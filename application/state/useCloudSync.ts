@@ -3,9 +3,10 @@
  * 
  * Provides a complete React interface to the CloudSyncManager.
  * Handles security state machine, provider connections, and sync operations.
+ * Uses useSyncExternalStore for real-time state synchronization across all components.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import {
   type CloudProvider,
   type SecurityState,
@@ -15,7 +16,6 @@ import {
   type ConflictResolution,
   type SyncPayload,
   type SyncResult,
-  type SyncEvent,
   type SyncHistoryEntry,
   formatLastSync,
   getSyncDotColor,
@@ -92,6 +92,7 @@ export interface CloudSyncHook {
   // Utilities
   formatLastSync: (timestamp?: number) => string;
   getProviderDotColor: (provider: CloudProvider) => string;
+  refresh: () => void;
 }
 
 export interface GitHubAuthState {
@@ -104,35 +105,22 @@ export interface GitHubAuthState {
 // Hook Implementation
 // ============================================================================
 
+// Singleton manager instance
+const manager = getCloudSyncManager();
+
+// Subscribe function for useSyncExternalStore
+const subscribe = (callback: () => void) => {
+  return manager.subscribeToStateChanges(callback);
+};
+
+// Get snapshot function for useSyncExternalStore
+const getSnapshot = (): SyncManagerState => {
+  return manager.getState();
+};
+
 export const useCloudSync = (): CloudSyncHook => {
-  const [manager] = useState<CloudSyncManager>(() => getCloudSyncManager());
-  const [state, setState] = useState<SyncManagerState>(() => manager.getState());
-  
-  // Refresh state on mount to ensure we have the latest state
-  useEffect(() => {
-    setState(manager.getState());
-  }, [manager]);
-  
-  // Subscribe to manager events
-  useEffect(() => {
-    const unsubscribe = manager.subscribe((event: SyncEvent) => {
-      // Refresh state on any event
-      setState(manager.getState());
-      
-      // Handle specific events if needed
-      switch (event.type) {
-        case 'SECURITY_STATE_CHANGED':
-        case 'SYNC_COMPLETED':
-        case 'SYNC_ERROR':
-        case 'AUTH_COMPLETED':
-        case 'CONFLICT_DETECTED':
-          setState(manager.getState());
-          break;
-      }
-    });
-    
-    return unsubscribe;
-  }, [manager]);
+  // Use useSyncExternalStore for real-time state sync across all components
+  const state = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   
   // ========== Computed Values ==========
   
@@ -158,6 +146,8 @@ export const useCloudSync = (): CloudSyncHook => {
   }, [state.syncState, state.providers]);
   
   // ========== Master Key Actions ==========
+  // Note: No need for setState calls - useSyncExternalStore automatically updates
+  // when manager emits events and calls notifyStateChange()
   
   const setupMasterKey = useCallback(async (password: string, confirmPassword: string) => {
     if (password !== confirmPassword) {
@@ -167,32 +157,26 @@ export const useCloudSync = (): CloudSyncHook => {
       throw new Error('Password must be at least 8 characters');
     }
     await manager.setupMasterKey(password);
-    setState(manager.getState());
-  }, [manager]);
+  }, []);
   
   const unlock = useCallback(async (password: string): Promise<boolean> => {
-    const success = await manager.unlock(password);
-    setState(manager.getState());
-    return success;
-  }, [manager]);
+    return await manager.unlock(password);
+  }, []);
   
   const lock = useCallback(() => {
     manager.lock();
-    setState(manager.getState());
-  }, [manager]);
+  }, []);
   
   const changeMasterKey = useCallback(async (
     oldPassword: string,
     newPassword: string
   ): Promise<boolean> => {
-    const success = await manager.changeMasterKey(oldPassword, newPassword);
-    setState(manager.getState());
-    return success;
-  }, [manager]);
+    return await manager.changeMasterKey(oldPassword, newPassword);
+  }, []);
   
   const verifyPassword = useCallback(async (password: string): Promise<boolean> => {
     return manager.verifyPassword(password);
-  }, [manager]);
+  }, []);
   
   // ========== Provider Actions ==========
   
@@ -201,9 +185,8 @@ export const useCloudSync = (): CloudSyncHook => {
     if (result.type !== 'device_code') {
       throw new Error('Unexpected auth type');
     }
-    setState(manager.getState());
     return result.data as DeviceFlowState;
-  }, [manager]);
+  }, []);
   
   const completeGitHubAuth = useCallback(async (
     deviceCode: string,
@@ -212,15 +195,13 @@ export const useCloudSync = (): CloudSyncHook => {
     onPending?: () => void
   ): Promise<void> => {
     await manager.completeGitHubAuth(deviceCode, interval, expiresAt, onPending);
-    setState(manager.getState());
-  }, [manager]);
+  }, []);
   
   const connectGoogle = useCallback(async (): Promise<string> => {
     const result = await manager.startProviderAuth('google');
     if (result.type !== 'url') {
       throw new Error('Unexpected auth type');
     }
-    setState(manager.getState());
     const data = result.data as { url: string; redirectUri: string };
     
     // Start OAuth callback server in Electron and wait for authorization
@@ -244,18 +225,16 @@ export const useCloudSync = (): CloudSyncHook => {
       
       // Complete auth with the received code
       await manager.completePKCEAuth('google', code, data.redirectUri);
-      setState(manager.getState());
     }
     
     return data.url;
-  }, [manager]);
+  }, []);
   
   const connectOneDrive = useCallback(async (): Promise<string> => {
     const result = await manager.startProviderAuth('onedrive');
     if (result.type !== 'url') {
       throw new Error('Unexpected auth type');
     }
-    setState(manager.getState());
     const data = result.data as { url: string; redirectUri: string };
     
     // Start OAuth callback server in Electron and wait for authorization
@@ -279,11 +258,10 @@ export const useCloudSync = (): CloudSyncHook => {
       
       // Complete auth with the received code
       await manager.completePKCEAuth('onedrive', code, data.redirectUri);
-      setState(manager.getState());
     }
     
     return data.url;
-  }, [manager]);
+  }, []);
   
   const completePKCEAuth = useCallback(async (
     provider: 'google' | 'onedrive',
@@ -291,66 +269,59 @@ export const useCloudSync = (): CloudSyncHook => {
     redirectUri: string
   ): Promise<void> => {
     await manager.completePKCEAuth(provider, code, redirectUri);
-    setState(manager.getState());
-  }, [manager]);
+  }, []);
   
   const disconnectProvider = useCallback(async (provider: CloudProvider): Promise<void> => {
     await manager.disconnectProvider(provider);
-    setState(manager.getState());
-  }, [manager]);
+  }, []);
   
   // ========== Sync Actions ==========
   
   const syncNow = useCallback(async (
     payload: SyncPayload
   ): Promise<Map<CloudProvider, SyncResult>> => {
-    const results = await manager.syncAllProviders(payload);
-    setState(manager.getState());
-    return results;
-  }, [manager]);
+    return await manager.syncAllProviders(payload);
+  }, []);
   
   const syncToProvider = useCallback(async (
     provider: CloudProvider,
     payload: SyncPayload
   ): Promise<SyncResult> => {
-    const result = await manager.syncToProvider(provider, payload);
-    setState(manager.getState());
-    return result;
-  }, [manager]);
+    return await manager.syncToProvider(provider, payload);
+  }, []);
   
   const downloadFromProvider = useCallback(async (
     provider: CloudProvider
   ): Promise<SyncPayload | null> => {
-    const payload = await manager.downloadFromProvider(provider);
-    setState(manager.getState());
-    return payload;
-  }, [manager]);
+    return await manager.downloadFromProvider(provider);
+  }, []);
   
   const resolveConflict = useCallback(async (
     resolution: ConflictResolution
   ): Promise<SyncPayload | null> => {
-    const payload = await manager.resolveConflict(resolution);
-    setState(manager.getState());
-    return payload;
-  }, [manager]);
+    return await manager.resolveConflict(resolution);
+  }, []);
   
   // ========== Settings ==========
   
   const setAutoSync = useCallback((enabled: boolean, intervalMinutes?: number) => {
     manager.setAutoSync(enabled, intervalMinutes);
-    setState(manager.getState());
-  }, [manager]);
+  }, []);
   
-  const setDeviceName = useCallback((name: string) => {
-    // This would need to be added to manager
-    manager.setDeviceName?.(name);
-  }, [manager]);
+  const setDeviceName = useCallback((_name: string) => {
+    // TODO: Add setDeviceName to CloudSyncManager if needed
+  }, []);
   
   // ========== Utilities ==========
   
   const getProviderDotColor = useCallback((provider: CloudProvider): string => {
     return getSyncDotColor(state.providers[provider].status);
   }, [state.providers]);
+  
+  const refresh = useCallback(() => {
+    // Force a re-render by triggering state change notification
+    // This is now a no-op since useSyncExternalStore handles updates automatically
+  }, []);
   
   return {
     // State
@@ -403,6 +374,7 @@ export const useCloudSync = (): CloudSyncHook => {
     // Utilities
     formatLastSync,
     getProviderDotColor,
+    refresh,
   };
 };
 

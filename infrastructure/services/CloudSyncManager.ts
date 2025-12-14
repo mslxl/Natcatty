@@ -65,13 +65,16 @@ export type SyncEventCallback = (event: SyncEvent) => void;
 
 export class CloudSyncManager {
   private state: SyncManagerState;
+  private stateSnapshot: SyncManagerState; // Immutable snapshot for useSyncExternalStore
   private adapters: Map<CloudProvider, CloudAdapter> = new Map();
   private eventListeners: Set<SyncEventCallback> = new Set();
+  private stateChangeListeners: Set<() => void> = new Set(); // For useSyncExternalStore
   private autoSyncTimer: ReturnType<typeof setInterval> | null = null;
   private masterPassword: string | null = null; // In memory only!
 
   constructor() {
     this.state = this.loadInitialState();
+    this.stateSnapshot = { ...this.state };
     this.initializeAdapters();
   }
 
@@ -141,10 +144,16 @@ export class CloudSyncManager {
     const key = SYNC_STORAGE_KEYS[`PROVIDER_${provider.toUpperCase()}` as keyof typeof SYNC_STORAGE_KEYS];
     const stored = this.loadFromStorage<Partial<ProviderConnection>>(key);
     
+    // Determine the correct status: if tokens exist, should be 'connected'
+    // Never restore 'syncing' or 'error' status - those are transient
+    const status: ProviderConnection['status'] = stored?.tokens 
+      ? 'connected' 
+      : 'disconnected';
+    
     return {
       provider,
-      status: stored?.tokens ? 'connected' : 'disconnected',
       ...stored,
+      status, // Must be last to override any stored 'syncing' or 'error' status
     } as ProviderConnection;
   }
 
@@ -193,8 +202,40 @@ export class CloudSyncManager {
     return () => this.eventListeners.delete(callback);
   }
 
+  /**
+   * Subscribe to state changes for useSyncExternalStore
+   * This is a simpler subscription that just notifies when state changes
+   */
+  subscribeToStateChanges(callback: () => void): () => void {
+    this.stateChangeListeners.add(callback);
+    return () => this.stateChangeListeners.delete(callback);
+  }
+
   private emit(event: SyncEvent): void {
+    // Update snapshot and notify state change listeners first
+    this.notifyStateChange();
+    // Then notify event listeners
     this.eventListeners.forEach(cb => cb(event));
+  }
+
+  /**
+   * Notify all state change listeners and update snapshot
+   * Call this after any state mutation
+   * Uses deep clone to ensure React detects changes in nested objects
+   */
+  private notifyStateChange(): void {
+    // Deep clone the state to ensure all nested objects are new references
+    this.stateSnapshot = {
+      ...this.state,
+      providers: {
+        github: { ...this.state.providers.github },
+        google: { ...this.state.providers.google },
+        onedrive: { ...this.state.providers.onedrive },
+      },
+      syncHistory: [...this.state.syncHistory],
+      currentConflict: this.state.currentConflict ? { ...this.state.currentConflict } : null,
+    };
+    this.stateChangeListeners.forEach(cb => cb());
   }
 
   // ==========================================================================
@@ -202,7 +243,7 @@ export class CloudSyncManager {
   // ==========================================================================
 
   getState(): Readonly<SyncManagerState> {
-    return { ...this.state };
+    return this.stateSnapshot;
   }
 
   getAdapter(provider: CloudProvider): CloudAdapter | undefined {
@@ -528,6 +569,7 @@ export class CloudSyncManager {
       status,
       error,
     };
+    this.notifyStateChange(); // Notify UI of status change
   }
 
   // ==========================================================================
@@ -723,6 +765,7 @@ export class CloudSyncManager {
       this.state.remoteVersion = remoteFile.meta.version;
       this.state.remoteUpdatedAt = remoteFile.meta.updatedAt;
       this.saveSyncConfig();
+      this.notifyStateChange(); // Notify UI of state change
 
       // Add to sync history
       this.addSyncHistoryEntry({
@@ -816,6 +859,7 @@ export class CloudSyncManager {
       );
     }
     this.saveSyncConfig();
+    this.notifyStateChange(); // Notify UI of state change
 
     if (enabled && this.state.securityState === 'UNLOCKED') {
       this.startAutoSync();
@@ -865,6 +909,7 @@ export class CloudSyncManager {
     // Keep only the last 50 entries
     this.state.syncHistory = [newEntry, ...this.state.syncHistory].slice(0, 50);
     this.saveToStorage('netcatty_sync_history_v1', this.state.syncHistory);
+    this.notifyStateChange(); // Notify UI of new history entry
   }
 
   // ==========================================================================

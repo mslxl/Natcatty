@@ -31,6 +31,7 @@ import {
     PopoverContent,
     PopoverTrigger,
 } from './ui/popover';
+import { toast } from './ui/toast';
 
 // ============================================================================
 // Provider Icons
@@ -106,7 +107,10 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
     className,
 }) => {
     const [isOpen, setIsOpen] = useState(false);
+    const [isSyncingManual, setIsSyncingManual] = useState(false);
     const sync = useCloudSync();
+
+    // State is now automatically synced via useSyncExternalStore - no manual refresh needed
 
     // Get connected provider (include syncing status as it's still connected)
     const getConnectedProvider = (): CloudProvider | null => {
@@ -317,17 +321,28 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
                                 size="sm"
                                 variant="outline"
                                 className="w-full gap-1"
-                                disabled={sync.isSyncing}
+                                disabled={sync.isSyncing || isSyncingManual}
                                 onClick={async () => {
                                     if (onSyncNow) {
-                                        await onSyncNow();
+                                        setIsSyncingManual(true);
+                                        try {
+                                            await onSyncNow();
+                                            toast.success('Sync completed successfully', 'Cloud Sync');
+                                        } catch (error) {
+                                            toast.error(
+                                                error instanceof Error ? error.message : 'Sync failed',
+                                                'Sync Error'
+                                            );
+                                        } finally {
+                                            setIsSyncingManual(false);
+                                        }
                                     } else {
                                         setIsOpen(false);
                                         onOpenSettings?.();
                                     }
                                 }}
                             >
-                                {sync.isSyncing ? (
+                                {(sync.isSyncing || isSyncingManual) ? (
                                     <Loader2 size={14} className="animate-spin" />
                                 ) : (
                                     <RefreshCw size={14} />
