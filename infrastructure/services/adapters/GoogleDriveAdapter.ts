@@ -244,22 +244,37 @@ export const findSyncFile = async (accessToken: string): Promise<string | null> 
     fields: 'files(id, name, modifiedTime)',
   });
 
-  const response = await fetch(
-    `${SYNC_CONSTANTS.GOOGLE_DRIVE_API}/files?${params.toString()}`,
-    {
+  const url = `${SYNC_CONSTANTS.GOOGLE_DRIVE_API}/files?${params.toString()}`;
+  console.log('[GoogleDrive] Searching for sync file:', url);
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
       },
-    }
-  );
+    });
+  } catch (fetchError) {
+    console.error('[GoogleDrive] Network error:', fetchError);
+    throw new Error(`Network error: ${fetchError instanceof Error ? fetchError.message : 'Failed to fetch'}`);
+  }
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    console.error('Drive API error:', response.status, errorData);
-    throw new Error(`Failed to search Drive: ${errorData.error?.message || response.status}`);
+    console.error('[GoogleDrive] API error:', response.status, errorData);
+    
+    if (response.status === 403) {
+      throw new Error('Google Drive API not enabled. Please enable it in Google Cloud Console.');
+    }
+    if (response.status === 401) {
+      throw new Error('Token expired or invalid. Please reconnect.');
+    }
+    
+    throw new Error(`Drive API error: ${errorData.error?.message || response.status}`);
   }
 
   const data = await response.json();
+  console.log('[GoogleDrive] Found files:', data.files?.length || 0);
   return data.files?.[0]?.id || null;
 };
 

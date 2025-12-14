@@ -429,6 +429,8 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                                 src={account.avatarUrl}
                                 alt=""
                                 className="w-4 h-4 rounded-full"
+                                referrerPolicy="no-referrer"
+                                crossOrigin="anonymous"
                             />
                         )}
                         <span className="text-xs text-muted-foreground truncate">
@@ -688,9 +690,16 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
         }
     }, [sync.currentConflict]);
 
-    // Connect GitHub
+    // Connect GitHub (disconnect others first - single provider only)
     const handleConnectGitHub = async () => {
         try {
+            // Disconnect other providers first (single provider mode)
+            if (sync.providers.google.status === 'connected') {
+                await sync.disconnectProvider('google');
+            }
+            if (sync.providers.onedrive.status === 'connected') {
+                await sync.disconnectProvider('onedrive');
+            }
             const deviceFlow = await sync.connectGitHub();
             setGitHubUserCode(deviceFlow.userCode);
             setGitHubVerificationUri(deviceFlow.verificationUri);
@@ -713,22 +722,36 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
         }
     };
 
-    // Connect Google
+    // Connect Google (disconnect others first - single provider only)
     const handleConnectGoogle = async () => {
         try {
-            const url = await sync.connectGoogle();
-            window.open(url, '_blank', 'width=600,height=700');
+            // Disconnect other providers first (single provider mode)
+            if (sync.providers.github.status === 'connected') {
+                await sync.disconnectProvider('github');
+            }
+            if (sync.providers.onedrive.status === 'connected') {
+                await sync.disconnectProvider('onedrive');
+            }
+            await sync.connectGoogle();
+            // Note: Auth flow is handled automatically by oauthBridge
             toast.info('Complete authorization in browser');
         } catch (error) {
             toast.error(error instanceof Error ? error.message : 'Unknown error', 'Google connection failed');
         }
     };
 
-    // Connect OneDrive
+    // Connect OneDrive (disconnect others first - single provider only)
     const handleConnectOneDrive = async () => {
         try {
-            const url = await sync.connectOneDrive();
-            window.open(url, '_blank', 'width=600,height=700');
+            // Disconnect other providers first (single provider mode)
+            if (sync.providers.github.status === 'connected') {
+                await sync.disconnectProvider('github');
+            }
+            if (sync.providers.google.status === 'connected') {
+                await sync.disconnectProvider('google');
+            }
+            await sync.connectOneDrive();
+            // Note: Auth flow is handled automatically by oauthBridge
             toast.info('Complete authorization in browser');
         } catch (error) {
             toast.error(error instanceof Error ? error.message : 'Unknown error', 'OneDrive connection failed');

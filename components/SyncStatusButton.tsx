@@ -142,7 +142,12 @@ const ProviderRow: React.FC<ProviderRowProps> = ({
                 {isConnected ? (
                     <div className="flex items-center gap-1">
                         {avatarUrl && (
-                            <img src={avatarUrl} alt="" className="w-3 h-3 rounded-full" />
+                            <img 
+                                src={avatarUrl} 
+                                alt="" 
+                                className="w-3 h-3 rounded-full" 
+                                referrerPolicy="no-referrer"
+                            />
                         )}
                         <span className="text-[10px] text-muted-foreground">
                             {formatTime(lastSync)}
@@ -211,10 +216,11 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
     };
 
     // Handle sync for a specific provider
-    const handleSync = async (provider: CloudProvider) => {
-        // This would need the payload from the app - for now just trigger sync state
-        // In real implementation, this should call through to the app's sync handler
-        console.log('Sync requested for:', provider);
+    // Note: This button is mainly for status display. 
+    // For sync, user should open settings where full payload is available.
+    const handleSync = async (_provider: CloudProvider) => {
+        // Open settings for full sync functionality
+        onOpenSettings?.();
     };
 
     return (
@@ -381,8 +387,9 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
                                         className="w-full gap-1"
                                         disabled={sync.isSyncing}
                                         onClick={() => {
-                                            // Trigger sync all - needs to be connected to app state
-                                            console.log('Sync all requested');
+                                            // Open settings for full sync functionality
+                                            setIsOpen(false);
+                                            onOpenSettings?.();
                                         }}
                                     >
                                         {sync.isSyncing ? (
@@ -390,7 +397,7 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
                                         ) : (
                                             <RefreshCw size={14} />
                                         )}
-                                        Sync All Now
+                                        Sync Now
                                     </Button>
                                 </div>
                             )}
