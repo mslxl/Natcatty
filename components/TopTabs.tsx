@@ -29,6 +29,7 @@ interface TopTabsProps {
   onOpenQuickSwitcher: () => void;
   onToggleTheme: () => void;
   onOpenSettings: () => void;
+  onSyncNow?: () => Promise<void>;
   onStartSessionDrag: (sessionId: string) => void;
   onEndSessionDrag: () => void;
   onReorderTabs: (draggedId: string, targetId: string, position: 'before' | 'after') => void;
@@ -123,6 +124,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   onOpenQuickSwitcher,
   onToggleTheme,
   onOpenSettings,
+  onSyncNow,
   onStartSessionDrag,
   onEndSessionDrag,
   onReorderTabs,
@@ -605,7 +607,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
           <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground app-no-drag">
             <Bell size={16} />
           </Button>
-          <SyncStatusButton onOpenSettings={onOpenSettings} />
+          <SyncStatusButton onOpenSettings={onOpenSettings} onSyncNow={onSyncNow} />
           <Button
             variant="ghost"
             size="icon"
@@ -635,7 +637,8 @@ const topTabsAreEqual = (prev: TopTabsProps, next: TopTabsProps): boolean => {
     prev.orderedTabs === next.orderedTabs &&
     prev.draggingSessionId === next.draggingSessionId &&
     prev.isMacClient === next.isMacClient &&
-    prev.onOpenSettings === next.onOpenSettings
+    prev.onOpenSettings === next.onOpenSettings &&
+    prev.onSyncNow === next.onSyncNow
   );
 };
 

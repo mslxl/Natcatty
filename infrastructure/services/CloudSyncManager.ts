@@ -22,6 +22,7 @@ import {
   type ProviderConnection,
   type SyncEvent,
   type OAuthTokens,
+  type SyncHistoryEntry,
   SYNC_CONSTANTS,
   SYNC_STORAGE_KEYS,
   generateDeviceId,
@@ -47,10 +48,13 @@ export interface SyncManagerState {
   deviceName: string;
   localVersion: number;
   localUpdatedAt: number;
+  remoteVersion: number;
+  remoteUpdatedAt: number;
   currentConflict: ConflictInfo | null;
   lastError: string | null;
   autoSyncEnabled: boolean;
   autoSyncInterval: number;
+  syncHistory: SyncHistoryEntry[];
 }
 
 export type SyncEventCallback = (event: SyncEvent) => void;
@@ -92,7 +96,12 @@ export class CloudSyncManager {
       interval: number;
       localVersion: number;
       localUpdatedAt: number;
+      remoteVersion: number;
+      remoteUpdatedAt: number;
     }>(SYNC_STORAGE_KEYS.SYNC_CONFIG);
+
+    // Load sync history
+    const syncHistory = this.loadFromStorage<SyncHistoryEntry[]>('netcatty_sync_history_v1') || [];
 
     // Determine initial security state
     const securityState: SecurityState = masterKeyConfig ? 'LOCKED' : 'NO_KEY';
@@ -118,10 +127,13 @@ export class CloudSyncManager {
       deviceName,
       localVersion: syncConfig?.localVersion || 0,
       localUpdatedAt: syncConfig?.localUpdatedAt || 0,
+      remoteVersion: syncConfig?.remoteVersion || 0,
+      remoteUpdatedAt: syncConfig?.remoteUpdatedAt || 0,
       currentConflict: null,
       lastError: null,
       autoSyncEnabled: syncConfig?.autoSync || false,
       autoSyncInterval: syncConfig?.interval || SYNC_CONSTANTS.DEFAULT_AUTO_SYNC_INTERVAL,
+      syncHistory,
     };
   }
 
@@ -624,11 +636,24 @@ export class CloudSyncManager {
       // Update local state
       this.state.localVersion = syncedFile.meta.version;
       this.state.localUpdatedAt = syncedFile.meta.updatedAt;
+      this.state.remoteVersion = syncedFile.meta.version;
+      this.state.remoteUpdatedAt = syncedFile.meta.updatedAt;
       this.state.providers[provider].lastSync = Date.now();
       this.state.providers[provider].lastSyncVersion = syncedFile.meta.version;
 
       this.saveSyncConfig();
       this.saveProviderConnection(provider, this.state.providers[provider]);
+
+      // Add to sync history
+      this.addSyncHistoryEntry({
+        timestamp: Date.now(),
+        provider,
+        action: 'upload',
+        success: true,
+        localVersion: syncedFile.meta.version,
+        remoteVersion: syncedFile.meta.version,
+        deviceName: this.state.deviceName,
+      });
 
       this.state.syncState = 'IDLE';
       this.updateProviderStatus(provider, 'connected');
@@ -647,6 +672,17 @@ export class CloudSyncManager {
       this.state.syncState = 'ERROR';
       this.state.lastError = String(error);
       this.updateProviderStatus(provider, 'error', String(error));
+
+      // Add to sync history
+      this.addSyncHistoryEntry({
+        timestamp: Date.now(),
+        provider,
+        action: 'upload',
+        success: false,
+        localVersion: this.state.localVersion,
+        deviceName: this.state.deviceName,
+        error: String(error),
+      });
       
       this.emit({ type: 'SYNC_ERROR', provider, error: String(error) });
       
@@ -672,20 +708,46 @@ export class CloudSyncManager {
       throw new Error('Provider not connected');
     }
 
-    const remoteFile = await adapter.download();
-    if (!remoteFile) {
-      return null;
+    try {
+      const remoteFile = await adapter.download();
+      if (!remoteFile) {
+        return null;
+      }
+
+      // Decrypt
+      const payload = await EncryptionService.decryptPayload(remoteFile, this.masterPassword);
+
+      // Update local tracking
+      this.state.localVersion = remoteFile.meta.version;
+      this.state.localUpdatedAt = remoteFile.meta.updatedAt;
+      this.state.remoteVersion = remoteFile.meta.version;
+      this.state.remoteUpdatedAt = remoteFile.meta.updatedAt;
+      this.saveSyncConfig();
+
+      // Add to sync history
+      this.addSyncHistoryEntry({
+        timestamp: Date.now(),
+        provider,
+        action: 'download',
+        success: true,
+        localVersion: remoteFile.meta.version,
+        remoteVersion: remoteFile.meta.version,
+        deviceName: remoteFile.meta.deviceName,
+      });
+
+      return payload;
+    } catch (error) {
+      // Add to sync history
+      this.addSyncHistoryEntry({
+        timestamp: Date.now(),
+        provider,
+        action: 'download',
+        success: false,
+        localVersion: this.state.localVersion,
+        error: String(error),
+      });
+      throw error;
     }
-
-    // Decrypt
-    const payload = await EncryptionService.decryptPayload(remoteFile, this.masterPassword);
-
-    // Update local tracking
-    this.state.localVersion = remoteFile.meta.version;
-    this.state.localUpdatedAt = remoteFile.meta.updatedAt;
-    this.saveSyncConfig();
-
-    return payload;
   }
 
   /**
@@ -789,7 +851,20 @@ export class CloudSyncManager {
       interval: this.state.autoSyncInterval,
       localVersion: this.state.localVersion,
       localUpdatedAt: this.state.localUpdatedAt,
+      remoteVersion: this.state.remoteVersion,
+      remoteUpdatedAt: this.state.remoteUpdatedAt,
     });
+  }
+
+  private addSyncHistoryEntry(entry: Omit<SyncHistoryEntry, 'id'>): void {
+    const newEntry: SyncHistoryEntry = {
+      ...entry,
+      id: crypto.randomUUID(),
+    };
+    
+    // Keep only the last 50 entries
+    this.state.syncHistory = [newEntry, ...this.state.syncHistory].slice(0, 50);
+    this.saveToStorage('netcatty_sync_history_v1', this.state.syncHistory);
   }
 
   // ==========================================================================

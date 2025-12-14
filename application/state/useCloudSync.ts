@@ -16,6 +16,7 @@ import {
   type SyncPayload,
   type SyncResult,
   type SyncEvent,
+  type SyncHistoryEntry,
   formatLastSync,
   getSyncDotColor,
 } from '../../domain/sync';
@@ -41,6 +42,13 @@ export interface CloudSyncHook {
   currentConflict: ConflictInfo | null;
   lastError: string | null;
   deviceName: string;
+  autoSyncEnabled: boolean;
+  autoSyncInterval: number;
+  localVersion: number;
+  localUpdatedAt: number;
+  remoteVersion: number;
+  remoteUpdatedAt: number;
+  syncHistory: SyncHistoryEntry[];
   
   // Computed
   hasAnyConnectedProvider: boolean;
@@ -99,6 +107,11 @@ export interface GitHubAuthState {
 export const useCloudSync = (): CloudSyncHook => {
   const [manager] = useState<CloudSyncManager>(() => getCloudSyncManager());
   const [state, setState] = useState<SyncManagerState>(() => manager.getState());
+  
+  // Refresh state on mount to ensure we have the latest state
+  useEffect(() => {
+    setState(manager.getState());
+  }, [manager]);
   
   // Subscribe to manager events
   useEffect(() => {
@@ -349,6 +362,13 @@ export const useCloudSync = (): CloudSyncHook => {
     currentConflict: state.currentConflict,
     lastError: state.lastError,
     deviceName: state.deviceName,
+    autoSyncEnabled: state.autoSyncEnabled,
+    autoSyncInterval: state.autoSyncInterval,
+    localVersion: state.localVersion,
+    localUpdatedAt: state.localUpdatedAt,
+    remoteVersion: state.remoteVersion,
+    remoteUpdatedAt: state.remoteUpdatedAt,
+    syncHistory: state.syncHistory,
     
     // Computed
     hasAnyConnectedProvider,

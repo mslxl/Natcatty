@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { activeTabStore, useActiveTabId, useIsVaultActive } from './application/state/activeTabStore';
+import { useAutoSync } from './application/state/useAutoSync';
 import { useSessionState } from './application/state/useSessionState';
 import { useSettingsState } from './application/state/useSettingsState';
 import { useVaultState } from './application/state/useVaultState';
@@ -173,6 +174,24 @@ function App() {
 
   // isMacClient is used for window controls styling
   const isMacClient = typeof navigator !== 'undefined' && /Mac|Macintosh/.test(navigator.userAgent);
+
+  // Auto-sync hook for cloud sync
+  const { syncNow: handleSyncNow } = useAutoSync({
+    hosts,
+    keys,
+    snippets,
+    customGroups,
+    portForwardingRules: undefined, // TODO: Add port forwarding rules from usePortForwardingState
+    knownHosts,
+    onApplyPayload: (payload) => {
+      importDataFromString(JSON.stringify({
+        hosts: payload.hosts,
+        keys: payload.keys,
+        snippets: payload.snippets,
+        customGroups: payload.customGroups,
+      }));
+    },
+  });
 
   // Debounce ref for moveFocus to prevent double-triggering when focus switches
   const lastMoveFocusTimeRef = useRef<number>(0);
@@ -599,6 +618,7 @@ function App() {
         onOpenQuickSwitcher={handleOpenQuickSwitcher}
         onToggleTheme={handleToggleTheme}
         onOpenSettings={handleOpenSettings}
+        onSyncNow={handleSyncNow}
         onStartSessionDrag={setDraggingSessionId}
         onEndSessionDrag={handleEndSessionDrag}
         onReorderTabs={reorderTabs}

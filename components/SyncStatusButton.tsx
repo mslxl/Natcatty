@@ -1,30 +1,28 @@
 /**
  * SyncStatusButton - Cloud Sync Status Indicator for Top Bar
  * 
- * Shows current sync state with colored indicators:
+ * Shows current sync state with cloud icon and colored indicators:
  * - Green dot: All synced
  * - Blue dot + spin: Syncing in progress  
- * - Yellow dot: Connecting/needs attention
  * - Red dot: Error
  * - Gray dot: No providers connected
  * 
- * Clicking opens a popover with quick sync controls and status details.
+ * Clicking opens a popover with sync status details and history.
  */
 
 import React, { useState } from 'react';
 import {
+    Cloud,
     CloudOff,
     Github,
     Loader2,
-    Lock,
     RefreshCw,
     Settings,
-    Shield,
-    ShieldAlert,
-    ShieldCheck,
-    Unlock,
+    X,
+    ArrowUp,
+    ArrowDown,
 } from 'lucide-react';
-import { useCloudSync, useSecurityState } from '../application/state/useCloudSync';
+import { useCloudSync } from '../application/state/useCloudSync';
 import type { CloudProvider } from '../domain/sync';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
@@ -51,9 +49,15 @@ const OneDriveIcon: React.FC<{ className?: string }> = ({ className }) => (
 );
 
 const providerIcons: Record<CloudProvider, React.ReactNode> = {
-    github: <Github size={14} />,
-    google: <GoogleDriveIcon className="w-3.5 h-3.5" />,
-    onedrive: <OneDriveIcon className="w-3.5 h-3.5" />,
+    github: <Github size={16} />,
+    google: <GoogleDriveIcon className="w-4 h-4" />,
+    onedrive: <OneDriveIcon className="w-4 h-4" />,
+};
+
+const providerNames: Record<CloudProvider, string> = {
+    github: 'GitHub Gist',
+    google: 'Google Drive',
+    onedrive: 'OneDrive',
 };
 
 // ============================================================================
@@ -61,7 +65,7 @@ const providerIcons: Record<CloudProvider, React.ReactNode> = {
 // ============================================================================
 
 interface StatusIndicatorProps {
-    status: 'synced' | 'syncing' | 'error' | 'locked' | 'setup' | 'none';
+    status: 'synced' | 'syncing' | 'error' | 'none';
     size?: 'sm' | 'md';
     className?: string;
 }
@@ -80,100 +84,10 @@ const StatusIndicator: React.FC<StatusIndicatorProps> = ({ status, size = 'sm', 
         synced: 'bg-green-500',
         syncing: 'bg-blue-500',
         error: 'bg-red-500',
-        locked: 'bg-amber-500',
-        setup: 'bg-muted-foreground/50',
         none: 'bg-muted-foreground/30',
     };
 
     return <span className={cn(baseClasses, colors[status])} />;
-};
-
-// ============================================================================
-// Provider Row Component
-// ============================================================================
-
-interface ProviderRowProps {
-    provider: CloudProvider;
-    name: string;
-    isConnected: boolean;
-    isSyncing: boolean;
-    lastSync?: number;
-    avatarUrl?: string;
-    error?: string;
-    onSync: () => void;
-}
-
-const ProviderRow: React.FC<ProviderRowProps> = ({
-    provider,
-    name,
-    isConnected,
-    isSyncing,
-    lastSync,
-    avatarUrl,
-    error,
-    onSync,
-}) => {
-    const formatTime = (timestamp?: number): string => {
-        if (!timestamp) return 'Never';
-        const diff = Date.now() - timestamp;
-        if (diff < 60000) return 'Just now';
-        if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-        return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    };
-
-    return (
-        <div className="flex items-center gap-2 py-1.5">
-            <div className={cn(
-                "w-6 h-6 rounded flex items-center justify-center",
-                isConnected ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
-            )}>
-                {providerIcons[provider]}
-            </div>
-
-            <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-medium">{name}</span>
-                    {isConnected && (
-                        <StatusIndicator
-                            status={error ? 'error' : isSyncing ? 'syncing' : 'synced'}
-                        />
-                    )}
-                </div>
-                {isConnected ? (
-                    <div className="flex items-center gap-1">
-                        {avatarUrl && (
-                            <img
-                                src={avatarUrl}
-                                alt=""
-                                className="w-3 h-3 rounded-full"
-                                referrerPolicy="no-referrer"
-                            />
-                        )}
-                        <span className="text-[10px] text-muted-foreground">
-                            {formatTime(lastSync)}
-                        </span>
-                    </div>
-                ) : (
-                    <span className="text-[10px] text-muted-foreground">Not connected</span>
-                )}
-            </div>
-
-            {isConnected && (
-                <button
-                    onClick={onSync}
-                    disabled={isSyncing}
-                    className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50"
-                    title="Sync now"
-                >
-                    {isSyncing ? (
-                        <Loader2 size={12} className="animate-spin text-muted-foreground" />
-                    ) : (
-                        <RefreshCw size={12} className="text-muted-foreground" />
-                    )}
-                </button>
-            )}
-        </div>
-    );
 };
 
 // ============================================================================
@@ -182,21 +96,32 @@ const ProviderRow: React.FC<ProviderRowProps> = ({
 
 interface SyncStatusButtonProps {
     onOpenSettings?: () => void;
+    onSyncNow?: () => Promise<void>; // Callback to trigger sync with current data
     className?: string;
 }
 
 export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
     onOpenSettings,
+    onSyncNow,
     className,
 }) => {
     const [isOpen, setIsOpen] = useState(false);
-    const { isLocked, hasNoKey } = useSecurityState();
     const sync = useCloudSync();
+
+    // Get connected provider (include syncing status as it's still connected)
+    const getConnectedProvider = (): CloudProvider | null => {
+        const isProviderActive = (status: string) => status === 'connected' || status === 'syncing';
+        if (isProviderActive(sync.providers.github.status)) return 'github';
+        if (isProviderActive(sync.providers.google.status)) return 'google';
+        if (isProviderActive(sync.providers.onedrive.status)) return 'onedrive';
+        return null;
+    };
+
+    const connectedProvider = getConnectedProvider();
+    const providerConnection = connectedProvider ? sync.providers[connectedProvider] : null;
 
     // Determine overall status for the button indicator
     const getOverallStatus = (): StatusIndicatorProps['status'] => {
-        if (hasNoKey) return 'setup';
-        if (isLocked) return 'locked';
         if (sync.isSyncing) return 'syncing';
         if (sync.lastError) return 'error';
         if (sync.hasAnyConnectedProvider) return 'synced';
@@ -207,20 +132,17 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
 
     // Get the button icon based on state
     const getButtonIcon = () => {
-        if (hasNoKey) return <Shield size={16} />;
-        if (isLocked) return <Lock size={16} />;
         if (sync.isSyncing) return <Loader2 size={16} className="animate-spin" />;
-        if (sync.lastError) return <ShieldAlert size={16} />;
-        if (sync.hasAnyConnectedProvider) return <ShieldCheck size={16} />;
+        if (sync.hasAnyConnectedProvider) return <Cloud size={16} />;
         return <CloudOff size={16} />;
     };
 
-    // Handle sync for a specific provider
-    // Note: This button is mainly for status display. 
-    // For sync, user should open settings where full payload is available.
-    const handleSync = async (_provider: CloudProvider) => {
-        // Open settings for full sync functionality
-        onOpenSettings?.();
+    const formatTime = (timestamp?: number): string => {
+        if (!timestamp) return 'Never';
+        const diff = Date.now() - timestamp;
+        if (diff < 60000) return 'Just now';
+        if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+        return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     };
 
     return (
@@ -247,7 +169,7 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
             </PopoverTrigger>
 
             <PopoverContent
-                className="w-72 p-0"
+                className="w-80 p-0"
                 align="end"
                 sideOffset={8}
             >
@@ -256,28 +178,23 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                             {overallStatus === 'synced' && (
-                                <ShieldCheck size={16} className="text-green-500" />
+                                <Cloud size={16} className="text-green-500" />
                             )}
                             {overallStatus === 'syncing' && (
                                 <Loader2 size={16} className="text-blue-500 animate-spin" />
                             )}
                             {overallStatus === 'error' && (
-                                <ShieldAlert size={16} className="text-red-500" />
+                                <Cloud size={16} className="text-red-500" />
                             )}
-                            {overallStatus === 'locked' && (
-                                <Lock size={16} className="text-amber-500" />
-                            )}
-                            {(overallStatus === 'setup' || overallStatus === 'none') && (
-                                <Shield size={16} className="text-muted-foreground" />
+                            {overallStatus === 'none' && (
+                                <CloudOff size={16} className="text-muted-foreground" />
                             )}
 
                             <span className="text-sm font-medium">
-                                {overallStatus === 'synced' && 'Synced'}
+                                {overallStatus === 'synced' && 'Cloud Sync Active'}
                                 {overallStatus === 'syncing' && 'Syncing...'}
                                 {overallStatus === 'error' && 'Sync Error'}
-                                {overallStatus === 'locked' && 'Vault Locked'}
-                                {overallStatus === 'setup' && 'Setup Required'}
-                                {overallStatus === 'none' && 'Not Connected'}
+                                {overallStatus === 'none' && 'Not Configured'}
                             </span>
                         </div>
 
@@ -294,22 +211,17 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
                             </button>
                         )}
                     </div>
-
-                    {sync.deviceName && overallStatus !== 'setup' && (
-                        <div className="text-[10px] text-muted-foreground mt-0.5">
-                            {sync.deviceName}
-                        </div>
-                    )}
                 </div>
 
                 {/* Content based on state */}
                 <div className="p-3">
-                    {hasNoKey ? (
-                        // Setup required
-                        <div className="text-center py-2">
-                            <Shield size={32} className="mx-auto mb-2 text-muted-foreground" />
+                    {!sync.hasAnyConnectedProvider ? (
+                        // No provider connected
+                        <div className="text-center py-4">
+                            <CloudOff size={32} className="mx-auto mb-2 text-muted-foreground" />
+                            <p className="text-sm font-medium mb-1">No Sync Configured</p>
                             <p className="text-xs text-muted-foreground mb-3">
-                                Set up encrypted sync to keep your data safe across devices.
+                                Connect a cloud provider to sync your data across devices.
                             </p>
                             <Button
                                 size="sm"
@@ -319,107 +231,110 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
                                     onOpenSettings?.();
                                 }}
                             >
-                                Set Up Encryption
+                                Configure Cloud Sync
                             </Button>
                         </div>
-                    ) : isLocked ? (
-                        // Locked state
-                        <div className="text-center py-2">
-                            <Lock size={32} className="mx-auto mb-2 text-amber-500" />
-                            <p className="text-xs text-muted-foreground mb-3">
-                                Unlock your vault to sync data.
-                            </p>
+                    ) : (
+                        // Provider connected - show details
+                        <div className="space-y-3">
+                            {/* Connected Provider Info */}
+                            {connectedProvider && providerConnection && (
+                                <div className="flex items-center gap-3 p-2 rounded-lg bg-muted/30">
+                                    <div className="w-10 h-10 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
+                                        {providerIcons[connectedProvider]}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-sm font-medium">{providerNames[connectedProvider]}</span>
+                                            <StatusIndicator status={overallStatus} />
+                                        </div>
+                                        <div className="flex items-center gap-2 mt-0.5">
+                                            {providerConnection.account?.avatarUrl && (
+                                                <img
+                                                    src={providerConnection.account.avatarUrl}
+                                                    alt=""
+                                                    className="w-4 h-4 rounded-full"
+                                                    referrerPolicy="no-referrer"
+                                                />
+                                            )}
+                                            <span className="text-xs text-muted-foreground truncate">
+                                                {providerConnection.account?.name || providerConnection.account?.email || 'Connected'}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Version Info */}
+                            <div className="grid grid-cols-2 gap-2">
+                                <div className="p-2 rounded-lg bg-muted/30">
+                                    <div className="text-[10px] text-muted-foreground uppercase mb-0.5">Local</div>
+                                    <div className="text-sm font-medium">v{sync.localVersion}</div>
+                                    <div className="text-[10px] text-muted-foreground">
+                                        {formatTime(sync.localUpdatedAt)}
+                                    </div>
+                                </div>
+                                <div className="p-2 rounded-lg bg-muted/30">
+                                    <div className="text-[10px] text-muted-foreground uppercase mb-0.5">Remote</div>
+                                    <div className="text-sm font-medium">v{sync.remoteVersion}</div>
+                                    <div className="text-[10px] text-muted-foreground">
+                                        {formatTime(sync.remoteUpdatedAt)}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Recent Sync History */}
+                            {sync.syncHistory.length > 0 && (
+                                <div>
+                                    <div className="text-xs text-muted-foreground mb-1.5">Recent Activity</div>
+                                    <div className="space-y-1 max-h-32 overflow-y-auto">
+                                        {sync.syncHistory.slice(0, 5).map((entry) => (
+                                            <div key={entry.id} className="flex items-center gap-2 text-xs py-1">
+                                                <div className={cn(
+                                                    "w-4 h-4 rounded-full flex items-center justify-center shrink-0",
+                                                    entry.success ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"
+                                                )}>
+                                                    {entry.success ? (
+                                                        entry.action === 'upload' ? <ArrowUp size={10} /> : <ArrowDown size={10} />
+                                                    ) : (
+                                                        <X size={10} />
+                                                    )}
+                                                </div>
+                                                <span className="text-muted-foreground flex-1 truncate">
+                                                    {entry.action === 'upload' ? 'Uploaded' : entry.action === 'download' ? 'Downloaded' : 'Resolved'} v{entry.localVersion}
+                                                </span>
+                                                <span className="text-muted-foreground/60 shrink-0">
+                                                    {formatTime(entry.timestamp)}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Sync Button */}
                             <Button
                                 size="sm"
                                 variant="outline"
                                 className="w-full gap-1"
-                                onClick={() => {
-                                    setIsOpen(false);
-                                    onOpenSettings?.();
+                                disabled={sync.isSyncing}
+                                onClick={async () => {
+                                    if (onSyncNow) {
+                                        await onSyncNow();
+                                    } else {
+                                        setIsOpen(false);
+                                        onOpenSettings?.();
+                                    }
                                 }}
                             >
-                                <Unlock size={14} />
-                                Unlock Vault
+                                {sync.isSyncing ? (
+                                    <Loader2 size={14} className="animate-spin" />
+                                ) : (
+                                    <RefreshCw size={14} />
+                                )}
+                                Sync Now
                             </Button>
                         </div>
-                    ) : (
-                        // Connected/syncing state - show providers
-                        <>
-                            <ProviderRow
-                                provider="github"
-                                name="GitHub Gist"
-                                isConnected={sync.providers.github.status === 'connected'}
-                                isSyncing={sync.providers.github.status === 'syncing'}
-                                lastSync={sync.providers.github.lastSync}
-                                avatarUrl={sync.providers.github.account?.avatarUrl}
-                                error={sync.providers.github.error}
-                                onSync={() => handleSync('github')}
-                            />
-
-                            <ProviderRow
-                                provider="google"
-                                name="Google Drive"
-                                isConnected={sync.providers.google.status === 'connected'}
-                                isSyncing={sync.providers.google.status === 'syncing'}
-                                lastSync={sync.providers.google.lastSync}
-                                avatarUrl={sync.providers.google.account?.avatarUrl}
-                                error={sync.providers.google.error}
-                                onSync={() => handleSync('google')}
-                            />
-
-                            <ProviderRow
-                                provider="onedrive"
-                                name="OneDrive"
-                                isConnected={sync.providers.onedrive.status === 'connected'}
-                                isSyncing={sync.providers.onedrive.status === 'syncing'}
-                                lastSync={sync.providers.onedrive.lastSync}
-                                avatarUrl={sync.providers.onedrive.account?.avatarUrl}
-                                error={sync.providers.onedrive.error}
-                                onSync={() => handleSync('onedrive')}
-                            />
-
-                            {/* Quick actions */}
-                            {sync.hasAnyConnectedProvider && (
-                                <div className="mt-3 pt-3 border-t border-border/60">
-                                    <Button
-                                        size="sm"
-                                        variant="outline"
-                                        className="w-full gap-1"
-                                        disabled={sync.isSyncing}
-                                        onClick={() => {
-                                            // Open settings for full sync functionality
-                                            setIsOpen(false);
-                                            onOpenSettings?.();
-                                        }}
-                                    >
-                                        {sync.isSyncing ? (
-                                            <Loader2 size={14} className="animate-spin" />
-                                        ) : (
-                                            <RefreshCw size={14} />
-                                        )}
-                                        Sync Now
-                                    </Button>
-                                </div>
-                            )}
-
-                            {!sync.hasAnyConnectedProvider && (
-                                <div className="text-center py-2">
-                                    <p className="text-xs text-muted-foreground mb-3">
-                                        Connect a cloud provider to start syncing.
-                                    </p>
-                                    <Button
-                                        size="sm"
-                                        className="w-full"
-                                        onClick={() => {
-                                            setIsOpen(false);
-                                            onOpenSettings?.();
-                                        }}
-                                    >
-                                        Connect Provider
-                                    </Button>
-                                </div>
-                            )}
-                        </>
                     )}
                 </div>
             </PopoverContent>

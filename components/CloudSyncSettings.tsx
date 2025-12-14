@@ -371,6 +371,7 @@ interface ProviderCardProps {
     account?: { name?: string; email?: string; avatarUrl?: string };
     lastSync?: number;
     error?: string;
+    disabled?: boolean; // Disable connect button when another provider is connected
     onConnect: () => void;
     onDisconnect: () => void;
     onSync: () => void;
@@ -385,6 +386,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
     account,
     lastSync,
     error,
+    disabled,
     onConnect,
     onDisconnect,
     onSync,
@@ -474,7 +476,12 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                         </Button>
                     </>
                 ) : (
-                    <Button size="sm" onClick={() => { console.log('[ProviderCard] Connect clicked'); onConnect(); }} className="gap-1">
+                    <Button 
+                        size="sm" 
+                        onClick={() => { console.log('[ProviderCard] Connect clicked'); onConnect(); }} 
+                        className="gap-1"
+                        disabled={disabled}
+                    >
                         <Cloud size={14} />
                         Connect
                     </Button>
@@ -843,11 +850,12 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
                     provider="github"
                     name="GitHub Gist"
                     icon={<Github size={24} />}
-                    isConnected={sync.providers.github.status === 'connected'}
+                    isConnected={sync.providers.github.status === 'connected' || sync.providers.github.status === 'syncing'}
                     isSyncing={sync.providers.github.status === 'syncing'}
                     account={sync.providers.github.account}
                     lastSync={sync.providers.github.lastSync}
                     error={sync.providers.github.error}
+                    disabled={sync.hasAnyConnectedProvider && sync.providers.github.status !== 'connected' && sync.providers.github.status !== 'syncing'}
                     onConnect={handleConnectGitHub}
                     onDisconnect={() => sync.disconnectProvider('github')}
                     onSync={() => handleSync('github')}
@@ -857,11 +865,12 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
                     provider="google"
                     name="Google Drive"
                     icon={<GoogleDriveIcon className="w-6 h-6" />}
-                    isConnected={sync.providers.google.status === 'connected'}
+                    isConnected={sync.providers.google.status === 'connected' || sync.providers.google.status === 'syncing'}
                     isSyncing={sync.providers.google.status === 'syncing'}
                     account={sync.providers.google.account}
                     lastSync={sync.providers.google.lastSync}
                     error={sync.providers.google.error}
+                    disabled={sync.hasAnyConnectedProvider && sync.providers.google.status !== 'connected' && sync.providers.google.status !== 'syncing'}
                     onConnect={handleConnectGoogle}
                     onDisconnect={() => sync.disconnectProvider('google')}
                     onSync={() => handleSync('google')}
@@ -871,11 +880,12 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
                     provider="onedrive"
                     name="Microsoft OneDrive"
                     icon={<OneDriveIcon className="w-6 h-6" />}
-                    isConnected={sync.providers.onedrive.status === 'connected'}
+                    isConnected={sync.providers.onedrive.status === 'connected' || sync.providers.onedrive.status === 'syncing'}
                     isSyncing={sync.providers.onedrive.status === 'syncing'}
                     account={sync.providers.onedrive.account}
                     lastSync={sync.providers.onedrive.lastSync}
                     error={sync.providers.onedrive.error}
+                    disabled={sync.hasAnyConnectedProvider && sync.providers.onedrive.status !== 'connected' && sync.providers.onedrive.status !== 'syncing'}
                     onConnect={handleConnectOneDrive}
                     onDisconnect={() => sync.disconnectProvider('onedrive')}
                     onSync={() => handleSync('onedrive')}
@@ -911,11 +921,75 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
                         </div>
                     </div>
                     <Toggle
-                        checked={false}
+                        checked={sync.autoSyncEnabled}
                         onChange={(enabled) => sync.setAutoSync(enabled)}
+                        disabled={!sync.hasAnyConnectedProvider}
                     />
                 </div>
             </div>
+
+            {/* Version Info & Sync History */}
+            {sync.hasAnyConnectedProvider && (
+                <div className="space-y-3">
+                    <h3 className="text-sm font-medium text-muted-foreground">Sync Status</h3>
+                    
+                    {/* Version Info Cards */}
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="p-3 rounded-lg border bg-card">
+                            <div className="text-xs text-muted-foreground mb-1">Local Version</div>
+                            <div className="text-lg font-semibold">v{sync.localVersion}</div>
+                            <div className="text-xs text-muted-foreground">
+                                {sync.localUpdatedAt ? new Date(sync.localUpdatedAt).toLocaleString() : 'Never'}
+                            </div>
+                        </div>
+                        <div className="p-3 rounded-lg border bg-card">
+                            <div className="text-xs text-muted-foreground mb-1">Remote Version</div>
+                            <div className="text-lg font-semibold">v{sync.remoteVersion}</div>
+                            <div className="text-xs text-muted-foreground">
+                                {sync.remoteUpdatedAt ? new Date(sync.remoteUpdatedAt).toLocaleString() : 'Never'}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Sync History */}
+                    {sync.syncHistory.length > 0 && (
+                        <div className="rounded-lg border bg-card">
+                            <div className="px-3 py-2 border-b border-border/60">
+                                <div className="text-sm font-medium">Sync History</div>
+                            </div>
+                            <div className="max-h-48 overflow-y-auto">
+                                {sync.syncHistory.slice(0, 10).map((entry) => (
+                                    <div key={entry.id} className="px-3 py-2 flex items-center gap-2 border-b border-border/30 last:border-b-0">
+                                        <div className={cn(
+                                            "w-2 h-2 rounded-full shrink-0",
+                                            entry.success ? "bg-green-500" : "bg-red-500"
+                                        )} />
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs font-medium capitalize">
+                                                    {entry.action === 'upload' ? '↑ Upload' : entry.action === 'download' ? '↓ Download' : '⟳ Resolved'}
+                                                </span>
+                                                <span className="text-xs text-muted-foreground">
+                                                    v{entry.localVersion}
+                                                </span>
+                                            </div>
+                                            <div className="text-[10px] text-muted-foreground truncate">
+                                                {new Date(entry.timestamp).toLocaleString()}
+                                                {entry.deviceName && ` · ${entry.deviceName}`}
+                                            </div>
+                                        </div>
+                                        {entry.error && (
+                                            <span className="text-xs text-red-500 truncate max-w-24" title={entry.error}>
+                                                Error
+                                            </span>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* Modals */}
             <GitHubDeviceFlowModal

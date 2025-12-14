@@ -255,6 +255,21 @@ export interface SyncManagerConfig {
   deviceName: string;
 }
 
+/**
+ * Sync history record entry
+ */
+export interface SyncHistoryEntry {
+  id: string;
+  timestamp: number;
+  provider: CloudProvider;
+  action: 'upload' | 'download' | 'conflict_resolved';
+  success: boolean;
+  localVersion: number;
+  remoteVersion?: number;
+  deviceName?: string;
+  error?: string;
+}
+
 // ============================================================================
 // OAuth Flow Types
 // ============================================================================
