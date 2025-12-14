@@ -142,10 +142,10 @@ const ProviderRow: React.FC<ProviderRowProps> = ({
                 {isConnected ? (
                     <div className="flex items-center gap-1">
                         {avatarUrl && (
-                            <img 
-                                src={avatarUrl} 
-                                alt="" 
-                                className="w-3 h-3 rounded-full" 
+                            <img
+                                src={avatarUrl}
+                                alt=""
+                                className="w-3 h-3 rounded-full"
                                 referrerPolicy="no-referrer"
                             />
                         )}
