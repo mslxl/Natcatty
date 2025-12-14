@@ -18,6 +18,7 @@ import {
   type SyncedFile,
   type GitHubDeviceCodeResponse,
 } from '../../../domain/sync';
+import { netcattyBridge } from '../netcattyBridge';
 
 // ============================================================================
 // Types
@@ -60,23 +61,45 @@ export interface DeviceFlowState {
  * Returns codes for user to enter in browser
  */
 export const startDeviceFlow = async (): Promise<DeviceFlowState> => {
-  const response = await fetch(SYNC_CONSTANTS.GITHUB_DEVICE_CODE_URL, {
-    method: 'POST',
-    headers: {
-      'Accept': 'application/json',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      client_id: SYNC_CONSTANTS.GITHUB_CLIENT_ID,
+  console.log('[GitHub] Starting device flow...');
+  console.log('[GitHub] Client ID:', SYNC_CONSTANTS.GITHUB_CLIENT_ID);
+
+  const bridge = netcattyBridge.get();
+  if (bridge?.githubStartDeviceFlow) {
+    return bridge.githubStartDeviceFlow({
+      clientId: SYNC_CONSTANTS.GITHUB_CLIENT_ID,
       scope: 'gist read:user',
-    }),
-  });
+    });
+  }
+  
+  let response: Response;
+  try {
+    response = await fetch(SYNC_CONSTANTS.GITHUB_DEVICE_CODE_URL, {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        client_id: SYNC_CONSTANTS.GITHUB_CLIENT_ID,
+        scope: 'gist read:user',
+      }).toString(),
+    });
+  } catch (fetchError) {
+    console.error('[GitHub] Network error:', fetchError);
+    throw new Error(`Network error: ${fetchError instanceof Error ? fetchError.message : 'Failed to fetch'}`);
+  }
+
+  console.log('[GitHub] Response status:', response.status);
 
   if (!response.ok) {
-    throw new Error(`GitHub device flow initiation failed: ${response.statusText}`);
+    const errorText = await response.text();
+    console.error('[GitHub] Error response:', errorText);
+    throw new Error(`GitHub device flow failed: ${response.status} - ${errorText}`);
   }
 
   const data: GitHubDeviceCodeResponse = await response.json();
+  console.log('[GitHub] Device flow started, user code:', data.user_code);
 
   return {
     deviceCode: data.device_code,
@@ -97,24 +120,31 @@ export const pollForToken = async (
   onPending?: () => void
 ): Promise<OAuthTokens | null> => {
   const pollInterval = Math.max(interval, 5) * 1000; // Minimum 5 seconds
+  const bridge = netcattyBridge.get();
 
   while (Date.now() < expiresAt) {
     await new Promise(resolve => setTimeout(resolve, pollInterval));
 
-    const response = await fetch(SYNC_CONSTANTS.GITHUB_ACCESS_TOKEN_URL, {
-      method: 'POST',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        client_id: SYNC_CONSTANTS.GITHUB_CLIENT_ID,
-        device_code: deviceCode,
-        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-      }),
-    });
-
-    const data = await response.json();
+    const data = bridge?.githubPollDeviceFlowToken
+      ? await bridge.githubPollDeviceFlowToken({
+          clientId: SYNC_CONSTANTS.GITHUB_CLIENT_ID,
+          deviceCode,
+        })
+      : await (async () => {
+          const response = await fetch(SYNC_CONSTANTS.GITHUB_ACCESS_TOKEN_URL, {
+            method: 'POST',
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: new URLSearchParams({
+              client_id: SYNC_CONSTANTS.GITHUB_CLIENT_ID,
+              device_code: deviceCode,
+              grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+            }).toString(),
+          });
+          return response.json();
+        })();
 
     if (data.access_token) {
       return {

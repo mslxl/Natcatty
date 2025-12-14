@@ -2,6 +2,7 @@ import { init as initGhostty } from 'ghostty-web';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import SettingsPage from './components/SettingsPage';
+import { ToastProvider } from './components/ui/toast';
 
 // Pre-load Ghostty WASM immediately on app start for faster terminal open
 initGhostty().catch((err) => {
@@ -27,7 +28,11 @@ const root = ReactDOM.createRoot(rootElement);
 const renderApp = () => {
   const route = getRoute();
   if (route === 'settings') {
-    root.render(<SettingsPage />);
+    root.render(
+      <ToastProvider>
+        <SettingsPage />
+      </ToastProvider>
+    );
   } else {
     root.render(<App />);
   }

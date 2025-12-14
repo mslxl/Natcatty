@@ -462,6 +462,10 @@ const api = {
   // OAuth callback server
   startOAuthCallback: (expectedState) => ipcRenderer.invoke("oauth:startCallback", expectedState),
   cancelOAuthCallback: () => ipcRenderer.invoke("oauth:cancelCallback"),
+
+  // GitHub Device Flow (proxied via main process to avoid CORS)
+  githubStartDeviceFlow: (options) => ipcRenderer.invoke("netcatty:github:deviceFlow:start", options),
+  githubPollDeviceFlowToken: (options) => ipcRenderer.invoke("netcatty:github:deviceFlow:poll", options),
 };
 
 // Merge with existing netcatty (if any) to avoid stale objects on hot reload

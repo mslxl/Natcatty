@@ -299,6 +299,22 @@ interface NetcattyBridge {
   // OAuth callback server for cloud sync
   startOAuthCallback?(expectedState?: string): Promise<{ code: string; state?: string }>;
   cancelOAuthCallback?(): Promise<void>;
+
+  // GitHub Device Flow (cloud sync)
+  githubStartDeviceFlow?(options?: { clientId?: string; scope?: string }): Promise<{
+    deviceCode: string;
+    userCode: string;
+    verificationUri: string;
+    expiresAt: number;
+    interval: number;
+  }>;
+  githubPollDeviceFlowToken?(options: { clientId?: string; deviceCode: string }): Promise<{
+    access_token?: string;
+    token_type?: string;
+    scope?: string;
+    error?: string;
+    error_description?: string;
+  }>;
 }
 
 interface Window {
