@@ -34,9 +34,10 @@ type ExportableVaultData = {
 };
 
 // Migration helper for old SSHKey format to new format
-const migrateKey = (
-  key: Partial<SSHKey> & { id: string; label: string },
-): SSHKey => {
+const migrateKey = (key: Partial<SSHKey>): SSHKey => {
+  const id = key.id ?? crypto.randomUUID();
+  const label = key.label ?? `Key ${id.slice(0, 8)}`;
+
   // Infer source from key characteristics if not explicitly set
   let source = key.source;
   if (!source) {
@@ -54,8 +55,8 @@ const migrateKey = (
   }
   
   return {
-    id: key.id,
-    label: key.label,
+    id,
+    label,
     type: key.type || "ED25519",
     privateKey: key.privateKey || "",
     publicKey: key.publicKey,
@@ -251,9 +252,7 @@ export const useVaultState = () => {
 
     // Migrate old keys to new format with source/category fields
     if (savedKeys?.length) {
-      const migratedKeys = savedKeys.map((k) =>
-        migrateKey(k as Partial<SSHKey>),
-      );
+      const migratedKeys = savedKeys.map(migrateKey);
       setKeys(migratedKeys);
       // Persist migrated keys
       localStorageAdapter.write(STORAGE_KEY_KEYS, migratedKeys);

@@ -28,7 +28,11 @@ export const useSyncState = () => {
   }, []);
 
   const upload = useCallback(
-    async <T extends object>(token: string, gistId: string | undefined, data: T) => {
+    async (
+      token: string,
+      gistId: string | undefined,
+      data: Parameters<typeof syncToGist>[2],
+    ) => {
       setIsSyncing(true);
       setSyncStatus("idle");
       try {
@@ -62,4 +66,3 @@ export const useSyncState = () => {
 
   return { isSyncing, syncStatus, resetSyncStatus, verify, upload, download };
 };
-

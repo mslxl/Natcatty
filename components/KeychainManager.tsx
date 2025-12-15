@@ -417,13 +417,14 @@ echo $3 >> "$FILE"`);
     } finally {
       setIsGenerating(false);
     }
-  }, [
-    draftKey,
-    createCredentialInBrowser,
-    onSave,
-    closePanel,
-    showError,
-  ]);
+	  }, [
+	    draftKey,
+	    createCredentialInBrowser,
+	    isMac,
+	    onSave,
+	    closePanel,
+	    showError,
+	  ]);
 
   // Handle FIDO2 hardware key registration
   const handleGenerateFido2 = useCallback(async () => {
