@@ -34,6 +34,8 @@ import type { GitHubAdapter } from './adapters/GitHubAdapter';
 import type { GoogleDriveAdapter } from './adapters/GoogleDriveAdapter';
 import type { OneDriveAdapter } from './adapters/OneDriveAdapter';
 
+const SYNC_HISTORY_STORAGE_KEY = 'netcatty_sync_history_v1';
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -71,11 +73,13 @@ export class CloudSyncManager {
   private stateChangeListeners: Set<() => void> = new Set(); // For useSyncExternalStore
   private autoSyncTimer: ReturnType<typeof setInterval> | null = null;
   private masterPassword: string | null = null; // In memory only!
+  private hasStorageListener = false;
 
   constructor() {
     this.state = this.loadInitialState();
     this.stateSnapshot = { ...this.state };
     this.initializeAdapters();
+    this.setupCrossWindowSync();
   }
 
   // ==========================================================================
@@ -104,7 +108,7 @@ export class CloudSyncManager {
     }>(SYNC_STORAGE_KEYS.SYNC_CONFIG);
 
     // Load sync history
-    const syncHistory = this.loadFromStorage<SyncHistoryEntry[]>('netcatty_sync_history_v1') || [];
+    const syncHistory = this.loadFromStorage<SyncHistoryEntry[]>(SYNC_HISTORY_STORAGE_KEY) || [];
 
     // Determine initial security state
     const securityState: SecurityState = masterKeyConfig ? 'LOCKED' : 'NO_KEY';
@@ -182,6 +186,123 @@ export class CloudSyncManager {
       console.error('Failed to save to storage:', e);
     }
   }
+
+  // ==========================================================================
+  // Cross-window sync (Electron settings window, etc.)
+  // ==========================================================================
+
+  private setupCrossWindowSync(): void {
+    if (this.hasStorageListener) return;
+    if (typeof window === 'undefined') return;
+
+    window.addEventListener('storage', this.handleStorageEvent);
+    this.hasStorageListener = true;
+  }
+
+  private safeJsonParse<T>(value: string | null): T | null {
+    if (!value) return null;
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return null;
+    }
+  }
+
+  private handleStorageEvent = (event: StorageEvent): void => {
+    if (event.storageArea !== window.localStorage) return;
+    const key = event.key;
+    if (!key) return;
+
+    // Sync versions + auto-sync settings
+    if (key === SYNC_STORAGE_KEYS.SYNC_CONFIG) {
+      const next = this.safeJsonParse<{
+        autoSync?: boolean;
+        interval?: number;
+        localVersion?: number;
+        localUpdatedAt?: number;
+        remoteVersion?: number;
+        remoteUpdatedAt?: number;
+      }>(event.newValue) || {
+        autoSync: false,
+        interval: SYNC_CONSTANTS.DEFAULT_AUTO_SYNC_INTERVAL,
+        localVersion: 0,
+        localUpdatedAt: 0,
+        remoteVersion: 0,
+        remoteUpdatedAt: 0,
+      };
+
+      this.state.autoSyncEnabled = Boolean(next.autoSync);
+      this.state.autoSyncInterval = Math.max(
+        SYNC_CONSTANTS.MIN_SYNC_INTERVAL,
+        Math.min(
+          SYNC_CONSTANTS.MAX_SYNC_INTERVAL,
+          Number(next.interval ?? SYNC_CONSTANTS.DEFAULT_AUTO_SYNC_INTERVAL)
+        )
+      );
+      this.state.localVersion = Number(next.localVersion ?? 0);
+      this.state.localUpdatedAt = Number(next.localUpdatedAt ?? 0);
+      this.state.remoteVersion = Number(next.remoteVersion ?? 0);
+      this.state.remoteUpdatedAt = Number(next.remoteUpdatedAt ?? 0);
+
+      this.notifyStateChange();
+      return;
+    }
+
+    // Sync history list
+    if (key === SYNC_HISTORY_STORAGE_KEY) {
+      const nextHistory = this.safeJsonParse<SyncHistoryEntry[]>(event.newValue) || [];
+      this.state.syncHistory = Array.isArray(nextHistory) ? nextHistory : [];
+      this.notifyStateChange();
+      return;
+    }
+
+    // Sync provider connections (connect/disconnect, account, tokens, last sync)
+    const providerByKey: Partial<Record<string, CloudProvider>> = {
+      [SYNC_STORAGE_KEYS.PROVIDER_GITHUB]: 'github',
+      [SYNC_STORAGE_KEYS.PROVIDER_GOOGLE]: 'google',
+      [SYNC_STORAGE_KEYS.PROVIDER_ONEDRIVE]: 'onedrive',
+    };
+    const provider = providerByKey[key];
+    if (provider) {
+      const prev = this.state.providers[provider];
+      const next = this.loadProviderConnection(provider);
+
+      const preserveTransientStatus =
+        prev.status === 'connecting' || prev.status === 'syncing';
+
+      this.state.providers[provider] = {
+        ...next,
+        status: preserveTransientStatus ? prev.status : next.status,
+        error: preserveTransientStatus ? prev.error : next.error,
+      };
+
+      const nextTokens = next.tokens;
+      const adapter = this.adapters.get(provider);
+      if (!nextTokens) {
+        if (adapter) {
+          adapter.signOut();
+          this.adapters.delete(provider);
+        }
+        this.notifyStateChange();
+        return;
+      }
+
+      const tokenChanged =
+        prev.tokens?.accessToken !== nextTokens.accessToken ||
+        prev.tokens?.refreshToken !== nextTokens.refreshToken ||
+        prev.tokens?.expiresAt !== nextTokens.expiresAt ||
+        prev.tokens?.tokenType !== nextTokens.tokenType ||
+        prev.tokens?.scope !== nextTokens.scope;
+
+      const resourceChanged = (adapter?.resourceId || null) !== (next.resourceId || null);
+
+      if (!adapter || tokenChanged || resourceChanged) {
+        this.adapters.set(provider, createAdapter(provider, nextTokens, next.resourceId));
+      }
+
+      this.notifyStateChange();
+    }
+  };
 
   private initializeAdapters(): void {
     for (const provider of ['github', 'google', 'onedrive'] as CloudProvider[]) {
@@ -685,6 +806,7 @@ export class CloudSyncManager {
 
       this.saveSyncConfig();
       this.saveProviderConnection(provider, this.state.providers[provider]);
+      this.notifyStateChange(); // Notify UI immediately after version update
 
       // Add to sync history
       this.addSyncHistoryEntry({
@@ -809,11 +931,13 @@ export class CloudSyncManager {
       const payload = await this.downloadFromProvider(provider);
       this.state.currentConflict = null;
       this.state.syncState = 'IDLE';
+      this.notifyStateChange(); // Notify UI of conflict resolution
       return payload;
     } else {
       // USE_LOCAL - just clear conflict, caller will re-sync
       this.state.currentConflict = null;
       this.state.syncState = 'IDLE';
+      this.notifyStateChange(); // Notify UI of conflict resolution
       return null;
     }
   }
@@ -908,7 +1032,7 @@ export class CloudSyncManager {
     
     // Keep only the last 50 entries
     this.state.syncHistory = [newEntry, ...this.state.syncHistory].slice(0, 50);
-    this.saveToStorage('netcatty_sync_history_v1', this.state.syncHistory);
+    this.saveToStorage(SYNC_HISTORY_STORAGE_KEY, this.state.syncHistory);
     this.notifyStateChange(); // Notify UI of new history entry
   }
 
@@ -921,6 +1045,10 @@ export class CloudSyncManager {
     this.lock();
     this.eventListeners.clear();
     this.adapters.clear();
+    if (this.hasStorageListener && typeof window !== 'undefined') {
+      window.removeEventListener('storage', this.handleStorageEvent);
+      this.hasStorageListener = false;
+    }
   }
 }
 

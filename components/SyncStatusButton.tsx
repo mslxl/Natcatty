@@ -149,6 +149,9 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
         return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     };
 
+    // Create a unique key based on sync state to force re-render
+    const syncStateKey = `${sync.localVersion}-${sync.remoteVersion}-${sync.syncHistory.length}`;
+
     return (
         <Popover open={isOpen} onOpenChange={setIsOpen}>
             <PopoverTrigger asChild>
@@ -173,6 +176,7 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
             </PopoverTrigger>
 
             <PopoverContent
+                key={syncStateKey}
                 className="w-80 p-0"
                 align="end"
                 sideOffset={8}

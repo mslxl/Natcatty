@@ -575,17 +575,19 @@ const GitHubDeviceFlowModal: React.FC<GitHubDeviceFlowModalProps> = ({
 // ============================================================================
 
 interface ConflictModalProps {
+    open: boolean;
     conflict: ConflictInfo | null;
     onResolve: (resolution: 'USE_LOCAL' | 'USE_REMOTE') => void;
     onClose: () => void;
 }
 
 const ConflictModal: React.FC<ConflictModalProps> = ({
+    open,
     conflict,
     onResolve,
     onClose,
 }) => {
-    if (!conflict) return null;
+    if (!open || !conflict) return null;
 
     const formatDate = (timestamp: number) => {
         return new Date(timestamp).toLocaleString();
@@ -641,17 +643,17 @@ const ConflictModal: React.FC<ConflictModalProps> = ({
                     </div>
                 </div>
 
-                <div className="flex gap-3">
+                <div className="flex flex-col gap-2">
                     <Button
                         variant="outline"
-                        className="flex-1 gap-2"
+                        className="w-full gap-2"
                         onClick={() => onResolve('USE_LOCAL')}
                     >
                         <Cloud size={14} />
                         Overwrite Cloud (Keep Local)
                     </Button>
                     <Button
-                        className="flex-1 gap-2"
+                        className="w-full gap-2"
                         onClick={() => onResolve('USE_REMOTE')}
                     >
                         <Download size={14} />
@@ -695,7 +697,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
     const [isPollingGitHub, setIsPollingGitHub] = useState(false);
 
     // Conflict modal
-    const [_showConflictModal, setShowConflictModal] = useState(false);
+    const [showConflictModal, setShowConflictModal] = useState(false);
 
     // Handle conflict detection
     useEffect(() => {
@@ -1004,6 +1006,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
             />
 
             <ConflictModal
+                open={showConflictModal}
                 conflict={sync.currentConflict}
                 onResolve={handleResolveConflict}
                 onClose={() => setShowConflictModal(false)}

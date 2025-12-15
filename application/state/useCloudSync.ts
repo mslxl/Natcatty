@@ -119,6 +119,17 @@ const getSnapshot = (): SyncManagerState => {
 };
 
 export const useCloudSync = (): CloudSyncHook => {
+  // Force update mechanism to ensure React re-renders
+  const [, forceUpdate] = useState(0);
+  
+  // Subscribe to state changes and force update
+  useEffect(() => {
+    const unsubscribe = manager.subscribeToStateChanges(() => {
+      forceUpdate(n => n + 1);
+    });
+    return unsubscribe;
+  }, []);
+  
   // Use useSyncExternalStore for real-time state sync across all components
   const state = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   

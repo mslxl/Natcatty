@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 import { useCloudSync } from './useCloudSync';
+import { getCloudSyncManager } from '../../infrastructure/services/CloudSyncManager';
 import type { SyncPayload } from '../../domain/sync';
 import { toast } from '../../components/ui/toast';
 
@@ -24,6 +25,9 @@ interface AutoSyncConfig {
   // Callbacks
   onApplyPayload: (payload: SyncPayload) => void;
 }
+
+// Get manager singleton for direct state access
+const manager = getCloudSyncManager();
 
 export const useAutoSync = (config: AutoSyncConfig) => {
   const sync = useCloudSync();
@@ -56,9 +60,31 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     return JSON.stringify(data);
   }, [config.hosts, config.keys, config.snippets, config.portForwardingRules]);
   
-  // Sync now handler
+  // Sync now handler - get fresh state directly from manager
   const syncNow = useCallback(async () => {
-    if (!sync.hasAnyConnectedProvider || sync.isSyncing || !sync.isUnlocked) {
+    // Get fresh state directly from CloudSyncManager singleton
+    const state = manager.getState();
+    const hasProvider = Object.values(state.providers).some(p => p.status === 'connected');
+    const syncing = state.syncState === 'SYNCING';
+    const unlocked = state.securityState === 'UNLOCKED';
+    
+    console.log('[AutoSync] syncNow called', {
+      hasAnyConnectedProvider: hasProvider,
+      isSyncing: syncing,
+      isUnlocked: unlocked,
+      securityState: state.securityState,
+    });
+    
+    if (!hasProvider) {
+      console.warn('[AutoSync] No connected provider');
+      return;
+    }
+    if (syncing) {
+      console.warn('[AutoSync] Already syncing');
+      return;
+    }
+    if (!unlocked) {
+      console.warn('[AutoSync] Vault is locked, securityState:', state.securityState);
       return;
     }
     
@@ -74,7 +100,11 @@ export const useAutoSync = (config: AutoSyncConfig) => {
   
   // Check remote version and pull if newer (on startup)
   const checkRemoteVersion = useCallback(async () => {
-    if (!sync.hasAnyConnectedProvider || !sync.isUnlocked || hasCheckedRemoteRef.current) {
+    const state = manager.getState();
+    const hasProvider = Object.values(state.providers).some(p => p.status === 'connected');
+    const unlocked = state.securityState === 'UNLOCKED';
+    
+    if (!hasProvider || !unlocked || hasCheckedRemoteRef.current) {
       return;
     }
     
@@ -82,9 +112,9 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     
     // Find connected provider
     const connectedProvider = 
-      sync.providers.github.status === 'connected' ? 'github' :
-      sync.providers.google.status === 'connected' ? 'google' :
-      sync.providers.onedrive.status === 'connected' ? 'onedrive' : null;
+      state.providers.github.status === 'connected' ? 'github' :
+      state.providers.google.status === 'connected' ? 'google' :
+      state.providers.onedrive.status === 'connected' ? 'onedrive' : null;
     
     if (!connectedProvider) return;
     
@@ -92,7 +122,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       console.log('[AutoSync] Checking remote version...');
       const remotePayload = await sync.downloadFromProvider(connectedProvider);
       
-      if (remotePayload && remotePayload.syncedAt > sync.localUpdatedAt) {
+      if (remotePayload && remotePayload.syncedAt > state.localUpdatedAt) {
         console.log('[AutoSync] Remote is newer, applying...');
         config.onApplyPayload(remotePayload);
         toast.success('Synced from cloud', 'Your data has been updated from the cloud.');
