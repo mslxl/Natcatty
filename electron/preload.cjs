@@ -482,6 +482,18 @@ const api = {
     ipcRenderer.invoke("netcatty:google:oauth:refresh", options),
   googleGetUserInfo: (options) =>
     ipcRenderer.invoke("netcatty:google:oauth:userinfo", options),
+
+  // Google Drive API (proxied via main process to avoid CORS/COEP issues in renderer)
+  googleDriveFindSyncFile: (options) =>
+    ipcRenderer.invoke("netcatty:google:drive:findSyncFile", options),
+  googleDriveCreateSyncFile: (options) =>
+    ipcRenderer.invoke("netcatty:google:drive:createSyncFile", options),
+  googleDriveUpdateSyncFile: (options) =>
+    ipcRenderer.invoke("netcatty:google:drive:updateSyncFile", options),
+  googleDriveDownloadSyncFile: (options) =>
+    ipcRenderer.invoke("netcatty:google:drive:downloadSyncFile", options),
+  googleDriveDeleteSyncFile: (options) =>
+    ipcRenderer.invoke("netcatty:google:drive:deleteSyncFile", options),
 };
 
 // Merge with existing netcatty (if any) to avoid stale objects on hot reload

@@ -352,6 +352,13 @@ interface NetcattyBridge {
     name: string;
     picture?: string;
   }>;
+
+  // Google Drive API (cloud sync) - proxied via main process to avoid CORS/COEP issues
+  googleDriveFindSyncFile?(options: { accessToken: string; fileName?: string }): Promise<{ fileId: string | null }>;
+  googleDriveCreateSyncFile?(options: { accessToken: string; fileName?: string; syncedFile: unknown }): Promise<{ fileId: string }>;
+  googleDriveUpdateSyncFile?(options: { accessToken: string; fileId: string; syncedFile: unknown }): Promise<{ ok: true }>;
+  googleDriveDownloadSyncFile?(options: { accessToken: string; fileId: string }): Promise<{ syncedFile: unknown | null }>;
+  googleDriveDeleteSyncFile?(options: { accessToken: string; fileId: string }): Promise<{ ok: true }>;
 }
 
 interface Window {

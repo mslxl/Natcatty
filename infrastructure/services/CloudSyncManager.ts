@@ -682,6 +682,7 @@ export class CloudSyncManager {
     };
 
     this.saveProviderConnection(provider, this.state.providers[provider]);
+    this.notifyStateChange(); // Ensure UI updates immediately after disconnect
   }
 
   private updateProviderStatus(

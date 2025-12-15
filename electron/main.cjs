@@ -292,7 +292,7 @@ const registerBridges = (win) => {
   webauthnBrowserBridge.registerHandlers(ipcMain);
   oauthBridge.setupOAuthBridge(ipcMain);
   githubAuthBridge.registerHandlers(ipcMain);
-  googleAuthBridge.registerHandlers(ipcMain);
+  googleAuthBridge.registerHandlers(ipcMain, electronModule);
 
   // Settings window handler
   ipcMain.handle("netcatty:settings:open", async () => {

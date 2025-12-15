@@ -12,7 +12,9 @@ export default defineConfig(() => {
         headers: {
           // Required for SharedArrayBuffer and WASM in some browsers
           'Cross-Origin-Opener-Policy': 'same-origin',
-          'Cross-Origin-Embedder-Policy': 'require-corp',
+          // Use credentialless to allow loading cross-origin images (e.g. Google avatars)
+          // while still enabling crossOriginIsolated.
+          'Cross-Origin-Embedder-Policy': 'credentialless',
         },
       },
       build: {

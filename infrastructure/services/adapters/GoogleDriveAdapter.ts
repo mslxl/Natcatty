@@ -128,45 +128,19 @@ export const exchangeCodeForTokens = async (
 ): Promise<OAuthTokens> => {
   const bridge = netcattyBridge.get();
   const exchangeViaMain = bridge?.googleExchangeCodeForTokens;
-  if (exchangeViaMain) {
-    return await exchangeViaMain({
-      clientId: SYNC_CONSTANTS.GOOGLE_CLIENT_ID,
-      clientSecret: SYNC_CONSTANTS.GOOGLE_CLIENT_SECRET,
-      code,
-      codeVerifier,
-      redirectUri,
-    });
+  if (!exchangeViaMain) {
+    throw new Error(
+      'Google OAuth bridge unavailable (token exchange is blocked by CORS in renderer). Please restart Netcatty.'
+    );
   }
 
-  const response = await fetch(SYNC_CONSTANTS.GOOGLE_TOKEN_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: new URLSearchParams({
-      client_id: SYNC_CONSTANTS.GOOGLE_CLIENT_ID,
-      client_secret: SYNC_CONSTANTS.GOOGLE_CLIENT_SECRET,
-      code,
-      code_verifier: codeVerifier,
-      grant_type: 'authorization_code',
-      redirect_uri: redirectUri,
-    }),
+  return await exchangeViaMain({
+    clientId: SYNC_CONSTANTS.GOOGLE_CLIENT_ID,
+    clientSecret: SYNC_CONSTANTS.GOOGLE_CLIENT_SECRET,
+    code,
+    codeVerifier,
+    redirectUri,
   });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(`Token exchange failed: ${error.error_description || error.error}`);
-  }
-
-  const data = await response.json();
-
-  return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token,
-    expiresAt: Date.now() + data.expires_in * 1000,
-    tokenType: data.token_type,
-    scope: data.scope,
-  };
 };
 
 /**
@@ -175,40 +149,17 @@ export const exchangeCodeForTokens = async (
 export const refreshAccessToken = async (refreshToken: string): Promise<OAuthTokens> => {
   const bridge = netcattyBridge.get();
   const refreshViaMain = bridge?.googleRefreshAccessToken;
-  if (refreshViaMain) {
-    return await refreshViaMain({
-      clientId: SYNC_CONSTANTS.GOOGLE_CLIENT_ID,
-      clientSecret: SYNC_CONSTANTS.GOOGLE_CLIENT_SECRET,
-      refreshToken,
-    });
+  if (!refreshViaMain) {
+    throw new Error(
+      'Google OAuth bridge unavailable (token refresh is blocked by CORS in renderer). Please restart Netcatty.'
+    );
   }
 
-  const response = await fetch(SYNC_CONSTANTS.GOOGLE_TOKEN_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: new URLSearchParams({
-      client_id: SYNC_CONSTANTS.GOOGLE_CLIENT_ID,
-      client_secret: SYNC_CONSTANTS.GOOGLE_CLIENT_SECRET,
-      refresh_token: refreshToken,
-      grant_type: 'refresh_token',
-    }),
+  return await refreshViaMain({
+    clientId: SYNC_CONSTANTS.GOOGLE_CLIENT_ID,
+    clientSecret: SYNC_CONSTANTS.GOOGLE_CLIENT_SECRET,
+    refreshToken,
   });
-
-  if (!response.ok) {
-    throw new Error('Failed to refresh token');
-  }
-
-  const data = await response.json();
-
-  return {
-    accessToken: data.access_token,
-    refreshToken: refreshToken, // Keep existing refresh token
-    expiresAt: Date.now() + data.expires_in * 1000,
-    tokenType: data.token_type,
-    scope: data.scope,
-  };
 };
 
 // ============================================================================
@@ -280,6 +231,16 @@ export const validateToken = async (accessToken: string): Promise<boolean> => {
  * Find sync file in appDataFolder
  */
 export const findSyncFile = async (accessToken: string): Promise<string | null> => {
+  const bridge = netcattyBridge.get();
+  const findViaMain = bridge?.googleDriveFindSyncFile;
+  if (findViaMain) {
+    const { fileId } = await findViaMain({
+      accessToken,
+      fileName: SYNC_CONSTANTS.SYNC_FILE_NAME,
+    });
+    return fileId || null;
+  }
+
   const params = new URLSearchParams({
     spaces: 'appDataFolder',
     q: `name = '${SYNC_CONSTANTS.SYNC_FILE_NAME}'`,
@@ -327,6 +288,17 @@ export const createSyncFile = async (
   accessToken: string,
   syncedFile: SyncedFile
 ): Promise<string> => {
+  const bridge = netcattyBridge.get();
+  const createViaMain = bridge?.googleDriveCreateSyncFile;
+  if (createViaMain) {
+    const { fileId } = await createViaMain({
+      accessToken,
+      fileName: SYNC_CONSTANTS.SYNC_FILE_NAME,
+      syncedFile,
+    });
+    return fileId;
+  }
+
   const metadata = {
     name: SYNC_CONSTANTS.SYNC_FILE_NAME,
     parents: ['appDataFolder'],
@@ -342,19 +314,32 @@ export const createSyncFile = async (
     new Blob([JSON.stringify(syncedFile, null, 2)], { type: 'application/json' })
   );
 
-  const response = await fetch(
-    `${SYNC_CONSTANTS.GOOGLE_DRIVE_API.replace('/v3', '/upload/v3')}/files?uploadType=multipart`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-      },
-      body: form,
-    }
-  );
+  let response: Response;
+  try {
+    response = await fetch(
+      `${SYNC_CONSTANTS.GOOGLE_DRIVE_API.replace('/v3', '/upload/v3')}/files?uploadType=multipart`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: form,
+      }
+    );
+  } catch (fetchError) {
+    console.error('[GoogleDrive] Network error:', fetchError);
+    throw new Error(`Network error: ${fetchError instanceof Error ? fetchError.message : 'Failed to fetch'}`);
+  }
 
   if (!response.ok) {
-    throw new Error('Failed to create file');
+    const errorData = await response.json().catch(() => ({}));
+    if (response.status === 403) {
+      throw new Error('Google Drive API not enabled. Please enable it in Google Cloud Console.');
+    }
+    if (response.status === 401) {
+      throw new Error('Token expired or invalid. Please reconnect.');
+    }
+    throw new Error(`Failed to create file: ${errorData.error?.message || response.status}`);
   }
 
   const data = await response.json();
@@ -369,20 +354,40 @@ export const updateSyncFile = async (
   fileId: string,
   syncedFile: SyncedFile
 ): Promise<void> => {
-  const response = await fetch(
-    `${SYNC_CONSTANTS.GOOGLE_DRIVE_API.replace('/v3', '/upload/v3')}/files/${fileId}?uploadType=media`,
-    {
-      method: 'PATCH',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(syncedFile, null, 2),
-    }
-  );
+  const bridge = netcattyBridge.get();
+  const updateViaMain = bridge?.googleDriveUpdateSyncFile;
+  if (updateViaMain) {
+    await updateViaMain({ accessToken, fileId, syncedFile });
+    return;
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `${SYNC_CONSTANTS.GOOGLE_DRIVE_API.replace('/v3', '/upload/v3')}/files/${fileId}?uploadType=media`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(syncedFile, null, 2),
+      }
+    );
+  } catch (fetchError) {
+    console.error('[GoogleDrive] Network error:', fetchError);
+    throw new Error(`Network error: ${fetchError instanceof Error ? fetchError.message : 'Failed to fetch'}`);
+  }
 
   if (!response.ok) {
-    throw new Error('Failed to update file');
+    const errorData = await response.json().catch(() => ({}));
+    if (response.status === 403) {
+      throw new Error('Google Drive API not enabled. Please enable it in Google Cloud Console.');
+    }
+    if (response.status === 401) {
+      throw new Error('Token expired or invalid. Please reconnect.');
+    }
+    throw new Error(`Failed to update file: ${errorData.error?.message || response.status}`);
   }
 };
 
@@ -393,20 +398,40 @@ export const downloadSyncFile = async (
   accessToken: string,
   fileId: string
 ): Promise<SyncedFile | null> => {
-  const response = await fetch(
-    `${SYNC_CONSTANTS.GOOGLE_DRIVE_API}/files/${fileId}?alt=media`,
-    {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-      },
-    }
-  );
+  const bridge = netcattyBridge.get();
+  const downloadViaMain = bridge?.googleDriveDownloadSyncFile;
+  if (downloadViaMain) {
+    const { syncedFile } = await downloadViaMain({ accessToken, fileId });
+    return (syncedFile as SyncedFile | null) || null;
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `${SYNC_CONSTANTS.GOOGLE_DRIVE_API}/files/${fileId}?alt=media`,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+        },
+      }
+    );
+  } catch (fetchError) {
+    console.error('[GoogleDrive] Network error:', fetchError);
+    throw new Error(`Network error: ${fetchError instanceof Error ? fetchError.message : 'Failed to fetch'}`);
+  }
 
   if (!response.ok) {
     if (response.status === 404) {
       return null;
     }
-    throw new Error('Failed to download file');
+    const errorData = await response.json().catch(() => ({}));
+    if (response.status === 403) {
+      throw new Error('Google Drive API not enabled. Please enable it in Google Cloud Console.');
+    }
+    if (response.status === 401) {
+      throw new Error('Token expired or invalid. Please reconnect.');
+    }
+    throw new Error(`Failed to download file: ${errorData.error?.message || response.status}`);
   }
 
   return response.json();
@@ -419,18 +444,35 @@ export const deleteSyncFile = async (
   accessToken: string,
   fileId: string
 ): Promise<void> => {
-  const response = await fetch(
-    `${SYNC_CONSTANTS.GOOGLE_DRIVE_API}/files/${fileId}`,
-    {
+  const bridge = netcattyBridge.get();
+  const deleteViaMain = bridge?.googleDriveDeleteSyncFile;
+  if (deleteViaMain) {
+    await deleteViaMain({ accessToken, fileId });
+    return;
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${SYNC_CONSTANTS.GOOGLE_DRIVE_API}/files/${fileId}`, {
       method: 'DELETE',
       headers: {
         'Authorization': `Bearer ${accessToken}`,
       },
-    }
-  );
+    });
+  } catch (fetchError) {
+    console.error('[GoogleDrive] Network error:', fetchError);
+    throw new Error(`Network error: ${fetchError instanceof Error ? fetchError.message : 'Failed to fetch'}`);
+  }
 
   if (!response.ok && response.status !== 404) {
-    throw new Error('Failed to delete file');
+    const errorData = await response.json().catch(() => ({}));
+    if (response.status === 403) {
+      throw new Error('Google Drive API not enabled. Please enable it in Google Cloud Console.');
+    }
+    if (response.status === 401) {
+      throw new Error('Token expired or invalid. Please reconnect.');
+    }
+    throw new Error(`Failed to delete file: ${errorData.error?.message || response.status}`);
   }
 };
 
