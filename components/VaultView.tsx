@@ -139,6 +139,10 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   const [isNewFolderOpen, setIsNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [targetParentPath, setTargetParentPath] = useState<string | null>(null);
+  const [isRenameGroupOpen, setIsRenameGroupOpen] = useState(false);
+  const [renameTargetPath, setRenameTargetPath] = useState<string | null>(null);
+  const [renameGroupName, setRenameGroupName] = useState("");
+  const [renameGroupError, setRenameGroupError] = useState<string | null>(null);
 
   // Handle external navigation requests
   useEffect(() => {
@@ -469,6 +473,58 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
       : newFolderName.trim();
     onUpdateCustomGroups(Array.from(new Set([...customGroups, fullPath])));
     setIsNewFolderOpen(false);
+  };
+
+  const submitRenameGroup = () => {
+    if (!renameTargetPath) return;
+
+    const nextName = renameGroupName.trim();
+    if (!nextName) {
+      setRenameGroupError("Group name is required.");
+      return;
+    }
+    if (nextName.includes("/") || nextName.includes("\\")) {
+      setRenameGroupError("Group name cannot include '/' or '\\'.");
+      return;
+    }
+
+    const segments = renameTargetPath.split("/").filter(Boolean);
+    const parent = segments.slice(0, -1).join("/");
+    const nextPath = parent ? `${parent}/${nextName}` : nextName;
+    if (nextPath === renameTargetPath) {
+      setIsRenameGroupOpen(false);
+      return;
+    }
+
+    const updatedGroups = customGroups.map((g) => {
+      if (g === renameTargetPath) return nextPath;
+      if (g.startsWith(renameTargetPath + "/"))
+        return nextPath + g.slice(renameTargetPath.length);
+      return g;
+    });
+    const updatedHosts = hosts.map((h) => {
+      const g = h.group || "";
+      if (g === renameTargetPath) return { ...h, group: nextPath };
+      if (g.startsWith(renameTargetPath + "/"))
+        return { ...h, group: nextPath + g.slice(renameTargetPath.length) };
+      return h;
+    });
+
+    onUpdateCustomGroups(Array.from(new Set(updatedGroups)));
+    onUpdateHosts(updatedHosts);
+    if (
+      selectedGroupPath &&
+      (selectedGroupPath === renameTargetPath ||
+        selectedGroupPath.startsWith(renameTargetPath + "/"))
+    ) {
+      const suffix =
+        selectedGroupPath === renameTargetPath
+          ? ""
+          : selectedGroupPath.slice(renameTargetPath.length);
+      setSelectedGroupPath(nextPath + suffix);
+    }
+
+    setIsRenameGroupOpen(false);
   };
 
   const deleteGroupPath = (path: string) => {
@@ -893,6 +949,16 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                               Subgroup
                             </ContextMenuItem>
                             <ContextMenuItem
+                              onClick={() => {
+                                setRenameTargetPath(node.path);
+                                setRenameGroupName(node.name);
+                                setRenameGroupError(null);
+                                setIsRenameGroupOpen(true);
+                              }}
+                            >
+                              <Edit2 className="mr-2 h-4 w-4" /> Rename Group
+                            </ContextMenuItem>
+                            <ContextMenuItem
                               className="text-destructive"
                               onClick={() => deleteGroupPath(node.path)}
                             >
@@ -1173,6 +1239,54 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
               Cancel
             </Button>
             <Button onClick={submitNewFolder}>Create</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={isRenameGroupOpen}
+        onOpenChange={(open) => {
+          setIsRenameGroupOpen(open);
+          if (!open) {
+            setRenameTargetPath(null);
+            setRenameGroupName("");
+            setRenameGroupError(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename Group</DialogTitle>
+            <DialogDescription className="sr-only">
+              Rename an existing group.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-2">
+            <Label>Group Name</Label>
+            <Input
+              value={renameGroupName}
+              onChange={(e) => {
+                setRenameGroupName(e.target.value);
+                setRenameGroupError(null);
+              }}
+              placeholder="e.g. Production"
+              autoFocus
+              onKeyDown={(e) => e.key === "Enter" && submitRenameGroup()}
+            />
+            {renameTargetPath && (
+              <p className="text-xs text-muted-foreground">
+                Path: <span className="font-mono">{renameTargetPath}</span>
+              </p>
+            )}
+            {renameGroupError && (
+              <p className="text-xs text-destructive">{renameGroupError}</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setIsRenameGroupOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={submitRenameGroup}>Rename</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

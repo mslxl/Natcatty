@@ -170,7 +170,7 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
                     <StatusIndicator
                         status={overallStatus}
                         size="sm"
-                        className="absolute -top-0.5 -right-0.5 ring-2 ring-background"
+                        className="absolute top-0.5 right-0.5 ring-2 ring-background"
                     />
                 </Button>
             </PopoverTrigger>
