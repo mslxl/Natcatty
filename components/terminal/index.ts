@@ -22,3 +22,7 @@ export { TerminalSearchBar } from './TerminalSearchBar';
 export type { TerminalSearchBarProps } from './TerminalSearchBar';
 
 export { createHighlightProcessor, highlightKeywords, compileHighlightRules } from './keywordHighlight';
+
+export { useTerminalSearch } from './hooks/useTerminalSearch';
+export { useTerminalContextActions } from './hooks/useTerminalContextActions';
+export { useTerminalAuthState } from './hooks/useTerminalAuthState';

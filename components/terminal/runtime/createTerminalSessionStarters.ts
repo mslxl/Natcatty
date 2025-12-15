@@ -1,0 +1,530 @@
+import type { FitAddon } from "@xterm/addon-fit";
+import type { SerializeAddon } from "@xterm/addon-serialize";
+import type { Terminal as XTerm } from "@xterm/xterm";
+import type { Dispatch, MutableRefObject, SetStateAction } from "react";
+import { logger } from "../../../lib/logger";
+import type { Host, SSHKey, TerminalSession, TerminalSettings } from "../../../types";
+
+type TerminalBackendApi = {
+  backendAvailable: () => boolean;
+  telnetAvailable: () => boolean;
+  moshAvailable: () => boolean;
+  localAvailable: () => boolean;
+  execAvailable: () => boolean;
+  startSSHSession: (options: NetcattySSHOptions) => Promise<string>;
+  startTelnetSession: (
+    options: Parameters<NonNullable<NetcattyBridge["startTelnetSession"]>>[0],
+  ) => Promise<string>;
+  startMoshSession: (
+    options: Parameters<NonNullable<NetcattyBridge["startMoshSession"]>>[0],
+  ) => Promise<string>;
+  startLocalSession: (
+    options: Parameters<NonNullable<NetcattyBridge["startLocalSession"]>>[0],
+  ) => Promise<string>;
+  execCommand: (options: Parameters<NetcattyBridge["execCommand"]>[0]) => Promise<{
+    stdout?: string;
+    stderr?: string;
+  }>;
+  onSessionData: (sessionId: string, cb: (data: string) => void) => () => void;
+  onSessionExit: (
+    sessionId: string,
+    cb: (evt: { exitCode?: number; signal?: number }) => void,
+  ) => () => void;
+  onChainProgress: (
+    cb: (hop: number, total: number, label: string, status: string) => void,
+  ) => (() => void) | undefined;
+  writeToSession: (sessionId: string, data: string) => void;
+  resizeSession: (sessionId: string, cols: number, rows: number) => void;
+};
+
+export type PendingAuth = {
+  authMethod: "password" | "key" | "certificate";
+  username: string;
+  password?: string;
+  keyId?: string;
+  passphrase?: string;
+} | null;
+
+type ChainProgressState = {
+  currentHop: number;
+  totalHops: number;
+  currentHostLabel: string;
+} | null;
+
+export type TerminalSessionStartersContext = {
+  host: Host;
+  keys: SSHKey[];
+  resolvedChainHosts: Host[];
+  sessionId: string;
+  startupCommand?: string;
+  terminalSettings?: TerminalSettings;
+  terminalBackend: TerminalBackendApi;
+
+  sessionRef: MutableRefObject<string | null>;
+  hasConnectedRef: MutableRefObject<boolean>;
+  hasRunStartupCommandRef: MutableRefObject<boolean>;
+  disposeDataRef: MutableRefObject<(() => void) | null>;
+  disposeExitRef: MutableRefObject<(() => void) | null>;
+  fitAddonRef: MutableRefObject<FitAddon | null>;
+  serializeAddonRef: MutableRefObject<SerializeAddon | null>;
+  highlightProcessorRef: MutableRefObject<(text: string) => string>;
+  pendingAuthRef: MutableRefObject<PendingAuth>;
+
+  updateStatus: (next: TerminalSession["status"]) => void;
+  setStatus: Dispatch<SetStateAction<TerminalSession["status"]>>;
+  setError: Dispatch<SetStateAction<string | null>>;
+  setNeedsAuth: Dispatch<SetStateAction<boolean>>;
+  setAuthRetryMessage: Dispatch<SetStateAction<string | null>>;
+  setAuthPassword: Dispatch<SetStateAction<string>>;
+  setProgressLogs: Dispatch<SetStateAction<string[]>>;
+  setProgressValue: Dispatch<SetStateAction<number>>;
+  setChainProgress: Dispatch<SetStateAction<ChainProgressState>>;
+
+  onSessionExit?: (sessionId: string) => void;
+  onTerminalDataCapture?: (sessionId: string, data: string) => void;
+  onOsDetected?: (hostId: string, distro: string) => void;
+  onCommandExecuted?: (
+    command: string,
+    hostId: string,
+    hostLabel: string,
+    sessionId: string,
+  ) => void;
+};
+
+const buildTermEnv = (host: Host, terminalSettings?: TerminalSettings) => {
+  const env: Record<string, string> = {
+    TERM: terminalSettings?.terminalEmulationType ?? "xterm-256color",
+  };
+
+  if (host.environmentVariables) {
+    for (const { name, value } of host.environmentVariables) {
+      if (name) env[name] = value;
+    }
+  }
+
+  return env;
+};
+
+const attachSessionToTerminal = (
+  ctx: TerminalSessionStartersContext,
+  term: XTerm,
+  id: string,
+  opts?: {
+    onExitMessage?: (evt: { exitCode?: number; signal?: number }) => string;
+    onConnected?: () => void;
+  },
+) => {
+  ctx.sessionRef.current = id;
+
+  ctx.disposeDataRef.current = ctx.terminalBackend.onSessionData(id, (chunk) => {
+    term.write(ctx.highlightProcessorRef.current(chunk));
+    if (!ctx.hasConnectedRef.current) {
+      ctx.updateStatus("connected");
+      opts?.onConnected?.();
+      setTimeout(() => {
+        if (!ctx.fitAddonRef.current) return;
+        try {
+          ctx.fitAddonRef.current.fit();
+          if (ctx.sessionRef.current) {
+            ctx.terminalBackend.resizeSession(ctx.sessionRef.current, term.cols, term.rows);
+          }
+        } catch (err) {
+          logger.warn("Post-connect fit failed", err);
+        }
+      }, 100);
+    }
+  });
+
+  ctx.disposeExitRef.current = ctx.terminalBackend.onSessionExit(id, (evt) => {
+    ctx.updateStatus("disconnected");
+    term.writeln(opts?.onExitMessage?.(evt) ?? "\r\n[session closed]");
+
+    if (ctx.onTerminalDataCapture && ctx.serializeAddonRef.current) {
+      try {
+        const terminalData = ctx.serializeAddonRef.current.serialize();
+        ctx.onTerminalDataCapture(ctx.sessionId, terminalData);
+      } catch (err) {
+        logger.warn("Failed to serialize terminal data:", err);
+      }
+    }
+
+    ctx.onSessionExit?.(ctx.sessionId);
+  });
+};
+
+const runDistroDetection = async (ctx: TerminalSessionStartersContext, key?: SSHKey) => {
+  if (!ctx.terminalBackend.execAvailable()) return;
+  try {
+    const res = await ctx.terminalBackend.execCommand({
+      hostname: ctx.host.hostname,
+      username: ctx.host.username || "root",
+      port: ctx.host.port || 22,
+      password: ctx.host.password,
+      privateKey: key?.privateKey,
+      command: "cat /etc/os-release 2>/dev/null || uname -a",
+      timeout: 8000,
+    });
+    const data = `${res.stdout || ""}\n${res.stderr || ""}`;
+    const idMatch = data.match(/ID=([\\w\\-]+)/i);
+    const distro = idMatch
+      ? idMatch[1].replace(/"/g, "")
+      : (data.split(/\s+/)[0] || "").toLowerCase();
+    if (distro) ctx.onOsDetected?.(ctx.host.id, distro);
+  } catch (err) {
+    logger.warn("OS probe failed", err);
+  }
+};
+
+export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContext) => {
+  const startSSH = async (term: XTerm) => {
+    try {
+      term.clear?.();
+    } catch (err) {
+      logger.warn("Failed to clear terminal before connect", err);
+    }
+
+    if (!ctx.terminalBackend.backendAvailable()) {
+      ctx.setError("Native SSH bridge unavailable. Launch via Electron app.");
+      term.writeln(
+        "\r\n[netcatty SSH bridge unavailable. Please run the desktop build to connect.]",
+      );
+      ctx.updateStatus("disconnected");
+      return;
+    }
+
+    const pendingAuth = ctx.pendingAuthRef.current;
+    const effectiveUsername = pendingAuth?.username || ctx.host.username || "root";
+    const effectivePassword = pendingAuth?.password || ctx.host.password;
+    const effectiveKeyId = pendingAuth?.keyId || ctx.host.identityFileId;
+    const effectivePassphrase = pendingAuth?.passphrase;
+
+    const key = effectiveKeyId
+      ? ctx.keys.find((k) => k.id === effectiveKeyId)
+      : undefined;
+
+    const proxyConfig = ctx.host.proxyConfig
+      ? {
+          type: ctx.host.proxyConfig.type,
+          host: ctx.host.proxyConfig.host,
+          port: ctx.host.proxyConfig.port,
+          username: ctx.host.proxyConfig.username,
+          password: ctx.host.proxyConfig.password,
+        }
+      : undefined;
+
+    const jumpHosts = ctx.resolvedChainHosts.map<NetcattyJumpHost>((jumpHost) => {
+      const jumpKey = jumpHost.identityFileId
+        ? ctx.keys.find((k) => k.id === jumpHost.identityFileId)
+        : undefined;
+      return {
+        hostname: jumpHost.hostname,
+        port: jumpHost.port || 22,
+        username: jumpHost.username || "root",
+        password: jumpHost.password,
+        privateKey: jumpKey?.privateKey,
+        certificate: jumpKey?.certificate,
+        passphrase: jumpKey?.passphrase,
+        publicKey: jumpKey?.publicKey,
+        credentialId: jumpKey?.credentialId,
+        rpId: jumpKey?.rpId,
+        keyId: jumpKey?.id,
+        keySource: jumpKey?.source,
+        userVerification: jumpKey?.source === "biometric" ? "required" : "preferred",
+        label: jumpHost.label,
+      };
+    });
+
+    const totalHops = jumpHosts.length + 1;
+    let unsubscribeChainProgress: (() => void) | undefined;
+
+    if (jumpHosts.length > 0) {
+      ctx.setChainProgress({
+        currentHop: 1,
+        totalHops,
+        currentHostLabel:
+          jumpHosts[0]?.label || jumpHosts[0]?.hostname || ctx.host.hostname,
+      });
+      ctx.setProgressLogs((prev) => [
+        ...prev,
+        `Starting chain connection (${totalHops} hops)...`,
+      ]);
+
+      const unsub = ctx.terminalBackend.onChainProgress((hop, total, label, status) => {
+        ctx.setChainProgress({
+          currentHop: hop,
+          totalHops: total,
+          currentHostLabel: label,
+        });
+        ctx.setProgressLogs((prev) => [
+          ...prev,
+          `Chain ${hop} of ${total}: ${label} - ${status}`,
+        ]);
+        const hopProgress = (hop / total) * 80 + 10;
+        ctx.setProgressValue(Math.min(95, hopProgress));
+      });
+      if (unsub) unsubscribeChainProgress = unsub;
+    }
+
+    try {
+      const termEnv = buildTermEnv(ctx.host, ctx.terminalSettings);
+
+      // DEBUG: Log key info for troubleshooting
+      console.log("[Terminal] Starting SSH session with key info:", {
+        keyId: key?.id,
+        keyLabel: key?.label,
+        keySource: key?.source,
+        hasCredentialId: !!key?.credentialId,
+        hasRpId: !!key?.rpId,
+        hasPublicKey: !!key?.publicKey,
+        hasPrivateKey: !!key?.privateKey,
+      });
+
+      const id = await ctx.terminalBackend.startSSHSession({
+        sessionId: ctx.sessionId,
+        hostname: ctx.host.hostname,
+        username: effectiveUsername,
+        port: ctx.host.port || 22,
+        password: effectivePassword,
+        privateKey: key?.privateKey,
+        certificate: key?.certificate,
+        publicKey: key?.publicKey,
+        credentialId: key?.credentialId,
+        rpId: key?.rpId,
+        keyId: key?.id,
+        keySource: key?.source,
+        userVerification: key?.source === "biometric" ? "required" : "preferred",
+        passphrase: effectivePassphrase || key?.passphrase,
+        agentForwarding: ctx.host.agentForwarding,
+        cols: term.cols,
+        rows: term.rows,
+        charset: ctx.host.charset,
+        env: termEnv,
+        proxy: proxyConfig,
+        jumpHosts: jumpHosts.length > 0 ? jumpHosts : undefined,
+      });
+
+      if (unsubscribeChainProgress) unsubscribeChainProgress();
+
+      attachSessionToTerminal(ctx, term, id, {
+        onConnected: () => ctx.setChainProgress(null),
+        onExitMessage: (evt) =>
+          `\r\n[session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
+      });
+
+      const commandToRun = ctx.startupCommand || ctx.host.startupCommand;
+      if (commandToRun && !ctx.hasRunStartupCommandRef.current) {
+        ctx.hasRunStartupCommandRef.current = true;
+        setTimeout(() => {
+          if (!ctx.sessionRef.current) return;
+          ctx.terminalBackend.writeToSession(ctx.sessionRef.current, `${commandToRun}\r`);
+          if (ctx.onCommandExecuted) {
+            ctx.onCommandExecuted(commandToRun, ctx.host.id, ctx.host.label, ctx.sessionId);
+          }
+        }, 600);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const isAuthError =
+        message.toLowerCase().includes("authentication") ||
+        message.toLowerCase().includes("auth") ||
+        message.toLowerCase().includes("password") ||
+        message.toLowerCase().includes("permission denied");
+
+      if (isAuthError) {
+        ctx.setError(null);
+        ctx.setNeedsAuth(true);
+        ctx.setAuthRetryMessage(
+          "Authentication failed. Please check your credentials and try again.",
+        );
+        ctx.setAuthPassword("");
+        ctx.setProgressLogs((prev) => [
+          ...prev,
+          "Authentication failed. Please try again.",
+        ]);
+        ctx.setStatus("connecting");
+      } else {
+        ctx.setError(message);
+        term.writeln(`\r\n[Failed to start SSH: ${message}]`);
+        ctx.updateStatus("disconnected");
+      }
+
+      ctx.setChainProgress(null);
+      if (unsubscribeChainProgress) unsubscribeChainProgress();
+    }
+
+    setTimeout(() => void runDistroDetection(ctx, key), 600);
+  };
+
+  const startTelnet = async (term: XTerm) => {
+    try {
+      term.clear?.();
+    } catch (err) {
+      logger.warn("Failed to clear terminal before connect", err);
+    }
+
+    if (!ctx.terminalBackend.telnetAvailable()) {
+      ctx.setError("Telnet bridge unavailable. Please run the desktop build.");
+      term.writeln("\r\n[Telnet bridge unavailable. Please run the desktop build.]");
+      ctx.updateStatus("disconnected");
+      return;
+    }
+
+    try {
+      const telnetEnv = buildTermEnv(ctx.host, ctx.terminalSettings);
+      const id = await ctx.terminalBackend.startTelnetSession({
+        sessionId: ctx.sessionId,
+        hostname: ctx.host.hostname,
+        port: ctx.host.telnetPort || ctx.host.port || 23,
+        cols: term.cols,
+        rows: term.rows,
+        charset: ctx.host.charset,
+        env: telnetEnv,
+      });
+
+      attachSessionToTerminal(ctx, term, id, {
+        onExitMessage: (evt) =>
+          `\r\n[Telnet session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      ctx.setError(message);
+      term.writeln(`\r\n[Failed to start Telnet: ${message}]`);
+      ctx.updateStatus("disconnected");
+    }
+  };
+
+  const startMosh = async (term: XTerm) => {
+    try {
+      term.clear?.();
+    } catch (err) {
+      logger.warn("Failed to clear terminal before connect", err);
+    }
+
+    if (!ctx.terminalBackend.moshAvailable()) {
+      ctx.setError("Mosh bridge unavailable. Please run the desktop build.");
+      term.writeln("\r\n[Mosh bridge unavailable. Please run the desktop build.]");
+      ctx.updateStatus("disconnected");
+      return;
+    }
+
+    try {
+      const moshEnv = buildTermEnv(ctx.host, ctx.terminalSettings);
+      const id = await ctx.terminalBackend.startMoshSession({
+        sessionId: ctx.sessionId,
+        hostname: ctx.host.hostname,
+        username: ctx.host.username || "root",
+        port: ctx.host.port || 22,
+        moshServerPath: ctx.host.moshServerPath,
+        agentForwarding: ctx.host.agentForwarding,
+        cols: term.cols,
+        rows: term.rows,
+        charset: ctx.host.charset,
+        env: moshEnv,
+      });
+
+      attachSessionToTerminal(ctx, term, id, {
+        onExitMessage: (evt) =>
+          `\r\n[Mosh session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
+      });
+
+      const commandToRun = ctx.startupCommand || ctx.host.startupCommand;
+      if (commandToRun && !ctx.hasRunStartupCommandRef.current) {
+        ctx.hasRunStartupCommandRef.current = true;
+        setTimeout(() => {
+          if (!ctx.sessionRef.current) return;
+          ctx.terminalBackend.writeToSession(ctx.sessionRef.current, `${commandToRun}\r`);
+          if (ctx.onCommandExecuted) {
+            ctx.onCommandExecuted(commandToRun, ctx.host.id, ctx.host.label, ctx.sessionId);
+          }
+        }, 600);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      ctx.setError(message);
+      term.writeln(`\r\n[Failed to start Mosh: ${message}]`);
+      ctx.updateStatus("disconnected");
+    }
+  };
+
+  const startLocal = async (term: XTerm) => {
+    try {
+      term.clear?.();
+    } catch (err) {
+      logger.warn("Failed to clear terminal before connect", err);
+    }
+
+    if (!ctx.terminalBackend.localAvailable()) {
+      ctx.setError("Local shell bridge unavailable. Please run the desktop build.");
+      term.writeln(
+        "\r\n[Local shell bridge unavailable. Please run the desktop build to spawn a local terminal.]",
+      );
+      ctx.updateStatus("disconnected");
+      return;
+    }
+
+    try {
+      const id = await ctx.terminalBackend.startLocalSession({
+        sessionId: ctx.sessionId,
+        cols: term.cols,
+        rows: term.rows,
+        env: {
+          TERM: ctx.terminalSettings?.terminalEmulationType ?? "xterm-256color",
+        },
+      });
+
+      ctx.sessionRef.current = id;
+      ctx.disposeDataRef.current = ctx.terminalBackend.onSessionData(id, (chunk) => {
+        term.write(ctx.highlightProcessorRef.current(chunk));
+        if (!ctx.hasConnectedRef.current) {
+          ctx.updateStatus("connected");
+          setTimeout(() => {
+            if (!ctx.fitAddonRef.current) return;
+            try {
+              ctx.fitAddonRef.current.fit();
+              if (ctx.sessionRef.current) {
+                ctx.terminalBackend.resizeSession(ctx.sessionRef.current, term.cols, term.rows);
+              }
+            } catch (err) {
+              logger.warn("Post-connect fit failed", err);
+            }
+          }, 100);
+        }
+      });
+
+      ctx.disposeExitRef.current = ctx.terminalBackend.onSessionExit(id, (evt) => {
+        ctx.updateStatus("disconnected");
+        term.writeln(
+          `\r\n[session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
+        );
+
+        logger.info("[Terminal] Session exit, capturing data", {
+          sessionId: ctx.sessionId,
+          hasCallback: !!ctx.onTerminalDataCapture,
+          hasSerializeAddon: !!ctx.serializeAddonRef.current,
+        });
+
+        if (ctx.onTerminalDataCapture && ctx.serializeAddonRef.current) {
+          try {
+            const terminalData = ctx.serializeAddonRef.current.serialize();
+            logger.info("[Terminal] Serialized terminal data", {
+              sessionId: ctx.sessionId,
+              dataLength: terminalData.length,
+            });
+            ctx.onTerminalDataCapture(ctx.sessionId, terminalData);
+          } catch (err) {
+            logger.warn("Failed to serialize terminal data:", err);
+          }
+        }
+
+        ctx.onSessionExit?.(ctx.sessionId);
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      ctx.setError(message);
+      term.writeln(`\r\n[Failed to start local shell: ${message}]`);
+      ctx.updateStatus("disconnected");
+    }
+  };
+
+  return { startSSH, startTelnet, startMosh, startLocal };
+};
