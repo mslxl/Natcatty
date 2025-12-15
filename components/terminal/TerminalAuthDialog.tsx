@@ -11,7 +11,7 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
-export type TerminalAuthMethod = 'password' | 'key';
+export type TerminalAuthMethod = 'password' | 'key' | 'certificate';
 
 export interface TerminalAuthDialogProps {
     authMethod: TerminalAuthMethod;
@@ -64,8 +64,11 @@ export const TerminalAuthDialog: React.FC<TerminalAuthDialogProps> = ({
         }
     };
 
-    // Show all keys (both regular keys and certificates) when in key mode
-    const selectableKeys = keys.filter((k) => k.category === 'key' || Boolean(k.certificate?.trim()));
+    // Show all keys (both regular keys and certificates) in the single key picker.
+    const selectableKeys = React.useMemo(
+        () => keys.filter((k) => k.category === 'key' || Boolean(k.certificate?.trim())),
+        [keys],
+    );
 
     const [keyDropdownOpen, setKeyDropdownOpen] = React.useState(false);
 
@@ -90,7 +93,7 @@ export const TerminalAuthDialog: React.FC<TerminalAuthDialogProps> = ({
                 <button
                     className={cn(
                         "flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-md transition-all",
-                        authMethod === 'key'
+                        authMethod === 'key' || authMethod === 'certificate'
                             ? "bg-primary text-primary-foreground shadow-sm"
                             : "text-muted-foreground hover:text-foreground hover:bg-secondary"
                     )}
@@ -205,6 +208,7 @@ export const TerminalAuthDialog: React.FC<TerminalAuthDialogProps> = ({
                                                     )}
                                                     onClick={() => {
                                                         setAuthKeyId(key.id);
+                                                        setAuthMethod(key.certificate?.trim() ? 'certificate' : 'key');
                                                         setAuthPassphrase(key.passphrase || '');
                                                         setKeyDropdownOpen(false);
                                                     }}

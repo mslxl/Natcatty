@@ -218,7 +218,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   // Pending connection credentials (set after auth dialog submit)
   const pendingAuthRef = useRef<{
-    authMethod: "password" | "key";
+    authMethod: "password" | "key" | "certificate";
     username: string;
     password?: string;
     keyId?: string;
@@ -722,7 +722,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           // SSH connection (default)
           // Check if host needs authentication info
           const hasPassword = host.authMethod === "password" && host.password;
-          const hasKey = host.authMethod === "key" && host.identityFileId;
+          const hasKey =
+            (host.authMethod === "key" || host.authMethod === "certificate") &&
+            host.identityFileId;
           const hasPendingAuth = pendingAuthRef.current;
 
           if (!hasPassword && !hasKey && !hasPendingAuth && !host.username) {
@@ -1114,7 +1116,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       : undefined;
 
     // Prepare jump host chain configuration
-    const jumpHosts = resolvedChainHosts.map((jumpHost) => {
+    const jumpHosts = resolvedChainHosts.map<NetcattyJumpHost>((jumpHost) => {
       const jumpKey = jumpHost.identityFileId
         ? keys.find((k) => k.id === jumpHost.identityFileId)
         : undefined;
@@ -1674,7 +1676,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const isAuthValid = () => {
     if (!authUsername.trim()) return false;
     if (authMethod === "password") return authPassword.trim().length > 0;
-    if (authMethod === "key") return !!authKeyId;
+    if (authMethod === "key" || authMethod === "certificate") return !!authKeyId;
     return false;
   };
 
@@ -1686,8 +1688,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       authMethod,
       username: authUsername,
       password: authMethod === "password" ? authPassword : undefined,
-      keyId: authMethod === "key" ? (authKeyId ?? undefined) : undefined,
-      passphrase: authMethod === "key" ? authPassphrase || undefined : undefined,
+      keyId:
+        authMethod === "key" || authMethod === "certificate"
+          ? (authKeyId ?? undefined)
+          : undefined,
+      passphrase:
+        authMethod === "key" || authMethod === "certificate"
+          ? authPassphrase || undefined
+          : undefined,
     };
 
     // Save credentials to host if requested
@@ -1697,7 +1705,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         username: authUsername,
         authMethod: authMethod,
         password: authMethod === "password" ? authPassword : undefined,
-        identityFileId: authMethod === "key" ? (authKeyId ?? undefined) : undefined,
+        identityFileId:
+          authMethod === "key" || authMethod === "certificate"
+            ? (authKeyId ?? undefined)
+            : undefined,
       };
       onUpdateHost(updatedHost);
     }
