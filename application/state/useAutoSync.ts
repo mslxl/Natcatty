@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useCloudSync } from './useCloudSync';
 import { getCloudSyncManager } from '../../infrastructure/services/CloudSyncManager';
+import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import type { SyncPayload } from '../../domain/sync';
 import { toast } from '../../components/ui/toast';
 
@@ -28,6 +29,12 @@ interface AutoSyncConfig {
 
 // Get manager singleton for direct state access
 const manager = getCloudSyncManager();
+
+type SyncTrigger = 'auto' | 'manual';
+
+interface SyncNowOptions {
+  trigger?: SyncTrigger;
+}
 
 export const useAutoSync = (config: AutoSyncConfig) => {
   const sync = useCloudSync();
@@ -61,38 +68,58 @@ export const useAutoSync = (config: AutoSyncConfig) => {
   }, [config.hosts, config.keys, config.snippets, config.portForwardingRules]);
   
   // Sync now handler - get fresh state directly from manager
-  const syncNow = useCallback(async () => {
-    // Get fresh state directly from CloudSyncManager singleton
-    const state = manager.getState();
-    const hasProvider = Object.values(state.providers).some(p => p.status === 'connected');
-    const syncing = state.syncState === 'SYNCING';
-    const unlocked = state.securityState === 'UNLOCKED';
-    
-    console.log('[AutoSync] syncNow called', {
-      hasAnyConnectedProvider: hasProvider,
-      isSyncing: syncing,
-      isUnlocked: unlocked,
-      securityState: state.securityState,
-    });
-    
-    if (!hasProvider) {
-      console.warn('[AutoSync] No connected provider');
-      return;
-    }
-    if (syncing) {
-      console.warn('[AutoSync] Already syncing');
-      return;
-    }
-    if (!unlocked) {
-      console.warn('[AutoSync] Vault is locked, securityState:', state.securityState);
-      return;
-    }
-    
+  const syncNow = useCallback(async (options?: SyncNowOptions) => {
+    const trigger: SyncTrigger = options?.trigger ?? 'auto';
+
     try {
+      // Get fresh state directly from CloudSyncManager singleton
+      let state = manager.getState();
+
+      const hasProvider = Object.values(state.providers).some(p => p.status === 'connected');
+      const syncing = state.syncState === 'SYNCING';
+
+      if (!hasProvider) {
+        throw new Error('No cloud provider connected. Open Settings → Sync & Cloud to connect one.');
+      }
+      if (syncing) {
+        throw new Error('Sync is already in progress.');
+      }
+
+      // If another window unlocked, reuse the in-memory session password from main process.
+      if (state.securityState !== 'UNLOCKED') {
+        const bridge = netcattyBridge.get();
+        const sessionPassword = await bridge?.cloudSyncGetSessionPassword?.();
+        if (sessionPassword) {
+          const ok = await sync.unlock(sessionPassword);
+          if (!ok) {
+            void bridge?.cloudSyncClearSessionPassword?.();
+          }
+        }
+      }
+
+      // Re-check after unlock attempt
+      state = manager.getState();
+      if (state.securityState !== 'UNLOCKED') {
+        throw new Error('Vault is locked. Open Settings → Sync & Cloud to unlock.');
+      }
+
       const payload = buildPayload();
-      await sync.syncNow(payload);
+      const results = await sync.syncNow(payload);
+
+      for (const result of results.values()) {
+        if (!result.success) {
+          if (result.conflictDetected) {
+            throw new Error('Sync conflict detected. Open Settings → Sync & Cloud to resolve.');
+          }
+          throw new Error(result.error || 'Sync failed');
+        }
+      }
+
       lastSyncedDataRef.current = getDataHash();
     } catch (error) {
+      if (trigger === 'manual') {
+        throw error;
+      }
       console.error('[AutoSync] Sync failed:', error);
       toast.error('Sync failed', error instanceof Error ? error.message : 'Unknown error');
     }

@@ -6,7 +6,7 @@
  * Uses useSyncExternalStore for real-time state synchronization across all components.
  */
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   type CloudProvider,
   type SecurityState,
@@ -132,15 +132,43 @@ export const useCloudSync = (): CloudSyncHook => {
   
   // Use useSyncExternalStore for real-time state sync across all components
   const state = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+
+  // Auto-unlock: if a master key exists, retrieve the persisted password (Electron safeStorage)
+  // and unlock silently so users don't have to manage a LOCKED state in the UI.
+  const attemptedAutoUnlockRef = useRef(false);
+  useEffect(() => {
+    if (attemptedAutoUnlockRef.current) return;
+    if (state.securityState !== 'LOCKED') return;
+    attemptedAutoUnlockRef.current = true;
+
+    void (async () => {
+      try {
+        const bridge = netcattyBridge.get();
+        const password = await bridge?.cloudSyncGetSessionPassword?.();
+        if (!password) return;
+
+        const ok = await manager.unlock(password);
+        if (!ok) {
+          void bridge?.cloudSyncClearSessionPassword?.();
+        }
+      } catch {
+        // Ignore auto-unlock errors; manual actions will surface them.
+      }
+    })();
+  }, [state.securityState]);
   
   // ========== Computed Values ==========
   
   const hasAnyConnectedProvider = useMemo(() => {
-    return (Object.values(state.providers) as ProviderConnection[]).some(p => p.status === 'connected');
+    return (Object.values(state.providers) as ProviderConnection[]).some(
+      (p) => p.status === 'connected' || p.status === 'syncing'
+    );
   }, [state.providers]);
   
   const connectedProviderCount = useMemo(() => {
-    return (Object.values(state.providers) as ProviderConnection[]).filter(p => p.status === 'connected').length;
+    return (Object.values(state.providers) as ProviderConnection[]).filter(
+      (p) => p.status === 'connected' || p.status === 'syncing'
+    ).length;
   }, [state.providers]);
   
   const overallSyncStatus = useMemo((): 'none' | 'synced' | 'syncing' | 'error' | 'conflict' => {
@@ -168,13 +196,19 @@ export const useCloudSync = (): CloudSyncHook => {
       throw new Error('Password must be at least 8 characters');
     }
     await manager.setupMasterKey(password);
+    void netcattyBridge.get()?.cloudSyncSetSessionPassword?.(password);
   }, []);
   
   const unlock = useCallback(async (password: string): Promise<boolean> => {
-    return await manager.unlock(password);
+    const ok = await manager.unlock(password);
+    if (ok) {
+      void netcattyBridge.get()?.cloudSyncSetSessionPassword?.(password);
+    }
+    return ok;
   }, []);
   
   const lock = useCallback(() => {
+    void netcattyBridge.get()?.cloudSyncClearSessionPassword?.();
     manager.lock();
   }, []);
   
@@ -182,7 +216,11 @@ export const useCloudSync = (): CloudSyncHook => {
     oldPassword: string,
     newPassword: string
   ): Promise<boolean> => {
-    return await manager.changeMasterKey(oldPassword, newPassword);
+    const ok = await manager.changeMasterKey(oldPassword, newPassword);
+    if (ok) {
+      void netcattyBridge.get()?.cloudSyncSetSessionPassword?.(newPassword);
+    }
+    return ok;
   }, []);
   
   const verifyPassword = useCallback(async (password: string): Promise<boolean> => {
@@ -286,33 +324,6 @@ export const useCloudSync = (): CloudSyncHook => {
     await manager.disconnectProvider(provider);
   }, []);
   
-  // ========== Sync Actions ==========
-  
-  const syncNow = useCallback(async (
-    payload: SyncPayload
-  ): Promise<Map<CloudProvider, SyncResult>> => {
-    return await manager.syncAllProviders(payload);
-  }, []);
-  
-  const syncToProvider = useCallback(async (
-    provider: CloudProvider,
-    payload: SyncPayload
-  ): Promise<SyncResult> => {
-    return await manager.syncToProvider(provider, payload);
-  }, []);
-  
-  const downloadFromProvider = useCallback(async (
-    provider: CloudProvider
-  ): Promise<SyncPayload | null> => {
-    return await manager.downloadFromProvider(provider);
-  }, []);
-  
-  const resolveConflict = useCallback(async (
-    resolution: ConflictResolution
-  ): Promise<SyncPayload | null> => {
-    return await manager.resolveConflict(resolution);
-  }, []);
-  
   // ========== Settings ==========
   
   const setAutoSync = useCallback((enabled: boolean, intervalMinutes?: number) => {
@@ -333,6 +344,44 @@ export const useCloudSync = (): CloudSyncHook => {
     // Force a re-render by triggering state change notification
     // This is now a no-op since useSyncExternalStore handles updates automatically
   }, []);
+
+  const ensureUnlocked = useCallback(async (): Promise<void> => {
+    const current = manager.getState();
+    if (current.securityState === 'UNLOCKED') return;
+    if (current.securityState === 'NO_KEY') {
+      throw new Error('No master key configured');
+    }
+
+    const bridge = netcattyBridge.get();
+    const password = await bridge?.cloudSyncGetSessionPassword?.();
+    if (password) {
+      const ok = await manager.unlock(password);
+      if (ok) return;
+      void bridge?.cloudSyncClearSessionPassword?.();
+    }
+
+    throw new Error('Vault is locked');
+  }, []);
+
+  const syncNowWithUnlock = useCallback(async (payload: SyncPayload) => {
+    await ensureUnlocked();
+    return await manager.syncAllProviders(payload);
+  }, [ensureUnlocked]);
+
+  const syncToProviderWithUnlock = useCallback(async (provider: CloudProvider, payload: SyncPayload) => {
+    await ensureUnlocked();
+    return await manager.syncToProvider(provider, payload);
+  }, [ensureUnlocked]);
+
+  const downloadFromProviderWithUnlock = useCallback(async (provider: CloudProvider) => {
+    await ensureUnlocked();
+    return await manager.downloadFromProvider(provider);
+  }, [ensureUnlocked]);
+
+  const resolveConflictWithUnlock = useCallback(async (resolution: ConflictResolution) => {
+    await ensureUnlocked();
+    return await manager.resolveConflict(resolution);
+  }, [ensureUnlocked]);
   
   return {
     // State
@@ -373,10 +422,10 @@ export const useCloudSync = (): CloudSyncHook => {
     disconnectProvider,
     
     // Sync Actions
-    syncNow,
-    syncToProvider,
-    downloadFromProvider,
-    resolveConflict,
+    syncNow: syncNowWithUnlock,
+    syncToProvider: syncToProviderWithUnlock,
+    downloadFromProvider: downloadFromProviderWithUnlock,
+    resolveConflict: resolveConflictWithUnlock,
     
     // Settings
     setAutoSync,

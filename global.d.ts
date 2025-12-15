@@ -274,6 +274,11 @@ interface NetcattyBridge {
   // Settings window
   openSettingsWindow?(): Promise<boolean>;
   closeSettingsWindow?(): Promise<void>;
+
+  // Cloud sync master password (stored in-memory + persisted via Electron safeStorage)
+  cloudSyncSetSessionPassword?(password: string): Promise<boolean>;
+  cloudSyncGetSessionPassword?(): Promise<string | null>;
+  cloudSyncClearSessionPassword?(): Promise<boolean>;
   
   // Port Forwarding
   startPortForward?(options: PortForwardOptions): Promise<PortForwardResult>;

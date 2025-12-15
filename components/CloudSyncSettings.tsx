@@ -3,7 +3,6 @@
  * 
  * Handles:
  * - Master key setup (gatekeeper screen)
- * - Unlock/lock functionality
  * - Provider connections (GitHub, Google, OneDrive)
  * - Sync status and conflict resolution
  */
@@ -18,21 +17,19 @@ import {
     ExternalLink,
     Eye,
     EyeOff,
-    Fingerprint,
     Github,
     Key,
     Loader2,
-    Lock,
     RefreshCw,
     Shield,
     ShieldCheck,
-    Unlock,
     X,
 } from 'lucide-react';
 import { useCloudSync } from '../application/state/useCloudSync';
 import type { CloudProvider, ConflictInfo, SyncPayload } from '../domain/sync';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { toast } from './ui/toast';
@@ -250,109 +247,6 @@ const GatekeeperScreen: React.FC<GatekeeperScreenProps> = ({ onSetupComplete }) 
                     )}
                     Enable Encrypted Vault
                 </Button>
-            </form>
-        </div>
-    );
-};
-
-// ============================================================================
-// Unlock Screen (LOCKED state)
-// ============================================================================
-
-interface UnlockScreenProps {
-    onUnlock: () => void;
-}
-
-const UnlockScreen: React.FC<UnlockScreenProps> = ({ onUnlock }) => {
-    const { unlock } = useCloudSync();
-    const [password, setPassword] = useState('');
-    const [showPassword, setShowPassword] = useState(false);
-    const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [attempts, setAttempts] = useState(0);
-
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!password) return;
-
-        setIsLoading(true);
-        setError(null);
-
-        try {
-            const success = await unlock(password);
-            if (success) {
-                onUnlock();
-            } else {
-                setAttempts(a => a + 1);
-                setError('Incorrect master key');
-                setPassword('');
-            }
-        } catch {
-            setError('Failed to unlock vault');
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    return (
-        <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-            <div className="w-20 h-20 rounded-full bg-amber-500/10 flex items-center justify-center mb-6">
-                <Lock className="w-10 h-10 text-amber-500" />
-            </div>
-
-            <h2 className="text-xl font-semibold mb-2">Vault Locked</h2>
-            <p className="text-sm text-muted-foreground max-w-md mb-8">
-                Enter your master key to access cloud sync settings and sync your data.
-            </p>
-
-            <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-4">
-                <div className="space-y-2">
-                    <Label className="text-left block">Master Key</Label>
-                    <div className="relative">
-                        <Input
-                            type={showPassword ? 'text' : 'password'}
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            placeholder="Enter your master key"
-                            className="pr-10"
-                            autoFocus
-                        />
-                        <button
-                            type="button"
-                            onClick={() => setShowPassword(!showPassword)}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                        >
-                            {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                        </button>
-                    </div>
-                </div>
-
-                {error && (
-                    <p className="text-sm text-red-500 text-left">
-                        {error} {attempts >= 3 && '- Too many attempts'}
-                    </p>
-                )}
-
-                <Button
-                    type="submit"
-                    disabled={!password || isLoading}
-                    className="w-full gap-2"
-                >
-                    {isLoading ? (
-                        <Loader2 size={16} className="animate-spin" />
-                    ) : (
-                        <Unlock size={16} />
-                    )}
-                    Unlock Vault
-                </Button>
-
-                <button
-                    type="button"
-                    className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 mx-auto"
-                >
-                    <Fingerprint size={14} />
-                    Use Touch ID / Face ID
-                </button>
             </form>
         </div>
     );
@@ -699,12 +593,43 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
     // Conflict modal
     const [showConflictModal, setShowConflictModal] = useState(false);
 
+    // Change master key dialog
+    const [showChangeKeyDialog, setShowChangeKeyDialog] = useState(false);
+    const [currentMasterKey, setCurrentMasterKey] = useState('');
+    const [newMasterKey, setNewMasterKey] = useState('');
+    const [confirmNewMasterKey, setConfirmNewMasterKey] = useState('');
+    const [showMasterKey, setShowMasterKey] = useState(false);
+    const [isChangingKey, setIsChangingKey] = useState(false);
+    const [changeKeyError, setChangeKeyError] = useState<string | null>(null);
+
+    // One-time unlock prompt (for existing users before password is persisted)
+    const [showUnlockDialog, setShowUnlockDialog] = useState(false);
+    const [unlockMasterKey, setUnlockMasterKey] = useState('');
+    const [showUnlockMasterKey, setShowUnlockMasterKey] = useState(false);
+    const [isUnlocking, setIsUnlocking] = useState(false);
+    const [unlockError, setUnlockError] = useState<string | null>(null);
+
     // Handle conflict detection
     useEffect(() => {
         if (sync.currentConflict) {
             setShowConflictModal(true);
         }
     }, [sync.currentConflict]);
+
+    // If we have a master key but we're still locked (e.g. older installs),
+    // prompt once and persist the password via safeStorage.
+    useEffect(() => {
+        if (sync.securityState !== 'LOCKED') {
+            setShowUnlockDialog(false);
+            return;
+        }
+        if (!sync.hasAnyConnectedProvider && !sync.autoSyncEnabled) {
+            return;
+        }
+
+        const t = setTimeout(() => setShowUnlockDialog(true), 500);
+        return () => clearTimeout(t);
+    }, [sync.securityState, sync.hasAnyConnectedProvider, sync.autoSyncEnabled]);
 
     // Connect GitHub (disconnect others first - single provider only)
     const handleConnectGitHub = async () => {
@@ -824,8 +749,8 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
                     </div>
                     <div>
                         <div className="flex items-center gap-2">
-                            <span className="font-medium">Vault Unlocked</span>
-                            <StatusDot status="connected" />
+                            <span className="font-medium">{sync.isUnlocked ? 'Vault Ready' : 'Preparing Vault...'}</span>
+                            <StatusDot status={sync.isUnlocked ? 'connected' : 'connecting'} />
                         </div>
                         <span className="text-xs text-muted-foreground">
                             {sync.connectedProviderCount} provider(s) connected
@@ -833,11 +758,19 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
-                    <Button variant="ghost" size="sm" onClick={sync.lock} className="gap-1">
-                        <Lock size={14} />
-                        Lock
-                    </Button>
-                    <Button variant="ghost" size="sm" className="gap-1">
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="gap-1"
+                        onClick={() => {
+                            setChangeKeyError(null);
+                            setCurrentMasterKey('');
+                            setNewMasterKey('');
+                            setConfirmNewMasterKey('');
+                            setShowMasterKey(false);
+                            setShowChangeKeyDialog(true);
+                        }}
+                    >
                         <Key size={14} />
                         Change Key
                     </Button>
@@ -1011,6 +944,194 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
                 onResolve={handleResolveConflict}
                 onClose={() => setShowConflictModal(false)}
             />
+
+            <Dialog open={showChangeKeyDialog} onOpenChange={setShowChangeKeyDialog}>
+                <DialogContent className="sm:max-w-[420px]">
+                    <DialogHeader>
+                        <DialogTitle>Change Master Key</DialogTitle>
+                        <DialogDescription>
+                            This will re-encrypt your vault. Make sure you remember the new key.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-4">
+                        <div className="space-y-2">
+                            <Label>Current Master Key</Label>
+                            <Input
+                                type={showMasterKey ? 'text' : 'password'}
+                                value={currentMasterKey}
+                                onChange={(e) => setCurrentMasterKey(e.target.value)}
+                                placeholder="Enter current master key"
+                                autoFocus
+                            />
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label>New Master Key</Label>
+                            <Input
+                                type={showMasterKey ? 'text' : 'password'}
+                                value={newMasterKey}
+                                onChange={(e) => setNewMasterKey(e.target.value)}
+                                placeholder="Enter new master key"
+                            />
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label>Confirm New Master Key</Label>
+                            <Input
+                                type={showMasterKey ? 'text' : 'password'}
+                                value={confirmNewMasterKey}
+                                onChange={(e) => setConfirmNewMasterKey(e.target.value)}
+                                placeholder="Confirm new master key"
+                            />
+                        </div>
+
+                        <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
+                            <input
+                                type="checkbox"
+                                checked={showMasterKey}
+                                onChange={(e) => setShowMasterKey(e.target.checked)}
+                                className="accent-primary"
+                            />
+                            Show keys
+                        </label>
+
+                        {changeKeyError && (
+                            <p className="text-sm text-red-500">{changeKeyError}</p>
+                        )}
+                    </div>
+
+                    <DialogFooter>
+                        <Button
+                            variant="outline"
+                            onClick={() => setShowChangeKeyDialog(false)}
+                            disabled={isChangingKey}
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            onClick={async () => {
+                                setChangeKeyError(null);
+                                if (!currentMasterKey || !newMasterKey || !confirmNewMasterKey) {
+                                    setChangeKeyError('Please fill in all fields');
+                                    return;
+                                }
+                                if (newMasterKey.length < 8) {
+                                    setChangeKeyError('New master key must be at least 8 characters');
+                                    return;
+                                }
+                                if (newMasterKey !== confirmNewMasterKey) {
+                                    setChangeKeyError('New master keys do not match');
+                                    return;
+                                }
+
+                                setIsChangingKey(true);
+                                try {
+                                    const ok = await sync.changeMasterKey(currentMasterKey, newMasterKey);
+                                    if (!ok) {
+                                        setChangeKeyError('Incorrect current master key');
+                                        return;
+                                    }
+
+                                    if (sync.hasAnyConnectedProvider) {
+                                        const payload = onBuildPayload();
+                                        await sync.syncNow(payload);
+                                    }
+
+                                    toast.success('Master key updated');
+                                    setShowChangeKeyDialog(false);
+                                } catch (error) {
+                                    setChangeKeyError(error instanceof Error ? error.message : 'Failed to change master key');
+                                } finally {
+                                    setIsChangingKey(false);
+                                }
+                            }}
+                            disabled={isChangingKey}
+                            className="gap-2"
+                        >
+                            {isChangingKey ? <Loader2 size={16} className="animate-spin" /> : <Key size={16} />}
+                            Update Key
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={showUnlockDialog} onOpenChange={setShowUnlockDialog}>
+                <DialogContent className="sm:max-w-[420px]">
+                    <DialogHeader>
+                        <DialogTitle>Enter Master Key</DialogTitle>
+                        <DialogDescription>
+                            Enter your master key once to enable encrypted sync. It will be stored securely using your OS keychain.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-4">
+                        <div className="space-y-2">
+                            <Label>Master Key</Label>
+                            <Input
+                                type={showUnlockMasterKey ? 'text' : 'password'}
+                                value={unlockMasterKey}
+                                onChange={(e) => setUnlockMasterKey(e.target.value)}
+                                placeholder="Enter your master key"
+                                autoFocus
+                            />
+                        </div>
+
+                        <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
+                            <input
+                                type="checkbox"
+                                checked={showUnlockMasterKey}
+                                onChange={(e) => setShowUnlockMasterKey(e.target.checked)}
+                                className="accent-primary"
+                            />
+                            Show key
+                        </label>
+
+                        {unlockError && (
+                            <p className="text-sm text-red-500">{unlockError}</p>
+                        )}
+                    </div>
+
+                    <DialogFooter>
+                        <Button
+                            variant="outline"
+                            onClick={() => setShowUnlockDialog(false)}
+                            disabled={isUnlocking}
+                        >
+                            Not now
+                        </Button>
+                        <Button
+                            onClick={async () => {
+                                setUnlockError(null);
+                                if (!unlockMasterKey) {
+                                    setUnlockError('Please enter your master key');
+                                    return;
+                                }
+                                setIsUnlocking(true);
+                                try {
+                                    const ok = await sync.unlock(unlockMasterKey);
+                                    if (!ok) {
+                                        setUnlockError('Incorrect master key');
+                                        return;
+                                    }
+                                    toast.success('Vault ready');
+                                    setShowUnlockDialog(false);
+                                    setUnlockMasterKey('');
+                                } catch (error) {
+                                    setUnlockError(error instanceof Error ? error.message : 'Failed to unlock vault');
+                                } finally {
+                                    setIsUnlocking(false);
+                                }
+                            }}
+                            disabled={isUnlocking}
+                            className="gap-2"
+                        >
+                            {isUnlocking ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
+                            Unlock
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 };
@@ -1026,15 +1147,11 @@ interface CloudSyncSettingsProps {
 
 export const CloudSyncSettings: React.FC<CloudSyncSettingsProps> = (props) => {
     const { securityState } = useCloudSync();
-    const [justSetup, setJustSetup] = useState(false);
-
-    // Show appropriate screen based on security state
+    
+    // Simplified UX: once a master key is configured, we auto-unlock via safeStorage
+    // so users don't have to manage a separate LOCKED screen.
     if (securityState === 'NO_KEY') {
-        return <GatekeeperScreen onSetupComplete={() => setJustSetup(true)} />;
-    }
-
-    if (securityState === 'LOCKED' && !justSetup) {
-        return <UnlockScreen onUnlock={() => { }} />;
+        return <GatekeeperScreen onSetupComplete={() => { }} />;
     }
 
     return <SyncDashboard {...props} />;

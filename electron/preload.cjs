@@ -415,6 +415,14 @@ const api = {
   // Settings window
   openSettingsWindow: () => ipcRenderer.invoke("netcatty:settings:open"),
   closeSettingsWindow: () => ipcRenderer.invoke("netcatty:settings:close"),
+
+  // Cloud sync session (in-memory only, shared across windows)
+  cloudSyncSetSessionPassword: (password) =>
+    ipcRenderer.invoke("netcatty:cloudSync:session:setPassword", password),
+  cloudSyncGetSessionPassword: () =>
+    ipcRenderer.invoke("netcatty:cloudSync:session:getPassword"),
+  cloudSyncClearSessionPassword: () =>
+    ipcRenderer.invoke("netcatty:cloudSync:session:clearPassword"),
   
   // Open URL in default browser
   openExternal: (url) => ipcRenderer.invoke("netcatty:openExternal", url),

@@ -180,6 +180,8 @@ function handleDeepLink(url) {
 const sessions = new Map();
 const sftpClients = new Map();
 const keyRoot = path.join(os.homedir(), ".netcatty", "keys");
+let cloudSyncSessionPassword = null;
+const CLOUD_SYNC_PASSWORD_FILE = "netcatty_cloud_sync_master_password_v1";
 
 // Key management helpers
 const ensureKeyDir = () => {
@@ -216,6 +218,56 @@ const registerBridges = (win) => {
   bridgesRegistered = true;
 
   const { ipcMain } = electronModule;
+  const { safeStorage } = electronModule;
+
+  const getCloudSyncPasswordPath = () => {
+    try {
+      return path.join(app.getPath("userData"), CLOUD_SYNC_PASSWORD_FILE);
+    } catch {
+      return null;
+    }
+  };
+
+  const readPersistedCloudSyncPassword = () => {
+    try {
+      if (!safeStorage?.isEncryptionAvailable?.()) return null;
+      const filePath = getCloudSyncPasswordPath();
+      if (!filePath || !fs.existsSync(filePath)) return null;
+      const base64 = fs.readFileSync(filePath, "utf8");
+      if (!base64) return null;
+      const buf = Buffer.from(base64, "base64");
+      const decrypted = safeStorage.decryptString(buf);
+      return typeof decrypted === "string" && decrypted.length ? decrypted : null;
+    } catch (err) {
+      console.warn("[CloudSync] Failed to read persisted password:", err?.message || err);
+      return null;
+    }
+  };
+
+  const persistCloudSyncPassword = (password) => {
+    try {
+      if (!safeStorage?.isEncryptionAvailable?.()) return false;
+      const filePath = getCloudSyncPasswordPath();
+      if (!filePath) return false;
+      const encrypted = safeStorage.encryptString(password);
+      fs.writeFileSync(filePath, encrypted.toString("base64"), { mode: 0o600 });
+      return true;
+    } catch (err) {
+      console.warn("[CloudSync] Failed to persist password:", err?.message || err);
+      return false;
+    }
+  };
+
+  const clearPersistedCloudSyncPassword = () => {
+    try {
+      const filePath = getCloudSyncPasswordPath();
+      if (filePath && fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch (err) {
+      console.warn("[CloudSync] Failed to clear persisted password:", err?.message || err);
+    }
+  };
 
   // Initialize bridges with shared dependencies
   const deps = {
@@ -250,6 +302,30 @@ const registerBridges = (win) => {
       isMac,
       electronDir,
     });
+    return true;
+  });
+
+  // Cloud sync master password (stored in-memory + persisted via safeStorage)
+  ipcMain.handle("netcatty:cloudSync:session:setPassword", async (_event, password) => {
+    cloudSyncSessionPassword = typeof password === "string" && password.length ? password : null;
+    if (cloudSyncSessionPassword) {
+      persistCloudSyncPassword(cloudSyncSessionPassword);
+    } else {
+      clearPersistedCloudSyncPassword();
+    }
+    return true;
+  });
+
+  ipcMain.handle("netcatty:cloudSync:session:getPassword", async () => {
+    if (cloudSyncSessionPassword) return cloudSyncSessionPassword;
+    const persisted = readPersistedCloudSyncPassword();
+    cloudSyncSessionPassword = persisted;
+    return persisted;
+  });
+
+  ipcMain.handle("netcatty:cloudSync:session:clearPassword", async () => {
+    cloudSyncSessionPassword = null;
+    clearPersistedCloudSyncPassword();
     return true;
   });
 

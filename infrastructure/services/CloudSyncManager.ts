@@ -492,6 +492,7 @@ export class CloudSyncManager {
     }
 
     this.state.masterKeyConfig = newConfig;
+    this.state.securityState = 'UNLOCKED';
     this.masterPassword = newPassword;
     
     // Re-derive key with new password
@@ -502,8 +503,11 @@ export class CloudSyncManager {
 
     this.saveToStorage(SYNC_STORAGE_KEYS.MASTER_KEY_CONFIG, newConfig);
 
-    // Re-upload to all connected providers with new encryption
-    await this.syncAllProviders();
+    // Notify UI and restart auto-sync (actual re-upload requires a payload from app state)
+    this.emit({ type: 'SECURITY_STATE_CHANGED', state: 'UNLOCKED' });
+    if (this.state.autoSyncEnabled) {
+      this.startAutoSync();
+    }
 
     return true;
   }

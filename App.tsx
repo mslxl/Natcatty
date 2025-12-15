@@ -193,6 +193,10 @@ function App() {
     },
   });
 
+  const handleSyncNowManual = useCallback(() => {
+    return handleSyncNow({ trigger: 'manual' });
+  }, [handleSyncNow]);
+
   // Debounce ref for moveFocus to prevent double-triggering when focus switches
   const lastMoveFocusTimeRef = useRef<number>(0);
   const MOVE_FOCUS_DEBOUNCE_MS = 200;
@@ -618,7 +622,7 @@ function App() {
         onOpenQuickSwitcher={handleOpenQuickSwitcher}
         onToggleTheme={handleToggleTheme}
         onOpenSettings={handleOpenSettings}
-        onSyncNow={handleSyncNow}
+        onSyncNow={handleSyncNowManual}
         onStartSessionDrag={setDraggingSessionId}
         onEndSessionDrag={handleEndSessionDrag}
         onReorderTabs={reorderTabs}
