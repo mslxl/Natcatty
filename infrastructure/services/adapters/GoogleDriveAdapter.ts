@@ -20,6 +20,7 @@ import {
   type PKCEChallenge,
 } from '../../../domain/sync';
 import { arrayBufferToBase64, generateRandomBytes } from '../EncryptionService';
+import { netcattyBridge } from '../netcattyBridge';
 
 // ============================================================================
 // Types
@@ -125,6 +126,18 @@ export const exchangeCodeForTokens = async (
   codeVerifier: string,
   redirectUri: string
 ): Promise<OAuthTokens> => {
+  const bridge = netcattyBridge.get();
+  const exchangeViaMain = bridge?.googleExchangeCodeForTokens;
+  if (exchangeViaMain) {
+    return await exchangeViaMain({
+      clientId: SYNC_CONSTANTS.GOOGLE_CLIENT_ID,
+      clientSecret: SYNC_CONSTANTS.GOOGLE_CLIENT_SECRET,
+      code,
+      codeVerifier,
+      redirectUri,
+    });
+  }
+
   const response = await fetch(SYNC_CONSTANTS.GOOGLE_TOKEN_URL, {
     method: 'POST',
     headers: {
@@ -160,6 +173,16 @@ export const exchangeCodeForTokens = async (
  * Refresh access token
  */
 export const refreshAccessToken = async (refreshToken: string): Promise<OAuthTokens> => {
+  const bridge = netcattyBridge.get();
+  const refreshViaMain = bridge?.googleRefreshAccessToken;
+  if (refreshViaMain) {
+    return await refreshViaMain({
+      clientId: SYNC_CONSTANTS.GOOGLE_CLIENT_ID,
+      clientSecret: SYNC_CONSTANTS.GOOGLE_CLIENT_SECRET,
+      refreshToken,
+    });
+  }
+
   const response = await fetch(SYNC_CONSTANTS.GOOGLE_TOKEN_URL, {
     method: 'POST',
     headers: {
@@ -196,6 +219,18 @@ export const refreshAccessToken = async (refreshToken: string): Promise<OAuthTok
  * Get authenticated user info
  */
 export const getUserInfo = async (accessToken: string): Promise<ProviderAccount> => {
+  const bridge = netcattyBridge.get();
+  const userInfoViaMain = bridge?.googleGetUserInfo;
+  if (userInfoViaMain) {
+    const user = await userInfoViaMain({ accessToken });
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      avatarUrl: user.picture,
+    };
+  }
+
   const response = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
     headers: {
       'Authorization': `Bearer ${accessToken}`,
@@ -221,6 +256,13 @@ export const getUserInfo = async (accessToken: string): Promise<ProviderAccount>
  */
 export const validateToken = async (accessToken: string): Promise<boolean> => {
   try {
+    const bridge = netcattyBridge.get();
+    const userInfoViaMain = bridge?.googleGetUserInfo;
+    if (userInfoViaMain) {
+      await userInfoViaMain({ accessToken });
+      return true;
+    }
+
     const response = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
       headers: { 'Authorization': `Bearer ${accessToken}` },
     });

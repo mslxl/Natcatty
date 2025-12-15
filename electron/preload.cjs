@@ -474,6 +474,14 @@ const api = {
   // GitHub Device Flow (proxied via main process to avoid CORS)
   githubStartDeviceFlow: (options) => ipcRenderer.invoke("netcatty:github:deviceFlow:start", options),
   githubPollDeviceFlowToken: (options) => ipcRenderer.invoke("netcatty:github:deviceFlow:poll", options),
+
+  // Google OAuth (proxied via main process to avoid CORS)
+  googleExchangeCodeForTokens: (options) =>
+    ipcRenderer.invoke("netcatty:google:oauth:exchange", options),
+  googleRefreshAccessToken: (options) =>
+    ipcRenderer.invoke("netcatty:google:oauth:refresh", options),
+  googleGetUserInfo: (options) =>
+    ipcRenderer.invoke("netcatty:google:oauth:userinfo", options),
 };
 
 // Merge with existing netcatty (if any) to avoid stale objects on hot reload

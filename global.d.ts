@@ -320,6 +320,38 @@ interface NetcattyBridge {
     error?: string;
     error_description?: string;
   }>;
+
+  // Google OAuth (cloud sync) - proxied via main process to avoid CORS
+  googleExchangeCodeForTokens?(options: {
+    clientId: string;
+    clientSecret?: string;
+    code: string;
+    codeVerifier: string;
+    redirectUri: string;
+  }): Promise<{
+    accessToken: string;
+    refreshToken?: string;
+    expiresAt?: number;
+    tokenType: string;
+    scope?: string;
+  }>;
+  googleRefreshAccessToken?(options: {
+    clientId: string;
+    clientSecret?: string;
+    refreshToken: string;
+  }): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    expiresAt?: number;
+    tokenType: string;
+    scope?: string;
+  }>;
+  googleGetUserInfo?(options: { accessToken: string }): Promise<{
+    id: string;
+    email: string;
+    name: string;
+    picture?: string;
+  }>;
 }
 
 interface Window {
