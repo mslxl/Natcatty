@@ -1,7 +1,7 @@
 import type { FitAddon } from "@xterm/addon-fit";
 import type { SerializeAddon } from "@xterm/addon-serialize";
 import type { Terminal as XTerm } from "@xterm/xterm";
-import type { Dispatch, MutableRefObject, SetStateAction } from "react";
+import type { Dispatch, RefObject, SetStateAction } from "react";
 import { logger } from "../../../lib/logger";
 import type { Host, SSHKey, TerminalSession, TerminalSettings } from "../../../types";
 
@@ -60,15 +60,15 @@ export type TerminalSessionStartersContext = {
   terminalSettings?: TerminalSettings;
   terminalBackend: TerminalBackendApi;
 
-  sessionRef: MutableRefObject<string | null>;
-  hasConnectedRef: MutableRefObject<boolean>;
-  hasRunStartupCommandRef: MutableRefObject<boolean>;
-  disposeDataRef: MutableRefObject<(() => void) | null>;
-  disposeExitRef: MutableRefObject<(() => void) | null>;
-  fitAddonRef: MutableRefObject<FitAddon | null>;
-  serializeAddonRef: MutableRefObject<SerializeAddon | null>;
-  highlightProcessorRef: MutableRefObject<(text: string) => string>;
-  pendingAuthRef: MutableRefObject<PendingAuth>;
+  sessionRef: RefObject<string | null>;
+  hasConnectedRef: RefObject<boolean>;
+  hasRunStartupCommandRef: RefObject<boolean>;
+  disposeDataRef: RefObject<(() => void) | null>;
+  disposeExitRef: RefObject<(() => void) | null>;
+  fitAddonRef: RefObject<FitAddon | null>;
+  serializeAddonRef: RefObject<SerializeAddon | null>;
+  highlightProcessorRef: RefObject<(text: string) => string>;
+  pendingAuthRef: RefObject<PendingAuth>;
 
   updateStatus: (next: TerminalSession["status"]) => void;
   setStatus: Dispatch<SetStateAction<TerminalSession["status"]>>;

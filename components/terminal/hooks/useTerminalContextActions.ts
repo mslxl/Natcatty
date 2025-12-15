@@ -1,6 +1,6 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { useCallback } from "react";
-import type { MutableRefObject } from "react";
+import type { RefObject } from "react";
 import { logger } from "../../../lib/logger";
 
 type TerminalBackendWriteApi = {
@@ -13,8 +13,8 @@ export const useTerminalContextActions = ({
   terminalBackend,
   onHasSelectionChange,
 }: {
-  termRef: MutableRefObject<XTerm | null>;
-  sessionRef: MutableRefObject<string | null>;
+  termRef: RefObject<XTerm | null>;
+  sessionRef: RefObject<string | null>;
   terminalBackend: TerminalBackendWriteApi;
   onHasSelectionChange?: (hasSelection: boolean) => void;
 }) => {
@@ -60,4 +60,3 @@ export const useTerminalContextActions = ({
 
   return { onCopy, onPaste, onSelectAll, onClear, onSelectWord };
 };
-

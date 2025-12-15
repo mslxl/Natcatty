@@ -1,6 +1,6 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { MutableRefObject } from "react";
+import type { RefObject } from "react";
 import type { Host, TerminalSession } from "../../../types";
 import type { PendingAuth } from "../runtime/createTerminalSessionStarters";
 import type { TerminalAuthMethod } from "../TerminalAuthDialog";
@@ -16,8 +16,8 @@ export const useTerminalAuthState = ({
   setProgressLogs,
 }: {
   host: Host;
-  pendingAuthRef: MutableRefObject<PendingAuth>;
-  termRef: MutableRefObject<XTerm | null>;
+  pendingAuthRef: RefObject<PendingAuth>;
+  termRef: RefObject<XTerm | null>;
   onUpdateHost?: (host: Host) => void;
   onStartSsh: (term: XTerm) => void;
   setStatus: (status: TerminalSession["status"]) => void;

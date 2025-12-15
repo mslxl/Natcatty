@@ -1,7 +1,7 @@
 import type { SearchAddon } from "@xterm/addon-search";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { useCallback, useRef, useState } from "react";
-import type { MutableRefObject } from "react";
+import type { RefObject } from "react";
 
 type SearchMatchCount = { current: number; total: number } | null;
 
@@ -9,8 +9,8 @@ export const useTerminalSearch = ({
   searchAddonRef,
   termRef,
 }: {
-  searchAddonRef: MutableRefObject<SearchAddon | null>;
-  termRef: MutableRefObject<XTerm | null>;
+  searchAddonRef: RefObject<SearchAddon | null>;
+  termRef: RefObject<XTerm | null>;
 }) => {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchMatchCount, setSearchMatchCount] = useState<SearchMatchCount>(null);
@@ -120,4 +120,3 @@ export const useTerminalSearch = ({
     handleCloseSearch,
   };
 };
-

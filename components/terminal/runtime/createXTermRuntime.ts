@@ -4,7 +4,7 @@ import { SerializeAddon } from "@xterm/addon-serialize";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal as XTerm } from "@xterm/xterm";
-import type { Dispatch, MutableRefObject, SetStateAction } from "react";
+import type { Dispatch, RefObject, SetStateAction } from "react";
 import {
   checkAppShortcut,
   getAppLevelActions,
@@ -45,18 +45,18 @@ export type CreateXTermRuntimeContext = {
   host: Host;
   fontSize: number;
   terminalTheme: TerminalTheme;
-  terminalSettingsRef: MutableRefObject<TerminalSettings | undefined>;
+  terminalSettingsRef: RefObject<TerminalSettings | undefined>;
   terminalBackend: TerminalBackendApi;
-  sessionRef: MutableRefObject<string | null>;
+  sessionRef: RefObject<string | null>;
 
-  hotkeySchemeRef: MutableRefObject<"disabled" | "mac" | "pc">;
-  keyBindingsRef: MutableRefObject<KeyBinding[]>;
-  onHotkeyActionRef: MutableRefObject<
+  hotkeySchemeRef: RefObject<"disabled" | "mac" | "pc">;
+  keyBindingsRef: RefObject<KeyBinding[]>;
+  onHotkeyActionRef: RefObject<
     ((action: string, event: KeyboardEvent) => void) | undefined
   >;
 
-  isBroadcastEnabledRef: MutableRefObject<boolean | undefined>;
-  onBroadcastInputRef: MutableRefObject<
+  isBroadcastEnabledRef: RefObject<boolean | undefined>;
+  onBroadcastInputRef: RefObject<
     ((data: string, sourceSessionId: string) => void) | undefined
   >;
 
@@ -68,7 +68,7 @@ export type CreateXTermRuntimeContext = {
     hostLabel: string,
     sessionId: string,
   ) => void;
-  commandBufferRef: MutableRefObject<string>;
+  commandBufferRef: RefObject<string>;
   setIsSearchOpen: Dispatch<SetStateAction<boolean>>;
 };
 
