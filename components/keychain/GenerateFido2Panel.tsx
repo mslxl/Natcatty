@@ -14,6 +14,7 @@ import { useFido2Backend, Fido2Device } from '../../application/state/useFido2Ba
 import { cn } from '../../lib/utils';
 import { SSHKey } from '../../types';
 import { Button } from '../ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Switch } from '../ui/switch.tsx';
@@ -88,7 +89,7 @@ const PinEntryModal: React.FC<{
     if (!open) return null;
 
     return (
-        <div className="absolute inset-0 bg-background/95 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-background/95 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
             <div className="w-full max-w-sm bg-card border border-border rounded-lg shadow-lg p-6 space-y-4">
                 <div className="text-center">
                     <div className="w-16 h-16 mx-auto mb-4 bg-primary/10 rounded-full flex items-center justify-center">
@@ -150,7 +151,7 @@ const TouchPromptModal: React.FC<{
     if (!open) return null;
 
     return (
-        <div className="absolute inset-0 bg-background/95 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-background/95 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
             <div className="w-full max-w-sm bg-card border border-border rounded-lg shadow-lg p-6 space-y-4">
                 <div className="text-center">
                     {/* Animated touch indicator */}
@@ -209,6 +210,7 @@ export const GenerateFido2Panel: React.FC<GenerateFido2PanelProps> = ({
     const [savePassphrase, setSavePassphrase] = useState(false);
     const [showPassphrase, setShowPassphrase] = useState(false);
     const [isInitialized, setIsInitialized] = useState(false);
+    const [configOpen, setConfigOpen] = useState(false);
 
     // Initialize on mount
     useEffect(() => {
@@ -226,6 +228,7 @@ export const GenerateFido2Panel: React.FC<GenerateFido2PanelProps> = ({
     // Handle device selection
     const handleDeviceSelect = useCallback((device: Fido2Device) => {
         selectDevice(device);
+        setConfigOpen(true);
     }, [selectDevice]);
 
     // Handle key generation
@@ -373,103 +376,131 @@ export const GenerateFido2Panel: React.FC<GenerateFido2PanelProps> = ({
                 </>
             )}
 
-            {/* Key Configuration - Only show when device is selected */}
-            {selectedDevice && showDeviceSelector && (
-                <>
-                    {/* Label */}
-                    <div className="bg-card border border-border/80 rounded-lg p-4 space-y-4">
-                        <div className="space-y-2">
-                            <Label>Label</Label>
-                            <Input
-                                value={draftKey.label || ''}
-                                onChange={e => setDraftKey({ ...draftKey, label: e.target.value })}
-                                placeholder="My Security Key"
-                            />
-                        </div>
+            <Dialog open={configOpen && !!selectedDevice} onOpenChange={setConfigOpen}>
+                <DialogContent className="max-w-md p-0">
+                    <div className="p-6 space-y-4">
+                        <DialogHeader>
+                            <DialogTitle>Configure Security Key</DialogTitle>
+                            <DialogDescription>
+                                Set label and options for the selected authenticator.
+                            </DialogDescription>
+                        </DialogHeader>
 
-                        {/* Options */}
-                        <div className="space-y-3">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <Label>Require User Presence</Label>
-                                    <p className="text-xs text-muted-foreground">Touch key for each use</p>
+                        {selectedDevice && (
+                            <div className="bg-card border border-border/80 rounded-lg p-3">
+                                <div className="flex items-center gap-3">
+                                    <div className={cn(
+                                        "w-10 h-10 rounded-lg flex items-center justify-center shrink-0",
+                                        selectedDevice.transport === 'internal'
+                                            ? "bg-blue-500/10 text-blue-500"
+                                            : "bg-amber-500/10 text-amber-500"
+                                    )}>
+                                        {selectedDevice.transport === 'internal' ? (
+                                            <span className="text-xs font-bold text-white bg-[#1a365d] px-1.5 py-0.5 rounded">fido</span>
+                                        ) : (
+                                            <Usb size={18} />
+                                        )}
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                        <p className="text-sm font-medium truncate">{selectedDevice.label}</p>
+                                        <p className="text-xs text-muted-foreground truncate">{selectedDevice.manufacturer}</p>
+                                    </div>
                                 </div>
-                                <Switch
-                                    checked={requireUserPresence}
-                                    onCheckedChange={setRequireUserPresence}
-                                />
                             </div>
+                        )}
 
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <Label>Require Pin Code</Label>
-                                    <p className="text-xs text-muted-foreground">Enter PIN for each use</p>
-                                </div>
-                                <Switch
-                                    checked={requirePinCode}
-                                    onCheckedChange={setRequirePinCode}
-                                />
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Passphrase (optional) */}
-                    <div className="bg-card border border-border/80 rounded-lg p-4 space-y-3">
-                        <div className="space-y-2">
-                            <Label className="text-muted-foreground">Passphrase (optional)</Label>
-                            <div className="relative">
+                        {/* Label */}
+                        <div className="bg-card border border-border/80 rounded-lg p-4 space-y-4">
+                            <div className="space-y-2">
+                                <Label>Label</Label>
                                 <Input
-                                    type={showPassphrase ? "text" : "password"}
-                                    value={passphrase}
-                                    onChange={e => setPassphrase(e.target.value)}
-                                    placeholder="Passphrase"
-                                    className="pr-12"
+                                    value={draftKey.label || ''}
+                                    onChange={e => setDraftKey({ ...draftKey, label: e.target.value })}
+                                    placeholder="My Security Key"
                                 />
-                                <button
-                                    type="button"
-                                    onClick={() => setShowPassphrase(!showPassphrase)}
-                                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground cursor-pointer"
-                                >
-                                    {showPassphrase ? <EyeOff size={16} /> : <span className="text-xs">Show</span>}
-                                </button>
+                            </div>
+
+                            {/* Options */}
+                            <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <Label>Require User Presence</Label>
+                                        <p className="text-xs text-muted-foreground">Touch key for each use</p>
+                                    </div>
+                                    <Switch
+                                        checked={requireUserPresence}
+                                        onCheckedChange={setRequireUserPresence}
+                                    />
+                                </div>
+
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <Label>Require Pin Code</Label>
+                                        <p className="text-xs text-muted-foreground">Enter PIN for each use</p>
+                                    </div>
+                                    <Switch
+                                        checked={requirePinCode}
+                                        onCheckedChange={setRequirePinCode}
+                                    />
+                                </div>
                             </div>
                         </div>
 
-                        <div className="flex items-center justify-between">
-                            <Label className="text-muted-foreground">Save passphrase</Label>
-                            <Switch
-                                checked={savePassphrase}
-                                onCheckedChange={setSavePassphrase}
-                                disabled={!passphrase}
-                            />
+                        {/* Passphrase (optional) */}
+                        <div className="bg-card border border-border/80 rounded-lg p-4 space-y-3">
+                            <div className="space-y-2">
+                                <Label className="text-muted-foreground">Passphrase (optional)</Label>
+                                <div className="relative">
+                                    <Input
+                                        type={showPassphrase ? "text" : "password"}
+                                        value={passphrase}
+                                        onChange={e => setPassphrase(e.target.value)}
+                                        placeholder="Passphrase"
+                                        className="pr-12"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowPassphrase(!showPassphrase)}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground cursor-pointer"
+                                    >
+                                        {showPassphrase ? <EyeOff size={16} /> : <span className="text-xs">Show</span>}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center justify-between">
+                                <Label className="text-muted-foreground">Save passphrase</Label>
+                                <Switch
+                                    checked={savePassphrase}
+                                    onCheckedChange={setSavePassphrase}
+                                    disabled={!passphrase}
+                                />
+                            </div>
                         </div>
+
+                        <Button
+                            className="w-full h-11"
+                            onClick={handleGenerate}
+                            disabled={isGenerating || !draftKey.label?.trim() || !selectedDevice}
+                        >
+                            {isGenerating ? (
+                                <div className="h-4 w-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
+                            ) : (
+                                <>
+                                    <Shield size={14} className="mr-2" />
+                                    Register Security Key
+                                </>
+                            )}
+                        </Button>
                     </div>
-                </>
-            )}
+                </DialogContent>
+            </Dialog>
 
             {/* Error Display */}
             {error && state === 'error' && (
                 <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-3">
                     <p className="text-sm text-destructive">{error}</p>
                 </div>
-            )}
-
-            {/* Generate Button */}
-            {showDeviceSelector && (
-                <Button
-                    className="w-full h-11"
-                    onClick={handleGenerate}
-                    disabled={isGenerating || !draftKey.label?.trim() || !selectedDevice}
-                >
-                    {isGenerating ? (
-                        <div className="h-4 w-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                    ) : (
-                        <>
-                            <Shield size={14} className="mr-2" />
-                            Register Security Key
-                        </>
-                    )}
-                </Button>
             )}
 
             {/* PIN Entry Modal */}
@@ -487,7 +518,7 @@ export const GenerateFido2Panel: React.FC<GenerateFido2PanelProps> = ({
 
             {/* Generating Overlay (when not showing PIN/Touch modals) */}
             {state === 'generating' && !showPinModal && !showTouchModal && (
-                <div className="absolute inset-0 bg-background/80 backdrop-blur-sm z-40 flex items-center justify-center">
+                <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-[60] flex items-center justify-center">
                     <div className="text-center">
                         <div className="w-12 h-12 mx-auto mb-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                         <p className="text-sm font-medium">Generating key...</p>
