@@ -9,6 +9,7 @@ const path = require("node:path");
 const { Client: SSHClient, utils: sshUtils } = require("ssh2");
 const { registerHandlers: registerWebAuthnHandlers } = require("./webauthnIpc.cjs");
 const { NetcattyAgent } = require("./netcattyAgent.cjs");
+const biometricBridge = require("./biometricBridge.cjs");
 
 // Simple file logger for debugging
 const logFile = path.join(require("os").tmpdir(), "netcatty-ssh.log");
@@ -211,6 +212,33 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         && typeof jump.publicKey === "string"
         && jump.publicKey.trim().length > 0;
 
+      // Check if this jump host uses a Termius-style biometric key
+      const isJumpBiometricKey =
+        jump.keySource === "biometric"
+        && jump.keyId
+        && jump.privateKey
+        && !hasWebAuthn;
+
+      // For biometric keys, retrieve passphrase from OS Secure Storage
+      let jumpEffectivePassphrase = jump.passphrase;
+      if (isJumpBiometricKey && !jumpEffectivePassphrase) {
+        console.log("[SSH] Jump host biometric key detected, retrieving passphrase...");
+        log("Jump host biometric key", { keyId: jump.keyId, hop: i + 1 });
+        
+        try {
+          const passphraseResult = await biometricBridge.getBiometricPassphrase(jump.keyId);
+          if (passphraseResult.success && passphraseResult.passphrase) {
+            jumpEffectivePassphrase = passphraseResult.passphrase;
+            console.log("[SSH] Jump host biometric passphrase retrieved successfully");
+          } else {
+            throw new Error(passphraseResult.error || "Failed to retrieve passphrase");
+          }
+        } catch (err) {
+          console.error("[SSH] Jump host biometric passphrase error:", err);
+          throw new Error(`Biometric authentication failed for jump host ${hopLabel}: ${err.message}`);
+        }
+      }
+
       let authAgent = null;
       if (hasWebAuthn) {
         // Give users time to complete Touch ID / Passkey prompts
@@ -236,13 +264,13 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
             label: jump.keyId || jump.username || "",
             certificate: jump.certificate,
             privateKey: jump.privateKey,
-            passphrase: jump.passphrase,
+            passphrase: jumpEffectivePassphrase,
           },
         });
         connOpts.agent = authAgent;
       } else if (jump.privateKey) {
         connOpts.privateKey = jump.privateKey;
-        if (jump.passphrase) connOpts.passphrase = jump.passphrase;
+        if (jumpEffectivePassphrase) connOpts.passphrase = jumpEffectivePassphrase;
       }
 
       if (jump.password) connOpts.password = jump.password;
@@ -392,18 +420,55 @@ async function startSSHSession(event, options) {
       && typeof options.publicKey === "string"
       && options.publicKey.trim().length > 0;
 
+    // Check if this is a Termius-style biometric key (ED25519 + OS Secure Storage)
+    // These keys have keySource === "biometric" but NO credentialId/rpId (not WebAuthn)
+    const isBiometricKey =
+      options.keySource === "biometric"
+      && options.keyId
+      && options.privateKey
+      && !hasWebAuthn;
+
+    // For biometric keys, retrieve passphrase from OS Secure Storage
+    // This will trigger Windows Hello / Touch ID prompt
+    let effectivePassphrase = options.passphrase;
+    if (isBiometricKey && !effectivePassphrase) {
+      console.log("[SSH] Biometric key detected, retrieving passphrase from secure storage...");
+      log("Biometric key detected", { keyId: options.keyId });
+      
+      try {
+        const passphraseResult = await biometricBridge.getBiometricPassphrase(options.keyId);
+        if (passphraseResult.success && passphraseResult.passphrase) {
+          effectivePassphrase = passphraseResult.passphrase;
+          console.log("[SSH] Biometric passphrase retrieved successfully");
+          log("Biometric passphrase retrieved", { keyId: options.keyId });
+        } else {
+          const errorMsg = passphraseResult.error || "Failed to retrieve biometric passphrase";
+          console.error("[SSH] Biometric passphrase retrieval failed:", errorMsg);
+          log("Biometric passphrase retrieval failed", { error: errorMsg });
+          throw new Error(`Biometric authentication failed: ${errorMsg}`);
+        }
+      } catch (err) {
+        console.error("[SSH] Biometric passphrase error:", err);
+        log("Biometric passphrase error", { error: err.message });
+        throw new Error(`Biometric authentication failed: ${err.message}`);
+      }
+    }
+
     console.log("[SSH] Auth configuration:", {
       hasCertificate,
       hasWebAuthn,
+      isBiometricKey,
       keySource: options.keySource,
       hasCredentialId: !!options.credentialId,
       hasRpId: !!options.rpId,
       hasPublicKey: !!options.publicKey,
+      hasEffectivePassphrase: !!effectivePassphrase,
     });
     
     log("Auth configuration", {
       hasCertificate,
       hasWebAuthn,
+      isBiometricKey,
       keySource: options.keySource,
       hasCredentialId: !!options.credentialId,
       hasRpId: !!options.rpId,
@@ -435,14 +500,15 @@ async function startSSHSession(event, options) {
           label: options.keyId || options.username || "",
           certificate: options.certificate,
           privateKey: options.privateKey,
-          passphrase: options.passphrase,
+          passphrase: effectivePassphrase,
         },
       });
       connectOpts.agent = authAgent;
     } else if (options.privateKey) {
       connectOpts.privateKey = options.privateKey;
-      if (options.passphrase) {
-        connectOpts.passphrase = options.passphrase;
+      // Use effectivePassphrase (which may have been retrieved from OS Secure Storage for biometric keys)
+      if (effectivePassphrase) {
+        connectOpts.passphrase = effectivePassphrase;
       }
     }
 

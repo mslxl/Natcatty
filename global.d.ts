@@ -41,6 +41,26 @@ interface Fido2GenerateResult {
   exitCode?: number;
 }
 
+// Biometric Key Support Check Result (Termius-style)
+interface BiometricSupportResult {
+  supported: boolean;
+  hasKeytar: boolean;
+  hasSshKeygen: boolean;
+  sshKeygenPath: string | null;
+  platform: string;
+  hasWindowsHello: boolean;
+  error: string | null;
+}
+
+// Biometric Key Generation Result
+interface BiometricGenerateResult {
+  success: boolean;
+  publicKey?: string;
+  privateKey?: string;
+  keyType?: string;
+  error?: string;
+}
+
 // Proxy configuration for SSH connections
 interface NetcattyProxyConfig {
   type: 'http' | 'socks5';
@@ -410,6 +430,13 @@ interface NetcattyBridge {
   fido2GetSshKeygenPath?(): Promise<string | null>;
   onFido2PinRequest?(cb: (requestId: string) => void): () => void;
   onFido2TouchPrompt?(cb: (requestId: string) => void): () => void;
+
+  // Biometric Key API (Termius-style: ED25519 + OS Secure Storage)
+  biometricCheckSupport?(): Promise<BiometricSupportResult>;
+  biometricGenerate?(options: { keyId: string; label: string }): Promise<BiometricGenerateResult>;
+  biometricGetPassphrase?(options: { keyId: string }): Promise<{ success: boolean; passphrase?: string; error?: string }>;
+  biometricDeletePassphrase?(options: { keyId: string }): Promise<{ success: boolean; error?: string }>;
+  biometricListKeys?(): Promise<{ success: boolean; keyIds?: string[]; error?: string }>;
 }
 
 interface Window {

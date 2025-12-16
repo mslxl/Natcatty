@@ -548,6 +548,18 @@ const api = {
     fido2TouchPromptListeners.set(id, cb);
     return () => fido2TouchPromptListeners.delete(id);
   },
+
+  // Biometric Key API (Termius-style: ED25519 + OS Secure Storage)
+  biometricCheckSupport: () =>
+    ipcRenderer.invoke("netcatty:biometric:checkSupport"),
+  biometricGenerate: (options) =>
+    ipcRenderer.invoke("netcatty:biometric:generate", options),
+  biometricGetPassphrase: (options) =>
+    ipcRenderer.invoke("netcatty:biometric:getPassphrase", options),
+  biometricDeletePassphrase: (options) =>
+    ipcRenderer.invoke("netcatty:biometric:deletePassphrase", options),
+  biometricListKeys: () =>
+    ipcRenderer.invoke("netcatty:biometric:listKeys"),
 };
 
 // Merge with existing netcatty (if any) to avoid stale objects on hot reload

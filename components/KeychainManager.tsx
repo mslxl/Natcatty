@@ -18,6 +18,7 @@ import React, { useCallback, useMemo, useState } from "react";
 import { logger } from "../lib/logger";
 import { cn } from "../lib/utils";
 import { Host, Identity, KeyType, SSHKey } from "../types";
+import { useBiometricBackend } from "../application/state/useBiometricBackend";
 import { useKeychainBackend } from "../application/state/useKeychainBackend";
 import { useWebAuthnBackend } from "../application/state/useWebAuthnBackend";
 import SelectHostPanel from "./SelectHostPanel";
@@ -36,7 +37,6 @@ import { toast } from "./ui/toast";
 
 // Import utilities and components from keychain module
 import {
-  createBiometricCredential,
   type FilterTab,
   GenerateBiometricPanel,
   GenerateFido2Panel,
@@ -80,7 +80,8 @@ const KeychainManager: React.FC<KeychainManagerProps> = ({
   onCreateGroup,
 }) => {
   const { generateKeyPair, execCommand } = useKeychainBackend();
-  const { hasBrowserWebAuthn: _hasBrowserWebAuthn, createCredentialInBrowser } = useWebAuthnBackend();
+  const { hasBrowserWebAuthn: _hasBrowserWebAuthn, createCredentialInBrowser: _createCredentialInBrowser } = useWebAuthnBackend();
+  const { generateKey: generateBiometricKey, deletePassphrase: deleteBiometricPassphrase } = useBiometricBackend();
   const [activeFilter, setActiveFilter] = useState<FilterTab>("key");
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
@@ -364,7 +365,7 @@ echo $3 >> "$FILE"`);
   }, [draftKey, onSave, closePanel, generateKeyPair, showError]);
 
   // Handle biometric key generation (Windows Hello / Touch ID)
-  // Uses IPC to create credential via a localhost popup window for WebAuthn security
+  // Uses Termius-style approach: ED25519 key + passphrase stored in OS Secure Storage
   const handleGenerateBiometric = useCallback(async () => {
     if (!draftKey.label?.trim()) {
       showError("Please enter a label for the key", "Validation");
@@ -374,31 +375,28 @@ echo $3 >> "$FILE"`);
     setIsGenerating(true);
 
     try {
-      // Use WebAuthn (macOS may use a browser fallback to reliably show Touch ID prompt)
-      const result = await createBiometricCredential(
-        draftKey.label.trim(),
-        createCredentialInBrowser,
-        // Callback when browser fallback is triggered
-        () => {
-          toast.info(
-            `A browser window will open to complete ${isMac ? "Touch ID" : "Windows Hello"}. Finish the prompt there, then return to Netcatty.`,
-            isMac ? "Touch ID" : "Windows Hello",
-          );
-        },
-      );
+      // Generate a unique ID for this key (used as the keytar account name)
+      const keyId = crypto.randomUUID();
+      
+      // Generate biometric key via the new backend
+      // This creates an ED25519 key with a random passphrase stored in OS Secure Storage
+      const result = await generateBiometricKey(keyId, draftKey.label.trim());
 
-      if (!result) {
-        throw new Error("Credential creation was cancelled");
+      if (!result.success) {
+        throw new Error(result.error || "Key generation failed");
+      }
+
+      if (!result.privateKey || !result.publicKey) {
+        throw new Error("Generated key is missing required components");
       }
 
       const newKey: SSHKey = {
-        id: crypto.randomUUID(),
+        id: keyId, // Use the same ID for the key and keytar storage
         label: draftKey.label.trim(),
-        type: "ECDSA",
-        privateKey: "", // Biometric keys don't have exportable private keys
+        type: "ED25519",
+        privateKey: result.privateKey, // Encrypted with passphrase stored in OS Secure Storage
         publicKey: result.publicKey,
-        credentialId: result.credentialId,
-        rpId: result.rpId,
+        // No credentialId/rpId - this is not a WebAuthn key
         source: "biometric",
         category: "key",
         created: Date.now(),
@@ -406,11 +404,16 @@ echo $3 >> "$FILE"`);
 
       onSave(newKey);
       closePanel();
+      
+      toast.success(
+        `Biometric key created successfully. ${isMac ? "Touch ID" : "Windows Hello"} will be required to use this key.`,
+        "Biometric Key",
+      );
     } catch (err) {
       showError(
         err instanceof Error
           ? err.message
-          : "Failed to create biometric credential",
+          : "Failed to create biometric key",
         "Biometric Setup",
       );
     } finally {
@@ -418,7 +421,7 @@ echo $3 >> "$FILE"`);
     }
   }, [
     draftKey,
-    createCredentialInBrowser,
+    generateBiometricKey,
     isMac,
     onSave,
     closePanel,
@@ -520,13 +523,27 @@ echo $3 >> "$FILE"`);
 
   // Handle delete
   const handleDelete = useCallback(
-    (id: string) => {
+    async (id: string) => {
+      // Find the key to check if it's a biometric key
+      const keyToDelete = keys.find((k) => k.id === id);
+      
+      // If it's a biometric key, also delete the passphrase from secure storage
+      if (keyToDelete?.source === "biometric") {
+        try {
+          await deleteBiometricPassphrase(id);
+          logger.info("Deleted biometric passphrase for key:", id);
+        } catch (err) {
+          logger.warn("Failed to delete biometric passphrase:", err);
+          // Continue with key deletion even if passphrase deletion fails
+        }
+      }
+      
       onDelete(id);
       if (panel.type === "view" && panel.key.id === id) {
         closePanel();
       }
     },
-    [onDelete, panel, closePanel],
+    [keys, deleteBiometricPassphrase, onDelete, panel, closePanel],
   );
 
   // Handle delete identity
