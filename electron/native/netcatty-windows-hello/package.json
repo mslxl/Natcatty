@@ -1,0 +1,11 @@
+{
+  "name": "netcatty-windows-hello",
+  "version": "0.0.1",
+  "private": true,
+  "main": "index.js",
+  "os": [
+    "win32"
+  ],
+  "gypfile": true,
+  "dependencies": {}
+}

@@ -18,6 +18,7 @@ dist-ssr
 coverage
 /.vite
 /build
+/electron/native/**/build
 /release
 /out
 *.asar

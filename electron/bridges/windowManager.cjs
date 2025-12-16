@@ -304,6 +304,20 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
   }
   handlersRegistered = true;
 
+  // Sync HWND getter for WebAuthn/Hello calls performed in preload.
+  // This must be synchronous to stay within the same user-gesture call stack.
+  ipcMain.on("netcatty:window:getNativeWindowHandleSync", (event) => {
+    try {
+      if (mainWindow && !mainWindow.isDestroyed() && typeof mainWindow.getNativeWindowHandle === "function") {
+        event.returnValue = mainWindow.getNativeWindowHandle();
+        return;
+      }
+    } catch {
+      // ignore
+    }
+    event.returnValue = null;
+  });
+
   ipcMain.handle("netcatty:window:minimize", () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.minimize();

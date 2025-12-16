@@ -334,10 +334,17 @@ interface NetcattyBridge {
 
   // Biometric Key API (Termius-style: ED25519 + OS Secure Storage)
   biometricCheckSupport?(): Promise<BiometricSupportResult>;
-  biometricGenerate?(options: { keyId: string; label: string }): Promise<BiometricGenerateResult>;
+  biometricGenerate?(options: { keyId: string; label: string; windowsHelloCredentialId?: string }): Promise<BiometricGenerateResult>;
   biometricGetPassphrase?(options: { keyId: string }): Promise<{ success: boolean; passphrase?: string; error?: string }>;
   biometricDeletePassphrase?(options: { keyId: string }): Promise<{ success: boolean; error?: string }>;
   biometricListKeys?(): Promise<{ success: boolean; keyIds?: string[]; error?: string }>;
+  
+  // WebAuthn API (exposed for user-gesture-triggered calls from React)
+  webauthn?: {
+    isAvailable: () => Promise<boolean>;
+    createCredential: (userName: string) => Promise<{ credentialId: string; rawId: string } | null>;
+    getAssertion: (credentialIdB64: string) => Promise<{ authenticatorData: string; signature: string } | null>;
+  };
 }
 
 interface Window {

@@ -36,7 +36,7 @@ try {
   electronModule = require("electron");
 }
 
-const { app, BrowserWindow, nativeTheme, Menu, protocol } = electronModule || {};
+const { app, BrowserWindow, nativeTheme, Menu, protocol, session } = electronModule || {};
 if (!app || !BrowserWindow) {
   throw new Error("Failed to load Electron runtime. Ensure the app is launched with the Electron binary.");
 }
@@ -361,6 +361,40 @@ async function createWindow() {
 
 // Application lifecycle
 app.whenReady().then(() => {
+  // Configure session for WebAuthn support
+  // This is critical for Windows Hello / Touch ID to work in Electron
+  const ses = session.defaultSession;
+  
+  // Allow WebAuthn-related permissions
+  ses.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    // Allow all permissions from localhost (dev) or app:// (production)
+    if (requestingOrigin.startsWith('http://localhost') || 
+        requestingOrigin.startsWith('https://localhost') ||
+        requestingOrigin.startsWith('app://')) {
+      return true;
+    }
+    
+    // Specifically allow hid (for hardware security keys) and usb
+    if (permission === 'hid' || permission === 'usb') {
+      return true;
+    }
+    
+    return true; // Allow other permissions as needed
+  });
+  
+  ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    // Allow all permission requests from our app
+    callback(true);
+  });
+  
+  // Set device permission handler for WebAuthn hardware authenticators
+  ses.setDevicePermissionHandler((details) => {
+    // Allow all device access for WebAuthn
+    return true;
+  });
+  
+  console.log('[Main] WebAuthn permissions configured');
+  
   // Deep link protocol (netcatty://...) to return from browser helper pages.
   // Note: protocol registration works best in packaged builds; in dev it may require manual registration.
   try {

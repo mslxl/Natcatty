@@ -9,7 +9,8 @@
  * 
  * Platform behavior:
  * - macOS: Keychain automatically prompts for Touch ID / password
- * - Windows: We use electron-windows-security to call Windows Hello
+ * - Windows: Uses WebAuthn via renderer process (navigator.credentials API)
+ *            to trigger Windows Hello UI properly
  */
 
 const { spawn, execSync } = require("node:child_process");
@@ -20,6 +21,8 @@ const crypto = require("node:crypto");
 
 // Service name for keytar (identifies our app in the credential store)
 const KEYTAR_SERVICE = "com.netcatty.biometric-keys";
+const WEBAUTHN_SERVICE = "com.netcatty.webauthn-hello";
+const WEBAUTHN_ACCOUNT_PREFIX = "uvpa-credential-id:";
 
 // Lazy-load keytar to handle cases where native module isn't available
 let keytar = null;
@@ -35,20 +38,62 @@ function getKeytar() {
   return keytar || null;
 }
 
-// Lazy-load electron-windows-security for Windows Hello verification
-let windowsSecurity = null;
-function getWindowsSecurity() {
-  if (process.platform !== "win32") return null;
-  if (windowsSecurity === null) {
-    try {
-      windowsSecurity = require("electron-windows-security");
-      console.log("[Biometric] electron-windows-security loaded successfully");
-    } catch (err) {
-      console.warn("[Biometric] electron-windows-security not available:", err.message);
-      windowsSecurity = false;
-    }
+// Pending WebAuthn requests to renderer
+const pendingWebAuthnRequests = new Map();
+let webauthnRequestCounter = 0;
+
+/**
+ * Invoke WebAuthn operation in the renderer process via IPC.
+ * The renderer uses navigator.credentials API which properly handles
+ * Windows foreground requirements.
+ */
+async function webauthnInvoke(op, params) {
+  const { BrowserWindow } = require("electron");
+  
+  // Find a window to send the request to
+  const windows = BrowserWindow.getAllWindows?.() || [];
+  const targetWin = windows.find(w => w && !w.isDestroyed?.()) || null;
+  
+  if (!targetWin) {
+    throw new Error("No Electron window available for WebAuthn");
   }
-  return windowsSecurity || null;
+
+  const requestId = `webauthn-${++webauthnRequestCounter}-${Date.now()}`;
+  
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pendingWebAuthnRequests.delete(requestId);
+      reject(new Error("WebAuthn operation timed out"));
+    }, 120000); // 2 minute timeout for user interaction
+
+    pendingWebAuthnRequests.set(requestId, { resolve, reject, timeout });
+
+    // Send request to renderer
+    targetWin.webContents.send("netcatty:webauthn:request", {
+      requestId,
+      op,
+      params,
+    });
+  });
+}
+
+/**
+ * Handle WebAuthn response from renderer process
+ */
+function handleWebAuthnResponse(event, payload) {
+  const { requestId, ok, result, error } = payload || {};
+  
+  const pending = pendingWebAuthnRequests.get(requestId);
+  if (!pending) return;
+  
+  pendingWebAuthnRequests.delete(requestId);
+  clearTimeout(pending.timeout);
+  
+  if (ok) {
+    pending.resolve(result);
+  } else {
+    pending.reject(new Error(error || "WebAuthn operation failed"));
+  }
 }
 
 /**
@@ -158,24 +203,12 @@ async function checkBiometricSupport() {
   }
 
   // Check Windows Hello availability on Windows
+  // NOTE: We can't reliably check WebAuthn from main process anymore
+  // The renderer will check it via window.netcatty.webauthn.isAvailable()
   if (platform === "win32") {
-    const winSec = getWindowsSecurity();
-    if (winSec && winSec.UserConsentVerifier) {
-      try {
-        const availability = await new Promise((resolve, reject) => {
-          winSec.UserConsentVerifier.checkAvailabilityAsync((err, avail) => {
-            if (err) reject(err);
-            else resolve(avail);
-          });
-        });
-        // UserConsentVerifierAvailability.available = 0
-        result.hasWindowsHello = availability === 0 || availability === winSec.UserConsentVerifierAvailability.available;
-        console.log("[Biometric] Windows Hello availability:", availability, result.hasWindowsHello);
-      } catch (err) {
-        console.warn("[Biometric] Windows Hello check failed:", err.message);
-        result.hasWindowsHello = false;
-      }
-    }
+    // Just assume it's available if we're on Windows 10+
+    // The actual check will be done in the renderer
+    result.hasWindowsHello = true;
   }
 
   result.supported = true;
@@ -188,10 +221,11 @@ async function checkBiometricSupport() {
  * @param {Object} options
  * @param {string} options.keyId - Unique ID for this key (used as account name in keytar)
  * @param {string} options.label - Human-readable label for the key
+ * @param {string} [options.windowsHelloCredentialId] - Pre-created WebAuthn credential ID from renderer
  * @returns {Promise<Object>} Result with publicKey, privateKey, or error
  */
 async function generateBiometricKey(options) {
-  const { keyId, label } = options;
+  const { keyId, label, windowsHelloCredentialId } = options;
 
   if (!keyId || !label) {
     return { success: false, error: "keyId and label are required" };
@@ -205,6 +239,19 @@ async function generateBiometricKey(options) {
   const sshKeygenPath = getSSHKeygenPath();
   if (!sshKeygenPath) {
     return { success: false, error: "ssh-keygen is not available" };
+  }
+
+  // On Windows, the renderer must have already created a WebAuthn credential
+  // and passed it to us via windowsHelloCredentialId
+  if (process.platform === "win32") {
+    if (!windowsHelloCredentialId) {
+      return { success: false, error: "Windows Hello credential must be created by the renderer first" };
+    }
+    
+    // Store the credential ID for later verification
+    const account = getWebauthnAccountForKeyId(keyId);
+    await kt.setPassword(WEBAUTHN_SERVICE, account, windowsHelloCredentialId);
+    console.log("[Biometric] Windows Hello credential ID stored:", windowsHelloCredentialId.substring(0, 20) + "...");
   }
 
   // Generate random passphrase
@@ -301,49 +348,86 @@ async function generateBiometricKey(options) {
   }
 }
 
-/**
- * Verify user with Windows Hello before allowing access
- * Uses electron-windows-security native module for reliable UI display
- * 
- * @param {string} reason - The reason for the verification prompt
- * @returns {Promise<boolean>} True if verified, false otherwise
- */
-async function verifyWindowsHello(reason = "Unlock your SSH Key") {
-  if (process.platform !== "win32") {
-    // Not on Windows, no verification needed here
-    // (macOS Keychain handles this automatically)
-    return true;
-  }
+function getWebauthnAccountForKeyId(keyId) {
+  return `${WEBAUTHN_ACCOUNT_PREFIX}${keyId}`;
+}
 
-  const winSec = getWindowsSecurity();
-  if (!winSec || !winSec.UserConsentVerifier) {
-    console.warn("[Biometric] electron-windows-security not available, skipping verification");
-    // SECURITY: If native module not available, we should fail closed
-    return false;
-  }
+async function ensureWindowsHelloCredentialForKeyId(keyId, reason = "Set up Windows Hello") {
+  if (process.platform !== "win32") return true;
+  if (!keyId) return false;
+
+  const kt = getKeytar();
+  if (!kt) return false;
 
   try {
-    console.log("[Biometric] Requesting Windows Hello verification via native module...");
+    console.log("[Biometric] " + reason + "...");
     
-    const result = await new Promise((resolve, reject) => {
-      winSec.UserConsentVerifier.requestVerificationAsync(reason, (err, verificationResult) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(verificationResult);
-        }
-      });
-    });
+    // Check availability via renderer
+    const available = await webauthnInvoke("isAvailable", {}).catch(() => false);
+    if (!available) {
+      console.warn("[Biometric] Windows Hello is not available on this system");
+      return false;
+    }
 
-    // UserConsentVerificationResult.verified = 0
-    const verified = result === 0 || result === winSec.UserConsentVerificationResult.verified;
-    console.log("[Biometric] Windows Hello result:", result, "verified:", verified);
-    
-    return verified;
+    // Ensure window is visible and focused
+    try {
+      const { BrowserWindow } = require("electron");
+      const focused = BrowserWindow.getFocusedWindow?.();
+      const parentWin = focused || BrowserWindow.getAllWindows?.()?.[0];
+      if (parentWin && !parentWin.isDestroyed?.()) {
+        if (parentWin.isMinimized?.()) {
+          parentWin.restore?.();
+        }
+        parentWin.show?.();
+        parentWin.focus?.();
+      }
+    } catch {
+      // ignore
+    }
+
+    // Small delay to ensure window is ready
+    await new Promise((r) => setTimeout(r, 100));
+
+    await ensureWindowsHelloCredentialInternal({ kt, keyId });
+    return true;
   } catch (err) {
-    console.error("[Biometric] Windows Hello verification failed:", err);
+    console.error("[Biometric] Windows Hello credential setup failed:", err);
     return false;
   }
+}
+
+async function ensureWindowsHelloCredentialInternal({ kt, keyId }) {
+  if (!keyId) {
+    throw new Error("keyId is required for Windows Hello credential storage");
+  }
+
+  const account = getWebauthnAccountForKeyId(keyId);
+
+  let credentialIdB64 = await kt.getPassword(WEBAUTHN_SERVICE, account);
+
+  if (!credentialIdB64) {
+    const userName = (() => {
+      try {
+        return os.userInfo().username || "Netcatty";
+      } catch {
+        return "Netcatty";
+      }
+    })();
+
+    console.log("[Biometric] Creating WebAuthn platform credential via renderer...");
+    
+    // Call renderer to create credential using navigator.credentials API
+    credentialIdB64 = await webauthnInvoke("createCredential", { userName });
+    
+    if (!credentialIdB64) {
+      throw new Error("Credential creation returned empty result");
+    }
+
+    await kt.setPassword(WEBAUTHN_SERVICE, account, credentialIdB64);
+    console.log("[Biometric] WebAuthn credential created and stored");
+  }
+
+  return { credentialIdB64 };
 }
 
 /**
@@ -354,10 +438,11 @@ async function verifyWindowsHello(reason = "Unlock your SSH Key") {
  * @param {string} keyId - The key ID used when generating the key
  * @returns {Promise<Object>} Result with passphrase or error
  */
-async function getBiometricPassphrase(keyId) {
-  if (!keyId) {
-    return { success: false, error: "keyId is required" };
-  }
+async function getBiometricPassphrase(options) {
+  const keyId = typeof options === "string" ? options : options?.keyId;
+  const skipHello = typeof options === "object" && options?.skipHello === true;
+
+  if (!keyId) return { success: false, error: "keyId is required" };
 
   const kt = getKeytar();
   if (!kt) {
@@ -366,9 +451,9 @@ async function getBiometricPassphrase(keyId) {
 
   try {
     // On Windows, verify with Windows Hello BEFORE accessing credential manager
-    if (process.platform === "win32") {
+    if (process.platform === "win32" && !skipHello) {
       console.log("[Biometric] Requesting Windows Hello verification...");
-      const verified = await verifyWindowsHello("Unlock SSH Key: " + keyId);
+      const verified = await verifyWindowsHelloForKeyId(keyId, "Unlock SSH Key: " + keyId);
       if (!verified) {
         return { success: false, error: "Windows Hello verification failed or cancelled" };
       }
@@ -392,6 +477,50 @@ async function getBiometricPassphrase(keyId) {
   }
 }
 
+async function verifyWindowsHelloForKeyId(keyId, reason = "Unlock your SSH Key") {
+  if (process.platform !== "win32") return true;
+  if (!keyId) return false;
+
+  try {
+    // Ensure window is visible and focused
+    try {
+      const { BrowserWindow } = require("electron");
+      const focused = BrowserWindow.getFocusedWindow?.();
+      const win = focused || BrowserWindow.getAllWindows?.()?.[0];
+      if (win && !win.isDestroyed?.()) {
+        if (win.isMinimized?.()) {
+          win.restore?.();
+        }
+        win.show?.();
+        win.focus?.();
+      }
+    } catch {
+      // ignore
+    }
+
+    // Small delay to ensure window is ready
+    await new Promise((r) => setTimeout(r, 100));
+
+    const kt = getKeytar();
+    if (!kt) return false;
+
+    const available = await webauthnInvoke("isAvailable", {}).catch(() => false);
+    if (!available) return false;
+
+    const { credentialIdB64 } = await ensureWindowsHelloCredentialInternal({
+      kt,
+      keyId,
+    });
+
+    console.log("[Biometric] Verifying with Windows Hello via renderer...");
+    const verified = await webauthnInvoke("getAssertion", { credentialIdB64 });
+    return !!verified;
+  } catch (err) {
+    console.error("[Biometric] Windows Hello verification failed:", err);
+    return false;
+  }
+}
+
 /**
  * Delete the stored passphrase for a biometric key
  * Should be called when the key is deleted
@@ -412,6 +541,12 @@ async function deleteBiometricPassphrase(keyId) {
   try {
     const result = await kt.deletePassword(KEYTAR_SERVICE, keyId);
     console.log("[Biometric] Passphrase deleted:", result);
+    // Best-effort cleanup of our stored WebAuthn credential linkage for this key.
+    try {
+      await kt.deletePassword(WEBAUTHN_SERVICE, getWebauthnAccountForKeyId(keyId));
+    } catch {
+      // ignore
+    }
     return { success: true };
   } catch (err) {
     console.error("[Biometric] Failed to delete passphrase:", err);
@@ -445,6 +580,11 @@ async function listBiometricKeys() {
  * Register IPC handlers for biometric key operations
  */
 function registerHandlers(ipcMain) {
+  // Handle WebAuthn responses from renderer
+  ipcMain.on("netcatty:webauthn:response", (event, payload) => {
+    handleWebAuthnResponse(event, payload);
+  });
+
   ipcMain.handle("netcatty:biometric:checkSupport", async () => {
     return checkBiometricSupport();
   });
@@ -454,7 +594,7 @@ function registerHandlers(ipcMain) {
   });
 
   ipcMain.handle("netcatty:biometric:getPassphrase", async (_event, options) => {
-    return getBiometricPassphrase(options?.keyId);
+    return getBiometricPassphrase(options);
   });
 
   ipcMain.handle("netcatty:biometric:deletePassphrase", async (_event, options) => {
@@ -473,6 +613,5 @@ module.exports = {
   getBiometricPassphrase,
   deleteBiometricPassphrase,
   listBiometricKeys,
-  verifyWindowsHello,
   KEYTAR_SERVICE,
 };
