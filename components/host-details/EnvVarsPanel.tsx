@@ -21,6 +21,7 @@ export interface EnvVarsPanelProps {
     onAddEnvVar: () => void;
     onRemoveEnvVar: (index: number) => void;
     onUpdateEnvVar: (index: number, field: 'name' | 'value', value: string) => void;
+    onSave: () => void;
     onBack: () => void;
     onCancel: () => void;
 }
@@ -36,6 +37,7 @@ export const EnvVarsPanel: React.FC<EnvVarsPanelProps> = ({
     onAddEnvVar,
     onRemoveEnvVar,
     onUpdateEnvVar,
+    onSave,
     onBack,
     onCancel,
 }) => {
@@ -47,7 +49,7 @@ export const EnvVarsPanel: React.FC<EnvVarsPanelProps> = ({
             showBackButton={true}
             onBack={onBack}
             actions={
-                <Button size="sm" onClick={onBack}>
+                <Button size="sm" onClick={onSave}>
                     Save
                 </Button>
             }

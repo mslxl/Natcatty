@@ -328,6 +328,10 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
           newVars[index] = { ...newVars[index], [field]: value };
           setForm((prev) => ({ ...prev, environmentVariables: newVars }));
         }}
+        onSave={() => {
+          if (newEnvName.trim()) addEnvVar();
+          setActiveSubPanel("none");
+        }}
         onBack={() => setActiveSubPanel("none")}
         onCancel={onCancel}
       />
