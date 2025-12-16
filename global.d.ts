@@ -1,26 +1,6 @@
 import type { RemoteFile } from "./types";
 
 declare global {
-// Biometric Key Support Check Result (Termius-style)
-interface BiometricSupportResult {
-  supported: boolean;
-  hasKeytar: boolean;
-  hasSshKeygen: boolean;
-  sshKeygenPath: string | null;
-  platform: string;
-  hasWindowsHello: boolean;
-  error: string | null;
-}
-
-// Biometric Key Generation Result
-interface BiometricGenerateResult {
-  success: boolean;
-  publicKey?: string;
-  privateKey?: string;
-  keyType?: string;
-  error?: string;
-}
-
 // Proxy configuration for SSH connections
 interface NetcattyProxyConfig {
   type: 'http' | 'socks5';
@@ -41,7 +21,7 @@ interface NetcattyJumpHost {
   passphrase?: string;
   publicKey?: string;
   keyId?: string;
-  keySource?: 'generated' | 'imported' | 'biometric';
+  keySource?: 'generated' | 'imported';
   label?: string; // Display label for UI
 }
 
@@ -66,7 +46,7 @@ interface NetcattySSHOptions {
   certificate?: string;
   publicKey?: string; // OpenSSH public key line
   keyId?: string;
-  keySource?: 'generated' | 'imported' | 'biometric';
+  keySource?: 'generated' | 'imported';
   agentForwarding?: boolean;
   cols?: number;
   rows?: number;
@@ -331,20 +311,6 @@ interface NetcattyBridge {
   googleDriveUpdateSyncFile?(options: { accessToken: string; fileId: string; syncedFile: unknown }): Promise<{ ok: true }>;
   googleDriveDownloadSyncFile?(options: { accessToken: string; fileId: string }): Promise<{ syncedFile: unknown | null }>;
   googleDriveDeleteSyncFile?(options: { accessToken: string; fileId: string }): Promise<{ ok: true }>;
-
-  // Biometric Key API (Termius-style: ED25519 + OS Secure Storage)
-  biometricCheckSupport?(): Promise<BiometricSupportResult>;
-  biometricGenerate?(options: { keyId: string; label: string; windowsHelloCredentialId?: string }): Promise<BiometricGenerateResult>;
-  biometricGetPassphrase?(options: { keyId: string }): Promise<{ success: boolean; passphrase?: string; error?: string }>;
-  biometricDeletePassphrase?(options: { keyId: string }): Promise<{ success: boolean; error?: string }>;
-  biometricListKeys?(): Promise<{ success: boolean; keyIds?: string[]; error?: string }>;
-  
-  // WebAuthn API (exposed for user-gesture-triggered calls from React)
-  webauthn?: {
-    isAvailable: () => Promise<boolean>;
-    createCredential: (userName: string) => Promise<{ credentialId: string; rawId: string } | null>;
-    getAssertion: (credentialIdB64: string) => Promise<{ authenticatorData: string; signature: string } | null>;
-  };
 }
 
 interface Window {

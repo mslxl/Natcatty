@@ -124,8 +124,7 @@ class NetcattyAgent extends BaseAgent {
           sigLength: sig?.length,
         });
 
-        // Return raw signature - ssh2SkPatch will handle format conversion
-        // for ECDSA/DSS types and proper signature field construction.
+        // Return raw signature. ssh2 will handle signature field construction.
         return Buffer.from(sig);
       }
 

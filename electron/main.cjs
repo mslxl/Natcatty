@@ -36,7 +36,7 @@ try {
   electronModule = require("electron");
 }
 
-const { app, BrowserWindow, nativeTheme, Menu, protocol, session } = electronModule || {};
+const { app, BrowserWindow, Menu, protocol } = electronModule || {};
 if (!app || !BrowserWindow) {
   throw new Error("Failed to load Electron runtime. Ensure the app is launched with the Electron binary.");
 }
@@ -45,15 +45,13 @@ const path = require("node:path");
 const os = require("node:os");
 const fs = require("node:fs");
 
-const DEEPLINK_SCHEME = "netcatty";
-
 // Register custom protocol as privileged BEFORE app.ready
-// This allows WebAuthn to work without HTTP server overhead
+// This enables the app:// scheme to be treated as a secure context.
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'app',
     privileges: {
-      secure: true,        // Treat as secure context (required for WebAuthn)
+      secure: true,        // Treat as secure context
       standard: true,      // Allow relative URLs
       supportFetchAPI: true,
       corsEnabled: true,
@@ -62,7 +60,6 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 // Apply ssh2 protocol patch needed for OpenSSH sk-* signature layouts.
-require("./bridges/ssh2SkPatch.cjs");
 
 // Import bridge modules
 const sshBridge = require("./bridges/sshBridge.cjs");
@@ -74,12 +71,10 @@ const terminalBridge = require("./bridges/terminalBridge.cjs");
 const oauthBridge = require("./bridges/oauthBridge.cjs");
 const githubAuthBridge = require("./bridges/githubAuthBridge.cjs");
 const googleAuthBridge = require("./bridges/googleAuthBridge.cjs");
-const biometricBridge = require("./bridges/biometricBridge.cjs");
 const windowManager = require("./bridges/windowManager.cjs");
 
 // GPU settings
 // NOTE: Do not disable Chromium sandbox by default.
-// On macOS, platform authenticators (Touch ID / WebAuthn) can become unavailable when sandboxing is disabled.
 // If you need to debug with sandbox disabled, set NETCATTY_NO_SANDBOX=1.
 if (process.env.NETCATTY_NO_SANDBOX === "1") {
   app.commandLine.appendSwitch("no-sandbox");
@@ -120,19 +115,7 @@ app.on("web-contents-created", (_event, contents) => {
 });
 
 // Application configuration
-// On macOS, when launched via `open -a` for WebAuthn support, env vars aren't passed.
-// Check for a temp config file written by launch.cjs
 let devServerUrl = process.env.VITE_DEV_SERVER_URL;
-const devConfigPath = path.join(__dirname, ".dev-config.json");
-if (!devServerUrl && fs.existsSync(devConfigPath)) {
-  try {
-    const config = JSON.parse(fs.readFileSync(devConfigPath, "utf-8"));
-    devServerUrl = config.VITE_DEV_SERVER_URL;
-    console.log("[Main] Loaded dev config from file:", devServerUrl);
-  } catch (e) {
-    console.warn("[Main] Failed to read dev config:", e);
-  }
-}
 
 const isDev = !!devServerUrl;
 const preload = path.join(__dirname, "preload.cjs");
@@ -163,18 +146,6 @@ function focusMainWindow() {
   } catch {
     return false;
   }
-}
-
-function getDeepLinkFromArgv(argv) {
-  const args = Array.isArray(argv) ? argv : [];
-  return args.find((a) => typeof a === "string" && a.startsWith(`${DEEPLINK_SCHEME}://`));
-}
-
-function handleDeepLink(url) {
-  if (!url || typeof url !== "string") return;
-  // Currently used to bring the app back to foreground after browser WebAuthn completes.
-  // Future: parse URL and navigate in renderer if needed.
-  focusMainWindow();
 }
 
 // Shared state
@@ -292,7 +263,6 @@ const registerBridges = (win) => {
   oauthBridge.setupOAuthBridge(ipcMain);
   githubAuthBridge.registerHandlers(ipcMain);
   googleAuthBridge.registerHandlers(ipcMain, electronModule);
-  biometricBridge.registerHandlers(ipcMain);
 
   // Settings window handler
   ipcMain.handle("netcatty:settings:open", async () => {
@@ -361,58 +331,6 @@ async function createWindow() {
 
 // Application lifecycle
 app.whenReady().then(() => {
-  // Configure session for WebAuthn support
-  // This is critical for Windows Hello / Touch ID to work in Electron
-  const ses = session.defaultSession;
-  
-  // Allow WebAuthn-related permissions
-  ses.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
-    // Allow all permissions from localhost (dev) or app:// (production)
-    if (requestingOrigin.startsWith('http://localhost') || 
-        requestingOrigin.startsWith('https://localhost') ||
-        requestingOrigin.startsWith('app://')) {
-      return true;
-    }
-    
-    // Specifically allow hid (for hardware security keys) and usb
-    if (permission === 'hid' || permission === 'usb') {
-      return true;
-    }
-    
-    return true; // Allow other permissions as needed
-  });
-  
-  ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
-    // Allow all permission requests from our app
-    callback(true);
-  });
-  
-  // Set device permission handler for WebAuthn hardware authenticators
-  ses.setDevicePermissionHandler((details) => {
-    // Allow all device access for WebAuthn
-    return true;
-  });
-  
-  console.log('[Main] WebAuthn permissions configured');
-  
-  // Deep link protocol (netcatty://...) to return from browser helper pages.
-  // Note: protocol registration works best in packaged builds; in dev it may require manual registration.
-  try {
-    if (process.defaultApp) {
-      // Electron dev: pass the app entry to allow OS to re-launch correctly.
-      const appPath = path.resolve(process.argv[1] || "");
-      if (appPath) {
-        app.setAsDefaultProtocolClient(DEEPLINK_SCHEME, process.execPath, [appPath]);
-      } else {
-        app.setAsDefaultProtocolClient(DEEPLINK_SCHEME);
-      }
-    } else {
-      app.setAsDefaultProtocolClient(DEEPLINK_SCHEME);
-    }
-  } catch (err) {
-    console.warn("[Main] Failed to register deep link protocol:", err?.message || err);
-  }
-
   // Register custom protocol handler for production mode
   // This serves files from dist/ with proper MIME types and SPA routing
   if (!isDev) {
@@ -515,12 +433,6 @@ app.whenReady().then(() => {
   // Create the main window
   createWindow();
 
-  // Handle deep link passed at startup (Windows/Linux) after we have a window.
-  const initialDeepLink = getDeepLinkFromArgv(process.argv);
-  if (initialDeepLink) {
-    handleDeepLink(initialDeepLink);
-  }
-
   // Re-create window on macOS dock click
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -529,23 +441,13 @@ app.whenReady().then(() => {
   });
 });
 
-// macOS deep links arrive here when app is already running
-app.on("open-url", (event, url) => {
-  try {
-    event.preventDefault();
-  } catch {}
-  handleDeepLink(url);
-});
-
-// Ensure deep links focus the existing instance on Windows/Linux
+// Ensure single-instance behavior focuses existing window
 try {
   const gotLock = app.requestSingleInstanceLock();
   if (!gotLock) {
     app.quit();
   } else {
-    app.on("second-instance", (_event, argv) => {
-      const url = getDeepLinkFromArgv(argv);
-      if (url) handleDeepLink(url);
+    app.on("second-instance", () => {
       focusMainWindow();
     });
   }
@@ -564,11 +466,6 @@ app.on("will-quit", () => {
     terminalBridge.cleanupAllSessions();
   } catch (err) {
     console.warn("Error during terminal cleanup:", err);
-  }
-  try {
-    windowManager.shutdownProductionStaticServer?.();
-  } catch (err) {
-    console.warn("Error during static server shutdown:", err);
   }
 });
 

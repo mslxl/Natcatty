@@ -2,7 +2,7 @@
  * Terminal Authentication Dialog
  * Displays auth form with password/key selection for SSH connection
  */
-import { AlertCircle, BadgeCheck, ChevronDown, Eye, EyeOff, Fingerprint, Key, Lock } from 'lucide-react';
+import { AlertCircle, BadgeCheck, ChevronDown, Eye, EyeOff, Key, Lock } from 'lucide-react';
 import React from 'react';
 import { cn } from '../../lib/utils';
 import { SSHKey } from '../../types';
@@ -171,21 +171,16 @@ export const TerminalAuthDialog: React.FC<TerminalAuthDialogProps> = ({
                                                         "h-8 w-8 rounded-lg flex items-center justify-center shrink-0",
                                                         selectedKey.certificate?.trim()
                                                             ? "bg-emerald-500/20 text-emerald-500"
-                                                            : selectedKey.source === 'biometric'
-                                                                ? "bg-amber-500/20 text-amber-500"
-                                                                : "bg-primary/20 text-primary"
+                                                            : "bg-primary/20 text-primary"
                                                     )}>
                                                         {selectedKey.certificate?.trim()
                                                             ? <BadgeCheck size={14} />
-                                                            : selectedKey.source === 'biometric'
-                                                                ? <Fingerprint size={14} />
-                                                                : <Key size={14} />}
+                                                            : <Key size={14} />}
                                                     </div>
                                                     <div className="flex-1 min-w-0">
                                                         <div className="text-sm font-medium truncate">{selectedKey.label}</div>
                                                         <div className="text-xs text-muted-foreground">
                                                             {selectedKey.certificate?.trim() ? 'Certificate' : selectedKey.type}
-                                                            {selectedKey.source === 'biometric' && ' · Passkey'}
                                                         </div>
                                                     </div>
                                                 </>
@@ -217,21 +212,16 @@ export const TerminalAuthDialog: React.FC<TerminalAuthDialogProps> = ({
                                                         "h-7 w-7 rounded-md flex items-center justify-center shrink-0",
                                                         key.certificate?.trim()
                                                             ? "bg-emerald-500/20 text-emerald-500"
-                                                            : key.source === 'biometric'
-                                                                ? "bg-amber-500/20 text-amber-500"
-                                                                : "bg-primary/20 text-primary"
+                                                            : "bg-primary/20 text-primary"
                                                     )}>
                                                         {key.certificate?.trim()
                                                             ? <BadgeCheck size={12} />
-                                                            : key.source === 'biometric'
-                                                                ? <Fingerprint size={12} />
-                                                                : <Key size={12} />}
+                                                            : <Key size={12} />}
                                                     </div>
                                                     <div className="flex-1 min-w-0">
                                                         <div className="text-sm font-medium truncate">{key.label}</div>
                                                         <div className="text-xs text-muted-foreground">
                                                             {key.certificate?.trim() ? 'Certificate' : key.type}
-                                                            {key.source === 'biometric' && ' · Passkey'}
                                                         </div>
                                                     </div>
                                                 </button>

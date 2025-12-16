@@ -201,9 +201,6 @@ export interface MasterKeyConfig {
   kdf: 'PBKDF2' | 'Argon2id';
   kdfIterations?: number;
   createdAt: number;
-  biometricEnabled?: boolean;
-  // If biometric enabled, encrypted master key stored here
-  encryptedMasterKey?: string; // Base64
 }
 
 /**

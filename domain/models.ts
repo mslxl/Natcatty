@@ -72,7 +72,7 @@ export interface Host {
 }
 
 export type KeyType = 'RSA' | 'ECDSA' | 'ED25519';
-export type KeySource = 'generated' | 'imported' | 'biometric';
+export type KeySource = 'generated' | 'imported';
 export type KeyCategory = 'key' | 'certificate' | 'identity';
 export type IdentityAuthMethod = 'password' | 'key' | 'certificate';
 
@@ -88,8 +88,6 @@ export interface SSHKey {
   savePassphrase?: boolean;
   source: KeySource;
   category: KeyCategory;
-  // For biometric keys (passphrase stored in OS Secure Storage)
-  keyId?: string; // Key identifier for OS Secure Storage lookup
   created: number;
 }
 

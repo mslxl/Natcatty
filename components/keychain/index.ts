@@ -17,7 +17,6 @@ export { KeyCard } from './KeyCard';
 // Panel components
 export { EditKeyPanel } from './EditKeyPanel';
 export { ExportKeyPanel } from './ExportKeyPanel';
-export { GenerateBiometricPanel } from './GenerateBiometricPanel';
 export { GenerateStandardPanel } from './GenerateStandardPanel';
 export { IdentityPanel } from './IdentityPanel';
 export { ImportKeyPanel } from './ImportKeyPanel';

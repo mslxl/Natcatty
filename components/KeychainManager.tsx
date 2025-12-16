@@ -2,7 +2,6 @@ import {
   BadgeCheck,
   ChevronDown,
   ChevronRight,
-  Fingerprint,
   Info,
   Key,
   LayoutGrid,
@@ -18,7 +17,6 @@ import React, { useCallback, useMemo, useState } from "react";
 import { logger } from "../lib/logger";
 import { cn } from "../lib/utils";
 import { Host, Identity, KeyType, SSHKey } from "../types";
-import { useBiometricBackend } from "../application/state/useBiometricBackend";
 import { useKeychainBackend } from "../application/state/useKeychainBackend";
 import SelectHostPanel from "./SelectHostPanel";
 import { AsidePanel, AsidePanelContent } from "./ui/aside-panel";
@@ -37,7 +35,6 @@ import { toast } from "./ui/toast";
 // Import utilities and components from keychain module
 import {
   type FilterTab,
-  GenerateBiometricPanel,
   GenerateStandardPanel,
   IdentityCard,
   IdentityPanel,
@@ -78,7 +75,6 @@ const KeychainManager: React.FC<KeychainManagerProps> = ({
   onCreateGroup,
 }) => {
   const { generateKeyPair, execCommand } = useKeychainBackend();
-  const { generateKey: generateBiometricKey, deletePassphrase: deleteBiometricPassphrase } = useBiometricBackend();
   const [activeFilter, setActiveFilter] = useState<FilterTab>("key");
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
@@ -113,17 +109,6 @@ if [ ! -f "$FILE" ]; then
 fi
 echo $3 >> "$FILE"`);
 
-  // Detect if running on macOS
-  const isMac = useMemo(() => {
-    return (
-      navigator.platform.toLowerCase().includes("mac") ||
-      navigator.userAgent.toLowerCase().includes("mac")
-    );
-  }, []);
-
-  // Biometric authentication label based on platform
-  const biometricLabel = isMac ? "TOUCH ID" : "WINDOWS HELLO";
-
   // Draft state for forms
   const [draftKey, setDraftKey] = useState<Partial<SSHKey>>({});
   const [draftIdentity, setDraftIdentity] = useState<Partial<Identity>>({});
@@ -149,9 +134,6 @@ echo $3 >> "$FILE"`);
         result = result.filter(
           (k) => k.category === "certificate" || k.certificate,
         );
-        break;
-      case "biometric":
-        result = result.filter((k) => k.source === "biometric");
         break;
     }
 
@@ -259,37 +241,22 @@ echo $3 >> "$FILE"`);
   }, []);
 
   // Open generate panel
-  const openGenerate = useCallback(
-    (keyType: "standard" | "biometric") => {
-      const defaultType =
-        keyType === "biometric" ? "ECDSA" : "ED25519";
-      // Set default keySize based on type: ED25519 doesn't need size, RSA defaults to 4096, ECDSA to 256
-      const getDefaultKeySize = (type: string) => {
-        if (type === "ED25519") return undefined;
-        if (type === "RSA") return 4096;
-        return 256; // ECDSA
-      };
+  const openGenerate = useCallback(() => {
+    const defaultType: KeyType = "ED25519";
 
-      const getSource = () => {
-        if (keyType === "biometric") return "biometric";
-        return "generated";
-      };
-
-      setPanelStack([{ type: "generate", keyType }]);
-      setDraftKey({
-        id: "",
-        label: "",
-        type: defaultType,
-        keySize: getDefaultKeySize(defaultType),
-        privateKey: "",
-        publicKey: "",
-        source: getSource(),
-        category: "key",
-        created: Date.now(),
-      });
-    },
-    [],
-  );
+    setPanelStack([{ type: "generate", keyType: "standard" }]);
+    setDraftKey({
+      id: "",
+      label: "",
+      type: defaultType,
+      keySize: undefined,
+      privateKey: "",
+      publicKey: "",
+      source: "generated",
+      category: "key",
+      created: Date.now(),
+    });
+  }, []);
 
   // Open import panel
   const openImport = useCallback(() => {
@@ -357,69 +324,6 @@ echo $3 >> "$FILE"`);
     }
   }, [draftKey, onSave, closePanel, generateKeyPair, showError]);
 
-  // Handle biometric key generation (Windows Hello / Touch ID)
-  // Uses Termius-style approach: ED25519 key + passphrase stored in OS Secure Storage
-  const handleGenerateBiometric = useCallback(async () => {
-    if (!draftKey.label?.trim()) {
-      showError("Please enter a label for the key", "Validation");
-      return;
-    }
-
-    setIsGenerating(true);
-
-    try {
-      // Generate a unique ID for this key (used as the keytar account name)
-      const keyId = crypto.randomUUID();
-
-      // Generate biometric key via the new backend
-      // This creates an ED25519 key with a random passphrase stored in OS Secure Storage
-      const result = await generateBiometricKey(keyId, draftKey.label.trim());
-
-      if (!result.success) {
-        throw new Error(result.error || "Key generation failed");
-      }
-
-      if (!result.privateKey || !result.publicKey) {
-        throw new Error("Generated key is missing required components");
-      }
-
-      const newKey: SSHKey = {
-        id: keyId, // Use the same ID for the key and keytar storage
-        label: draftKey.label.trim(),
-        type: "ED25519",
-        privateKey: result.privateKey, // Encrypted with passphrase stored in OS Secure Storage
-        publicKey: result.publicKey,
-        source: "biometric",
-        category: "key",
-        created: Date.now(),
-      };
-
-      onSave(newKey);
-      closePanel();
-
-      toast.success(
-        `Biometric key created successfully. ${isMac ? "Touch ID" : "Windows Hello"} will be required to use this key.`,
-        "Biometric Key",
-      );
-    } catch (err) {
-      showError(
-        err instanceof Error
-          ? err.message
-          : "Failed to create biometric key",
-        "Biometric Setup",
-      );
-    } finally {
-      setIsGenerating(false);
-    }
-  }, [
-    draftKey,
-    generateBiometricKey,
-    isMac,
-    onSave,
-    closePanel,
-    showError,
-  ]);
-
   // Handle key import
   const handleImport = useCallback(() => {
     if (!draftKey.label?.trim() || !draftKey.privateKey?.trim()) {
@@ -478,26 +382,12 @@ echo $3 >> "$FILE"`);
   // Handle delete
   const handleDelete = useCallback(
     async (id: string) => {
-      // Find the key to check if it's a biometric key
-      const keyToDelete = keys.find((k) => k.id === id);
-
-      // If it's a biometric key, also delete the passphrase from secure storage
-      if (keyToDelete?.source === "biometric") {
-        try {
-          await deleteBiometricPassphrase(id);
-          logger.info("Deleted biometric passphrase for key:", id);
-        } catch (err) {
-          logger.warn("Failed to delete biometric passphrase:", err);
-          // Continue with key deletion even if passphrase deletion fails
-        }
-      }
-
       onDelete(id);
       if (panel.type === "view" && panel.key.id === id) {
         closePanel();
       }
     },
-    [keys, deleteBiometricPassphrase, onDelete, panel, closePanel],
+    [onDelete, panel, closePanel],
   );
 
   // Handle delete identity
@@ -518,14 +408,12 @@ echo $3 >> "$FILE"`);
 
   // Get icon for key source
   const getKeyIcon = (key: SSHKey) => {
-    if (key.source === "biometric") return <Fingerprint size={16} />;
     if (key.certificate) return <BadgeCheck size={16} />;
     return <Key size={16} />;
   };
 
   // Get key type display
   const getKeyTypeDisplay = (key: SSHKey) => {
-    if (key.source === "biometric") return isMac ? "Touch ID" : "Windows Hello";
     return key.type;
   };
 
@@ -668,7 +556,7 @@ echo $3 >> "$FILE"`);
                 <Button
                   variant="ghost"
                   className="w-full justify-start gap-2"
-                  onClick={() => openGenerate("standard")}
+                  onClick={openGenerate}
                 >
                   <Plus size={14} /> Generate Key
                 </Button>
@@ -739,19 +627,6 @@ echo $3 >> "$FILE"`);
                 </Button>
               </DropdownContent>
             </Dropdown>
-
-            <Button
-              size="sm"
-              variant={activeFilter === "biometric" ? "secondary" : "ghost"}
-              className={cn(
-                "h-8 px-3 gap-2",
-                activeFilter === "biometric" && "bg-primary/15 text-primary",
-              )}
-              onClick={() => setActiveFilter("biometric")}
-            >
-              <Fingerprint size={14} />
-              {biometricLabel}
-            </Button>
           </div>
 
           {/* Search and View Mode - hide search when panel is open */}
@@ -822,28 +697,18 @@ echo $3 >> "$FILE"`);
                 <Shield size={32} className="opacity-60" />
               </div>
               <h3 className="text-lg font-semibold text-foreground mb-2">
-                {activeFilter === "biometric"
-                  ? `Set up ${isMac ? "Touch ID" : "Windows Hello"}`
-                  : "Set up your keys"}
+                Set up your keys
               </h3>
               <p className="text-sm text-center max-w-sm mb-4">
-                {activeFilter === "biometric"
-                  ? `Create biometric SSH keys secured by ${isMac ? "Touch ID" : "Windows Hello"} for passwordless authentication.`
-                  : "Import or generate SSH keys for secure authentication."}
+                Import or generate SSH keys for secure authentication.
               </p>
-              {activeFilter === "biometric" && (
-                <Button onClick={() => openGenerate("biometric")}>
-                  <Fingerprint size={14} className="mr-2" />
-                  Create Biometric Key
-                </Button>
-              )}
               {(activeFilter === "key" || activeFilter === "certificate") && (
                 <div className="flex gap-2">
                   <Button variant="secondary" onClick={openImport}>
                     <Upload size={14} className="mr-2" />
                     Import
                   </Button>
-                  <Button onClick={() => openGenerate("standard")}>
+                  <Button onClick={openGenerate}>
                     <Plus size={14} className="mr-2" />
                     Generate
                   </Button>
@@ -923,25 +788,21 @@ echo $3 >> "$FILE"`);
           open={true}
           onClose={closePanel}
           title={
-            panel.type === "generate" && panel.keyType === "biometric"
-              ? "Generate Biometric Key"
-              : panel.type === "generate" && panel.keyType === "standard"
-                ? "Generate Key"
-                : panel.type === "import"
-                  ? "New Key"
-                  : panel.type === "view"
-                    ? panel.key.source === "biometric"
-                      ? "Biometric Key"
-                      : "Key Details"
-                    : panel.type === "edit"
-                      ? "Edit Key"
-                      : panel.type === "identity"
-                        ? panel.identity
-                          ? "Edit Identity"
-                          : "New Identity"
-                        : panel.type === "export"
-                          ? "Key Export"
-                          : ""
+            panel.type === "generate"
+              ? "Generate Key"
+              : panel.type === "import"
+                ? "New Key"
+                : panel.type === "view"
+                  ? "Key Details"
+                  : panel.type === "edit"
+                    ? "Edit Key"
+                    : panel.type === "identity"
+                      ? panel.identity
+                        ? "Edit Identity"
+                        : "New Identity"
+                      : panel.type === "export"
+                        ? "Key Export"
+                        : ""
           }
           showBackButton={panelStack.length > 1}
           onBack={popPanel}
@@ -954,16 +815,6 @@ echo $3 >> "$FILE"`);
           }
         >
           <AsidePanelContent>
-            {/* Generate Biometric Key */}
-            {panel.type === "generate" && panel.keyType === "biometric" && (
-              <GenerateBiometricPanel
-                draftKey={draftKey}
-                setDraftKey={setDraftKey}
-                isGenerating={isGenerating}
-                onGenerate={handleGenerateBiometric}
-              />
-            )}
-
             {/* Generate Standard Key */}
             {panel.type === "generate" && panel.keyType === "standard" && (
               <GenerateStandardPanel
@@ -1014,8 +865,8 @@ echo $3 >> "$FILE"`);
                   <div
                     className={cn(
                       "h-10 w-10 rounded-md flex items-center justify-center",
-                      panel.key.source === "biometric"
-                        ? "bg-blue-500/15 text-blue-500"
+                      panel.key.certificate
+                        ? "bg-emerald-500/15 text-emerald-500"
                         : "bg-primary/15 text-primary",
                     )}
                   >

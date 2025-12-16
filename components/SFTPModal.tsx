@@ -231,10 +231,9 @@ interface SFTPModalProps {
     privateKey?: string;
     certificate?: string;
     passphrase?: string;
-    // Biometric keys (passphrase stored in OS Secure Storage)
     publicKey?: string;
     keyId?: string;
-    keySource?: 'generated' | 'imported' | 'biometric';
+    keySource?: 'generated' | 'imported';
   };
   open: boolean;
   onClose: () => void;
@@ -328,9 +327,6 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       certificate: credentials.certificate,
       passphrase: credentials.passphrase,
       publicKey: credentials.publicKey,
-      credentialId: credentials.credentialId,
-      rpId: credentials.rpId,
-      userVerification: credentials.userVerification,
       keyId: credentials.keyId,
       keySource: credentials.keySource,
     });
@@ -346,9 +342,6 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     credentials.certificate,
     credentials.passphrase,
     credentials.publicKey,
-    credentials.credentialId,
-    credentials.rpId,
-    credentials.userVerification,
     credentials.keyId,
     credentials.keySource,
     openSftp,

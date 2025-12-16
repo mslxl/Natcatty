@@ -2,7 +2,7 @@
  * Keychain utility functions
  */
 
-import { BadgeCheck, Fingerprint, Key } from 'lucide-react';
+import { BadgeCheck, Key } from 'lucide-react';
 import React from 'react';
 import { logger } from '../../lib/logger';
 import { KeyType, SSHKey } from '../../types';
@@ -38,7 +38,6 @@ QyNTUxOQAAACB${randomId}AAAEC${randomData.substring(0, 64)}
  * Get icon element for key source
  */
 export const getKeyIcon = (key: SSHKey): React.ReactElement => {
-    if (key.source === 'biometric') return React.createElement(Fingerprint, { size: 16 });
     if (key.certificate) return React.createElement(BadgeCheck, { size: 16 });
     return React.createElement(Key, { size: 16 });
 };
@@ -47,7 +46,7 @@ export const getKeyIcon = (key: SSHKey): React.ReactElement => {
  * Get display text for key type
  */
 export const getKeyTypeDisplay = (key: SSHKey, isMac: boolean): string => {
-    if (key.source === 'biometric') return isMac ? 'Touch ID' : 'Windows Hello';
+    void isMac;
     return key.type;
 };
 
@@ -87,10 +86,10 @@ export type PanelMode =
     | { type: 'closed' }
     | { type: 'view'; key: SSHKey }
     | { type: 'edit'; key: SSHKey }
-    | { type: 'generate'; keyType: 'standard' | 'biometric' }
+    | { type: 'generate'; keyType: 'standard' }
     | { type: 'import' }
     | { type: 'identity'; identity?: import('../../types').Identity }
     | { type: 'export'; key: SSHKey };
 
 // Filter tab types
-export type FilterTab = 'key' | 'certificate' | 'biometric';
+export type FilterTab = 'key' | 'certificate';

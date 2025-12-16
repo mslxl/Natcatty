@@ -204,9 +204,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({
                         <div
                           className={cn(
                             "h-8 w-8 rounded-lg flex items-center justify-center",
-                            key.source === "biometric"
-                              ? "bg-purple-500/20 text-purple-500"
-                              : "bg-primary/20 text-primary",
+                            "bg-primary/20 text-primary",
                           )}
                         >
                           <Key size={14} />

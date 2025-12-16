@@ -34,7 +34,6 @@ async function openSftp(event, options) {
   };
   
   const hasCertificate = typeof options.certificate === "string" && options.certificate.trim().length > 0;
-  const hasBiometric = options.keySource === "biometric" && typeof options.keyId === "string";
 
   let authAgent = null;
   if (hasCertificate) {

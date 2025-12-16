@@ -2,7 +2,7 @@
  * Identity Panel - Create/Edit identity
  */
 
-import { BadgeCheck,ChevronDown,Eye,EyeOff,Key,Shield,User } from 'lucide-react';
+import { BadgeCheck,ChevronDown,Eye,EyeOff,Key,User } from 'lucide-react';
 import React from 'react';
 import { Identity,SSHKey } from '../../types';
 import { Button } from '../ui/button';
@@ -86,7 +86,6 @@ export const IdentityPanel: React.FC<IdentityPanelProps> = ({
                             <span className="flex items-center gap-2">
                                 {draftIdentity.authMethod === 'key' && <><Key size={14} /> Key</>}
                                 {draftIdentity.authMethod === 'certificate' && <><BadgeCheck size={14} /> Certificate</>}
-                                {draftIdentity.authMethod === 'fido2' && <><Shield size={14} /> FIDO2</>}
                                 {(!draftIdentity.authMethod || draftIdentity.authMethod === 'password') && 'None (Password only)'}
                             </span>
                             <ChevronDown size={14} />
@@ -106,13 +105,6 @@ export const IdentityPanel: React.FC<IdentityPanelProps> = ({
                             onClick={() => setDraftIdentity({ ...draftIdentity, authMethod: 'certificate', keyId: undefined })}
                         >
                             <BadgeCheck size={14} /> Certificate
-                        </Button>
-                        <Button
-                            variant="ghost"
-                            className="w-full justify-start gap-2"
-                            onClick={() => setDraftIdentity({ ...draftIdentity, authMethod: 'fido2', keyId: undefined })}
-                        >
-                            <Shield size={14} /> FIDO2
                         </Button>
                     </DropdownContent>
                 </Dropdown>

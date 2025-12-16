@@ -19,3 +19,6 @@ export const STORAGE_KEY_PF_PREFER_FORM_MODE = 'netcatty_pf_prefer_form_mode_v1'
 export const STORAGE_KEY_KNOWN_HOSTS = 'netcatty_known_hosts_v1';
 export const STORAGE_KEY_SHELL_HISTORY = 'netcatty_shell_history_v1';
 export const STORAGE_KEY_CONNECTION_LOGS = 'netcatty_connection_logs_v1';
+
+// Archived legacy key records that are no longer supported by the app (e.g. biometric/WebAuthn/FIDO2 experiments).
+export const STORAGE_KEY_LEGACY_KEYS = 'netcatty_legacy_keys_v1';

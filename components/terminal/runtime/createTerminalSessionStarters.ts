@@ -225,11 +225,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         certificate: jumpKey?.certificate,
         passphrase: jumpKey?.passphrase,
         publicKey: jumpKey?.publicKey,
-        credentialId: jumpKey?.credentialId,
-        rpId: jumpKey?.rpId,
         keyId: jumpKey?.id,
         keySource: jumpKey?.source,
-        userVerification: jumpKey?.source === "biometric" ? "required" : "preferred",
         label: jumpHost.label,
       };
     });
@@ -273,8 +270,6 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         keyId: key?.id,
         keyLabel: key?.label,
         keySource: key?.source,
-        hasCredentialId: !!key?.credentialId,
-        hasRpId: !!key?.rpId,
         hasPublicKey: !!key?.publicKey,
         hasPrivateKey: !!key?.privateKey,
       });
@@ -288,11 +283,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         privateKey: key?.privateKey,
         certificate: key?.certificate,
         publicKey: key?.publicKey,
-        credentialId: key?.credentialId,
-        rpId: key?.rpId,
         keyId: key?.id,
         keySource: key?.source,
-        userVerification: key?.source === "biometric" ? "required" : "preferred",
         passphrase: effectivePassphrase || key?.passphrase,
         agentForwarding: ctx.host.agentForwarding,
         cols: term.cols,

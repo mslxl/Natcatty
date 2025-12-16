@@ -19,6 +19,7 @@ import {
   STORAGE_KEY_HOSTS,
   STORAGE_KEY_KEYS,
   STORAGE_KEY_KNOWN_HOSTS,
+  STORAGE_KEY_LEGACY_KEYS,
   STORAGE_KEY_SHELL_HISTORY,
   STORAGE_KEY_SNIPPET_PACKAGES,
   STORAGE_KEY_SNIPPETS,
@@ -33,27 +34,20 @@ type ExportableVaultData = {
   knownHosts?: KnownHost[];
 };
 
+type LegacyKeyRecord = Record<string, unknown> & { id?: string; source?: string };
+
 // Migration helper for old SSHKey format to new format
 const migrateKey = (key: Partial<SSHKey>): SSHKey => {
   const id = key.id ?? crypto.randomUUID();
   const label = key.label ?? `Key ${id.slice(0, 8)}`;
 
-  // Infer source from key characteristics if not explicitly set
-  let source = key.source;
-  if (!source) {
-    // If key has credentialId and rpId, it's a biometric or fido2 key
-    if (key.credentialId && key.rpId) {
-      // If it has no privateKey, it's likely biometric (Touch ID / Windows Hello)
-      // FIDO2 keys also have no privateKey but are external hardware keys
-      // Default to biometric for platform authenticators
-      source = "biometric";
-    } else if (key.privateKey) {
-      source = "imported";
-    } else {
-      source = "generated";
-    }
-  }
-  
+  const source =
+    key.source === "generated" || key.source === "imported"
+      ? key.source
+      : key.privateKey
+        ? "imported"
+        : "generated";
+
   return {
     id,
     label,
@@ -67,10 +61,16 @@ const migrateKey = (key: Partial<SSHKey>): SSHKey => {
     category:
       key.category ||
       ((key.certificate ? "certificate" : "key") as KeyCategory),
-    credentialId: key.credentialId,
-    rpId: key.rpId,
     created: key.created || Date.now(),
   };
+};
+
+const isLegacyUnsupportedKey = (key: LegacyKeyRecord): boolean => {
+  const source = key.source;
+  if (source === "biometric" || source === "fido2" || source === "passkey") return true;
+  // Legacy experimental WebAuthn fields
+  if ("credentialId" in key || "rpId" in key || "userVerification" in key) return true;
+  return false;
 };
 
 export const useVaultState = () => {
@@ -233,8 +233,7 @@ export const useVaultState = () => {
 
   useEffect(() => {
     const savedHosts = localStorageAdapter.read<Host[]>(STORAGE_KEY_HOSTS);
-    const savedKeys =
-      localStorageAdapter.read<Partial<SSHKey>[]>(STORAGE_KEY_KEYS);
+    const savedKeysRaw = localStorageAdapter.read<unknown[]>(STORAGE_KEY_KEYS);
     const savedGroups = localStorageAdapter.read<string[]>(STORAGE_KEY_GROUPS);
     const savedSnippets =
       localStorageAdapter.read<Snippet[]>(STORAGE_KEY_SNIPPETS);
@@ -251,11 +250,29 @@ export const useVaultState = () => {
     }
 
     // Migrate old keys to new format with source/category fields
-    if (savedKeys?.length) {
-      const migratedKeys = savedKeys.map(migrateKey);
+    if (savedKeysRaw?.length) {
+      const migratedKeys: SSHKey[] = [];
+      const legacyKeys: LegacyKeyRecord[] = [];
+
+      for (const entry of savedKeysRaw) {
+        const record =
+          entry && typeof entry === "object" ? (entry as LegacyKeyRecord) : null;
+        if (!record) continue;
+
+        if (isLegacyUnsupportedKey(record)) {
+          legacyKeys.push(record);
+          continue;
+        }
+
+        migratedKeys.push(migrateKey(record as Partial<SSHKey>));
+      }
+
       setKeys(migratedKeys);
       // Persist migrated keys
       localStorageAdapter.write(STORAGE_KEY_KEYS, migratedKeys);
+      if (legacyKeys.length) {
+        localStorageAdapter.write(STORAGE_KEY_LEGACY_KEYS, legacyKeys);
+      }
     }
 
     if (savedSnippets) setSnippets(savedSnippets);

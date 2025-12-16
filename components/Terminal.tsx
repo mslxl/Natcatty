@@ -947,20 +947,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
             publicKey: host.identityFileId
               ? keys.find((k) => k.id === host.identityFileId)?.publicKey
               : undefined,
-            credentialId: host.identityFileId
-              ? keys.find((k) => k.id === host.identityFileId)?.credentialId
-              : undefined,
-            rpId: host.identityFileId
-              ? keys.find((k) => k.id === host.identityFileId)?.rpId
-              : undefined,
             keyId: host.identityFileId,
             keySource: host.identityFileId
               ? keys.find((k) => k.id === host.identityFileId)?.source
-              : undefined,
-            userVerification: host.identityFileId
-              ? keys.find((k) => k.id === host.identityFileId)?.source === "biometric"
-                ? "required"
-                : "preferred"
               : undefined,
           }}
           open={showSFTP && status === "connected"}

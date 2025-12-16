@@ -360,7 +360,6 @@ export const createMasterKeyConfig = async (
     kdf: 'PBKDF2',
     kdfIterations: SYNC_CONSTANTS.PBKDF2_ITERATIONS,
     createdAt: Date.now(),
-    biometricEnabled: false,
   };
 };
 
@@ -415,75 +414,6 @@ export const changeMasterPassword = async (
 };
 
 // ============================================================================
-// Biometric Key Storage (via Electron safeStorage)
-// ============================================================================
-
-/**
- * Encrypt master password for biometric storage
- * Uses a random encryption key stored in safeStorage
- */
-export const encryptForBiometric = async (
-  password: string
-): Promise<{ encrypted: string; key: string }> => {
-  const key = generateRandomBytes(32);
-  const iv = generateRandomBytes(SYNC_CONSTANTS.GCM_IV_LENGTH);
-  
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    toArrayBuffer(key),
-    'AES-GCM',
-    false,
-    ['encrypt']
-  );
-  
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: toArrayBuffer(iv), tagLength: SYNC_CONSTANTS.GCM_TAG_LENGTH },
-    cryptoKey,
-    toArrayBuffer(stringToBytes(password))
-  );
-  
-  // Combine IV and ciphertext
-  const combined = new Uint8Array(iv.length + ciphertext.byteLength);
-  combined.set(iv, 0);
-  combined.set(new Uint8Array(ciphertext), iv.length);
-  
-  return {
-    encrypted: arrayBufferToBase64(combined),
-    key: arrayBufferToBase64(key),
-  };
-};
-
-/**
- * Decrypt master password from biometric storage
- */
-export const decryptFromBiometric = async (
-  encrypted: string,
-  keyBase64: string
-): Promise<string> => {
-  const combined = base64ToUint8Array(encrypted);
-  const key = base64ToUint8Array(keyBase64);
-  
-  const iv = combined.slice(0, SYNC_CONSTANTS.GCM_IV_LENGTH);
-  const ciphertext = combined.slice(SYNC_CONSTANTS.GCM_IV_LENGTH);
-  
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    toArrayBuffer(key),
-    'AES-GCM',
-    false,
-    ['decrypt']
-  );
-  
-  const plaintext = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: toArrayBuffer(iv), tagLength: SYNC_CONSTANTS.GCM_TAG_LENGTH },
-    cryptoKey,
-    toArrayBuffer(ciphertext)
-  );
-  
-  return bytesToString(new Uint8Array(plaintext));
-};
-
-// ============================================================================
 // Export Service Class
 // ============================================================================
 
@@ -501,8 +431,6 @@ export class EncryptionService {
   static changeMasterPassword = changeMasterPassword;
   static verifyPassword = verifyPassword;
   static createVerificationHash = createVerificationHash;
-  static encryptForBiometric = encryptForBiometric;
-  static decryptFromBiometric = decryptFromBiometric;
   static generateRandomBytes = generateRandomBytes;
   static arrayBufferToBase64 = arrayBufferToBase64;
   static base64ToUint8Array = base64ToUint8Array;

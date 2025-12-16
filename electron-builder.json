@@ -16,8 +16,7 @@
   "asarUnpack": [
     "node_modules/node-pty/**/*",
     "node_modules/ssh2/**/*",
-    "node_modules/cpu-features/**/*",
-    "node_modules/netcatty-windows-hello/**/*"
+    "node_modules/cpu-features/**/*"
   ],
   "mac": {
     "target": [
@@ -32,11 +31,8 @@
     "entitlements": "electron/entitlements.mac.plist",
     "entitlementsInherit": "electron/entitlements.mac.plist",
     "extendInfo": {
-      "NSBluetoothAlwaysUsageDescription": "Netcatty needs Bluetooth access for FIDO2 security keys",
-      "NSBluetoothPeripheralUsageDescription": "Netcatty needs Bluetooth access for FIDO2 security keys",
       "NSCameraUsageDescription": "Netcatty may use the camera for video calls",
       "NSMicrophoneUsageDescription": "Netcatty may use the microphone for audio",
-      "NSFaceIDUsageDescription": "Netcatty uses Face ID for secure authentication",
       "NSLocalNetworkUsageDescription": "Netcatty needs local network access for SSH connections"
     }
   },

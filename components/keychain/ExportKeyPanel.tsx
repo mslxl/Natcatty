@@ -128,11 +128,9 @@ export const ExportKeyPanel: React.FC<ExportKeyPanelProps> = ({
             <div className="flex items-center gap-3 p-3 bg-card border border-border/80 rounded-lg">
                 <div className={cn(
                     "h-10 w-10 rounded-md flex items-center justify-center",
-                    keyItem.source === 'biometric'
-                        ? "bg-blue-500/15 text-blue-500"
-                        : keyItem.source === 'fido2'
-                            ? "bg-amber-500/15 text-amber-500"
-                            : "bg-primary/15 text-primary"
+                    keyItem.certificate
+                      ? "bg-emerald-500/15 text-emerald-500"
+                      : "bg-primary/15 text-primary"
                 )}>
                     {getKeyIcon(keyItem)}
                 </div>

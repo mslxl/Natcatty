@@ -49,13 +49,6 @@ export const ViewKeyPanel: React.FC<ViewKeyPanelProps> = ({
                 <p className="text-sm">{keyItem.type}</p>
             </div>
 
-            {keyItem.source === 'biometric' && (
-                <div className="space-y-1">
-                    <Label className="text-muted-foreground">Key Size</Label>
-                    <p className="text-sm">256</p>
-                </div>
-            )}
-
             {/* Key Export section */}
             <div className="pt-4 mt-4 border-t border-border/60">
                 <div className="flex items-center gap-2 mb-3">

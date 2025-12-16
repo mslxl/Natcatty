@@ -26,7 +26,6 @@ export const IdentityCard: React.FC<IdentityCardProps> = ({
             case 'password': return 'Password';
             case 'key': return 'Key';
             case 'certificate': return 'Certificate';
-            case 'fido2': return 'FIDO2';
             default: return method;
         }
     };
