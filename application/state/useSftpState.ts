@@ -288,7 +288,7 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[]) => {
 
   // Get host credentials
   const getHostCredentials = useCallback(
-    (host: Host) => {
+    (host: Host): NetcattySSHOptions => {
       const key = host.identityFileId
         ? keys.find((k) => k.id === host.identityFileId)
         : null;
