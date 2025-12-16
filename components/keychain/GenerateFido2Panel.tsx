@@ -286,11 +286,11 @@ export const GenerateFido2Panel: React.FC<GenerateFido2PanelProps> = ({
     const showTouchModal = state === 'waiting-touch';
 
     // Check if we have USB devices (excluding internal)
-    const usbDevices = useMemo(() => 
+    const usbDevices = useMemo(() =>
         devices.filter(d => d.transport === 'usb'),
         [devices]
     );
-    const internalDevices = useMemo(() => 
+    const internalDevices = useMemo(() =>
         devices.filter(d => d.transport === 'internal'),
         [devices]
     );

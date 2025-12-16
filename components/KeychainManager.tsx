@@ -375,17 +375,17 @@ echo $3 >> "$FILE"`);
 
     try {
       // Use WebAuthn (macOS may use a browser fallback to reliably show Touch ID prompt)
-       const result = await createBiometricCredential(
-         draftKey.label.trim(),
-         createCredentialInBrowser,
-         // Callback when browser fallback is triggered
-         () => {
-           toast.info(
+      const result = await createBiometricCredential(
+        draftKey.label.trim(),
+        createCredentialInBrowser,
+        // Callback when browser fallback is triggered
+        () => {
+          toast.info(
             `A browser window will open to complete ${isMac ? "Touch ID" : "Windows Hello"}. Finish the prompt there, then return to Netcatty.`,
             isMac ? "Touch ID" : "Windows Hello",
-            );
-          },
-        );
+          );
+        },
+      );
 
       if (!result) {
         throw new Error("Credential creation was cancelled");
@@ -416,14 +416,14 @@ echo $3 >> "$FILE"`);
     } finally {
       setIsGenerating(false);
     }
-	  }, [
-	    draftKey,
-	    createCredentialInBrowser,
-	    isMac,
-	    onSave,
-	    closePanel,
-	    showError,
-	  ]);
+  }, [
+    draftKey,
+    createCredentialInBrowser,
+    isMac,
+    onSave,
+    closePanel,
+    showError,
+  ]);
 
   // Handle FIDO2 hardware key registration
   const handleGenerateFido2 = useCallback(async (result: { success: boolean; publicKey?: string; privateKey?: string; error?: string }) => {
