@@ -37,7 +37,6 @@ import { toast } from "./ui/toast";
 // Import utilities and components from keychain module
 import {
   createBiometricCredential,
-  createFido2Credential,
   type FilterTab,
   GenerateBiometricPanel,
   GenerateFido2Panel,
@@ -427,31 +426,30 @@ echo $3 >> "$FILE"`);
 	  ]);
 
   // Handle FIDO2 hardware key registration
-  const handleGenerateFido2 = useCallback(async () => {
+  const handleGenerateFido2 = useCallback(async (result: { success: boolean; publicKey?: string; privateKey?: string; error?: string }) => {
+    if (!result.success) {
+      if (result.error) {
+        showError(result.error, "FIDO2 Setup");
+      }
+      return;
+    }
+
     if (!draftKey.label?.trim()) {
       showError("Please enter a label for the security key", "Validation");
       return;
     }
 
-    setIsGenerating(true);
-
     try {
-      const result = await createFido2Credential(draftKey.label.trim());
-
-      if (!result) {
-        throw new Error("Security key registration was cancelled");
-      }
-
       const newKey: SSHKey = {
         id: crypto.randomUUID(),
         label: draftKey.label.trim(),
         type: "ECDSA",
-        privateKey: "", // Hardware keys don't expose private keys
-        publicKey: result.publicKey,
-        credentialId: result.credentialId,
-        rpId: result.rpId,
+        privateKey: result.privateKey || "", // ed25519-sk private key handle
+        publicKey: result.publicKey || "",
         source: "fido2",
         category: "key",
+        passphrase: draftKey.passphrase,
+        savePassphrase: draftKey.savePassphrase,
         created: Date.now(),
       };
 
@@ -462,8 +460,6 @@ echo $3 >> "$FILE"`);
         err instanceof Error ? err.message : "Failed to register security key",
         "FIDO2 Setup",
       );
-    } finally {
-      setIsGenerating(false);
     }
   }, [draftKey, onSave, closePanel, showError]);
 

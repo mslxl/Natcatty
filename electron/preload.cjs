@@ -8,6 +8,10 @@ const transferErrorListeners = new Map();
 const chainProgressListeners = new Map();
 const authFailedListeners = new Map();
 
+// FIDO2 key generation listeners
+const fido2PinRequestListeners = new Map();
+const fido2TouchPromptListeners = new Map();
+
 // WebAuthn requests from main process
 const base64UrlToUint8 = (b64url) => {
   if (typeof b64url !== "string") throw new Error("Invalid base64url value");
@@ -132,6 +136,30 @@ ipcRenderer.on("netcatty:chain:progress", (_event, payload) => {
       cb(hop, total, label, status);
     } catch (err) {
       console.error("Chain progress callback failed", err);
+    }
+  });
+});
+
+// FIDO2 PIN request events
+ipcRenderer.on("netcatty:fido2:pinRequest", (_event, payload) => {
+  const { requestId } = payload;
+  fido2PinRequestListeners.forEach((cb) => {
+    try {
+      cb(requestId);
+    } catch (err) {
+      console.error("FIDO2 PIN request callback failed", err);
+    }
+  });
+});
+
+// FIDO2 touch prompt events
+ipcRenderer.on("netcatty:fido2:touchPrompt", (_event, payload) => {
+  const { requestId } = payload;
+  fido2TouchPromptListeners.forEach((cb) => {
+    try {
+      cb(requestId);
+    } catch (err) {
+      console.error("FIDO2 touch prompt callback failed", err);
     }
   });
 });
@@ -494,6 +522,32 @@ const api = {
     ipcRenderer.invoke("netcatty:google:drive:downloadSyncFile", options),
   googleDriveDeleteSyncFile: (options) =>
     ipcRenderer.invoke("netcatty:google:drive:deleteSyncFile", options),
+
+  // FIDO2 SSH Key Generation API
+  fido2ListDevices: () =>
+    ipcRenderer.invoke("netcatty:fido2:listDevices"),
+  fido2CheckSupport: () =>
+    ipcRenderer.invoke("netcatty:fido2:checkSupport"),
+  fido2Generate: (options) =>
+    ipcRenderer.invoke("netcatty:fido2:generate", options),
+  fido2SubmitPin: (requestId, pin) =>
+    ipcRenderer.invoke("netcatty:fido2:submitPin", { requestId, pin }),
+  fido2CancelPin: (requestId) =>
+    ipcRenderer.invoke("netcatty:fido2:cancelPin", { requestId }),
+  fido2Cancel: (requestId) =>
+    ipcRenderer.invoke("netcatty:fido2:cancel", { requestId }),
+  fido2GetSshKeygenPath: () =>
+    ipcRenderer.invoke("netcatty:fido2:getSshKeygenPath"),
+  onFido2PinRequest: (cb) => {
+    const id = Date.now().toString() + Math.random().toString(16).slice(2);
+    fido2PinRequestListeners.set(id, cb);
+    return () => fido2PinRequestListeners.delete(id);
+  },
+  onFido2TouchPrompt: (cb) => {
+    const id = Date.now().toString() + Math.random().toString(16).slice(2);
+    fido2TouchPromptListeners.set(id, cb);
+    return () => fido2TouchPromptListeners.delete(id);
+  },
 };
 
 // Merge with existing netcatty (if any) to avoid stale objects on hot reload

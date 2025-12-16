@@ -1,6 +1,46 @@
 import type { RemoteFile } from "./types";
 
 declare global {
+// FIDO2 Device Information
+interface Fido2DeviceInfo {
+  id: string;
+  label: string;
+  manufacturer: string;
+  path: string;
+  transport: 'usb' | 'internal';
+  vendorId?: number;
+  productId?: number;
+}
+
+// FIDO2 Support Check Result
+interface Fido2SupportResult {
+  supported: boolean;
+  sshKeygenPath: string | null;
+  version?: string;
+  error?: string;
+}
+
+// FIDO2 Key Generation Options
+interface Fido2GenerateOptions {
+  requestId?: string;
+  label: string;
+  devicePath: string;
+  requireUserPresence?: boolean;
+  requirePinCode?: boolean;
+  resident?: boolean;
+  passphrase?: string;
+}
+
+// FIDO2 Key Generation Result
+interface Fido2GenerateResult {
+  success: boolean;
+  publicKey?: string;
+  privateKey?: string;
+  keyType?: string;
+  error?: string;
+  exitCode?: number;
+}
+
 // Proxy configuration for SSH connections
 interface NetcattyProxyConfig {
   type: 'http' | 'socks5';
@@ -359,6 +399,17 @@ interface NetcattyBridge {
   googleDriveUpdateSyncFile?(options: { accessToken: string; fileId: string; syncedFile: unknown }): Promise<{ ok: true }>;
   googleDriveDownloadSyncFile?(options: { accessToken: string; fileId: string }): Promise<{ syncedFile: unknown | null }>;
   googleDriveDeleteSyncFile?(options: { accessToken: string; fileId: string }): Promise<{ ok: true }>;
+
+  // FIDO2 SSH Key Generation
+  fido2ListDevices?(): Promise<Fido2DeviceInfo[]>;
+  fido2CheckSupport?(): Promise<Fido2SupportResult>;
+  fido2Generate?(options: Fido2GenerateOptions): Promise<Fido2GenerateResult>;
+  fido2SubmitPin?(requestId: string, pin: string): Promise<{ success: boolean; error?: string }>;
+  fido2CancelPin?(requestId: string): Promise<{ success: boolean }>;
+  fido2Cancel?(requestId: string): Promise<{ success: boolean }>;
+  fido2GetSshKeygenPath?(): Promise<string | null>;
+  onFido2PinRequest?(cb: (requestId: string) => void): () => void;
+  onFido2TouchPrompt?(cb: (requestId: string) => void): () => void;
 }
 
 interface Window {

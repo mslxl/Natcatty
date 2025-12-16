@@ -75,6 +75,7 @@ const webauthnBrowserBridge = require("./bridges/webauthnBrowserBridge.cjs");
 const oauthBridge = require("./bridges/oauthBridge.cjs");
 const githubAuthBridge = require("./bridges/githubAuthBridge.cjs");
 const googleAuthBridge = require("./bridges/googleAuthBridge.cjs");
+const fido2Bridge = require("./bridges/fido2Bridge.cjs");
 const windowManager = require("./bridges/windowManager.cjs");
 
 // GPU settings
@@ -293,6 +294,7 @@ const registerBridges = (win) => {
   oauthBridge.setupOAuthBridge(ipcMain);
   githubAuthBridge.registerHandlers(ipcMain);
   googleAuthBridge.registerHandlers(ipcMain, electronModule);
+  fido2Bridge.registerHandlers(ipcMain, electronModule);
 
   // Settings window handler
   ipcMain.handle("netcatty:settings:open", async () => {
