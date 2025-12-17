@@ -61,7 +61,7 @@ export type CreateXTermRuntimeContext = {
   >;
 
   sessionId: string;
-  status: TerminalSession["status"];
+  statusRef: RefObject<TerminalSession["status"]>;
   onCommandExecuted?: (
     command: string,
     hostId: string,
@@ -388,7 +388,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         ctx.onBroadcastInputRef.current(data, ctx.sessionId);
       }
 
-      if (ctx.status === "connected" && ctx.onCommandExecuted) {
+      if (ctx.statusRef.current === "connected" && ctx.onCommandExecuted) {
         if (data === "\r" || data === "\n") {
           const cmd = ctx.commandBufferRef.current.trim();
           if (cmd) ctx.onCommandExecuted(cmd, ctx.host.id, ctx.host.label, ctx.sessionId);

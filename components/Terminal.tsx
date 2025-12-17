@@ -165,6 +165,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const [progressValue, setProgressValue] = useState(15);
   const [hasSelection, setHasSelection] = useState(false);
 
+  const statusRef = useRef<TerminalSession["status"]>(status);
+  statusRef.current = status;
+
   const [chainProgress, setChainProgress] = useState<{
     currentHop: number;
     totalHops: number;
@@ -315,7 +318,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           isBroadcastEnabledRef,
           onBroadcastInputRef,
           sessionId,
-          status,
+          statusRef,
           onCommandExecuted,
           commandBufferRef,
           setIsSearchOpen,
