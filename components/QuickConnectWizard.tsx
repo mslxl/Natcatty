@@ -11,6 +11,8 @@ import {
   User,
 } from "lucide-react";
 import React, { useMemo, useState } from "react";
+import { useI18n } from "../application/i18n/I18nProvider";
+import type { QuickConnectTarget } from "../domain/quickConnect";
 import { cn } from "../lib/utils";
 import { Host, KnownHost, SSHKey } from "../types";
 import { Button } from "./ui/button";
@@ -24,12 +26,6 @@ type Protocol = "ssh" | "mosh" | "telnet";
 // Wizard steps
 type WizardStep = "protocol" | "username" | "knownhost" | "auth";
 
-interface QuickConnectTarget {
-  hostname: string;
-  username?: string;
-  port?: number;
-}
-
 interface QuickConnectWizardProps {
   open: boolean;
   target: QuickConnectTarget;
@@ -39,52 +35,6 @@ interface QuickConnectWizardProps {
   onSaveHost?: (host: Host) => void;
   onAddKey?: () => void;
   onClose: () => void;
-}
-
-// Parse user@host:port format
-export function parseQuickConnectInput(
-  input: string,
-): QuickConnectTarget | null {
-  const trimmed = input.trim();
-  if (!trimmed) return null;
-
-  // Pattern: [user@]hostname[:port]
-  // Hostname can be IP (v4 or v6) or domain name
-  const regex = /^(?:([^@]+)@)?([^\s:]+|\[[^\]]+\])(?::(\d+))?$/;
-  const match = trimmed.match(regex);
-  if (!match) return null;
-
-  const [, username, hostname, portStr] = match;
-
-  // Validate hostname looks like an IP or domain
-  const ipv4Regex = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
-  const ipv6Regex = /^\[?[a-fA-F0-9:]+\]?$/;
-  const domainRegex =
-    /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$/;
-
-  if (
-    !ipv4Regex.test(hostname) &&
-    !ipv6Regex.test(hostname) &&
-    !domainRegex.test(hostname)
-  ) {
-    return null;
-  }
-
-  const port = portStr ? parseInt(portStr, 10) : undefined;
-  if (port !== undefined && (isNaN(port) || port < 1 || port > 65535)) {
-    return null;
-  }
-
-  return {
-    hostname: hostname.replace(/^\[|\]$/g, ""), // Remove IPv6 brackets
-    username: username || undefined,
-    port,
-  };
-}
-
-// Check if input looks like a quick connect address
-export function isQuickConnectInput(input: string): boolean {
-  return parseQuickConnectInput(input) !== null;
 }
 
 const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
@@ -97,6 +47,7 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
   onAddKey,
   onClose,
 }) => {
+  const { t } = useI18n();
   // Wizard state
   const [step, setStep] = useState<WizardStep>("protocol");
   const [protocol, setProtocol] = useState<Protocol>("ssh");
@@ -254,7 +205,7 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
   // Render protocol selection step
   const renderProtocolStep = () => (
     <div className="space-y-4">
-      <h3 className="text-base font-semibold">Choose protocol</h3>
+      <h3 className="text-base font-semibold">{t("protocolSelect.chooseProtocol")}</h3>
       <div className="space-y-3">
         {/* SSH */}
         <button
@@ -285,7 +236,7 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">port:</span>
+            <span className="text-xs text-muted-foreground">{t("protocolSelect.port")}</span>
             <Input
               type="number"
               value={protocol === "ssh" ? port : 22}
@@ -330,7 +281,7 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">port:</span>
+            <span className="text-xs text-muted-foreground">{t("protocolSelect.port")}</span>
             <Input
               type="number"
               value={protocol === "mosh" ? port : 22}
@@ -383,7 +334,7 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">port:</span>
+            <span className="text-xs text-muted-foreground">{t("protocolSelect.port")}</span>
             <Input
               type="number"
               value={protocol === "telnet" ? port : 23}
@@ -406,12 +357,12 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
   const renderUsernameStep = () => (
     <div className="space-y-4">
       <div className="space-y-2">
-        <Label htmlFor="quick-username">Username</Label>
+        <Label htmlFor="quick-username">{t("terminal.auth.username")}</Label>
         <Input
           id="quick-username"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
-          placeholder="root"
+          placeholder={t("terminal.auth.username.placeholder")}
           autoFocus
           onKeyDown={(e) => {
             if (e.key === "Enter" && username.trim()) {
@@ -427,21 +378,21 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
   const renderKnownHostStep = () => (
     <div className="space-y-4">
       <h3 className="text-base font-semibold text-amber-600 dark:text-amber-500">
-        Are you sure you want to connect?
+        {t("quickConnect.knownHost.title")}
       </h3>
       <div className="space-y-2 text-sm text-muted-foreground">
-        <p>The authenticity of {target.hostname} can not be established.</p>
+        <p>{t("quickConnect.knownHost.authenticity", { hostname: target.hostname })}</p>
         {knownHostInfo && (
           <>
             <p className="font-medium text-foreground">
-              {knownHostInfo.keyType} fingerprint is SHA256:
+              {t("quickConnect.knownHost.fingerprintLabel", { keyType: knownHostInfo.keyType })}
             </p>
             <p className="font-mono text-xs bg-muted p-2 rounded break-all">
               {knownHostInfo.fingerprint}
             </p>
           </>
         )}
-        <p>Do you want to add it to the list of known hosts?</p>
+        <p>{t("quickConnect.knownHost.addQuestion")}</p>
       </div>
     </div>
   );
@@ -461,7 +412,7 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
           onClick={() => setAuthMethod("password")}
         >
           <Lock size={14} />
-          Password
+          {t("terminal.auth.password")}
         </button>
         <button
           className={cn(
@@ -473,21 +424,21 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
           onClick={() => setAuthMethod("key")}
         >
           <Key size={14} />
-          Public Key
+          {t("terminal.auth.sshKey")}
         </button>
       </div>
 
       {/* Password field */}
       {authMethod === "password" && (
         <div className="space-y-2">
-          <Label htmlFor="quick-password">Password:</Label>
+          <Label htmlFor="quick-password">{t("terminal.auth.passwordLabel")}</Label>
           <div className="relative">
             <Input
               id="quick-password"
               type={showPassword ? "text" : "password"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter password"
+              placeholder={t("terminal.auth.password.placeholder")}
               className="pr-10"
               autoFocus
               onKeyDown={(e) => {
@@ -512,7 +463,7 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
         <div className="space-y-2">
           {keys.filter((k) => k.category === "key").length === 0 ? (
             <div className="text-sm text-muted-foreground p-3 border border-dashed border-border/60 rounded-lg text-center">
-              No keys available. Add keys in the Keychain section.
+              {t("terminal.auth.noKeysHint")}
             </div>
           ) : (
             <ScrollArea className="max-h-48">
@@ -708,11 +659,11 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
             onClick={step === "protocol" ? onClose : handleBack}
           >
             {step === "protocol" ? (
-              "Close"
+              t("common.close")
             ) : (
               <>
                 <ArrowLeft size={14} className="mr-2" />
-                Back
+                {t("common.back")}
               </>
             )}
           </Button>
@@ -720,7 +671,7 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
           {step === "knownhost" ? (
             <div className="flex items-center gap-2">
               <Button variant="secondary" onClick={handleContinue}>
-                Continue
+                {t("common.continue")}
               </Button>
               <Button
                 onClick={() => {
@@ -728,7 +679,7 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
                   handleContinue();
                 }}
               >
-                Add and continue
+                {t("quickConnect.knownHost.addAndContinue")}
               </Button>
             </div>
           ) : step === "auth" ? (
@@ -737,17 +688,17 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
                 authMethod === "key" &&
                 keys.filter((k) => k.category === "key").length === 0 && (
                   <Button variant="secondary" onClick={onAddKey}>
-                    Add key
+                    {t("quickConnect.addKey")}
                   </Button>
                 )}
               <Button disabled={!canProceed} onClick={handleConnect}>
-                Continue & Save
+                {t("terminal.auth.continueSave")}
                 <ChevronDown size={14} className="ml-2" />
               </Button>
             </div>
           ) : (
             <Button onClick={handleContinue} disabled={!canProceed}>
-              Continue
+              {t("common.continue")}
             </Button>
           )}
         </div>

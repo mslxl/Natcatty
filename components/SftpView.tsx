@@ -504,7 +504,9 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
         <div className="h-12 px-4 border-b border-border/60 flex items-center gap-3 shrink-0">
           <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
             {side === "left" ? <Monitor size={14} /> : <HardDrive size={14} />}
-            <span>{side === "left" ? "Local" : "Remote"}</span>
+            <span>
+              {side === "left" ? t("sftp.pane.local") : t("sftp.pane.remote")}
+            </span>
           </div>
           <Button
             variant="outline"
@@ -512,7 +514,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
             className="h-8 px-3"
             onClick={() => setShowHostPicker(true)}
           >
-            <Plus size={14} className="mr-2" /> Select host
+            <Plus size={14} className="mr-2" /> {t("sftp.pane.selectHost")}
           </Button>
         </div>
 
@@ -522,14 +524,14 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
           </div>
           <div>
             <div className="text-sm font-semibold mb-1">
-              Select a host to start
+              {t("sftp.pane.selectHostToStart")}
             </div>
             <div className="text-xs text-muted-foreground">
-              Choose a local or remote filesystem to browse
+              {t("sftp.pane.chooseFilesystem")}
             </div>
           </div>
           <Button onClick={() => setShowHostPicker(true)}>
-            <Plus size={14} className="mr-2" /> Select host
+            <Plus size={14} className="mr-2" /> {t("sftp.pane.selectHost")}
           </Button>
         </div>
 

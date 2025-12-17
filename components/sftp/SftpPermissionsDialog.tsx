@@ -3,6 +3,7 @@
  */
 
 import React,{ useEffect,useState } from 'react';
+import { useI18n } from '../../application/i18n/I18nProvider';
 import { SftpFileEntry } from '../../types';
 import { Button } from '../ui/button';
 import { Dialog,DialogContent,DialogDescription,DialogFooter,DialogHeader,DialogTitle } from '../ui/dialog';
@@ -15,6 +16,7 @@ interface SftpPermissionsDialogProps {
 }
 
 export const SftpPermissionsDialog: React.FC<SftpPermissionsDialogProps> = ({ open, onOpenChange, file, onSave }) => {
+    const { t } = useI18n();
     const [permissions, setPermissions] = useState({
         owner: { read: false, write: false, execute: false },
         group: { read: false, write: false, execute: false },
@@ -77,6 +79,8 @@ export const SftpPermissionsDialog: React.FC<SftpPermissionsDialogProps> = ({ op
 
     if (!file) return null;
 
+    const permLabel = (perm: 'read' | 'write' | 'execute') => (perm === 'read' ? 'R' : perm === 'write' ? 'W' : 'X');
+
     const PermRow = ({ role, label }: { role: 'owner' | 'group' | 'others'; label: string }) => (
         <div className="flex items-center gap-4">
             <div className="w-16 text-sm font-medium">{label}</div>
@@ -89,7 +93,7 @@ export const SftpPermissionsDialog: React.FC<SftpPermissionsDialogProps> = ({ op
                             onChange={() => togglePerm(role, perm)}
                             className="rounded border-border"
                         />
-                        <span className="text-xs capitalize">{perm[0].toUpperCase()}</span>
+                        <span className="text-xs">{permLabel(perm)}</span>
                     </label>
                 ))}
             </div>
@@ -100,7 +104,7 @@ export const SftpPermissionsDialog: React.FC<SftpPermissionsDialogProps> = ({ op
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="sm:max-w-[400px]">
                 <DialogHeader>
-                    <DialogTitle>Edit Permissions</DialogTitle>
+                    <DialogTitle>{t('sftp.permissions.title')}</DialogTitle>
                     <DialogDescription className="truncate">
                         {file.name}
                     </DialogDescription>
@@ -108,27 +112,27 @@ export const SftpPermissionsDialog: React.FC<SftpPermissionsDialogProps> = ({ op
 
                 <div className="space-y-4 py-4">
                     <div className="space-y-3">
-                        <PermRow role="owner" label="Owner" />
-                        <PermRow role="group" label="Group" />
-                        <PermRow role="others" label="Others" />
+                        <PermRow role="owner" label={t('sftp.permissions.owner')} />
+                        <PermRow role="group" label={t('sftp.permissions.group')} />
+                        <PermRow role="others" label={t('sftp.permissions.others')} />
                     </div>
 
                     <div className="flex items-center justify-between pt-2 border-t border-border/60">
                         <div className="text-xs text-muted-foreground">
-                            Octal: <span className="font-mono text-foreground">{getOctalPermissions()}</span>
+                            {t('sftp.permissions.octal')}: <span className="font-mono text-foreground">{getOctalPermissions()}</span>
                         </div>
                         <div className="text-xs text-muted-foreground">
-                            Symbolic: <span className="font-mono text-foreground">{getSymbolicPermissions()}</span>
+                            {t('sftp.permissions.symbolic')}: <span className="font-mono text-foreground">{getSymbolicPermissions()}</span>
                         </div>
                     </div>
                 </div>
 
                 <DialogFooter>
                     <Button variant="outline" onClick={() => onOpenChange(false)}>
-                        Cancel
+                        {t('common.cancel')}
                     </Button>
                     <Button onClick={handleSave}>
-                        Apply
+                        {t('common.apply')}
                     </Button>
                 </DialogFooter>
             </DialogContent>

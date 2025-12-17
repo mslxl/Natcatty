@@ -9,6 +9,7 @@ import {
   Trash2,
 } from "lucide-react";
 import React, { useMemo, useState } from "react";
+import { useI18n } from "../application/i18n/I18nProvider";
 import { KeyType } from "../domain/models";
 import { cn } from "../lib/utils";
 import { SSHKey } from "../types";
@@ -33,6 +34,7 @@ interface KeyManagerProps {
 }
 
 const KeyManager: React.FC<KeyManagerProps> = ({ keys, onSave, onDelete }) => {
+  const { t } = useI18n();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [panelMode, setPanelMode] = useState<"new" | "edit">("new");
   const [draftKey, setDraftKey] = useState<Partial<SSHKey>>({
@@ -282,29 +284,31 @@ const KeyManager: React.FC<KeyManagerProps> = ({ keys, onSave, onDelete }) => {
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>
-              {panelMode === "new" ? "New Key" : "Edit Key"}
+              {panelMode === "new"
+                ? t("keychain.keyDialog.newTitle")
+                : t("keychain.keyDialog.editTitle")}
             </DialogTitle>
             <DialogDescription className="sr-only">
               {panelMode === "new"
-                ? "Create a new SSH key entry"
-                : "Edit the selected SSH key entry"}
+                ? t("keychain.keyDialog.newDesc")
+                : t("keychain.keyDialog.editDesc")}
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label>Label</Label>
+              <Label>{t("keychain.field.label")}</Label>
               <Input
                 value={draftKey.label}
                 onChange={(e) =>
                   setDraftKey({ ...draftKey, label: e.target.value })
                 }
-                placeholder="Key label"
+                placeholder={t("keychain.field.labelPlaceholder")}
                 required
               />
             </div>
 
             <div className="space-y-2">
-              <Label>Private key *</Label>
+              <Label>{t("keychain.field.privateKeyRequired")}</Label>
               <Textarea
                 value={draftKey.privateKey}
                 onChange={(e) =>
@@ -321,13 +325,13 @@ const KeyManager: React.FC<KeyManagerProps> = ({ keys, onSave, onDelete }) => {
                   variant="secondary"
                   onClick={handleGenerate}
                 >
-                  Generate
+                  {t("keychain.generate.generate")}
                 </Button>
               )}
             </div>
 
             <div className="space-y-2">
-              <Label>Public key</Label>
+              <Label>{t("keychain.field.publicKey")}</Label>
               <Textarea
                 value={derivedPublicKey}
                 onChange={(e) =>
@@ -340,20 +344,20 @@ const KeyManager: React.FC<KeyManagerProps> = ({ keys, onSave, onDelete }) => {
 
             <div className="space-y-2">
               <Label className="flex items-center gap-2">
-                Certificate{" "}
+                {t("terminal.auth.certificate")}{" "}
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
-                  Optional
+                  {t("common.optional")}
                 </span>
               </Label>
               <Textarea
-                placeholder="Paste certificate..."
+                placeholder={t("keychain.field.certificatePlaceholder")}
                 className="min-h-[80px] text-xs"
               />
             </div>
 
             <div className="border border-dashed border-border/80 rounded-xl p-4 text-center space-y-2 bg-background/60">
               <div className="text-sm text-muted-foreground">
-                Drag and drop a private key file to import
+                {t("keychain.import.dropHint")}
               </div>
               <Button
                 type="button"
@@ -362,14 +366,14 @@ const KeyManager: React.FC<KeyManagerProps> = ({ keys, onSave, onDelete }) => {
                   // mock file import
                   setDraftKey({
                     ...draftKey,
-                    label: draftKey.label || "Imported Key",
+                    label: draftKey.label || t("keychain.import.importedKeyLabel"),
                     privateKey:
                       draftKey.privateKey ||
                       "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAAC3NzaC1lZDI1NTE5AAAA\n-----END OPENSSH PRIVATE KEY-----",
                   });
                 }}
               >
-                Import from key file
+                {t("keychain.import.importFromFile")}
               </Button>
             </div>
 
@@ -381,7 +385,7 @@ const KeyManager: React.FC<KeyManagerProps> = ({ keys, onSave, onDelete }) => {
                   className="text-destructive mr-auto"
                   onClick={() => handleDelete(draftKey.id!)}
                 >
-                  Delete
+                  {t("common.delete")}
                 </Button>
               )}
               <Button
@@ -389,10 +393,12 @@ const KeyManager: React.FC<KeyManagerProps> = ({ keys, onSave, onDelete }) => {
                 variant="ghost"
                 onClick={() => setIsDialogOpen(false)}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button type="submit">
-                {panelMode === "new" ? "Save Key" : "Update Key"}
+                {panelMode === "new"
+                  ? t("keychain.import.saveKey")
+                  : t("keychain.keyDialog.updateKey")}
               </Button>
             </DialogFooter>
           </form>

@@ -5,6 +5,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import { Maximize2, Radio } from "lucide-react";
 import React, { memo, useEffect, useMemo, useRef, useState } from "react";
+import { useI18n } from "../application/i18n/I18nProvider";
 import { logger } from "../lib/logger";
 import { cn } from "../lib/utils";
 import {
@@ -112,6 +113,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   onBroadcastInput,
 }) => {
   const CONNECTION_TIMEOUT = 12000;
+  const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -188,8 +190,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }
     if (lastToastedErrorRef.current === error) return;
     lastToastedErrorRef.current = error;
-    toast.error(error, "Connection Error");
-  }, [error]);
+    toast.error(error, t("terminal.connectionErrorTitle"));
+  }, [error, t]);
 
   const pendingAuthRef = useRef<PendingAuth>(null);
   const sessionStartersRef = useRef<ReturnType<typeof createTerminalSessionStarters> | null>(null);

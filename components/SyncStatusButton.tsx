@@ -229,7 +229,7 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
                         // No provider connected
                         <div className="text-center py-4">
                             <CloudOff size={32} className="mx-auto mb-2 text-muted-foreground" />
-                            <p className="text-sm font-medium mb-1">No Sync Configured</p>
+                            <p className="text-sm font-medium mb-1">{t('sync.notConfigured')}</p>
                             <p className="text-xs text-muted-foreground mb-3">
                                 Connect a cloud provider to sync your data across devices.
                             </p>
@@ -268,7 +268,9 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
                                                 />
                                             )}
                                             <span className="text-xs text-muted-foreground truncate">
-                                                {providerConnection.account?.name || providerConnection.account?.email || 'Connected'}
+                                                {providerConnection.account?.name ||
+                                                  providerConnection.account?.email ||
+                                                  t('sync.connected')}
                                             </span>
                                         </div>
                                     </div>
@@ -278,14 +280,18 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
                             {/* Version Info */}
                             <div className="grid grid-cols-2 gap-2">
                                 <div className="p-2 rounded-lg bg-muted/30">
-                                    <div className="text-[10px] text-muted-foreground uppercase mb-0.5">Local</div>
+                                    <div className="text-[10px] text-muted-foreground uppercase mb-0.5">
+                                      {t('cloudSync.conflict.local')}
+                                    </div>
                                     <div className="text-sm font-medium">v{sync.localVersion}</div>
                                     <div className="text-[10px] text-muted-foreground">
                                         {formatTime(sync.localUpdatedAt)}
                                     </div>
                                 </div>
                                 <div className="p-2 rounded-lg bg-muted/30">
-                                    <div className="text-[10px] text-muted-foreground uppercase mb-0.5">Remote</div>
+                                    <div className="text-[10px] text-muted-foreground uppercase mb-0.5">
+                                      {t('cloudSync.conflict.cloud')}
+                                    </div>
                                     <div className="text-sm font-medium">v{sync.remoteVersion}</div>
                                     <div className="text-[10px] text-muted-foreground">
                                         {formatTime(sync.remoteUpdatedAt)}
@@ -296,7 +302,9 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
                             {/* Recent Sync History */}
                             {sync.syncHistory.length > 0 && (
                                 <div>
-                                    <div className="text-xs text-muted-foreground mb-1.5">Recent Activity</div>
+                                    <div className="text-xs text-muted-foreground mb-1.5">
+                                      {t('sync.recentActivity')}
+                                    </div>
                                     <div className="space-y-1 max-h-32 overflow-y-auto">
                                         {sync.syncHistory.slice(0, 5).map((entry) => (
                                             <div key={entry.id} className="flex items-center gap-2 text-xs py-1">
@@ -311,7 +319,12 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
                                                     )}
                                                 </div>
                                                 <span className="text-muted-foreground flex-1 truncate">
-                                                    {entry.action === 'upload' ? 'Uploaded' : entry.action === 'download' ? 'Downloaded' : 'Resolved'} v{entry.localVersion}
+                                                    {entry.action === 'upload'
+                                                      ? t('sync.history.uploaded')
+                                                      : entry.action === 'download'
+                                                        ? t('sync.history.downloaded')
+                                                        : t('sync.history.resolved')}{' '}
+                                                    v{entry.localVersion}
                                                 </span>
                                                 <span className="text-muted-foreground/60 shrink-0">
                                                     {formatTime(entry.timestamp)}
@@ -331,17 +344,17 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
                                 onClick={async () => {
                                     if (onSyncNow) {
                                         setIsSyncingManual(true);
-                                        try {
-                                            await onSyncNow();
-                                            toast.success('Sync completed successfully', 'Cloud Sync');
-                                        } catch (error) {
+                                         try {
+                                             await onSyncNow();
+                                            toast.success(t('sync.toast.completedMessage'), t('sync.cloudSync'));
+                                         } catch (error) {
                                             toast.error(
-                                                error instanceof Error ? error.message : 'Sync failed',
-                                                'Sync Error'
+                                                error instanceof Error ? error.message : t('sync.failed'),
+                                                t('sync.toast.errorTitle'),
                                             );
-                                        } finally {
+                                         } finally {
                                             setIsSyncingManual(false);
-                                        }
+                                         }
                                     } else {
                                         setIsOpen(false);
                                         onOpenSettings?.();
@@ -353,7 +366,7 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
                                 ) : (
                                     <RefreshCw size={14} />
                                 )}
-                                Sync Now
+                                {t('sync.syncNow')}
                             </Button>
                         </div>
                     )}

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { RotateCcw } from "lucide-react";
 import type { HotkeyScheme, KeyBinding } from "../../../domain/models";
 import { keyEventToString } from "../../../domain/models";
+import { useI18n } from "../../../application/i18n/I18nProvider";
 import { cn } from "../../../lib/utils";
 import { Button } from "../../ui/button";
 import { SectionHeader, Select, SettingsTabContent, SettingRow } from "../settings-ui";
@@ -15,6 +16,7 @@ export default function SettingsShortcutsTab(props: {
   resetAllKeyBindings: () => void;
 }) {
   const { hotkeyScheme, setHotkeyScheme, keyBindings, updateKeyBinding, resetKeyBinding, resetAllKeyBindings } = props;
+  const { t } = useI18n();
 
   const [recordingBindingId, setRecordingBindingId] = useState<string | null>(null);
   const [recordingScheme, setRecordingScheme] = useState<"mac" | "pc" | null>(null);
@@ -100,18 +102,18 @@ export default function SettingsShortcutsTab(props: {
 
   return (
     <SettingsTabContent value="shortcuts">
-      <SectionHeader title="Hotkey Scheme" />
+      <SectionHeader title={t("settings.shortcuts.section.scheme")} />
       <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
         <SettingRow
-          label="Keyboard shortcuts"
-          description="Choose which keyboard layout to use for shortcuts"
+          label={t("settings.shortcuts.scheme.label")}
+          description={t("settings.shortcuts.scheme.desc")}
         >
           <Select
             value={hotkeyScheme}
             options={[
-              { value: "disabled", label: "Disabled" },
-              { value: "mac", label: "Mac (⌘)" },
-              { value: "pc", label: "PC (Ctrl)" },
+              { value: "disabled", label: t("settings.shortcuts.scheme.disabled") },
+              { value: "mac", label: t("settings.shortcuts.scheme.mac") },
+              { value: "pc", label: t("settings.shortcuts.scheme.pc") },
             ]}
             onChange={(v) => setHotkeyScheme(v as HotkeyScheme)}
             className="w-32"
@@ -122,14 +124,14 @@ export default function SettingsShortcutsTab(props: {
       {hotkeyScheme !== "disabled" && (
         <>
           <div className="flex items-center justify-between">
-            <SectionHeader title="Custom Shortcuts" className="mb-0" />
+            <SectionHeader title={t("settings.shortcuts.section.custom")} className="mb-0" />
             <Button
               variant="ghost"
               size="sm"
               onClick={resetAllKeyBindings}
               className="text-xs gap-1"
             >
-              <RotateCcw size={12} /> Reset All
+              <RotateCcw size={12} /> {t("settings.shortcuts.resetAll")}
             </Button>
           </div>
 
@@ -139,7 +141,7 @@ export default function SettingsShortcutsTab(props: {
             return (
               <div key={category}>
                 <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-                  {category}
+                  {t(`settings.shortcuts.category.${category}`)}
                 </h4>
                 <div className="space-y-0 divide-y divide-border rounded-lg border bg-card">
                   {categoryBindings.map((binding) => {
@@ -177,7 +179,9 @@ export default function SettingsShortcutsTab(props: {
                                     : "border-border hover:border-primary/50",
                                 )}
                               >
-                                {isRecordingThis ? "Press Keys..." : modifierPrefix || "None"}
+                                {isRecordingThis
+                                  ? t("settings.shortcuts.recording")
+                                  : modifierPrefix || t("settings.shortcuts.none")}
                               </button>
                               <span className="text-xs text-muted-foreground">+</span>
                               <span className="px-2 py-1 text-xs font-mono rounded border border-border bg-muted/30 text-muted-foreground">
@@ -198,7 +202,9 @@ export default function SettingsShortcutsTab(props: {
                                   : "border-border hover:border-primary/50",
                               )}
                             >
-                              {isRecordingThis ? "Press Keys..." : currentKey || "Disabled"}
+                              {isRecordingThis
+                                ? t("settings.shortcuts.recording")
+                                : currentKey || t("settings.shortcuts.scheme.disabled")}
                             </button>
                           )}
                           <button
@@ -221,4 +227,3 @@ export default function SettingsShortcutsTab(props: {
     </SettingsTabContent>
   );
 }
-

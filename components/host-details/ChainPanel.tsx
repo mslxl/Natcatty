@@ -4,6 +4,7 @@
  */
 import { ArrowDown,Plus,X } from 'lucide-react';
 import React from 'react';
+import { useI18n } from '../../application/i18n/I18nProvider';
 import { Host } from '../../types';
 import { DistroAvatar } from '../DistroAvatar';
 import { AsidePanel } from '../ui/aside-panel';
@@ -36,16 +37,17 @@ export const ChainPanel: React.FC<ChainPanelProps> = ({
     onBack,
     onCancel,
 }) => {
+    const { t } = useI18n();
     return (
         <AsidePanel
             open={true}
             onClose={onCancel}
-            title="Edit Chain"
+            title={t('hostDetails.chain.title')}
             showBackButton={true}
             onBack={onBack}
             actions={
                 <Button size="sm" onClick={onBack}>
-                    Save
+                    {t('common.save')}
                 </Button>
             }
         >
@@ -53,10 +55,10 @@ export const ChainPanel: React.FC<ChainPanelProps> = ({
                 <div className="p-4 space-y-4">
                     <Card className="p-3 space-y-3 bg-card border-border/80">
                         <p className="text-xs text-muted-foreground">
-                            Adding another host will create a connection to <span className="font-semibold text-foreground">{formLabel || formHostname}</span>
+                            {t('hostDetails.chain.desc', { host: formLabel || formHostname })}
                         </p>
                         <Button className="w-full h-10" onClick={() => { }}>
-                            <Plus size={14} className="mr-2" /> Add a Host
+                            <Plus size={14} className="mr-2" /> {t('hostDetails.chain.addHost')}
                         </Button>
                     </Card>
 
@@ -98,8 +100,8 @@ export const ChainPanel: React.FC<ChainPanelProps> = ({
                                 className="h-8 w-8"
                             />
                             <div className="flex-1 min-w-0">
-                                <div className="text-sm font-medium truncate">{formLabel || formHostname || "Target"}</div>
-                                <div className="text-xs text-muted-foreground">Target</div>
+                                <div className="text-sm font-medium truncate">{formLabel || formHostname || t('hostDetails.chain.target')}</div>
+                                <div className="text-xs text-muted-foreground">{t('hostDetails.chain.target')}</div>
                             </div>
                         </div>
                     </div>
@@ -107,7 +109,7 @@ export const ChainPanel: React.FC<ChainPanelProps> = ({
                     {/* Available hosts to add */}
                     {availableHostsForChain.length > 0 && (
                         <Card className="p-3 bg-card border-border/80">
-                            <p className="text-xs font-semibold text-muted-foreground mb-2">Available Hosts</p>
+                            <p className="text-xs font-semibold text-muted-foreground mb-2">{t('hostDetails.chain.availableHosts')}</p>
                             <div className="space-y-1">
                                 {availableHostsForChain.map((host) => (
                                     <button
@@ -129,7 +131,7 @@ export const ChainPanel: React.FC<ChainPanelProps> = ({
 
                     {chainedHosts.length > 0 && (
                         <Button variant="ghost" className="w-full h-10 text-destructive" onClick={onClearChain}>
-                            Clear
+                            {t('hostDetails.chain.clear')}
                         </Button>
                     )}
                 </div>

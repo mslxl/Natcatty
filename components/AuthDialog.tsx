@@ -1,5 +1,6 @@
 import { ChevronDown, Eye, EyeOff, Key, Lock, User } from "lucide-react";
 import React, { useState } from "react";
+import { useI18n } from "../application/i18n/I18nProvider";
 import { cn } from "../lib/utils";
 import { Host, SSHKey } from "../types";
 import { DistroAvatar } from "./DistroAvatar";
@@ -28,6 +29,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({
   onSubmit,
   onCancel,
 }) => {
+  const { t } = useI18n();
   const [username, setUsername] = useState(host.username || "root");
   const [authMethod, setAuthMethod] = useState<"password" | "key">("password");
   const [password, setPassword] = useState("");
@@ -114,7 +116,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({
               onClick={() => setAuthMethod("password")}
             >
               <Lock size={14} />
-              Password
+              {t("terminal.auth.password")}
             </button>
             <button
               className={cn(
@@ -126,7 +128,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({
               onClick={() => setAuthMethod("key")}
             >
               <Key size={14} />
-              Public Key
+              {t("terminal.auth.sshKey")}
             </button>
           </div>
         </div>
@@ -136,12 +138,12 @@ const AuthDialog: React.FC<AuthDialogProps> = ({
           {/* Username field (shown when no username on host) */}
           {!host.username && (
             <div className="space-y-2">
-              <Label htmlFor="auth-username">Username</Label>
+              <Label htmlFor="auth-username">{t("terminal.auth.username")}</Label>
               <Input
                 id="auth-username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="root"
+                placeholder={t("terminal.auth.username.placeholder")}
                 autoFocus
               />
             </div>
@@ -150,14 +152,16 @@ const AuthDialog: React.FC<AuthDialogProps> = ({
           {/* Password field */}
           {authMethod === "password" && (
             <div className="space-y-2">
-              <Label htmlFor="auth-password">Password</Label>
+              <Label htmlFor="auth-password">
+                {t("terminal.auth.passwordLabel")}
+              </Label>
               <div className="relative">
                 <Input
                   id="auth-password"
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter password"
+                  placeholder={t("terminal.auth.password.placeholder")}
                   className="pr-10"
                   autoFocus={!!host.username}
                   onKeyDown={(e) => {
@@ -180,10 +184,10 @@ const AuthDialog: React.FC<AuthDialogProps> = ({
           {/* Key selection */}
           {authMethod === "key" && (
             <div className="space-y-2">
-              <Label>Select Key</Label>
+              <Label>{t("terminal.auth.selectKey")}</Label>
               {keys.length === 0 ? (
                 <div className="text-sm text-muted-foreground p-3 border border-dashed border-border/60 rounded-lg text-center">
-                  No keys available. Add keys in the Keychain section.
+                  {t("terminal.auth.noKeysHint")}
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -214,7 +218,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({
                             {key.label}
                           </div>
                           <div className="text-xs text-muted-foreground">
-                            Type {key.type}
+                            {t("auth.keyType", { type: key.type })}
                           </div>
                         </div>
                       </button>
@@ -226,7 +230,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({
                     >
                       <PopoverTrigger asChild>
                         <Button variant="outline" className="w-full">
-                          Show all keys
+                          {t("auth.showAllKeys")}
                           <ChevronDown size={14} className="ml-2" />
                         </Button>
                       </PopoverTrigger>
@@ -272,13 +276,13 @@ const AuthDialog: React.FC<AuthDialogProps> = ({
         {/* Footer */}
         <div className="px-6 py-4 border-t border-border/50 flex items-center justify-between">
           <Button variant="secondary" onClick={onCancel}>
-            Close
+            {t("common.close")}
           </Button>
           <div className="flex items-center gap-2">
             <Popover>
               <PopoverTrigger asChild>
                 <Button disabled={!isValid} onClick={handleSubmit}>
-                  Continue & Save
+                  {t("terminal.auth.continueSave")}
                   <ChevronDown size={14} className="ml-2" />
                 </Button>
               </PopoverTrigger>
@@ -291,7 +295,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({
                   }}
                   disabled={!isValid}
                 >
-                  Continue
+                  {t("common.continue")}
                 </button>
               </PopoverContent>
             </Popover>

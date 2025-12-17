@@ -8,6 +8,7 @@ import type {
   TerminalSettings,
 } from "../../../domain/models";
 import { DEFAULT_KEYWORD_HIGHLIGHT_RULES } from "../../../domain/models";
+import { useI18n } from "../../../application/i18n/I18nProvider";
 import { TERMINAL_FONTS, MAX_FONT_SIZE, MIN_FONT_SIZE } from "../../../infrastructure/config/fonts";
 import { TERMINAL_THEMES } from "../../../infrastructure/config/terminalThemes";
 import { cn } from "../../../lib/utils";
@@ -90,6 +91,7 @@ export default function SettingsTerminalTab(props: {
     terminalSettings,
     updateTerminalSetting,
   } = props;
+  const { t } = useI18n();
 
   const clampFontSize = useCallback((next: number) => {
     const safe = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, next));
@@ -98,7 +100,7 @@ export default function SettingsTerminalTab(props: {
 
   return (
     <SettingsTabContent value="terminal">
-      <SectionHeader title="Terminal Theme" />
+      <SectionHeader title={t("settings.terminal.section.theme")} />
       <div className="grid grid-cols-2 gap-3">
         {TERMINAL_THEMES.map((t) => (
           <TerminalThemeCard
@@ -110,9 +112,12 @@ export default function SettingsTerminalTab(props: {
         ))}
       </div>
 
-      <SectionHeader title="Font" />
+      <SectionHeader title={t("settings.terminal.section.font")} />
       <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
-        <SettingRow label="Font" description="Terminal font family">
+        <SettingRow
+          label={t("settings.terminal.font.family")}
+          description={t("settings.terminal.font.family.desc")}
+        >
           <Select
             value={terminalFontFamilyId}
             options={TERMINAL_FONTS.map((f) => ({ value: f.id, label: f.name }))}
@@ -121,7 +126,10 @@ export default function SettingsTerminalTab(props: {
           />
         </SettingRow>
 
-        <SettingRow label="Font size" description="Terminal text size">
+        <SettingRow
+          label={t("settings.terminal.font.size")}
+          description={t("settings.terminal.font.size.desc")}
+        >
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
@@ -143,7 +151,10 @@ export default function SettingsTerminalTab(props: {
           </div>
         </SettingRow>
 
-        <SettingRow label="Font weight" description="Weight for regular text (100-900)">
+        <SettingRow
+          label={t("settings.terminal.font.weight")}
+          description={t("settings.terminal.font.weight.desc")}
+        >
           <Select
             value={String(terminalSettings.fontWeight)}
             options={[
@@ -162,7 +173,10 @@ export default function SettingsTerminalTab(props: {
           />
         </SettingRow>
 
-        <SettingRow label="Bold font weight" description="Weight for bold text (100-900)">
+        <SettingRow
+          label={t("settings.terminal.font.weightBold")}
+          description={t("settings.terminal.font.weightBold.desc")}
+        >
           <Select
             value={String(terminalSettings.fontWeightBold)}
             options={[
@@ -181,7 +195,10 @@ export default function SettingsTerminalTab(props: {
           />
         </SettingRow>
 
-        <SettingRow label="Line padding" description="Additional space between lines (0-10)">
+        <SettingRow
+          label={t("settings.terminal.font.linePadding")}
+          description={t("settings.terminal.font.linePadding.desc")}
+        >
           <div className="flex items-center gap-2">
             <input
               type="range"
@@ -196,7 +213,7 @@ export default function SettingsTerminalTab(props: {
           </div>
         </SettingRow>
 
-        <SettingRow label="Terminal emulation type">
+        <SettingRow label={t("settings.terminal.font.emulationType")}>
           <Select
             value={terminalSettings.terminalEmulationType}
             options={[
@@ -212,22 +229,22 @@ export default function SettingsTerminalTab(props: {
         </SettingRow>
       </div>
 
-      <SectionHeader title="Cursor" />
+      <SectionHeader title={t("settings.terminal.section.cursor")} />
       <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
-        <SettingRow label="Cursor style">
+        <SettingRow label={t("settings.terminal.cursor.style")}>
           <Select
             value={terminalSettings.cursorShape}
             options={[
-              { value: "block", label: "Block" },
-              { value: "bar", label: "Bar" },
-              { value: "underline", label: "Underline" },
+              { value: "block", label: t("settings.terminal.cursor.style.block") },
+              { value: "bar", label: t("settings.terminal.cursor.style.bar") },
+              { value: "underline", label: t("settings.terminal.cursor.style.underline") },
             ]}
             onChange={(v) => updateTerminalSetting("cursorShape", v as CursorShape)}
             className="w-32"
           />
         </SettingRow>
 
-        <SettingRow label="Cursor blink">
+        <SettingRow label={t("settings.terminal.cursor.blink")}>
           <Toggle
             checked={terminalSettings.cursorBlink}
             onChange={(v) => updateTerminalSetting("cursorBlink", v)}
@@ -235,21 +252,21 @@ export default function SettingsTerminalTab(props: {
         </SettingRow>
       </div>
 
-      <SectionHeader title="Keyboard" />
+      <SectionHeader title={t("settings.terminal.section.keyboard")} />
       <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
         <SettingRow
-          label="Use Option as Meta key"
-          description="Use ⌥ Option (Alt) as the Meta key instead of for special characters"
+          label={t("settings.terminal.keyboard.altAsMeta")}
+          description={t("settings.terminal.keyboard.altAsMeta.desc")}
         >
           <Toggle checked={terminalSettings.altAsMeta} onChange={(v) => updateTerminalSetting("altAsMeta", v)} />
         </SettingRow>
       </div>
 
-      <SectionHeader title="Accessibility" />
+      <SectionHeader title={t("settings.terminal.section.accessibility")} />
       <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
         <SettingRow
-          label="Minimum contrast ratio"
-          description="Adjust colors to meet contrast requirements (1 = disabled, 21 = max)"
+          label={t("settings.terminal.accessibility.minimumContrastRatio")}
+          description={t("settings.terminal.accessibility.minimumContrastRatio.desc")}
         >
           <div className="flex items-center gap-2">
             <input
@@ -270,56 +287,77 @@ export default function SettingsTerminalTab(props: {
         </SettingRow>
       </div>
 
-      <SectionHeader title="Behavior" />
+      <SectionHeader title={t("settings.terminal.section.behavior")} />
       <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
-        <SettingRow label="Right-click behavior" description="Action when right-clicking in terminal">
+        <SettingRow
+          label={t("settings.terminal.behavior.rightClick")}
+          description={t("settings.terminal.behavior.rightClick.desc")}
+        >
           <Select
             value={terminalSettings.rightClickBehavior}
             options={[
-              { value: "context-menu", label: "Show Menu" },
-              { value: "paste", label: "Paste" },
-              { value: "select-word", label: "Select Word" },
+              { value: "context-menu", label: t("settings.terminal.behavior.rightClick.menu") },
+              { value: "paste", label: t("settings.terminal.behavior.rightClick.paste") },
+              { value: "select-word", label: t("settings.terminal.behavior.rightClick.selectWord") },
             ]}
             onChange={(v) => updateTerminalSetting("rightClickBehavior", v as RightClickBehavior)}
             className="w-36"
           />
         </SettingRow>
 
-        <SettingRow label="Copy on select" description="Automatically copy selected text">
+        <SettingRow
+          label={t("settings.terminal.behavior.copyOnSelect")}
+          description={t("settings.terminal.behavior.copyOnSelect.desc")}
+        >
           <Toggle checked={terminalSettings.copyOnSelect} onChange={(v) => updateTerminalSetting("copyOnSelect", v)} />
         </SettingRow>
 
-        <SettingRow label="Middle-click paste" description="Paste clipboard content on middle-click">
+        <SettingRow
+          label={t("settings.terminal.behavior.middleClickPaste")}
+          description={t("settings.terminal.behavior.middleClickPaste.desc")}
+        >
           <Toggle checked={terminalSettings.middleClickPaste} onChange={(v) => updateTerminalSetting("middleClickPaste", v)} />
         </SettingRow>
 
-        <SettingRow label="Scroll on input" description="Scroll terminal to bottom when typing">
+        <SettingRow
+          label={t("settings.terminal.behavior.scrollOnInput")}
+          description={t("settings.terminal.behavior.scrollOnInput.desc")}
+        >
           <Toggle checked={terminalSettings.scrollOnInput} onChange={(v) => updateTerminalSetting("scrollOnInput", v)} />
         </SettingRow>
 
-        <SettingRow label="Scroll on output" description="Scroll terminal to bottom when new output arrives">
+        <SettingRow
+          label={t("settings.terminal.behavior.scrollOnOutput")}
+          description={t("settings.terminal.behavior.scrollOnOutput.desc")}
+        >
           <Toggle checked={terminalSettings.scrollOnOutput} onChange={(v) => updateTerminalSetting("scrollOnOutput", v)} />
         </SettingRow>
 
         <SettingRow
-          label="Scroll on key press"
-          description="Scroll terminal to bottom when pressing a key (e.g., Enter)"
+          label={t("settings.terminal.behavior.scrollOnKeyPress")}
+          description={t("settings.terminal.behavior.scrollOnKeyPress.desc")}
         >
           <Toggle checked={terminalSettings.scrollOnKeyPress} onChange={(v) => updateTerminalSetting("scrollOnKeyPress", v)} />
         </SettingRow>
 
-        <SettingRow label="Scroll on paste" description="Scroll terminal to bottom when pasting text">
+        <SettingRow
+          label={t("settings.terminal.behavior.scrollOnPaste")}
+          description={t("settings.terminal.behavior.scrollOnPaste.desc")}
+        >
           <Toggle checked={terminalSettings.scrollOnPaste} onChange={(v) => updateTerminalSetting("scrollOnPaste", v)} />
         </SettingRow>
 
-        <SettingRow label="Link modifier key" description="Hold this key to click on links in terminal">
+        <SettingRow
+          label={t("settings.terminal.behavior.linkModifier")}
+          description={t("settings.terminal.behavior.linkModifier.desc")}
+        >
           <Select
             value={terminalSettings.linkModifier}
             options={[
-              { value: "none", label: "None (click directly)" },
-              { value: "ctrl", label: "Ctrl" },
-              { value: "alt", label: "Alt / Option" },
-              { value: "meta", label: "Cmd / Win" },
+              { value: "none", label: t("settings.terminal.behavior.linkModifier.none") },
+              { value: "ctrl", label: t("settings.terminal.behavior.linkModifier.ctrl") },
+              { value: "alt", label: t("settings.terminal.behavior.linkModifier.alt") },
+              { value: "meta", label: t("settings.terminal.behavior.linkModifier.meta") },
             ]}
             onChange={(v) => updateTerminalSetting("linkModifier", v as LinkModifier)}
             className="w-40"
@@ -327,13 +365,13 @@ export default function SettingsTerminalTab(props: {
         </SettingRow>
       </div>
 
-      <SectionHeader title="Scrollback" />
+      <SectionHeader title={t("settings.terminal.section.scrollback")} />
       <div className="rounded-lg border bg-card p-4">
         <p className="text-sm text-muted-foreground mb-3">
-          Limit number of terminal rows. Set to 0 to maximum limit size.
+          {t("settings.terminal.scrollback.desc")}
         </p>
         <div className="space-y-1">
-          <Label className="text-xs">Number of rows *</Label>
+          <Label className="text-xs">{t("settings.terminal.scrollback.rows")}</Label>
           <Input
             type="number"
             min={0}
@@ -350,10 +388,12 @@ export default function SettingsTerminalTab(props: {
         </div>
       </div>
 
-      <SectionHeader title="Keyword highlighting" />
+      <SectionHeader title={t("settings.terminal.section.keywordHighlight")} />
       <div className="rounded-lg border bg-card p-4">
         <div className="flex items-center justify-between mb-4">
-          <span className="text-sm font-medium">Keyword highlighting</span>
+          <span className="text-sm font-medium">
+            {t("settings.terminal.keywordHighlight.title")}
+          </span>
           <Toggle
             checked={terminalSettings.keywordHighlightEnabled}
             onChange={(v) => updateTerminalSetting("keywordHighlightEnabled", v)}
@@ -398,7 +438,7 @@ export default function SettingsTerminalTab(props: {
               }}
             >
               <RotateCcw size={14} className="mr-2" />
-              Reset to default colors
+              {t("settings.terminal.keywordHighlight.resetColors")}
             </Button>
           </div>
         )}
@@ -406,4 +446,3 @@ export default function SettingsTerminalTab(props: {
     </SettingsTabContent>
   );
 }
-

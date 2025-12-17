@@ -34,6 +34,8 @@ import { toast } from "./ui/toast";
 // Import components and utilities from port-forwarding module
 import {
   EditPanel,
+  generateRuleLabel as buildRuleLabel,
+  getTypeLabel,
   NewFormPanel,
   RuleCard,
   WizardContent,
@@ -478,19 +480,12 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
   };
 
   const generateRuleLabel = (): string => {
-    const _host = hosts.find((h) => h.id === draftRule.hostId);
-    const _hostLabel = _host?.label || "Unknown";
-
-    switch (wizardType) {
-      case "local":
-        return `Local:${draftRule.localPort} → ${draftRule.remoteHost}:${draftRule.remotePort}`;
-      case "remote":
-        return `Remote:${draftRule.localPort} → ${draftRule.remoteHost}:${draftRule.remotePort}`;
-      case "dynamic":
-        return `SOCKS:${draftRule.localPort}`;
-      default:
-        return "New Rule";
-    }
+    return buildRuleLabel(
+      wizardType,
+      draftRule.localPort,
+      draftRule.remoteHost,
+      draftRule.remotePort,
+    );
   };
 
   // Handle skip wizard (just save with defaults)
@@ -517,7 +512,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
             <DropdownTrigger asChild>
               <Button variant="secondary" className="h-9 px-3 gap-2">
                 <Zap size={14} />
-                NEW FORWARDING
+                {t("pf.action.newForwarding")}
                 <ChevronDown
                   size={14}
                   className={cn(
@@ -527,30 +522,30 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
                 />
               </Button>
             </DropdownTrigger>
-            <DropdownContent className="w-52" align="start" sideOffset={8}>
+            <DropdownContent className="w-max flex flex-col" align="start" sideOffset={8}>
               <Button
                 variant="ghost"
-                className="w-full justify-start gap-3 h-10"
+                className="justify-start gap-3 h-10 px-3 whitespace-nowrap"
                 onClick={() => startNewRule("local")}
               >
                 <Globe size={16} className="text-blue-500" />
-                Local Forwarding
+                {getTypeLabel(t, "local")}
               </Button>
               <Button
                 variant="ghost"
-                className="w-full justify-start gap-3 h-10"
+                className="justify-start gap-3 h-10 px-3 whitespace-nowrap"
                 onClick={() => startNewRule("remote")}
               >
                 <Server size={16} className="text-orange-500" />
-                Remote Forwarding
+                {getTypeLabel(t, "remote")}
               </Button>
               <Button
                 variant="ghost"
-                className="w-full justify-start gap-3 h-10"
+                className="justify-start gap-3 h-10 px-3 whitespace-nowrap"
                 onClick={() => startNewRule("dynamic")}
               >
                 <Shuffle size={16} className="text-purple-500" />
-                Dynamic Forwarding
+                {getTypeLabel(t, "dynamic")}
               </Button>
             </DropdownContent>
           </Dropdown>
@@ -562,7 +557,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
                 className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
               />
               <Input
-                placeholder="Search..."
+                placeholder={t("common.searchPlaceholder")}
                 className="h-9 pl-8 w-44"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -587,7 +582,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
                   className="w-full justify-start gap-2 h-9"
                   onClick={() => setViewMode("grid")}
                 >
-                  <LayoutGrid size={14} /> Grid
+                  <LayoutGrid size={14} /> {t("pf.view.grid")}
                   {viewMode === "grid" && (
                     <Check size={12} className="ml-auto" />
                   )}
@@ -597,7 +592,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
                   className="w-full justify-start gap-2 h-9"
                   onClick={() => setViewMode("list")}
                 >
-                  <ListIcon size={14} /> List
+                  <ListIcon size={14} /> {t("pf.view.list")}
                   {viewMode === "list" && (
                     <Check size={12} className="ml-auto" />
                   )}

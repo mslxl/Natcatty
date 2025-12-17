@@ -4,6 +4,7 @@
 
 import { Eye, EyeOff } from 'lucide-react';
 import React from 'react';
+import { useI18n } from '../../application/i18n/I18nProvider';
 import { cn } from '../../lib/utils';
 import { KeyType, SSHKey } from '../../types';
 import { Button } from '../ui/button';
@@ -27,19 +28,20 @@ export const GenerateStandardPanel: React.FC<GenerateStandardPanelProps> = ({
     isGenerating,
     onGenerate,
 }) => {
+    const { t } = useI18n();
     return (
         <>
             <div className="space-y-2">
-                <Label>Label</Label>
+                <Label>{t('keychain.field.label')}</Label>
                 <Input
                     value={draftKey.label || ''}
                     onChange={e => setDraftKey({ ...draftKey, label: e.target.value })}
-                    placeholder="My SSH Key"
+                    placeholder={t('keychain.generate.labelPlaceholder')}
                 />
             </div>
 
             <div className="space-y-2">
-                <Label>Key type</Label>
+                <Label>{t('keychain.generate.keyType')}</Label>
                 <div className="flex gap-2">
                     {(['ED25519', 'ECDSA', 'RSA'] as KeyType[]).map((t) => (
                         <Button
@@ -64,7 +66,7 @@ export const GenerateStandardPanel: React.FC<GenerateStandardPanelProps> = ({
             {/* Key Size selector - only for RSA and ECDSA */}
             {(draftKey.type === 'RSA' || draftKey.type === 'ECDSA') && (
                 <div className="space-y-2">
-                    <Label>Key size</Label>
+                    <Label>{t('keychain.generate.keySize')}</Label>
                     <div className="flex gap-2">
                         {(draftKey.type === 'RSA'
                             ? [4096, 2048, 1024]
@@ -87,13 +89,13 @@ export const GenerateStandardPanel: React.FC<GenerateStandardPanelProps> = ({
             )}
 
             <div className="space-y-2">
-                <Label>Passphrase</Label>
+                <Label>{t('terminal.auth.passphrase')}</Label>
                 <div className="relative">
                     <Input
                         type={showPassphrase ? 'text' : 'password'}
                         value={draftKey.passphrase || ''}
                         onChange={e => setDraftKey({ ...draftKey, passphrase: e.target.value })}
-                        placeholder="Optional passphrase"
+                        placeholder={t('keychain.generate.passphrasePlaceholder')}
                         className="pr-10"
                     />
                     <Button
@@ -117,7 +119,7 @@ export const GenerateStandardPanel: React.FC<GenerateStandardPanelProps> = ({
                     className="h-4 w-4 rounded border-border"
                 />
                 <Label htmlFor="savePassphrase" className="text-sm font-normal cursor-pointer">
-                    Save passphrase
+                    {t('keychain.generate.savePassphrase')}
                 </Label>
             </div>
 
@@ -129,7 +131,7 @@ export const GenerateStandardPanel: React.FC<GenerateStandardPanelProps> = ({
                 {isGenerating ? (
                     <div className="h-4 w-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                 ) : (
-                    'Generate & save'
+                    t('keychain.generate.generateSave')
                 )}
             </Button>
         </>

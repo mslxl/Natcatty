@@ -4,6 +4,7 @@
 
 import { Upload } from 'lucide-react';
 import React,{ useCallback,useRef } from 'react';
+import { useI18n } from '../../application/i18n/I18nProvider';
 import { SSHKey } from '../../types';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -22,6 +23,7 @@ export const ImportKeyPanel: React.FC<ImportKeyPanelProps> = ({
     setDraftKey,
     onImport,
 }) => {
+    const { t } = useI18n();
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleFileImport = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
@@ -88,16 +90,16 @@ export const ImportKeyPanel: React.FC<ImportKeyPanelProps> = ({
             />
 
             <div className="space-y-2">
-                <Label>Label</Label>
+                <Label>{t('keychain.field.label')}</Label>
                 <Input
                     value={draftKey.label || ''}
                     onChange={e => setDraftKey({ ...draftKey, label: e.target.value })}
-                    placeholder="Key label"
+                    placeholder={t('keychain.field.labelPlaceholder')}
                 />
             </div>
 
             <div className="space-y-2">
-                <Label>Private key *</Label>
+                <Label>{t('keychain.field.privateKeyRequired')}</Label>
                 <Textarea
                     value={draftKey.privateKey || ''}
                     onChange={e => setDraftKey({ ...draftKey, privateKey: e.target.value })}
@@ -107,7 +109,7 @@ export const ImportKeyPanel: React.FC<ImportKeyPanelProps> = ({
             </div>
 
             <div className="space-y-2">
-                <Label>Public key</Label>
+                <Label>{t('keychain.field.publicKey')}</Label>
                 <Textarea
                     value={draftKey.publicKey || ''}
                     onChange={e => setDraftKey({ ...draftKey, publicKey: e.target.value })}
@@ -118,15 +120,15 @@ export const ImportKeyPanel: React.FC<ImportKeyPanelProps> = ({
 
             <div className="space-y-2">
                 <Label className="flex items-center gap-2">
-                    Certificate
+                    {t('terminal.auth.certificate')}
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
-                        Optional
+                        {t('common.optional')}
                     </span>
                 </Label>
                 <Textarea
                     value={draftKey.certificate || ''}
                     onChange={e => setDraftKey({ ...draftKey, certificate: e.target.value })}
-                    placeholder="Paste certificate..."
+                    placeholder={t('keychain.field.certificatePlaceholder')}
                     className="min-h-[80px] font-mono text-xs"
                 />
             </div>
@@ -138,14 +140,14 @@ export const ImportKeyPanel: React.FC<ImportKeyPanelProps> = ({
             >
                 <div className="flex items-center justify-center gap-2 text-muted-foreground">
                     <Upload size={16} />
-                    <span className="text-sm">Drag and drop a private key file to import</span>
+                    <span className="text-sm">{t('keychain.import.dropHint')}</span>
                 </div>
                 <Button
                     variant="secondary"
                     className="w-full"
                     onClick={() => fileInputRef.current?.click()}
                 >
-                    Import from key file
+                    {t('keychain.import.importFromFile')}
                 </Button>
             </div>
 
@@ -154,7 +156,7 @@ export const ImportKeyPanel: React.FC<ImportKeyPanelProps> = ({
                 onClick={onImport}
                 disabled={!draftKey.label?.trim() || !draftKey.privateKey?.trim()}
             >
-                Save Key
+                {t('keychain.import.saveKey')}
             </Button>
         </>
     );

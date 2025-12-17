@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 import { useCloudSync } from './useCloudSync';
+import { useI18n } from '../i18n/I18nProvider';
 import { getCloudSyncManager } from '../../infrastructure/services/CloudSyncManager';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import type { SyncPayload } from '../../domain/sync';
@@ -37,6 +38,7 @@ interface SyncNowOptions {
 }
 
 export const useAutoSync = (config: AutoSyncConfig) => {
+  const { t } = useI18n();
   const sync = useCloudSync();
   const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastSyncedDataRef = useRef<string>('');
@@ -79,10 +81,10 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       const syncing = state.syncState === 'SYNCING';
 
       if (!hasProvider) {
-        throw new Error('No cloud provider connected. Open Settings → Sync & Cloud to connect one.');
+        throw new Error(t('sync.autoSync.noProvider'));
       }
       if (syncing) {
-        throw new Error('Sync is already in progress.');
+        throw new Error(t('sync.autoSync.alreadySyncing'));
       }
 
       // If another window unlocked, reuse the in-memory session password from main process.
@@ -100,7 +102,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       // Re-check after unlock attempt
       state = manager.getState();
       if (state.securityState !== 'UNLOCKED') {
-        throw new Error('Vault is locked. Open Settings → Sync & Cloud to unlock.');
+        throw new Error(t('sync.autoSync.vaultLocked'));
       }
 
       const payload = buildPayload();
@@ -109,9 +111,9 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       for (const result of results.values()) {
         if (!result.success) {
           if (result.conflictDetected) {
-            throw new Error('Sync conflict detected. Open Settings → Sync & Cloud to resolve.');
+            throw new Error(t('sync.autoSync.conflictDetected'));
           }
-          throw new Error(result.error || 'Sync failed');
+          throw new Error(result.error || t('sync.autoSync.syncFailed'));
         }
       }
 
@@ -121,9 +123,12 @@ export const useAutoSync = (config: AutoSyncConfig) => {
         throw error;
       }
       console.error('[AutoSync] Sync failed:', error);
-      toast.error('Sync failed', error instanceof Error ? error.message : 'Unknown error');
+      toast.error(
+        error instanceof Error ? error.message : t('common.unknownError'),
+        t('sync.autoSync.failedTitle'),
+      );
     }
-  }, [sync, buildPayload, getDataHash]);
+  }, [sync, buildPayload, getDataHash, t]);
   
   // Check remote version and pull if newer (on startup)
   const checkRemoteVersion = useCallback(async () => {
@@ -152,13 +157,13 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       if (remotePayload && remotePayload.syncedAt > state.localUpdatedAt) {
         console.log('[AutoSync] Remote is newer, applying...');
         config.onApplyPayload(remotePayload);
-        toast.success('Synced from cloud', 'Your data has been updated from the cloud.');
+        toast.success(t('sync.autoSync.syncedMessage'), t('sync.autoSync.syncedTitle'));
       }
     } catch (error) {
       console.error('[AutoSync] Failed to check remote version:', error);
       // Don't show error toast for initial check - it's not critical
     }
-  }, [sync, config]);
+  }, [sync, config, t]);
   
   // Debounced auto-sync when data changes
   useEffect(() => {

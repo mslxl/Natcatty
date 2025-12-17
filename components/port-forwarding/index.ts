@@ -4,9 +4,14 @@
  */
 
 export {
-TYPE_DESCRIPTIONS,
-TYPE_ICONS,TYPE_LABELS,generateRuleLabel,getStatusColor,
-getTypeColor
+  TYPE_DESCRIPTION_KEYS,
+  TYPE_LABEL_KEYS,
+  TYPE_ICONS,
+  generateRuleLabel,
+  getStatusColor,
+  getTypeColor,
+  getTypeDescription,
+  getTypeLabel,
 } from './utils';
 
 export { RuleCard } from './RuleCard';

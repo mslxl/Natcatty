@@ -5,17 +5,31 @@ import { Globe,Server,Shuffle } from 'lucide-react';
 import React from 'react';
 import { PortForwardingType } from '../../domain/models';
 
-export const TYPE_LABELS: Record<PortForwardingType, string> = {
-  local: 'Local Forwarding',
-  remote: 'Remote Forwarding',
-  dynamic: 'Dynamic Forwarding',
+export const TYPE_LABEL_KEYS: Record<PortForwardingType, string> = {
+  local: 'pf.type.local',
+  remote: 'pf.type.remote',
+  dynamic: 'pf.type.dynamic',
 };
 
-export const TYPE_DESCRIPTIONS: Record<PortForwardingType, string> = {
-  local: 'Local forwarding lets you access a remote server\'s listening port as though it were local.',
-  remote: 'Remote forwarding opens a port on the remote machine and forwards connections to the local (current) host.',
-  dynamic: 'Dynamic port forwarding turns Netcatty into a SOCKS proxy server. SOCKS proxy server is a protocol to request any connection via a remote host.',
+export const TYPE_DESCRIPTION_KEYS: Record<PortForwardingType, string> = {
+  local: 'pf.type.local.desc',
+  remote: 'pf.type.remote.desc',
+  dynamic: 'pf.type.dynamic.desc',
 };
+
+export function getTypeLabel(
+  t: (key: string, vars?: Record<string, unknown>) => string,
+  type: PortForwardingType
+): string {
+  return t(TYPE_LABEL_KEYS[type]);
+}
+
+export function getTypeDescription(
+  t: (key: string, vars?: Record<string, unknown>) => string,
+  type: PortForwardingType
+): string {
+  return t(TYPE_DESCRIPTION_KEYS[type]);
+}
 
 export const TYPE_ICONS: Record<PortForwardingType, React.ReactNode> = {
   local: <Globe size={16} />,
@@ -62,9 +76,9 @@ export function generateRuleLabel(
 ): string {
   switch (type) {
     case 'local':
-      return `Local:${localPort} → ${remoteHost}:${remotePort}`;
+      return `Local:${localPort} -> ${remoteHost}:${remotePort}`;
     case 'remote':
-      return `Remote:${localPort} → ${remoteHost}:${remotePort}`;
+      return `Remote:${localPort} -> ${remoteHost}:${remotePort}`;
     case 'dynamic':
       return `SOCKS:${localPort}`;
     default:

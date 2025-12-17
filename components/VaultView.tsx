@@ -41,10 +41,8 @@ import KeychainManager from "./KeychainManager";
 import KnownHostsManager from "./KnownHostsManager";
 import PortForwarding from "./PortForwardingNew";
 import ProtocolSelectDialog from "./ProtocolSelectDialog";
-import QuickConnectWizard, {
-  isQuickConnectInput,
-  parseQuickConnectInput,
-} from "./QuickConnectWizard";
+import QuickConnectWizard from "./QuickConnectWizard";
+import { isQuickConnectInput, parseQuickConnectInput } from "../domain/quickConnect";
 import SnippetsManager from "./SnippetsManager";
 import { Button } from "./ui/button";
 import {

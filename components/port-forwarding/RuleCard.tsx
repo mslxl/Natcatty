@@ -4,6 +4,7 @@
  */
 import { Copy,Loader2,Pencil,Play,Square,Trash2 } from 'lucide-react';
 import React from 'react';
+import { useI18n } from '../../application/i18n/I18nProvider';
 import { PortForwardingRule } from '../../domain/models';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/button';
@@ -37,6 +38,7 @@ export const RuleCard: React.FC<RuleCardProps> = ({
     onStart,
     onStop,
 }) => {
+    const { t } = useI18n();
     const isActive = rule.status === 'active';
     const isInactive = rule.status === 'inactive' || rule.status === 'error';
 
@@ -74,8 +76,8 @@ export const RuleCard: React.FC<RuleCardProps> = ({
                             <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
                                 <span className="truncate">
                                     {rule.type === 'dynamic'
-                                        ? `SOCKS on ${rule.bindAddress}:${rule.localPort}`
-                                        : `${rule.bindAddress}:${rule.localPort} → ${rule.remoteHost}:${rule.remotePort}`
+                                        ? t('pf.rule.summary.dynamic', { bindAddress: rule.bindAddress, localPort: rule.localPort })
+                                        : t('pf.rule.summary.default', { bindAddress: rule.bindAddress, localPort: rule.localPort, remoteHost: rule.remoteHost, remotePort: rule.remotePort })
                                     }
                                 </span>
                             </div>
@@ -121,25 +123,25 @@ export const RuleCard: React.FC<RuleCardProps> = ({
             </ContextMenuTrigger>
             <ContextMenuContent>
                 <ContextMenuItem onClick={onEdit}>
-                    <Pencil className="mr-2 h-4 w-4" /> Edit
+                    <Pencil className="mr-2 h-4 w-4" /> {t('action.edit')}
                 </ContextMenuItem>
                 <ContextMenuItem onClick={onDuplicate}>
-                    <Copy className="mr-2 h-4 w-4" /> Duplicate
+                    <Copy className="mr-2 h-4 w-4" /> {t('action.duplicate')}
                 </ContextMenuItem>
                 <ContextMenuSeparator />
                 {isInactive && (
                     <ContextMenuItem onClick={onStart}>
-                        <Play className="mr-2 h-4 w-4" /> Start
+                        <Play className="mr-2 h-4 w-4" /> {t('action.start')}
                     </ContextMenuItem>
                 )}
                 {(rule.status === 'active' || rule.status === 'connecting') && (
                     <ContextMenuItem onClick={onStop}>
-                        <Square className="mr-2 h-4 w-4" /> Stop
+                        <Square className="mr-2 h-4 w-4" /> {t('action.stop')}
                     </ContextMenuItem>
                 )}
                 <ContextMenuSeparator />
                 <ContextMenuItem className="text-destructive" onClick={onDelete}>
-                    <Trash2 className="mr-2 h-4 w-4" /> Delete
+                    <Trash2 className="mr-2 h-4 w-4" /> {t('action.delete')}
                 </ContextMenuItem>
             </ContextMenuContent>
         </ContextMenu>

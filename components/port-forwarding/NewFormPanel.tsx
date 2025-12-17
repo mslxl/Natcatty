@@ -4,6 +4,7 @@
  */
 import { ChevronDown,Zap } from 'lucide-react';
 import React from 'react';
+import { useI18n } from '../../application/i18n/I18nProvider';
 import { Host,PortForwardingRule,PortForwardingType } from '../../domain/models';
 import { cn } from '../../lib/utils';
 import { DistroAvatar } from '../DistroAvatar';
@@ -12,6 +13,7 @@ import { AsidePanel,AsidePanelContent,AsidePanelFooter } from '../ui/aside-panel
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
+import { getTypeLabel } from './utils';
 
 export interface NewFormPanelProps {
     draft: Partial<PortForwardingRule>;
@@ -34,13 +36,14 @@ export const NewFormPanel: React.FC<NewFormPanelProps> = ({
     onOpenWizard,
     isValid,
 }) => {
+    const { t } = useI18n();
     const selectedHost = hosts.find(h => h.id === draft.hostId);
 
     return (
         <AsidePanel
             open={true}
             onClose={onClose}
-            title="New Port Forwarding"
+            title={t('pf.wizard.newTitle')}
             width="w-[360px]"
         >
             <AsidePanelContent>
@@ -57,7 +60,7 @@ export const NewFormPanel: React.FC<NewFormPanelProps> = ({
                             )}
                             onClick={() => onDraftChange({ type })}
                         >
-                            {type[0].toUpperCase() + type.slice(1)}
+                            {getTypeLabel(t, type)}
                         </Button>
                     ))}
                 </div>
@@ -69,9 +72,9 @@ export const NewFormPanel: React.FC<NewFormPanelProps> = ({
 
                 {/* Label */}
                 <div className="space-y-1">
-                    <Label className="text-[10px] text-muted-foreground">Label</Label>
+                    <Label className="text-[10px] text-muted-foreground">{t('field.label')}</Label>
                     <Input
-                        placeholder="Rule label"
+                        placeholder={t('pf.form.labelPlaceholder')}
                         className="h-10"
                         value={draft.label || ''}
                         onChange={e => onDraftChange({ label: e.target.value })}
@@ -80,10 +83,10 @@ export const NewFormPanel: React.FC<NewFormPanelProps> = ({
 
                 {/* Local Port */}
                 <div className="space-y-1">
-                    <Label className="text-[10px] text-muted-foreground">Local port number *</Label>
+                    <Label className="text-[10px] text-muted-foreground">{t('pf.wizard.localConfig.localPort')}</Label>
                     <Input
                         type="number"
-                        placeholder="e.g. 8080"
+                        placeholder={t('pf.wizard.placeholders.portExample', { port: 8080 })}
                         className="h-10"
                         value={draft.localPort || ''}
                         onChange={e => onDraftChange({ localPort: parseInt(e.target.value) || undefined })}
@@ -92,7 +95,7 @@ export const NewFormPanel: React.FC<NewFormPanelProps> = ({
 
                 {/* Bind Address */}
                 <div className="space-y-1">
-                    <Label className="text-[10px] text-muted-foreground">Bind address</Label>
+                    <Label className="text-[10px] text-muted-foreground">{t('pf.wizard.bindAddress')}</Label>
                     <Input
                         placeholder="127.0.0.1"
                         className="h-10"
@@ -103,7 +106,7 @@ export const NewFormPanel: React.FC<NewFormPanelProps> = ({
 
                 {/* Intermediate Host */}
                 <div className="space-y-1">
-                    <Label className="text-[10px] text-muted-foreground">Intermediate host *</Label>
+                    <Label className="text-[10px] text-muted-foreground">{t('pf.form.intermediateHost')}</Label>
                     <Button
                         variant="secondary"
                         className="w-full h-10 justify-between"
@@ -119,7 +122,7 @@ export const NewFormPanel: React.FC<NewFormPanelProps> = ({
                                 <span>{selectedHost.label}</span>
                             </div>
                         ) : (
-                            <span className="text-muted-foreground">Select a host</span>
+                            <span className="text-muted-foreground">{t('common.selectAHost')}</span>
                         )}
                         <ChevronDown size={14} />
                     </Button>
@@ -129,9 +132,9 @@ export const NewFormPanel: React.FC<NewFormPanelProps> = ({
                 {(draft.type === 'local' || draft.type === 'remote') && (
                     <>
                         <div className="space-y-1">
-                            <Label className="text-[10px] text-muted-foreground">Destination address *</Label>
+                            <Label className="text-[10px] text-muted-foreground">{t('pf.wizard.destination.address')}</Label>
                             <Input
-                                placeholder="e.g. localhost or 192.168.1.100"
+                                placeholder={t('pf.wizard.destination.addressPlaceholder')}
                                 className="h-10"
                                 value={draft.remoteHost || ''}
                                 onChange={e => onDraftChange({ remoteHost: e.target.value })}
@@ -139,10 +142,10 @@ export const NewFormPanel: React.FC<NewFormPanelProps> = ({
                         </div>
 
                         <div className="space-y-1">
-                            <Label className="text-[10px] text-muted-foreground">Destination port number *</Label>
+                            <Label className="text-[10px] text-muted-foreground">{t('pf.wizard.destination.port')}</Label>
                             <Input
                                 type="number"
-                                placeholder="e.g. 3306"
+                                placeholder={t('pf.wizard.placeholders.portExample', { port: 3306 })}
                                 className="h-10"
                                 value={draft.remotePort || ''}
                                 onChange={e => onDraftChange({ remotePort: parseInt(e.target.value) || undefined })}
@@ -157,7 +160,7 @@ export const NewFormPanel: React.FC<NewFormPanelProps> = ({
                     disabled={!isValid}
                     onClick={onSave}
                 >
-                    Create Rule
+                    {t('pf.form.createRule')}
                 </Button>
                 <div className="flex items-center justify-between">
                     <Button
@@ -165,15 +168,15 @@ export const NewFormPanel: React.FC<NewFormPanelProps> = ({
                         className="h-10 text-muted-foreground hover:text-foreground hover:bg-foreground/5"
                         onClick={onClose}
                     >
-                        Cancel
+                        {t('common.cancel')}
                     </Button>
                     <button
                         className="text-xs text-muted-foreground hover:text-foreground/80 flex items-center gap-1 px-2 py-1 rounded hover:bg-foreground/5 transition-colors"
                         onClick={onOpenWizard}
-                        title="Open Port Forwarding Wizard"
+                        title={t('pf.form.openWizardTitle')}
                     >
                         <Zap size={12} />
-                        Open Wizard
+                        {t('pf.form.openWizard')}
                     </button>
                 </div>
             </AsidePanelFooter>

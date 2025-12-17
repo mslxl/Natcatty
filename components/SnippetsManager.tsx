@@ -1,5 +1,6 @@
 import { Check, ChevronDown, Clock, Copy, Edit2, FileCode, FolderPlus, LayoutGrid, List as ListIcon, Loader2, Package, Play, Plus, Search, Trash2 } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useI18n } from '../application/i18n/I18nProvider';
 import { cn } from '../lib/utils';
 import { Host, ShellHistoryEntry, Snippet, SSHKey } from '../types';
 import { DistroAvatar } from './DistroAvatar';
@@ -49,6 +50,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
   onSaveHost,
   onCreateGroup,
 }) => {
+  const { t } = useI18n();
   // Panel state
   const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>('none');
   const [editingSnippet, setEditingSnippet] = useState<Partial<Snippet>>({
@@ -305,7 +307,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
           availableKeys={availableKeys}
           onSaveHost={onSaveHost}
           onCreateGroup={onCreateGroup}
-          title="Add targets"
+          title={t('snippets.targets.add')}
         />
       );
     }
@@ -315,7 +317,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
         <AsidePanel
           open={true}
           onClose={handleClosePanel}
-          title={editingSnippet.id ? 'Edit Snippet' : 'New Snippet'}
+          title={editingSnippet.id ? t('snippets.panel.editTitle') : t('snippets.panel.newTitle')}
           actions={
             <Button
               variant="ghost"
@@ -323,7 +325,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
               className="h-8 w-8"
               onClick={handleSubmit}
               disabled={!editingSnippet.label || !editingSnippet.command}
-              aria-label="Save"
+              aria-label={t('common.save')}
             >
               <Check size={16} />
             </Button>
@@ -332,9 +334,9 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
           <AsidePanelContent>
             {/* Action Description */}
             <Card className="p-3 space-y-2 bg-card border-border/80">
-              <p className="text-xs font-semibold text-muted-foreground">Action description</p>
+              <p className="text-xs font-semibold text-muted-foreground">{t('snippets.field.description')}</p>
               <Input
-                placeholder="Example: check network load"
+                placeholder={t('snippets.field.descriptionPlaceholder')}
                 value={editingSnippet.label || ''}
                 onChange={(e) => setEditingSnippet({ ...editingSnippet, label: e.target.value })}
                 className="h-10"
@@ -343,19 +345,19 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
 
             {/* Package */}
             <Card className="p-3 space-y-2 bg-card border-border/80">
-              <p className="text-xs font-semibold text-muted-foreground">Add a Package</p>
+              <p className="text-xs font-semibold text-muted-foreground">{t('snippets.field.package')}</p>
               <Combobox
                 options={packageOptions}
                 value={editingSnippet.package || selectedPackage || ''}
                 onValueChange={(val) => setEditingSnippet({ ...editingSnippet, package: val })}
-                placeholder="Select or create package"
+                placeholder={t('snippets.field.packagePlaceholder')}
                 allowCreate={true}
                 onCreateNew={(val) => {
                   if (!packages.includes(val)) {
                     onPackagesChange([...packages, val]);
                   }
                 }}
-                createText="Create Package"
+                createText={t('snippets.field.createPackage')}
                 icon={<Package size={16} />}
                 triggerClassName="h-10"
               />
@@ -363,7 +365,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
 
             {/* Script */}
             <Card className="p-3 space-y-2 bg-card border-border/80">
-              <p className="text-xs font-semibold text-muted-foreground">Script *</p>
+              <p className="text-xs font-semibold text-muted-foreground">{t('snippets.field.scriptRequired')}</p>
               <Textarea
                 placeholder="ls -l"
                 className="min-h-[120px] font-mono text-xs"
@@ -375,9 +377,9 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
             {/* Targets */}
             <Card className="p-3 space-y-3 bg-card border-border/80">
               <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold text-muted-foreground">Targets</p>
+                <p className="text-xs font-semibold text-muted-foreground">{t('snippets.targets.title')}</p>
                 <Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-primary" onClick={openTargetPicker}>
-                  Edit
+                  {t('action.edit')}
                 </Button>
               </div>
 
@@ -387,7 +389,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                   className="w-full h-10"
                   onClick={openTargetPicker}
                 >
-                  Add targets
+                  {t('snippets.targets.add')}
                 </Button>
               ) : (
                 <div className="space-y-2">
@@ -414,7 +416,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
               onClick={handleSubmit}
               disabled={!editingSnippet.label || !editingSnippet.command}
             >
-              {editingSnippet.targets?.length ? 'Run' : 'Save'}
+              {editingSnippet.targets?.length ? t('action.run') : t('common.save')}
             </Button>
           </div>
         </AsidePanel>
@@ -426,8 +428,8 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
         <AsidePanel
           open={true}
           onClose={handleClosePanel}
-          title="Shell History"
-          subtitle={`${shellHistory.length} commands`}
+          title={t('snippets.history.title')}
+          subtitle={t('snippets.history.subtitle', { count: shellHistory.length })}
           showBackButton={true}
           onBack={handleClosePanel}
         >
@@ -440,8 +442,8 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
             {visibleHistory.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground">
                 <Clock size={32} className="mx-auto mb-3 opacity-50" />
-                <p className="text-sm">No shell history yet</p>
-                <p className="text-xs mt-1">Commands you execute will appear here</p>
+                <p className="text-sm">{t('snippets.history.emptyTitle')}</p>
+                <p className="text-xs mt-1">{t('snippets.history.emptyDesc')}</p>
               </div>
             ) : (
               <>
@@ -460,7 +462,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                       <Loader2 size={20} className="animate-spin mx-auto text-muted-foreground" />
                     ) : (
                       <Button variant="ghost" size="sm" onClick={loadMoreHistory}>
-                        Load more
+                        {t('snippets.history.loadMore')}
                       </Button>
                     )}
                   </div>
@@ -484,14 +486,14 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
             <div className="relative w-64">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Search snippets..."
+                placeholder={t('snippets.searchPlaceholder')}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="h-10 pl-9 bg-secondary border-border/60 text-sm"
               />
             </div>
             <Button onClick={() => handleEdit()} size="sm" className="h-10">
-              <Plus size={14} className="mr-2" /> New Snippet
+              <Plus size={14} className="mr-2" /> {t('snippets.action.newSnippet')}
             </Button>
             <Button
               onClick={() => {
@@ -502,7 +504,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
               variant="secondary"
               className="h-10 gap-2"
             >
-              <FolderPlus size={14} className="mr-1" /> New Package
+              <FolderPlus size={14} className="mr-1" /> {t('snippets.action.newPackage')}
             </Button>
             <Button
               variant={rightPanelMode === 'history' ? 'secondary' : 'ghost'}
@@ -510,7 +512,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
               className="h-10 gap-2"
               onClick={() => setRightPanelMode(rightPanelMode === 'history' ? 'none' : 'history')}
             >
-              <Clock size={14} /> Shell History
+              <Clock size={14} /> {t('snippets.history.title')}
             </Button>
             {/* View mode and sort controls */}
             <div className="flex items-center gap-1 ml-auto">
@@ -527,14 +529,14 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                     className="w-full justify-start gap-2 h-9"
                     onClick={() => setViewMode('grid')}
                   >
-                    <LayoutGrid size={14} /> Grid
+                    <LayoutGrid size={14} /> {t('snippets.view.grid')}
                   </Button>
                   <Button
                     variant={viewMode === 'list' ? 'secondary' : 'ghost'}
                     className="w-full justify-start gap-2 h-9"
                     onClick={() => setViewMode('list')}
                   >
-                    <ListIcon size={14} /> List
+                    <ListIcon size={14} /> {t('snippets.view.list')}
                   </Button>
                 </DropdownContent>
               </Dropdown>
@@ -547,10 +549,10 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
           </div>
         </header>
         <div className="flex items-center gap-2 text-sm font-semibold px-4 py-2">
-          <button className="text-primary hover:underline" onClick={() => setSelectedPackage(null)}>All packages</button>
+          <button className="text-primary hover:underline" onClick={() => setSelectedPackage(null)}>{t('snippets.breadcrumb.allPackages')}</button>
           {breadcrumb.map((b) => (
             <span key={b.path} className="flex items-center gap-2">
-              <span className="text-muted-foreground">›</span>
+              <span className="text-muted-foreground">{t('snippets.breadcrumb.separator')}</span>
               <button className="text-primary hover:underline" onClick={() => setSelectedPackage(b.path)}>{b.name}</button>
             </span>
           ))}
@@ -562,8 +564,8 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
               <div className="mx-auto h-12 w-12 rounded-xl bg-muted text-muted-foreground flex items-center justify-center">
                 <FileCode size={22} />
               </div>
-              <div className="text-sm font-semibold text-foreground">Create snippet</div>
-              <div className="text-xs text-muted-foreground px-8">Save your most used commands as snippets to reuse them in one click.</div>
+              <div className="text-sm font-semibold text-foreground">{t('snippets.empty.title')}</div>
+              <div className="text-xs text-muted-foreground px-8">{t('snippets.empty.desc')}</div>
             </div>
           </div>
         )}
@@ -572,7 +574,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
           {displayedPackages.length > 0 && (
             <>
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-muted-foreground">Packages</h3>
+                <h3 className="text-sm font-semibold text-muted-foreground">{t('snippets.section.packages')}</h3>
               </div>
               <div className={cn(
                 viewMode === 'grid'
@@ -610,14 +612,14 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="text-sm font-semibold truncate">{pkg.name}</div>
-                            <div className="text-[11px] text-muted-foreground">{pkg.count} snippet{pkg.count === 1 ? '' : 's'}</div>
+                            <div className="text-[11px] text-muted-foreground">{t('snippets.package.count', { count: pkg.count })}</div>
                           </div>
                         </div>
                       </div>
                     </ContextMenuTrigger>
                     <ContextMenuContent>
-                      <ContextMenuItem onClick={() => setSelectedPackage(pkg.path)}>Open</ContextMenuItem>
-                      <ContextMenuItem className="text-destructive" onClick={() => deletePackage(pkg.path)}>Delete</ContextMenuItem>
+                      <ContextMenuItem onClick={() => setSelectedPackage(pkg.path)}>{t('action.open')}</ContextMenuItem>
+                      <ContextMenuItem className="text-destructive" onClick={() => deletePackage(pkg.path)}>{t('action.delete')}</ContextMenuItem>
                     </ContextMenuContent>
                   </ContextMenu>
                 ))}
@@ -627,7 +629,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
 
           {displayedSnippets.length > 0 && (
             <div className="space-y-2">
-              <h3 className="text-sm font-semibold text-muted-foreground">Snippets</h3>
+              <h3 className="text-sm font-semibold text-muted-foreground">{t('snippets.section.snippets')}</h3>
               <div className={cn(
                 viewMode === 'grid'
                   ? "grid gap-3 grid-cols-1 md:grid-cols-2 xl:grid-cols-3"
@@ -657,7 +659,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                           <div className="min-w-0 flex-1">
                             <div className="text-sm font-semibold truncate">{snippet.label}</div>
                             <div className="text-[11px] text-muted-foreground font-mono leading-4 truncate">
-                              {snippet.command.replace(/\s+/g, ' ') || 'Command'}
+                              {snippet.command.replace(/\s+/g, ' ') || t('snippets.commandFallback')}
                             </div>
                           </div>
                           {viewMode === 'list' && (
@@ -685,17 +687,17 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                         }}
                         disabled={!snippet.targets?.length}
                       >
-                        <Play className="mr-2 h-4 w-4" /> Run
+                        <Play className="mr-2 h-4 w-4" /> {t('action.run')}
                       </ContextMenuItem>
                       <ContextMenuSeparator />
                       <ContextMenuItem onClick={() => handleEdit(snippet)}>
-                        <Edit2 className="mr-2 h-4 w-4" /> Edit
+                        <Edit2 className="mr-2 h-4 w-4" /> {t('action.edit')}
                       </ContextMenuItem>
                       <ContextMenuItem onClick={() => handleCopy(snippet.id, snippet.command)}>
-                        <Copy className="mr-2 h-4 w-4" /> Copy
+                        <Copy className="mr-2 h-4 w-4" /> {t('action.copy')}
                       </ContextMenuItem>
                       <ContextMenuItem className="text-destructive" onClick={() => onDelete(snippet.id)}>
-                        <Trash2 className="mr-2 h-4 w-4" /> Delete
+                        <Trash2 className="mr-2 h-4 w-4" /> {t('action.delete')}
                       </ContextMenuItem>
                     </ContextMenuContent>
                   </ContextMenu>
@@ -711,25 +713,25 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <Card className="w-full max-w-sm p-4 space-y-4">
             <div>
-              <p className="text-sm font-semibold">New Package</p>
-              <p className="text-xs text-muted-foreground">Parent: {selectedPackage || 'Root'}</p>
+              <p className="text-sm font-semibold">{t('snippets.packageDialog.title')}</p>
+              <p className="text-xs text-muted-foreground">{t('snippets.packageDialog.parent', { parent: selectedPackage || t('snippets.packageDialog.root') })}</p>
             </div>
             <div className="space-y-2">
-              <Label>Name</Label>
+              <Label>{t('field.name')}</Label>
               <Input
                 autoFocus
-                placeholder="e.g. ops/maintenance"
+                placeholder={t('snippets.packageDialog.placeholder')}
                 value={newPackageName}
                 onChange={(e) => setNewPackageName(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && createPackage()}
               />
-              <p className="text-[11px] text-muted-foreground">Use "/" to create nested packages.</p>
+              <p className="text-[11px] text-muted-foreground">{t('snippets.packageDialog.hint')}</p>
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setIsPackageDialogOpen(false)}>
-                Cancel
+                {t('common.cancel')}
               </Button>
-              <Button onClick={createPackage}>Create</Button>
+              <Button onClick={createPackage}>{t('common.create')}</Button>
             </div>
           </Card>
         </div>
@@ -750,6 +752,7 @@ interface HistoryItemProps {
 }
 
 const HistoryItem: React.FC<HistoryItemProps> = ({ entry, onSaveAsSnippet, onCopy, isCopied }) => {
+  const { t } = useI18n();
   const [isEditing, setIsEditing] = useState(false);
   const [label, setLabel] = useState('');
 
@@ -769,10 +772,10 @@ const HistoryItem: React.FC<HistoryItemProps> = ({ entry, onSaveAsSnippet, onCop
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return 'just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
+    if (diffMins < 1) return t('snippets.history.time.justNow');
+    if (diffMins < 60) return t('snippets.history.time.minutesAgo', { count: diffMins });
+    if (diffHours < 24) return t('snippets.history.time.hoursAgo', { count: diffHours });
+    if (diffDays < 7) return t('snippets.history.time.daysAgo', { count: diffDays });
     return date.toLocaleDateString();
   };
 
@@ -783,7 +786,7 @@ const HistoryItem: React.FC<HistoryItemProps> = ({ entry, onSaveAsSnippet, onCop
           <div className="font-mono text-sm truncate">{entry.command}</div>
           <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground">
             <span>{entry.hostLabel}</span>
-            <span>•</span>
+            <span>{t('snippets.history.separator')}</span>
             <span>{formatTime(entry.timestamp)}</span>
           </div>
         </div>
@@ -803,7 +806,7 @@ const HistoryItem: React.FC<HistoryItemProps> = ({ entry, onSaveAsSnippet, onCop
               className="h-7 px-3"
               onClick={() => setIsEditing(true)}
             >
-              Save
+              {t('common.save')}
             </Button>
           </div>
         )}
@@ -811,7 +814,7 @@ const HistoryItem: React.FC<HistoryItemProps> = ({ entry, onSaveAsSnippet, onCop
       {isEditing && (
         <div className="mt-3 space-y-2">
           <Input
-            placeholder="Set a label for this snippet"
+            placeholder={t('snippets.history.labelPlaceholder')}
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSave()}
@@ -819,10 +822,10 @@ const HistoryItem: React.FC<HistoryItemProps> = ({ entry, onSaveAsSnippet, onCop
           />
           <div className="flex justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={() => { setIsEditing(false); setLabel(''); }}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button size="sm" onClick={handleSave} disabled={!label.trim()}>
-              Save as Snippet
+              {t('snippets.history.saveAsSnippet')}
             </Button>
           </div>
         </div>

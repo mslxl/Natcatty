@@ -5,6 +5,7 @@
 import { ChevronRight, Info } from 'lucide-react';
 import React, { useState } from 'react';
 import { useKeychainBackend } from '../../application/state/useKeychainBackend';
+import { useI18n } from '../../application/i18n/I18nProvider';
 import { cn } from '../../lib/utils';
 import { Host, SSHKey } from '../../types';
 import { Button } from '../ui/button';
@@ -48,6 +49,7 @@ export const ExportKeyPanel: React.FC<ExportKeyPanelProps> = ({
 	onSaveHost,
 	onClose,
 }) => {
+    const { t } = useI18n();
 	const { execCommand } = useKeychainBackend();
 	const [exportLocation, setExportLocation] = useState('.ssh');
 	const [exportFilename, setExportFilename] = useState('authorized_keys');
@@ -65,7 +67,7 @@ export const ExportKeyPanel: React.FC<ExportKeyPanelProps> = ({
         try {
             // Check for authentication method
             if (!exportHost.password && !exportHost.identityFileId) {
-                throw new Error('Host has no saved password or key. Please add password credentials to the host first.');
+                throw new Error(t('keychain.export.missingCredentials'));
             }
 
             // Get private key for authentication if host uses key auth
@@ -108,15 +110,24 @@ export const ExportKeyPanel: React.FC<ExportKeyPanelProps> = ({
                     };
                     onSaveHost(updatedHost);
                 }
-                toast.success(`Public key exported and attached to ${exportHost.label}`, 'Export Successful');
+                toast.success(
+                  t('keychain.export.successMessage', { host: exportHost.label }),
+                  t('keychain.export.successTitle'),
+                );
                 onClose();
             } else {
                 const errorMsg = hasError || result?.stdout?.trim() || `Command exited with code ${exitCode}`;
-                toast.error(`Failed to export key: ${errorMsg}`, 'Export Failed');
+                toast.error(
+                  t('keychain.export.failedMessage', { error: errorMsg }),
+                  t('keychain.export.failedTitle'),
+                );
             }
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            toast.error(`Export failed: ${message}`, 'Export Failed');
+            toast.error(
+              t('keychain.export.failedGeneric', { message }),
+              t('keychain.export.failedTitle'),
+            );
         } finally {
             setIsExporting(false);
         }
@@ -136,34 +147,36 @@ export const ExportKeyPanel: React.FC<ExportKeyPanelProps> = ({
                 </div>
                 <div className="min-w-0 flex-1">
                     <p className="text-sm font-semibold truncate">{keyItem.label}</p>
-                    <p className="text-xs text-muted-foreground">Type {getKeyTypeDisplay(keyItem, isMac)}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {t('auth.keyType', { type: getKeyTypeDisplay(keyItem, isMac) })}
+                    </p>
                 </div>
             </div>
 
             {/* Export to field */}
-            <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                    <Label className="text-muted-foreground">Export to *</Label>
-                    <Button
-                        variant="link"
-                        className="h-auto p-0 text-primary text-sm"
+                <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                        <Label className="text-muted-foreground">{t('keychain.export.exportToRequired')}</Label>
+                        <Button
+                            variant="link"
+                            className="h-auto p-0 text-primary text-sm"
+                            onClick={onShowHostSelector}
+                        >
+                            {t('keychain.export.selectHost')}
+                        </Button>
+                    </div>
+                    <Input
+                        value={exportHost?.label || ''}
+                        readOnly
+                        placeholder={t('keychain.export.selectHostPlaceholder')}
+                        className="bg-muted/50 cursor-pointer"
                         onClick={onShowHostSelector}
-                    >
-                        Select Host
-                    </Button>
+                    />
                 </div>
-                <Input
-                    value={exportHost?.label || ''}
-                    readOnly
-                    placeholder="Select a host..."
-                    className="bg-muted/50 cursor-pointer"
-                    onClick={onShowHostSelector}
-                />
-            </div>
 
             {/* Location field */}
             <div className="space-y-2">
-                <Label className="text-muted-foreground">Location ~ $1 *</Label>
+                <Label className="text-muted-foreground">{t('keychain.export.locationLabel')}</Label>
                 <Input
                     value={exportLocation}
                     onChange={e => setExportLocation(e.target.value)}
@@ -173,7 +186,7 @@ export const ExportKeyPanel: React.FC<ExportKeyPanelProps> = ({
 
             {/* Filename field */}
             <div className="space-y-2">
-                <Label className="text-muted-foreground">Filename ~ $2 *</Label>
+                <Label className="text-muted-foreground">{t('keychain.export.filenameLabel')}</Label>
                 <Input
                     value={exportFilename}
                     onChange={e => setExportFilename(e.target.value)}
@@ -185,8 +198,12 @@ export const ExportKeyPanel: React.FC<ExportKeyPanelProps> = ({
             <div className="flex items-start gap-2 p-3 bg-muted/50 border border-border/60 rounded-lg">
                 <Info size={14} className="mt-0.5 text-muted-foreground shrink-0" />
                 <p className="text-xs text-muted-foreground">
-                    Key export currently supports only <span className="font-semibold text-foreground">UNIX</span> systems.
-                    Use <span className="font-semibold text-foreground">Advanced</span> section to customize the export script.
+                    {t('keychain.export.note.supportsOnly')}{' '}
+                    <span className="font-semibold text-foreground">UNIX</span>{' '}
+                    {t('keychain.export.note.systems')}{' '}
+                    {t('keychain.export.note.use')}{' '}
+                    <span className="font-semibold text-foreground">{t('keychain.export.advanced')}</span>{' '}
+                    {t('keychain.export.note.customize')}
                 </p>
             </div>
 
@@ -194,7 +211,7 @@ export const ExportKeyPanel: React.FC<ExportKeyPanelProps> = ({
             <Collapsible open={exportAdvancedOpen} onOpenChange={setExportAdvancedOpen}>
                 <CollapsibleTrigger asChild>
                     <Button variant="ghost" className="w-full justify-between px-0 h-10 hover:bg-transparent hover:text-current">
-                        <span className="font-medium">Advanced</span>
+                        <span className="font-medium">{t('keychain.export.advanced')}</span>
                         <ChevronRight size={16} className={cn(
                             "transition-transform",
                             exportAdvancedOpen && "rotate-90"
@@ -202,12 +219,12 @@ export const ExportKeyPanel: React.FC<ExportKeyPanelProps> = ({
                     </Button>
                 </CollapsibleTrigger>
                 <CollapsibleContent className="space-y-2 pt-2">
-                    <Label className="text-muted-foreground">Script *</Label>
+                    <Label className="text-muted-foreground">{t('keychain.export.scriptRequired')}</Label>
                     <Textarea
                         value={exportScript}
                         onChange={e => setExportScript(e.target.value)}
                         className="min-h-[180px] font-mono text-xs"
-                        placeholder="Export script..."
+                        placeholder={t('keychain.export.scriptPlaceholder')}
                     />
                 </CollapsibleContent>
             </Collapsible>
@@ -218,7 +235,7 @@ export const ExportKeyPanel: React.FC<ExportKeyPanelProps> = ({
                 disabled={!exportHost || !exportLocation || !exportFilename || isExporting}
                 onClick={handleExport}
             >
-                {isExporting ? 'Exporting...' : 'Export and Attach'}
+                {isExporting ? t('keychain.export.exporting') : t('keychain.export.exportAndAttach')}
             </Button>
         </>
     );

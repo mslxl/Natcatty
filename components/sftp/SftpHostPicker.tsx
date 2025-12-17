@@ -4,6 +4,7 @@
 
 import { Monitor } from 'lucide-react';
 import React,{ useMemo } from 'react';
+import { useI18n } from '../../application/i18n/I18nProvider';
 import { Host } from '../../types';
 import { DistroAvatar } from '../DistroAvatar';
 import { Badge } from '../ui/badge';
@@ -31,6 +32,7 @@ export const SftpHostPicker: React.FC<SftpHostPickerProps> = ({
     onSelectLocal,
     onSelectHost,
 }) => {
+    const { t } = useI18n();
     const filteredHosts = useMemo(() => {
         const term = hostSearch.trim().toLowerCase();
         return hosts.filter(h =>
@@ -44,16 +46,16 @@ export const SftpHostPicker: React.FC<SftpHostPickerProps> = ({
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="max-w-md">
                 <DialogHeader>
-                    <DialogTitle>Select Host</DialogTitle>
+                    <DialogTitle>{t('sftp.picker.title')}</DialogTitle>
                     <DialogDescription>
-                        Pick a host for the {side} pane
+                        {t('sftp.picker.desc', { side: side === 'left' ? t('common.left') : t('common.right') })}
                     </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-3">
                     <Input
                         value={hostSearch}
                         onChange={e => onHostSearchChange(e.target.value)}
-                        placeholder="Search hosts..."
+                        placeholder={t('sftp.picker.searchPlaceholder')}
                         className="h-9"
                     />
 
@@ -67,11 +69,11 @@ export const SftpHostPicker: React.FC<SftpHostPickerProps> = ({
                                 <Monitor size={16} />
                             </div>
                             <div>
-                                <div className="text-sm font-medium">Local filesystem</div>
-                                <div className="text-xs text-muted-foreground">Browse local files</div>
+                                <div className="text-sm font-medium">{t('sftp.picker.local.title')}</div>
+                                <div className="text-xs text-muted-foreground">{t('sftp.picker.local.desc')}</div>
                             </div>
                         </div>
-                        <Badge variant="outline" className="text-[10px]">Local</Badge>
+                        <Badge variant="outline" className="text-[10px]">{t('sftp.picker.local.badge')}</Badge>
                     </div>
 
                     {/* Remote hosts */}
@@ -98,7 +100,7 @@ export const SftpHostPicker: React.FC<SftpHostPickerProps> = ({
                         ))}
                         {filteredHosts.length === 0 && (
                             <div className="text-xs text-muted-foreground text-center py-6 border border-dashed border-border/60 rounded-lg">
-                                No matching hosts
+                                {t('sftp.picker.noMatch')}
                             </div>
                         )}
                     </div>

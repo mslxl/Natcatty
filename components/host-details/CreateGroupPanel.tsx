@@ -4,6 +4,7 @@
  */
 import { FolderPlus,HelpCircle,Plus } from 'lucide-react';
 import React from 'react';
+import { useI18n } from '../../application/i18n/I18nProvider';
 import { AsidePanel,AsidePanelContent } from '../ui/aside-panel';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
@@ -53,28 +54,29 @@ export const CreateGroupPanel: React.FC<CreateGroupPanelProps> = ({
     onBack,
     onCancel,
 }) => {
+    const { t } = useI18n();
     return (
         <AsidePanel
             open={true}
             onClose={onCancel}
-            title="New Group"
+            title={t('hostDetails.group.title')}
             showBackButton={true}
             onBack={onBack}
             actions={
                 <Button size="sm" onClick={onSave} disabled={!newGroupName.trim()}>
-                    Save
+                    {t('common.save')}
                 </Button>
             }
         >
             <AsidePanelContent>
                 <Card className="p-3 space-y-3 bg-card border-border/80">
-                    <p className="text-xs font-semibold">General</p>
+                    <p className="text-xs font-semibold">{t('hostDetails.group.general')}</p>
                     <div className="flex items-center gap-2">
                         <div className="h-10 w-10 rounded-lg bg-primary/15 flex items-center justify-center">
                             <FolderPlus size={18} className="text-primary" />
                         </div>
                         <Input
-                            placeholder="Group name"
+                            placeholder={t('hostDetails.group.namePlaceholder')}
                             value={newGroupName}
                             onChange={(e) => setNewGroupName(e.target.value)}
                             className="h-10 flex-1"
@@ -83,7 +85,7 @@ export const CreateGroupPanel: React.FC<CreateGroupPanelProps> = ({
                     </div>
                     <div className="relative">
                         <Input
-                            placeholder="Parent Group"
+                            placeholder={t('hostDetails.group.parentPlaceholder')}
                             value={newGroupParent}
                             onChange={(e) => setNewGroupParent(e.target.value)}
                             list="parent-group-options"
@@ -97,14 +99,14 @@ export const CreateGroupPanel: React.FC<CreateGroupPanelProps> = ({
 
                 <Card className="p-3 space-y-2 bg-card border-border/80">
                     <div className="flex items-center justify-between">
-                        <p className="text-xs font-semibold">Cloud Sync</p>
+                        <p className="text-xs font-semibold">{t('hostDetails.group.cloudSync')}</p>
                         <HelpCircle size={14} className="text-muted-foreground" />
                     </div>
-                    <ToggleRow label="Cloud Sync" enabled={false} onToggle={() => { }} />
+                    <ToggleRow label={t('hostDetails.group.cloudSync')} enabled={false} onToggle={() => { }} />
                 </Card>
 
                 <Button variant="ghost" className="w-full h-10 gap-2">
-                    <Plus size={16} /> Add protocol
+                    <Plus size={16} /> {t('hostDetails.group.addProtocol')}
                 </Button>
             </AsidePanelContent>
         </AsidePanel>

@@ -4,6 +4,7 @@
 
 import { Copy,Info } from 'lucide-react';
 import React from 'react';
+import { useI18n } from '../../application/i18n/I18nProvider';
 import { SSHKey } from '../../types';
 import { Button } from '../ui/button';
 import { Label } from '../ui/label';
@@ -18,16 +19,17 @@ export const ViewKeyPanel: React.FC<ViewKeyPanelProps> = ({
     keyItem,
     onExport,
 }) => {
+    const { t } = useI18n();
     return (
         <>
             <div className="space-y-2">
-                <Label className="text-muted-foreground">Label</Label>
+                <Label className="text-muted-foreground">{t('keychain.field.label')}</Label>
                 <p className="text-sm">{keyItem.label}</p>
             </div>
 
             {keyItem.publicKey && (
                 <div className="space-y-2">
-                    <Label className="text-muted-foreground">Public Key</Label>
+                    <Label className="text-muted-foreground">{t('keychain.field.publicKey')}</Label>
                     <div className="relative">
                         <div className="p-3 bg-card border border-border/80 rounded-lg font-mono text-xs break-all max-h-32 overflow-y-auto">
                             {keyItem.publicKey}
@@ -45,20 +47,20 @@ export const ViewKeyPanel: React.FC<ViewKeyPanelProps> = ({
             )}
 
             <div className="space-y-1">
-                <Label className="text-muted-foreground">Type</Label>
+                <Label className="text-muted-foreground">{t('field.type')}</Label>
                 <p className="text-sm">{keyItem.type}</p>
             </div>
 
             {/* Key Export section */}
             <div className="pt-4 mt-4 border-t border-border/60">
                 <div className="flex items-center gap-2 mb-3">
-                    <span className="text-sm font-medium">Key export</span>
+                    <span className="text-sm font-medium">{t('keychain.export.title')}</span>
                     <div className="h-4 w-4 rounded-full bg-muted flex items-center justify-center">
                         <Info size={10} className="text-muted-foreground" />
                     </div>
                 </div>
                 <Button className="w-full h-11" onClick={onExport}>
-                    Export to host
+                    {t('keychain.export.exportToHost')}
                 </Button>
             </div>
         </>

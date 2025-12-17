@@ -3,6 +3,7 @@ import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, 
 import { activeTabStore, useActiveTabId } from '../application/state/activeTabStore';
 import { LogView } from '../application/state/useSessionState';
 import { useWindowControls } from '../application/state/useWindowControls';
+import { useI18n } from '../application/i18n/I18nProvider';
 import { cn } from '../lib/utils';
 import { TerminalSession, Workspace } from '../types';
 import { Button } from './ui/button';
@@ -129,6 +130,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   onEndSessionDrag,
   onReorderTabs,
 }) => {
+  const { t } = useI18n();
   // Subscribe to activeTabId from external store
   const { maximize } = useWindowControls();
   const activeTabId = useActiveTabId();
@@ -381,7 +383,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             <button
               onClick={(e) => onCloseSession(session.id, e)}
               className="p-1 rounded-full hover:bg-destructive/10 hover:text-destructive transition-colors"
-              aria-label="Close session"
+              aria-label={t('tabs.closeSessionAria')}
             >
               <X size={12} />
             </button>
@@ -440,10 +442,10 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             </ContextMenuTrigger>
             <ContextMenuContent>
               <ContextMenuItem onClick={() => onRenameWorkspace(workspace.id)}>
-                Rename
+                {t('common.rename')}
               </ContextMenuItem>
               <ContextMenuItem className="text-destructive" onClick={() => onCloseWorkspace(workspace.id)}>
-                Close
+                {t('common.close')}
               </ContextMenuItem>
             </ContextMenuContent>
           </ContextMenu>
@@ -470,7 +472,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             <div className="flex items-center gap-2 min-w-0 flex-1">
               <FileText size={14} className={cn("shrink-0", isActive ? "text-accent" : "text-muted-foreground")} />
               <span className="truncate">
-                Log: {isLocal ? 'Local' : logView.log.hostname}
+                {t('tabs.logPrefix')} {isLocal ? t('tabs.logLocal') : logView.log.hostname}
               </span>
             </div>
             <button
@@ -479,7 +481,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
                 onCloseLogView(logView.id);
               }}
               className="p-1 rounded-full hover:bg-destructive/10 hover:text-destructive transition-colors"
-              aria-label="Close log view"
+              aria-label={t('tabs.closeLogViewAria')}
             >
               <X size={12} />
             </button>

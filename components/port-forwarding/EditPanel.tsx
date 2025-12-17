@@ -4,6 +4,7 @@
  */
 import { ChevronDown,Copy,Trash2 } from 'lucide-react';
 import React from 'react';
+import { useI18n } from '../../application/i18n/I18nProvider';
 import { Host,PortForwardingRule } from '../../domain/models';
 import { DistroAvatar } from '../DistroAvatar';
 import { TrafficDiagram } from '../TrafficDiagram';
@@ -35,13 +36,14 @@ export const EditPanel: React.FC<EditPanelProps> = ({
     onDelete,
     onOpenHostSelector,
 }) => {
+    const { t } = useI18n();
     const selectedHost = hosts.find(h => h.id === draft.hostId);
 
     return (
         <AsidePanel
             open={true}
             onClose={onClose}
-            title="Edit Port Forwarding"
+            title={t('pf.wizard.editTitle')}
             width="w-[360px]"
             actions={
                 <AsideActionMenu>
@@ -49,14 +51,14 @@ export const EditPanel: React.FC<EditPanelProps> = ({
                         icon={<Copy size={14} />}
                         onClick={onDuplicate}
                     >
-                        Duplicate
+                        {t('action.duplicate')}
                     </AsideActionMenuItem>
                     <AsideActionMenuItem
                         icon={<Trash2 size={14} />}
                         variant="destructive"
                         onClick={onDelete}
                     >
-                        Delete
+                        {t('action.delete')}
                     </AsideActionMenuItem>
                 </AsideActionMenu>
             }
@@ -69,9 +71,9 @@ export const EditPanel: React.FC<EditPanelProps> = ({
 
                 {/* Label */}
                 <div className="space-y-1">
-                    <Label className="text-[10px] text-muted-foreground">Label</Label>
+                    <Label className="text-[10px] text-muted-foreground">{t('field.label')}</Label>
                     <Input
-                        placeholder="Rule label"
+                        placeholder={t('pf.form.labelPlaceholder')}
                         className="h-10"
                         value={draft.label || ''}
                         onChange={e => onDraftChange({ label: e.target.value })}
@@ -80,10 +82,10 @@ export const EditPanel: React.FC<EditPanelProps> = ({
 
                 {/* Local Port */}
                 <div className="space-y-1">
-                    <Label className="text-[10px] text-muted-foreground">Local port number *</Label>
+                    <Label className="text-[10px] text-muted-foreground">{t('pf.wizard.localConfig.localPort')}</Label>
                     <Input
                         type="number"
-                        placeholder="e.g. 8080"
+                        placeholder={t('pf.wizard.placeholders.portExample', { port: 8080 })}
                         className="h-10"
                         value={draft.localPort || ''}
                         onChange={e => onDraftChange({ localPort: parseInt(e.target.value) || undefined })}
@@ -92,7 +94,7 @@ export const EditPanel: React.FC<EditPanelProps> = ({
 
                 {/* Bind Address */}
                 <div className="space-y-1">
-                    <Label className="text-[10px] text-muted-foreground">Bind address</Label>
+                    <Label className="text-[10px] text-muted-foreground">{t('pf.wizard.bindAddress')}</Label>
                     <Input
                         placeholder="127.0.0.1"
                         className="h-10"
@@ -103,7 +105,7 @@ export const EditPanel: React.FC<EditPanelProps> = ({
 
                 {/* Intermediate Host - for all types */}
                 <div className="space-y-1">
-                    <Label className="text-[10px] text-muted-foreground">Intermediate host *</Label>
+                    <Label className="text-[10px] text-muted-foreground">{t('pf.form.intermediateHost')}</Label>
                     <Button
                         variant="secondary"
                         className="w-full h-10 justify-between"
@@ -119,7 +121,7 @@ export const EditPanel: React.FC<EditPanelProps> = ({
                                 <span>{selectedHost.label}</span>
                             </div>
                         ) : (
-                            <span className="text-muted-foreground">Select a host</span>
+                            <span className="text-muted-foreground">{t('common.selectAHost')}</span>
                         )}
                         <ChevronDown size={14} />
                     </Button>
@@ -129,9 +131,9 @@ export const EditPanel: React.FC<EditPanelProps> = ({
                 {(draft.type === 'local' || draft.type === 'remote') && (
                     <>
                         <div className="space-y-1">
-                            <Label className="text-[10px] text-muted-foreground">Destination address *</Label>
+                            <Label className="text-[10px] text-muted-foreground">{t('pf.wizard.destination.address')}</Label>
                             <Input
-                                placeholder="e.g. localhost or 192.168.1.100"
+                                placeholder={t('pf.wizard.destination.addressPlaceholder')}
                                 className="h-10"
                                 value={draft.remoteHost || ''}
                                 onChange={e => onDraftChange({ remoteHost: e.target.value })}
@@ -139,10 +141,10 @@ export const EditPanel: React.FC<EditPanelProps> = ({
                         </div>
 
                         <div className="space-y-1">
-                            <Label className="text-[10px] text-muted-foreground">Destination port number *</Label>
+                            <Label className="text-[10px] text-muted-foreground">{t('pf.wizard.destination.port')}</Label>
                             <Input
                                 type="number"
-                                placeholder="e.g. 3306"
+                                placeholder={t('pf.wizard.placeholders.portExample', { port: 3306 })}
                                 className="h-10"
                                 value={draft.remotePort || ''}
                                 onChange={e => onDraftChange({ remotePort: parseInt(e.target.value) || undefined })}
@@ -156,14 +158,14 @@ export const EditPanel: React.FC<EditPanelProps> = ({
                     className="w-full h-10"
                     onClick={onSave}
                 >
-                    Save Changes
+                    {t('common.saveChanges')}
                 </Button>
                 <Button
                     variant="ghost"
                     className="w-full h-10 text-muted-foreground hover:text-foreground hover:bg-foreground/5"
                     onClick={onClose}
                 >
-                    Cancel
+                    {t('common.cancel')}
                 </Button>
             </AsidePanelFooter>
         </AsidePanel>

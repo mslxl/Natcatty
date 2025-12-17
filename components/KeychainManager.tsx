@@ -14,6 +14,7 @@ import {
   UserPlus,
 } from "lucide-react";
 import React, { useCallback, useMemo, useState } from "react";
+import { useI18n } from "../application/i18n/I18nProvider";
 import { logger } from "../lib/logger";
 import { cn } from "../lib/utils";
 import { Host, Identity, KeyType, SSHKey } from "../types";
@@ -74,6 +75,7 @@ const KeychainManager: React.FC<KeychainManagerProps> = ({
   onSaveHost,
   onCreateGroup,
 }) => {
+  const { t } = useI18n();
   const { generateKeyPair, execCommand } = useKeychainBackend();
   const [activeFilter, setActiveFilter] = useState<FilterTab>("key");
   const [search, setSearch] = useState("");
@@ -88,6 +90,27 @@ const KeychainManager: React.FC<KeychainManagerProps> = ({
         : ({ type: "closed" } as PanelMode),
     [panelStack],
   );
+
+  const panelTitle = useMemo(() => {
+    switch (panel.type) {
+      case "generate":
+        return t("keychain.panel.generateKey");
+      case "import":
+        return t("keychain.panel.newKey");
+      case "view":
+        return t("keychain.panel.keyDetails");
+      case "edit":
+        return t("keychain.panel.editKey");
+      case "identity":
+        return panel.identity
+          ? t("keychain.panel.editIdentity")
+          : t("keychain.panel.newIdentity");
+      case "export":
+        return t("keychain.panel.keyExport");
+      default:
+        return "";
+    }
+  }, [panel, t]);
 
   const [showHostSelector, setShowHostSelector] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -115,9 +138,9 @@ echo $3 >> "$FILE"`);
   const [showPassphrase, setShowPassphrase] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
 
-  const showError = useCallback((message: string, title = "Error") => {
+  const showError = useCallback((message: string, title = t("common.error")) => {
     toast.error(message, title);
-  }, []);
+  }, [t]);
 
   // Filter keys based on active tab and search
   const filteredKeys = useMemo(() => {
@@ -276,7 +299,7 @@ echo $3 >> "$FILE"`);
   // Handle standard key generation
   const handleGenerateStandard = useCallback(async () => {
     if (!draftKey.label?.trim()) {
-      showError("Please enter a label for the key", "Validation");
+      showError(t("keychain.validation.labelRequired"), t("common.validation"));
       return;
     }
 
@@ -294,11 +317,11 @@ echo $3 >> "$FILE"`);
       });
       if (!result) {
         throw new Error(
-          "Key generation not available - please ensure the app is running in Electron",
+          t("keychain.error.generationUnavailable"),
         );
       }
       if (!result.success || !result.privateKey || !result.publicKey) {
-        throw new Error(result.error || "Failed to generate key pair");
+        throw new Error(result.error || t("keychain.error.generateKeyPairFailed"));
       }
 
       const newKey: SSHKey = {
@@ -318,16 +341,19 @@ echo $3 >> "$FILE"`);
       onSave(newKey);
       closePanel();
     } catch (err) {
-      showError(err instanceof Error ? err.message : "Failed to generate key", "Key Generation");
+      showError(
+        err instanceof Error ? err.message : t("keychain.error.generateKeyFailed"),
+        t("keychain.error.keyGenerationTitle"),
+      );
     } finally {
       setIsGenerating(false);
     }
-  }, [draftKey, onSave, closePanel, generateKeyPair, showError]);
+  }, [draftKey, onSave, closePanel, generateKeyPair, showError, t]);
 
   // Handle key import
   const handleImport = useCallback(() => {
     if (!draftKey.label?.trim() || !draftKey.privateKey?.trim()) {
-      showError("Label and private key are required", "Validation");
+      showError(t("keychain.validation.labelAndPrivateKeyRequired"), t("common.validation"));
       return;
     }
 
@@ -354,12 +380,12 @@ echo $3 >> "$FILE"`);
 
     onSave(newKey);
     closePanel();
-  }, [draftKey, onSave, closePanel, showError]);
+  }, [draftKey, onSave, closePanel, showError, t]);
 
   // Handle save identity
   const handleSaveIdentity = useCallback(() => {
     if (!draftIdentity.label?.trim() || !draftIdentity.username?.trim()) {
-      showError("Label and username are required", "Validation");
+      showError(t("keychain.validation.labelAndUsernameRequired"), t("common.validation"));
       return;
     }
 
@@ -377,7 +403,7 @@ echo $3 >> "$FILE"`);
 
     onSaveIdentity(newIdentity);
     closePanel();
-  }, [draftIdentity, onSaveIdentity, closePanel, showError]);
+  }, [draftIdentity, onSaveIdentity, closePanel, showError, t]);
 
   // Handle delete
   const handleDelete = useCallback(
@@ -537,7 +563,7 @@ echo $3 >> "$FILE"`);
                   onClick={() => setActiveFilter("key")}
                 >
                   <Key size={14} />
-                  KEY
+                  {t("keychain.filter.key")}
                 </Button>
                 <DropdownTrigger asChild>
                   <Button
@@ -558,14 +584,14 @@ echo $3 >> "$FILE"`);
                   className="w-full justify-start gap-2"
                   onClick={openGenerate}
                 >
-                  <Plus size={14} /> Generate Key
+                  <Plus size={14} /> {t("keychain.action.generateKey")}
                 </Button>
                 <Button
                   variant="ghost"
                   className="w-full justify-start gap-2"
                   onClick={openImport}
                 >
-                  <Upload size={14} /> Import Key
+                  <Upload size={14} /> {t("keychain.action.importKey")}
                 </Button>
                 {onSaveIdentity && (
                   <Button
@@ -573,7 +599,7 @@ echo $3 >> "$FILE"`);
                     className="w-full justify-start gap-2"
                     onClick={openNewIdentity}
                   >
-                    <UserPlus size={14} /> New Identity
+                    <UserPlus size={14} /> {t("keychain.action.newIdentity")}
                   </Button>
                 )}
               </DropdownContent>
@@ -599,7 +625,7 @@ echo $3 >> "$FILE"`);
                   onClick={() => setActiveFilter("certificate")}
                 >
                   <BadgeCheck size={14} />
-                  CERTIFICATE
+                  {t("keychain.filter.certificate")}
                   <span className="text-[10px] px-1.5 rounded-full bg-muted text-muted-foreground">
                     {keys.filter((k) => k.certificate).length}
                   </span>
@@ -623,7 +649,7 @@ echo $3 >> "$FILE"`);
                   className="w-full justify-start gap-2"
                   onClick={openImport}
                 >
-                  <Upload size={14} /> Import Certificate
+                  <Upload size={14} /> {t("keychain.action.importCertificate")}
                 </Button>
               </DropdownContent>
             </Dropdown>
@@ -640,7 +666,7 @@ echo $3 >> "$FILE"`);
                 <Input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search..."
+                  placeholder={t("common.searchPlaceholder")}
                   className="h-9 pl-8 w-full"
                 />
               </div>
@@ -666,14 +692,14 @@ echo $3 >> "$FILE"`);
                   className="w-full justify-start gap-2 h-9"
                   onClick={() => setViewMode("grid")}
                 >
-                  <LayoutGrid size={14} /> Grid
+                  <LayoutGrid size={14} /> {t("keychain.view.grid")}
                 </Button>
                 <Button
                   variant={viewMode === "list" ? "secondary" : "ghost"}
                   className="w-full justify-start gap-2 h-9"
                   onClick={() => setViewMode("list")}
                 >
-                  <ListIcon size={14} /> List
+                  <ListIcon size={14} /> {t("keychain.view.list")}
                 </Button>
               </DropdownContent>
             </Dropdown>
@@ -684,10 +710,10 @@ echo $3 >> "$FILE"`);
         <div className="space-y-3 p-3">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold text-muted-foreground">
-              Keys
+              {t("keychain.section.keys")}
             </h2>
             <span className="text-xs text-muted-foreground">
-              {filteredKeys.length} items
+              {t("keychain.count.items", { count: filteredKeys.length })}
             </span>
           </div>
 
@@ -697,20 +723,20 @@ echo $3 >> "$FILE"`);
                 <Shield size={32} className="opacity-60" />
               </div>
               <h3 className="text-lg font-semibold text-foreground mb-2">
-                Set up your keys
+                {t("keychain.empty.title")}
               </h3>
               <p className="text-sm text-center max-w-sm mb-4">
-                Import or generate SSH keys for secure authentication.
+                {t("keychain.empty.desc")}
               </p>
               {(activeFilter === "key" || activeFilter === "certificate") && (
                 <div className="flex gap-2">
                   <Button variant="secondary" onClick={openImport}>
                     <Upload size={14} className="mr-2" />
-                    Import
+                    {t("common.import")}
                   </Button>
                   <Button onClick={openGenerate}>
                     <Plus size={14} className="mr-2" />
-                    Generate
+                    {t("common.generate")}
                   </Button>
                 </div>
               )}
@@ -749,10 +775,10 @@ echo $3 >> "$FILE"`);
           <div className="space-y-3 px-3 pb-3">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-muted-foreground">
-                Identities
+                {t("keychain.section.identities")}
               </h2>
               <span className="text-xs text-muted-foreground">
-                {filteredIdentities.length} items
+                {t("keychain.count.items", { count: filteredIdentities.length })}
               </span>
             </div>
             <div
@@ -787,23 +813,7 @@ echo $3 >> "$FILE"`);
         <AsidePanel
           open={true}
           onClose={closePanel}
-          title={
-            panel.type === "generate"
-              ? "Generate Key"
-              : panel.type === "import"
-                ? "New Key"
-                : panel.type === "view"
-                  ? "Key Details"
-                  : panel.type === "edit"
-                    ? "Edit Key"
-                    : panel.type === "identity"
-                      ? panel.identity
-                        ? "Edit Identity"
-                        : "New Identity"
-                      : panel.type === "export"
-                        ? "Key Export"
-                        : ""
-          }
+          title={panelTitle}
           showBackButton={panelStack.length > 1}
           onBack={popPanel}
           actions={
@@ -877,7 +887,7 @@ echo $3 >> "$FILE"`);
                       {panel.key.label}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      Type {getKeyTypeDisplay(panel.key)}
+                      {t("auth.keyType", { type: getKeyTypeDisplay(panel.key) })}
                     </p>
                   </div>
                 </div>
@@ -885,19 +895,21 @@ echo $3 >> "$FILE"`);
                 {/* Export to field */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <Label className="text-muted-foreground">Export to *</Label>
+                    <Label className="text-muted-foreground">
+                      {t("keychain.export.exportTo")}
+                    </Label>
                     <Button
                       variant="link"
                       className="h-auto p-0 text-primary text-sm"
                       onClick={() => setShowHostSelector(true)}
                     >
-                      Select Host
+                      {t("keychain.export.selectHost")}
                     </Button>
                   </div>
                   <Input
                     value={exportHost?.label || ""}
                     readOnly
-                    placeholder="Select a host..."
+                    placeholder={t("common.selectAHostPlaceholder")}
                     className="bg-muted/50 cursor-pointer"
                     onClick={() => setShowHostSelector(true)}
                   />
@@ -906,7 +918,7 @@ echo $3 >> "$FILE"`);
                 {/* Location field */}
                 <div className="space-y-2">
                   <Label className="text-muted-foreground">
-                    Location ~ $1 *
+                    {t("keychain.export.location")}
                   </Label>
                   <Input
                     value={exportLocation}
@@ -918,7 +930,7 @@ echo $3 >> "$FILE"`);
                 {/* Filename field */}
                 <div className="space-y-2">
                   <Label className="text-muted-foreground">
-                    Filename ~ $2 *
+                    {t("keychain.export.filename")}
                   </Label>
                   <Input
                     value={exportFilename}
@@ -934,13 +946,10 @@ echo $3 >> "$FILE"`);
                     className="mt-0.5 text-muted-foreground shrink-0"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Key export currently supports only{" "}
-                    <span className="font-semibold text-foreground">UNIX</span>{" "}
-                    systems. Use{" "}
-                    <span className="font-semibold text-foreground">
-                      Advanced
-                    </span>{" "}
-                    section to customize the export script.
+                    {t("keychain.export.note", {
+                      unix: "UNIX",
+                      advanced: t("common.advanced"),
+                    })}
                   </p>
                 </div>
 
@@ -954,7 +963,7 @@ echo $3 >> "$FILE"`);
                       variant="ghost"
                       className="w-full justify-between px-0 h-10 hover:bg-transparent hover:text-current"
                     >
-                      <span className="font-medium">Advanced</span>
+                      <span className="font-medium">{t("common.advanced")}</span>
                       <ChevronRight
                         size={16}
                         className={cn(
@@ -965,12 +974,14 @@ echo $3 >> "$FILE"`);
                     </Button>
                   </CollapsibleTrigger>
                   <CollapsibleContent className="space-y-2 pt-2">
-                    <Label className="text-muted-foreground">Script *</Label>
+                    <Label className="text-muted-foreground">
+                      {t("keychain.export.script")}
+                    </Label>
                     <Textarea
                       value={exportScript}
                       onChange={(e) => setExportScript(e.target.value)}
                       className="min-h-[180px] font-mono text-xs"
-                      placeholder="Export script..."
+                      placeholder={t("keychain.export.scriptPlaceholder")}
                     />
                   </CollapsibleContent>
                 </Collapsible>
@@ -994,7 +1005,7 @@ echo $3 >> "$FILE"`);
                       // Since we're exporting a key to a host, we need password auth
                       if (!exportHost.password && !exportHost.identityFileId) {
                         throw new Error(
-                          "Host has no saved password or key. Please add password credentials to the host first.",
+                          t("keychain.export.missingCredentials"),
                         );
                       }
 
@@ -1044,30 +1055,37 @@ echo $3 >> "$FILE"`);
                           onSaveHost(updatedHost);
                         }
                         toast.success(
-                          `Public key exported and attached to ${exportHost.label}`,
-                          "Export Successful",
+                          t("keychain.export.successMessage", {
+                            host: exportHost.label,
+                          }),
+                          t("keychain.export.successTitle"),
                         );
                         closePanel();
                       } else {
                         const errorMsg =
                           hasError ||
                           result?.stdout?.trim() ||
-                          `Command exited with code ${exitCode}`;
+                          t("keychain.export.exitCode", { code: exitCode });
                         toast.error(
-                          `Failed to export key: ${errorMsg}`,
-                          "Export Failed",
+                          t("keychain.export.failedMessage", { error: errorMsg }),
+                          t("keychain.export.failedTitle"),
                         );
                       }
                     } catch (err) {
                       const message =
                         err instanceof Error ? err.message : String(err);
-                      toast.error(`Export failed: ${message}`, "Export Failed");
+                      toast.error(
+                        t("keychain.export.failedPrefix", { error: message }),
+                        t("keychain.export.failedTitle"),
+                      );
                     } finally {
                       setIsExporting(false);
                     }
                   }}
                 >
-                  {isExporting ? "Exporting..." : "Export and Attach"}
+                  {isExporting
+                    ? t("keychain.export.exporting")
+                    : t("keychain.export.exportAndAttach")}
                 </Button>
               </>
             )}
@@ -1076,18 +1094,20 @@ echo $3 >> "$FILE"`);
             {panel.type === "edit" && (
               <>
                 <div className="space-y-2">
-                  <Label>Label *</Label>
+                  <Label>{t("keychain.edit.labelRequired")}</Label>
                   <Input
                     value={draftKey.label || ""}
                     onChange={(e) =>
                       setDraftKey({ ...draftKey, label: e.target.value })
                     }
-                    placeholder="Key label"
+                    placeholder={t("keychain.edit.keyLabelPlaceholder")}
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label className="text-destructive">Private key *</Label>
+                  <Label className="text-destructive">
+                    {t("keychain.edit.privateKeyRequired")}
+                  </Label>
                   <Textarea
                     value={draftKey.privateKey || ""}
                     onChange={(e) =>
@@ -1099,7 +1119,9 @@ echo $3 >> "$FILE"`);
                 </div>
 
                 <div className="space-y-2">
-                  <Label className="text-muted-foreground">Public key</Label>
+                  <Label className="text-muted-foreground">
+                    {t("keychain.edit.publicKey")}
+                  </Label>
                   <Textarea
                     value={draftKey.publicKey || ""}
                     onChange={(e) =>
@@ -1111,13 +1133,15 @@ echo $3 >> "$FILE"`);
                 </div>
 
                 <div className="space-y-2">
-                  <Label className="text-muted-foreground">Certificate</Label>
+                  <Label className="text-muted-foreground">
+                    {t("keychain.edit.certificate")}
+                  </Label>
                   <Textarea
                     value={draftKey.certificate || ""}
                     onChange={(e) =>
                       setDraftKey({ ...draftKey, certificate: e.target.value })
                     }
-                    placeholder="Certificate content (optional)"
+                    placeholder={t("keychain.edit.certificatePlaceholder")}
                     className="min-h-[60px] font-mono text-xs"
                   />
                 </div>
@@ -1125,7 +1149,9 @@ echo $3 >> "$FILE"`);
                 {/* Key Export section */}
                 <div className="pt-4 mt-4 border-t border-border/60">
                   <div className="flex items-center gap-2 mb-3">
-                    <span className="text-sm font-medium">Key export</span>
+                    <span className="text-sm font-medium">
+                      {t("keychain.edit.keyExport")}
+                    </span>
                     <div className="h-4 w-4 rounded-full bg-muted flex items-center justify-center">
                       <Info size={10} className="text-muted-foreground" />
                     </div>
@@ -1134,7 +1160,7 @@ echo $3 >> "$FILE"`);
                     className="w-full h-11"
                     onClick={() => openKeyExport(panel.key)}
                   >
-                    Export to host
+                    {t("keychain.edit.exportToHost")}
                   </Button>
                 </div>
 
@@ -1154,7 +1180,7 @@ echo $3 >> "$FILE"`);
                     }
                   }}
                 >
-                  Save Changes
+                  {t("common.saveChanges")}
                 </Button>
               </>
             )}
