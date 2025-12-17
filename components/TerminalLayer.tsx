@@ -40,10 +40,14 @@ interface TerminalLayerProps {
   draggingSessionId: string | null;
   terminalTheme: TerminalTheme;
   terminalSettings?: TerminalSettings;
+  terminalFontFamilyId: string;
   fontSize?: number;
   hotkeyScheme?: 'disabled' | 'mac' | 'pc';
   keyBindings?: KeyBinding[];
   onHotkeyAction?: (action: string, event: KeyboardEvent) => void;
+  onUpdateTerminalThemeId?: (themeId: string) => void;
+  onUpdateTerminalFontFamilyId?: (fontFamilyId: string) => void;
+  onUpdateTerminalFontSize?: (fontSize: number) => void;
   onCloseSession: (sessionId: string, e?: React.MouseEvent) => void;
   onUpdateSessionStatus: (sessionId: string, status: TerminalSession['status']) => void;
   onUpdateHostDistro: (hostId: string, distro: string) => void;
@@ -73,10 +77,14 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   draggingSessionId,
   terminalTheme,
   terminalSettings,
+  terminalFontFamilyId,
   fontSize = 14,
   hotkeyScheme = 'disabled',
   keyBindings = [],
   onHotkeyAction,
+  onUpdateTerminalThemeId,
+  onUpdateTerminalFontFamilyId,
+  onUpdateTerminalFontSize,
   onCloseSession,
   onUpdateSessionStatus,
   onUpdateHostDistro,
@@ -657,11 +665,15 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                 isResizing={!!resizing}
                 isFocusMode={isFocusMode}
                 isFocused={isFocusedPane}
+                fontFamilyId={terminalFontFamilyId}
                 fontSize={fontSize}
                 terminalTheme={terminalTheme}
                 terminalSettings={terminalSettings}
                 sessionId={session.id}
                 startupCommand={session.startupCommand}
+                onUpdateTerminalThemeId={onUpdateTerminalThemeId}
+                onUpdateTerminalFontFamilyId={onUpdateTerminalFontFamilyId}
+                onUpdateTerminalFontSize={onUpdateTerminalFontSize}
                 hotkeyScheme={hotkeyScheme}
                 keyBindings={keyBindings}
                 onHotkeyAction={onHotkeyAction}

@@ -85,8 +85,12 @@ function App() {
   const {
     theme,
     setTheme,
+    setTerminalThemeId,
     currentTerminalTheme,
+    terminalFontFamilyId,
+    setTerminalFontFamilyId,
     terminalFontSize,
+    setTerminalFontSize,
     terminalSettings,
     hotkeyScheme,
     keyBindings,
@@ -657,10 +661,14 @@ function App() {
           draggingSessionId={draggingSessionId}
           terminalTheme={currentTerminalTheme}
           terminalSettings={terminalSettings}
+          terminalFontFamilyId={terminalFontFamilyId}
           fontSize={terminalFontSize}
           hotkeyScheme={hotkeyScheme}
           keyBindings={keyBindings}
           onHotkeyAction={handleHotkeyAction}
+          onUpdateTerminalThemeId={setTerminalThemeId}
+          onUpdateTerminalFontFamilyId={setTerminalFontFamilyId}
+          onUpdateTerminalFontSize={setTerminalFontSize}
           onCloseSession={closeSession}
           onUpdateSessionStatus={updateSessionStatus}
           onUpdateHostDistro={updateHostDistro}

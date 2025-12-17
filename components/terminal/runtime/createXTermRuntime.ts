@@ -43,6 +43,7 @@ export type XTermRuntime = {
 export type CreateXTermRuntimeContext = {
   container: HTMLDivElement;
   host: Host;
+  fontFamilyId: string;
   fontSize: number;
   terminalTheme: TerminalTheme;
   terminalSettingsRef: RefObject<TerminalSettings | undefined>;
@@ -104,7 +105,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     deviceMemoryGb,
   });
 
-  const hostFontId = ctx.host.fontFamily || "menlo";
+  const hostFontId = ctx.host.fontFamily || ctx.fontFamilyId || "menlo";
   const fontObj = TERMINAL_FONTS.find((f) => f.id === hostFontId) || TERMINAL_FONTS[0];
   const fontFamily = fontObj.family;
 

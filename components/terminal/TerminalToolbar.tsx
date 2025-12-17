@@ -15,6 +15,12 @@ export interface TerminalToolbarProps {
     status: 'connecting' | 'connected' | 'disconnected';
     snippets: Snippet[];
     host?: Host;
+    defaultThemeId: string;
+    defaultFontFamilyId: string;
+    defaultFontSize: number;
+    onUpdateTerminalThemeId?: (themeId: string) => void;
+    onUpdateTerminalFontFamilyId?: (fontFamilyId: string) => void;
+    onUpdateTerminalFontSize?: (fontSize: number) => void;
     isScriptsOpen: boolean;
     setIsScriptsOpen: (open: boolean) => void;
     onOpenSFTP: () => void;
@@ -31,6 +37,12 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
     status,
     snippets,
     host,
+    defaultThemeId,
+    defaultFontFamilyId,
+    defaultFontSize,
+    onUpdateTerminalThemeId,
+    onUpdateTerminalFontFamilyId,
+    onUpdateTerminalFontSize,
     isScriptsOpen,
     setIsScriptsOpen,
     onOpenSFTP,
@@ -45,19 +57,37 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
     const [themeModalOpen, setThemeModalOpen] = useState(false);
     const buttonBase = "h-7 px-2 text-[11px] bg-white/5 hover:bg-white/10 text-white shadow-none border-none";
 
+    const isLocalTerminal = host?.protocol === 'local' || host?.id?.startsWith('local-');
+
+    const currentThemeId = host?.theme || defaultThemeId;
+    const currentFontFamilyId = host?.fontFamily || defaultFontFamilyId;
+    const currentFontSize = host?.fontSize || defaultFontSize;
+
     const handleThemeChange = (themeId: string) => {
+        if (isLocalTerminal) {
+            onUpdateTerminalThemeId?.(themeId);
+            return;
+        }
         if (host && onUpdateHost) {
             onUpdateHost({ ...host, theme: themeId });
         }
     };
 
     const handleFontFamilyChange = (fontFamilyId: string) => {
+        if (isLocalTerminal) {
+            onUpdateTerminalFontFamilyId?.(fontFamilyId);
+            return;
+        }
         if (host && onUpdateHost) {
             onUpdateHost({ ...host, fontFamily: fontFamilyId });
         }
     };
 
     const handleFontSizeChange = (fontSize: number) => {
+        if (isLocalTerminal) {
+            onUpdateTerminalFontSize?.(fontSize);
+            return;
+        }
         if (host && onUpdateHost) {
             onUpdateHost({ ...host, fontSize });
         }
@@ -153,9 +183,9 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
             <ThemeCustomizeModal
                 open={themeModalOpen}
                 onClose={() => setThemeModalOpen(false)}
-                currentThemeId={host?.theme || 'termius-dark'}
-                currentFontFamilyId={host?.fontFamily || 'menlo'}
-                currentFontSize={host?.fontSize || 14}
+                currentThemeId={currentThemeId}
+                currentFontFamilyId={currentFontFamilyId}
+                currentFontSize={currentFontSize}
                 onThemeChange={handleThemeChange}
                 onFontFamilyChange={handleFontFamilyChange}
                 onFontSizeChange={handleFontSizeChange}

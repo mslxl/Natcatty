@@ -49,11 +49,15 @@ interface TerminalProps {
   isResizing?: boolean;
   isFocusMode?: boolean;
   isFocused?: boolean;
+  fontFamilyId: string;
   fontSize: number;
   terminalTheme: TerminalTheme;
   terminalSettings?: TerminalSettings;
   sessionId: string;
   startupCommand?: string;
+  onUpdateTerminalThemeId?: (themeId: string) => void;
+  onUpdateTerminalFontFamilyId?: (fontFamilyId: string) => void;
+  onUpdateTerminalFontSize?: (fontSize: number) => void;
   hotkeyScheme?: "disabled" | "mac" | "pc";
   keyBindings?: KeyBinding[];
   onHotkeyAction?: (action: string, event: KeyboardEvent) => void;
@@ -89,11 +93,15 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   isResizing,
   isFocusMode,
   isFocused,
+  fontFamilyId,
   fontSize,
   terminalTheme,
   terminalSettings,
   sessionId,
   startupCommand,
+  onUpdateTerminalThemeId,
+  onUpdateTerminalFontFamilyId,
+  onUpdateTerminalFontSize,
   hotkeyScheme = "disabled",
   keyBindings = [],
   onHotkeyAction,
@@ -307,8 +315,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         const runtime = createXTermRuntime({
           container: containerRef.current,
           host,
+          fontFamilyId,
           fontSize,
-          terminalTheme,
+          terminalTheme: effectiveTheme,
           terminalSettingsRef,
           terminalBackend,
           sessionRef,
@@ -510,7 +519,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       const effectiveFontSize = host.fontSize || fontSize;
       termRef.current.options.fontSize = effectiveFontSize;
 
-      const hostFontId = host.fontFamily || "menlo";
+      const hostFontId = host.fontFamily || fontFamilyId || "menlo";
       const fontObj = TERMINAL_FONTS.find((f) => f.id === hostFontId) || TERMINAL_FONTS[0];
       termRef.current.options.fontFamily = fontObj.family;
 
@@ -521,7 +530,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
       setTimeout(() => safeFit(), 50);
     }
-  }, [host.fontSize, host.fontFamily, host.theme, fontSize, effectiveTheme]);
+  }, [host.fontSize, host.fontFamily, host.theme, fontFamilyId, fontSize, effectiveTheme]);
 
   useEffect(() => {
     if (isVisible && fitAddonRef.current) {
@@ -761,6 +770,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       status={status}
       snippets={snippets}
       host={host}
+      defaultThemeId={terminalTheme.id}
+      defaultFontFamilyId={fontFamilyId}
+      defaultFontSize={fontSize}
+      onUpdateTerminalThemeId={onUpdateTerminalThemeId}
+      onUpdateTerminalFontFamilyId={onUpdateTerminalFontFamilyId}
+      onUpdateTerminalFontSize={onUpdateTerminalFontSize}
       isScriptsOpen={isScriptsOpen}
       setIsScriptsOpen={setIsScriptsOpen}
       onOpenSFTP={() => setShowSFTP((v) => !v)}
