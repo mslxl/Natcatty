@@ -115,9 +115,10 @@ app.on("web-contents-created", (_event, contents) => {
 });
 
 // Application configuration
-let devServerUrl = process.env.VITE_DEV_SERVER_URL;
-
-const isDev = !!devServerUrl;
+const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+// Never treat a packaged app as "dev" even if the user has VITE_DEV_SERVER_URL set globally.
+const isDev = !app.isPackaged && !!devServerUrl;
+const effectiveDevServerUrl = isDev ? devServerUrl : undefined;
 const preload = path.join(__dirname, "preload.cjs");
 const isMac = process.platform === "darwin";
 const appIcon = path.join(__dirname, "../public/icon.png");
@@ -268,7 +269,7 @@ const registerBridges = (win) => {
   ipcMain.handle("netcatty:settings:open", async () => {
     await windowManager.openSettingsWindow(electronModule, {
       preload,
-      devServerUrl,
+      devServerUrl: effectiveDevServerUrl,
       isDev,
       appIcon,
       isMac,
@@ -327,7 +328,7 @@ const registerBridges = (win) => {
 async function createWindow() {
   const win = await windowManager.createWindow(electronModule, {
     preload,
-    devServerUrl,
+    devServerUrl: effectiveDevServerUrl,
     isDev,
     appIcon,
     isMac,
