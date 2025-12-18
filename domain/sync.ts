@@ -125,6 +125,7 @@ export interface SyncPayload {
   // Core vault data
   hosts: import('./models').Host[];
   keys: import('./models').SSHKey[];
+  identities?: import('./models').Identity[];
   snippets: import('./models').Snippet[];
   customGroups: string[];
   

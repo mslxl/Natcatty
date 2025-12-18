@@ -3,6 +3,7 @@ import { normalizeDistroId, sanitizeHost } from "../../domain/host";
 import {
   ConnectionLog,
   Host,
+  Identity,
   KeyCategory,
   KnownHost,
   ShellHistoryEntry,
@@ -17,6 +18,7 @@ import {
   STORAGE_KEY_CONNECTION_LOGS,
   STORAGE_KEY_GROUPS,
   STORAGE_KEY_HOSTS,
+  STORAGE_KEY_IDENTITIES,
   STORAGE_KEY_KEYS,
   STORAGE_KEY_KNOWN_HOSTS,
   STORAGE_KEY_LEGACY_KEYS,
@@ -29,6 +31,7 @@ import { localStorageAdapter } from "../../infrastructure/persistence/localStora
 type ExportableVaultData = {
   hosts: Host[];
   keys: SSHKey[];
+  identities?: Identity[];
   snippets: Snippet[];
   customGroups: string[];
   knownHosts?: KnownHost[];
@@ -76,6 +79,7 @@ const isLegacyUnsupportedKey = (key: LegacyKeyRecord): boolean => {
 export const useVaultState = () => {
   const [hosts, setHosts] = useState<Host[]>([]);
   const [keys, setKeys] = useState<SSHKey[]>([]);
+  const [identities, setIdentities] = useState<Identity[]>([]);
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [customGroups, setCustomGroups] = useState<string[]>([]);
   const [snippetPackages, setSnippetPackages] = useState<string[]>([]);
@@ -92,6 +96,11 @@ export const useVaultState = () => {
   const updateKeys = useCallback((data: SSHKey[]) => {
     setKeys(data);
     localStorageAdapter.write(STORAGE_KEY_KEYS, data);
+  }, []);
+
+  const updateIdentities = useCallback((data: Identity[]) => {
+    setIdentities(data);
+    localStorageAdapter.write(STORAGE_KEY_IDENTITIES, data);
   }, []);
 
   const updateSnippets = useCallback((data: Snippet[]) => {
@@ -234,6 +243,8 @@ export const useVaultState = () => {
   useEffect(() => {
     const savedHosts = localStorageAdapter.read<Host[]>(STORAGE_KEY_HOSTS);
     const savedKeysRaw = localStorageAdapter.read<unknown[]>(STORAGE_KEY_KEYS);
+    const savedIdentities =
+      localStorageAdapter.read<Identity[]>(STORAGE_KEY_IDENTITIES);
     const savedGroups = localStorageAdapter.read<string[]>(STORAGE_KEY_GROUPS);
     const savedSnippets =
       localStorageAdapter.read<Snippet[]>(STORAGE_KEY_SNIPPETS);
@@ -275,6 +286,8 @@ export const useVaultState = () => {
       }
     }
 
+    if (savedIdentities) setIdentities(savedIdentities);
+
     if (savedSnippets) setSnippets(savedSnippets);
     else updateSnippets(INITIAL_SNIPPETS);
 
@@ -315,17 +328,19 @@ export const useVaultState = () => {
     (): ExportableVaultData => ({
       hosts,
       keys,
+      identities,
       snippets,
       customGroups,
       knownHosts,
     }),
-    [hosts, keys, snippets, customGroups, knownHosts],
+    [hosts, keys, identities, snippets, customGroups, knownHosts],
   );
 
   const importData = useCallback(
     (payload: Partial<ExportableVaultData>) => {
       if (payload.hosts) updateHosts(payload.hosts);
       if (payload.keys) updateKeys(payload.keys);
+      if (payload.identities) updateIdentities(payload.identities);
       if (payload.snippets) updateSnippets(payload.snippets);
       if (payload.customGroups) updateCustomGroups(payload.customGroups);
       if (payload.knownHosts) updateKnownHosts(payload.knownHosts);
@@ -333,6 +348,7 @@ export const useVaultState = () => {
     [
       updateHosts,
       updateKeys,
+      updateIdentities,
       updateSnippets,
       updateCustomGroups,
       updateKnownHosts,
@@ -350,6 +366,7 @@ export const useVaultState = () => {
   return {
     hosts,
     keys,
+    identities,
     snippets,
     customGroups,
     snippetPackages,
@@ -358,6 +375,7 @@ export const useVaultState = () => {
     connectionLogs,
     updateHosts,
     updateKeys,
+    updateIdentities,
     updateSnippets,
     updateSnippetPackages,
     updateCustomGroups,

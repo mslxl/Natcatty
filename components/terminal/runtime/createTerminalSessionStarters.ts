@@ -3,7 +3,8 @@ import type { SerializeAddon } from "@xterm/addon-serialize";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { logger } from "../../../lib/logger";
-import type { Host, SSHKey, TerminalSession, TerminalSettings } from "../../../types";
+import type { Host, Identity, SSHKey, TerminalSession, TerminalSettings } from "../../../types";
+import { resolveHostAuth } from "../../../domain/sshAuth";
 
 type TerminalBackendApi = {
   backendAvailable: () => boolean;
@@ -54,6 +55,7 @@ type ChainProgressState = {
 export type TerminalSessionStartersContext = {
   host: Host;
   keys: SSHKey[];
+  identities?: Identity[];
   resolvedChainHosts: Host[];
   sessionId: string;
   startupCommand?: string;
@@ -152,15 +154,18 @@ const attachSessionToTerminal = (
   });
 };
 
-const runDistroDetection = async (ctx: TerminalSessionStartersContext, key?: SSHKey) => {
+const runDistroDetection = async (
+  ctx: TerminalSessionStartersContext,
+  auth: { username: string; password?: string; key?: SSHKey },
+) => {
   if (!ctx.terminalBackend.execAvailable()) return;
   try {
     const res = await ctx.terminalBackend.execCommand({
       hostname: ctx.host.hostname,
-      username: ctx.host.username || "root",
+      username: auth.username || "root",
       port: ctx.host.port || 22,
-      password: ctx.host.password,
-      privateKey: key?.privateKey,
+      password: auth.password,
+      privateKey: auth.key?.privateKey,
       command: "cat /etc/os-release 2>/dev/null || uname -a",
       timeout: 8000,
     });
@@ -193,14 +198,38 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     }
 
     const pendingAuth = ctx.pendingAuthRef.current;
-    const effectiveUsername = pendingAuth?.username || ctx.host.username || "root";
-    const effectivePassword = pendingAuth?.password || ctx.host.password;
-    const effectiveKeyId = pendingAuth?.keyId || ctx.host.identityFileId;
-    const effectivePassphrase = pendingAuth?.passphrase;
+    const resolvedAuth = resolveHostAuth({
+      host: ctx.host,
+      keys: ctx.keys,
+      identities: ctx.identities,
+      override: pendingAuth
+        ? {
+            authMethod: pendingAuth.authMethod,
+            username: pendingAuth.username,
+            password: pendingAuth.password,
+            keyId: pendingAuth.keyId,
+            passphrase: pendingAuth.passphrase,
+          }
+        : null,
+    });
 
-    const key = effectiveKeyId
-      ? ctx.keys.find((k) => k.id === effectiveKeyId)
-      : undefined;
+    const effectiveUsername = resolvedAuth.username || "root";
+    const effectivePassword = resolvedAuth.password;
+    const key = resolvedAuth.key;
+    const effectivePassphrase = resolvedAuth.passphrase;
+    let usedKey: SSHKey | undefined;
+    let usedPassword: string | undefined;
+
+    const isAuthError = (err: unknown): boolean => {
+      if (!(err instanceof Error)) return false;
+      const msg = err.message.toLowerCase();
+      return (
+        msg.includes("authentication") ||
+        msg.includes("auth") ||
+        msg.includes("password") ||
+        msg.includes("permission denied")
+      );
+    };
 
     const proxyConfig = ctx.host.proxyConfig
       ? {
@@ -213,19 +242,22 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       : undefined;
 
     const jumpHosts = ctx.resolvedChainHosts.map<NetcattyJumpHost>((jumpHost) => {
-      const jumpKey = jumpHost.identityFileId
-        ? ctx.keys.find((k) => k.id === jumpHost.identityFileId)
-        : undefined;
+      const jumpAuth = resolveHostAuth({
+        host: jumpHost,
+        keys: ctx.keys,
+        identities: ctx.identities,
+      });
+      const jumpKey = jumpAuth.key;
       return {
         hostname: jumpHost.hostname,
         port: jumpHost.port || 22,
-        username: jumpHost.username || "root",
-        password: jumpHost.password,
+        username: jumpAuth.username || "root",
+        password: jumpAuth.password,
         privateKey: jumpKey?.privateKey,
         certificate: jumpKey?.certificate,
-        passphrase: jumpKey?.passphrase,
+        passphrase: jumpAuth.passphrase || jumpKey?.passphrase,
         publicKey: jumpKey?.publicKey,
-        keyId: jumpKey?.id,
+        keyId: jumpAuth.keyId,
         keySource: jumpKey?.source,
         label: jumpHost.label,
       };
@@ -274,26 +306,56 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         hasPrivateKey: !!key?.privateKey,
       });
 
-      const id = await ctx.terminalBackend.startSSHSession({
-        sessionId: ctx.sessionId,
-        hostname: ctx.host.hostname,
-        username: effectiveUsername,
-        port: ctx.host.port || 22,
-        password: effectivePassword,
-        privateKey: key?.privateKey,
-        certificate: key?.certificate,
-        publicKey: key?.publicKey,
-        keyId: key?.id,
-        keySource: key?.source,
-        passphrase: effectivePassphrase || key?.passphrase,
-        agentForwarding: ctx.host.agentForwarding,
-        cols: term.cols,
-        rows: term.rows,
-        charset: ctx.host.charset,
-        env: termEnv,
-        proxy: proxyConfig,
-        jumpHosts: jumpHosts.length > 0 ? jumpHosts : undefined,
-      });
+      const startAttempt = async (attempt: {
+        password?: string;
+        key?: SSHKey;
+      }): Promise<string> => {
+        return ctx.terminalBackend.startSSHSession({
+          sessionId: ctx.sessionId,
+          hostname: ctx.host.hostname,
+          username: effectiveUsername,
+          port: ctx.host.port || 22,
+          password: attempt.password,
+          privateKey: attempt.key?.privateKey,
+          certificate: attempt.key?.certificate,
+          publicKey: attempt.key?.publicKey,
+          keyId: attempt.key?.id,
+          keySource: attempt.key?.source,
+          passphrase: attempt.key ? (effectivePassphrase || attempt.key.passphrase) : undefined,
+          agentForwarding: ctx.host.agentForwarding,
+          cols: term.cols,
+          rows: term.rows,
+          charset: ctx.host.charset,
+          env: termEnv,
+          proxy: proxyConfig,
+          jumpHosts: jumpHosts.length > 0 ? jumpHosts : undefined,
+        });
+      };
+
+      let id: string;
+      const hasKeyMaterial = !!key?.privateKey;
+      const hasPassword = !!effectivePassword;
+
+      if (hasKeyMaterial) {
+        try {
+          id = await startAttempt({ key });
+          usedKey = key;
+        } catch (err) {
+          if (isAuthError(err) && hasPassword) {
+            ctx.setProgressLogs((prev) => [
+              ...prev,
+              "Key auth failed. Trying password...",
+            ]);
+            id = await startAttempt({ password: effectivePassword });
+            usedPassword = effectivePassword;
+          } else {
+            throw err;
+          }
+        }
+      } else {
+        id = await startAttempt({ password: effectivePassword });
+        usedPassword = effectivePassword;
+      }
 
       if (unsubscribeChainProgress) unsubscribeChainProgress();
 
@@ -316,13 +378,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const isAuthError =
-        message.toLowerCase().includes("authentication") ||
-        message.toLowerCase().includes("auth") ||
-        message.toLowerCase().includes("password") ||
-        message.toLowerCase().includes("permission denied");
+      const authError = isAuthError(err);
 
-      if (isAuthError) {
+      if (authError) {
         ctx.setError(null);
         ctx.setNeedsAuth(true);
         ctx.setAuthRetryMessage(
@@ -344,7 +402,15 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       if (unsubscribeChainProgress) unsubscribeChainProgress();
     }
 
-    setTimeout(() => void runDistroDetection(ctx, key), 600);
+    setTimeout(
+      () =>
+        void runDistroDetection(ctx, {
+          username: effectiveUsername,
+          password: usedPassword,
+          key: usedKey,
+        }),
+      600,
+    );
   };
 
   const startTelnet = async (term: XTerm) => {

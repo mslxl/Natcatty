@@ -27,6 +27,7 @@ import {
   GroupNode,
   Host,
   HostProtocol,
+  Identity,
   KnownHost,
   SSHKey,
   ShellHistoryEntry,
@@ -71,6 +72,7 @@ export type VaultSection = "hosts" | "keys" | "snippets" | "port" | "knownhosts"
 interface VaultViewProps {
   hosts: Host[];
   keys: SSHKey[];
+  identities: Identity[];
   snippets: Snippet[];
   snippetPackages: string[];
   customGroups: string[];
@@ -85,6 +87,7 @@ interface VaultViewProps {
   onConnect: (host: Host) => void;
   onUpdateHosts: (hosts: Host[]) => void;
   onUpdateKeys: (keys: SSHKey[]) => void;
+  onUpdateIdentities: (identities: Identity[]) => void;
   onUpdateSnippets: (snippets: Snippet[]) => void;
   onUpdateSnippetPackages: (pkgs: string[]) => void;
   onUpdateCustomGroups: (groups: string[]) => void;
@@ -103,6 +106,7 @@ interface VaultViewProps {
 const VaultViewInner: React.FC<VaultViewProps> = ({
   hosts,
   keys,
+  identities,
   snippets,
   snippetPackages,
   customGroups,
@@ -117,6 +121,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   onConnect,
   onUpdateHosts,
   onUpdateKeys,
+  onUpdateIdentities,
   onUpdateSnippets,
   onUpdateSnippetPackages,
   onUpdateCustomGroups,
@@ -1117,6 +1122,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
         {currentSection === "keys" && (
           <KeychainManager
             keys={keys}
+            identities={identities}
             hosts={hosts}
             customGroups={customGroups}
             onSave={(k) => onUpdateKeys([...keys, k])}
@@ -1126,6 +1132,18 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
               )
             }
             onDelete={(id) => onUpdateKeys(keys.filter((k) => k.id !== id))}
+            onSaveIdentity={(identity) =>
+              onUpdateIdentities(
+                identities.find((ex) => ex.id === identity.id)
+                  ? identities.map((ex) =>
+                      ex.id === identity.id ? identity : ex,
+                    )
+                  : [...identities, identity],
+              )
+            }
+            onDeleteIdentity={(id) =>
+              onUpdateIdentities(identities.filter((i) => i.id !== id))
+            }
             onSaveHost={(host) => {
               // Update existing host or add new one
               const existingIndex = hosts.findIndex((h) => h.id === host.id);
@@ -1181,6 +1199,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
         <HostDetailsPanel
           initialData={editingHost}
           availableKeys={keys}
+          identities={identities}
           groups={Array.from(
             new Set([
               ...customGroups,

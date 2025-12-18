@@ -19,6 +19,7 @@ interface AutoSyncConfig {
   // Data to sync
   hosts: SyncPayload['hosts'];
   keys: SyncPayload['keys'];
+  identities?: SyncPayload['identities'];
   snippets: SyncPayload['snippets'];
   customGroups: SyncPayload['customGroups'];
   portForwardingRules?: SyncPayload['portForwardingRules'];
@@ -50,24 +51,26 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     return {
       hosts: config.hosts,
       keys: config.keys,
+      identities: config.identities,
       snippets: config.snippets,
       customGroups: config.customGroups,
       portForwardingRules: config.portForwardingRules,
       knownHosts: config.knownHosts,
       syncedAt: Date.now(),
     };
-  }, [config.hosts, config.keys, config.snippets, config.customGroups, config.portForwardingRules, config.knownHosts]);
+  }, [config.hosts, config.keys, config.identities, config.snippets, config.customGroups, config.portForwardingRules, config.knownHosts]);
   
   // Create a hash of current data for comparison
   const getDataHash = useCallback(() => {
     const data = {
       hosts: config.hosts,
       keys: config.keys,
+      identities: config.identities,
       snippets: config.snippets,
       portForwardingRules: config.portForwardingRules,
     };
     return JSON.stringify(data);
-  }, [config.hosts, config.keys, config.snippets, config.portForwardingRules]);
+  }, [config.hosts, config.keys, config.identities, config.snippets, config.portForwardingRules]);
   
   // Sync now handler - get fresh state directly from manager
   const syncNow = useCallback(async (options?: SyncNowOptions) => {

@@ -8,6 +8,7 @@ import {
   Shield,
   Tag,
   TerminalSquare,
+  User,
   Variable,
   X,
 } from "lucide-react";
@@ -16,7 +17,7 @@ import { useI18n } from "../application/i18n/I18nProvider";
 import { TERMINAL_THEMES } from "../infrastructure/config/terminalThemes";
 import { MIN_FONT_SIZE, MAX_FONT_SIZE } from "../infrastructure/config/fonts";
 import { cn } from "../lib/utils";
-import { EnvVar, Host, ProxyConfig, SSHKey } from "../types";
+import { EnvVar, Host, Identity, ProxyConfig, SSHKey } from "../types";
 import { DistroAvatar } from "./DistroAvatar";
 import ThemeSelectPanel from "./ThemeSelectPanel";
 import {
@@ -52,6 +53,7 @@ type SubPanel =
 interface HostDetailsPanelProps {
   initialData?: Host | null;
   availableKeys: SSHKey[];
+  identities: Identity[];
   groups: string[];
   allTags?: string[]; // All available tags for autocomplete
   allHosts?: Host[]; // All hosts for chain selection
@@ -64,6 +66,7 @@ interface HostDetailsPanelProps {
 const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   initialData,
   availableKeys,
+  identities,
   groups,
   allTags = [],
   allHosts = [],
@@ -100,6 +103,9 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   const [credentialPopoverOpen, setCredentialPopoverOpen] = useState(false);
   const [selectedCredentialType, setSelectedCredentialType] =
     useState<CredentialType>(null);
+
+  // Identity suggestion state (shown under username input)
+  const [showIdentitySuggestions, setShowIdentitySuggestions] = useState(false);
 
   // New group creation state
   const [newGroupName, setNewGroupName] = useState("");
@@ -266,6 +272,47 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
       identity: availableKeys.filter((k) => k.category === "identity"),
     };
   }, [availableKeys]);
+
+  const selectedIdentity = useMemo(() => {
+    if (!form.identityId) return undefined;
+    return identities.find((i) => i.id === form.identityId);
+  }, [form.identityId, identities]);
+
+  const filteredIdentitySuggestions = useMemo(() => {
+    if (selectedIdentity) return [];
+    const q = (form.username || "").toLowerCase().trim();
+    const base = identities;
+    const filtered = q
+      ? base.filter(
+          (i) =>
+            i.label.toLowerCase().includes(q) ||
+            i.username.toLowerCase().includes(q),
+        )
+      : base;
+    return filtered.slice(0, 6);
+  }, [form.username, identities, selectedIdentity]);
+
+  const applyIdentity = useCallback(
+    (identity: Identity) => {
+      setForm((prev) => ({
+        ...prev,
+        identityId: identity.id,
+        username: identity.username,
+        authMethod: identity.authMethod,
+        password: undefined,
+        identityFileId: undefined,
+      }));
+      setSelectedCredentialType(null);
+      setCredentialPopoverOpen(false);
+      setShowIdentitySuggestions(false);
+    },
+    [],
+  );
+
+  const clearIdentity = useCallback(() => {
+    setForm((prev) => ({ ...prev, identityId: undefined }));
+    setShowIdentitySuggestions(false);
+  }, []);
 
   // Render sub-panels
   if (activeSubPanel === "create-group") {
@@ -514,22 +561,121 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
             </div>
           </div>
           <div className="grid gap-2">
-            <Input
-              placeholder={t("hostDetails.username.placeholder")}
-              value={form.username}
-              onChange={(e) => update("username", e.target.value)}
-              className="h-10"
-            />
-            <Input
-              placeholder={t("hostDetails.password.placeholder")}
-              type="password"
-              value={form.password || ""}
-              onChange={(e) => update("password", e.target.value)}
-              className="h-10"
-            />
+            {selectedIdentity ? (
+              <div className="flex items-center gap-2 h-10 px-3 rounded-md border border-border/70 bg-secondary/60">
+                <User size={16} className="text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium truncate">
+                    {selectedIdentity.label}
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0"
+                  onClick={clearIdentity}
+                  title={t("common.clear")}
+                >
+                  <X size={14} />
+                </Button>
+              </div>
+            ) : form.identityId ? (
+              <div className="flex items-center gap-2 h-10 px-3 rounded-md border border-border/70 bg-secondary/60">
+                <User size={16} className="text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium truncate">
+                    {t("hostDetails.identity.missing")}
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0"
+                  onClick={clearIdentity}
+                  title={t("common.clear")}
+                >
+                  <X size={14} />
+                </Button>
+              </div>
+            ) : (
+              <>
+                <Input
+                  placeholder={t("hostDetails.username.placeholder")}
+                  value={form.username}
+                  onChange={(e) => update("username", e.target.value)}
+                  onFocus={() => setShowIdentitySuggestions(true)}
+                  onBlur={() =>
+                    setTimeout(() => setShowIdentitySuggestions(false), 120)
+                  }
+                  className="h-10"
+                />
+
+                {showIdentitySuggestions &&
+                  filteredIdentitySuggestions.length > 0 && (
+                    <div className="space-y-1">
+                      <div className="text-xs text-muted-foreground px-1">
+                        {t("hostDetails.identity.suggestions")}
+                      </div>
+                      {filteredIdentitySuggestions.map((identity) => {
+                        const keyLabel = identity.keyId
+                          ? availableKeys.find((k) => k.id === identity.keyId)
+                              ?.label
+                          : undefined;
+                        const methodLabel =
+                          identity.authMethod === "certificate"
+                            ? t("hostDetails.credential.certificate")
+                            : identity.authMethod === "key"
+                              ? t("hostDetails.credential.key")
+                              : t("keychain.identity.method.passwordOnly");
+                        const summaryParts = [
+                          identity.username,
+                          identity.password ? "••••••" : undefined,
+                          keyLabel,
+                        ].filter(Boolean);
+                        return (
+                          <button
+                            key={identity.id}
+                            type="button"
+                            className="w-full flex items-center gap-3 px-3 py-2 rounded-md bg-secondary/40 hover:bg-secondary/70 border border-border/60 transition-colors text-left"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              applyIdentity(identity);
+                            }}
+                          >
+                            <div className="h-8 w-8 rounded-md bg-green-500/15 text-green-500 flex items-center justify-center shrink-0">
+                              <User size={16} />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm font-medium truncate">
+                                {identity.label}
+                              </div>
+                              <div className="text-xs text-muted-foreground truncate">
+                                {methodLabel}
+                                {summaryParts.length
+                                  ? ` - ${summaryParts.join(", ")}`
+                                  : ""}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+              </>
+            )}
+
+            {!selectedIdentity && !form.identityId && (
+              <Input
+                placeholder={t("hostDetails.password.placeholder")}
+                type="password"
+                value={form.password || ""}
+                onChange={(e) => update("password", e.target.value)}
+                className="h-10"
+              />
+            )}
 
             {/* Selected credential display */}
-            {form.identityFileId && (
+            {!selectedIdentity && form.identityFileId && (
               <div className="flex items-center gap-2 p-2 rounded-md bg-secondary/50 border border-border/60">
                 {form.authMethod === "certificate" ? (
                   <Shield size={14} className="text-primary" />
@@ -556,7 +702,8 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
             )}
 
             {/* Credential type selection with inline popover - hidden when credential is selected */}
-            {!form.identityFileId &&
+            {!selectedIdentity &&
+              !form.identityFileId &&
               !selectedCredentialType && (
                 <Popover
                   open={credentialPopoverOpen}
@@ -610,7 +757,9 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
               )}
 
             {/* Key selection combobox - appears after selecting "Key" type */}
-            {selectedCredentialType === "key" && !form.identityFileId && (
+            {!selectedIdentity &&
+              selectedCredentialType === "key" &&
+              !form.identityFileId && (
               <div className="flex items-center gap-1">
                 <Combobox
                   options={keysByCategory.key.map((k) => ({
@@ -642,7 +791,8 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
             )}
 
             {/* Certificate selection combobox - appears after selecting "Certificate" type */}
-	            {selectedCredentialType === "certificate" &&
+	            {!selectedIdentity &&
+	              selectedCredentialType === "certificate" &&
 	              !form.identityFileId && (
 	                <div className="flex items-center gap-1">
 	                  <Combobox

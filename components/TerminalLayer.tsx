@@ -6,7 +6,7 @@ import { collectSessionIds } from '../domain/workspace';
 import { SplitDirection } from '../domain/workspace';
 import { KeyBinding, TerminalSettings } from '../domain/models';
 import { cn } from '../lib/utils';
-import { Host, KnownHost, SSHKey, Snippet, TerminalSession, TerminalTheme, Workspace, WorkspaceNode } from '../types';
+import { Host, Identity, KnownHost, SSHKey, Snippet, TerminalSession, TerminalTheme, Workspace, WorkspaceNode } from '../types';
 import { DistroAvatar } from './DistroAvatar';
 import Terminal from './Terminal';
 import { Button } from './ui/button';
@@ -33,6 +33,7 @@ type ResizerHandle = {
 interface TerminalLayerProps {
   hosts: Host[];
   keys: SSHKey[];
+  identities: Identity[];
   snippets: Snippet[];
   sessions: TerminalSession[];
   workspaces: Workspace[];
@@ -70,6 +71,7 @@ interface TerminalLayerProps {
 const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   hosts,
   keys,
+  identities,
   snippets,
   sessions,
   workspaces,
@@ -657,6 +659,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
               <Terminal
                 host={host}
                 keys={keys}
+                identities={identities}
                 snippets={snippets}
                 allHosts={hosts}
                 knownHosts={knownHosts}

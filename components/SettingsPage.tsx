@@ -23,7 +23,7 @@ export default function SettingsPage() {
     const Inner = () => {
         const { t } = useI18n();
 
-    const { hosts, keys, snippets, importDataFromString } = useVaultState();
+    const { hosts, keys, identities, snippets, importDataFromString } = useVaultState();
     const { closeSettingsWindow } = useWindowControls();
 
     const handleClose = useCallback(() => {
@@ -123,6 +123,7 @@ export default function SettingsPage() {
                     <SettingsSyncTab
                         hosts={hosts}
                         keys={keys}
+                        identities={identities}
                         snippets={snippets}
                         importDataFromString={importDataFromString}
                     />

@@ -10,17 +10,24 @@ import {
   Plus,
   Search,
   Shield,
+  Trash2,
   Upload,
   UserPlus,
 } from "lucide-react";
 import React, { useCallback, useMemo, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
+import { resolveHostAuth } from "../domain/sshAuth";
 import { logger } from "../lib/logger";
 import { cn } from "../lib/utils";
 import { Host, Identity, KeyType, SSHKey } from "../types";
 import { useKeychainBackend } from "../application/state/useKeychainBackend";
 import SelectHostPanel from "./SelectHostPanel";
-import { AsidePanel, AsidePanelContent } from "./ui/aside-panel";
+import {
+  AsideActionMenu,
+  AsideActionMenuItem,
+  AsidePanel,
+  AsidePanelContent,
+} from "./ui/aside-panel";
 import { Button } from "./ui/button";
 import {
   Collapsible,
@@ -817,7 +824,25 @@ echo $3 >> "$FILE"`);
           showBackButton={panelStack.length > 1}
           onBack={popPanel}
           actions={
-            panel.type === "view" || panel.type === "identity" ? (
+            panel.type === "identity" && panel.identity && onDeleteIdentity ? (
+              <AsideActionMenu>
+                <AsideActionMenuItem
+                  variant="destructive"
+                  icon={<Trash2 size={14} />}
+                  onClick={() => {
+                    const ok = window.confirm(
+                      t("confirm.deleteIdentity", {
+                        name: panel.identity?.label || "",
+                      }),
+                    );
+                    if (!ok || !panel.identity) return;
+                    _handleDeleteIdentity(panel.identity.id);
+                  }}
+                >
+                  {t("common.delete")}
+                </AsideActionMenuItem>
+              </AsideActionMenu>
+            ) : panel.type === "view" ? (
               <Button variant="ghost" size="icon" className="h-8 w-8">
                 <MoreHorizontal size={16} />
               </Button>
@@ -1001,19 +1026,20 @@ echo $3 >> "$FILE"`);
                     setIsExporting(true);
 
                     try {
-                      // Check for authentication method - prefer password for key export
-                      // Since we're exporting a key to a host, we need password auth
-                      if (!exportHost.password && !exportHost.identityFileId) {
+                      const exportAuth = resolveHostAuth({
+                        host: exportHost,
+                        keys,
+                        identities,
+                      });
+
+                      // Need either password or a usable key to run remote command.
+                      if (!exportAuth.password && !exportAuth.key?.privateKey) {
                         throw new Error(
                           t("keychain.export.missingCredentials"),
                         );
                       }
 
-                      // Get private key for authentication if host uses key auth
-                      const hostPrivateKey = exportHost.identityFileId
-                        ? keys.find((k) => k.id === exportHost.identityFileId)
-                          ?.privateKey
-                        : undefined;
+                      const hostPrivateKey = exportAuth.key?.privateKey;
 
                       // Escape the public key for shell (single quotes, escape existing quotes)
                       const escapedPublicKey = panel.key.publicKey.replace(
@@ -1033,9 +1059,9 @@ echo $3 >> "$FILE"`);
                       // Execute via SSH
                       const result = await execCommand({
                         hostname: exportHost.hostname,
-                        username: exportHost.username,
+                        username: exportAuth.username,
                         port: exportHost.port || 22,
-                        password: exportHost.password,
+                        password: exportAuth.password,
                         privateKey: hostPrivateKey,
                         command,
                         timeout: 30000,
@@ -1045,14 +1071,24 @@ echo $3 >> "$FILE"`);
                       const exitCode = result?.code;
                       const hasError = result?.stderr?.trim();
                       if (exitCode === 0 || (exitCode == null && !hasError)) {
-                        // Update host to use this key for authentication
-                        if (onSaveHost) {
-                          const updatedHost: Host = {
+                        // Update identity (preferred) or host to use this key for authentication
+                        if (exportHost.identityId && onSaveIdentity) {
+                          const existing = identities.find(
+                            (i) => i.id === exportHost.identityId,
+                          );
+                          if (existing) {
+                            onSaveIdentity({
+                              ...existing,
+                              authMethod: "key",
+                              keyId: panel.key.id,
+                            });
+                          }
+                        } else if (onSaveHost) {
+                          onSaveHost({
                             ...exportHost,
                             identityFileId: panel.key.id,
                             authMethod: "key",
-                          };
-                          onSaveHost(updatedHost);
+                          });
                         }
                         toast.success(
                           t("keychain.export.successMessage", {

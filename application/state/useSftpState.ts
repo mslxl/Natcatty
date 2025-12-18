@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   FileConflict,
   Host,
+  Identity,
   SftpConnection,
   SftpFileEntry,
   SSHKey,
@@ -11,6 +12,7 @@ import {
 } from "../../domain/models";
 import { logger } from "../../lib/logger";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
+import { resolveHostAuth } from "../../domain/sshAuth";
 
 // Helper functions
 const formatFileSize = (bytes: number): string => {
@@ -83,7 +85,7 @@ export interface SftpPane {
   filter: string;
 }
 
-export const useSftpState = (hosts: Host[], keys: SSHKey[]) => {
+export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity[]) => {
   // Connections
   const [leftPane, setLeftPane] = useState<SftpPane>({
     connection: null,
@@ -289,22 +291,21 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[]) => {
   // Get host credentials
   const getHostCredentials = useCallback(
     (host: Host): NetcattySSHOptions => {
-      const key = host.identityFileId
-        ? keys.find((k) => k.id === host.identityFileId)
-        : null;
+      const resolved = resolveHostAuth({ host, keys, identities });
+      const key = resolved.key || null;
       return {
         hostname: host.hostname,
-        username: host.username,
+        username: resolved.username,
         port: host.port || 22,
-        password: host.password,
+        password: resolved.password,
         privateKey: key?.privateKey,
         certificate: key?.certificate,
         publicKey: key?.publicKey,
-        keyId: key?.id,
+        keyId: resolved.keyId,
         keySource: key?.source,
       };
     },
-    [keys],
+    [identities, keys],
   );
 
   const getMockLocalFiles = useCallback((path: string): SftpFileEntry[] => {
@@ -456,10 +457,54 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[]) => {
 
 	        try {
 	          const credentials = getHostCredentials(host);
-	          const sftpId = await netcattyBridge.get()?.openSftp({
-	            sessionId: `sftp-${connectionId}`,
-	            ...credentials,
-	          });
+            const bridge = netcattyBridge.get();
+            const openSftp = bridge?.openSftp;
+            if (!openSftp) throw new Error("SFTP bridge unavailable");
+
+            const isAuthError = (err: unknown): boolean => {
+              if (!(err instanceof Error)) return false;
+              const msg = err.message.toLowerCase();
+              return (
+                msg.includes("authentication") ||
+                msg.includes("auth") ||
+                msg.includes("password") ||
+                msg.includes("permission denied")
+              );
+            };
+
+            const hasKey = !!credentials.privateKey;
+            const hasPassword = !!credentials.password;
+
+            let sftpId: string | undefined;
+            if (hasKey) {
+              try {
+                // Prefer trying key/cert first when both are present.
+                sftpId = await openSftp({
+                  sessionId: `sftp-${connectionId}`,
+                  ...credentials,
+                  password: undefined,
+                });
+              } catch (err) {
+                if (hasPassword && isAuthError(err)) {
+                  sftpId = await openSftp({
+                    sessionId: `sftp-${connectionId}`,
+                    ...credentials,
+                    privateKey: undefined,
+                    certificate: undefined,
+                    publicKey: undefined,
+                    keyId: undefined,
+                    keySource: undefined,
+                  });
+                } else {
+                  throw err;
+                }
+              }
+            } else {
+              sftpId = await openSftp({
+                sessionId: `sftp-${connectionId}`,
+                ...credentials,
+              });
+            }
 
           if (!sftpId) throw new Error("Failed to open SFTP session");
 

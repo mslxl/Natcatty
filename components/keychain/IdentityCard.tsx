@@ -4,6 +4,7 @@
 
 import { Pencil,User } from 'lucide-react';
 import React from 'react';
+import { useI18n } from '../../application/i18n/I18nProvider';
 import { cn } from '../../lib/utils';
 import { Identity } from '../../types';
 import { Button } from '../ui/button';
@@ -21,14 +22,23 @@ export const IdentityCard: React.FC<IdentityCardProps> = ({
     isSelected,
     onClick,
 }) => {
-    const getAuthMethodDisplay = (method: string) => {
-        switch (method) {
-            case 'password': return 'Password';
-            case 'key': return 'Key';
-            case 'certificate': return 'Certificate';
-            default: return method;
-        }
-    };
+    const { t } = useI18n();
+
+    const hasPassword = !!identity.password;
+    const hasKey = !!identity.keyId;
+    const keyKind = identity.authMethod === 'certificate' ? 'certificate' : 'key';
+
+    const summary = hasPassword && hasKey
+        ? (keyKind === 'certificate'
+            ? t('keychain.identity.summary.passwordAndCertificate')
+            : t('keychain.identity.summary.passwordAndKey'))
+        : hasKey
+            ? (keyKind === 'certificate'
+                ? t('keychain.identity.summary.certificate')
+                : t('keychain.identity.summary.key'))
+            : hasPassword
+                ? t('keychain.identity.summary.password')
+                : t('keychain.identity.summary.none');
 
     return (
         <div
@@ -48,7 +58,7 @@ export const IdentityCard: React.FC<IdentityCardProps> = ({
                 <div className="min-w-0 flex-1">
                     <div className="text-sm font-semibold truncate">{identity.label || 'Add a label...'}</div>
                     <div className="text-[11px] font-mono text-muted-foreground truncate">
-                        {getAuthMethodDisplay(identity.authMethod)}
+                        {summary}
                     </div>
                 </div>
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">

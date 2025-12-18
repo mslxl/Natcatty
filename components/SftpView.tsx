@@ -19,7 +19,7 @@ import { useI18n } from "../application/i18n/I18nProvider";
 import { useIsSftpActive } from "../application/state/activeTabStore";
 import { SftpPane, useSftpState } from "../application/state/useSftpState";
 import { cn } from "../lib/utils";
-import { Host, SftpFileEntry, SSHKey } from "../types";
+import { Host, Identity, SftpFileEntry, SSHKey } from "../types";
 import { Button } from "./ui/button";
 import {
   ContextMenu,
@@ -1073,11 +1073,12 @@ SftpPaneView.displayName = "SftpPaneView";
 interface SftpViewProps {
   hosts: Host[];
   keys: SSHKey[];
+  identities: Identity[];
 }
 
-const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys }) => {
+const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => {
   const isActive = useIsSftpActive();
-  const sftp = useSftpState(hosts, keys);
+  const sftp = useSftpState(hosts, keys, identities);
   const [permissionsState, setPermissionsState] = useState<{
     file: SftpFileEntry;
     side: "left" | "right";

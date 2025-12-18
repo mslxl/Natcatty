@@ -42,6 +42,8 @@ export interface Host {
   hostname: string;
   port: number;
   username: string;
+  // Optional reference to a reusable identity (username + auth) stored in Keychain.
+  identityId?: string;
   group?: string;
   tags: string[];
   os: 'linux' | 'windows' | 'macos';

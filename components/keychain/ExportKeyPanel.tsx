@@ -6,8 +6,9 @@ import { ChevronRight, Info } from 'lucide-react';
 import React, { useState } from 'react';
 import { useKeychainBackend } from '../../application/state/useKeychainBackend';
 import { useI18n } from '../../application/i18n/I18nProvider';
+import { resolveHostAuth } from '../../domain/sshAuth';
 import { cn } from '../../lib/utils';
-import { Host, SSHKey } from '../../types';
+import { Host, Identity, SSHKey } from '../../types';
 import { Button } from '../ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible';
 import { Input } from '../ui/input';
@@ -20,6 +21,7 @@ interface ExportKeyPanelProps {
     keyItem: SSHKey;
     _hosts: Host[]; // Reserved for future inline host list/validation
     keys: SSHKey[];
+    identities: Identity[];
     exportHost: Host | null;
     _setExportHost: (host: Host | null) => void; // Host selection handled by onShowHostSelector callback
     onShowHostSelector: () => void;
@@ -43,6 +45,7 @@ export const ExportKeyPanel: React.FC<ExportKeyPanelProps> = ({
     keyItem,
     _hosts, // Reserved for future inline host list/validation
     keys,
+    identities,
     exportHost,
     _setExportHost, // Host selection handled by onShowHostSelector callback
     onShowHostSelector,
@@ -65,15 +68,14 @@ export const ExportKeyPanel: React.FC<ExportKeyPanelProps> = ({
         setIsExporting(true);
 
         try {
+            const exportAuth = resolveHostAuth({ host: exportHost, keys, identities });
+
             // Check for authentication method
-            if (!exportHost.password && !exportHost.identityFileId) {
+            if (!exportAuth.password && !exportAuth.key?.privateKey) {
                 throw new Error(t('keychain.export.missingCredentials'));
             }
 
-            // Get private key for authentication if host uses key auth
-            const hostPrivateKey = exportHost.identityFileId
-                ? keys.find(k => k.id === exportHost.identityFileId)?.privateKey
-                : undefined;
+            const hostPrivateKey = exportAuth.key?.privateKey;
 
             // Escape the public key for shell
             const escapedPublicKey = keyItem.publicKey.replace(/'/g, "'\\''");
@@ -89,9 +91,9 @@ export const ExportKeyPanel: React.FC<ExportKeyPanelProps> = ({
 			// Execute via SSH
 			const result = await execCommand({
 				hostname: exportHost.hostname,
-				username: exportHost.username,
+				username: exportAuth.username,
 				port: exportHost.port || 22,
-				password: exportHost.password,
+				password: exportAuth.password,
                 privateKey: hostPrivateKey,
                 command,
                 timeout: 30000,

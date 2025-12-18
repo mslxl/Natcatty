@@ -10,6 +10,7 @@ import { logger } from "../lib/logger";
 import { cn } from "../lib/utils";
 import {
   Host,
+  Identity,
   KnownHost,
   SSHKey,
   Snippet,
@@ -18,6 +19,7 @@ import {
   TerminalSettings,
   KeyBinding,
 } from "../types";
+import { resolveHostAuth } from "../domain/sshAuth";
 import { useTerminalBackend } from "../application/state/useTerminalBackend";
 import KnownHostConfirmDialog, { HostKeyInfo } from "./KnownHostConfirmDialog";
 import SFTPModal from "./SFTPModal";
@@ -41,6 +43,7 @@ import { useTerminalAuthState } from "./terminal/hooks/useTerminalAuthState";
 interface TerminalProps {
   host: Host;
   keys: SSHKey[];
+  identities: Identity[];
   snippets: Snippet[];
   allHosts?: Host[];
   knownHosts?: KnownHost[];
@@ -85,6 +88,7 @@ interface TerminalProps {
 const TerminalComponent: React.FC<TerminalProps> = ({
   host,
   keys,
+  identities,
   snippets,
   allHosts = [],
   knownHosts: _knownHosts = [],
@@ -270,6 +274,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const sessionStarters = createTerminalSessionStarters({
     host,
     keys,
+    identities,
     resolvedChainHosts,
     sessionId,
     startupCommand,
@@ -354,13 +359,17 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           setProgressLogs(["Initializing Mosh connection..."]);
           await sessionStarters.startMosh(term);
         } else {
-          const hasPassword = host.authMethod === "password" && host.password;
-          const hasKey =
-            (host.authMethod === "key" || host.authMethod === "certificate") &&
-            host.identityFileId;
+          const resolvedAuth = resolveHostAuth({ host, keys, identities });
+          const hasPassword = !!resolvedAuth.password;
+          const hasKey = !!resolvedAuth.keyId;
           const hasPendingAuth = pendingAuthRef.current;
 
-          if (!hasPassword && !hasKey && !hasPendingAuth && !host.username) {
+          if (
+            !hasPassword &&
+            !hasKey &&
+            !hasPendingAuth &&
+            !resolvedAuth.username
+          ) {
             auth.setNeedsAuth(true);
             setStatus("disconnected");
             return;
@@ -950,28 +959,21 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
         <SFTPModal
           host={host}
-          credentials={{
-            username: host.username,
-            hostname: host.hostname,
-            port: host.port,
-            password: host.password,
-            privateKey: host.identityFileId
-              ? keys.find((k) => k.id === host.identityFileId)?.privateKey
-              : undefined,
-            certificate: host.identityFileId
-              ? keys.find((k) => k.id === host.identityFileId)?.certificate
-              : undefined,
-            passphrase: host.identityFileId
-              ? keys.find((k) => k.id === host.identityFileId)?.passphrase
-              : undefined,
-            publicKey: host.identityFileId
-              ? keys.find((k) => k.id === host.identityFileId)?.publicKey
-              : undefined,
-            keyId: host.identityFileId,
-            keySource: host.identityFileId
-              ? keys.find((k) => k.id === host.identityFileId)?.source
-              : undefined,
-          }}
+          credentials={(() => {
+            const resolvedAuth = resolveHostAuth({ host, keys, identities });
+            return {
+              username: resolvedAuth.username,
+              hostname: host.hostname,
+              port: host.port,
+              password: resolvedAuth.password,
+              privateKey: resolvedAuth.key?.privateKey,
+              certificate: resolvedAuth.key?.certificate,
+              passphrase: resolvedAuth.passphrase,
+              publicKey: resolvedAuth.key?.publicKey,
+              keyId: resolvedAuth.keyId,
+              keySource: resolvedAuth.key?.source,
+            };
+          })()}
           open={showSFTP && status === "connected"}
           onClose={() => setShowSFTP(false)}
         />

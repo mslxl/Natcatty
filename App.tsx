@@ -7,6 +7,7 @@ import { useVaultState } from './application/state/useVaultState';
 import { useWindowControls } from './application/state/useWindowControls';
 import { I18nProvider, useI18n } from './application/i18n/I18nProvider';
 import { matchesKeyBinding } from './domain/models';
+import { resolveHostAuth } from './domain/sshAuth';
 import { netcattyBridge } from './infrastructure/services/netcattyBridge';
 import LogView from './components/LogView.tsx';
 import ProtocolSelectDialog from './components/ProtocolSelectDialog';
@@ -102,6 +103,7 @@ function App() {
   const {
     hosts,
     keys,
+    identities,
     snippets,
     customGroups,
     snippetPackages,
@@ -110,6 +112,7 @@ function App() {
     connectionLogs,
     updateHosts,
     updateKeys,
+    updateIdentities,
     updateSnippets,
     updateSnippetPackages,
     updateCustomGroups,
@@ -167,6 +170,7 @@ function App() {
   const { syncNow: handleSyncNow } = useAutoSync({
     hosts,
     keys,
+    identities,
     snippets,
     customGroups,
     portForwardingRules: undefined, // TODO: Add port forwarding rules from usePortForwardingState
@@ -175,6 +179,7 @@ function App() {
       importDataFromString(JSON.stringify({
         hosts: payload.hosts,
         keys: payload.keys,
+        identities: payload.identities,
         snippets: payload.snippets,
         customGroups: payload.customGroups,
       }));
@@ -477,11 +482,12 @@ function App() {
   const handleConnectToHost = useCallback((host: Host) => {
     const { username, hostname: localHost } = systemInfoRef.current;
     const protocol = host.moshEnabled ? 'mosh' : (host.protocol || 'ssh');
+    const resolvedAuth = resolveHostAuth({ host, keys, identities });
     addConnectionLog({
       hostId: host.id,
       hostLabel: host.label,
       hostname: host.hostname,
-      username: host.username || 'root',
+      username: resolvedAuth.username || 'root',
       protocol: protocol as 'ssh' | 'telnet' | 'local' | 'mosh',
       startTime: Date.now(),
       localUsername: username,
@@ -489,7 +495,7 @@ function App() {
       saved: false,
     });
     connectToHost(host);
-  }, [addConnectionLog, connectToHost]);
+  }, [addConnectionLog, connectToHost, identities, keys]);
 
   // Handle terminal data capture when session exits
   const handleTerminalDataCapture = useCallback((sessionId: string, data: string) => {
@@ -620,6 +626,7 @@ function App() {
           <VaultView
             hosts={hosts}
             keys={keys}
+            identities={identities}
             snippets={snippets}
             snippetPackages={snippetPackages}
             customGroups={customGroups}
@@ -634,6 +641,7 @@ function App() {
             onConnect={handleConnectToHost}
             onUpdateHosts={updateHosts}
             onUpdateKeys={updateKeys}
+            onUpdateIdentities={updateIdentities}
             onUpdateSnippets={updateSnippets}
             onUpdateSnippetPackages={updateSnippetPackages}
             onUpdateCustomGroups={updateCustomGroups}
@@ -649,11 +657,12 @@ function App() {
           />
         </VaultViewContainer>
 
-        <SftpView hosts={hosts} keys={keys} />
+        <SftpView hosts={hosts} keys={keys} identities={identities} />
 
         <TerminalLayer
           hosts={hosts}
           keys={keys}
+          identities={identities}
           snippets={snippets}
           sessions={sessions}
           workspaces={workspaces}
