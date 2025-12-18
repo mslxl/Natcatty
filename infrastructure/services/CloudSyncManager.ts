@@ -78,7 +78,6 @@ export class CloudSyncManager {
   constructor() {
     this.state = this.loadInitialState();
     this.stateSnapshot = { ...this.state };
-    this.initializeAdapters();
     this.setupCrossWindowSync();
   }
 
@@ -296,22 +295,30 @@ export class CloudSyncManager {
 
       const resourceChanged = (adapter?.resourceId || null) !== (next.resourceId || null);
 
-      if (!adapter || tokenChanged || resourceChanged) {
-        this.adapters.set(provider, createAdapter(provider, nextTokens, next.resourceId));
+      if (adapter && (tokenChanged || resourceChanged)) {
+        adapter.signOut();
+        this.adapters.delete(provider);
       }
 
       this.notifyStateChange();
     }
   };
 
-  private initializeAdapters(): void {
-    for (const provider of ['github', 'google', 'onedrive'] as CloudProvider[]) {
-      const connection = this.state.providers[provider];
-      if (connection.tokens) {
-        const adapter = createAdapter(provider, connection.tokens, connection.resourceId);
-        this.adapters.set(provider, adapter);
-      }
+  private async getConnectedAdapter(provider: CloudProvider): Promise<CloudAdapter> {
+    const connection = this.state.providers[provider];
+    const tokens = connection?.tokens;
+    if (!tokens) {
+      throw new Error('Provider not connected');
     }
+
+    const existing = this.adapters.get(provider);
+    if (existing?.isAuthenticated) {
+      return existing;
+    }
+
+    const adapter = await createAdapter(provider, tokens, connection.resourceId);
+    this.adapters.set(provider, adapter);
+    return adapter;
   }
 
   // ==========================================================================
@@ -534,14 +541,13 @@ export class CloudSyncManager {
     type: 'device_code' | 'url';
     data: unknown;
   }> {
-    const adapter = createAdapter(provider);
+    const adapter = await createAdapter(provider);
     this.adapters.set(provider, adapter);
 
     this.updateProviderStatus(provider, 'connecting');
 
     if (provider === 'github') {
       // GitHub uses Device Flow
-      await import('./adapters/GitHubAdapter'); // Ensure adapter is loaded
       const ghAdapter = adapter as GitHubAdapter;
       const deviceFlow = await ghAdapter.startAuth();
       
@@ -554,12 +560,10 @@ export class CloudSyncManager {
       const redirectUri = 'http://127.0.0.1:45678/oauth/callback';
       
       if (provider === 'google') {
-        await import('./adapters/GoogleDriveAdapter');
         const gdAdapter = adapter as GoogleDriveAdapter;
         const url = await gdAdapter.startAuth(redirectUri);
         return { type: 'url', data: { url, redirectUri } };
       } else {
-        await import('./adapters/OneDriveAdapter');
         const odAdapter = adapter as OneDriveAdapter;
         const url = await odAdapter.startAuth(redirectUri);
         return { type: 'url', data: { url, redirectUri } };
@@ -581,7 +585,6 @@ export class CloudSyncManager {
       throw new Error('GitHub adapter not initialized');
     }
 
-    await import('./adapters/GitHubAdapter');
     const ghAdapter = adapter as GitHubAdapter;
 
     try {
@@ -630,12 +633,10 @@ export class CloudSyncManager {
       let account;
 
       if (provider === 'google') {
-        await import('./adapters/GoogleDriveAdapter');
         const gdAdapter = adapter as GoogleDriveAdapter;
         tokens = await gdAdapter.completeAuth(code, redirectUri);
         account = gdAdapter.accountInfo;
       } else {
-        await import('./adapters/OneDriveAdapter');
         const odAdapter = adapter as OneDriveAdapter;
         tokens = await odAdapter.completeAuth(code, redirectUri);
         account = odAdapter.accountInfo;
@@ -745,8 +746,10 @@ export class CloudSyncManager {
       };
     }
 
-    const adapter = this.adapters.get(provider);
-    if (!adapter?.isAuthenticated) {
+    let adapter: CloudAdapter;
+    try {
+      adapter = await this.getConnectedAdapter(provider);
+    } catch {
       return {
         success: false,
         provider,
@@ -872,10 +875,7 @@ export class CloudSyncManager {
       throw new Error('Vault is locked');
     }
 
-    const adapter = this.adapters.get(provider);
-    if (!adapter?.isAuthenticated) {
-      throw new Error('Provider not connected');
-    }
+    const adapter = await this.getConnectedAdapter(provider);
 
     try {
       const remoteFile = await adapter.download();

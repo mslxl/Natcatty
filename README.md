@@ -2,7 +2,7 @@
 
 [![Netcatty UI](screenshot.png)](screenshot.png)
 
-Netcatty is a modern SSH manager and terminal app that brings host grouping, drag-to-organize, SFTP side panel, keychain, port forwarding, and a rich UI theme. It ships with the Ghostty Web terminal (VT100) and an Electron desktop bridge for native SSH/SFTP.
+Netcatty is a modern SSH manager and terminal app that brings host grouping, drag-to-organize, SFTP side panel, keychain, port forwarding, and a rich UI theme. It ships with an xterm.js-based terminal and an Electron desktop bridge for native SSH/SFTP.
 
 ---
 
@@ -10,7 +10,7 @@ Netcatty is a modern SSH manager and terminal app that brings host grouping, dra
 - 🧭 **Host groups & breadcrumbs**: right-click to create/delete groups, drag hosts or groups into target groups, double-click to drill into a group, and breadcrumb navigation back to root.
 - 🗂️ **SFTP panel**: collapsible sidebar, single-click to enter directories, upload/delete/download, and loading animations.
 - 🗝️ **Keychain**: import/generate SSH keys, choose password/key auth; single-click a host to connect.
-- 🖥️ **Terminal UX**: Ghostty Web engine, auto-resize on window changes, connection logs, timeout/cancel, and connection progress UI.
+- 🖥️ **Terminal UX**: xterm.js engine, auto-resize on window changes, connection logs, timeout/cancel, and connection progress UI.
 - 🌗 **Themes & branding**: light/dark toggle, custom accent color, Netcatty logo baked in.
 - 🔌 **Electron bridge**: native SSH/SFTP channels without extra browser plugins.
 

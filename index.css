@@ -261,33 +261,6 @@ body {
   display: none;
 }
 
-/* Ghostty terminal canvas - fill container completely */
-[data-ghostty-surface] {
-  width: 100% !important;
-  height: 100% !important;
-}
-
-/* Override Ghostty's internal padding/margin */
-[data-ghostty-surface]>div {
-  padding: 0 !important;
-  margin: 0 !important;
-}
-
-/* Make terminal scrollbar overlay instead of taking space */
-[data-ghostty-surface] ::-webkit-scrollbar {
-  width: 8px;
-  background: transparent;
-}
-
-[data-ghostty-surface] ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 4px;
-}
-
-[data-ghostty-surface] ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
-}
-
 .workspace-pane {
   outline: none;
   overflow: visible;

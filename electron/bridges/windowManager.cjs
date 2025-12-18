@@ -100,6 +100,7 @@ async function createWindow(electronModule, options) {
     height: 900,
     backgroundColor: themeConfig.background,
     icon: appIcon,
+    show: false,
     frame: isMac,
     titleBarStyle: isMac ? "hiddenInset" : undefined,
     trafficLightPosition: isMac ? { x: 12, y: 12 } : undefined,
@@ -112,6 +113,15 @@ async function createWindow(electronModule, options) {
   });
 
   mainWindow = win;
+
+  // Show window when renderer is ready to prevent initial white flash.
+  win.once("ready-to-show", () => {
+    try {
+      win.show();
+    } catch {
+      // ignore
+    }
+  });
 
   // Register window control handlers
   registerWindowHandlers(electronModule.ipcMain, nativeTheme);

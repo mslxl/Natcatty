@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { activeTabStore, useActiveTabId, useIsVaultActive } from './application/state/activeTabStore';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { activeTabStore, useActiveTabId, useIsSftpActive, useIsTerminalLayerVisible, useIsVaultActive } from './application/state/activeTabStore';
 import { useAutoSync } from './application/state/useAutoSync';
 import { useSessionState } from './application/state/useSessionState';
 import { useSettingsState } from './application/state/useSettingsState';
@@ -12,8 +12,6 @@ import { netcattyBridge } from './infrastructure/services/netcattyBridge';
 import LogView from './components/LogView.tsx';
 import ProtocolSelectDialog from './components/ProtocolSelectDialog';
 import { QuickSwitcher } from './components/QuickSwitcher';
-import { SftpView } from './components/SftpView';
-import { TerminalLayer } from './components/TerminalLayer';
 import { TopTabs } from './components/TopTabs';
 import { Button } from './components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog';
@@ -24,6 +22,8 @@ import { VaultView, VaultSection } from './components/VaultView';
 import { cn } from './lib/utils';
 import { ConnectionLog, Host, HostProtocol, TerminalTheme } from './types';
 import { LogView as LogViewType } from './application/state/useSessionState';
+import type { SftpView as SftpViewComponent } from './components/SftpView';
+import type { TerminalLayer as TerminalLayerComponent } from './components/TerminalLayer';
 
 // Visibility container for VaultView - isolates isActive subscription
 const VaultViewContainer: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -71,8 +71,60 @@ const LogViewWrapper: React.FC<LogViewWrapperProps> = ({ logView, defaultTermina
   );
 };
 
-function App() {
-  console.log('[App] render');
+const LazySftpView = lazy(() =>
+  import('./components/SftpView').then((m) => ({ default: m.SftpView })),
+);
+
+const LazyTerminalLayer = lazy(() =>
+  import('./components/TerminalLayer').then((m) => ({ default: m.TerminalLayer })),
+);
+
+type SettingsState = ReturnType<typeof useSettingsState>;
+type SftpViewProps = React.ComponentProps<typeof SftpViewComponent>;
+type TerminalLayerProps = React.ComponentProps<typeof TerminalLayerComponent>;
+
+const SftpViewMount: React.FC<SftpViewProps> = (props) => {
+  const isActive = useIsSftpActive();
+  const [shouldMount, setShouldMount] = useState(isActive);
+
+  useEffect(() => {
+    if (isActive) setShouldMount(true);
+  }, [isActive]);
+
+  if (!shouldMount) return null;
+
+  return (
+    <Suspense fallback={null}>
+      <LazySftpView {...props} />
+    </Suspense>
+  );
+};
+
+const TerminalLayerMount: React.FC<TerminalLayerProps> = (props) => {
+  const isVisible = useIsTerminalLayerVisible(props.draggingSessionId);
+  const [shouldMount, setShouldMount] = useState(isVisible);
+
+  useEffect(() => {
+    if (isVisible) setShouldMount(true);
+  }, [isVisible]);
+
+  useEffect(() => {
+    if (shouldMount) return;
+    // Warm up the terminal layer shortly after first paint to reduce latency when opening a session.
+    const id = window.setTimeout(() => setShouldMount(true), 1200);
+    return () => window.clearTimeout(id);
+  }, [shouldMount]);
+
+  if (!shouldMount) return null;
+
+  return (
+    <Suspense fallback={null}>
+      <LazyTerminalLayer {...props} />
+    </Suspense>
+  );
+};
+
+function App({ settings }: { settings: SettingsState }) {
 
   const { t } = useI18n();
 
@@ -95,10 +147,7 @@ function App() {
     terminalSettings,
     hotkeyScheme,
     keyBindings,
-  } = useSettingsState();
-
-  // Debug: log hotkeyScheme and keyBindings on every render
-  console.log('[App] hotkeyScheme:', hotkeyScheme, 'keyBindings length:', keyBindings.length);
+  } = settings;
 
   const {
     hosts,
@@ -657,9 +706,9 @@ function App() {
           />
         </VaultViewContainer>
 
-        <SftpView hosts={hosts} keys={keys} identities={identities} />
+        <SftpViewMount hosts={hosts} keys={keys} identities={identities} />
 
-        <TerminalLayer
+        <TerminalLayerMount
           hosts={hosts}
           keys={keys}
           identities={identities}
@@ -784,11 +833,11 @@ function App() {
 }
 
 function AppWithProviders() {
-  const { uiLanguage } = useSettingsState();
+  const settings = useSettingsState();
   return (
-    <I18nProvider locale={uiLanguage}>
+    <I18nProvider locale={settings.uiLanguage}>
       <ToastProvider>
-        <App />
+        <App settings={settings} />
       </ToastProvider>
     </I18nProvider>
   );

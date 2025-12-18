@@ -1,13 +1,8 @@
-import { init as initGhostty } from 'ghostty-web';
 import ReactDOM from 'react-dom/client';
+import '@xterm/xterm/css/xterm.css';
 import App from './App';
 import SettingsPage from './components/SettingsPage';
 import { ToastProvider } from './components/ui/toast';
-
-// Pre-load Ghostty WASM immediately on app start for faster terminal open
-initGhostty().catch((err) => {
-  console.warn('[Ghostty] WASM preload failed, will retry on terminal open:', err);
-});
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

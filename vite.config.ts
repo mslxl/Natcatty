@@ -20,17 +20,8 @@ export default defineConfig(() => {
       build: {
         chunkSizeWarningLimit: 3000,
         target: 'esnext', // Required for top-level await in WASM modules
-        rollupOptions: {
-          output: {
-            // Disable code splitting for Electron compatibility with file:// protocol
-            manualChunks: undefined,
-          },
-        },
       },
       plugins: [tailwindcss(), react()],
-      optimizeDeps: {
-        exclude: ['ghostty-web'], // Don't pre-bundle ghostty-web to preserve WASM imports
-      },
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),

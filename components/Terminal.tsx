@@ -2,7 +2,6 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { SearchAddon } from "@xterm/addon-search";
-import "@xterm/xterm/css/xterm.css";
 import { Maximize2, Radio } from "lucide-react";
 import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";

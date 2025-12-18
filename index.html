@@ -7,10 +7,11 @@
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' https://fonts.gstatic.com; connect-src 'self' data: blob: ws: wss: https:; img-src 'self' data: https:;" />
   <title>netcatty SSH</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
     href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
     rel="stylesheet">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
   <style>
     /* Load extended Unicode ranges for terminal box drawing characters */
     @font-face {
@@ -67,6 +68,9 @@
 
     body {
       font-family: 'Space Grotesk', 'Inter', sans-serif;
+      margin: 0;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
     }
 
     /* Global Modern Scrollbar */
@@ -105,6 +109,31 @@
       scrollbar-width: none;
     }
 	  </style>
+    <script>
+      (function () {
+        try {
+          var theme = localStorage.getItem('netcatty_theme_v1');
+          var color = localStorage.getItem('netcatty_color_v1');
+          var lang = localStorage.getItem('netcatty_ui_language_v1');
+          var root = document.documentElement;
+
+          if (theme === 'dark' || theme === 'light') {
+            root.classList.remove('light', 'dark');
+            root.classList.add(theme);
+          }
+
+          if (color) {
+            root.style.setProperty('--primary', color);
+            root.style.setProperty('--accent', color);
+            root.style.setProperty('--ring', color);
+          }
+
+          if (lang) root.lang = lang;
+        } catch (e) {
+          // ignore
+        }
+      })();
+    </script>
 	  <link rel="stylesheet" href="/index.css">
 	</head>
 

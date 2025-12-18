@@ -2,13 +2,6 @@
  * Cloud Sync Adapters - Unified Export
  */
 
-export { GitHubAdapter, type DeviceFlowState } from './GitHubAdapter';
-export { GoogleDriveAdapter } from './GoogleDriveAdapter';
-export { OneDriveAdapter } from './OneDriveAdapter';
-
-import { GitHubAdapter } from './GitHubAdapter';
-import { GoogleDriveAdapter } from './GoogleDriveAdapter';
-import { OneDriveAdapter } from './OneDriveAdapter';
 import type { CloudProvider, SyncedFile, OAuthTokens, ProviderAccount } from '../../../domain/sync';
 
 /**
@@ -30,18 +23,24 @@ export interface CloudAdapter {
 /**
  * Create adapter for a specific provider
  */
-export const createAdapter = (
+export const createAdapter = async (
   provider: CloudProvider,
   tokens?: OAuthTokens,
   resourceId?: string
-): CloudAdapter => {
+): Promise<CloudAdapter> => {
   switch (provider) {
-    case 'github':
+    case 'github': {
+      const { GitHubAdapter } = await import('./GitHubAdapter');
       return new GitHubAdapter(tokens, resourceId);
-    case 'google':
+    }
+    case 'google': {
+      const { GoogleDriveAdapter } = await import('./GoogleDriveAdapter');
       return new GoogleDriveAdapter(tokens, resourceId);
-    case 'onedrive':
+    }
+    case 'onedrive': {
+      const { OneDriveAdapter } = await import('./OneDriveAdapter');
       return new OneDriveAdapter(tokens, resourceId);
+    }
     default:
       throw new Error(`Unknown provider: ${provider}`);
   }
