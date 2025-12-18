@@ -144,36 +144,38 @@
     }
 
     @keyframes spin {
-      to { transform: rotate(360deg); }
+      to {
+        transform: rotate(360deg);
+      }
     }
-	  </style>
-    <script>
-      (function () {
-        try {
-          var theme = localStorage.getItem('netcatty_theme_v1');
-          var color = localStorage.getItem('netcatty_color_v1');
-          var lang = localStorage.getItem('netcatty_ui_language_v1');
-          var root = document.documentElement;
+  </style>
+  <script>
+    (function () {
+      try {
+        var theme = localStorage.getItem('netcatty_theme_v1');
+        var color = localStorage.getItem('netcatty_color_v1');
+        var lang = localStorage.getItem('netcatty_ui_language_v1');
+        var root = document.documentElement;
 
-          if (theme === 'dark' || theme === 'light') {
-            root.classList.remove('light', 'dark');
-            root.classList.add(theme);
-          }
-
-          if (color) {
-            root.style.setProperty('--primary', color);
-            root.style.setProperty('--accent', color);
-            root.style.setProperty('--ring', color);
-          }
-
-          if (lang) root.lang = lang;
-        } catch (e) {
-          // ignore
+        if (theme === 'dark' || theme === 'light') {
+          root.classList.remove('light', 'dark');
+          root.classList.add(theme);
         }
-      })();
-    </script>
-	  <link rel="stylesheet" href="/index.css">
-	</head>
+
+        if (color) {
+          root.style.setProperty('--primary', color);
+          root.style.setProperty('--accent', color);
+          root.style.setProperty('--ring', color);
+        }
+
+        if (lang) root.lang = lang;
+      } catch (e) {
+        // ignore
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/index.css">
+</head>
 
 <body class="bg-background text-foreground overflow-hidden antialiased h-screen w-screen">
   <div id="root" class="h-full w-full">
@@ -181,10 +183,13 @@
     <div id="splash" class="splash-screen">
       <div class="splash-content">
         <svg class="splash-logo" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect width="48" height="48" rx="12" fill="currentColor" fill-opacity="0.1"/>
-          <path d="M14 16C14 14.8954 14.8954 14 16 14H32C33.1046 14 34 14.8954 34 16V32C34 33.1046 33.1046 34 32 34H16C14.8954 34 14 33.1046 14 32V16Z" stroke="currentColor" stroke-width="2"/>
-          <path d="M18 22L22 26L18 30" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M26 30H30" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <rect width="48" height="48" rx="12" fill="currentColor" fill-opacity="0.1" />
+          <path
+            d="M14 16C14 14.8954 14.8954 14 16 14H32C33.1046 14 34 14.8954 34 16V32C34 33.1046 33.1046 34 32 34H16C14.8954 34 14 33.1046 14 32V16Z"
+            stroke="currentColor" stroke-width="2" />
+          <path d="M18 22L22 26L18 30" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round" />
+          <path d="M26 30H30" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
         </svg>
         <div class="splash-spinner"></div>
       </div>
