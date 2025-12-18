@@ -45,19 +45,22 @@ const path = require("node:path");
 const os = require("node:os");
 const fs = require("node:fs");
 
-// Register custom protocol as privileged BEFORE app.ready
-// This enables the app:// scheme to be treated as a secure context.
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: 'app',
-    privileges: {
-      secure: true,        // Treat as secure context
-      standard: true,      // Allow relative URLs
-      supportFetchAPI: true,
-      corsEnabled: true,
-    }
-  }
-]);
+try {
+  protocol?.registerSchemesAsPrivileged?.([
+    {
+      scheme: "app",
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        corsEnabled: true,
+        stream: true,
+      },
+    },
+  ]);
+} catch (err) {
+  console.warn("[Main] Failed to register app:// scheme privileges:", err);
+}
 
 // Apply ssh2 protocol patch needed for OpenSSH sk-* signature layouts.
 
@@ -123,6 +126,107 @@ const preload = path.join(__dirname, "preload.cjs");
 const isMac = process.platform === "darwin";
 const appIcon = path.join(__dirname, "../public/icon.png");
 const electronDir = __dirname;
+
+const APP_PROTOCOL_HEADERS = {
+  // Required for crossOriginIsolated / SharedArrayBuffer.
+  // Mirrors the dev-server headers in `vite.config.ts`.
+  "Cross-Origin-Opener-Policy": "same-origin",
+  "Cross-Origin-Embedder-Policy": "credentialless",
+};
+
+const DIST_MIME_TYPES = {
+  ".html": "text/html",
+  ".js": "text/javascript",
+  ".mjs": "text/javascript",
+  ".css": "text/css",
+  ".json": "application/json",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".eot": "application/vnd.ms-fontobject",
+  ".wav": "audio/wav",
+  ".mp3": "audio/mpeg",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".wasm": "application/wasm",
+};
+
+function resolveContentType(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  return DIST_MIME_TYPES[ext] || "application/octet-stream";
+}
+
+function isPathInside(parentPath, childPath) {
+  const parent = path.resolve(parentPath);
+  const child = path.resolve(childPath);
+  if (child === parent) return true;
+  return child.startsWith(`${parent}${path.sep}`);
+}
+
+function resolveDistPath() {
+  return path.join(electronDir, "../dist");
+}
+
+function registerAppProtocol() {
+  if (!protocol?.handle) return;
+
+  try {
+    protocol.handle("app", async (request) => {
+      const notFound = () =>
+        new Response("Not Found", {
+          status: 404,
+          headers: { ...APP_PROTOCOL_HEADERS, "Content-Type": "text/plain" },
+        });
+
+      try {
+        const url = new URL(request.url);
+        let pathname = url.pathname || "/";
+        try {
+          pathname = decodeURIComponent(pathname);
+        } catch {
+          // keep undecoded
+        }
+
+        if (!pathname || pathname === "/") pathname = "/index.html";
+
+        const distPath = path.resolve(resolveDistPath());
+        const relative = pathname.replace(/^\/+/, "");
+        let fullPath = path.resolve(distPath, relative);
+
+        if (!isPathInside(distPath, fullPath)) {
+          return new Response("Forbidden", {
+            status: 403,
+            headers: { ...APP_PROTOCOL_HEADERS, "Content-Type": "text/plain" },
+          });
+        }
+
+        // SPA fallback: for extension-less paths, serve index.html.
+        if (!path.extname(fullPath)) {
+          fullPath = path.resolve(distPath, "index.html");
+        }
+
+        const file = await fs.promises.readFile(fullPath);
+        return new Response(file, {
+          status: 200,
+          headers: {
+            ...APP_PROTOCOL_HEADERS,
+            "Content-Type": resolveContentType(fullPath),
+          },
+        });
+      } catch (err) {
+        return notFound();
+      }
+    });
+  } catch (err) {
+    console.error("[Main] Failed to register app:// protocol handler:", err);
+  }
+}
 
 function focusMainWindow() {
   try {
@@ -267,15 +371,20 @@ const registerBridges = (win) => {
 
   // Settings window handler
   ipcMain.handle("netcatty:settings:open", async () => {
-    await windowManager.openSettingsWindow(electronModule, {
-      preload,
-      devServerUrl: effectiveDevServerUrl,
-      isDev,
-      appIcon,
-      isMac,
-      electronDir,
-    });
-    return true;
+    try {
+      await windowManager.openSettingsWindow(electronModule, {
+        preload,
+        devServerUrl: effectiveDevServerUrl,
+        isDev,
+        appIcon,
+        isMac,
+        electronDir,
+      });
+      return true;
+    } catch (err) {
+      console.error("[Main] Failed to open settings window:", err);
+      return false;
+    }
   });
 
   // Cloud sync master password (stored in-memory + persisted via safeStorage)
@@ -339,101 +448,24 @@ async function createWindow() {
   return win;
 }
 
+function showStartupError(err) {
+  const title = "Netcatty";
+  const code = err && typeof err === "object" ? err.code : null;
+  const message =
+    code === "ENOENT"
+      ? "Renderer files are missing. Please reinstall or rebuild Netcatty."
+      : "Failed to load the UI. Please relaunch Netcatty.";
+
+  try {
+    electronModule.dialog?.showErrorBox?.(title, message);
+  } catch {
+    // ignore
+  }
+}
+
 // Application lifecycle
 app.whenReady().then(() => {
-  // Register custom protocol handler for production mode
-  // This serves files from dist/ with proper MIME types and SPA routing
-  if (!isDev) {
-    const net = require('node:net');
-    const { net: electronNet } = electronModule;
-    
-    protocol.handle('app', (request) => {
-      const url = new URL(request.url);
-      let filePath = url.pathname;
-
-      // Headers required for crossOriginIsolated / SharedArrayBuffer in production.
-      // Mirrors the dev-server headers in `vite.config.ts`.
-      const isolationHeaders = {
-        'Cross-Origin-Opener-Policy': 'same-origin',
-        'Cross-Origin-Embedder-Policy': 'credentialless',
-      };
-      
-      // Remove leading slash for path joining
-      if (filePath.startsWith('/')) {
-        filePath = filePath.slice(1);
-      }
-      
-      // Default to index.html for root
-      if (!filePath || filePath === '') {
-        filePath = 'index.html';
-      }
-      
-      const distPath = path.join(electronDir, '../dist');
-      let fullPath = path.join(distPath, filePath);
-      
-      // Security: ensure path is within dist directory
-      if (!fullPath.startsWith(distPath)) {
-        return new Response('Forbidden', { status: 403 });
-      }
-      
-      // SPA fallback: if file doesn't exist and no extension, serve index.html
-      if (!fs.existsSync(fullPath)) {
-        const ext = path.extname(filePath);
-        if (!ext || ext === '') {
-          fullPath = path.join(distPath, 'index.html');
-        }
-      }
-      
-      // Check if file exists
-      if (!fs.existsSync(fullPath)) {
-        return new Response('Not Found', { status: 404 });
-      }
-      
-      // Determine MIME type
-      const ext = path.extname(fullPath).toLowerCase();
-      const mimeTypes = {
-        '.html': 'text/html',
-        '.js': 'text/javascript',
-        '.mjs': 'text/javascript',
-        '.css': 'text/css',
-        '.json': 'application/json',
-        '.png': 'image/png',
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.gif': 'image/gif',
-        '.svg': 'image/svg+xml',
-        '.ico': 'image/x-icon',
-        '.woff': 'font/woff',
-        '.woff2': 'font/woff2',
-        '.ttf': 'font/ttf',
-        '.eot': 'application/vnd.ms-fontobject',
-        '.wav': 'audio/wav',
-        '.mp3': 'audio/mpeg',
-        '.mp4': 'video/mp4',
-        '.webm': 'video/webm',
-        '.wasm': 'application/wasm',
-      };
-      const contentType = mimeTypes[ext] || 'application/octet-stream';
-      
-      // Read and return file
-      try {
-        const content = fs.readFileSync(fullPath);
-        return new Response(content, {
-          status: 200,
-          headers: {
-            'Content-Type': contentType,
-            'Content-Length': content.length.toString(),
-            ...isolationHeaders,
-          },
-        });
-      } catch (err) {
-        console.error('[Protocol] Error reading file:', fullPath, err);
-        return new Response('Internal Server Error', { status: 500 });
-      }
-    });
-    
-    console.log('[Main] Custom app:// protocol registered');
-  }
+  registerAppProtocol();
 
   // Set dock icon on macOS
   if (isMac && appIcon && app.dock?.setIcon) {
@@ -449,12 +481,21 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(menu);
 
   // Create the main window
-  createWindow();
+  void createWindow().catch((err) => {
+    console.error("[Main] Failed to create main window:", err);
+    showStartupError(err);
+    try {
+      app.quit();
+    } catch {}
+  });
 
   // Re-create window on macOS dock click
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+      void createWindow().catch((err) => {
+        console.error("[Main] Failed to create window on activate:", err);
+        showStartupError(err);
+      });
     }
   });
 });

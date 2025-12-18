@@ -20,6 +20,33 @@ export default defineConfig(() => {
       build: {
         chunkSizeWarningLimit: 3000,
         target: 'esnext', // Required for top-level await in WASM modules
+        // Optimize chunk splitting for faster initial load
+        rollupOptions: {
+          output: {
+            manualChunks: {
+              // Vendor chunks - rarely change, can be cached aggressively
+              'vendor-react': ['react', 'react-dom'],
+              'vendor-radix': [
+                '@radix-ui/react-collapsible',
+                '@radix-ui/react-context-menu',
+                '@radix-ui/react-dialog',
+                '@radix-ui/react-popover',
+                '@radix-ui/react-scroll-area',
+                '@radix-ui/react-select',
+                '@radix-ui/react-slot',
+                '@radix-ui/react-tabs',
+              ],
+              'vendor-xterm': [
+                '@xterm/xterm',
+                '@xterm/addon-fit',
+                '@xterm/addon-search',
+                '@xterm/addon-serialize',
+                '@xterm/addon-web-links',
+                '@xterm/addon-webgl',
+              ],
+            },
+          },
+        },
       },
       plugins: [tailwindcss(), react()],
       resolve: {

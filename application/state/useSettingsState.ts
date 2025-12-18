@@ -1,4 +1,4 @@
-import { useCallback,useEffect,useMemo,useState } from 'react';
+import { useCallback,useEffect,useLayoutEffect,useMemo,useState } from 'react';
 import { SyncConfig, TerminalSettings, DEFAULT_TERMINAL_SETTINGS, HotkeyScheme, CustomKeyBindings, DEFAULT_KEY_BINDINGS, KeyBinding, UILanguage } from '../../domain/models';
 import {
 STORAGE_KEY_COLOR,
@@ -13,7 +13,7 @@ STORAGE_KEY_CUSTOM_KEY_BINDINGS,
 STORAGE_KEY_CUSTOM_CSS,
 STORAGE_KEY_UI_LANGUAGE,
 } from '../../infrastructure/config/storageKeys';
-import { DEFAULT_UI_LOCALE, isSupportedLocale } from '../../infrastructure/config/i18n';
+import { DEFAULT_UI_LOCALE, resolveSupportedLocale } from '../../infrastructure/config/i18n';
 import { TERMINAL_THEMES } from '../../infrastructure/config/terminalThemes';
 import { TERMINAL_FONTS, DEFAULT_FONT_SIZE } from '../../infrastructure/config/fonts';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
@@ -28,6 +28,27 @@ const DEFAULT_HOTKEY_SCHEME: HotkeyScheme =
   typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/i.test(navigator.platform) 
     ? 'mac' 
     : 'pc';
+
+const readStoredString = (key: string): string | null => {
+  const raw = localStorageAdapter.readString(key);
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    return typeof parsed === 'string' ? parsed : trimmed;
+  } catch {
+    return trimmed;
+  }
+};
+
+const isValidTheme = (value: unknown): value is 'light' | 'dark' => value === 'light' || value === 'dark';
+
+const isValidHslToken = (value: string): boolean => {
+  // Expect: "<h> <s>% <l>%", e.g. "221.2 83.2% 53.3%"
+  return /^\s*\d+(\.\d+)?\s+\d+(\.\d+)?%\s+\d+(\.\d+)?%\s*$/.test(value);
+};
 
 const applyThemeTokens = (theme: 'light' | 'dark', primaryColor: string) => {
   const root = window.document.documentElement;
@@ -47,15 +68,21 @@ const applyThemeTokens = (theme: 'light' | 'dark', primaryColor: string) => {
 };
 
 export const useSettingsState = () => {
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorageAdapter.readString(STORAGE_KEY_THEME) as 'dark' | 'light') || DEFAULT_THEME);
-  const [primaryColor, setPrimaryColor] = useState<string>(() => localStorageAdapter.readString(STORAGE_KEY_COLOR) || DEFAULT_COLOR);
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    const stored = readStoredString(STORAGE_KEY_THEME);
+    return stored && isValidTheme(stored) ? stored : DEFAULT_THEME;
+  });
+  const [primaryColor, setPrimaryColor] = useState<string>(() => {
+    const stored = readStoredString(STORAGE_KEY_COLOR);
+    return stored && isValidHslToken(stored) ? stored.trim() : DEFAULT_COLOR;
+  });
   const [syncConfig, setSyncConfig] = useState<SyncConfig | null>(() => localStorageAdapter.read<SyncConfig>(STORAGE_KEY_SYNC));
   const [terminalThemeId, setTerminalThemeId] = useState<string>(() => localStorageAdapter.readString(STORAGE_KEY_TERM_THEME) || DEFAULT_TERMINAL_THEME);
   const [terminalFontFamilyId, setTerminalFontFamilyId] = useState<string>(() => localStorageAdapter.readString(STORAGE_KEY_TERM_FONT_FAMILY) || DEFAULT_FONT_FAMILY);
   const [terminalFontSize, setTerminalFontSize] = useState<number>(() => localStorageAdapter.readNumber(STORAGE_KEY_TERM_FONT_SIZE) || DEFAULT_FONT_SIZE);
   const [uiLanguage, setUiLanguage] = useState<UILanguage>(() => {
-    const stored = localStorageAdapter.readString(STORAGE_KEY_UI_LANGUAGE);
-    return stored && isSupportedLocale(stored) ? stored : DEFAULT_UI_LOCALE;
+    const stored = readStoredString(STORAGE_KEY_UI_LANGUAGE);
+    return resolveSupportedLocale(stored || DEFAULT_UI_LOCALE);
   });
   const [terminalSettings, setTerminalSettings] = useState<TerminalSettings>(() => {
     const stored = localStorageAdapter.read<TerminalSettings>(STORAGE_KEY_TERM_SETTINGS);
@@ -76,24 +103,79 @@ export const useSettingsState = () => {
     localStorageAdapter.readString(STORAGE_KEY_CUSTOM_CSS) || ''
   );
 
-  useEffect(() => {
+  // Helper to notify other windows about settings changes via IPC
+  const notifySettingsChanged = useCallback((key: string, value: unknown) => {
+    try {
+      netcattyBridge.get()?.notifySettingsChanged?.({ key, value });
+    } catch {
+      // ignore - bridge may not be available
+    }
+  }, []);
+
+  useLayoutEffect(() => {
     applyThemeTokens(theme, primaryColor);
     localStorageAdapter.writeString(STORAGE_KEY_THEME, theme);
     localStorageAdapter.writeString(STORAGE_KEY_COLOR, primaryColor);
-  }, [theme, primaryColor]);
+    // Notify other windows
+    notifySettingsChanged(STORAGE_KEY_THEME, theme);
+    notifySettingsChanged(STORAGE_KEY_COLOR, primaryColor);
+  }, [theme, primaryColor, notifySettingsChanged]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_UI_LANGUAGE, uiLanguage);
     document.documentElement.lang = uiLanguage;
     netcattyBridge.get()?.setLanguage?.(uiLanguage);
-  }, [uiLanguage]);
+    notifySettingsChanged(STORAGE_KEY_UI_LANGUAGE, uiLanguage);
+  }, [uiLanguage, notifySettingsChanged]);
+
+  // Listen for settings changes from other windows via IPC
+	  useEffect(() => {
+	    const bridge = netcattyBridge.get();
+	    if (!bridge?.onSettingsChanged) return;
+	    const unsubscribe = bridge.onSettingsChanged((payload) => {
+	      const { key, value } = payload;
+	      if (key === STORAGE_KEY_THEME && (value === 'light' || value === 'dark')) {
+	        setTheme(value);
+	        applyThemeTokens(value, primaryColor);
+	      }
+	      if (key === STORAGE_KEY_COLOR && typeof value === 'string' && isValidHslToken(value)) {
+	        const next = value.trim();
+	        setPrimaryColor(next);
+	        applyThemeTokens(theme, next);
+	      }
+	      if (key === STORAGE_KEY_UI_LANGUAGE && typeof value === 'string') {
+	        const next = resolveSupportedLocale(value);
+	        setUiLanguage((prev) => (prev === next ? prev : next));
+	        document.documentElement.lang = next;
+	      }
+      if (key === STORAGE_KEY_TERM_THEME && typeof value === 'string') {
+        setTerminalThemeId(value);
+      }
+      if (key === STORAGE_KEY_TERM_FONT_FAMILY && typeof value === 'string') {
+        setTerminalFontFamilyId(value);
+      }
+      if (key === STORAGE_KEY_TERM_FONT_SIZE && typeof value === 'number') {
+        setTerminalFontSize(value);
+      }
+      if (key === STORAGE_KEY_HOTKEY_SCHEME && (value === 'disabled' || value === 'mac' || value === 'pc')) {
+        setHotkeyScheme(value);
+      }
+    });
+    return () => {
+      try {
+        unsubscribe?.();
+      } catch {
+        // ignore
+      }
+    };
+  }, [theme, primaryColor]);
 
   useEffect(() => {
     const bridge = netcattyBridge.get();
     if (!bridge?.onLanguageChanged) return;
     const unsubscribe = bridge.onLanguageChanged((language) => {
       if (typeof language !== 'string' || !language.length) return;
-      const next = isSupportedLocale(language) ? language : DEFAULT_UI_LOCALE;
+      const next = resolveSupportedLocale(language);
       setUiLanguage((prev) => (prev === next ? prev : next));
     });
     return () => {
@@ -109,14 +191,13 @@ export const useSettingsState = () => {
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === STORAGE_KEY_THEME && e.newValue) {
-        const newTheme = e.newValue as 'light' | 'dark';
-        if (newTheme !== theme) {
-          setTheme(newTheme);
+        if (isValidTheme(e.newValue) && e.newValue !== theme) {
+          setTheme(e.newValue);
         }
       }
       if (e.key === STORAGE_KEY_COLOR && e.newValue) {
-        if (e.newValue !== primaryColor) {
-          setPrimaryColor(e.newValue);
+        if (isValidHslToken(e.newValue) && e.newValue !== primaryColor) {
+          setPrimaryColor(e.newValue.trim());
         }
       }
       if (e.key === STORAGE_KEY_CUSTOM_CSS && e.newValue !== null) {
@@ -131,9 +212,9 @@ export const useSettingsState = () => {
         }
       }
       if (e.key === STORAGE_KEY_UI_LANGUAGE && e.newValue) {
-        const next = e.newValue as UILanguage;
-        if (typeof next === 'string' && isSupportedLocale(next) && next !== uiLanguage) {
-          setUiLanguage(next);
+        const next = resolveSupportedLocale(e.newValue);
+        if (next !== uiLanguage) {
+          setUiLanguage(next as UILanguage);
         }
       }
       if (e.key === STORAGE_KEY_CUSTOM_KEY_BINDINGS && e.newValue) {
@@ -180,15 +261,18 @@ export const useSettingsState = () => {
 
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_TERM_THEME, terminalThemeId);
-  }, [terminalThemeId]);
+    notifySettingsChanged(STORAGE_KEY_TERM_THEME, terminalThemeId);
+  }, [terminalThemeId, notifySettingsChanged]);
 
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_TERM_FONT_FAMILY, terminalFontFamilyId);
-  }, [terminalFontFamilyId]);
+    notifySettingsChanged(STORAGE_KEY_TERM_FONT_FAMILY, terminalFontFamilyId);
+  }, [terminalFontFamilyId, notifySettingsChanged]);
 
   useEffect(() => {
     localStorageAdapter.writeNumber(STORAGE_KEY_TERM_FONT_SIZE, terminalFontSize);
-  }, [terminalFontSize]);
+    notifySettingsChanged(STORAGE_KEY_TERM_FONT_SIZE, terminalFontSize);
+  }, [terminalFontSize, notifySettingsChanged]);
 
   useEffect(() => {
     localStorageAdapter.write(STORAGE_KEY_TERM_SETTINGS, terminalSettings);
@@ -196,7 +280,8 @@ export const useSettingsState = () => {
 
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_HOTKEY_SCHEME, hotkeyScheme);
-  }, [hotkeyScheme]);
+    notifySettingsChanged(STORAGE_KEY_HOTKEY_SCHEME, hotkeyScheme);
+  }, [hotkeyScheme, notifySettingsChanged]);
 
   useEffect(() => {
     localStorageAdapter.write(STORAGE_KEY_CUSTOM_KEY_BINDINGS, customKeyBindings);

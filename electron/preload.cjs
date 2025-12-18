@@ -348,6 +348,14 @@ const api = {
   openSettingsWindow: () => ipcRenderer.invoke("netcatty:settings:open"),
   closeSettingsWindow: () => ipcRenderer.invoke("netcatty:settings:close"),
 
+  // Cross-window settings sync
+  notifySettingsChanged: (payload) => ipcRenderer.send("netcatty:settings:changed", payload),
+  onSettingsChanged: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("netcatty:settings:changed", handler);
+    return () => ipcRenderer.removeListener("netcatty:settings:changed", handler);
+  },
+
   // Cloud sync session (in-memory only, shared across windows)
   cloudSyncSetSessionPassword: (password) =>
     ipcRenderer.invoke("netcatty:cloudSync:session:setPassword", password),

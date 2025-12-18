@@ -28,6 +28,17 @@ let currentLanguage = "en";
 let handlersRegistered = false; // Prevent duplicate IPC handler registration
 let menuDeps = null;
 const rendererReadyCallbacksByWebContentsId = new Map();
+const DEBUG_WINDOWS = process.env.NETCATTY_DEBUG_WINDOWS === "1";
+
+function debugLog(...args) {
+  if (!DEBUG_WINDOWS) return;
+  try {
+    // eslint-disable-next-line no-console
+    console.log("[WindowManager]", ...args);
+  } catch {
+    // ignore
+  }
+}
 
 const MENU_LABELS = {
   en: { edit: "Edit", view: "View", window: "Window" },
@@ -48,6 +59,17 @@ function rebuildApplicationMenu() {
   if (!menuDeps?.Menu || !menuDeps?.app) return;
   const menu = buildAppMenu(menuDeps.Menu, menuDeps.app, menuDeps.isMac, currentLanguage);
   menuDeps.Menu.setApplicationMenu(menu);
+}
+
+function getWindowForIpcEvent(event) {
+  try {
+    const wc = event?.sender;
+    const win = wc?.getOwnerBrowserWindow?.();
+    if (win && !win.isDestroyed()) return win;
+  } catch {
+    // ignore
+  }
+  return mainWindow;
 }
 
 function broadcastLanguageChanged() {
@@ -87,6 +109,25 @@ function normalizeDevServerUrl(urlString) {
   } catch {
     return urlString;
   }
+}
+
+function getDevRendererBaseUrl(devServerUrl) {
+  const normalized = normalizeDevServerUrl(devServerUrl);
+  const fallback = typeof normalized === "string" ? normalized.replace(/\/+$/, "") : "";
+
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      const currentUrl = mainWindow.webContents?.getURL?.();
+      if (currentUrl) {
+        const origin = new URL(currentUrl).origin;
+        if (origin && origin !== "null") return origin;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return fallback;
 }
 
 function hslToHex(h, s, l) {
@@ -163,7 +204,7 @@ function resolveFrontendBackgroundColor(electronDir, theme) {
   }
 }
 
-async function waitForRootPaint(win, { timeoutMs = 800, intervalMs = 50 } = {}) {
+async function waitForRootPaint(win, { timeoutMs = 400, intervalMs = 30 } = {}) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
@@ -185,6 +226,14 @@ async function waitForRootPaint(win, { timeoutMs = 800, intervalMs = 50 } = {}) 
 }
 
 function setupDeferredShow(win, { timeoutMs = 3000 } = {}) {
+  const webContentsId = (() => {
+    try {
+      return win?.webContents?.id;
+    } catch {
+      return null;
+    }
+  })();
+
   let shown = false;
   let readyToShow = false;
   let rendererReady = false;
@@ -195,7 +244,7 @@ function setupDeferredShow(win, { timeoutMs = 3000 } = {}) {
     shown = true;
     if (timer) clearTimeout(timer);
     timer = null;
-    rendererReadyCallbacksByWebContentsId.delete(win.webContents.id);
+    if (webContentsId) rendererReadyCallbacksByWebContentsId.delete(webContentsId);
     try {
       if (!win.isDestroyed()) win.show();
     } catch {
@@ -214,7 +263,7 @@ function setupDeferredShow(win, { timeoutMs = 3000 } = {}) {
     tryShow();
   };
 
-  rendererReadyCallbacksByWebContentsId.set(win.webContents.id, markRendererReady);
+  if (webContentsId) rendererReadyCallbacksByWebContentsId.set(webContentsId, markRendererReady);
 
   win.once("ready-to-show", () => {
     readyToShow = true;
@@ -236,7 +285,7 @@ function setupDeferredShow(win, { timeoutMs = 3000 } = {}) {
   win.on("closed", () => {
     if (timer) clearTimeout(timer);
     timer = null;
-    rendererReadyCallbacksByWebContentsId.delete(win.webContents.id);
+    if (webContentsId) rendererReadyCallbacksByWebContentsId.delete(webContentsId);
   });
 
   return { showOnce, markRendererReady };
@@ -281,15 +330,16 @@ async function createWindow(electronModule, options) {
     // ignore
   }
 
-  // Defer show until renderer is ready; use a short fallback only in dev to avoid waiting forever.
-  setupDeferredShow(win, { timeoutMs: isDev ? 3000 : 0 });
+  // Defer show until renderer is ready; use fallback timeout to avoid keeping window hidden forever.
+  // Production gets a shorter timeout since the splash screen provides visual feedback.
+  setupDeferredShow(win, { timeoutMs: isDev ? 3000 : 1500 });
 
   // Register window control handlers
   registerWindowHandlers(electronModule.ipcMain, nativeTheme);
 
   if (isDev) {
     try {
-      await win.loadURL(normalizeDevServerUrl(devServerUrl));
+      await win.loadURL(getDevRendererBaseUrl(devServerUrl));
       win.webContents.openDevTools({ mode: "detach" });
       onRegisterBridge?.(win);
       return win;
@@ -298,8 +348,8 @@ async function createWindow(electronModule, options) {
     }
   }
 
-  // Production mode - load via app:// protocol (secure context + supports COOP/COEP headers).
-  await win.loadURL(`app://./index.html`);
+  // Production mode - load via custom protocol.
+  await win.loadURL("app://netcatty/index.html");
   
   onRegisterBridge?.(win);
   return win;
@@ -331,7 +381,9 @@ async function openSettingsWindow(electronModule, options) {
     minHeight: 500,
     backgroundColor,
     icon: appIcon,
-    parent: mainWindow,
+    // NOTE: Do NOT set parent on Windows - it can cause the main window to close
+    // when the settings window is closed in some edge cases.
+    parent: isMac ? mainWindow : undefined,
     modal: false,
     show: false,
     frame: false,
@@ -354,8 +406,8 @@ async function openSettingsWindow(electronModule, options) {
     // ignore
   }
 
-  // Defer show until renderer is ready; use a short fallback only in dev to avoid waiting forever.
-  setupDeferredShow(win, { timeoutMs: isDev ? 3000 : 0 });
+  // Defer show until renderer is ready; use fallback timeout to avoid keeping window hidden forever.
+  setupDeferredShow(win, { timeoutMs: isDev ? 3000 : 1500 });
 
   // Clean up reference when closed
   win.on('closed', () => {
@@ -367,15 +419,16 @@ async function openSettingsWindow(electronModule, options) {
   
   if (isDev) {
     try {
-      await win.loadURL(normalizeDevServerUrl(devServerUrl) + settingsPath);
+      const baseUrl = getDevRendererBaseUrl(devServerUrl);
+      await win.loadURL(`${baseUrl}${settingsPath}`);
       return win;
     } catch (e) {
       console.warn("Dev server not reachable for settings window", e);
     }
   }
 
-  // Production mode - load via app:// protocol (secure context + supports COOP/COEP headers).
-  await win.loadURL(`app://./index.html#/settings`);
+  // Production mode - load via custom protocol.
+  await win.loadURL("app://netcatty/index.html#/settings");
   
   return win;
 }
@@ -400,34 +453,46 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
   }
   handlersRegistered = true;
 
-  ipcMain.handle("netcatty:window:minimize", () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.minimize();
+  ipcMain.handle("netcatty:window:minimize", (event) => {
+    const win = getWindowForIpcEvent(event);
+    if (win && !win.isDestroyed()) {
+      debugLog("window:minimize", { senderId: event?.sender?.id, windowId: win.webContents?.id });
+      win.minimize();
     }
   });
 
-  ipcMain.handle("netcatty:window:maximize", () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      if (mainWindow.isMaximized()) {
-        mainWindow.unmaximize();
+  ipcMain.handle("netcatty:window:maximize", (event) => {
+    const win = getWindowForIpcEvent(event);
+    if (win && !win.isDestroyed()) {
+      debugLog("window:maximize", { senderId: event?.sender?.id, windowId: win.webContents?.id });
+      if (win.isMaximized()) {
+        win.unmaximize();
         return false;
       } else {
-        mainWindow.maximize();
+        win.maximize();
         return true;
       }
     }
     return false;
   });
 
-  ipcMain.handle("netcatty:window:close", () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.close();
+  ipcMain.handle("netcatty:window:close", (event) => {
+    const win = getWindowForIpcEvent(event);
+    if (win && !win.isDestroyed()) {
+      debugLog("window:close", {
+        senderId: event?.sender?.id,
+        windowId: win.webContents?.id,
+        isMain: win === mainWindow,
+        isSettings: win === settingsWindow,
+      });
+      win.close();
     }
   });
 
-  ipcMain.handle("netcatty:window:isMaximized", () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      return mainWindow.isMaximized();
+  ipcMain.handle("netcatty:window:isMaximized", (event) => {
+    const win = getWindowForIpcEvent(event);
+    if (win && !win.isDestroyed()) {
+      return win.isMaximized();
     }
     return false;
   });
@@ -454,8 +519,49 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
   });
 
   // Settings window close handler
-  ipcMain.handle("netcatty:settings:close", () => {
-    closeSettingsWindow();
+  ipcMain.handle("netcatty:settings:close", (event) => {
+    // Prefer closing the tracked settings window (if any).
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      debugLog("settings:close (tracked)", {
+        senderId: event?.sender?.id,
+        settingsId: settingsWindow.webContents?.id,
+      });
+      closeSettingsWindow();
+      return true;
+    }
+
+    // Fallback: close the caller window if it's not the main window.
+    const owner = getWindowForIpcEvent(event);
+    if (owner && owner !== mainWindow && !owner.isDestroyed()) {
+      debugLog("settings:close (owner)", {
+        senderId: event?.sender?.id,
+        ownerId: owner.webContents?.id,
+        isMain: owner === mainWindow,
+        isSettings: owner === settingsWindow,
+      });
+      try {
+        owner.close();
+      } catch {
+        // ignore
+      }
+    }
+    return true;
+  });
+
+  // Broadcast settings changed to all windows (for cross-window sync)
+  ipcMain.on("netcatty:settings:changed", (event, payload) => {
+    const senderId = event?.sender?.id;
+    // Notify all windows except the sender
+    try {
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.id !== senderId) {
+        mainWindow.webContents.send("netcatty:settings:changed", payload);
+      }
+      if (settingsWindow && !settingsWindow.isDestroyed() && settingsWindow.webContents.id !== senderId) {
+        settingsWindow.webContents.send("netcatty:settings:changed", payload);
+      }
+    } catch {
+      // ignore
+    }
   });
 
   // Renderer reports first meaningful paint/mount; used to avoid initial blank screen.

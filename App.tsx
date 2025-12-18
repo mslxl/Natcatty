@@ -850,6 +850,14 @@ function AppWithProviders() {
 
   useEffect(() => {
     try {
+      // Hide splash screen with a fade-out animation
+      const splash = document.getElementById('splash');
+      if (splash) {
+        splash.classList.add('fade-out');
+        // Remove from DOM after animation completes
+        setTimeout(() => splash.remove(), 200);
+      }
+      // Notify main process that renderer is ready
       netcattyBridge.get()?.rendererReady?.();
     } catch {
       // ignore

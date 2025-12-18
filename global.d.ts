@@ -232,6 +232,10 @@ interface NetcattyBridge {
   openSettingsWindow?(): Promise<boolean>;
   closeSettingsWindow?(): Promise<void>;
 
+  // Cross-window settings sync
+  notifySettingsChanged?(payload: { key: string; value: unknown }): void;
+  onSettingsChanged?(cb: (payload: { key: string; value: unknown }) => void): () => void;
+
   // Cloud sync master password (stored in-memory + persisted via Electron safeStorage)
   cloudSyncSetSessionPassword?(password: string): Promise<boolean>;
   cloudSyncGetSessionPassword?(): Promise<string | null>;
