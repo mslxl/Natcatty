@@ -153,6 +153,7 @@ function App({ settings }: { settings: SettingsState }) {
     terminalSettings,
     hotkeyScheme,
     keyBindings,
+    isHotkeyRecording,
   } = settings;
 
   const {
@@ -427,7 +428,7 @@ function App({ settings }: { settings: SettingsState }) {
 
   // Global hotkey handler
   useEffect(() => {
-    if (hotkeyScheme === 'disabled') return;
+    if (hotkeyScheme === 'disabled' || isHotkeyRecording) return;
 
     const isMac = hotkeyScheme === 'mac';
     if (IS_DEV) console.log('[Hotkeys] Registering global hotkey handler, scheme:', hotkeyScheme, 'bindings count:', keyBindings.length);
@@ -442,6 +443,9 @@ function App({ settings }: { settings: SettingsState }) {
         return;
       }
 
+      const isTerminalElement =
+        target instanceof HTMLElement && !!target.closest?.(".xterm");
+
       // Check each key binding
       for (const binding of keyBindings) {
         const keyStr = isMac ? binding.mac : binding.pc;
@@ -451,7 +455,10 @@ function App({ settings }: { settings: SettingsState }) {
           // Don't handle them at app level
           const terminalActions = ['copy', 'paste', 'selectAll', 'clearBuffer', 'searchTerminal'];
           if (terminalActions.includes(binding.action)) {
-            return; // Let terminal handle it
+            if (isTerminalElement) {
+              return; // Let terminal handle it
+            }
+            continue; // Ignore terminal actions outside terminal
           }
 
           e.preventDefault();
@@ -464,7 +471,7 @@ function App({ settings }: { settings: SettingsState }) {
 
     window.addEventListener('keydown', handleGlobalKeyDown, true);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown, true);
-  }, [hotkeyScheme, keyBindings, executeHotkeyAction]);
+  }, [hotkeyScheme, keyBindings, isHotkeyRecording, executeHotkeyAction]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {

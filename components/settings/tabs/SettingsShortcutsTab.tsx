@@ -14,8 +14,17 @@ export default function SettingsShortcutsTab(props: {
   updateKeyBinding?: (bindingId: string, scheme: "mac" | "pc", newKey: string) => void;
   resetKeyBinding?: (bindingId: string, scheme?: "mac" | "pc") => void;
   resetAllKeyBindings: () => void;
+  setIsHotkeyRecording?: (isRecording: boolean) => void;
 }) {
-  const { hotkeyScheme, setHotkeyScheme, keyBindings, updateKeyBinding, resetKeyBinding, resetAllKeyBindings } = props;
+  const {
+    hotkeyScheme,
+    setHotkeyScheme,
+    keyBindings,
+    updateKeyBinding,
+    resetKeyBinding,
+    resetAllKeyBindings,
+    setIsHotkeyRecording,
+  } = props;
   const { t } = useI18n();
 
   const [recordingBindingId, setRecordingBindingId] = useState<string | null>(null);
@@ -97,6 +106,14 @@ export default function SettingsShortcutsTab(props: {
       window.removeEventListener("click", handleClick, true);
     };
   }, [recordingBindingId, recordingScheme, updateKeyBinding, cancelRecording, getSpecialSuffix]);
+
+  useEffect(() => {
+    const isRecording = Boolean(recordingBindingId && recordingScheme);
+    setIsHotkeyRecording?.(isRecording);
+    return () => {
+      setIsHotkeyRecording?.(false);
+    };
+  }, [recordingBindingId, recordingScheme, setIsHotkeyRecording]);
 
   const categories = useMemo(() => ["tabs", "terminal", "navigation", "app"] as const, []);
 

@@ -17,11 +17,10 @@ import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
-export default function SettingsPage() {
-    const settings = useSettingsState();
+type SettingsState = ReturnType<typeof useSettingsState>;
 
-    const Inner = () => {
-        const { t } = useI18n();
+const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }) => {
+    const { t } = useI18n();
     const { notifyRendererReady, closeSettingsWindow } = useWindowControls();
 
     useEffect(() => {
@@ -122,6 +121,7 @@ export default function SettingsPage() {
                         updateKeyBinding={settings.updateKeyBinding}
                         resetKeyBinding={settings.resetKeyBinding}
                         resetAllKeyBindings={settings.resetAllKeyBindings}
+                        setIsHotkeyRecording={settings.setIsHotkeyRecording}
                     />
 
                     <SettingsSyncTab
@@ -135,11 +135,14 @@ export default function SettingsPage() {
             </Tabs>
         </div>
     );
-    };
+};
+
+export default function SettingsPage() {
+    const settings = useSettingsState();
 
     return (
         <I18nProvider locale={settings.uiLanguage}>
-            <Inner />
+            <SettingsPageContent settings={settings} />
         </I18nProvider>
     );
 }

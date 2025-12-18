@@ -10,6 +10,7 @@ STORAGE_KEY_TERM_FONT_SIZE,
 STORAGE_KEY_TERM_SETTINGS,
 STORAGE_KEY_HOTKEY_SCHEME,
 STORAGE_KEY_CUSTOM_KEY_BINDINGS,
+STORAGE_KEY_HOTKEY_RECORDING,
 STORAGE_KEY_CUSTOM_CSS,
 STORAGE_KEY_UI_LANGUAGE,
 } from '../../infrastructure/config/storageKeys';
@@ -99,6 +100,7 @@ export const useSettingsState = () => {
   const [customKeyBindings, setCustomKeyBindings] = useState<CustomKeyBindings>(() => 
     localStorageAdapter.read<CustomKeyBindings>(STORAGE_KEY_CUSTOM_KEY_BINDINGS) || {}
   );
+  const [isHotkeyRecording, setIsHotkeyRecordingState] = useState(false);
   const [customCSS, setCustomCSS] = useState<string>(() => 
     localStorageAdapter.readString(STORAGE_KEY_CUSTOM_CSS) || ''
   );
@@ -159,6 +161,20 @@ export const useSettingsState = () => {
       }
       if (key === STORAGE_KEY_HOTKEY_SCHEME && (value === 'disabled' || value === 'mac' || value === 'pc')) {
         setHotkeyScheme(value);
+      }
+      if (key === STORAGE_KEY_CUSTOM_KEY_BINDINGS) {
+        if (typeof value === 'string') {
+          try {
+            setCustomKeyBindings(JSON.parse(value) as CustomKeyBindings);
+          } catch {
+            // ignore parse errors
+          }
+        } else if (value && typeof value === 'object') {
+          setCustomKeyBindings(value as CustomKeyBindings);
+        }
+      }
+      if (key === STORAGE_KEY_HOTKEY_RECORDING && typeof value === 'boolean') {
+        setIsHotkeyRecordingState(value);
       }
     });
     return () => {
@@ -285,7 +301,13 @@ export const useSettingsState = () => {
 
   useEffect(() => {
     localStorageAdapter.write(STORAGE_KEY_CUSTOM_KEY_BINDINGS, customKeyBindings);
-  }, [customKeyBindings]);
+    notifySettingsChanged(STORAGE_KEY_CUSTOM_KEY_BINDINGS, customKeyBindings);
+  }, [customKeyBindings, notifySettingsChanged]);
+
+  const setIsHotkeyRecording = useCallback((isRecording: boolean) => {
+    setIsHotkeyRecordingState(isRecording);
+    notifySettingsChanged(STORAGE_KEY_HOTKEY_RECORDING, isRecording);
+  }, [notifySettingsChanged]);
 
   // Apply and persist custom CSS
   useEffect(() => {
@@ -397,6 +419,8 @@ export const useSettingsState = () => {
     updateKeyBinding,
     resetKeyBinding,
     resetAllKeyBindings,
+    isHotkeyRecording,
+    setIsHotkeyRecording,
     customCSS,
     setCustomCSS,
   };

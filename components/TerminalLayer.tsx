@@ -767,6 +767,9 @@ const terminalLayerAreEqual = (prev: TerminalLayerProps, next: TerminalLayerProp
     prev.terminalTheme === next.terminalTheme &&
     prev.terminalSettings === next.terminalSettings &&
     prev.fontSize === next.fontSize &&
+    prev.hotkeyScheme === next.hotkeyScheme &&
+    prev.keyBindings === next.keyBindings &&
+    prev.onHotkeyAction === next.onHotkeyAction &&
     prev.onUpdateHost === next.onUpdateHost &&
     prev.onToggleWorkspaceViewMode === next.onToggleWorkspaceViewMode &&
     prev.onSetWorkspaceFocusedSession === next.onSetWorkspaceFocusedSession &&
