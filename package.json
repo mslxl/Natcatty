@@ -1,8 +1,10 @@
 {
   "name": "netcatty",
+  "description": "Netcatty is a modern SSH manager and terminal app with host grouping, SFTP, keychain, port forwarding, and a rich UI.",
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "author": "binaricat",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "npm run lint && concurrently -k \"vite\" \"npm:dev:electron\"",
