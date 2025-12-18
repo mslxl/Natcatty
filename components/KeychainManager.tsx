@@ -2,6 +2,7 @@ import {
   BadgeCheck,
   ChevronDown,
   ChevronRight,
+  Edit2,
   Info,
   Key,
   LayoutGrid,
@@ -34,6 +35,13 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "./ui/collapsible";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "./ui/context-menu";
 import { Dropdown, DropdownContent, DropdownTrigger } from "./ui/dropdown";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -796,19 +804,52 @@ echo $3 >> "$FILE"`);
               }
             >
               {filteredIdentities.map((identity) => (
-                <IdentityCard
-                  key={identity.id}
-                  identity={identity}
-                  viewMode={viewMode}
-                  isSelected={
-                    panel.type === "identity" &&
-                    panel.identity?.id === identity.id
-                  }
-                  onClick={() => {
-                    setPanelStack([{ type: "identity", identity }]);
-                    setDraftIdentity({ ...identity });
-                  }}
-                />
+                <ContextMenu key={identity.id}>
+                  <ContextMenuTrigger>
+                    <IdentityCard
+                      identity={identity}
+                      viewMode={viewMode}
+                      isSelected={
+                        panel.type === "identity" &&
+                        panel.identity?.id === identity.id
+                      }
+                      onClick={() => {
+                        setPanelStack([{ type: "identity", identity }]);
+                        setDraftIdentity({ ...identity });
+                      }}
+                    />
+                  </ContextMenuTrigger>
+                  <ContextMenuContent>
+                    <ContextMenuItem
+                      onClick={() => {
+                        setPanelStack([{ type: "identity", identity }]);
+                        setDraftIdentity({ ...identity });
+                      }}
+                    >
+                      <Edit2 className="mr-2 h-4 w-4" /> {t("action.edit")}
+                    </ContextMenuItem>
+                    {onDeleteIdentity && (
+                      <>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          className="text-destructive"
+                          onClick={() => {
+                            const ok = window.confirm(
+                              t("confirm.deleteIdentity", {
+                                name: identity.label || "",
+                              }),
+                            );
+                            if (!ok) return;
+                            _handleDeleteIdentity(identity.id);
+                          }}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />{" "}
+                          {t("action.delete")}
+                        </ContextMenuItem>
+                      </>
+                    )}
+                  </ContextMenuContent>
+                </ContextMenu>
               ))}
             </div>
           </div>

@@ -16,6 +16,7 @@ const zhCN: Messages = {
   'common.enabled': '已启用',
   'common.disabled': '已禁用',
   'common.unknownError': '未知错误',
+  'common.noResultsFound': '没有匹配结果',
   'common.back': '返回',
   'common.apply': '应用',
   'common.left': '左侧',

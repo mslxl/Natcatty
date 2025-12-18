@@ -25,6 +25,7 @@ const en: Messages = {
   'common.error': 'Error',
   'common.validation': 'Validation',
   'common.unknownError': 'Unknown error',
+  'common.noResultsFound': 'No results found',
   'common.back': 'Back',
   'common.apply': 'Apply',
   'common.saveChanges': 'Save Changes',
