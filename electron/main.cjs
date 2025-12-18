@@ -350,6 +350,13 @@ app.whenReady().then(() => {
     protocol.handle('app', (request) => {
       const url = new URL(request.url);
       let filePath = url.pathname;
+
+      // Headers required for crossOriginIsolated / SharedArrayBuffer in production.
+      // Mirrors the dev-server headers in `vite.config.ts`.
+      const isolationHeaders = {
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'credentialless',
+      };
       
       // Remove leading slash for path joining
       if (filePath.startsWith('/')) {
@@ -416,6 +423,7 @@ app.whenReady().then(() => {
           headers: {
             'Content-Type': contentType,
             'Content-Length': content.length.toString(),
+            ...isolationHeaders,
           },
         });
       } catch (err) {

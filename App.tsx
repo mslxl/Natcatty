@@ -9,9 +9,6 @@ import { I18nProvider, useI18n } from './application/i18n/I18nProvider';
 import { matchesKeyBinding } from './domain/models';
 import { resolveHostAuth } from './domain/sshAuth';
 import { netcattyBridge } from './infrastructure/services/netcattyBridge';
-import LogView from './components/LogView.tsx';
-import ProtocolSelectDialog from './components/ProtocolSelectDialog';
-import { QuickSwitcher } from './components/QuickSwitcher';
 import { TopTabs } from './components/TopTabs';
 import { Button } from './components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog';
@@ -59,17 +56,27 @@ const LogViewWrapper: React.FC<LogViewWrapperProps> = ({ logView, defaultTermina
 
   return (
     <div className={cn("absolute inset-0", isVisible ? "z-20" : "")} style={containerStyle}>
-      <LogView
-        log={logView.log}
-        defaultTerminalTheme={defaultTerminalTheme}
-        defaultFontSize={defaultFontSize}
-        isVisible={isVisible}
-        onClose={onClose}
-        onUpdateLog={onUpdateLog}
-      />
+      <Suspense fallback={null}>
+        <LazyLogView
+          log={logView.log}
+          defaultTerminalTheme={defaultTerminalTheme}
+          defaultFontSize={defaultFontSize}
+          isVisible={isVisible}
+          onClose={onClose}
+          onUpdateLog={onUpdateLog}
+        />
+      </Suspense>
     </div>
   );
 };
+
+const LazyLogView = lazy(() => import('./components/LogView'));
+const LazyProtocolSelectDialog = lazy(() => import('./components/ProtocolSelectDialog'));
+const LazyQuickSwitcher = lazy(() =>
+  import('./components/QuickSwitcher').then((m) => ({ default: m.QuickSwitcher })),
+);
+
+const IS_DEV = import.meta.env.DEV;
 
 const LazySftpView = lazy(() =>
   import('./components/SftpView').then((m) => ({ default: m.SftpView })),
@@ -125,7 +132,6 @@ const TerminalLayerMount: React.FC<TerminalLayerProps> = (props) => {
 };
 
 function App({ settings }: { settings: SettingsState }) {
-
   const { t } = useI18n();
 
   const [isQuickSwitcherOpen, setIsQuickSwitcherOpen] = useState(false);
@@ -361,7 +367,7 @@ function App({ settings }: { settings: SettingsState }) {
         } else if (activeWs) {
           // In a workspace - need to determine focused session
           // For now, we'll need the terminal to handle this via context menu
-          console.log('[Hotkey] Split horizontal in workspace - use context menu on specific terminal');
+          if (IS_DEV) console.log('[Hotkey] Split horizontal in workspace - use context menu on specific terminal');
         }
         break;
       }
@@ -375,7 +381,7 @@ function App({ settings }: { settings: SettingsState }) {
           splitSession(activeSession.id, 'vertical');
         } else if (activeWs) {
           // In a workspace - need to determine focused session
-          console.log('[Hotkey] Split vertical in workspace - use context menu on specific terminal');
+          if (IS_DEV) console.log('[Hotkey] Split vertical in workspace - use context menu on specific terminal');
         }
         break;
       }
@@ -383,30 +389,30 @@ function App({ settings }: { settings: SettingsState }) {
         // Debounce to prevent double-triggering when focus switches between terminals
         const now = Date.now();
         if (now - lastMoveFocusTimeRef.current < MOVE_FOCUS_DEBOUNCE_MS) {
-          console.log('[App] moveFocus debounced, ignoring');
+          if (IS_DEV) console.log('[App] moveFocus debounced, ignoring');
           break;
         }
         lastMoveFocusTimeRef.current = now;
 
         // Move focus between split panes
-        console.log('[App] moveFocus action triggered, key:', e.key);
+        if (IS_DEV) console.log('[App] moveFocus action triggered, key:', e.key);
         const direction = e.key === 'ArrowUp' ? 'up'
           : e.key === 'ArrowDown' ? 'down'
             : e.key === 'ArrowLeft' ? 'left'
               : e.key === 'ArrowRight' ? 'right'
                 : null;
-        console.log('[App] moveFocus direction:', direction);
+        if (IS_DEV) console.log('[App] moveFocus direction:', direction);
         if (direction) {
           // Find the active workspace
           const currentId = activeTabStore.getActiveTabId();
-          console.log('[App] Active tab ID:', currentId);
+          if (IS_DEV) console.log('[App] Active tab ID:', currentId);
           const activeWs = workspaces.find(w => w.id === currentId);
-          console.log('[App] Active workspace:', activeWs?.id, activeWs?.title);
+          if (IS_DEV) console.log('[App] Active workspace:', activeWs?.id, activeWs?.title);
           if (activeWs) {
             const result = moveFocusInWorkspace(activeWs.id, direction as 'up' | 'down' | 'left' | 'right');
-            console.log('[App] moveFocusInWorkspace result:', result);
+            if (IS_DEV) console.log('[App] moveFocusInWorkspace result:', result);
           } else {
-            console.log('[App] No active workspace found');
+            if (IS_DEV) console.log('[App] No active workspace found');
           }
         }
         break;
@@ -424,7 +430,7 @@ function App({ settings }: { settings: SettingsState }) {
     if (hotkeyScheme === 'disabled') return;
 
     const isMac = hotkeyScheme === 'mac';
-    console.log('[Hotkeys] Registering global hotkey handler, scheme:', hotkeyScheme, 'bindings count:', keyBindings.length);
+    if (IS_DEV) console.log('[Hotkeys] Registering global hotkey handler, scheme:', hotkeyScheme, 'bindings count:', keyBindings.length);
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       // Don't handle if we're in an input or textarea (except for Escape)
@@ -440,7 +446,7 @@ function App({ settings }: { settings: SettingsState }) {
       for (const binding of keyBindings) {
         const keyStr = isMac ? binding.mac : binding.pc;
         if (matchesKeyBinding(e, keyStr, isMac)) {
-          console.log('[Hotkeys] Matched binding:', binding.action, keyStr);
+          if (IS_DEV) console.log('[Hotkeys] Matched binding:', binding.action, keyStr);
           // Terminal-specific actions should be handled by the terminal
           // Don't handle them at app level
           const terminalActions = ['copy', 'paste', 'selectAll', 'clearBuffer', 'searchTerminal'];
@@ -471,6 +477,7 @@ function App({ settings }: { settings: SettingsState }) {
   }, [isQuickSwitcherOpen]);
 
   const quickResults = useMemo(() => {
+    if (!isQuickSwitcherOpen) return [];
     const term = quickSearch.trim().toLowerCase();
     const filtered = term
       ? hosts.filter(h =>
@@ -480,7 +487,7 @@ function App({ settings }: { settings: SettingsState }) {
       )
       : hosts;
     return filtered.slice(0, 8);
-  }, [hosts, quickSearch]);
+  }, [hosts, quickSearch, isQuickSwitcherOpen]);
 
   const handleDeleteHost = useCallback((hostId: string) => {
     const target = hosts.find(h => h.id === hostId);
@@ -548,17 +555,17 @@ function App({ settings }: { settings: SettingsState }) {
 
   // Handle terminal data capture when session exits
   const handleTerminalDataCapture = useCallback((sessionId: string, data: string) => {
-    console.log('[handleTerminalDataCapture] Called', { sessionId, dataLength: data.length });
+    if (IS_DEV) console.log('[handleTerminalDataCapture] Called', { sessionId, dataLength: data.length });
     // Find the connection log for this session
     const session = sessions.find(s => s.id === sessionId);
-    console.log('[handleTerminalDataCapture] Session', session);
+    if (IS_DEV) console.log('[handleTerminalDataCapture] Session', session);
     if (!session) {
-      console.log('[handleTerminalDataCapture] No session found');
+      if (IS_DEV) console.log('[handleTerminalDataCapture] No session found');
       return;
     }
 
-    console.log('[handleTerminalDataCapture] Looking for logs with hostname:', session.hostname);
-    console.log('[handleTerminalDataCapture] All logs:', connectionLogs.map(l => ({ id: l.id, hostname: l.hostname, endTime: l.endTime, hasTerminalData: !!l.terminalData })));
+    if (IS_DEV) console.log('[handleTerminalDataCapture] Looking for logs with hostname:', session.hostname);
+    if (IS_DEV) console.log('[handleTerminalDataCapture] All logs:', connectionLogs.map(l => ({ id: l.id, hostname: l.hostname, endTime: l.endTime, hasTerminalData: !!l.terminalData })));
 
     // Find the most recent log matching this session's hostname and doesn't have terminalData yet
     // For local terminal, hostname is 'localhost'
@@ -571,16 +578,16 @@ function App({ settings }: { settings: SettingsState }) {
       )
       .sort((a, b) => b.startTime - a.startTime)[0];
 
-    console.log('[handleTerminalDataCapture] Matching log', matchingLog);
+    if (IS_DEV) console.log('[handleTerminalDataCapture] Matching log', matchingLog);
 
     if (matchingLog) {
       updateConnectionLog(matchingLog.id, {
         endTime: Date.now(),
         terminalData: data,
       });
-      console.log('[handleTerminalDataCapture] Updated log with terminalData');
+      if (IS_DEV) console.log('[handleTerminalDataCapture] Updated log with terminalData');
     } else {
-      console.log('[handleTerminalDataCapture] No matching log found!');
+      if (IS_DEV) console.log('[handleTerminalDataCapture] No matching log found!');
     }
   }, [sessions, connectionLogs, updateConnectionLog]);
 
@@ -764,34 +771,38 @@ function App({ settings }: { settings: SettingsState }) {
         })}
       </div>
 
-      <QuickSwitcher
-        isOpen={isQuickSwitcherOpen}
-        query={quickSearch}
-        results={quickResults}
-        sessions={sessions}
-        workspaces={workspaces}
-        onQueryChange={setQuickSearch}
-        onSelect={handleHostConnectWithProtocolCheck}
-        onSelectTab={(tabId) => {
-          setActiveTabId(tabId);
-          setIsQuickSwitcherOpen(false);
-          setQuickSearch('');
-        }}
-        onCreateLocalTerminal={() => {
-          handleCreateLocalTerminal();
-          setIsQuickSwitcherOpen(false);
-          setQuickSearch('');
-        }}
-        onCreateWorkspace={() => {
-          // TODO: Implement workspace creation
-          setIsQuickSwitcherOpen(false);
-        }}
-        onClose={() => {
-          setIsQuickSwitcherOpen(false);
-          setQuickSearch('');
-        }}
-        keyBindings={keyBindings}
-      />
+      {isQuickSwitcherOpen && (
+        <Suspense fallback={null}>
+          <LazyQuickSwitcher
+            isOpen={isQuickSwitcherOpen}
+            query={quickSearch}
+            results={quickResults}
+            sessions={sessions}
+            workspaces={workspaces}
+            onQueryChange={setQuickSearch}
+            onSelect={handleHostConnectWithProtocolCheck}
+            onSelectTab={(tabId) => {
+              setActiveTabId(tabId);
+              setIsQuickSwitcherOpen(false);
+              setQuickSearch('');
+            }}
+            onCreateLocalTerminal={() => {
+              handleCreateLocalTerminal();
+              setIsQuickSwitcherOpen(false);
+              setQuickSearch('');
+            }}
+            onCreateWorkspace={() => {
+              // TODO: Implement workspace creation
+              setIsQuickSwitcherOpen(false);
+            }}
+            onClose={() => {
+              setIsQuickSwitcherOpen(false);
+              setQuickSearch('');
+            }}
+            keyBindings={keyBindings}
+          />
+        </Suspense>
+      )}
 
       <Dialog open={!!workspaceRenameTarget} onOpenChange={(open) => {
         if (!open) {
@@ -822,11 +833,13 @@ function App({ settings }: { settings: SettingsState }) {
 
       {/* Protocol Select Dialog for QuickSwitcher */}
       {protocolSelectHost && (
-        <ProtocolSelectDialog
-          host={protocolSelectHost}
-          onSelect={handleProtocolSelect}
-          onCancel={() => setProtocolSelectHost(null)}
-        />
+        <Suspense fallback={null}>
+          <LazyProtocolSelectDialog
+            host={protocolSelectHost}
+            onSelect={handleProtocolSelect}
+            onCancel={() => setProtocolSelectHost(null)}
+          />
+        </Suspense>
       )}
     </div>
   );
@@ -834,6 +847,15 @@ function App({ settings }: { settings: SettingsState }) {
 
 function AppWithProviders() {
   const settings = useSettingsState();
+
+  useEffect(() => {
+    try {
+      netcattyBridge.get()?.rendererReady?.();
+    } catch {
+      // ignore
+    }
+  }, []);
+
   return (
     <I18nProvider locale={settings.uiLanguage}>
       <ToastProvider>

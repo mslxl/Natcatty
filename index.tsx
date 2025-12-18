@@ -1,8 +1,16 @@
+import { Suspense, lazy } from 'react';
 import ReactDOM from 'react-dom/client';
-import '@xterm/xterm/css/xterm.css';
+import '@fontsource/space-grotesk/400.css';
+import '@fontsource/space-grotesk/500.css';
+import '@fontsource/space-grotesk/600.css';
+import '@fontsource/space-grotesk/700.css';
+import '@fontsource/jetbrains-mono/400.css';
+import '@fontsource/jetbrains-mono/500.css';
+import '@fontsource/jetbrains-mono/600.css';
 import App from './App';
-import SettingsPage from './components/SettingsPage';
 import { ToastProvider } from './components/ui/toast';
+
+const LazySettingsPage = lazy(() => import('./components/SettingsPage'));
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -25,7 +33,9 @@ const renderApp = () => {
   if (route === 'settings') {
     root.render(
       <ToastProvider>
-        <SettingsPage />
+        <Suspense fallback={null}>
+          <LazySettingsPage />
+        </Suspense>
       </ToastProvider>
     );
   } else {

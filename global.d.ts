@@ -253,6 +253,9 @@ interface NetcattyBridge {
   // App info (name/version/platform) for About screens
   getAppInfo?(): Promise<{ name: string; version: string; platform: string }>;
 
+  // Notify main process the renderer has mounted/painted (used to avoid initial blank screen).
+  rendererReady?(): void;
+
   onLanguageChanged?(cb: (language: string) => void): () => void;
 
   // Chain progress listener for jump host connections

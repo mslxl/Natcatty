@@ -21,6 +21,8 @@
     "lint:fix": "eslint . --fix"
   },
   "dependencies": {
+    "@fontsource/jetbrains-mono": "^5.2.8",
+    "@fontsource/space-grotesk": "^5.2.10",
     "@google/genai": "1.33.0",
     "@radix-ui/react-collapsible": "1.1.12",
     "@radix-ui/react-context-menu": "2.2.16",

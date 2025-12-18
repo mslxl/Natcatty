@@ -361,6 +361,9 @@ const api = {
 
   // App info
   getAppInfo: () => ipcRenderer.invoke("netcatty:app:getInfo"),
+
+  // Tell main process the renderer has mounted/painted (used to avoid initial blank screen).
+  rendererReady: () => ipcRenderer.send("netcatty:renderer:ready"),
   
   // Port Forwarding API
   startPortForward: async (options) => {

@@ -3,7 +3,7 @@
  * This component is rendered in a separate Electron window
  */
 import { AppWindow, Cloud, Keyboard, Palette, TerminalSquare, X } from "lucide-react";
-import React, { useCallback } from "react";
+import React, { useCallback, useEffect } from "react";
 import { useSettingsState } from "../application/state/useSettingsState";
 import { useVaultState } from "../application/state/useVaultState";
 import { useWindowControls } from "../application/state/useWindowControls";
@@ -22,9 +22,13 @@ export default function SettingsPage() {
 
     const Inner = () => {
         const { t } = useI18n();
+    const { notifyRendererReady, closeSettingsWindow } = useWindowControls();
+
+    useEffect(() => {
+        notifyRendererReady();
+    }, [notifyRendererReady]);
 
     const { hosts, keys, identities, snippets, importDataFromString } = useVaultState();
-    const { closeSettingsWindow } = useWindowControls();
 
     const handleClose = useCallback(() => {
         closeSettingsWindow();

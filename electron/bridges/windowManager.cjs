@@ -4,6 +4,7 @@
  */
 
 const path = require("node:path");
+const fs = require("node:fs");
 
 // Theme colors configuration
 const THEME_COLORS = {
@@ -26,6 +27,7 @@ let currentTheme = "light";
 let currentLanguage = "en";
 let handlersRegistered = false; // Prevent duplicate IPC handler registration
 let menuDeps = null;
+const rendererReadyCallbacksByWebContentsId = new Map();
 
 const MENU_LABELS = {
   en: { edit: "Edit", view: "View", window: "Window" },
@@ -87,18 +89,176 @@ function normalizeDevServerUrl(urlString) {
   }
 }
 
+function hslToHex(h, s, l) {
+  const hue = ((h % 360) + 360) % 360;
+  const sat = Math.max(0, Math.min(100, s)) / 100;
+  const light = Math.max(0, Math.min(100, l)) / 100;
+
+  const c = (1 - Math.abs(2 * light - 1)) * sat;
+  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = light - c / 2;
+
+  let r1 = 0;
+  let g1 = 0;
+  let b1 = 0;
+
+  if (hue < 60) {
+    r1 = c; g1 = x; b1 = 0;
+  } else if (hue < 120) {
+    r1 = x; g1 = c; b1 = 0;
+  } else if (hue < 180) {
+    r1 = 0; g1 = c; b1 = x;
+  } else if (hue < 240) {
+    r1 = 0; g1 = x; b1 = c;
+  } else if (hue < 300) {
+    r1 = x; g1 = 0; b1 = c;
+  } else {
+    r1 = c; g1 = 0; b1 = x;
+  }
+
+  const toHex = (n) => Math.round((n + m) * 255).toString(16).padStart(2, "0");
+  return `#${toHex(r1)}${toHex(g1)}${toHex(b1)}`;
+}
+
+function parseBackgroundFromIndexHtml(indexHtml, theme) {
+  if (!indexHtml) return null;
+
+  const block =
+    theme === "dark"
+      ? indexHtml.match(/\.dark\s*\{[\s\S]*?\}/)
+      : indexHtml.match(/:root\s*\{[\s\S]*?\}/);
+
+  const within = block?.[0] || indexHtml;
+  const m = within.match(/--background:\s*([^;]+);/);
+  const raw = m?.[1]?.trim();
+  if (!raw) return null;
+
+  const parts = raw.split(/\s+/).filter(Boolean);
+  if (parts.length < 3) return null;
+
+  const h = Number(parts[0]);
+  const s = Number(String(parts[1]).replace("%", ""));
+  const l = Number(String(parts[2]).replace("%", ""));
+
+  if (!Number.isFinite(h) || !Number.isFinite(s) || !Number.isFinite(l)) return null;
+  return hslToHex(h, s, l);
+}
+
+function resolveIndexHtmlPath(electronDir) {
+  const dist = path.join(electronDir, "../dist/index.html");
+  const root = path.join(electronDir, "../index.html");
+  if (fs.existsSync(dist)) return dist;
+  if (fs.existsSync(root)) return root;
+  return dist;
+}
+
+function resolveFrontendBackgroundColor(electronDir, theme) {
+  try {
+    const htmlPath = resolveIndexHtmlPath(electronDir);
+    if (!htmlPath || !fs.existsSync(htmlPath)) return null;
+    const indexHtml = fs.readFileSync(htmlPath, "utf8");
+    return parseBackgroundFromIndexHtml(indexHtml, theme);
+  } catch {
+    return null;
+  }
+}
+
+async function waitForRootPaint(win, { timeoutMs = 800, intervalMs = 50 } = {}) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      if (win.isDestroyed()) return false;
+      const count = await win.webContents.executeJavaScript(
+        `(() => {
+          const root = document.getElementById("root");
+          return root ? root.children.length : 0;
+        })()`,
+        true,
+      );
+      if (Number(count) > 0) return true;
+    } catch {
+      return false;
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return false;
+}
+
+function setupDeferredShow(win, { timeoutMs = 3000 } = {}) {
+  let shown = false;
+  let readyToShow = false;
+  let rendererReady = false;
+  let timer = null;
+
+  const showOnce = () => {
+    if (shown) return;
+    shown = true;
+    if (timer) clearTimeout(timer);
+    timer = null;
+    rendererReadyCallbacksByWebContentsId.delete(win.webContents.id);
+    try {
+      if (!win.isDestroyed()) win.show();
+    } catch {
+      // ignore
+    }
+  };
+
+  const tryShow = () => {
+    if (shown) return;
+    if (readyToShow && rendererReady) showOnce();
+  };
+
+  const markRendererReady = () => {
+    if (rendererReady) return;
+    rendererReady = true;
+    tryShow();
+  };
+
+  rendererReadyCallbacksByWebContentsId.set(win.webContents.id, markRendererReady);
+
+  win.once("ready-to-show", () => {
+    readyToShow = true;
+    tryShow();
+  });
+
+  win.webContents.once("did-finish-load", () => {
+    void (async () => {
+      // If the renderer mounts shortly after load, wait briefly to avoid showing a blank root.
+      const painted = await waitForRootPaint(win, { timeoutMs: 800, intervalMs: 50 });
+      if (painted) markRendererReady();
+    })();
+  });
+
+  // Dev/edge-case fallback: don't keep the window hidden forever.
+  if (Number(timeoutMs) > 0) {
+    timer = setTimeout(showOnce, timeoutMs);
+  }
+  win.on("closed", () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    rendererReadyCallbacksByWebContentsId.delete(win.webContents.id);
+  });
+
+  return { showOnce, markRendererReady };
+}
+
 /**
  * Create the main application window
  */
 async function createWindow(electronModule, options) {
   const { BrowserWindow, nativeTheme } = electronModule;
-  const { preload, devServerUrl, isDev, appIcon, isMac, onRegisterBridge } = options;
+  const { preload, devServerUrl, isDev, appIcon, isMac, onRegisterBridge, electronDir } = options;
   
-  const themeConfig = THEME_COLORS[currentTheme];
+  const osTheme = nativeTheme?.shouldUseDarkColors ? "dark" : "light";
+  const effectiveTheme = currentTheme === "dark" || currentTheme === "light" ? currentTheme : osTheme;
+  const frontendBackground = resolveFrontendBackgroundColor(electronDir || __dirname, effectiveTheme);
+  const backgroundColor = frontendBackground || "#1a1a1a";
+  const themeConfig = THEME_COLORS[effectiveTheme] || THEME_COLORS.light;
+
   const win = new BrowserWindow({
     width: 1400,
     height: 900,
-    backgroundColor: themeConfig.background,
+    backgroundColor,
     icon: appIcon,
     show: false,
     frame: isMac,
@@ -114,14 +274,15 @@ async function createWindow(electronModule, options) {
 
   mainWindow = win;
 
-  // Show window when renderer is ready to prevent initial white flash.
-  win.once("ready-to-show", () => {
-    try {
-      win.show();
-    } catch {
-      // ignore
-    }
-  });
+  // Ensure native background matches frontend background, even before first paint.
+  try {
+    win.setBackgroundColor(backgroundColor);
+  } catch {
+    // ignore
+  }
+
+  // Defer show until renderer is ready; use a short fallback only in dev to avoid waiting forever.
+  setupDeferredShow(win, { timeoutMs: isDev ? 3000 : 0 });
 
   // Register window control handlers
   registerWindowHandlers(electronModule.ipcMain, nativeTheme);
@@ -137,7 +298,7 @@ async function createWindow(electronModule, options) {
     }
   }
 
-  // Production mode - load via app:// protocol (handled by main process).
+  // Production mode - load via app:// protocol (secure context + supports COOP/COEP headers).
   await win.loadURL(`app://./index.html`);
   
   onRegisterBridge?.(win);
@@ -149,7 +310,7 @@ async function createWindow(electronModule, options) {
  */
 async function openSettingsWindow(electronModule, options) {
   const { BrowserWindow } = electronModule;
-  const { preload, devServerUrl, isDev, appIcon, isMac } = options;
+  const { preload, devServerUrl, isDev, appIcon, isMac, electronDir } = options;
   
   // If settings window already exists, just focus it
   if (settingsWindow && !settingsWindow.isDestroyed()) {
@@ -157,13 +318,18 @@ async function openSettingsWindow(electronModule, options) {
     return settingsWindow;
   }
   
-  const themeConfig = THEME_COLORS[currentTheme];
+  const osTheme = electronModule?.nativeTheme?.shouldUseDarkColors ? "dark" : "light";
+  const effectiveTheme = currentTheme === "dark" || currentTheme === "light" ? currentTheme : osTheme;
+  const frontendBackground = resolveFrontendBackgroundColor(electronDir || __dirname, effectiveTheme);
+  const backgroundColor = frontendBackground || "#1a1a1a";
+  const themeConfig = THEME_COLORS[effectiveTheme] || THEME_COLORS.light;
+
   const win = new BrowserWindow({
     width: 800,
     height: 650,
     minWidth: 700,
     minHeight: 500,
-    backgroundColor: themeConfig.background,
+    backgroundColor,
     icon: appIcon,
     parent: mainWindow,
     modal: false,
@@ -181,10 +347,15 @@ async function openSettingsWindow(electronModule, options) {
 
   settingsWindow = win;
 
-  // Show window when ready to prevent flicker
-  win.once('ready-to-show', () => {
-    win.show();
-  });
+  // Ensure native background matches frontend background, even before first paint.
+  try {
+    win.setBackgroundColor(backgroundColor);
+  } catch {
+    // ignore
+  }
+
+  // Defer show until renderer is ready; use a short fallback only in dev to avoid waiting forever.
+  setupDeferredShow(win, { timeoutMs: isDev ? 3000 : 0 });
 
   // Clean up reference when closed
   win.on('closed', () => {
@@ -203,7 +374,7 @@ async function openSettingsWindow(electronModule, options) {
     }
   }
 
-  // Production mode - load via app:// protocol (handled by main process).
+  // Production mode - load via app:// protocol (secure context + supports COOP/COEP headers).
   await win.loadURL(`app://./index.html#/settings`);
   
   return win;
@@ -285,6 +456,14 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
   // Settings window close handler
   ipcMain.handle("netcatty:settings:close", () => {
     closeSettingsWindow();
+  });
+
+  // Renderer reports first meaningful paint/mount; used to avoid initial blank screen.
+  ipcMain.on("netcatty:renderer:ready", (event) => {
+    const wcId = event?.sender?.id;
+    if (!wcId) return;
+    const cb = rendererReadyCallbacksByWebContentsId.get(wcId);
+    if (cb) cb();
   });
 }
 

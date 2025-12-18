@@ -2,6 +2,14 @@ import { useCallback } from "react";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
 
 export const useWindowControls = () => {
+  const notifyRendererReady = useCallback(() => {
+    try {
+      netcattyBridge.get()?.rendererReady?.();
+    } catch {
+      // ignore
+    }
+  }, []);
+
   const closeSettingsWindow = useCallback(async () => {
     const bridge = netcattyBridge.get();
     await bridge?.closeSettingsWindow?.();
@@ -33,6 +41,7 @@ export const useWindowControls = () => {
   }, []);
 
   return {
+    notifyRendererReady,
     closeSettingsWindow,
     openSettingsWindow,
     minimize,

@@ -18,7 +18,7 @@ import {
   Upload,
   Zap,
 } from "lucide-react";
-import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
+import React, { Suspense, lazy, memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { sanitizeHost } from "../domain/host";
 import { importVaultHostsFromText } from "../domain/vaultImport";
@@ -43,7 +43,6 @@ import HostDetailsPanel from "./HostDetailsPanel";
 import KeychainManager from "./KeychainManager";
 import KnownHostsManager from "./KnownHostsManager";
 import PortForwarding from "./PortForwardingNew";
-import ProtocolSelectDialog from "./ProtocolSelectDialog";
 import QuickConnectWizard from "./QuickConnectWizard";
 import { isQuickConnectInput, parseQuickConnectInput } from "../domain/quickConnect";
 import SnippetsManager from "./SnippetsManager";
@@ -69,6 +68,8 @@ import { Label } from "./ui/label";
 import { SortDropdown, SortMode } from "./ui/sort-dropdown";
 import { TagFilterDropdown } from "./ui/tag-filter-dropdown";
 import { toast } from "./ui/toast";
+
+const LazyProtocolSelectDialog = lazy(() => import("./ProtocolSelectDialog"));
 
 export type VaultSection = "hosts" | "keys" | "snippets" | "port" | "knownhosts" | "logs";
 
@@ -1464,11 +1465,13 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
 
       {/* Protocol Select Dialog */}
       {protocolSelectHost && (
-        <ProtocolSelectDialog
-          host={protocolSelectHost}
-          onSelect={handleProtocolSelect}
-          onCancel={() => setProtocolSelectHost(null)}
-        />
+        <Suspense fallback={null}>
+          <LazyProtocolSelectDialog
+            host={protocolSelectHost}
+            onSelect={handleProtocolSelect}
+            onCancel={() => setProtocolSelectHost(null)}
+          />
+        </Suspense>
       )}
     </div>
   );
