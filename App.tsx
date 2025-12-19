@@ -7,7 +7,6 @@ import { useVaultState } from './application/state/useVaultState';
 import { useWindowControls } from './application/state/useWindowControls';
 import { I18nProvider, useI18n } from './application/i18n/I18nProvider';
 import { matchesKeyBinding } from './domain/models';
-import { getAppLevelActions } from './application/state/useGlobalHotkeys';
 import { resolveHostAuth } from './domain/sshAuth';
 import { netcattyBridge } from './infrastructure/services/netcattyBridge';
 import { TopTabs } from './components/TopTabs';
@@ -461,8 +460,6 @@ function App({ settings }: { settings: SettingsState }) {
               node.hasAttribute("data-session-id")),
         ),
       );
-
-      const appLevelActions = getAppLevelActions();
 
       // Check each key binding
       for (const binding of keyBindings) {

@@ -307,8 +307,6 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
     const currentScheme = ctx.hotkeySchemeRef.current;
     const currentBindings = ctx.keyBindingsRef.current;
-    const hotkeyCallback = ctx.onHotkeyActionRef.current;
-
     if (currentScheme === "disabled" || currentBindings.length === 0) {
       return true;
     }
