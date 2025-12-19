@@ -153,12 +153,27 @@
     (function () {
       try {
         var theme = localStorage.getItem('netcatty_theme_v1');
+        var accentMode = localStorage.getItem('netcatty_accent_mode_v1');
+        var accentColor = localStorage.getItem('netcatty_color_v1');
         var lang = localStorage.getItem('netcatty_ui_language_v1');
         var root = document.documentElement;
 
         if (theme === 'dark' || theme === 'light') {
           root.classList.remove('light', 'dark');
           root.classList.add(theme);
+        }
+
+        if (accentMode === 'custom' && accentColor) {
+          root.style.setProperty('--primary', accentColor);
+          root.style.setProperty('--accent', accentColor);
+          root.style.setProperty('--ring', accentColor);
+          var parts = accentColor.split(/\s+/);
+          var lightness = parseFloat((parts[2] || '').replace('%', ''));
+          var accentForeground = theme === 'dark'
+            ? '220 40% 96%'
+            : (!isNaN(lightness) && lightness < 55 ? '0 0% 98%' : '222 47% 12%');
+          root.style.setProperty('--accent-foreground', accentForeground);
+          root.style.setProperty('--primary-foreground', accentForeground);
         }
 
         if (lang) root.lang = lang;

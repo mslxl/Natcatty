@@ -1,6 +1,7 @@
 import { useCallback,useEffect,useLayoutEffect,useMemo,useState } from 'react';
 import { SyncConfig, TerminalSettings, DEFAULT_TERMINAL_SETTINGS, HotkeyScheme, CustomKeyBindings, DEFAULT_KEY_BINDINGS, KeyBinding, UILanguage } from '../../domain/models';
 import {
+STORAGE_KEY_COLOR,
 STORAGE_KEY_SYNC,
 STORAGE_KEY_TERM_THEME,
 STORAGE_KEY_THEME,
@@ -12,6 +13,7 @@ STORAGE_KEY_CUSTOM_KEY_BINDINGS,
 STORAGE_KEY_HOTKEY_RECORDING,
 STORAGE_KEY_CUSTOM_CSS,
 STORAGE_KEY_UI_LANGUAGE,
+STORAGE_KEY_ACCENT_MODE,
 STORAGE_KEY_UI_THEME_LIGHT,
 STORAGE_KEY_UI_THEME_DARK,
 } from '../../infrastructure/config/storageKeys';
@@ -25,6 +27,8 @@ import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 const DEFAULT_THEME: 'light' | 'dark' = 'light';
 const DEFAULT_LIGHT_UI_THEME = 'snow';
 const DEFAULT_DARK_UI_THEME = 'midnight';
+const DEFAULT_ACCENT_MODE: 'theme' | 'custom' = 'theme';
+const DEFAULT_CUSTOM_ACCENT = '221.2 83.2% 53.3%';
 const DEFAULT_TERMINAL_THEME = 'netcatty-dark';
 const DEFAULT_FONT_FAMILY = 'menlo';
 // Auto-detect default hotkey scheme based on platform
@@ -49,12 +53,22 @@ const readStoredString = (key: string): string | null => {
 
 const isValidTheme = (value: unknown): value is 'light' | 'dark' => value === 'light' || value === 'dark';
 
+const isValidHslToken = (value: string): boolean => {
+  // Expect: "<h> <s>% <l>%", e.g. "221.2 83.2% 53.3%"
+  return /^\s*\d+(\.\d+)?\s+\d+(\.\d+)?%\s+\d+(\.\d+)?%\s*$/.test(value);
+};
+
 const isValidUiThemeId = (theme: 'light' | 'dark', value: string): boolean => {
   const list = theme === 'dark' ? DARK_UI_THEMES : LIGHT_UI_THEMES;
   return list.some((preset) => preset.id === value);
 };
 
-const applyThemeTokens = (theme: 'light' | 'dark', tokens: UiThemeTokens) => {
+const applyThemeTokens = (
+  theme: 'light' | 'dark',
+  tokens: UiThemeTokens,
+  accentMode: 'theme' | 'custom',
+  accentOverride: string,
+) => {
   const root = window.document.documentElement;
   root.classList.remove('light', 'dark');
   root.classList.add(theme);
@@ -64,19 +78,25 @@ const applyThemeTokens = (theme: 'light' | 'dark', tokens: UiThemeTokens) => {
   root.style.setProperty('--card-foreground', tokens.cardForeground);
   root.style.setProperty('--popover', tokens.popover);
   root.style.setProperty('--popover-foreground', tokens.popoverForeground);
-  root.style.setProperty('--primary', tokens.primary);
-  root.style.setProperty('--primary-foreground', tokens.primaryForeground);
+  const accentToken = accentMode === 'custom' ? accentOverride : tokens.accent;
+  const accentLightness = parseFloat(accentToken.split(/\s+/)[2]?.replace('%', '') || '');
+  const computedAccentForeground = theme === 'dark'
+    ? '220 40% 96%'
+    : (!Number.isNaN(accentLightness) && accentLightness < 55 ? '0 0% 98%' : '222 47% 12%');
+
+  root.style.setProperty('--primary', accentToken);
+  root.style.setProperty('--primary-foreground', accentMode === 'custom' ? computedAccentForeground : tokens.primaryForeground);
   root.style.setProperty('--secondary', tokens.secondary);
   root.style.setProperty('--secondary-foreground', tokens.secondaryForeground);
   root.style.setProperty('--muted', tokens.muted);
   root.style.setProperty('--muted-foreground', tokens.mutedForeground);
-  root.style.setProperty('--accent', tokens.accent);
-  root.style.setProperty('--accent-foreground', tokens.accentForeground);
+  root.style.setProperty('--accent', accentToken);
+  root.style.setProperty('--accent-foreground', accentMode === 'custom' ? computedAccentForeground : tokens.accentForeground);
   root.style.setProperty('--destructive', tokens.destructive);
   root.style.setProperty('--destructive-foreground', tokens.destructiveForeground);
   root.style.setProperty('--border', tokens.border);
   root.style.setProperty('--input', tokens.input);
-  root.style.setProperty('--ring', tokens.ring);
+  root.style.setProperty('--ring', accentToken);
   
   // Sync with native window title bar (Electron)
   netcattyBridge.get()?.setTheme?.(theme);
@@ -95,6 +115,16 @@ export const useSettingsState = () => {
   const [darkUiThemeId, setDarkUiThemeId] = useState<string>(() => {
     const stored = readStoredString(STORAGE_KEY_UI_THEME_DARK);
     return stored && isValidUiThemeId('dark', stored) ? stored : DEFAULT_DARK_UI_THEME;
+  });
+  const [customAccent, setCustomAccent] = useState<string>(() => {
+    const stored = readStoredString(STORAGE_KEY_COLOR);
+    return stored && isValidHslToken(stored) ? stored.trim() : DEFAULT_CUSTOM_ACCENT;
+  });
+  const [accentMode, setAccentMode] = useState<'theme' | 'custom'>(() => {
+    const stored = readStoredString(STORAGE_KEY_ACCENT_MODE);
+    if (stored === 'theme' || stored === 'custom') return stored;
+    const legacyColor = readStoredString(STORAGE_KEY_COLOR);
+    return legacyColor && isValidHslToken(legacyColor) ? 'custom' : DEFAULT_ACCENT_MODE;
   });
   const [syncConfig, setSyncConfig] = useState<SyncConfig | null>(() => localStorageAdapter.read<SyncConfig>(STORAGE_KEY_SYNC));
   const [terminalThemeId, setTerminalThemeId] = useState<string>(() => localStorageAdapter.readString(STORAGE_KEY_TERM_THEME) || DEFAULT_TERMINAL_THEME);
@@ -135,15 +165,19 @@ export const useSettingsState = () => {
 
   useLayoutEffect(() => {
     const tokens = getUiThemeById(theme, theme === 'dark' ? darkUiThemeId : lightUiThemeId).tokens;
-    applyThemeTokens(theme, tokens);
+    applyThemeTokens(theme, tokens, accentMode, customAccent);
     localStorageAdapter.writeString(STORAGE_KEY_THEME, theme);
     localStorageAdapter.writeString(STORAGE_KEY_UI_THEME_LIGHT, lightUiThemeId);
     localStorageAdapter.writeString(STORAGE_KEY_UI_THEME_DARK, darkUiThemeId);
+    localStorageAdapter.writeString(STORAGE_KEY_ACCENT_MODE, accentMode);
+    localStorageAdapter.writeString(STORAGE_KEY_COLOR, customAccent);
     // Notify other windows
     notifySettingsChanged(STORAGE_KEY_THEME, theme);
     notifySettingsChanged(STORAGE_KEY_UI_THEME_LIGHT, lightUiThemeId);
     notifySettingsChanged(STORAGE_KEY_UI_THEME_DARK, darkUiThemeId);
-  }, [theme, lightUiThemeId, darkUiThemeId, notifySettingsChanged]);
+    notifySettingsChanged(STORAGE_KEY_ACCENT_MODE, accentMode);
+    notifySettingsChanged(STORAGE_KEY_COLOR, customAccent);
+  }, [theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, notifySettingsChanged]);
 
   useLayoutEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_UI_LANGUAGE, uiLanguage);
@@ -161,20 +195,33 @@ export const useSettingsState = () => {
       if (key === STORAGE_KEY_THEME && (value === 'light' || value === 'dark')) {
         setTheme(value);
         const tokens = getUiThemeById(value, value === 'dark' ? darkUiThemeId : lightUiThemeId).tokens;
-        applyThemeTokens(value, tokens);
+        applyThemeTokens(value, tokens, accentMode, customAccent);
       }
       if (key === STORAGE_KEY_UI_THEME_LIGHT && typeof value === 'string' && isValidUiThemeId('light', value)) {
         setLightUiThemeId(value);
         if (theme === 'light') {
           const tokens = getUiThemeById('light', value).tokens;
-          applyThemeTokens('light', tokens);
+          applyThemeTokens('light', tokens, accentMode, customAccent);
         }
       }
       if (key === STORAGE_KEY_UI_THEME_DARK && typeof value === 'string' && isValidUiThemeId('dark', value)) {
         setDarkUiThemeId(value);
         if (theme === 'dark') {
           const tokens = getUiThemeById('dark', value).tokens;
-          applyThemeTokens('dark', tokens);
+          applyThemeTokens('dark', tokens, accentMode, customAccent);
+        }
+      }
+      if (key === STORAGE_KEY_ACCENT_MODE && (value === 'theme' || value === 'custom')) {
+        setAccentMode(value);
+        const tokens = getUiThemeById(theme, theme === 'dark' ? darkUiThemeId : lightUiThemeId).tokens;
+        applyThemeTokens(theme, tokens, value, customAccent);
+      }
+      if (key === STORAGE_KEY_COLOR && typeof value === 'string' && isValidHslToken(value)) {
+        const next = value.trim();
+        setCustomAccent(next);
+        if (accentMode === 'custom') {
+          const tokens = getUiThemeById(theme, theme === 'dark' ? darkUiThemeId : lightUiThemeId).tokens;
+          applyThemeTokens(theme, tokens, accentMode, next);
         }
       }
       if (key === STORAGE_KEY_UI_LANGUAGE && typeof value === 'string') {
@@ -216,7 +263,7 @@ export const useSettingsState = () => {
         // ignore
       }
     };
-  }, [theme, lightUiThemeId, darkUiThemeId]);
+  }, [theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent]);
 
   useEffect(() => {
     const bridge = netcattyBridge.get();
@@ -251,6 +298,16 @@ export const useSettingsState = () => {
       if (e.key === STORAGE_KEY_UI_THEME_DARK && e.newValue) {
         if (isValidUiThemeId('dark', e.newValue) && e.newValue !== darkUiThemeId) {
           setDarkUiThemeId(e.newValue);
+        }
+      }
+      if (e.key === STORAGE_KEY_ACCENT_MODE && e.newValue) {
+        if ((e.newValue === 'theme' || e.newValue === 'custom') && e.newValue !== accentMode) {
+          setAccentMode(e.newValue);
+        }
+      }
+      if (e.key === STORAGE_KEY_COLOR && e.newValue) {
+        if (isValidHslToken(e.newValue) && e.newValue !== customAccent) {
+          setCustomAccent(e.newValue.trim());
         }
       }
       if (e.key === STORAGE_KEY_CUSTOM_CSS && e.newValue !== null) {
@@ -310,7 +367,7 @@ export const useSettingsState = () => {
 
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
-  }, [theme, lightUiThemeId, darkUiThemeId, customCSS, hotkeyScheme, uiLanguage, terminalThemeId, terminalFontFamilyId, terminalFontSize]);
+  }, [theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customCSS, hotkeyScheme, uiLanguage, terminalThemeId, terminalFontFamilyId, terminalFontSize]);
 
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_TERM_THEME, terminalThemeId);
@@ -436,6 +493,10 @@ export const useSettingsState = () => {
     setLightUiThemeId,
     darkUiThemeId,
     setDarkUiThemeId,
+    accentMode,
+    setAccentMode,
+    customAccent,
+    setCustomAccent,
     syncConfig,
     updateSyncConfig,
     uiLanguage,

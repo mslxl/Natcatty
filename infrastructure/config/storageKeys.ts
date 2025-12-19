@@ -6,6 +6,7 @@ export const STORAGE_KEY_SNIPPETS = 'netcatty_snippets_v1';
 export const STORAGE_KEY_SNIPPET_PACKAGES = 'netcatty_snippet_packages_v1';
 export const STORAGE_KEY_THEME = 'netcatty_theme_v1';
 export const STORAGE_KEY_COLOR = 'netcatty_color_v1';
+export const STORAGE_KEY_ACCENT_MODE = 'netcatty_accent_mode_v1';
 export const STORAGE_KEY_UI_THEME_LIGHT = 'netcatty_ui_theme_light_v1';
 export const STORAGE_KEY_UI_THEME_DARK = 'netcatty_ui_theme_dark_v1';
 export const STORAGE_KEY_SYNC = 'netcatty_sync_v1';
