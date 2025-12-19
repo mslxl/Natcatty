@@ -20,9 +20,11 @@ import {
 } from "lucide-react";
 import React, { Suspense, lazy, memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
+import { useStoredViewMode } from "../application/state/useStoredViewMode";
 import { sanitizeHost } from "../domain/host";
 import { importVaultHostsFromText } from "../domain/vaultImport";
 import type { VaultImportFormat } from "../domain/vaultImport";
+import { STORAGE_KEY_VAULT_HOSTS_VIEW_MODE } from "../infrastructure/config/storageKeys";
 import { cn } from "../lib/utils";
 import {
   ConnectionLog,
@@ -164,7 +166,10 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   }, [navigateToSection, onNavigateToSectionHandled]);
 
   // View mode, sorting, and tag filter state
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [viewMode, setViewMode] = useStoredViewMode(
+    STORAGE_KEY_VAULT_HOSTS_VIEW_MODE,
+    "grid",
+  );
   const [sortMode, setSortMode] = useState<SortMode>("az");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
@@ -838,13 +843,18 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                   </div>
                 )}
               </div>
-              <Button
-                variant={isSearchQuickConnect ? "default" : "secondary"}
-                className="h-10 px-4 app-no-drag"
-                onClick={handleConnectClick}
-              >
-                {t("vault.hosts.connect")}
-              </Button>
+                <Button
+                  variant={isSearchQuickConnect ? "default" : "secondary"}
+                  className={cn(
+                    "h-10 px-4 app-no-drag",
+                    !isSearchQuickConnect &&
+                      currentSection === "hosts" &&
+                      "bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40",
+                  )}
+                  onClick={handleConnectClick}
+                >
+                  {t("vault.hosts.connect")}
+                </Button>
               {/* View mode, tag filter, and sort controls */}
               <div className="flex items-center gap-1 app-no-drag">
                 <Dropdown>
@@ -932,14 +942,18 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                   </DropdownContent>
                 </Dropdown>
               </div>
-              <Button
-                size="sm"
-                variant="secondary"
-                className="h-10 px-3 app-no-drag"
-                onClick={onCreateLocalTerminal}
-              >
-                <TerminalSquare size={14} className="mr-2" /> {t("common.terminal")}
-              </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className={cn(
+                    "h-10 px-3 app-no-drag",
+                    currentSection === "hosts" &&
+                      "bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40",
+                  )}
+                  onClick={onCreateLocalTerminal}
+                >
+                  <TerminalSquare size={14} className="mr-2" /> {t("common.terminal")}
+                </Button>
             </div>
           </header>
         )}

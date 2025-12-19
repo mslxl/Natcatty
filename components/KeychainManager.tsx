@@ -17,7 +17,9 @@ import {
 } from "lucide-react";
 import React, { useCallback, useMemo, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
+import { useStoredViewMode } from "../application/state/useStoredViewMode";
 import { resolveHostAuth } from "../domain/sshAuth";
+import { STORAGE_KEY_VAULT_KEYS_VIEW_MODE } from "../infrastructure/config/storageKeys";
 import { logger } from "../lib/logger";
 import { cn } from "../lib/utils";
 import { Host, Identity, KeyType, SSHKey } from "../types";
@@ -94,7 +96,10 @@ const KeychainManager: React.FC<KeychainManagerProps> = ({
   const { generateKeyPair, execCommand } = useKeychainBackend();
   const [activeFilter, setActiveFilter] = useState<FilterTab>("key");
   const [search, setSearch] = useState("");
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [viewMode, setViewMode] = useStoredViewMode(
+    STORAGE_KEY_VAULT_KEYS_VIEW_MODE,
+    "grid",
+  );
 
   // Panel stack for navigation (supports back navigation)
   const [panelStack, setPanelStack] = useState<PanelMode[]>([]);

@@ -1,6 +1,8 @@
 import { Check, ChevronDown, Clock, Copy, Edit2, FileCode, FolderPlus, LayoutGrid, List as ListIcon, Loader2, Package, Play, Plus, Search, Trash2 } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
+import { useStoredViewMode } from '../application/state/useStoredViewMode';
+import { STORAGE_KEY_VAULT_SNIPPETS_VIEW_MODE } from '../infrastructure/config/storageKeys';
 import { cn } from '../lib/utils';
 import { Host, ShellHistoryEntry, Snippet, SSHKey } from '../types';
 import { DistroAvatar } from './DistroAvatar';
@@ -67,7 +69,10 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
 
   // Search, sort, and view mode state
   const [search, setSearch] = useState('');
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [viewMode, setViewMode] = useStoredViewMode(
+    STORAGE_KEY_VAULT_SNIPPETS_VIEW_MODE,
+    'grid',
+  );
   const [sortMode, setSortMode] = useState<SortMode>('az');
 
   // Shell history lazy loading state

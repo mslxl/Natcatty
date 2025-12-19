@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Host, PortForwardingRule } from "../../domain/models";
 import {
   STORAGE_KEY_PF_PREFER_FORM_MODE,
+  STORAGE_KEY_PF_VIEW_MODE,
   STORAGE_KEY_PORT_FORWARDING,
 } from "../../infrastructure/config/storageKeys";
 import { localStorageAdapter } from "../../infrastructure/persistence/localStorageAdapter";
@@ -11,8 +12,10 @@ import {
   startPortForward,
   stopPortForward,
 } from "../../infrastructure/services/portForwardingService";
+import { useStoredViewMode, ViewMode } from "./useStoredViewMode";
 
-export type ViewMode = "grid" | "list";
+export type { ViewMode };
+
 export type SortMode = "az" | "za" | "newest" | "oldest";
 
 export interface UsePortForwardingStateResult {
@@ -60,7 +63,10 @@ export interface UsePortForwardingStateResult {
 export const usePortForwardingState = (): UsePortForwardingStateResult => {
   const [rules, setRules] = useState<PortForwardingRule[]>([]);
   const [selectedRuleId, setSelectedRuleId] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>("grid");
+  const [viewMode, setViewMode] = useStoredViewMode(
+    STORAGE_KEY_PF_VIEW_MODE,
+    "grid",
+  );
   const [sortMode, setSortMode] = useState<SortMode>("newest");
   const [search, setSearch] = useState("");
   const [preferFormMode, setPreferFormModeState] = useState<boolean>(() => {

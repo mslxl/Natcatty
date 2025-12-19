@@ -18,10 +18,15 @@ export const STORAGE_KEY_CUSTOM_CSS = 'netcatty_custom_css_v1';
 export const STORAGE_KEY_UI_LANGUAGE = 'netcatty_ui_language_v1';
 export const STORAGE_KEY_PORT_FORWARDING = 'netcatty_port_forwarding_v1';
 export const STORAGE_KEY_PF_PREFER_FORM_MODE = 'netcatty_pf_prefer_form_mode_v1';
+export const STORAGE_KEY_PF_VIEW_MODE = 'netcatty_pf_view_mode_v1';
 export const STORAGE_KEY_KNOWN_HOSTS = 'netcatty_known_hosts_v1';
 export const STORAGE_KEY_SHELL_HISTORY = 'netcatty_shell_history_v1';
 export const STORAGE_KEY_CONNECTION_LOGS = 'netcatty_connection_logs_v1';
 export const STORAGE_KEY_IDENTITIES = 'netcatty_identities_v1';
+export const STORAGE_KEY_VAULT_HOSTS_VIEW_MODE = 'netcatty_vault_hosts_view_mode_v1';
+export const STORAGE_KEY_VAULT_KEYS_VIEW_MODE = 'netcatty_vault_keys_view_mode_v1';
+export const STORAGE_KEY_VAULT_SNIPPETS_VIEW_MODE = 'netcatty_vault_snippets_view_mode_v1';
+export const STORAGE_KEY_VAULT_KNOWN_HOSTS_VIEW_MODE = 'netcatty_vault_known_hosts_view_mode_v1';
 
 // Archived legacy key records that are no longer supported by the app (e.g. biometric/WebAuthn/FIDO2 experiments).
 export const STORAGE_KEY_LEGACY_KEYS = 'netcatty_legacy_keys_v1';

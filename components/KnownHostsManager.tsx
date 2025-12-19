@@ -21,6 +21,8 @@ import React, {
 } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useKnownHostsBackend } from "../application/state/useKnownHostsBackend";
+import { useStoredViewMode, ViewMode } from "../application/state/useStoredViewMode";
+import { STORAGE_KEY_VAULT_KNOWN_HOSTS_VIEW_MODE } from "../infrastructure/config/storageKeys";
 import { logger } from "../lib/logger";
 import { cn } from "../lib/utils";
 import { Host, KnownHost } from "../types";
@@ -47,8 +49,6 @@ interface KnownHostsManagerProps {
   onImportFromFile: (hosts: KnownHost[]) => void;
   onRefresh: () => void;
 }
-
-type ViewMode = "grid" | "list";
 
 // Parse known_hosts file content - pure function, moved outside component
 const parseKnownHostsFile = (content: string): KnownHost[] => {
@@ -244,7 +244,10 @@ const KnownHostsManager: React.FC<KnownHostsManagerProps> = ({
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
   const [isScanning, setIsScanning] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>("grid");
+  const [viewMode, setViewMode] = useStoredViewMode(
+    STORAGE_KEY_VAULT_KNOWN_HOSTS_VIEW_MODE,
+    "grid",
+  );
   const [sortMode, setSortMode] = useState<SortMode>("newest");
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const hasScannedRef = React.useRef(false);
