@@ -849,9 +849,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
               {inWorkspace && onToggleBroadcast && (
                 <Button
                   variant="secondary"
-                  size="sm"
+                  size="icon"
                   className={cn(
-                    "h-7 px-2 text-[11px] shadow-none border-none text-[color:var(--terminal-toolbar-fg)]",
+                    "h-7 w-7 p-0 shadow-none border-none text-[color:var(--terminal-toolbar-fg)]",
                     "bg-[color:var(--terminal-toolbar-btn)] hover:bg-[color:var(--terminal-toolbar-btn-hover)]",
                     isBroadcastEnabled ? "bg-[color:var(--terminal-toolbar-btn-active)]" : "",
                   )}
@@ -861,19 +861,25 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                       ? t("terminal.toolbar.broadcastDisable")
                       : t("terminal.toolbar.broadcastEnable")
                   }
+                  aria-label={
+                    isBroadcastEnabled
+                      ? t("terminal.toolbar.broadcastDisable")
+                      : t("terminal.toolbar.broadcastEnable")
+                  }
                 >
-                  <Radio size={12} className="mr-2" /> {t("terminal.toolbar.broadcast")}
+                  <Radio size={14} />
                 </Button>
               )}
               {inWorkspace && !isFocusMode && onExpandToFocus && (
                 <Button
                   variant="secondary"
-                  size="sm"
-                  className="h-7 px-2 text-[11px] shadow-none border-none text-[color:var(--terminal-toolbar-fg)] bg-[color:var(--terminal-toolbar-btn)] hover:bg-[color:var(--terminal-toolbar-btn-hover)]"
+                  size="icon"
+                  className="h-7 w-7 p-0 shadow-none border-none text-[color:var(--terminal-toolbar-fg)] bg-[color:var(--terminal-toolbar-btn)] hover:bg-[color:var(--terminal-toolbar-btn-hover)]"
                   onClick={onExpandToFocus}
                   title={t("terminal.toolbar.focusMode")}
+                  aria-label={t("terminal.toolbar.focusMode")}
                 >
-                  <Maximize2 size={12} className="mr-2" /> {t("terminal.toolbar.focus")}
+                  <Maximize2 size={14} />
                 </Button>
               )}
               {renderControls({ showClose: inWorkspace })}

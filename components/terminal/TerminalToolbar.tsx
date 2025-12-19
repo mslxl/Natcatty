@@ -55,7 +55,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
 }) => {
     const { t } = useI18n();
     const [themeModalOpen, setThemeModalOpen] = useState(false);
-    const buttonBase = "h-7 px-2 text-[11px] shadow-none border-none text-[color:var(--terminal-toolbar-fg)] bg-[color:var(--terminal-toolbar-btn)] hover:bg-[color:var(--terminal-toolbar-btn-hover)]";
+    const buttonBase = "h-7 w-7 p-0 shadow-none border-none text-[color:var(--terminal-toolbar-fg)] bg-[color:var(--terminal-toolbar-btn)] hover:bg-[color:var(--terminal-toolbar-btn-hover)]";
 
     const isLocalTerminal = host?.protocol === 'local' || host?.id?.startsWith('local-');
 
@@ -97,23 +97,26 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
         <>
             <Button
                 variant="secondary"
-                size="sm"
+                size="icon"
                 className={buttonBase}
                 disabled={status !== 'connected'}
                 title={status === 'connected' ? t("terminal.toolbar.openSftp") : t("terminal.toolbar.availableAfterConnect")}
+                aria-label={t("terminal.toolbar.openSftp")}
                 onClick={onOpenSFTP}
             >
-                <FolderInput size={12} className="mr-2" /> {t("terminal.toolbar.sftp")}
+                <FolderInput size={14} />
             </Button>
 
             <Popover open={isScriptsOpen} onOpenChange={setIsScriptsOpen}>
                 <PopoverTrigger asChild>
                     <Button
                         variant="secondary"
-                        size="sm"
+                        size="icon"
                         className={buttonBase}
+                        title={t("terminal.toolbar.scripts")}
+                        aria-label={t("terminal.toolbar.scripts")}
                     >
-                        <Zap size={12} className="mr-2" /> {t("terminal.toolbar.scripts")}
+                        <Zap size={14} />
                     </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-64 p-0" align="start">
@@ -147,22 +150,24 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
 
             <Button
                 variant="secondary"
-                size="sm"
+                size="icon"
                 className={buttonBase}
                 title={t("terminal.toolbar.terminalSettings")}
+                aria-label={t("terminal.toolbar.terminalSettings")}
                 onClick={() => setThemeModalOpen(true)}
             >
-                <Palette size={12} className="mr-2" /> {t("common.settings")}
+                <Palette size={14} />
             </Button>
 
             <Button
                 variant="secondary"
-                size="sm"
+                size="icon"
                 className={`${buttonBase} ${isSearchOpen ? 'bg-[color:var(--terminal-toolbar-btn-active)]' : ''}`}
                 title={t("terminal.toolbar.searchTerminal")}
+                aria-label={t("terminal.toolbar.searchTerminal")}
                 onClick={onToggleSearch}
             >
-                <Search size={12} className="mr-2" /> {t("terminal.toolbar.search")}
+                <Search size={14} />
             </Button>
 
             {showClose && onClose && (
