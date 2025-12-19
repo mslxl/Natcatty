@@ -301,6 +301,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const activeResizers = useMemo(() => collectResizers(activeWorkspace, workspaceArea), [activeWorkspace, workspaceArea, collectResizers]);
 
   const computeSplitHint = (e: React.DragEvent): SplitHint => {
+    if (isFocusMode) return null;
     const surface = workspaceOverlayRef.current || workspaceInnerRef.current || workspaceOuterRef.current;
     if (!surface || !workspaceArea.width || !workspaceArea.height) return null;
     const rect = surface.getBoundingClientRect();
@@ -390,6 +391,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   }, [resizing, onUpdateSplitSizes]);
 
   const handleWorkspaceDrop = (e: React.DragEvent) => {
+    if (isFocusMode) return;
     const draggedSessionId = e.dataTransfer.getData('session-id');
     if (!draggedSessionId) return;
     e.preventDefault();
@@ -426,6 +428,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   // Check if active workspace is in focus mode
   const isFocusMode = activeWorkspace?.viewMode === 'focus';
   const focusedSessionId = activeWorkspace?.focusedSessionId;
+
+  useEffect(() => {
+    if (isFocusMode && dropHint) {
+      setDropHint(null);
+    }
+  }, [isFocusMode, dropHint]);
 
   // Track previous focusedSessionId to detect changes
   const prevFocusedSessionIdRef = useRef<string | undefined>(undefined);
@@ -567,11 +575,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       {/* Focus mode sidebar */}
       {isFocusMode && renderFocusModeSidebar()}
 
-      {draggingSessionId && (
+      {draggingSessionId && !isFocusMode && (
         <div
           ref={workspaceOverlayRef}
           className="absolute inset-0 z-30"
           onDragOver={(e) => {
+            if (isFocusMode) return;
             if (!e.dataTransfer.types.includes('session-id')) return;
             e.preventDefault();
             e.stopPropagation();

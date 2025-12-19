@@ -822,11 +822,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     >
       <div className="relative h-full w-full flex overflow-hidden bg-gradient-to-br from-[#050910] via-[#06101a] to-[#0b1220]">
         <div className="absolute left-0 right-0 top-0 z-20 pointer-events-none">
-          <div
-            className="flex items-center gap-1 px-2 py-1 backdrop-blur-md pointer-events-auto min-w-0 border-b-[0.5px]"
-            style={{
-              backgroundColor: effectiveTheme.colors.background,
-              color: effectiveTheme.colors.foreground,
+            <div
+              className="flex items-center gap-1 px-2 py-0.5 backdrop-blur-md pointer-events-auto min-w-0 border-b-[0.5px]"
+              style={{
+                backgroundColor: effectiveTheme.colors.background,
+                color: effectiveTheme.colors.foreground,
               borderColor: `color-mix(in srgb, ${effectiveTheme.colors.foreground} 8%, ${effectiveTheme.colors.background} 92%)`,
               ['--terminal-toolbar-fg' as never]: effectiveTheme.colors.foreground,
               ['--terminal-toolbar-bg' as never]: effectiveTheme.colors.background,
@@ -847,14 +847,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
             <div className="flex-1" />
             <div className="flex items-center gap-0.5 flex-shrink-0">
               {inWorkspace && onToggleBroadcast && (
-                <Button
-                  variant="secondary"
-                  size="icon"
-                  className={cn(
-                    "h-7 w-7 p-0 shadow-none border-none text-[color:var(--terminal-toolbar-fg)]",
-                    "bg-[color:var(--terminal-toolbar-btn)] hover:bg-[color:var(--terminal-toolbar-btn-hover)]",
-                    isBroadcastEnabled ? "bg-[color:var(--terminal-toolbar-btn-active)]" : "",
-                  )}
+                  <Button
+                    variant="secondary"
+                    size="icon"
+                    className={cn(
+                      "h-6 w-6 p-0 shadow-none border-none text-[color:var(--terminal-toolbar-fg)]",
+                      "bg-[color:var(--terminal-toolbar-btn)] hover:bg-[color:var(--terminal-toolbar-btn-hover)]",
+                      isBroadcastEnabled ? "bg-[color:var(--terminal-toolbar-btn-active)]" : "",
+                    )}
                   onClick={onToggleBroadcast}
                   title={
                     isBroadcastEnabled
@@ -866,22 +866,22 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                       ? t("terminal.toolbar.broadcastDisable")
                       : t("terminal.toolbar.broadcastEnable")
                   }
-                >
-                  <Radio size={14} />
-                </Button>
-              )}
-              {inWorkspace && !isFocusMode && onExpandToFocus && (
-                <Button
-                  variant="secondary"
-                  size="icon"
-                  className="h-7 w-7 p-0 shadow-none border-none text-[color:var(--terminal-toolbar-fg)] bg-[color:var(--terminal-toolbar-btn)] hover:bg-[color:var(--terminal-toolbar-btn-hover)]"
-                  onClick={onExpandToFocus}
-                  title={t("terminal.toolbar.focusMode")}
-                  aria-label={t("terminal.toolbar.focusMode")}
-                >
-                  <Maximize2 size={14} />
-                </Button>
-              )}
+                  >
+                    <Radio size={12} />
+                  </Button>
+                )}
+                {inWorkspace && !isFocusMode && onExpandToFocus && (
+                  <Button
+                    variant="secondary"
+                    size="icon"
+                    className="h-6 w-6 p-0 shadow-none border-none text-[color:var(--terminal-toolbar-fg)] bg-[color:var(--terminal-toolbar-btn)] hover:bg-[color:var(--terminal-toolbar-btn-hover)]"
+                    onClick={onExpandToFocus}
+                    title={t("terminal.toolbar.focusMode")}
+                    aria-label={t("terminal.toolbar.focusMode")}
+                  >
+                    <Maximize2 size={12} />
+                  </Button>
+                )}
               {renderControls({ showClose: inWorkspace })}
             </div>
           </div>

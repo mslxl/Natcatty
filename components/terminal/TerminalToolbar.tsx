@@ -55,7 +55,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
 }) => {
     const { t } = useI18n();
     const [themeModalOpen, setThemeModalOpen] = useState(false);
-    const buttonBase = "h-7 w-7 p-0 shadow-none border-none text-[color:var(--terminal-toolbar-fg)] bg-[color:var(--terminal-toolbar-btn)] hover:bg-[color:var(--terminal-toolbar-btn-hover)]";
+    const buttonBase = "h-6 w-6 p-0 shadow-none border-none text-[color:var(--terminal-toolbar-fg)] bg-[color:var(--terminal-toolbar-btn)] hover:bg-[color:var(--terminal-toolbar-btn-hover)]";
 
     const isLocalTerminal = host?.protocol === 'local' || host?.id?.startsWith('local-');
 
@@ -104,7 +104,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                 aria-label={t("terminal.toolbar.openSftp")}
                 onClick={onOpenSFTP}
             >
-                <FolderInput size={14} />
+                <FolderInput size={12} />
             </Button>
 
             <Popover open={isScriptsOpen} onOpenChange={setIsScriptsOpen}>
@@ -116,7 +116,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                         title={t("terminal.toolbar.scripts")}
                         aria-label={t("terminal.toolbar.scripts")}
                     >
-                        <Zap size={14} />
+                        <Zap size={12} />
                     </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-64 p-0" align="start">
@@ -156,7 +156,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                 aria-label={t("terminal.toolbar.terminalSettings")}
                 onClick={() => setThemeModalOpen(true)}
             >
-                <Palette size={14} />
+                <Palette size={12} />
             </Button>
 
             <Button
@@ -167,21 +167,21 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                 aria-label={t("terminal.toolbar.searchTerminal")}
                 onClick={onToggleSearch}
             >
-                <Search size={14} />
+                <Search size={12} />
             </Button>
 
             {showClose && onClose && (
                 <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 text-[color:var(--terminal-toolbar-fg)] hover:bg-[color:var(--terminal-toolbar-btn-hover)]"
+                    className="h-6 w-6 text-[color:var(--terminal-toolbar-fg)] hover:bg-[color:var(--terminal-toolbar-btn-hover)]"
                     onClick={(e) => {
                         e.stopPropagation();
                         onClose();
                     }}
                     title={t("terminal.toolbar.closeSession")}
                 >
-                    <X size={12} />
+                    <X size={11} />
                 </Button>
             )}
 
