@@ -35,8 +35,10 @@ const zhCN: Messages = {
   'confirm.deleteHost': '删除主机 "{name}"？',
   'confirm.deleteIdentity': '删除身份 "{name}"？',
   'dialog.renameWorkspace.title': '重命名工作区',
+  'dialog.renameSession.title': '重命名会话',
   'field.name': '名称',
   'placeholder.workspaceName': '工作区名称',
+  'placeholder.sessionName': '会话名称',
   'toast.settingsUnavailable': '当前平台无法打开设置窗口。',
 
   // Settings shell
@@ -405,6 +407,12 @@ const zhCN: Messages = {
   'terminal.toolbar.noSnippets': '暂无代码片段',
   'terminal.toolbar.terminalSettings': '终端设置',
   'terminal.toolbar.searchTerminal': '搜索终端 (Ctrl+F)',
+  'terminal.toolbar.search': '搜索',
+  'terminal.toolbar.broadcast': '广播',
+  'terminal.toolbar.broadcastEnable': '启用广播模式',
+  'terminal.toolbar.broadcastDisable': '关闭广播模式',
+  'terminal.toolbar.focus': '聚焦',
+  'terminal.toolbar.focusMode': '聚焦模式',
   'terminal.toolbar.closeSession': '关闭会话',
   'terminal.search.placeholder': '搜索…',
   'terminal.search.noResults': '无结果',

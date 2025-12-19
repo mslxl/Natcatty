@@ -190,6 +190,12 @@ function App({ settings }: { settings: SettingsState }) {
     setActiveTabId,
     draggingSessionId,
     setDraggingSessionId,
+    sessionRenameTarget,
+    sessionRenameValue,
+    setSessionRenameValue,
+    startSessionRename,
+    submitSessionRename,
+    resetSessionRename,
     workspaceRenameTarget,
     workspaceRenameValue,
     setWorkspaceRenameValue,
@@ -700,6 +706,7 @@ function App({ settings }: { settings: SettingsState }) {
         draggingSessionId={draggingSessionId}
         isMacClient={isMacClient}
         onCloseSession={closeSession}
+        onRenameSession={startSessionRename}
         onRenameWorkspace={startWorkspaceRename}
         onCloseWorkspace={closeWorkspace}
         onCloseLogView={closeLogView}
@@ -838,6 +845,33 @@ function App({ settings }: { settings: SettingsState }) {
           />
         </Suspense>
       )}
+
+      <Dialog open={!!sessionRenameTarget} onOpenChange={(open) => {
+        if (!open) {
+          resetSessionRename();
+        }
+      }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t('dialog.renameSession.title')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="session-name">{t('field.name')}</Label>
+            <Input
+              id="session-name"
+              value={sessionRenameValue}
+              onChange={(e) => setSessionRenameValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') submitSessionRename(); }}
+              autoFocus
+              placeholder={t('placeholder.sessionName')}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={resetSessionRename}>{t('common.cancel')}</Button>
+            <Button onClick={submitSessionRename} disabled={!sessionRenameValue.trim()}>{t('common.save')}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!workspaceRenameTarget} onOpenChange={(open) => {
         if (!open) {

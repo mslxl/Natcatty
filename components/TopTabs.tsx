@@ -24,6 +24,7 @@ interface TopTabsProps {
   draggingSessionId: string | null;
   isMacClient: boolean;
   onCloseSession: (sessionId: string, e?: React.MouseEvent) => void;
+  onRenameSession: (sessionId: string) => void;
   onRenameWorkspace: (workspaceId: string) => void;
   onCloseWorkspace: (workspaceId: string) => void;
   onCloseLogView: (logViewId: string) => void;
@@ -119,6 +120,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   draggingSessionId,
   isMacClient,
   onCloseSession,
+  onRenameSession,
   onRenameWorkspace,
   onCloseWorkspace,
   onCloseLogView,
@@ -360,48 +362,59 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
         const showDropIndicatorAfter = dropIndicator?.tabId === session.id && dropIndicator.position === 'after';
 
         return (
-          <div
-            key={session.id}
-            data-tab-id={session.id}
-            onClick={() => onSelectTab(session.id)}
-            draggable
-            onDragStart={(e) => handleTabDragStart(e, session.id)}
-            onDragEnd={handleTabDragEnd}
-            onDragOver={(e) => handleTabDragOver(e, session.id)}
-            onDragLeave={handleTabDragLeave}
-            onDrop={(e) => handleTabDrop(e, session.id)}
-            className={cn(
-              "relative h-8 pl-3 pr-2 min-w-[140px] max-w-[240px] rounded-md border text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0",
-              "transition-all duration-200 ease-out",
-              activeTabId === session.id ? "bg-accent/20 text-foreground" : "border-border/60 text-muted-foreground hover:border-accent/40 hover:text-foreground",
-              isBeingDragged && isDraggingForReorder ? "opacity-40 scale-95" : ""
-            )}
-            style={{
-              ...shiftStyle,
-              ...(activeTabId === session.id ? { borderColor: 'hsl(var(--accent))' } : {})
-            }}
-          >
-            {/* Drop indicator line - before */}
-            {showDropIndicatorBefore && isDraggingForReorder && (
-              <div className="absolute -left-1.5 top-1 bottom-1 w-0.5 bg-primary rounded-full shadow-[0_0_8px_2px] shadow-primary/50 animate-pulse" />
-            )}
-            {/* Drop indicator line - after */}
-            {showDropIndicatorAfter && isDraggingForReorder && (
-              <div className="absolute -right-1.5 top-1 bottom-1 w-0.5 bg-primary rounded-full shadow-[0_0_8px_2px] shadow-primary/50 animate-pulse" />
-            )}
-            <div className="flex items-center gap-2 min-w-0 flex-1">
-              <TerminalSquare size={14} className={cn("shrink-0", activeTabId === session.id ? "text-accent" : "text-muted-foreground")} />
-              <span className="truncate">{session.hostLabel}</span>
-              <div className="flex-shrink-0">{sessionStatusDot(session.status)}</div>
-            </div>
-            <button
-              onClick={(e) => onCloseSession(session.id, e)}
-              className="p-1 rounded-full hover:bg-destructive/10 hover:text-destructive transition-colors"
-              aria-label={t('tabs.closeSessionAria')}
-            >
-              <X size={12} />
-            </button>
-          </div>
+          <ContextMenu key={session.id}>
+            <ContextMenuTrigger asChild>
+              <div
+                data-tab-id={session.id}
+                onClick={() => onSelectTab(session.id)}
+                draggable
+                onDragStart={(e) => handleTabDragStart(e, session.id)}
+                onDragEnd={handleTabDragEnd}
+                onDragOver={(e) => handleTabDragOver(e, session.id)}
+                onDragLeave={handleTabDragLeave}
+                onDrop={(e) => handleTabDrop(e, session.id)}
+                className={cn(
+                  "relative h-8 pl-3 pr-2 min-w-[140px] max-w-[240px] rounded-md border text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0",
+                  "transition-all duration-200 ease-out",
+                  activeTabId === session.id ? "bg-accent/20 text-foreground" : "border-border/60 text-muted-foreground hover:border-accent/40 hover:text-foreground",
+                  isBeingDragged && isDraggingForReorder ? "opacity-40 scale-95" : ""
+                )}
+                style={{
+                  ...shiftStyle,
+                  ...(activeTabId === session.id ? { borderColor: 'hsl(var(--accent))' } : {})
+                }}
+              >
+                {/* Drop indicator line - before */}
+                {showDropIndicatorBefore && isDraggingForReorder && (
+                  <div className="absolute -left-1.5 top-1 bottom-1 w-0.5 bg-primary rounded-full shadow-[0_0_8px_2px] shadow-primary/50 animate-pulse" />
+                )}
+                {/* Drop indicator line - after */}
+                {showDropIndicatorAfter && isDraggingForReorder && (
+                  <div className="absolute -right-1.5 top-1 bottom-1 w-0.5 bg-primary rounded-full shadow-[0_0_8px_2px] shadow-primary/50 animate-pulse" />
+                )}
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <TerminalSquare size={14} className={cn("shrink-0", activeTabId === session.id ? "text-accent" : "text-muted-foreground")} />
+                  <span className="truncate">{session.hostLabel}</span>
+                  <div className="flex-shrink-0">{sessionStatusDot(session.status)}</div>
+                </div>
+                <button
+                  onClick={(e) => onCloseSession(session.id, e)}
+                  className="p-1 rounded-full hover:bg-destructive/10 hover:text-destructive transition-colors"
+                  aria-label={t('tabs.closeSessionAria')}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            </ContextMenuTrigger>
+            <ContextMenuContent>
+              <ContextMenuItem onClick={() => onRenameSession(session.id)}>
+                {t('common.rename')}
+              </ContextMenuItem>
+              <ContextMenuItem className="text-destructive" onClick={() => onCloseSession(session.id)}>
+                {t('common.close')}
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
         );
       }
 

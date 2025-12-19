@@ -823,15 +823,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       <div className="relative h-full w-full flex overflow-hidden bg-gradient-to-br from-[#050910] via-[#06101a] to-[#0b1220]">
         <div className="absolute left-0 right-0 top-0 z-20 pointer-events-none">
           <div className="flex items-center gap-1 px-2 py-1 bg-black/55 text-white backdrop-blur-md pointer-events-auto min-w-0">
-            <div className="flex-1 min-w-0 flex items-center gap-1 text-[11px] font-semibold">
-              <span
-                className={cn(
-                  "truncate",
-                  inWorkspace ? "max-w-[80px]" : "max-w-[200px]",
-                )}
-              >
-                {host.label}
-              </span>
+            <div className="flex items-center gap-1 text-[11px] font-semibold">
+              <span className="whitespace-nowrap">{host.label}</span>
               <span
                 className={cn(
                   "inline-block h-2 w-2 rounded-full flex-shrink-0",
@@ -839,13 +832,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                 )}
               />
             </div>
+            <div className="flex-1" />
             <div className="flex items-center gap-0.5 flex-shrink-0">
               {inWorkspace && onToggleBroadcast && (
                 <Button
-                  variant="ghost"
+                  variant="secondary"
                   size="sm"
                   className={cn(
-                    "h-6 w-6 p-0 hover:bg-white/10",
+                    "h-7 px-2 text-[11px] bg-white/5 hover:bg-white/10 text-white shadow-none border-none",
                     isBroadcastEnabled
                       ? "text-emerald-400 hover:text-emerald-300"
                       : "text-white/70 hover:text-white",
@@ -853,22 +847,22 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                   onClick={onToggleBroadcast}
                   title={
                     isBroadcastEnabled
-                      ? "Disable Broadcast Mode"
-                      : "Enable Broadcast Mode"
+                      ? t("terminal.toolbar.broadcastDisable")
+                      : t("terminal.toolbar.broadcastEnable")
                   }
                 >
-                  <Radio size={12} />
+                  <Radio size={12} className="mr-2" /> {t("terminal.toolbar.broadcast")}
                 </Button>
               )}
               {inWorkspace && !isFocusMode && onExpandToFocus && (
                 <Button
-                  variant="ghost"
+                  variant="secondary"
                   size="sm"
-                  className="h-6 w-6 p-0 text-white/70 hover:text-white hover:bg-white/10"
+                  className="h-7 px-2 text-[11px] bg-white/5 hover:bg-white/10 text-white shadow-none border-none text-white/70 hover:text-white"
                   onClick={onExpandToFocus}
-                  title="Focus Mode"
+                  title={t("terminal.toolbar.focusMode")}
                 >
-                  <Maximize2 size={12} />
+                  <Maximize2 size={12} className="mr-2" /> {t("terminal.toolbar.focus")}
                 </Button>
               )}
               {renderControls({ showClose: inWorkspace })}

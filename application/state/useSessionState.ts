@@ -27,6 +27,8 @@ export const useSessionState = () => {
   // activeTabId is now managed by external store - components subscribe directly
   const setActiveTabId = activeTabStore.setActiveTabId;
   const [draggingSessionId, setDraggingSessionId] = useState<string | null>(null);
+  const [sessionRenameTarget, setSessionRenameTarget] = useState<TerminalSession | null>(null);
+  const [sessionRenameValue, setSessionRenameValue] = useState('');
   const [workspaceRenameTarget, setWorkspaceRenameTarget] = useState<Workspace | null>(null);
   const [workspaceRenameValue, setWorkspaceRenameValue] = useState('');
   // Tab order: stores ordered list of tab IDs (orphan session IDs and workspace IDs)
@@ -172,6 +174,37 @@ export const useSessionState = () => {
 	      return remainingWorkspaces;
 	    });
 	  }, [setActiveTabId]);
+
+  const startSessionRename = useCallback((sessionId: string) => {
+    setSessions(prevSessions => {
+      const target = prevSessions.find(s => s.id === sessionId);
+      if (target) {
+        setSessionRenameTarget(target);
+        setSessionRenameValue(target.hostLabel);
+      }
+      return prevSessions;
+    });
+  }, []);
+
+  const submitSessionRename = useCallback(() => {
+    setSessionRenameValue(prevValue => {
+      const name = prevValue.trim();
+      if (!name) return prevValue;
+
+      setSessionRenameTarget(prevTarget => {
+        if (!prevTarget) return prevTarget;
+        setSessions(prev => prev.map(s => s.id === prevTarget.id ? { ...s, hostLabel: name } : s));
+        return null;
+      });
+
+      return '';
+    });
+  }, []);
+
+  const resetSessionRename = useCallback(() => {
+    setSessionRenameTarget(null);
+    setSessionRenameValue('');
+  }, []);
 
   const startWorkspaceRename = useCallback((workspaceId: string) => {
     setWorkspaces(prevWorkspaces => {
@@ -544,6 +577,12 @@ export const useSessionState = () => {
     setActiveTabId,
     draggingSessionId,
     setDraggingSessionId,
+    sessionRenameTarget,
+    sessionRenameValue,
+    setSessionRenameValue,
+    startSessionRename,
+    submitSessionRename,
+    resetSessionRename,
     workspaceRenameTarget,
     workspaceRenameValue,
     setWorkspaceRenameValue,

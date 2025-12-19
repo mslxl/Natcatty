@@ -158,11 +158,11 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
             <Button
                 variant="secondary"
                 size="sm"
-                className={`${buttonBase} px-1.5 ${isSearchOpen ? 'bg-white/20' : ''}`}
+                className={`${buttonBase} ${isSearchOpen ? 'bg-white/20' : ''}`}
                 title={t("terminal.toolbar.searchTerminal")}
                 onClick={onToggleSearch}
             >
-                <Search size={12} />
+                <Search size={12} className="mr-2" /> {t("terminal.toolbar.search")}
             </Button>
 
             {showClose && onClose && (

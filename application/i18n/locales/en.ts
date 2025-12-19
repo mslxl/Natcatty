@@ -47,8 +47,10 @@ const en: Messages = {
   'confirm.deleteHost': 'Delete Host "{name}"?',
   'confirm.deleteIdentity': 'Delete Identity "{name}"?',
   'dialog.renameWorkspace.title': 'Rename workspace',
+  'dialog.renameSession.title': 'Rename session',
   'field.name': 'Name',
   'placeholder.workspaceName': 'Workspace name',
+  'placeholder.sessionName': 'Session name',
   'toast.settingsUnavailable': 'Settings window is unavailable on this platform.',
 
   // Settings shell
@@ -565,6 +567,12 @@ const en: Messages = {
   'terminal.toolbar.noSnippets': 'No snippets available',
   'terminal.toolbar.terminalSettings': 'Terminal settings',
   'terminal.toolbar.searchTerminal': 'Search terminal (Ctrl+F)',
+  'terminal.toolbar.search': 'Search',
+  'terminal.toolbar.broadcast': 'Broadcast',
+  'terminal.toolbar.broadcastEnable': 'Enable Broadcast Mode',
+  'terminal.toolbar.broadcastDisable': 'Disable Broadcast Mode',
+  'terminal.toolbar.focus': 'Focus',
+  'terminal.toolbar.focusMode': 'Focus Mode',
   'terminal.toolbar.closeSession': 'Close session',
   'terminal.search.placeholder': 'Search...',
   'terminal.search.noResults': 'No results',
