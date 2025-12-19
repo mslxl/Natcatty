@@ -822,7 +822,19 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     >
       <div className="relative h-full w-full flex overflow-hidden bg-gradient-to-br from-[#050910] via-[#06101a] to-[#0b1220]">
         <div className="absolute left-0 right-0 top-0 z-20 pointer-events-none">
-          <div className="flex items-center gap-1 px-2 py-1 bg-black/55 text-white backdrop-blur-md pointer-events-auto min-w-0">
+          <div
+            className="flex items-center gap-1 px-2 py-1 backdrop-blur-md pointer-events-auto min-w-0 border-b-[0.5px]"
+            style={{
+              backgroundColor: effectiveTheme.colors.background,
+              color: effectiveTheme.colors.foreground,
+              borderColor: `color-mix(in srgb, ${effectiveTheme.colors.foreground} 8%, ${effectiveTheme.colors.background} 92%)`,
+              ['--terminal-toolbar-fg' as never]: effectiveTheme.colors.foreground,
+              ['--terminal-toolbar-bg' as never]: effectiveTheme.colors.background,
+              ['--terminal-toolbar-btn' as never]: `color-mix(in srgb, ${effectiveTheme.colors.background} 88%, ${effectiveTheme.colors.foreground} 12%)`,
+              ['--terminal-toolbar-btn-hover' as never]: `color-mix(in srgb, ${effectiveTheme.colors.background} 78%, ${effectiveTheme.colors.foreground} 22%)`,
+              ['--terminal-toolbar-btn-active' as never]: `color-mix(in srgb, ${effectiveTheme.colors.background} 68%, ${effectiveTheme.colors.foreground} 32%)`,
+            }}
+          >
             <div className="flex items-center gap-1 text-[11px] font-semibold">
               <span className="whitespace-nowrap">{host.label}</span>
               <span
@@ -839,10 +851,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                   variant="secondary"
                   size="sm"
                   className={cn(
-                    "h-7 px-2 text-[11px] bg-white/5 hover:bg-white/10 text-white shadow-none border-none",
-                    isBroadcastEnabled
-                      ? "text-emerald-400 hover:text-emerald-300"
-                      : "text-white/70 hover:text-white",
+                    "h-7 px-2 text-[11px] shadow-none border-none text-[color:var(--terminal-toolbar-fg)]",
+                    "bg-[color:var(--terminal-toolbar-btn)] hover:bg-[color:var(--terminal-toolbar-btn-hover)]",
+                    isBroadcastEnabled ? "bg-[color:var(--terminal-toolbar-btn-active)]" : "",
                   )}
                   onClick={onToggleBroadcast}
                   title={
@@ -858,7 +869,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                 <Button
                   variant="secondary"
                   size="sm"
-                  className="h-7 px-2 text-[11px] bg-white/5 hover:bg-white/10 text-white shadow-none border-none text-white/70 hover:text-white"
+                  className="h-7 px-2 text-[11px] shadow-none border-none text-[color:var(--terminal-toolbar-fg)] bg-[color:var(--terminal-toolbar-btn)] hover:bg-[color:var(--terminal-toolbar-btn-hover)]"
                   onClick={onExpandToFocus}
                   title={t("terminal.toolbar.focusMode")}
                 >
