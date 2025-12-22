@@ -15,6 +15,7 @@ import {
     CloudOff,
     Copy,
     Download,
+    Database,
     ExternalLink,
     Eye,
     EyeOff,
@@ -22,6 +23,7 @@ import {
     Key,
     Loader2,
     RefreshCw,
+    Server,
     Shield,
     ShieldCheck,
     X,
@@ -34,6 +36,7 @@ import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { toast } from './ui/toast';
 
 // ============================================================================
@@ -382,6 +385,49 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                         {t('cloudSync.provider.connect')}
                     </Button>
                 )}
+            </div>
+        </div>
+    );
+};
+
+// ============================================================================
+// Placeholder Provider Card (Coming Soon)
+// ============================================================================
+
+interface PlaceholderProviderCardProps {
+    name: string;
+    description: string;
+    icon: React.ReactNode;
+}
+
+const PlaceholderProviderCard: React.FC<PlaceholderProviderCardProps> = ({
+    name,
+    description,
+    icon,
+}) => {
+    const { t } = useI18n();
+
+    return (
+        <div className="flex items-center gap-4 p-4 rounded-lg border bg-muted/30">
+            <div className="w-12 h-12 rounded-lg flex items-center justify-center bg-muted text-muted-foreground">
+                {icon}
+            </div>
+
+            <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                    <span className="font-medium">{name}</span>
+                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground border border-border/60 rounded-full px-2 py-0.5">
+                        {t('cloudSync.provider.comingSoon')}
+                    </span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">{description}</p>
+            </div>
+
+            <div className="flex items-center gap-2">
+                <Button size="sm" disabled className="gap-1">
+                    <Cloud size={14} />
+                    {t('cloudSync.provider.connect')}
+                </Button>
             </div>
         </div>
     );
@@ -794,162 +840,157 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
                 </div>
             </div>
 
-            {/* Provider Cards */}
-            <div className="space-y-3">
-                <h3 className="text-sm font-medium text-muted-foreground">{t('cloudSync.providers.title')}</h3>
+            <Tabs defaultValue="providers" className="space-y-4">
+                <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="providers">{t('cloudSync.providers.title')}</TabsTrigger>
+                    <TabsTrigger value="status">{t('cloudSync.status.title')}</TabsTrigger>
+                </TabsList>
 
-                <ProviderCard
-                    provider="github"
-                    name="GitHub Gist"
-                    icon={<Github size={24} />}
-                    isConnected={sync.providers.github.status === 'connected' || sync.providers.github.status === 'syncing'}
-                    isSyncing={sync.providers.github.status === 'syncing'}
-                    account={sync.providers.github.account}
-                    lastSync={sync.providers.github.lastSync}
-                    error={sync.providers.github.error}
-                    disabled={sync.hasAnyConnectedProvider && sync.providers.github.status !== 'connected' && sync.providers.github.status !== 'syncing'}
-                    onConnect={handleConnectGitHub}
-                    onDisconnect={() => sync.disconnectProvider('github')}
-                    onSync={() => handleSync('github')}
-                />
-
-                <ProviderCard
-                    provider="google"
-                    name="Google Drive"
-                    icon={<GoogleDriveIcon className="w-6 h-6" />}
-                    isConnected={sync.providers.google.status === 'connected' || sync.providers.google.status === 'syncing'}
-                    isSyncing={sync.providers.google.status === 'syncing'}
-                    account={sync.providers.google.account}
-                    lastSync={sync.providers.google.lastSync}
-                    error={sync.providers.google.error}
-                    disabled={sync.hasAnyConnectedProvider && sync.providers.google.status !== 'connected' && sync.providers.google.status !== 'syncing'}
-                    onConnect={handleConnectGoogle}
-                    onDisconnect={() => sync.disconnectProvider('google')}
-                    onSync={() => handleSync('google')}
-                />
-
-                <ProviderCard
-                    provider="onedrive"
-                    name="Microsoft OneDrive"
-                    icon={<OneDriveIcon className="w-6 h-6" />}
-                    isConnected={sync.providers.onedrive.status === 'connected' || sync.providers.onedrive.status === 'syncing'}
-                    isSyncing={sync.providers.onedrive.status === 'syncing'}
-                    account={sync.providers.onedrive.account}
-                    lastSync={sync.providers.onedrive.lastSync}
-                    error={sync.providers.onedrive.error}
-                    disabled={sync.hasAnyConnectedProvider && sync.providers.onedrive.status !== 'connected' && sync.providers.onedrive.status !== 'syncing'}
-                    onConnect={handleConnectOneDrive}
-                    onDisconnect={() => sync.disconnectProvider('onedrive')}
-                    onSync={() => handleSync('onedrive')}
-                />
-            </div>
-
-            {/* Sync All Button */}
-            {sync.hasAnyConnectedProvider && (
-                <Button
-                    onClick={async () => {
-                        const payload = onBuildPayload();
-                        await sync.syncNow(payload);
-                    }}
-                    disabled={sync.isSyncing}
-                    className="w-full gap-2"
-                >
-                    {sync.isSyncing ? (
-                        <Loader2 size={16} className="animate-spin" />
-                    ) : (
-                        <RefreshCw size={16} />
-                    )}
-                    {t('cloudSync.syncAll')}
-                </Button>
-            )}
-
-            {/* Auto-sync Settings */}
-            <div className="p-4 rounded-lg border bg-card">
-                <div className="flex items-center justify-between">
-                    <div>
-                        <div className="text-sm font-medium">{t('cloudSync.autoSync.title')}</div>
-                        <div className="text-xs text-muted-foreground">
-                            {t('cloudSync.autoSync.desc')}
-                        </div>
-                    </div>
-                    <Toggle
-                        checked={sync.autoSyncEnabled}
-                        onChange={(enabled) => sync.setAutoSync(enabled)}
-                        disabled={!sync.hasAnyConnectedProvider}
+                <TabsContent value="providers" className="space-y-3">
+                    <ProviderCard
+                        provider="github"
+                        name="GitHub Gist"
+                        icon={<Github size={24} />}
+                        isConnected={sync.providers.github.status === 'connected' || sync.providers.github.status === 'syncing'}
+                        isSyncing={sync.providers.github.status === 'syncing'}
+                        account={sync.providers.github.account}
+                        lastSync={sync.providers.github.lastSync}
+                        error={sync.providers.github.error}
+                        disabled={sync.hasAnyConnectedProvider && sync.providers.github.status !== 'connected' && sync.providers.github.status !== 'syncing'}
+                        onConnect={handleConnectGitHub}
+                        onDisconnect={() => sync.disconnectProvider('github')}
+                        onSync={() => handleSync('github')}
                     />
-                </div>
-            </div>
 
-            {/* Version Info & Sync History */}
-            {sync.hasAnyConnectedProvider && (
-                <div className="space-y-3">
-                    <h3 className="text-sm font-medium text-muted-foreground">{t('cloudSync.status.title')}</h3>
+                    <ProviderCard
+                        provider="google"
+                        name="Google Drive"
+                        icon={<GoogleDriveIcon className="w-6 h-6" />}
+                        isConnected={sync.providers.google.status === 'connected' || sync.providers.google.status === 'syncing'}
+                        isSyncing={sync.providers.google.status === 'syncing'}
+                        account={sync.providers.google.account}
+                        lastSync={sync.providers.google.lastSync}
+                        error={sync.providers.google.error}
+                        disabled={sync.hasAnyConnectedProvider && sync.providers.google.status !== 'connected' && sync.providers.google.status !== 'syncing'}
+                        onConnect={handleConnectGoogle}
+                        onDisconnect={() => sync.disconnectProvider('google')}
+                        onSync={() => handleSync('google')}
+                    />
 
-                    {/* Version Info Cards */}
-                    <div className="grid grid-cols-2 gap-3">
-                        <div className="p-3 rounded-lg border bg-card">
-                            <div className="text-xs text-muted-foreground mb-1">{t('cloudSync.status.localVersion')}</div>
-                            <div className="text-lg font-semibold">v{sync.localVersion}</div>
-                            <div className="text-xs text-muted-foreground">
-                                {sync.localUpdatedAt
-                                    ? new Date(sync.localUpdatedAt).toLocaleString(resolvedLocale || undefined)
-                                    : t('cloudSync.lastSync.never')}
+                    <ProviderCard
+                        provider="onedrive"
+                        name="Microsoft OneDrive"
+                        icon={<OneDriveIcon className="w-6 h-6" />}
+                        isConnected={sync.providers.onedrive.status === 'connected' || sync.providers.onedrive.status === 'syncing'}
+                        isSyncing={sync.providers.onedrive.status === 'syncing'}
+                        account={sync.providers.onedrive.account}
+                        lastSync={sync.providers.onedrive.lastSync}
+                        error={sync.providers.onedrive.error}
+                        disabled={sync.hasAnyConnectedProvider && sync.providers.onedrive.status !== 'connected' && sync.providers.onedrive.status !== 'syncing'}
+                        onConnect={handleConnectOneDrive}
+                        onDisconnect={() => sync.disconnectProvider('onedrive')}
+                        onSync={() => handleSync('onedrive')}
+                    />
+
+                    <PlaceholderProviderCard
+                        name={t('cloudSync.provider.webdav')}
+                        description={t('cloudSync.provider.webdav.desc')}
+                        icon={<Server size={24} />}
+                    />
+
+                    <PlaceholderProviderCard
+                        name={t('cloudSync.provider.s3')}
+                        description={t('cloudSync.provider.s3.desc')}
+                        icon={<Database size={24} />}
+                    />
+                </TabsContent>
+
+                <TabsContent value="status" className="space-y-4">
+                    <div className="p-4 rounded-lg border bg-card">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <div className="text-sm font-medium">{t('cloudSync.autoSync.title')}</div>
+                                <div className="text-xs text-muted-foreground">
+                                    {t('cloudSync.autoSync.desc')}
+                                </div>
                             </div>
-                        </div>
-                        <div className="p-3 rounded-lg border bg-card">
-                            <div className="text-xs text-muted-foreground mb-1">{t('cloudSync.status.remoteVersion')}</div>
-                            <div className="text-lg font-semibold">v{sync.remoteVersion}</div>
-                            <div className="text-xs text-muted-foreground">
-                                {sync.remoteUpdatedAt
-                                    ? new Date(sync.remoteUpdatedAt).toLocaleString(resolvedLocale || undefined)
-                                    : t('cloudSync.lastSync.never')}
-                            </div>
+                            <Toggle
+                                checked={sync.autoSyncEnabled}
+                                onChange={(enabled) => sync.setAutoSync(enabled)}
+                                disabled={!sync.hasAnyConnectedProvider}
+                            />
                         </div>
                     </div>
 
-                    {/* Sync History */}
-                    {sync.syncHistory.length > 0 && (
-                        <div className="rounded-lg border bg-card">
-                            <div className="px-3 py-2 border-b border-border/60">
-                                <div className="text-sm font-medium">{t('cloudSync.history.title')}</div>
-                            </div>
-                            <div className="max-h-48 overflow-y-auto">
-                                {sync.syncHistory.slice(0, 10).map((entry) => (
-                                    <div key={entry.id} className="px-3 py-2 flex items-center gap-2 border-b border-border/30 last:border-b-0">
-                                        <div className={cn(
-                                            "w-2 h-2 rounded-full shrink-0",
-                                            entry.success ? "bg-green-500" : "bg-red-500"
-                                        )} />
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-xs font-medium capitalize">
-                                                    {entry.action === 'upload'
-                                                        ? t('cloudSync.history.upload')
-                                                        : entry.action === 'download'
-                                                            ? t('cloudSync.history.download')
-                                                            : t('cloudSync.history.resolved')}
-                                                </span>
-                                                <span className="text-xs text-muted-foreground">
-                                                    v{entry.localVersion}
-                                                </span>
-                                            </div>
-                                            <div className="text-[10px] text-muted-foreground truncate">
-                                                {new Date(entry.timestamp).toLocaleString(resolvedLocale || undefined)}
-                                                {entry.deviceName && ` · ${entry.deviceName}`}
-                                            </div>
-                                        </div>
-                                        {entry.error && (
-                                            <span className="text-xs text-red-500 truncate max-w-24" title={entry.error}>
-                                                {t('cloudSync.history.error')}
-                                            </span>
-                                        )}
+                    {sync.hasAnyConnectedProvider && (
+                        <div className="space-y-3">
+                            {/* Version Info Cards */}
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="p-3 rounded-lg border bg-card">
+                                    <div className="text-xs text-muted-foreground mb-1">{t('cloudSync.status.localVersion')}</div>
+                                    <div className="text-lg font-semibold">v{sync.localVersion}</div>
+                                    <div className="text-xs text-muted-foreground">
+                                        {sync.localUpdatedAt
+                                            ? new Date(sync.localUpdatedAt).toLocaleString(resolvedLocale || undefined)
+                                            : t('cloudSync.lastSync.never')}
                                     </div>
-                                ))}
+                                </div>
+                                <div className="p-3 rounded-lg border bg-card">
+                                    <div className="text-xs text-muted-foreground mb-1">{t('cloudSync.status.remoteVersion')}</div>
+                                    <div className="text-lg font-semibold">v{sync.remoteVersion}</div>
+                                    <div className="text-xs text-muted-foreground">
+                                        {sync.remoteUpdatedAt
+                                            ? new Date(sync.remoteUpdatedAt).toLocaleString(resolvedLocale || undefined)
+                                            : t('cloudSync.lastSync.never')}
+                                    </div>
+                                </div>
                             </div>
+
+                            {/* Sync History */}
+                            {sync.syncHistory.length > 0 && (
+                                <div className="rounded-lg border bg-card">
+                                    <div className="px-3 py-2 border-b border-border/60">
+                                        <div className="text-sm font-medium">{t('cloudSync.history.title')}</div>
+                                    </div>
+                                    <div className="max-h-48 overflow-y-auto">
+                                        {sync.syncHistory.slice(0, 10).map((entry) => (
+                                            <div key={entry.id} className="px-3 py-2 flex items-center gap-2 border-b border-border/30 last:border-b-0">
+                                                <div className={cn(
+                                                    "w-2 h-2 rounded-full shrink-0",
+                                                    entry.success ? "bg-green-500" : "bg-red-500"
+                                                )} />
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-xs font-medium capitalize">
+                                                            {entry.action === 'upload'
+                                                                ? t('cloudSync.history.upload')
+                                                                : entry.action === 'download'
+                                                                    ? t('cloudSync.history.download')
+                                                                    : t('cloudSync.history.resolved')}
+                                                        </span>
+                                                        <span className="text-xs text-muted-foreground">
+                                                            v{entry.localVersion}
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-[10px] text-muted-foreground truncate">
+                                                        {new Date(entry.timestamp).toLocaleString(resolvedLocale || undefined)}
+                                                        {entry.deviceName && ` · ${entry.deviceName}`}
+                                                    </div>
+                                                </div>
+                                                {entry.error && (
+                                                    <span className="text-xs text-red-500 truncate max-w-24" title={entry.error}>
+                                                        {t('cloudSync.history.error')}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
-                </div>
-            )}
+                </TabsContent>
+            </Tabs>
 
             {/* Modals */}
             <GitHubDeviceFlowModal
