@@ -149,7 +149,9 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     const connectedProvider = 
       state.providers.github.status === 'connected' ? 'github' :
       state.providers.google.status === 'connected' ? 'google' :
-      state.providers.onedrive.status === 'connected' ? 'onedrive' : null;
+      state.providers.onedrive.status === 'connected' ? 'onedrive' :
+      state.providers.webdav.status === 'connected' ? 'webdav' :
+      state.providers.s3.status === 'connected' ? 's3' : null;
     
     if (!connectedProvider) return;
     

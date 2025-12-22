@@ -23,6 +23,7 @@ import {
     Key,
     Loader2,
     RefreshCw,
+    Settings,
     Server,
     Shield,
     ShieldCheck,
@@ -30,12 +31,13 @@ import {
 } from 'lucide-react';
 import { useCloudSync } from '../application/state/useCloudSync';
 import { useI18n } from '../application/i18n/I18nProvider';
-import type { CloudProvider, ConflictInfo, SyncPayload } from '../domain/sync';
+import type { CloudProvider, ConflictInfo, SyncPayload, WebDAVAuthType, WebDAVConfig, S3Config } from '../domain/sync';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { toast } from './ui/toast';
 
@@ -270,6 +272,7 @@ interface ProviderCardProps {
     lastSync?: number;
     error?: string;
     disabled?: boolean; // Disable connect button when another provider is connected
+    onEdit?: () => void;
     onConnect: () => void;
     onDisconnect: () => void;
     onSync: () => void;
@@ -285,6 +288,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
     lastSync,
     error,
     disabled,
+    onEdit,
     onConnect,
     onDisconnect,
     onSync,
@@ -365,6 +369,17 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                             )}
                             {t('cloudSync.provider.sync')}
                         </Button>
+                        {onEdit && (
+                            <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={onEdit}
+                                className="gap-1"
+                            >
+                                <Settings size={14} />
+                                {t('action.edit')}
+                            </Button>
+                        )}
                         <Button
                             size="sm"
                             variant="ghost"
@@ -385,49 +400,6 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                         {t('cloudSync.provider.connect')}
                     </Button>
                 )}
-            </div>
-        </div>
-    );
-};
-
-// ============================================================================
-// Placeholder Provider Card (Coming Soon)
-// ============================================================================
-
-interface PlaceholderProviderCardProps {
-    name: string;
-    description: string;
-    icon: React.ReactNode;
-}
-
-const PlaceholderProviderCard: React.FC<PlaceholderProviderCardProps> = ({
-    name,
-    description,
-    icon,
-}) => {
-    const { t } = useI18n();
-
-    return (
-        <div className="flex items-center gap-4 p-4 rounded-lg border bg-muted/30">
-            <div className="w-12 h-12 rounded-lg flex items-center justify-center bg-muted text-muted-foreground">
-                {icon}
-            </div>
-
-            <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                    <span className="font-medium">{name}</span>
-                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground border border-border/60 rounded-full px-2 py-0.5">
-                        {t('cloudSync.provider.comingSoon')}
-                    </span>
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">{description}</p>
-            </div>
-
-            <div className="flex items-center gap-2">
-                <Button size="sm" disabled className="gap-1">
-                    <Cloud size={14} />
-                    {t('cloudSync.provider.connect')}
-                </Button>
             </div>
         </div>
     );
@@ -626,11 +598,33 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
     const { t, resolvedLocale } = useI18n();
     const sync = useCloudSync();
 
+    const normalizeEndpoint = (value: string): string => {
+        const trimmed = value.trim();
+        if (!trimmed) return trimmed;
+        if (!/^https?:\/\//i.test(trimmed)) {
+            return `https://${trimmed}`;
+        }
+        return trimmed;
+    };
+
+    const disconnectOtherProviders = async (current: CloudProvider) => {
+        const providers: CloudProvider[] = ['github', 'google', 'onedrive', 'webdav', 's3'];
+        const isActive = (status: string) => status === 'connected' || status === 'syncing';
+        for (const provider of providers) {
+            if (provider === current) continue;
+            if (isActive(sync.providers[provider].status)) {
+                await sync.disconnectProvider(provider);
+            }
+        }
+    };
+
     // Debug: log provider states
     console.log('[SyncDashboard] Provider states:', {
         github: sync.providers.github.status,
         google: sync.providers.google.status,
         onedrive: sync.providers.onedrive.status,
+        webdav: sync.providers.webdav.status,
+        s3: sync.providers.s3.status,
     });
 
     // GitHub Device Flow state
@@ -658,6 +652,31 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
     const [isUnlocking, setIsUnlocking] = useState(false);
     const [unlockError, setUnlockError] = useState<string | null>(null);
 
+    // WebDAV dialog state
+    const [showWebdavDialog, setShowWebdavDialog] = useState(false);
+    const [webdavEndpoint, setWebdavEndpoint] = useState('');
+    const [webdavAuthType, setWebdavAuthType] = useState<WebDAVAuthType>('basic');
+    const [webdavUsername, setWebdavUsername] = useState('');
+    const [webdavPassword, setWebdavPassword] = useState('');
+    const [webdavToken, setWebdavToken] = useState('');
+    const [showWebdavSecret, setShowWebdavSecret] = useState(false);
+    const [webdavError, setWebdavError] = useState<string | null>(null);
+    const [isSavingWebdav, setIsSavingWebdav] = useState(false);
+
+    // S3 dialog state
+    const [showS3Dialog, setShowS3Dialog] = useState(false);
+    const [s3Endpoint, setS3Endpoint] = useState('');
+    const [s3Region, setS3Region] = useState('');
+    const [s3Bucket, setS3Bucket] = useState('');
+    const [s3AccessKeyId, setS3AccessKeyId] = useState('');
+    const [s3SecretAccessKey, setS3SecretAccessKey] = useState('');
+    const [s3SessionToken, setS3SessionToken] = useState('');
+    const [s3Prefix, setS3Prefix] = useState('');
+    const [s3ForcePathStyle, setS3ForcePathStyle] = useState(true);
+    const [showS3Secret, setShowS3Secret] = useState(false);
+    const [s3Error, setS3Error] = useState<string | null>(null);
+    const [isSavingS3, setIsSavingS3] = useState(false);
+
     // Handle conflict detection
     useEffect(() => {
         if (sync.currentConflict) {
@@ -684,13 +703,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
     const handleConnectGitHub = async () => {
         console.log('[CloudSync] handleConnectGitHub called');
         try {
-            // Disconnect other providers first (single provider mode)
-            if (sync.providers.google.status === 'connected') {
-                await sync.disconnectProvider('google');
-            }
-            if (sync.providers.onedrive.status === 'connected') {
-                await sync.disconnectProvider('onedrive');
-            }
+            await disconnectOtherProviders('github');
             console.log('[CloudSync] Calling sync.connectGitHub()...');
             const deviceFlow = await sync.connectGitHub();
             console.log('[CloudSync] Device flow received:', deviceFlow.userCode);
@@ -721,13 +734,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
     // Connect Google (disconnect others first - single provider only)
     const handleConnectGoogle = async () => {
         try {
-            // Disconnect other providers first (single provider mode)
-            if (sync.providers.github.status === 'connected') {
-                await sync.disconnectProvider('github');
-            }
-            if (sync.providers.onedrive.status === 'connected') {
-                await sync.disconnectProvider('onedrive');
-            }
+            await disconnectOtherProviders('google');
             await sync.connectGoogle();
             // Note: Auth flow is handled automatically by oauthBridge
             toast.info(t('cloudSync.connect.browserContinue'));
@@ -742,13 +749,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
     // Connect OneDrive (disconnect others first - single provider only)
     const handleConnectOneDrive = async () => {
         try {
-            // Disconnect other providers first (single provider mode)
-            if (sync.providers.github.status === 'connected') {
-                await sync.disconnectProvider('github');
-            }
-            if (sync.providers.google.status === 'connected') {
-                await sync.disconnectProvider('google');
-            }
+            await disconnectOtherProviders('onedrive');
             await sync.connectOneDrive();
             // Note: Auth flow is handled automatically by oauthBridge
             toast.info(t('cloudSync.connect.browserContinue'));
@@ -757,6 +758,110 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
                 error instanceof Error ? error.message : t('common.unknownError'),
                 t('cloudSync.connect.onedrive.failedTitle'),
             );
+        }
+    };
+
+    const openWebdavDialog = () => {
+        const config = sync.providers.webdav.config as WebDAVConfig | undefined;
+        setWebdavEndpoint(config?.endpoint || '');
+        setWebdavAuthType(config?.authType || 'basic');
+        setWebdavUsername(config?.username || '');
+        setWebdavPassword(config?.password || '');
+        setWebdavToken(config?.token || '');
+        setShowWebdavSecret(false);
+        setWebdavError(null);
+        setShowWebdavDialog(true);
+    };
+
+    const openS3Dialog = () => {
+        const config = sync.providers.s3.config as S3Config | undefined;
+        setS3Endpoint(config?.endpoint || '');
+        setS3Region(config?.region || '');
+        setS3Bucket(config?.bucket || '');
+        setS3AccessKeyId(config?.accessKeyId || '');
+        setS3SecretAccessKey(config?.secretAccessKey || '');
+        setS3SessionToken(config?.sessionToken || '');
+        setS3Prefix(config?.prefix || '');
+        setS3ForcePathStyle(config?.forcePathStyle ?? true);
+        setShowS3Secret(false);
+        setS3Error(null);
+        setShowS3Dialog(true);
+    };
+
+    const handleSaveWebdav = async () => {
+        const endpoint = normalizeEndpoint(webdavEndpoint);
+        if (!endpoint) {
+            setWebdavError(t('cloudSync.webdav.validation.endpoint'));
+            return;
+        }
+
+        if (webdavAuthType === 'token') {
+            if (!webdavToken.trim()) {
+                setWebdavError(t('cloudSync.webdav.validation.token'));
+                return;
+            }
+        } else {
+            if (!webdavUsername.trim() || !webdavPassword) {
+                setWebdavError(t('cloudSync.webdav.validation.credentials'));
+                return;
+            }
+        }
+
+        const config: WebDAVConfig = {
+            endpoint,
+            authType: webdavAuthType,
+            username: webdavAuthType === 'token' ? undefined : webdavUsername.trim(),
+            password: webdavAuthType === 'token' ? undefined : webdavPassword,
+            token: webdavAuthType === 'token' ? webdavToken.trim() : undefined,
+        };
+
+        setIsSavingWebdav(true);
+        setWebdavError(null);
+        try {
+            await disconnectOtherProviders('webdav');
+            await sync.connectWebDAV(config);
+            toast.success(t('cloudSync.connect.webdav.success'));
+            setShowWebdavDialog(false);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : t('common.unknownError');
+            setWebdavError(message);
+            toast.error(message, t('cloudSync.connect.webdav.failedTitle'));
+        } finally {
+            setIsSavingWebdav(false);
+        }
+    };
+
+    const handleSaveS3 = async () => {
+        const endpoint = normalizeEndpoint(s3Endpoint);
+        if (!endpoint || !s3Region.trim() || !s3Bucket.trim() || !s3AccessKeyId.trim() || !s3SecretAccessKey) {
+            setS3Error(t('cloudSync.s3.validation.required'));
+            return;
+        }
+
+        const config: S3Config = {
+            endpoint,
+            region: s3Region.trim(),
+            bucket: s3Bucket.trim(),
+            accessKeyId: s3AccessKeyId.trim(),
+            secretAccessKey: s3SecretAccessKey,
+            sessionToken: s3SessionToken.trim() ? s3SessionToken.trim() : undefined,
+            prefix: s3Prefix.trim() ? s3Prefix.trim() : undefined,
+            forcePathStyle: s3ForcePathStyle,
+        };
+
+        setIsSavingS3(true);
+        setS3Error(null);
+        try {
+            await disconnectOtherProviders('s3');
+            await sync.connectS3(config);
+            toast.success(t('cloudSync.connect.s3.success'));
+            setShowS3Dialog(false);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : t('common.unknownError');
+            setS3Error(message);
+            toast.error(message, t('cloudSync.connect.s3.failedTitle'));
+        } finally {
+            setIsSavingS3(false);
         }
     };
 
@@ -892,16 +997,36 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
                         onSync={() => handleSync('onedrive')}
                     />
 
-                    <PlaceholderProviderCard
+                    <ProviderCard
+                        provider="webdav"
                         name={t('cloudSync.provider.webdav')}
-                        description={t('cloudSync.provider.webdav.desc')}
                         icon={<Server size={24} />}
+                        isConnected={sync.providers.webdav.status === 'connected' || sync.providers.webdav.status === 'syncing'}
+                        isSyncing={sync.providers.webdav.status === 'syncing'}
+                        account={sync.providers.webdav.account}
+                        lastSync={sync.providers.webdav.lastSync}
+                        error={sync.providers.webdav.error}
+                        disabled={sync.hasAnyConnectedProvider && sync.providers.webdav.status !== 'connected' && sync.providers.webdav.status !== 'syncing'}
+                        onEdit={openWebdavDialog}
+                        onConnect={openWebdavDialog}
+                        onDisconnect={() => sync.disconnectProvider('webdav')}
+                        onSync={() => handleSync('webdav')}
                     />
 
-                    <PlaceholderProviderCard
+                    <ProviderCard
+                        provider="s3"
                         name={t('cloudSync.provider.s3')}
-                        description={t('cloudSync.provider.s3.desc')}
                         icon={<Database size={24} />}
+                        isConnected={sync.providers.s3.status === 'connected' || sync.providers.s3.status === 'syncing'}
+                        isSyncing={sync.providers.s3.status === 'syncing'}
+                        account={sync.providers.s3.account}
+                        lastSync={sync.providers.s3.lastSync}
+                        error={sync.providers.s3.error}
+                        disabled={sync.hasAnyConnectedProvider && sync.providers.s3.status !== 'connected' && sync.providers.s3.status !== 'syncing'}
+                        onEdit={openS3Dialog}
+                        onConnect={openS3Dialog}
+                        onDisconnect={() => sync.disconnectProvider('s3')}
+                        onSync={() => handleSync('s3')}
                     />
                 </TabsContent>
 
@@ -1010,6 +1135,222 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
                 onResolve={handleResolveConflict}
                 onClose={() => setShowConflictModal(false)}
             />
+
+            <Dialog open={showWebdavDialog} onOpenChange={setShowWebdavDialog}>
+                <DialogContent className="sm:max-w-[460px] max-h-[80vh] overflow-y-auto z-[70]">
+                    <DialogHeader>
+                        <DialogTitle>{t('cloudSync.webdav.title')}</DialogTitle>
+                        <DialogDescription>{t('cloudSync.webdav.desc')}</DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-4">
+                        <div className="space-y-2">
+                            <Label>{t('cloudSync.webdav.endpoint')}</Label>
+                            <Input
+                                value={webdavEndpoint}
+                                onChange={(e) => setWebdavEndpoint(e.target.value)}
+                                placeholder="https://dav.example.com/remote.php/webdav/"
+                            />
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label>{t('cloudSync.webdav.authType')}</Label>
+                            <Select value={webdavAuthType} onValueChange={(value) => setWebdavAuthType(value as WebDAVAuthType)}>
+                                <SelectTrigger>
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="basic">{t('cloudSync.webdav.auth.basic')}</SelectItem>
+                                    <SelectItem value="digest">{t('cloudSync.webdav.auth.digest')}</SelectItem>
+                                    <SelectItem value="token">{t('cloudSync.webdav.auth.token')}</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        {webdavAuthType !== 'token' ? (
+                            <>
+                                <div className="space-y-2">
+                                    <Label>{t('cloudSync.webdav.username')}</Label>
+                                    <Input
+                                        value={webdavUsername}
+                                        onChange={(e) => setWebdavUsername(e.target.value)}
+                                        autoComplete="username"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>{t('cloudSync.webdav.password')}</Label>
+                                    <Input
+                                        type={showWebdavSecret ? 'text' : 'password'}
+                                        value={webdavPassword}
+                                        onChange={(e) => setWebdavPassword(e.target.value)}
+                                        autoComplete="current-password"
+                                    />
+                                </div>
+                            </>
+                        ) : (
+                            <div className="space-y-2">
+                                <Label>{t('cloudSync.webdav.token')}</Label>
+                                <Input
+                                    type={showWebdavSecret ? 'text' : 'password'}
+                                    value={webdavToken}
+                                    onChange={(e) => setWebdavToken(e.target.value)}
+                                />
+                            </div>
+                        )}
+
+                        <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
+                            <input
+                                type="checkbox"
+                                checked={showWebdavSecret}
+                                onChange={(e) => setShowWebdavSecret(e.target.checked)}
+                                className="accent-primary"
+                            />
+                            {t('cloudSync.webdav.showSecret')}
+                        </label>
+
+                        {webdavError && (
+                            <p className="text-sm text-red-500">{webdavError}</p>
+                        )}
+                    </div>
+
+                    <DialogFooter>
+                        <Button
+                            variant="outline"
+                            onClick={() => setShowWebdavDialog(false)}
+                            disabled={isSavingWebdav}
+                        >
+                            {t('common.cancel')}
+                        </Button>
+                        <Button
+                            onClick={handleSaveWebdav}
+                            disabled={isSavingWebdav}
+                            className="gap-2"
+                        >
+                            {isSavingWebdav ? <Loader2 size={16} className="animate-spin" /> : <Cloud size={16} />}
+                            {t('common.save')}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={showS3Dialog} onOpenChange={setShowS3Dialog}>
+                <DialogContent className="sm:max-w-[520px] max-h-[80vh] overflow-y-auto z-[70]">
+                    <DialogHeader>
+                        <DialogTitle>{t('cloudSync.s3.title')}</DialogTitle>
+                        <DialogDescription>{t('cloudSync.s3.desc')}</DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-4">
+                        <div className="space-y-2">
+                            <Label>{t('cloudSync.s3.endpoint')}</Label>
+                            <Input
+                                value={s3Endpoint}
+                                onChange={(e) => setS3Endpoint(e.target.value)}
+                                placeholder="https://s3.example.com"
+                            />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-2">
+                                <Label>{t('cloudSync.s3.region')}</Label>
+                                <Input
+                                    value={s3Region}
+                                    onChange={(e) => setS3Region(e.target.value)}
+                                    placeholder="us-east-1"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label>{t('cloudSync.s3.bucket')}</Label>
+                                <Input
+                                    value={s3Bucket}
+                                    onChange={(e) => setS3Bucket(e.target.value)}
+                                    placeholder="netcatty-backups"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label>{t('cloudSync.s3.accessKeyId')}</Label>
+                            <Input
+                                value={s3AccessKeyId}
+                                onChange={(e) => setS3AccessKeyId(e.target.value)}
+                                autoComplete="off"
+                            />
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label>{t('cloudSync.s3.secretAccessKey')}</Label>
+                            <Input
+                                type={showS3Secret ? 'text' : 'password'}
+                                value={s3SecretAccessKey}
+                                onChange={(e) => setS3SecretAccessKey(e.target.value)}
+                                autoComplete="off"
+                            />
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label>{t('cloudSync.s3.sessionToken')}</Label>
+                            <Input
+                                type={showS3Secret ? 'text' : 'password'}
+                                value={s3SessionToken}
+                                onChange={(e) => setS3SessionToken(e.target.value)}
+                                autoComplete="off"
+                            />
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label>{t('cloudSync.s3.prefix')}</Label>
+                            <Input
+                                value={s3Prefix}
+                                onChange={(e) => setS3Prefix(e.target.value)}
+                                placeholder="backups/netcatty"
+                            />
+                        </div>
+
+                        <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
+                            <input
+                                type="checkbox"
+                                checked={s3ForcePathStyle}
+                                onChange={(e) => setS3ForcePathStyle(e.target.checked)}
+                                className="accent-primary"
+                            />
+                            {t('cloudSync.s3.forcePathStyle')}
+                        </label>
+
+                        <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
+                            <input
+                                type="checkbox"
+                                checked={showS3Secret}
+                                onChange={(e) => setShowS3Secret(e.target.checked)}
+                                className="accent-primary"
+                            />
+                            {t('cloudSync.s3.showSecret')}
+                        </label>
+
+                        {s3Error && (
+                            <p className="text-sm text-red-500">{s3Error}</p>
+                        )}
+                    </div>
+
+                    <DialogFooter>
+                        <Button
+                            variant="outline"
+                            onClick={() => setShowS3Dialog(false)}
+                            disabled={isSavingS3}
+                        >
+                            {t('common.cancel')}
+                        </Button>
+                        <Button
+                            onClick={handleSaveS3}
+                            disabled={isSavingS3}
+                            className="gap-2"
+                        >
+                            {isSavingS3 ? <Loader2 size={16} className="animate-spin" /> : <Database size={16} />}
+                            {t('common.save')}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             <Dialog open={showChangeKeyDialog} onOpenChange={setShowChangeKeyDialog}>
                 <DialogContent className="sm:max-w-[420px]">

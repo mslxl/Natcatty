@@ -20,9 +20,12 @@ import {
   type MasterKeyConfig,
   type UnlockedMasterKey,
   type ProviderConnection,
+  type ProviderAccount,
   type SyncEvent,
   type OAuthTokens,
   type SyncHistoryEntry,
+  type WebDAVConfig,
+  type S3Config,
   SYNC_CONSTANTS,
   SYNC_STORAGE_KEYS,
   generateDeviceId,
@@ -117,6 +120,8 @@ export class CloudSyncManager {
       github: this.loadProviderConnection('github'),
       google: this.loadProviderConnection('google'),
       onedrive: this.loadProviderConnection('onedrive'),
+      webdav: this.loadProviderConnection('webdav'),
+      s3: this.loadProviderConnection('s3'),
     };
 
     // Save device ID if new
@@ -147,10 +152,10 @@ export class CloudSyncManager {
     const key = SYNC_STORAGE_KEYS[`PROVIDER_${provider.toUpperCase()}` as keyof typeof SYNC_STORAGE_KEYS];
     const stored = this.loadFromStorage<Partial<ProviderConnection>>(key);
     
-    // Determine the correct status: if tokens exist, should be 'connected'
+    // Determine the correct status: if tokens or config exist, should be 'connected'
     // Never restore 'syncing' or 'error' status - those are transient
-    const status: ProviderConnection['status'] = stored?.tokens 
-      ? 'connected' 
+    const status: ProviderConnection['status'] = (stored?.tokens || stored?.config)
+      ? 'connected'
       : 'disconnected';
     
     return {
@@ -164,7 +169,7 @@ export class CloudSyncManager {
     const key = SYNC_STORAGE_KEYS[`PROVIDER_${provider.toUpperCase()}` as keyof typeof SYNC_STORAGE_KEYS];
     // Don't persist sensitive tokens directly - use safeStorage in production
     const { tokens, ...safeData } = connection;
-    this.saveToStorage(key, { ...safeData, tokens }); // In production, encrypt tokens
+    this.saveToStorage(key, { ...safeData, tokens }); // In production, encrypt tokens/config
   }
 
   private loadFromStorage<T>(key: string): T | null {
@@ -260,6 +265,8 @@ export class CloudSyncManager {
       [SYNC_STORAGE_KEYS.PROVIDER_GITHUB]: 'github',
       [SYNC_STORAGE_KEYS.PROVIDER_GOOGLE]: 'google',
       [SYNC_STORAGE_KEYS.PROVIDER_ONEDRIVE]: 'onedrive',
+      [SYNC_STORAGE_KEYS.PROVIDER_WEBDAV]: 'webdav',
+      [SYNC_STORAGE_KEYS.PROVIDER_S3]: 's3',
     };
     const provider = providerByKey[key];
     if (provider) {
@@ -276,8 +283,9 @@ export class CloudSyncManager {
       };
 
       const nextTokens = next.tokens;
+      const nextConfig = next.config;
       const adapter = this.adapters.get(provider);
-      if (!nextTokens) {
+      if (!nextTokens && !nextConfig) {
         if (adapter) {
           adapter.signOut();
           this.adapters.delete(provider);
@@ -287,15 +295,18 @@ export class CloudSyncManager {
       }
 
       const tokenChanged =
-        prev.tokens?.accessToken !== nextTokens.accessToken ||
-        prev.tokens?.refreshToken !== nextTokens.refreshToken ||
-        prev.tokens?.expiresAt !== nextTokens.expiresAt ||
-        prev.tokens?.tokenType !== nextTokens.tokenType ||
-        prev.tokens?.scope !== nextTokens.scope;
+        (prev.tokens?.accessToken || null) !== (nextTokens?.accessToken || null) ||
+        (prev.tokens?.refreshToken || null) !== (nextTokens?.refreshToken || null) ||
+        (prev.tokens?.expiresAt || null) !== (nextTokens?.expiresAt || null) ||
+        (prev.tokens?.tokenType || null) !== (nextTokens?.tokenType || null) ||
+        (prev.tokens?.scope || null) !== (nextTokens?.scope || null);
+
+      const configChanged =
+        JSON.stringify(prev.config || null) !== JSON.stringify(nextConfig || null);
 
       const resourceChanged = (adapter?.resourceId || null) !== (next.resourceId || null);
 
-      if (adapter && (tokenChanged || resourceChanged)) {
+      if (adapter && (tokenChanged || configChanged || resourceChanged)) {
         adapter.signOut();
         this.adapters.delete(provider);
       }
@@ -307,7 +318,8 @@ export class CloudSyncManager {
   private async getConnectedAdapter(provider: CloudProvider): Promise<CloudAdapter> {
     const connection = this.state.providers[provider];
     const tokens = connection?.tokens;
-    if (!tokens) {
+    const config = connection?.config;
+    if (!tokens && !config) {
       throw new Error('Provider not connected');
     }
 
@@ -316,7 +328,7 @@ export class CloudSyncManager {
       return existing;
     }
 
-    const adapter = await createAdapter(provider, tokens, connection.resourceId);
+    const adapter = await createAdapter(provider, tokens, connection.resourceId, config);
     this.adapters.set(provider, adapter);
     return adapter;
   }
@@ -359,6 +371,8 @@ export class CloudSyncManager {
         github: { ...this.state.providers.github },
         google: { ...this.state.providers.google },
         onedrive: { ...this.state.providers.onedrive },
+        webdav: { ...this.state.providers.webdav },
+        s3: { ...this.state.providers.s3 },
       },
       syncHistory: [...this.state.syncHistory],
       currentConflict: this.state.currentConflict ? { ...this.state.currentConflict } : null,
@@ -541,6 +555,9 @@ export class CloudSyncManager {
     type: 'device_code' | 'url';
     data: unknown;
   }> {
+    if (provider === 'webdav' || provider === 's3') {
+      throw new Error('Provider requires manual configuration');
+    }
     const adapter = await createAdapter(provider);
     this.adapters.set(provider, adapter);
 
@@ -668,6 +685,41 @@ export class CloudSyncManager {
   }
 
   /**
+   * Connect config-based providers (WebDAV/S3)
+   */
+  async connectConfigProvider(
+    provider: 'webdav' | 's3',
+    config: WebDAVConfig | S3Config
+  ): Promise<void> {
+    const adapter = await createAdapter(provider, undefined, undefined, config);
+    this.adapters.set(provider, adapter);
+    this.updateProviderStatus(provider, 'connecting');
+
+    try {
+      const resourceId = await adapter.initializeSync();
+      const account = adapter.accountInfo || this.buildAccountFromConfig(provider, config);
+
+      this.state.providers[provider] = {
+        provider,
+        status: 'connected',
+        config,
+        account,
+        resourceId: resourceId || undefined,
+      };
+
+      this.saveProviderConnection(provider, this.state.providers[provider]);
+      this.emit({
+        type: 'AUTH_COMPLETED',
+        provider,
+        account,
+      });
+    } catch (error) {
+      this.updateProviderStatus(provider, 'error', String(error));
+      throw error;
+    }
+  }
+
+  /**
    * Disconnect a provider
    */
   async disconnectProvider(provider: CloudProvider): Promise<void> {
@@ -697,6 +749,18 @@ export class CloudSyncManager {
       error,
     };
     this.notifyStateChange(); // Notify UI of status change
+  }
+
+  private buildAccountFromConfig(
+    provider: 'webdav' | 's3',
+    config: WebDAVConfig | S3Config
+  ): ProviderAccount {
+    if (provider === 'webdav') {
+      const endpoint = (config as WebDAVConfig).endpoint;
+      return { id: endpoint, name: endpoint };
+    }
+    const s3 = config as S3Config;
+    return { id: `${s3.bucket}@${s3.endpoint}`, name: `${s3.bucket} (${s3.region})` };
   }
 
   // ==========================================================================

@@ -17,6 +17,8 @@ import {
   type SyncPayload,
   type SyncResult,
   type SyncHistoryEntry,
+  type WebDAVConfig,
+  type S3Config,
   formatLastSync,
   getSyncDotColor,
 } from '../../domain/sync';
@@ -72,6 +74,8 @@ export interface CloudSyncHook {
   ) => Promise<void>;
   connectGoogle: () => Promise<string>;
   connectOneDrive: () => Promise<string>;
+  connectWebDAV: (config: WebDAVConfig) => Promise<void>;
+  connectS3: (config: S3Config) => Promise<void>;
   completePKCEAuth: (
     provider: 'google' | 'onedrive',
     code: string,
@@ -323,6 +327,14 @@ export const useCloudSync = (): CloudSyncHook => {
   const disconnectProvider = useCallback(async (provider: CloudProvider): Promise<void> => {
     await manager.disconnectProvider(provider);
   }, []);
+
+  const connectWebDAV = useCallback(async (config: WebDAVConfig): Promise<void> => {
+    await manager.connectConfigProvider('webdav', config);
+  }, []);
+
+  const connectS3 = useCallback(async (config: S3Config): Promise<void> => {
+    await manager.connectConfigProvider('s3', config);
+  }, []);
   
   // ========== Settings ==========
   
@@ -418,6 +430,8 @@ export const useCloudSync = (): CloudSyncHook => {
     completeGitHubAuth,
     connectGoogle,
     connectOneDrive,
+    connectWebDAV,
+    connectS3,
     completePKCEAuth,
     disconnectProvider,
     

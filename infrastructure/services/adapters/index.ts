@@ -2,7 +2,14 @@
  * Cloud Sync Adapters - Unified Export
  */
 
-import type { CloudProvider, SyncedFile, OAuthTokens, ProviderAccount } from '../../../domain/sync';
+import type {
+  CloudProvider,
+  SyncedFile,
+  OAuthTokens,
+  ProviderAccount,
+  WebDAVConfig,
+  S3Config,
+} from '../../../domain/sync';
 
 /**
  * Unified adapter interface
@@ -26,7 +33,8 @@ export interface CloudAdapter {
 export const createAdapter = async (
   provider: CloudProvider,
   tokens?: OAuthTokens,
-  resourceId?: string
+  resourceId?: string,
+  config?: WebDAVConfig | S3Config
 ): Promise<CloudAdapter> => {
   switch (provider) {
     case 'github': {
@@ -40,6 +48,14 @@ export const createAdapter = async (
     case 'onedrive': {
       const { OneDriveAdapter } = await import('./OneDriveAdapter');
       return new OneDriveAdapter(tokens, resourceId);
+    }
+    case 'webdav': {
+      const { WebDAVAdapter } = await import('./WebDAVAdapter');
+      return new WebDAVAdapter(config as WebDAVConfig | undefined, resourceId);
+    }
+    case 's3': {
+      const { S3Adapter } = await import('./S3Adapter');
+      return new S3Adapter(config as S3Config | undefined, resourceId);
     }
     default:
       throw new Error(`Unknown provider: ${provider}`);

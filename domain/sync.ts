@@ -2,7 +2,7 @@
  * Cloud Sync Domain Types & Interfaces
  * 
  * Zero-Knowledge Encrypted Multi-Cloud Sync System
- * Supports: GitHub Gist, Google Drive, Microsoft OneDrive
+ * Supports: GitHub Gist, Google Drive, Microsoft OneDrive, WebDAV, S3 Compatible
  */
 
 // ============================================================================
@@ -42,7 +42,28 @@ export type ConflictResolution =
 /**
  * Supported cloud storage providers
  */
-export type CloudProvider = 'github' | 'google' | 'onedrive';
+export type CloudProvider = 'github' | 'google' | 'onedrive' | 'webdav' | 's3';
+
+export type WebDAVAuthType = 'basic' | 'digest' | 'token';
+
+export interface WebDAVConfig {
+  endpoint: string;
+  authType: WebDAVAuthType;
+  username?: string;
+  password?: string;
+  token?: string;
+}
+
+export interface S3Config {
+  endpoint: string;
+  region: string;
+  bucket: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
+  prefix?: string;
+  forcePathStyle?: boolean;
+}
 
 /**
  * Provider-specific connection status
@@ -83,6 +104,7 @@ export interface ProviderConnection {
   status: ProviderConnectionStatus;
   account?: ProviderAccount;
   tokens?: OAuthTokens;
+  config?: WebDAVConfig | S3Config;
   lastSync?: number;        // Unix timestamp
   lastSyncVersion?: number;
   resourceId?: string;      // gistId / fileId / itemId
@@ -349,6 +371,8 @@ export const SYNC_STORAGE_KEYS = {
   PROVIDER_GITHUB: 'netcatty_provider_github_v1',
   PROVIDER_GOOGLE: 'netcatty_provider_google_v1',
   PROVIDER_ONEDRIVE: 'netcatty_provider_onedrive_v1',
+  PROVIDER_WEBDAV: 'netcatty_provider_webdav_v1',
+  PROVIDER_S3: 'netcatty_provider_s3_v1',
   LOCAL_SYNC_META: 'netcatty_local_sync_meta_v1',
 } as const;
 

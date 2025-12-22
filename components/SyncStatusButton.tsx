@@ -21,6 +21,8 @@ import {
     X,
     ArrowUp,
     ArrowDown,
+    Database,
+    Server,
 } from 'lucide-react';
 import { useCloudSync } from '../application/state/useCloudSync';
 import type { CloudProvider } from '../domain/sync';
@@ -54,12 +56,16 @@ const providerIcons: Record<CloudProvider, React.ReactNode> = {
     github: <Github size={16} />,
     google: <GoogleDriveIcon className="w-4 h-4" />,
     onedrive: <OneDriveIcon className="w-4 h-4" />,
+    webdav: <Server size={16} />,
+    s3: <Database size={16} />,
 };
 
 const providerNames: Record<CloudProvider, string> = {
     github: 'GitHub Gist',
     google: 'Google Drive',
     onedrive: 'OneDrive',
+    webdav: 'WebDAV',
+    s3: 'S3 Compatible',
 };
 
 // ============================================================================
@@ -120,6 +126,8 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
         if (isProviderActive(sync.providers.github.status)) return 'github';
         if (isProviderActive(sync.providers.google.status)) return 'google';
         if (isProviderActive(sync.providers.onedrive.status)) return 'onedrive';
+        if (isProviderActive(sync.providers.webdav.status)) return 'webdav';
+        if (isProviderActive(sync.providers.s3.status)) return 's3';
         return null;
     };
 
