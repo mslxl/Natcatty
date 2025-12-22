@@ -382,6 +382,25 @@ const api = {
     ipcRenderer.invoke("netcatty:cloudSync:session:getPassword"),
   cloudSyncClearSessionPassword: () =>
     ipcRenderer.invoke("netcatty:cloudSync:session:clearPassword"),
+
+  // Cloud sync network operations (proxied via main process)
+  cloudSyncWebdavInitialize: (config) =>
+    ipcRenderer.invoke("netcatty:cloudSync:webdav:initialize", { config }),
+  cloudSyncWebdavUpload: (config, syncedFile) =>
+    ipcRenderer.invoke("netcatty:cloudSync:webdav:upload", { config, syncedFile }),
+  cloudSyncWebdavDownload: (config) =>
+    ipcRenderer.invoke("netcatty:cloudSync:webdav:download", { config }),
+  cloudSyncWebdavDelete: (config) =>
+    ipcRenderer.invoke("netcatty:cloudSync:webdav:delete", { config }),
+
+  cloudSyncS3Initialize: (config) =>
+    ipcRenderer.invoke("netcatty:cloudSync:s3:initialize", { config }),
+  cloudSyncS3Upload: (config, syncedFile) =>
+    ipcRenderer.invoke("netcatty:cloudSync:s3:upload", { config, syncedFile }),
+  cloudSyncS3Download: (config) =>
+    ipcRenderer.invoke("netcatty:cloudSync:s3:download", { config }),
+  cloudSyncS3Delete: (config) =>
+    ipcRenderer.invoke("netcatty:cloudSync:s3:delete", { config }),
   
   // Open URL in default browser
   openExternal: (url) => ipcRenderer.invoke("netcatty:openExternal", url),

@@ -16,6 +16,7 @@ import {
   type ProviderAccount,
   type OAuthTokens,
 } from '../../../domain/sync';
+import { netcattyBridge } from '../netcattyBridge';
 
 const normalizeEndpoint = (endpoint: string): string => {
   const trimmed = endpoint.trim();
@@ -81,6 +82,12 @@ export class S3Adapter {
     if (!this.config) {
       throw new Error('Missing S3 config');
     }
+    const bridge = netcattyBridge.get();
+    if (bridge?.cloudSyncS3Initialize) {
+      const result = await bridge.cloudSyncS3Initialize(this.config);
+      this.resource = result?.resourceId || this.getObjectKey();
+      return this.resource;
+    }
     const client = this.getClient();
     try {
       await client.send(new HeadObjectCommand({
@@ -104,6 +111,12 @@ export class S3Adapter {
     if (!this.config) {
       throw new Error('Missing S3 config');
     }
+    const bridge = netcattyBridge.get();
+    if (bridge?.cloudSyncS3Upload) {
+      const result = await bridge.cloudSyncS3Upload(this.config, syncedFile);
+      this.resource = result?.resourceId || this.getObjectKey();
+      return this.resource;
+    }
     const body = JSON.stringify(syncedFile);
     const client = this.getClient();
     await client.send(new PutObjectCommand({
@@ -119,6 +132,11 @@ export class S3Adapter {
   async download(): Promise<SyncedFile | null> {
     if (!this.config) {
       throw new Error('Missing S3 config');
+    }
+    const bridge = netcattyBridge.get();
+    if (bridge?.cloudSyncS3Download) {
+      const result = await bridge.cloudSyncS3Download(this.config);
+      return (result?.syncedFile ?? null) as SyncedFile | null;
     }
     const client = this.getClient();
     try {
@@ -139,6 +157,11 @@ export class S3Adapter {
 
   async deleteSync(): Promise<void> {
     if (!this.config) {
+      return;
+    }
+    const bridge = netcattyBridge.get();
+    if (bridge?.cloudSyncS3Delete) {
+      await bridge.cloudSyncS3Delete(this.config);
       return;
     }
     const client = this.getClient();

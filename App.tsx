@@ -77,6 +77,10 @@ const LazyQuickSwitcher = lazy(() =>
 );
 
 const IS_DEV = import.meta.env.DEV;
+const HOTKEY_DEBUG =
+  IS_DEV &&
+  typeof window !== "undefined" &&
+  window.localStorage?.getItem("debug.hotkeys") === "1";
 
 const LazySftpView = lazy(() =>
   import('./components/SftpView').then((m) => ({ default: m.SftpView })),
@@ -437,7 +441,9 @@ function App({ settings }: { settings: SettingsState }) {
     if (hotkeyScheme === 'disabled' || isHotkeyRecording) return;
 
     const isMac = hotkeyScheme === 'mac';
-    if (IS_DEV) console.log('[Hotkeys] Registering global hotkey handler, scheme:', hotkeyScheme, 'bindings count:', keyBindings.length);
+    if (HOTKEY_DEBUG) {
+      console.log('[Hotkeys] Registering global hotkey handler, scheme:', hotkeyScheme, 'bindings count:', keyBindings.length);
+    }
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       // Don't handle if we're in an input or textarea (except for Escape)
@@ -471,7 +477,7 @@ function App({ settings }: { settings: SettingsState }) {
       for (const binding of keyBindings) {
         const keyStr = isMac ? binding.mac : binding.pc;
         if (matchesKeyBinding(e, keyStr, isMac)) {
-          if (IS_DEV) console.log('[Hotkeys] Matched binding:', binding.action, keyStr);
+          if (HOTKEY_DEBUG) console.log('[Hotkeys] Matched binding:', binding.action, keyStr);
           // Terminal-specific actions should be handled by the terminal
           // Don't handle them at app level
           const terminalActions = ['copy', 'paste', 'selectAll', 'clearBuffer', 'searchTerminal'];
@@ -484,7 +490,7 @@ function App({ settings }: { settings: SettingsState }) {
 
           e.preventDefault();
           e.stopPropagation();
-          if (IS_DEV) {
+          if (HOTKEY_DEBUG) {
             console.log('[Hotkeys] Global handle', {
               action: binding.action,
               key: e.key,

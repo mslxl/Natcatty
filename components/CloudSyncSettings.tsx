@@ -617,6 +617,45 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
         return trimmed;
     };
 
+    const buildErrorDetails = (
+        error: unknown,
+        context: Record<string, string | number | boolean | null | undefined>,
+    ): string | null => {
+        const lines: string[] = [];
+        Object.entries(context).forEach(([key, value]) => {
+            if (value === undefined || value === null || value === '') return;
+            lines.push(`${key}: ${value}`);
+        });
+
+        if (error instanceof Error) {
+            const err = error as Error & {
+                cause?: unknown;
+                code?: unknown;
+                status?: unknown;
+                statusText?: unknown;
+            };
+            if (err.code) lines.push(`code: ${String(err.code)}`);
+            if (err.status) lines.push(`status: ${String(err.status)}`);
+            if (err.statusText) lines.push(`statusText: ${String(err.statusText)}`);
+            if (err.cause) {
+                if (typeof err.cause === 'object') {
+                    try {
+                        lines.push(`cause: ${JSON.stringify(err.cause, null, 2)}`);
+                    } catch {
+                        lines.push(`cause: ${String(err.cause)}`);
+                    }
+                } else {
+                    lines.push(`cause: ${String(err.cause)}`);
+                }
+            }
+            if (!lines.length && err.stack) lines.push(err.stack);
+        } else if (error) {
+            lines.push(`error: ${String(error)}`);
+        }
+
+        return lines.length ? lines.join('\n') : null;
+    };
+
     const getNetworkErrorMessage = (error: unknown, fallback: string): string => {
         if (!(error instanceof Error)) return fallback;
         const message = error.message || fallback;
@@ -683,6 +722,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
     const [webdavToken, setWebdavToken] = useState('');
     const [showWebdavSecret, setShowWebdavSecret] = useState(false);
     const [webdavError, setWebdavError] = useState<string | null>(null);
+    const [webdavErrorDetail, setWebdavErrorDetail] = useState<string | null>(null);
     const [isSavingWebdav, setIsSavingWebdav] = useState(false);
 
     // S3 dialog state
@@ -697,6 +737,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
     const [s3ForcePathStyle, setS3ForcePathStyle] = useState(true);
     const [showS3Secret, setShowS3Secret] = useState(false);
     const [s3Error, setS3Error] = useState<string | null>(null);
+    const [s3ErrorDetail, setS3ErrorDetail] = useState<string | null>(null);
     const [isSavingS3, setIsSavingS3] = useState(false);
 
     // Handle conflict detection
@@ -790,6 +831,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
         setWebdavToken(config?.token || '');
         setShowWebdavSecret(false);
         setWebdavError(null);
+        setWebdavErrorDetail(null);
         setShowWebdavDialog(true);
     };
 
@@ -805,6 +847,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
         setS3ForcePathStyle(config?.forcePathStyle ?? true);
         setShowS3Secret(false);
         setS3Error(null);
+        setS3ErrorDetail(null);
         setShowS3Dialog(true);
     };
 
@@ -812,17 +855,20 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
         const endpoint = normalizeEndpoint(webdavEndpoint);
         if (!endpoint) {
             setWebdavError(t('cloudSync.webdav.validation.endpoint'));
+            setWebdavErrorDetail(null);
             return;
         }
 
         if (webdavAuthType === 'token') {
             if (!webdavToken.trim()) {
                 setWebdavError(t('cloudSync.webdav.validation.token'));
+                setWebdavErrorDetail(null);
                 return;
             }
         } else {
             if (!webdavUsername.trim() || !webdavPassword) {
                 setWebdavError(t('cloudSync.webdav.validation.credentials'));
+                setWebdavErrorDetail(null);
                 return;
             }
         }
@@ -837,6 +883,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
 
         setIsSavingWebdav(true);
         setWebdavError(null);
+        setWebdavErrorDetail(null);
         try {
             await disconnectOtherProviders('webdav');
             await sync.connectWebDAV(config);
@@ -845,6 +892,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
         } catch (error) {
             const message = error instanceof Error ? error.message : t('common.unknownError');
             setWebdavError(message);
+            setWebdavErrorDetail(buildErrorDetails(error, { endpoint, authType: webdavAuthType }));
             toast.error(message, t('cloudSync.connect.webdav.failedTitle'));
         } finally {
             setIsSavingWebdav(false);
@@ -855,6 +903,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
         const endpoint = normalizeEndpoint(s3Endpoint);
         if (!endpoint || !s3Region.trim() || !s3Bucket.trim() || !s3AccessKeyId.trim() || !s3SecretAccessKey) {
             setS3Error(t('cloudSync.s3.validation.required'));
+            setS3ErrorDetail(null);
             return;
         }
 
@@ -871,6 +920,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
 
         setIsSavingS3(true);
         setS3Error(null);
+        setS3ErrorDetail(null);
         try {
             await disconnectOtherProviders('s3');
             await sync.connectS3(config);
@@ -879,6 +929,14 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
         } catch (error) {
             const message = error instanceof Error ? error.message : t('common.unknownError');
             setS3Error(message);
+            setS3ErrorDetail(
+                buildErrorDetails(error, {
+                    endpoint,
+                    region: s3Region.trim(),
+                    bucket: s3Bucket.trim(),
+                    forcePathStyle: s3ForcePathStyle,
+                }),
+            );
             toast.error(message, t('cloudSync.connect.s3.failedTitle'));
         } finally {
             setIsSavingS3(false);
@@ -1236,6 +1294,11 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
                         {webdavError && (
                             <p className="text-sm text-red-500">{webdavError}</p>
                         )}
+                        {webdavErrorDetail && (
+                            <pre className="text-xs text-red-400 whitespace-pre-wrap rounded-md border border-red-500/30 bg-red-500/10 p-2">
+                                {webdavErrorDetail}
+                            </pre>
+                        )}
                     </div>
 
                     <DialogFooter>
@@ -1354,6 +1417,11 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
 
                         {s3Error && (
                             <p className="text-sm text-red-500">{s3Error}</p>
+                        )}
+                        {s3ErrorDetail && (
+                            <pre className="text-xs text-red-400 whitespace-pre-wrap rounded-md border border-red-500/30 bg-red-500/10 p-2">
+                                {s3ErrorDetail}
+                            </pre>
                         )}
                     </div>
 

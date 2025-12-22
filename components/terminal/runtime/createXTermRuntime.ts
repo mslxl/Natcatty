@@ -324,7 +324,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     if (terminalActions.has(action)) {
       e.preventDefault();
       e.stopPropagation();
-      if (import.meta.env.DEV) {
+      const hotkeyDebug =
+        import.meta.env.DEV &&
+        typeof window !== "undefined" &&
+        window.localStorage?.getItem("debug.hotkeys") === "1";
+      if (hotkeyDebug) {
         console.log('[Hotkeys] Xterm terminal-level', {
           action,
           key: e.key,

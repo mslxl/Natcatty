@@ -853,6 +853,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                     className={cn(
                       "h-6 w-6 p-0 shadow-none border-none text-[color:var(--terminal-toolbar-fg)]",
                       "bg-transparent hover:bg-transparent",
+                      isBroadcastEnabled && "text-green-500",
                     )}
                   onClick={onToggleBroadcast}
                   title={

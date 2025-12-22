@@ -10,6 +10,7 @@ import {
   type ProviderAccount,
   type OAuthTokens,
 } from '../../../domain/sync';
+import { netcattyBridge } from '../netcattyBridge';
 
 type WebDAVClient = ReturnType<typeof createClient>;
 
@@ -59,37 +60,79 @@ export class WebDAVAdapter {
   }
 
   async initializeSync(): Promise<string | null> {
-    const client = this.getClient();
-    const path = this.getSyncPath();
-    await client.exists(path);
-    this.resource = path;
-    return this.resource;
+    return this.withWebdavErrorContext('initialize', async () => {
+      if (!this.config) {
+        throw new Error('Missing WebDAV config');
+      }
+      const bridge = netcattyBridge.get();
+      if (bridge?.cloudSyncWebdavInitialize) {
+        const result = await bridge.cloudSyncWebdavInitialize(this.config);
+        this.resource = result?.resourceId || this.getSyncPath();
+        return this.resource;
+      }
+      const client = this.getClient();
+      const path = this.getSyncPath();
+      await client.exists(path);
+      this.resource = path;
+      return this.resource;
+    });
   }
 
   async upload(syncedFile: SyncedFile): Promise<string> {
-    const client = this.getClient();
-    const path = this.getSyncPath();
-    await client.putFileContents(path, JSON.stringify(syncedFile), { overwrite: true });
-    this.resource = path;
-    return path;
+    return this.withWebdavErrorContext('upload', async () => {
+      if (!this.config) {
+        throw new Error('Missing WebDAV config');
+      }
+      const bridge = netcattyBridge.get();
+      if (bridge?.cloudSyncWebdavUpload) {
+        const result = await bridge.cloudSyncWebdavUpload(this.config, syncedFile);
+        this.resource = result?.resourceId || this.getSyncPath();
+        return this.resource;
+      }
+      const client = this.getClient();
+      const path = this.getSyncPath();
+      await client.putFileContents(path, JSON.stringify(syncedFile), { overwrite: true });
+      this.resource = path;
+      return path;
+    });
   }
 
   async download(): Promise<SyncedFile | null> {
-    const client = this.getClient();
-    const path = this.getSyncPath();
-    const exists = await client.exists(path);
-    if (!exists) return null;
-    const data = await client.getFileContents(path, { format: 'text' });
-    if (!data) return null;
-    return JSON.parse(data as string) as SyncedFile;
+    return this.withWebdavErrorContext('download', async () => {
+      if (!this.config) {
+        throw new Error('Missing WebDAV config');
+      }
+      const bridge = netcattyBridge.get();
+      if (bridge?.cloudSyncWebdavDownload) {
+        const result = await bridge.cloudSyncWebdavDownload(this.config);
+        return (result?.syncedFile ?? null) as SyncedFile | null;
+      }
+      const client = this.getClient();
+      const path = this.getSyncPath();
+      const exists = await client.exists(path);
+      if (!exists) return null;
+      const data = await client.getFileContents(path, { format: 'text' });
+      if (!data) return null;
+      return JSON.parse(data as string) as SyncedFile;
+    });
   }
 
   async deleteSync(): Promise<void> {
-    const client = this.getClient();
-    const path = this.getSyncPath();
-    const exists = await client.exists(path);
-    if (!exists) return;
-    await client.deleteFile(path);
+    return this.withWebdavErrorContext('delete', async () => {
+      if (!this.config) {
+        throw new Error('Missing WebDAV config');
+      }
+      const bridge = netcattyBridge.get();
+      if (bridge?.cloudSyncWebdavDelete) {
+        await bridge.cloudSyncWebdavDelete(this.config);
+        return;
+      }
+      const client = this.getClient();
+      const path = this.getSyncPath();
+      const exists = await client.exists(path);
+      if (!exists) return;
+      await client.deleteFile(path);
+    });
   }
 
   getTokens(): OAuthTokens | null {
@@ -127,6 +170,58 @@ export class WebDAVAdapter {
       username: config.username || '',
       password: config.password || '',
     });
+  }
+
+  private async withWebdavErrorContext<T>(
+    operation: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await fn();
+    } catch (error) {
+      throw this.buildWebdavError(operation, error);
+    }
+  }
+
+  private buildWebdavError(operation: string, error: unknown): Error {
+    const baseMessage = error instanceof Error ? error.message : String(error);
+    const details: Record<string, string | number | boolean | null | undefined> = {
+      operation,
+    };
+    const raw = error as {
+      status?: number;
+      statusText?: string;
+      url?: string;
+      method?: string;
+      code?: string;
+      response?: {
+        status?: number;
+        statusText?: string;
+        url?: string;
+      };
+      cause?: unknown;
+    };
+
+    if (raw?.status) details.status = raw.status;
+    if (raw?.statusText) details.statusText = raw.statusText;
+    if (raw?.url) details.url = raw.url;
+    if (raw?.method) details.method = raw.method;
+    if (raw?.code) details.code = raw.code;
+    if (raw?.response?.status) details.status = raw.response.status;
+    if (raw?.response?.statusText) details.statusText = raw.response.statusText;
+    if (raw?.response?.url) details.url = raw.response.url;
+    if (raw?.cause && typeof raw.cause === 'object') {
+      Object.assign(details, raw.cause as Record<string, unknown>);
+      details.operation = operation;
+      const cause = raw.cause as { code?: string };
+      if (cause?.code) details.causeCode = cause.code;
+    } else if (raw?.cause) {
+      details.cause = String(raw.cause);
+    }
+
+    const err = new Error(`WebDAV ${operation} failed: ${baseMessage}`);
+    (err as Error & { cause?: unknown }).cause = details;
+    return err;
   }
 
   private getSyncPath(): string {

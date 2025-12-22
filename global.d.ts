@@ -1,4 +1,5 @@
 import type { RemoteFile } from "./types";
+import type { S3Config, SyncedFile, WebDAVConfig } from "./domain/sync";
 
 declare global {
 // Proxy configuration for SSH connections
@@ -243,6 +244,23 @@ interface NetcattyBridge {
   cloudSyncSetSessionPassword?(password: string): Promise<boolean>;
   cloudSyncGetSessionPassword?(): Promise<string | null>;
   cloudSyncClearSessionPassword?(): Promise<boolean>;
+
+  // Cloud sync network operations (proxied via main process)
+  cloudSyncWebdavInitialize?(config: WebDAVConfig): Promise<{ resourceId: string | null }>;
+  cloudSyncWebdavUpload?(
+    config: WebDAVConfig,
+    syncedFile: SyncedFile
+  ): Promise<{ resourceId: string }>;
+  cloudSyncWebdavDownload?(config: WebDAVConfig): Promise<{ syncedFile: SyncedFile | null }>;
+  cloudSyncWebdavDelete?(config: WebDAVConfig): Promise<{ ok: true }>;
+
+  cloudSyncS3Initialize?(config: S3Config): Promise<{ resourceId: string | null }>;
+  cloudSyncS3Upload?(
+    config: S3Config,
+    syncedFile: SyncedFile
+  ): Promise<{ resourceId: string }>;
+  cloudSyncS3Download?(config: S3Config): Promise<{ syncedFile: SyncedFile | null }>;
+  cloudSyncS3Delete?(config: S3Config): Promise<{ ok: true }>;
   
   // Port Forwarding
   startPortForward?(options: PortForwardOptions): Promise<PortForwardResult>;
