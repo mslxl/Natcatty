@@ -163,6 +163,33 @@ export const useSettingsState = () => {
     }
   }, []);
 
+  const syncAppearanceFromStorage = useCallback(() => {
+    const storedTheme = readStoredString(STORAGE_KEY_THEME);
+    const nextTheme = storedTheme && isValidTheme(storedTheme) ? storedTheme : theme;
+    const storedLightId = readStoredString(STORAGE_KEY_UI_THEME_LIGHT);
+    const nextLightId = storedLightId && isValidUiThemeId('light', storedLightId) ? storedLightId : lightUiThemeId;
+    const storedDarkId = readStoredString(STORAGE_KEY_UI_THEME_DARK);
+    const nextDarkId = storedDarkId && isValidUiThemeId('dark', storedDarkId) ? storedDarkId : darkUiThemeId;
+    const storedAccentMode = readStoredString(STORAGE_KEY_ACCENT_MODE);
+    const nextAccentMode = storedAccentMode === 'theme' || storedAccentMode === 'custom' ? storedAccentMode : accentMode;
+    const storedAccent = readStoredString(STORAGE_KEY_COLOR);
+    const nextAccent = storedAccent && isValidHslToken(storedAccent) ? storedAccent.trim() : customAccent;
+
+    setTheme(nextTheme);
+    setLightUiThemeId(nextLightId);
+    setDarkUiThemeId(nextDarkId);
+    setAccentMode(nextAccentMode);
+    setCustomAccent(nextAccent);
+
+    const tokens = getUiThemeById(nextTheme, nextTheme === 'dark' ? nextDarkId : nextLightId).tokens;
+    applyThemeTokens(nextTheme, tokens, nextAccentMode, nextAccent);
+  }, [theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent]);
+
+  const syncCustomCssFromStorage = useCallback(() => {
+    const storedCss = localStorageAdapter.readString(STORAGE_KEY_CUSTOM_CSS) || '';
+    setCustomCSS((prev) => (prev === storedCss ? prev : storedCss));
+  }, []);
+
   useLayoutEffect(() => {
     const tokens = getUiThemeById(theme, theme === 'dark' ? darkUiThemeId : lightUiThemeId).tokens;
     applyThemeTokens(theme, tokens, accentMode, customAccent);
@@ -192,43 +219,24 @@ export const useSettingsState = () => {
 	    if (!bridge?.onSettingsChanged) return;
 	    const unsubscribe = bridge.onSettingsChanged((payload) => {
 	      const { key, value } = payload;
-      if (key === STORAGE_KEY_THEME && (value === 'light' || value === 'dark')) {
-        setTheme(value);
-        const tokens = getUiThemeById(value, value === 'dark' ? darkUiThemeId : lightUiThemeId).tokens;
-        applyThemeTokens(value, tokens, accentMode, customAccent);
-      }
-      if (key === STORAGE_KEY_UI_THEME_LIGHT && typeof value === 'string' && isValidUiThemeId('light', value)) {
-        setLightUiThemeId(value);
-        if (theme === 'light') {
-          const tokens = getUiThemeById('light', value).tokens;
-          applyThemeTokens('light', tokens, accentMode, customAccent);
-        }
-      }
-      if (key === STORAGE_KEY_UI_THEME_DARK && typeof value === 'string' && isValidUiThemeId('dark', value)) {
-        setDarkUiThemeId(value);
-        if (theme === 'dark') {
-          const tokens = getUiThemeById('dark', value).tokens;
-          applyThemeTokens('dark', tokens, accentMode, customAccent);
-        }
-      }
-      if (key === STORAGE_KEY_ACCENT_MODE && (value === 'theme' || value === 'custom')) {
-        setAccentMode(value);
-        const tokens = getUiThemeById(theme, theme === 'dark' ? darkUiThemeId : lightUiThemeId).tokens;
-        applyThemeTokens(theme, tokens, value, customAccent);
-      }
-      if (key === STORAGE_KEY_COLOR && typeof value === 'string' && isValidHslToken(value)) {
-        const next = value.trim();
-        setCustomAccent(next);
-        if (accentMode === 'custom') {
-          const tokens = getUiThemeById(theme, theme === 'dark' ? darkUiThemeId : lightUiThemeId).tokens;
-          applyThemeTokens(theme, tokens, accentMode, next);
-        }
+      if (
+        key === STORAGE_KEY_THEME ||
+        key === STORAGE_KEY_UI_THEME_LIGHT ||
+        key === STORAGE_KEY_UI_THEME_DARK ||
+        key === STORAGE_KEY_ACCENT_MODE ||
+        key === STORAGE_KEY_COLOR
+      ) {
+        syncAppearanceFromStorage();
+        return;
       }
       if (key === STORAGE_KEY_UI_LANGUAGE && typeof value === 'string') {
         const next = resolveSupportedLocale(value);
         setUiLanguage((prev) => (prev === next ? prev : next));
 	        document.documentElement.lang = next;
 	      }
+      if (key === STORAGE_KEY_CUSTOM_CSS && typeof value === 'string') {
+        syncCustomCssFromStorage();
+      }
       if (key === STORAGE_KEY_TERM_THEME && typeof value === 'string') {
         setTerminalThemeId(value);
       }
@@ -263,7 +271,7 @@ export const useSettingsState = () => {
         // ignore
       }
     };
-  }, [theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent]);
+  }, [syncAppearanceFromStorage, syncCustomCssFromStorage]);
 
   useEffect(() => {
     const bridge = netcattyBridge.get();
@@ -406,6 +414,7 @@ export const useSettingsState = () => {
   // Apply and persist custom CSS
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_CUSTOM_CSS, customCSS);
+    notifySettingsChanged(STORAGE_KEY_CUSTOM_CSS, customCSS);
     
     // Apply custom CSS to document
     let styleEl = document.getElementById('netcatty-custom-css') as HTMLStyleElement | null;
@@ -415,7 +424,7 @@ export const useSettingsState = () => {
       document.head.appendChild(styleEl);
     }
     styleEl.textContent = customCSS;
-  }, [customCSS]);
+  }, [customCSS, notifySettingsChanged]);
 
   // Get merged key bindings (defaults + custom overrides)
   const keyBindings = useMemo((): KeyBinding[] => {
