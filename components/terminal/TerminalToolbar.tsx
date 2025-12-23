@@ -165,6 +165,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                 className={buttonBase}
                 title={t("terminal.toolbar.searchTerminal")}
                 aria-label={t("terminal.toolbar.searchTerminal")}
+                aria-pressed={isSearchOpen}
                 onClick={onToggleSearch}
             >
                 <Search size={12} />

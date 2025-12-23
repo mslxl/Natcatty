@@ -35,7 +35,6 @@ import { toast } from "./ui/toast";
 import {
   EditPanel,
   generateRuleLabel as buildRuleLabel,
-  getTypeLabel,
   getTypeMenuLabel,
   NewFormPanel,
   RuleCard,
