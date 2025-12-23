@@ -355,10 +355,6 @@ async function startSSHSession(event, options) {
         kex: ['curve25519-sha256', 'curve25519-sha256@libssh.org', 'ecdh-sha2-nistp256', 'ecdh-sha2-nistp384', 'diffie-hellman-group14-sha256'],
         compress: ['none'],
       },
-      // Enable debug logging for SSH connection troubleshooting
-      debug: (msg) => {
-        log("SSH DEBUG", msg);
-      },
     };
 
     // Authentication for final target
