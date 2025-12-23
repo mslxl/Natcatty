@@ -29,6 +29,9 @@ let handlersRegistered = false; // Prevent duplicate IPC handler registration
 let menuDeps = null;
 const rendererReadyCallbacksByWebContentsId = new Map();
 const DEBUG_WINDOWS = process.env.NETCATTY_DEBUG_WINDOWS === "1";
+const OAUTH_DEFAULT_WIDTH = 600;
+const OAUTH_DEFAULT_HEIGHT = 700;
+const OAUTH_OVERLAY_ID = "__netcatty_oauth_loading__";
 
 function debugLog(...args) {
   if (!DEBUG_WINDOWS) return;
@@ -219,6 +222,111 @@ function resolveFrontendBackgroundColor(electronDir, theme) {
   }
 }
 
+function parseWindowOpenFeatures(features) {
+  if (!features) return {};
+  const parts = String(features)
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const values = {};
+  parts.forEach((part) => {
+    const [key, value] = part.split("=").map((entry) => entry.trim());
+    if (!key || !value) return;
+    const numeric = Number.parseInt(value, 10);
+    if (Number.isFinite(numeric)) values[key.toLowerCase()] = numeric;
+  });
+
+  const width = values.width;
+  const height = values.height;
+  return {
+    width: Number.isFinite(width) ? Math.max(360, Math.min(width, 1400)) : null,
+    height: Number.isFinite(height) ? Math.max(480, Math.min(height, 1200)) : null,
+  };
+}
+
+function attachOAuthLoadingOverlay(win) {
+  if (!win || win.isDestroyed?.()) return;
+
+  const overlayStyle = `
+    #${OAUTH_OVERLAY_ID} {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      background:
+        radial-gradient(900px circle at 15% 0%, rgba(14, 165, 233, 0.12), transparent 38%),
+        radial-gradient(1200px circle at 85% 10%, rgba(56, 189, 248, 0.14), transparent 40%),
+        #f7f9fc;
+      color: #1e293b;
+      font-family: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+      z-index: 999999;
+    }
+    #${OAUTH_OVERLAY_ID}.dark {
+      background:
+        radial-gradient(900px circle at 15% 0%, rgba(14, 165, 233, 0.16), transparent 38%),
+        radial-gradient(1200px circle at 85% 10%, rgba(56, 189, 248, 0.18), transparent 40%),
+        #0b1220;
+      color: #e2e8f0;
+    }
+    #${OAUTH_OVERLAY_ID} .spinner {
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      border: 3px solid rgba(148, 163, 184, 0.35);
+      border-top-color: currentColor;
+      animation: netcatty-oauth-spin 0.8s linear infinite;
+    }
+    #${OAUTH_OVERLAY_ID} .label {
+      font-size: 14px;
+      letter-spacing: 0.04em;
+    }
+    @keyframes netcatty-oauth-spin {
+      to { transform: rotate(360deg); }
+    }
+  `;
+
+  const injectOverlayScript = `
+    (() => {
+      if (document.getElementById("${OAUTH_OVERLAY_ID}")) return;
+      const root = document.documentElement || document.body;
+      const style = document.createElement("style");
+      style.textContent = ${JSON.stringify(overlayStyle)};
+      style.setAttribute("data-netcatty-oauth", "style");
+      (document.head || root).appendChild(style);
+
+      const overlay = document.createElement("div");
+      overlay.id = "${OAUTH_OVERLAY_ID}";
+      if (root.classList.contains("dark")) overlay.classList.add("dark");
+      overlay.innerHTML = '<div class="spinner"></div><div class="label">Loading...</div>';
+      (document.body || root).appendChild(overlay);
+    })();
+  `;
+
+  const removeOverlayScript = `
+    (() => {
+      const overlay = document.getElementById("${OAUTH_OVERLAY_ID}");
+      if (overlay) overlay.remove();
+      const style = document.querySelector('style[data-netcatty-oauth="style"]');
+      if (style) style.remove();
+    })();
+  `;
+
+  win.webContents.on("did-start-loading", () => {
+    win.webContents.executeJavaScript(injectOverlayScript, true).catch(() => {});
+  });
+
+  win.webContents.on("did-stop-loading", () => {
+    win.webContents.executeJavaScript(removeOverlayScript, true).catch(() => {});
+  });
+
+  win.webContents.on("did-fail-load", () => {
+    win.webContents.executeJavaScript(removeOverlayScript, true).catch(() => {});
+  });
+}
+
 async function waitForRootPaint(win, { timeoutMs = 400, intervalMs = 30 } = {}) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -358,6 +466,50 @@ async function createWindow(electronModule, options) {
   // Defer show until renderer is ready; use fallback timeout to avoid keeping window hidden forever.
   // Production gets a shorter timeout since the splash screen provides visual feedback.
   setupDeferredShow(win, { timeoutMs: isDev ? 3000 : 1500 });
+
+  win.webContents.on("did-create-window", (childWindow) => {
+    try {
+      childWindow.setMenuBarVisibility(false);
+      childWindow.autoHideMenuBar = true;
+      childWindow.removeMenu();
+    } catch {
+      // ignore
+    }
+    try {
+      if (appIcon && childWindow.setIcon) childWindow.setIcon(appIcon);
+    } catch {
+      // ignore
+    }
+    attachOAuthLoadingOverlay(childWindow);
+  });
+
+  win.webContents.setWindowOpenHandler((details) => {
+    const url = details?.url;
+    if (!url || !/^https?:/i.test(url)) {
+      return { action: "deny" };
+    }
+
+    const size = parseWindowOpenFeatures(details?.features);
+    return {
+      action: "allow",
+      overrideBrowserWindowOptions: {
+        width: size.width || OAUTH_DEFAULT_WIDTH,
+        height: size.height || OAUTH_DEFAULT_HEIGHT,
+        minWidth: 420,
+        minHeight: 560,
+        backgroundColor,
+        icon: appIcon,
+        autoHideMenuBar: true,
+        menuBarVisible: false,
+        title: "Netcatty Authorization",
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: false,
+        },
+      },
+    };
+  });
 
   // Register window control handlers
   registerWindowHandlers(electronModule.ipcMain, nativeTheme);

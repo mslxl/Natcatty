@@ -49,53 +49,6 @@ const ONEDRIVE_SCOPES = [
 
 const ONEDRIVE_SCOPE = ONEDRIVE_SCOPES.join(' ');
 
-const decodeBase64Url = (value: string): string | null => {
-  if (typeof atob !== 'function') return null;
-  const base64 = value.replace(/-/g, '+').replace(/_/g, '/');
-  const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
-  try {
-    return atob(padded);
-  } catch {
-    return null;
-  }
-};
-
-const decodeJwtClaims = (
-  token?: string | null
-): {
-  aud?: string;
-  scp?: string;
-  iss?: string;
-  tid?: string;
-  appid?: string;
-  exp?: number;
-} | null => {
-  if (!token) return null;
-  const parts = token.split('.');
-  if (parts.length < 2) return null;
-  const decoded = decodeBase64Url(parts[1]);
-  if (!decoded) return null;
-  try {
-    const payload = JSON.parse(decoded) as Record<string, unknown>;
-    return {
-      aud: typeof payload.aud === 'string' ? payload.aud : undefined,
-      scp: typeof payload.scp === 'string' ? payload.scp : undefined,
-      iss: typeof payload.iss === 'string' ? payload.iss : undefined,
-      tid: typeof payload.tid === 'string' ? payload.tid : undefined,
-      appid: typeof payload.appid === 'string' ? payload.appid : undefined,
-      exp: typeof payload.exp === 'number' ? payload.exp : undefined,
-    };
-  } catch {
-    return null;
-  }
-};
-
-const logTokenClaims = (context: string, token?: string | null): void => {
-  const claims = decodeJwtClaims(token);
-  if (!claims) return;
-  console.warn(`[OneDrive] ${context} token claims`, claims);
-};
-
 const isUnauthorizedError = (error: unknown): boolean => {
   const message = error instanceof Error ? error.message : String(error);
   const lower = message.toLowerCase();
@@ -619,24 +572,8 @@ export class OneDriveAdapter {
       return await operation(accessToken);
     } catch (error) {
       if (isUnauthorizedError(error) && this.tokens?.refreshToken) {
-        console.warn(`[OneDrive] ${context} received 401, refreshing token and retrying.`);
         this.tokens = await refreshAccessToken(this.tokens.refreshToken);
-        logTokenClaims(`${context} refresh`, this.tokens.accessToken);
-        try {
-          return await operation(this.tokens.accessToken);
-        } catch (retryError) {
-          if (isUnauthorizedError(retryError)) {
-            logTokenClaims(`${context} retry failed`, this.tokens.accessToken);
-          }
-          throw retryError;
-        }
-      }
-
-      if (isUnauthorizedError(error)) {
-        if (!this.tokens?.refreshToken) {
-          console.warn(`[OneDrive] ${context} 401 without refresh token; re-auth required.`);
-        }
-        logTokenClaims(`${context} failed`, accessToken);
+        return await operation(this.tokens.accessToken);
       }
       throw error;
     }

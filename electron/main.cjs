@@ -484,6 +484,22 @@ app.whenReady().then(() => {
   const menu = windowManager.buildAppMenu(Menu, app, isMac);
   Menu.setApplicationMenu(menu);
 
+  app.on("browser-window-created", (_event, win) => {
+    try {
+      const mainWin = windowManager.getMainWindow();
+      const settingsWin = windowManager.getSettingsWindow();
+      const isPrimary = win === mainWin || win === settingsWin;
+      if (!isPrimary) {
+        win.setMenuBarVisibility(false);
+        win.autoHideMenuBar = true;
+        win.setMenu(null);
+        if (appIcon && win.setIcon) win.setIcon(appIcon);
+      }
+    } catch {
+      // ignore
+    }
+  });
+
   // Create the main window
   void createWindow().catch((err) => {
     console.error("[Main] Failed to create main window:", err);
