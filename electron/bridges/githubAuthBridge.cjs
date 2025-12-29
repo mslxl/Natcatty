@@ -5,7 +5,7 @@
  * This bridge proxies GitHub Device Flow endpoints via the main process.
  */
 
-const GITHUB_CLIENT_ID = "Ov23liuLdkw1H393rtT4";
+const GITHUB_CLIENT_ID = process.env.VITE_SYNC_GITHUB_CLIENT_ID || "";
 const GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code";
 const GITHUB_ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
 
@@ -82,4 +82,3 @@ function registerHandlers(ipcMain) {
 }
 
 module.exports = { registerHandlers };
-

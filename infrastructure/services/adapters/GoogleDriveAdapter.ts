@@ -136,6 +136,7 @@ export const exchangeCodeForTokens = async (
 
   return await exchangeViaMain({
     clientId: SYNC_CONSTANTS.GOOGLE_CLIENT_ID,
+    clientSecret: SYNC_CONSTANTS.GOOGLE_CLIENT_SECRET,
     code,
     codeVerifier,
     redirectUri,
@@ -156,6 +157,7 @@ export const refreshAccessToken = async (refreshToken: string): Promise<OAuthTok
 
   return await refreshViaMain({
     clientId: SYNC_CONSTANTS.GOOGLE_CLIENT_ID,
+    clientSecret: SYNC_CONSTANTS.GOOGLE_CLIENT_SECRET,
     refreshToken,
   });
 };

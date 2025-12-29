@@ -380,6 +380,12 @@ export const SYNC_STORAGE_KEYS = {
 // Constants
 // ============================================================================
 
+const readBuildEnv = (key: string): string | undefined => {
+  const env = (import.meta as { env?: Record<string, string | undefined> }).env;
+  const value = env?.[key];
+  return value && value.trim().length ? value : undefined;
+};
+
 export const SYNC_CONSTANTS = {
   // Encryption
   AES_KEY_LENGTH: 256,
@@ -401,9 +407,10 @@ export const SYNC_CONSTANTS = {
   MAX_SYNC_INTERVAL: 60,         // minutes
   
   // OAuth
-  GITHUB_CLIENT_ID: 'Ov23liuLdkw1H393rtT4', // Public client ID for Device Flow
-  GOOGLE_CLIENT_ID: '840441747394-n58o8ibgivgd3frqsn0bo5revf4viq2a.apps.googleusercontent.com',
-  ONEDRIVE_CLIENT_ID: '138bb0b6-b919-4e9d-80c6-64136ffc02a3',
+  GITHUB_CLIENT_ID: readBuildEnv('VITE_SYNC_GITHUB_CLIENT_ID') || '', // Public client ID for Device Flow
+  GOOGLE_CLIENT_ID: readBuildEnv('VITE_SYNC_GOOGLE_CLIENT_ID') || '',
+  GOOGLE_CLIENT_SECRET: readBuildEnv('VITE_SYNC_GOOGLE_CLIENT_SECRET') || '',
+  ONEDRIVE_CLIENT_ID: readBuildEnv('VITE_SYNC_ONEDRIVE_CLIENT_ID') || '',
   
   // API endpoints
   GITHUB_DEVICE_CODE_URL: 'https://github.com/login/device/code',
