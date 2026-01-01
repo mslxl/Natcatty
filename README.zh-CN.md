@@ -243,6 +243,16 @@ Netcatty 自动检测并显示已连接主机的操作系统图标：
 <a name="快速开始"></a>
 # 快速开始
 
+### 下载
+
+从 [GitHub Releases](https://github.com/user/netcatty/releases/latest) 下载最新版本。
+
+> **⚠️ macOS 用户注意：** 由于应用未经代码签名，macOS Gatekeeper 会阻止运行。下载后，请在终端运行以下命令移除隔离属性：
+> ```bash
+> xattr -cr /Applications/Netcatty.app
+> ```
+> 或者右键点击应用 → 打开 → 在弹出的对话框中点击"打开"。
+
 ### 前置条件
 - Node.js 18+ 和 npm
 - macOS、Windows 10+ 或 Linux

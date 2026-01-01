@@ -243,6 +243,16 @@ Netcatty automatically detects and displays OS icons for connected hosts:
 <a name="getting-started"></a>
 # Getting Started
 
+### Download
+
+Download the latest release from [GitHub Releases](https://github.com/user/netcatty/releases/latest).
+
+> **⚠️ macOS Users:** Since the app is not code-signed, macOS Gatekeeper will block it. After downloading, run this command to remove the quarantine attribute:
+> ```bash
+> xattr -cr /Applications/Netcatty.app
+> ```
+> Or right-click the app → Open → Click "Open" in the dialog.
+
 ### Prerequisites
 - Node.js 18+ and npm
 - macOS, Windows 10+, or Linux

@@ -243,6 +243,16 @@ Netcatty は接続したホストの OS アイコンを自動的に検出・表�
 <a name="はじめに"></a>
 # はじめに
 
+### ダウンロード
+
+[GitHub Releases](https://github.com/user/netcatty/releases/latest) から最新版をダウンロードしてください。
+
+> **⚠️ macOS ユーザーへ：** アプリはコード署名されていないため、macOS Gatekeeper によってブロックされます。ダウンロード後、以下のコマンドを実行して隔離属性を削除してください：
+> ```bash
+> xattr -cr /Applications/Netcatty.app
+> ```
+> または、アプリを右クリック → 開く → ダイアログで「開く」をクリックしてください。
+
 ### 前提条件
 - Node.js 18+ と npm
 - macOS、Windows 10+、または Linux
