@@ -608,6 +608,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
       ? `${targetParentPath}/${newFolderName.trim()}`
       : newFolderName.trim();
     onUpdateCustomGroups(Array.from(new Set([...customGroups, fullPath])));
+    setNewFolderName("");
+    setTargetParentPath(null);
     setIsNewFolderOpen(false);
   };
 
@@ -925,6 +927,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                       className="w-full justify-start gap-2"
                       onClick={() => {
                         setTargetParentPath(selectedGroupPath);
+                        setNewFolderName("");
                         setIsNewFolderOpen(true);
                       }}
                     >
@@ -1087,6 +1090,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                             <ContextMenuItem
                               onClick={() => {
                                 setTargetParentPath(node.path);
+                                setNewFolderName("");
                                 setIsNewFolderOpen(true);
                               }}
                             >
@@ -1369,7 +1373,13 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
         />
       )}
 
-          <Dialog open={isNewFolderOpen} onOpenChange={setIsNewFolderOpen}>
+          <Dialog open={isNewFolderOpen} onOpenChange={(open) => {
+            setIsNewFolderOpen(open);
+            if (!open) {
+              setNewFolderName("");
+              setTargetParentPath(null);
+            }
+          }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
