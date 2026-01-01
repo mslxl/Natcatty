@@ -124,7 +124,7 @@
 <a name="host-management"></a>
 ## Host Management
 
-Organize hosts with groups, tags, and powerful search. Drag and drop to reorganize.
+The Vault view is your command center for managing all SSH connections. Create hierarchical groups with right-click context menus, drag hosts between groups, and use breadcrumb navigation to quickly traverse your host tree. Each host displays its connection status, OS icon, and quick-connect button. Switch between grid and list views based on your preference, and use the powerful search to filter hosts by name, hostname, tags, or group.
 
 | Dark Mode | Light Mode | List View |
 |-----------|------------|-----------|
@@ -133,7 +133,7 @@ Organize hosts with groups, tags, and powerful search. Drag and drop to reorgani
 <a name="terminal"></a>
 ## Terminal
 
-Split terminals, customize themes, and run snippets across sessions.
+Powered by xterm.js with WebGL acceleration, the terminal delivers a smooth, responsive experience. Split your workspace horizontally or vertically to monitor multiple sessions simultaneously. Enable broadcast mode to send commands to all terminals at once — perfect for fleet management. The theme customization panel offers 50+ color schemes with live preview, adjustable font size, and multiple font family options including JetBrains Mono and Fira Code.
 
 | Split Windows | Theme Customization |
 |---------------|---------------------|
@@ -144,35 +144,35 @@ Split terminals, customize themes, and run snippets across sessions.
 <a name="sftp"></a>
 ## SFTP
 
-Dual-pane SFTP browser with drag-and-drop transfers.
+The dual-pane SFTP browser supports local-to-remote and remote-to-remote file transfers. Navigate directories with single-click, drag files between panes, and monitor transfer progress in real-time. The interface shows file permissions, sizes, and modification dates. Queue multiple transfers and watch them complete with detailed speed and progress indicators. Context menus provide quick access to rename, delete, download, and upload operations.
 
 ![SFTP View](screenshots/sftp.png)
 
 <a name="keychain"></a>
 ## Keychain
 
-Manage SSH keys, certificates, and identities in one place.
+The Keychain is your secure vault for SSH credentials. Generate new RSA, ECDSA, or ED25519 keys with customizable bit lengths, or import existing keys in PEM/OpenSSH format. Support for SSH certificates enables secure authentication with certificate authorities. Create reusable identities that combine username, authentication method, and keys — then assign them to multiple hosts. Export public keys directly to remote servers with one click, using customizable deployment scripts.
 
 ![Key Manager](screenshots/key-manager.png)
 
 <a name="port-forwarding"></a>
 ## Port Forwarding
 
-Create and manage SSH tunnels with visual interface.
+Set up SSH tunnels with an intuitive visual interface. Local forwarding exposes remote services (like databases or internal APIs) on your local machine. Remote forwarding shares your local services with remote servers. Dynamic forwarding creates a SOCKS5 proxy for secure browsing. Each tunnel shows real-time status with clear indicators for active, connecting, or error states. Save tunnel configurations for quick reuse across sessions.
 
 ![Port Forwarding](screenshots/port-forwadring.png)
 
 <a name="cloud-sync"></a>
 ## Cloud Sync
 
-Sync your configuration securely across devices.
+Keep your hosts, keys, snippets, and settings synchronized across all your devices with end-to-end encryption. Your master password encrypts all data locally before upload — the cloud provider never sees plaintext. Choose from multiple storage backends: GitHub Gist for simplicity, S3-compatible storage (AWS, MinIO, Cloudflare R2) for flexibility, WebDAV for self-hosted solutions, or Google Drive and OneDrive for convenience. Conflict resolution ensures you never lose data during simultaneous edits.
 
 ![Cloud Sync](screenshots/cloud-sync.png)
 
 <a name="themes--customization"></a>
 ## Themes & Customization
 
-Personalize your workspace with themes, accent colors, and i18n.
+Make Netcatty truly yours with extensive customization options. Toggle between light and dark modes, or let the app follow your system preference. Pick any accent color to match your style. The application supports multiple languages including English and 简体中文, with more translations welcome via community contributions. All preferences sync across devices when cloud sync is enabled, so your personalized experience follows you everywhere.
 
 ![Themes & i18n](screenshots/app-themes-i18n.png)
 
@@ -209,7 +209,7 @@ Netcatty automatically detects and displays OS icons for connected hosts:
 
 ### Development
 
-\`\`\`bash
+```bash
 # Clone the repository
 git clone https://github.com/user/netcatty.git
 cd netcatty
@@ -219,10 +219,11 @@ npm install
 
 # Start development mode (Vite + Electron)
 npm run dev
-\`\`\`
+```
 
 ### Project Structure
-\`\`\`
+
+```
 ├── App.tsx                 # Main React application
 ├── components/             # React components
 │   ├── Terminal.tsx        # Terminal component
@@ -237,14 +238,14 @@ npm run dev
 │   ├── main.cjs            # Main entry
 │   └── bridges/            # IPC bridges
 └── public/                 # Static assets & icons
-\`\`\`
+```
 
 ---
 
 <a name="build--package"></a>
 # Build & Package
 
-\`\`\`bash
+```bash
 # Build for production
 npm run build
 
@@ -255,7 +256,7 @@ npm run pack
 npm run pack:mac     # macOS (DMG + ZIP)
 npm run pack:win     # Windows (NSIS installer)
 npm run pack:linux   # Linux (AppImage, deb, rpm)
-\`\`\`
+```
 
 ---
 
@@ -281,9 +282,9 @@ npm run pack:linux   # Linux (AppImage, deb, rpm)
 Contributions are welcome! Please feel free to submit a Pull Request.
 
 1. Fork the repository
-2. Create your feature branch (\`git checkout -b feature/amazing-feature\`)
-3. Commit your changes (\`git commit -m 'Add some amazing feature'\`)
-4. Push to the branch (\`git push origin feature/amazing-feature\`)
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
 See [agents.md](agents.md) for architecture overview and coding conventions.
