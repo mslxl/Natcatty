@@ -27,6 +27,10 @@
   </a>
 </p>
 
+<p align="center">
+  <a href="./README.md">English</a> · <a href="./README.zh-CN.md">简体中文</a> · <a href="./README.ja-JP.md">日本語</a>
+</p>
+
 ---
 
 [![Netcatty Main Interface](screenshots/main-window-dark.png)](screenshots/main-window-dark.png)
@@ -151,21 +155,57 @@ The dual-pane SFTP browser supports local-to-remote and remote-to-remote file tr
 <a name="keychain"></a>
 ## Keychain
 
-The Keychain is your secure vault for SSH credentials. Generate new RSA, ECDSA, or ED25519 keys with customizable bit lengths, or import existing keys in PEM/OpenSSH format. Support for SSH certificates enables secure authentication with certificate authorities. Create reusable identities that combine username, authentication method, and keys — then assign them to multiple hosts. Export public keys directly to remote servers with one click, using customizable deployment scripts.
+The Keychain is your secure vault for SSH credentials. Generate new keys, import existing ones, or manage SSH certificates for enterprise authentication.
+
+| Key Type | Algorithm | Recommended Use |
+|----------|-----------|----------------|
+| **ED25519** | EdDSA | Modern, fast, most secure (recommended) |
+| **ECDSA** | NIST P-256/384/521 | Good security, widely supported |
+| **RSA** | RSA 2048/4096 | Legacy compatibility, universal support |
+| **Certificate** | CA-signed | Enterprise environments, short-lived auth |
+
+**Features:**
+- 🔑 Generate keys with customizable bit lengths
+- 📥 Import PEM/OpenSSH format keys
+- 👤 Create reusable identities (username + auth method)
+- 📤 One-click export public keys to remote hosts
 
 ![Key Manager](screenshots/key-manager.png)
 
 <a name="port-forwarding"></a>
 ## Port Forwarding
 
-Set up SSH tunnels with an intuitive visual interface. Local forwarding exposes remote services (like databases or internal APIs) on your local machine. Remote forwarding shares your local services with remote servers. Dynamic forwarding creates a SOCKS5 proxy for secure browsing. Each tunnel shows real-time status with clear indicators for active, connecting, or error states. Save tunnel configurations for quick reuse across sessions.
+Set up SSH tunnels with an intuitive visual interface. Each tunnel shows real-time status with clear indicators for active, connecting, or error states. Save tunnel configurations for quick reuse across sessions.
+
+| Type | Direction | Use Case | Example |
+|------|-----------|----------|--------|
+| **Local** | Remote → Local | Access remote services on your machine | Forward remote MySQL `3306` to `localhost:3306` |
+| **Remote** | Local → Remote | Share local services with remote server | Expose local dev server to remote machine |
+| **Dynamic** | SOCKS5 Proxy | Secure browsing through SSH tunnel | Browse internet via encrypted SSH connection |
 
 ![Port Forwarding](screenshots/port-forwadring.png)
 
 <a name="cloud-sync"></a>
 ## Cloud Sync
 
-Keep your hosts, keys, snippets, and settings synchronized across all your devices with end-to-end encryption. Your master password encrypts all data locally before upload — the cloud provider never sees plaintext. Choose from multiple storage backends: GitHub Gist for simplicity, S3-compatible storage (AWS, MinIO, Cloudflare R2) for flexibility, WebDAV for self-hosted solutions, or Google Drive and OneDrive for convenience. Conflict resolution ensures you never lose data during simultaneous edits.
+Keep your hosts, keys, snippets, and settings synchronized across all your devices with end-to-end encryption. Your master password encrypts all data locally before upload — the cloud provider never sees plaintext.
+
+| Provider | Best For | Setup Complexity |
+|----------|----------|------------------|
+| **GitHub Gist** | Quick setup, version history | ⭐ Easy |
+| **Google Drive** | Personal use, large storage | ⭐ Easy |
+| **OneDrive** | Microsoft ecosystem users | ⭐ Easy |
+| **S3-Compatible** | AWS, MinIO, Cloudflare R2, self-hosted | ⭐⭐ Medium |
+| **WebDAV** | Nextcloud, ownCloud, self-hosted | ⭐⭐ Medium |
+
+**What syncs:**
+- ✅ Hosts & connection settings
+- ✅ SSH keys & certificates
+- ✅ Identities & credentials
+- ✅ Snippets & scripts
+- ✅ Custom groups & tags
+- ✅ Port forwarding rules
+- ✅ Application preferences
 
 ![Cloud Sync](screenshots/cloud-sync.png)
 
