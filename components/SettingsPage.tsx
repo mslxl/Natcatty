@@ -21,7 +21,14 @@ type SettingsState = ReturnType<typeof useSettingsState>;
 const SettingsSyncTab = React.lazy(() => import("./settings/tabs/SettingsSyncTab"));
 
 const SettingsSyncTabWithVault: React.FC = () => {
-    const { hosts, keys, identities, snippets, importDataFromString } = useVaultState();
+    const {
+        hosts,
+        keys,
+        identities,
+        snippets,
+        importDataFromString,
+        clearVaultData,
+    } = useVaultState();
 
     return (
         <SettingsSyncTab
@@ -30,6 +37,7 @@ const SettingsSyncTabWithVault: React.FC = () => {
             identities={identities}
             snippets={snippets}
             importDataFromString={importDataFromString}
+            clearVaultData={clearVaultData}
         />
     );
 };

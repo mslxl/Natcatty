@@ -10,8 +10,9 @@ export default function SettingsSyncTab(props: {
   identities: Identity[];
   snippets: Snippet[];
   importDataFromString: (data: string) => void;
+  clearVaultData: () => void;
 }) {
-  const { hosts, keys, identities, snippets, importDataFromString } = props;
+  const { hosts, keys, identities, snippets, importDataFromString, clearVaultData } = props;
 
   const buildSyncPayload = useCallback((): SyncPayload => {
     return {
@@ -41,8 +42,11 @@ export default function SettingsSyncTab(props: {
 
   return (
     <SettingsTabContent value="sync">
-      <CloudSyncSettings onBuildPayload={buildSyncPayload} onApplyPayload={applySyncPayload} />
+      <CloudSyncSettings
+        onBuildPayload={buildSyncPayload}
+        onApplyPayload={applySyncPayload}
+        onClearLocalData={clearVaultData}
+      />
     </SettingsTabContent>
   );
 }
-

@@ -76,6 +76,15 @@ const isLegacyUnsupportedKey = (key: LegacyKeyRecord): boolean => {
   return false;
 };
 
+const safeParse = <T,>(value: string | null): T | null => {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
+  }
+};
+
 export const useVaultState = () => {
   const [hosts, setHosts] = useState<Host[]>([]);
   const [keys, setKeys] = useState<SSHKey[]>([]);
@@ -122,6 +131,25 @@ export const useVaultState = () => {
     setKnownHosts(data);
     localStorageAdapter.write(STORAGE_KEY_KNOWN_HOSTS, data);
   }, []);
+
+  const clearVaultData = useCallback(() => {
+    updateHosts([]);
+    updateKeys([]);
+    updateIdentities([]);
+    updateSnippets([]);
+    updateSnippetPackages([]);
+    updateCustomGroups([]);
+    updateKnownHosts([]);
+    localStorageAdapter.remove(STORAGE_KEY_LEGACY_KEYS);
+  }, [
+    updateHosts,
+    updateKeys,
+    updateIdentities,
+    updateSnippets,
+    updateSnippetPackages,
+    updateCustomGroups,
+    updateKnownHosts,
+  ]);
 
   const addShellHistoryEntry = useCallback(
     (entry: Omit<ShellHistoryEntry, "id" | "timestamp">) => {
@@ -252,7 +280,7 @@ export const useVaultState = () => {
       STORAGE_KEY_SNIPPET_PACKAGES,
     );
 
-    if (savedHosts?.length) {
+    if (savedHosts) {
       const sanitized = savedHosts.map(sanitizeHost);
       setHosts(sanitized);
       localStorageAdapter.write(STORAGE_KEY_HOSTS, sanitized);
@@ -312,6 +340,79 @@ export const useVaultState = () => {
     );
     if (savedConnectionLogs) setConnectionLogs(savedConnectionLogs);
   }, [updateHosts, updateSnippets]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.storageArea !== window.localStorage) return;
+      const key = event.key;
+      if (!key) return;
+
+      if (key === STORAGE_KEY_HOSTS) {
+        const next = safeParse<Host[]>(event.newValue) ?? [];
+        setHosts(next.map(sanitizeHost));
+        return;
+      }
+
+      if (key === STORAGE_KEY_KEYS) {
+        const raw = safeParse<unknown[]>(event.newValue) ?? [];
+        const migratedKeys: SSHKey[] = [];
+        for (const entry of raw) {
+          const record =
+            entry && typeof entry === "object" ? (entry as LegacyKeyRecord) : null;
+          if (!record || isLegacyUnsupportedKey(record)) continue;
+          migratedKeys.push(migrateKey(record as Partial<SSHKey>));
+        }
+        setKeys(migratedKeys);
+        return;
+      }
+
+      if (key === STORAGE_KEY_IDENTITIES) {
+        const next = safeParse<Identity[]>(event.newValue) ?? [];
+        setIdentities(next);
+        return;
+      }
+
+      if (key === STORAGE_KEY_SNIPPETS) {
+        const next = safeParse<Snippet[]>(event.newValue) ?? [];
+        setSnippets(next);
+        return;
+      }
+
+      if (key === STORAGE_KEY_GROUPS) {
+        const next = safeParse<string[]>(event.newValue) ?? [];
+        setCustomGroups(next);
+        return;
+      }
+
+      if (key === STORAGE_KEY_SNIPPET_PACKAGES) {
+        const next = safeParse<string[]>(event.newValue) ?? [];
+        setSnippetPackages(next);
+        return;
+      }
+
+      if (key === STORAGE_KEY_KNOWN_HOSTS) {
+        const next = safeParse<KnownHost[]>(event.newValue) ?? [];
+        setKnownHosts(next);
+        return;
+      }
+
+      if (key === STORAGE_KEY_SHELL_HISTORY) {
+        const next = safeParse<ShellHistoryEntry[]>(event.newValue) ?? [];
+        setShellHistory(next);
+        return;
+      }
+
+      if (key === STORAGE_KEY_CONNECTION_LOGS) {
+        const next = safeParse<ConnectionLog[]>(event.newValue) ?? [];
+        setConnectionLogs(next);
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
 
   const updateHostDistro = useCallback((hostId: string, distro: string) => {
     const normalized = normalizeDistroId(distro);
@@ -391,5 +492,6 @@ export const useVaultState = () => {
     convertKnownHostToHost,
     exportData,
     importDataFromString,
+    clearVaultData,
   };
 };

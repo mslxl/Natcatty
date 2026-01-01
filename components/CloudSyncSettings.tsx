@@ -605,11 +605,13 @@ const ConflictModal: React.FC<ConflictModalProps> = ({
 interface SyncDashboardProps {
     onBuildPayload: () => SyncPayload;
     onApplyPayload: (payload: SyncPayload) => void;
+    onClearLocalData?: () => void;
 }
 
 export const SyncDashboard: React.FC<SyncDashboardProps> = ({
     onBuildPayload,
     onApplyPayload,
+    onClearLocalData,
 }) => {
     const { t, resolvedLocale } = useI18n();
     const sync = useCloudSync();
@@ -1684,6 +1686,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
                         <Button
                             variant="destructive"
                             onClick={() => {
+                                onClearLocalData?.();
                                 sync.resetLocalVersion();
                                 setShowClearLocalDialog(false);
                                 toast.success(t('cloudSync.clearLocal.toast.desc'), t('cloudSync.clearLocal.toast.title'));
@@ -1706,6 +1709,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
 interface CloudSyncSettingsProps {
     onBuildPayload: () => SyncPayload;
     onApplyPayload: (payload: SyncPayload) => void;
+    onClearLocalData?: () => void;
 }
 
 export const CloudSyncSettings: React.FC<CloudSyncSettingsProps> = (props) => {
