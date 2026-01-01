@@ -14,11 +14,25 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/user/netcatty/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/user/netcatty?style=for-the-badge&logo=github&label=Release"></a>
+  <a href="https://github.com/binaricat/Netcatty/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/binaricat/Netcatty?style=for-the-badge&logo=github&label=Release"></a>
   &nbsp;
-  <a href="#"><img alt="Platform" src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=for-the-badge&logo=electron"></a>
+  <a href="#"><img alt="Platform" src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-blue?style=for-the-badge&logo=electron"></a>
   &nbsp;
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-GPL--3.0-green?style=for-the-badge"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-mac-arm64.dmg">
+    <img src="https://img.shields.io/badge/下载-macOS%20ARM64-000?style=for-the-badge&logo=apple" alt="下载 macOS ARM64">
+  </a>
+  &nbsp;
+  <a href="https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-mac-x64.dmg">
+    <img src="https://img.shields.io/badge/下载-macOS%20Intel-000?style=for-the-badge&logo=apple" alt="下载 macOS Intel">
+  </a>
+  &nbsp;
+  <a href="https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-win-x64.exe">
+    <img src="https://img.shields.io/badge/下载-Windows%20x64-0078D4?style=for-the-badge&logo=windows" alt="下载 Windows">
+  </a>
 </p>
 
 <p align="center">
@@ -245,7 +259,13 @@ Netcatty 自动检测并显示已连接主机的操作系统图标：
 
 ### 下载
 
-从 [GitHub Releases](https://github.com/user/netcatty/releases/latest) 下载最新版本。
+| 平台 | 架构 | 下载链接 |
+|------|------|----------|
+| **macOS** | Apple Silicon (M1/M2/M3) | [Netcatty-1.0.0-mac-arm64.dmg](https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-mac-arm64.dmg) |
+| **macOS** | Intel | [Netcatty-1.0.0-mac-x64.dmg](https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-mac-x64.dmg) |
+| **Windows** | x64 | [Netcatty-1.0.0-win-x64.exe](https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-win-x64.exe) |
+
+或在 [GitHub Releases](https://github.com/binaricat/Netcatty/releases) 浏览所有版本。
 
 > **⚠️ macOS 用户注意：** 由于应用未经代码签名，macOS Gatekeeper 会阻止运行。下载后，请在终端运行以下命令移除隔离属性：
 > ```bash
@@ -261,8 +281,8 @@ Netcatty 自动检测并显示已连接主机的操作系统图标：
 
 ```bash
 # 克隆仓库
-git clone https://github.com/user/netcatty.git
-cd netcatty
+git clone https://github.com/binaricat/Netcatty.git
+cd Netcatty
 
 # 安装依赖
 npm install

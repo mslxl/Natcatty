@@ -14,11 +14,25 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/user/netcatty/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/user/netcatty?style=for-the-badge&logo=github&label=Release"></a>
+  <a href="https://github.com/binaricat/Netcatty/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/binaricat/Netcatty?style=for-the-badge&logo=github&label=Release"></a>
   &nbsp;
-  <a href="#"><img alt="Platform" src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=for-the-badge&logo=electron"></a>
+  <a href="#"><img alt="Platform" src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-blue?style=for-the-badge&logo=electron"></a>
   &nbsp;
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-GPL--3.0-green?style=for-the-badge"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-mac-arm64.dmg">
+    <img src="https://img.shields.io/badge/ダウンロード-macOS%20ARM64-000?style=for-the-badge&logo=apple" alt="macOS ARM64 をダウンロード">
+  </a>
+  &nbsp;
+  <a href="https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-mac-x64.dmg">
+    <img src="https://img.shields.io/badge/ダウンロード-macOS%20Intel-000?style=for-the-badge&logo=apple" alt="macOS Intel をダウンロード">
+  </a>
+  &nbsp;
+  <a href="https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-win-x64.exe">
+    <img src="https://img.shields.io/badge/ダウンロード-Windows%20x64-0078D4?style=for-the-badge&logo=windows" alt="Windows をダウンロード">
+  </a>
 </p>
 
 <p align="center">
@@ -245,7 +259,13 @@ Netcatty は接続したホストの OS アイコンを自動的に検出・表�
 
 ### ダウンロード
 
-[GitHub Releases](https://github.com/user/netcatty/releases/latest) から最新版をダウンロードしてください。
+| プラットフォーム | アーキテクチャ | ダウンロード |
+|------------------|----------------|--------------|
+| **macOS** | Apple Silicon (M1/M2/M3) | [Netcatty-1.0.0-mac-arm64.dmg](https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-mac-arm64.dmg) |
+| **macOS** | Intel | [Netcatty-1.0.0-mac-x64.dmg](https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-mac-x64.dmg) |
+| **Windows** | x64 | [Netcatty-1.0.0-win-x64.exe](https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-win-x64.exe) |
+
+または [GitHub Releases](https://github.com/binaricat/Netcatty/releases) ですべてのリリースを参照してください。
 
 > **⚠️ macOS ユーザーへ：** アプリはコード署名されていないため、macOS Gatekeeper によってブロックされます。ダウンロード後、以下のコマンドを実行して隔離属性を削除してください：
 > ```bash
@@ -261,8 +281,8 @@ Netcatty は接続したホストの OS アイコンを自動的に検出・表�
 
 ```bash
 # リポジトリをクローン
-git clone https://github.com/user/netcatty.git
-cd netcatty
+git clone https://github.com/binaricat/Netcatty.git
+cd Netcatty
 
 # 依存関係をインストール
 npm install
