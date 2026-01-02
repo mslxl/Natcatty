@@ -144,20 +144,30 @@
 
 Vault ビューはすべての SSH 接続を管理するコマンドセンターです。右クリックメニューで階層的なグループを作成し、グループ間でホストをドラッグ、パンくずナビゲーションでホストツリーを素早く移動できます。各ホストは接続状態、OS アイコン、クイック接続ボタンを表示。グリッドとリストビューを切り替え、強力な検索で名前、ホスト名、タグ、グループでフィルタリングできます。
 
-| ダークモード | ライトモード | リストビュー |
-|------------|------------|------------|
-| ![ダーク](screenshots/main-window-dark.png) | ![ライト](screenshots/main-window-light.png) | ![リスト](screenshots/main-window-dark-list.png) |
+**ダークモード**
+
+![ダークモード](screenshots/main-window-dark.png)
+
+**ライトモード**
+
+![ライトモード](screenshots/main-window-light.png)
+
+**リストビュー**
+
+![リストビュー](screenshots/main-window-dark-list.png)
 
 <a name="ターミナル"></a>
 ## ターミナル
 
 WebGL アクセラレーション対応の xterm.js ベースのターミナルで、スムーズでレスポンシブな体験を提供。ワークスペースを水平または垂直に分割して、複数のセッションを同時に監視。ブロードキャストモードを有効にすると、すべてのターミナルに一度にコマンドを送信できます — フリート管理に最適。テーマカスタマイズパネルでは、50以上の配色スキームをライブプレビュー、フォントサイズの調整、JetBrains Mono や Fira Code を含む複数のフォントファミリーを選択できます。
 
-| 分割ウィンドウ | テーマカスタマイズ |
-|--------------|-----------------|
-| ![分割](screenshots/split-window.png) | ![テーマ](screenshots/terminal-theme-change.png) |
+**分割ウィンドウ**
 
-![ターミナルテーマ](screenshots/terminal-theme-change-2.png)
+![分割ウィンドウ](screenshots/split-window.png)
+
+**テーマカスタマイズ**
+
+![テーマカスタマイズ](screenshots/terminal-theme-change.png)
 
 <a name="sftp"></a>
 ## SFTP

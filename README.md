@@ -144,20 +144,30 @@
 
 The Vault view is your command center for managing all SSH connections. Create hierarchical groups with right-click context menus, drag hosts between groups, and use breadcrumb navigation to quickly traverse your host tree. Each host displays its connection status, OS icon, and quick-connect button. Switch between grid and list views based on your preference, and use the powerful search to filter hosts by name, hostname, tags, or group.
 
-| Dark Mode | Light Mode | List View |
-|-----------|------------|-----------|
-| ![Dark](screenshots/main-window-dark.png) | ![Light](screenshots/main-window-light.png) | ![List](screenshots/main-window-dark-list.png) |
+**Dark Mode**
+
+![Dark Mode](screenshots/main-window-dark.png)
+
+**Light Mode**
+
+![Light Mode](screenshots/main-window-light.png)
+
+**List View**
+
+![List View](screenshots/main-window-dark-list.png)
 
 <a name="terminal"></a>
 ## Terminal
 
 Powered by xterm.js with WebGL acceleration, the terminal delivers a smooth, responsive experience. Split your workspace horizontally or vertically to monitor multiple sessions simultaneously. Enable broadcast mode to send commands to all terminals at once — perfect for fleet management. The theme customization panel offers 50+ color schemes with live preview, adjustable font size, and multiple font family options including JetBrains Mono and Fira Code.
 
-| Split Windows | Theme Customization |
-|---------------|---------------------|
-| ![Split](screenshots/split-window.png) | ![Theme](screenshots/terminal-theme-change.png) |
+**Split Windows**
 
-![Terminal Themes](screenshots/terminal-theme-change-2.png)
+![Split Windows](screenshots/split-window.png)
+
+**Theme Customization**
+
+![Theme Customization](screenshots/terminal-theme-change.png)
 
 <a name="sftp"></a>
 ## SFTP

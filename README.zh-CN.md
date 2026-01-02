@@ -144,20 +144,30 @@
 
 Vault 视图是管理所有 SSH 连接的控制中心。通过右键菜单创建层级分组，在分组间拖拽主机，使用面包屑导航快速遍历主机树。每个主机显示连接状态、操作系统图标和快速连接按钮。根据偏好在网格和列表视图之间切换，使用强大的搜索按名称、主机名、标签或分组过滤主机。
 
-| 深色模式 | 浅色模式 | 列表视图 |
-|---------|---------|---------|
-| ![深色](screenshots/main-window-dark.png) | ![浅色](screenshots/main-window-light.png) | ![列表](screenshots/main-window-dark-list.png) |
+**深色模式**
+
+![深色模式](screenshots/main-window-dark.png)
+
+**浅色模式**
+
+![浅色模式](screenshots/main-window-light.png)
+
+**列表视图**
+
+![列表视图](screenshots/main-window-dark-list.png)
 
 <a name="终端"></a>
 ## 终端
 
 基于 xterm.js 的 WebGL 加速终端，提供流畅、响应迅速的体验。水平或垂直分割工作区，同时监控多个会话。启用广播模式可一次向所有终端发送命令 —— 非常适合批量管理。主题定制面板提供 50+ 配色方案和实时预览、可调节字号以及多种字体选择，包括 JetBrains Mono 和 Fira Code。
 
-| 分屏窗口 | 主题定制 |
-|---------|---------|
-| ![分屏](screenshots/split-window.png) | ![主题](screenshots/terminal-theme-change.png) |
+**分屏窗口**
 
-![终端主题](screenshots/terminal-theme-change-2.png)
+![分屏窗口](screenshots/split-window.png)
+
+**主题定制**
+
+![主题定制](screenshots/terminal-theme-change.png)
 
 <a name="sftp"></a>
 ## SFTP
