@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Bug, Github, MessageCircle, Newspaper, RefreshCcw } from "lucide-react";
+import { ArrowUpCircle, Bug, Check, Github, Loader2, MessageCircle, Newspaper, RefreshCcw } from "lucide-react";
 import AppLogo from "./AppLogo";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import { useApplicationBackend } from "../application/state/useApplicationBackend";
+import { useUpdateCheck } from "../application/state/useUpdateCheck";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { SettingsTabContent } from "./settings/settings-ui";
+import { toast } from "./ui/toast";
 
 type AppInfo = {
     name: string;
@@ -64,7 +66,10 @@ const ActionRow: React.FC<{
 export default function SettingsApplicationTab() {
     const { t } = useI18n();
     const { openExternal, getApplicationInfo } = useApplicationBackend();
+    const { updateState, checkNow, openReleasePage } = useUpdateCheck();
     const [appInfo, setAppInfo] = useState<AppInfo>({ name: "Netcatty", version: "" });
+    const [lastCheckResult, setLastCheckResult] = useState<'none' | 'available' | 'upToDate'>('none');
+    const [hasAutoChecked, setHasAutoChecked] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -84,6 +89,55 @@ export default function SettingsApplicationTab() {
         };
     }, [getApplicationInfo]);
 
+    // Check if demo mode is enabled for development testing
+    const isUpdateDemoMode = typeof window !== 'undefined' && 
+        window.localStorage?.getItem('debug.updateDemo') === '1';
+
+    // Auto check for updates when entering this page
+    useEffect(() => {
+        if (hasAutoChecked) return;
+        if (updateState.isChecking) return;
+        
+        // In demo mode or when we have a valid version, auto-check
+        const canCheck = isUpdateDemoMode || (appInfo.version && appInfo.version !== '0.0.0');
+        if (!canCheck) return;
+        
+        setHasAutoChecked(true);
+        void checkNow();
+    }, [hasAutoChecked, updateState.isChecking, isUpdateDemoMode, appInfo.version, checkNow]);
+
+    const handleCheckForUpdates = async () => {
+        // In demo mode, allow checking even for dev builds
+        if (!isUpdateDemoMode && (!appInfo.version || appInfo.version === '0.0.0')) {
+            // Dev build - just open releases page
+            openReleasePage();
+            return;
+        }
+
+        setLastCheckResult('none');
+
+        const result = await checkNow();
+        
+        if (result?.hasUpdate && result.latestRelease) {
+            setLastCheckResult('available');
+            toast.info(
+                t('update.available.message', { version: result.latestRelease.version }),
+                t('update.available.title')
+            );
+            // Open the release page
+            openReleasePage();
+        } else if (result) {
+            setLastCheckResult('upToDate');
+            toast.success(
+                t('update.upToDate.message', { version: appInfo.version }),
+                t('update.upToDate.title')
+            );
+        }
+        
+        // Reset the result after 3 seconds
+        setTimeout(() => setLastCheckResult('none'), 3000);
+    };
+
     const issueUrl = useMemo(() => buildIssueUrl(appInfo), [appInfo]);
     const releasesUrl = `${REPO_URL}/releases`;
   const discussionsUrl = `${REPO_URL}/discussions`;
@@ -96,16 +150,46 @@ export default function SettingsApplicationTab() {
             <AppLogo className="w-16 h-16" />
             <div>
               <div className="text-3xl font-semibold leading-none">{appInfo.name}</div>
-              <div className="text-sm text-muted-foreground mt-1">
-                {appInfo.version ? appInfo.version : " "}
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-sm text-muted-foreground">
+                  {appInfo.version ? appInfo.version : " "}
+                </span>
+                {/* Update available badge - inline with version */}
+                {updateState.hasUpdate && updateState.latestRelease && (
+                  <button
+                    onClick={() => void openReleasePage()}
+                    className={cn(
+                      "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium",
+                      "bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300",
+                      "hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors cursor-pointer"
+                    )}
+                  >
+                    <ArrowUpCircle size={12} />
+                    v{updateState.latestRelease.version} {t('update.downloadNow')}
+                  </button>
+                )}
               </div>
             </div>
           </div>
 
           <div className="mt-6">
-            <Button variant="secondary" className="gap-2" onClick={() => void openExternal(releasesUrl)}>
-              <RefreshCcw size={16} />
-              {t("settings.application.checkUpdates")}
+            <Button 
+              variant="secondary" 
+              className="gap-2" 
+              onClick={() => void handleCheckForUpdates()}
+              disabled={updateState.isChecking}
+            >
+              {updateState.isChecking ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : lastCheckResult === 'upToDate' ? (
+                <Check size={16} />
+              ) : (
+                <RefreshCcw size={16} />
+              )}
+              {updateState.isChecking 
+                ? t("update.checking")
+                : t("settings.application.checkUpdates")
+              }
             </Button>
           </div>
         </div>

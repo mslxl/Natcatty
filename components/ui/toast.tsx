@@ -10,6 +10,8 @@ export interface Toast {
     title?: string;
     message: string;
     duration?: number;
+    onClick?: () => void;
+    actionLabel?: string;
 }
 
 interface ToastContextValue {
@@ -31,18 +33,29 @@ export const useToast = () => {
 // Simple hook for components that may not be inside ToastProvider
 let globalShowToast: ((toast: Omit<Toast, 'id'>) => void) | null = null;
 
+export interface ToastOptions {
+    title?: string;
+    duration?: number;
+    onClick?: () => void;
+    actionLabel?: string;
+}
+
 export const toast = {
-    success: (message: string, title?: string) => {
-        globalShowToast?.({ type: 'success', message, title, duration: 3000 });
+    success: (message: string, titleOrOptions?: string | ToastOptions) => {
+        const options = typeof titleOrOptions === 'string' ? { title: titleOrOptions } : titleOrOptions;
+        globalShowToast?.({ type: 'success', message, duration: 3000, ...options });
     },
-    error: (message: string, title?: string) => {
-        globalShowToast?.({ type: 'error', message, title, duration: 5000 });
+    error: (message: string, titleOrOptions?: string | ToastOptions) => {
+        const options = typeof titleOrOptions === 'string' ? { title: titleOrOptions } : titleOrOptions;
+        globalShowToast?.({ type: 'error', message, duration: 5000, ...options });
     },
-    warning: (message: string, title?: string) => {
-        globalShowToast?.({ type: 'warning', message, title, duration: 4000 });
+    warning: (message: string, titleOrOptions?: string | ToastOptions) => {
+        const options = typeof titleOrOptions === 'string' ? { title: titleOrOptions } : titleOrOptions;
+        globalShowToast?.({ type: 'warning', message, duration: 4000, ...options });
     },
-    info: (message: string, title?: string) => {
-        globalShowToast?.({ type: 'info', message, title, duration: 3000 });
+    info: (message: string, titleOrOptions?: string | ToastOptions) => {
+        const options = typeof titleOrOptions === 'string' ? { title: titleOrOptions } : titleOrOptions;
+        globalShowToast?.({ type: 'info', message, duration: 3000, ...options });
     },
 };
 
@@ -99,6 +112,13 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 const ToastContainer: React.FC<{ toasts: Toast[]; onDismiss: (id: string) => void }> = ({ toasts, onDismiss }) => {
     if (toasts.length === 0) return null;
 
+    const handleToastClick = (t: Toast) => {
+        if (t.onClick) {
+            t.onClick();
+            onDismiss(t.id);
+        }
+    };
+
     return (
         <div className="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 max-w-sm">
             {toasts.map(t => (
@@ -107,8 +127,12 @@ const ToastContainer: React.FC<{ toasts: Toast[]; onDismiss: (id: string) => voi
                     className={cn(
                         "flex items-start gap-3 p-3 rounded-lg border shadow-lg",
                         "bg-card animate-in slide-in-from-right-5 fade-in duration-200",
-                        TOAST_STYLES[t.type]
+                        TOAST_STYLES[t.type],
+                        t.onClick && "cursor-pointer hover:opacity-90 transition-opacity"
                     )}
+                    onClick={() => handleToastClick(t)}
+                    role={t.onClick ? "button" : undefined}
+                    tabIndex={t.onClick ? 0 : undefined}
                 >
                     <div className="flex-shrink-0 mt-0.5">
                         {TOAST_ICONS[t.type]}
@@ -118,9 +142,12 @@ const ToastContainer: React.FC<{ toasts: Toast[]; onDismiss: (id: string) => voi
                             <div className="text-sm font-medium text-foreground">{t.title}</div>
                         )}
                         <div className="text-sm text-muted-foreground break-words">{t.message}</div>
+                        {t.actionLabel && t.onClick && (
+                            <div className="text-xs font-medium text-primary mt-1">{t.actionLabel} →</div>
+                        )}
                     </div>
                     <button
-                        onClick={() => onDismiss(t.id)}
+                        onClick={(e) => { e.stopPropagation(); onDismiss(t.id); }}
                         className="flex-shrink-0 p-1 rounded hover:bg-secondary/80 transition-colors"
                     >
                         <X className="h-3.5 w-3.5 text-muted-foreground" />

@@ -72,6 +72,17 @@ const en: Messages = {
   'settings.application.whatsNew': "What's new",
   'settings.application.whatsNew.subtitle': 'Show release notes',
 
+  // Update notifications
+  'update.available.title': 'Update Available',
+  'update.available.message': 'A new version {version} is available. Click to download.',
+  'update.checking': 'Checking for updates...',
+  'update.upToDate.title': 'Up to Date',
+  'update.upToDate.message': 'You are running the latest version ({version}).',
+  'update.error': 'Failed to check for updates',
+  'update.downloadNow': 'Download Now',
+  'update.remindLater': 'Remind Later',
+  'update.skipVersion': 'Skip This Version',
+
   // Settings > Appearance
   'settings.appearance.uiTheme': 'UI Theme',
   'settings.appearance.darkMode': 'Dark Mode',

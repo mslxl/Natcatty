@@ -60,6 +60,17 @@ const zhCN: Messages = {
   'settings.application.whatsNew': '更新内容',
   'settings.application.whatsNew.subtitle': '查看发布说明',
 
+  // Update notifications
+  'update.available.title': '发现新版本',
+  'update.available.message': '新版本 {version} 已发布，点击前往下载。',
+  'update.checking': '正在检查更新...',
+  'update.upToDate.title': '已是最新版本',
+  'update.upToDate.message': '当前版本 ({version}) 已是最新。',
+  'update.error': '检查更新失败',
+  'update.downloadNow': '立即下载',
+  'update.remindLater': '稍后提醒',
+  'update.skipVersion': '跳过此版本',
+
   // Settings > Appearance
   'settings.appearance.uiTheme': '界面主题',
   'settings.appearance.darkMode': '深色模式',

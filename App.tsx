@@ -3,6 +3,7 @@ import { activeTabStore, useActiveTabId, useIsSftpActive, useIsTerminalLayerVisi
 import { useAutoSync } from './application/state/useAutoSync';
 import { useSessionState } from './application/state/useSessionState';
 import { useSettingsState } from './application/state/useSettingsState';
+import { useUpdateCheck } from './application/state/useUpdateCheck';
 import { useVaultState } from './application/state/useVaultState';
 import { useWindowControls } from './application/state/useWindowControls';
 import { I18nProvider, useI18n } from './application/i18n/I18nProvider';
@@ -255,6 +256,28 @@ function App({ settings }: { settings: SettingsState }) {
   const handleSyncNowManual = useCallback(() => {
     return handleSyncNow({ trigger: 'manual' });
   }, [handleSyncNow]);
+
+  // Update check hook - checks for new versions on startup
+  const { updateState, openReleasePage, dismissUpdate } = useUpdateCheck();
+
+  // Show toast notification when update is available
+  useEffect(() => {
+    if (updateState.hasUpdate && updateState.latestRelease) {
+      const version = updateState.latestRelease.version;
+      toast.info(
+        t('update.available.message', { version }),
+        {
+          title: t('update.available.title'),
+          duration: 8000, // Show longer for update notifications
+          onClick: () => {
+            openReleasePage();
+            dismissUpdate();
+          },
+          actionLabel: t('update.downloadNow'),
+        }
+      );
+    }
+  }, [updateState.hasUpdate, updateState.latestRelease, t, openReleasePage, dismissUpdate]);
 
   // Debounce ref for moveFocus to prevent double-triggering when focus switches
   const lastMoveFocusTimeRef = useRef<number>(0);
