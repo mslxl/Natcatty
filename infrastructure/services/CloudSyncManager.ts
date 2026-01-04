@@ -217,6 +217,26 @@ export class CloudSyncManager {
     const key = event.key;
     if (!key) return;
 
+    // Handle master key config changes (e.g., when set up in settings window)
+    if (key === SYNC_STORAGE_KEYS.MASTER_KEY_CONFIG) {
+      const nextConfig = this.safeJsonParse<MasterKeyConfig>(event.newValue);
+      
+      if (nextConfig && !this.state.masterKeyConfig) {
+        // Master key was set up in another window - update our state
+        this.state.masterKeyConfig = nextConfig;
+        this.state.securityState = 'LOCKED';
+        this.notifyStateChange();
+      } else if (!nextConfig && this.state.masterKeyConfig) {
+        // Master key was removed in another window
+        this.state.masterKeyConfig = null;
+        this.state.securityState = 'NO_KEY';
+        this.state.unlockedKey = null;
+        this.masterPassword = null;
+        this.notifyStateChange();
+      }
+      return;
+    }
+
     // Sync versions + auto-sync settings
     if (key === SYNC_STORAGE_KEYS.SYNC_CONFIG) {
       const next = this.safeJsonParse<{

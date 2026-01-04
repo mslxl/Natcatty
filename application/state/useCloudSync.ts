@@ -142,8 +142,21 @@ export const useCloudSync = (): CloudSyncHook => {
 
   // Auto-unlock: if a master key exists, retrieve the persisted password (Electron safeStorage)
   // and unlock silently so users don't have to manage a LOCKED state in the UI.
+  // Track the master key config hash to detect when a new master key is set up in another window.
+  const lastMasterKeyHashRef = useRef<string | null>(null);
   const attemptedAutoUnlockRef = useRef(false);
   useEffect(() => {
+    // Compute a simple hash of the master key config to detect changes
+    const currentHash = state.masterKeyConfig 
+      ? JSON.stringify({ salt: state.masterKeyConfig.salt, iv: state.masterKeyConfig.iv })
+      : null;
+    
+    // If master key config changed (e.g., set up in settings window), reset the attempt flag
+    if (currentHash !== lastMasterKeyHashRef.current) {
+      lastMasterKeyHashRef.current = currentHash;
+      attemptedAutoUnlockRef.current = false;
+    }
+    
     if (attemptedAutoUnlockRef.current) return;
     if (state.securityState !== 'LOCKED') return;
     attemptedAutoUnlockRef.current = true;
@@ -162,7 +175,7 @@ export const useCloudSync = (): CloudSyncHook => {
         // Ignore auto-unlock errors; manual actions will surface them.
       }
     })();
-  }, [state.securityState]);
+  }, [state.securityState, state.masterKeyConfig]);
   
   // ========== Computed Values ==========
   
