@@ -26,7 +26,6 @@ import {
   type SyncHistoryEntry,
   type WebDAVConfig,
   type S3Config,
-  type SMBConfig,
   SYNC_CONSTANTS,
   SYNC_STORAGE_KEYS,
   generateDeviceId,
@@ -123,7 +122,6 @@ export class CloudSyncManager {
       onedrive: this.loadProviderConnection('onedrive'),
       webdav: this.loadProviderConnection('webdav'),
       s3: this.loadProviderConnection('s3'),
-      smb: this.loadProviderConnection('smb'),
     };
 
     // Save device ID if new
@@ -715,11 +713,11 @@ export class CloudSyncManager {
   }
 
   /**
-   * Connect config-based providers (WebDAV/S3/SMB)
+   * Connect config-based providers (WebDAV/S3)
    */
   async connectConfigProvider(
-    provider: 'webdav' | 's3' | 'smb',
-    config: WebDAVConfig | S3Config | SMBConfig
+    provider: 'webdav' | 's3',
+    config: WebDAVConfig | S3Config
   ): Promise<void> {
     const adapter = await createAdapter(provider, undefined, undefined, config);
     this.adapters.set(provider, adapter);
@@ -782,18 +780,12 @@ export class CloudSyncManager {
   }
 
   private buildAccountFromConfig(
-    provider: 'webdav' | 's3' | 'smb',
-    config: WebDAVConfig | S3Config | SMBConfig
+    provider: 'webdav' | 's3',
+    config: WebDAVConfig | S3Config
   ): ProviderAccount {
     if (provider === 'webdav') {
       const endpoint = (config as WebDAVConfig).endpoint;
       return { id: endpoint, name: endpoint };
-    }
-    if (provider === 'smb') {
-      const smb = config as SMBConfig;
-      const share = smb.share.replace(/^\/\//, '').replace(/^\\\\/, '');
-      const name = smb.username ? `${smb.username}@${share}` : share;
-      return { id: smb.share, name };
     }
     const s3 = config as S3Config;
     return { id: `${s3.bucket}@${s3.endpoint}`, name: `${s3.bucket} (${s3.region})` };

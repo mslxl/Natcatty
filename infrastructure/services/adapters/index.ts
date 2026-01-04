@@ -9,7 +9,6 @@ import type {
   ProviderAccount,
   WebDAVConfig,
   S3Config,
-  SMBConfig,
 } from '../../../domain/sync';
 
 /**
@@ -35,7 +34,7 @@ export const createAdapter = async (
   provider: CloudProvider,
   tokens?: OAuthTokens,
   resourceId?: string,
-  config?: WebDAVConfig | S3Config | SMBConfig
+  config?: WebDAVConfig | S3Config
 ): Promise<CloudAdapter> => {
   switch (provider) {
     case 'github': {
@@ -57,10 +56,6 @@ export const createAdapter = async (
     case 's3': {
       const { S3Adapter } = await import('./S3Adapter');
       return new S3Adapter(config as S3Config | undefined, resourceId);
-    }
-    case 'smb': {
-      const { SMBAdapter } = await import('./SMBAdapter');
-      return new SMBAdapter(config as SMBConfig | undefined, resourceId);
     }
     default:
       throw new Error(`Unknown provider: ${provider}`);

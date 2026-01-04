@@ -42,7 +42,7 @@ export type ConflictResolution =
 /**
  * Supported cloud storage providers
  */
-export type CloudProvider = 'github' | 'google' | 'onedrive' | 'webdav' | 's3' | 'smb';
+export type CloudProvider = 'github' | 'google' | 'onedrive' | 'webdav' | 's3';
 
 export type WebDAVAuthType = 'basic' | 'digest' | 'token';
 
@@ -63,14 +63,6 @@ export interface S3Config {
   sessionToken?: string;
   prefix?: string;
   forcePathStyle?: boolean;
-}
-
-export interface SMBConfig {
-  share: string;           // SMB share path (e.g., //server/share or smb://server/share)
-  username?: string;
-  password?: string;
-  domain?: string;         // Windows domain (optional)
-  port?: number;           // SMB port (default: 445)
 }
 
 /**
@@ -112,7 +104,7 @@ export interface ProviderConnection {
   status: ProviderConnectionStatus;
   account?: ProviderAccount;
   tokens?: OAuthTokens;
-  config?: WebDAVConfig | S3Config | SMBConfig;
+  config?: WebDAVConfig | S3Config;
   lastSync?: number;        // Unix timestamp
   lastSyncVersion?: number;
   resourceId?: string;      // gistId / fileId / itemId
