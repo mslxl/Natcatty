@@ -431,6 +431,9 @@ const en: Messages = {
   // Select Host panel
   'selectHost.title': 'Select Host',
   'selectHost.noHostsFound': 'No hosts found',
+  'selectHost.newHost': 'New Host',
+  'selectHost.continue': 'Continue',
+  'selectHost.continueWithCount': 'Continue ({count} selected)',
 
   // Quick Connect
   'quickConnect.knownHost.title': 'Are you sure you want to connect?',

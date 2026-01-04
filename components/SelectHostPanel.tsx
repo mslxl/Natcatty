@@ -249,7 +249,7 @@ const SelectHostPanel: React.FC<SelectHostPanelProps> = ({
             }}
           >
             <Plus size={14} />
-            NEW HOST
+            {t('selectHost.newHost')}
           </Button>
         )}
         <div className="relative flex-1 max-w-xs">
@@ -258,7 +258,7 @@ const SelectHostPanel: React.FC<SelectHostPanelProps> = ({
             className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
           />
           <Input
-            placeholder="Search"
+            placeholder={t('common.searchPlaceholder')}
             className="h-8 pl-8"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -395,8 +395,8 @@ const SelectHostPanel: React.FC<SelectHostPanelProps> = ({
           }}
         >
           {multiSelect
-            ? `Continue (${selectedHostIds.length} selected)`
-            : "Continue"}
+            ? t('selectHost.continueWithCount', { count: selectedHostIds.length })
+            : t('selectHost.continue')}
         </Button>
       </div>
 

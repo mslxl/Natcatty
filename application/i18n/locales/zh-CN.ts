@@ -304,6 +304,9 @@ const zhCN: Messages = {
   // Select Host panel
   'selectHost.title': '选择主机',
   'selectHost.noHostsFound': '未找到主机',
+  'selectHost.newHost': '新建主机',
+  'selectHost.continue': '继续',
+  'selectHost.continueWithCount': '继续（已选 {count} 个）',
 
   // Quick Connect
   'quickConnect.knownHost.title': '确认要连接吗？',

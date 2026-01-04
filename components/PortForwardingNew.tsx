@@ -801,7 +801,6 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
           identities={identities}
           onSaveHost={onSaveHost}
           onCreateGroup={_onCreateGroup}
-          title="Select Host"
         />
       )}
 
