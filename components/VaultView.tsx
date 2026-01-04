@@ -46,7 +46,7 @@ import KeychainManager from "./KeychainManager";
 import KnownHostsManager from "./KnownHostsManager";
 import PortForwarding from "./PortForwardingNew";
 import QuickConnectWizard from "./QuickConnectWizard";
-import { isQuickConnectInput, parseQuickConnectInput } from "../domain/quickConnect";
+import { isQuickConnectInput, parseQuickConnectInputWithWarnings } from "../domain/quickConnect";
 import SnippetsManager from "./SnippetsManager";
 import { ImportVaultDialog } from "./vault/ImportVaultDialog";
 import { Button } from "./ui/button";
@@ -184,6 +184,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     port?: number;
   } | null>(null);
   const [isQuickConnectOpen, setIsQuickConnectOpen] = useState(false);
+  const [quickConnectWarnings, setQuickConnectWarnings] = useState<string[]>([]);
 
   // Protocol select state (for hosts with multiple protocols)
   const [protocolSelectHost, setProtocolSelectHost] = useState<Host | null>(
@@ -198,9 +199,10 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   // Handle connect button click - detect quick connect or regular search
   const handleConnectClick = useCallback(() => {
     if (isSearchQuickConnect) {
-      const target = parseQuickConnectInput(search);
-      if (target) {
-        setQuickConnectTarget(target);
+      const parsed = parseQuickConnectInputWithWarnings(search);
+      if (parsed.target) {
+        setQuickConnectTarget(parsed.target);
+        setQuickConnectWarnings(parsed.warnings);
         setIsQuickConnectOpen(true);
       }
     } else {
@@ -268,6 +270,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
       onConnect(host);
       setIsQuickConnectOpen(false);
       setQuickConnectTarget(null);
+      setQuickConnectWarnings([]);
       setSearch("");
     },
     [onConnect],
@@ -1483,7 +1486,9 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           onClose={() => {
             setIsQuickConnectOpen(false);
             setQuickConnectTarget(null);
+            setQuickConnectWarnings([]);
           }}
+          warnings={quickConnectWarnings}
         />
       )}
 

@@ -148,7 +148,7 @@ const zhCN: Messages = {
   'vault.hosts.header.live': '{count} 个在线',
 
   // Vault hosts header/actions
-  'vault.hosts.search.placeholder': '查找主机或 ssh user@hostname…',
+  'vault.hosts.search.placeholder': '查找主机或 ssh user@hostname / ssh -p 2222 user@hostname…',
   'vault.hosts.connect': '连接',
   'vault.view.grid': '网格',
   'vault.view.list': '列表',
@@ -312,6 +312,7 @@ const zhCN: Messages = {
   'quickConnect.knownHost.addQuestion': '是否将它加入 Known Hosts？',
   'quickConnect.knownHost.addAndContinue': '加入并继续',
   'quickConnect.addKey': '添加 key',
+  'quickConnect.warning.unparsedOptions': '部分 SSH 参数已被忽略: {options}',
 
   // Protocol select dialog
   'protocolSelect.chooseProtocol': '选择协议',
