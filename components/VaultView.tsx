@@ -1311,6 +1311,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           <PortForwarding
             hosts={hosts}
             keys={keys}
+            identities={identities}
             customGroups={customGroups}
             onSaveHost={(host) => onUpdateHosts([...hosts, host])}
             onCreateGroup={(groupPath) =>

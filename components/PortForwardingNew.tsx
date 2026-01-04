@@ -53,6 +53,7 @@ type WizardStep =
 interface PortForwardingProps {
   hosts: Host[];
   keys: SSHKey[];
+  identities?: import('../domain/models').Identity[];
   customGroups: string[];
   onNewHost?: () => void;
   onSaveHost?: (host: Host) => void;
@@ -62,6 +63,7 @@ interface PortForwardingProps {
 const PortForwarding: React.FC<PortForwardingProps> = ({
   hosts,
   keys,
+  identities = [],
   customGroups: _customGroups,
   onNewHost: _onNewHost,
   onSaveHost,
@@ -796,6 +798,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
           onBack={() => setShowHostSelector(false)}
           onContinue={() => setShowHostSelector(false)}
           availableKeys={keys}
+          identities={identities}
           onSaveHost={onSaveHost}
           onCreateGroup={_onCreateGroup}
           title="Select Host"

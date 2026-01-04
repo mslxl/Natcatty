@@ -30,6 +30,7 @@ interface SelectHostPanelProps {
   onNewHost?: () => void;
   // Props for inline host creation
   availableKeys?: SSHKey[];
+  identities?: import('../domain/models').Identity[];
   onSaveHost?: (host: Host) => void;
   onCreateGroup?: (groupPath: string) => void;
   title?: string;
@@ -47,6 +48,7 @@ const SelectHostPanel: React.FC<SelectHostPanelProps> = ({
   onContinue,
   onNewHost,
   availableKeys = [],
+  identities = [],
   onSaveHost,
   onCreateGroup,
   title,
@@ -203,7 +205,7 @@ const SelectHostPanel: React.FC<SelectHostPanelProps> = ({
   return (
     <div
       className={cn(
-        "absolute right-0 top-0 bottom-0 w-[380px] border-l border-border/60 bg-background z-30 flex flex-col app-no-drag",
+        "absolute right-0 top-0 bottom-0 w-[380px] border-l border-border/60 bg-background z-40 flex flex-col app-no-drag",
         className,
       )}
     >
@@ -403,6 +405,7 @@ const SelectHostPanel: React.FC<SelectHostPanelProps> = ({
         <HostDetailsPanel
           initialData={null}
           availableKeys={availableKeys}
+          identities={identities}
           groups={customGroups}
           allHosts={hosts}
           onSave={(host) => {
