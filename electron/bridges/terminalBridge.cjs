@@ -12,6 +12,8 @@ const pty = require("node-pty");
 let sessions = null;
 let electronModule = null;
 
+const DEFAULT_UTF8_LOCALE = "en_US.UTF-8";
+
 /**
  * Initialize the terminal bridge with dependencies
  */
@@ -52,6 +54,32 @@ function findExecutable(name) {
   return name;
 }
 
+const isUtf8Locale = (value) => typeof value === "string" && /utf-?8/i.test(value);
+
+const isEmptyLocale = (value) => {
+  if (value === undefined || value === null) return true;
+  const trimmed = String(value).trim();
+  if (!trimmed) return true;
+  return trimmed === "C" || trimmed === "POSIX";
+};
+
+const applyLocaleDefaults = (env) => {
+  const hasUtf8 =
+    isUtf8Locale(env.LC_ALL) || isUtf8Locale(env.LC_CTYPE) || isUtf8Locale(env.LANG);
+  if (hasUtf8) return env;
+
+  const hasAnyLocale =
+    !isEmptyLocale(env.LC_ALL) || !isEmptyLocale(env.LC_CTYPE) || !isEmptyLocale(env.LANG);
+  if (hasAnyLocale) return env;
+
+  return {
+    ...env,
+    LANG: DEFAULT_UTF8_LOCALE,
+    LC_CTYPE: DEFAULT_UTF8_LOCALE,
+    LC_ALL: DEFAULT_UTF8_LOCALE,
+  };
+};
+
 /**
  * Start a local terminal session
  */
@@ -63,12 +91,12 @@ function startLocalSession(event, payload) {
     ? findExecutable("powershell") || "powershell.exe"
     : process.env.SHELL || "/bin/bash";
   const shell = payload?.shell || defaultShell;
-  const env = {
+  const env = applyLocaleDefaults({
     ...process.env,
     ...(payload?.env || {}),
     TERM: "xterm-256color",
     COLORTERM: "truecolor",
-  };
+  });
   
   const proc = pty.spawn(shell, [], {
     cols: payload?.cols || 80,
