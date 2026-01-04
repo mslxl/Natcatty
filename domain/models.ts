@@ -345,6 +345,9 @@ export interface TerminalSettings {
   // Keyboard
   altAsMeta: boolean; // Use ⌥ as the Meta key
   scrollOnInput: boolean; // Scroll terminal to bottom on input
+  scrollOnOutput: boolean; // Scroll terminal to bottom on output
+  scrollOnKeyPress: boolean; // Scroll terminal to bottom on key press
+  scrollOnPaste: boolean; // Scroll terminal to bottom on paste
 
   // Mouse
   rightClickBehavior: RightClickBehavior;
@@ -381,6 +384,9 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   minimumContrastRatio: 1,
   altAsMeta: false,
   scrollOnInput: true,
+  scrollOnOutput: false,
+  scrollOnKeyPress: false,
+  scrollOnPaste: true,
   rightClickBehavior: 'context-menu',
   copyOnSelect: false,
   middleClickPaste: true,

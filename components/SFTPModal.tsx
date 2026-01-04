@@ -743,14 +743,14 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       return true;
     } catch (e) {
       setUploadTasks((prev) =>
-        prev.map((t) =>
-          t.id === taskId
+        prev.map((task) =>
+          task.id === taskId
             ? {
-              ...t,
+              ...task,
               status: "failed" as const,
               error: e instanceof Error ? e.message : t("sftp.error.uploadFailed"),
             }
-            : t,
+            : task,
         ),
       );
       return false;

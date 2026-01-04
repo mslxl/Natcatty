@@ -148,7 +148,7 @@ export const useCloudSync = (): CloudSyncHook => {
   useEffect(() => {
     // Compute a simple hash of the master key config to detect changes
     const currentHash = state.masterKeyConfig 
-      ? JSON.stringify({ salt: state.masterKeyConfig.salt, iv: state.masterKeyConfig.iv })
+      ? JSON.stringify({ salt: state.masterKeyConfig.salt, kdf: state.masterKeyConfig.kdf })
       : null;
     
     // If master key config changed (e.g., set up in settings window), reset the attempt flag

@@ -44,10 +44,13 @@ export const SftpHostPicker: React.FC<SftpHostPickerProps> = ({
         ).sort((a, b) => a.label.localeCompare(b.label));
     }, [hosts, hostSearch]);
     const sideLabel = side === 'left' ? t('common.left') : t('common.right');
-    const items = useMemo(() => {
-        return [{ type: 'local' as const, id: 'local' }].concat(
-            filteredHosts.map((host) => ({ type: 'host' as const, id: host.id, host }))
-        );
+    
+    type PickerItem = { type: 'local'; id: string } | { type: 'host'; id: string; host: Host };
+    
+    const items = useMemo<PickerItem[]>(() => {
+        const localItem: PickerItem = { type: 'local', id: 'local' };
+        const hostItems: PickerItem[] = filteredHosts.map((host) => ({ type: 'host', id: host.id, host }));
+        return [localItem, ...hostItems];
     }, [filteredHosts]);
 
     useEffect(() => {
@@ -62,7 +65,7 @@ export const SftpHostPicker: React.FC<SftpHostPickerProps> = ({
         setSelectedIndex(0);
     }, [hostSearch, open]);
 
-    const handleSelect = (item: typeof items[number]) => {
+    const handleSelect = (item: PickerItem) => {
         if (item.type === 'local') {
             onSelectLocal();
         } else {
