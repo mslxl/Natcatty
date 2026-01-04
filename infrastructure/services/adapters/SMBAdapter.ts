@@ -13,6 +13,7 @@ import {
   type OAuthTokens,
 } from '../../../domain/sync';
 import { netcattyBridge } from '../netcattyBridge';
+import type { CloudAdapter } from './index';
 
 const normalizeShare = (share: string): string => {
   const trimmed = share.trim();
@@ -28,7 +29,7 @@ const normalizeShare = (share: string): string => {
   return trimmed.replace(/\\/g, '/');
 };
 
-export class SMBAdapter {
+export class SMBAdapter implements CloudAdapter {
   private config: SMBConfig | null;
   private resource: string | null;
   private account: ProviderAccount | null;
