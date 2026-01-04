@@ -6,6 +6,7 @@
 const os = require("node:os");
 const fs = require("node:fs");
 const net = require("node:net");
+const path = require("node:path");
 const pty = require("node-pty");
 
 // Shared references
@@ -13,6 +14,13 @@ let sessions = null;
 let electronModule = null;
 
 const DEFAULT_UTF8_LOCALE = "en_US.UTF-8";
+const LOGIN_SHELLS = new Set(["bash", "zsh", "fish", "ksh"]);
+
+const getLoginShellArgs = (shellPath) => {
+  if (!shellPath || process.platform === "win32") return [];
+  const shellName = path.basename(shellPath);
+  return LOGIN_SHELLS.has(shellName) ? ["-l"] : [];
+};
 
 /**
  * Initialize the terminal bridge with dependencies
@@ -91,6 +99,7 @@ function startLocalSession(event, payload) {
     ? findExecutable("powershell") || "powershell.exe"
     : process.env.SHELL || "/bin/bash";
   const shell = payload?.shell || defaultShell;
+  const shellArgs = getLoginShellArgs(shell);
   const env = applyLocaleDefaults({
     ...process.env,
     ...(payload?.env || {}),
@@ -98,7 +107,7 @@ function startLocalSession(event, payload) {
     COLORTERM: "truecolor",
   });
   
-  const proc = pty.spawn(shell, [], {
+  const proc = pty.spawn(shell, shellArgs, {
     cols: payload?.cols || 80,
     rows: payload?.rows || 24,
     env,
