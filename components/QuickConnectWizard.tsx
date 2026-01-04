@@ -31,6 +31,7 @@ interface QuickConnectWizardProps {
   target: QuickConnectTarget;
   keys: SSHKey[];
   knownHosts: KnownHost[];
+  warnings?: string[];
   onConnect: (host: Host) => void;
   onSaveHost?: (host: Host) => void;
   onAddKey?: () => void;
@@ -42,6 +43,7 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
   target,
   keys,
   knownHosts,
+  warnings,
   onConnect,
   onSaveHost,
   onAddKey,
@@ -643,6 +645,16 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
 
         {/* Progress indicator */}
         <div className="px-6">{renderProgressIndicator()}</div>
+
+        {warnings && warnings.length > 0 && (
+          <div className="px-6 pb-2">
+            <div className="text-xs text-amber-600 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
+              {t("quickConnect.warning.unparsedOptions", {
+                options: warnings.join(", "),
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Content */}
         <div className="px-6 py-4">
