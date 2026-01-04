@@ -10,136 +10,136 @@ import { SettingsTabContent } from "./settings/settings-ui";
 import { toast } from "./ui/toast";
 
 type AppInfo = {
-    name: string;
-    version: string;
-    platform?: string;
+  name: string;
+  version: string;
+  platform?: string;
 };
 
 const REPO_URL = "https://github.com/binaricat/Netcatty";
 
 const buildIssueUrl = (appInfo: AppInfo) => {
-    const title = "Bug: ";
-    const bodyLines = [
-        "## Describe the problem",
-        "",
-        "## Steps to reproduce",
-        "1.",
-        "",
-        "## Expected behavior",
-        "",
-        "## Actual behavior",
-        "",
-        "## Environment",
-        `- App: ${appInfo.name} ${appInfo.version}`,
-        `- Platform: ${appInfo.platform || "unknown"}`,
-        `- UA: ${typeof navigator !== "undefined" ? navigator.userAgent : "unknown"}`,
-    ];
-    const params = new URLSearchParams({
-        title,
-        body: bodyLines.join("\n"),
-    });
-    return `${REPO_URL}/issues/new?${params.toString()}`;
+  const title = "Bug: ";
+  const bodyLines = [
+    "## Describe the problem",
+    "",
+    "## Steps to reproduce",
+    "1.",
+    "",
+    "## Expected behavior",
+    "",
+    "## Actual behavior",
+    "",
+    "## Environment",
+    `- App: ${appInfo.name} ${appInfo.version}`,
+    `- Platform: ${appInfo.platform || "unknown"}`,
+    `- UA: ${typeof navigator !== "undefined" ? navigator.userAgent : "unknown"}`,
+  ];
+  const params = new URLSearchParams({
+    title,
+    body: bodyLines.join("\n"),
+  });
+  return `${REPO_URL}/issues/new?${params.toString()}`;
 };
 
 const ActionRow: React.FC<{
-    icon: React.ReactNode;
-    title: string;
-    subtitle: string;
-    onClick: () => void;
+  icon: React.ReactNode;
+  title: string;
+  subtitle: string;
+  onClick: () => void;
 }> = ({ icon, title, subtitle, onClick }) => (
-    <button
-        type="button"
-        onClick={onClick}
-        className={cn(
-            "w-full flex items-center gap-3 rounded-lg px-3 py-3 text-left",
-            "hover:bg-muted/50 transition-colors"
-        )}
-    >
-        <div className="shrink-0 text-muted-foreground">{icon}</div>
-        <div className="min-w-0">
-            <div className="text-sm font-medium leading-tight">{title}</div>
-            <div className="text-xs text-muted-foreground mt-0.5 truncate">{subtitle}</div>
-        </div>
-    </button>
+  <button
+    type="button"
+    onClick={onClick}
+    className={cn(
+      "w-full flex items-center gap-3 rounded-lg px-3 py-3 text-left",
+      "hover:bg-muted/50 transition-colors"
+    )}
+  >
+    <div className="shrink-0 text-muted-foreground">{icon}</div>
+    <div className="min-w-0">
+      <div className="text-sm font-medium leading-tight">{title}</div>
+      <div className="text-xs text-muted-foreground mt-0.5 truncate">{subtitle}</div>
+    </div>
+  </button>
 );
 
 export default function SettingsApplicationTab() {
-    const { t } = useI18n();
-    const { openExternal, getApplicationInfo } = useApplicationBackend();
-    const { updateState, checkNow, openReleasePage } = useUpdateCheck();
-    const [appInfo, setAppInfo] = useState<AppInfo>({ name: "Netcatty", version: "" });
-    const [lastCheckResult, setLastCheckResult] = useState<'none' | 'available' | 'upToDate'>('none');
-    const [hasAutoChecked, setHasAutoChecked] = useState(false);
+  const { t } = useI18n();
+  const { openExternal, getApplicationInfo } = useApplicationBackend();
+  const { updateState, checkNow, openReleasePage } = useUpdateCheck();
+  const [appInfo, setAppInfo] = useState<AppInfo>({ name: "Netcatty", version: "" });
+  const [lastCheckResult, setLastCheckResult] = useState<'none' | 'available' | 'upToDate'>('none');
+  const [hasAutoChecked, setHasAutoChecked] = useState(false);
 
-    useEffect(() => {
-        let cancelled = false;
-        const load = async () => {
-            try {
-                const info = await getApplicationInfo();
-                if (!cancelled && info?.name && typeof info?.version === "string") {
-                    setAppInfo(info);
-                }
-            } catch {
-                // Ignore: running in browser/dev without Electron bridge
-            }
-        };
-        void load();
-        return () => {
-            cancelled = true;
-        };
-    }, [getApplicationInfo]);
-
-    // Check if demo mode is enabled for development testing
-    const isUpdateDemoMode = typeof window !== 'undefined' && 
-        window.localStorage?.getItem('debug.updateDemo') === '1';
-
-    // Auto check for updates when entering this page
-    useEffect(() => {
-        if (hasAutoChecked) return;
-        if (updateState.isChecking) return;
-        
-        // In demo mode or when we have a valid version, auto-check
-        const canCheck = isUpdateDemoMode || (appInfo.version && appInfo.version !== '0.0.0');
-        if (!canCheck) return;
-        
-        setHasAutoChecked(true);
-        void checkNow();
-    }, [hasAutoChecked, updateState.isChecking, isUpdateDemoMode, appInfo.version, checkNow]);
-
-    const handleCheckForUpdates = async () => {
-        // In demo mode, allow checking even for dev builds
-        if (!isUpdateDemoMode && (!appInfo.version || appInfo.version === '0.0.0')) {
-            // Dev build - just open releases page
-            openReleasePage();
-            return;
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const info = await getApplicationInfo();
+        if (!cancelled && info?.name && typeof info?.version === "string") {
+          setAppInfo(info);
         }
-
-        setLastCheckResult('none');
-
-        const result = await checkNow();
-        
-        if (result?.hasUpdate && result.latestRelease) {
-            setLastCheckResult('available');
-            toast.info(
-                t('update.available.message', { version: result.latestRelease.version }),
-                t('update.available.title')
-            );
-            // Open the release page
-            openReleasePage();
-        } else if (result) {
-            setLastCheckResult('upToDate');
-            toast.success(
-                t('update.upToDate.message', { version: appInfo.version }),
-                t('update.upToDate.title')
-            );
-        }
-        
-        // Reset the result after 3 seconds
-        setTimeout(() => setLastCheckResult('none'), 3000);
+      } catch {
+        // Ignore: running in browser/dev without Electron bridge
+      }
     };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [getApplicationInfo]);
 
-    const issueUrl = useMemo(() => buildIssueUrl(appInfo), [appInfo]);
-    const releasesUrl = `${REPO_URL}/releases`;
+  // Check if demo mode is enabled for development testing
+  const isUpdateDemoMode = typeof window !== 'undefined' &&
+    window.localStorage?.getItem('debug.updateDemo') === '1';
+
+  // Auto check for updates when entering this page
+  useEffect(() => {
+    if (hasAutoChecked) return;
+    if (updateState.isChecking) return;
+
+    // In demo mode or when we have a valid version, auto-check
+    const canCheck = isUpdateDemoMode || (appInfo.version && appInfo.version !== '0.0.0');
+    if (!canCheck) return;
+
+    setHasAutoChecked(true);
+    void checkNow();
+  }, [hasAutoChecked, updateState.isChecking, isUpdateDemoMode, appInfo.version, checkNow]);
+
+  const handleCheckForUpdates = async () => {
+    // In demo mode, allow checking even for dev builds
+    if (!isUpdateDemoMode && (!appInfo.version || appInfo.version === '0.0.0')) {
+      // Dev build - just open releases page
+      openReleasePage();
+      return;
+    }
+
+    setLastCheckResult('none');
+
+    const result = await checkNow();
+
+    if (result?.hasUpdate && result.latestRelease) {
+      setLastCheckResult('available');
+      toast.info(
+        t('update.available.message', { version: result.latestRelease.version }),
+        t('update.available.title')
+      );
+      // Open the release page
+      openReleasePage();
+    } else if (result) {
+      setLastCheckResult('upToDate');
+      toast.success(
+        t('update.upToDate.message', { version: appInfo.version }),
+        t('update.upToDate.title')
+      );
+    }
+
+    // Reset the result after 3 seconds
+    setTimeout(() => setLastCheckResult('none'), 3000);
+  };
+
+  const issueUrl = useMemo(() => buildIssueUrl(appInfo), [appInfo]);
+  const releasesUrl = `${REPO_URL}/releases`;
   const discussionsUrl = `${REPO_URL}/discussions`;
 
   return (
@@ -173,9 +173,9 @@ export default function SettingsApplicationTab() {
           </div>
 
           <div className="mt-6">
-            <Button 
-              variant="secondary" 
-              className="gap-2" 
+            <Button
+              variant="secondary"
+              className="gap-2"
               onClick={() => void handleCheckForUpdates()}
               disabled={updateState.isChecking}
             >
@@ -186,7 +186,7 @@ export default function SettingsApplicationTab() {
               ) : (
                 <RefreshCcw size={16} />
               )}
-              {updateState.isChecking 
+              {updateState.isChecking
                 ? t("update.checking")
                 : t("settings.application.checkUpdates")
               }

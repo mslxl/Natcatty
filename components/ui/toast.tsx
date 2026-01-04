@@ -1,5 +1,5 @@
-import { AlertCircle,AlertTriangle,CheckCircle,Info,X } from 'lucide-react';
-import React,{ createContext,useCallback,useContext,useEffect,useState } from 'react';
+import { AlertCircle, AlertTriangle, CheckCircle, Info, X } from 'lucide-react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { cn } from '../../lib/utils';
 
 export type ToastType = 'success' | 'error' | 'warning' | 'info';
