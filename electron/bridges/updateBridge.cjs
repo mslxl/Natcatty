@@ -78,7 +78,7 @@ function setStatus(next) {
   updateStatus.updateInfo = next.updateInfo ?? updateStatus.updateInfo;
   updateStatus.progress = next.progress ?? updateStatus.progress;
   updateStatus.error = next.error ?? updateStatus.error;
-  updateStatus.supported = isSupported();
+  updateStatus.supported = next.supported ?? isSupported();
   broadcastStatus();
 }
 
