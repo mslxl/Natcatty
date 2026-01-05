@@ -110,6 +110,12 @@ export const useTerminalBackend = () => {
     return !!bridge?.startSSHSession;
   }, []);
 
+  const listSerialPorts = useCallback(async () => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.listSerialPorts) return [];
+    return bridge.listSerialPorts();
+  }, []);
+
   return {
     backendAvailable,
     telnetAvailable,
@@ -123,6 +129,7 @@ export const useTerminalBackend = () => {
     startMoshSession,
     startLocalSession,
     startSerialSession,
+    listSerialPorts,
     execCommand,
     writeToSession,
     resizeSession,

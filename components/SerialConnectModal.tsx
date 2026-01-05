@@ -5,8 +5,8 @@
 import { ChevronDown, ChevronUp, Cpu, RefreshCw, Usb } from 'lucide-react';
 import React, { useCallback, useEffect, useState } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
+import { useTerminalBackend } from '../application/state/useTerminalBackend';
 import type { SerialConfig, SerialFlowControl, SerialParity } from '../domain/models';
-import { netcattyBridge } from '../infrastructure/services/netcattyBridge';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
 import {
@@ -17,7 +17,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from './ui/dialog';
-import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
 
@@ -60,24 +59,23 @@ export const SerialConnectModal: React.FC<SerialConnectModalProps> = ({
   const [parity, setParity] = useState<SerialParity>('none');
   const [flowControl, setFlowControl] = useState<SerialFlowControl>('none');
 
+  const terminalBackend = useTerminalBackend();
+
   const loadPorts = useCallback(async () => {
     setIsLoadingPorts(true);
     try {
-      const bridge = netcattyBridge.get();
-      if (bridge?.listSerialPorts) {
-        const result = await bridge.listSerialPorts();
-        setPorts(result);
-        // Auto-select first port if available
-        if (result.length > 0 && !selectedPort) {
-          setSelectedPort(result[0].path);
-        }
+      const result = await terminalBackend.listSerialPorts();
+      setPorts(result);
+      // Auto-select first port if available
+      if (result.length > 0 && !selectedPort) {
+        setSelectedPort(result[0].path);
       }
     } catch (err) {
       console.error('[Serial] Failed to list ports:', err);
     } finally {
       setIsLoadingPorts(false);
     }
-  }, [selectedPort]);
+  }, [selectedPort, terminalBackend]);
 
   useEffect(() => {
     if (open) {
@@ -101,7 +99,10 @@ export const SerialConnectModal: React.FC<SerialConnectModalProps> = ({
     onClose();
   };
 
-  const isValid = !!selectedPort && baudRate > 0;
+  // Validate: port must be selected from available ports, baud rate must be valid
+  const isPortValid = !!selectedPort && ports.some(p => p.path === selectedPort);
+  const isBaudRateValid = BAUD_RATES.includes(baudRate);
+  const isValid = isPortValid && isBaudRateValid;
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
