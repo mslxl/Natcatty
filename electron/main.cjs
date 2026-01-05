@@ -77,7 +77,6 @@ const googleAuthBridge = require("./bridges/googleAuthBridge.cjs");
 const onedriveAuthBridge = require("./bridges/onedriveAuthBridge.cjs");
 const cloudSyncBridge = require("./bridges/cloudSyncBridge.cjs");
 const windowManager = require("./bridges/windowManager.cjs");
-const updateBridge = require("./bridges/updateBridge.cjs");
 
 // GPU settings
 // NOTE: Do not disable Chromium sandbox by default.
@@ -360,7 +359,6 @@ const registerBridges = (win) => {
   sftpBridge.init(deps);
   transferBridge.init(deps);
   terminalBridge.init(deps);
-  updateBridge.init({ electronModule });
 
   // Register all IPC handlers
   sshBridge.registerHandlers(ipcMain);
@@ -374,7 +372,6 @@ const registerBridges = (win) => {
   googleAuthBridge.registerHandlers(ipcMain, electronModule);
   onedriveAuthBridge.registerHandlers(ipcMain, electronModule);
   cloudSyncBridge.registerHandlers(ipcMain);
-  updateBridge.registerHandlers(ipcMain);
 
   // Settings window handler
   ipcMain.handle("netcatty:settings:open", async () => {

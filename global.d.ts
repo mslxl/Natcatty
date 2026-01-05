@@ -111,34 +111,6 @@ interface PortForwardStatusResult {
 
 type PortForwardStatusCallback = (status: 'inactive' | 'connecting' | 'active' | 'error', error?: string) => void;
 
-interface NetcattyUpdateInfo {
-  version: string;
-  releaseName?: string;
-  releaseNotes?: string;
-  releaseDate?: string;
-}
-
-interface NetcattyUpdateProgress {
-  percent?: number;
-  transferred?: number;
-  total?: number;
-  bytesPerSecond?: number;
-}
-
-interface NetcattyUpdateStatus {
-  status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
-  supported?: boolean;
-  updateInfo?: NetcattyUpdateInfo | null;
-  progress?: NetcattyUpdateProgress | null;
-  error?: string | null;
-}
-
-interface NetcattyUpdateActionResult {
-  supported: boolean;
-  updateInfo?: NetcattyUpdateInfo | null;
-  error?: string;
-}
-
 interface NetcattyBridge {
   startSSHSession(options: NetcattySSHOptions): Promise<string>;
   startTelnetSession?(options: {
@@ -259,13 +231,6 @@ interface NetcattyBridge {
   windowIsMaximized?(): Promise<boolean>;
   windowIsFullscreen?(): Promise<boolean>;
   onWindowFullScreenChanged?(cb: (isFullscreen: boolean) => void): () => void;
-
-  // Auto update
-  getUpdateStatus?(): Promise<NetcattyUpdateStatus>;
-  updateCheck?(): Promise<NetcattyUpdateActionResult>;
-  downloadUpdate?(): Promise<NetcattyUpdateActionResult>;
-  installUpdate?(): Promise<NetcattyUpdateActionResult>;
-  onUpdateStatus?(cb: (status: NetcattyUpdateStatus) => void): () => void;
   
   // Settings window
   openSettingsWindow?(): Promise<boolean>;
