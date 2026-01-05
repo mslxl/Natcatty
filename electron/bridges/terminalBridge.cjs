@@ -562,8 +562,10 @@ function validatePath(event, payload) {
   try {
     // Resolve path (handle ~, etc.)
     let resolvedPath = targetPath;
-    if (resolvedPath.startsWith("~")) {
-      resolvedPath = path.join(os.homedir(), resolvedPath.slice(1));
+    if (resolvedPath === "~") {
+      resolvedPath = os.homedir();
+    } else if (resolvedPath.startsWith("~/")) {
+      resolvedPath = path.join(os.homedir(), resolvedPath.slice(2));
     }
     resolvedPath = path.resolve(resolvedPath);
     
