@@ -555,6 +555,7 @@ function getDefaultShell() {
  */
 function validatePath(event, payload) {
   const targetPath = payload?.path;
+  const type = payload?.type || 'any';
   if (!targetPath) {
     return { exists: false, isFile: false, isDirectory: false };
   }
@@ -569,16 +570,42 @@ function validatePath(event, payload) {
     }
     resolvedPath = path.resolve(resolvedPath);
     
-    if (!fs.existsSync(resolvedPath)) {
-      return { exists: false, isFile: false, isDirectory: false };
+    if (fs.existsSync(resolvedPath)) {
+      const stat = fs.statSync(resolvedPath);
+      return {
+        exists: true,
+        isFile: stat.isFile(),
+        isDirectory: stat.isDirectory(),
+      };
     }
     
-    const stat = fs.statSync(resolvedPath);
-    return {
-      exists: true,
-      isFile: stat.isFile(),
-      isDirectory: stat.isDirectory(),
-    };
+    // If type is 'file' and path doesn't exist, try to resolve via PATH (for executables like cmd.exe, powershell.exe)
+    if (type === 'file') {
+      const resolvedExecutable = findExecutable(targetPath);
+      // findExecutable returns the original name if not found, so check if it actually resolves to a real path
+      if (resolvedExecutable !== targetPath && fs.existsSync(resolvedExecutable)) {
+        const stat = fs.statSync(resolvedExecutable);
+        return {
+          exists: true,
+          isFile: stat.isFile(),
+          isDirectory: stat.isDirectory(),
+        };
+      }
+      // Also try with .exe extension on Windows if not already present
+      if (process.platform === 'win32' && !targetPath.toLowerCase().endsWith('.exe')) {
+        const withExe = findExecutable(targetPath + '.exe');
+        if (withExe !== targetPath + '.exe' && fs.existsSync(withExe)) {
+          const stat = fs.statSync(withExe);
+          return {
+            exists: true,
+            isFile: stat.isFile(),
+            isDirectory: stat.isDirectory(),
+          };
+        }
+      }
+    }
+    
+    return { exists: false, isFile: false, isDirectory: false };
   } catch (err) {
     console.warn(`[Terminal] Error validating path "${targetPath}":`, err.message);
     return { exists: false, isFile: false, isDirectory: false };

@@ -531,7 +531,7 @@ export default function SettingsTerminalTab(props: {
           label={t("settings.terminal.localShell.shell")}
           description={t("settings.terminal.localShell.shell.desc")}
         >
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 items-end">
             <Input
               value={terminalSettings.localShell}
               placeholder={t("settings.terminal.localShell.shell.placeholder")}
