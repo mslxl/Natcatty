@@ -9,7 +9,6 @@ const chainProgressListeners = new Map();
 const authFailedListeners = new Map();
 const languageChangeListeners = new Set();
 const fullscreenChangeListeners = new Set();
-const updateStatusListeners = new Set();
 
 ipcRenderer.on("netcatty:data", (_event, payload) => {
   const set = dataListeners.get(payload.sessionId);
@@ -67,16 +66,6 @@ ipcRenderer.on("netcatty:window:fullscreen-changed", (_event, isFullscreen) => {
       cb(isFullscreen);
     } catch (err) {
       console.error("Fullscreen changed callback failed", err);
-    }
-  });
-});
-
-ipcRenderer.on("netcatty:update:status", (_event, payload) => {
-  updateStatusListeners.forEach((cb) => {
-    try {
-      cb(payload);
-    } catch (err) {
-      console.error("Update status callback failed", err);
     }
   });
 });
@@ -373,10 +362,6 @@ const api = {
     fullscreenChangeListeners.add(cb);
     return () => fullscreenChangeListeners.delete(cb);
   },
-  onUpdateStatus: (cb) => {
-    updateStatusListeners.add(cb);
-    return () => updateStatusListeners.delete(cb);
-  },
   
   // Settings window
   openSettingsWindow: () => ipcRenderer.invoke("netcatty:settings:open"),
@@ -422,10 +407,6 @@ const api = {
 
   // App info
   getAppInfo: () => ipcRenderer.invoke("netcatty:app:getInfo"),
-  getUpdateStatus: () => ipcRenderer.invoke("netcatty:update:getStatus"),
-  updateCheck: () => ipcRenderer.invoke("netcatty:update:check"),
-  downloadUpdate: () => ipcRenderer.invoke("netcatty:update:download"),
-  installUpdate: () => ipcRenderer.invoke("netcatty:update:install"),
 
   // Tell main process the renderer has mounted/painted (used to avoid initial blank screen).
   rendererReady: () => ipcRenderer.send("netcatty:renderer:ready"),

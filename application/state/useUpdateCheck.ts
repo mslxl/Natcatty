@@ -21,15 +21,11 @@ const debugLog = (...args: unknown[]) => {
 
 export interface UpdateState {
   isChecking: boolean;
-  isDownloading: boolean;
-  updateDownloaded: boolean;
-  downloadProgress: number | null;
   hasUpdate: boolean;
   currentVersion: string;
   latestRelease: ReleaseInfo | null;
   error: string | null;
   lastCheckedAt: number | null;
-  autoUpdateSupported: boolean;
 }
 
 export interface UseUpdateCheckResult {
@@ -37,27 +33,7 @@ export interface UseUpdateCheckResult {
   checkNow: () => Promise<UpdateCheckResult | null>;
   dismissUpdate: () => void;
   openReleasePage: () => void;
-  downloadUpdate: () => Promise<boolean>;
-  installUpdate: () => Promise<boolean>;
 }
-
-type UpdateStatusPayload = {
-  status?: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
-  supported?: boolean;
-  updateInfo?: {
-    version?: string;
-    releaseName?: string;
-    releaseNotes?: string;
-    releaseDate?: string;
-  } | null;
-  progress?: {
-    percent?: number;
-    transferred?: number;
-    total?: number;
-    bytesPerSecond?: number;
-  } | null;
-  error?: string | null;
-};
 
 /**
  * Hook for managing update checks
@@ -68,15 +44,11 @@ type UpdateStatusPayload = {
 export function useUpdateCheck(): UseUpdateCheckResult {
   const [updateState, setUpdateState] = useState<UpdateState>({
     isChecking: false,
-    isDownloading: false,
-    updateDownloaded: false,
-    downloadProgress: null,
     hasUpdate: false,
     currentVersion: '',
     latestRelease: null,
     error: null,
     lastCheckedAt: null,
-    autoUpdateSupported: false,
   });
 
   const hasCheckedOnStartupRef = useRef(false);
@@ -97,86 +69,6 @@ export function useUpdateCheck(): UseUpdateCheckResult {
       }
     };
     void loadVersion();
-  }, []);
-
-  useEffect(() => {
-    const loadUpdateStatus = async () => {
-      try {
-        const bridge = netcattyBridge.get();
-        const status = await bridge?.getUpdateStatus?.();
-        if (!status) return;
-        setUpdateState((prev) => ({
-          ...prev,
-          autoUpdateSupported: Boolean(status.supported),
-          isDownloading: status.status === 'downloading',
-          updateDownloaded: status.status === 'downloaded',
-          downloadProgress: status.progress?.percent ?? prev.downloadProgress,
-          error: status.error ?? prev.error,
-        }));
-      } catch {
-        // Ignore if auto updater isn't available
-      }
-    };
-    void loadUpdateStatus();
-  }, []);
-
-  useEffect(() => {
-    const bridge = netcattyBridge.get();
-    if (!bridge?.onUpdateStatus) return;
-    const unsubscribe = bridge.onUpdateStatus((payload: UpdateStatusPayload) => {
-      if (!payload) return;
-      setUpdateState((prev) => {
-        const next = { ...prev };
-        if (typeof payload.supported === 'boolean') {
-          next.autoUpdateSupported = payload.supported;
-        }
-
-        if (payload.status === 'checking') {
-          next.isChecking = true;
-          next.error = null;
-        } else if (payload.status === 'available') {
-          next.isChecking = false;
-          next.hasUpdate = true;
-          if (!next.latestRelease && payload.updateInfo?.version) {
-            next.latestRelease = {
-              version: payload.updateInfo.version,
-              tagName: `v${payload.updateInfo.version}`,
-              name: payload.updateInfo.releaseName || payload.updateInfo.version,
-              body: payload.updateInfo.releaseNotes || '',
-              htmlUrl: getReleaseUrl(payload.updateInfo.version),
-              publishedAt: payload.updateInfo.releaseDate || '',
-              assets: [],
-            };
-          }
-        } else if (payload.status === 'downloading') {
-          next.isDownloading = true;
-          next.updateDownloaded = false;
-          next.hasUpdate = true;
-          next.downloadProgress = payload.progress?.percent ?? next.downloadProgress;
-          next.error = null;
-        } else if (payload.status === 'downloaded') {
-          next.isDownloading = false;
-          next.updateDownloaded = true;
-          next.hasUpdate = true;
-          next.downloadProgress = 100;
-          next.error = null;
-        } else if (payload.status === 'error') {
-          next.isChecking = false;
-          next.isDownloading = false;
-          next.error = payload.error || 'Unknown error';
-        } else if (payload.status === 'not-available') {
-          next.isChecking = false;
-          next.hasUpdate = false;
-        }
-        return next;
-      });
-    });
-
-    return () => {
-      if (typeof unsubscribe === 'function') {
-        unsubscribe();
-      }
-    };
   }, []);
 
   const performCheck = useCallback(async (currentVersion: string): Promise<UpdateCheckResult | null> => {
@@ -200,18 +92,6 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     setUpdateState((prev) => ({ ...prev, isChecking: true, error: null }));
 
     try {
-      const bridge = netcattyBridge.get();
-      if (bridge?.updateCheck) {
-        void bridge.updateCheck().then((status) => {
-          if (status && typeof status.supported === 'boolean') {
-            setUpdateState((prev) => ({ ...prev, autoUpdateSupported: status.supported }));
-          }
-          if (status?.error) {
-            setUpdateState((prev) => ({ ...prev, error: status.error || 'Unknown error' }));
-          }
-        });
-      }
-
       let result: UpdateCheckResult;
       
       if (IS_UPDATE_DEMO_MODE) {
@@ -309,55 +189,6 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     window.open(url, '_blank', 'noopener,noreferrer');
   }, [updateState.latestRelease]);
 
-  const downloadUpdate = useCallback(async () => {
-    const bridge = netcattyBridge.get();
-    if (!bridge?.downloadUpdate) return false;
-    setUpdateState((prev) => ({ ...prev, isDownloading: true, error: null }));
-    try {
-      const result = await bridge.downloadUpdate();
-      if (result && typeof result.supported === 'boolean') {
-        setUpdateState((prev) => ({ ...prev, autoUpdateSupported: result.supported }));
-      }
-      if (result?.error) {
-        setUpdateState((prev) => ({
-          ...prev,
-          isDownloading: false,
-          error: result.error || 'Unknown error',
-        }));
-        return false;
-      }
-      if (result?.supported === false) {
-        setUpdateState((prev) => ({ ...prev, isDownloading: false }));
-        return false;
-      }
-      return true;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      setUpdateState((prev) => ({ ...prev, isDownloading: false, error: errorMsg }));
-      return false;
-    }
-  }, []);
-
-  const installUpdate = useCallback(async () => {
-    const bridge = netcattyBridge.get();
-    if (!bridge?.installUpdate) return false;
-    try {
-      const result = await bridge.installUpdate();
-      if (result?.error) {
-        setUpdateState((prev) => ({ ...prev, error: result.error || 'Unknown error' }));
-        return false;
-      }
-      if (result?.supported === false) {
-        return false;
-      }
-      return true;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      setUpdateState((prev) => ({ ...prev, error: errorMsg }));
-      return false;
-    }
-  }, []);
-
   // Startup check with delay - runs once on mount
   useEffect(() => {
     debugLog('Startup check effect mounted, IS_UPDATE_DEMO_MODE:', IS_UPDATE_DEMO_MODE);
@@ -430,7 +261,5 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     checkNow,
     dismissUpdate,
     openReleasePage,
-    downloadUpdate,
-    installUpdate,
   };
 }
