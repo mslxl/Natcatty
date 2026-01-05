@@ -522,8 +522,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
 
     try {
       // Get local shell configuration from terminal settings
-      const localShell = ctx.terminalSettings?.localShell || undefined;
-      const localStartDir = ctx.terminalSettings?.localStartDir || undefined;
+      const localShell = ctx.terminalSettings?.localShell;
+      const localStartDir = ctx.terminalSettings?.localStartDir;
 
       const id = await ctx.terminalBackend.startLocalSession({
         sessionId: ctx.sessionId,

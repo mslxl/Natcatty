@@ -108,9 +108,23 @@ function startLocalSession(event, payload) {
   });
   
   // Determine the starting directory
-  // Default to home directory if not specified
+  // Default to home directory if not specified or if specified path is invalid
   const defaultCwd = os.homedir();
-  const cwd = payload?.cwd || defaultCwd;
+  let cwd = defaultCwd;
+  
+  if (payload?.cwd) {
+    try {
+      // Resolve to absolute path and check if it exists and is a directory
+      const resolvedPath = path.resolve(payload.cwd);
+      if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isDirectory()) {
+        cwd = resolvedPath;
+      } else {
+        console.warn(`[Terminal] Specified cwd "${payload.cwd}" is not a valid directory, using home directory`);
+      }
+    } catch (err) {
+      console.warn(`[Terminal] Error validating cwd "${payload.cwd}":`, err.message);
+    }
+  }
   
   const proc = pty.spawn(shell, shellArgs, {
     cols: payload?.cols || 80,
