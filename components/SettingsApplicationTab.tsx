@@ -187,6 +187,7 @@ export default function SettingsApplicationTab() {
                 {updateState.hasUpdate && updateState.latestRelease && (
                   <button
                     onClick={() => void handleUpdateAction()}
+                    disabled={updateState.isDownloading}
                     className={cn(
                       "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium",
                       "bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300",
