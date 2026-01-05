@@ -166,6 +166,7 @@ export function useUpdateCheck(): UseUpdateCheckResult {
           next.error = payload.error || 'Unknown error';
         } else if (payload.status === 'not-available') {
           next.isChecking = false;
+          next.hasUpdate = false;
         }
         return next;
       });
