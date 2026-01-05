@@ -972,6 +972,47 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           host={host}
           credentials={(() => {
             const resolvedAuth = resolveHostAuth({ host, keys, identities });
+            
+            // Build proxy config if present
+            const proxyConfig = host.proxyConfig
+              ? {
+                  type: host.proxyConfig.type,
+                  host: host.proxyConfig.host,
+                  port: host.proxyConfig.port,
+                  username: host.proxyConfig.username,
+                  password: host.proxyConfig.password,
+                }
+              : undefined;
+            
+            // Build jump hosts array if host chain is configured
+            let jumpHosts: NetcattyJumpHost[] | undefined;
+            if (host.hostChain?.hostIds && host.hostChain.hostIds.length > 0) {
+              jumpHosts = host.hostChain.hostIds
+                .map((hostId) => allHosts.find((h) => h.id === hostId))
+                .filter((h): h is Host => !!h)
+                .map((jumpHost) => {
+                  const jumpAuth = resolveHostAuth({
+                    host: jumpHost,
+                    keys,
+                    identities,
+                  });
+                  const jumpKey = jumpAuth.key;
+                  return {
+                    hostname: jumpHost.hostname,
+                    port: jumpHost.port || 22,
+                    username: jumpAuth.username || "root",
+                    password: jumpAuth.password,
+                    privateKey: jumpKey?.privateKey,
+                    certificate: jumpKey?.certificate,
+                    passphrase: jumpAuth.passphrase || jumpKey?.passphrase,
+                    publicKey: jumpKey?.publicKey,
+                    keyId: jumpAuth.keyId,
+                    keySource: jumpKey?.source,
+                    label: jumpHost.label,
+                  };
+                });
+            }
+            
             return {
               username: resolvedAuth.username,
               hostname: host.hostname,
@@ -983,6 +1024,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
               publicKey: resolvedAuth.key?.publicKey,
               keyId: resolvedAuth.keyId,
               keySource: resolvedAuth.key?.source,
+              proxy: proxyConfig,
+              jumpHosts: jumpHosts && jumpHosts.length > 0 ? jumpHosts : undefined,
             };
           })()}
           open={showSFTP && status === "connected"}

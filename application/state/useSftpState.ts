@@ -293,6 +293,47 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
     (host: Host): NetcattySSHOptions => {
       const resolved = resolveHostAuth({ host, keys, identities });
       const key = resolved.key || null;
+      
+      // Build proxy config if present
+      const proxyConfig = host.proxyConfig
+        ? {
+            type: host.proxyConfig.type,
+            host: host.proxyConfig.host,
+            port: host.proxyConfig.port,
+            username: host.proxyConfig.username,
+            password: host.proxyConfig.password,
+          }
+        : undefined;
+      
+      // Build jump hosts array if host chain is configured
+      let jumpHosts: NetcattyJumpHost[] | undefined;
+      if (host.hostChain?.hostIds && host.hostChain.hostIds.length > 0) {
+        jumpHosts = host.hostChain.hostIds
+          .map((hostId) => hosts.find((h) => h.id === hostId))
+          .filter((h): h is Host => !!h)
+          .map((jumpHost) => {
+            const jumpAuth = resolveHostAuth({
+              host: jumpHost,
+              keys,
+              identities,
+            });
+            const jumpKey = jumpAuth.key;
+            return {
+              hostname: jumpHost.hostname,
+              port: jumpHost.port || 22,
+              username: jumpAuth.username || "root",
+              password: jumpAuth.password,
+              privateKey: jumpKey?.privateKey,
+              certificate: jumpKey?.certificate,
+              passphrase: jumpAuth.passphrase || jumpKey?.passphrase,
+              publicKey: jumpKey?.publicKey,
+              keyId: jumpAuth.keyId,
+              keySource: jumpKey?.source,
+              label: jumpHost.label,
+            };
+          });
+      }
+      
       return {
         hostname: host.hostname,
         username: resolved.username,
@@ -303,9 +344,11 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
         publicKey: key?.publicKey,
         keyId: resolved.keyId,
         keySource: key?.source,
+        proxy: proxyConfig,
+        jumpHosts: jumpHosts && jumpHosts.length > 0 ? jumpHosts : undefined,
       };
     },
-    [identities, keys],
+    [hosts, identities, keys],
   );
 
   const getMockLocalFiles = useCallback((path: string): SftpFileEntry[] => {
