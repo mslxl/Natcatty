@@ -215,6 +215,12 @@ const api = {
     const result = await ipcRenderer.invoke("netcatty:local:start", options || {});
     return result.sessionId;
   },
+  getDefaultShell: async () => {
+    return ipcRenderer.invoke("netcatty:local:defaultShell");
+  },
+  validatePath: async (path, type) => {
+    return ipcRenderer.invoke("netcatty:local:validatePath", { path, type });
+  },
   writeToSession: (sessionId, data) => {
     ipcRenderer.send("netcatty:write", { sessionId, data });
   },

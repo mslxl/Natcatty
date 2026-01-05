@@ -107,10 +107,30 @@ function startLocalSession(event, payload) {
     COLORTERM: "truecolor",
   });
   
+  // Determine the starting directory
+  // Default to home directory if not specified or if specified path is invalid
+  const defaultCwd = os.homedir();
+  let cwd = defaultCwd;
+  
+  if (payload?.cwd) {
+    try {
+      // Resolve to absolute path and check if it exists and is a directory
+      const resolvedPath = path.resolve(payload.cwd);
+      if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isDirectory()) {
+        cwd = resolvedPath;
+      } else {
+        console.warn(`[Terminal] Specified cwd "${payload.cwd}" is not a valid directory, using home directory`);
+      }
+    } catch (err) {
+      console.warn(`[Terminal] Error validating cwd "${payload.cwd}":`, err.message);
+    }
+  }
+  
   const proc = pty.spawn(shell, shellArgs, {
     cols: payload?.cols || 80,
     rows: payload?.rows || 24,
     env,
+    cwd,
   });
   
   const session = {
@@ -510,9 +530,59 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:local:start", startLocalSession);
   ipcMain.handle("netcatty:telnet:start", startTelnetSession);
   ipcMain.handle("netcatty:mosh:start", startMoshSession);
+  ipcMain.handle("netcatty:local:defaultShell", getDefaultShell);
+  ipcMain.handle("netcatty:local:validatePath", validatePath);
   ipcMain.on("netcatty:write", writeToSession);
   ipcMain.on("netcatty:resize", resizeSession);
   ipcMain.on("netcatty:close", closeSession);
+}
+
+/**
+ * Get the default shell for the current platform
+ */
+function getDefaultShell() {
+  if (process.platform === "win32") {
+    return findExecutable("powershell") || "powershell.exe";
+  }
+  return process.env.SHELL || "/bin/bash";
+}
+
+/**
+ * Validate a path - check if it exists and whether it's a file or directory
+ * @param {object} event - IPC event
+ * @param {object} payload - Contains { path: string, type?: 'file' | 'directory' | 'any' }
+ * @returns {{ exists: boolean, isFile: boolean, isDirectory: boolean }}
+ */
+function validatePath(event, payload) {
+  const targetPath = payload?.path;
+  if (!targetPath) {
+    return { exists: false, isFile: false, isDirectory: false };
+  }
+  
+  try {
+    // Resolve path (handle ~, etc.)
+    let resolvedPath = targetPath;
+    if (resolvedPath === "~") {
+      resolvedPath = os.homedir();
+    } else if (resolvedPath.startsWith("~/")) {
+      resolvedPath = path.join(os.homedir(), resolvedPath.slice(2));
+    }
+    resolvedPath = path.resolve(resolvedPath);
+    
+    if (!fs.existsSync(resolvedPath)) {
+      return { exists: false, isFile: false, isDirectory: false };
+    }
+    
+    const stat = fs.statSync(resolvedPath);
+    return {
+      exists: true,
+      isFile: stat.isFile(),
+      isDirectory: stat.isDirectory(),
+    };
+  } catch (err) {
+    console.warn(`[Terminal] Error validating path "${targetPath}":`, err.message);
+    return { exists: false, isFile: false, isDirectory: false };
+  }
 }
 
 /**
@@ -558,4 +628,6 @@ module.exports = {
   resizeSession,
   closeSession,
   cleanupAllSessions,
+  getDefaultShell,
+  validatePath,
 };

@@ -1,5 +1,5 @@
-import React, { useCallback } from "react";
-import { Check, Minus, Plus, RotateCcw } from "lucide-react";
+import React, { useCallback, useEffect, useState } from "react";
+import { AlertCircle, Check, Minus, Plus, RotateCcw } from "lucide-react";
 import type {
   CursorShape,
   LinkModifier,
@@ -92,6 +92,87 @@ export default function SettingsTerminalTab(props: {
     updateTerminalSetting,
   } = props;
   const { t } = useI18n();
+
+  // Local shell settings state
+  const [defaultShell, setDefaultShell] = useState<string>("");
+  const [shellValidation, setShellValidation] = useState<{ valid: boolean; message?: string } | null>(null);
+  const [dirValidation, setDirValidation] = useState<{ valid: boolean; message?: string } | null>(null);
+
+  // Fetch default shell on mount
+  useEffect(() => {
+    const bridge = (window as unknown as { netcatty?: NetcattyBridge }).netcatty;
+    if (bridge?.getDefaultShell) {
+      bridge.getDefaultShell().then((shell) => {
+        setDefaultShell(shell);
+      }).catch(() => {
+        // Ignore errors - might not be in Electron
+      });
+    }
+  }, []);
+
+  // Validate shell path when it changes
+  useEffect(() => {
+    const bridge = (window as unknown as { netcatty?: NetcattyBridge }).netcatty;
+    const shellPath = terminalSettings.localShell;
+    
+    if (!shellPath) {
+      setShellValidation(null);
+      return;
+    }
+
+    if (!bridge?.validatePath) {
+      setShellValidation(null);
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      bridge.validatePath(shellPath, 'file').then((result) => {
+        if (result.exists && result.isFile) {
+          setShellValidation({ valid: true });
+        } else if (result.exists && result.isDirectory) {
+          setShellValidation({ valid: false, message: t("settings.terminal.localShell.shell.isDirectory") });
+        } else {
+          setShellValidation({ valid: false, message: t("settings.terminal.localShell.shell.notFound") });
+        }
+      }).catch(() => {
+        setShellValidation(null);
+      });
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [terminalSettings.localShell, t]);
+
+  // Validate directory path when it changes
+  useEffect(() => {
+    const bridge = (window as unknown as { netcatty?: NetcattyBridge }).netcatty;
+    const dirPath = terminalSettings.localStartDir;
+    
+    if (!dirPath) {
+      setDirValidation(null);
+      return;
+    }
+
+    if (!bridge?.validatePath) {
+      setDirValidation(null);
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      bridge.validatePath(dirPath, 'directory').then((result) => {
+        if (result.exists && result.isDirectory) {
+          setDirValidation({ valid: true });
+        } else if (result.exists && result.isFile) {
+          setDirValidation({ valid: false, message: t("settings.terminal.localShell.startDir.isFile") });
+        } else {
+          setDirValidation({ valid: false, message: t("settings.terminal.localShell.startDir.notFound") });
+        }
+      }).catch(() => {
+        setDirValidation(null);
+      });
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [terminalSettings.localStartDir, t]);
 
   const clampFontSize = useCallback((next: number) => {
     const safe = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, next));
@@ -442,6 +523,60 @@ export default function SettingsTerminalTab(props: {
             </Button>
           </div>
         )}
+      </div>
+
+      <SectionHeader title={t("settings.terminal.section.localShell")} />
+      <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
+        <SettingRow
+          label={t("settings.terminal.localShell.shell")}
+          description={t("settings.terminal.localShell.shell.desc")}
+        >
+          <div className="flex flex-col gap-1">
+            <Input
+              value={terminalSettings.localShell}
+              placeholder={t("settings.terminal.localShell.shell.placeholder")}
+              onChange={(e) => updateTerminalSetting("localShell", e.target.value)}
+              className={cn(
+                "w-48",
+                shellValidation && !shellValidation.valid && "border-destructive focus-visible:ring-destructive"
+              )}
+            />
+            {defaultShell && !terminalSettings.localShell && (
+              <span className="text-xs text-muted-foreground">
+                {t("settings.terminal.localShell.shell.detected")}: {defaultShell}
+              </span>
+            )}
+            {shellValidation && !shellValidation.valid && shellValidation.message && (
+              <span className="text-xs text-destructive flex items-center gap-1">
+                <AlertCircle size={12} />
+                {shellValidation.message}
+              </span>
+            )}
+          </div>
+        </SettingRow>
+
+        <SettingRow
+          label={t("settings.terminal.localShell.startDir")}
+          description={t("settings.terminal.localShell.startDir.desc")}
+        >
+          <div className="flex flex-col gap-1">
+            <Input
+              value={terminalSettings.localStartDir}
+              placeholder={t("settings.terminal.localShell.startDir.placeholder")}
+              onChange={(e) => updateTerminalSetting("localStartDir", e.target.value)}
+              className={cn(
+                "w-48",
+                dirValidation && !dirValidation.valid && "border-destructive focus-visible:ring-destructive"
+              )}
+            />
+            {dirValidation && !dirValidation.valid && dirValidation.message && (
+              <span className="text-xs text-destructive flex items-center gap-1">
+                <AlertCircle size={12} />
+                {dirValidation.message}
+              </span>
+            )}
+          </div>
+        </SettingRow>
       </div>
     </SettingsTabContent>
   );

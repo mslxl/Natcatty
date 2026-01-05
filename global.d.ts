@@ -134,7 +134,9 @@ interface NetcattyBridge {
     charset?: string;
     env?: Record<string, string>;
   }): Promise<string>;
-  startLocalSession?(options: { sessionId?: string; cols?: number; rows?: number; shell?: string; env?: Record<string, string> }): Promise<string>;
+  startLocalSession?(options: { sessionId?: string; cols?: number; rows?: number; shell?: string; cwd?: string; env?: Record<string, string> }): Promise<string>;
+  getDefaultShell?(): Promise<string>;
+  validatePath?(path: string, type?: 'file' | 'directory' | 'any'): Promise<{ exists: boolean; isFile: boolean; isDirectory: boolean }>;
   generateKeyPair?(options: {
     type: 'RSA' | 'ECDSA' | 'ED25519';
     bits?: number;
