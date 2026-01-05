@@ -275,7 +275,7 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
   } catch (err) {
     // Cleanup on error
     for (const conn of connections) {
-      try { conn.end(); } catch {}
+      try { conn.end(); } catch (cleanupErr) { console.warn('[SFTP Chain] Cleanup error:', cleanupErr.message); }
     }
     throw err;
   }
@@ -377,7 +377,7 @@ async function openSftp(event, options) {
   } catch (err) {
     // Cleanup jump connections on error
     for (const conn of chainConnections) {
-      try { conn.end(); } catch {}
+      try { conn.end(); } catch (cleanupErr) { console.warn('[SFTP] Cleanup error on connect failure:', cleanupErr.message); }
     }
     throw err;
   }
@@ -501,7 +501,7 @@ async function closeSftp(event, payload) {
   const jumpData = jumpConnectionsMap.get(payload.sftpId);
   if (jumpData) {
     for (const conn of jumpData.connections) {
-      try { conn.end(); } catch {}
+      try { conn.end(); } catch (cleanupErr) { console.warn('[SFTP] Cleanup error on close:', cleanupErr.message); }
     }
     jumpConnectionsMap.delete(payload.sftpId);
     console.log(`[SFTP] Cleaned up ${jumpData.connections.length} jump connection(s) for ${payload.sftpId}`);
