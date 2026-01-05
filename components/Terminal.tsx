@@ -420,10 +420,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   // Connection timeline and timeout visuals
   useEffect(() => {
     if (status !== "connecting" || auth.needsAuth) return;
-    
+
     // Only show SSH-specific scripted logs for SSH connections
     const isSSH = host.protocol !== "serial" && host.protocol !== "local" && host.protocol !== "telnet" && host.hostname !== "localhost";
-    
+
     let stepTimer: ReturnType<typeof setInterval> | undefined;
     if (isSSH) {
       const scripted = [
@@ -842,11 +842,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     >
       <div className="relative h-full w-full flex overflow-hidden bg-gradient-to-br from-[#050910] via-[#06101a] to-[#0b1220]">
         <div className="absolute left-0 right-0 top-0 z-20 pointer-events-none">
-            <div
-              className="flex items-center gap-1 px-2 py-0.5 backdrop-blur-md pointer-events-auto min-w-0 border-b-[0.5px]"
-              style={{
-                backgroundColor: effectiveTheme.colors.background,
-                color: effectiveTheme.colors.foreground,
+          <div
+            className="flex items-center gap-1 px-2 py-0.5 backdrop-blur-md pointer-events-auto min-w-0 border-b-[0.5px]"
+            style={{
+              backgroundColor: effectiveTheme.colors.background,
+              color: effectiveTheme.colors.foreground,
               borderColor: `color-mix(in srgb, ${effectiveTheme.colors.foreground} 8%, ${effectiveTheme.colors.background} 92%)`,
               ['--terminal-toolbar-fg' as never]: effectiveTheme.colors.foreground,
               ['--terminal-toolbar-bg' as never]: effectiveTheme.colors.background,
@@ -867,14 +867,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
             <div className="flex-1" />
             <div className="flex items-center gap-0.5 flex-shrink-0">
               {inWorkspace && onToggleBroadcast && (
-                  <Button
-                    variant="secondary"
-                    size="icon"
-                    className={cn(
-                      "h-6 w-6 p-0 shadow-none border-none text-[color:var(--terminal-toolbar-fg)]",
-                      "bg-transparent hover:bg-transparent",
-                      isBroadcastEnabled && "text-green-500",
-                    )}
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className={cn(
+                    "h-6 w-6 p-0 shadow-none border-none text-[color:var(--terminal-toolbar-fg)]",
+                    "bg-transparent hover:bg-transparent",
+                    isBroadcastEnabled && "text-green-500",
+                  )}
                   onClick={onToggleBroadcast}
                   title={
                     isBroadcastEnabled
@@ -886,22 +886,22 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                       ? t("terminal.toolbar.broadcastDisable")
                       : t("terminal.toolbar.broadcastEnable")
                   }
-                  >
-                    <Radio size={12} />
-                  </Button>
-                )}
-                {inWorkspace && !isFocusMode && onExpandToFocus && (
-                  <Button
-                    variant="secondary"
-                    size="icon"
-                    className="h-6 w-6 p-0 shadow-none border-none text-[color:var(--terminal-toolbar-fg)] bg-transparent hover:bg-transparent"
-                    onClick={onExpandToFocus}
-                    title={t("terminal.toolbar.focusMode")}
-                    aria-label={t("terminal.toolbar.focusMode")}
-                  >
-                    <Maximize2 size={12} />
-                  </Button>
-                )}
+                >
+                  <Radio size={12} />
+                </Button>
+              )}
+              {inWorkspace && !isFocusMode && onExpandToFocus && (
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className="h-6 w-6 p-0 shadow-none border-none text-[color:var(--terminal-toolbar-fg)] bg-transparent hover:bg-transparent"
+                  onClick={onExpandToFocus}
+                  title={t("terminal.toolbar.focusMode")}
+                  aria-label={t("terminal.toolbar.focusMode")}
+                >
+                  <Maximize2 size={12} />
+                </Button>
+              )}
               {renderControls({ showClose: inWorkspace })}
             </div>
           </div>
@@ -992,18 +992,18 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           host={host}
           credentials={(() => {
             const resolvedAuth = resolveHostAuth({ host, keys, identities });
-            
+
             // Build proxy config if present
             const proxyConfig = host.proxyConfig
               ? {
-                  type: host.proxyConfig.type,
-                  host: host.proxyConfig.host,
-                  port: host.proxyConfig.port,
-                  username: host.proxyConfig.username,
-                  password: host.proxyConfig.password,
-                }
+                type: host.proxyConfig.type,
+                host: host.proxyConfig.host,
+                port: host.proxyConfig.port,
+                username: host.proxyConfig.username,
+                password: host.proxyConfig.password,
+              }
               : undefined;
-            
+
             // Build jump hosts array if host chain is configured
             let jumpHosts: NetcattyJumpHost[] | undefined;
             if (host.hostChain?.hostIds && host.hostChain.hostIds.length > 0) {
@@ -1032,7 +1032,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                   };
                 });
             }
-            
+
             return {
               username: resolvedAuth.username,
               hostname: host.hostname,

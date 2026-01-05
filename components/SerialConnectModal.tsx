@@ -148,7 +148,7 @@ export const SerialConnectModal: React.FC<SerialConnectModalProps> = ({
                 {t('common.refresh')}
               </Button>
             </div>
-            
+
             {/* Combobox for port selection with manual input support */}
             <Combobox
               options={portOptions}
@@ -160,7 +160,7 @@ export const SerialConnectModal: React.FC<SerialConnectModalProps> = ({
               createText={t('common.use')}
               icon={<Usb size={14} className="text-muted-foreground" />}
             />
-            
+
             {!isPortValid && selectedPort && (
               <p className="text-xs text-destructive">
                 {t('serial.field.customPortPlaceholder')}
