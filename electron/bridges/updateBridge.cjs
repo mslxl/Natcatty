@@ -158,6 +158,9 @@ function registerHandlers(ipcMain) {
     if (!isSupported()) {
       return { supported: false, error: "Auto updates are unavailable in this build." };
     }
+    if (updateStatus.status === "downloading" || updateStatus.status === "downloaded") {
+      return { supported: true };
+    }
     attachListeners();
     try {
       if (!updateStatus.updateInfo) {
@@ -177,6 +180,7 @@ function registerHandlers(ipcMain) {
       return { supported: false, error: "Auto updates are unavailable in this build." };
     }
     try {
+      // quitAndInstall exits the app on success; return below is only for errors.
       updater.quitAndInstall();
       return { supported: true };
     } catch (err) {
