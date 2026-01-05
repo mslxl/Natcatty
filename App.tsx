@@ -259,6 +259,7 @@ function App({ settings }: { settings: SettingsState }) {
 
   // Update check hook - checks for new versions on startup
   const { updateState, openReleasePage, downloadUpdate, installUpdate } = useUpdateCheck();
+  const lastUpdateToastVersionRef = useRef<string | null>(null);
 
   const handleUpdateAction = useCallback(async () => {
     if (updateState.updateDownloaded) {
@@ -285,17 +286,25 @@ function App({ settings }: { settings: SettingsState }) {
 
   // Show toast notification when update is available
   useEffect(() => {
-    if (updateState.hasUpdate && updateState.latestRelease) {
-      const version = updateState.latestRelease.version;
-      toast.info(t('update.available.message', { version }), {
-        title: t('update.available.title'),
-        duration: 8000, // Show longer for update notifications
-        onClick: () => {
-          void handleUpdateAction();
-        },
-        actionLabel: t('update.downloadNow'),
-      });
+    if (!updateState.hasUpdate || !updateState.latestRelease) {
+      lastUpdateToastVersionRef.current = null;
+      return;
     }
+
+    const version = updateState.latestRelease.version;
+    if (lastUpdateToastVersionRef.current === version) {
+      return;
+    }
+
+    lastUpdateToastVersionRef.current = version;
+    toast.info(t('update.available.message', { version }), {
+      title: t('update.available.title'),
+      duration: 8000, // Show longer for update notifications
+      onClick: () => {
+        void handleUpdateAction();
+      },
+      actionLabel: t('update.downloadNow'),
+    });
   }, [updateState.hasUpdate, updateState.latestRelease, t, handleUpdateAction]);
 
   useEffect(() => {
