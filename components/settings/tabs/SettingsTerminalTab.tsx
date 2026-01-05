@@ -114,7 +114,7 @@ export default function SettingsTerminalTab(props: {
   useEffect(() => {
     const bridge = (window as unknown as { netcatty?: NetcattyBridge }).netcatty;
     const shellPath = terminalSettings.localShell;
-    
+
     if (!shellPath) {
       setShellValidation(null);
       return;
@@ -146,7 +146,7 @@ export default function SettingsTerminalTab(props: {
   useEffect(() => {
     const bridge = (window as unknown as { netcatty?: NetcattyBridge }).netcatty;
     const dirPath = terminalSettings.localStartDir;
-    
+
     if (!dirPath) {
       setDirValidation(null);
       return;
