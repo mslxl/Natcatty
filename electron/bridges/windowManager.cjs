@@ -102,11 +102,13 @@ function saveWindowState(state) {
 }
 
 /**
- * Get the current window bounds, accounting for maximized state
+ * Get the current window bounds state for saving
+ * @param {BrowserWindow} win - The window to get bounds from
+ * @param {Object} overrideBounds - Optional bounds to use instead of current window bounds (for normal bounds tracking)
  */
-function getWindowBounds(win) {
+function getWindowBoundsState(win, overrideBounds) {
   if (!win || win.isDestroyed()) return null;
-  const bounds = win.getBounds();
+  const bounds = overrideBounds || win.getBounds();
   return {
     x: bounds.x,
     y: bounds.y,
@@ -586,17 +588,8 @@ async function createWindow(electronModule, options) {
   const scheduleSaveState = () => {
     if (saveStateTimer) clearTimeout(saveStateTimer);
     saveStateTimer = setTimeout(() => {
-      if (win.isDestroyed()) return;
-      const bounds = lastNormalBounds || win.getBounds();
-      const state = {
-        x: bounds.x,
-        y: bounds.y,
-        width: bounds.width,
-        height: bounds.height,
-        isMaximized: win.isMaximized(),
-        isFullScreen: win.isFullScreen(),
-      };
-      saveWindowState(state);
+      const state = getWindowBoundsState(win, lastNormalBounds);
+      if (state) saveWindowState(state);
     }, 500);
   };
 
@@ -620,17 +613,8 @@ async function createWindow(electronModule, options) {
   // Save state when window is about to close
   win.on("close", () => {
     if (saveStateTimer) clearTimeout(saveStateTimer);
-    if (win.isDestroyed()) return;
-    const bounds = lastNormalBounds || win.getBounds();
-    const state = {
-      x: bounds.x,
-      y: bounds.y,
-      width: bounds.width,
-      height: bounds.height,
-      isMaximized: win.isMaximized(),
-      isFullScreen: win.isFullScreen(),
-    };
-    saveWindowState(state);
+    const state = getWindowBoundsState(win, lastNormalBounds);
+    if (state) saveWindowState(state);
   });
 
   win.on("enter-full-screen", () => {
