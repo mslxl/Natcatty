@@ -258,26 +258,57 @@ function App({ settings }: { settings: SettingsState }) {
   }, [handleSyncNow]);
 
   // Update check hook - checks for new versions on startup
-  const { updateState, openReleasePage, dismissUpdate } = useUpdateCheck();
+  const { updateState, openReleasePage, downloadUpdate, installUpdate } = useUpdateCheck();
+
+  const handleUpdateAction = useCallback(async () => {
+    if (updateState.updateDownloaded) {
+      const installed = await installUpdate();
+      if (!installed) {
+        openReleasePage();
+      }
+      return;
+    }
+    if (updateState.isDownloading) {
+      return;
+    }
+    const started = await downloadUpdate();
+    if (!started) {
+      openReleasePage();
+    }
+  }, [
+    updateState.updateDownloaded,
+    updateState.isDownloading,
+    installUpdate,
+    downloadUpdate,
+    openReleasePage,
+  ]);
 
   // Show toast notification when update is available
   useEffect(() => {
     if (updateState.hasUpdate && updateState.latestRelease) {
       const version = updateState.latestRelease.version;
-      toast.info(
-        t('update.available.message', { version }),
-        {
-          title: t('update.available.title'),
-          duration: 8000, // Show longer for update notifications
-          onClick: () => {
-            openReleasePage();
-            dismissUpdate();
-          },
-          actionLabel: t('update.downloadNow'),
-        }
-      );
+      toast.info(t('update.available.message', { version }), {
+        title: t('update.available.title'),
+        duration: 8000, // Show longer for update notifications
+        onClick: () => {
+          void handleUpdateAction();
+        },
+        actionLabel: t('update.downloadNow'),
+      });
     }
-  }, [updateState.hasUpdate, updateState.latestRelease, t, openReleasePage, dismissUpdate]);
+  }, [updateState.hasUpdate, updateState.latestRelease, t, handleUpdateAction]);
+
+  useEffect(() => {
+    if (!updateState.updateDownloaded) return;
+    toast.success(t('update.downloaded.message'), {
+      title: t('update.downloaded.title'),
+      duration: 8000,
+      onClick: () => {
+        void handleUpdateAction();
+      },
+      actionLabel: t('update.installNow'),
+    });
+  }, [updateState.updateDownloaded, t, handleUpdateAction]);
 
   // Debounce ref for moveFocus to prevent double-triggering when focus switches
   const lastMoveFocusTimeRef = useRef<number>(0);

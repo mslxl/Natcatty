@@ -66,7 +66,7 @@ const ActionRow: React.FC<{
 export default function SettingsApplicationTab() {
   const { t } = useI18n();
   const { openExternal, getApplicationInfo } = useApplicationBackend();
-  const { updateState, checkNow, openReleasePage } = useUpdateCheck();
+  const { updateState, checkNow, openReleasePage, downloadUpdate, installUpdate } = useUpdateCheck();
   const [appInfo, setAppInfo] = useState<AppInfo>({ name: "Netcatty", version: "" });
   const [lastCheckResult, setLastCheckResult] = useState<'none' | 'available' | 'upToDate'>('none');
   const [hasAutoChecked, setHasAutoChecked] = useState(false);
@@ -106,6 +106,25 @@ export default function SettingsApplicationTab() {
     void checkNow();
   }, [hasAutoChecked, updateState.isChecking, isUpdateDemoMode, appInfo.version, checkNow]);
 
+  const handleUpdateAction = async () => {
+    if (updateState.updateDownloaded) {
+      const installed = await installUpdate();
+      if (!installed) {
+        openReleasePage();
+      }
+      return;
+    }
+
+    if (updateState.isDownloading) {
+      return;
+    }
+
+    const started = await downloadUpdate();
+    if (!started) {
+      openReleasePage();
+    }
+  };
+
   const handleCheckForUpdates = async () => {
     // In demo mode, allow checking even for dev builds
     if (!isUpdateDemoMode && (!appInfo.version || appInfo.version === '0.0.0')) {
@@ -120,12 +139,13 @@ export default function SettingsApplicationTab() {
 
     if (result?.hasUpdate && result.latestRelease) {
       setLastCheckResult('available');
-      toast.info(
-        t('update.available.message', { version: result.latestRelease.version }),
-        t('update.available.title')
-      );
-      // Open the release page
-      openReleasePage();
+      toast.info(t('update.available.message', { version: result.latestRelease.version }), {
+        title: t('update.available.title'),
+        onClick: () => {
+          void handleUpdateAction();
+        },
+        actionLabel: t('update.downloadNow'),
+      });
     } else if (result) {
       setLastCheckResult('upToDate');
       toast.success(
@@ -141,6 +161,15 @@ export default function SettingsApplicationTab() {
   const issueUrl = useMemo(() => buildIssueUrl(appInfo), [appInfo]);
   const releasesUrl = `${REPO_URL}/releases`;
   const discussionsUrl = `${REPO_URL}/discussions`;
+  const downloadPercent = updateState.downloadProgress != null
+    ? Math.round(updateState.downloadProgress)
+    : null;
+
+  const updateActionLabel = updateState.updateDownloaded
+    ? t('update.installNow')
+    : updateState.isDownloading
+      ? t('update.downloading', { percent: downloadPercent ?? 0 })
+      : t('update.downloadNow');
 
   return (
     <SettingsTabContent value="application">
@@ -157,15 +186,16 @@ export default function SettingsApplicationTab() {
                 {/* Update available badge - inline with version */}
                 {updateState.hasUpdate && updateState.latestRelease && (
                   <button
-                    onClick={() => void openReleasePage()}
+                    onClick={() => void handleUpdateAction()}
                     className={cn(
                       "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium",
                       "bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300",
-                      "hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors cursor-pointer"
+                      "hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors cursor-pointer",
+                      updateState.isDownloading && "opacity-70 cursor-default"
                     )}
                   >
                     <ArrowUpCircle size={12} />
-                    v{updateState.latestRelease.version} {t('update.downloadNow')}
+                    v{updateState.latestRelease.version} {updateActionLabel}
                   </button>
                 )}
               </div>
