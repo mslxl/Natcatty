@@ -1374,6 +1374,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           )}
           allTags={allTags}
           allHosts={hosts}
+          defaultGroup={editingHost ? undefined : selectedGroupPath}
           onSave={(host) => {
             onUpdateHosts(
               editingHost

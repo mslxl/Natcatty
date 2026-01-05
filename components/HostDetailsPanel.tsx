@@ -59,6 +59,7 @@ interface HostDetailsPanelProps {
   groups: string[];
   allTags?: string[]; // All available tags for autocomplete
   allHosts?: Host[]; // All hosts for chain selection
+  defaultGroup?: string | null; // Default group for new hosts (from current navigation)
   onSave: (host: Host) => void;
   onCancel: () => void;
   onCreateGroup?: (groupPath: string) => void; // Callback to create a new group
@@ -72,6 +73,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   groups,
   allTags = [],
   allHosts = [],
+  defaultGroup,
   onSave,
   onCancel,
   onCreateGroup,
@@ -95,6 +97,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
         charset: "UTF-8",
         theme: "Flexoki Dark",
         createdAt: Date.now(),
+        group: defaultGroup || undefined, // Pre-fill with current navigation group
       } as Host),
   );
 
