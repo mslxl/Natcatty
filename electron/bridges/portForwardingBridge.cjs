@@ -314,6 +314,28 @@ async function listPortForwards() {
 }
 
 /**
+ * Stop all active port forwards (cleanup on app quit)
+ */
+function stopAllPortForwards() {
+  console.log(`[PortForward] Stopping all ${portForwardingTunnels.size} active tunnels...`);
+  for (const [tunnelId, tunnel] of portForwardingTunnels) {
+    try {
+      if (tunnel.server) {
+        tunnel.server.close();
+      }
+      if (tunnel.conn) {
+        tunnel.conn.end();
+      }
+      console.log(`[PortForward] Stopped tunnel ${tunnelId}`);
+    } catch (err) {
+      console.warn(`[PortForward] Failed to stop tunnel ${tunnelId}:`, err.message);
+    }
+  }
+  portForwardingTunnels.clear();
+  console.log('[PortForward] All tunnels stopped');
+}
+
+/**
  * Register IPC handlers for port forwarding operations
  */
 function registerHandlers(ipcMain) {
@@ -329,4 +351,5 @@ module.exports = {
   stopPortForward,
   getPortForwardStatus,
   listPortForwards,
+  stopAllPortForwards,
 };

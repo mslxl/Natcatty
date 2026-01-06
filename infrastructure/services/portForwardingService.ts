@@ -36,6 +36,49 @@ export const getActiveRuleIds = (): string[] => {
 };
 
 /**
+ * Sync active connections with backend
+ * Called on app startup to restore state of tunnels that may still be running
+ * Returns map of tunnelId -> ruleId for tunnels that are active in backend
+ */
+export const syncWithBackend = async (): Promise<Map<string, string>> => {
+  const bridge = netcattyBridge.get();
+  const activeTunnelMap = new Map<string, string>();
+  
+  if (!bridge?.listPortForwards) {
+    logger.warn('[PortForwardingService] Backend not available for sync');
+    return activeTunnelMap;
+  }
+  
+  try {
+    const activeTunnels = await bridge.listPortForwards();
+    logger.info(`[PortForwardingService] Backend reports ${activeTunnels.length} active tunnels`);
+    
+    for (const tunnel of activeTunnels) {
+      // tunnelId format is "pf-{ruleId}-{timestamp}"
+      const match = tunnel.tunnelId.match(/^pf-([^-]+-[^-]+-[^-]+-[^-]+-[^-]+)-/);
+      if (match && match[1]) {
+        const ruleId = match[1];
+        activeTunnelMap.set(tunnel.tunnelId, ruleId);
+        
+        // Update local connection tracking
+        activeConnections.set(ruleId, {
+          ruleId,
+          tunnelId: tunnel.tunnelId,
+          status: 'active',
+        });
+        
+        logger.info(`[PortForwardingService] Synced active tunnel for rule ${ruleId}`);
+      }
+    }
+    
+    return activeTunnelMap;
+  } catch (err) {
+    logger.error('[PortForwardingService] Failed to sync with backend:', err);
+    return activeTunnelMap;
+  }
+};
+
+/**
  * Start a port forwarding tunnel
  */
 export const startPortForward = async (
