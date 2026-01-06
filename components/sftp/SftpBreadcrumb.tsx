@@ -3,7 +3,8 @@
  */
 
 import { ChevronRight, Home, MoreHorizontal } from 'lucide-react';
-import React, { memo, useMemo, useState } from 'react';
+import React, { memo, useEffect, useMemo, useState } from 'react';
+import { useI18n } from '../../application/i18n/I18nProvider';
 import { cn } from '../../lib/utils';
 
 interface SftpBreadcrumbProps {
@@ -20,7 +21,13 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
     onHome,
     maxVisibleParts = 4 
 }) => {
+    const { t } = useI18n();
     const [isExpanded, setIsExpanded] = useState(false);
+
+    // Reset expansion state when path changes
+    useEffect(() => {
+        setIsExpanded(false);
+    }, [path]);
 
     // Handle both Windows (C:\path) and Unix (/path) style paths
     const isWindowsPath = /^[A-Za-z]:/.test(path);
@@ -76,7 +83,7 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
             <button
                 onClick={onHome}
                 className="hover:text-foreground p-1 rounded hover:bg-secondary/60 shrink-0"
-                title="Go to home"
+                title={t("sftp.goHome")}
             >
                 <Home size={12} />
             </button>
@@ -93,7 +100,7 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
                                 <button
                                     onClick={handleExpand}
                                     className="hover:text-foreground px-1 py-0.5 rounded hover:bg-secondary/60 shrink-0 flex items-center"
-                                    title={`Click to show ${hiddenParts.length} hidden folder(s): ${hiddenParts.map(h => h.part).join(' > ')}`}
+                                    title={`${t("sftp.showHiddenPaths")}: ${hiddenParts.map(h => h.part).join(' > ')}`}
                                 >
                                     <MoreHorizontal size={14} />
                                 </button>

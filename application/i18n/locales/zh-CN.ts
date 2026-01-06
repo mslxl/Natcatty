@@ -278,6 +278,7 @@ const zhCN: Messages = {
   'sftp.status.uploading': '上传中...',
   'sftp.status.ready': '就绪',
   'sftp.goUp': '上一级',
+  'sftp.goHome': '返回主目录',
   'sftp.folderName': '文件夹名称',
   'sftp.folderName.placeholder': '输入文件夹名称',
   'sftp.prompt.newFolderName': '新建文件夹名称？',

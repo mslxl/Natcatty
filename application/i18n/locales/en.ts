@@ -404,6 +404,7 @@ const en: Messages = {
   'sftp.status.uploading': 'Uploading...',
   'sftp.status.ready': 'Ready',
   'sftp.goUp': 'Go up',
+  'sftp.goHome': 'Go to home',
   'sftp.folderName': 'Folder name',
   'sftp.folderName.placeholder': 'Enter folder name',
   'sftp.prompt.newFolderName': 'New folder name?',
