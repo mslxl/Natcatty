@@ -35,18 +35,51 @@ export const getActiveRuleIds = (): string[] => {
     .map(([ruleId]) => ruleId);
 };
 
+// Tunnel ID prefix and UUID regex pattern for parsing
+const TUNNEL_ID_PREFIX = 'pf-';
+// UUID format: 8-4-4-4-12 hexadecimal characters
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Parse rule ID from tunnel ID
+ * Tunnel ID format is "pf-{ruleId}-{timestamp}" where ruleId is a UUID
+ */
+const parseRuleIdFromTunnelId = (tunnelId: string): string | null => {
+  if (!tunnelId.startsWith(TUNNEL_ID_PREFIX)) {
+    return null;
+  }
+  
+  // Remove prefix and split remaining parts
+  const withoutPrefix = tunnelId.slice(TUNNEL_ID_PREFIX.length);
+  const parts = withoutPrefix.split('-');
+  
+  // UUID has 5 parts (8-4-4-4-12), so we need at least 6 parts (5 UUID + timestamp)
+  if (parts.length < 6) {
+    return null;
+  }
+  
+  // Reconstruct the UUID from first 5 parts
+  const ruleId = parts.slice(0, 5).join('-');
+  
+  // Validate it's a proper UUID format
+  if (!UUID_REGEX.test(ruleId)) {
+    return null;
+  }
+  
+  return ruleId;
+};
+
 /**
  * Sync active connections with backend
  * Called on app startup to restore state of tunnels that may still be running
- * Returns map of tunnelId -> ruleId for tunnels that are active in backend
+ * This updates the local activeConnections map to match the backend state.
  */
-export const syncWithBackend = async (): Promise<Map<string, string>> => {
+export const syncWithBackend = async (): Promise<void> => {
   const bridge = netcattyBridge.get();
-  const activeTunnelMap = new Map<string, string>();
   
   if (!bridge?.listPortForwards) {
     logger.warn('[PortForwardingService] Backend not available for sync');
-    return activeTunnelMap;
+    return;
   }
   
   try {
@@ -54,12 +87,8 @@ export const syncWithBackend = async (): Promise<Map<string, string>> => {
     logger.info(`[PortForwardingService] Backend reports ${activeTunnels.length} active tunnels`);
     
     for (const tunnel of activeTunnels) {
-      // tunnelId format is "pf-{ruleId}-{timestamp}"
-      const match = tunnel.tunnelId.match(/^pf-([^-]+-[^-]+-[^-]+-[^-]+-[^-]+)-/);
-      if (match && match[1]) {
-        const ruleId = match[1];
-        activeTunnelMap.set(tunnel.tunnelId, ruleId);
-        
+      const ruleId = parseRuleIdFromTunnelId(tunnel.tunnelId);
+      if (ruleId) {
         // Update local connection tracking
         activeConnections.set(ruleId, {
           ruleId,
@@ -70,11 +99,8 @@ export const syncWithBackend = async (): Promise<Map<string, string>> => {
         logger.info(`[PortForwardingService] Synced active tunnel for rule ${ruleId}`);
       }
     }
-    
-    return activeTunnelMap;
   } catch (err) {
     logger.error('[PortForwardingService] Failed to sync with backend:', err);
-    return activeTunnelMap;
   }
 };
 
