@@ -539,12 +539,17 @@ app.on("window-all-closed", () => {
   }
 });
 
-// Cleanup all PTY sessions before quitting to prevent node-pty assertion errors
+// Cleanup all PTY sessions and port forwarding tunnels before quitting
 app.on("will-quit", () => {
   try {
     terminalBridge.cleanupAllSessions();
   } catch (err) {
     console.warn("Error during terminal cleanup:", err);
+  }
+  try {
+    portForwardingBridge.stopAllPortForwards();
+  } catch (err) {
+    console.warn("Error during port forwarding cleanup:", err);
   }
 });
 

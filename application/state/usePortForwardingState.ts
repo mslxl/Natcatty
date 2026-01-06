@@ -11,6 +11,7 @@ import {
   getActiveRuleIds,
   startPortForward,
   stopPortForward,
+  syncWithBackend,
 } from "../../infrastructure/services/portForwardingService";
 import { useStoredViewMode, ViewMode } from "./useStoredViewMode";
 
@@ -78,25 +79,32 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
     localStorageAdapter.writeBoolean(STORAGE_KEY_PF_PREFER_FORM_MODE, prefer);
   }, []);
 
-  // Load rules from storage on mount
+  // Load rules from storage on mount and sync with backend
   useEffect(() => {
-    const saved = localStorageAdapter.read<PortForwardingRule[]>(
-      STORAGE_KEY_PORT_FORWARDING,
-    );
-    if (saved && Array.isArray(saved)) {
-      // Sync status with active connections in the service layer
-      const _activeRuleIds = getActiveRuleIds();
-      const withSyncedStatus = saved.map((r) => {
-        const conn = getActiveConnection(r.id);
-        if (conn) {
-          // This rule has an active connection, preserve its status
-          return { ...r, status: conn.status, error: conn.error };
-        }
-        // No active connection, reset to inactive
-        return { ...r, status: "inactive" as const, error: undefined };
-      });
-      setRules(withSyncedStatus);
-    }
+    const loadAndSync = async () => {
+      // First, sync with backend to get any active tunnels
+      await syncWithBackend();
+      
+      const saved = localStorageAdapter.read<PortForwardingRule[]>(
+        STORAGE_KEY_PORT_FORWARDING,
+      );
+      if (saved && Array.isArray(saved)) {
+        // Sync status with active connections in the service layer
+        const _activeRuleIds = getActiveRuleIds();
+        const withSyncedStatus = saved.map((r) => {
+          const conn = getActiveConnection(r.id);
+          if (conn) {
+            // This rule has an active connection, preserve its status
+            return { ...r, status: conn.status, error: conn.error };
+          }
+          // No active connection, reset to inactive
+          return { ...r, status: "inactive" as const, error: undefined };
+        });
+        setRules(withSyncedStatus);
+      }
+    };
+    
+    void loadAndSync();
   }, []);
 
   // Persist rules to storage whenever they change
