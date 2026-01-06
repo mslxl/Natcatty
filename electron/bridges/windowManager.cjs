@@ -615,6 +615,8 @@ async function createWindow(electronModule, options) {
     if (saveStateTimer) clearTimeout(saveStateTimer);
     const state = getWindowBoundsState(win, lastNormalBounds);
     if (state) saveWindowState(state);
+    // Close settings window when main window closes
+    closeSettingsWindow();
   });
 
   win.on("enter-full-screen", () => {
