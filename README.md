@@ -22,16 +22,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-mac-arm64.dmg">
-    <img src="https://img.shields.io/badge/Download-macOS%20ARM64-000?style=for-the-badge&logo=apple" alt="Download macOS ARM64">
-  </a>
-  &nbsp;
-  <a href="https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-mac-x64.dmg">
-    <img src="https://img.shields.io/badge/Download-macOS%20Intel-000?style=for-the-badge&logo=apple" alt="Download macOS Intel">
-  </a>
-  &nbsp;
-  <a href="https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-win-x64.exe">
-    <img src="https://img.shields.io/badge/Download-Windows%20x64-0078D4?style=for-the-badge&logo=windows" alt="Download Windows">
+  <a href="https://github.com/binaricat/Netcatty/releases/latest">
+    <img src="https://img.shields.io/github/v/release/binaricat/Netcatty?style=for-the-badge&logo=github&label=Download%20Latest&color=success" alt="Download Latest Release">
   </a>
 </p>
 
@@ -269,11 +261,13 @@ Netcatty automatically detects and displays OS icons for connected hosts:
 
 ### Download
 
-| Platform | Architecture | Download |
-|----------|--------------|----------|
-| **macOS** | Apple Silicon (M1/M2/M3) | [Netcatty-1.0.0-mac-arm64.dmg](https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-mac-arm64.dmg) |
-| **macOS** | Intel | [Netcatty-1.0.0-mac-x64.dmg](https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-mac-x64.dmg) |
-| **Windows** | x64 | [Netcatty-1.0.0-win-x64.exe](https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-win-x64.exe) |
+Download the latest release for your platform from [GitHub Releases](https://github.com/binaricat/Netcatty/releases/latest).
+
+| Platform | Architecture | Status |
+|----------|--------------|--------|
+| **macOS** | Apple Silicon (M1/M2/M3) | ✅ Supported |
+| **macOS** | Intel | ✅ Supported |
+| **Windows** | x64 | ✅ Supported |
 
 Or browse all releases at [GitHub Releases](https://github.com/binaricat/Netcatty/releases).
 

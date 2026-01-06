@@ -63,7 +63,7 @@ export interface Host {
   tags: string[];
   os: 'linux' | 'windows' | 'macos';
   identityFileId?: string; // Reference to SSHKey
-  protocol?: 'ssh' | 'telnet' | 'local'; // Default/primary protocol
+  protocol?: 'ssh' | 'telnet' | 'local' | 'serial'; // Default/primary protocol
   password?: string;
   authMethod?: 'password' | 'key' | 'certificate';
   agentForwarding?: boolean;

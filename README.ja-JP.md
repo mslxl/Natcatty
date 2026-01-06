@@ -22,16 +22,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-mac-arm64.dmg">
-    <img src="https://img.shields.io/badge/ダウンロード-macOS%20ARM64-000?style=for-the-badge&logo=apple" alt="macOS ARM64 をダウンロード">
-  </a>
-  &nbsp;
-  <a href="https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-mac-x64.dmg">
-    <img src="https://img.shields.io/badge/ダウンロード-macOS%20Intel-000?style=for-the-badge&logo=apple" alt="macOS Intel をダウンロード">
-  </a>
-  &nbsp;
-  <a href="https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-win-x64.exe">
-    <img src="https://img.shields.io/badge/ダウンロード-Windows%20x64-0078D4?style=for-the-badge&logo=windows" alt="Windows をダウンロード">
+  <a href="https://github.com/binaricat/Netcatty/releases/latest">
+    <img src="https://img.shields.io/github/v/release/binaricat/Netcatty?style=for-the-badge&logo=github&label=最新版をダウンロード&color=success" alt="最新版をダウンロード">
   </a>
 </p>
 
@@ -269,11 +261,13 @@ Netcatty は接続したホストの OS アイコンを自動的に検出・表�
 
 ### ダウンロード
 
-| プラットフォーム | アーキテクチャ | ダウンロード |
-|------------------|----------------|--------------|
-| **macOS** | Apple Silicon (M1/M2/M3) | [Netcatty-1.0.0-mac-arm64.dmg](https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-mac-arm64.dmg) |
-| **macOS** | Intel | [Netcatty-1.0.0-mac-x64.dmg](https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-mac-x64.dmg) |
-| **Windows** | x64 | [Netcatty-1.0.0-win-x64.exe](https://github.com/binaricat/Netcatty/releases/latest/download/Netcatty-1.0.0-win-x64.exe) |
+[GitHub Releases](https://github.com/binaricat/Netcatty/releases/latest) からお使いのプラットフォームに対応した最新版をダウンロードしてください。
+
+| プラットフォーム | アーキテクチャ | ステータス |
+|------------------|----------------|------------|
+| **macOS** | Apple Silicon (M1/M2/M3) | ✅ サポート |
+| **macOS** | Intel | ✅ サポート |
+| **Windows** | x64 | ✅ サポート |
 
 または [GitHub Releases](https://github.com/binaricat/Netcatty/releases) ですべてのリリースを参照してください。
 
