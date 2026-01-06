@@ -3,6 +3,7 @@ import {
   ChevronRight,
   Database,
   Download,
+  ExternalLink,
   File,
   FileArchive,
   FileAudio,
@@ -51,7 +52,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
 
 // Comprehensive file icon helper
-const getFileIcon = (fileName: string, isDirectory: boolean) => {
+const getFileIcon = (fileName: string, isDirectory: boolean, isSymlink?: boolean) => {
   if (isDirectory)
     return (
       <Folder
@@ -61,6 +62,11 @@ const getFileIcon = (fileName: string, isDirectory: boolean) => {
         className="text-blue-400"
       />
     );
+
+  // For symlink files (not directories), show a special symlink icon
+  if (isSymlink) {
+    return <ExternalLink size={18} className="text-cyan-500" />;
+  }
 
   const ext = fileName.split(".").pop()?.toLowerCase() || "";
   const iconClass = "text-muted-foreground";
@@ -1329,7 +1335,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
                       >
                         <div className="flex items-center gap-3 min-w-0">
                           <div className="shrink-0">
-                            {getFileIcon(file.name, isNavigableDirectory)}
+                            {getFileIcon(file.name, isNavigableDirectory, file.type === "symlink" && !isNavigableDirectory)}
                           </div>
                           <span className={cn("truncate font-medium", file.type === "symlink" && "italic")}>
                             {file.name}
