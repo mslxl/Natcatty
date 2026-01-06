@@ -19,6 +19,7 @@ import {
   Key,
   Loader2,
   Lock,
+  MoreHorizontal,
   Plus,
   RefreshCw,
   Settings,
@@ -330,6 +331,10 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   const [isEditingPath, setIsEditingPath] = useState(false);
   const [editingPathValue, setEditingPathValue] = useState("");
   const pathInputRef = useRef<HTMLInputElement>(null);
+  
+  // Breadcrumb truncation state
+  const [isBreadcrumbExpanded, setIsBreadcrumbExpanded] = useState(false);
+  const MAX_VISIBLE_BREADCRUMB_PARTS = 4;
 
   const isWindowsPath = useCallback((path: string): boolean => {
     return /^[A-Za-z]:/.test(path);
@@ -581,6 +586,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     if (navigatingRef.current) return;
     navigatingRef.current = true;
     setCurrentPath(path);
+    setIsBreadcrumbExpanded(false); // Reset breadcrumb expansion when navigating
     // Reset lock after a short delay
     setTimeout(() => {
       navigatingRef.current = false;
@@ -982,6 +988,35 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
 
   // Breadcrumbs
   const breadcrumbs = getBreadcrumbs(currentPath);
+  
+  // Compute visible/hidden breadcrumbs for truncation
+  const { visibleBreadcrumbs, hiddenBreadcrumbs, needsBreadcrumbTruncation } = useMemo(() => {
+    if (isBreadcrumbExpanded || breadcrumbs.length <= MAX_VISIBLE_BREADCRUMB_PARTS) {
+      return {
+        visibleBreadcrumbs: breadcrumbs.map((part, idx) => ({ part, originalIndex: idx })),
+        hiddenBreadcrumbs: [] as { part: string; originalIndex: number }[],
+        needsBreadcrumbTruncation: false
+      };
+    }
+
+    // Show first part + ellipsis + last (MAX_VISIBLE_BREADCRUMB_PARTS - 1) parts
+    const firstPart = [{ part: breadcrumbs[0], originalIndex: 0 }];
+    const lastPartsCount = MAX_VISIBLE_BREADCRUMB_PARTS - 1;
+    const lastParts = breadcrumbs.slice(-lastPartsCount).map((part, idx) => ({
+      part,
+      originalIndex: breadcrumbs.length - lastPartsCount + idx
+    }));
+    const hidden = breadcrumbs.slice(1, -lastPartsCount).map((part, idx) => ({
+      part,
+      originalIndex: idx + 1
+    }));
+
+    return {
+      visibleBreadcrumbs: [...firstPart, ...lastParts],
+      hiddenBreadcrumbs: hidden,
+      needsBreadcrumbTruncation: true
+    };
+  }, [breadcrumbs, isBreadcrumbExpanded]);
 
   const handleFileClick = (
     file: RemoteFile,
@@ -1158,32 +1193,56 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
               <div
                 className="flex items-center gap-1 flex-1 min-w-0 cursor-text hover:bg-secondary/50 rounded px-1 py-0.5 transition-colors"
                 onDoubleClick={handlePathDoubleClick}
-                title={t("sftp.path.doubleClickToEdit")}
+                title={currentPath}
               >
                 <button
-                  className="text-muted-foreground hover:text-foreground px-1"
+                  className="text-muted-foreground hover:text-foreground px-1 shrink-0"
                   onClick={() => setCurrentPath(getRootPath(currentPath))}
                 >
                   {isLocalSession && isWindowsPath(currentPath)
                     ? getWindowsDrive(currentPath) ?? "C:"
                     : "/"}
                 </button>
-                {breadcrumbs.map((part, idx) => (
-                  <React.Fragment key={idx}>
-                    <ChevronRight
-                      size={12}
-                      className="text-muted-foreground flex-shrink-0"
-                    />
-                    <button
-                      className="text-muted-foreground hover:text-foreground truncate px-1"
-                      onClick={() =>
-                        setCurrentPath(breadcrumbPathAt(breadcrumbs, idx))
-                      }
-                    >
-                      {part}
-                    </button>
-                  </React.Fragment>
-                ))}
+                {visibleBreadcrumbs.map(({ part, originalIndex }, displayIdx) => {
+                  const isLast = originalIndex === breadcrumbs.length - 1;
+                  const showEllipsisBefore = needsBreadcrumbTruncation && displayIdx === 1;
+
+                  return (
+                    <React.Fragment key={originalIndex}>
+                      {showEllipsisBefore && (
+                        <>
+                          <ChevronRight
+                            size={12}
+                            className="text-muted-foreground flex-shrink-0"
+                          />
+                          <button
+                            className="text-muted-foreground hover:text-foreground px-1 shrink-0 flex items-center"
+                            onClick={() => setIsBreadcrumbExpanded(true)}
+                            title={`${t("sftp.showHiddenPaths")}: ${hiddenBreadcrumbs.map(h => h.part).join(" > ")}`}
+                          >
+                            <MoreHorizontal size={14} />
+                          </button>
+                        </>
+                      )}
+                      <ChevronRight
+                        size={12}
+                        className="text-muted-foreground flex-shrink-0"
+                      />
+                      <button
+                        className={cn(
+                          "text-muted-foreground hover:text-foreground truncate px-1 max-w-[100px]",
+                          isLast && "text-foreground font-medium"
+                        )}
+                        onClick={() =>
+                          setCurrentPath(breadcrumbPathAt(breadcrumbs, originalIndex))
+                        }
+                        title={part}
+                      >
+                        {part}
+                      </button>
+                    </React.Fragment>
+                  );
+                })}
               </div>
             )}
           </div>
