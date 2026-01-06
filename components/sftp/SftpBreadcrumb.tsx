@@ -3,7 +3,7 @@
  */
 
 import { ChevronRight, Home, MoreHorizontal } from 'lucide-react';
-import React, { memo, useEffect, useMemo, useState } from 'react';
+import React, { memo, useMemo } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { cn } from '../../lib/utils';
 
@@ -22,12 +22,6 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
     maxVisibleParts = 4 
 }) => {
     const { t } = useI18n();
-    const [isExpanded, setIsExpanded] = useState(false);
-
-    // Reset expansion state when path changes
-    useEffect(() => {
-        setIsExpanded(false);
-    }, [path]);
 
     // Handle both Windows (C:\path) and Unix (/path) style paths
     const isWindowsPath = /^[A-Za-z]:/.test(path);
@@ -42,9 +36,9 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
         return '/' + parts.slice(0, index + 1).join('/');
     };
 
-    // Determine which parts to show
+    // Determine which parts to show (always truncate, no expansion)
     const { visibleParts, hiddenParts, needsTruncation } = useMemo(() => {
-        if (isExpanded || parts.length <= maxVisibleParts) {
+        if (parts.length <= maxVisibleParts) {
             return { 
                 visibleParts: parts.map((part, idx) => ({ part, originalIndex: idx })), 
                 hiddenParts: [] as { part: string; originalIndex: number }[], 
@@ -69,11 +63,7 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
             hiddenParts: hidden, 
             needsTruncation: true 
         };
-    }, [parts, maxVisibleParts, isExpanded]);
-
-    const handleExpand = () => {
-        setIsExpanded(true);
-    };
+    }, [parts, maxVisibleParts]);
 
     return (
         <div 
@@ -97,13 +87,12 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
                     <React.Fragment key={partPath}>
                         {showEllipsisBefore && (
                             <>
-                                <button
-                                    onClick={handleExpand}
-                                    className="hover:text-foreground px-1 py-0.5 rounded hover:bg-secondary/60 shrink-0 flex items-center"
+                                <span
+                                    className="px-1 py-0.5 shrink-0 flex items-center text-muted-foreground cursor-default"
                                     title={`${t("sftp.showHiddenPaths")}: ${hiddenParts.map(h => h.part).join(' > ')}`}
                                 >
                                     <MoreHorizontal size={14} />
-                                </button>
+                                </span>
                                 <ChevronRight size={12} className="opacity-40 shrink-0" />
                             </>
                         )}

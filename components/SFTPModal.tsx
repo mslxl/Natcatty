@@ -332,8 +332,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   const [editingPathValue, setEditingPathValue] = useState("");
   const pathInputRef = useRef<HTMLInputElement>(null);
   
-  // Breadcrumb truncation state
-  const [isBreadcrumbExpanded, setIsBreadcrumbExpanded] = useState(false);
+  // Breadcrumb truncation constant
   const MAX_VISIBLE_BREADCRUMB_PARTS = 4;
 
   const isWindowsPath = useCallback((path: string): boolean => {
@@ -586,7 +585,6 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     if (navigatingRef.current) return;
     navigatingRef.current = true;
     setCurrentPath(path);
-    setIsBreadcrumbExpanded(false); // Reset breadcrumb expansion when navigating
     // Reset lock after a short delay
     setTimeout(() => {
       navigatingRef.current = false;
@@ -989,9 +987,9 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   // Breadcrumbs
   const breadcrumbs = getBreadcrumbs(currentPath);
   
-  // Compute visible/hidden breadcrumbs for truncation
+  // Compute visible/hidden breadcrumbs for truncation (always truncate, no expansion)
   const { visibleBreadcrumbs, hiddenBreadcrumbs, needsBreadcrumbTruncation } = useMemo(() => {
-    if (isBreadcrumbExpanded || breadcrumbs.length <= MAX_VISIBLE_BREADCRUMB_PARTS) {
+    if (breadcrumbs.length <= MAX_VISIBLE_BREADCRUMB_PARTS) {
       return {
         visibleBreadcrumbs: breadcrumbs.map((part, idx) => ({ part, originalIndex: idx })),
         hiddenBreadcrumbs: [] as { part: string; originalIndex: number }[],
@@ -1016,7 +1014,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       hiddenBreadcrumbs: hidden,
       needsBreadcrumbTruncation: true
     };
-  }, [breadcrumbs, isBreadcrumbExpanded]);
+  }, [breadcrumbs]);
 
   const handleFileClick = (
     file: RemoteFile,
@@ -1215,13 +1213,12 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
                             size={12}
                             className="text-muted-foreground flex-shrink-0"
                           />
-                          <button
-                            className="text-muted-foreground hover:text-foreground px-1 shrink-0 flex items-center"
-                            onClick={() => setIsBreadcrumbExpanded(true)}
+                          <span
+                            className="text-muted-foreground px-1 shrink-0 flex items-center cursor-default"
                             title={`${t("sftp.showHiddenPaths")}: ${hiddenBreadcrumbs.map(h => h.part).join(" > ")}`}
                           >
                             <MoreHorizontal size={14} />
-                          </button>
+                          </span>
                         </>
                       )}
                       <ChevronRight
