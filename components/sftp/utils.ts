@@ -4,6 +4,7 @@
 
 import {
 Database,
+ExternalLink,
 File,
 FileArchive,
 FileAudio,
@@ -73,6 +74,11 @@ export const formatSpeed = (bytesPerSecond: number): string => {
  */
 export const getFileIcon = (entry: SftpFileEntry): React.ReactElement => {
     if (entry.type === 'directory') return React.createElement(Folder, { size: 14 });
+    
+    // For symlink files (not directories), show a special symlink icon
+    if (entry.type === 'symlink' && entry.linkTarget !== 'directory') {
+        return React.createElement(ExternalLink, { size: 14, className: "text-cyan-500" });
+    }
 
     const ext = entry.name.split('.').pop()?.toLowerCase() || '';
 
@@ -173,3 +179,11 @@ export interface ColumnWidths {
     size: number;
     type: number;
 }
+
+/**
+ * Check if an entry is navigable like a directory
+ * This includes regular directories and symlinks that point to directories
+ */
+export const isNavigableDirectory = (entry: SftpFileEntry): boolean => {
+    return entry.type === 'directory' || (entry.type === 'symlink' && entry.linkTarget === 'directory');
+};
