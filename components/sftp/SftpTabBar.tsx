@@ -177,7 +177,7 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
   );
 
   return (
-    <div className="flex items-stretch h-8 bg-secondary/30">
+    <div className="flex items-stretch h-8 bg-secondary/30 border-b border-border/40">
       {/* Scrollable tabs container */}
       <div className="relative flex-1 min-w-0 flex">
         {/* Left fade mask */}
@@ -221,7 +221,7 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
                   "relative px-3 min-w-[100px] max-w-[180px] text-xs font-medium cursor-pointer flex items-center justify-between gap-2 flex-shrink-0 border-r border-border/40",
                   "transition-all duration-150 ease-out",
                   isActive
-                    ? "text-foreground border-b-2 border-b-accent"
+                    ? "text-foreground border-b-2 border-b-primary"
                     : "text-muted-foreground hover:text-foreground border-b-2 border-b-transparent",
                   isBeingDragged ? "opacity-40 scale-95" : "",
                 )}
@@ -241,7 +241,7 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
                       size={12}
                       className={cn(
                         "shrink-0",
-                        isActive ? "text-accent" : "text-muted-foreground",
+                        isActive ? "text-primary" : "text-muted-foreground",
                       )}
                     />
                   ) : (
@@ -249,7 +249,7 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
                       size={12}
                       className={cn(
                         "shrink-0",
-                        isActive ? "text-accent" : "text-muted-foreground",
+                        isActive ? "text-primary" : "text-muted-foreground",
                       )}
                     />
                   )}
