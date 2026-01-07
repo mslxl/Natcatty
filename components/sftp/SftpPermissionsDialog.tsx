@@ -28,7 +28,7 @@ const SftpPermissionsDialogInner: React.FC<SftpPermissionsDialogProps> = ({ open
     useEffect(() => {
         if (file?.permissions) {
             const perms = file.permissions;
-            
+
             // Check if it's octal format (e.g., "755", "644")
             if (/^[0-7]{3,4}$/.test(perms)) {
                 const octal = perms.length === 4 ? perms.slice(1) : perms;
@@ -54,7 +54,7 @@ const SftpPermissionsDialogInner: React.FC<SftpPermissionsDialogProps> = ({ open
                 });
                 return;
             }
-            
+
             // Parse symbolic rwxrwxrwx format (skip first char for type)
             const pStr = perms.length === 10 ? perms.slice(1) : perms;
             if (pStr.length >= 9) {

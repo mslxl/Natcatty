@@ -360,7 +360,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   const [isEditingPath, setIsEditingPath] = useState(false);
   const [editingPathValue, setEditingPathValue] = useState("");
   const pathInputRef = useRef<HTMLInputElement>(null);
-  
+
   // Breadcrumb truncation constant
   const MAX_VISIBLE_BREADCRUMB_PARTS = 4;
 
@@ -920,7 +920,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       others: { read: false, write: false, execute: false },
     };
     if (!perms) return defaultPerms;
-    
+
     // Check if it's octal format (e.g., "755", "644")
     if (/^[0-7]{3,4}$/.test(perms)) {
       const octal = perms.length === 4 ? perms.slice(1) : perms;
@@ -945,7 +945,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
         },
       };
     }
-    
+
     // Handle symbolic rwxrwxrwx format
     const pStr = perms.length === 10 ? perms.slice(1) : perms;
     if (pStr.length >= 9) {
@@ -977,7 +977,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       return;
     }
     setPermissionsTarget(file);
-    
+
     // Always fetch fresh permissions via stat for accuracy
     let permsStr = file.permissions;
     try {
@@ -989,7 +989,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     } catch (e) {
       console.warn("Failed to fetch file permissions:", e);
     }
-    
+
     setPermissions(parsePermissions(permsStr));
     setShowPermissionsDialog(true);
   }, [isLocalSession, currentPath, joinPath, statSftp, parsePermissions, ensureSftp]);
@@ -1076,7 +1076,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     // Check if we're at root
     const atRoot = isRootPath(currentPath);
     if (atRoot) return files;
-    
+
     // Add ".." parent directory entry at the top (only if not at root)
     const parentEntry: RemoteFile = {
       name: "..",
@@ -1090,11 +1090,11 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   // Sorted files
   const sortedFiles = useMemo(() => {
     if (!displayFiles.length) return displayFiles;
-    
+
     // Keep ".." at the top, sort the rest
     const parentEntry = displayFiles.find((f) => f.name === "..");
     const otherFiles = displayFiles.filter((f) => f.name !== "..");
-    
+
     const sorted = [...otherFiles].sort((a, b) => {
       // Directories and symlinks pointing to directories come first
       const aIsDir = a.type === "directory" || (a.type === "symlink" && a.linkTarget === "directory");
@@ -1128,7 +1128,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       }
       return sortOrder === "asc" ? cmp : -cmp;
     });
-    
+
     return parentEntry ? [parentEntry, ...sorted] : sorted;
   }, [displayFiles, sortField, sortOrder]);
 
@@ -1286,7 +1286,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
 
   // Breadcrumbs
   const breadcrumbs = getBreadcrumbs(currentPath);
-  
+
   // Compute visible/hidden breadcrumbs for truncation (always truncate, no expansion)
   const { visibleBreadcrumbs, hiddenBreadcrumbs, needsBreadcrumbTruncation } = useMemo(() => {
     if (breadcrumbs.length <= MAX_VISIBLE_BREADCRUMB_PARTS) {
@@ -1323,7 +1323,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   ) => {
     // Don't allow selecting ".." entry
     if (file.name === "..") return;
-    
+
     if (file.type === "directory") {
       // Double click to enter directory is handled by onDoubleClick
       // Single click just selects
@@ -1678,7 +1678,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
           {/* File rows with virtual scrolling */}
           <ContextMenu>
             <ContextMenuTrigger asChild>
-              <div 
+              <div
                 className={shouldVirtualize ? "relative" : "divide-y divide-border/30"}
                 style={shouldVirtualize ? { height: totalHeight } : undefined}
               >
@@ -1687,130 +1687,130 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
                   const isNavigableDirectory = file.type === "directory" || (file.type === "symlink" && file.linkTarget === "directory");
                   const isDownloadableFile = file.type === "file" || (file.type === "symlink" && file.linkTarget === "file");
                   const isParentEntry = file.name === "..";
-                  
+
                   return (
-                  <ContextMenu key={file.name}>
-                    <ContextMenuTrigger>
-                      <div
-                        data-sftp-modal-row="true"
-                        className={cn(
-                          "px-4 py-2.5 items-center hover:bg-muted/50 cursor-pointer transition-colors text-sm",
-                          selectedFiles.has(file.name) && !isParentEntry && "bg-primary/10",
-                          shouldVirtualize ? "absolute left-0 right-0 border-b border-border/30" : "",
-                        )}
-                        style={shouldVirtualize ? {
-                          top,
-                          display: "grid",
-                          gridTemplateColumns: `${columnWidths.name}% ${columnWidths.size}% ${columnWidths.modified}% ${columnWidths.actions}%`,
-                        } : {
-                          display: "grid",
-                          gridTemplateColumns: `${columnWidths.name}% ${columnWidths.size}% ${columnWidths.modified}% ${columnWidths.actions}%`,
-                        }}
-                        onClick={(e) => handleFileClick(file, idx, e)}
-                        onDoubleClick={() => handleFileDoubleClick(file)}
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="shrink-0">
-                            {getFileIcon(file.name, isNavigableDirectory, file.type === "symlink" && !isNavigableDirectory)}
-                          </div>
-                          <span className={cn("truncate font-medium", file.type === "symlink" && "italic")}>
-                            {file.name}
-                            {file.type === "symlink" && <span className="sr-only"> (symbolic link)</span>}
-                          </span>
-                          {file.type === "symlink" && (
-                            <span className="text-xs text-muted-foreground shrink-0" aria-hidden="true">→</span>
+                    <ContextMenu key={file.name}>
+                      <ContextMenuTrigger>
+                        <div
+                          data-sftp-modal-row="true"
+                          className={cn(
+                            "px-4 py-2.5 items-center hover:bg-muted/50 cursor-pointer transition-colors text-sm",
+                            selectedFiles.has(file.name) && !isParentEntry && "bg-primary/10",
+                            shouldVirtualize ? "absolute left-0 right-0 border-b border-border/30" : "",
                           )}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {isNavigableDirectory ? "--" : formatBytes(file.size)}
-                        </div>
-                        <div className="text-xs text-muted-foreground truncate">
-                          {formatDate(file.lastModified, resolvedLocale)}
-                        </div>
-                        <div className="flex items-center justify-end gap-1">
-                          {isDownloadableFile && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDownload(file);
-                              }}
-                              title={t("sftp.context.download")}
-                            >
-                              <Download size={14} />
-                            </Button>
-                          )}
-                          {!isParentEntry && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 hover:text-destructive"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDelete(file);
-                            }}
-                            title={t("sftp.context.delete")}
-                          >
-                            <Trash2 size={14} />
-                          </Button>
-                          )}
-                        </div>
-                      </div>
-                    </ContextMenuTrigger>
-                    <ContextMenuContent>
-                      {isParentEntry ? (
-                        <ContextMenuItem
-                          onClick={() => {
-                            // Navigate to parent directory
-                            const segments = currentPath.split("/").filter(Boolean);
-                            segments.pop();
-                            const parentPath = segments.length === 0 ? "/" : `/${segments.join("/")}`;
-                            handleNavigate(parentPath);
+                          style={shouldVirtualize ? {
+                            top,
+                            display: "grid",
+                            gridTemplateColumns: `${columnWidths.name}% ${columnWidths.size}% ${columnWidths.modified}% ${columnWidths.actions}%`,
+                          } : {
+                            display: "grid",
+                            gridTemplateColumns: `${columnWidths.name}% ${columnWidths.size}% ${columnWidths.modified}% ${columnWidths.actions}%`,
                           }}
+                          onClick={(e) => handleFileClick(file, idx, e)}
+                          onDoubleClick={() => handleFileDoubleClick(file)}
                         >
-                          {t("sftp.context.open")}
-                        </ContextMenuItem>
-                      ) : (
-                        <>
-                      {(file.type === "directory" || (file.type === "symlink" && file.linkTarget === "directory")) && (
-                        <ContextMenuItem
-                          onClick={() =>
-                            handleNavigate(
-                              currentPath === "/"
-                                ? `/${file.name}`
-                                : `${currentPath}/${file.name}`,
-                            )
-                          }
-                        >
-                          {t("sftp.context.open")}
-                        </ContextMenuItem>
-                      )}
-                      {(file.type === "file" || (file.type === "symlink" && file.linkTarget === "file")) && (
-                        <ContextMenuItem onClick={() => handleDownload(file)}>
-                          <Download size={14} className="mr-2" /> {t("sftp.context.download")}
-                        </ContextMenuItem>
-                      )}
-                      <ContextMenuItem onClick={() => openRenameDialog(file)}>
-                        <Edit2 size={14} className="mr-2" /> {t("sftp.context.rename")}
-                      </ContextMenuItem>
-                      {!isLocalSession && (
-                        <ContextMenuItem onClick={() => openPermissionsDialog(file)}>
-                          <Shield size={14} className="mr-2" /> {t("sftp.context.permissions")}
-                        </ContextMenuItem>
-                      )}
-                      <ContextMenuItem
-                        className="text-destructive"
-                        onClick={() => handleDelete(file)}
-                      >
-                        <Trash2 size={14} className="mr-2" /> {t("sftp.context.delete")}
-                      </ContextMenuItem>
-                        </>
-                      )}
-                    </ContextMenuContent>
-                  </ContextMenu>
-                );
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="shrink-0">
+                              {getFileIcon(file.name, isNavigableDirectory, file.type === "symlink" && !isNavigableDirectory)}
+                            </div>
+                            <span className={cn("truncate font-medium", file.type === "symlink" && "italic")}>
+                              {file.name}
+                              {file.type === "symlink" && <span className="sr-only"> (symbolic link)</span>}
+                            </span>
+                            {file.type === "symlink" && (
+                              <span className="text-xs text-muted-foreground shrink-0" aria-hidden="true">→</span>
+                            )}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {isNavigableDirectory ? "--" : formatBytes(file.size)}
+                          </div>
+                          <div className="text-xs text-muted-foreground truncate">
+                            {formatDate(file.lastModified, resolvedLocale)}
+                          </div>
+                          <div className="flex items-center justify-end gap-1">
+                            {isDownloadableFile && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDownload(file);
+                                }}
+                                title={t("sftp.context.download")}
+                              >
+                                <Download size={14} />
+                              </Button>
+                            )}
+                            {!isParentEntry && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 hover:text-destructive"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDelete(file);
+                                }}
+                                title={t("sftp.context.delete")}
+                              >
+                                <Trash2 size={14} />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent>
+                        {isParentEntry ? (
+                          <ContextMenuItem
+                            onClick={() => {
+                              // Navigate to parent directory
+                              const segments = currentPath.split("/").filter(Boolean);
+                              segments.pop();
+                              const parentPath = segments.length === 0 ? "/" : `/${segments.join("/")}`;
+                              handleNavigate(parentPath);
+                            }}
+                          >
+                            {t("sftp.context.open")}
+                          </ContextMenuItem>
+                        ) : (
+                          <>
+                            {(file.type === "directory" || (file.type === "symlink" && file.linkTarget === "directory")) && (
+                              <ContextMenuItem
+                                onClick={() =>
+                                  handleNavigate(
+                                    currentPath === "/"
+                                      ? `/${file.name}`
+                                      : `${currentPath}/${file.name}`,
+                                  )
+                                }
+                              >
+                                {t("sftp.context.open")}
+                              </ContextMenuItem>
+                            )}
+                            {(file.type === "file" || (file.type === "symlink" && file.linkTarget === "file")) && (
+                              <ContextMenuItem onClick={() => handleDownload(file)}>
+                                <Download size={14} className="mr-2" /> {t("sftp.context.download")}
+                              </ContextMenuItem>
+                            )}
+                            <ContextMenuItem onClick={() => openRenameDialog(file)}>
+                              <Edit2 size={14} className="mr-2" /> {t("sftp.context.rename")}
+                            </ContextMenuItem>
+                            {!isLocalSession && (
+                              <ContextMenuItem onClick={() => openPermissionsDialog(file)}>
+                                <Shield size={14} className="mr-2" /> {t("sftp.context.permissions")}
+                              </ContextMenuItem>
+                            )}
+                            <ContextMenuItem
+                              className="text-destructive"
+                              onClick={() => handleDelete(file)}
+                            >
+                              <Trash2 size={14} className="mr-2" /> {t("sftp.context.delete")}
+                            </ContextMenuItem>
+                          </>
+                        )}
+                      </ContextMenuContent>
+                    </ContextMenu>
+                  );
                 })}
               </div>
             </ContextMenuTrigger>
