@@ -49,10 +49,22 @@ const isNavigableDirectory = (entry: SftpFileEntry): boolean => {
 // Check if path is Windows-style
 const isWindowsPath = (path: string): boolean => /^[A-Za-z]:/.test(path);
 
+const normalizeWindowsRoot = (path: string): string => {
+  const normalized = path.replace(/\//g, "\\");
+  if (/^[A-Za-z]:\\$/.test(normalized)) return normalized;
+  if (/^[A-Za-z]:$/.test(normalized)) return `${normalized}\\`;
+  return normalized;
+};
+
+const isWindowsRoot = (path: string): boolean => {
+  if (!isWindowsPath(path)) return false;
+  return /^[A-Za-z]:\\?$/.test(path.replace(/\//g, "\\"));
+};
+
 const joinPath = (base: string, name: string): string => {
   if (isWindowsPath(base)) {
     // Windows path
-    const normalizedBase = base.replace(/[\\/]+$/, ""); // Remove trailing slashes
+    const normalizedBase = normalizeWindowsRoot(base).replace(/[\\/]+$/, "");
     return `${normalizedBase}\\${name}`;
   }
   // Unix path
@@ -61,18 +73,37 @@ const joinPath = (base: string, name: string): string => {
 };
 
 const getParentPath = (path: string): string => {
+  console.log("[SFTP getParentPath] input", { path, isWindows: isWindowsPath(path) });
+  
   if (isWindowsPath(path)) {
-    // Windows path
-    const parts = path.split(/[\\/]/).filter(Boolean);
-    if (parts.length <= 1) return parts[0] || "C:"; // Return drive root
+    const normalized = normalizeWindowsRoot(path).replace(/[\\]+$/, "");
+    const drive = normalized.slice(0, 2);
+    if (/^[A-Za-z]:$/.test(normalized) || /^[A-Za-z]:\\$/.test(normalized)) {
+      console.log("[SFTP getParentPath] Windows root, returning", { result: `${drive}\\` });
+      return `${drive}\\`;
+    }
+    const rest = normalized.slice(2).replace(/^[\\]+/, "");
+    const parts = rest ? rest.split(/[\\]+/).filter(Boolean) : [];
+    if (parts.length <= 1) {
+      console.log("[SFTP getParentPath] Windows near root, returning", { result: `${drive}\\` });
+      return `${drive}\\`;
+    }
     parts.pop();
-    return parts.join("\\");
+    const result = `${drive}\\${parts.join("\\")}`;
+    console.log("[SFTP getParentPath] Windows result", { result });
+    return result;
   }
   // Unix path
-  if (path === "/") return "/";
+  if (path === "/") {
+    console.log("[SFTP getParentPath] Unix root, returning /");
+    return "/";
+  }
   const parts = path.split("/").filter(Boolean);
+  console.log("[SFTP getParentPath] Unix parts before pop", { parts: [...parts] });
   parts.pop();
-  return parts.length ? `/${parts.join("/")}` : "/";
+  const result = parts.length ? `/${parts.join("/")}` : "/";
+  console.log("[SFTP getParentPath] Unix result", { result, partsAfterPop: parts });
+  return result;
 };
 
 const getFileName = (path: string): string => {
@@ -1370,11 +1401,23 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
       path: string,
       options?: { force?: boolean },
     ) => {
+      console.log("[SFTP navigateTo] called", { side, path, force: options?.force });
+      
       const pane = getActivePane(side);
       const sideTabs = side === "left" ? leftTabs : rightTabs;
       const activeTabId = sideTabs.activeTabId;
 
-      if (!pane?.connection || !activeTabId) return;
+      console.log("[SFTP navigateTo] state check", { 
+        paneId: pane?.id,
+        hasConnection: !!pane?.connection,
+        activeTabId,
+        currentPath: pane?.connection?.currentPath
+      });
+
+      if (!pane?.connection || !activeTabId) {
+        console.log("[SFTP navigateTo] No pane/connection/activeTabId, returning early");
+        return;
+      }
 
       const requestId = ++navSeqRef.current[side];
       const cacheKey = makeCacheKey(pane.connection.id, path);
@@ -1387,6 +1430,7 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
         Date.now() - cached.timestamp < DIR_CACHE_TTL_MS &&
         cached.files
       ) {
+        console.log("[SFTP navigateTo] Using cached files for path", { path, cacheKey });
         updateTab(side, activeTabId, (prev) => ({
           ...prev,
           connection: prev.connection
@@ -1400,6 +1444,7 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
         return;
       }
 
+      console.log("[SFTP navigateTo] Fetching files from server for path", { path });
       updateTab(side, activeTabId, (prev) => ({ ...prev, loading: true, error: null }));
 
       try {
@@ -1505,8 +1550,7 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
 
       const currentPath = pane.connection.currentPath;
       // Check if we're at root (Unix "/" or Windows "C:")
-      const isAtRoot =
-        currentPath === "/" || /^[A-Za-z]:[\\/]?$/.test(currentPath);
+      const isAtRoot = currentPath === "/" || isWindowsRoot(currentPath);
 
       if (!isAtRoot) {
         const parentPath = getParentPath(currentPath);
@@ -1519,22 +1563,50 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
   // Open file/directory
   const openEntry = useCallback(
     async (side: "left" | "right", entry: SftpFileEntry) => {
+      console.log("[SFTP openEntry] called", { side, entryName: entry.name, entryType: entry.type });
+      
       const pane = getActivePane(side);
-      if (!pane?.connection) return;
+      console.log("[SFTP openEntry] getActivePane result", { 
+        paneId: pane?.id, 
+        hasConnection: !!pane?.connection,
+        currentPath: pane?.connection?.currentPath 
+      });
+      
+      if (!pane?.connection) {
+        console.log("[SFTP openEntry] No pane or connection, returning early");
+        return;
+      }
 
       if (entry.name === "..") {
-        await navigateUp(side);
+        // Navigate to parent directory directly using the current path from pane
+        // instead of calling navigateUp which re-fetches the pane
+        const currentPath = pane.connection.currentPath;
+        const isAtRoot = currentPath === "/" || isWindowsRoot(currentPath);
+        console.log("[SFTP openEntry] Navigating up from '..'", { 
+          currentPath, 
+          isAtRoot,
+          isWindowsRoot: isWindowsRoot(currentPath)
+        });
+        
+        if (!isAtRoot) {
+          const parentPath = getParentPath(currentPath);
+          console.log("[SFTP openEntry] Calculated parent path", { currentPath, parentPath });
+          await navigateTo(side, parentPath);
+        } else {
+          console.log("[SFTP openEntry] Already at root, not navigating");
+        }
         return;
       }
 
       // Navigate into directories, or symlinks that point to directories
       if (isNavigableDirectory(entry)) {
         const newPath = joinPath(pane.connection.currentPath, entry.name);
+        console.log("[SFTP openEntry] Navigating into directory", { currentPath: pane.connection.currentPath, entryName: entry.name, newPath });
         await navigateTo(side, newPath);
       }
       // TODO: Handle file open/preview
     },
-    [getActivePane, navigateTo, navigateUp],
+    [getActivePane, navigateTo],
   );
 
   // Selection management
@@ -2298,13 +2370,13 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
   );
 
   // Get filtered files
-  const getFilteredFiles = (pane: SftpPane): SftpFileEntry[] => {
+  const getFilteredFiles = useCallback((pane: SftpPane): SftpFileEntry[] => {
     const term = pane.filter.trim().toLowerCase();
     if (!term) return pane.files;
     return pane.files.filter(
       (f) => f.name === ".." || f.name.toLowerCase().includes(term),
     );
-  };
+  }, []);
 
   // Get active transfers count
   const activeTransfersCount = transfers.filter(

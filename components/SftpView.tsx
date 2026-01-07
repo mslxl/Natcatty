@@ -14,10 +14,20 @@
  * - components/sftp/SftpHostPicker.tsx - Host selection dialog
  */
 
-import React, { memo, useCallback, useMemo, useRef, useState } from "react";
+import React, {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useIsSftpActive } from "../application/state/activeTabStore";
 import { SftpPane, useSftpState } from "../application/state/useSftpState";
+import { logger } from "../lib/logger";
 import { cn } from "../lib/utils";
 import { Host, Identity, SftpFileEntry, SSHKey } from "../types";
 import { Button } from "./ui/button";
@@ -78,10 +88,10 @@ import {
 interface SftpPaneViewProps {
   side: "left" | "right";
   pane: SftpPane;
+  isActive: boolean;
   showHeader?: boolean;
   showEmptyHeader?: boolean;
   hosts: Host[];
-  filteredFiles: SftpFileEntry[];
   onConnect: (host: Host | "local") => void;
   onDisconnect: () => void;
   onNavigateTo: (path: string) => void;
@@ -113,10 +123,10 @@ interface SftpPaneViewProps {
 const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   side,
   pane,
+  isActive,
   showHeader = true,
   showEmptyHeader = true,
   hosts,
-  filteredFiles,
   onConnect,
   onDisconnect,
   onNavigateTo,
@@ -138,6 +148,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   onDragEnd,
 }) => {
   const { t } = useI18n();
+  const [, startTransition] = useTransition();
   // Dialog states
   const [showHostPicker, setShowHostPicker] = useState(false);
   const [hostSearch, setHostSearch] = useState("");
@@ -148,6 +159,9 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   const [renameName, setRenameName] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteTargets, setDeleteTargets] = useState<string[]>([]);
+  const [isCreating, setIsCreating] = useState(false);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Drag states
   const [dragOverEntry, setDragOverEntry] = useState<string | null>(null);
@@ -180,6 +194,18 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   const [pathSuggestionIndex, setPathSuggestionIndex] = useState(-1);
   const pathInputRef = useRef<HTMLInputElement>(null);
   const pathDropdownRef = useRef<HTMLDivElement>(null);
+  const [rowHeight, setRowHeight] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const scrollFrameRef = useRef<number | null>(null);
+
+  const filteredFiles = useMemo(() => {
+    const term = pane.filter.trim().toLowerCase();
+    if (!term) return pane.files;
+    return pane.files.filter(
+      (f) => f.name === ".." || f.name.toLowerCase().includes(term),
+    );
+  }, [pane.files, pane.filter]);
 
   // Path suggestions
   const pathSuggestions = useMemo(() => {
@@ -228,7 +254,10 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   // Display files with parent entry
   const displayFiles = useMemo(() => {
     if (!pane.connection) return [];
-    if (pane.connection.currentPath === "/") return filteredFiles;
+    const isRootPath =
+      pane.connection.currentPath === "/" ||
+      /^[A-Za-z]:[\\/]?$/.test(pane.connection.currentPath);
+    if (isRootPath) return filteredFiles;
     const parentEntry: SftpFileEntry = {
       name: "..",
       type: "directory",
@@ -283,13 +312,74 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     return parentEntry ? [parentEntry, ...sorted] : sorted;
   }, [displayFiles, sortField, sortOrder]);
 
+  const selectedFilesRef = useRef(pane.selectedFiles);
+  const sortedFilesRef = useRef(sortedDisplayFiles);
+
+  useEffect(() => {
+    selectedFilesRef.current = pane.selectedFiles;
+  }, [pane.selectedFiles]);
+
+  useEffect(() => {
+    sortedFilesRef.current = sortedDisplayFiles;
+  }, [sortedDisplayFiles]);
+
+  useEffect(() => {
+    logger.debug("SftpPaneView active state", {
+      side,
+      paneId: pane.id,
+      isActive,
+    });
+  }, [isActive, pane.id, side]);
+
+  useLayoutEffect(() => {
+    const container = fileListRef.current;
+    if (!container || !isActive) return;
+    const update = () => setViewportHeight(container.clientHeight);
+    update();
+    const raf1 = window.requestAnimationFrame(update);
+    const raf2 = window.requestAnimationFrame(update);
+    const resizeObserver = new ResizeObserver(update);
+    resizeObserver.observe(container);
+    return () => {
+      resizeObserver.disconnect();
+      window.cancelAnimationFrame(raf1);
+      window.cancelAnimationFrame(raf2);
+    };
+  }, [isActive, sortedDisplayFiles.length]);
+
+  useLayoutEffect(() => {
+    const container = fileListRef.current;
+    if (!container || !isActive || sortedDisplayFiles.length === 0) return;
+    const raf = window.requestAnimationFrame(() => {
+      const rowElement = container.querySelector(
+        '[data-sftp-row="true"]',
+      ) as HTMLElement | null;
+      if (!rowElement) return;
+      const nextHeight = Math.round(rowElement.getBoundingClientRect().height);
+      if (nextHeight && Math.abs(nextHeight - rowHeight) > 1) {
+        setRowHeight(nextHeight);
+      }
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [isActive, sortedDisplayFiles.length, rowHeight]);
+
+  useEffect(() => {
+    return () => {
+      if (scrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollFrameRef.current);
+      }
+    };
+  }, []);
+
   const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
-    } else {
-      setSortField(field);
-      setSortOrder("asc");
-    }
+    startTransition(() => {
+      if (sortField === field) {
+        setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+      } else {
+        setSortField(field);
+        setSortOrder("asc");
+      }
+    });
   };
 
   // Column resize handlers
@@ -390,18 +480,22 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
 
   // File operations
   const handleCreateFolder = async () => {
-    if (!newFolderName.trim()) return;
+    if (!newFolderName.trim() || isCreating) return;
+    setIsCreating(true);
     try {
       await onCreateDirectory(newFolderName.trim());
       setShowNewFolderDialog(false);
       setNewFolderName("");
     } catch {
       /* Error handling */
+    } finally {
+      setIsCreating(false);
     }
   };
 
   const handleRename = async () => {
-    if (!renameTarget || !renameName.trim()) return;
+    if (!renameTarget || !renameName.trim() || isRenaming) return;
+    setIsRenaming(true);
     try {
       await onRenameFile(renameTarget, renameName.trim());
       setShowRenameDialog(false);
@@ -409,11 +503,14 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
       setRenameName("");
     } catch {
       /* Error handling */
+    } finally {
+      setIsRenaming(false);
     }
   };
 
   const handleDelete = async () => {
-    if (deleteTargets.length === 0) return;
+    if (deleteTargets.length === 0 || isDeleting) return;
+    setIsDeleting(true);
     try {
       await onDeleteFiles(deleteTargets);
       setShowDeleteConfirm(false);
@@ -421,6 +518,8 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
       onClearSelection();
     } catch {
       /* Error handling */
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -451,60 +550,303 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     );
   };
 
-  const handleFileDragStart = (entry: SftpFileEntry, e: React.DragEvent) => {
-    if (entry.name === "..") {
-      e.preventDefault();
-      return;
-    }
-    const selectedNames = Array.from(pane.selectedFiles);
-    const files = selectedNames.includes(entry.name)
-      ? sortedDisplayFiles
-        .filter((f) => selectedNames.includes(f.name))
-        .map((f) => ({
-          name: f.name,
-          isDirectory: isNavigableDirectory(f),
-          side,
-        }))
-      : [{ name: entry.name, isDirectory: isNavigableDirectory(entry), side }];
-    e.dataTransfer.effectAllowed = "copy";
-    e.dataTransfer.setData("text/plain", files.map((f) => f.name).join("\n"));
-    onDragStart(files, side);
-  };
+  const handleFileDragStart = useCallback(
+    (entry: SftpFileEntry, e: React.DragEvent) => {
+      if (entry.name === "..") {
+        e.preventDefault();
+        return;
+      }
+      const selectedNames = Array.from(selectedFilesRef.current);
+      const files = selectedNames.includes(entry.name)
+        ? sortedFilesRef.current
+          .filter((f) => selectedNames.includes(f.name))
+          .map((f) => ({
+            name: f.name,
+            isDirectory: isNavigableDirectory(f),
+            side,
+          }))
+        : [
+            {
+              name: entry.name,
+              isDirectory: isNavigableDirectory(entry),
+              side,
+            },
+          ];
+      e.dataTransfer.effectAllowed = "copy";
+      e.dataTransfer.setData("text/plain", files.map((f) => f.name).join("\n"));
+      onDragStart(files, side);
+    },
+    [onDragStart, side],
+  );
 
-  const handleEntryDragOver = (entry: SftpFileEntry, e: React.DragEvent) => {
-    if (!draggedFiles || draggedFiles[0]?.side === side) return;
-    // Allow drag over for directories and symlinks pointing to directories
-    if (isNavigableDirectory(entry) && entry.name !== "..") {
-      e.preventDefault();
-      e.stopPropagation();
-      setDragOverEntry(entry.name);
-    }
-  };
+  const handleEntryDragOver = useCallback(
+    (entry: SftpFileEntry, e: React.DragEvent) => {
+      if (!draggedFiles || draggedFiles[0]?.side === side) return;
+      // Allow drag over for directories and symlinks pointing to directories
+      if (isNavigableDirectory(entry) && entry.name !== "..") {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOverEntry(entry.name);
+      }
+    },
+    [draggedFiles, side],
+  );
 
-  const handleEntryDrop = (entry: SftpFileEntry, e: React.DragEvent) => {
-    if (!draggedFiles || draggedFiles[0]?.side === side) return;
-    // Allow drop on directories and symlinks pointing to directories
-    if (isNavigableDirectory(entry) && entry.name !== "..") {
-      e.preventDefault();
-      e.stopPropagation();
-      setDragOverEntry(null);
-      setIsDragOverPane(false);
-      onReceiveFromOtherPane(
-        draggedFiles.map((f) => ({ name: f.name, isDirectory: f.isDirectory })),
-      );
-    }
-  };
+  const handleEntryDrop = useCallback(
+    (entry: SftpFileEntry, e: React.DragEvent) => {
+      if (!draggedFiles || draggedFiles[0]?.side === side) return;
+      // Allow drop on directories and symlinks pointing to directories
+      if (isNavigableDirectory(entry) && entry.name !== "..") {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOverEntry(null);
+        setIsDragOverPane(false);
+        onReceiveFromOtherPane(
+          draggedFiles.map((f) => ({ name: f.name, isDirectory: f.isDirectory })),
+        );
+      }
+    },
+    [draggedFiles, onReceiveFromOtherPane, side],
+  );
 
-  const openRenameDialog = (name: string) => {
+  const handleFileListScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      if (!isActive) return;
+      const nextTop = e.currentTarget.scrollTop;
+      if (scrollFrameRef.current !== null) return;
+      scrollFrameRef.current = window.requestAnimationFrame(() => {
+        scrollFrameRef.current = null;
+        setScrollTop(nextTop);
+      });
+    },
+    [isActive],
+  );
+
+  const openRenameDialog = useCallback((name: string) => {
     setRenameTarget(name);
     setRenameName(name);
     setShowRenameDialog(true);
-  };
+  }, []);
 
-  const openDeleteConfirm = (names: string[]) => {
+  const openDeleteConfirm = useCallback((names: string[]) => {
     setDeleteTargets(names);
     setShowDeleteConfirm(true);
-  };
+  }, []);
+
+  const handleRowSelect = useCallback(
+    (entry: SftpFileEntry, index: number, e: React.MouseEvent) => {
+      if (entry.name === "..") return;
+      if (e.shiftKey && lastSelectedIndexRef.current !== null) {
+        const start = Math.min(lastSelectedIndexRef.current, index);
+        const end = Math.max(lastSelectedIndexRef.current, index);
+        const selectedFileNames = sortedDisplayFiles
+          .slice(start, end + 1)
+          .filter((f) => f.name !== "..")
+          .map((f) => f.name);
+        onRangeSelect(selectedFileNames);
+      } else {
+        onToggleSelection(entry.name, e.ctrlKey || e.metaKey);
+        lastSelectedIndexRef.current = index;
+      }
+    },
+    [onRangeSelect, onToggleSelection, sortedDisplayFiles],
+  );
+
+  const handleRowOpen = useCallback(
+    (entry: SftpFileEntry) => {
+      console.log("[SftpPaneView] handleRowOpen called", { 
+        side, 
+        entryName: entry.name
+      });
+      onOpenEntry(entry);
+    },
+    [onOpenEntry, side],
+  );
+
+  const handleRowDragLeave = useCallback(() => {
+    setDragOverEntry(null);
+  }, []);
+
+  const filesByName = useMemo(() => {
+    const map = new Map<string, SftpFileEntry>();
+    sortedDisplayFiles.forEach((entry) => {
+      map.set(entry.name, entry);
+    });
+    return map;
+  }, [sortedDisplayFiles]);
+
+  const canVirtualize = isActive && viewportHeight > 0 && rowHeight > 0;
+  const shouldVirtualize = canVirtualize && sortedDisplayFiles.length > 0;
+  const overscan = 6;
+  const totalHeight = shouldVirtualize
+    ? sortedDisplayFiles.length * rowHeight
+    : 0;
+  const startIndex = shouldVirtualize
+    ? Math.max(0, Math.floor(scrollTop / rowHeight) - overscan)
+    : 0;
+  const endIndex = shouldVirtualize
+    ? Math.min(
+        sortedDisplayFiles.length - 1,
+        Math.ceil((scrollTop + viewportHeight) / rowHeight) + overscan,
+      )
+    : sortedDisplayFiles.length - 1;
+  const visibleRows = shouldVirtualize
+    ? sortedDisplayFiles
+        .slice(startIndex, endIndex + 1)
+        .map((entry, idx) => ({
+          entry,
+          index: startIndex + idx,
+          top: (startIndex + idx) * rowHeight,
+        }))
+    : sortedDisplayFiles.map((entry, index) => ({
+        entry,
+        index,
+        top: 0,
+      }));
+
+  useEffect(() => {
+    logger.debug("SftpPaneView virtualization", {
+      side,
+      paneId: pane.id,
+      enabled: shouldVirtualize,
+      rows: sortedDisplayFiles.length,
+      viewportHeight,
+      rowHeight,
+    });
+  }, [
+    pane.id,
+    rowHeight,
+    shouldVirtualize,
+    side,
+    sortedDisplayFiles.length,
+    viewportHeight,
+  ]);
+
+  const renderRow = useCallback(
+    (entry: SftpFileEntry, index: number) => (
+      <ContextMenu>
+        <ContextMenuTrigger>
+          <SftpFileRow
+            entry={entry}
+            index={index}
+            isSelected={pane.selectedFiles.has(entry.name)}
+            isDragOver={dragOverEntry === entry.name}
+            columnWidths={columnWidths}
+            onSelect={handleRowSelect}
+            onOpen={handleRowOpen}
+            onDragStart={handleFileDragStart}
+            onDragEnd={onDragEnd}
+            onDragOver={handleEntryDragOver}
+            onDragLeave={handleRowDragLeave}
+            onDrop={handleEntryDrop}
+          />
+        </ContextMenuTrigger>
+        {entry.name !== ".." && (
+          <ContextMenuContent>
+            <ContextMenuItem onClick={() => handleRowOpen(entry)}>
+              {isNavigableDirectory(entry)
+                ? t("sftp.context.open")
+                : t("sftp.context.download")}
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              onClick={() => {
+                const files = pane.selectedFiles.has(entry.name)
+                  ? Array.from(pane.selectedFiles)
+                  : [entry.name];
+                const fileData = files.map((name) => {
+                  const file = filesByName.get(name);
+                  return {
+                    name,
+                    isDirectory: file ? isNavigableDirectory(file) : false,
+                  };
+                });
+                onCopyToOtherPane(fileData);
+              }}
+            >
+              <Copy size={14} className="mr-2" />{" "}
+              {t("sftp.context.copyToOtherPane")}
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem onClick={() => openRenameDialog(entry.name)}>
+              <Pencil size={14} className="mr-2" /> {t("common.rename")}
+            </ContextMenuItem>
+            {onEditPermissions && pane.connection && !pane.connection.isLocal && (
+              <ContextMenuItem onClick={() => onEditPermissions(entry)}>
+                <Shield size={14} className="mr-2" />{" "}
+                {t("sftp.context.permissions")}
+              </ContextMenuItem>
+            )}
+            <ContextMenuItem
+              className="text-destructive"
+              onClick={() => {
+                const files = pane.selectedFiles.has(entry.name)
+                  ? Array.from(pane.selectedFiles)
+                  : [entry.name];
+                openDeleteConfirm(files);
+              }}
+            >
+              <Trash2 size={14} className="mr-2" /> {t("action.delete")}
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem onClick={onRefresh}>
+              <RefreshCw size={14} className="mr-2" /> {t("common.refresh")}
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => setShowNewFolderDialog(true)}>
+              <FolderPlus size={14} className="mr-2" /> {t("sftp.newFolder")}
+            </ContextMenuItem>
+          </ContextMenuContent>
+        )}
+      </ContextMenu>
+    ),
+    [
+      columnWidths,
+      dragOverEntry,
+      filesByName,
+      handleEntryDragOver,
+      handleEntryDrop,
+      handleFileDragStart,
+      handleRowDragLeave,
+      handleRowOpen,
+      handleRowSelect,
+      onCopyToOtherPane,
+      onDragEnd,
+      onEditPermissions,
+      onRefresh,
+      openDeleteConfirm,
+      openRenameDialog,
+      pane.connection,
+      pane.selectedFiles,
+      setShowNewFolderDialog,
+      t,
+    ],
+  );
+
+  const fileRows = useMemo(
+    () =>
+      shouldVirtualize
+        ? visibleRows.map(({ entry, index, top }) => (
+            <div
+              key={entry.name}
+              className="absolute left-0 right-0 border-b border-border/30"
+              style={{ top, height: rowHeight }}
+            >
+              {renderRow(entry, index)}
+            </div>
+          ))
+        : sortedDisplayFiles.map((entry, index) => (
+            <React.Fragment key={entry.name}>
+              {renderRow(entry, index)}
+            </React.Fragment>
+          )),
+    [
+      renderRow,
+      rowHeight,
+      shouldVirtualize,
+      sortedDisplayFiles,
+      visibleRows,
+    ],
+  );
 
   // No connection state
   if (!pane.connection) {
@@ -602,13 +944,15 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
               />
               <Input
                 value={pane.filter}
-                onChange={(e) => onSetFilter(e.target.value)}
+                onChange={(e) =>
+                  startTransition(() => onSetFilter(e.target.value))
+                }
                 placeholder="Filter..."
                 className="h-6 w-28 pl-6 pr-5 text-[10px] bg-secondary/40"
               />
               {pane.filter && (
                 <button
-                  onClick={() => onSetFilter("")}
+                  onClick={() => startTransition(() => onSetFilter(""))}
                   className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 >
                   <X size={10} />
@@ -800,6 +1144,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
           "flex-1 min-h-0 overflow-y-auto relative",
           isDragOverPane && "ring-2 ring-primary/30 ring-inset",
         )}
+        onScroll={handleFileListScroll}
       >
         {pane.loading && sortedDisplayFiles.length === 0 ? (
           <div className="flex items-center justify-center h-full">
@@ -819,110 +1164,19 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
             <span className="text-sm">{t("sftp.emptyDirectory")}</span>
           </div>
         ) : (
-          <div className="divide-y divide-border/30">
-            {sortedDisplayFiles.map((entry, idx) => (
-              <ContextMenu key={`${entry.name}-${idx}`}>
-                <ContextMenuTrigger>
-                  <SftpFileRow
-                    entry={entry}
-                    isSelected={pane.selectedFiles.has(entry.name)}
-                    isDragOver={dragOverEntry === entry.name}
-                    columnWidths={columnWidths}
-                    onSelect={(e) => {
-                      if (entry.name === "..") return;
-                      if (e.shiftKey && lastSelectedIndexRef.current !== null) {
-                        const start = Math.min(
-                          lastSelectedIndexRef.current,
-                          idx,
-                        );
-                        const end = Math.max(lastSelectedIndexRef.current, idx);
-                        const selectedFileNames = sortedDisplayFiles
-                          .slice(start, end + 1)
-                          .filter((f) => f.name !== "..")
-                          .map((f) => f.name);
-                        onRangeSelect(selectedFileNames);
-                      } else {
-                        onToggleSelection(entry.name, e.ctrlKey || e.metaKey);
-                        lastSelectedIndexRef.current = idx;
-                      }
-                    }}
-                    onOpen={() => onOpenEntry(entry)}
-                    onDragStart={(e) => handleFileDragStart(entry, e)}
-                    onDragEnd={onDragEnd}
-                    onDragOver={(e) => handleEntryDragOver(entry, e)}
-                    onDragLeave={() => setDragOverEntry(null)}
-                    onDrop={(e) => handleEntryDrop(entry, e)}
-                  />
-                </ContextMenuTrigger>
-                {entry.name !== ".." && (
-                  <ContextMenuContent>
-                    <ContextMenuItem onClick={() => onOpenEntry(entry)}>
-                      {isNavigableDirectory(entry)
-                        ? t("sftp.context.open")
-                        : t("sftp.context.download")}
-                    </ContextMenuItem>
-                    <ContextMenuSeparator />
-                    <ContextMenuItem
-                      onClick={() => {
-                        const files = pane.selectedFiles.has(entry.name)
-                          ? Array.from(pane.selectedFiles)
-                          : [entry.name];
-                        const fileData = files.map((name) => {
-                          const file = sortedDisplayFiles.find(
-                            (f) => f.name === name,
-                          );
-                          return {
-                            name,
-                            isDirectory: file ? isNavigableDirectory(file) : false,
-                          };
-                        });
-                        onCopyToOtherPane(fileData);
-                      }}
-                    >
-                      <Copy size={14} className="mr-2" />{" "}
-                      {t("sftp.context.copyToOtherPane")}
-                    </ContextMenuItem>
-                    <ContextMenuSeparator />
-                    <ContextMenuItem
-                      onClick={() => openRenameDialog(entry.name)}
-                    >
-                      <Pencil size={14} className="mr-2" /> {t("common.rename")}
-                    </ContextMenuItem>
-                    {onEditPermissions &&
-                      pane.connection &&
-                      !pane.connection.isLocal && (
-                        <ContextMenuItem
-                          onClick={() => onEditPermissions(entry)}
-                        >
-                          <Shield size={14} className="mr-2" />{" "}
-                          {t("sftp.context.permissions")}
-                        </ContextMenuItem>
-                      )}
-                    <ContextMenuItem
-                      className="text-destructive"
-                      onClick={() => {
-                        const files = pane.selectedFiles.has(entry.name)
-                          ? Array.from(pane.selectedFiles)
-                          : [entry.name];
-                        openDeleteConfirm(files);
-                      }}
-                    >
-                      <Trash2 size={14} className="mr-2" /> {t("action.delete")}
-                    </ContextMenuItem>
-                    <ContextMenuSeparator />
-                    <ContextMenuItem onClick={onRefresh}>
-                      <RefreshCw size={14} className="mr-2" />{" "}
-                      {t("common.refresh")}
-                    </ContextMenuItem>
-                    <ContextMenuItem
-                      onClick={() => setShowNewFolderDialog(true)}
-                    >
-                      <FolderPlus size={14} className="mr-2" /> {t("sftp.newFolder")}
-                    </ContextMenuItem>
-                  </ContextMenuContent>
-                )}
-              </ContextMenu>
-            ))}
+          <div
+            className={cn(
+              shouldVirtualize ? "relative" : "divide-y divide-border/30",
+            )}
+            style={shouldVirtualize ? { height: totalHeight } : undefined}
+          >
+            {fileRows}
+          </div>
+        )}
+
+        {pane.loading && sortedDisplayFiles.length > 0 && (
+          <div className="absolute inset-0 flex items-center justify-center bg-background/40 backdrop-blur-[1px] pointer-events-none">
+            <Loader2 size={20} className="animate-spin text-muted-foreground" />
           </div>
         )}
 
@@ -978,8 +1232,11 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
             </Button>
             <Button
               onClick={handleCreateFolder}
-              disabled={!newFolderName.trim()}
+              disabled={!newFolderName.trim() || isCreating}
             >
+              {isCreating && (
+                <Loader2 size={14} className="mr-2 animate-spin" />
+              )}
               {t("common.create")}
             </Button>
           </DialogFooter>
@@ -1010,7 +1267,13 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
             >
               {t("common.cancel")}
             </Button>
-            <Button onClick={handleRename} disabled={!renameName.trim()}>
+            <Button
+              onClick={handleRename}
+              disabled={!renameName.trim() || isRenaming}
+            >
+              {isRenaming && (
+                <Loader2 size={14} className="mr-2 animate-spin" />
+              )}
               {t("common.rename")}
             </Button>
           </DialogFooter>
@@ -1045,7 +1308,14 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
             >
               {t("common.cancel")}
             </Button>
-            <Button variant="destructive" onClick={handleDelete}>
+            <Button
+              variant="destructive"
+              onClick={handleDelete}
+              disabled={isDeleting}
+            >
+              {isDeleting && (
+                <Loader2 size={14} className="mr-2 animate-spin" />
+              )}
               {t("action.delete")}
             </Button>
           </DialogFooter>
@@ -1246,16 +1516,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
     [],
   );
 
-  const leftFilteredFiles = useMemo(
-    () => sftp.getFilteredFiles(sftp.leftPane),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- sftp.getFilteredFiles is a stable reference
-    [sftp.leftPane, sftp.getFilteredFiles],
-  );
-  const rightFilteredFiles = useMemo(
-    () => sftp.getFilteredFiles(sftp.rightPane),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- sftp.getFilteredFiles is a stable reference
-    [sftp.rightPane, sftp.getFilteredFiles],
-  );
   const visibleTransfers = useMemo(
     () => sftp.transfers.slice(-5),
     [sftp.transfers],
@@ -1302,6 +1562,25 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
     sftp.selectTab("right", tabId);
   }, [sftp]);
 
+  const activeLeftTabId = sftp.getActiveTabId("left");
+  const activeRightTabId = sftp.getActiveTabId("right");
+  const leftPanes = sftp.leftTabs.tabs.length > 0 ? sftp.leftTabs.tabs : [sftp.leftPane];
+  const rightPanes = sftp.rightTabs.tabs.length > 0 ? sftp.rightTabs.tabs : [sftp.rightPane];
+
+  useEffect(() => {
+    logger.info("SftpView tab switch", {
+      side: "left",
+      activeTabId: activeLeftTabId,
+    });
+  }, [activeLeftTabId]);
+
+  useEffect(() => {
+    logger.info("SftpView tab switch", {
+      side: "right",
+      activeTabId: activeRightTabId,
+    });
+  }, [activeRightTabId]);
+
   const handleReorderTabsLeft = useCallback(
     (draggedId: string, targetId: string, position: "before" | "after") => {
       sftp.reorderTabs("left", draggedId, targetId, position);
@@ -1343,7 +1622,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
           {leftTabsInfo.length > 0 && (
             <SftpTabBar
               tabs={leftTabsInfo}
-              activeTabId={sftp.getActiveTabId("left")}
+              activeTabId={activeLeftTabId}
               side="left"
               onSelectTab={handleSelectTabLeft}
               onCloseTab={handleCloseTabLeft}
@@ -1352,32 +1631,45 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
             />
           )}
           <div className="relative flex-1 min-h-0">
-            <SftpPaneView
-              side="left"
-              pane={sftp.leftPane}
-              showHeader
-              hosts={hosts}
-              filteredFiles={leftFilteredFiles}
-              onConnect={handleConnectLeft}
-              onDisconnect={handleDisconnectLeft}
-              onNavigateTo={handleNavigateToLeft}
-              onNavigateUp={handleNavigateUpLeft}
-              onRefresh={handleRefreshLeft}
-              onOpenEntry={handleOpenEntryLeft}
-              onToggleSelection={handleToggleSelectionLeft}
-              onRangeSelect={handleRangeSelectLeft}
-              onClearSelection={handleClearSelectionLeft}
-              onSetFilter={handleSetFilterLeft}
-              onCreateDirectory={handleCreateDirectoryLeft}
-              onDeleteFiles={handleDeleteFilesLeft}
-              onRenameFile={handleRenameFileLeft}
-              onCopyToOtherPane={handleCopyToOtherPaneLeft}
-              onReceiveFromOtherPane={handleReceiveFromOtherPaneLeft}
-              onEditPermissions={handleEditPermissionsLeft}
-              draggedFiles={draggedFiles}
-              onDragStart={handleDragStart}
-              onDragEnd={handleDragEnd}
-            />
+            {leftPanes.map((pane, idx) => {
+              const isActive = activeLeftTabId
+                ? pane.id === activeLeftTabId
+                : idx === 0;
+              return (
+                <div
+                  key={pane.id}
+                  className={cn("absolute inset-0", isActive ? "block" : "hidden")}
+                >
+                  <SftpPaneView
+                    side="left"
+                    pane={pane}
+                    isActive={isActive}
+                    showHeader
+                    showEmptyHeader={false}
+                    hosts={hosts}
+                    onConnect={handleConnectLeft}
+                    onDisconnect={handleDisconnectLeft}
+                    onNavigateTo={handleNavigateToLeft}
+                    onNavigateUp={handleNavigateUpLeft}
+                    onRefresh={handleRefreshLeft}
+                    onOpenEntry={handleOpenEntryLeft}
+                    onToggleSelection={handleToggleSelectionLeft}
+                    onRangeSelect={handleRangeSelectLeft}
+                    onClearSelection={handleClearSelectionLeft}
+                    onSetFilter={handleSetFilterLeft}
+                    onCreateDirectory={handleCreateDirectoryLeft}
+                    onDeleteFiles={handleDeleteFilesLeft}
+                    onRenameFile={handleRenameFileLeft}
+                    onCopyToOtherPane={handleCopyToOtherPaneLeft}
+                    onReceiveFromOtherPane={handleReceiveFromOtherPaneLeft}
+                    onEditPermissions={handleEditPermissionsLeft}
+                    draggedFiles={draggedFiles}
+                    onDragStart={handleDragStart}
+                    onDragEnd={handleDragEnd}
+                  />
+                </div>
+              );
+            })}
           </div>
         </div>
         <div className="relative flex flex-col">
@@ -1385,7 +1677,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
           {rightTabsInfo.length > 0 && (
             <SftpTabBar
               tabs={rightTabsInfo}
-              activeTabId={sftp.getActiveTabId("right")}
+              activeTabId={activeRightTabId}
               side="right"
               onSelectTab={handleSelectTabRight}
               onCloseTab={handleCloseTabRight}
@@ -1394,33 +1686,45 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
             />
           )}
           <div className="relative flex-1 min-h-0">
-            <SftpPaneView
-              side="right"
-              pane={sftp.rightPane}
-              showHeader
-              showEmptyHeader={false}
-              hosts={hosts}
-              filteredFiles={rightFilteredFiles}
-              onConnect={handleConnectRight}
-              onDisconnect={handleDisconnectRight}
-              onNavigateTo={handleNavigateToRight}
-              onNavigateUp={handleNavigateUpRight}
-              onRefresh={handleRefreshRight}
-              onOpenEntry={handleOpenEntryRight}
-              onToggleSelection={handleToggleSelectionRight}
-              onRangeSelect={handleRangeSelectRight}
-              onClearSelection={handleClearSelectionRight}
-              onSetFilter={handleSetFilterRight}
-              onCreateDirectory={handleCreateDirectoryRight}
-              onDeleteFiles={handleDeleteFilesRight}
-              onRenameFile={handleRenameFileRight}
-              onCopyToOtherPane={handleCopyToOtherPaneRight}
-              onReceiveFromOtherPane={handleReceiveFromOtherPaneRight}
-              onEditPermissions={handleEditPermissionsRight}
-              draggedFiles={draggedFiles}
-              onDragStart={handleDragStart}
-              onDragEnd={handleDragEnd}
-            />
+            {rightPanes.map((pane, idx) => {
+              const isActive = activeRightTabId
+                ? pane.id === activeRightTabId
+                : idx === 0;
+              return (
+                <div
+                  key={pane.id}
+                  className={cn("absolute inset-0", isActive ? "block" : "hidden")}
+                >
+                  <SftpPaneView
+                    side="right"
+                    pane={pane}
+                    isActive={isActive}
+                    showHeader
+                    showEmptyHeader={false}
+                    hosts={hosts}
+                    onConnect={handleConnectRight}
+                    onDisconnect={handleDisconnectRight}
+                    onNavigateTo={handleNavigateToRight}
+                    onNavigateUp={handleNavigateUpRight}
+                    onRefresh={handleRefreshRight}
+                    onOpenEntry={handleOpenEntryRight}
+                    onToggleSelection={handleToggleSelectionRight}
+                    onRangeSelect={handleRangeSelectRight}
+                    onClearSelection={handleClearSelectionRight}
+                    onSetFilter={handleSetFilterRight}
+                    onCreateDirectory={handleCreateDirectoryRight}
+                    onDeleteFiles={handleDeleteFilesRight}
+                    onRenameFile={handleRenameFileRight}
+                    onCopyToOtherPane={handleCopyToOtherPaneRight}
+                    onReceiveFromOtherPane={handleReceiveFromOtherPaneRight}
+                    onEditPermissions={handleEditPermissionsRight}
+                    draggedFiles={draggedFiles}
+                    onDragStart={handleDragStart}
+                    onDragEnd={handleDragEnd}
+                  />
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
