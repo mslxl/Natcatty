@@ -31,7 +31,12 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
     // For Windows, first part might be drive letter like "C:"
     const buildPath = (index: number) => {
         if (isWindowsPath) {
-            return parts.slice(0, index + 1).join('\\');
+            const builtPath = parts.slice(0, index + 1).join('\\');
+            // If this is just a drive letter (e.g., "C:"), add trailing backslash
+            if (/^[A-Za-z]:$/.test(builtPath)) {
+                return builtPath + '\\';
+            }
+            return builtPath;
         }
         return '/' + parts.slice(0, index + 1).join('/');
     };
