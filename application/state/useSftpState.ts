@@ -556,24 +556,31 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
   );
 
   // Connect to a host - connects in the active tab of the specified side
-  // If there's no active tab, creates one first
+  // If there's no active tab, creates one first using addTab
   const connect = useCallback(
     async (side: "left" | "right", host: Host | "local") => {
-      let sideTabs = side === "left" ? leftTabs : rightTabs;
-      let activeTabId = sideTabs.activeTabId;
+      const setTabs = side === "left" ? setLeftTabs : setRightTabs;
       
-      // If there's no active tab, create one first
-      if (!activeTabId) {
-        const setTabs = side === "left" ? setLeftTabs : setRightTabs;
+      // Get current active tab ID, or create a new tab if none exists
+      let activeTabId: string | null = null;
+      const sideTabs = side === "left" ? leftTabs : rightTabs;
+      
+      if (!sideTabs.activeTabId) {
+        // Create a new tab synchronously using functional state update
         const newPane = createEmptyPane();
+        activeTabId = newPane.id;
         setTabs((prev) => ({
           tabs: [...prev.tabs, newPane],
           activeTabId: newPane.id,
         }));
-        activeTabId = newPane.id;
+      } else {
+        activeTabId = sideTabs.activeTabId;
       }
       
-      const currentPane = getActivePane(side);
+      // Need to wait for state to settle before continuing
+      // We'll use the activeTabId we just set/captured
+      if (!activeTabId) return;
+      
       const connectionId = `${side}-${Date.now()}`;
 
       // Invalidate any pending navigation for this side
@@ -583,6 +590,9 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
       // Save host info for potential reconnection
       lastConnectedHostRef.current[side] = host;
 
+      // Get current pane state (may be null if we just created it)
+      const currentPane = getActivePane(side);
+      
       // First, disconnect any existing connection
       if (currentPane?.connection) {
         clearCacheForConnection(currentPane.connection.id);
