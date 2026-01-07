@@ -64,9 +64,9 @@ export const FileOpenerDialog: React.FC<FileOpenerDialogProps> = ({
       }
     }}>
       <DialogContent className="sm:max-w-[400px]">
-        <DialogHeader>
+        <DialogHeader className="min-w-0">
           <DialogTitle>{t('sftp.opener.title')}</DialogTitle>
-          <DialogDescription className="truncate">
+          <DialogDescription className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap">
             {fileName}
           </DialogDescription>
         </DialogHeader>
@@ -100,11 +100,6 @@ export const FileOpenerDialog: React.FC<FileOpenerDialogProps> = ({
             </div>
           </Button>
 
-          {!canEdit && (
-            <div className="text-sm text-muted-foreground text-center py-4">
-              {t('sftp.opener.onlySystemApp')}
-            </div>
-          )}
         </div>
 
         {/* Remember choice checkbox - always show, use 'file' for no extension */}

@@ -115,7 +115,7 @@ export function Combobox({
             <PopoverTrigger asChild disabled={disabled}>
                 <div
                     className={cn(
-                        "flex h-10 w-full items-center rounded-md border border-input bg-background text-sm",
+                        "flex h-10 w-full items-center rounded-md border border-input bg-background text-sm min-w-0 overflow-hidden",
                         "hover:bg-secondary/50 transition-colors",
                         "disabled:cursor-not-allowed disabled:opacity-50",
                         triggerClassName
@@ -129,7 +129,7 @@ export function Combobox({
                         onChange={handleInputChange}
                         onKeyDown={handleInputKeyDown}
                         placeholder={placeholder}
-                        className="flex-1 h-full px-3 bg-transparent outline-none placeholder:text-muted-foreground"
+                        className="flex-1 min-w-0 h-full px-3 bg-transparent outline-none placeholder:text-muted-foreground"
                         disabled={disabled}
                     />
                     {inputValue && (

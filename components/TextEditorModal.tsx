@@ -18,7 +18,7 @@ import { useI18n } from '../application/i18n/I18nProvider';
 import { getLanguageId, getLanguageName, getSupportedLanguages } from '../lib/sftpFileUtils';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Combobox } from './ui/combobox';
 import { toast } from './ui/toast';
 
 interface TextEditorModalProps {
@@ -159,6 +159,14 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
 
   const supportedLanguages = useMemo(() => getSupportedLanguages(), []);
   const monacoLanguage = useMemo(() => languageIdToMonaco(languageId), [languageId]);
+  const languageOptions = useMemo(
+    () => supportedLanguages.map((lang) => ({ value: lang.id, label: lang.name })),
+    [supportedLanguages],
+  );
+
+  const handleLanguageChange = useCallback((nextValue: string) => {
+    setLanguageId(nextValue || 'plaintext');
+  }, []);
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
@@ -172,21 +180,7 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
                 {hasChanges && <span className="text-primary ml-1">*</span>}
               </DialogTitle>
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              {/* Language selector */}
-              <Select value={languageId} onValueChange={setLanguageId}>
-                <SelectTrigger className="h-7 w-[140px] text-xs">
-                  <SelectValue placeholder={t('sftp.editor.syntaxHighlight')} />
-                </SelectTrigger>
-                <SelectContent>
-                  {supportedLanguages.map((lang) => (
-                    <SelectItem key={lang.id} value={lang.id} className="text-xs">
-                      {lang.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
+            <div className="flex items-center gap-2 min-w-0">
               {/* Search button */}
               <Button
                 variant="ghost"
@@ -197,6 +191,15 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
               >
                 <Search size={14} />
               </Button>
+
+              {/* Language selector */}
+              <Combobox
+                options={languageOptions}
+                value={languageId}
+                onValueChange={handleLanguageChange}
+                placeholder={t('sftp.editor.syntaxHighlight')}
+                triggerClassName="h-7 max-w-[180px] min-w-[120px] text-xs"
+              />
 
               {/* Save button */}
               <Button
