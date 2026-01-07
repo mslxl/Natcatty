@@ -89,7 +89,7 @@ const SftpFileRowInner: React.FC<SftpFileRowProps> = ({
                         <Link size={8} className="absolute -bottom-0.5 -right-0.5 text-muted-foreground" aria-hidden="true" />
                     )}
                 </div>
-                <span className={cn("truncate", entry.type === 'symlink' && "italic")}>
+                <span className={cn("truncate", entry.type === 'symlink' && "italic pr-1")}>
                     {entry.name}
                     {entry.type === 'symlink' && <span className="sr-only"> (symbolic link)</span>}
                 </span>
