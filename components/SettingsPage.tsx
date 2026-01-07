@@ -2,7 +2,7 @@
  * Settings Page - Standalone settings window content
  * This component is rendered in a separate Electron window
  */
-import { AppWindow, Cloud, Keyboard, Palette, TerminalSquare, X } from "lucide-react";
+import { AppWindow, Cloud, FileType, Keyboard, Palette, TerminalSquare, X } from "lucide-react";
 import React, { useCallback, useEffect, useState } from "react";
 import { useSettingsState } from "../application/state/useSettingsState";
 import { useVaultState } from "../application/state/useVaultState";
@@ -10,6 +10,7 @@ import { useWindowControls } from "../application/state/useWindowControls";
 import { I18nProvider, useI18n } from "../application/i18n/I18nProvider";
 import SettingsApplicationTab from "./SettingsApplicationTab";
 import SettingsAppearanceTab from "./settings/tabs/SettingsAppearanceTab";
+import SettingsFileAssociationsTab from "./settings/tabs/SettingsFileAssociationsTab";
 import SettingsShortcutsTab from "./settings/tabs/SettingsShortcutsTab";
 import SettingsTerminalTab from "./settings/tabs/SettingsTerminalTab";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
@@ -118,6 +119,12 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                             <Keyboard size={14} /> {t("settings.tab.shortcuts")}
                         </TabsTrigger>
                         <TabsTrigger
+                            value="file-associations"
+                            className="w-full justify-start gap-2 px-3 py-2 text-sm data-[state=active]:bg-background hover:bg-background/60 rounded-md transition-colors"
+                        >
+                            <FileType size={14} /> {t("settings.tab.sftpFileAssociations")}
+                        </TabsTrigger>
+                        <TabsTrigger
                             value="sync"
                             className="w-full justify-start gap-2 px-3 py-2 text-sm data-[state=active]:bg-background hover:bg-background/60 rounded-md transition-colors"
                         >
@@ -171,6 +178,10 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                             resetAllKeyBindings={settings.resetAllKeyBindings}
                             setIsHotkeyRecording={settings.setIsHotkeyRecording}
                         />
+                    )}
+
+                    {mountedTabs.has("file-associations") && (
+                        <SettingsFileAssociationsTab />
                     )}
 
                     {mountedTabs.has("sync") && (
