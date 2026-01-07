@@ -27,7 +27,7 @@ export const FileOpenerDialog: React.FC<FileOpenerDialogProps> = ({
   const { t } = useI18n();
   const [isSelectingApp, setIsSelectingApp] = useState(false);
   const [rememberChoice, setRememberChoice] = useState(true);
-  
+
   const extension = getFileExtension(fileName);
   // Show edit option for files that are not known binary formats
   const canEdit = !isKnownBinaryFile(fileName);
@@ -131,8 +131,8 @@ export const FileOpenerDialog: React.FC<FileOpenerDialogProps> = ({
             onChange={(e) => setRememberChoice(e.target.checked)}
             className="rounded border-border h-4 w-4 accent-primary"
           />
-          <label 
-            htmlFor="remember-choice" 
+          <label
+            htmlFor="remember-choice"
             className="text-sm text-muted-foreground cursor-pointer select-none"
           >
             {t('sftp.opener.setDefault', { ext: displayExtension })}

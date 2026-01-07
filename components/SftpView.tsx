@@ -1741,9 +1741,9 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
           // Open with saved system application
           try {
             await sftpRef.current.downloadToTempAndOpen(
-              side, 
-              fullPath, 
-              file.name, 
+              side,
+              fullPath,
+              file.name,
               savedOpener.systemApp.path
             );
           } catch (e) {

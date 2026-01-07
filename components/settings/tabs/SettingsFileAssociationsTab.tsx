@@ -11,7 +11,7 @@ import { Button } from "../../ui/button";
 import { SectionHeader, SettingsTabContent } from "../settings-ui";
 
 const getOpenerLabel = (
-  openerType: FileOpenerType, 
+  openerType: FileOpenerType,
   systemApp: SystemAppInfo | undefined,
   t: (key: string) => string
 ): string => {
