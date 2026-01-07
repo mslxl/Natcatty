@@ -144,7 +144,6 @@ interface SftpPaneViewProps {
   pane: SftpPane;
   showHeader?: boolean;
   showEmptyHeader?: boolean;
-  loadingTextContent?: boolean;
 }
 
 const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
@@ -152,7 +151,6 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   pane,
   showHeader = true,
   showEmptyHeader = true,
-  loadingTextContent = false,
 }) => {
   // NOTE: We don't subscribe to activeTabId here!
   // Visibility is controlled by parent SftpPaneWrapper via CSS (visibility: hidden)
@@ -1272,15 +1270,6 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
           </div>
         )}
 
-        {loadingTextContent && (
-          <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-20">
-            <div className="flex flex-col items-center gap-2">
-              <Loader2 size={24} className="animate-spin text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">{t("sftp.status.loading")}</span>
-            </div>
-          </div>
-        )}
-
         {/* Drop overlay */}
         {isDragOverPane && draggedFiles && draggedFiles[0]?.side !== side && (
           <div className="absolute inset-0 flex items-center justify-center bg-primary/5 pointer-events-none">
@@ -1469,6 +1458,7 @@ interface SftpViewProps {
 }
 
 const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => {
+  const { t } = useI18n();
   const isActive = useIsSftpActive();
   const sftp = useSftpState(hosts, keys, identities);
   const { sftpDoubleClickBehavior } = useSettingsState();
@@ -2129,10 +2119,18 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
                     pane={pane}
                     showHeader
                     showEmptyHeader={false}
-                    loadingTextContent={loadingTextContent && textEditorTarget?.side === "left"}
                   />
                 </SftpPaneWrapper>
               ))}
+              {/* Loading overlay for left pane - shown when loading text content */}
+              {loadingTextContent && textEditorTarget?.side === "left" && (
+                <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-30">
+                  <div className="flex flex-col items-center gap-2">
+                    <Loader2 size={24} className="animate-spin text-muted-foreground" />
+                    <span className="text-sm text-muted-foreground">{t("sftp.status.loading")}</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           <div className="relative flex flex-col">
@@ -2161,10 +2159,18 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
                     pane={pane}
                     showHeader
                     showEmptyHeader={false}
-                    loadingTextContent={loadingTextContent && textEditorTarget?.side === "right"}
                   />
                 </SftpPaneWrapper>
               ))}
+              {/* Loading overlay for right pane - shown when loading text content */}
+              {loadingTextContent && textEditorTarget?.side === "right" && (
+                <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-30">
+                  <div className="flex flex-col items-center gap-2">
+                    <Loader2 size={24} className="animate-spin text-muted-foreground" />
+                    <span className="text-sm text-muted-foreground">{t("sftp.status.loading")}</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
