@@ -2,7 +2,7 @@
  * SFTP Permissions Editor Dialog
  */
 
-import React,{ useEffect,useState } from 'react';
+import React, { memo, useEffect, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { SftpFileEntry } from '../../types';
 import { Button } from '../ui/button';
@@ -15,7 +15,7 @@ interface SftpPermissionsDialogProps {
     onSave: (file: SftpFileEntry, permissions: string) => void;
 }
 
-export const SftpPermissionsDialog: React.FC<SftpPermissionsDialogProps> = ({ open, onOpenChange, file, onSave }) => {
+const SftpPermissionsDialogInner: React.FC<SftpPermissionsDialogProps> = ({ open, onOpenChange, file, onSave }) => {
     const { t } = useI18n();
     const [permissions, setPermissions] = useState({
         owner: { read: false, write: false, execute: false },
@@ -139,3 +139,6 @@ export const SftpPermissionsDialog: React.FC<SftpPermissionsDialogProps> = ({ op
         </Dialog>
     );
 };
+
+export const SftpPermissionsDialog = memo(SftpPermissionsDialogInner);
+SftpPermissionsDialog.displayName = 'SftpPermissionsDialog';

@@ -11,6 +11,21 @@ formatSpeed,formatTransferBytes,getFileIcon,isNavigableDirectory,type ColumnWidt
 type SortOrder
 } from './utils';
 
+// Context
+export {
+  SftpContextProvider,
+  useSftpContext,
+  useSftpPaneCallbacks,
+  useSftpDrag,
+  useSftpHosts,
+  useActiveTabId,
+  useIsPaneActive,
+  activeTabStore,
+  type SftpPaneCallbacks,
+  type SftpDragCallbacks,
+  type SftpContextValue,
+} from './SftpContext';
+
 // Components
 export { SftpBreadcrumb } from './SftpBreadcrumb';
 export { SftpConflictDialog } from './SftpConflictDialog';

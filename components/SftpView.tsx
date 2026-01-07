@@ -28,6 +28,7 @@ import { useI18n } from "../application/i18n/I18nProvider";
 import { useIsSftpActive } from "../application/state/activeTabStore";
 import { SftpPane, useSftpState } from "../application/state/useSftpState";
 import { logger } from "../lib/logger";
+import { useRenderTracker } from "../lib/useRenderTracker";
 import { cn } from "../lib/utils";
 import { Host, Identity, SftpFileEntry, SSHKey } from "../types";
 import { Button } from "./ui/button";
@@ -84,69 +85,106 @@ import {
   X,
 } from "lucide-react";
 
-// SFTP Pane component
+// Import context hooks
+import {
+  SftpContextProvider,
+  useSftpPaneCallbacks,
+  useSftpDrag,
+  useSftpHosts,
+  useActiveTabId,
+  activeTabStore,
+  type SftpPaneCallbacks,
+  type SftpDragCallbacks,
+} from "./sftp";
+
+// Wrapper component that subscribes to activeTabId for CSS visibility
+// This isolates the activeTabId subscription - only this component re-renders on tab switch
+// Uses visibility:hidden pattern from App.tsx for smooth tab switching
+interface SftpPaneWrapperProps {
+  side: "left" | "right";
+  paneId: string;
+  isFirstPane: boolean;
+  children: React.ReactNode;
+}
+
+const SftpPaneWrapper = memo<SftpPaneWrapperProps>(({ side, paneId, isFirstPane, children }) => {
+  const activeTabId = useActiveTabId(side);
+  // Active if: this pane's id matches activeTabId, or no activeTabId and this is first pane
+  const isActive = activeTabId ? paneId === activeTabId : isFirstPane;
+  
+  // Use same visibility pattern as VaultViewContainer in App.tsx
+  const containerStyle: React.CSSProperties = isActive
+    ? {}
+    : { visibility: 'hidden', pointerEvents: 'none' };
+  
+  return (
+    <div 
+      className={cn("absolute inset-0", isActive ? "z-10" : "z-0")} 
+      style={containerStyle}
+    >
+      {children}
+    </div>
+  );
+});
+SftpPaneWrapper.displayName = "SftpPaneWrapper";
+
+// SFTP Pane component - simplified props, callbacks from context
+// Does NOT subscribe to activeTabId - visibility is controlled by SftpPaneWrapper
 interface SftpPaneViewProps {
   side: "left" | "right";
   pane: SftpPane;
-  isActive: boolean;
   showHeader?: boolean;
   showEmptyHeader?: boolean;
-  hosts: Host[];
-  onConnect: (host: Host | "local") => void;
-  onDisconnect: () => void;
-  onNavigateTo: (path: string) => void;
-  onNavigateUp: () => void;
-  onRefresh: () => void;
-  onOpenEntry: (entry: SftpFileEntry) => void;
-  onToggleSelection: (fileName: string, multiSelect: boolean) => void;
-  onRangeSelect: (fileNames: string[]) => void;
-  onClearSelection: () => void;
-  onSetFilter: (filter: string) => void;
-  onCreateDirectory: (name: string) => Promise<void>;
-  onDeleteFiles: (fileNames: string[]) => Promise<void>;
-  onRenameFile: (oldName: string, newName: string) => Promise<void>;
-  onCopyToOtherPane: (files: { name: string; isDirectory: boolean }[]) => void;
-  onReceiveFromOtherPane: (
-    files: { name: string; isDirectory: boolean }[],
-  ) => void;
-  onEditPermissions?: (file: SftpFileEntry) => void;
-  draggedFiles:
-  | { name: string; isDirectory: boolean; side: "left" | "right" }[]
-  | null;
-  onDragStart: (
-    files: { name: string; isDirectory: boolean }[],
-    side: "left" | "right",
-  ) => void;
-  onDragEnd: () => void;
 }
 
 const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   side,
   pane,
-  isActive,
   showHeader = true,
   showEmptyHeader = true,
-  hosts,
-  onConnect,
-  onDisconnect,
-  onNavigateTo,
-  onNavigateUp,
-  onRefresh,
-  onOpenEntry,
-  onToggleSelection,
-  onRangeSelect,
-  onClearSelection,
-  onSetFilter,
-  onCreateDirectory,
-  onDeleteFiles,
-  onRenameFile,
-  onCopyToOtherPane,
-  onReceiveFromOtherPane,
-  onEditPermissions,
-  draggedFiles,
-  onDragStart,
-  onDragEnd,
 }) => {
+  // NOTE: We don't subscribe to activeTabId here!
+  // Visibility is controlled by parent SftpPaneWrapper via CSS (visibility: hidden)
+  // This component never re-renders on tab switch
+  // We assume isActive=true because hidden components don't trigger keyboard events anyway
+  const isActive = true;
+  
+  // Get callbacks from context - stable references
+  const callbacks = useSftpPaneCallbacks(side);
+  const { draggedFiles, onDragStart, onDragEnd } = useSftpDrag();
+  const hosts = useSftpHosts();
+  
+  // Destructure for easier use
+  const {
+    onConnect,
+    onDisconnect,
+    onNavigateTo,
+    onNavigateUp,
+    onRefresh,
+    onOpenEntry,
+    onToggleSelection,
+    onRangeSelect,
+    onClearSelection,
+    onSetFilter,
+    onCreateDirectory,
+    onDeleteFiles,
+    onRenameFile,
+    onCopyToOtherPane,
+    onReceiveFromOtherPane,
+    onEditPermissions,
+  } = callbacks;
+
+  // 渲染追踪 - 只追踪数据 props（回调来自 context，引用稳定）
+  // Note: isActive is always true here, visibility is controlled by CSS
+  useRenderTracker(`SftpPaneView[${side}]`, {
+    side,
+    paneId: pane.id,
+    paneConnected: pane.connected,
+    panePath: pane.currentPath,
+    showHeader,
+    draggedFilesCount: draggedFiles?.length ?? 0,
+  });
+
   const { t } = useI18n();
   const [, startTransition] = useTransition();
   // Dialog states
@@ -1342,7 +1380,22 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   );
 };
 
-const SftpPaneView = memo(SftpPaneViewInner);
+// Custom comparison for SftpPaneView - simplified since callbacks come from context
+// isActive is now managed by SftpPaneWrapper, not passed as prop
+const sftpPaneViewAreEqual = (
+  prev: SftpPaneViewProps,
+  next: SftpPaneViewProps,
+): boolean => {
+  // Check essential props only
+  if (prev.pane !== next.pane) return false;
+  if (prev.side !== next.side) return false;
+  if (prev.showHeader !== next.showHeader) return false;
+  if (prev.showEmptyHeader !== next.showEmptyHeader) return false;
+  
+  return true;
+};
+
+const SftpPaneView = memo(SftpPaneViewInner, sftpPaneViewAreEqual);
 SftpPaneView.displayName = "SftpPaneView";
 
 // Main SftpView component
@@ -1355,6 +1408,29 @@ interface SftpViewProps {
 const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => {
   const isActive = useIsSftpActive();
   const sftp = useSftpState(hosts, keys, identities);
+  
+  // Store sftp in a ref so callbacks can access the latest instance
+  // without needing to re-create when sftp changes
+  const sftpRef = useRef(sftp);
+  sftpRef.current = sftp;
+  
+  // Sync activeTabId to external store (allows child components to subscribe without parent re-render)
+  // Using useLayoutEffect to sync before paint
+  useLayoutEffect(() => {
+    activeTabStore.setActiveTabId("left", sftp.leftTabs.activeTabId);
+  }, [sftp.leftTabs.activeTabId]);
+  
+  useLayoutEffect(() => {
+    activeTabStore.setActiveTabId("right", sftp.rightTabs.activeTabId);
+  }, [sftp.rightTabs.activeTabId]);
+  
+  // 渲染追踪 - 不追踪 activeTabId（现在通过 store 订阅）
+  useRenderTracker("SftpViewInner", {
+    isActive,
+    hostsCount: hosts.length,
+    leftTabsCount: sftp.leftTabs.tabs.length,
+    rightTabsCount: sftp.rightTabs.tabs.length,
+  });
   const [permissionsState, setPermissionsState] = useState<{
     file: SftpFileEntry;
     side: "left" | "right";
@@ -1378,134 +1454,134 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
     setDraggedFiles(null);
   }, []);
 
-  /* eslint-disable react-hooks/exhaustive-deps -- sftp methods are stable references from useSftpState hook */
+  // All callbacks use sftpRef.current to access latest sftp instance
+  // This keeps callback references stable (empty dependency arrays)
   const handleCopyToOtherPaneLeft = useCallback(
     (files: { name: string; isDirectory: boolean }[]) =>
-      sftp.startTransfer(files, "left", "right"),
-    [sftp.startTransfer],
+      sftpRef.current.startTransfer(files, "left", "right"),
+    [],
   );
   const handleCopyToOtherPaneRight = useCallback(
     (files: { name: string; isDirectory: boolean }[]) =>
-      sftp.startTransfer(files, "right", "left"),
-    [sftp.startTransfer],
+      sftpRef.current.startTransfer(files, "right", "left"),
+    [],
   );
   const handleReceiveFromOtherPaneLeft = useCallback(
     (files: { name: string; isDirectory: boolean }[]) =>
-      sftp.startTransfer(files, "right", "left"),
-    [sftp.startTransfer],
+      sftpRef.current.startTransfer(files, "right", "left"),
+    [],
   );
   const handleReceiveFromOtherPaneRight = useCallback(
     (files: { name: string; isDirectory: boolean }[]) =>
-      sftp.startTransfer(files, "left", "right"),
-    [sftp.startTransfer],
+      sftpRef.current.startTransfer(files, "left", "right"),
+    [],
   );
 
   const handleConnectLeft = useCallback(
-    (host: Host) => sftp.connect("left", host),
-    [sftp.connect],
+    (host: Host) => sftpRef.current.connect("left", host),
+    [],
   );
   const handleConnectRight = useCallback(
-    (host: Host) => sftp.connect("right", host),
-    [sftp.connect],
+    (host: Host) => sftpRef.current.connect("right", host),
+    [],
   );
   const handleDisconnectLeft = useCallback(
-    () => sftp.disconnect("left"),
-    [sftp.disconnect],
+    () => sftpRef.current.disconnect("left"),
+    [],
   );
   const handleDisconnectRight = useCallback(
-    () => sftp.disconnect("right"),
-    [sftp.disconnect],
+    () => sftpRef.current.disconnect("right"),
+    [],
   );
   const handleNavigateToLeft = useCallback(
-    (path: string) => sftp.navigateTo("left", path),
-    [sftp.navigateTo],
+    (path: string) => sftpRef.current.navigateTo("left", path),
+    [],
   );
   const handleNavigateToRight = useCallback(
-    (path: string) => sftp.navigateTo("right", path),
-    [sftp.navigateTo],
+    (path: string) => sftpRef.current.navigateTo("right", path),
+    [],
   );
   const handleNavigateUpLeft = useCallback(
-    () => sftp.navigateUp("left"),
-    [sftp.navigateUp],
+    () => sftpRef.current.navigateUp("left"),
+    [],
   );
   const handleNavigateUpRight = useCallback(
-    () => sftp.navigateUp("right"),
-    [sftp.navigateUp],
+    () => sftpRef.current.navigateUp("right"),
+    [],
   );
   const handleRefreshLeft = useCallback(
-    () => sftp.refresh("left"),
-    [sftp.refresh],
+    () => sftpRef.current.refresh("left"),
+    [],
   );
   const handleRefreshRight = useCallback(
-    () => sftp.refresh("right"),
-    [sftp.refresh],
+    () => sftpRef.current.refresh("right"),
+    [],
   );
   const handleOpenEntryLeft = useCallback(
-    (entry: SftpFileEntry) => sftp.openEntry("left", entry),
-    [sftp.openEntry],
+    (entry: SftpFileEntry) => sftpRef.current.openEntry("left", entry),
+    [],
   );
   const handleOpenEntryRight = useCallback(
-    (entry: SftpFileEntry) => sftp.openEntry("right", entry),
-    [sftp.openEntry],
+    (entry: SftpFileEntry) => sftpRef.current.openEntry("right", entry),
+    [],
   );
   const handleToggleSelectionLeft = useCallback(
-    (name: string, multi: boolean) => sftp.toggleSelection("left", name, multi),
-    [sftp.toggleSelection],
+    (name: string, multi: boolean) => sftpRef.current.toggleSelection("left", name, multi),
+    [],
   );
   const handleToggleSelectionRight = useCallback(
     (name: string, multi: boolean) =>
-      sftp.toggleSelection("right", name, multi),
-    [sftp.toggleSelection],
+      sftpRef.current.toggleSelection("right", name, multi),
+    [],
   );
   const handleRangeSelectLeft = useCallback(
-    (fileNames: string[]) => sftp.rangeSelect("left", fileNames),
-    [sftp.rangeSelect],
+    (fileNames: string[]) => sftpRef.current.rangeSelect("left", fileNames),
+    [],
   );
   const handleRangeSelectRight = useCallback(
-    (fileNames: string[]) => sftp.rangeSelect("right", fileNames),
-    [sftp.rangeSelect],
+    (fileNames: string[]) => sftpRef.current.rangeSelect("right", fileNames),
+    [],
   );
   const handleClearSelectionLeft = useCallback(
-    () => sftp.clearSelection("left"),
-    [sftp.clearSelection],
+    () => sftpRef.current.clearSelection("left"),
+    [],
   );
   const handleClearSelectionRight = useCallback(
-    () => sftp.clearSelection("right"),
-    [sftp.clearSelection],
+    () => sftpRef.current.clearSelection("right"),
+    [],
   );
   const handleSetFilterLeft = useCallback(
-    (filter: string) => sftp.setFilter("left", filter),
-    [sftp.setFilter],
+    (filter: string) => sftpRef.current.setFilter("left", filter),
+    [],
   );
   const handleSetFilterRight = useCallback(
-    (filter: string) => sftp.setFilter("right", filter),
-    [sftp.setFilter],
+    (filter: string) => sftpRef.current.setFilter("right", filter),
+    [],
   );
   const handleCreateDirectoryLeft = useCallback(
-    (name: string) => sftp.createDirectory("left", name),
-    [sftp.createDirectory],
+    (name: string) => sftpRef.current.createDirectory("left", name),
+    [],
   );
   const handleCreateDirectoryRight = useCallback(
-    (name: string) => sftp.createDirectory("right", name),
-    [sftp.createDirectory],
+    (name: string) => sftpRef.current.createDirectory("right", name),
+    [],
   );
   const handleDeleteFilesLeft = useCallback(
-    (names: string[]) => sftp.deleteFiles("left", names),
-    [sftp.deleteFiles],
+    (names: string[]) => sftpRef.current.deleteFiles("left", names),
+    [],
   );
   const handleDeleteFilesRight = useCallback(
-    (names: string[]) => sftp.deleteFiles("right", names),
-    [sftp.deleteFiles],
+    (names: string[]) => sftpRef.current.deleteFiles("right", names),
+    [],
   );
   const handleRenameFileLeft = useCallback(
-    (old: string, newName: string) => sftp.renameFile("left", old, newName),
-    [sftp.renameFile],
+    (old: string, newName: string) => sftpRef.current.renameFile("left", old, newName),
+    [],
   );
   const handleRenameFileRight = useCallback(
-    (old: string, newName: string) => sftp.renameFile("right", old, newName),
-    [sftp.renameFile],
+    (old: string, newName: string) => sftpRef.current.renameFile("right", old, newName),
+    [],
   );
-  /* eslint-enable react-hooks/exhaustive-deps */
 
   const handleEditPermissionsLeft = useCallback(
     (file: SftpFileEntry) => setPermissionsState({ file, side: "left" }),
@@ -1515,6 +1591,62 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
     (file: SftpFileEntry) => setPermissionsState({ file, side: "right" }),
     [],
   );
+
+  // Create stable callback objects for context
+  // All handlers now use sftpRef, so these objects never change
+  /* eslint-disable react-hooks/exhaustive-deps -- Handlers use sftpRef.current internally, so they are stable */
+  const leftCallbacks = useMemo<SftpPaneCallbacks>(
+    () => ({
+      onConnect: handleConnectLeft,
+      onDisconnect: handleDisconnectLeft,
+      onNavigateTo: handleNavigateToLeft,
+      onNavigateUp: handleNavigateUpLeft,
+      onRefresh: handleRefreshLeft,
+      onOpenEntry: handleOpenEntryLeft,
+      onToggleSelection: handleToggleSelectionLeft,
+      onRangeSelect: handleRangeSelectLeft,
+      onClearSelection: handleClearSelectionLeft,
+      onSetFilter: handleSetFilterLeft,
+      onCreateDirectory: handleCreateDirectoryLeft,
+      onDeleteFiles: handleDeleteFilesLeft,
+      onRenameFile: handleRenameFileLeft,
+      onCopyToOtherPane: handleCopyToOtherPaneLeft,
+      onReceiveFromOtherPane: handleReceiveFromOtherPaneLeft,
+      onEditPermissions: handleEditPermissionsLeft,
+    }),
+    [],
+  );
+
+  const rightCallbacks = useMemo<SftpPaneCallbacks>(
+    () => ({
+      onConnect: handleConnectRight,
+      onDisconnect: handleDisconnectRight,
+      onNavigateTo: handleNavigateToRight,
+      onNavigateUp: handleNavigateUpRight,
+      onRefresh: handleRefreshRight,
+      onOpenEntry: handleOpenEntryRight,
+      onToggleSelection: handleToggleSelectionRight,
+      onRangeSelect: handleRangeSelectRight,
+      onClearSelection: handleClearSelectionRight,
+      onSetFilter: handleSetFilterRight,
+      onCreateDirectory: handleCreateDirectoryRight,
+      onDeleteFiles: handleDeleteFilesRight,
+      onRenameFile: handleRenameFileRight,
+      onCopyToOtherPane: handleCopyToOtherPaneRight,
+      onReceiveFromOtherPane: handleReceiveFromOtherPaneRight,
+      onEditPermissions: handleEditPermissionsRight,
+    }),
+    [],
+  );
+
+  const dragCallbacks = useMemo<SftpDragCallbacks>(
+    () => ({
+      onDragStart: handleDragStart,
+      onDragEnd: handleDragEnd,
+    }),
+    [],
+  );
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const visibleTransfers = useMemo(
     () => sftp.transfers.slice(-5),
@@ -1530,204 +1662,191 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       zIndex: -1,
     };
 
-  // Tab management callbacks
+  // Tab management callbacks - using sftpRef for stable references
   const [showHostPickerLeft, setShowHostPickerLeft] = useState(false);
   const [showHostPickerRight, setShowHostPickerRight] = useState(false);
   const [hostSearchLeft, setHostSearchLeft] = useState("");
   const [hostSearchRight, setHostSearchRight] = useState("");
 
   const handleAddTabLeft = useCallback(() => {
-    sftp.addTab("left");
+    sftpRef.current.addTab("left");
     setShowHostPickerLeft(true);
-  }, [sftp]);
+  }, []);
 
   const handleAddTabRight = useCallback(() => {
-    sftp.addTab("right");
+    sftpRef.current.addTab("right");
     setShowHostPickerRight(true);
-  }, [sftp]);
+  }, []);
 
   const handleCloseTabLeft = useCallback((tabId: string) => {
-    sftp.closeTab("left", tabId);
-  }, [sftp]);
+    sftpRef.current.closeTab("left", tabId);
+  }, []);
 
   const handleCloseTabRight = useCallback((tabId: string) => {
-    sftp.closeTab("right", tabId);
-  }, [sftp]);
+    sftpRef.current.closeTab("right", tabId);
+  }, []);
 
   const handleSelectTabLeft = useCallback((tabId: string) => {
-    sftp.selectTab("left", tabId);
-  }, [sftp]);
+    sftpRef.current.selectTab("left", tabId);
+  }, []);
 
   const handleSelectTabRight = useCallback((tabId: string) => {
-    sftp.selectTab("right", tabId);
-  }, [sftp]);
+    sftpRef.current.selectTab("right", tabId);
+  }, []);
 
-  const activeLeftTabId = sftp.getActiveTabId("left");
-  const activeRightTabId = sftp.getActiveTabId("right");
-  const leftPanes = sftp.leftTabs.tabs.length > 0 ? sftp.leftTabs.tabs : [sftp.leftPane];
-  const rightPanes = sftp.rightTabs.tabs.length > 0 ? sftp.rightTabs.tabs : [sftp.rightPane];
+  // Don't read activeTabId here - let SftpTabBar and SftpPaneWrapper subscribe to store
+  // This prevents SftpViewInner from re-rendering on tab switch
+  
+  // Memoize panes arrays to prevent unnecessary re-renders
+  const leftPanes = useMemo(() => 
+    sftp.leftTabs.tabs.length > 0 ? sftp.leftTabs.tabs : [sftp.leftPane],
+    [sftp.leftTabs.tabs, sftp.leftPane]
+  );
+  const rightPanes = useMemo(() => 
+    sftp.rightTabs.tabs.length > 0 ? sftp.rightTabs.tabs : [sftp.rightPane],
+    [sftp.rightTabs.tabs, sftp.rightPane]
+  );
 
-  useEffect(() => {
-    logger.info("SftpView tab switch", {
-      side: "left",
-      activeTabId: activeLeftTabId,
-    });
-  }, [activeLeftTabId]);
-
-  useEffect(() => {
-    logger.info("SftpView tab switch", {
-      side: "right",
-      activeTabId: activeRightTabId,
-    });
-  }, [activeRightTabId]);
-
+  // Reorder and cross-pane move handlers - using sftpRef for stable references
   const handleReorderTabsLeft = useCallback(
     (draggedId: string, targetId: string, position: "before" | "after") => {
-      sftp.reorderTabs("left", draggedId, targetId, position);
+      sftpRef.current.reorderTabs("left", draggedId, targetId, position);
     },
-    [sftp],
+    [],
   );
 
   const handleReorderTabsRight = useCallback(
     (draggedId: string, targetId: string, position: "before" | "after") => {
-      sftp.reorderTabs("right", draggedId, targetId, position);
+      sftpRef.current.reorderTabs("right", draggedId, targetId, position);
     },
-    [sftp],
+    [],
+  );
+
+  // Cross-pane tab move handlers
+  // When dropping on right side, the tab is coming FROM left side
+  const handleMoveTabFromLeftToRight = useCallback(
+    (tabId: string) => {
+      sftpRef.current.moveTabToOtherSide("left", tabId);
+    },
+    [],
+  );
+
+  // When dropping on left side, the tab is coming FROM right side
+  const handleMoveTabFromRightToLeft = useCallback(
+    (tabId: string) => {
+      sftpRef.current.moveTabToOtherSide("right", tabId);
+    },
+    [],
   );
 
   const handleHostSelectLeft = useCallback((host: Host | "local") => {
-    sftp.connect("left", host);
+    sftpRef.current.connect("left", host);
     setShowHostPickerLeft(false);
-  }, [sftp]);
+  }, []);
 
   const handleHostSelectRight = useCallback((host: Host | "local") => {
-    sftp.connect("right", host);
+    sftpRef.current.connect("right", host);
     setShowHostPickerRight(false);
-  }, [sftp]);
+  }, []);
 
-  const leftTabsInfo = useMemo(() => sftp.getTabsInfo("left"), [sftp]);
-  const rightTabsInfo = useMemo(() => sftp.getTabsInfo("right"), [sftp]);
+  // Use leftTabs/rightTabs directly for more accurate memoization
+  const leftTabsInfo = useMemo(() => {
+    return sftp.leftTabs.tabs.map((pane) => ({
+      id: pane.id,
+      label: pane.connection?.hostLabel || "New Tab",
+      isLocal: pane.connection?.isLocal || false,
+      hostId: pane.connection?.hostId || null,
+    }));
+  }, [sftp.leftTabs.tabs]);
+  
+  const rightTabsInfo = useMemo(() => {
+    return sftp.rightTabs.tabs.map((pane) => ({
+      id: pane.id,
+      label: pane.connection?.hostLabel || "New Tab",
+      isLocal: pane.connection?.isLocal || false,
+      hostId: pane.connection?.hostId || null,
+    }));
+  }, [sftp.rightTabs.tabs]);
 
   return (
-    <div
-      className={cn(
-        "absolute inset-0 min-h-0 flex flex-col",
-        isActive ? "z-20" : "",
-      )}
-      style={containerStyle}
+    <SftpContextProvider
+      hosts={hosts}
+      draggedFiles={draggedFiles}
+      dragCallbacks={dragCallbacks}
+      leftCallbacks={leftCallbacks}
+      rightCallbacks={rightCallbacks}
     >
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 min-h-0 border-t border-border/70">
-        <div className="relative border-r border-border/70 flex flex-col">
-          {/* Left side tab bar - only show when there are tabs */}
-          {leftTabsInfo.length > 0 && (
-            <SftpTabBar
-              tabs={leftTabsInfo}
-              activeTabId={activeLeftTabId}
-              side="left"
-              onSelectTab={handleSelectTabLeft}
-              onCloseTab={handleCloseTabLeft}
-              onAddTab={handleAddTabLeft}
-              onReorderTabs={handleReorderTabsLeft}
-            />
-          )}
-          <div className="relative flex-1 min-h-0">
-            {leftPanes.map((pane, idx) => {
-              const isActive = activeLeftTabId
-                ? pane.id === activeLeftTabId
-                : idx === 0;
-              return (
-                <div
+      <div
+        className={cn(
+          "absolute inset-0 min-h-0 flex flex-col",
+          isActive ? "z-20" : "",
+        )}
+        style={containerStyle}
+      >
+        <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 min-h-0 border-t border-border/70">
+          <div className="relative border-r border-border/70 flex flex-col">
+            {/* Left side tab bar - only show when there are tabs */}
+            {leftTabsInfo.length > 0 && (
+              <SftpTabBar
+                tabs={leftTabsInfo}
+                side="left"
+                onSelectTab={handleSelectTabLeft}
+                onCloseTab={handleCloseTabLeft}
+                onAddTab={handleAddTabLeft}
+                onReorderTabs={handleReorderTabsLeft}
+                onMoveTabToOtherSide={handleMoveTabFromRightToLeft}
+              />
+            )}
+            <div className="relative flex-1 min-h-0">
+              {leftPanes.map((pane, idx) => (
+                <SftpPaneWrapper
                   key={pane.id}
-                  className={cn("absolute inset-0", isActive ? "block" : "hidden")}
+                  side="left"
+                  paneId={pane.id}
+                  isFirstPane={idx === 0}
                 >
                   <SftpPaneView
                     side="left"
                     pane={pane}
-                    isActive={isActive}
                     showHeader
                     showEmptyHeader={false}
-                    hosts={hosts}
-                    onConnect={handleConnectLeft}
-                    onDisconnect={handleDisconnectLeft}
-                    onNavigateTo={handleNavigateToLeft}
-                    onNavigateUp={handleNavigateUpLeft}
-                    onRefresh={handleRefreshLeft}
-                    onOpenEntry={handleOpenEntryLeft}
-                    onToggleSelection={handleToggleSelectionLeft}
-                    onRangeSelect={handleRangeSelectLeft}
-                    onClearSelection={handleClearSelectionLeft}
-                    onSetFilter={handleSetFilterLeft}
-                    onCreateDirectory={handleCreateDirectoryLeft}
-                    onDeleteFiles={handleDeleteFilesLeft}
-                    onRenameFile={handleRenameFileLeft}
-                    onCopyToOtherPane={handleCopyToOtherPaneLeft}
-                    onReceiveFromOtherPane={handleReceiveFromOtherPaneLeft}
-                    onEditPermissions={handleEditPermissionsLeft}
-                    draggedFiles={draggedFiles}
-                    onDragStart={handleDragStart}
-                    onDragEnd={handleDragEnd}
                   />
-                </div>
-              );
-            })}
+                </SftpPaneWrapper>
+              ))}
+            </div>
           </div>
-        </div>
-        <div className="relative flex flex-col">
-          {/* Right side tab bar - only show when there are tabs */}
-          {rightTabsInfo.length > 0 && (
-            <SftpTabBar
-              tabs={rightTabsInfo}
-              activeTabId={activeRightTabId}
-              side="right"
-              onSelectTab={handleSelectTabRight}
-              onCloseTab={handleCloseTabRight}
-              onAddTab={handleAddTabRight}
-              onReorderTabs={handleReorderTabsRight}
-            />
-          )}
-          <div className="relative flex-1 min-h-0">
-            {rightPanes.map((pane, idx) => {
-              const isActive = activeRightTabId
-                ? pane.id === activeRightTabId
-                : idx === 0;
-              return (
-                <div
+          <div className="relative flex flex-col">
+            {/* Right side tab bar - only show when there are tabs */}
+            {rightTabsInfo.length > 0 && (
+              <SftpTabBar
+                tabs={rightTabsInfo}
+                side="right"
+                onSelectTab={handleSelectTabRight}
+                onCloseTab={handleCloseTabRight}
+                onAddTab={handleAddTabRight}
+                onReorderTabs={handleReorderTabsRight}
+                onMoveTabToOtherSide={handleMoveTabFromLeftToRight}
+              />
+            )}
+            <div className="relative flex-1 min-h-0">
+              {rightPanes.map((pane, idx) => (
+                <SftpPaneWrapper
                   key={pane.id}
-                  className={cn("absolute inset-0", isActive ? "block" : "hidden")}
+                  side="right"
+                  paneId={pane.id}
+                  isFirstPane={idx === 0}
                 >
                   <SftpPaneView
                     side="right"
                     pane={pane}
-                    isActive={isActive}
                     showHeader
                     showEmptyHeader={false}
-                    hosts={hosts}
-                    onConnect={handleConnectRight}
-                    onDisconnect={handleDisconnectRight}
-                    onNavigateTo={handleNavigateToRight}
-                    onNavigateUp={handleNavigateUpRight}
-                    onRefresh={handleRefreshRight}
-                    onOpenEntry={handleOpenEntryRight}
-                    onToggleSelection={handleToggleSelectionRight}
-                    onRangeSelect={handleRangeSelectRight}
-                    onClearSelection={handleClearSelectionRight}
-                    onSetFilter={handleSetFilterRight}
-                    onCreateDirectory={handleCreateDirectoryRight}
-                    onDeleteFiles={handleDeleteFilesRight}
-                    onRenameFile={handleRenameFileRight}
-                    onCopyToOtherPane={handleCopyToOtherPaneRight}
-                    onReceiveFromOtherPane={handleReceiveFromOtherPaneRight}
-                    onEditPermissions={handleEditPermissionsRight}
-                    draggedFiles={draggedFiles}
-                    onDragStart={handleDragStart}
-                    onDragEnd={handleDragEnd}
                   />
-                </div>
-              );
-            })}
+                </SftpPaneWrapper>
+              ))}
+            </div>
           </div>
         </div>
-      </div>
 
       {/* Host pickers for adding new tabs */}
       <SftpHostPicker
@@ -1816,12 +1935,13 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
           setPermissionsState(null);
         }}
       />
-    </div>
+      </div>
+    </SftpContextProvider>
   );
 };
 
 const sftpViewAreEqual = (prev: SftpViewProps, next: SftpViewProps): boolean =>
-  prev.hosts === next.hosts && prev.keys === next.keys;
+  prev.hosts === next.hosts && prev.keys === next.keys && prev.identities === next.identities;
 
 export const SftpView = memo(SftpViewInner, sftpViewAreEqual);
 SftpView.displayName = "SftpView";

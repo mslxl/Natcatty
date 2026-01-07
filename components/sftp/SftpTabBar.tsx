@@ -19,7 +19,10 @@ import React, {
   useState,
 } from "react";
 import { useI18n } from "../../application/i18n/I18nProvider";
+import { logger } from "../../lib/logger";
+import { useRenderTracker } from "../../lib/useRenderTracker";
 import { cn } from "../../lib/utils";
+import { useActiveTabId } from "./SftpContext";
 
 export interface SftpTab {
   id: string;
@@ -30,7 +33,6 @@ export interface SftpTab {
 
 interface SftpTabBarProps {
   tabs: SftpTab[];
-  activeTabId: string | null;
   side: "left" | "right";
   onSelectTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => void;
@@ -40,17 +42,35 @@ interface SftpTabBarProps {
     targetId: string,
     position: "before" | "after",
   ) => void;
+  /** Called when a tab is dragged to the other side */
+  onMoveTabToOtherSide?: (tabId: string) => void;
 }
 
 const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
   tabs,
-  activeTabId,
-  side: _side,
+  side,
   onSelectTab,
   onCloseTab,
   onAddTab,
   onReorderTabs,
+  onMoveTabToOtherSide,
 }) => {
+  // Subscribe to activeTabId from store (isolated subscription)
+  const activeTabId = useActiveTabId(side);
+  
+  // 渲染追踪 - 追踪所有 props 包括回调函数
+  useRenderTracker(`SftpTabBar[${side}]`, {
+    side,
+    tabsCount: tabs.length,
+    activeTabId,
+    // 追踪回调函数引用是否变化
+    onSelectTab,
+    onCloseTab,
+    onAddTab,
+    onReorderTabs,
+    onMoveTabToOtherSide,
+  });
+
   const { t } = useI18n();
 
   // Refs for scrollable tab container
@@ -64,7 +84,23 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
     position: "before" | "after";
   } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [isCrossPaneDragOver, setIsCrossPaneDragOver] = useState(false);
   const draggedTabIdRef = useRef<string | null>(null);
+
+  // Global dragend listener to ensure state is reset even if the dragged element is removed
+  useEffect(() => {
+    const handleGlobalDragEnd = () => {
+      if (draggedTabIdRef.current) {
+        draggedTabIdRef.current = null;
+        setDropIndicator(null);
+        setIsDragging(false);
+        setIsCrossPaneDragOver(false);
+      }
+    };
+    
+    document.addEventListener("dragend", handleGlobalDragEnd);
+    return () => document.removeEventListener("dragend", handleGlobalDragEnd);
+  }, []);
 
   // Check scroll state
   const updateScrollState = useCallback(() => {
@@ -119,12 +155,13 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
     (e: React.DragEvent, tabId: string) => {
       e.dataTransfer.effectAllowed = "move";
       e.dataTransfer.setData("sftp-tab-id", tabId);
+      e.dataTransfer.setData("sftp-tab-side", side);
       draggedTabIdRef.current = tabId;
       setTimeout(() => {
         setIsDragging(true);
       }, 0);
     },
-    [],
+    [side],
   );
 
   const handleTabDragEnd = useCallback(() => {
@@ -176,8 +213,61 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
     [onCloseTab],
   );
 
+  // Cross-pane drag handlers
+  const handleCrossPaneDragOver = useCallback(
+    (e: React.DragEvent) => {
+      const draggedFromSide = e.dataTransfer.types.includes("sftp-tab-side");
+      if (!draggedFromSide) return;
+      
+      // Check if this is from the other side (we can't read the data during dragover due to browser security)
+      // We'll set the indicator and validate on drop
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      setIsCrossPaneDragOver(true);
+    },
+    [],
+  );
+
+  const handleCrossPaneDragLeave = useCallback(() => {
+    setIsCrossPaneDragOver(false);
+  }, []);
+
+  const handleCrossPaneDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsCrossPaneDragOver(false);
+      
+      const draggedId = e.dataTransfer.getData("sftp-tab-id");
+      const draggedFromSide = e.dataTransfer.getData("sftp-tab-side");
+      
+      // Only accept drops from the other side
+      if (draggedId && draggedFromSide && draggedFromSide !== side && onMoveTabToOtherSide) {
+        logger.info("[SftpTabBar] Cross-pane drop", {
+          tabId: draggedId,
+          fromSide: draggedFromSide,
+          toSide: side,
+        });
+        onMoveTabToOtherSide(draggedId);
+      }
+      
+      // Always reset drag state on drop
+      draggedTabIdRef.current = null;
+      setDropIndicator(null);
+      setIsDragging(false);
+    },
+    [side, onMoveTabToOtherSide],
+  );
+
   return (
-    <div className="flex items-stretch h-8 bg-secondary/30 border-b border-border/40">
+    <div
+      className={cn(
+        "flex items-stretch h-8 bg-secondary/30 border-b border-border/40 transition-colors",
+        isCrossPaneDragOver && "bg-primary/10 ring-1 ring-inset ring-primary/40",
+      )}
+      onDragOver={handleCrossPaneDragOver}
+      onDragLeave={handleCrossPaneDragLeave}
+      onDrop={handleCrossPaneDrop}
+    >
       {/* Scrollable tabs container */}
       <div className="relative flex-1 min-w-0 flex">
         {/* Left fade mask */}
@@ -219,11 +309,11 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
                 onDrop={(e) => handleTabDrop(e, tab.id)}
                 className={cn(
                   "relative px-3 min-w-[100px] max-w-[180px] text-xs font-medium cursor-pointer flex items-center justify-between gap-2 flex-shrink-0 border-r border-border/40",
-                  "transition-all duration-150 ease-out",
+                  "transition-[color,opacity,transform] duration-100 ease-out",
                   isActive
                     ? "text-foreground border-b-2"
                     : "text-muted-foreground hover:text-foreground",
-                  isBeingDragged ? "opacity-40 scale-95" : "",
+                  isBeingDragged && "opacity-50",
                 )}
                 style={
                   isActive
@@ -297,5 +387,34 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
   );
 };
 
-export const SftpTabBar = memo(SftpTabBarInner);
+// Custom comparison - only re-render when data props change, ignore callback refs
+// Note: activeTabId is now subscribed internally, not passed as prop
+const sftpTabBarAreEqual = (
+  prev: SftpTabBarProps,
+  next: SftpTabBarProps,
+): boolean => {
+  // Compare data props only
+  if (prev.side !== next.side) return false;
+  if (prev.tabs.length !== next.tabs.length) return false;
+  
+  // Deep compare tabs array
+  for (let i = 0; i < prev.tabs.length; i++) {
+    const prevTab = prev.tabs[i];
+    const nextTab = next.tabs[i];
+    if (
+      prevTab.id !== nextTab.id ||
+      prevTab.label !== nextTab.label ||
+      prevTab.isLocal !== nextTab.isLocal ||
+      prevTab.hostId !== nextTab.hostId
+    ) {
+      return false;
+    }
+  }
+  
+  // Ignore callback function refs - they may change but behavior is stable
+  return true;
+};
+
+export const SftpTabBar = memo(SftpTabBarInner, sftpTabBarAreEqual);
 SftpTabBar.displayName = "SftpTabBar";
+

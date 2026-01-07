@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FileConflict,
   Host,
@@ -155,16 +155,34 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
     activeTabId: null,
   });
 
-  // Helper to get active pane for a side
+  // Use refs to access latest state without causing callback dependency changes
+  const leftTabsRef = useRef(leftTabs);
+  const rightTabsRef = useRef(rightTabs);
+  leftTabsRef.current = leftTabs;
+  rightTabsRef.current = rightTabs;
+
+  // Helper to get active pane for a side - uses ref to avoid dependency on state
   const getActivePane = useCallback((side: "left" | "right"): SftpPane | null => {
-    const sideTabs = side === "left" ? leftTabs : rightTabs;
+    const sideTabs = side === "left" ? leftTabsRef.current : rightTabsRef.current;
     if (!sideTabs.activeTabId) return null;
     return sideTabs.tabs.find((t) => t.id === sideTabs.activeTabId) || null;
-  }, [leftTabs, rightTabs]);
+  }, []); // Empty deps - uses refs for latest state
 
   // For backward compatibility - return active pane or a default empty pane-like object
-  const leftPane = getActivePane("left") || createEmptyPane(EMPTY_LEFT_PANE_ID);
-  const rightPane = getActivePane("right") || createEmptyPane(EMPTY_RIGHT_PANE_ID);
+  // These need to update when tabs change, so they depend on actual state
+  const leftPane = useMemo(() => {
+    const pane = leftTabs.activeTabId 
+      ? leftTabs.tabs.find((t) => t.id === leftTabs.activeTabId) 
+      : null;
+    return pane || createEmptyPane(EMPTY_LEFT_PANE_ID);
+  }, [leftTabs]);
+  
+  const rightPane = useMemo(() => {
+    const pane = rightTabs.activeTabId 
+      ? rightTabs.tabs.find((t) => t.id === rightTabs.activeTabId) 
+      : null;
+    return pane || createEmptyPane(EMPTY_RIGHT_PANE_ID);
+  }, [rightTabs]);
 
   // Helper to update a specific tab in a side
   const updateTab = useCallback(
@@ -178,14 +196,14 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
     [],
   );
 
-  // Helper to update active tab on a side
+  // Helper to update active tab on a side - uses ref to avoid dependency on state
   const updateActiveTab = useCallback(
     (side: "left" | "right", updater: (pane: SftpPane) => SftpPane) => {
-      const sideTabs = side === "left" ? leftTabs : rightTabs;
+      const sideTabs = side === "left" ? leftTabsRef.current : rightTabsRef.current;
       if (!sideTabs.activeTabId) return;
       updateTab(side, sideTabs.activeTabId, updater);
     },
-    [leftTabs, rightTabs, updateTab],
+    [updateTab],
   );
 
   // Tab management functions
@@ -205,30 +223,31 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
   const closeTab = useCallback(
     (side: "left" | "right", tabId: string) => {
       const setTabs = side === "left" ? setLeftTabs : setRightTabs;
-      const sideTabs = side === "left" ? leftTabs : rightTabs;
-      
-      // Find the tab to close
-      const tabIndex = sideTabs.tabs.findIndex((t) => t.id === tabId);
-      if (tabIndex === -1) return;
+      // Use functional update to access current state
+      setTabs((prev) => {
+        // Find the tab to close
+        const tabIndex = prev.tabs.findIndex((t) => t.id === tabId);
+        if (tabIndex === -1) return prev;
 
-      // Determine new active tab after closing
-      let newActiveTabId: string | null = null;
-      if (sideTabs.tabs.length > 1) {
-        if (sideTabs.activeTabId === tabId) {
-          // Select next tab, or previous if closing last
-          const nextIndex = tabIndex < sideTabs.tabs.length - 1 ? tabIndex + 1 : tabIndex - 1;
-          newActiveTabId = sideTabs.tabs[nextIndex]?.id || null;
-        } else {
-          newActiveTabId = sideTabs.activeTabId;
+        // Determine new active tab after closing
+        let newActiveTabId: string | null = null;
+        if (prev.tabs.length > 1) {
+          if (prev.activeTabId === tabId) {
+            // Select next tab, or previous if closing last
+            const nextIndex = tabIndex < prev.tabs.length - 1 ? tabIndex + 1 : tabIndex - 1;
+            newActiveTabId = prev.tabs[nextIndex]?.id || null;
+          } else {
+            newActiveTabId = prev.activeTabId;
+          }
         }
-      }
 
-      setTabs((prev) => ({
-        tabs: prev.tabs.filter((t) => t.id !== tabId),
-        activeTabId: newActiveTabId,
-      }));
+        return {
+          tabs: prev.tabs.filter((t) => t.id !== tabId),
+          activeTabId: newActiveTabId,
+        };
+      });
     },
-    [leftTabs, rightTabs],
+    [],
   );
 
   const selectTab = useCallback(
@@ -272,13 +291,55 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
     [],
   );
 
+  // Move a tab from one side to the other
+  const moveTabToOtherSide = useCallback(
+    (fromSide: "left" | "right", tabId: string) => {
+      const sourceTabs = fromSide === "left" ? leftTabsRef.current : rightTabsRef.current;
+      const setSourceTabs = fromSide === "left" ? setLeftTabs : setRightTabs;
+      const setTargetTabs = fromSide === "left" ? setRightTabs : setLeftTabs;
+
+      // Find the tab to move
+      const tabToMove = sourceTabs.tabs.find((t) => t.id === tabId);
+      if (!tabToMove) return;
+
+      logger.info("[SFTP] Moving tab to other side", {
+        fromSide,
+        toSide: fromSide === "left" ? "right" : "left",
+        tabId,
+        hostLabel: tabToMove.connection?.hostLabel,
+      });
+
+      // Remove from source
+      setSourceTabs((prev) => {
+        const newTabs = prev.tabs.filter((t) => t.id !== tabId);
+        let newActiveTabId: string | null = null;
+        if (newTabs.length > 0) {
+          if (prev.activeTabId === tabId) {
+            // Select the first remaining tab
+            newActiveTabId = newTabs[0].id;
+          } else {
+            newActiveTabId = prev.activeTabId;
+          }
+        }
+        return { tabs: newTabs, activeTabId: newActiveTabId };
+      });
+
+      // Add to target and make it active
+      setTargetTabs((prev) => ({
+        tabs: [...prev.tabs, tabToMove],
+        activeTabId: tabToMove.id,
+      }));
+    },
+    [],
+  );
+
   // Default label for tabs without a connection
   const DEFAULT_TAB_LABEL = "New Tab";
 
-  // Get tab info for tab bar display
+  // Get tab info for tab bar display - uses ref to avoid dependency
   const getTabsInfo = useCallback(
     (side: "left" | "right") => {
-      const sideTabs = side === "left" ? leftTabs : rightTabs;
+      const sideTabs = side === "left" ? leftTabsRef.current : rightTabsRef.current;
       return sideTabs.tabs.map((pane) => ({
         id: pane.id,
         label: pane.connection?.hostLabel || DEFAULT_TAB_LABEL,
@@ -286,14 +347,16 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
         hostId: pane.connection?.hostId || null,
       }));
     },
-    [leftTabs, rightTabs],
+    [],
   );
 
+  // getActiveTabId needs to trigger re-render when tab changes, so it depends on state
   const getActiveTabId = useCallback(
     (side: "left" | "right") => {
-      return side === "left" ? leftTabs.activeTabId : rightTabs.activeTabId;
+      const sideTabs = side === "left" ? leftTabsRef.current : rightTabsRef.current;
+      return sideTabs.activeTabId;
     },
-    [leftTabs.activeTabId, rightTabs.activeTabId],
+    [],
   );
 
   // Transfer management
@@ -414,7 +477,7 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
   const handleSessionError = useCallback(
     (side: "left" | "right", _error: Error) => {
       const pane = getActivePane(side);
-      const sideTabs = side === "left" ? leftTabs : rightTabs;
+      const sideTabs = side === "left" ? leftTabsRef.current : rightTabsRef.current;
 
       if (!pane || !sideTabs.activeTabId) return;
 
@@ -451,7 +514,7 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
         }));
       }
     },
-    [getActivePane, leftTabs, rightTabs, clearCacheForConnection, updateActiveTab],
+    [getActivePane, clearCacheForConnection, updateActiveTab],
   );
 
   // Cleanup on unmount
@@ -594,7 +657,7 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
       
       // Get current active tab ID, or create a new tab if none exists
       let activeTabId: string | null = null;
-      const sideTabs = side === "left" ? leftTabs : rightTabs;
+      const sideTabs = side === "left" ? leftTabsRef.current : rightTabsRef.current;
       
       if (!sideTabs.activeTabId) {
         // Create a new tab synchronously using functional state update
@@ -862,8 +925,6 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
     },
     [
       getHostCredentials,
-      leftTabs,
-      rightTabs,
       getActivePane,
       updateTab,
       clearCacheForConnection,
@@ -909,7 +970,7 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
   const disconnect = useCallback(
     async (side: "left" | "right") => {
       const pane = getActivePane(side);
-      const sideTabs = side === "left" ? leftTabs : rightTabs;
+      const sideTabs = side === "left" ? leftTabsRef.current : rightTabsRef.current;
       const activeTabId = sideTabs.activeTabId;
 
       if (!pane || !activeTabId) return;
@@ -939,7 +1000,7 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
 
       updateTab(side, activeTabId, () => createEmptyPane(activeTabId));
     },
-    [getActivePane, leftTabs, rightTabs, clearCacheForConnection, updateTab],
+    [getActivePane, clearCacheForConnection, updateTab],
   );
 
   // Mock local file data for development (when backend is not available)
@@ -1404,7 +1465,7 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
       console.log("[SFTP navigateTo] called", { side, path, force: options?.force });
       
       const pane = getActivePane(side);
-      const sideTabs = side === "left" ? leftTabs : rightTabs;
+      const sideTabs = side === "left" ? leftTabsRef.current : rightTabsRef.current;
       const activeTabId = sideTabs.activeTabId;
 
       console.log("[SFTP navigateTo] state check", { 
@@ -1521,8 +1582,6 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
     },
     [
       getActivePane,
-      leftTabs,
-      rightTabs,
       updateTab,
       makeCacheKey,
       clearCacheForConnection,
@@ -2379,9 +2438,9 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
   }, []);
 
   // Get active transfers count
-  const activeTransfersCount = transfers.filter(
+  const activeTransfersCount = useMemo(() => transfers.filter(
     (t) => t.status === "pending" || t.status === "transferring",
-  ).length;
+  ).length, [transfers]);
 
   // Change file permissions (SFTP only)
   const changePermissions = useCallback(
@@ -2416,65 +2475,140 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
     [getActivePane, refresh, handleSessionError],
   );
 
-  return {
-    // Panes (backward compatible - returns active tab's pane)
-    leftPane,
-    rightPane,
+  // Store methods in a ref to create stable wrapper functions
+  // This prevents callback reference changes from causing re-renders in consumers
+  const methodsRef = useRef({
     getFilteredFiles,
-
-    // Multi-tab management
-    leftTabs,
-    rightTabs,
     addTab,
     closeTab,
     selectTab,
     reorderTabs,
+    moveTabToOtherSide,
     getTabsInfo,
     getActiveTabId,
     getActivePane,
-
-    // Connection
     connect,
     disconnect,
-
-    // Navigation
     navigateTo,
     navigateUp,
     refresh,
     openEntry,
-
-    // Selection
     toggleSelection,
     rangeSelect,
     clearSelection,
     selectAll,
     setFilter,
-
-    // File operations
     createDirectory,
     deleteFiles,
     renameFile,
     changePermissions,
-
-    // Transfers
-    transfers,
-    activeTransfersCount,
     startTransfer,
     cancelTransfer,
     retryTransfer,
     clearCompletedTransfers,
     dismissTransfer,
-
-    // Conflicts
-    conflicts,
     resolveConflict,
+  });
+  methodsRef.current = {
+    getFilteredFiles,
+    addTab,
+    closeTab,
+    selectTab,
+    reorderTabs,
+    moveTabToOtherSide,
+    getTabsInfo,
+    getActiveTabId,
+    getActivePane,
+    connect,
+    disconnect,
+    navigateTo,
+    navigateUp,
+    refresh,
+    openEntry,
+    toggleSelection,
+    rangeSelect,
+    clearSelection,
+    selectAll,
+    setFilter,
+    createDirectory,
+    deleteFiles,
+    renameFile,
+    changePermissions,
+    startTransfer,
+    cancelTransfer,
+    retryTransfer,
+    clearCompletedTransfers,
+    dismissTransfer,
+    resolveConflict,
+  };
 
-    // Helpers
+  // Create stable method wrappers that call through methodsRef
+  // These are created once and never change reference
+  const stableMethods = useMemo(() => ({
+    getFilteredFiles: (...args: Parameters<typeof getFilteredFiles>) => methodsRef.current.getFilteredFiles(...args),
+    addTab: (...args: Parameters<typeof addTab>) => methodsRef.current.addTab(...args),
+    closeTab: (...args: Parameters<typeof closeTab>) => methodsRef.current.closeTab(...args),
+    selectTab: (...args: Parameters<typeof selectTab>) => methodsRef.current.selectTab(...args),
+    reorderTabs: (...args: Parameters<typeof reorderTabs>) => methodsRef.current.reorderTabs(...args),
+    moveTabToOtherSide: (...args: Parameters<typeof moveTabToOtherSide>) => methodsRef.current.moveTabToOtherSide(...args),
+    getTabsInfo: (...args: Parameters<typeof getTabsInfo>) => methodsRef.current.getTabsInfo(...args),
+    getActiveTabId: (...args: Parameters<typeof getActiveTabId>) => methodsRef.current.getActiveTabId(...args),
+    getActivePane: (...args: Parameters<typeof getActivePane>) => methodsRef.current.getActivePane(...args),
+    connect: (...args: Parameters<typeof connect>) => methodsRef.current.connect(...args),
+    disconnect: (...args: Parameters<typeof disconnect>) => methodsRef.current.disconnect(...args),
+    navigateTo: (...args: Parameters<typeof navigateTo>) => methodsRef.current.navigateTo(...args),
+    navigateUp: (...args: Parameters<typeof navigateUp>) => methodsRef.current.navigateUp(...args),
+    refresh: (...args: Parameters<typeof refresh>) => methodsRef.current.refresh(...args),
+    openEntry: (...args: Parameters<typeof openEntry>) => methodsRef.current.openEntry(...args),
+    toggleSelection: (...args: Parameters<typeof toggleSelection>) => methodsRef.current.toggleSelection(...args),
+    rangeSelect: (...args: Parameters<typeof rangeSelect>) => methodsRef.current.rangeSelect(...args),
+    clearSelection: (...args: Parameters<typeof clearSelection>) => methodsRef.current.clearSelection(...args),
+    selectAll: (...args: Parameters<typeof selectAll>) => methodsRef.current.selectAll(...args),
+    setFilter: (...args: Parameters<typeof setFilter>) => methodsRef.current.setFilter(...args),
+    createDirectory: (...args: Parameters<typeof createDirectory>) => methodsRef.current.createDirectory(...args),
+    deleteFiles: (...args: Parameters<typeof deleteFiles>) => methodsRef.current.deleteFiles(...args),
+    renameFile: (...args: Parameters<typeof renameFile>) => methodsRef.current.renameFile(...args),
+    changePermissions: (...args: Parameters<typeof changePermissions>) => methodsRef.current.changePermissions(...args),
+    startTransfer: (...args: Parameters<typeof startTransfer>) => methodsRef.current.startTransfer(...args),
+    cancelTransfer: (...args: Parameters<typeof cancelTransfer>) => methodsRef.current.cancelTransfer(...args),
+    retryTransfer: (...args: Parameters<typeof retryTransfer>) => methodsRef.current.retryTransfer(...args),
+    clearCompletedTransfers: () => methodsRef.current.clearCompletedTransfers(),
+    dismissTransfer: (...args: Parameters<typeof dismissTransfer>) => methodsRef.current.dismissTransfer(...args),
+    resolveConflict: (...args: Parameters<typeof resolveConflict>) => methodsRef.current.resolveConflict(...args),
+  }), []); // Empty deps - these wrappers never change
+
+  // Return object with stable method references but reactive state
+  // State changes will cause re-renders, but method references stay stable
+  return useMemo(() => ({
+    // Reactive state - changes trigger re-renders
+    leftPane,
+    rightPane,
+    leftTabs,
+    rightTabs,
+    transfers,
+    activeTransfersCount,
+    conflicts,
+
+    // Stable methods - never change reference
+    ...stableMethods,
+
+    // Pure helper functions (these are defined at module level, always stable)
     formatFileSize,
     formatDate,
     getFileExtension,
     joinPath,
     getParentPath,
     getFileName,
-  };
+  }), [
+    // Only state in deps - methods come from stableMethods which is stable
+    leftPane,
+    rightPane,
+    leftTabs,
+    rightTabs,
+    transfers,
+    activeTransfersCount,
+    conflicts,
+    stableMethods,
+  ]);
 };
+

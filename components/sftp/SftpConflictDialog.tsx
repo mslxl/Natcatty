@@ -3,7 +3,7 @@
  */
 
 import { AlertCircle } from 'lucide-react';
-import React,{ useState } from 'react';
+import React, { memo, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { Button } from '../ui/button';
 import { Dialog,DialogContent,DialogDescription,DialogFooter,DialogHeader,DialogTitle } from '../ui/dialog';
@@ -25,7 +25,7 @@ interface SftpConflictDialogProps {
     formatFileSize: (size: number) => string;
 }
 
-export const SftpConflictDialog: React.FC<SftpConflictDialogProps> = ({ conflicts, onResolve, formatFileSize }) => {
+const SftpConflictDialogInner: React.FC<SftpConflictDialogProps> = ({ conflicts, onResolve, formatFileSize }) => {
     const { t } = useI18n();
     const [applyToAll, setApplyToAll] = useState(false);
     const conflict = conflicts[0]; // Handle first conflict
@@ -135,3 +135,6 @@ export const SftpConflictDialog: React.FC<SftpConflictDialogProps> = ({ conflict
         </Dialog>
     );
 };
+
+export const SftpConflictDialog = memo(SftpConflictDialogInner);
+SftpConflictDialog.displayName = 'SftpConflictDialog';

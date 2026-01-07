@@ -3,7 +3,7 @@
  */
 
 import { Monitor, Search } from 'lucide-react';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { Host } from '../../types';
 import { DistroAvatar } from '../DistroAvatar';
@@ -22,7 +22,7 @@ interface SftpHostPickerProps {
     onSelectHost: (host: Host) => void;
 }
 
-export const SftpHostPicker: React.FC<SftpHostPickerProps> = ({
+const SftpHostPickerInner: React.FC<SftpHostPickerProps> = ({
     open,
     onOpenChange,
     hosts,
@@ -178,3 +178,6 @@ export const SftpHostPicker: React.FC<SftpHostPickerProps> = ({
         </Dialog>
     );
 };
+
+export const SftpHostPicker = memo(SftpHostPickerInner);
+SftpHostPicker.displayName = 'SftpHostPicker';
