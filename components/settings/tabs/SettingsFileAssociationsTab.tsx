@@ -8,8 +8,8 @@ import { useSftpFileAssociations } from "../../../application/state/useSftpFileA
 import { useSettingsState } from "../../../application/state/useSettingsState";
 import type { FileOpenerType, SystemAppInfo } from "../../../lib/sftpFileUtils";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
+import { cn } from "../../../lib/utils";
 import { Button } from "../../ui/button";
-import { RadioGroup, RadioGroupItem } from "../../ui/radio-group";
 import { Label } from "../../ui/label";
 import { SectionHeader, SettingsTabContent } from "../settings-ui";
 
@@ -69,34 +69,68 @@ export default function SettingsFileAssociationsTab() {
           <p className="text-sm text-muted-foreground">
             {t('settings.sftp.doubleClickBehavior.desc')}
           </p>
-          <RadioGroup
-            value={sftpDoubleClickBehavior}
-            onValueChange={(value) => setSftpDoubleClickBehavior(value as 'open' | 'transfer')}
-            className="space-y-3"
-          >
-            <div className="flex items-start space-x-3 space-y-0">
-              <RadioGroupItem value="open" id="sftp-behavior-open" />
-              <div className="space-y-1 leading-none">
-                <Label htmlFor="sftp-behavior-open" className="font-medium cursor-pointer">
-                  {t('settings.sftp.doubleClickBehavior.open')}
-                </Label>
-                <p className="text-sm text-muted-foreground">
-                  {t('settings.sftp.doubleClickBehavior.openDesc')}
-                </p>
+          <div className="space-y-3">
+            <button
+              onClick={() => setSftpDoubleClickBehavior('open')}
+              className={cn(
+                "w-full text-left p-4 rounded-lg border-2 transition-colors",
+                sftpDoubleClickBehavior === 'open'
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:border-primary/50 hover:bg-secondary/50"
+              )}
+            >
+              <div className="flex items-start gap-3">
+                <div className={cn(
+                  "h-5 w-5 rounded-full border-2 flex items-center justify-center mt-0.5 shrink-0",
+                  sftpDoubleClickBehavior === 'open'
+                    ? "border-primary"
+                    : "border-muted-foreground/30"
+                )}>
+                  {sftpDoubleClickBehavior === 'open' && (
+                    <div className="h-2.5 w-2.5 rounded-full bg-primary" />
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <Label className="font-medium cursor-pointer">
+                    {t('settings.sftp.doubleClickBehavior.open')}
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    {t('settings.sftp.doubleClickBehavior.openDesc')}
+                  </p>
+                </div>
               </div>
-            </div>
-            <div className="flex items-start space-x-3 space-y-0">
-              <RadioGroupItem value="transfer" id="sftp-behavior-transfer" />
-              <div className="space-y-1 leading-none">
-                <Label htmlFor="sftp-behavior-transfer" className="font-medium cursor-pointer">
-                  {t('settings.sftp.doubleClickBehavior.transfer')}
-                </Label>
-                <p className="text-sm text-muted-foreground">
-                  {t('settings.sftp.doubleClickBehavior.transferDesc')}
-                </p>
+            </button>
+            <button
+              onClick={() => setSftpDoubleClickBehavior('transfer')}
+              className={cn(
+                "w-full text-left p-4 rounded-lg border-2 transition-colors",
+                sftpDoubleClickBehavior === 'transfer'
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:border-primary/50 hover:bg-secondary/50"
+              )}
+            >
+              <div className="flex items-start gap-3">
+                <div className={cn(
+                  "h-5 w-5 rounded-full border-2 flex items-center justify-center mt-0.5 shrink-0",
+                  sftpDoubleClickBehavior === 'transfer'
+                    ? "border-primary"
+                    : "border-muted-foreground/30"
+                )}>
+                  {sftpDoubleClickBehavior === 'transfer' && (
+                    <div className="h-2.5 w-2.5 rounded-full bg-primary" />
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <Label className="font-medium cursor-pointer">
+                    {t('settings.sftp.doubleClickBehavior.transfer')}
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    {t('settings.sftp.doubleClickBehavior.transferDesc')}
+                  </p>
+                </div>
               </div>
-            </div>
-          </RadioGroup>
+            </button>
+          </div>
         </div>
 
         {/* File associations section */}
