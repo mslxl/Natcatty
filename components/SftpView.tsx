@@ -565,67 +565,58 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
       onDragLeave={handlePaneDragLeave}
       onDrop={handlePaneDrop}
     >
-      {/* Header */}
-      <div className="h-12 px-4 border-b border-border/60 flex items-center gap-3">
-        <div className="flex items-center gap-2 text-sm font-semibold">
+      {/* Header - compact version */}
+      <div className="h-8 px-3 border-b border-border/60 flex items-center gap-2">
+        <div className="flex items-center gap-1.5 text-xs font-medium">
           {pane.connection.isLocal ? (
-            <Monitor size={14} />
+            <Monitor size={12} />
           ) : (
-            <HardDrive size={14} />
+            <HardDrive size={12} />
           )}
           <span>{pane.connection.hostLabel}</span>
           {(pane.connection.status === "connecting" || pane.reconnecting) && (
-            <Loader2 size={12} className="animate-spin text-muted-foreground" />
+            <Loader2 size={10} className="animate-spin text-muted-foreground" />
           )}
           {pane.reconnecting && (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-[10px] text-muted-foreground">
               Reconnecting...
             </span>
           )}
           {pane.connection.status === "error" && !pane.reconnecting && (
-            <AlertCircle size={12} className="text-destructive" />
+            <AlertCircle size={10} className="text-destructive" />
           )}
         </div>
-
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-8 px-3"
-          onClick={() => setShowHostPicker(true)}
-        >
-          <RefreshCw size={12} className="mr-1" /> Change
-        </Button>
 
         <div className="flex items-center gap-1 ml-auto">
           <div className="relative">
             <Search
-              size={14}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+              size={12}
+              className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground"
             />
             <Input
               value={pane.filter}
               onChange={(e) => onSetFilter(e.target.value)}
               placeholder="Filter..."
-              className="h-8 w-36 pl-8 pr-7 text-xs bg-secondary/40"
+              className="h-6 w-28 pl-6 pr-5 text-[10px] bg-secondary/40"
             />
             {pane.filter && (
               <button
                 onClick={() => onSetFilter("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
-                <X size={12} />
+                <X size={10} />
               </button>
             )}
           </div>
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8"
+            className="h-6 w-6"
             onClick={onRefresh}
             title={t("common.refresh")}
           >
             <RefreshCw
-              size={14}
+              size={12}
               className={
                 pane.loading || pane.reconnecting ? "animate-spin" : ""
               }
@@ -634,16 +625,16 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
         </div>
       </div>
 
-      {/* Toolbar */}
-      <div className="h-10 px-4 flex items-center gap-2 border-b border-border/40 bg-secondary/20">
+      {/* Toolbar - compact */}
+      <div className="h-7 px-2 flex items-center gap-1 border-b border-border/40 bg-secondary/20">
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7"
+          className="h-5 w-5"
           onClick={onNavigateUp}
           title={t("sftp.goUp")}
         >
-          <ChevronLeft size={14} />
+          <ChevronLeft size={12} />
         </Button>
 
         {/* Editable Breadcrumb with autocomplete */}
@@ -660,7 +651,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
               onBlur={handlePathBlur}
               onKeyDown={handlePathKeyDown}
               onFocus={() => setShowPathSuggestions(true)}
-              className="h-7 w-full text-xs bg-background"
+              className="h-5 w-full text-[10px] bg-background"
               autoFocus
             />
             {showPathSuggestions && pathSuggestions.length > 0 && (

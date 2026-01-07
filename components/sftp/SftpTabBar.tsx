@@ -20,7 +20,6 @@ import React, {
 } from "react";
 import { useI18n } from "../../application/i18n/I18nProvider";
 import { cn } from "../../lib/utils";
-import { Button } from "../ui/button";
 
 export interface SftpTab {
   id: string;
@@ -178,7 +177,7 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
   );
 
   return (
-    <div className="flex items-center gap-1 h-8 px-2 border-b border-border/60 bg-secondary/30">
+    <div className="flex items-stretch h-8 bg-secondary/30">
       {/* Scrollable tabs container */}
       <div className="relative flex-1 min-w-0 flex">
         {/* Left fade mask */}
@@ -194,7 +193,7 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
 
         <div
           ref={tabsContainerRef}
-          className="flex items-center gap-1 overflow-x-auto scrollbar-none max-w-full"
+          className="flex items-stretch overflow-x-auto scrollbar-none max-w-full"
           style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
         >
           {tabs.map((tab) => {
@@ -219,21 +218,21 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
                 onDragOver={(e) => handleTabDragOver(e, tab.id)}
                 onDrop={(e) => handleTabDrop(e, tab.id)}
                 className={cn(
-                  "relative h-6 pl-2 pr-1 min-w-[100px] max-w-[160px] rounded-md border text-xs font-medium cursor-pointer flex items-center justify-between gap-1 flex-shrink-0",
-                  "transition-all duration-200 ease-out",
+                  "relative px-3 min-w-[100px] max-w-[180px] text-xs font-medium cursor-pointer flex items-center justify-between gap-2 flex-shrink-0 border-r border-border/40",
+                  "transition-all duration-150 ease-out",
                   isActive
-                    ? "bg-accent/20 text-foreground border-accent"
-                    : "border-border/60 text-muted-foreground hover:border-accent/40 hover:text-foreground",
+                    ? "text-foreground border-b-2 border-b-accent"
+                    : "text-muted-foreground hover:text-foreground border-b-2 border-b-transparent",
                   isBeingDragged ? "opacity-40 scale-95" : "",
                 )}
               >
                 {/* Drop indicator line - before */}
                 {showDropIndicatorBefore && isDragging && (
-                  <div className="absolute -left-1 top-1 bottom-1 w-0.5 bg-primary rounded-full shadow-[0_0_8px_2px] shadow-primary/50 animate-pulse" />
+                  <div className="absolute left-0 top-1 bottom-1 w-0.5 bg-primary shadow-[0_0_8px_2px] shadow-primary/50 animate-pulse" />
                 )}
                 {/* Drop indicator line - after */}
                 {showDropIndicatorAfter && isDragging && (
-                  <div className="absolute -right-1 top-1 bottom-1 w-0.5 bg-primary rounded-full shadow-[0_0_8px_2px] shadow-primary/50 animate-pulse" />
+                  <div className="absolute right-0 top-1 bottom-1 w-0.5 bg-primary shadow-[0_0_8px_2px] shadow-primary/50 animate-pulse" />
                 )}
 
                 <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -259,10 +258,10 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
 
                 <button
                   onClick={(e) => handleCloseTab(e, tab.id)}
-                  className="p-0.5 rounded-full hover:bg-destructive/10 hover:text-destructive transition-colors shrink-0"
+                  className="p-0.5 hover:bg-destructive/10 hover:text-destructive transition-colors shrink-0"
                   aria-label={t("common.close")}
                 >
-                  <X size={10} />
+                  <X size={12} />
                 </button>
               </div>
             );
@@ -282,15 +281,13 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
       </div>
 
       {/* Add tab button */}
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-6 w-6 shrink-0"
+      <button
+        className="px-2 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors border-l border-border/40"
         onClick={onAddTab}
         title={t("sftp.tabs.addTab")}
       >
         <Plus size={14} />
-      </Button>
+      </button>
     </div>
   );
 };

@@ -556,14 +556,24 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
   );
 
   // Connect to a host - connects in the active tab of the specified side
+  // If there's no active tab, creates one first
   const connect = useCallback(
     async (side: "left" | "right", host: Host | "local") => {
-      const sideTabs = side === "left" ? leftTabs : rightTabs;
+      let sideTabs = side === "left" ? leftTabs : rightTabs;
+      let activeTabId = sideTabs.activeTabId;
+      
+      // If there's no active tab, create one first
+      if (!activeTabId) {
+        const setTabs = side === "left" ? setLeftTabs : setRightTabs;
+        const newPane = createEmptyPane();
+        setTabs((prev) => ({
+          tabs: [...prev.tabs, newPane],
+          activeTabId: newPane.id,
+        }));
+        activeTabId = newPane.id;
+      }
+      
       const currentPane = getActivePane(side);
-      const activeTabId = sideTabs.activeTabId;
-      
-      if (!activeTabId) return;
-      
       const connectionId = `${side}-${Date.now()}`;
 
       // Invalidate any pending navigation for this side
