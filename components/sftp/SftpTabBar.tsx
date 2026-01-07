@@ -287,7 +287,7 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
 
       {/* Add tab button */}
       <button
-        className="px-2 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors border-l border-border/40"
+        className="px-2 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-[linear-gradient(135deg,_hsl(var(--accent)_/_0.18),_hsl(var(--primary)_/_0.18))] transition-all duration-150 border-l border-border/40 cursor-pointer"
         onClick={onAddTab}
         title={t("sftp.tabs.addTab")}
       >
