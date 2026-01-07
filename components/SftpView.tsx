@@ -804,7 +804,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
           />
         </ContextMenuTrigger>
         {entry.name !== ".." && (
-            <ContextMenuContent>
+          <ContextMenuContent>
             <ContextMenuItem onClick={() => handleRowOpen(entry)}>
               {isNavigableDirectory(entry) ? (
                 <>
@@ -1477,7 +1477,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
   // without needing to re-create when sftp changes
   const sftpRef = useRef(sftp);
   sftpRef.current = sftp;
-  
+
   // Store behavior setting in ref for stable callbacks
   const behaviorRef = useRef(sftpDoubleClickBehavior);
   behaviorRef.current = sftpDoubleClickBehavior;
@@ -1856,13 +1856,13 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
   const handleOpenEntryLeft = useCallback(
     (entry: SftpFileEntry) => {
       const isDir = isNavigableDirectory(entry);
-      
+
       // Always navigate into directories
       if (entry.name === ".." || isDir) {
         sftpRef.current.openEntry("left", entry);
         return;
       }
-      
+
       // For files, check the behavior setting
       if (behaviorRef.current === 'transfer') {
         // Transfer to other pane
@@ -1878,17 +1878,17 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
     },
     [handleOpenFileLeft],
   );
-  
+
   const handleOpenEntryRight = useCallback(
     (entry: SftpFileEntry) => {
       const isDir = isNavigableDirectory(entry);
-      
+
       // Always navigate into directories
       if (entry.name === ".." || isDir) {
         sftpRef.current.openEntry("right", entry);
         return;
       }
-      
+
       // For files, check the behavior setting
       if (behaviorRef.current === 'transfer') {
         // Transfer to other pane
