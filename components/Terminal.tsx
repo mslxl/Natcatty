@@ -927,7 +927,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
             ref={containerRef}
             className="absolute inset-x-0 bottom-0"
             style={{
-              top: isSearchOpen ? "64px" : "40px",
+              top: isSearchOpen ? "64px" : "30px",
               paddingLeft: 6,
               backgroundColor: effectiveTheme.colors.background,
             }}

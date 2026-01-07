@@ -468,6 +468,7 @@ export interface RemoteFile {
   size: string;
   lastModified: string;
   linkTarget?: 'file' | 'directory' | null; // For symlinks: the type of the target, or null if broken
+  permissions?: string; // rwx format for owner/group/others e.g. "rwxr-xr-x"
 }
 
 export type WorkspaceNode =

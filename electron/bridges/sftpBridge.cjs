@@ -161,6 +161,9 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
       console.log(`[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}: Connecting to ${hopLabel}...`);
       
       const conn = new SSHClient();
+      // Increase max listeners to prevent Node.js warning
+      // Set to 0 (unlimited) since complex operations add many temp listeners
+      conn.setMaxListeners(0);
       
       // Build connection options
       const connOpts = {
@@ -362,6 +365,14 @@ async function openSftp(event, options) {
   
   try {
     await client.connect(connectOpts);
+    
+    // Increase max listeners AFTER connect, when the internal ssh2 Client exists
+    // This prevents Node.js MaxListenersExceededWarning when performing many operations
+    // ssh2-sftp-client adds temporary listeners for each operation, so we need a high limit
+    if (client.client && typeof client.client.setMaxListeners === 'function') {
+      client.client.setMaxListeners(0); // 0 means unlimited
+    }
+    
     sftpClients.set(connId, client);
     
     // Store jump connections for cleanup when SFTP is closed
@@ -422,12 +433,26 @@ async function listSftp(event, payload) {
       type = "file";
     }
     
+    // Extract permissions from longname or rights
+    let permissions = undefined;
+    if (item.rights) {
+      // ssh2-sftp-client returns rights object with user/group/other
+      permissions = `${item.rights.user || '---'}${item.rights.group || '---'}${item.rights.other || '---'}`;
+    } else if (item.longname) {
+      // Fallback: parse from longname (e.g., "-rwxr-xr-x 1 root root ...")
+      const match = item.longname.match(/^[dlsbc-]([rwxsStT-]{9})/);
+      if (match) {
+        permissions = match[1];
+      }
+    }
+    
     return {
       name: item.name,
       type,
       linkTarget,
       size: `${item.size} bytes`,
       lastModified: new Date(item.modifyTime || Date.now()).toISOString(),
+      permissions,
     };
   }));
   

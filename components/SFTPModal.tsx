@@ -3,6 +3,7 @@ import {
   ChevronRight,
   Database,
   Download,
+  Edit2,
   ExternalLink,
   File,
   FileArchive,
@@ -23,6 +24,7 @@ import {
   Plus,
   RefreshCw,
   Settings,
+  Shield,
   Terminal,
   Trash2,
   Upload,
@@ -31,6 +33,7 @@ import {
 import React, {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -49,7 +52,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "./ui/context-menu";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
 
 // Comprehensive file icon helper
@@ -280,6 +283,9 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     writeSftp,
     deleteSftp,
     mkdirSftp,
+    renameSftp,
+    chmodSftp,
+    statSftp,
     listLocalDir,
     readLocalFile,
     writeLocalFile,
@@ -302,6 +308,29 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   const navigatingRef = useRef(false);
   const lastSelectedIndexRef = useRef<number | null>(null);
   const localHomeRef = useRef<string | null>(null);
+
+  // Rename dialog state
+  const [showRenameDialog, setShowRenameDialog] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<RemoteFile | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [isRenaming, setIsRenaming] = useState(false);
+
+  // Permissions dialog state
+  const [showPermissionsDialog, setShowPermissionsDialog] = useState(false);
+  const [permissionsTarget, setPermissionsTarget] = useState<RemoteFile | null>(null);
+  const [permissions, setPermissions] = useState({
+    owner: { read: false, write: false, execute: false },
+    group: { read: false, write: false, execute: false },
+    others: { read: false, write: false, execute: false },
+  });
+  const [isChangingPermissions, setIsChangingPermissions] = useState(false);
+
+  // Virtual scrolling refs and state
+  const fileListRef = useRef<HTMLDivElement>(null);
+  const scrollFrameRef = useRef<number | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [rowHeight, setRowHeight] = useState(40); // Default row height estimate
 
   // Directory listing cache + load sequence to avoid stale updates
   const DIR_CACHE_TTL_MS = 10_000;
@@ -844,6 +873,170 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     }
   };
 
+  // Open rename dialog
+  const openRenameDialog = useCallback((file: RemoteFile) => {
+    setRenameTarget(file);
+    setRenameName(file.name);
+    setShowRenameDialog(true);
+  }, []);
+
+  // Handle rename
+  const handleRename = async () => {
+    if (!renameTarget || !renameName.trim() || isRenaming) return;
+    if (renameName.trim() === renameTarget.name) {
+      setShowRenameDialog(false);
+      return;
+    }
+    setIsRenaming(true);
+    try {
+      const oldPath = joinPath(currentPath, renameTarget.name);
+      const newPath = joinPath(currentPath, renameName.trim());
+      if (isLocalSession) {
+        // For local, use renameLocalFile if available, otherwise show error
+        toast.error("Local rename not implemented", "SFTP");
+      } else {
+        await renameSftp(await ensureSftp(), oldPath, newPath);
+      }
+      setShowRenameDialog(false);
+      setRenameTarget(null);
+      setRenameName("");
+      await loadFiles(currentPath, { force: true });
+    } catch (e) {
+      toast.error(
+        e instanceof Error ? e.message : t("sftp.error.renameFailed"),
+        "SFTP",
+      );
+    } finally {
+      setIsRenaming(false);
+    }
+  };
+
+  // Parse permissions string to object
+  // Supports both symbolic format (rwxr-xr-x) and octal format (755)
+  const parsePermissions = useCallback((perms: string | undefined) => {
+    const defaultPerms = {
+      owner: { read: false, write: false, execute: false },
+      group: { read: false, write: false, execute: false },
+      others: { read: false, write: false, execute: false },
+    };
+    if (!perms) return defaultPerms;
+    
+    // Check if it's octal format (e.g., "755", "644")
+    if (/^[0-7]{3,4}$/.test(perms)) {
+      const octal = perms.length === 4 ? perms.slice(1) : perms;
+      const ownerBits = parseInt(octal[0], 10);
+      const groupBits = parseInt(octal[1], 10);
+      const othersBits = parseInt(octal[2], 10);
+      return {
+        owner: {
+          read: (ownerBits & 4) !== 0,
+          write: (ownerBits & 2) !== 0,
+          execute: (ownerBits & 1) !== 0,
+        },
+        group: {
+          read: (groupBits & 4) !== 0,
+          write: (groupBits & 2) !== 0,
+          execute: (groupBits & 1) !== 0,
+        },
+        others: {
+          read: (othersBits & 4) !== 0,
+          write: (othersBits & 2) !== 0,
+          execute: (othersBits & 1) !== 0,
+        },
+      };
+    }
+    
+    // Handle symbolic rwxrwxrwx format
+    const pStr = perms.length === 10 ? perms.slice(1) : perms;
+    if (pStr.length >= 9) {
+      return {
+        owner: {
+          read: pStr[0] === 'r',
+          write: pStr[1] === 'w',
+          execute: pStr[2] === 'x' || pStr[2] === 's',
+        },
+        group: {
+          read: pStr[3] === 'r',
+          write: pStr[4] === 'w',
+          execute: pStr[5] === 'x' || pStr[5] === 's',
+        },
+        others: {
+          read: pStr[6] === 'r',
+          write: pStr[7] === 'w',
+          execute: pStr[8] === 'x' || pStr[8] === 't',
+        },
+      };
+    }
+    return defaultPerms;
+  }, []);
+
+  // Open permissions dialog
+  const openPermissionsDialog = useCallback(async (file: RemoteFile) => {
+    if (isLocalSession) {
+      toast.error("Permissions not available for local files", "SFTP");
+      return;
+    }
+    setPermissionsTarget(file);
+    
+    // Always fetch fresh permissions via stat for accuracy
+    let permsStr = file.permissions;
+    try {
+      const fullPath = joinPath(currentPath, file.name);
+      const stat = await statSftp(await ensureSftp(), fullPath);
+      if (stat.permissions) {
+        permsStr = stat.permissions;
+      }
+    } catch (e) {
+      console.warn("Failed to fetch file permissions:", e);
+    }
+    
+    setPermissions(parsePermissions(permsStr));
+    setShowPermissionsDialog(true);
+  }, [isLocalSession, currentPath, joinPath, statSftp, parsePermissions, ensureSftp]);
+
+  // Toggle permission
+  const togglePermission = useCallback((role: 'owner' | 'group' | 'others', perm: 'read' | 'write' | 'execute') => {
+    setPermissions(prev => ({
+      ...prev,
+      [role]: { ...prev[role], [perm]: !prev[role][perm] }
+    }));
+  }, []);
+
+  // Get octal permissions string
+  const getOctalPermissions = useCallback(() => {
+    const getNum = (p: { read: boolean; write: boolean; execute: boolean }) =>
+      (p.read ? 4 : 0) + (p.write ? 2 : 0) + (p.execute ? 1 : 0);
+    return `${getNum(permissions.owner)}${getNum(permissions.group)}${getNum(permissions.others)}`;
+  }, [permissions]);
+
+  // Get symbolic permissions string
+  const getSymbolicPermissions = useCallback(() => {
+    const getSym = (p: { read: boolean; write: boolean; execute: boolean }) =>
+      `${p.read ? 'r' : '-'}${p.write ? 'w' : '-'}${p.execute ? 'x' : '-'}`;
+    return getSym(permissions.owner) + getSym(permissions.group) + getSym(permissions.others);
+  }, [permissions]);
+
+  // Handle permissions save
+  const handleSavePermissions = async () => {
+    if (!permissionsTarget || isChangingPermissions) return;
+    setIsChangingPermissions(true);
+    try {
+      const fullPath = joinPath(currentPath, permissionsTarget.name);
+      await chmodSftp(await ensureSftp(), fullPath, getOctalPermissions());
+      setShowPermissionsDialog(false);
+      setPermissionsTarget(null);
+      await loadFiles(currentPath, { force: true });
+      toast.success(t("sftp.permissions.success"), "SFTP");
+    } catch (e) {
+      toast.error(
+        e instanceof Error ? e.message : t("sftp.permissions.failed"),
+        "SFTP",
+      );
+    } finally {
+      setIsChangingPermissions(false);
+    }
+  };
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       handleUploadMultiple(e.target.files);
@@ -878,9 +1071,31 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     onClose();
   };
 
+  // Display files with parent entry (like SftpView)
+  const displayFiles = useMemo(() => {
+    // Check if we're at root
+    const atRoot = isRootPath(currentPath);
+    if (atRoot) return files;
+    
+    // Add ".." parent directory entry at the top (only if not at root)
+    const parentEntry: RemoteFile = {
+      name: "..",
+      type: "directory",
+      size: "--",
+      lastModified: undefined,
+    };
+    return [parentEntry, ...files.filter((f) => f.name !== "..")];
+  }, [files, currentPath, isRootPath]);
+
   // Sorted files
   const sortedFiles = useMemo(() => {
-    return [...files].sort((a, b) => {
+    if (!displayFiles.length) return displayFiles;
+    
+    // Keep ".." at the top, sort the rest
+    const parentEntry = displayFiles.find((f) => f.name === "..");
+    const otherFiles = displayFiles.filter((f) => f.name !== "..");
+    
+    const sorted = [...otherFiles].sort((a, b) => {
       // Directories and symlinks pointing to directories come first
       const aIsDir = a.type === "directory" || (a.type === "symlink" && a.linkTarget === "directory");
       const bIsDir = b.type === "directory" || (b.type === "symlink" && b.linkTarget === "directory");
@@ -913,7 +1128,92 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       }
       return sortOrder === "asc" ? cmp : -cmp;
     });
-  }, [files, sortField, sortOrder]);
+    
+    return parentEntry ? [parentEntry, ...sorted] : sorted;
+  }, [displayFiles, sortField, sortOrder]);
+
+  // Virtual scrolling: measure viewport and row height
+  useLayoutEffect(() => {
+    const container = fileListRef.current;
+    if (!container || !open) return;
+    const update = () => setViewportHeight(container.clientHeight);
+    update();
+    const raf = window.requestAnimationFrame(update);
+    const resizeObserver = new ResizeObserver(update);
+    resizeObserver.observe(container);
+    return () => {
+      resizeObserver.disconnect();
+      window.cancelAnimationFrame(raf);
+    };
+  }, [open, sortedFiles.length]);
+
+  useLayoutEffect(() => {
+    const container = fileListRef.current;
+    if (!container || !open || sortedFiles.length === 0) return;
+    const raf = window.requestAnimationFrame(() => {
+      const rowElement = container.querySelector(
+        '[data-sftp-modal-row="true"]',
+      ) as HTMLElement | null;
+      if (!rowElement) return;
+      const nextHeight = Math.round(rowElement.getBoundingClientRect().height);
+      if (nextHeight && Math.abs(nextHeight - rowHeight) > 1) {
+        setRowHeight(nextHeight);
+      }
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [open, sortedFiles.length, rowHeight]);
+
+  // Cleanup scroll frame on unmount
+  useEffect(() => {
+    return () => {
+      if (scrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollFrameRef.current);
+      }
+    };
+  }, []);
+
+  // Virtual scrolling scroll handler
+  const handleFileListScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      const nextTop = e.currentTarget.scrollTop;
+      if (scrollFrameRef.current !== null) return;
+      scrollFrameRef.current = window.requestAnimationFrame(() => {
+        scrollFrameRef.current = null;
+        setScrollTop(nextTop);
+      });
+    },
+    [],
+  );
+
+  // Virtual scrolling calculations
+  const overscan = 6;
+  const canVirtualize = open && viewportHeight > 0 && rowHeight > 0;
+  const shouldVirtualize = canVirtualize && sortedFiles.length > 50; // Only virtualize for larger lists
+  const totalHeight = shouldVirtualize
+    ? sortedFiles.length * rowHeight
+    : 0;
+  const startIndex = shouldVirtualize
+    ? Math.max(0, Math.floor(scrollTop / rowHeight) - overscan)
+    : 0;
+  const endIndex = shouldVirtualize
+    ? Math.min(
+      sortedFiles.length - 1,
+      Math.ceil((scrollTop + viewportHeight) / rowHeight) + overscan,
+    )
+    : sortedFiles.length - 1;
+  const visibleRows = shouldVirtualize
+    ? sortedFiles
+      .slice(startIndex, endIndex + 1)
+      .map((file, idx) => ({
+        file,
+        index: startIndex + idx,
+        top: (startIndex + idx) * rowHeight,
+      }))
+    : sortedFiles.map((file, index) => ({
+      file,
+      index,
+      top: 0,
+    }));
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -1021,6 +1321,9 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     index: number,
     e: React.MouseEvent,
   ) => {
+    // Don't allow selecting ".." entry
+    if (file.name === "..") return;
+    
     if (file.type === "directory") {
       // Double click to enter directory is handled by onDoubleClick
       // Single click just selects
@@ -1078,6 +1381,11 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   };
 
   const handleFileDoubleClick = (file: RemoteFile) => {
+    // Handle ".." special case - go to parent directory
+    if (file.name === "..") {
+      handleUp();
+      return;
+    }
     // Navigate into directories, or symlinks that point to directories
     if (file.type === "directory" || (file.type === "symlink" && file.linkTarget === "directory")) {
       handleNavigate(joinPath(currentPath, file.name));
@@ -1331,12 +1639,14 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
           </div>
         )}
 
-        {/* File List */}
+        {/* File List with Virtual Scrolling */}
         <div
+          ref={fileListRef}
           className={cn(
             "flex-1 min-h-0 overflow-y-auto relative",
             dragActive && "bg-primary/5 ring-2 ring-inset ring-primary",
           )}
+          onScroll={handleFileListScroll}
           onDragEnter={handleDrag}
           onDragLeave={handleDrag}
           onDragOver={handleDrag}
@@ -1365,24 +1675,34 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
             </div>
           )}
 
-          {/* File rows */}
+          {/* File rows with virtual scrolling */}
           <ContextMenu>
             <ContextMenuTrigger asChild>
-              <div className="divide-y divide-border/30">
-                {sortedFiles.map((file, idx) => {
+              <div 
+                className={shouldVirtualize ? "relative" : "divide-y divide-border/30"}
+                style={shouldVirtualize ? { height: totalHeight } : undefined}
+              >
+                {visibleRows.map(({ file, index: idx, top }) => {
                   // Check if this entry is navigable like a directory
                   const isNavigableDirectory = file.type === "directory" || (file.type === "symlink" && file.linkTarget === "directory");
                   const isDownloadableFile = file.type === "file" || (file.type === "symlink" && file.linkTarget === "file");
+                  const isParentEntry = file.name === "..";
                   
                   return (
-                  <ContextMenu key={idx}>
+                  <ContextMenu key={file.name}>
                     <ContextMenuTrigger>
                       <div
+                        data-sftp-modal-row="true"
                         className={cn(
                           "px-4 py-2.5 items-center hover:bg-muted/50 cursor-pointer transition-colors text-sm",
-                          selectedFiles.has(file.name) && "bg-primary/10",
+                          selectedFiles.has(file.name) && !isParentEntry && "bg-primary/10",
+                          shouldVirtualize ? "absolute left-0 right-0 border-b border-border/30" : "",
                         )}
-                        style={{
+                        style={shouldVirtualize ? {
+                          top,
+                          display: "grid",
+                          gridTemplateColumns: `${columnWidths.name}% ${columnWidths.size}% ${columnWidths.modified}% ${columnWidths.actions}%`,
+                        } : {
                           display: "grid",
                           gridTemplateColumns: `${columnWidths.name}% ${columnWidths.size}% ${columnWidths.modified}% ${columnWidths.actions}%`,
                         }}
@@ -1422,6 +1742,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
                               <Download size={14} />
                             </Button>
                           )}
+                          {!isParentEntry && (
                           <Button
                             variant="ghost"
                             size="icon"
@@ -1434,10 +1755,25 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
                           >
                             <Trash2 size={14} />
                           </Button>
+                          )}
                         </div>
                       </div>
                     </ContextMenuTrigger>
                     <ContextMenuContent>
+                      {isParentEntry ? (
+                        <ContextMenuItem
+                          onClick={() => {
+                            // Navigate to parent directory
+                            const segments = currentPath.split("/").filter(Boolean);
+                            segments.pop();
+                            const parentPath = segments.length === 0 ? "/" : `/${segments.join("/")}`;
+                            handleNavigate(parentPath);
+                          }}
+                        >
+                          {t("sftp.context.open")}
+                        </ContextMenuItem>
+                      ) : (
+                        <>
                       {(file.type === "directory" || (file.type === "symlink" && file.linkTarget === "directory")) && (
                         <ContextMenuItem
                           onClick={() =>
@@ -1456,12 +1792,22 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
                           <Download size={14} className="mr-2" /> {t("sftp.context.download")}
                         </ContextMenuItem>
                       )}
+                      <ContextMenuItem onClick={() => openRenameDialog(file)}>
+                        <Edit2 size={14} className="mr-2" /> {t("sftp.context.rename")}
+                      </ContextMenuItem>
+                      {!isLocalSession && (
+                        <ContextMenuItem onClick={() => openPermissionsDialog(file)}>
+                          <Shield size={14} className="mr-2" /> {t("sftp.context.permissions")}
+                        </ContextMenuItem>
+                      )}
                       <ContextMenuItem
                         className="text-destructive"
                         onClick={() => handleDelete(file)}
                       >
                         <Trash2 size={14} className="mr-2" /> {t("sftp.context.delete")}
                       </ContextMenuItem>
+                        </>
+                      )}
                     </ContextMenuContent>
                   </ContextMenu>
                 );
@@ -1662,6 +2008,89 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
           </span>
         </div>
       </DialogContent>
+
+      {/* Rename Dialog */}
+      <Dialog open={showRenameDialog} onOpenChange={setShowRenameDialog}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>{t("sftp.rename.title")}</DialogTitle>
+            <DialogDescription className="truncate">
+              {renameTarget?.name}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Input
+              value={renameName}
+              onChange={(e) => setRenameName(e.target.value)}
+              placeholder={t("sftp.rename.placeholder")}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleRename();
+              }}
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowRenameDialog(false)}>
+              {t("common.cancel")}
+            </Button>
+            <Button onClick={handleRename} disabled={isRenaming || !renameName.trim()}>
+              {isRenaming ? <Loader2 size={14} className="mr-2 animate-spin" /> : null}
+              {t("common.apply")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Permissions Dialog */}
+      <Dialog open={showPermissionsDialog} onOpenChange={setShowPermissionsDialog}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>{t("sftp.permissions.title")}</DialogTitle>
+            <DialogDescription className="truncate">
+              {permissionsTarget?.name}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-3">
+              {(['owner', 'group', 'others'] as const).map((role) => (
+                <div key={role} className="flex items-center gap-4">
+                  <div className="w-16 text-sm font-medium">{t(`sftp.permissions.${role}`)}</div>
+                  <div className="flex gap-3">
+                    {(['read', 'write', 'execute'] as const).map((perm) => (
+                      <label key={perm} className="flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={permissions[role][perm]}
+                          onChange={() => togglePermission(role, perm)}
+                          className="rounded border-border"
+                        />
+                        <span className="text-xs">{perm === 'read' ? 'R' : perm === 'write' ? 'W' : 'X'}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between pt-2 border-t border-border/60">
+              <div className="text-xs text-muted-foreground">
+                {t("sftp.permissions.octal")}: <span className="font-mono text-foreground">{getOctalPermissions()}</span>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {t("sftp.permissions.symbolic")}: <span className="font-mono text-foreground">{getSymbolicPermissions()}</span>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPermissionsDialog(false)}>
+              {t("common.cancel")}
+            </Button>
+            <Button onClick={handleSavePermissions} disabled={isChangingPermissions}>
+              {isChangingPermissions ? <Loader2 size={14} className="mr-2 animate-spin" /> : null}
+              {t("common.apply")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 };

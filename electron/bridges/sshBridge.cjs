@@ -365,6 +365,8 @@ async function startSSHSession(event, options) {
       hasCertificate,
       keySource: options.keySource,
       hasPublicKey: !!options.publicKey,
+      hasPrivateKey: !!options.privateKey,
+      hasPassword: !!options.password,
       hasEffectivePassphrase: !!effectivePassphrase,
     });
     
@@ -372,6 +374,7 @@ async function startSSHSession(event, options) {
       hasCertificate,
       keySource: options.keySource,
       hasPublicKey: !!options.publicKey,
+      hasPrivateKey: !!options.privateKey,
     });
 
     let authAgent = null;
@@ -448,8 +451,9 @@ async function startSSHSession(event, options) {
     }
 
     return new Promise((resolve, reject) => {
+      const logPrefix = hasJumpHosts ? '[Chain]' : '[SSH]';
       conn.on("ready", () => {
-        console.log(`[Chain] Final target ${options.hostname} ready`);
+        console.log(`${logPrefix} ${options.hostname} ready`);
         if (hasJumpHosts || hasProxy) {
           sendProgress(totalHops, totalHops, options.hostname, 'connected');
         }
@@ -551,7 +555,6 @@ async function startSSHSession(event, options) {
       });
 
       conn.on("error", (err) => {
-        console.error(`[Chain] Final target ${options.hostname} error:`, err.message);
         const contents = electronModule.BrowserWindow.fromWebContents(event.sender)?.webContents;
         
         const isAuthError = err.message?.toLowerCase().includes('authentication') ||
@@ -559,12 +562,16 @@ async function startSSHSession(event, options) {
                            err.message?.toLowerCase().includes('password') ||
                            err.level === 'client-authentication';
         
+        // Use log instead of error for auth failures (normal fallback scenario)
         if (isAuthError) {
+          console.log(`${logPrefix} ${options.hostname} auth failed:`, err.message);
           contents?.send("netcatty:auth:failed", { 
             sessionId, 
             error: err.message,
             hostname: options.hostname 
           });
+        } else {
+          console.error(`${logPrefix} ${options.hostname} error:`, err.message);
         }
         
         contents?.send("netcatty:exit", { sessionId, exitCode: 1, error: err.message });
@@ -576,7 +583,7 @@ async function startSSHSession(event, options) {
       });
 
       conn.on("timeout", () => {
-        console.error(`[Chain] Final target ${options.hostname} connection timeout`);
+        console.error(`${logPrefix} ${options.hostname} connection timeout`);
         const err = new Error(`Connection timeout to ${options.hostname}`);
         const contents = electronModule.BrowserWindow.fromWebContents(event.sender)?.webContents;
         contents?.send("netcatty:exit", { sessionId, exitCode: 1, error: err.message });
@@ -596,7 +603,7 @@ async function startSSHSession(event, options) {
         }
       });
 
-      console.log(`[Chain] Connecting to final target ${options.hostname}...`);
+      console.log(`${logPrefix} Connecting to ${options.hostname}...`);
       conn.connect(connectOpts);
     });
   } catch (err) {
@@ -755,10 +762,34 @@ async function generateKeyPair(event, options) {
 }
 
 /**
+ * Wrapper for SSH session handler to suppress noisy auth error stack traces
+ * Auth failures are expected when fallback to password is available
+ */
+async function startSSHSessionWrapper(event, options) {
+  try {
+    return await startSSHSession(event, options);
+  } catch (err) {
+    const isAuthError = err.message?.toLowerCase().includes('authentication') ||
+                       err.message?.toLowerCase().includes('auth') ||
+                       err.level === 'client-authentication';
+    
+    if (isAuthError) {
+      // Re-throw with a clean error to avoid Electron printing full stack trace
+      // The frontend will handle this as a normal auth failure for fallback
+      const authError = new Error(err.message);
+      authError.level = 'client-authentication';
+      authError.isAuthError = true;
+      throw authError;
+    }
+    throw err;
+  }
+}
+
+/**
  * Register IPC handlers for SSH operations
  */
 function registerHandlers(ipcMain) {
-  ipcMain.handle("netcatty:start", startSSHSession);
+  ipcMain.handle("netcatty:start", startSSHSessionWrapper);
   ipcMain.handle("netcatty:ssh:exec", execCommand);
   ipcMain.handle("netcatty:key:generate", generateKeyPair);
 }
