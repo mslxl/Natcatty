@@ -287,6 +287,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     closeSftp: closeSftpBackend,
     listSftp,
     readSftp,
+    readSftpBinary,
     writeSftpBinaryWithProgress,
     writeSftpBinary,
     writeSftp,
@@ -1125,11 +1126,8 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       if (isLocalSession) {
         data = await readLocalFile(fullPath);
       } else {
-        // Use readSftp which returns string, convert to ArrayBuffer
-        const content = await readSftp(await ensureSftp(), fullPath);
-        // If it's a string, encode it as latin1 (binary-safe)
-        const encoder = new TextEncoder();
-        data = encoder.encode(content).buffer;
+        // Use readSftpBinary for proper binary file reading
+        data = await readSftpBinary(await ensureSftp(), fullPath);
       }
       setImagePreviewData(data);
     } catch (e) {
@@ -1141,7 +1139,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     } finally {
       setLoadingImageData(false);
     }
-  }, [currentPath, ensureSftp, isLocalSession, joinPath, readLocalFile, readSftp, t]);
+  }, [currentPath, ensureSftp, isLocalSession, joinPath, readLocalFile, readSftpBinary, t]);
 
   const handleOpenFile = useCallback(async (file: RemoteFile) => {
     const savedOpener = getOpenerForFile(file.name);

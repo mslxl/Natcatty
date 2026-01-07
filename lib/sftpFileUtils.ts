@@ -7,7 +7,7 @@
 const TEXT_EXTENSIONS = new Set([
   // Code/Scripts
   'js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs', 'vue', 'svelte',
-  'py', 'pyc', 'pyw', 'pyi',
+  'py', 'pyw', 'pyi',
   'sh', 'bash', 'zsh', 'fish', 'bat', 'cmd', 'ps1', 'psm1',
   'c', 'cpp', 'h', 'hpp', 'cc', 'cxx', 'hh', 'hxx',
   'java', 'scala', 'kt', 'kts', 'groovy', 'gradle',
