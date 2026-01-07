@@ -76,6 +76,7 @@ import {
   ArrowDown,
   ChevronLeft,
   Copy,
+  Download,
   Edit2,
   ExternalLink,
   Folder,
@@ -801,11 +802,18 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
           />
         </ContextMenuTrigger>
         {entry.name !== ".." && (
-          <ContextMenuContent>
+            <ContextMenuContent>
             <ContextMenuItem onClick={() => handleRowOpen(entry)}>
-              {isNavigableDirectory(entry)
-                ? t("sftp.context.open")
-                : t("sftp.context.download")}
+              {isNavigableDirectory(entry) ? (
+                <>
+                  <Folder size={14} className="mr-2" /> {t("sftp.context.open")}
+                </>
+              ) : (
+                <>
+                  <Download size={14} className="mr-2" />{" "}
+                  {t("sftp.context.download")}
+                </>
+              )}
             </ContextMenuItem>
             {/* File operations - only for files, not directories */}
             {!isNavigableDirectory(entry) && onOpenFile && (
