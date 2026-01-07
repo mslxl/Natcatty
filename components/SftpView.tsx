@@ -1488,6 +1488,12 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
 
   // File operations state
   const { getOpenerForFile, setOpenerForExtension } = useSftpFileAssociations();
+  
+  // Store getOpenerForFile in a ref so callbacks can access the latest version
+  // without needing to re-create when associations change
+  const getOpenerForFileRef = useRef(getOpenerForFile);
+  getOpenerForFileRef.current = getOpenerForFile;
+  
   const [showTextEditor, setShowTextEditor] = useState(false);
   const [textEditorTarget, setTextEditorTarget] = useState<{
     file: SftpFileEntry;
@@ -1690,11 +1696,19 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       if (!pane.connection) return;
 
       const fullPath = sftpRef.current.joinPath(pane.connection.currentPath, file.name);
-      const savedOpener = getOpenerForFile(file.name);
+      // Use ref to get the latest associations (avoids stale closure)
+      const savedOpener = getOpenerForFileRef.current(file.name);
+      
+      console.log('[SftpView] handleOpenFileForSide called', { 
+        fileName: file.name, 
+        savedOpener,
+        fullPath 
+      });
 
-      if (savedOpener) {
+      if (savedOpener && savedOpener.openerType) {
         if (savedOpener.openerType === 'builtin-editor') {
           handleEditFileForSide(side, file);
+          return;
         } else if (savedOpener.openerType === 'system-app' && savedOpener.systemApp) {
           // Open with saved system application
           try {
@@ -1710,14 +1724,17 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
               "SFTP"
             );
           }
+          return;
         }
-      } else {
-        // Show opener dialog
-        setFileOpenerTarget({ file, side, fullPath });
-        setShowFileOpenerDialog(true);
+        // Fall through: savedOpener exists but openerType is invalid or missing systemApp
+        console.log('[SftpView] savedOpener exists but invalid, showing dialog', savedOpener);
       }
+      
+      // Show opener dialog
+      setFileOpenerTarget({ file, side, fullPath });
+      setShowFileOpenerDialog(true);
     },
-    [getOpenerForFile, handleEditFileForSide],
+    [handleEditFileForSide],
   );
 
   const handleFileOpenerSelect = useCallback(
