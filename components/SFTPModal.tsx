@@ -255,7 +255,6 @@ interface SFTPModalProps {
   };
   open: boolean;
   onClose: () => void;
-  initialPath?: string; // Optional initial directory path
 }
 
 // Sort configuration
@@ -280,7 +279,6 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   credentials,
   open,
   onClose,
-  initialPath,
 }) => {
   const {
     openSftp,
@@ -306,7 +304,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   } = useSftpBackend();
   const { t, resolvedLocale } = useI18n();
   const isLocalSession = host.protocol === "local";
-  const [currentPath, setCurrentPath] = useState(initialPath || "/");
+  const [currentPath, setCurrentPath] = useState("/");
   const [files, setFiles] = useState<RemoteFile[]>([]);
   const [loading, setLoading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -622,51 +620,52 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
               home = fetchedHome ?? null;
               localHomeRef.current = home;
             }
-            const startPath = initialPath ||
-              home ||
+            const startPath = home ||
               (navigator.platform.toLowerCase().includes("win") ? "C:\\" : "/");
             setCurrentPath(startPath);
             loadFiles(startPath);
           })();
         } else {
-          // For remote sessions, try to determine a good starting path
+          // For remote sessions, load home directory directly
           void (async () => {
-            let startPath = initialPath;
+            const username = credentials.username || 'root';
+            // Root user's home is /root, other users' home is /home/username
+            const homePath = username === 'root' ? '/root' : `/home/${username}`;
 
-            // If we have an initial path (from OSC 7), verify it's accessible via SFTP
-            // Note: The shell user might have sudo'd to a different user, so SFTP access may differ
-            if (startPath) {
+            // Set loading state immediately for better UX
+            setLoading(true);
+
+            try {
+              const sftpId = await ensureSftp();
+              const list = await listSftp(sftpId, homePath);
+              setCurrentPath(homePath);
+              setFiles(list);
+              setSelectedFiles(new Set());
+              dirCacheRef.current.set(`${host.id}::${homePath}`, {
+                files: list,
+                timestamp: Date.now(),
+              });
+              setLoading(false);
+            } catch {
+              // Home directory not accessible, fall back to /
+              logger.warn(`[SFTP] Home ${homePath} not accessible, using /`);
               try {
                 const sftpId = await ensureSftp();
-                await statSftp(sftpId, startPath);
-                logger.info(`[SFTP] Using initial path from terminal: ${startPath}`);
-              } catch {
-                // Path not accessible via SFTP (e.g., user sudo'd to root but SFTP uses original user)
-                logger.warn(`[SFTP] Initial path ${startPath} not accessible via SFTP, falling back to home`);
-                startPath = undefined; // Fall through to default logic
+                const list = await listSftp(sftpId, '/');
+                setCurrentPath('/');
+                setFiles(list);
+                setSelectedFiles(new Set());
+                dirCacheRef.current.set(`${host.id}::/`, {
+                  files: list,
+                  timestamp: Date.now(),
+                });
+              } catch (e) {
+                logger.error('[SFTP] Failed to load root directory', e);
+                toast.error(t("sftp.error.loadFailed"), "SFTP");
+              } finally {
+                setLoading(false);
               }
             }
-
-            if (!startPath) {
-              // If no initial path, try to use a sensible default based on username
-              const username = credentials.username || 'root';
-              // For root user, home is /root; for others, /home/username
-              startPath = username === 'root' ? '/root' : `/home/${username}`;
-
-              // Verify the path exists by attempting to stat it
-              // If it fails, fall back to root directory
-              try {
-                const sftpId = await ensureSftp();
-                await statSftp(sftpId, startPath);
-              } catch {
-                // Path doesn't exist, fall back to root
-                logger.warn(`Home directory ${startPath} not accessible, using /`);
-                startPath = '/';
-              }
-            }
-
-            setCurrentPath(startPath);
-            loadFiles(startPath);
           })();
         }
         return;
@@ -678,7 +677,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       void closeSftpSession();
       initializedRef.current = false;
     }
-  }, [open, currentPath, loadFiles, closeSftpSession, getHomeDir, isLocalSession, initialPath, credentials.username, ensureSftp, statSftp]);
+  }, [open, currentPath, loadFiles, closeSftpSession, getHomeDir, isLocalSession, credentials.username, ensureSftp, listSftp, host.id, t]);
 
   const handleNavigate = useCallback((path: string) => {
     // Prevent double navigation (e.g., from double-click race condition)
