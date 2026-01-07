@@ -1674,7 +1674,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       if (!pane.connection) return;
 
       const fullPath = sftpRef.current.joinPath(pane.connection.currentPath, file.name);
-      
+
       try {
         setTextEditorTarget({ file, side, fullPath });
 
