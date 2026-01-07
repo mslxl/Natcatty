@@ -341,13 +341,13 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   const { getOpenerForFile, setOpenerForExtension } = useSftpFileAssociations();
   const [showFileOpenerDialog, setShowFileOpenerDialog] = useState(false);
   const [fileOpenerTarget, setFileOpenerTarget] = useState<RemoteFile | null>(null);
-  
+
   // Text editor state
   const [showTextEditor, setShowTextEditor] = useState(false);
   const [textEditorTarget, setTextEditorTarget] = useState<RemoteFile | null>(null);
   const [textEditorContent, setTextEditorContent] = useState("");
   const [_loadingTextContent, setLoadingTextContent] = useState(false);
-  
+
   // Image preview state
   const [showImagePreview, setShowImagePreview] = useState(false);
   const [imagePreviewTarget, setImagePreviewTarget] = useState<RemoteFile | null>(null);
@@ -639,7 +639,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
           // For remote sessions, try to determine a good starting path
           void (async () => {
             let startPath = initialPath;
-            
+
             // If we have an initial path (from OSC 7), verify it's accessible via SFTP
             // Note: The shell user might have sudo'd to a different user, so SFTP access may differ
             if (startPath) {
@@ -653,13 +653,13 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
                 startPath = undefined; // Fall through to default logic
               }
             }
-            
+
             if (!startPath) {
               // If no initial path, try to use a sensible default based on username
               const username = credentials.username || 'root';
               // For root user, home is /root; for others, /home/username
               startPath = username === 'root' ? '/root' : `/home/${username}`;
-              
+
               // Verify the path exists by attempting to stat it
               // If it fails, fall back to root directory
               try {
@@ -671,7 +671,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
                 startPath = '/';
               }
             }
-            
+
             setCurrentPath(startPath);
             loadFiles(startPath);
           })();
@@ -1158,7 +1158,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       setImagePreviewTarget(file);
       setShowImagePreview(true);
       const fullPath = joinPath(currentPath, file.name);
-      
+
       // Read file as binary
       let data: ArrayBuffer;
       if (isLocalSession) {
@@ -1181,7 +1181,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
 
   const handleOpenFile = useCallback(async (file: RemoteFile) => {
     const savedOpener = getOpenerForFile(file.name);
-    
+
     if (savedOpener) {
       // Use saved opener
       if (savedOpener === 'builtin-editor') {
@@ -1197,14 +1197,14 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
 
   const handleFileOpenerSelect = useCallback((openerType: FileOpenerType, setAsDefault: boolean) => {
     if (!fileOpenerTarget) return;
-    
+
     if (setAsDefault) {
       const ext = getFileExtension(fileOpenerTarget.name);
       if (ext !== 'file') {
         setOpenerForExtension(ext, openerType);
       }
     }
-    
+
     if (openerType === 'builtin-editor') {
       handleEditFile(fileOpenerTarget);
     } else if (openerType === 'builtin-image-viewer') {

@@ -1,7 +1,7 @@
 /**
  * TextEditorModal - Modal for editing text files in SFTP with syntax highlighting
  */
-import { 
+import {
   CloudUpload,
   Loader2,
   X,
@@ -135,7 +135,7 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
 
   const handleEditorMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
-    
+
     // Add save shortcut
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       handleSave();
@@ -171,7 +171,7 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
                   ))}
                 </SelectContent>
               </Select>
-              
+
               {/* Save button */}
               <Button
                 variant="default"
@@ -187,7 +187,7 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
                 )}
                 {saving ? t('sftp.editor.saving') : t('sftp.editor.save')}
               </Button>
-              
+
               {/* Close button */}
               <Button
                 variant="ghost"

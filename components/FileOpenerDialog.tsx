@@ -60,7 +60,7 @@ export const FileOpenerDialog: React.FC<FileOpenerDialogProps> = ({
               </div>
             </Button>
           )}
-          
+
           {canPreview && (
             <Button
               variant="outline"
@@ -74,7 +74,7 @@ export const FileOpenerDialog: React.FC<FileOpenerDialogProps> = ({
               </div>
             </Button>
           )}
-          
+
           {/* System application option - TODO: Full implementation needed */}
           <Button
             variant="outline"
@@ -87,7 +87,7 @@ export const FileOpenerDialog: React.FC<FileOpenerDialogProps> = ({
               <div className="text-xs text-muted-foreground">Open with system application</div>
             </div>
           </Button>
-          
+
           {!canEdit && !canPreview && (
             <div className="text-sm text-muted-foreground text-center py-4">
               {t('sftp.opener.onlySystemApp')}

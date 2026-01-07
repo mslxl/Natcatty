@@ -1,11 +1,11 @@
 /**
  * ImagePreviewModal - Modal for previewing images in SFTP
  */
-import { 
-  Loader2, 
-  Maximize2, 
-  Minus, 
-  Plus, 
+import {
+  Loader2,
+  Maximize2,
+  Minus,
+  Plus,
   RotateCcw
 } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -75,12 +75,12 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
 
   const handleFitToWindow = useCallback(() => {
     if (!imageRef.current || !containerRef.current) return;
-    
+
     const container = containerRef.current.getBoundingClientRect();
     const img = imageRef.current;
     const naturalWidth = img.naturalWidth || img.width;
     const naturalHeight = img.naturalHeight || img.height;
-    
+
     if (naturalWidth && naturalHeight) {
       const scaleX = (container.width - 40) / naturalWidth;
       const scaleY = (container.height - 40) / naturalHeight;
@@ -201,13 +201,13 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
               <span className="text-sm">{t('sftp.status.loading')}</span>
             </div>
           )}
-          
+
           {!loading && !imageUrl && (
             <div className="text-muted-foreground text-sm">
               {t('sftp.error.loadFailed')}
             </div>
           )}
-          
+
           {!loading && imageUrl && (
             <img
               ref={imageRef}
