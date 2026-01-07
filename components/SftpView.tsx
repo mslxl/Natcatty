@@ -807,9 +807,10 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
                   ? Array.from(pane.selectedFiles)
                   : [entry.name];
                 const fileData = files.map((name) => {
-                  const file = filesByName.get(name);
+                  const fileName = String(name);
+                  const file = filesByName.get(fileName);
                   return {
-                    name,
+                    name: fileName,
                     isDirectory: file ? isNavigableDirectory(file) : false,
                   };
                 });

@@ -343,7 +343,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   const [showTextEditor, setShowTextEditor] = useState(false);
   const [textEditorTarget, setTextEditorTarget] = useState<RemoteFile | null>(null);
   const [textEditorContent, setTextEditorContent] = useState("");
-  const [loadingTextContent, setLoadingTextContent] = useState(false);
+  const [_loadingTextContent, setLoadingTextContent] = useState(false);
   
   // Image preview state
   const [showImagePreview, setShowImagePreview] = useState(false);
@@ -1082,40 +1082,6 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     setShowFileOpenerDialog(true);
   }, []);
 
-  const handleOpenFile = useCallback(async (file: RemoteFile) => {
-    const extension = getFileExtension(file.name);
-    const savedOpener = getOpenerForFile(file.name);
-    
-    if (savedOpener) {
-      // Use saved opener
-      if (savedOpener === 'builtin-editor') {
-        handleEditFile(file);
-      } else if (savedOpener === 'builtin-image-viewer') {
-        handlePreviewImage(file);
-      }
-    } else {
-      // Show opener dialog
-      openFileOpenerDialog(file);
-    }
-  }, [getOpenerForFile]);
-
-  const handleFileOpenerSelect = useCallback((openerType: FileOpenerType, setAsDefault: boolean) => {
-    if (!fileOpenerTarget) return;
-    
-    if (setAsDefault) {
-      const ext = getFileExtension(fileOpenerTarget.name);
-      if (ext !== 'file') {
-        setOpenerForExtension(ext, openerType);
-      }
-    }
-    
-    if (openerType === 'builtin-editor') {
-      handleEditFile(fileOpenerTarget);
-    } else if (openerType === 'builtin-image-viewer') {
-      handlePreviewImage(fileOpenerTarget);
-    }
-  }, [fileOpenerTarget, setOpenerForExtension]);
-
   const handleEditFile = useCallback(async (file: RemoteFile) => {
     try {
       setLoadingTextContent(true);
@@ -1176,6 +1142,39 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       setLoadingImageData(false);
     }
   }, [currentPath, ensureSftp, isLocalSession, joinPath, readLocalFile, readSftp, t]);
+
+  const handleOpenFile = useCallback(async (file: RemoteFile) => {
+    const savedOpener = getOpenerForFile(file.name);
+    
+    if (savedOpener) {
+      // Use saved opener
+      if (savedOpener === 'builtin-editor') {
+        handleEditFile(file);
+      } else if (savedOpener === 'builtin-image-viewer') {
+        handlePreviewImage(file);
+      }
+    } else {
+      // Show opener dialog
+      openFileOpenerDialog(file);
+    }
+  }, [getOpenerForFile, handleEditFile, handlePreviewImage, openFileOpenerDialog]);
+
+  const handleFileOpenerSelect = useCallback((openerType: FileOpenerType, setAsDefault: boolean) => {
+    if (!fileOpenerTarget) return;
+    
+    if (setAsDefault) {
+      const ext = getFileExtension(fileOpenerTarget.name);
+      if (ext !== 'file') {
+        setOpenerForExtension(ext, openerType);
+      }
+    }
+    
+    if (openerType === 'builtin-editor') {
+      handleEditFile(fileOpenerTarget);
+    } else if (openerType === 'builtin-image-viewer') {
+      handlePreviewImage(fileOpenerTarget);
+    }
+  }, [fileOpenerTarget, setOpenerForExtension, handleEditFile, handlePreviewImage]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {

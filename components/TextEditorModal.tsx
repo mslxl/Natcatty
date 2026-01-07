@@ -3,8 +3,7 @@
  */
 import { 
   CloudUpload,
-  Loader2, 
-  X 
+  Loader2,
 } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
