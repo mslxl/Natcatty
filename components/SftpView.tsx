@@ -79,6 +79,7 @@ interface SftpPaneViewProps {
   side: "left" | "right";
   pane: SftpPane;
   showHeader?: boolean;
+  showEmptyHeader?: boolean;
   hosts: Host[];
   filteredFiles: SftpFileEntry[];
   onConnect: (host: Host | "local") => void;
@@ -113,6 +114,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   side,
   pane,
   showHeader = true,
+  showEmptyHeader = true,
   hosts,
   filteredFiles,
   onConnect,
@@ -508,22 +510,24 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   if (!pane.connection) {
     return (
       <div className="absolute inset-0 flex flex-col">
-        <div className="h-12 px-4 border-b border-border/60 flex items-center gap-3 shrink-0">
-          <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
-            {side === "left" ? <Monitor size={14} /> : <HardDrive size={14} />}
-            <span>
-              {side === "left" ? t("sftp.pane.local") : t("sftp.pane.remote")}
-            </span>
+        {showEmptyHeader && (
+          <div className="h-12 px-4 border-b border-border/60 flex items-center gap-3 shrink-0">
+            <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+              {side === "left" ? <Monitor size={14} /> : <HardDrive size={14} />}
+              <span>
+                {side === "left" ? t("sftp.pane.local") : t("sftp.pane.remote")}
+              </span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 px-3"
+              onClick={() => setShowHostPicker(true)}
+            >
+              <Plus size={14} className="mr-2" /> {t("sftp.pane.selectHost")}
+            </Button>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 px-3"
-            onClick={() => setShowHostPicker(true)}
-          >
-            <Plus size={14} className="mr-2" /> {t("sftp.pane.selectHost")}
-          </Button>
-        </div>
+        )}
 
         <div className="flex-1 flex flex-col items-center justify-center text-center gap-4 p-6">
           <div className="h-14 w-14 rounded-xl bg-secondary/60 text-primary flex items-center justify-center">
@@ -1351,7 +1355,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
             <SftpPaneView
               side="left"
               pane={sftp.leftPane}
-              showHeader={leftTabsInfo.length > 0}
+              showHeader
               hosts={hosts}
               filteredFiles={leftFilteredFiles}
               onConnect={handleConnectLeft}
@@ -1393,7 +1397,8 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
             <SftpPaneView
               side="right"
               pane={sftp.rightPane}
-              showHeader={rightTabsInfo.length > 0}
+              showHeader
+              showEmptyHeader={false}
               hosts={hosts}
               filteredFiles={rightFilteredFiles}
               onConnect={handleConnectRight}

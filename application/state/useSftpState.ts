@@ -846,16 +846,12 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
   useEffect(() => {
     if (!initialConnectDoneRef.current && leftTabs.tabs.length === 0) {
       initialConnectDoneRef.current = true;
-      // Use setTimeout to ensure addTab and connect are defined before calling
+      // connect() creates a tab when none exists; avoid adding an extra empty tab.
       setTimeout(() => {
-        // Add first tab and connect to local
-        const tabId = addTab("left");
-        if (tabId) {
-          setTimeout(() => connect("left", "local"), 0);
-        }
+        connect("left", "local");
       }, 0);
     }
-  }, [connect, addTab, leftTabs.tabs.length]);
+  }, [connect, leftTabs.tabs.length]);
 
   // Auto-reconnect when reconnecting flag is set
   useEffect(() => {
