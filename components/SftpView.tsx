@@ -1832,8 +1832,10 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
   // Custom handleOpenEntry callbacks that check the double-click behavior setting
   const handleOpenEntryLeft = useCallback(
     (entry: SftpFileEntry) => {
+      const isDir = isNavigableDirectory(entry);
+      
       // Always navigate into directories
-      if (entry.name === ".." || isNavigableDirectory(entry)) {
+      if (entry.name === ".." || isDir) {
         sftpRef.current.openEntry("left", entry);
         return;
       }
@@ -1843,7 +1845,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
         // Transfer to other pane
         const fileData = [{
           name: entry.name,
-          isDirectory: isNavigableDirectory(entry)
+          isDirectory: isDir
         }];
         sftpRef.current.startTransfer(fileData, "left", "right");
       } else {
@@ -1856,8 +1858,10 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
   
   const handleOpenEntryRight = useCallback(
     (entry: SftpFileEntry) => {
+      const isDir = isNavigableDirectory(entry);
+      
       // Always navigate into directories
-      if (entry.name === ".." || isNavigableDirectory(entry)) {
+      if (entry.name === ".." || isDir) {
         sftpRef.current.openEntry("right", entry);
         return;
       }
@@ -1867,7 +1871,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
         // Transfer to other pane
         const fileData = [{
           name: entry.name,
-          isDirectory: isNavigableDirectory(entry)
+          isDirectory: isDir
         }];
         sftpRef.current.startTransfer(fileData, "right", "left");
       } else {
