@@ -471,7 +471,21 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     setShowPathSuggestions(false);
     setPathSuggestionIndex(-1);
     if (pane.connection && newPath !== pane.connection.currentPath) {
-      onNavigateTo(newPath.startsWith("/") ? newPath : `/${newPath}`);
+      // Check if it's a Windows path (starts with drive letter like C: or D:)
+      const isWindowsPath = /^[A-Za-z]:/.test(newPath);
+      if (isWindowsPath) {
+        // For Windows paths, normalize drive root to have trailing backslash
+        // Handle cases like "C:", "C:/", "C:\" - all should become "C:\"
+        let normalizedPath = newPath;
+        if (/^[A-Za-z]:[\\/]?$/.test(newPath)) {
+          // This is a drive root (e.g., "C:", "C:/", "C:\")
+          normalizedPath = newPath.charAt(0).toUpperCase() + ":\\";
+        }
+        onNavigateTo(normalizedPath);
+      } else {
+        // For Unix paths, ensure leading slash
+        onNavigateTo(newPath.startsWith("/") ? newPath : `/${newPath}`);
+      }
     }
   };
 
