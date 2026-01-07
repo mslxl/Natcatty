@@ -184,6 +184,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     onEditFile,
     onPreviewFile,
     onOpenFile,
+    onOpenFileWith,
   } = callbacks;
 
   // 渲染追踪 - 只追踪数据 props（回调来自 context，引用稳定）
@@ -816,6 +817,12 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
             {!isNavigableDirectory(entry) && onOpenFile && (
               <ContextMenuItem onClick={() => onOpenFile(entry)}>
                 <ExternalLink size={14} className="mr-2" />{" "}
+                {t("sftp.context.open")}
+              </ContextMenuItem>
+            )}
+            {!isNavigableDirectory(entry) && onOpenFileWith && (
+              <ContextMenuItem onClick={() => onOpenFileWith(entry)}>
+                <ExternalLink size={14} className="mr-2" />{" "}
                 {t("sftp.context.openWith")}
               </ContextMenuItem>
             )}
@@ -898,6 +905,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
       onEditFile,
       onEditPermissions,
       onOpenFile,
+      onOpenFileWith,
       onPreviewFile,
       onRefresh,
       openDeleteConfirm,
@@ -1768,9 +1776,8 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
 
       if (setAsDefault) {
         const ext = getFileExtension(fileOpenerTarget.file.name);
-        if (ext !== 'file') {
-          setOpenerForExtension(ext, openerType, systemApp);
-        }
+        console.log('[SftpView] Saving file association for extension:', ext, 'openerType:', openerType, 'systemApp:', systemApp);
+        setOpenerForExtension(ext, openerType, systemApp);
       }
 
       setShowFileOpenerDialog(false);
@@ -1848,6 +1855,29 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
     [handleOpenFileForSide],
   );
 
+  // Open With - always show the opener dialog
+  const handleOpenFileWithForSide = useCallback(
+    (side: "left" | "right", file: SftpFileEntry) => {
+      const pane = side === "left" ? sftpRef.current.leftPane : sftpRef.current.rightPane;
+      if (!pane.connection) return;
+
+      const fullPath = sftpRef.current.joinPath(pane.connection.currentPath, file.name);
+      // Always show the opener dialog
+      setFileOpenerTarget({ file, side, fullPath });
+      setShowFileOpenerDialog(true);
+    },
+    [],
+  );
+
+  const handleOpenFileWithLeft = useCallback(
+    (file: SftpFileEntry) => handleOpenFileWithForSide("left", file),
+    [handleOpenFileWithForSide],
+  );
+  const handleOpenFileWithRight = useCallback(
+    (file: SftpFileEntry) => handleOpenFileWithForSide("right", file),
+    [handleOpenFileWithForSide],
+  );
+
   // Create stable callback objects for context
   // All handlers now use sftpRef, so these objects never change
   /* eslint-disable react-hooks/exhaustive-deps -- Handlers use sftpRef.current internally, so they are stable */
@@ -1872,6 +1902,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       onEditFile: handleEditFileLeft,
       onPreviewFile: handlePreviewFileLeft,
       onOpenFile: handleOpenFileLeft,
+      onOpenFileWith: handleOpenFileWithLeft,
     }),
     [],
   );
@@ -1897,6 +1928,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       onEditFile: handleEditFileRight,
       onPreviewFile: handlePreviewFileRight,
       onOpenFile: handleOpenFileRight,
+      onOpenFileWith: handleOpenFileWithRight,
     }),
     [],
   );

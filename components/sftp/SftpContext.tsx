@@ -31,6 +31,7 @@ export interface SftpPaneCallbacks {
     onEditFile?: (entry: SftpFileEntry) => void;
     onPreviewFile?: (entry: SftpFileEntry) => void;
     onOpenFile?: (entry: SftpFileEntry) => void;
+    onOpenFileWith?: (entry: SftpFileEntry) => void;  // Always show opener dialog
 }
 
 export interface SftpDragCallbacks {
