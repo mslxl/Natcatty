@@ -111,15 +111,15 @@ const SftpPaneWrapper = memo<SftpPaneWrapperProps>(({ side, paneId, isFirstPane,
   const activeTabId = useActiveTabId(side);
   // Active if: this pane's id matches activeTabId, or no activeTabId and this is first pane
   const isActive = activeTabId ? paneId === activeTabId : isFirstPane;
-  
+
   // Use same visibility pattern as VaultViewContainer in App.tsx
   const containerStyle: React.CSSProperties = isActive
     ? {}
     : { visibility: 'hidden', pointerEvents: 'none' };
-  
+
   return (
-    <div 
-      className={cn("absolute inset-0", isActive ? "z-10" : "z-0")} 
+    <div
+      className={cn("absolute inset-0", isActive ? "z-10" : "z-0")}
       style={containerStyle}
     >
       {children}
@@ -148,12 +148,12 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   // This component never re-renders on tab switch
   // We assume isActive=true because hidden components don't trigger keyboard events anyway
   const isActive = true;
-  
+
   // Get callbacks from context - stable references
   const callbacks = useSftpPaneCallbacks(side);
   const { draggedFiles, onDragStart, onDragEnd } = useSftpDrag();
   const hosts = useSftpHosts();
-  
+
   // Destructure for easier use
   const {
     onConnect,
@@ -1391,7 +1391,7 @@ const sftpPaneViewAreEqual = (
   if (prev.side !== next.side) return false;
   if (prev.showHeader !== next.showHeader) return false;
   if (prev.showEmptyHeader !== next.showEmptyHeader) return false;
-  
+
   return true;
 };
 
@@ -1408,22 +1408,22 @@ interface SftpViewProps {
 const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => {
   const isActive = useIsSftpActive();
   const sftp = useSftpState(hosts, keys, identities);
-  
+
   // Store sftp in a ref so callbacks can access the latest instance
   // without needing to re-create when sftp changes
   const sftpRef = useRef(sftp);
   sftpRef.current = sftp;
-  
+
   // Sync activeTabId to external store (allows child components to subscribe without parent re-render)
   // Using useLayoutEffect to sync before paint
   useLayoutEffect(() => {
     activeTabStore.setActiveTabId("left", sftp.leftTabs.activeTabId);
   }, [sftp.leftTabs.activeTabId]);
-  
+
   useLayoutEffect(() => {
     activeTabStore.setActiveTabId("right", sftp.rightTabs.activeTabId);
   }, [sftp.rightTabs.activeTabId]);
-  
+
   // 渲染追踪 - 不追踪 activeTabId（现在通过 store 订阅）
   useRenderTracker("SftpViewInner", {
     isActive,
@@ -1696,13 +1696,13 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
 
   // Don't read activeTabId here - let SftpTabBar and SftpPaneWrapper subscribe to store
   // This prevents SftpViewInner from re-rendering on tab switch
-  
+
   // Memoize panes arrays to prevent unnecessary re-renders
-  const leftPanes = useMemo(() => 
+  const leftPanes = useMemo(() =>
     sftp.leftTabs.tabs.length > 0 ? sftp.leftTabs.tabs : [sftp.leftPane],
     [sftp.leftTabs.tabs, sftp.leftPane]
   );
-  const rightPanes = useMemo(() => 
+  const rightPanes = useMemo(() =>
     sftp.rightTabs.tabs.length > 0 ? sftp.rightTabs.tabs : [sftp.rightPane],
     [sftp.rightTabs.tabs, sftp.rightPane]
   );
@@ -1758,7 +1758,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       hostId: pane.connection?.hostId || null,
     }));
   }, [sftp.leftTabs.tabs]);
-  
+
   const rightTabsInfo = useMemo(() => {
     return sftp.rightTabs.tabs.map((pane) => ({
       id: pane.id,
@@ -1848,93 +1848,93 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
           </div>
         </div>
 
-      {/* Host pickers for adding new tabs */}
-      <SftpHostPicker
-        open={showHostPickerLeft}
-        onOpenChange={setShowHostPickerLeft}
-        hosts={hosts}
-        side="left"
-        hostSearch={hostSearchLeft}
-        onHostSearchChange={setHostSearchLeft}
-        onSelectLocal={() => handleHostSelectLeft("local")}
-        onSelectHost={handleHostSelectLeft}
-      />
-      <SftpHostPicker
-        open={showHostPickerRight}
-        onOpenChange={setShowHostPickerRight}
-        hosts={hosts}
-        side="right"
-        hostSearch={hostSearchRight}
-        onHostSearchChange={setHostSearchRight}
-        onSelectLocal={() => handleHostSelectRight("local")}
-        onSelectHost={handleHostSelectRight}
-      />
+        {/* Host pickers for adding new tabs */}
+        <SftpHostPicker
+          open={showHostPickerLeft}
+          onOpenChange={setShowHostPickerLeft}
+          hosts={hosts}
+          side="left"
+          hostSearch={hostSearchLeft}
+          onHostSearchChange={setHostSearchLeft}
+          onSelectLocal={() => handleHostSelectLeft("local")}
+          onSelectHost={handleHostSelectLeft}
+        />
+        <SftpHostPicker
+          open={showHostPickerRight}
+          onOpenChange={setShowHostPickerRight}
+          hosts={hosts}
+          side="right"
+          hostSearch={hostSearchRight}
+          onHostSearchChange={setHostSearchRight}
+          onSelectLocal={() => handleHostSelectRight("local")}
+          onSelectHost={handleHostSelectRight}
+        />
 
-      {sftp.transfers.length > 0 && (
-        <div className="border-t border-border/70 bg-secondary/80 backdrop-blur-sm shrink-0">
-          <div className="flex items-center justify-between px-4 py-2 text-xs text-muted-foreground border-b border-border/40">
-            <span className="font-medium">
-              Transfers
-              {sftp.activeTransfersCount > 0 && (
-                <span className="ml-2 text-primary">
-                  ({sftp.activeTransfersCount} active)
-                </span>
-              )}
-            </span>
-            {sftp.transfers.some(
-              (t) => t.status === "completed" || t.status === "cancelled",
-            ) && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-2 text-xs"
-                  onClick={sftp.clearCompletedTransfers}
-                >
-                  Clear completed
-                </Button>
-              )}
+        {sftp.transfers.length > 0 && (
+          <div className="border-t border-border/70 bg-secondary/80 backdrop-blur-sm shrink-0">
+            <div className="flex items-center justify-between px-4 py-2 text-xs text-muted-foreground border-b border-border/40">
+              <span className="font-medium">
+                Transfers
+                {sftp.activeTransfersCount > 0 && (
+                  <span className="ml-2 text-primary">
+                    ({sftp.activeTransfersCount} active)
+                  </span>
+                )}
+              </span>
+              {sftp.transfers.some(
+                (t) => t.status === "completed" || t.status === "cancelled",
+              ) && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={sftp.clearCompletedTransfers}
+                  >
+                    Clear completed
+                  </Button>
+                )}
+            </div>
+            <div className="max-h-40 overflow-auto">
+              {visibleTransfers.map((task) => (
+                <SftpTransferItem
+                  key={task.id}
+                  task={task}
+                  onCancel={() => sftp.cancelTransfer(task.id)}
+                  onRetry={() => sftp.retryTransfer(task.id)}
+                  onDismiss={() => sftp.dismissTransfer(task.id)}
+                />
+              ))}
+            </div>
           </div>
-          <div className="max-h-40 overflow-auto">
-            {visibleTransfers.map((task) => (
-              <SftpTransferItem
-                key={task.id}
-                task={task}
-                onCancel={() => sftp.cancelTransfer(task.id)}
-                onRetry={() => sftp.retryTransfer(task.id)}
-                onDismiss={() => sftp.dismissTransfer(task.id)}
-              />
-            ))}
-          </div>
-        </div>
-      )}
+        )}
 
-      <SftpConflictDialog
-        conflicts={sftp.conflicts}
-        onResolve={sftp.resolveConflict}
-        formatFileSize={sftp.formatFileSize}
-      />
+        <SftpConflictDialog
+          conflicts={sftp.conflicts}
+          onResolve={sftp.resolveConflict}
+          formatFileSize={sftp.formatFileSize}
+        />
 
-      <SftpPermissionsDialog
-        open={!!permissionsState}
-        onOpenChange={(open) => !open && setPermissionsState(null)}
-        file={permissionsState?.file ?? null}
-        onSave={(file, permissions) => {
-          if (permissionsState) {
-            const fullPath = sftp.joinPath(
-              permissionsState.side === "left"
-                ? sftp.leftPane.connection?.currentPath || ""
-                : sftp.rightPane.connection?.currentPath || "",
-              file.name,
-            );
-            sftp.changePermissions(
-              permissionsState.side,
-              fullPath,
-              permissions,
-            );
-          }
-          setPermissionsState(null);
-        }}
-      />
+        <SftpPermissionsDialog
+          open={!!permissionsState}
+          onOpenChange={(open) => !open && setPermissionsState(null)}
+          file={permissionsState?.file ?? null}
+          onSave={(file, permissions) => {
+            if (permissionsState) {
+              const fullPath = sftp.joinPath(
+                permissionsState.side === "left"
+                  ? sftp.leftPane.connection?.currentPath || ""
+                  : sftp.rightPane.connection?.currentPath || "",
+                file.name,
+              );
+              sftp.changePermissions(
+                permissionsState.side,
+                fullPath,
+                permissions,
+              );
+            }
+            setPermissionsState(null);
+          }}
+        />
       </div>
     </SftpContextProvider>
   );

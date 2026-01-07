@@ -11,33 +11,33 @@ import { Host, SftpFileEntry } from "../../types";
 
 // Types for the context
 export interface SftpPaneCallbacks {
-  onConnect: (host: Host | "local") => void;
-  onDisconnect: () => void;
-  onNavigateTo: (path: string) => void;
-  onNavigateUp: () => void;
-  onRefresh: () => void;
-  onOpenEntry: (entry: SftpFileEntry) => void;
-  onToggleSelection: (fileName: string, multiSelect: boolean) => void;
-  onRangeSelect: (fileNames: string[]) => void;
-  onClearSelection: () => void;
-  onSetFilter: (filter: string) => void;
-  onCreateDirectory: (name: string) => Promise<void>;
-  onDeleteFiles: (fileNames: string[]) => Promise<void>;
-  onRenameFile: (oldName: string, newName: string) => Promise<void>;
-  onCopyToOtherPane: (files: { name: string; isDirectory: boolean }[]) => void;
-  onReceiveFromOtherPane: (files: { name: string; isDirectory: boolean }[]) => void;
-  onEditPermissions?: (file: SftpFileEntry) => void;
+    onConnect: (host: Host | "local") => void;
+    onDisconnect: () => void;
+    onNavigateTo: (path: string) => void;
+    onNavigateUp: () => void;
+    onRefresh: () => void;
+    onOpenEntry: (entry: SftpFileEntry) => void;
+    onToggleSelection: (fileName: string, multiSelect: boolean) => void;
+    onRangeSelect: (fileNames: string[]) => void;
+    onClearSelection: () => void;
+    onSetFilter: (filter: string) => void;
+    onCreateDirectory: (name: string) => Promise<void>;
+    onDeleteFiles: (fileNames: string[]) => Promise<void>;
+    onRenameFile: (oldName: string, newName: string) => Promise<void>;
+    onCopyToOtherPane: (files: { name: string; isDirectory: boolean }[]) => void;
+    onReceiveFromOtherPane: (files: { name: string; isDirectory: boolean }[]) => void;
+    onEditPermissions?: (file: SftpFileEntry) => void;
 }
 
 export interface SftpDragCallbacks {
-  onDragStart: (files: { name: string; isDirectory: boolean }[], side: "left" | "right") => void;
-  onDragEnd: () => void;
+    onDragStart: (files: { name: string; isDirectory: boolean }[], side: "left" | "right") => void;
+    onDragEnd: () => void;
 }
 
 // Store for activeTabId - allows subscription without re-rendering parent
 type ActiveTabStore = {
-  left: string | null;
-  right: string | null;
+    left: string | null;
+    right: string | null;
 };
 
 type ActiveTabListener = () => void;
@@ -46,109 +46,109 @@ let activeTabState: ActiveTabStore = { left: null, right: null };
 const activeTabListeners = new Set<ActiveTabListener>();
 
 export const activeTabStore = {
-  getSnapshot: () => activeTabState,
-  getLeftActiveTabId: () => activeTabState.left,
-  getRightActiveTabId: () => activeTabState.right,
-  setActiveTabId: (side: "left" | "right", tabId: string | null) => {
-    if (activeTabState[side] !== tabId) {
-      activeTabState = { ...activeTabState, [side]: tabId };
-      activeTabListeners.forEach((listener) => listener());
-    }
-  },
-  subscribe: (listener: ActiveTabListener) => {
-    activeTabListeners.add(listener);
-    return () => activeTabListeners.delete(listener);
-  },
+    getSnapshot: () => activeTabState,
+    getLeftActiveTabId: () => activeTabState.left,
+    getRightActiveTabId: () => activeTabState.right,
+    setActiveTabId: (side: "left" | "right", tabId: string | null) => {
+        if (activeTabState[side] !== tabId) {
+            activeTabState = { ...activeTabState, [side]: tabId };
+            activeTabListeners.forEach((listener) => listener());
+        }
+    },
+    subscribe: (listener: ActiveTabListener) => {
+        activeTabListeners.add(listener);
+        return () => activeTabListeners.delete(listener);
+    },
 };
 
 // Hook to subscribe to active tab changes for a specific side
 export const useActiveTabId = (side: "left" | "right"): string | null => {
-  return useSyncExternalStore(
-    activeTabStore.subscribe,
-    () => (side === "left" ? activeTabStore.getLeftActiveTabId() : activeTabStore.getRightActiveTabId()),
-    () => (side === "left" ? activeTabStore.getLeftActiveTabId() : activeTabStore.getRightActiveTabId()),
-  );
+    return useSyncExternalStore(
+        activeTabStore.subscribe,
+        () => (side === "left" ? activeTabStore.getLeftActiveTabId() : activeTabStore.getRightActiveTabId()),
+        () => (side === "left" ? activeTabStore.getLeftActiveTabId() : activeTabStore.getRightActiveTabId()),
+    );
 };
 
 // Hook to check if a specific pane is active (for CSS control)
 export const useIsPaneActive = (side: "left" | "right", paneId: string): boolean => {
-  const activeTabId = useActiveTabId(side);
-  return activeTabId === paneId || (activeTabId === null && paneId !== null);
+    const activeTabId = useActiveTabId(side);
+    return activeTabId === paneId || (activeTabId === null && paneId !== null);
 };
 
 export interface SftpContextValue {
-  // Hosts list for connection picker
-  hosts: Host[];
-  
-  // Drag state (shared between panes)
-  draggedFiles: { name: string; isDirectory: boolean; side: "left" | "right" }[] | null;
-  dragCallbacks: SftpDragCallbacks;
-  
-  // Callbacks for each side
-  leftCallbacks: SftpPaneCallbacks;
-  rightCallbacks: SftpPaneCallbacks;
+    // Hosts list for connection picker
+    hosts: Host[];
+
+    // Drag state (shared between panes)
+    draggedFiles: { name: string; isDirectory: boolean; side: "left" | "right" }[] | null;
+    dragCallbacks: SftpDragCallbacks;
+
+    // Callbacks for each side
+    leftCallbacks: SftpPaneCallbacks;
+    rightCallbacks: SftpPaneCallbacks;
 }
 
 const SftpContext = createContext<SftpContextValue | null>(null);
 
 export const useSftpContext = () => {
-  const context = useContext(SftpContext);
-  if (!context) {
-    throw new Error("useSftpContext must be used within SftpContextProvider");
-  }
-  return context;
+    const context = useContext(SftpContext);
+    if (!context) {
+        throw new Error("useSftpContext must be used within SftpContextProvider");
+    }
+    return context;
 };
 
 // Hook to get callbacks for a specific side
 export const useSftpPaneCallbacks = (side: "left" | "right"): SftpPaneCallbacks => {
-  const context = useSftpContext();
-  return side === "left" ? context.leftCallbacks : context.rightCallbacks;
+    const context = useSftpContext();
+    return side === "left" ? context.leftCallbacks : context.rightCallbacks;
 };
 
 // Hook to get drag-related values
 export const useSftpDrag = () => {
-  const context = useSftpContext();
-  return {
-    draggedFiles: context.draggedFiles,
-    ...context.dragCallbacks,
-  };
+    const context = useSftpContext();
+    return {
+        draggedFiles: context.draggedFiles,
+        ...context.dragCallbacks,
+    };
 };
 
 // Hook to get hosts
 export const useSftpHosts = () => {
-  const context = useSftpContext();
-  return context.hosts;
+    const context = useSftpContext();
+    return context.hosts;
 };
 
 interface SftpContextProviderProps {
-  hosts: Host[];
-  draggedFiles: { name: string; isDirectory: boolean; side: "left" | "right" }[] | null;
-  dragCallbacks: SftpDragCallbacks;
-  leftCallbacks: SftpPaneCallbacks;
-  rightCallbacks: SftpPaneCallbacks;
-  children: React.ReactNode;
+    hosts: Host[];
+    draggedFiles: { name: string; isDirectory: boolean; side: "left" | "right" }[] | null;
+    dragCallbacks: SftpDragCallbacks;
+    leftCallbacks: SftpPaneCallbacks;
+    rightCallbacks: SftpPaneCallbacks;
+    children: React.ReactNode;
 }
 
 export const SftpContextProvider: React.FC<SftpContextProviderProps> = ({
-  hosts,
-  draggedFiles,
-  dragCallbacks,
-  leftCallbacks,
-  rightCallbacks,
-  children,
+    hosts,
+    draggedFiles,
+    dragCallbacks,
+    leftCallbacks,
+    rightCallbacks,
+    children,
 }) => {
-  // Memoize the context value to prevent unnecessary re-renders
-  // Note: The callbacks objects should be stable (created with useMemo in parent)
-  const value = useMemo<SftpContextValue>(
-    () => ({
-      hosts,
-      draggedFiles,
-      dragCallbacks,
-      leftCallbacks,
-      rightCallbacks,
-    }),
-    [hosts, draggedFiles, dragCallbacks, leftCallbacks, rightCallbacks],
-  );
+    // Memoize the context value to prevent unnecessary re-renders
+    // Note: The callbacks objects should be stable (created with useMemo in parent)
+    const value = useMemo<SftpContextValue>(
+        () => ({
+            hosts,
+            draggedFiles,
+            dragCallbacks,
+            leftCallbacks,
+            rightCallbacks,
+        }),
+        [hosts, draggedFiles, dragCallbacks, leftCallbacks, rightCallbacks],
+    );
 
-  return <SftpContext.Provider value={value}>{children}</SftpContext.Provider>;
+    return <SftpContext.Provider value={value}>{children}</SftpContext.Provider>;
 };

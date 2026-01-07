@@ -6,7 +6,7 @@ import React, { memo, useEffect, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { SftpFileEntry } from '../../types';
 import { Button } from '../ui/button';
-import { Dialog,DialogContent,DialogDescription,DialogFooter,DialogHeader,DialogTitle } from '../ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 
 interface SftpPermissionsDialogProps {
     open: boolean;

@@ -57,7 +57,7 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
 }) => {
   // Subscribe to activeTabId from store (isolated subscription)
   const activeTabId = useActiveTabId(side);
-  
+
   // 渲染追踪 - 追踪所有 props 包括回调函数
   useRenderTracker(`SftpTabBar[${side}]`, {
     side,
@@ -97,7 +97,7 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
         setIsCrossPaneDragOver(false);
       }
     };
-    
+
     document.addEventListener("dragend", handleGlobalDragEnd);
     return () => document.removeEventListener("dragend", handleGlobalDragEnd);
   }, []);
@@ -218,7 +218,7 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
     (e: React.DragEvent) => {
       const draggedFromSide = e.dataTransfer.types.includes("sftp-tab-side");
       if (!draggedFromSide) return;
-      
+
       // Check if this is from the other side (we can't read the data during dragover due to browser security)
       // We'll set the indicator and validate on drop
       e.preventDefault();
@@ -236,10 +236,10 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
     (e: React.DragEvent) => {
       e.preventDefault();
       setIsCrossPaneDragOver(false);
-      
+
       const draggedId = e.dataTransfer.getData("sftp-tab-id");
       const draggedFromSide = e.dataTransfer.getData("sftp-tab-side");
-      
+
       // Only accept drops from the other side
       if (draggedId && draggedFromSide && draggedFromSide !== side && onMoveTabToOtherSide) {
         logger.info("[SftpTabBar] Cross-pane drop", {
@@ -249,7 +249,7 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
         });
         onMoveTabToOtherSide(draggedId);
       }
-      
+
       // Always reset drag state on drop
       draggedTabIdRef.current = null;
       setDropIndicator(null);
@@ -396,7 +396,7 @@ const sftpTabBarAreEqual = (
   // Compare data props only
   if (prev.side !== next.side) return false;
   if (prev.tabs.length !== next.tabs.length) return false;
-  
+
   // Deep compare tabs array
   for (let i = 0; i < prev.tabs.length; i++) {
     const prevTab = prev.tabs[i];
@@ -410,7 +410,7 @@ const sftpTabBarAreEqual = (
       return false;
     }
   }
-  
+
   // Ignore callback function refs - they may change but behavior is stable
   return true;
 };
