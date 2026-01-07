@@ -566,12 +566,12 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
             side,
           }))
         : [
-            {
-              name: entry.name,
-              isDirectory: isNavigableDirectory(entry),
-              side,
-            },
-          ];
+          {
+            name: entry.name,
+            isDirectory: isNavigableDirectory(entry),
+            side,
+          },
+        ];
       e.dataTransfer.effectAllowed = "copy";
       e.dataTransfer.setData("text/plain", files.map((f) => f.name).join("\n"));
       onDragStart(files, side);
@@ -654,8 +654,8 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
 
   const handleRowOpen = useCallback(
     (entry: SftpFileEntry) => {
-      console.log("[SftpPaneView] handleRowOpen called", { 
-        side, 
+      console.log("[SftpPaneView] handleRowOpen called", {
+        side,
         entryName: entry.name
       });
       onOpenEntry(entry);
@@ -686,23 +686,23 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     : 0;
   const endIndex = shouldVirtualize
     ? Math.min(
-        sortedDisplayFiles.length - 1,
-        Math.ceil((scrollTop + viewportHeight) / rowHeight) + overscan,
-      )
+      sortedDisplayFiles.length - 1,
+      Math.ceil((scrollTop + viewportHeight) / rowHeight) + overscan,
+    )
     : sortedDisplayFiles.length - 1;
   const visibleRows = shouldVirtualize
     ? sortedDisplayFiles
-        .slice(startIndex, endIndex + 1)
-        .map((entry, idx) => ({
-          entry,
-          index: startIndex + idx,
-          top: (startIndex + idx) * rowHeight,
-        }))
-    : sortedDisplayFiles.map((entry, index) => ({
+      .slice(startIndex, endIndex + 1)
+      .map((entry, idx) => ({
         entry,
-        index,
-        top: 0,
-      }));
+        index: startIndex + idx,
+        top: (startIndex + idx) * rowHeight,
+      }))
+    : sortedDisplayFiles.map((entry, index) => ({
+      entry,
+      index,
+      top: 0,
+    }));
 
   useEffect(() => {
     logger.debug("SftpPaneView virtualization", {
@@ -826,19 +826,19 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     () =>
       shouldVirtualize
         ? visibleRows.map(({ entry, index, top }) => (
-            <div
-              key={entry.name}
-              className="absolute left-0 right-0 border-b border-border/30"
-              style={{ top, height: rowHeight }}
-            >
-              {renderRow(entry, index)}
-            </div>
-          ))
+          <div
+            key={entry.name}
+            className="absolute left-0 right-0 border-b border-border/30"
+            style={{ top, height: rowHeight }}
+          >
+            {renderRow(entry, index)}
+          </div>
+        ))
         : sortedDisplayFiles.map((entry, index) => (
-            <React.Fragment key={entry.name}>
-              {renderRow(entry, index)}
-            </React.Fragment>
-          )),
+          <React.Fragment key={entry.name}>
+            {renderRow(entry, index)}
+          </React.Fragment>
+        )),
     [
       renderRow,
       rowHeight,
@@ -990,85 +990,85 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
             <ChevronLeft size={12} />
           </Button>
 
-        {/* Editable Breadcrumb with autocomplete */}
-        {isEditingPath ? (
-          <div className="relative flex-1">
-            <Input
-              ref={pathInputRef}
-              value={editingPathValue}
-              onChange={(e) => {
-                setEditingPathValue(e.target.value);
-                setShowPathSuggestions(true);
-                setPathSuggestionIndex(-1);
-              }}
-              onBlur={handlePathBlur}
-              onKeyDown={handlePathKeyDown}
-              onFocus={() => setShowPathSuggestions(true)}
-              className="h-5 w-full text-[10px] bg-background"
-              autoFocus
-            />
-            {showPathSuggestions && pathSuggestions.length > 0 && (
-              <div
-                ref={pathDropdownRef}
-                className="absolute top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-lg z-50 max-h-48 overflow-auto"
-              >
-                {pathSuggestions.map((suggestion, idx) => (
-                  <button
-                    key={suggestion.path}
-                    type="button"
-                    className={cn(
-                      "w-full px-3 py-2 text-left text-xs flex items-center gap-2 hover:bg-secondary/60 transition-colors",
-                      idx === pathSuggestionIndex && "bg-secondary/80",
-                    )}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      handlePathSubmit(suggestion.path);
-                    }}
-                  >
-                    {suggestion.type === "folder" ? (
-                      <Folder size={12} className="text-primary shrink-0" />
-                    ) : (
-                      <Home
-                        size={12}
-                        className="text-muted-foreground shrink-0"
-                      />
-                    )}
-                    <span className="truncate font-mono">
-                      {suggestion.path}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        ) : (
-          <div
-            className="flex-1 cursor-text hover:bg-secondary/50 rounded px-1 transition-colors"
-            onDoubleClick={handlePathDoubleClick}
-            title={t("sftp.path.doubleClickToEdit")}
-          >
-            <SftpBreadcrumb
-              path={pane.connection.currentPath}
-              onNavigate={onNavigateTo}
-              onHome={() =>
-                pane.connection?.homeDir &&
-                onNavigateTo(pane.connection.homeDir)
-              }
-            />
-          </div>
-        )}
+          {/* Editable Breadcrumb with autocomplete */}
+          {isEditingPath ? (
+            <div className="relative flex-1">
+              <Input
+                ref={pathInputRef}
+                value={editingPathValue}
+                onChange={(e) => {
+                  setEditingPathValue(e.target.value);
+                  setShowPathSuggestions(true);
+                  setPathSuggestionIndex(-1);
+                }}
+                onBlur={handlePathBlur}
+                onKeyDown={handlePathKeyDown}
+                onFocus={() => setShowPathSuggestions(true)}
+                className="h-5 w-full text-[10px] bg-background"
+                autoFocus
+              />
+              {showPathSuggestions && pathSuggestions.length > 0 && (
+                <div
+                  ref={pathDropdownRef}
+                  className="absolute top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-lg z-50 max-h-48 overflow-auto"
+                >
+                  {pathSuggestions.map((suggestion, idx) => (
+                    <button
+                      key={suggestion.path}
+                      type="button"
+                      className={cn(
+                        "w-full px-3 py-2 text-left text-xs flex items-center gap-2 hover:bg-secondary/60 transition-colors",
+                        idx === pathSuggestionIndex && "bg-secondary/80",
+                      )}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        handlePathSubmit(suggestion.path);
+                      }}
+                    >
+                      {suggestion.type === "folder" ? (
+                        <Folder size={12} className="text-primary shrink-0" />
+                      ) : (
+                        <Home
+                          size={12}
+                          className="text-muted-foreground shrink-0"
+                        />
+                      )}
+                      <span className="truncate font-mono">
+                        {suggestion.path}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div
+              className="flex-1 cursor-text hover:bg-secondary/50 rounded px-1 transition-colors"
+              onDoubleClick={handlePathDoubleClick}
+              title={t("sftp.path.doubleClickToEdit")}
+            >
+              <SftpBreadcrumb
+                path={pane.connection.currentPath}
+                onNavigate={onNavigateTo}
+                onHome={() =>
+                  pane.connection?.homeDir &&
+                  onNavigateTo(pane.connection.homeDir)
+                }
+              />
+            </div>
+          )}
 
-        <div className="ml-auto flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-xs"
-            onClick={() => setShowNewFolderDialog(true)}
-          >
-            <FolderPlus size={12} className="mr-1" /> {t("sftp.newFolder")}
-          </Button>
+          <div className="ml-auto flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => setShowNewFolderDialog(true)}
+            >
+              <FolderPlus size={12} className="mr-1" /> {t("sftp.newFolder")}
+            </Button>
+          </div>
         </div>
-      </div>
       )}
 
       {/* File list header */}
