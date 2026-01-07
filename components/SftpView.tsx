@@ -48,6 +48,7 @@ import {
   SftpFileRow,
   SftpHostPicker,
   SftpPermissionsDialog,
+  SftpTabBar,
   SftpTransferItem,
   SortField,
   SortOrder,
@@ -77,6 +78,7 @@ import {
 interface SftpPaneViewProps {
   side: "left" | "right";
   pane: SftpPane;
+  showHeader?: boolean;
   hosts: Host[];
   filteredFiles: SftpFileEntry[];
   onConnect: (host: Host | "local") => void;
@@ -110,6 +112,7 @@ interface SftpPaneViewProps {
 const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   side,
   pane,
+  showHeader = true,
   hosts,
   filteredFiles,
   onConnect,
@@ -564,86 +567,80 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
       onDragLeave={handlePaneDragLeave}
       onDrop={handlePaneDrop}
     >
-      {/* Header */}
-      <div className="h-12 px-4 border-b border-border/60 flex items-center gap-3">
-        <div className="flex items-center gap-2 text-sm font-semibold">
-          {pane.connection.isLocal ? (
-            <Monitor size={14} />
-          ) : (
-            <HardDrive size={14} />
-          )}
-          <span>{pane.connection.hostLabel}</span>
-          {(pane.connection.status === "connecting" || pane.reconnecting) && (
-            <Loader2 size={12} className="animate-spin text-muted-foreground" />
-          )}
-          {pane.reconnecting && (
-            <span className="text-xs text-muted-foreground">
-              Reconnecting...
-            </span>
-          )}
-          {pane.connection.status === "error" && !pane.reconnecting && (
-            <AlertCircle size={12} className="text-destructive" />
-          )}
-        </div>
-
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-8 px-3"
-          onClick={() => setShowHostPicker(true)}
-        >
-          <RefreshCw size={12} className="mr-1" /> Change
-        </Button>
-
-        <div className="flex items-center gap-1 ml-auto">
-          <div className="relative">
-            <Search
-              size={14}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
-            />
-            <Input
-              value={pane.filter}
-              onChange={(e) => onSetFilter(e.target.value)}
-              placeholder="Filter..."
-              className="h-8 w-36 pl-8 pr-7 text-xs bg-secondary/40"
-            />
-            {pane.filter && (
-              <button
-                onClick={() => onSetFilter("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-              >
-                <X size={12} />
-              </button>
+      {/* Header - compact version - only show when showHeader is true */}
+      {showHeader && (
+        <div className="h-8 px-3 border-b border-border/60 flex items-center gap-2">
+          <div className="flex items-center gap-1.5 text-xs font-medium">
+            {pane.connection.isLocal ? (
+              <Monitor size={12} />
+            ) : (
+              <HardDrive size={12} />
+            )}
+            <span>{pane.connection.hostLabel}</span>
+            {(pane.connection.status === "connecting" || pane.reconnecting) && (
+              <Loader2 size={10} className="animate-spin text-muted-foreground" />
+            )}
+            {pane.reconnecting && (
+              <span className="text-[10px] text-muted-foreground">
+                Reconnecting...
+              </span>
+            )}
+            {pane.connection.status === "error" && !pane.reconnecting && (
+              <AlertCircle size={10} className="text-destructive" />
             )}
           </div>
+
+          <div className="flex items-center gap-1 ml-auto">
+            <div className="relative">
+              <Search
+                size={12}
+                className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+              />
+              <Input
+                value={pane.filter}
+                onChange={(e) => onSetFilter(e.target.value)}
+                placeholder="Filter..."
+                className="h-6 w-28 pl-6 pr-5 text-[10px] bg-secondary/40"
+              />
+              {pane.filter && (
+                <button
+                  onClick={() => onSetFilter("")}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X size={10} />
+                </button>
+              )}
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={onRefresh}
+              title={t("common.refresh")}
+            >
+              <RefreshCw
+                size={12}
+                className={
+                  pane.loading || pane.reconnecting ? "animate-spin" : ""
+                }
+              />
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Toolbar - compact - only show when showHeader is true */}
+      {showHeader && (
+        <div className="h-7 px-2 flex items-center gap-1 border-b border-border/40 bg-secondary/20">
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8"
-            onClick={onRefresh}
-            title={t("common.refresh")}
+            className="h-5 w-5"
+            onClick={onNavigateUp}
+            title={t("sftp.goUp")}
           >
-            <RefreshCw
-              size={14}
-              className={
-                pane.loading || pane.reconnecting ? "animate-spin" : ""
-              }
-            />
+            <ChevronLeft size={12} />
           </Button>
-        </div>
-      </div>
-
-      {/* Toolbar */}
-      <div className="h-10 px-4 flex items-center gap-2 border-b border-border/40 bg-secondary/20">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          onClick={onNavigateUp}
-          title={t("sftp.goUp")}
-        >
-          <ChevronLeft size={14} />
-        </Button>
 
         {/* Editable Breadcrumb with autocomplete */}
         {isEditingPath ? (
@@ -659,7 +656,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
               onBlur={handlePathBlur}
               onKeyDown={handlePathKeyDown}
               onFocus={() => setShowPathSuggestions(true)}
-              className="h-7 w-full text-xs bg-background"
+              className="h-5 w-full text-[10px] bg-background"
               autoFocus
             />
             {showPathSuggestions && pathSuggestions.length > 0 && (
@@ -724,6 +721,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
           </Button>
         </div>
       </div>
+      )}
 
       {/* File list header */}
       <div
@@ -1268,6 +1266,65 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       zIndex: -1,
     };
 
+  // Tab management callbacks
+  const [showHostPickerLeft, setShowHostPickerLeft] = useState(false);
+  const [showHostPickerRight, setShowHostPickerRight] = useState(false);
+  const [hostSearchLeft, setHostSearchLeft] = useState("");
+  const [hostSearchRight, setHostSearchRight] = useState("");
+
+  const handleAddTabLeft = useCallback(() => {
+    sftp.addTab("left");
+    setShowHostPickerLeft(true);
+  }, [sftp]);
+
+  const handleAddTabRight = useCallback(() => {
+    sftp.addTab("right");
+    setShowHostPickerRight(true);
+  }, [sftp]);
+
+  const handleCloseTabLeft = useCallback((tabId: string) => {
+    sftp.closeTab("left", tabId);
+  }, [sftp]);
+
+  const handleCloseTabRight = useCallback((tabId: string) => {
+    sftp.closeTab("right", tabId);
+  }, [sftp]);
+
+  const handleSelectTabLeft = useCallback((tabId: string) => {
+    sftp.selectTab("left", tabId);
+  }, [sftp]);
+
+  const handleSelectTabRight = useCallback((tabId: string) => {
+    sftp.selectTab("right", tabId);
+  }, [sftp]);
+
+  const handleReorderTabsLeft = useCallback(
+    (draggedId: string, targetId: string, position: "before" | "after") => {
+      sftp.reorderTabs("left", draggedId, targetId, position);
+    },
+    [sftp],
+  );
+
+  const handleReorderTabsRight = useCallback(
+    (draggedId: string, targetId: string, position: "before" | "after") => {
+      sftp.reorderTabs("right", draggedId, targetId, position);
+    },
+    [sftp],
+  );
+
+  const handleHostSelectLeft = useCallback((host: Host | "local") => {
+    sftp.connect("left", host);
+    setShowHostPickerLeft(false);
+  }, [sftp]);
+
+  const handleHostSelectRight = useCallback((host: Host | "local") => {
+    sftp.connect("right", host);
+    setShowHostPickerRight(false);
+  }, [sftp]);
+
+  const leftTabsInfo = useMemo(() => sftp.getTabsInfo("left"), [sftp]);
+  const rightTabsInfo = useMemo(() => sftp.getTabsInfo("right"), [sftp]);
+
   return (
     <div
       className={cn(
@@ -1277,61 +1334,113 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       style={containerStyle}
     >
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 min-h-0 border-t border-border/70">
-        <div className="relative border-r border-border/70">
-          <SftpPaneView
-            side="left"
-            pane={sftp.leftPane}
-            hosts={hosts}
-            filteredFiles={leftFilteredFiles}
-            onConnect={handleConnectLeft}
-            onDisconnect={handleDisconnectLeft}
-            onNavigateTo={handleNavigateToLeft}
-            onNavigateUp={handleNavigateUpLeft}
-            onRefresh={handleRefreshLeft}
-            onOpenEntry={handleOpenEntryLeft}
-            onToggleSelection={handleToggleSelectionLeft}
-            onRangeSelect={handleRangeSelectLeft}
-            onClearSelection={handleClearSelectionLeft}
-            onSetFilter={handleSetFilterLeft}
-            onCreateDirectory={handleCreateDirectoryLeft}
-            onDeleteFiles={handleDeleteFilesLeft}
-            onRenameFile={handleRenameFileLeft}
-            onCopyToOtherPane={handleCopyToOtherPaneLeft}
-            onReceiveFromOtherPane={handleReceiveFromOtherPaneLeft}
-            onEditPermissions={handleEditPermissionsLeft}
-            draggedFiles={draggedFiles}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-          />
+        <div className="relative border-r border-border/70 flex flex-col">
+          {/* Left side tab bar - only show when there are tabs */}
+          {leftTabsInfo.length > 0 && (
+            <SftpTabBar
+              tabs={leftTabsInfo}
+              activeTabId={sftp.getActiveTabId("left")}
+              side="left"
+              onSelectTab={handleSelectTabLeft}
+              onCloseTab={handleCloseTabLeft}
+              onAddTab={handleAddTabLeft}
+              onReorderTabs={handleReorderTabsLeft}
+            />
+          )}
+          <div className="relative flex-1 min-h-0">
+            <SftpPaneView
+              side="left"
+              pane={sftp.leftPane}
+              showHeader={leftTabsInfo.length > 0}
+              hosts={hosts}
+              filteredFiles={leftFilteredFiles}
+              onConnect={handleConnectLeft}
+              onDisconnect={handleDisconnectLeft}
+              onNavigateTo={handleNavigateToLeft}
+              onNavigateUp={handleNavigateUpLeft}
+              onRefresh={handleRefreshLeft}
+              onOpenEntry={handleOpenEntryLeft}
+              onToggleSelection={handleToggleSelectionLeft}
+              onRangeSelect={handleRangeSelectLeft}
+              onClearSelection={handleClearSelectionLeft}
+              onSetFilter={handleSetFilterLeft}
+              onCreateDirectory={handleCreateDirectoryLeft}
+              onDeleteFiles={handleDeleteFilesLeft}
+              onRenameFile={handleRenameFileLeft}
+              onCopyToOtherPane={handleCopyToOtherPaneLeft}
+              onReceiveFromOtherPane={handleReceiveFromOtherPaneLeft}
+              onEditPermissions={handleEditPermissionsLeft}
+              draggedFiles={draggedFiles}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+            />
+          </div>
         </div>
-        <div className="relative">
-          <SftpPaneView
-            side="right"
-            pane={sftp.rightPane}
-            hosts={hosts}
-            filteredFiles={rightFilteredFiles}
-            onConnect={handleConnectRight}
-            onDisconnect={handleDisconnectRight}
-            onNavigateTo={handleNavigateToRight}
-            onNavigateUp={handleNavigateUpRight}
-            onRefresh={handleRefreshRight}
-            onOpenEntry={handleOpenEntryRight}
-            onToggleSelection={handleToggleSelectionRight}
-            onRangeSelect={handleRangeSelectRight}
-            onClearSelection={handleClearSelectionRight}
-            onSetFilter={handleSetFilterRight}
-            onCreateDirectory={handleCreateDirectoryRight}
-            onDeleteFiles={handleDeleteFilesRight}
-            onRenameFile={handleRenameFileRight}
-            onCopyToOtherPane={handleCopyToOtherPaneRight}
-            onReceiveFromOtherPane={handleReceiveFromOtherPaneRight}
-            onEditPermissions={handleEditPermissionsRight}
-            draggedFiles={draggedFiles}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-          />
+        <div className="relative flex flex-col">
+          {/* Right side tab bar - only show when there are tabs */}
+          {rightTabsInfo.length > 0 && (
+            <SftpTabBar
+              tabs={rightTabsInfo}
+              activeTabId={sftp.getActiveTabId("right")}
+              side="right"
+              onSelectTab={handleSelectTabRight}
+              onCloseTab={handleCloseTabRight}
+              onAddTab={handleAddTabRight}
+              onReorderTabs={handleReorderTabsRight}
+            />
+          )}
+          <div className="relative flex-1 min-h-0">
+            <SftpPaneView
+              side="right"
+              pane={sftp.rightPane}
+              showHeader={rightTabsInfo.length > 0}
+              hosts={hosts}
+              filteredFiles={rightFilteredFiles}
+              onConnect={handleConnectRight}
+              onDisconnect={handleDisconnectRight}
+              onNavigateTo={handleNavigateToRight}
+              onNavigateUp={handleNavigateUpRight}
+              onRefresh={handleRefreshRight}
+              onOpenEntry={handleOpenEntryRight}
+              onToggleSelection={handleToggleSelectionRight}
+              onRangeSelect={handleRangeSelectRight}
+              onClearSelection={handleClearSelectionRight}
+              onSetFilter={handleSetFilterRight}
+              onCreateDirectory={handleCreateDirectoryRight}
+              onDeleteFiles={handleDeleteFilesRight}
+              onRenameFile={handleRenameFileRight}
+              onCopyToOtherPane={handleCopyToOtherPaneRight}
+              onReceiveFromOtherPane={handleReceiveFromOtherPaneRight}
+              onEditPermissions={handleEditPermissionsRight}
+              draggedFiles={draggedFiles}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+            />
+          </div>
         </div>
       </div>
+
+      {/* Host pickers for adding new tabs */}
+      <SftpHostPicker
+        open={showHostPickerLeft}
+        onOpenChange={setShowHostPickerLeft}
+        hosts={hosts}
+        side="left"
+        hostSearch={hostSearchLeft}
+        onHostSearchChange={setHostSearchLeft}
+        onSelectLocal={() => handleHostSelectLeft("local")}
+        onSelectHost={handleHostSelectLeft}
+      />
+      <SftpHostPicker
+        open={showHostPickerRight}
+        onOpenChange={setShowHostPickerRight}
+        hosts={hosts}
+        side="right"
+        hostSearch={hostSearchRight}
+        onHostSearchChange={setHostSearchRight}
+        onSelectLocal={() => handleHostSelectRight("local")}
+        onSelectHost={handleHostSelectRight}
+      />
 
       {sftp.transfers.length > 0 && (
         <div className="border-t border-border/70 bg-secondary/80 backdrop-blur-sm shrink-0">
