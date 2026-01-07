@@ -35,5 +35,8 @@ export const STORAGE_KEY_VAULT_KNOWN_HOSTS_VIEW_MODE = 'netcatty_vault_known_hos
 export const STORAGE_KEY_UPDATE_LAST_CHECK = 'netcatty_update_last_check_v1';
 export const STORAGE_KEY_UPDATE_DISMISSED_VERSION = 'netcatty_update_dismissed_version_v1';
 
+// SFTP File Opener Associations
+export const STORAGE_KEY_SFTP_FILE_ASSOCIATIONS = 'netcatty_sftp_file_associations_v1';
+
 // Archived legacy key records that are no longer supported by the app (e.g. biometric/WebAuthn/FIDO2 experiments).
 export const STORAGE_KEY_LEGACY_KEYS = 'netcatty_legacy_keys_v1';

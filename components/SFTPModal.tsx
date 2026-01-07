@@ -5,6 +5,7 @@ import {
   Download,
   Edit2,
   ExternalLink,
+  Eye,
   File,
   FileArchive,
   FileAudio,
@@ -15,6 +16,7 @@ import {
   FileType,
   FileVideo,
   Folder,
+  FolderOpen,
   Globe,
   Home,
   Key,
@@ -41,16 +43,22 @@ import React, {
 } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useSftpBackend } from "../application/state/useSftpBackend";
+import { useSftpFileAssociations } from "../application/state/useSftpFileAssociations";
 import { logger } from "../lib/logger";
+import { getFileExtension, isImageFile, isTextFile, FileOpenerType } from "../lib/sftpFileUtils";
 import { cn } from "../lib/utils";
 import { Host, RemoteFile } from "../types";
 import { DistroAvatar } from "./DistroAvatar";
+import FileOpenerDialog from "./FileOpenerDialog";
+import ImagePreviewModal from "./ImagePreviewModal";
+import TextEditorModal from "./TextEditorModal";
 import { Button } from "./ui/button";
 import { toast } from "./ui/toast";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger,
 } from "./ui/context-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
@@ -279,6 +287,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     closeSftp: closeSftpBackend,
     listSftp,
     readSftp,
+    readSftpBinary,
     writeSftpBinaryWithProgress,
     writeSftpBinary,
     writeSftp,
@@ -325,6 +334,23 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     others: { read: false, write: false, execute: false },
   });
   const [isChangingPermissions, setIsChangingPermissions] = useState(false);
+
+  // File opener state
+  const { getOpenerForFile, setOpenerForExtension } = useSftpFileAssociations();
+  const [showFileOpenerDialog, setShowFileOpenerDialog] = useState(false);
+  const [fileOpenerTarget, setFileOpenerTarget] = useState<RemoteFile | null>(null);
+  
+  // Text editor state
+  const [showTextEditor, setShowTextEditor] = useState(false);
+  const [textEditorTarget, setTextEditorTarget] = useState<RemoteFile | null>(null);
+  const [textEditorContent, setTextEditorContent] = useState("");
+  const [_loadingTextContent, setLoadingTextContent] = useState(false);
+  
+  // Image preview state
+  const [showImagePreview, setShowImagePreview] = useState(false);
+  const [imagePreviewTarget, setImagePreviewTarget] = useState<RemoteFile | null>(null);
+  const [imagePreviewData, setImagePreviewData] = useState<ArrayBuffer | null>(null);
+  const [loadingImageData, setLoadingImageData] = useState(false);
 
   // Virtual scrolling refs and state
   const fileListRef = useRef<HTMLDivElement>(null);
@@ -1050,6 +1076,103 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       setIsChangingPermissions(false);
     }
   };
+
+  // File opener handlers
+  const openFileOpenerDialog = useCallback((file: RemoteFile) => {
+    setFileOpenerTarget(file);
+    setShowFileOpenerDialog(true);
+  }, []);
+
+  const handleEditFile = useCallback(async (file: RemoteFile) => {
+    try {
+      setLoadingTextContent(true);
+      setTextEditorTarget(file);
+      const fullPath = joinPath(currentPath, file.name);
+      const content = isLocalSession
+        ? await readLocalFile(fullPath).then(buf => new TextDecoder().decode(buf))
+        : await readSftp(await ensureSftp(), fullPath);
+      setTextEditorContent(content);
+      setShowTextEditor(true);
+    } catch (e) {
+      toast.error(
+        e instanceof Error ? e.message : t("sftp.error.loadFailed"),
+        "SFTP",
+      );
+    } finally {
+      setLoadingTextContent(false);
+    }
+  }, [currentPath, ensureSftp, isLocalSession, joinPath, readLocalFile, readSftp, t]);
+
+  const handleSaveTextFile = useCallback(async (content: string) => {
+    if (!textEditorTarget) return;
+    const fullPath = joinPath(currentPath, textEditorTarget.name);
+    if (isLocalSession) {
+      const encoder = new TextEncoder();
+      await writeLocalFile(fullPath, encoder.encode(content).buffer);
+    } else {
+      await writeSftp(await ensureSftp(), fullPath, content);
+    }
+  }, [currentPath, ensureSftp, isLocalSession, joinPath, textEditorTarget, writeLocalFile, writeSftp]);
+
+  const handlePreviewImage = useCallback(async (file: RemoteFile) => {
+    try {
+      setLoadingImageData(true);
+      setImagePreviewTarget(file);
+      setShowImagePreview(true);
+      const fullPath = joinPath(currentPath, file.name);
+      
+      // Read file as binary
+      let data: ArrayBuffer;
+      if (isLocalSession) {
+        data = await readLocalFile(fullPath);
+      } else {
+        // Use readSftpBinary for proper binary file reading
+        data = await readSftpBinary(await ensureSftp(), fullPath);
+      }
+      setImagePreviewData(data);
+    } catch (e) {
+      toast.error(
+        e instanceof Error ? e.message : t("sftp.error.loadFailed"),
+        "SFTP",
+      );
+      setShowImagePreview(false);
+    } finally {
+      setLoadingImageData(false);
+    }
+  }, [currentPath, ensureSftp, isLocalSession, joinPath, readLocalFile, readSftpBinary, t]);
+
+  const handleOpenFile = useCallback(async (file: RemoteFile) => {
+    const savedOpener = getOpenerForFile(file.name);
+    
+    if (savedOpener) {
+      // Use saved opener
+      if (savedOpener === 'builtin-editor') {
+        handleEditFile(file);
+      } else if (savedOpener === 'builtin-image-viewer') {
+        handlePreviewImage(file);
+      }
+    } else {
+      // Show opener dialog
+      openFileOpenerDialog(file);
+    }
+  }, [getOpenerForFile, handleEditFile, handlePreviewImage, openFileOpenerDialog]);
+
+  const handleFileOpenerSelect = useCallback((openerType: FileOpenerType, setAsDefault: boolean) => {
+    if (!fileOpenerTarget) return;
+    
+    if (setAsDefault) {
+      const ext = getFileExtension(fileOpenerTarget.name);
+      if (ext !== 'file') {
+        setOpenerForExtension(ext, openerType);
+      }
+    }
+    
+    if (openerType === 'builtin-editor') {
+      handleEditFile(fileOpenerTarget);
+    } else if (openerType === 'builtin-image-viewer') {
+      handlePreviewImage(fileOpenerTarget);
+    }
+  }, [fileOpenerTarget, setOpenerForExtension, handleEditFile, handlePreviewImage]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -1794,13 +1917,36 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
                                   )
                                 }
                               >
-                                {t("sftp.context.open")}
+                                <FolderOpen size={14} className="mr-2" /> {t("sftp.context.open")}
                               </ContextMenuItem>
                             )}
                             {(file.type === "file" || (file.type === "symlink" && file.linkTarget === "file")) && (
-                              <ContextMenuItem onClick={() => handleDownload(file)}>
-                                <Download size={14} className="mr-2" /> {t("sftp.context.download")}
-                              </ContextMenuItem>
+                              <>
+                                {/* Open - uses saved association or shows dialog */}
+                                <ContextMenuItem onClick={() => handleOpenFile(file)}>
+                                  <FolderOpen size={14} className="mr-2" /> {t("sftp.context.open")}
+                                </ContextMenuItem>
+                                {/* Open with - always shows dialog */}
+                                <ContextMenuItem onClick={() => openFileOpenerDialog(file)}>
+                                  <MoreHorizontal size={14} className="mr-2" /> {t("sftp.context.openWith")}
+                                </ContextMenuItem>
+                                {/* Edit - for text files */}
+                                {isTextFile(file.name) && (
+                                  <ContextMenuItem onClick={() => handleEditFile(file)}>
+                                    <Edit2 size={14} className="mr-2" /> {t("sftp.context.edit")}
+                                  </ContextMenuItem>
+                                )}
+                                {/* Preview - for image files */}
+                                {isImageFile(file.name) && (
+                                  <ContextMenuItem onClick={() => handlePreviewImage(file)}>
+                                    <Eye size={14} className="mr-2" /> {t("sftp.context.preview")}
+                                  </ContextMenuItem>
+                                )}
+                                <ContextMenuSeparator />
+                                <ContextMenuItem onClick={() => handleDownload(file)}>
+                                  <Download size={14} className="mr-2" /> {t("sftp.context.download")}
+                                </ContextMenuItem>
+                              </>
                             )}
                             <ContextMenuItem onClick={() => openRenameDialog(file)}>
                               <Edit2 size={14} className="mr-2" /> {t("sftp.context.rename")}
@@ -1961,7 +2107,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
                       )}
                       {task.status === "completed" && (
                         <div className="text-[10px] text-green-600 mt-0.5">
-                          Completed â€?{formatBytes(task.totalBytes)}
+                          Completed ï¿½?{formatBytes(task.totalBytes)}
                         </div>
                       )}
                       {task.status === "failed" && task.error && (
@@ -2101,6 +2247,43 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* File Opener Dialog */}
+      <FileOpenerDialog
+        open={showFileOpenerDialog}
+        onClose={() => {
+          setShowFileOpenerDialog(false);
+          setFileOpenerTarget(null);
+        }}
+        fileName={fileOpenerTarget?.name || ""}
+        onSelect={handleFileOpenerSelect}
+      />
+
+      {/* Text Editor Modal */}
+      <TextEditorModal
+        open={showTextEditor}
+        onClose={() => {
+          setShowTextEditor(false);
+          setTextEditorTarget(null);
+          setTextEditorContent("");
+        }}
+        fileName={textEditorTarget?.name || ""}
+        initialContent={textEditorContent}
+        onSave={handleSaveTextFile}
+      />
+
+      {/* Image Preview Modal */}
+      <ImagePreviewModal
+        open={showImagePreview}
+        onClose={() => {
+          setShowImagePreview(false);
+          setImagePreviewTarget(null);
+          setImagePreviewData(null);
+        }}
+        fileName={imagePreviewTarget?.name || ""}
+        imageData={imagePreviewData}
+        loading={loadingImageData}
+      />
     </Dialog>
   );
 };
