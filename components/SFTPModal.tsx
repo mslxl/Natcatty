@@ -558,6 +558,19 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     [ensureSftp, host.id, isLocalSession, listLocalDir, listSftp, t],
   );
 
+  useLayoutEffect(() => {
+    if (!open) return;
+    const cacheKey = `${host.id}::${currentPath}`;
+    const cached = dirCacheRef.current.get(cacheKey);
+    const isFresh =
+      cached && Date.now() - cached.timestamp < DIR_CACHE_TTL_MS;
+    if (!isFresh) {
+      setFiles([]);
+      setSelectedFiles(new Set());
+    }
+    setScrollTop(0);
+  }, [currentPath, host.id, open]);
+
   const closeSftpSession = useCallback(async () => {
     if (!isLocalSession && sftpIdRef.current) {
       try {
@@ -1583,62 +1596,60 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
         </div>
 
         {/* Table Header with sortable columns and resize handles - OUTSIDE scroll container */}
-        {files.length > 0 && (
+        <div
+          className="shrink-0 bg-muted/80 backdrop-blur-sm border-b border-border/60 px-4 py-2 flex items-center text-xs font-medium text-muted-foreground select-none"
+          style={{
+            display: "grid",
+            gridTemplateColumns: `${columnWidths.name}% ${columnWidths.size}% ${columnWidths.modified}% ${columnWidths.actions}%`,
+          }}
+        >
           <div
-            className="shrink-0 bg-muted/80 backdrop-blur-sm border-b border-border/60 px-4 py-2 flex items-center text-xs font-medium text-muted-foreground select-none"
-            style={{
-              display: "grid",
-              gridTemplateColumns: `${columnWidths.name}% ${columnWidths.size}% ${columnWidths.modified}% ${columnWidths.actions}%`,
-            }}
+            className="flex items-center gap-1 cursor-pointer hover:text-foreground relative pr-2"
+            onClick={() => handleSort("name")}
           >
+            <span>{t("sftp.columns.name")}</span>
+            {sortField === "name" && (
+              <span className="text-primary">
+                {sortOrder === "asc" ? "^" : "v"}
+              </span>
+            )}
             <div
-              className="flex items-center gap-1 cursor-pointer hover:text-foreground relative pr-2"
-              onClick={() => handleSort("name")}
-            >
-              <span>{t("sftp.columns.name")}</span>
-              {sortField === "name" && (
-                <span className="text-primary">
-                  {sortOrder === "asc" ? "^" : "v"}
-                </span>
-              )}
-              <div
-                className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors"
-                onMouseDown={(e) => handleResizeStart("name", e)}
-              />
-            </div>
-            <div
-              className="flex items-center gap-1 cursor-pointer hover:text-foreground relative pr-2"
-              onClick={() => handleSort("size")}
-            >
-              <span>{t("sftp.columns.size")}</span>
-              {sortField === "size" && (
-                <span className="text-primary">
-                  {sortOrder === "asc" ? "^" : "v"}
-                </span>
-              )}
-              <div
-                className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors"
-                onMouseDown={(e) => handleResizeStart("size", e)}
-              />
-            </div>
-            <div
-              className="flex items-center gap-1 cursor-pointer hover:text-foreground relative pr-2"
-              onClick={() => handleSort("modified")}
-            >
-              <span>{t("sftp.columns.modified")}</span>
-              {sortField === "modified" && (
-                <span className="text-primary">
-                  {sortOrder === "asc" ? "^" : "v"}
-                </span>
-              )}
-              <div
-                className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors"
-                onMouseDown={(e) => handleResizeStart("modified", e)}
-              />
-            </div>
-            <div className="text-right">{t("sftp.columns.actions")}</div>
+              className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors"
+              onMouseDown={(e) => handleResizeStart("name", e)}
+            />
           </div>
-        )}
+          <div
+            className="flex items-center gap-1 cursor-pointer hover:text-foreground relative pr-2"
+            onClick={() => handleSort("size")}
+          >
+            <span>{t("sftp.columns.size")}</span>
+            {sortField === "size" && (
+              <span className="text-primary">
+                {sortOrder === "asc" ? "^" : "v"}
+              </span>
+            )}
+            <div
+              className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors"
+              onMouseDown={(e) => handleResizeStart("size", e)}
+            />
+          </div>
+          <div
+            className="flex items-center gap-1 cursor-pointer hover:text-foreground relative pr-2"
+            onClick={() => handleSort("modified")}
+          >
+            <span>{t("sftp.columns.modified")}</span>
+            {sortField === "modified" && (
+              <span className="text-primary">
+                {sortOrder === "asc" ? "^" : "v"}
+              </span>
+            )}
+            <div
+              className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors"
+              onMouseDown={(e) => handleResizeStart("modified", e)}
+            />
+          </div>
+          <div className="text-right">{t("sftp.columns.actions")}</div>
+        </div>
 
         {/* File List with Virtual Scrolling */}
         <div
