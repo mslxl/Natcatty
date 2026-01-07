@@ -392,10 +392,9 @@ export function getLanguageName(languageId: string): string {
 /**
  * File opener application types
  * - 'builtin-editor': Built-in text editor (Monaco)
- * - 'builtin-image-viewer': Built-in image viewer
  * - 'system-app': External system application (stores path)
  */
-export type FileOpenerType = 'builtin-editor' | 'builtin-image-viewer' | 'system-app';
+export type FileOpenerType = 'builtin-editor' | 'system-app';
 
 /**
  * System application info for file associations

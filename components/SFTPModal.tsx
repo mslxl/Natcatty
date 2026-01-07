@@ -5,7 +5,6 @@ import {
   Download,
   Edit2,
   ExternalLink,
-  Eye,
   File,
   FileArchive,
   FileAudio,
@@ -45,12 +44,11 @@ import { useI18n } from "../application/i18n/I18nProvider";
 import { useSftpBackend } from "../application/state/useSftpBackend";
 import { useSftpFileAssociations } from "../application/state/useSftpFileAssociations";
 import { logger } from "../lib/logger";
-import { getFileExtension, isImageFile, isKnownBinaryFile, FileOpenerType, SystemAppInfo } from "../lib/sftpFileUtils";
+import { getFileExtension, isKnownBinaryFile, FileOpenerType, SystemAppInfo } from "../lib/sftpFileUtils";
 import { cn } from "../lib/utils";
 import { Host, RemoteFile } from "../types";
 import { DistroAvatar } from "./DistroAvatar";
 import FileOpenerDialog from "./FileOpenerDialog";
-import ImagePreviewModal from "./ImagePreviewModal";
 import TextEditorModal from "./TextEditorModal";
 import { Button } from "./ui/button";
 import { toast } from "./ui/toast";
@@ -349,12 +347,6 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   const [textEditorTarget, setTextEditorTarget] = useState<RemoteFile | null>(null);
   const [textEditorContent, setTextEditorContent] = useState("");
   const [_loadingTextContent, setLoadingTextContent] = useState(false);
-
-  // Image preview state
-  const [showImagePreview, setShowImagePreview] = useState(false);
-  const [imagePreviewTarget, setImagePreviewTarget] = useState<RemoteFile | null>(null);
-  const [imagePreviewData, setImagePreviewData] = useState<ArrayBuffer | null>(null);
-  const [loadingImageData, setLoadingImageData] = useState(false);
 
   // Virtual scrolling refs and state
   const fileListRef = useRef<HTMLDivElement>(null);
@@ -1154,33 +1146,6 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     }
   }, [currentPath, ensureSftp, isLocalSession, joinPath, textEditorTarget, writeLocalFile, writeSftp]);
 
-  const handlePreviewImage = useCallback(async (file: RemoteFile) => {
-    try {
-      setLoadingImageData(true);
-      setImagePreviewTarget(file);
-      setShowImagePreview(true);
-      const fullPath = joinPath(currentPath, file.name);
-
-      // Read file as binary
-      let data: ArrayBuffer;
-      if (isLocalSession) {
-        data = await readLocalFile(fullPath);
-      } else {
-        // Use readSftpBinary for proper binary file reading
-        data = await readSftpBinary(await ensureSftp(), fullPath);
-      }
-      setImagePreviewData(data);
-    } catch (e) {
-      toast.error(
-        e instanceof Error ? e.message : t("sftp.error.loadFailed"),
-        "SFTP",
-      );
-      setShowImagePreview(false);
-    } finally {
-      setLoadingImageData(false);
-    }
-  }, [currentPath, ensureSftp, isLocalSession, joinPath, readLocalFile, readSftpBinary, t]);
-
   const handleOpenFile = useCallback(async (file: RemoteFile) => {
     const savedOpener = getOpenerForFile(file.name);
 
@@ -1188,8 +1153,6 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       // Use saved opener based on openerType
       if (savedOpener.openerType === 'builtin-editor') {
         handleEditFile(file);
-      } else if (savedOpener.openerType === 'builtin-image-viewer' && isImageFile(file.name)) {
-        handlePreviewImage(file);
       } else if (savedOpener.openerType === 'system-app' && savedOpener.systemApp) {
         // Open with saved system application
         try {
@@ -1215,7 +1178,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       // Show opener dialog
       openFileOpenerDialog(file);
     }
-  }, [getOpenerForFile, handleEditFile, handlePreviewImage, openFileOpenerDialog, joinPath, currentPath, isLocalSession, ensureSftp, downloadSftpToTempAndOpen, t]);
+  }, [getOpenerForFile, handleEditFile, openFileOpenerDialog, joinPath, currentPath, isLocalSession, ensureSftp, downloadSftpToTempAndOpen, t]);
 
   const handleFileOpenerSelect = useCallback(async (openerType: FileOpenerType, setAsDefault: boolean, systemApp?: SystemAppInfo) => {
     if (!fileOpenerTarget) return;
@@ -1230,8 +1193,6 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
 
     if (openerType === 'builtin-editor') {
       handleEditFile(fileOpenerTarget);
-    } else if (openerType === 'builtin-image-viewer') {
-      handlePreviewImage(fileOpenerTarget);
     } else if (openerType === 'system-app' && systemApp) {
       // Download and open with system application
       try {
@@ -1255,7 +1216,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     }
 
     setFileOpenerTarget(null);
-  }, [fileOpenerTarget, setOpenerForExtension, handleEditFile, handlePreviewImage, joinPath, currentPath, isLocalSession, ensureSftp, downloadSftpToTempAndOpen, t]);
+  }, [fileOpenerTarget, setOpenerForExtension, handleEditFile, joinPath, currentPath, isLocalSession, ensureSftp, downloadSftpToTempAndOpen, t]);
 
   // Callback for FileOpenerDialog to select a system application
   const handleSelectSystemApp = useCallback(async (): Promise<SystemAppInfo | null> => {
@@ -2028,12 +1989,6 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
                                     <Edit2 size={14} className="mr-2" /> {t("sftp.context.edit")}
                                   </ContextMenuItem>
                                 )}
-                                {/* Preview - for image files */}
-                                {isImageFile(file.name) && (
-                                  <ContextMenuItem onClick={() => handlePreviewImage(file)}>
-                                    <Eye size={14} className="mr-2" /> {t("sftp.context.preview")}
-                                  </ContextMenuItem>
-                                )}
                                 <ContextMenuSeparator />
                                 <ContextMenuItem onClick={() => handleDownload(file)}>
                                   <Download size={14} className="mr-2" /> {t("sftp.context.download")}
@@ -2363,19 +2318,6 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
         fileName={textEditorTarget?.name || ""}
         initialContent={textEditorContent}
         onSave={handleSaveTextFile}
-      />
-
-      {/* Image Preview Modal */}
-      <ImagePreviewModal
-        open={showImagePreview}
-        onClose={() => {
-          setShowImagePreview(false);
-          setImagePreviewTarget(null);
-          setImagePreviewData(null);
-        }}
-        fileName={imagePreviewTarget?.name || ""}
-        imageData={imagePreviewData}
-        loading={loadingImageData}
       />
     </Dialog>
   );

@@ -1,11 +1,11 @@
 /**
  * FileOpenerDialog - Dialog for choosing how to open a file
  */
-import { Edit2, Eye, FolderOpen } from 'lucide-react';
+import { Edit2, FolderOpen } from 'lucide-react';
 import React, { useCallback, useState } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
 import type { FileOpenerType, SystemAppInfo } from '../lib/sftpFileUtils';
-import { getFileExtension, isImageFile, isKnownBinaryFile } from '../lib/sftpFileUtils';
+import { getFileExtension, isKnownBinaryFile } from '../lib/sftpFileUtils';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 
@@ -31,7 +31,6 @@ export const FileOpenerDialog: React.FC<FileOpenerDialogProps> = ({
   const extension = getFileExtension(fileName);
   // Show edit option for files that are not known binary formats
   const canEdit = !isKnownBinaryFile(fileName);
-  const canPreview = isImageFile(fileName);
   // For files without extension, we use 'file' as virtual extension
   // So we always allow setting default (hasExtension is always true)
   const displayExtension = extension === 'file' ? t('sftp.opener.noExtension') : `.${extension}`;
@@ -87,20 +86,6 @@ export const FileOpenerDialog: React.FC<FileOpenerDialogProps> = ({
             </Button>
           )}
 
-          {canPreview && (
-            <Button
-              variant="outline"
-              className="w-full justify-start gap-3 h-12"
-              onClick={() => handleSelectBuiltIn('builtin-image-viewer')}
-            >
-              <Eye size={18} className="text-primary" />
-              <div className="text-left">
-                <div className="font-medium text-sm">{t('sftp.opener.builtInImageViewer')}</div>
-                <div className="text-xs text-muted-foreground">{t('sftp.opener.previewDescription')}</div>
-              </div>
-            </Button>
-          )}
-
           {/* System application option */}
           <Button
             variant="outline"
@@ -115,7 +100,7 @@ export const FileOpenerDialog: React.FC<FileOpenerDialogProps> = ({
             </div>
           </Button>
 
-          {!canEdit && !canPreview && (
+          {!canEdit && (
             <div className="text-sm text-muted-foreground text-center py-4">
               {t('sftp.opener.onlySystemApp')}
             </div>

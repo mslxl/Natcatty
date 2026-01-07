@@ -28,13 +28,12 @@ import { useI18n } from "../application/i18n/I18nProvider";
 import { useIsSftpActive } from "../application/state/activeTabStore";
 import { SftpPane, useSftpState } from "../application/state/useSftpState";
 import { logger } from "../lib/logger";
-import { isImageFile, isKnownBinaryFile, getFileExtension, FileOpenerType, SystemAppInfo } from "../lib/sftpFileUtils";
+import { isKnownBinaryFile, getFileExtension, FileOpenerType, SystemAppInfo } from "../lib/sftpFileUtils";
 import { useRenderTracker } from "../lib/useRenderTracker";
 import { cn } from "../lib/utils";
 import { Host, Identity, SftpFileEntry, SSHKey } from "../types";
 import { useSftpFileAssociations } from "../application/state/useSftpFileAssociations";
 import FileOpenerDialog from "./FileOpenerDialog";
-import ImagePreviewModal from "./ImagePreviewModal";
 import TextEditorModal from "./TextEditorModal";
 import { Button } from "./ui/button";
 import { toast } from "./ui/toast";
@@ -77,7 +76,6 @@ import {
   ChevronLeft,
   Copy,
   Edit2,
-  Eye,
   ExternalLink,
   Folder,
   FolderPlus,
@@ -182,7 +180,6 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     onReceiveFromOtherPane,
     onEditPermissions,
     onEditFile,
-    onPreviewFile,
     onOpenFile,
     onOpenFileWith,
   } = callbacks;
@@ -832,12 +829,6 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
                 {t("sftp.context.edit")}
               </ContextMenuItem>
             )}
-            {!isNavigableDirectory(entry) && isImageFile(entry.name) && onPreviewFile && (
-              <ContextMenuItem onClick={() => onPreviewFile(entry)}>
-                <Eye size={14} className="mr-2" />{" "}
-                {t("sftp.context.preview")}
-              </ContextMenuItem>
-            )}
             <ContextMenuSeparator />
             <ContextMenuItem
               onClick={() => {
@@ -906,7 +897,6 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
       onEditPermissions,
       onOpenFile,
       onOpenFileWith,
-      onPreviewFile,
       onRefresh,
       openDeleteConfirm,
       openRenameDialog,
@@ -1506,15 +1496,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
   } | null>(null);
   const [textEditorContent, setTextEditorContent] = useState("");
 
-  const [showImagePreview, setShowImagePreview] = useState(false);
-  const [imagePreviewTarget, setImagePreviewTarget] = useState<{
-    file: SftpFileEntry;
-    side: "left" | "right";
-    fullPath: string;
-  } | null>(null);
-  const [imagePreviewData, setImagePreviewData] = useState<ArrayBuffer | null>(null);
-  const [loadingImageData, setLoadingImageData] = useState(false);
-
   const [showFileOpenerDialog, setShowFileOpenerDialog] = useState(false);
   const [fileOpenerTarget, setFileOpenerTarget] = useState<{
     file: SftpFileEntry;
@@ -1703,35 +1684,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
     [],
   );
 
-  const handlePreviewFileForSide = useCallback(
-    async (side: "left" | "right", file: SftpFileEntry) => {
-      const pane = side === "left" ? sftpRef.current.leftPane : sftpRef.current.rightPane;
-      if (!pane.connection) return;
-
-      const fullPath = sftpRef.current.joinPath(pane.connection.currentPath, file.name);
-
-      try {
-        setLoadingImageData(true);
-        setImagePreviewTarget({ file, side, fullPath });
-        setShowImagePreview(true);
-
-        const data = await sftpRef.current.readBinaryFile(side, fullPath);
-
-        setImagePreviewData(data);
-      } catch (e) {
-        toast.error(
-          e instanceof Error ? e.message : "Failed to load image",
-          "SFTP"
-        );
-        setShowImagePreview(false);
-        setImagePreviewTarget(null);
-      } finally {
-        setLoadingImageData(false);
-      }
-    },
-    [],
-  );
-
   const handleOpenFileForSide = useCallback(
     async (side: "left" | "right", file: SftpFileEntry) => {
       const pane = side === "left" ? sftpRef.current.leftPane : sftpRef.current.rightPane;
@@ -1743,8 +1695,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       if (savedOpener) {
         if (savedOpener.openerType === 'builtin-editor') {
           handleEditFileForSide(side, file);
-        } else if (savedOpener.openerType === 'builtin-image-viewer' && isImageFile(file.name)) {
-          handlePreviewFileForSide(side, file);
         } else if (savedOpener.openerType === 'system-app' && savedOpener.systemApp) {
           // Open with saved system application
           try {
@@ -1767,7 +1717,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
         setShowFileOpenerDialog(true);
       }
     },
-    [getOpenerForFile, handleEditFileForSide, handlePreviewFileForSide],
+    [getOpenerForFile, handleEditFileForSide],
   );
 
   const handleFileOpenerSelect = useCallback(
@@ -1784,8 +1734,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
 
       if (openerType === 'builtin-editor') {
         handleEditFileForSide(fileOpenerTarget.side, fileOpenerTarget.file);
-      } else if (openerType === 'builtin-image-viewer') {
-        handlePreviewFileForSide(fileOpenerTarget.side, fileOpenerTarget.file);
       } else if (openerType === 'system-app' && systemApp) {
         // Download and open with system application
         try {
@@ -1805,7 +1753,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
 
       setFileOpenerTarget(null);
     },
-    [fileOpenerTarget, setOpenerForExtension, handleEditFileForSide, handlePreviewFileForSide],
+    [fileOpenerTarget, setOpenerForExtension, handleEditFileForSide],
   );
 
   // Callback for FileOpenerDialog to select a system application
@@ -1837,14 +1785,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
   const handleEditFileRight = useCallback(
     (file: SftpFileEntry) => handleEditFileForSide("right", file),
     [handleEditFileForSide],
-  );
-  const handlePreviewFileLeft = useCallback(
-    (file: SftpFileEntry) => handlePreviewFileForSide("left", file),
-    [handlePreviewFileForSide],
-  );
-  const handlePreviewFileRight = useCallback(
-    (file: SftpFileEntry) => handlePreviewFileForSide("right", file),
-    [handlePreviewFileForSide],
   );
   const handleOpenFileLeft = useCallback(
     (file: SftpFileEntry) => handleOpenFileForSide("left", file),
@@ -1900,7 +1840,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       onReceiveFromOtherPane: handleReceiveFromOtherPaneLeft,
       onEditPermissions: handleEditPermissionsLeft,
       onEditFile: handleEditFileLeft,
-      onPreviewFile: handlePreviewFileLeft,
       onOpenFile: handleOpenFileLeft,
       onOpenFileWith: handleOpenFileWithLeft,
     }),
@@ -1926,7 +1865,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       onReceiveFromOtherPane: handleReceiveFromOtherPaneRight,
       onEditPermissions: handleEditPermissionsRight,
       onEditFile: handleEditFileRight,
-      onPreviewFile: handlePreviewFileRight,
       onOpenFile: handleOpenFileRight,
       onOpenFileWith: handleOpenFileWithRight,
     }),
@@ -2241,19 +2179,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
           fileName={textEditorTarget?.file.name || ""}
           initialContent={textEditorContent}
           onSave={handleSaveTextFile}
-        />
-
-        {/* Image Preview Modal */}
-        <ImagePreviewModal
-          open={showImagePreview}
-          onClose={() => {
-            setShowImagePreview(false);
-            setImagePreviewTarget(null);
-            setImagePreviewData(null);
-          }}
-          fileName={imagePreviewTarget?.file.name || ""}
-          imageData={imagePreviewData}
-          loading={loadingImageData}
         />
 
         {/* File Opener Dialog */}

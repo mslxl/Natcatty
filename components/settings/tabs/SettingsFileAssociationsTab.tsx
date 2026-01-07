@@ -17,8 +17,6 @@ const getOpenerLabel = (
 ): string => {
   if (openerType === 'builtin-editor') {
     return t('sftp.opener.builtInEditor');
-  } else if (openerType === 'builtin-image-viewer') {
-    return t('sftp.opener.builtInImageViewer');
   } else if (openerType === 'system-app' && systemApp) {
     return systemApp.name;
   }

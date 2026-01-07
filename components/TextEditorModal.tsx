@@ -4,6 +4,7 @@
 import {
   CloudUpload,
   Loader2,
+  Search,
   X,
 } from 'lucide-react';
 import Editor, { type OnMount, loader } from '@monaco-editor/react';
@@ -148,6 +149,14 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
     });
   }, [handleSave]);
 
+  // Trigger search dialog
+  const handleSearch = useCallback(() => {
+    if (editorRef.current) {
+      editorRef.current.trigger('keyboard', 'actions.find', null);
+      editorRef.current.focus();
+    }
+  }, []);
+
   const supportedLanguages = useMemo(() => getSupportedLanguages(), []);
   const monacoLanguage = useMemo(() => languageIdToMonaco(languageId), [languageId]);
 
@@ -177,6 +186,17 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
                   ))}
                 </SelectContent>
               </Select>
+
+              {/* Search button */}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={handleSearch}
+                title={t('common.search')}
+              >
+                <Search size={14} />
+              </Button>
 
               {/* Save button */}
               <Button
