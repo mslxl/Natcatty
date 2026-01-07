@@ -1,13 +1,16 @@
 /**
- * SettingsFileAssociationsTab - Manage SFTP file opener associations
+ * SettingsFileAssociationsTab - Manage SFTP file opener associations and behavior
  */
 import { FileType, Pencil, Trash2 } from "lucide-react";
 import React, { useCallback, useState } from "react";
 import { useI18n } from "../../../application/i18n/I18nProvider";
 import { useSftpFileAssociations } from "../../../application/state/useSftpFileAssociations";
+import { useSettingsState } from "../../../application/state/useSettingsState";
 import type { FileOpenerType, SystemAppInfo } from "../../../lib/sftpFileUtils";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { Button } from "../../ui/button";
+import { RadioGroup, RadioGroupItem } from "../../ui/radio-group";
+import { Label } from "../../ui/label";
 import { SectionHeader, SettingsTabContent } from "../settings-ui";
 
 const getOpenerLabel = (
@@ -26,6 +29,7 @@ const getOpenerLabel = (
 export default function SettingsFileAssociationsTab() {
   const { t } = useI18n();
   const { getAllAssociations, removeAssociation, setOpenerForExtension } = useSftpFileAssociations();
+  const { sftpDoubleClickBehavior, setSftpDoubleClickBehavior } = useSettingsState();
   const associations = getAllAssociations();
   const [editingExtension, setEditingExtension] = useState<string | null>(null);
 
@@ -58,11 +62,49 @@ export default function SettingsFileAssociationsTab() {
 
   return (
     <SettingsTabContent value="file-associations">
-      <div className="space-y-6">
-        <SectionHeader title={t('settings.sftpFileAssociations.title')} />
-        <p className="text-sm text-muted-foreground mb-4">
-          {t('settings.sftpFileAssociations.desc')}
-        </p>
+      <div className="space-y-8">
+        {/* Double-click behavior section */}
+        <div className="space-y-4">
+          <SectionHeader title={t('settings.sftp.doubleClickBehavior')} />
+          <p className="text-sm text-muted-foreground">
+            {t('settings.sftp.doubleClickBehavior.desc')}
+          </p>
+          <RadioGroup
+            value={sftpDoubleClickBehavior}
+            onValueChange={(value) => setSftpDoubleClickBehavior(value as 'open' | 'transfer')}
+            className="space-y-3"
+          >
+            <div className="flex items-start space-x-3 space-y-0">
+              <RadioGroupItem value="open" id="sftp-behavior-open" />
+              <div className="space-y-1 leading-none">
+                <Label htmlFor="sftp-behavior-open" className="font-medium cursor-pointer">
+                  {t('settings.sftp.doubleClickBehavior.open')}
+                </Label>
+                <p className="text-sm text-muted-foreground">
+                  {t('settings.sftp.doubleClickBehavior.openDesc')}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start space-x-3 space-y-0">
+              <RadioGroupItem value="transfer" id="sftp-behavior-transfer" />
+              <div className="space-y-1 leading-none">
+                <Label htmlFor="sftp-behavior-transfer" className="font-medium cursor-pointer">
+                  {t('settings.sftp.doubleClickBehavior.transfer')}
+                </Label>
+                <p className="text-sm text-muted-foreground">
+                  {t('settings.sftp.doubleClickBehavior.transferDesc')}
+                </p>
+              </div>
+            </div>
+          </RadioGroup>
+        </div>
+
+        {/* File associations section */}
+        <div className="space-y-4">
+          <SectionHeader title={t('settings.sftpFileAssociations.title')} />
+          <p className="text-sm text-muted-foreground">
+            {t('settings.sftpFileAssociations.desc')}
+          </p>
 
         {associations.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
@@ -127,6 +169,7 @@ export default function SettingsFileAssociationsTab() {
             </table>
           </div>
         )}
+        </div>
       </div>
     </SettingsTabContent>
   );

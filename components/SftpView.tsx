@@ -27,6 +27,7 @@ import React, {
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useIsSftpActive } from "../application/state/activeTabStore";
 import { SftpPane, useSftpState } from "../application/state/useSftpState";
+import { useSettingsState } from "../application/state/useSettingsState";
 import { logger } from "../lib/logger";
 import { isKnownBinaryFile, getFileExtension, FileOpenerType, SystemAppInfo } from "../lib/sftpFileUtils";
 import { useRenderTracker } from "../lib/useRenderTracker";
@@ -1455,11 +1456,16 @@ interface SftpViewProps {
 const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => {
   const isActive = useIsSftpActive();
   const sftp = useSftpState(hosts, keys, identities);
+  const { sftpDoubleClickBehavior } = useSettingsState();
 
   // Store sftp in a ref so callbacks can access the latest instance
   // without needing to re-create when sftp changes
   const sftpRef = useRef(sftp);
   sftpRef.current = sftp;
+  
+  // Store behavior setting in ref for stable callbacks
+  const behaviorRef = useRef(sftpDoubleClickBehavior);
+  behaviorRef.current = sftpDoubleClickBehavior;
 
   // Sync activeTabId to external store (allows child components to subscribe without parent re-render)
   // Using useLayoutEffect to sync before paint
@@ -1585,14 +1591,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
   );
   const handleRefreshRight = useCallback(
     () => sftpRef.current.refresh("right"),
-    [],
-  );
-  const handleOpenEntryLeft = useCallback(
-    (entry: SftpFileEntry) => sftpRef.current.openEntry("left", entry),
-    [],
-  );
-  const handleOpenEntryRight = useCallback(
-    (entry: SftpFileEntry) => sftpRef.current.openEntry("right", entry),
     [],
   );
   const handleToggleSelectionLeft = useCallback(
@@ -1833,6 +1831,67 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
   const handleOpenFileWithRight = useCallback(
     (file: SftpFileEntry) => handleOpenFileWithForSide("right", file),
     [handleOpenFileWithForSide],
+  );
+
+  // Custom handleOpenEntry callbacks that check the double-click behavior setting
+  const handleOpenEntryLeft = useCallback(
+    (entry: SftpFileEntry) => {
+      console.log("[SftpView] handleOpenEntryLeft called", {
+        entryName: entry.name,
+        entryType: entry.type,
+        behavior: behaviorRef.current
+      });
+      
+      // Always navigate into directories
+      if (entry.name === ".." || isNavigableDirectory(entry)) {
+        sftpRef.current.openEntry("left", entry);
+        return;
+      }
+      
+      // For files, check the behavior setting
+      if (behaviorRef.current === 'transfer') {
+        // Transfer to other pane
+        const fileData = [{
+          name: entry.name,
+          isDirectory: false
+        }];
+        sftpRef.current.startTransfer(fileData, "left", "right");
+      } else {
+        // Default: open the file
+        handleOpenFileLeft(entry);
+      }
+    },
+    [handleOpenFileLeft],
+  );
+  
+  const handleOpenEntryRight = useCallback(
+    (entry: SftpFileEntry) => {
+      console.log("[SftpView] handleOpenEntryRight called", {
+        entryName: entry.name,
+        entryType: entry.type,
+        behavior: behaviorRef.current
+      });
+      
+      // Always navigate into directories
+      if (entry.name === ".." || isNavigableDirectory(entry)) {
+        sftpRef.current.openEntry("right", entry);
+        return;
+      }
+      
+      // For files, check the behavior setting
+      if (behaviorRef.current === 'transfer') {
+        // Transfer to other pane
+        const fileData = [{
+          name: entry.name,
+          isDirectory: false
+        }];
+        sftpRef.current.startTransfer(fileData, "right", "left");
+      } else {
+        // Default: open the file
+        handleOpenFileRight(entry);
+      }
+    },
+    [handleOpenFileRight],
   );
 
   // Create stable callback objects for context
