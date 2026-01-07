@@ -234,6 +234,9 @@ const api = {
   execCommand: async (options) => {
     return ipcRenderer.invoke("netcatty:ssh:exec", options);
   },
+  getSessionPwd: async (sessionId) => {
+    return ipcRenderer.invoke("netcatty:ssh:pwd", { sessionId });
+  },
   generateKeyPair: async (options) => {
     return ipcRenderer.invoke("netcatty:key:generate", options);
   },

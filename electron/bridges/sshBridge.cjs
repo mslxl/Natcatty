@@ -795,11 +795,61 @@ async function startSSHSessionWrapper(event, options) {
 }
 
 /**
+ * Get current working directory from an active SSH session
+ * This sends 'pwd' to the shell and captures the output
+ */
+async function getSessionPwd(event, payload) {
+  const { sessionId } = payload;
+  const session = sessions.get(sessionId);
+  
+  if (!session || !session.stream || !session.conn) {
+    return { success: false, error: 'Session not found or not connected' };
+  }
+  
+  return new Promise((resolve) => {
+    const conn = session.conn;
+    const timeout = setTimeout(() => {
+      resolve({ success: false, error: 'Timeout getting pwd' });
+    }, 3000);
+    
+    // Use exec on the existing connection to run pwd
+    conn.exec('pwd', (err, stream) => {
+      if (err) {
+        clearTimeout(timeout);
+        resolve({ success: false, error: err.message });
+        return;
+      }
+      
+      let stdout = '';
+      stream.on('data', (data) => {
+        stdout += data.toString();
+      });
+      
+      stream.on('close', () => {
+        clearTimeout(timeout);
+        const cwd = stdout.trim().split(/\r?\n/).pop()?.trim();
+        if (cwd && cwd.startsWith('/')) {
+          resolve({ success: true, cwd });
+        } else {
+          resolve({ success: false, error: 'Invalid pwd output' });
+        }
+      });
+      
+      stream.on('error', (err) => {
+        clearTimeout(timeout);
+        resolve({ success: false, error: err.message });
+      });
+    });
+  });
+}
+
+/**
  * Register IPC handlers for SSH operations
  */
 function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:start", startSSHSessionWrapper);
   ipcMain.handle("netcatty:ssh:exec", execCommand);
+  ipcMain.handle("netcatty:ssh:pwd", getSessionPwd);
   ipcMain.handle("netcatty:key:generate", generateKeyPair);
 }
 
@@ -809,5 +859,6 @@ module.exports = {
   createProxySocket,
   startSSHSession,
   execCommand,
+  getSessionPwd,
   generateKeyPair,
 };

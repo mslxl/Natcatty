@@ -702,6 +702,8 @@ const zhCN: Messages = {
   'sftp.opener.desc': '选择一个应用程序来打开此文件',
   'sftp.opener.builtInEditor': '内置编辑器',
   'sftp.opener.builtInImageViewer': '内置图片预览',
+  'sftp.opener.systemApp': '系统应用',
+  'sftp.opener.onlySystemApp': '下载并用系统应用打开',
   'sftp.opener.noAppsAvailable': '无可用应用程序',
   'sftp.opener.setDefault': '始终使用此应用程序打开 .{ext} 文件',
   'sftp.opener.confirm.title': '设置默认应用程序',
@@ -720,7 +722,7 @@ const zhCN: Messages = {
   'sftp.preview.fitToWindow': '适应窗口',
 
   // Settings > SFTP File Associations
-  'settings.tab.sftpFileAssociations': '文件关联',
+  'settings.tab.sftpFileAssociations': 'SFTP',
   'settings.sftpFileAssociations.title': 'SFTP 文件关联',
   'settings.sftpFileAssociations.desc': '配置按扩展名打开文件的默认应用程序',
   'settings.sftpFileAssociations.extension': '扩展名',

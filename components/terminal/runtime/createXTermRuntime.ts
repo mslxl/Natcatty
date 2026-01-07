@@ -38,6 +38,8 @@ export type XTermRuntime = {
   serializeAddon: SerializeAddon;
   searchAddon: SearchAddon;
   dispose: () => void;
+  /** Current working directory detected via OSC 7 */
+  currentCwd: string | undefined;
 };
 
 export type CreateXTermRuntimeContext = {
@@ -76,6 +78,9 @@ export type CreateXTermRuntimeContext = {
   serialLocalEcho?: boolean;
   serialLineMode?: boolean;
   serialLineBufferRef?: RefObject<string>;
+
+  // Callback when shell reports CWD change via OSC 7
+  onCwdChange?: (cwd: string) => void;
 };
 
 const detectPlatform = (): XTermPlatform => {
@@ -485,6 +490,36 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     }
   });
 
+  // Track current working directory via OSC 7 escape sequences
+  // OSC 7 format: \x1b]7;file://hostname/path\x07 or \x1b]7;file://hostname/path\x1b\\
+  let currentCwd: string | undefined = undefined;
+
+  // Register OSC 7 handler using xterm.js parser
+  // OSC 7 is the standard way for shells to report the current working directory
+  term.parser.registerOscHandler(7, (data) => {
+    try {
+      // data is the content after "7;" - typically "file://hostname/path"
+      if (data.startsWith('file://')) {
+        // Extract path from file:// URL
+        const url = new URL(data);
+        const path = decodeURIComponent(url.pathname);
+        if (path && path.length > 0) {
+          currentCwd = path;
+          ctx.onCwdChange?.(path);
+          logger.debug('[XTerm] OSC 7 CWD update:', path);
+        }
+      } else if (data.startsWith('/')) {
+        // Some shells send just the path without file:// prefix
+        currentCwd = data;
+        ctx.onCwdChange?.(data);
+        logger.debug('[XTerm] OSC 7 CWD update (raw path):', data);
+      }
+    } catch (err) {
+      logger.warn('[XTerm] Failed to parse OSC 7:', err);
+    }
+    return true; // Indicate we handled the sequence
+  });
+
   let resizeTimeout: NodeJS.Timeout | null = null;
   const resizeDebounceMs = XTERM_PERFORMANCE_CONFIG.resize.debounceMs;
   term.onResize(({ cols, rows }) => {
@@ -529,6 +564,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       } catch (err) {
         logger.warn("[XTerm] webglAddon dispose failed", err);
       }
+    },
+    get currentCwd() {
+      return currentCwd;
     },
   };
 };

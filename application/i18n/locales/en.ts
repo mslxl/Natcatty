@@ -463,6 +463,8 @@ const en: Messages = {
   'sftp.opener.desc': 'Choose an application to open this file',
   'sftp.opener.builtInEditor': 'Built-in Editor',
   'sftp.opener.builtInImageViewer': 'Built-in Image Viewer',
+  'sftp.opener.systemApp': 'System Application',
+  'sftp.opener.onlySystemApp': 'Download and open with system application',
   'sftp.opener.noAppsAvailable': 'No applications available',
   'sftp.opener.setDefault': 'Always use this application for .{ext} files',
   'sftp.opener.confirm.title': 'Set Default Application',
@@ -481,7 +483,7 @@ const en: Messages = {
   'sftp.preview.fitToWindow': 'Fit to Window',
 
   // Settings > SFTP File Associations
-  'settings.tab.sftpFileAssociations': 'File Associations',
+  'settings.tab.sftpFileAssociations': 'SFTP',
   'settings.sftpFileAssociations.title': 'SFTP File Associations',
   'settings.sftpFileAssociations.desc': 'Configure default applications for opening files by extension',
   'settings.sftpFileAssociations.extension': 'Extension',

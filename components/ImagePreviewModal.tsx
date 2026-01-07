@@ -132,14 +132,14 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <DialogContent className="max-w-5xl h-[85vh] flex flex-col p-0 gap-0">
+      <DialogContent className="max-w-5xl h-[85vh] flex flex-col p-0 gap-0" hideCloseButton>
         {/* Header */}
         <DialogHeader className="px-4 py-3 border-b border-border/60 flex-shrink-0">
           <div className="flex items-center justify-between">
             <DialogTitle className="text-sm font-semibold truncate max-w-[400px]">
               {fileName}
             </DialogTitle>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1">"
               <Button
                 variant="ghost"
                 size="icon"

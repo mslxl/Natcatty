@@ -1,7 +1,7 @@
 /**
  * FileOpenerDialog - Dialog for choosing how to open a file
  */
-import { Edit2, Eye } from 'lucide-react';
+import { Edit2, Eye, ExternalLink } from 'lucide-react';
 import React, { useCallback, useState } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
 import type { FileOpenerType } from '../lib/sftpFileUtils';
@@ -9,11 +9,14 @@ import { getFileExtension, isImageFile, isTextFile } from '../lib/sftpFileUtils'
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 
+// Extended opener types
+export type ExtendedFileOpenerType = FileOpenerType | 'system-app';
+
 interface FileOpenerDialogProps {
   open: boolean;
   onClose: () => void;
   fileName: string;
-  onSelect: (openerType: FileOpenerType, setAsDefault: boolean) => void;
+  onSelect: (openerType: ExtendedFileOpenerType, setAsDefault: boolean) => void;
 }
 
 export const FileOpenerDialog: React.FC<FileOpenerDialogProps> = ({
@@ -28,7 +31,7 @@ export const FileOpenerDialog: React.FC<FileOpenerDialogProps> = ({
   const canEdit = isTextFile(fileName);
   const canPreview = isImageFile(fileName);
 
-  const handleSelect = useCallback((openerType: FileOpenerType) => {
+  const handleSelect = useCallback((openerType: ExtendedFileOpenerType) => {
     onSelect(openerType, setAsDefault);
     onClose();
   }, [onSelect, setAsDefault, onClose]);
@@ -72,9 +75,22 @@ export const FileOpenerDialog: React.FC<FileOpenerDialogProps> = ({
             </Button>
           )}
           
+          {/* System application option - TODO: Full implementation needed */}
+          <Button
+            variant="outline"
+            className="w-full justify-start gap-3 h-12"
+            onClick={() => handleSelect('system-app')}
+          >
+            <ExternalLink size={18} className="text-primary" />
+            <div className="text-left">
+              <div className="font-medium text-sm">{t('sftp.opener.systemApp')}</div>
+              <div className="text-xs text-muted-foreground">Open with system application</div>
+            </div>
+          </Button>
+          
           {!canEdit && !canPreview && (
             <div className="text-sm text-muted-foreground text-center py-4">
-              {t('sftp.opener.noAppsAvailable')}
+              {t('sftp.opener.onlySystemApp')}
             </div>
           )}
         </div>

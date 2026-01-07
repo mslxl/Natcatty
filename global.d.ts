@@ -168,6 +168,8 @@ interface NetcattyBridge {
     command: string;
     timeout?: number;
   }): Promise<{ stdout: string; stderr: string; code: number | null }>;
+  /** Get current working directory from an active SSH session */
+  getSessionPwd?(sessionId: string): Promise<{ success: boolean; cwd?: string; error?: string }>;
   writeToSession(sessionId: string, data: string): void;
   resizeSession(sessionId: string, cols: number, rows: number): void;
   closeSession(sessionId: string): void;

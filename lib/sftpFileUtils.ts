@@ -171,6 +171,73 @@ export function isTextFile(fileName: string): boolean {
 }
 
 /**
+ * Check if binary data appears to be text by analyzing byte patterns
+ * This provides a more accurate detection than extension-only checking
+ * 
+ * @param data - First chunk of file data (ArrayBuffer or Uint8Array)
+ * @param maxBytes - Maximum bytes to check (default 512)
+ * @returns true if data appears to be text
+ */
+export function isTextData(data: ArrayBuffer | Uint8Array, maxBytes: number = 512): boolean {
+  const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
+  const checkLength = Math.min(bytes.length, maxBytes);
+  
+  if (checkLength === 0) return true; // Empty file is considered text
+  
+  let controlChars = 0;
+  let nullBytes = 0;
+  let highBytes = 0;
+  let totalBytes = 0;
+  
+  for (let i = 0; i < checkLength; i++) {
+    const byte = bytes[i];
+    totalBytes++;
+    
+    // Null bytes are strong indicators of binary files
+    if (byte === 0) {
+      nullBytes++;
+      if (nullBytes > 0) return false; // Even one null byte suggests binary
+    }
+    
+    // Control characters (except common ones like \t, \n, \r)
+    if (byte < 32 && byte !== 9 && byte !== 10 && byte !== 13) {
+      controlChars++;
+    }
+    
+    // High-bit characters (non-ASCII) - some are OK for UTF-8
+    if (byte > 127) {
+      highBytes++;
+    }
+  }
+  
+  // If more than 30% are control chars or more than 95% are high-bit chars, likely binary
+  const controlRatio = controlChars / totalBytes;
+  const highRatio = highBytes / totalBytes;
+  
+  if (controlRatio > 0.3) return false;
+  if (highRatio > 0.95) return false;
+  
+  return true;
+}
+
+/**
+ * Enhanced text file detection combining extension and content analysis
+ * Use this when you have access to file data for better accuracy
+ */
+export function isTextFileEnhanced(fileName: string, data?: ArrayBuffer | Uint8Array): boolean {
+  // First check by extension
+  const extCheck = isTextFile(fileName);
+  
+  // If we have data, verify it's actually text
+  if (data && data.byteLength > 0) {
+    return extCheck && isTextData(data);
+  }
+  
+  // Fall back to extension-only check
+  return extCheck;
+}
+
+/**
  * Check if a file is an image file based on its extension
  */
 export function isImageFile(fileName: string): boolean {

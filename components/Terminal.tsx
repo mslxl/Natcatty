@@ -169,6 +169,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const terminalBackend = useTerminalBackend();
   const { resizeSession } = terminalBackend;
 
+  
+
   const [isScriptsOpen, setIsScriptsOpen] = useState(false);
   const [status, setStatus] = useState<TerminalSession["status"]>("connecting");
   const [error, setError] = useState<string | null>(null);

@@ -116,6 +116,12 @@ export const useTerminalBackend = () => {
     return bridge.listSerialPorts();
   }, []);
 
+  const getSessionPwd = useCallback(async (sessionId: string) => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.getSessionPwd) return { success: false, error: 'getSessionPwd unavailable' };
+    return bridge.getSessionPwd(sessionId);
+  }, []);
+
   return {
     backendAvailable,
     telnetAvailable,
@@ -131,6 +137,7 @@ export const useTerminalBackend = () => {
     startSerialSession,
     listSerialPorts,
     execCommand,
+    getSessionPwd,
     writeToSession,
     resizeSession,
     closeSession,

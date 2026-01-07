@@ -1,11 +1,18 @@
 /**
- * TextEditorModal - Modal for editing text files in SFTP
+ * TextEditorModal - Modal for editing text files in SFTP with syntax highlighting
  */
 import { 
   CloudUpload,
   Loader2,
+  X,
 } from 'lucide-react';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import Editor, { type OnMount, loader } from '@monaco-editor/react';
+import type * as Monaco from 'monaco-editor';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+// Configure Monaco to use local files instead of CDN
+loader.config({ paths: { vs: './node_modules/monaco-editor/min/vs' } });
+
 import { useI18n } from '../application/i18n/I18nProvider';
 import { getLanguageId, getLanguageName, getSupportedLanguages } from '../lib/sftpFileUtils';
 import { Button } from './ui/button';
@@ -21,6 +28,56 @@ interface TextEditorModalProps {
   onSave: (content: string) => Promise<void>;
 }
 
+// Map our language IDs to Monaco language IDs
+const languageIdToMonaco = (langId: string): string => {
+  const mapping: Record<string, string> = {
+    'javascript': 'javascript',
+    'typescript': 'typescript',
+    'python': 'python',
+    'shell': 'shell',
+    'batch': 'bat',
+    'powershell': 'powershell',
+    'c': 'c',
+    'cpp': 'cpp',
+    'java': 'java',
+    'kotlin': 'kotlin',
+    'go': 'go',
+    'rust': 'rust',
+    'ruby': 'ruby',
+    'php': 'php',
+    'perl': 'perl',
+    'lua': 'lua',
+    'r': 'r',
+    'swift': 'swift',
+    'dart': 'dart',
+    'csharp': 'csharp',
+    'fsharp': 'fsharp',
+    'vb': 'vb',
+    'html': 'html',
+    'css': 'css',
+    'scss': 'scss',
+    'sass': 'sass',
+    'less': 'less',
+    'json': 'json',
+    'jsonc': 'json',
+    'json5': 'json',
+    'xml': 'xml',
+    'yaml': 'yaml',
+    'toml': 'ini',
+    'ini': 'ini',
+    'sql': 'sql',
+    'graphql': 'graphql',
+    'markdown': 'markdown',
+    'plaintext': 'plaintext',
+    'vue': 'html',
+    'svelte': 'html',
+    'dockerfile': 'dockerfile',
+    'makefile': 'makefile',
+    'diff': 'diff',
+  };
+  return mapping[langId] || 'plaintext';
+};
+
 export const TextEditorModal: React.FC<TextEditorModalProps> = ({
   open,
   onClose,
@@ -33,6 +90,7 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
   const [saving, setSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const [languageId, setLanguageId] = useState(() => getLanguageId(fileName));
+  const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
 
   // Reset content when file changes
   useEffect(() => {
@@ -71,29 +129,35 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
     onClose();
   }, [hasChanges, onClose, t]);
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    // Save on Ctrl/Cmd + S
-    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-      e.preventDefault();
+  const handleEditorChange = useCallback((value: string | undefined) => {
+    setContent(value || '');
+  }, []);
+
+  const handleEditorMount: OnMount = useCallback((editor, monaco) => {
+    editorRef.current = editor;
+    
+    // Add save shortcut
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       handleSave();
-    }
+    });
   }, [handleSave]);
 
   const supportedLanguages = useMemo(() => getSupportedLanguages(), []);
+  const monacoLanguage = useMemo(() => languageIdToMonaco(languageId), [languageId]);
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
-      <DialogContent className="max-w-5xl h-[85vh] flex flex-col p-0 gap-0">
+      <DialogContent className="max-w-5xl h-[85vh] flex flex-col p-0 gap-0" hideCloseButton>
         {/* Header */}
         <DialogHeader className="px-4 py-3 border-b border-border/60 flex-shrink-0">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <DialogTitle className="text-sm font-semibold truncate max-w-[400px]">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <DialogTitle className="text-sm font-semibold truncate">
                 {fileName}
                 {hasChanges && <span className="text-primary ml-1">*</span>}
               </DialogTitle>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-shrink-0">
               {/* Language selector */}
               <Select value={languageId} onValueChange={setLanguageId}>
                 <SelectTrigger className="h-7 w-[140px] text-xs">
@@ -123,22 +187,43 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
                 )}
                 {saving ? t('sftp.editor.saving') : t('sftp.editor.save')}
               </Button>
+              
+              {/* Close button */}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={handleClose}
+              >
+                <X size={14} />
+              </Button>
             </div>
           </div>
         </DialogHeader>
 
-        {/* Editor */}
+        {/* Monaco Editor */}
         <div className="flex-1 min-h-0 relative">
-          <textarea
+          <Editor
+            height="100%"
+            language={monacoLanguage}
             value={content}
-            onChange={(e) => setContent(e.target.value)}
-            onKeyDown={handleKeyDown}
-            className="w-full h-full resize-none bg-background text-foreground p-4 font-mono text-sm leading-relaxed focus:outline-none overflow-auto"
-            style={{ tabSize: 2 }}
-            spellCheck={false}
-            autoCapitalize="off"
-            autoCorrect="off"
-            placeholder=""
+            onChange={handleEditorChange}
+            onMount={handleEditorMount}
+            theme="vs-dark"
+            options={{
+              minimap: { enabled: true },
+              fontSize: 14,
+              lineNumbers: 'on',
+              roundedSelection: false,
+              scrollBeyondLastLine: false,
+              automaticLayout: true,
+              tabSize: 2,
+              insertSpaces: true,
+              wordWrap: 'off',
+              folding: true,
+              renderWhitespace: 'selection',
+              bracketPairColorization: { enabled: true },
+            }}
           />
         </div>
 
