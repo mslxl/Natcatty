@@ -1264,12 +1264,6 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
           </div>
         )}
 
-        {pane.loading && sortedDisplayFiles.length > 0 && (
-          <div className="absolute inset-0 flex items-center justify-center bg-background/40 backdrop-blur-[1px] pointer-events-none">
-            <Loader2 size={20} className="animate-spin text-muted-foreground" />
-          </div>
-        )}
-
         {/* Drop overlay */}
         {isDragOverPane && draggedFiles && draggedFiles[0]?.side !== side && (
           <div className="absolute inset-0 flex items-center justify-center bg-primary/5 pointer-events-none">
@@ -1294,6 +1288,13 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
           {pane.connection.currentPath}
         </span>
       </div>
+
+      {/* Loading overlay - covers entire pane when navigating directories */}
+      {pane.loading && sortedDisplayFiles.length > 0 && (
+        <div className="absolute inset-0 flex items-center justify-center bg-background/40 backdrop-blur-[1px] pointer-events-none z-10">
+          <Loader2 size={24} className="animate-spin text-muted-foreground" />
+        </div>
+      )}
 
       {/* Dialogs */}
       <Dialog open={showNewFolderDialog} onOpenChange={setShowNewFolderDialog}>
