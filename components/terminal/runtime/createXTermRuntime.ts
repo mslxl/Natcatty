@@ -10,7 +10,7 @@ import {
   getAppLevelActions,
   getTerminalPassthroughActions,
 } from "../../../application/state/useGlobalHotkeys";
-import { TERMINAL_FONTS, type TerminalFont } from "../../../infrastructure/config/fonts";
+import { fontStore } from "../../../application/state/fontStore";
 import {
   XTERM_PERFORMANCE_CONFIG,
   type XTermPlatform,
@@ -81,9 +81,6 @@ export type CreateXTermRuntimeContext = {
 
   // Callback when shell reports CWD change via OSC 7
   onCwdChange?: (cwd: string) => void;
-
-  // Available fonts
-  availableFonts?: TerminalFont[];
 };
 
 const detectPlatform = (): XTermPlatform => {
@@ -119,16 +116,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   });
 
   const hostFontId = ctx.host.fontFamily || ctx.fontFamilyId || "menlo";
-  // Fallback to TERMINAL_FONTS if availableFonts is empty or not provided
-  const fontsToUse =
-    ctx.availableFonts && ctx.availableFonts.length > 0
-      ? ctx.availableFonts
-      : TERMINAL_FONTS;
-  const defaultFont = { id: hostFontId, family: "monospace" } as TerminalFont;
-  const fontObj =
-    fontsToUse.find((f) => f.id === hostFontId) ||
-    fontsToUse[0] ||
-    defaultFont;
+  // Use fontStore for font lookup - guarantees non-empty result
+  const fontObj = fontStore.getFontById(hostFontId);
   const fontFamily = fontObj.family;
 
   const effectiveFontSize = ctx.host.fontSize || ctx.fontSize;

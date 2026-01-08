@@ -22,7 +22,7 @@ import { DEFAULT_UI_LOCALE, resolveSupportedLocale } from '../../infrastructure/
 import { TERMINAL_THEMES } from '../../infrastructure/config/terminalThemes';
 import { DEFAULT_FONT_SIZE, TERMINAL_FONTS } from '../../infrastructure/config/fonts';
 import { DARK_UI_THEMES, LIGHT_UI_THEMES, UiThemeTokens, getUiThemeById } from '../../infrastructure/config/uiThemes';
-import { useFontState } from './useFontState';
+import { useAvailableFonts } from './fontStore';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 
@@ -107,7 +107,7 @@ const applyThemeTokens = (
 };
 
 export const useSettingsState = () => {
-  const { availableFonts } = useFontState();
+  const availableFonts = useAvailableFonts();
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     const stored = readStoredString(STORAGE_KEY_THEME);
     return stored && isValidTheme(stored) ? stored : DEFAULT_THEME;
@@ -504,13 +504,7 @@ export const useSettingsState = () => {
   );
 
   const currentTerminalFont = useMemo(
-    () => {
-      // Fallback to TERMINAL_FONTS if availableFonts is empty
-      if (!availableFonts || availableFonts.length === 0) {
-        return TERMINAL_FONTS.find(f => f.id === terminalFontFamilyId) || TERMINAL_FONTS[0];
-      }
-      return availableFonts.find(f => f.id === terminalFontFamilyId) || availableFonts[0];
-    },
+    () => availableFonts.find(f => f.id === terminalFontFamilyId) || availableFonts[0],
     [terminalFontFamilyId, availableFonts]
   );
 

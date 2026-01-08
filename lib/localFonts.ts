@@ -9,18 +9,79 @@ interface LocalFontData {
 }
 
 /**
+ * Known monospace font families that don't follow naming conventions.
+ * These are popular programming/terminal fonts that should be included.
+ */
+const KNOWN_MONOSPACE_FONTS = new Set([
+    // Popular programming fonts
+    'iosevka',
+    'hack',
+    'consolas',
+    'menlo',
+    'monaco',
+    'inconsolata',
+    'mononoki',
+    'fantasque sans mono',
+    'anonymous pro',
+    'liberation mono',
+    'dejavu sans mono',
+    'droid sans mono',
+    'ubuntu mono',
+    'roboto mono',
+    'source code pro',
+    'fira code',
+    'fira mono',
+    'jetbrains mono',
+    'cascadia code',
+    'cascadia mono',
+    'victor mono',
+    'ibm plex mono',
+    'sf mono',
+    'operator mono',
+    'input mono',
+    'pragmata pro',
+    'berkeley mono',
+    'monaspace',
+    'geist mono',
+    'comic mono',
+    'courier',
+    'courier new',
+    'lucida console',
+    'pt mono',
+    'overpass mono',
+    'space mono',
+    'go mono',
+    'noto sans mono',
+    'sarasa mono',
+    'maple mono',
+]);
+
+/**
+ * Suffix indicators that suggest a font is monospace
+ */
+const MONO_SUFFIX_INDICATORS = ['mono', 'monospace', 'code', 'terminal', 'console'];
+
+/**
  * Checks if a font family name indicates a monospace font.
- * Uses word boundary matching to avoid false positives like 'Monaco' or 'Lemonada'.
+ * Uses both known font list and suffix matching for comprehensive detection.
  */
 function isMonospaceFont(familyName: string): boolean {
-    const familyLower = familyName.toLowerCase();
-    const monoIndicators = ['mono', 'monospace', 'code', 'terminal'];
-
-    return monoIndicators.some(indicator => {
+    const familyLower = familyName.toLowerCase().trim();
+    
+    // Check against known monospace fonts (exact or partial match)
+    for (const knownFont of KNOWN_MONOSPACE_FONTS) {
+        if (familyLower === knownFont || familyLower.startsWith(knownFont + ' ')) {
+            return true;
+        }
+    }
+    
+    // Check suffix indicators with word boundary
+    return MONO_SUFFIX_INDICATORS.some(indicator => {
         return (
             familyLower === indicator ||
             familyLower.endsWith(' ' + indicator) ||
-            familyLower.endsWith('-' + indicator)
+            familyLower.endsWith('-' + indicator) ||
+            familyLower.includes(' ' + indicator + ' ')
         );
     });
 }

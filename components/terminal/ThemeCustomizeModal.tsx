@@ -13,8 +13,9 @@ import React, { useEffect, useMemo, useState, useCallback, useRef, memo } from '
 import { createPortal } from 'react-dom';
 import { Check, Minus, Palette, Plus, Type, X } from 'lucide-react';
 import { useI18n } from '../../application/i18n/I18nProvider';
+import { useAvailableFonts } from '../../application/state/fontStore';
 import { TERMINAL_THEMES, TerminalThemeConfig } from '../../infrastructure/config/terminalThemes';
-import { DEFAULT_FONT_SIZE, MIN_FONT_SIZE, MAX_FONT_SIZE, TerminalFont, TERMINAL_FONTS } from '../../infrastructure/config/fonts';
+import { DEFAULT_FONT_SIZE, MIN_FONT_SIZE, MAX_FONT_SIZE, TerminalFont } from '../../infrastructure/config/fonts';
 import { Button } from '../ui/button';
 import { cn } from '../../lib/utils';
 
@@ -110,7 +111,6 @@ interface ThemeCustomizeModalProps {
     onFontSizeChange?: (fontSize: number) => void;
     /** Called when user clicks Save to persist settings */
     onSave?: () => void;
-    availableFonts?: TerminalFont[];
 }
 
 // Memoized preview component to avoid re-rendering on every state change
@@ -264,9 +264,9 @@ export const ThemeCustomizeModal: React.FC<ThemeCustomizeModalProps> = ({
     onFontFamilyChange,
     onFontSizeChange,
     onSave,
-    availableFonts = TERMINAL_FONTS,
 }) => {
     const { t } = useI18n();
+    const availableFonts = useAvailableFonts();
     const [activeTab, setActiveTab] = useState<TabType>('theme');
     const [selectedTheme, setSelectedTheme] = useState(currentThemeId);
     const [selectedFont, setSelectedFont] = useState(currentFontFamilyId);
@@ -296,10 +296,7 @@ export const ThemeCustomizeModal: React.FC<ThemeCustomizeModalProps> = ({
     }, [open, currentThemeId, currentFontFamilyId, currentFontSize]);
 
     const currentFont = useMemo(
-        (): TerminalFont => {
-            const fonts = availableFonts.length > 0 ? availableFonts : TERMINAL_FONTS;
-            return fonts.find(f => f.id === selectedFont) || fonts[0];
-        },
+        (): TerminalFont => availableFonts.find(f => f.id === selectedFont) || availableFonts[0],
         [selectedFont, availableFonts]
     );
     const currentTheme = useMemo(
@@ -435,7 +432,7 @@ export const ThemeCustomizeModal: React.FC<ThemeCustomizeModalProps> = ({
                             )}
                             {activeTab === 'font' && (
                                 <div className="space-y-1">
-                                    {(availableFonts.length > 0 ? availableFonts : TERMINAL_FONTS).map(font => (
+                                    {availableFonts.map(font => (
                                         <FontItem
                                             key={font.id}
                                             font={font}

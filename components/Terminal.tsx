@@ -26,7 +26,7 @@ import KnownHostConfirmDialog, { HostKeyInfo } from "./KnownHostConfirmDialog";
 import SFTPModal from "./SFTPModal";
 import { Button } from "./ui/button";
 import { toast } from "./ui/toast";
-import { TERMINAL_FONTS, type TerminalFont } from "../infrastructure/config/fonts";
+import { useAvailableFonts } from "../application/state/fontStore";
 import { TERMINAL_THEMES } from "../infrastructure/config/terminalThemes";
 
 import { TerminalConnectionDialog } from "./terminal/TerminalConnectionDialog";
@@ -85,7 +85,6 @@ interface TerminalProps {
   isBroadcastEnabled?: boolean;
   onToggleBroadcast?: () => void;
   onBroadcastInput?: (data: string, sourceSessionId: string) => void;
-  availableFonts?: TerminalFont[];
 }
 
 const TerminalComponent: React.FC<TerminalProps> = ({
@@ -127,10 +126,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   isBroadcastEnabled,
   onToggleBroadcast,
   onBroadcastInput,
-  availableFonts = TERMINAL_FONTS,
 }) => {
   const CONNECTION_TIMEOUT = 12000;
   const { t } = useI18n();
+  const availableFonts = useAvailableFonts();
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -349,7 +348,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           serialLocalEcho: serialConfig?.localEcho,
           serialLineMode: serialConfig?.lineMode,
           serialLineBufferRef,
-          availableFonts,
         });
 
         xtermRuntimeRef.current = runtime;
@@ -554,12 +552,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       termRef.current.options.fontSize = effectiveFontSize;
 
       const hostFontId = host.fontFamily || fontFamilyId || "menlo";
-      // Fallback to TERMINAL_FONTS if availableFonts is empty
-      const fontsToUse = availableFonts.length > 0 ? availableFonts : TERMINAL_FONTS;
-      const fontObj = fontsToUse.find((f) => f.id === hostFontId) || fontsToUse[0];
-      if (fontObj) {
-        termRef.current.options.fontFamily = fontObj.family;
-      }
+      const fontObj = availableFonts.find((f) => f.id === hostFontId) || availableFonts[0];
+      termRef.current.options.fontFamily = fontObj.family;
 
       termRef.current.options.theme = {
         ...effectiveTheme.colors,
@@ -823,7 +817,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       onClose={() => onCloseSession?.(sessionId)}
       isSearchOpen={isSearchOpen}
       onToggleSearch={handleToggleSearch}
-      availableFonts={availableFonts}
     />
   );
 
