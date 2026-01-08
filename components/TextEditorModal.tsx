@@ -18,7 +18,6 @@ const monacoBasePath = import.meta.env.DEV
 loader.config({ paths: { vs: monacoBasePath } });
 
 import { useI18n } from '../application/i18n/I18nProvider';
-import { useSettingsState } from '../application/state/useSettingsState';
 import { getLanguageId, getLanguageName, getSupportedLanguages } from '../lib/sftpFileUtils';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
@@ -91,12 +90,26 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
   onSave,
 }) => {
   const { t } = useI18n();
-  const { theme } = useSettingsState();
   const [content, setContent] = useState(initialContent);
   const [saving, setSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const [languageId, setLanguageId] = useState(() => getLanguageId(fileName));
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
+
+  // Track theme from document.documentElement class (syncs with app theme)
+  const [isDarkTheme, setIsDarkTheme] = useState(() => 
+    document.documentElement.classList.contains('dark')
+  );
+
+  // Listen for theme changes via MutationObserver on <html> class
+  useEffect(() => {
+    const root = document.documentElement;
+    const observer = new MutationObserver(() => {
+      setIsDarkTheme(root.classList.contains('dark'));
+    });
+    observer.observe(root, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
 
   // Reset content when file changes
   useEffect(() => {
@@ -164,7 +177,7 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
 
   const supportedLanguages = useMemo(() => getSupportedLanguages(), []);
   const monacoLanguage = useMemo(() => languageIdToMonaco(languageId), [languageId]);
-  const monacoTheme = useMemo(() => (theme === 'dark' ? 'vs-dark' : 'light'), [theme]);
+  const monacoTheme = isDarkTheme ? 'vs-dark' : 'light';
   const languageOptions = useMemo(
     () => supportedLanguages.map((lang) => ({ value: lang.id, label: lang.name })),
     [supportedLanguages],
