@@ -243,6 +243,10 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   const [showPathSuggestions, setShowPathSuggestions] = useState(false);
   const [pathSuggestionIndex, setPathSuggestionIndex] = useState(-1);
   const pathInputRef = useRef<HTMLInputElement>(null);
+  
+  // Inline search/filter bar state
+  const [showFilterBar, setShowFilterBar] = useState(false);
+  const filterInputRef = useRef<HTMLInputElement>(null);
   const pathDropdownRef = useRef<HTMLDivElement>(null);
   const [rowHeight, setRowHeight] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
@@ -1003,161 +1007,176 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
       onDragLeave={handlePaneDragLeave}
       onDrop={handlePaneDrop}
     >
-      {/* Header - compact version - only show when showHeader is true */}
-      {showHeader && (
-        <div className="h-8 px-3 border-b border-border/60 flex items-center gap-2">
-          <div className="flex items-center gap-1.5 text-xs font-medium">
-            {pane.connection.isLocal ? (
-              <Monitor size={12} />
-            ) : (
-              <HardDrive size={12} />
-            )}
-            <span>{pane.connection.hostLabel}</span>
-            {(pane.connection.status === "connecting" || pane.reconnecting) && (
-              <Loader2 size={10} className="animate-spin text-muted-foreground" />
-            )}
-            {pane.reconnecting && (
-              <span className="text-[10px] text-muted-foreground">
-                Reconnecting...
-              </span>
-            )}
-            {pane.connection.status === "error" && !pane.reconnecting && (
-              <AlertCircle size={10} className="text-destructive" />
+
+
+      {/* Toolbar - always visible when connected */}
+      <div className="h-7 px-2 flex items-center gap-1 border-b border-border/40 bg-secondary/20">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-5 w-5"
+          onClick={onNavigateUp}
+          title={t("sftp.goUp")}
+        >
+          <ChevronLeft size={12} />
+        </Button>
+
+        {/* Editable Breadcrumb with autocomplete */}
+        {isEditingPath ? (
+          <div className="relative flex-1">
+            <Input
+              ref={pathInputRef}
+              value={editingPathValue}
+              onChange={(e) => {
+                setEditingPathValue(e.target.value);
+                setShowPathSuggestions(true);
+                setPathSuggestionIndex(-1);
+              }}
+              onBlur={handlePathBlur}
+              onKeyDown={handlePathKeyDown}
+              onFocus={() => setShowPathSuggestions(true)}
+              className="h-5 w-full text-[10px] bg-background"
+              autoFocus
+            />
+            {showPathSuggestions && pathSuggestions.length > 0 && (
+              <div
+                ref={pathDropdownRef}
+                className="absolute top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-lg z-50 max-h-48 overflow-auto"
+              >
+                {pathSuggestions.map((suggestion, idx) => (
+                  <button
+                    key={suggestion.path}
+                    type="button"
+                    className={cn(
+                      "w-full px-3 py-2 text-left text-xs flex items-center gap-2 hover:bg-secondary/60 transition-colors",
+                      idx === pathSuggestionIndex && "bg-secondary/80",
+                    )}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      handlePathSubmit(suggestion.path);
+                    }}
+                  >
+                    {suggestion.type === "folder" ? (
+                      <Folder size={12} className="text-primary shrink-0" />
+                    ) : (
+                      <Home
+                        size={12}
+                        className="text-muted-foreground shrink-0"
+                      />
+                    )}
+                    <span className="truncate font-mono">
+                      {suggestion.path}
+                    </span>
+                  </button>
+                ))}
+              </div>
             )}
           </div>
-
-          <div className="flex items-center gap-1 ml-auto">
-            <div className="relative">
-              <Search
-                size={12}
-                className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground"
-              />
-              <Input
-                value={pane.filter}
-                onChange={(e) =>
-                  startTransition(() => onSetFilter(e.target.value))
-                }
-                placeholder="Filter..."
-                className="h-6 w-28 pl-6 pr-5 text-[10px] bg-secondary/40"
-              />
-              {pane.filter && (
-                <button
-                  onClick={() => startTransition(() => onSetFilter(""))}
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                >
-                  <X size={10} />
-                </button>
-              )}
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6"
-              onClick={onRefresh}
-              title={t("common.refresh")}
-            >
-              <RefreshCw
-                size={12}
-                className={
-                  pane.loading || pane.reconnecting ? "animate-spin" : ""
-                }
-              />
-            </Button>
+        ) : (
+          <div
+            className="flex-1 cursor-text hover:bg-secondary/50 rounded px-1 transition-colors"
+            onDoubleClick={handlePathDoubleClick}
+            title={t("sftp.path.doubleClickToEdit")}
+          >
+            <SftpBreadcrumb
+              path={pane.connection.currentPath}
+              onNavigate={onNavigateTo}
+              onHome={() =>
+                pane.connection?.homeDir &&
+                onNavigateTo(pane.connection.homeDir)
+              }
+            />
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Toolbar - compact - only show when showHeader is true */}
-      {showHeader && (
-        <div className="h-7 px-2 flex items-center gap-1 border-b border-border/40 bg-secondary/20">
+        <div className="ml-auto flex items-center gap-0.5">
           <Button
             variant="ghost"
             size="icon"
-            className="h-5 w-5"
-            onClick={onNavigateUp}
-            title={t("sftp.goUp")}
+            className="h-6 w-6"
+            onClick={() => setShowNewFolderDialog(true)}
+            title={t("sftp.newFolder")}
           >
-            <ChevronLeft size={12} />
+            <FolderPlus size={14} />
           </Button>
+          <Button
+            variant={showFilterBar || pane.filter ? "secondary" : "ghost"}
+            size="icon"
+            className={cn("h-6 w-6", pane.filter && "text-primary")}
+            onClick={() => {
+              setShowFilterBar(!showFilterBar);
+              if (!showFilterBar) {
+                setTimeout(() => filterInputRef.current?.focus(), 0);
+              }
+            }}
+            title={t("sftp.filter")}
+          >
+            <Search size={14} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            onClick={onRefresh}
+            title={t("common.refresh")}
+          >
+            <RefreshCw
+              size={14}
+              className={
+                pane.loading || pane.reconnecting ? "animate-spin" : ""
+              }
+            />
+          </Button>
+        </div>
+      </div>
 
-          {/* Editable Breadcrumb with autocomplete */}
-          {isEditingPath ? (
-            <div className="relative flex-1">
-              <Input
-                ref={pathInputRef}
-                value={editingPathValue}
-                onChange={(e) => {
-                  setEditingPathValue(e.target.value);
-                  setShowPathSuggestions(true);
-                  setPathSuggestionIndex(-1);
-                }}
-                onBlur={handlePathBlur}
-                onKeyDown={handlePathKeyDown}
-                onFocus={() => setShowPathSuggestions(true)}
-                className="h-5 w-full text-[10px] bg-background"
-                autoFocus
-              />
-              {showPathSuggestions && pathSuggestions.length > 0 && (
-                <div
-                  ref={pathDropdownRef}
-                  className="absolute top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-lg z-50 max-h-48 overflow-auto"
-                >
-                  {pathSuggestions.map((suggestion, idx) => (
-                    <button
-                      key={suggestion.path}
-                      type="button"
-                      className={cn(
-                        "w-full px-3 py-2 text-left text-xs flex items-center gap-2 hover:bg-secondary/60 transition-colors",
-                        idx === pathSuggestionIndex && "bg-secondary/80",
-                      )}
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        handlePathSubmit(suggestion.path);
-                      }}
-                    >
-                      {suggestion.type === "folder" ? (
-                        <Folder size={12} className="text-primary shrink-0" />
-                      ) : (
-                        <Home
-                          size={12}
-                          className="text-muted-foreground shrink-0"
-                        />
-                      )}
-                      <span className="truncate font-mono">
-                        {suggestion.path}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div
-              className="flex-1 cursor-text hover:bg-secondary/50 rounded px-1 transition-colors"
-              onDoubleClick={handlePathDoubleClick}
-              title={t("sftp.path.doubleClickToEdit")}
-            >
-              <SftpBreadcrumb
-                path={pane.connection.currentPath}
-                onNavigate={onNavigateTo}
-                onHome={() =>
-                  pane.connection?.homeDir &&
-                  onNavigateTo(pane.connection.homeDir)
+      {/* Inline filter bar - appears below toolbar when search is active */}
+      {showFilterBar && (
+        <div className="h-8 px-3 flex items-center gap-2 border-b border-border/40 bg-secondary/10">
+          <div className="relative flex-1">
+            <Search
+              size={12}
+              className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
+              ref={filterInputRef}
+              value={pane.filter}
+              onChange={(e) =>
+                startTransition(() => onSetFilter(e.target.value))
+              }
+              placeholder={t("sftp.filter.placeholder")}
+              className="h-6 w-full pl-7 pr-7 text-xs bg-background"
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  if (pane.filter) {
+                    startTransition(() => onSetFilter(""));
+                  } else {
+                    setShowFilterBar(false);
+                  }
                 }
-              />
-            </div>
-          )}
-
-          <div className="ml-auto flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => setShowNewFolderDialog(true)}
-            >
-              <FolderPlus size={12} className="mr-1" /> {t("sftp.newFolder")}
-            </Button>
+              }}
+            />
+            {pane.filter && (
+              <button
+                onClick={() => startTransition(() => onSetFilter(""))}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X size={12} />
+              </button>
+            )}
           </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 shrink-0"
+            onClick={() => {
+              startTransition(() => onSetFilter(""));
+              setShowFilterBar(false);
+            }}
+            title={t("common.close")}
+          >
+            <X size={14} />
+          </Button>
         </div>
       )}
 

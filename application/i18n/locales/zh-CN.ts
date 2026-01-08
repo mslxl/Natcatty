@@ -249,6 +249,8 @@ const zhCN: Messages = {
 
   // SFTP
   'sftp.newFolder': '新建文件夹',
+  'sftp.filter': '筛选',
+  'sftp.filter.placeholder': '按文件名筛选...',
   'sftp.columns.name': '名称',
   'sftp.columns.modified': '修改时间',
   'sftp.columns.size': '大小',

@@ -375,6 +375,8 @@ const en: Messages = {
 
   // SFTP
   'sftp.newFolder': 'New Folder',
+  'sftp.filter': 'Filter',
+  'sftp.filter.placeholder': 'Filter by filename...',
   'sftp.columns.name': 'Name',
   'sftp.columns.modified': 'Modified',
   'sftp.columns.size': 'Size',
