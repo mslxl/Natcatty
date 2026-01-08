@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Host, PortForwardingRule } from "../../domain/models";
 import {
   STORAGE_KEY_PF_PREFER_FORM_MODE,
@@ -7,8 +7,10 @@ import {
 } from "../../infrastructure/config/storageKeys";
 import { localStorageAdapter } from "../../infrastructure/persistence/localStorageAdapter";
 import {
+  clearReconnectTimer,
   getActiveConnection,
   getActiveRuleIds,
+  setReconnectCallback,
   startPortForward,
   stopPortForward,
   syncWithBackend,
@@ -51,6 +53,7 @@ export interface UsePortForwardingStateResult {
     host: Host,
     keys: { id: string; privateKey: string }[],
     onStatusChange?: (status: PortForwardingRule["status"], error?: string) => void,
+    enableReconnect?: boolean,
   ) => Promise<{ success: boolean; error?: string }>;
   stopTunnel: (
     ruleId: string,
@@ -61,7 +64,16 @@ export interface UsePortForwardingStateResult {
   selectedRule: PortForwardingRule | undefined;
 }
 
-export const usePortForwardingState = (): UsePortForwardingStateResult => {
+export interface UsePortForwardingStateOptions {
+  hosts?: Host[];
+  keys?: { id: string; privateKey: string }[];
+}
+
+export const usePortForwardingState = (
+  options: UsePortForwardingStateOptions = {},
+): UsePortForwardingStateResult => {
+  const { hosts = [], keys = [] } = options;
+  
   const [rules, setRules] = useState<PortForwardingRule[]>([]);
   const [selectedRuleId, setSelectedRuleId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useStoredViewMode(
@@ -78,6 +90,27 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
     setPreferFormModeState(prefer);
     localStorageAdapter.writeBoolean(STORAGE_KEY_PF_PREFER_FORM_MODE, prefer);
   }, []);
+
+  // Ref to store the current rules, hosts, and keys for the reconnect callback
+  const rulesRef = useRef<PortForwardingRule[]>(rules);
+  const hostsRef = useRef<Host[]>(hosts);
+  const keysRef = useRef<{ id: string; privateKey: string }[]>(keys);
+  
+  // Keep refs in sync
+  useEffect(() => {
+    rulesRef.current = rules;
+  }, [rules]);
+  
+  useEffect(() => {
+    hostsRef.current = hosts;
+  }, [hosts]);
+  
+  useEffect(() => {
+    keysRef.current = keys;
+  }, [keys]);
+
+  // Track if auto-start has been executed
+  const autoStartExecutedRef = useRef(false);
 
   // Load rules from storage on mount and sync with backend
   useEffect(() => {
@@ -111,6 +144,76 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
   const persistRules = useCallback((updatedRules: PortForwardingRule[]) => {
     localStorageAdapter.write(STORAGE_KEY_PORT_FORWARDING, updatedRules);
   }, []);
+
+  // Reconnect callback - used by the service layer to trigger reconnection
+  const handleReconnect = useCallback(
+    async (
+      ruleId: string,
+      onStatusChange: (status: PortForwardingRule["status"], error?: string) => void,
+    ) => {
+      const rule = rulesRef.current.find((r) => r.id === ruleId);
+      if (!rule || !rule.hostId) {
+        return { success: false, error: "Rule or host not found" };
+      }
+
+      const host = hostsRef.current.find((h) => h.id === rule.hostId);
+      if (!host) {
+        return { success: false, error: "Host not found" };
+      }
+
+      return startPortForward(rule, host, keysRef.current, onStatusChange, true);
+    },
+    [],
+  );
+
+  // Set up the reconnect callback in the service layer
+  useEffect(() => {
+    setReconnectCallback(handleReconnect);
+    return () => {
+      setReconnectCallback(null);
+    };
+  }, [handleReconnect]);
+
+  // Auto-start rules when hosts and keys become available
+  useEffect(() => {
+    if (autoStartExecutedRef.current) return;
+    if (rules.length === 0 || hosts.length === 0) return;
+
+    const autoStartRules = rules.filter(
+      (r) => r.autoStart && r.status === "inactive" && r.hostId,
+    );
+
+    if (autoStartRules.length === 0) return;
+
+    autoStartExecutedRef.current = true;
+
+    // Start each auto-start rule
+    for (const rule of autoStartRules) {
+      const host = hosts.find((h) => h.id === rule.hostId);
+      if (host) {
+        void startPortForward(
+          rule,
+          host,
+          keys,
+          (status, error) => {
+            setRules((prev) =>
+              prev.map((r) =>
+                r.id === rule.id
+                  ? {
+                      ...r,
+                      status,
+                      error,
+                      lastUsedAt: status === "active" ? Date.now() : r.lastUsedAt,
+                    }
+                  : r,
+              ),
+            );
+          },
+          true, // Enable reconnect for auto-start rules
+        );
+      }
+    }
+  }, [rules, hosts, keys]);
 
   const addRule = useCallback(
     (
@@ -212,11 +315,12 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
         status: PortForwardingRule["status"],
         error?: string,
       ) => void,
+      enableReconnect = false,
     ) => {
       return startPortForward(rule, host, keys, (status, error) => {
         setRuleStatus(rule.id, status, error);
         onStatusChange?.(status, error ?? undefined);
-      });
+      }, enableReconnect);
     },
     [setRuleStatus],
   );
@@ -226,6 +330,8 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
       ruleId: string,
       onStatusChange?: (status: PortForwardingRule["status"]) => void,
     ) => {
+      // Clear any pending reconnect timer when manually stopping
+      clearReconnectTimer(ruleId);
       return stopPortForward(ruleId, (status) => {
         setRuleStatus(ruleId, status);
         onStatusChange?.(status);

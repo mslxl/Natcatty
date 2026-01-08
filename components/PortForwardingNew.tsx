@@ -100,7 +100,10 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
     selectedRule: _selectedRule,
     preferFormMode,
     setPreferFormMode,
-  } = usePortForwardingState();
+  } = usePortForwardingState({
+    hosts,
+    keys: keys.map((k) => ({ id: k.id, privateKey: k.privateKey })),
+  });
 
   // Track connecting/stopping states
   const [pendingOperations, setPendingOperations] = useState<Set<string>>(
@@ -138,6 +141,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
               );
             }
           },
+          rule.autoStart, // Enable reconnect for auto-start rules
         );
         // Show error from result only if not already shown
         if (!result.success && result.error && !errorShown) {
