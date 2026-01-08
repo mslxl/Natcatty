@@ -20,8 +20,9 @@ STORAGE_KEY_SFTP_DOUBLE_CLICK_BEHAVIOR,
 } from '../../infrastructure/config/storageKeys';
 import { DEFAULT_UI_LOCALE, resolveSupportedLocale } from '../../infrastructure/config/i18n';
 import { TERMINAL_THEMES } from '../../infrastructure/config/terminalThemes';
-import { TERMINAL_FONTS, DEFAULT_FONT_SIZE } from '../../infrastructure/config/fonts';
+import { DEFAULT_FONT_SIZE } from '../../infrastructure/config/fonts';
 import { DARK_UI_THEMES, LIGHT_UI_THEMES, UiThemeTokens, getUiThemeById } from '../../infrastructure/config/uiThemes';
+import { useAvailableFonts } from './fontStore';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 
@@ -33,9 +34,9 @@ const DEFAULT_CUSTOM_ACCENT = '221.2 83.2% 53.3%';
 const DEFAULT_TERMINAL_THEME = 'netcatty-dark';
 const DEFAULT_FONT_FAMILY = 'menlo';
 // Auto-detect default hotkey scheme based on platform
-const DEFAULT_HOTKEY_SCHEME: HotkeyScheme = 
-  typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/i.test(navigator.platform) 
-    ? 'mac' 
+const DEFAULT_HOTKEY_SCHEME: HotkeyScheme =
+  typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/i.test(navigator.platform)
+    ? 'mac'
     : 'pc';
 const DEFAULT_SFTP_DOUBLE_CLICK_BEHAVIOR: 'open' | 'transfer' = 'open';
 
@@ -99,13 +100,14 @@ const applyThemeTokens = (
   root.style.setProperty('--border', tokens.border);
   root.style.setProperty('--input', tokens.input);
   root.style.setProperty('--ring', accentToken);
-  
+
   // Sync with native window title bar (Electron)
   netcattyBridge.get()?.setTheme?.(theme);
   netcattyBridge.get()?.setBackgroundColor?.(tokens.background);
 };
 
 export const useSettingsState = () => {
+  const availableFonts = useAvailableFonts();
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     const stored = readStoredString(STORAGE_KEY_THEME);
     return stored && isValidTheme(stored) ? stored : DEFAULT_THEME;
@@ -148,11 +150,11 @@ export const useSettingsState = () => {
     }
     return DEFAULT_HOTKEY_SCHEME;
   });
-  const [customKeyBindings, setCustomKeyBindings] = useState<CustomKeyBindings>(() => 
+  const [customKeyBindings, setCustomKeyBindings] = useState<CustomKeyBindings>(() =>
     localStorageAdapter.read<CustomKeyBindings>(STORAGE_KEY_CUSTOM_KEY_BINDINGS) || {}
   );
   const [isHotkeyRecording, setIsHotkeyRecordingState] = useState(false);
-  const [customCSS, setCustomCSS] = useState<string>(() => 
+  const [customCSS, setCustomCSS] = useState<string>(() =>
     localStorageAdapter.readString(STORAGE_KEY_CUSTOM_CSS) || ''
   );
   const [sftpDoubleClickBehavior, setSftpDoubleClickBehavior] = useState<'open' | 'transfer'>(() => {
@@ -427,7 +429,7 @@ export const useSettingsState = () => {
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_CUSTOM_CSS, customCSS);
     notifySettingsChanged(STORAGE_KEY_CUSTOM_CSS, customCSS);
-    
+
     // Apply custom CSS to document
     let styleEl = document.getElementById('netcatty-custom-css') as HTMLStyleElement | null;
     if (!styleEl) {
@@ -502,8 +504,8 @@ export const useSettingsState = () => {
   );
 
   const currentTerminalFont = useMemo(
-    () => TERMINAL_FONTS.find(f => f.id === terminalFontFamilyId) || TERMINAL_FONTS[0],
-    [terminalFontFamilyId]
+    () => availableFonts.find(f => f.id === terminalFontFamilyId) || availableFonts[0],
+    [terminalFontFamilyId, availableFonts]
   );
 
   const updateTerminalSetting = useCallback(<K extends keyof TerminalSettings>(
@@ -552,5 +554,6 @@ export const useSettingsState = () => {
     setCustomCSS,
     sftpDoubleClickBehavior,
     setSftpDoubleClickBehavior,
+    availableFonts,
   };
 };

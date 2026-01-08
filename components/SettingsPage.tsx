@@ -14,10 +14,13 @@ import SettingsFileAssociationsTab from "./settings/tabs/SettingsFileAssociation
 import SettingsShortcutsTab from "./settings/tabs/SettingsShortcutsTab";
 import SettingsTerminalTab from "./settings/tabs/SettingsTerminalTab";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
+import type { TerminalFont } from "../infrastructure/config/fonts";
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
-type SettingsState = ReturnType<typeof useSettingsState>;
+type SettingsState = ReturnType<typeof useSettingsState> & {
+    availableFonts: TerminalFont[];
+};
 
 const SettingsSyncTab = React.lazy(() => import("./settings/tabs/SettingsSyncTab"));
 
@@ -165,6 +168,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                             setTerminalFontSize={settings.setTerminalFontSize}
                             terminalSettings={settings.terminalSettings}
                             updateTerminalSetting={settings.updateTerminalSetting}
+                            availableFonts={settings.availableFonts}
                         />
                     )}
 

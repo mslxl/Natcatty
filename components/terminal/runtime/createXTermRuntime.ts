@@ -10,7 +10,7 @@ import {
   getAppLevelActions,
   getTerminalPassthroughActions,
 } from "../../../application/state/useGlobalHotkeys";
-import { TERMINAL_FONTS } from "../../../infrastructure/config/fonts";
+import { fontStore } from "../../../application/state/fontStore";
 import {
   XTERM_PERFORMANCE_CONFIG,
   type XTermPlatform,
@@ -73,7 +73,7 @@ export type CreateXTermRuntimeContext = {
   ) => void;
   commandBufferRef: RefObject<string>;
   setIsSearchOpen: Dispatch<SetStateAction<boolean>>;
-  
+
   // Serial-specific options
   serialLocalEcho?: boolean;
   serialLineMode?: boolean;
@@ -116,7 +116,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   });
 
   const hostFontId = ctx.host.fontFamily || ctx.fontFamilyId || "menlo";
-  const fontObj = TERMINAL_FONTS.find((f) => f.id === hostFontId) || TERMINAL_FONTS[0];
+  // Use fontStore for font lookup - guarantees non-empty result
+  const fontObj = fontStore.getFontById(hostFontId);
   const fontFamily = fontObj.family;
 
   const effectiveFontSize = ctx.host.fontSize || ctx.fontSize;
