@@ -179,6 +179,9 @@ const en: Messages = {
   'settings.terminal.localShell.startDir.placeholder': 'Home directory',
   'settings.terminal.localShell.startDir.notFound': 'Directory not found',
   'settings.terminal.localShell.startDir.isFile': 'Path is a file, not a directory',
+  'settings.terminal.section.connection': 'Connection',
+  'settings.terminal.connection.keepaliveInterval': 'Keepalive Interval',
+  'settings.terminal.connection.keepaliveInterval.desc': 'How often (in seconds) to send SSH-level keepalive packets to server. Set to 0 to disable.',
 
   // Settings > Shortcuts
   'settings.shortcuts.section.scheme': 'Hotkey Scheme',

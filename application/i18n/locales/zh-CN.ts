@@ -817,6 +817,9 @@ const zhCN: Messages = {
   'settings.terminal.localShell.startDir.placeholder': '用户主目录',
   'settings.terminal.localShell.startDir.notFound': '目录不存在',
   'settings.terminal.localShell.startDir.isFile': '路径是文件，不是目录',
+  'settings.terminal.section.connection': '连接',
+  'settings.terminal.connection.keepaliveInterval': '会话保持间隔',
+  'settings.terminal.connection.keepaliveInterval.desc': '向服务器发送 SSH 级别保活数据包的频率（秒）。设为 0 表示禁用。',
 
   // Settings > Shortcuts
   'settings.shortcuts.section.scheme': '快捷键方案',
