@@ -70,6 +70,8 @@ export const RuleCard: React.FC<RuleCardProps> = ({
                                         size={10}
                                         className="text-muted-foreground flex-shrink-0"
                                         title={t('pf.form.autoStart')}
+                                        aria-label={t('pf.form.autoStart')}
+                                        role="img"
                                     />
                                 )}
                                 <span

@@ -53,6 +53,46 @@ export const clearReconnectTimer = (ruleId: string): void => {
 };
 
 /**
+ * Helper function to schedule a reconnection attempt
+ * Returns true if a reconnect was scheduled, false otherwise
+ */
+const scheduleReconnectIfNeeded = (
+  ruleId: string,
+  enableReconnect: boolean,
+  onStatusChange: (status: PortForwardingRule['status'], error?: string) => void,
+): boolean => {
+  if (!enableReconnect || !reconnectCallback) {
+    return false;
+  }
+
+  const currentConn = activeConnections.get(ruleId);
+  const attempts = (currentConn?.reconnectAttempts ?? 0) + 1;
+
+  if (attempts <= MAX_RECONNECT_ATTEMPTS) {
+    logger.info(`[PortForwardingService] Scheduling reconnect ${attempts}/${MAX_RECONNECT_ATTEMPTS}`);
+
+    if (currentConn) {
+      currentConn.reconnectAttempts = attempts;
+      currentConn.reconnectTimeoutId = setTimeout(() => {
+        if (reconnectCallback) {
+          reconnectCallback(ruleId, onStatusChange);
+        }
+      }, RECONNECT_DELAY_MS);
+    }
+
+    onStatusChange('connecting', `Reconnecting (${attempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+    return true;
+  }
+
+  logger.warn(`[PortForwardingService] Max reconnect attempts (${MAX_RECONNECT_ATTEMPTS}) reached for rule ${ruleId}`);
+  // Reset reconnect attempts
+  if (currentConn) {
+    currentConn.reconnectAttempts = 0;
+  }
+  return false;
+};
+
+/**
  * Get active connection info for a rule
  */
 export const getActiveConnection = (ruleId: string): PortForwardingConnection | undefined => {
@@ -181,33 +221,10 @@ export const startPortForward = async (
       }
       
       // Handle auto-reconnect on error/disconnect
-      if (status === 'error' && enableReconnect && reconnectCallback) {
-        const currentConn = activeConnections.get(rule.id);
-        const attempts = (currentConn?.reconnectAttempts ?? 0) + 1;
-        
-        if (attempts <= MAX_RECONNECT_ATTEMPTS) {
-          logger.info(`[PortForwardingService] Tunnel disconnected, attempting reconnect ${attempts}/${MAX_RECONNECT_ATTEMPTS}`);
-          
-          // Update connection with reconnect attempt count
-          if (currentConn) {
-            currentConn.reconnectAttempts = attempts;
-            // Schedule reconnect
-            currentConn.reconnectTimeoutId = setTimeout(() => {
-              if (reconnectCallback) {
-                reconnectCallback(rule.id, onStatusChange);
-              }
-            }, RECONNECT_DELAY_MS);
-          }
-          
-          // Don't immediately report error, we're trying to reconnect
-          onStatusChange('connecting', `Reconnecting (${attempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+      if (status === 'error') {
+        const reconnectScheduled = scheduleReconnectIfNeeded(rule.id, enableReconnect, onStatusChange);
+        if (reconnectScheduled) {
           return;
-        } else {
-          logger.warn(`[PortForwardingService] Max reconnect attempts (${MAX_RECONNECT_ATTEMPTS}) reached for rule ${rule.id}`);
-          // Reset reconnect attempts
-          if (currentConn) {
-            currentConn.reconnectAttempts = 0;
-          }
         }
       }
       
@@ -243,25 +260,9 @@ export const startPortForward = async (
     
     if (!result.success) {
       // Check if we should attempt reconnect
-      if (enableReconnect && reconnectCallback) {
-        const currentConn = activeConnections.get(rule.id);
-        const attempts = (currentConn?.reconnectAttempts ?? 0) + 1;
-        
-        if (attempts <= MAX_RECONNECT_ATTEMPTS) {
-          logger.info(`[PortForwardingService] Connection failed, attempting reconnect ${attempts}/${MAX_RECONNECT_ATTEMPTS}`);
-          
-          if (currentConn) {
-            currentConn.reconnectAttempts = attempts;
-            currentConn.reconnectTimeoutId = setTimeout(() => {
-              if (reconnectCallback) {
-                reconnectCallback(rule.id, onStatusChange);
-              }
-            }, RECONNECT_DELAY_MS);
-          }
-          
-          onStatusChange('connecting', `Reconnecting (${attempts}/${MAX_RECONNECT_ATTEMPTS})...`);
-          return { success: false, error: result.error };
-        }
+      const reconnectScheduled = scheduleReconnectIfNeeded(rule.id, enableReconnect, onStatusChange);
+      if (reconnectScheduled) {
+        return { success: false, error: result.error };
       }
       
       activeConnections.delete(rule.id);
@@ -282,25 +283,9 @@ export const startPortForward = async (
     const error = err instanceof Error ? err.message : 'Unknown error';
     
     // Check if we should attempt reconnect
-    if (enableReconnect && reconnectCallback) {
-      const currentConn = activeConnections.get(rule.id);
-      const attempts = (currentConn?.reconnectAttempts ?? 0) + 1;
-      
-      if (attempts <= MAX_RECONNECT_ATTEMPTS) {
-        logger.info(`[PortForwardingService] Exception occurred, attempting reconnect ${attempts}/${MAX_RECONNECT_ATTEMPTS}`);
-        
-        if (currentConn) {
-          currentConn.reconnectAttempts = attempts;
-          currentConn.reconnectTimeoutId = setTimeout(() => {
-            if (reconnectCallback) {
-              reconnectCallback(rule.id, onStatusChange);
-            }
-          }, RECONNECT_DELAY_MS);
-        }
-        
-        onStatusChange('connecting', `Reconnecting (${attempts}/${MAX_RECONNECT_ATTEMPTS})...`);
-        return { success: false, error };
-      }
+    const reconnectScheduled = scheduleReconnectIfNeeded(rule.id, enableReconnect, onStatusChange);
+    if (reconnectScheduled) {
+      return { success: false, error };
     }
     
     onStatusChange('error', error);
