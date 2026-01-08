@@ -61,6 +61,8 @@ interface NetcattySSHOptions {
   proxy?: NetcattyProxyConfig;
   // Jump hosts (bastion chain)
   jumpHosts?: NetcattyJumpHost[];
+  // SSH-level keepalive interval in seconds (0 = disabled)
+  keepaliveInterval?: number;
 }
 
 interface SftpStatResult {

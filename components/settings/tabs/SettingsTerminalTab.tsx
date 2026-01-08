@@ -580,6 +580,28 @@ export default function SettingsTerminalTab(props: {
           </div>
         </SettingRow>
       </div>
+
+      <SectionHeader title={t("settings.terminal.section.connection")} />
+      <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
+        <SettingRow
+          label={t("settings.terminal.connection.keepaliveInterval")}
+          description={t("settings.terminal.connection.keepaliveInterval.desc")}
+        >
+          <Input
+            type="number"
+            min={0}
+            max={3600}
+            value={terminalSettings.keepaliveInterval}
+            onChange={(e) => {
+              const val = parseInt(e.target.value);
+              if (!isNaN(val) && val >= 0 && val <= 3600) {
+                updateTerminalSetting("keepaliveInterval", val);
+              }
+            }}
+            className="w-24"
+          />
+        </SettingRow>
+      </div>
     </SettingsTabContent>
   );
 }

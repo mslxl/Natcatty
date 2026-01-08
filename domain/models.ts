@@ -378,6 +378,9 @@ export interface TerminalSettings {
   // Local Shell Configuration
   localShell: string; // Path to shell executable (empty = system default)
   localStartDir: string; // Starting directory for local terminal (empty = home directory)
+
+  // SSH Connection
+  keepaliveInterval: number; // Seconds between SSH-level keepalive packets (0 = disabled)
 }
 
 export const DEFAULT_KEYWORD_HIGHLIGHT_RULES: KeywordHighlightRule[] = [
@@ -415,6 +418,7 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   keywordHighlightRules: DEFAULT_KEYWORD_HIGHLIGHT_RULES,
   localShell: '', // Empty = use system default
   localStartDir: '', // Empty = use home directory
+  keepaliveInterval: 0, // 0 = disabled (use SSH library defaults)
 };
 
 export interface TerminalTheme {

@@ -343,6 +343,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           env: termEnv,
           proxy: proxyConfig,
           jumpHosts: jumpHosts.length > 0 ? jumpHosts : undefined,
+          keepaliveInterval: ctx.terminalSettings?.keepaliveInterval,
         });
       };
 

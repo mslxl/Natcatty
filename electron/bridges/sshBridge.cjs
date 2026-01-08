@@ -199,7 +199,9 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         port: jump.port || 22,
         username: jump.username || 'root',
         readyTimeout: 20000, // Reduced from 60s for faster failure detection
-        keepaliveInterval: 10000,
+        // Use user-configured keepalive interval from options (in seconds -> convert to ms)
+        // If 0 or not provided, use 10000ms as default
+        keepaliveInterval: options.keepaliveInterval > 0 ? options.keepaliveInterval * 1000 : 10000,
         keepaliveCountMax: 3,
         algorithms: {
           // Prioritize fastest ciphers (GCM modes are hardware-accelerated)
@@ -355,7 +357,9 @@ async function startSSHSession(event, options) {
       username: options.username || "root",
       // `readyTimeout` covers the entire connection + authentication flow in ssh2.
       readyTimeout: 20000, // Fast failure for non-interactive auth
-      keepaliveInterval: 10000,
+      // Use user-configured keepalive interval (in seconds -> convert to ms)
+      // If 0 or not provided, use 10000ms as default
+      keepaliveInterval: options.keepaliveInterval > 0 ? options.keepaliveInterval * 1000 : 10000,
       keepaliveCountMax: 3,
       algorithms: {
         // Prioritize fastest ciphers (GCM modes are hardware-accelerated)
