@@ -1,12 +1,12 @@
 /**
  * SyncStatusButton - Cloud Sync Status Indicator for Top Bar
- * 
+ *
  * Shows current sync state with cloud icon and colored indicators:
  * - Green dot: All synced
- * - Blue dot + spin: Syncing in progress  
+ * - Blue dot + spin: Syncing in progress
  * - Red dot: Error
  * - Gray dot: No providers connected
- * 
+ *
  * Clicking opens a popover with sync status details and history.
  */
 
@@ -239,7 +239,7 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
                             <CloudOff size={32} className="mx-auto mb-2 text-muted-foreground" />
                             <p className="text-sm font-medium mb-1">{t('sync.notConfigured')}</p>
                             <p className="text-xs text-muted-foreground mb-3">
-                                Connect a cloud provider to sync your data across devices.
+                                {t('sync.autoSync.noProvider')}
                             </p>
                             <Button
                                 size="sm"
@@ -249,7 +249,7 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
                                     onOpenSettings?.();
                                 }}
                             >
-                                Configure Cloud Sync
+                                {t('sync.settings')}
                             </Button>
                         </div>
                     ) : (

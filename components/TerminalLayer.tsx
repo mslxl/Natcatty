@@ -11,6 +11,7 @@ import { DistroAvatar } from './DistroAvatar';
 import Terminal from './Terminal';
 import { Button } from './ui/button';
 import { ScrollArea } from './ui/scroll-area';
+import type { TerminalFont } from '../infrastructure/config/fonts';
 
 type WorkspaceRect = { x: number; y: number; w: number; h: number };
 
@@ -66,6 +67,7 @@ interface TerminalLayerProps {
   // Broadcast mode
   isBroadcastEnabled?: (workspaceId: string) => boolean;
   onToggleBroadcast?: (workspaceId: string) => void;
+  availableFonts?: TerminalFont[];
 }
 
 const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
@@ -103,6 +105,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   onSplitSession,
   isBroadcastEnabled,
   onToggleBroadcast,
+  availableFonts,
 }) => {
   // Subscribe to activeTabId from external store
   const activeTabId = useActiveTabId();
@@ -704,6 +707,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                 isBroadcastEnabled={inActiveWorkspace && activeWorkspace ? isBroadcastEnabled?.(activeWorkspace.id) : false}
                 onToggleBroadcast={inActiveWorkspace && activeWorkspace ? () => onToggleBroadcast?.(activeWorkspace.id) : undefined}
                 onBroadcastInput={inActiveWorkspace && activeWorkspace && isBroadcastEnabled?.(activeWorkspace.id) ? handleBroadcastInput : undefined}
+                availableFonts={availableFonts}
               />
             </div>
           );

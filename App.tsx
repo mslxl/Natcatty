@@ -22,6 +22,7 @@ import { ConnectionLog, Host, HostProtocol, TerminalTheme } from './types';
 import { LogView as LogViewType } from './application/state/useSessionState';
 import type { SftpView as SftpViewComponent } from './components/SftpView';
 import type { TerminalLayer as TerminalLayerComponent } from './components/TerminalLayer';
+import type { TerminalFont } from './infrastructure/config/fonts';
 
 // Visibility container for VaultView - isolates isActive subscription
 const VaultViewContainer: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -44,9 +45,10 @@ interface LogViewWrapperProps {
   defaultFontSize: number;
   onClose: () => void;
   onUpdateLog: (logId: string, updates: Partial<ConnectionLog>) => void;
+  availableFonts?: TerminalFont[];
 }
 
-const LogViewWrapper: React.FC<LogViewWrapperProps> = ({ logView, defaultTerminalTheme, defaultFontSize, onClose, onUpdateLog }) => {
+const LogViewWrapper: React.FC<LogViewWrapperProps> = ({ logView, defaultTerminalTheme, defaultFontSize, onClose, onUpdateLog, availableFonts }) => {
   const activeTabId = useActiveTabId();
   const isVisible = activeTabId === logView.id;
 
@@ -65,6 +67,7 @@ const LogViewWrapper: React.FC<LogViewWrapperProps> = ({ logView, defaultTermina
           isVisible={isVisible}
           onClose={onClose}
           onUpdateLog={onUpdateLog}
+          availableFonts={availableFonts}
         />
       </Suspense>
     </div>
@@ -159,6 +162,7 @@ function App({ settings }: { settings: SettingsState }) {
     hotkeyScheme,
     keyBindings,
     isHotkeyRecording,
+    availableFonts,
   } = settings;
 
   const {
@@ -822,6 +826,7 @@ function App({ settings }: { settings: SettingsState }) {
           onSetDraggingSessionId={setDraggingSessionId}
           onToggleWorkspaceViewMode={toggleWorkspaceViewMode}
           onSetWorkspaceFocusedSession={setWorkspaceFocusedSession}
+          availableFonts={availableFonts}
           onSplitSession={splitSession}
           isBroadcastEnabled={isBroadcastEnabled}
           onToggleBroadcast={toggleBroadcast}
@@ -839,6 +844,7 @@ function App({ settings }: { settings: SettingsState }) {
               defaultFontSize={terminalFontSize}
               onClose={() => closeLogView(logView.id)}
               onUpdateLog={updateConnectionLog}
+              availableFonts={availableFonts}
             />
           );
         })}

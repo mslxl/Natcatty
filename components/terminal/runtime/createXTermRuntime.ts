@@ -10,7 +10,7 @@ import {
   getAppLevelActions,
   getTerminalPassthroughActions,
 } from "../../../application/state/useGlobalHotkeys";
-import { TERMINAL_FONTS } from "../../../infrastructure/config/fonts";
+import { TERMINAL_FONTS, type TerminalFont } from "../../../infrastructure/config/fonts";
 import {
   XTERM_PERFORMANCE_CONFIG,
   type XTermPlatform,
@@ -73,7 +73,7 @@ export type CreateXTermRuntimeContext = {
   ) => void;
   commandBufferRef: RefObject<string>;
   setIsSearchOpen: Dispatch<SetStateAction<boolean>>;
-  
+
   // Serial-specific options
   serialLocalEcho?: boolean;
   serialLineMode?: boolean;
@@ -81,6 +81,9 @@ export type CreateXTermRuntimeContext = {
 
   // Callback when shell reports CWD change via OSC 7
   onCwdChange?: (cwd: string) => void;
+
+  // Available fonts
+  availableFonts?: TerminalFont[];
 };
 
 const detectPlatform = (): XTermPlatform => {
@@ -116,7 +119,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   });
 
   const hostFontId = ctx.host.fontFamily || ctx.fontFamilyId || "menlo";
-  const fontObj = TERMINAL_FONTS.find((f) => f.id === hostFontId) || TERMINAL_FONTS[0];
+  const availableFonts = ctx.availableFonts || TERMINAL_FONTS;
+  const fontObj = availableFonts.find((f) => f.id === hostFontId) || availableFonts[0];
   const fontFamily = fontObj.family;
 
   const effectiveFontSize = ctx.host.fontSize || ctx.fontSize;

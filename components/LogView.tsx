@@ -10,6 +10,7 @@ import { ConnectionLog, TerminalTheme } from "../types";
 import { TERMINAL_THEMES } from "../infrastructure/config/terminalThemes";
 import { Button } from "./ui/button";
 import ThemeCustomizeModal from "./terminal/ThemeCustomizeModal";
+import type { TerminalFont } from "../infrastructure/config/fonts";
 
 interface LogViewProps {
     log: ConnectionLog;
@@ -18,6 +19,7 @@ interface LogViewProps {
     isVisible: boolean;
     onClose: () => void;
     onUpdateLog: (logId: string, updates: Partial<ConnectionLog>) => void;
+    availableFonts?: TerminalFont[];
 }
 
 const LogViewComponent: React.FC<LogViewProps> = ({
@@ -27,6 +29,7 @@ const LogViewComponent: React.FC<LogViewProps> = ({
     isVisible,
     onClose,
     onUpdateLog,
+    availableFonts,
 }) => {
     const { t, resolvedLocale } = useI18n();
     const containerRef = useRef<HTMLDivElement>(null);
@@ -253,6 +256,7 @@ const LogViewComponent: React.FC<LogViewProps> = ({
                 currentFontSize={currentFontSize}
                 onThemeChange={handleThemeChange}
                 onFontSizeChange={handleFontSizeChange}
+                availableFonts={availableFonts}
             />
         </div>
     );

@@ -10,6 +10,7 @@ import { Button } from '../ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { ScrollArea } from '../ui/scroll-area';
 import ThemeCustomizeModal from './ThemeCustomizeModal';
+import type { TerminalFont } from '../../infrastructure/config/fonts';
 
 export interface TerminalToolbarProps {
     status: 'connecting' | 'connected' | 'disconnected';
@@ -31,6 +32,7 @@ export interface TerminalToolbarProps {
     // Search functionality
     isSearchOpen?: boolean;
     onToggleSearch?: () => void;
+    availableFonts?: TerminalFont[];
 }
 
 export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
@@ -52,6 +54,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
     onClose,
     isSearchOpen,
     onToggleSearch,
+    availableFonts,
 }) => {
     const { t } = useI18n();
     const [themeModalOpen, setThemeModalOpen] = useState(false);
@@ -199,6 +202,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                 onThemeChange={handleThemeChange}
                 onFontFamilyChange={handleFontFamilyChange}
                 onFontSizeChange={handleFontSizeChange}
+                availableFonts={availableFonts}
                 onSave={() => {
                     // Trigger any necessary updates
                 }}

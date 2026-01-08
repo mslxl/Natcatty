@@ -9,7 +9,7 @@ import type {
 } from "../../../domain/models";
 import { DEFAULT_KEYWORD_HIGHLIGHT_RULES } from "../../../domain/models";
 import { useI18n } from "../../../application/i18n/I18nProvider";
-import { TERMINAL_FONTS, MAX_FONT_SIZE, MIN_FONT_SIZE } from "../../../infrastructure/config/fonts";
+import { MAX_FONT_SIZE, MIN_FONT_SIZE, type TerminalFont } from "../../../infrastructure/config/fonts";
 import { TERMINAL_THEMES } from "../../../infrastructure/config/terminalThemes";
 import { cn } from "../../../lib/utils";
 import { Button } from "../../ui/button";
@@ -80,6 +80,7 @@ export default function SettingsTerminalTab(props: {
     key: K,
     value: TerminalSettings[K],
   ) => void;
+  availableFonts: TerminalFont[];
 }) {
   const {
     terminalThemeId,
@@ -90,6 +91,7 @@ export default function SettingsTerminalTab(props: {
     setTerminalFontSize,
     terminalSettings,
     updateTerminalSetting,
+    availableFonts,
   } = props;
   const { t } = useI18n();
 
@@ -201,7 +203,7 @@ export default function SettingsTerminalTab(props: {
         >
           <Select
             value={terminalFontFamilyId}
-            options={TERMINAL_FONTS.map((f) => ({ value: f.id, label: f.name }))}
+            options={availableFonts.map((f) => ({ value: f.id, label: f.name }))}
             onChange={(id) => setTerminalFontFamilyId(id)}
             className="w-40"
           />
