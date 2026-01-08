@@ -119,8 +119,16 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   });
 
   const hostFontId = ctx.host.fontFamily || ctx.fontFamilyId || "menlo";
-  const availableFonts = ctx.availableFonts || TERMINAL_FONTS;
-  const fontObj = availableFonts.find((f) => f.id === hostFontId) || availableFonts[0];
+  // Fallback to TERMINAL_FONTS if availableFonts is empty or not provided
+  const fontsToUse =
+    ctx.availableFonts && ctx.availableFonts.length > 0
+      ? ctx.availableFonts
+      : TERMINAL_FONTS;
+  const defaultFont = { id: hostFontId, family: "monospace" } as TerminalFont;
+  const fontObj =
+    fontsToUse.find((f) => f.id === hostFontId) ||
+    fontsToUse[0] ||
+    defaultFont;
   const fontFamily = fontObj.family;
 
   const effectiveFontSize = ctx.host.fontSize || ctx.fontSize;

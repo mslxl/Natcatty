@@ -30,7 +30,7 @@ const CJK_FALLBACK_FONTS = [
 
 const CJK_FALLBACK_STACK = CJK_FALLBACK_FONTS.join(', ');
 
-const withCjkFallback = (family: string) => {
+export const withCjkFallback = (family: string) => {
   const trimmed = family.trim();
   if (!CJK_FALLBACK_STACK) return trimmed;
   // Avoid double-appending if a custom stack already includes one of these fonts.

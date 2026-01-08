@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom';
 import { Check, Minus, Palette, Plus, Type, X } from 'lucide-react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { TERMINAL_THEMES, TerminalThemeConfig } from '../../infrastructure/config/terminalThemes';
-import { DEFAULT_FONT_SIZE, MIN_FONT_SIZE, MAX_FONT_SIZE, TerminalFont } from '../../infrastructure/config/fonts';
+import { DEFAULT_FONT_SIZE, MIN_FONT_SIZE, MAX_FONT_SIZE, TerminalFont, TERMINAL_FONTS } from '../../infrastructure/config/fonts';
 import { Button } from '../ui/button';
 import { cn } from '../../lib/utils';
 
@@ -264,7 +264,7 @@ export const ThemeCustomizeModal: React.FC<ThemeCustomizeModalProps> = ({
     onFontFamilyChange,
     onFontSizeChange,
     onSave,
-    availableFonts = [],
+    availableFonts = TERMINAL_FONTS,
 }) => {
     const { t } = useI18n();
     const [activeTab, setActiveTab] = useState<TabType>('theme');
@@ -296,7 +296,10 @@ export const ThemeCustomizeModal: React.FC<ThemeCustomizeModalProps> = ({
     }, [open, currentThemeId, currentFontFamilyId, currentFontSize]);
 
     const currentFont = useMemo(
-        () => availableFonts.find(f => f.id === selectedFont) || availableFonts[0] || { id: 'menlo', name: 'Menlo', family: 'Menlo, monospace', description: 'Default font', category: 'monospace' },
+        (): TerminalFont => {
+            const fonts = availableFonts.length > 0 ? availableFonts : TERMINAL_FONTS;
+            return fonts.find(f => f.id === selectedFont) || fonts[0];
+        },
         [selectedFont, availableFonts]
     );
     const currentTheme = useMemo(
@@ -432,7 +435,7 @@ export const ThemeCustomizeModal: React.FC<ThemeCustomizeModalProps> = ({
                             )}
                             {activeTab === 'font' && (
                                 <div className="space-y-1">
-                                    {availableFonts.map(font => (
+                                    {(availableFonts.length > 0 ? availableFonts : TERMINAL_FONTS).map(font => (
                                         <FontItem
                                             key={font.id}
                                             font={font}

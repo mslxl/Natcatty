@@ -21,12 +21,15 @@ export const useFontState = () => {
         // Add default fonts first
         TERMINAL_FONTS.forEach(font => fontMap.set(font.id, font));
 
-        // Add/override with local fonts
-        localFonts.forEach(font => fontMap.set(font.id, font));
+        // Add local fonts with a distinct ID namespace to avoid collisions
+        localFonts.forEach(font => {
+          const localId = font.id.startsWith('local-') ? font.id : `local-${font.id}`;
+          fontMap.set(localId, { ...font, id: localId });
+        });
 
         setAvailableFonts(Array.from(fontMap.values()));
       } catch (error) {
-        // If local fonts API is not available, fall back to default fonts
+        // If local fonts API is not available or permission denied, fall back to default fonts
         console.warn('Failed to fetch local fonts, using defaults:', error);
         setAvailableFonts(TERMINAL_FONTS);
       } finally {

@@ -20,7 +20,7 @@ STORAGE_KEY_SFTP_DOUBLE_CLICK_BEHAVIOR,
 } from '../../infrastructure/config/storageKeys';
 import { DEFAULT_UI_LOCALE, resolveSupportedLocale } from '../../infrastructure/config/i18n';
 import { TERMINAL_THEMES } from '../../infrastructure/config/terminalThemes';
-import { DEFAULT_FONT_SIZE } from '../../infrastructure/config/fonts';
+import { DEFAULT_FONT_SIZE, TERMINAL_FONTS } from '../../infrastructure/config/fonts';
 import { DARK_UI_THEMES, LIGHT_UI_THEMES, UiThemeTokens, getUiThemeById } from '../../infrastructure/config/uiThemes';
 import { useFontState } from './useFontState';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
@@ -504,7 +504,13 @@ export const useSettingsState = () => {
   );
 
   const currentTerminalFont = useMemo(
-    () => availableFonts.find(f => f.id === terminalFontFamilyId) || availableFonts[0],
+    () => {
+      // Fallback to TERMINAL_FONTS if availableFonts is empty
+      if (!availableFonts || availableFonts.length === 0) {
+        return TERMINAL_FONTS.find(f => f.id === terminalFontFamilyId) || TERMINAL_FONTS[0];
+      }
+      return availableFonts.find(f => f.id === terminalFontFamilyId) || availableFonts[0];
+    },
     [terminalFontFamilyId, availableFonts]
   );
 

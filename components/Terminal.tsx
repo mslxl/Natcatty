@@ -554,8 +554,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       termRef.current.options.fontSize = effectiveFontSize;
 
       const hostFontId = host.fontFamily || fontFamilyId || "menlo";
-      const fontObj = availableFonts.find((f) => f.id === hostFontId) || availableFonts[0];
-      termRef.current.options.fontFamily = fontObj.family;
+      // Fallback to TERMINAL_FONTS if availableFonts is empty
+      const fontsToUse = availableFonts.length > 0 ? availableFonts : TERMINAL_FONTS;
+      const fontObj = fontsToUse.find((f) => f.id === hostFontId) || fontsToUse[0];
+      if (fontObj) {
+        termRef.current.options.fontFamily = fontObj.family;
+      }
 
       termRef.current.options.theme = {
         ...effectiveTheme.colors,
