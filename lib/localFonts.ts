@@ -2,9 +2,9 @@ import { TerminalFont } from "../infrastructure/config/fonts"
 
 export async function getMonospaceFonts(): Promise<TerminalFont[]> {
     const fonts = await window.queryLocalFonts();
-    // 简单筛选，或结合 Canvas 测量宽度精确判断
+    // Simple filter; optionally combine with Canvas width measurement for precise detection
     const mono_fonts = fonts.filter(f => f.family.toLowerCase().includes('mono'));
-    // 映射为 TerminalFont 结构
+    // Map to TerminalFont structure
     return mono_fonts.map(f => ({
         id: f.family,
         name: f.family,
