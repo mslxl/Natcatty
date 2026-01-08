@@ -618,15 +618,18 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
         return getMockLocalFiles(path);
       }
 
-      return rawFiles.map((f) => ({
-        name: f.name,
-        type: f.type as "file" | "directory" | "symlink",
-        size: parseInt(f.size) || 0,
-        sizeFormatted: f.size,
-        lastModified: new Date(f.lastModified).getTime(),
-        lastModifiedFormatted: f.lastModified,
-        linkTarget: f.linkTarget as "file" | "directory" | null | undefined,
-      }));
+      return rawFiles.map((f) => {
+        const size = parseInt(f.size) || 0;
+        return {
+          name: f.name,
+          type: f.type as "file" | "directory" | "symlink",
+          size,
+          sizeFormatted: formatFileSize(size),
+          lastModified: new Date(f.lastModified).getTime(),
+          lastModifiedFormatted: f.lastModified,
+          linkTarget: f.linkTarget as "file" | "directory" | null | undefined,
+        };
+      });
     },
     [getMockLocalFiles],
   );
@@ -636,15 +639,18 @@ export const useSftpState = (hosts: Host[], keys: SSHKey[], identities: Identity
       const rawFiles = await netcattyBridge.get()?.listSftp(sftpId, path);
       if (!rawFiles) return [];
 
-      return rawFiles.map((f) => ({
-        name: f.name,
-        type: f.type as "file" | "directory" | "symlink",
-        size: parseInt(f.size) || 0,
-        sizeFormatted: f.size,
-        lastModified: new Date(f.lastModified).getTime(),
-        lastModifiedFormatted: f.lastModified,
-        linkTarget: f.linkTarget as "file" | "directory" | null | undefined,
-      }));
+      return rawFiles.map((f) => {
+        const size = parseInt(f.size) || 0;
+        return {
+          name: f.name,
+          type: f.type as "file" | "directory" | "symlink",
+          size,
+          sizeFormatted: formatFileSize(size),
+          lastModified: new Date(f.lastModified).getTime(),
+          lastModifiedFormatted: f.lastModified,
+          linkTarget: f.linkTarget as "file" | "directory" | null | undefined,
+        };
+      });
     },
     [],
   );
