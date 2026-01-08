@@ -22,6 +22,7 @@ coverage
 /release
 /out
 *.asar
+/public/monaco
 
 # Editor directories and files
 .vscode/*

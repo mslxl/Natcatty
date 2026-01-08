@@ -12,7 +12,10 @@ import type * as Monaco from 'monaco-editor';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 // Configure Monaco to use local files instead of CDN
-loader.config({ paths: { vs: './node_modules/monaco-editor/min/vs' } });
+const monacoBasePath = import.meta.env.DEV
+  ? './node_modules/monaco-editor/min/vs'
+  : `${import.meta.env.BASE_URL}monaco/vs`;
+loader.config({ paths: { vs: monacoBasePath } });
 
 import { useI18n } from '../application/i18n/I18nProvider';
 import { getLanguageId, getLanguageName, getSupportedLanguages } from '../lib/sftpFileUtils';
