@@ -77,6 +77,7 @@ const googleAuthBridge = require("./bridges/googleAuthBridge.cjs");
 const onedriveAuthBridge = require("./bridges/onedriveAuthBridge.cjs");
 const cloudSyncBridge = require("./bridges/cloudSyncBridge.cjs");
 const fileWatcherBridge = require("./bridges/fileWatcherBridge.cjs");
+const tempDirBridge = require("./bridges/tempDirBridge.cjs");
 const windowManager = require("./bridges/windowManager.cjs");
 
 // GPU settings
@@ -362,6 +363,9 @@ const registerBridges = (win) => {
   terminalBridge.init(deps);
   fileWatcherBridge.init(deps);
 
+  // Initialize temp directory (synchronously)
+  tempDirBridge.ensureTempDir();
+
   // Register all IPC handlers
   sshBridge.registerHandlers(ipcMain);
   sftpBridge.registerHandlers(ipcMain);
@@ -375,6 +379,7 @@ const registerBridges = (win) => {
   onedriveAuthBridge.registerHandlers(ipcMain, electronModule);
   cloudSyncBridge.registerHandlers(ipcMain);
   fileWatcherBridge.registerHandlers(ipcMain);
+  tempDirBridge.registerHandlers(ipcMain, shell);
 
   // Settings window handler
   ipcMain.handle("netcatty:settings:open", async () => {
@@ -488,9 +493,11 @@ const registerBridges = (win) => {
         console.log(`[Main]   Command: open ${args.join(' ')}`);
         child = cpSpawn("open", args, { detached: true, stdio: "pipe" });
       } else if (process.platform === "win32") {
-        // On Windows, just spawn the exe with the file as argument
-        console.log(`[Main]   Command: "${appPath}" "${filePath}"`);
-        child = cpSpawn(appPath, [filePath], { detached: true, stdio: "pipe", shell: true });
+        // On Windows, use cmd /c start to properly handle paths with spaces
+        // The empty string "" as window title is required when the first arg has quotes
+        const args = ["/c", "start", "\"\"", `"${appPath}"`, `"${filePath}"`];
+        console.log(`[Main]   Command: cmd ${args.join(' ')}`);
+        child = cpSpawn("cmd", args, { detached: true, stdio: "pipe", windowsVerbatimArguments: true });
       } else {
         // On Linux, spawn the app with the file
         console.log(`[Main]   Command: ${appPath} ${filePath}`);
@@ -503,12 +510,32 @@ const registerBridges = (win) => {
       });
       
       child.stderr?.on("data", (data) => {
-        console.error(`[Main] Application stderr:`, data.toString());
+        // On Windows, stderr may be encoded in GBK/CP936, try to decode
+        if (process.platform === "win32") {
+          try {
+            // Try decoding as GBK (code page 936) for Chinese Windows
+            const { TextDecoder } = require("node:util");
+            const decoder = new TextDecoder("gbk");
+            const decoded = decoder.decode(data);
+            console.log(`[Main] Application stderr: ${decoded}`);
+          } catch {
+            // Fallback to hex dump if decoding fails
+            console.log(`[Main] Application stderr (hex): ${data.toString("hex")}`);
+          }
+        } else {
+          console.error(`[Main] Application stderr:`, data.toString());
+        }
       });
       
       child.on("exit", (code, signal) => {
+        // On Windows, many apps (like Notepad++) pass the file to an existing instance
+        // and immediately exit with code 1, this is normal behavior
         if (code !== 0 && code !== null) {
-          console.warn(`[Main] Application exited with code: ${code}, signal: ${signal}`);
+          if (process.platform === "win32") {
+            console.log(`[Main] Application exited with code: ${code}, signal: ${signal} (this may be normal for single-instance apps)`);
+          } else {
+            console.warn(`[Main] Application exited with code: ${code}, signal: ${signal}`);
+          }
         } else {
           console.log(`[Main] Application started successfully`);
         }
@@ -530,9 +557,8 @@ const registerBridges = (win) => {
     console.log(`[Main]   File name: ${fileName}`);
     
     const client = require("./bridges/sftpBridge.cjs");
-    const tempDir = os.tmpdir();
-    const tempFileName = `netcatty_${Date.now()}_${fileName}`;
-    const localPath = path.join(tempDir, tempFileName);
+    // Use tempDirBridge for dedicated Netcatty temp directory
+    const localPath = await tempDirBridge.getTempFilePath(fileName);
     
     console.log(`[Main]   Local temp path: ${localPath}`);
     
@@ -560,6 +586,27 @@ const registerBridges = (win) => {
     await sftpClient.fastGet(remotePath, localPath);
     console.log(`[Main]   File downloaded successfully`);
     return localPath;
+  });
+
+  // Delete a temp file (for cleanup when editors close)
+  ipcMain.handle("netcatty:deleteTempFile", async (_event, { filePath }) => {
+    try {
+      // Only allow deleting files in Netcatty temp directory for security
+      const netcattyTempDir = tempDirBridge.getTempDir();
+      const resolvedPath = path.resolve(filePath);
+      if (!resolvedPath.startsWith(netcattyTempDir)) {
+        console.warn(`[Main] Refused to delete file outside Netcatty temp dir: ${filePath}`);
+        return { success: false };
+      }
+      
+      await fs.promises.unlink(resolvedPath);
+      console.log(`[Main] Temp file deleted: ${filePath}`);
+      return { success: true };
+    } catch (err) {
+      // Silently handle failures (file may be in use or already deleted)
+      console.log(`[Main] Could not delete temp file: ${filePath} (${err.message})`);
+      return { success: false };
+    }
   });
 
   console.log('[Main] All bridges registered successfully');

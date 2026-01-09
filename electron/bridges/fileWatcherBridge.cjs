@@ -16,6 +16,10 @@ const activeWatchers = new Map();
 // Debounce map to prevent multiple rapid syncs
 const debounceTimers = new Map();
 
+// Map of sftpId -> Set<localPath> to track temp files even without watching
+// This allows cleanup when SFTP session closes, regardless of auto-sync setting
+const tempFilesMap = new Map();
+
 let sftpClients = null;
 let electronModule = null;
 
@@ -25,6 +29,18 @@ let electronModule = null;
 function init(deps) {
   sftpClients = deps.sftpClients;
   electronModule = deps.electronModule;
+}
+
+/**
+ * Register a temp file for cleanup when SFTP session closes
+ * Called regardless of whether auto-sync is enabled
+ */
+function registerTempFile(sftpId, localPath) {
+  if (!tempFilesMap.has(sftpId)) {
+    tempFilesMap.set(sftpId, new Set());
+  }
+  tempFilesMap.get(sftpId).add(localPath);
+  console.log(`[FileWatcher] Registered temp file for cleanup: ${localPath} (session: ${sftpId})`);
 }
 
 /**
@@ -74,6 +90,7 @@ async function startWatching(event, { localPath, remotePath, sftpId }) {
     const stat = await fs.promises.stat(localPath);
     lastModified = stat.mtimeMs;
     lastSize = stat.size;
+    console.log(`[FileWatcher] Initial file stats: mtime=${lastModified}, size=${lastSize}`);
   } catch (err) {
     console.error(`[FileWatcher] Failed to stat file ${localPath}:`, err.message);
     throw new Error(`Cannot watch file: ${err.message}`);
@@ -82,24 +99,27 @@ async function startWatching(event, { localPath, remotePath, sftpId }) {
   // Store webContents reference for later notifications
   const webContents = event.sender;
   
-  // Create file system watcher with persistent: true to keep it active
-  // Note: On macOS and Windows, some editors use atomic writes (rename) instead of in-place writes
-  // So we need to handle both 'change' and 'rename' events
-  const watcher = fs.watch(localPath, { persistent: true }, async (eventType) => {
-    console.log(`[FileWatcher] Event received for ${localPath}: ${eventType}`);
+  // Use fs.watchFile (polling) instead of fs.watch for better reliability on Windows
+  // fs.watch can miss events when editors use atomic writes (save to temp, then rename)
+  // fs.watchFile polls the file system at regular intervals
+  const pollInterval = 1000; // Check every 1 second
+  
+  fs.watchFile(localPath, { persistent: true, interval: pollInterval }, async (curr, prev) => {
+    console.log(`[FileWatcher] File stat change detected for ${localPath}`);
+    console.log(`[FileWatcher]   Previous: mtime=${prev.mtimeMs}, size=${prev.size}`);
+    console.log(`[FileWatcher]   Current: mtime=${curr.mtimeMs}, size=${curr.size}`);
     
-    // Handle both 'change' and 'rename' events
-    // 'rename' can occur when editors use atomic writes (save to temp, then rename)
-    if (eventType !== "change" && eventType !== "rename") return;
+    // Check if file was deleted
+    if (curr.nlink === 0) {
+      console.log(`[FileWatcher] File ${localPath} was deleted, stopping watch`);
+      stopWatching(null, { watchId });
+      return;
+    }
     
-    // For rename events, check if the file still exists (it might be the old file being deleted)
-    if (eventType === "rename") {
-      try {
-        await fs.promises.access(localPath, fs.constants.F_OK);
-      } catch {
-        console.log(`[FileWatcher] File ${localPath} no longer exists after rename event, skipping`);
-        return;
-      }
+    // Check if file was actually modified
+    if (curr.mtimeMs <= prev.mtimeMs && curr.size === prev.size) {
+      console.log(`[FileWatcher] File unchanged, skipping`);
+      return;
     }
     
     // Debounce rapid changes (e.g., multiple saves in quick succession)
@@ -116,22 +136,18 @@ async function startWatching(event, { localPath, remotePath, sftpId }) {
     debounceTimers.set(watchId, timer);
   });
   
-  watcher.on("error", (err) => {
-    console.error(`[FileWatcher] Watcher error for ${localPath}:`, err.message);
-    stopWatching(null, { watchId });
-  });
-  
   activeWatchers.set(watchId, {
-    watcher,
+    watcher: null, // fs.watchFile doesn't return a watcher object
     localPath,
     remotePath,
     sftpId,
     lastModified,
     lastSize,
     webContents,
+    useWatchFile: true, // Flag to indicate we're using fs.watchFile
   });
   
-  console.log(`[FileWatcher] Watch started with ID: ${watchId}`);
+  console.log(`[FileWatcher] Watch started with ID: ${watchId} (using fs.watchFile polling every ${pollInterval}ms)`);
   return { watchId };
 }
 
@@ -221,9 +237,9 @@ async function handleFileChange(watchId, webContents) {
 }
 
 /**
- * Stop watching a file
+ * Stop watching a file and optionally clean up the temp file
  */
-function stopWatching(event, { watchId }) {
+function stopWatching(event, { watchId, cleanupTempFile = false }) {
   const watchInfo = activeWatchers.get(watchId);
   if (!watchInfo) {
     console.log(`[FileWatcher] Watch ID not found: ${watchId}`);
@@ -239,11 +255,22 @@ function stopWatching(event, { watchId }) {
     debounceTimers.delete(watchId);
   }
   
-  // Close the watcher
+  // Stop the watcher
   try {
-    watchInfo.watcher.close();
+    if (watchInfo.useWatchFile) {
+      // Using fs.watchFile - need to use fs.unwatchFile
+      fs.unwatchFile(watchInfo.localPath);
+    } else if (watchInfo.watcher) {
+      // Using fs.watch - close the watcher
+      watchInfo.watcher.close();
+    }
   } catch (err) {
-    console.warn(`[FileWatcher] Error closing watcher:`, err.message);
+    console.warn(`[FileWatcher] Error stopping watcher:`, err.message);
+  }
+  
+  // Clean up temp file if requested
+  if (cleanupTempFile && watchInfo.localPath) {
+    cleanupTempFileAsync(watchInfo.localPath);
   }
   
   activeWatchers.delete(watchId);
@@ -252,19 +279,48 @@ function stopWatching(event, { watchId }) {
 }
 
 /**
- * Stop all watchers for a specific SFTP session
+ * Asynchronously delete a temp file, logging success and silently handling failures
+ */
+async function cleanupTempFileAsync(filePath) {
+  try {
+    await fs.promises.unlink(filePath);
+    console.log(`[FileWatcher] Temp file cleaned up: ${filePath}`);
+  } catch (err) {
+    // Silently ignore deletion failures (file may be in use or already deleted)
+    console.log(`[FileWatcher] Could not delete temp file (may be in use): ${filePath}`);
+  }
+}
+
+/**
+ * Stop all watchers for a specific SFTP session and clean up temp files
  * Called when SFTP connection is closed
  */
-function stopWatchersForSession(sftpId) {
-  let count = 0;
+function stopWatchersForSession(sftpId, cleanupTempFiles = true) {
+  let watcherCount = 0;
+  
+  // Stop active watchers
   for (const [watchId, watchInfo] of activeWatchers.entries()) {
     if (watchInfo.sftpId === sftpId) {
-      stopWatching(null, { watchId });
-      count++;
+      stopWatching(null, { watchId, cleanupTempFile: cleanupTempFiles });
+      watcherCount++;
     }
   }
-  if (count > 0) {
-    console.log(`[FileWatcher] Stopped ${count} watcher(s) for SFTP session: ${sftpId}`);
+  if (watcherCount > 0) {
+    console.log(`[FileWatcher] Stopped ${watcherCount} watcher(s) for SFTP session: ${sftpId}`);
+  }
+  
+  // Clean up any registered temp files that weren't being watched
+  if (cleanupTempFiles && tempFilesMap.has(sftpId)) {
+    const tempFiles = tempFilesMap.get(sftpId);
+    let cleanedCount = 0;
+    for (const filePath of tempFiles) {
+      cleanupTempFileAsync(filePath);
+      cleanedCount++;
+    }
+    tempFilesMap.delete(sftpId);
+    if (cleanedCount > 0) {
+      console.log(`[FileWatcher] Queued cleanup for ${cleanedCount} temp file(s) for SFTP session: ${sftpId}`);
+    }
   }
 }
 
@@ -288,9 +344,17 @@ function listWatchers() {
  * Register IPC handlers for file watching operations
  */
 function registerHandlers(ipcMain) {
-  ipcMain.handle("netcatty:filewatch:start", startWatching);
+  console.log("[FileWatcher] Registering IPC handlers");
+  ipcMain.handle("netcatty:filewatch:start", (event, args) => {
+    console.log("[FileWatcher] IPC netcatty:filewatch:start received", args);
+    return startWatching(event, args);
+  });
   ipcMain.handle("netcatty:filewatch:stop", stopWatching);
   ipcMain.handle("netcatty:filewatch:list", listWatchers);
+  ipcMain.handle("netcatty:filewatch:registerTempFile", (_event, { sftpId, localPath }) => {
+    registerTempFile(sftpId, localPath);
+    return { success: true };
+  });
 }
 
 /**
@@ -310,5 +374,6 @@ module.exports = {
   stopWatching,
   stopWatchersForSession,
   listWatchers,
+  registerTempFile,
   cleanup,
 };

@@ -61,6 +61,21 @@ const en: Messages = {
   'settings.tab.terminal': 'Terminal',
   'settings.tab.shortcuts': 'Shortcuts',
   'settings.tab.syncCloud': 'Sync & Cloud',
+  'settings.tab.system': 'System',
+
+  // Settings > System
+  'settings.system.title': 'System',
+  'settings.system.description': 'System information and temporary file management.',
+  'settings.system.tempDirectory': 'Temporary Files',
+  'settings.system.location': 'Location',
+  'settings.system.fileCount': 'Files',
+  'settings.system.totalSize': 'Size',
+  'settings.system.openFolder': 'Open folder',
+  'settings.system.refresh': 'Refresh',
+  'settings.system.clearTempFiles': 'Clear temp files',
+  'settings.system.clearing': 'Clearing...',
+  'settings.system.clearResult': 'Deleted {deleted} file(s), {failed} failed.',
+  'settings.system.tempDirectoryHint': 'Temporary files are created when opening remote files with external applications. They are automatically cleaned up when SFTP sessions close.',
 
   // Settings > Application
   'settings.application.checkUpdates': 'Check for updates',

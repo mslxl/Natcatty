@@ -420,10 +420,20 @@ interface NetcattyBridge {
   
   // File watcher for auto-sync feature
   startFileWatch?(localPath: string, remotePath: string, sftpId: string): Promise<{ watchId: string }>;
-  stopFileWatch?(watchId: string): Promise<{ success: boolean }>;
+  stopFileWatch?(watchId: string, cleanupTempFile?: boolean): Promise<{ success: boolean }>;
   listFileWatches?(): Promise<Array<{ watchId: string; localPath: string; remotePath: string; sftpId: string }>>;
+  registerTempFile?(sftpId: string, localPath: string): Promise<{ success: boolean }>;
   onFileWatchSynced?(cb: (payload: { watchId: string; localPath: string; remotePath: string; bytesWritten: number }) => void): () => void;
   onFileWatchError?(cb: (payload: { watchId: string; localPath: string; remotePath: string; error: string }) => void): () => void;
+  
+  // Temp file cleanup
+  deleteTempFile?(filePath: string): Promise<{ success: boolean }>;
+  
+  // Temp directory management
+  getTempDirInfo?(): Promise<{ path: string; fileCount: number; totalSize: number }>;
+  clearTempDir?(): Promise<{ deletedCount: number; failedCount: number; error?: string }>;
+  getTempDirPath?(): Promise<string>;
+  openTempDir?(): Promise<{ success: boolean }>;
 }
 
 interface Window {

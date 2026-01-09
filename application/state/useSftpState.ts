@@ -2684,30 +2684,39 @@ export const useSftpState = (
       }
 
       // Download to temp directory
-      logger.info("[SFTP] Downloading file to temp", { sftpId, remotePath, fileName });
+      console.log("[SFTP] Downloading file to temp", { sftpId, remotePath, fileName });
       const localTempPath = await bridge.downloadSftpToTemp(sftpId, remotePath, fileName);
-      logger.info("[SFTP] File downloaded to temp", { localTempPath });
+      console.log("[SFTP] File downloaded to temp", { localTempPath });
+      
+      // Register temp file for cleanup when SFTP session closes (regardless of auto-sync setting)
+      if (bridge.registerTempFile) {
+        try {
+          await bridge.registerTempFile(sftpId, localTempPath);
+        } catch (err) {
+          console.warn("[SFTP] Failed to register temp file for cleanup:", err);
+        }
+      }
       
       // Open with the selected application
-      logger.info("[SFTP] Opening with application", { localTempPath, appPath });
+      console.log("[SFTP] Opening with application", { localTempPath, appPath });
       await bridge.openWithApplication(localTempPath, appPath);
-      logger.info("[SFTP] Application launched");
+      console.log("[SFTP] Application launched");
       
       // Start file watching if enabled
       let watchId: string | undefined;
-      logger.info("[SFTP] Auto-sync enabled check", { enableWatch: options?.enableWatch, hasStartFileWatch: !!bridge.startFileWatch });
+      console.log("[SFTP] Auto-sync enabled check", { enableWatch: options?.enableWatch, hasStartFileWatch: !!bridge.startFileWatch });
       if (options?.enableWatch && bridge.startFileWatch) {
         try {
-          logger.info("[SFTP] Starting file watch", { localTempPath, remotePath, sftpId });
+          console.log("[SFTP] Starting file watch", { localTempPath, remotePath, sftpId });
           const result = await bridge.startFileWatch(localTempPath, remotePath, sftpId);
           watchId = result.watchId;
-          logger.info("[SFTP] File watch started successfully", { watchId, localTempPath, remotePath });
+          console.log("[SFTP] File watch started successfully", { watchId, localTempPath, remotePath });
         } catch (err) {
-          logger.warn("[SFTP] Failed to start file watch:", err);
+          console.warn("[SFTP] Failed to start file watch:", err);
           // Don't fail the operation if watching fails
         }
       } else {
-        logger.info("[SFTP] File watching not enabled or not available");
+        console.log("[SFTP] File watching not enabled or not available");
       }
       
       return { localTempPath, watchId };

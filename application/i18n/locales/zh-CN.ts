@@ -49,6 +49,21 @@ const zhCN: Messages = {
   'settings.tab.terminal': '终端',
   'settings.tab.shortcuts': '快捷键',
   'settings.tab.syncCloud': '同步与云',
+  'settings.tab.system': '系统',
+
+  // Settings > System
+  'settings.system.title': '系统',
+  'settings.system.description': '系统信息与临时文件管理。',
+  'settings.system.tempDirectory': '临时文件',
+  'settings.system.location': '位置',
+  'settings.system.fileCount': '文件数量',
+  'settings.system.totalSize': '占用空间',
+  'settings.system.openFolder': '打开文件夹',
+  'settings.system.refresh': '刷新',
+  'settings.system.clearTempFiles': '清理临时文件',
+  'settings.system.clearing': '清理中...',
+  'settings.system.clearResult': '已删除 {deleted} 个文件，{failed} 个失败。',
+  'settings.system.tempDirectoryHint': '临时文件在使用外部应用打开远程文件时创建。SFTP 会话关闭时会自动清理。',
 
   // Settings > Application
   'settings.application.checkUpdates': '检查更新',
