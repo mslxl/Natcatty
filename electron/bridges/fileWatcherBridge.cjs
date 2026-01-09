@@ -28,6 +28,37 @@ function init(deps) {
 }
 
 /**
+ * Show a system notification for file sync events
+ * Works on macOS, Windows, and Linux
+ */
+function showSystemNotification(title, body) {
+  try {
+    if (!electronModule?.Notification) {
+      console.warn("[FileWatcher] Electron Notification API not available");
+      return;
+    }
+    
+    const { Notification } = electronModule;
+    
+    // Check if notifications are supported
+    if (!Notification.isSupported()) {
+      console.warn("[FileWatcher] System notifications not supported on this platform");
+      return;
+    }
+    
+    const notification = new Notification({
+      title,
+      body,
+      silent: false, // Allow notification sound
+    });
+    
+    notification.show();
+  } catch (err) {
+    console.warn("[FileWatcher] Failed to show system notification:", err.message);
+  }
+}
+
+/**
  * Start watching a local file for changes
  * Returns a watchId that can be used to stop watching
  */
@@ -94,6 +125,9 @@ async function handleFileChange(watchId, webContents) {
   
   const { localPath, remotePath, sftpId, lastModified: previousModified, lastSize: previousSize } = watchInfo;
   
+  // Extract file name once for notifications and logging
+  const fileName = path.basename(remotePath);
+  
   console.log(`[FileWatcher] File change detected: ${localPath}`);
   
   try {
@@ -130,6 +164,12 @@ async function handleFileChange(watchId, webContents) {
     
     console.log(`[FileWatcher] Sync complete: ${remotePath}`);
     
+    // Show system notification for successful sync
+    showSystemNotification(
+      "Netcatty",
+      `File synced to remote: ${fileName}`
+    );
+    
     // Notify the renderer about successful sync
     if (webContents && !webContents.isDestroyed()) {
       webContents.send("netcatty:filewatch:synced", {
@@ -142,6 +182,12 @@ async function handleFileChange(watchId, webContents) {
     
   } catch (err) {
     console.error(`[FileWatcher] Sync failed for ${localPath}:`, err.message);
+    
+    // Show system notification for sync failure
+    showSystemNotification(
+      "Netcatty",
+      `Failed to sync ${fileName}: ${err.message}`
+    );
     
     // Notify the renderer about sync failure
     if (webContents && !webContents.isDestroyed()) {
