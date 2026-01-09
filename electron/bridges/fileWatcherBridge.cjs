@@ -79,8 +79,13 @@ async function startWatching(event, { localPath, remotePath, sftpId }) {
     throw new Error(`Cannot watch file: ${err.message}`);
   }
   
-  // Create file system watcher
-  const watcher = fs.watch(localPath, { persistent: false }, async (eventType) => {
+  // Store webContents reference for later notifications
+  const webContents = event.sender;
+  
+  // Create file system watcher with persistent: true to keep it active
+  const watcher = fs.watch(localPath, { persistent: true }, async (eventType) => {
+    console.log(`[FileWatcher] Event received for ${localPath}: ${eventType}`);
+    
     if (eventType !== "change") return;
     
     // Debounce rapid changes (e.g., multiple saves in quick succession)
@@ -91,7 +96,7 @@ async function startWatching(event, { localPath, remotePath, sftpId }) {
     
     const timer = setTimeout(async () => {
       debounceTimers.delete(watchId);
-      await handleFileChange(watchId, event.sender);
+      await handleFileChange(watchId, webContents);
     }, 500); // 500ms debounce
     
     debounceTimers.set(watchId, timer);
@@ -109,7 +114,7 @@ async function startWatching(event, { localPath, remotePath, sftpId }) {
     sftpId,
     lastModified,
     lastSize,
-    senderId: event.sender.id,
+    webContents,
   });
   
   console.log(`[FileWatcher] Watch started with ID: ${watchId}`);
