@@ -417,6 +417,13 @@ interface NetcattyBridge {
   selectApplication?(): Promise<{ path: string; name: string } | null>;
   openWithApplication?(filePath: string, appPath: string): Promise<boolean>;
   downloadSftpToTemp?(sftpId: string, remotePath: string, fileName: string): Promise<string>;
+  
+  // File watcher for auto-sync feature
+  startFileWatch?(localPath: string, remotePath: string, sftpId: string): Promise<{ watchId: string }>;
+  stopFileWatch?(watchId: string): Promise<{ success: boolean }>;
+  listFileWatches?(): Promise<Array<{ watchId: string; localPath: string; remotePath: string; sftpId: string }>>;
+  onFileWatchSynced?(cb: (payload: { watchId: string; localPath: string; remotePath: string; bytesWritten: number }) => void): () => void;
+  onFileWatchError?(cb: (payload: { watchId: string; localPath: string; remotePath: string; error: string }) => void): () => void;
 }
 
 interface Window {

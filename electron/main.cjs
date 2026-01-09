@@ -76,6 +76,7 @@ const githubAuthBridge = require("./bridges/githubAuthBridge.cjs");
 const googleAuthBridge = require("./bridges/googleAuthBridge.cjs");
 const onedriveAuthBridge = require("./bridges/onedriveAuthBridge.cjs");
 const cloudSyncBridge = require("./bridges/cloudSyncBridge.cjs");
+const fileWatcherBridge = require("./bridges/fileWatcherBridge.cjs");
 const windowManager = require("./bridges/windowManager.cjs");
 
 // GPU settings
@@ -359,6 +360,7 @@ const registerBridges = (win) => {
   sftpBridge.init(deps);
   transferBridge.init(deps);
   terminalBridge.init(deps);
+  fileWatcherBridge.init(deps);
 
   // Register all IPC handlers
   sshBridge.registerHandlers(ipcMain);
@@ -372,6 +374,7 @@ const registerBridges = (win) => {
   googleAuthBridge.registerHandlers(ipcMain, electronModule);
   onedriveAuthBridge.registerHandlers(ipcMain, electronModule);
   cloudSyncBridge.registerHandlers(ipcMain);
+  fileWatcherBridge.registerHandlers(ipcMain);
 
   // Settings window handler
   ipcMain.handle("netcatty:settings:open", async () => {

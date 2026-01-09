@@ -514,6 +514,14 @@ const en: Messages = {
   'settings.sftp.doubleClickBehavior.transfer': 'Transfer to other pane',
   'settings.sftp.doubleClickBehavior.openDesc': 'Open the file in the default application',
   'settings.sftp.doubleClickBehavior.transferDesc': 'Transfer the file to the other pane\'s active host',
+  
+  // Settings > SFTP Auto Sync
+  'settings.sftp.autoSync': 'Auto-sync to remote',
+  'settings.sftp.autoSync.desc': 'Automatically sync file changes back to the remote server when opening files with external applications',
+  'settings.sftp.autoSync.enable': 'Enable auto-sync',
+  'settings.sftp.autoSync.enableDesc': 'When you save a file in an external application, changes will be automatically uploaded to the remote server',
+  'sftp.autoSync.success': 'File synced to remote: {fileName}',
+  'sftp.autoSync.error': 'Failed to sync file: {error}',
 
   // Quick Switcher
   'qs.search.placeholder': 'Search hosts or tabs',

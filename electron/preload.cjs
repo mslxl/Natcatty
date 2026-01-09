@@ -198,6 +198,30 @@ ipcRenderer.on("netcatty:portforward:status", (_event, payload) => {
   }
 });
 
+// File watcher listeners (for auto-sync feature)
+const fileWatchSyncedListeners = new Set();
+const fileWatchErrorListeners = new Set();
+
+ipcRenderer.on("netcatty:filewatch:synced", (_event, payload) => {
+  fileWatchSyncedListeners.forEach((cb) => {
+    try {
+      cb(payload);
+    } catch (err) {
+      console.error("File watch synced callback failed", err);
+    }
+  });
+});
+
+ipcRenderer.on("netcatty:filewatch:error", (_event, payload) => {
+  fileWatchErrorListeners.forEach((cb) => {
+    try {
+      cb(payload);
+    } catch (err) {
+      console.error("File watch error callback failed", err);
+    }
+  });
+});
+
 const api = {
   startSSHSession: async (options) => {
     const result = await ipcRenderer.invoke("netcatty:start", options);
@@ -512,6 +536,22 @@ const api = {
     ipcRenderer.invoke("netcatty:openWithApplication", { filePath, appPath }),
   downloadSftpToTemp: (sftpId, remotePath, fileName) =>
     ipcRenderer.invoke("netcatty:sftp:downloadToTemp", { sftpId, remotePath, fileName }),
+  
+  // File watcher for auto-sync feature
+  startFileWatch: (localPath, remotePath, sftpId) =>
+    ipcRenderer.invoke("netcatty:filewatch:start", { localPath, remotePath, sftpId }),
+  stopFileWatch: (watchId) =>
+    ipcRenderer.invoke("netcatty:filewatch:stop", { watchId }),
+  listFileWatches: () =>
+    ipcRenderer.invoke("netcatty:filewatch:list"),
+  onFileWatchSynced: (cb) => {
+    fileWatchSyncedListeners.add(cb);
+    return () => fileWatchSyncedListeners.delete(cb);
+  },
+  onFileWatchError: (cb) => {
+    fileWatchErrorListeners.add(cb);
+    return () => fileWatchErrorListeners.delete(cb);
+  },
 };
 
 // Merge with existing netcatty (if any) to avoid stale objects on hot reload
