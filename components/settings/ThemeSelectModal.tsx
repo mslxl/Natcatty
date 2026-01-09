@@ -97,11 +97,16 @@ export const ThemeSelectModal: React.FC<ThemeSelectModalProps> = ({
 
     if (!open) return null;
 
+    const modalTitleId = 'theme-select-modal-title';
+
     const modalContent = (
         <div
             className="fixed inset-0 flex items-center justify-center bg-black/60"
             style={{ zIndex: 99999 }}
             onClick={handleBackdropClick}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={modalTitleId}
         >
             <div
                 className="w-[480px] max-h-[600px] bg-background border border-border rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
@@ -113,11 +118,12 @@ export const ThemeSelectModal: React.FC<ThemeSelectModalProps> = ({
                         <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-primary/10">
                             <Palette size={16} className="text-primary" />
                         </div>
-                        <h2 className="text-sm font-semibold text-foreground">{t('settings.terminal.themeModal.title')}</h2>
+                        <h2 id={modalTitleId} className="text-sm font-semibold text-foreground">{t('settings.terminal.themeModal.title')}</h2>
                     </div>
                     <button
                         onClick={onClose}
                         className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                        aria-label={t('common.close')}
                     >
                         <X size={16} />
                     </button>

@@ -780,7 +780,6 @@ const zhCN: Messages = {
   'settings.terminal.themeModal.darkThemes': '深色主题',
   'settings.terminal.themeModal.lightThemes': '浅色主题',
   'settings.terminal.theme.selectButton': '选择主题',
-  'settings.terminal.theme.currentTheme': '当前',
   'settings.terminal.section.font': '字体',
   'settings.terminal.section.cursor': '光标',
   'settings.terminal.section.keyboard': '键盘',
