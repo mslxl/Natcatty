@@ -122,6 +122,11 @@ const en: Messages = {
 
   // Settings > Terminal
   'settings.terminal.section.theme': 'Terminal Theme',
+  'settings.terminal.themeModal.title': 'Select Theme',
+  'settings.terminal.themeModal.darkThemes': 'Dark Themes',
+  'settings.terminal.themeModal.lightThemes': 'Light Themes',
+  'settings.terminal.theme.selectButton': 'Select Theme',
+  'settings.terminal.theme.currentTheme': 'Current',
   'settings.terminal.section.font': 'Font',
   'settings.terminal.section.cursor': 'Cursor',
   'settings.terminal.section.keyboard': 'Keyboard',
