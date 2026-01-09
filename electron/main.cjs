@@ -36,7 +36,7 @@ try {
   electronModule = require("electron");
 }
 
-const { app, BrowserWindow, Menu, protocol } = electronModule || {};
+const { app, BrowserWindow, Menu, protocol, shell } = electronModule || {};
 if (!app || !BrowserWindow) {
   throw new Error("Failed to load Electron runtime. Ensure the app is launched with the Electron binary.");
 }
