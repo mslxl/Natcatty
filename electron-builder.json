@@ -42,6 +42,27 @@
       "NSLocalNetworkUsageDescription": "Netcatty needs local network access for SSH connections"
     }
   },
+  "dmg": {
+    "title": "${productName}",
+    "background": "public/dmg-background.jpg",
+    "iconSize": 100,
+    "iconTextSize": 12,
+    "window": {
+      "width": 672,
+      "height": 500
+    },
+    "contents": [
+      { "x": 150, "y": 158 },
+      { "x": 550, "y": 158, "type": "link", "path": "/Applications" },
+      {
+        "x": 350,
+        "y": 330,
+        "type": "file",
+        "path": "scripts/FixQuarantine.app",
+        "name": "已损坏修复.app"
+      }
+    ]
+  },
   "win": {
     "target": [
       {
