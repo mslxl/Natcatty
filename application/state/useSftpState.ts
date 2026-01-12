@@ -2759,24 +2759,21 @@ export const useSftpState = (
               throw new Error("SFTP session not found");
             }
             
-            // Try to use progress API, fallback to basic binary write
-            let uploaded = false;
+            // Try progress API first, fallback to basic binary write
+            const progressResult = bridge.writeSftpBinaryWithProgress
+              ? await bridge.writeSftpBinaryWithProgress(
+                  sftpId,
+                  targetPath,
+                  arrayBuffer,
+                  crypto.randomUUID(),
+                  undefined,
+                  undefined,
+                  undefined,
+                )
+              : undefined;
             
-            if (bridge.writeSftpBinaryWithProgress) {
-              const hasProgress = await bridge.writeSftpBinaryWithProgress(
-                sftpId,
-                targetPath,
-                arrayBuffer,
-                crypto.randomUUID(),
-                undefined,
-                undefined,
-                undefined,
-              );
-              uploaded = hasProgress === true;
-            }
-            
-            // Fallback to non-progress API if progress not available or failed
-            if (!uploaded) {
+            // If progress API not available or returned undefined, use basic API
+            if (progressResult === undefined) {
               if (bridge.writeSftpBinary) {
                 await bridge.writeSftpBinary(sftpId, targetPath, arrayBuffer);
               } else {

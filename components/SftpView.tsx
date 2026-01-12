@@ -1916,6 +1916,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
   );
 
   // Handle external file upload from OS drag-and-drop (shared logic)
+  // Uses sftpRef.current internally, so dependencies are stable
   const handleUploadExternalFilesForSide = useCallback(
     async (side: "left" | "right", files: FileList) => {
       try {
@@ -1949,6 +1950,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
         );
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Uses sftpRef.current internally
     [t],
   );
 
