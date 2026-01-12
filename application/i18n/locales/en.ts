@@ -542,6 +542,12 @@ const en: Messages = {
   'sftp.autoSync.success': 'File synced to remote: {fileName}',
   'sftp.autoSync.error': 'Failed to sync file: {error}',
 
+  // Settings > SFTP Show Hidden Files
+  'settings.sftp.showHiddenFiles': 'Show hidden files',
+  'settings.sftp.showHiddenFiles.desc': 'Display hidden files and directories (files starting with a dot) in the SFTP file browser',
+  'settings.sftp.showHiddenFiles.enable': 'Show hidden files',
+  'settings.sftp.showHiddenFiles.enableDesc': 'Display files and directories that are normally hidden (e.g., .bashrc, .config)',
+
   // Quick Switcher
   'qs.search.placeholder': 'Search hosts or tabs',
   'qs.recentConnections': 'Recent connections',

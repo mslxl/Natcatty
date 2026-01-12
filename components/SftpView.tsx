@@ -100,6 +100,7 @@ import {
   useSftpPaneCallbacks,
   useSftpDrag,
   useSftpHosts,
+  useSftpShowHiddenFiles,
   useActiveTabId,
   activeTabStore,
   type SftpPaneCallbacks,
@@ -162,6 +163,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   const callbacks = useSftpPaneCallbacks(side);
   const { draggedFiles, onDragStart, onDragEnd } = useSftpDrag();
   const hosts = useSftpHosts();
+  const showHiddenFiles = useSftpShowHiddenFiles();
 
   // Destructure for easier use
   const {
@@ -255,11 +257,19 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
 
   const filteredFiles = useMemo(() => {
     const term = pane.filter.trim().toLowerCase();
-    if (!term) return pane.files;
-    return pane.files.filter(
+    let files = pane.files;
+    
+    // Filter hidden files (files starting with a dot) unless showHiddenFiles is enabled
+    if (!showHiddenFiles) {
+      files = files.filter((f) => f.name === ".." || !f.name.startsWith("."));
+    }
+    
+    // Apply text filter
+    if (!term) return files;
+    return files.filter(
       (f) => f.name === ".." || f.name.toLowerCase().includes(term),
     );
-  }, [pane.files, pane.filter]);
+  }, [pane.files, pane.filter, showHiddenFiles]);
 
   // Path suggestions
   const pathSuggestions = useMemo(() => {
@@ -1480,7 +1490,7 @@ interface SftpViewProps {
 const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => {
   const { t } = useI18n();
   const isActive = useIsSftpActive();
-  const { sftpDoubleClickBehavior, sftpAutoSync } = useSettingsState();
+  const { sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles } = useSettingsState();
   
   // File watch event handlers (stable refs to avoid re-creating the useSftpState options)
   const fileWatchHandlers = useMemo(() => ({
@@ -2124,6 +2134,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       dragCallbacks={dragCallbacks}
       leftCallbacks={leftCallbacks}
       rightCallbacks={rightCallbacks}
+      showHiddenFiles={sftpShowHiddenFiles}
     >
       <div
         className={cn(

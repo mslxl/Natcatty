@@ -18,6 +18,7 @@ export {
   useSftpPaneCallbacks,
   useSftpDrag,
   useSftpHosts,
+  useSftpShowHiddenFiles,
   useActiveTabId,
   useIsPaneActive,
   activeTabStore,

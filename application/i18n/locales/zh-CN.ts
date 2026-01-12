@@ -774,6 +774,12 @@ const zhCN: Messages = {
   'sftp.autoSync.success': '文件已同步到远程：{fileName}',
   'sftp.autoSync.error': '同步文件失败：{error}',
 
+  // Settings > SFTP Show Hidden Files
+  'settings.sftp.showHiddenFiles': '显示隐藏文件',
+  'settings.sftp.showHiddenFiles.desc': '在 SFTP 文件浏览器中显示隐藏文件和目录（以点开头的文件）',
+  'settings.sftp.showHiddenFiles.enable': '显示隐藏文件',
+  'settings.sftp.showHiddenFiles.enableDesc': '显示通常隐藏的文件和目录（例如 .bashrc、.config）',
+
   // Settings > Terminal
   'settings.terminal.section.theme': '终端主题',
   'settings.terminal.themeModal.title': '选择主题',
