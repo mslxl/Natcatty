@@ -185,7 +185,6 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     onReceiveFromOtherPane,
     onEditPermissions,
     onEditFile,
-    onOpenFile,
     onOpenFileWith,
     onDownloadFile,
     onUploadExternalFiles,
@@ -260,10 +259,10 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
 
   const filteredFiles = useMemo(() => {
     const term = pane.filter.trim().toLowerCase();
-    
+
     // Filter hidden files using utility function
     let files = filterHiddenFiles(pane.files, showHiddenFiles);
-    
+
     // Apply text filter
     if (!term) return files;
     return files.filter(
@@ -605,7 +604,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   const handlePaneDragOver = (e: React.DragEvent) => {
     // Check if this is external file drag (from OS)
     const hasFiles = e.dataTransfer.types.includes('Files');
-    
+
     // If it's external files, always allow drop
     if (hasFiles) {
       e.preventDefault();
@@ -613,7 +612,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
       setIsDragOverPane(true);
       return;
     }
-    
+
     // Otherwise, check if it's internal drag from other pane
     if (!draggedFiles || draggedFiles[0]?.side === side) return;
     e.preventDefault();
@@ -634,7 +633,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     e.stopPropagation();
     setIsDragOverPane(false);
     setDragOverEntry(null);
-    
+
     // Check if this is external file drop (from OS)
     const droppedFiles = e.dataTransfer.files;
     if (droppedFiles && droppedFiles.length > 0) {
@@ -644,7 +643,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
       }
       return;
     }
-    
+
     // Otherwise, handle internal drag from other pane
     if (!draggedFiles || draggedFiles[0]?.side === side) return;
     onReceiveFromOtherPane(
@@ -1514,7 +1513,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
   const { t } = useI18n();
   const isActive = useIsSftpActive();
   const { sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles } = useSettingsState();
-  
+
   // File watch event handlers (stable refs to avoid re-creating the useSftpState options)
   const fileWatchHandlers = useMemo(() => ({
     onFileWatchSynced: (payload: { remotePath: string }) => {
@@ -1527,7 +1526,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       logger.error("[SFTP] File auto-sync failed", payload);
     },
   }), [t]);
-  
+
   const sftp = useSftpState(hosts, keys, identities, fileWatchHandlers);
 
   // Store sftp in a ref so callbacks can access the latest instance
@@ -1538,7 +1537,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
   // Store behavior setting in ref for stable callbacks
   const behaviorRef = useRef(sftpDoubleClickBehavior);
   behaviorRef.current = sftpDoubleClickBehavior;
-  
+
   // Store auto-sync setting in ref for stable callbacks
   const autoSyncRef = useRef(sftpAutoSync);
   autoSyncRef.current = sftpAutoSync;
@@ -1923,12 +1922,12 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       try {
         const results = await sftpRef.current.uploadExternalFiles(side, files);
         const failCount = results.filter(r => !r.success).length;
-        
+
         if (failCount === 0) {
           // All files uploaded successfully
           const successCount = results.length;
-          const message = successCount === 1 
-            ? `${t('sftp.upload')}: ${results[0].fileName}` 
+          const message = successCount === 1
+            ? `${t('sftp.upload')}: ${results[0].fileName}`
             : `${t('sftp.uploadFiles')}: ${successCount}`;
           toast.success(message, "SFTP");
         } else {
@@ -1950,7 +1949,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
         );
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- sftpRef.current, toast, and logger are stable
+
     [t],
   );
 
@@ -1975,7 +1974,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       try {
         // Read the file as binary
         const content = await sftpRef.current.readBinaryFile(side, fullPath);
-        
+
         // Create blob and trigger browser download
         const blob = new Blob([content], { type: "application/octet-stream" });
         const url = URL.createObjectURL(blob);
@@ -1986,7 +1985,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        
+
         toast.success(`${t('sftp.context.download')}: ${file.name}`, "SFTP");
       } catch (e) {
         logger.error("[SftpView] Failed to download file:", e);
