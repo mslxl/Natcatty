@@ -1926,18 +1926,17 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
         
         if (successCount > 0 && failCount === 0) {
           // All files uploaded successfully
-          toast.success(
-            successCount === 1 
-              ? t('sftp.upload') + ' ' + results[0].fileName 
-              : t('sftp.uploadFiles') + ' (' + successCount + ')',
-            "SFTP"
-          );
+          const message = successCount === 1 
+            ? `${t('sftp.upload')}: ${results[0].fileName}` 
+            : `${t('sftp.uploadFiles')}: ${successCount}`;
+          toast.success(message, "SFTP");
         } else if (failCount > 0) {
           // Some or all files failed
           const failedFiles = results.filter(r => !r.success);
           failedFiles.forEach(failed => {
+            const errorMsg = failed.error ? ` - ${failed.error}` : '';
             toast.error(
-              `${t('sftp.error.uploadFailed')}: ${failed.fileName}${failed.error ? ' - ' + failed.error : ''}`,
+              `${t('sftp.error.uploadFailed')}: ${failed.fileName}${errorMsg}`,
               "SFTP"
             );
           });

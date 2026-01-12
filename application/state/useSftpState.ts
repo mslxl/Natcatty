@@ -2766,16 +2766,14 @@ export const useSftpState = (
                 targetPath,
                 arrayBuffer,
                 crypto.randomUUID(),
-                undefined,
-                undefined,
-                undefined,
+                // Progress callbacks not needed for simple drag-drop upload
+                undefined, // onProgress
+                undefined, // onComplete
+                undefined, // onError
               );
               
-              // If progress API succeeded, we're done
-              if (result?.success) {
-                // Upload succeeded
-              } else {
-                // Progress API failed or not fully supported, fallback to basic API
+              // If progress API failed, fallback to basic API
+              if (!result?.success) {
                 if (bridge.writeSftpBinary) {
                   await bridge.writeSftpBinary(sftpId, targetPath, arrayBuffer);
                 } else {
