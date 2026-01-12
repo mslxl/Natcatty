@@ -2760,25 +2760,33 @@ export const useSftpState = (
             }
             
             // Try progress API first, fallback to basic binary write
-            const progressResult = bridge.writeSftpBinaryWithProgress
-              ? await bridge.writeSftpBinaryWithProgress(
-                  sftpId,
-                  targetPath,
-                  arrayBuffer,
-                  crypto.randomUUID(),
-                  undefined,
-                  undefined,
-                  undefined,
-                )
-              : undefined;
-            
-            // If progress API not available or returned undefined, use basic API
-            if (progressResult === undefined) {
-              if (bridge.writeSftpBinary) {
-                await bridge.writeSftpBinary(sftpId, targetPath, arrayBuffer);
+            if (bridge.writeSftpBinaryWithProgress) {
+              const result = await bridge.writeSftpBinaryWithProgress(
+                sftpId,
+                targetPath,
+                arrayBuffer,
+                crypto.randomUUID(),
+                undefined,
+                undefined,
+                undefined,
+              );
+              
+              // If progress API succeeded, we're done
+              if (result?.success) {
+                // Upload succeeded
               } else {
-                throw new Error("No SFTP write method available");
+                // Progress API failed or not fully supported, fallback to basic API
+                if (bridge.writeSftpBinary) {
+                  await bridge.writeSftpBinary(sftpId, targetPath, arrayBuffer);
+                } else {
+                  throw new Error("Upload failed and no fallback method available");
+                }
               }
+            } else if (bridge.writeSftpBinary) {
+              // Progress API not available, use basic API
+              await bridge.writeSftpBinary(sftpId, targetPath, arrayBuffer);
+            } else {
+              throw new Error("No SFTP write method available");
             }
           }
           
