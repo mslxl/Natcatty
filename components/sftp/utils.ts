@@ -187,3 +187,23 @@ export interface ColumnWidths {
 export const isNavigableDirectory = (entry: SftpFileEntry): boolean => {
     return entry.type === 'directory' || (entry.type === 'symlink' && entry.linkTarget === 'directory');
 };
+
+/**
+ * Check if a file name represents a hidden file (starts with a dot)
+ * The ".." parent directory entry is never considered hidden
+ */
+export const isHiddenFile = (fileName: string): boolean => {
+    return fileName !== ".." && fileName.startsWith(".");
+};
+
+/**
+ * Filter files based on hidden file visibility setting
+ * Always preserves ".." parent directory entry
+ */
+export const filterHiddenFiles = <T extends { name: string }>(
+    files: T[],
+    showHiddenFiles: boolean
+): T[] => {
+    if (showHiddenFiles) return files;
+    return files.filter((f) => !isHiddenFile(f.name));
+};

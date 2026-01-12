@@ -48,6 +48,7 @@ import { logger } from "../lib/logger";
 import { getFileExtension, isKnownBinaryFile, FileOpenerType, SystemAppInfo } from "../lib/sftpFileUtils";
 import { cn } from "../lib/utils";
 import { Host, RemoteFile } from "../types";
+import { filterHiddenFiles } from "./sftp";
 import { DistroAvatar } from "./DistroAvatar";
 import FileOpenerDialog from "./FileOpenerDialog";
 import TextEditorModal from "./TextEditorModal";
@@ -1263,11 +1264,8 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
 
   // Display files with parent entry (like SftpView)
   const displayFiles = useMemo(() => {
-    // Filter hidden files (files starting with a dot) unless showHiddenFiles is enabled
-    let visibleFiles = files;
-    if (!sftpShowHiddenFiles) {
-      visibleFiles = files.filter((f) => f.name === ".." || !f.name.startsWith("."));
-    }
+    // Filter hidden files using utility function
+    const visibleFiles = filterHiddenFiles(files, sftpShowHiddenFiles);
     
     // Check if we're at root
     const atRoot = isRootPath(currentPath);

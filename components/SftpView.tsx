@@ -59,6 +59,7 @@ import { Label } from "./ui/label";
 // Import extracted components
 import {
   ColumnWidths,
+  filterHiddenFiles,
   isNavigableDirectory,
   SftpBreadcrumb,
   SftpConflictDialog,
@@ -257,12 +258,9 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
 
   const filteredFiles = useMemo(() => {
     const term = pane.filter.trim().toLowerCase();
-    let files = pane.files;
     
-    // Filter hidden files (files starting with a dot) unless showHiddenFiles is enabled
-    if (!showHiddenFiles) {
-      files = files.filter((f) => f.name === ".." || !f.name.startsWith("."));
-    }
+    // Filter hidden files using utility function
+    let files = filterHiddenFiles(pane.files, showHiddenFiles);
     
     // Apply text filter
     if (!term) return files;
