@@ -863,7 +863,11 @@ async function getSessionPwd(event, payload) {
 
     // Send pwd command with short unique markers
     // Using 'S' and 'E' as suffixes to make markers shorter
-    stream.write(` echo '${marker}S' && pwd && echo '${marker}E'\n`);
+    // After the command, send ANSI escape sequences to clear the output lines:
+    // \x1b[1A = move cursor up 1 line, \x1b[2K = clear entire line
+    // Clear 4 lines: the command echo, START marker, pwd output, and END marker
+    const clearLines = '\\x1b[1A\\x1b[2K\\x1b[1A\\x1b[2K\\x1b[1A\\x1b[2K\\x1b[1A\\x1b[2K';
+    stream.write(` echo '${marker}S' && pwd && echo '${marker}E' && printf '${clearLines}'\n`);
   });
 }
 
