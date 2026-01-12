@@ -2772,8 +2772,9 @@ export const useSftpState = (
                 undefined, // onError
               );
               
-              // If progress API failed, fallback to basic API
-              if (!result?.success) {
+              // Check if progress API explicitly reported failure
+              // If result is undefined/null or success is false, fallback to basic API
+              if (!result || result.success === false) {
                 if (bridge.writeSftpBinary) {
                   await bridge.writeSftpBinary(sftpId, targetPath, arrayBuffer);
                 } else {

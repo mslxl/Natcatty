@@ -1916,21 +1916,22 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
   );
 
   // Handle external file upload from OS drag-and-drop (shared logic)
-  // Uses sftpRef.current internally, so dependencies are stable
+  // Uses sftpRef.current internally, so dependencies are stable.
+  // toast and logger are globally stable, t is the only real dependency.
   const handleUploadExternalFilesForSide = useCallback(
     async (side: "left" | "right", files: FileList) => {
       try {
         const results = await sftpRef.current.uploadExternalFiles(side, files);
-        const successCount = results.filter(r => r.success).length;
         const failCount = results.filter(r => !r.success).length;
         
-        if (successCount > 0 && failCount === 0) {
+        if (failCount === 0) {
           // All files uploaded successfully
+          const successCount = results.length;
           const message = successCount === 1 
             ? `${t('sftp.upload')}: ${results[0].fileName}` 
             : `${t('sftp.uploadFiles')}: ${successCount}`;
           toast.success(message, "SFTP");
-        } else if (failCount > 0) {
+        } else {
           // Some or all files failed
           const failedFiles = results.filter(r => !r.success);
           failedFiles.forEach(failed => {
@@ -1949,7 +1950,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
         );
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- Uses sftpRef.current internally
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sftpRef.current, toast, and logger are stable
     [t],
   );
 
