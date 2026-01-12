@@ -544,9 +544,9 @@ const en: Messages = {
 
   // Settings > SFTP Show Hidden Files
   'settings.sftp.showHiddenFiles': 'Show hidden files',
-  'settings.sftp.showHiddenFiles.desc': 'Display hidden files (dotfiles) in the SFTP file browser. On Unix/Linux systems, hidden files are those starting with a dot.',
+  'settings.sftp.showHiddenFiles.desc': 'Display files with the Windows hidden attribute in the SFTP file browser when browsing local Windows filesystem.',
   'settings.sftp.showHiddenFiles.enable': 'Show hidden files',
-  'settings.sftp.showHiddenFiles.enableDesc': 'Display files starting with a dot (e.g., .bashrc, .config, .ssh)',
+  'settings.sftp.showHiddenFiles.enableDesc': 'Display Windows hidden files when browsing local filesystem',
 
   // Quick Switcher
   'qs.search.placeholder': 'Search hosts or tabs',

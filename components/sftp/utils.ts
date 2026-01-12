@@ -189,27 +189,31 @@ export const isNavigableDirectory = (entry: SftpFileEntry): boolean => {
 };
 
 /**
- * Check if a file name represents a hidden file
- * - On Unix/Linux systems (local and remote): files starting with a dot are hidden
- * - On Windows local filesystem: this check won't detect Windows hidden attribute files
- *   (Windows uses file attributes, not filename convention for hidden files)
+ * Check if a file is hidden on Windows
+ * Only applies to local Windows filesystem where the hidden attribute is set
  * The ".." parent directory entry is never considered hidden
+ * 
+ * Note: On Unix/Linux, there's no system-level hidden file concept.
+ * Dotfiles are just a convention, not actual hidden files, so we don't filter them.
  */
-export const isHiddenFile = (fileName: string): boolean => {
-    return fileName !== ".." && fileName.startsWith(".");
+export const isWindowsHiddenFile = <T extends { name: string; hidden?: boolean }>(file: T): boolean => {
+    if (file.name === "..") return false;
+    return file.hidden === true;
 };
 
 /**
- * Filter files based on hidden file visibility setting
- * Filters out files starting with a dot (Unix/Linux hidden file convention)
+ * Filter files based on Windows hidden file visibility setting
+ * Only filters files with the Windows hidden attribute set
  * Always preserves ".." parent directory entry
  * 
- * Note: This does not filter Windows hidden attribute files on local Windows filesystem
+ * This setting only affects local Windows filesystem browsing.
+ * On Unix/Linux systems and remote SFTP connections, all files are shown
+ * because there's no system-level hidden file concept (dotfiles are just a convention).
  */
-export const filterHiddenFiles = <T extends { name: string }>(
+export const filterHiddenFiles = <T extends { name: string; hidden?: boolean }>(
     files: T[],
     showHiddenFiles: boolean
 ): T[] => {
     if (showHiddenFiles) return files;
-    return files.filter((f) => !isHiddenFile(f.name));
+    return files.filter((f) => !isWindowsHiddenFile(f));
 };
