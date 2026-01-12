@@ -847,18 +847,11 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
                 </>
               ) : (
                 <>
-                  <Download size={14} className="mr-2" />{" "}
-                  {t("sftp.context.download")}
+                  <ExternalLink size={14} className="mr-2" />{" "}
+                  {t("sftp.context.open")}
                 </>
               )}
             </ContextMenuItem>
-            {/* File operations - only for files, not directories */}
-            {!isNavigableDirectory(entry) && onOpenFile && (
-              <ContextMenuItem onClick={() => onOpenFile(entry)}>
-                <ExternalLink size={14} className="mr-2" />{" "}
-                {t("sftp.context.open")}
-              </ContextMenuItem>
-            )}
             {!isNavigableDirectory(entry) && onOpenFileWith && (
               <ContextMenuItem onClick={() => onOpenFileWith(entry)}>
                 <ExternalLink size={14} className="mr-2" />{" "}
@@ -937,7 +930,6 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
       onDragEnd,
       onEditFile,
       onEditPermissions,
-      onOpenFile,
       onOpenFileWith,
       onRefresh,
       openDeleteConfirm,
