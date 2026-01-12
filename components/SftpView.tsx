@@ -187,6 +187,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     onEditFile,
     onOpenFile,
     onOpenFileWith,
+    onUploadExternalFiles,
   } = callbacks;
 
   // 渲染追踪 - 只追踪数据 props（回调来自 context，引用稳定）
@@ -601,6 +602,18 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
 
   // Drag handlers
   const handlePaneDragOver = (e: React.DragEvent) => {
+    // Check if this is external file drag (from OS)
+    const hasFiles = e.dataTransfer.types.includes('Files');
+    
+    // If it's external files, always allow drop
+    if (hasFiles) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      setIsDragOverPane(true);
+      return;
+    }
+    
+    // Otherwise, check if it's internal drag from other pane
     if (!draggedFiles || draggedFiles[0]?.side === side) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
@@ -615,11 +628,23 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     setDragOverEntry(null);
   };
 
-  const handlePaneDrop = (e: React.DragEvent) => {
+  const handlePaneDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragOverPane(false);
     setDragOverEntry(null);
+    
+    // Check if this is external file drop (from OS)
+    const droppedFiles = e.dataTransfer.files;
+    if (droppedFiles && droppedFiles.length > 0) {
+      // Handle external file upload using the callback
+      if (onUploadExternalFiles) {
+        await onUploadExternalFiles(droppedFiles);
+      }
+      return;
+    }
+    
+    // Otherwise, handle internal drag from other pane
     if (!draggedFiles || draggedFiles[0]?.side === side) return;
     onReceiveFromOtherPane(
       draggedFiles.map((f) => ({ name: f.name, isDirectory: f.isDirectory })),
@@ -1890,6 +1915,55 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
     [handleOpenFileWithForSide],
   );
 
+  // Handle external file upload from OS drag-and-drop (shared logic)
+  // Uses sftpRef.current internally, so dependencies are stable.
+  // toast and logger are globally stable, t is the only real dependency.
+  const handleUploadExternalFilesForSide = useCallback(
+    async (side: "left" | "right", files: FileList) => {
+      try {
+        const results = await sftpRef.current.uploadExternalFiles(side, files);
+        const failCount = results.filter(r => !r.success).length;
+        
+        if (failCount === 0) {
+          // All files uploaded successfully
+          const successCount = results.length;
+          const message = successCount === 1 
+            ? `${t('sftp.upload')}: ${results[0].fileName}` 
+            : `${t('sftp.uploadFiles')}: ${successCount}`;
+          toast.success(message, "SFTP");
+        } else {
+          // Some or all files failed
+          const failedFiles = results.filter(r => !r.success);
+          failedFiles.forEach(failed => {
+            const errorMsg = failed.error ? ` - ${failed.error}` : '';
+            toast.error(
+              `${t('sftp.error.uploadFailed')}: ${failed.fileName}${errorMsg}`,
+              "SFTP"
+            );
+          });
+        }
+      } catch (error) {
+        logger.error("[SftpView] Failed to upload external files:", error);
+        toast.error(
+          error instanceof Error ? error.message : t('sftp.error.uploadFailed'),
+          "SFTP"
+        );
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sftpRef.current, toast, and logger are stable
+    [t],
+  );
+
+  const handleUploadExternalFilesLeft = useCallback(
+    (files: FileList) => handleUploadExternalFilesForSide("left", files),
+    [handleUploadExternalFilesForSide],
+  );
+
+  const handleUploadExternalFilesRight = useCallback(
+    (files: FileList) => handleUploadExternalFilesForSide("right", files),
+    [handleUploadExternalFilesForSide],
+  );
+
   // Custom handleOpenEntry callbacks that check the double-click behavior setting
   const handleOpenEntryLeft = useCallback(
     (entry: SftpFileEntry) => {
@@ -1967,6 +2041,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       onEditFile: handleEditFileLeft,
       onOpenFile: handleOpenFileLeft,
       onOpenFileWith: handleOpenFileWithLeft,
+      onUploadExternalFiles: handleUploadExternalFilesLeft,
     }),
     [],
   );
@@ -1992,6 +2067,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       onEditFile: handleEditFileRight,
       onOpenFile: handleOpenFileRight,
       onOpenFileWith: handleOpenFileWithRight,
+      onUploadExternalFiles: handleUploadExternalFilesRight,
     }),
     [],
   );
