@@ -1056,6 +1056,7 @@ const zhCN: Messages = {
   'serial.field.baudRate': '波特率',
   'serial.field.dataBits': '数据位',
   'serial.field.stopBits': '停止位',
+  'serial.field.stopBits15Warning': '1.5 停止位在 Windows 下可能不被所有设备支持',
   'serial.field.parity': '校验位',
   'serial.field.flowControl': '流控制',
   'serial.noPorts': '未检测到串口设备。请连接设备后刷新。',

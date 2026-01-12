@@ -5,6 +5,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import { Maximize2, Radio } from "lucide-react";
 import React, { memo, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { logger } from "../lib/logger";
 import { cn } from "../lib/utils";
@@ -741,23 +742,23 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }
 
     // Try to get the current working directory from the terminal session
+    let initialPath: string | undefined = undefined;
     if (sessionRef.current) {
       try {
         const result = await terminalBackend.getSessionPwd(sessionRef.current);
         if (result.success && result.cwd) {
-          setSftpInitialPath(result.cwd);
-        } else {
-          // If we can't get the pwd, clear the initial path
-          setSftpInitialPath(undefined);
+          initialPath = result.cwd;
         }
       } catch {
         // Silently fail and open SFTP without initial path
-        setSftpInitialPath(undefined);
       }
-    } else {
-      setSftpInitialPath(undefined);
     }
-    
+
+    // Use flushSync to ensure initialPath state is committed before opening SFTP modal
+    // This prevents React's batching from causing the modal to open with stale/undefined initialPath
+    flushSync(() => {
+      setSftpInitialPath(initialPath);
+    });
     setShowSFTP(true);
   };
 

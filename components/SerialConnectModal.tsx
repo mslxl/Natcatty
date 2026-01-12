@@ -114,10 +114,16 @@ export const SerialConnectModal: React.FC<SerialConnectModalProps> = ({
     }));
   }, [ports]);
 
-  // Validate: port path must start with /dev/ (Unix/macOS) or COM (Windows)
+  // Validate: port path must start with /dev/ (Unix/macOS) or COM/\\.\COM (Windows)
   const trimmedPort = selectedPort.trim();
-  const isPortValid = trimmedPort.startsWith('/dev/') || /^COM\d+$/i.test(trimmedPort);
+  const isPortValid =
+    trimmedPort.startsWith('/dev/') ||
+    /^COM\d+$/i.test(trimmedPort) ||
+    /^\\\\\.\\COM\d+$/i.test(trimmedPort);
   const isBaudRateValid = BAUD_RATES.includes(baudRate);
+
+  // Check if using 1.5 stop bits (limited Windows support)
+  const isStopBits15 = stopBits === 1.5;
   const isValid = isPortValid && isBaudRateValid;
 
   return (
@@ -237,6 +243,11 @@ export const SerialConnectModal: React.FC<SerialConnectModalProps> = ({
                       </option>
                     ))}
                   </select>
+                  {isStopBits15 && (
+                    <p className="text-xs text-yellow-500">
+                      {t('serial.field.stopBits15Warning')}
+                    </p>
+                  )}
                 </div>
               </div>
 

@@ -1067,6 +1067,7 @@ const en: Messages = {
   'serial.field.baudRate': 'Baud Rate',
   'serial.field.dataBits': 'Data Bits',
   'serial.field.stopBits': 'Stop Bits',
+  'serial.field.stopBits15Warning': '1.5 stop bits may not be supported on all Windows devices',
   'serial.field.parity': 'Parity',
   'serial.field.flowControl': 'Flow Control',
   'serial.noPorts': 'No serial ports detected. Connect a device and refresh.',

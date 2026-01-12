@@ -320,6 +320,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const sftpIdRef = useRef<string | null>(null);
   const initializedRef = useRef(false);
+  const lastInitialPathRef = useRef<string | undefined>(undefined);
   const navigatingRef = useRef(false);
   const lastSelectedIndexRef = useRef<number | null>(null);
   const localHomeRef = useRef<string | null>(null);
@@ -616,8 +617,12 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
 
   useEffect(() => {
     if (open) {
-      if (!initializedRef.current) {
+      // Check if we need to reinitialize (either first time or initialPath changed)
+      const needsReinit = !initializedRef.current || initialPath !== lastInitialPathRef.current;
+
+      if (needsReinit) {
         initializedRef.current = true;
+        lastInitialPathRef.current = initialPath;
         if (isLocalSession) {
           void (async () => {
             let home = localHomeRef.current;
@@ -1289,7 +1294,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   const displayFiles = useMemo(() => {
     // Filter hidden files using utility function
     const visibleFiles = filterHiddenFiles(files, sftpShowHiddenFiles);
-    
+
     // Check if we're at root
     const atRoot = isRootPath(currentPath);
     if (atRoot) return visibleFiles;
