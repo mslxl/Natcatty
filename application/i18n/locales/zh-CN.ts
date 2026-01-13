@@ -1086,6 +1086,7 @@ const zhCN: Messages = {
   'serial.field.configLabel': '配置名称',
   'serial.field.configLabelPlaceholder': '例如 Arduino Uno',
   'serial.connectAndSave': '连接并保存',
+  'serial.edit.title': '串口设置',
 };
 
 export default zhCN;

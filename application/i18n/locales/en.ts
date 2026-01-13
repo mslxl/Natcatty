@@ -1097,6 +1097,7 @@ const en: Messages = {
   'serial.field.configLabel': 'Configuration Name',
   'serial.field.configLabelPlaceholder': 'e.g. Arduino Uno',
   'serial.connectAndSave': 'Connect & Save',
+  'serial.edit.title': 'Serial Port Settings',
 };
 
 export default en;
