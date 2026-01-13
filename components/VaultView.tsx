@@ -1532,6 +1532,9 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             onConnectSerial(config);
           }
         }}
+        onSaveHost={(host) => {
+          onUpdateHosts([...hosts, host]);
+        }}
       />
     </div>
   );

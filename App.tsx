@@ -20,7 +20,7 @@ import { Label } from './components/ui/label';
 import { ToastProvider, toast } from './components/ui/toast';
 import { VaultView, VaultSection } from './components/VaultView';
 import { cn } from './lib/utils';
-import { ConnectionLog, Host, HostProtocol, TerminalTheme } from './types';
+import { ConnectionLog, Host, HostProtocol, SerialConfig, TerminalTheme } from './types';
 import { LogView as LogViewType } from './application/state/useSessionState';
 import type { SftpView as SftpViewComponent } from './components/SftpView';
 import type { TerminalLayer as TerminalLayerComponent } from './components/TerminalLayer';
@@ -635,6 +635,24 @@ function App({ settings }: { settings: SettingsState }) {
     connectToHost(host);
   }, [addConnectionLog, connectToHost, identities, keys]);
 
+  // Wrapper to create serial session with logging
+  const handleConnectSerial = useCallback((config: SerialConfig) => {
+    const { username, hostname } = systemInfoRef.current;
+    const portName = config.path.split('/').pop() || config.path;
+    addConnectionLog({
+      hostId: '',
+      hostLabel: `Serial: ${portName}`,
+      hostname: config.path,
+      username: username,
+      protocol: 'serial',
+      startTime: Date.now(),
+      localUsername: username,
+      localHostname: hostname,
+      saved: false,
+    });
+    createSerialSession(config);
+  }, [addConnectionLog, createSerialSession]);
+
   // Handle terminal data capture when session exits
   const handleTerminalDataCapture = useCallback((sessionId: string, data: string) => {
     if (IS_DEV) console.log('[handleTerminalDataCapture] Called', { sessionId, dataLength: data.length });
@@ -776,7 +794,7 @@ function App({ settings }: { settings: SettingsState }) {
             onOpenSettings={handleOpenSettings}
             onOpenQuickSwitcher={handleOpenQuickSwitcher}
             onCreateLocalTerminal={handleCreateLocalTerminal}
-            onConnectSerial={createSerialSession}
+            onConnectSerial={handleConnectSerial}
             onDeleteHost={handleDeleteHost}
             onConnect={handleConnectToHost}
             onUpdateHosts={updateHosts}

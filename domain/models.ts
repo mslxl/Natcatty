@@ -617,7 +617,7 @@ export interface ConnectionLog {
   hostLabel: string; // Display label (e.g., 'Local Terminal' or host label)
   hostname: string; // Target hostname or 'localhost'
   username: string; // SSH username or system username
-  protocol: 'ssh' | 'telnet' | 'local' | 'mosh';
+  protocol: 'ssh' | 'telnet' | 'local' | 'mosh' | 'serial';
   startTime: number; // Connection start timestamp
   endTime?: number; // Connection end timestamp (undefined if still active)
   localUsername: string; // System username of the local user

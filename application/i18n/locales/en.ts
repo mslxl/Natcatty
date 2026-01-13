@@ -1089,6 +1089,14 @@ const en: Messages = {
   'serial.field.lineMode': 'Line Mode',
   'serial.field.lineModeDesc': 'Buffer input and send on Enter (instead of character-by-character)',
   'serial.connectionError': 'Failed to connect to serial port',
+  'serial.field.baudRatePlaceholder': 'Select or enter baud rate...',
+  'serial.field.baudRateEmpty': 'Enter a custom baud rate',
+  'serial.field.customBaudRate': 'Using custom baud rate',
+  'serial.field.saveConfig': 'Save Configuration',
+  'serial.field.saveConfigDesc': 'Save this serial configuration to hosts for quick access',
+  'serial.field.configLabel': 'Configuration Name',
+  'serial.field.configLabelPlaceholder': 'e.g. Arduino Uno',
+  'serial.connectAndSave': 'Connect & Save',
 };
 
 export default en;

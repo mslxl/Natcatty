@@ -1078,6 +1078,14 @@ const zhCN: Messages = {
   'serial.field.lineMode': '行模式',
   'serial.field.lineModeDesc': '缓冲输入，按回车后发送（而不是逐字符发送）',
   'serial.connectionError': '连接串口失败',
+  'serial.field.baudRatePlaceholder': '选择或输入波特率...',
+  'serial.field.baudRateEmpty': '输入自定义波特率',
+  'serial.field.customBaudRate': '使用自定义波特率',
+  'serial.field.saveConfig': '保存配置',
+  'serial.field.saveConfigDesc': '将此串口配置保存到主机列表以便快速访问',
+  'serial.field.configLabel': '配置名称',
+  'serial.field.configLabelPlaceholder': '例如 Arduino Uno',
+  'serial.connectAndSave': '连接并保存',
 };
 
 export default zhCN;
