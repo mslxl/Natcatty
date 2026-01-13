@@ -120,16 +120,18 @@ export const SerialConnectModal: React.FC<SerialConnectModalProps> = ({
     if (saveConfig && onSaveHost) {
       const portName = selectedPort.split('/').pop() || selectedPort;
       const host: Host = {
-        id: `serial-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        id: `serial-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
         label: configLabel.trim() || `Serial: ${portName}`,
         hostname: selectedPort,
-        port: baudRate, // Store baud rate in port field for serial hosts
+        // For serial hosts, port field stores baud rate as a numeric identifier.
+        // The full configuration is stored in serialConfig for actual connection.
+        port: baudRate,
         username: '',
         os: 'linux',
         tags: ['serial'],
         protocol: 'serial',
         createdAt: Date.now(),
-        serialConfig: config, // Store full serial configuration
+        serialConfig: config, // Store full serial configuration for connection
       };
       onSaveHost(host);
     }
