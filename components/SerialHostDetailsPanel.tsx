@@ -2,12 +2,12 @@
  * Serial Host Details Panel
  * A dedicated editor for serial port hosts (distinct from SSH HostDetailsPanel)
  */
-import { ChevronDown, ChevronUp, Save, Tag, Usb, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, Save, Tag, Usb } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { useTerminalBackend } from '../application/state/useTerminalBackend';
 import type { Host, SerialConfig, SerialFlowControl, SerialParity } from '../domain/models';
-import { cn } from '../lib/utils';
+
 import { Button } from './ui/button';
 import { Combobox, ComboboxOption, MultiCombobox } from './ui/combobox';
 import { Input } from './ui/input';
