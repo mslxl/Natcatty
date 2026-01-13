@@ -129,6 +129,7 @@ export const SerialConnectModal: React.FC<SerialConnectModalProps> = ({
         tags: ['serial'],
         protocol: 'serial',
         createdAt: Date.now(),
+        serialConfig: config, // Store full serial configuration
       };
       onSaveHost(host);
     }

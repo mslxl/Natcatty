@@ -88,6 +88,8 @@ export interface Host {
   telnetEnabled?: boolean; // Is Telnet enabled for this host
   telnetUsername?: string; // Telnet-specific username
   telnetPassword?: string; // Telnet-specific password
+  // Serial-specific configuration (for protocol='serial' hosts)
+  serialConfig?: SerialConfig;
 }
 
 export type KeyType = 'RSA' | 'ECDSA' | 'ED25519';

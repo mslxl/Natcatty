@@ -619,6 +619,25 @@ function App({ settings }: { settings: SettingsState }) {
   // Wrapper to connect to host with logging
   const handleConnectToHost = useCallback((host: Host) => {
     const { username, hostname: localHost } = systemInfoRef.current;
+    
+    // Handle serial hosts separately
+    if (host.protocol === 'serial') {
+      const portName = host.hostname.split('/').pop() || host.hostname;
+      addConnectionLog({
+        hostId: host.id,
+        hostLabel: host.label || `Serial: ${portName}`,
+        hostname: host.hostname,
+        username: username,
+        protocol: 'serial',
+        startTime: Date.now(),
+        localUsername: username,
+        localHostname: localHost,
+        saved: false,
+      });
+      connectToHost(host);
+      return;
+    }
+    
     const protocol = host.moshEnabled ? 'mosh' : (host.protocol || 'ssh');
     const resolvedAuth = resolveHostAuth({ host, keys, identities });
     addConnectionLog({
