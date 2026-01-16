@@ -325,6 +325,12 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   const lastSelectedIndexRef = useRef<number | null>(null);
   const localHomeRef = useRef<string | null>(null);
 
+  // Reconnect state
+  const [reconnecting, setReconnecting] = useState(false);
+  const reconnectingRef = useRef(false);
+  const reconnectAttemptsRef = useRef(0);
+  const MAX_RECONNECT_ATTEMPTS = 3;
+
   // Rename dialog state
   const [showRenameDialog, setShowRenameDialog] = useState(false);
   const [renameTarget, setRenameTarget] = useState<RemoteFile | null>(null);
@@ -536,6 +542,40 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     openSftp,
   ]);
 
+  // Check if an error indicates a stale/lost SFTP session
+  const isSessionError = useCallback((err: unknown): boolean => {
+    if (!(err instanceof Error)) return false;
+    const msg = err.message.toLowerCase();
+    return (
+      msg.includes("session not found") ||
+      msg.includes("sftp session") ||
+      msg.includes("not found") ||
+      msg.includes("closed") ||
+      msg.includes("connection reset") ||
+      msg.includes("eof")
+    );
+  }, []);
+
+  // Handle session error - triggers auto-reconnect
+  const handleSessionError = useCallback(() => {
+    if (reconnectingRef.current) return; // Prevent duplicate reconnect attempts
+
+    if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
+      toast.error(t("sftp.error.reconnectFailed"), "SFTP");
+      setReconnecting(false);
+      reconnectingRef.current = false;
+      return;
+    }
+
+    // Clear stale session reference
+    sftpIdRef.current = null;
+
+    // Set reconnecting state
+    reconnectingRef.current = true;
+    reconnectAttemptsRef.current++;
+    setReconnecting(true);
+  }, [t]);
+
   const loadFiles = useCallback(
     async (path: string, options?: { force?: boolean }) => {
       const requestId = ++loadSeqRef.current;
@@ -569,6 +609,14 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
         setSelectedFiles(new Set());
       } catch (e) {
         if (loadSeqRef.current !== requestId) return;
+
+        // Check if this is a session error that can trigger auto-reconnect
+        if (!isLocalSession && isSessionError(e) && files.length > 0) {
+          logger.info("[SFTP] Session lost, attempting to reconnect...");
+          handleSessionError();
+          return;
+        }
+
         logger.error("Failed to load files", e);
         toast.error(
           e instanceof Error ? e.message : t("sftp.error.loadFailed"),
@@ -581,7 +629,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
         }
       }
     },
-    [ensureSftp, host.id, isLocalSession, listLocalDir, listSftp, t],
+    [ensureSftp, host.id, isLocalSession, listLocalDir, listSftp, t, isSessionError, handleSessionError, files.length],
   );
 
   useLayoutEffect(() => {
@@ -614,6 +662,71 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       void closeSftpSession();
     };
   }, [closeSftpSession]);
+
+  // Auto-reconnect effect
+  useEffect(() => {
+    if (!reconnecting || !reconnectingRef.current || isLocalSession) return;
+
+    const attemptReconnect = async () => {
+      // Small delay before reconnecting
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      if (!reconnectingRef.current) return; // May have been cancelled
+
+      try {
+        // Re-establish SFTP connection
+        const sftpId = await openSftp({
+          sessionId: `sftp-modal-${host.id}`,
+          hostname: credentials.hostname,
+          username: credentials.username || "root",
+          port: credentials.port || 22,
+          password: credentials.password,
+          privateKey: credentials.privateKey,
+          certificate: credentials.certificate,
+          passphrase: credentials.passphrase,
+          publicKey: credentials.publicKey,
+          keyId: credentials.keyId,
+          keySource: credentials.keySource,
+          proxy: credentials.proxy,
+          jumpHosts: credentials.jumpHosts,
+        });
+        sftpIdRef.current = sftpId;
+
+        // Refresh current directory
+        const list = await listSftp(sftpId, currentPath);
+        dirCacheRef.current.set(`${host.id}::${currentPath}`, {
+          files: list,
+          timestamp: Date.now(),
+        });
+        setFiles(list);
+        setSelectedFiles(new Set());
+
+        // Reconnect successful
+        reconnectingRef.current = false;
+        reconnectAttemptsRef.current = 0;
+        setReconnecting(false);
+        toast.success(t("sftp.reconnected"), "SFTP");
+      } catch (e) {
+        logger.error("[SFTP] Reconnect failed", e);
+        // Check if we can retry
+        if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+          // Trigger another attempt
+          sftpIdRef.current = null;
+          reconnectingRef.current = false; // Reset to allow handleSessionError to work
+          handleSessionError();
+        } else {
+          // Max retries reached
+          reconnectingRef.current = false;
+          setReconnecting(false);
+          toast.error(t("sftp.error.reconnectFailed"), "SFTP");
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    attemptReconnect();
+  }, [reconnecting, isLocalSession, host.id, credentials, openSftp, listSftp, currentPath, t, handleSessionError]);
 
   useEffect(() => {
     if (open) {
@@ -1703,7 +1816,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
             className="h-7 w-7"
             onClick={() => loadFiles(currentPath, { force: true })}
           >
-            <RefreshCw size={14} className={cn(loading && "animate-spin")} />
+            <RefreshCw size={14} className={cn((loading || reconnecting) && "animate-spin")} />
           </Button>
 
           {/* Editable Breadcrumbs */}
@@ -1893,6 +2006,19 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
               <div className="flex flex-col items-center gap-2">
                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                 <span className="text-sm text-muted-foreground">{t("sftp.status.loading")}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Reconnecting overlay */}
+          {reconnecting && (
+            <div className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm z-20">
+              <div className="flex flex-col items-center gap-3 p-6 rounded-xl bg-secondary/90 border border-border/60 shadow-lg">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <div className="text-center">
+                  <div className="text-sm font-medium">{t("sftp.reconnecting.title")}</div>
+                  <div className="text-xs text-muted-foreground mt-1">{t("sftp.reconnecting.desc")}</div>
+                </div>
               </div>
             </div>
           )}

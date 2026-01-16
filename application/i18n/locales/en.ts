@@ -542,6 +542,12 @@ const en: Messages = {
   'sftp.autoSync.success': 'File synced to remote: {fileName}',
   'sftp.autoSync.error': 'Failed to sync file: {error}',
 
+  // SFTP Reconnecting
+  'sftp.reconnecting.title': 'Reconnecting...',
+  'sftp.reconnecting.desc': 'Connection lost, attempting to reconnect',
+  'sftp.reconnected': 'Connection restored',
+  'sftp.error.reconnectFailed': 'Failed to reconnect. Please try again.',
+
   // Settings > SFTP Show Hidden Files
   'settings.sftp.showHiddenFiles': 'Show hidden files',
   'settings.sftp.showHiddenFiles.desc': 'Display files with the Windows hidden attribute in the SFTP file browser when browsing local Windows filesystem.',
