@@ -1291,7 +1291,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
           <div className="flex items-center justify-center h-full">
             <Loader2 size={24} className="animate-spin text-muted-foreground" />
           </div>
-        ) : pane.error ? (
+        ) : pane.error && !pane.reconnecting ? (
           <div className="flex flex-col items-center justify-center h-full gap-2 text-destructive">
             <AlertCircle size={24} />
             <span className="text-sm">{pane.error}</span>
@@ -1341,9 +1341,22 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
       </div>
 
       {/* Loading overlay - covers entire pane when navigating directories */}
-      {pane.loading && sortedDisplayFiles.length > 0 && (
+      {pane.loading && sortedDisplayFiles.length > 0 && !pane.reconnecting && (
         <div className="absolute inset-0 flex items-center justify-center bg-background/40 backdrop-blur-[1px] pointer-events-none z-10">
           <Loader2 size={24} className="animate-spin text-muted-foreground" />
+        </div>
+      )}
+
+      {/* Reconnecting overlay - shows when SFTP connection is lost and reconnecting */}
+      {pane.reconnecting && (
+        <div className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm z-20">
+          <div className="flex flex-col items-center gap-3 p-6 rounded-xl bg-secondary/90 border border-border/60 shadow-lg">
+            <Loader2 size={32} className="animate-spin text-primary" />
+            <div className="text-center">
+              <div className="text-sm font-medium">{t("sftp.reconnecting.title")}</div>
+              <div className="text-xs text-muted-foreground mt-1">{t("sftp.reconnecting.desc")}</div>
+            </div>
+          </div>
         </div>
       )}
 

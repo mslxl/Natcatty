@@ -780,6 +780,10 @@ const zhCN: Messages = {
   'sftp.autoSync.success': '文件已同步到远程：{fileName}',
   'sftp.autoSync.error': '同步文件失败：{error}',
 
+  // SFTP Reconnecting
+  'sftp.reconnecting.title': '正在重连...',
+  'sftp.reconnecting.desc': '连接已断开，正在尝试重新连接',
+
   // Settings > SFTP Show Hidden Files
   'settings.sftp.showHiddenFiles': '显示隐藏文件',
   'settings.sftp.showHiddenFiles.desc': '在浏览本地 Windows 文件系统时，显示具有 Windows 隐藏属性的文件。',
