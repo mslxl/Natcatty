@@ -783,6 +783,8 @@ const zhCN: Messages = {
   // SFTP Reconnecting
   'sftp.reconnecting.title': '正在重连...',
   'sftp.reconnecting.desc': '连接已断开，正在尝试重新连接',
+  'sftp.reconnected': '连接已恢复',
+  'sftp.error.reconnectFailed': '重连失败，请重试。',
 
   // Settings > SFTP Show Hidden Files
   'settings.sftp.showHiddenFiles': '显示隐藏文件',
