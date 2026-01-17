@@ -5,7 +5,8 @@
 <h1 align="center">Netcatty</h1>
 
 <p align="center">
-  <strong>モダンな SSH クライアント、SFTP ブラウザ & ターミナルマネージャー</strong>
+  <strong>モダンな SSH クライアント、SFTP ブラウザ & ターミナルマネージャー</strong><br/>
+  <a href="https://netcatty.app"><strong>netcatty.app</strong></a>
 </p>
 
 <p align="center">
@@ -40,6 +41,12 @@
 ---
 
 [![Netcatty メインインターフェース](screenshots/main-window-dark.png)](screenshots/main-window-dark.png)
+
+<p align="center">
+  <img src="screenshots/vault_grid_view.png" width="45%" alt="Grid View">
+  &nbsp; &nbsp;
+  <img src="screenshots/sftp_dual_pane.png" width="45%" alt="SFTP Dual Pane">
+</p>
 
 ---
 
@@ -138,15 +145,15 @@ Vault ビューはすべての SSH 接続を管理するコマンドセンター
 
 **ダークモード**
 
-![ダークモード](screenshots/main-window-dark.png)
+![ホスト管理](screenshots/vault_grid_view.png)
 
-**ライトモード**
+**ネストされたフォルダと整理**
 
-![ライトモード](screenshots/main-window-light.png)
+![ネストされたフォルダ](screenshots/nested_folder_structure.png)
 
 **リストビュー**
 
-![リストビュー](screenshots/main-window-dark-list.png)
+![リストビュー](screenshots/vault_list_view.png)
 
 <a name="ターミナル"></a>
 ## ターミナル
@@ -155,18 +162,28 @@ WebGL アクセラレーション対応の xterm.js ベースのターミナル�
 
 **分割ウィンドウ**
 
-![分割ウィンドウ](screenshots/split-window.png)
+**ブロードキャストモード**
 
-**テーマカスタマイズ**
+一度入力すれば、どこでも実行できます。複数のサーバーを同時にメンテナンスするのに最適です。
 
-![テーマカスタマイズ](screenshots/terminal-theme-change.png)
+![ブロードキャストモード](screenshots/broadcast_mode.png)
+
+**パフォーマンス情報とカスタマイズ**
+
+接続の健全性を監視し、ターミナルのあらゆる側面をカスタマイズします。
+
+![ターミナルパフォーマンス](screenshots/terminal_performance.png)
 
 <a name="sftp"></a>
 ## SFTP
 
 デュアルペイン SFTP ブラウザは、ローカルからリモート、リモートからリモートへのファイル転送をサポート。シングルクリックでディレクトリを移動、ペイン間でファイルをドラッグ＆ドロップ、転送進捗をリアルタイムで監視。インターフェースにはファイル権限、サイズ、変更日時を表示。複数の転送をキューに入れ、詳細な速度と進捗インジケーターで完了を確認。コンテキストメニューから名前変更、削除、ダウンロード、アップロード操作にすばやくアクセス。
 
-![SFTP ビュー](screenshots/sftp.png)
+![SFTP デュアルペイン](screenshots/sftp_dual_pane.png)
+
+**転送キュー**
+
+![転送キュー](screenshots/sftp_transfer_queue.png)
 
 <a name="キーチェーン"></a>
 ## キーチェーン
@@ -187,6 +204,10 @@ WebGL アクセラレーション対応の xterm.js ベースのターミナル�
 - 📤 ワンクリックで公開鍵をリモートホストにエクスポート
 
 ![キーマネージャー](screenshots/key-manager.png)
+
+**キー生成**
+
+![キー生成](screenshots/key_generator_ui.png)
 
 <a name="ポートフォワーディング"></a>
 ## ポートフォワーディング
@@ -362,6 +383,17 @@ npm run pack:linux   # Linux (AppImage, deb, rpm)
 5. Pull Request をオープン
 
 アーキテクチャの概要とコーディング規約については [agents.md](agents.md) を参照してください。
+
+---
+
+<a name="コントリビューター"></a>
+# コントリビューター
+
+貢献してくれたすべての人々に感謝します！
+
+<a href="https://github.com/binaricat/Netcatty/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=binaricat/Netcatty" alt="contributors" />
+</a>
 
 ---
 
