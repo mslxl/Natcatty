@@ -430,7 +430,7 @@ export function getSupportedLanguages(): { id: string; name: string }[] {
  * This includes the relative path for nested files in folders
  */
 export interface DropEntry {
-  file: File;
+  file: File | null;  // null for directory entries
   relativePath: string;  // Path relative to the root of the drop (e.g., "folder/subfolder/file.txt")
   isDirectory: boolean;
 }
@@ -503,7 +503,7 @@ async function processEntry(
     
     // Add a placeholder for the directory itself (to ensure it gets created)
     results.push({
-      file: new File([], entry.name),
+      file: null,  // Directories don't have file content
       relativePath: currentPath,
       isDirectory: true,
     });

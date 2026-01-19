@@ -1114,7 +1114,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       if (entry.isDirectory) {
         // Create directory
         await ensureDirectory(targetPath);
-      } else {
+      } else if (entry.file) {
         // Ensure parent directories exist
         const pathParts = entry.relativePath.split('/');
         if (pathParts.length > 1) {

@@ -634,9 +634,8 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     setIsDragOverPane(false);
     setDragOverEntry(null);
 
-    // Check if this is external file drop (from OS)
-    const hasFiles = e.dataTransfer.types.includes('Files');
-    if (hasFiles && e.dataTransfer.items.length > 0) {
+    // Check if this is external file/folder drop (from OS)
+    if (e.dataTransfer.items.length > 0) {
       // Handle external file/folder upload using the callback
       // Pass the entire DataTransfer to support folder uploads
       if (onUploadExternalFiles) {

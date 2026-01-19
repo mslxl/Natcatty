@@ -2793,10 +2793,9 @@ export const useSftpState = (
         
         try {
           if (entry.isDirectory) {
-            // Create directory
+            // Create directory (don't add to results - only files are reported)
             await ensureDirectory(targetPath, sftpId);
-            results.push({ fileName: entry.relativePath, success: true });
-          } else {
+          } else if (entry.file) {
             // Ensure parent directory exists for files in subdirectories
             const pathParts = entry.relativePath.split('/');
             if (pathParts.length > 1) {
@@ -2843,15 +2842,19 @@ export const useSftpState = (
               }
             }
             
+            // Only add file uploads to results (not directories)
             results.push({ fileName: entry.relativePath, success: true });
           }
         } catch (error) {
-          logger.error(`Failed to upload ${entry.relativePath}:`, error);
-          results.push({
-            fileName: entry.relativePath,
-            success: false,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          // Only log file upload errors (directory errors are expected for existing dirs)
+          if (!entry.isDirectory) {
+            logger.error(`Failed to upload ${entry.relativePath}:`, error);
+            results.push({
+              fileName: entry.relativePath,
+              success: false,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
       }
       
