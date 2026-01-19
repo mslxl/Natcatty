@@ -192,21 +192,21 @@ export function getFileExtension(fileName: string): string {
  */
 export function isTextFile(fileName: string): boolean {
   const ext = getFileExtension(fileName);
-  
+
   // Check known text extensions
   if (TEXT_EXTENSIONS.has(ext)) {
     return true;
   }
-  
+
   // Check common filenames that are text but have no extension
   const baseName = fileName.toLowerCase().split('/').pop() || '';
   const nameWithoutExt = baseName.replace(/\.[^.]+$/, '');
-  
+
   // Check exact filename matches
   if (TEXT_FILENAMES.has(baseName) || TEXT_FILENAMES.has(nameWithoutExt)) {
     return true;
   }
-  
+
   // Check dot-files that are typically text config files
   if (baseName.startsWith('.')) {
     const dotConfigPatterns = [
@@ -218,7 +218,7 @@ export function isTextFile(fileName: string): boolean {
       return true;
     }
   }
-  
+
   return false;
 }
 
@@ -233,42 +233,42 @@ export function isTextFile(fileName: string): boolean {
 export function isTextData(data: ArrayBuffer | Uint8Array, maxBytes: number = 512): boolean {
   const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
   const checkLength = Math.min(bytes.length, maxBytes);
-  
+
   if (checkLength === 0) return true; // Empty file is considered text
-  
+
   let controlChars = 0;
   let nullBytes = 0;
   let highBytes = 0;
   let totalBytes = 0;
-  
+
   for (let i = 0; i < checkLength; i++) {
     const byte = bytes[i];
     totalBytes++;
-    
+
     // Null bytes are strong indicators of binary files
     if (byte === 0) {
       nullBytes++;
       if (nullBytes > 0) return false; // Even one null byte suggests binary
     }
-    
+
     // Control characters (except common ones like \t, \n, \r)
     if (byte < 32 && byte !== 9 && byte !== 10 && byte !== 13) {
       controlChars++;
     }
-    
+
     // High-bit characters (non-ASCII) - some are OK for UTF-8
     if (byte > 127) {
       highBytes++;
     }
   }
-  
+
   // If more than 30% are control chars or more than 95% are high-bit chars, likely binary
   const controlRatio = controlChars / totalBytes;
   const highRatio = highBytes / totalBytes;
-  
+
   if (controlRatio > 0.3) return false;
   if (highRatio > 0.95) return false;
-  
+
   return true;
 }
 
@@ -279,12 +279,12 @@ export function isTextData(data: ArrayBuffer | Uint8Array, maxBytes: number = 51
 export function isTextFileEnhanced(fileName: string, data?: ArrayBuffer | Uint8Array): boolean {
   // First check by extension
   const extCheck = isTextFile(fileName);
-  
+
   // If we have data, verify it's actually text
   if (data && data.byteLength > 0) {
     return extCheck && isTextData(data);
   }
-  
+
   // Fall back to extension-only check
   return extCheck;
 }
@@ -419,7 +419,7 @@ export interface FileAssociation {
 export function getSupportedLanguages(): { id: string; name: string }[] {
   const languageIds = new Set(Object.values(EXTENSION_TO_LANGUAGE));
   languageIds.add('plaintext');
-  
+
   return Array.from(languageIds)
     .map(id => ({ id, name: getLanguageName(id) }))
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -444,7 +444,7 @@ function readDirectoryEntries(
 ): Promise<FileSystemEntry[]> {
   return new Promise((resolve, reject) => {
     const allEntries: FileSystemEntry[] = [];
-    
+
     const readBatch = () => {
       directoryReader.readEntries(
         (entries) => {
@@ -459,7 +459,7 @@ function readDirectoryEntries(
         (error) => reject(error)
       );
     };
-    
+
     readBatch();
   });
 }
@@ -484,7 +484,7 @@ async function processEntry(
   basePath: string = ""
 ): Promise<DropEntry[]> {
   const results: DropEntry[] = [];
-  
+
   if (entry.isFile) {
     const fileEntry = entry as FileSystemFileEntry;
     try {
@@ -500,20 +500,28 @@ async function processEntry(
   } else if (entry.isDirectory) {
     const dirEntry = entry as FileSystemDirectoryEntry;
     const currentPath = basePath ? `${basePath}/${entry.name}` : entry.name;
-    
+
     // Add a placeholder for the directory itself (to ensure it gets created)
     results.push({
       file: null,  // Directories don't have file content
       relativePath: currentPath,
       isDirectory: true,
     });
-    
+
     try {
       const reader = dirEntry.createReader();
       const entries = await readDirectoryEntries(reader);
-      
-      // Process all entries in the directory
-      for (const childEntry of entries) {
+
+      // Helper to yield to main thread - prevents UI freezing during large folder parsing
+      const yieldToMain = () => new Promise<void>(resolve => setTimeout(resolve, 0));
+
+      // Process all entries in the directory with periodic yielding
+      for (let i = 0; i < entries.length; i++) {
+        // Yield every 10 entries to keep UI responsive
+        if (i > 0 && i % 10 === 0) {
+          await yieldToMain();
+        }
+        const childEntry = entries[i];
         const childResults = await processEntry(childEntry, currentPath);
         results.push(...childResults);
       }
@@ -521,7 +529,7 @@ async function processEntry(
       console.warn(`Failed to read directory: ${entry.name}`, error);
     }
   }
-  
+
   return results;
 }
 
@@ -540,7 +548,7 @@ export async function extractDropEntries(
 ): Promise<DropEntry[]> {
   const items = dataTransfer.items;
   const results: DropEntry[] = [];
-  
+
   // Check if webkitGetAsEntry is supported (for folder access)
   if (items && items.length > 0 && typeof items[0].webkitGetAsEntry === 'function') {
     // Collect all entries first (getAsEntry must be called synchronously)
@@ -554,7 +562,7 @@ export async function extractDropEntries(
         }
       }
     }
-    
+
     // Now process entries asynchronously
     for (const entry of entries) {
       const entryResults = await processEntry(entry);
@@ -572,6 +580,6 @@ export async function extractDropEntries(
       });
     }
   }
-  
+
   return results;
 }

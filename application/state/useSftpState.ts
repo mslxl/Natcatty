@@ -2826,8 +2826,13 @@ export const useSftpState = (
 
       let fileIndex = 0;
 
+      // Helper to yield to main thread - prevents UI freezing during large uploads
+      const yieldToMain = () => new Promise<void>(resolve => setTimeout(resolve, 0));
+
       try {
         for (const entry of sortedEntries) {
+          // Yield to main thread periodically to keep UI responsive
+          await yieldToMain();
           // Check for cancellation before processing each entry
           if (cancelFolderUploadRef.current) {
             logger.info("[SFTP] Folder upload cancelled by user");
