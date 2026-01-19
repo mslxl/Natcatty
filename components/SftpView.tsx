@@ -634,21 +634,21 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     setIsDragOverPane(false);
     setDragOverEntry(null);
 
-    // Check if this is external file drop (from OS)
-    const droppedFiles = e.dataTransfer.files;
-    if (droppedFiles && droppedFiles.length > 0) {
-      // Handle external file upload using the callback
-      if (onUploadExternalFiles) {
-        await onUploadExternalFiles(droppedFiles);
+    // Check if this is an internal drag from another pane (draggedFiles is set by onDragStart)
+    if (draggedFiles && draggedFiles.length > 0) {
+      // Handle internal pane-to-pane transfer
+      if (draggedFiles[0]?.side !== side) {
+        onReceiveFromOtherPane(
+          draggedFiles.map((f) => ({ name: f.name, isDirectory: f.isDirectory })),
+        );
       }
       return;
     }
 
-    // Otherwise, handle internal drag from other pane
-    if (!draggedFiles || draggedFiles[0]?.side === side) return;
-    onReceiveFromOtherPane(
-      draggedFiles.map((f) => ({ name: f.name, isDirectory: f.isDirectory })),
-    );
+    // Otherwise, this is an external file/folder drop (from OS)
+    if (e.dataTransfer.items.length > 0 && onUploadExternalFiles) {
+      await onUploadExternalFiles(e.dataTransfer);
+    }
   };
 
   const handleFileDragStart = useCallback(
@@ -1927,24 +1927,32 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
     [handleOpenFileWithForSide],
   );
 
-  // Handle external file upload from OS drag-and-drop (shared logic)
+  // Handle external file/folder upload from OS drag-and-drop (shared logic)
   // Uses sftpRef.current internally, so dependencies are stable.
   // toast and logger are globally stable, t is the only real dependency.
   const handleUploadExternalFilesForSide = useCallback(
-    async (side: "left" | "right", files: FileList) => {
+    async (side: "left" | "right", dataTransfer: DataTransfer) => {
       try {
-        const results = await sftpRef.current.uploadExternalFiles(side, files);
+        const results = await sftpRef.current.uploadExternalFiles(side, dataTransfer);
+
+        // Check if upload was cancelled
+        if (sftpRef.current.folderUploadProgress.cancelled) {
+          toast.info(t('sftp.upload.cancelled'), "SFTP");
+          return;
+        }
+
         const failCount = results.filter(r => !r.success).length;
+        // Count only files, not directories for success message
+        const successCount = results.filter(r => r.success).length;
 
         if (failCount === 0) {
-          // All files uploaded successfully
-          const successCount = results.length;
+          // All items uploaded successfully
           const message = successCount === 1
             ? `${t('sftp.upload')}: ${results[0].fileName}`
             : `${t('sftp.uploadFiles')}: ${successCount}`;
           toast.success(message, "SFTP");
         } else {
-          // Some or all files failed
+          // Some or all items failed
           const failedFiles = results.filter(r => !r.success);
           failedFiles.forEach(failed => {
             const errorMsg = failed.error ? ` - ${failed.error}` : '';
@@ -1967,12 +1975,12 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
   );
 
   const handleUploadExternalFilesLeft = useCallback(
-    (files: FileList) => handleUploadExternalFilesForSide("left", files),
+    (dataTransfer: DataTransfer) => handleUploadExternalFilesForSide("left", dataTransfer),
     [handleUploadExternalFilesForSide],
   );
 
   const handleUploadExternalFilesRight = useCallback(
-    (files: FileList) => handleUploadExternalFilesForSide("right", files),
+    (dataTransfer: DataTransfer) => handleUploadExternalFilesForSide("right", dataTransfer),
     [handleUploadExternalFilesForSide],
   );
 
@@ -2381,14 +2389,15 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
           onSelectHost={handleHostSelectRight}
         />
 
-        {sftp.transfers.length > 0 && (
+        {/* Transfer status area - shows folder uploads and file transfers */}
+        {(sftp.transfers.length > 0 || sftp.folderUploadProgress.isUploading) && (
           <div className="border-t border-border/70 bg-secondary/80 backdrop-blur-sm shrink-0">
             <div className="flex items-center justify-between px-4 py-2 text-xs text-muted-foreground border-b border-border/40">
               <span className="font-medium">
                 Transfers
-                {sftp.activeTransfersCount > 0 && (
+                {(sftp.activeTransfersCount > 0 || sftp.folderUploadProgress.isUploading) && (
                   <span className="ml-2 text-primary">
-                    ({sftp.activeTransfersCount} active)
+                    ({sftp.activeTransfersCount + (sftp.folderUploadProgress.isUploading ? 1 : 0)} active)
                   </span>
                 )}
               </span>
@@ -2406,6 +2415,37 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
                 )}
             </div>
             <div className="max-h-40 overflow-auto">
+              {/* Folder upload progress - shown at top when active */}
+              {sftp.folderUploadProgress.isUploading && (
+                <div className="flex items-center gap-3 px-4 py-2 border-b border-border/30 bg-primary/5">
+                  <div className="flex-shrink-0">
+                    <Loader2 size={16} className="animate-spin text-primary" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-medium truncate">
+                        {t("sftp.upload.progress", {
+                          current: sftp.folderUploadProgress.currentIndex,
+                          total: sftp.folderUploadProgress.totalFiles,
+                        })}
+                      </span>
+                    </div>
+                    {sftp.folderUploadProgress.currentFile && (
+                      <div className="text-xs text-muted-foreground truncate mt-0.5">
+                        {sftp.folderUploadProgress.currentFile}
+                      </div>
+                    )}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs flex-shrink-0"
+                    onClick={() => sftp.cancelFolderUpload()}
+                  >
+                    {t("sftp.upload.cancel")}
+                  </Button>
+                </div>
+              )}
               {visibleTransfers.map((task) => (
                 <SftpTransferItem
                   key={task.id}
