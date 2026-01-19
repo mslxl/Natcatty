@@ -1023,6 +1023,18 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
           />
         </Card>
 
+        {/* Agent Forwarding */}
+        <Card className="p-3 space-y-2 bg-card border-border/80">
+          <ToggleRow
+            label={t("hostDetails.agentForwarding")}
+            enabled={!!form.agentForwarding}
+            onToggle={() => update("agentForwarding", !form.agentForwarding)}
+          />
+          <p className="text-xs text-muted-foreground">
+            {t("hostDetails.agentForwarding.desc")}
+          </p>
+        </Card>
+
         {/* Proxy via Hosts (Jump Hosts / ProxyJump) */}
         <Card className="p-3 space-y-2 bg-card border-border/80">
           <div className="flex items-center justify-between">

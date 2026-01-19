@@ -610,6 +610,8 @@ const en: Messages = {
   'hostDetails.keys.empty': 'No keys available',
   'hostDetails.certs.search': 'Search certificates...',
   'hostDetails.certs.empty': 'No certificates available',
+  'hostDetails.agentForwarding': 'Forward SSH Agent',
+  'hostDetails.agentForwarding.desc': 'Allow remote server to use your local SSH keys (e.g., for git operations)',
   'hostDetails.jumpHosts': 'Proxy via Hosts',
   'hostDetails.jumpHosts.hops': '{count} hop(s)',
   'hostDetails.jumpHosts.direct': 'Direct',

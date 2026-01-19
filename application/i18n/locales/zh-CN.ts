@@ -379,6 +379,8 @@ const zhCN: Messages = {
   'hostDetails.keys.empty': '暂无密钥',
   'hostDetails.certs.search': '搜索证书…',
   'hostDetails.certs.empty': '暂无证书',
+  'hostDetails.agentForwarding': '转发 SSH 密钥',
+  'hostDetails.agentForwarding.desc': '允许远程服务器使用本地 SSH 密钥（例如用于 git 操作）',
   'hostDetails.jumpHosts': '通过主机代理',
   'hostDetails.jumpHosts.hops': '{count} 跳',
   'hostDetails.jumpHosts.direct': '直连',
