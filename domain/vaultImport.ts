@@ -562,11 +562,16 @@ const importFromSshConfig = (text: string): VaultImportResult => {
   flush();
 
   const parsedHosts: Host[] = [];
+  // Use hostname+port as key instead of host.id to survive deduplication
   const hostProxyJumpMap = new Map<string, string>();
   let parsed = 0;
   let skipped = 0;
 
   const isWildcardPattern = (p: string) => /[*?]/.test(p) || p === "!" || p.startsWith("!");
+
+  // Helper to create a stable key for ProxyJump mapping
+  const makeHostKey = (hostname: string, port?: number) =>
+    `${hostname.toLowerCase()}:${port ?? 22}`;
 
   for (const block of blocks) {
     const patterns = block.patterns.filter((p) => p && !isWildcardPattern(p));
@@ -594,8 +599,10 @@ const importFromSshConfig = (text: string): VaultImportResult => {
 
       parsedHosts.push(host);
 
+      // Store ProxyJump using hostname key (survives deduplication)
       if (block.proxyJump && block.proxyJump.toLowerCase() !== "none") {
-        hostProxyJumpMap.set(host.id, block.proxyJump);
+        const hostKey = makeHostKey(hostname, block.port);
+        hostProxyJumpMap.set(hostKey, block.proxyJump);
       }
     }
   }
@@ -616,8 +623,14 @@ const importFromSshConfig = (text: string): VaultImportResult => {
     return null;
   };
 
-  for (const host of dedupedHosts) {
-    const proxyJumpValue = hostProxyJumpMap.get(host.id);
+  // Collect inline hosts separately to avoid modifying array during iteration
+  const inlineHosts: Host[] = [];
+
+  // Process ProxyJump for each host (iterate over a copy to avoid issues)
+  const hostsToProcess = [...dedupedHosts];
+  for (const host of hostsToProcess) {
+    const hostKey = makeHostKey(host.hostname, host.port);
+    const proxyJumpValue = hostProxyJumpMap.get(hostKey);
     if (!proxyJumpValue) continue;
 
     const jumpHosts = parseProxyJump(proxyJumpValue);
@@ -629,24 +642,46 @@ const importFromSshConfig = (text: string): VaultImportResult => {
     for (const jumpHost of jumpHosts) {
       const existingId = resolveJumpHostToId(jumpHost);
       if (existingId) {
-        resolvedIds.push(existingId);
+        // Avoid duplicate IDs in the chain
+        if (!resolvedIds.includes(existingId)) {
+          resolvedIds.push(existingId);
+        }
       } else {
-        const inlineHost = createHost({
-          label: jumpHost.hostname,
-          hostname: jumpHost.hostname,
-          username: jumpHost.username,
-          port: jumpHost.port,
-          protocol: "ssh",
-        });
-        dedupedHosts.push(inlineHost);
-        hostnameToId.set(inlineHost.hostname.toLowerCase(), inlineHost.id);
-        labelToId.set(inlineHost.label.toLowerCase(), inlineHost.id);
-        resolvedIds.push(inlineHost.id);
-        unresolvedJumps.push(jumpHost.hostname);
+        // Check if we already created an inline host for this
+        const inlineKey = jumpHost.hostname.toLowerCase();
+        let inlineId = hostnameToId.get(inlineKey);
+
+        if (!inlineId) {
+          const inlineHost = createHost({
+            label: jumpHost.hostname,
+            hostname: jumpHost.hostname,
+            username: jumpHost.username,
+            port: jumpHost.port,
+            protocol: "ssh",
+          });
+          inlineHosts.push(inlineHost);
+          hostnameToId.set(inlineHost.hostname.toLowerCase(), inlineHost.id);
+          labelToId.set(inlineHost.label.toLowerCase(), inlineHost.id);
+          inlineId = inlineHost.id;
+          unresolvedJumps.push(jumpHost.hostname);
+        }
+
+        if (!resolvedIds.includes(inlineId)) {
+          resolvedIds.push(inlineId);
+        }
       }
     }
 
     if (resolvedIds.length > 0) {
+      // Cycle detection: check if this host appears in its own chain
+      if (resolvedIds.includes(host.id)) {
+        issues.push({
+          level: "warning",
+          message: `ssh_config: detected circular reference in ProxyJump for "${host.label}", skipping chain.`,
+        });
+        continue;
+      }
+
       const hostChain: HostChainConfig = { hostIds: resolvedIds };
       host.hostChain = hostChain;
     }
@@ -659,11 +694,41 @@ const importFromSshConfig = (text: string): VaultImportResult => {
     }
   }
 
+  // Add inline hosts to the final result
+  const allHosts = [...dedupedHosts, ...inlineHosts];
+
+  // Deep cycle detection: check for indirect cycles (A -> B -> C -> A)
+  const detectCycle = (hostId: string, visited: Set<string>): boolean => {
+    if (visited.has(hostId)) return true;
+    visited.add(hostId);
+    const host = allHosts.find(h => h.id === hostId);
+    if (host?.hostChain?.hostIds) {
+      for (const chainId of host.hostChain.hostIds) {
+        if (detectCycle(chainId, visited)) return true;
+      }
+    }
+    visited.delete(hostId);
+    return false;
+  };
+
+  // Remove chains that form cycles
+  for (const host of allHosts) {
+    if (host.hostChain?.hostIds && host.hostChain.hostIds.length > 0) {
+      if (detectCycle(host.id, new Set())) {
+        issues.push({
+          level: "warning",
+          message: `ssh_config: detected circular dependency in jump chain for "${host.label}", removing chain.`,
+        });
+        delete host.hostChain;
+      }
+    }
+  }
+
   return {
-    hosts: dedupedHosts,
+    hosts: allHosts,
     groups: [],
     issues,
-    stats: { parsed, imported: dedupedHosts.length, skipped, duplicates },
+    stats: { parsed, imported: allHosts.length, skipped, duplicates },
   };
 };
 
