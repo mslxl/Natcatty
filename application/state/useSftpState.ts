@@ -1697,8 +1697,8 @@ export const useSftpState = (
       const pane = getActivePane(side);
       if (pane?.connection) {
         await navigateTo(side, pane.connection.currentPath, { force: true });
-      } else if (pane?.error) {
-        // Connection was lost - try to reconnect using saved host info
+      } else if (!pane?.connection && pane?.error) {
+        // Connection was lost or failed - try to reconnect using saved host info
         const lastHost = lastConnectedHostRef.current[side];
         if (lastHost && !reconnectingRef.current[side]) {
           reconnectingRef.current[side] = true;
