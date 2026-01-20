@@ -543,7 +543,7 @@ export const useSftpState = (
         updateActiveTab(side, (prev) => ({
           ...prev,
           reconnecting: true,
-          error: "Connection lost. Reconnecting...",
+          error: "sftp.error.connectionLostReconnecting",
         }));
       } else {
         // No host info or empty files, just clear the connection
@@ -553,7 +553,7 @@ export const useSftpState = (
           files: [],
           loading: false,
           reconnecting: false,
-          error: "SFTP session lost. Please reconnect.",
+          error: "sftp.error.sessionLost",
           selectedFiles: new Set(),
           filter: "",
         }));
@@ -1697,9 +1697,26 @@ export const useSftpState = (
       const pane = getActivePane(side);
       if (pane?.connection) {
         await navigateTo(side, pane.connection.currentPath, { force: true });
+      } else if (!pane?.connection && pane?.error) {
+        // Connection was lost or failed - try to reconnect using saved host info
+        const lastHost = lastConnectedHostRef.current[side];
+        if (lastHost && !reconnectingRef.current[side]) {
+          reconnectingRef.current[side] = true;
+          updateActiveTab(side, (prev) => ({
+            ...prev,
+            reconnecting: true,
+            error: "sftp.reconnecting.title",
+          }));
+        } else if (!lastHost) {
+          // No host info available - prompt user to manually reconnect
+          updateActiveTab(side, (prev) => ({
+            ...prev,
+            error: "sftp.error.connectionLostManual",
+          }));
+        }
       }
     },
-    [getActivePane, navigateTo],
+    [getActivePane, navigateTo, updateActiveTab],
   );
 
   // Navigate up
@@ -2432,7 +2449,7 @@ export const useSftpState = (
               : t,
           ),
         );
-        await processTransfer(task, sourcePane, targetPane);
+        await processTransfer(task, sourcePane, targetPane, targetSide);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- processTransfer is defined inline, not a dependency
@@ -2521,7 +2538,7 @@ export const useSftpState = (
       if (sourcePane?.connection && targetPane?.connection) {
         // Small delay to ensure state is updated
         setTimeout(async () => {
-          await processTransfer(updatedTask, sourcePane, targetPane);
+          await processTransfer(updatedTask, sourcePane, targetPane, targetSide);
         }, 100);
       }
     },

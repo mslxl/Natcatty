@@ -1294,7 +1294,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
         ) : pane.error && !pane.reconnecting ? (
           <div className="flex flex-col items-center justify-center h-full gap-2 text-destructive">
             <AlertCircle size={24} />
-            <span className="text-sm">{pane.error}</span>
+            <span className="text-sm">{t(pane.error)}</span>
             <Button variant="outline" size="sm" onClick={onRefresh}>
               {t("sftp.retry")}
             </Button>
