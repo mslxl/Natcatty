@@ -71,6 +71,8 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
         readyTimeout: 20000,
         keepaliveInterval: 10000,
         keepaliveCountMax: 3,
+        // Enable keyboard-interactive authentication (required for 2FA/MFA)
+        tryKeyboard: true,
         algorithms: {
           cipher: ['aes128-gcm@openssh.com', 'aes256-gcm@openssh.com', 'aes128-ctr', 'aes256-ctr'],
           kex: ['curve25519-sha256', 'curve25519-sha256@libssh.org', 'ecdh-sha2-nistp256', 'ecdh-sha2-nistp384', 'diffie-hellman-group14-sha256'],
@@ -223,6 +225,9 @@ async function openSftp(event, options) {
     host: options.hostname,
     port: options.port || 22,
     username: options.username || "root",
+    // Enable keyboard-interactive authentication (required for 2FA/MFA)
+    tryKeyboard: true,
+    readyTimeout: 120000, // 2 minutes for 2FA input
   };
 
   // Use the tunneled socket if we have one

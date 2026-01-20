@@ -89,6 +89,8 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         // If 0 or not provided, use 10000ms as default
         keepaliveInterval: options.keepaliveInterval && options.keepaliveInterval > 0 ? options.keepaliveInterval * 1000 : 10000,
         keepaliveCountMax: 3,
+        // Enable keyboard-interactive authentication (required for 2FA/MFA)
+        tryKeyboard: true,
         algorithms: {
           // Prioritize fastest ciphers (GCM modes are hardware-accelerated)
           cipher: ['aes128-gcm@openssh.com', 'aes256-gcm@openssh.com', 'aes128-ctr', 'aes256-ctr'],
@@ -247,6 +249,8 @@ async function startSSHSession(event, options) {
       // If 0 or not provided, use 10000ms as default
       keepaliveInterval: options.keepaliveInterval && options.keepaliveInterval > 0 ? options.keepaliveInterval * 1000 : 10000,
       keepaliveCountMax: 3,
+      // Enable keyboard-interactive authentication (required for 2FA/MFA)
+      tryKeyboard: true,
       algorithms: {
         // Prioritize fastest ciphers (GCM modes are hardware-accelerated)
         cipher: ['aes128-gcm@openssh.com', 'aes256-gcm@openssh.com', 'aes128-ctr', 'aes256-ctr'],
