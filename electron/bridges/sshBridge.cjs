@@ -22,6 +22,11 @@ const DEFAULT_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
  * @returns {boolean} - True if the key is encrypted
  */
 function isKeyEncrypted(keyContent) {
+  // Check for PKCS#8 encrypted format (-----BEGIN ENCRYPTED PRIVATE KEY-----)
+  if (keyContent.includes("-----BEGIN ENCRYPTED PRIVATE KEY-----")) {
+    return true;
+  }
+
   // Check for legacy PEM format encryption (e.g., RSA PRIVATE KEY with encryption)
   if (keyContent.includes("Proc-Type:") && keyContent.includes("ENCRYPTED")) {
     return true;
