@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
-import type { RemoteFile } from "../../types";
+import type { RemoteFile, SftpFilenameEncoding } from "../../types";
 
 export const useSftpBackend = () => {
   const openSftp = useCallback(async (options: NetcattySSHOptions) => {
@@ -15,34 +15,34 @@ export const useSftpBackend = () => {
     return bridge.closeSftp(sftpId);
   }, []);
 
-  const listSftp = useCallback(async (sftpId: string, path: string) => {
+  const listSftp = useCallback(async (sftpId: string, path: string, encoding?: SftpFilenameEncoding) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.listSftp) throw new Error("SFTP bridge unavailable");
-    return bridge.listSftp(sftpId, path);
+    return bridge.listSftp(sftpId, path, encoding);
   }, []);
 
-  const readSftp = useCallback(async (sftpId: string, path: string) => {
+  const readSftp = useCallback(async (sftpId: string, path: string, encoding?: SftpFilenameEncoding) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.readSftp) throw new Error("SFTP bridge unavailable");
-    return bridge.readSftp(sftpId, path);
+    return bridge.readSftp(sftpId, path, encoding);
   }, []);
 
-  const readSftpBinary = useCallback(async (sftpId: string, path: string) => {
+  const readSftpBinary = useCallback(async (sftpId: string, path: string, encoding?: SftpFilenameEncoding) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.readSftpBinary) throw new Error("readSftpBinary unavailable");
-    return bridge.readSftpBinary(sftpId, path);
+    return bridge.readSftpBinary(sftpId, path, encoding);
   }, []);
 
-  const writeSftp = useCallback(async (sftpId: string, path: string, content: string) => {
+  const writeSftp = useCallback(async (sftpId: string, path: string, content: string, encoding?: SftpFilenameEncoding) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.writeSftp) throw new Error("SFTP bridge unavailable");
-    return bridge.writeSftp(sftpId, path, content);
+    return bridge.writeSftp(sftpId, path, content, encoding);
   }, []);
 
-  const writeSftpBinary = useCallback(async (sftpId: string, path: string, content: ArrayBuffer) => {
+  const writeSftpBinary = useCallback(async (sftpId: string, path: string, content: ArrayBuffer, encoding?: SftpFilenameEncoding) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.writeSftpBinary) throw new Error("writeSftpBinary unavailable");
-    return bridge.writeSftpBinary(sftpId, path, content);
+    return bridge.writeSftpBinary(sftpId, path, content, encoding);
   }, []);
 
   const writeSftpBinaryWithProgress = useCallback(
@@ -51,6 +51,7 @@ export const useSftpBackend = () => {
       path: string,
       content: ArrayBuffer,
       transferId: string,
+      encoding?: SftpFilenameEncoding,
       onProgress?: (transferred: number, total: number, speed: number) => void,
       onComplete?: () => void,
       onError?: (error: string) => void,
@@ -62,6 +63,7 @@ export const useSftpBackend = () => {
         path,
         content,
         transferId,
+        encoding,
         onProgress,
         onComplete,
         onError,
@@ -70,34 +72,34 @@ export const useSftpBackend = () => {
     [],
   );
 
-  const mkdirSftp = useCallback(async (sftpId: string, path: string) => {
+  const mkdirSftp = useCallback(async (sftpId: string, path: string, encoding?: SftpFilenameEncoding) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.mkdirSftp) throw new Error("mkdirSftp unavailable");
-    return bridge.mkdirSftp(sftpId, path);
+    return bridge.mkdirSftp(sftpId, path, encoding);
   }, []);
 
-  const deleteSftp = useCallback(async (sftpId: string, path: string) => {
+  const deleteSftp = useCallback(async (sftpId: string, path: string, encoding?: SftpFilenameEncoding) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.deleteSftp) throw new Error("deleteSftp unavailable");
-    return bridge.deleteSftp(sftpId, path);
+    return bridge.deleteSftp(sftpId, path, encoding);
   }, []);
 
-  const renameSftp = useCallback(async (sftpId: string, oldPath: string, newPath: string) => {
+  const renameSftp = useCallback(async (sftpId: string, oldPath: string, newPath: string, encoding?: SftpFilenameEncoding) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.renameSftp) throw new Error("renameSftp unavailable");
-    return bridge.renameSftp(sftpId, oldPath, newPath);
+    return bridge.renameSftp(sftpId, oldPath, newPath, encoding);
   }, []);
 
-  const statSftp = useCallback(async (sftpId: string, path: string) => {
+  const statSftp = useCallback(async (sftpId: string, path: string, encoding?: SftpFilenameEncoding) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.statSftp) throw new Error("statSftp unavailable");
-    return bridge.statSftp(sftpId, path);
+    return bridge.statSftp(sftpId, path, encoding);
   }, []);
 
-  const chmodSftp = useCallback(async (sftpId: string, path: string, mode: string) => {
+  const chmodSftp = useCallback(async (sftpId: string, path: string, mode: string, encoding?: SftpFilenameEncoding) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.chmodSftp) throw new Error("chmodSftp unavailable");
-    return bridge.chmodSftp(sftpId, path, mode);
+    return bridge.chmodSftp(sftpId, path, mode, encoding);
   }, []);
 
   const listLocalDir = useCallback(async (path: string): Promise<RemoteFile[]> => {
@@ -185,7 +187,7 @@ export const useSftpBackend = () => {
     remotePath: string,
     fileName: string,
     appPath: string,
-    options?: { enableWatch?: boolean }
+    options?: { enableWatch?: boolean; encoding?: SftpFilenameEncoding }
   ): Promise<{ localTempPath: string; watchId?: string }> => {
     const bridge = netcattyBridge.get();
     if (!bridge?.downloadSftpToTemp || !bridge?.openWithApplication) {
@@ -194,7 +196,7 @@ export const useSftpBackend = () => {
     
     // Download the file to temp
     console.log("[SFTPBackend] Downloading file to temp", { sftpId, remotePath, fileName });
-    const tempPath = await bridge.downloadSftpToTemp(sftpId, remotePath, fileName);
+    const tempPath = await bridge.downloadSftpToTemp(sftpId, remotePath, fileName, options?.encoding);
     console.log("[SFTPBackend] File downloaded to temp", { tempPath });
     
     // Register temp file for cleanup when SFTP session closes (regardless of auto-sync setting)
@@ -217,7 +219,7 @@ export const useSftpBackend = () => {
     if (options?.enableWatch && bridge.startFileWatch) {
       try {
         console.log("[SFTPBackend] Starting file watch", { tempPath, remotePath, sftpId });
-        const result = await bridge.startFileWatch(tempPath, remotePath, sftpId);
+        const result = await bridge.startFileWatch(tempPath, remotePath, sftpId, options?.encoding);
         watchId = result.watchId;
         console.log("[SFTPBackend] File watch started successfully", { watchId, tempPath, remotePath });
       } catch (err) {
@@ -262,4 +264,3 @@ export const useSftpBackend = () => {
     downloadSftpToTempAndOpen,
   };
 };
-

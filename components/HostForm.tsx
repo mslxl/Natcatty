@@ -280,6 +280,29 @@ const HostForm: React.FC<HostFormProps> = ({
                 }
               />
             </div>
+            <div className="space-y-1">
+              <Label htmlFor="sftp-encoding">
+                {t("hostDetails.sftp.encoding")}
+              </Label>
+              <Select
+                value={formData.sftpEncoding || "auto"}
+                onValueChange={(val) =>
+                  setFormData({ ...formData, sftpEncoding: val as Host["sftpEncoding"] })
+                }
+              >
+                <SelectTrigger id="sftp-encoding">
+                  <SelectValue placeholder={t("sftp.encoding.label")} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">{t("sftp.encoding.auto")}</SelectItem>
+                  <SelectItem value="utf-8">{t("sftp.encoding.utf8")}</SelectItem>
+                  <SelectItem value="gb18030">{t("sftp.encoding.gb18030")}</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {t("hostDetails.sftp.encoding.desc")}
+              </p>
+            </div>
 
             <Label>{t("hostForm.auth.method")}</Label>
             <div className="grid grid-cols-2 gap-4">

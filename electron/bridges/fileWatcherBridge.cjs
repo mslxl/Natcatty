@@ -9,6 +9,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { encodePathForSession } = require("./sftpBridge.cjs");
 
 // Map of watchId -> { watcher, localPath, remotePath, sftpId, lastModified, lastSize }
 const activeWatchers = new Map();
@@ -78,7 +79,7 @@ function showSystemNotification(title, body) {
  * Start watching a local file for changes
  * Returns a watchId that can be used to stop watching
  */
-async function startWatching(event, { localPath, remotePath, sftpId }) {
+async function startWatching(event, { localPath, remotePath, sftpId, encoding }) {
   const watchId = `watch-${crypto.randomUUID()}`;
   
   console.log(`[FileWatcher] Starting watch: ${localPath} -> ${remotePath}`);
@@ -141,6 +142,7 @@ async function startWatching(event, { localPath, remotePath, sftpId }) {
     localPath,
     remotePath,
     sftpId,
+    encoding,
     lastModified,
     lastSize,
     webContents,
@@ -158,7 +160,7 @@ async function handleFileChange(watchId, webContents) {
   const watchInfo = activeWatchers.get(watchId);
   if (!watchInfo) return;
   
-  const { localPath, remotePath, sftpId, lastModified: previousModified, lastSize: previousSize } = watchInfo;
+  const { localPath, remotePath, sftpId, encoding, lastModified: previousModified, lastSize: previousSize } = watchInfo;
   
   // Extract file name once for notifications and logging
   const fileName = path.basename(remotePath);
@@ -195,7 +197,8 @@ async function handleFileChange(watchId, webContents) {
     console.log(`[FileWatcher] Syncing ${content.length} bytes to ${remotePath}`);
     
     // Upload to remote
-    await client.put(content, remotePath);
+    const encodedPath = encodePathForSession(sftpId, remotePath, encoding);
+    await client.put(content, encodedPath);
     
     console.log(`[FileWatcher] Sync complete: ${remotePath}`);
     

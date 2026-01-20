@@ -313,38 +313,41 @@ const api = {
     const result = await ipcRenderer.invoke("netcatty:sftp:open", options);
     return result.sftpId;
   },
-  listSftp: async (sftpId, path) => {
-    return ipcRenderer.invoke("netcatty:sftp:list", { sftpId, path });
+  listSftp: async (sftpId, path, encoding) => {
+    return ipcRenderer.invoke("netcatty:sftp:list", { sftpId, path, encoding });
   },
-  readSftp: async (sftpId, path) => {
-    return ipcRenderer.invoke("netcatty:sftp:read", { sftpId, path });
+  readSftp: async (sftpId, path, encoding) => {
+    return ipcRenderer.invoke("netcatty:sftp:read", { sftpId, path, encoding });
   },
-  readSftpBinary: async (sftpId, path) => {
-    return ipcRenderer.invoke("netcatty:sftp:readBinary", { sftpId, path });
+  readSftpBinary: async (sftpId, path, encoding) => {
+    return ipcRenderer.invoke("netcatty:sftp:readBinary", { sftpId, path, encoding });
   },
-  writeSftp: async (sftpId, path, content) => {
-    return ipcRenderer.invoke("netcatty:sftp:write", { sftpId, path, content });
+  writeSftp: async (sftpId, path, content, encoding) => {
+    return ipcRenderer.invoke("netcatty:sftp:write", { sftpId, path, content, encoding });
+  },
+  writeSftpBinary: async (sftpId, path, content, encoding) => {
+    return ipcRenderer.invoke("netcatty:sftp:writeBinary", { sftpId, path, content, encoding });
   },
   closeSftp: async (sftpId) => {
     return ipcRenderer.invoke("netcatty:sftp:close", { sftpId });
   },
-  mkdirSftp: async (sftpId, path) => {
-    return ipcRenderer.invoke("netcatty:sftp:mkdir", { sftpId, path });
+  mkdirSftp: async (sftpId, path, encoding) => {
+    return ipcRenderer.invoke("netcatty:sftp:mkdir", { sftpId, path, encoding });
   },
-  deleteSftp: async (sftpId, path) => {
-    return ipcRenderer.invoke("netcatty:sftp:delete", { sftpId, path });
+  deleteSftp: async (sftpId, path, encoding) => {
+    return ipcRenderer.invoke("netcatty:sftp:delete", { sftpId, path, encoding });
   },
-  renameSftp: async (sftpId, oldPath, newPath) => {
-    return ipcRenderer.invoke("netcatty:sftp:rename", { sftpId, oldPath, newPath });
+  renameSftp: async (sftpId, oldPath, newPath, encoding) => {
+    return ipcRenderer.invoke("netcatty:sftp:rename", { sftpId, oldPath, newPath, encoding });
   },
-  statSftp: async (sftpId, path) => {
-    return ipcRenderer.invoke("netcatty:sftp:stat", { sftpId, path });
+  statSftp: async (sftpId, path, encoding) => {
+    return ipcRenderer.invoke("netcatty:sftp:stat", { sftpId, path, encoding });
   },
-  chmodSftp: async (sftpId, path, mode) => {
-    return ipcRenderer.invoke("netcatty:sftp:chmod", { sftpId, path, mode });
+  chmodSftp: async (sftpId, path, mode, encoding) => {
+    return ipcRenderer.invoke("netcatty:sftp:chmod", { sftpId, path, mode, encoding });
   },
   // Write binary with real-time progress callback
-  writeSftpBinaryWithProgress: async (sftpId, path, content, transferId, onProgress, onComplete, onError) => {
+  writeSftpBinaryWithProgress: async (sftpId, path, content, transferId, encoding, onProgress, onComplete, onError) => {
     // Register callbacks
     if (onProgress) uploadProgressListeners.set(transferId, onProgress);
     if (onComplete) uploadCompleteListeners.set(transferId, onComplete);
@@ -354,7 +357,8 @@ const api = {
       sftpId, 
       path, 
       content, 
-      transferId 
+      transferId,
+      encoding,
     });
   },
   // Local filesystem operations
@@ -561,12 +565,12 @@ const api = {
     ipcRenderer.invoke("netcatty:selectApplication"),
   openWithApplication: (filePath, appPath) =>
     ipcRenderer.invoke("netcatty:openWithApplication", { filePath, appPath }),
-  downloadSftpToTemp: (sftpId, remotePath, fileName) =>
-    ipcRenderer.invoke("netcatty:sftp:downloadToTemp", { sftpId, remotePath, fileName }),
+  downloadSftpToTemp: (sftpId, remotePath, fileName, encoding) =>
+    ipcRenderer.invoke("netcatty:sftp:downloadToTemp", { sftpId, remotePath, fileName, encoding }),
   
   // File watcher for auto-sync feature
-  startFileWatch: (localPath, remotePath, sftpId) =>
-    ipcRenderer.invoke("netcatty:filewatch:start", { localPath, remotePath, sftpId }),
+  startFileWatch: (localPath, remotePath, sftpId, encoding) =>
+    ipcRenderer.invoke("netcatty:filewatch:start", { localPath, remotePath, sftpId, encoding }),
   stopFileWatch: (watchId, cleanupTempFile = false) =>
     ipcRenderer.invoke("netcatty:filewatch:stop", { watchId, cleanupTempFile }),
   listFileWatches: () =>

@@ -32,7 +32,7 @@ import { logger } from "../lib/logger";
 import { isKnownBinaryFile, getFileExtension, FileOpenerType, SystemAppInfo } from "../lib/sftpFileUtils";
 import { useRenderTracker } from "../lib/useRenderTracker";
 import { cn } from "../lib/utils";
-import { Host, Identity, SftpFileEntry, SSHKey } from "../types";
+import { Host, Identity, SftpFileEntry, SftpFilenameEncoding, SSHKey } from "../types";
 import { useSftpFileAssociations } from "../application/state/useSftpFileAssociations";
 import FileOpenerDialog from "./FileOpenerDialog";
 import TextEditorModal from "./TextEditorModal";
@@ -55,6 +55,13 @@ import {
 } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 
 // Import extracted components
 import {
@@ -174,6 +181,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     onNavigateTo,
     onNavigateUp,
     onRefresh,
+    onSetFilenameEncoding,
     onOpenEntry,
     onToggleSelection,
     onRangeSelect,
@@ -1222,7 +1230,27 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
           </div>
         )}
 
-        <div className="ml-auto flex items-center gap-0.5">
+        <div className="ml-auto flex items-center gap-1">
+          {pane.connection && !pane.connection.isLocal && (
+            <Select
+              value={pane.filenameEncoding || "auto"}
+              onValueChange={(value) =>
+                onSetFilenameEncoding(value as SftpFilenameEncoding)
+              }
+            >
+              <SelectTrigger
+                className="h-6 w-[120px] text-[10px]"
+                title={t("sftp.encoding.label")}
+              >
+                <SelectValue placeholder={t("sftp.encoding.label")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">{t("sftp.encoding.auto")}</SelectItem>
+                <SelectItem value="utf-8">{t("sftp.encoding.utf8")}</SelectItem>
+                <SelectItem value="gb18030">{t("sftp.encoding.gb18030")}</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
           <Button
             variant="ghost"
             size="icon"
@@ -1899,6 +1927,16 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
     () => sftpRef.current.refresh("right"),
     [],
   );
+  const handleSetFilenameEncodingLeft = useCallback(
+    (encoding: SftpFilenameEncoding) =>
+      sftpRef.current.setFilenameEncoding("left", encoding),
+    [],
+  );
+  const handleSetFilenameEncodingRight = useCallback(
+    (encoding: SftpFilenameEncoding) =>
+      sftpRef.current.setFilenameEncoding("right", encoding),
+    [],
+  );
   const handleToggleSelectionLeft = useCallback(
     (name: string, multi: boolean) => sftpRef.current.toggleSelection("left", name, multi),
     [],
@@ -2317,6 +2355,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       onNavigateTo: handleNavigateToLeft,
       onNavigateUp: handleNavigateUpLeft,
       onRefresh: handleRefreshLeft,
+      onSetFilenameEncoding: handleSetFilenameEncodingLeft,
       onOpenEntry: handleOpenEntryLeft,
       onToggleSelection: handleToggleSelectionLeft,
       onRangeSelect: handleRangeSelectLeft,
@@ -2345,6 +2384,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       onNavigateTo: handleNavigateToRight,
       onNavigateUp: handleNavigateUpRight,
       onRefresh: handleRefreshRight,
+      onSetFilenameEncoding: handleSetFilenameEncodingRight,
       onOpenEntry: handleOpenEntryRight,
       onToggleSelection: handleToggleSelectionRight,
       onRangeSelect: handleRangeSelectRight,

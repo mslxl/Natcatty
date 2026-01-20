@@ -1,0 +1,1009 @@
+diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/protocol/SFTP.js
+index 9f33c02..c311d3a 100644
+--- a/node_modules/ssh2/lib/protocol/SFTP.js
++++ b/node_modules/ssh2/lib/protocol/SFTP.js
+@@ -117,6 +117,18 @@ const OPENSSH_MAX_PKT_LEN = 256 * 1024;
+ 
+ const bufferParser = makeBufferParser();
+ 
++function getStringLen(value) {
++  return Buffer.isBuffer(value) ? value.length : Buffer.byteLength(value);
++}
++
++function writeString(buf, offset, value, len) {
++  if (Buffer.isBuffer(value)) {
++    buf.set(value, offset);
++    return len ?? value.length;
++  }
++  return buf.utf8Write(value, offset, len ?? Buffer.byteLength(value));
++}
++
+ const fakeStderr = {
+   readable: false,
+   writable: false,
+@@ -339,7 +351,7 @@ class SFTP extends EventEmitter {
+       uint32        pflags
+       ATTRS         attrs
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen + 4 + 4 + attrsLen);
+ 
+@@ -349,7 +361,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+     writeUInt32BE(buf, flags, p += pathLen);
+     writeUInt32BE(buf, attrsFlags, p += 4);
+     if (attrsLen) {
+@@ -734,7 +746,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     filename
+     */
+-    const fnameLen = Buffer.byteLength(filename);
++    const fnameLen = getStringLen(filename);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + fnameLen);
+ 
+@@ -744,7 +756,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, fnameLen, p);
+-    buf.utf8Write(filename, p += 4, fnameLen);
++    writeString(buf, p += 4, filename, fnameLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -762,8 +774,8 @@ class SFTP extends EventEmitter {
+       string     oldpath
+       string     newpath
+     */
+-    const oldLen = Buffer.byteLength(oldPath);
+-    const newLen = Buffer.byteLength(newPath);
++    const oldLen = getStringLen(oldPath);
++    const newLen = getStringLen(newPath);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + oldLen + 4 + newLen);
+ 
+@@ -773,9 +785,9 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, oldLen, p);
+-    buf.utf8Write(oldPath, p += 4, oldLen);
++    writeString(buf, p += 4, oldPath, oldLen);
+     writeUInt32BE(buf, newLen, p += oldLen);
+-    buf.utf8Write(newPath, p += 4, newLen);
++    writeString(buf, p += 4, newPath, newLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -806,7 +818,7 @@ class SFTP extends EventEmitter {
+       string     path
+       ATTRS      attrs
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen + 4 + attrsLen);
+ 
+@@ -816,7 +828,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+     writeUInt32BE(buf, flags, p += pathLen);
+     if (attrsLen) {
+       p += 4;
+@@ -844,7 +856,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
+ 
+@@ -854,7 +866,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -987,7 +999,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
+ 
+@@ -997,7 +1009,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -1014,7 +1026,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
+ 
+@@ -1024,7 +1036,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -1041,7 +1053,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
+ 
+@@ -1051,7 +1063,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -1080,7 +1092,7 @@ class SFTP extends EventEmitter {
+       string     path
+       ATTRS      attrs
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen + 4 + attrsLen);
+ 
+@@ -1090,7 +1102,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+     writeUInt32BE(buf, flags, p += pathLen);
+     if (attrsLen) {
+       p += 4;
+@@ -1205,7 +1217,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
+ 
+@@ -1215,7 +1227,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = {
+       cb: (err, names) => {
+@@ -1243,8 +1255,8 @@ class SFTP extends EventEmitter {
+       string     linkpath
+       string     targetpath
+     */
+-    const linkLen = Buffer.byteLength(linkPath);
+-    const targetLen = Buffer.byteLength(targetPath);
++    const linkLen = getStringLen(linkPath);
++    const targetLen = getStringLen(targetPath);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + linkLen + 4 + targetLen);
+ 
+@@ -1256,14 +1268,14 @@ class SFTP extends EventEmitter {
+     if (this._isOpenSSH) {
+       // OpenSSH has linkpath and targetpath positions switched
+       writeUInt32BE(buf, targetLen, p);
+-      buf.utf8Write(targetPath, p += 4, targetLen);
++      writeString(buf, p += 4, targetPath, targetLen);
+       writeUInt32BE(buf, linkLen, p += targetLen);
+-      buf.utf8Write(linkPath, p += 4, linkLen);
++      writeString(buf, p += 4, linkPath, linkLen);
+     } else {
+       writeUInt32BE(buf, linkLen, p);
+-      buf.utf8Write(linkPath, p += 4, linkLen);
++      writeString(buf, p += 4, linkPath, linkLen);
+       writeUInt32BE(buf, targetLen, p += linkLen);
+-      buf.utf8Write(targetPath, p += 4, targetLen);
++      writeString(buf, p += 4, targetPath, targetLen);
+     }
+ 
+     this._requests[reqid] = { cb };
+@@ -1281,7 +1293,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
+ 
+@@ -1291,7 +1303,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = {
+       cb: (err, names) => {
+@@ -1325,8 +1337,8 @@ class SFTP extends EventEmitter {
+       string    oldpath
+       string    newpath
+     */
+-    const oldLen = Buffer.byteLength(oldPath);
+-    const newLen = Buffer.byteLength(newPath);
++    const oldLen = getStringLen(oldPath);
++    const newLen = getStringLen(newPath);
+     let p = 9;
+     const buf =
+       Buffer.allocUnsafe(4 + 1 + 4 + 4 + 24 + 4 + oldLen + 4 + newLen);
+@@ -1337,11 +1349,11 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 24, p);
+-    buf.utf8Write('posix-rename@openssh.com', p += 4, 24);
++    writeString(buf, p += 4, 'posix-rename@openssh.com', 24);
+     writeUInt32BE(buf, oldLen, p += 24);
+-    buf.utf8Write(oldPath, p += 4, oldLen);
++    writeString(buf, p += 4, oldPath, oldLen);
+     writeUInt32BE(buf, newLen, p += oldLen);
+-    buf.utf8Write(newPath, p += 4, newLen);
++    writeString(buf, p += 4, newPath, newLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -1364,7 +1376,7 @@ class SFTP extends EventEmitter {
+       string    "statvfs@openssh.com"
+       string    path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + 19 + 4 + pathLen);
+ 
+@@ -1374,9 +1386,9 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 19, p);
+-    buf.utf8Write('statvfs@openssh.com', p += 4, 19);
++    writeString(buf, p += 4, 'statvfs@openssh.com', 19);
+     writeUInt32BE(buf, pathLen, p += 19);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = { extended: 'statvfs@openssh.com', cb };
+ 
+@@ -1411,7 +1423,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 20, p);
+-    buf.utf8Write('fstatvfs@openssh.com', p += 4, 20);
++    writeString(buf, p += 4, 'fstatvfs@openssh.com', 20);
+     writeUInt32BE(buf, handleLen, p += 20);
+     buf.set(handle, p += 4);
+ 
+@@ -1437,8 +1449,8 @@ class SFTP extends EventEmitter {
+       string    oldpath
+       string    newpath
+     */
+-    const oldLen = Buffer.byteLength(oldPath);
+-    const newLen = Buffer.byteLength(newPath);
++    const oldLen = getStringLen(oldPath);
++    const newLen = getStringLen(newPath);
+     let p = 9;
+     const buf =
+       Buffer.allocUnsafe(4 + 1 + 4 + 4 + 20 + 4 + oldLen + 4 + newLen);
+@@ -1449,11 +1461,11 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 20, p);
+-    buf.utf8Write('hardlink@openssh.com', p += 4, 20);
++    writeString(buf, p += 4, 'hardlink@openssh.com', 20);
+     writeUInt32BE(buf, oldLen, p += 20);
+-    buf.utf8Write(oldPath, p += 4, oldLen);
++    writeString(buf, p += 4, oldPath, oldLen);
+     writeUInt32BE(buf, newLen, p += oldLen);
+-    buf.utf8Write(newPath, p += 4, newLen);
++    writeString(buf, p += 4, newPath, newLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -1488,7 +1500,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 17, p);
+-    buf.utf8Write('fsync@openssh.com', p += 4, 17);
++    writeString(buf, p += 4, 'fsync@openssh.com', 17);
+     writeUInt32BE(buf, handleLen, p += 17);
+     buf.set(handle, p += 4);
+ 
+@@ -1524,7 +1536,7 @@ class SFTP extends EventEmitter {
+       string    path
+       ATTRS     attrs
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf =
+       Buffer.allocUnsafe(4 + 1 + 4 + 4 + 20 + 4 + pathLen + 4 + attrsLen);
+@@ -1535,10 +1547,10 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 20, p);
+-    buf.utf8Write('lsetstat@openssh.com', p += 4, 20);
++    writeString(buf, p += 4, 'lsetstat@openssh.com', 20);
+ 
+     writeUInt32BE(buf, pathLen, p += 20);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     writeUInt32BE(buf, flags, p += pathLen);
+     if (attrsLen) {
+@@ -1573,7 +1585,7 @@ class SFTP extends EventEmitter {
+       string    "expand-path@openssh.com"
+       string    path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + 23 + 4 + pathLen);
+ 
+@@ -1583,10 +1595,10 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 23, p);
+-    buf.utf8Write('expand-path@openssh.com', p += 4, 23);
++    writeString(buf, p += 4, 'expand-path@openssh.com', 23);
+ 
+     writeUInt32BE(buf, pathLen, p += 20);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = {
+       cb: (err, names) => {
+@@ -1653,7 +1665,7 @@ class SFTP extends EventEmitter {
+ 
+     writeUInt32BE(buf, 9, p);
+     p += 4;
+-    buf.utf8Write('copy-data', p, 9);
++    writeString(buf, p, 'copy-data', 9);
+     p += 9;
+ 
+     writeUInt32BE(buf, srcHandle.length, p);
+@@ -1708,7 +1720,7 @@ class SFTP extends EventEmitter {
+       string    username
+     */
+     let p = 0;
+-    const usernameLen = Buffer.byteLength(username);
++    const usernameLen = getStringLen(username);
+     const buf = Buffer.allocUnsafe(
+       4 + 1
+       + 4
+@@ -1728,12 +1740,12 @@ class SFTP extends EventEmitter {
+ 
+     writeUInt32BE(buf, 14, p);
+     p += 4;
+-    buf.utf8Write('home-directory', p, 14);
++    writeString(buf, p, 'home-directory', 14);
+     p += 14;
+ 
+     writeUInt32BE(buf, usernameLen, p);
+     p += 4;
+-    buf.utf8Write(username, p, usernameLen);
++    writeString(buf, p, username, usernameLen);
+     p += usernameLen;
+ 
+     this._requests[reqid] = {
+@@ -1806,7 +1818,7 @@ class SFTP extends EventEmitter {
+ 
+     writeUInt32BE(buf, 30, p);
+     p += 4;
+-    buf.utf8Write('users-groups-by-id@openssh.com', p, 30);
++    writeString(buf, p, 'users-groups-by-id@openssh.com', 30);
+     p += 30;
+ 
+     writeUInt32BE(buf, 4 * uids.length, p);
+@@ -1871,7 +1883,7 @@ class SFTP extends EventEmitter {
+ 
+     message || (message = '');
+ 
+-    const msgLen = Buffer.byteLength(message);
++    const msgLen = getStringLen(message);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + 4 + msgLen + 4);
+ 
+@@ -1884,7 +1896,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, msgLen, p += 4);
+     p += 4;
+     if (msgLen) {
+-      buf.utf8Write(message, p, msgLen);
++      writeString(buf, p, message, msgLen);
+       p += msgLen;
+     }
+ 
+@@ -1913,7 +1925,7 @@ class SFTP extends EventEmitter {
+     const dataLen = (
+       isBuffer
+       ? data.length
+-      : Buffer.byteLength(data, encoding)
++      : getStringLen(data, encoding)
+     );
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + dataLen);
+@@ -1927,7 +1939,7 @@ class SFTP extends EventEmitter {
+       if (isBuffer)
+         buf.set(data, p += 4);
+       else if (isUTF8)
+-        buf.utf8Write(data, p += 4, dataLen);
++        writeString(buf, p += 4, data, dataLen);
+       else
+         buf.write(data, p += 4, dataLen, encoding);
+     }
+@@ -1959,13 +1971,13 @@ class SFTP extends EventEmitter {
+         ? ''
+         : name.filename
+       );
+-      namesLen += 4 + Buffer.byteLength(filename);
++      namesLen += 4 + getStringLen(filename);
+       const longname = (
+         !name || !name.longname || typeof name.longname !== 'string'
+         ? ''
+         : name.longname
+       );
+-      namesLen += 4 + Buffer.byteLength(longname);
++      namesLen += 4 + getStringLen(longname);
+ 
+       if (typeof name.attrs === 'object' && name.attrs !== null) {
+         nameAttrs = attrsToBytes(name.attrs);
+@@ -2011,11 +2023,11 @@ class SFTP extends EventEmitter {
+           ? ''
+           : name.filename
+         );
+-        const len = Buffer.byteLength(filename);
++        const len = getStringLen(filename);
+         writeUInt32BE(buf, len, p);
+         p += 4;
+         if (len) {
+-          buf.utf8Write(filename, p, len);
++          writeString(buf, p, filename, len);
+           p += len;
+         }
+       }
+@@ -2026,11 +2038,11 @@ class SFTP extends EventEmitter {
+           ? ''
+           : name.longname
+         );
+-        const len = Buffer.byteLength(longname);
++        const len = getStringLen(longname);
+         writeUInt32BE(buf, len, p);
+         p += 4;
+         if (len) {
+-          buf.utf8Write(longname, p, len);
++          writeString(buf, p, longname, len);
+           p += len;
+         }
+       }
+@@ -2749,7 +2761,7 @@ function requestLimits(sftp, cb) {
+   writeUInt32BE(buf, reqid, 5);
+ 
+   writeUInt32BE(buf, 18, p);
+-  buf.utf8Write('limits@openssh.com', p += 4, 18);
++  writeString(buf, p += 4, 'limits@openssh.com', 18);
+ 
+   sftp._requests[reqid] = { extended: 'limits@openssh.com', cb };
+ 
+@@ -2953,18 +2965,28 @@ const CLIENT_HANDLERS = {
+         // spec not specifying an encoding because the specs for newer
+         // versions of the protocol all explicitly specify UTF-8 for
+         // filenames
+-        const filename = bufferParser.readString(true);
++        const filenameRaw = bufferParser.readString();
++        if (filenameRaw === undefined) {
++          names = undefined;
++          break;
++        }
++        const filename = filenameRaw.toString('utf8');
+ 
+         // `longname` only exists in SFTPv3 and since it typically will
+         // contain the filename, we assume it is also UTF-8
+-        const longname = bufferParser.readString(true);
++        const longnameRaw = bufferParser.readString();
++        if (longnameRaw === undefined) {
++          names = undefined;
++          break;
++        }
++        const longname = longnameRaw.toString('utf8');
+ 
+         const attrs = readAttrs(sftp._biOpt);
+         if (attrs === undefined) {
+           names = undefined;
+           break;
+         }
+-        names.push({ filename, longname, attrs });
++        names.push({ filename, longname, filenameRaw, longnameRaw, attrs });
+       }
+       if (names !== undefined) {
+         sftp._debug && sftp._debug(
+diff --git a/node_modules/ssh2/lib/protocol/crypto/build/Makefile b/node_modules/ssh2/lib/protocol/crypto/build/Makefile
+index c3b5297..058fa85 100644
+--- a/node_modules/ssh2/lib/protocol/crypto/build/Makefile
++++ b/node_modules/ssh2/lib/protocol/crypto/build/Makefile
+@@ -148,10 +148,10 @@ cmd_pch_mm = $(CC.$(TOOLSET)) $(GYP_PCH_OBJCXXFLAGS) $(DEPFLAGS) -c -o $@ $<
+ # Use $(4) for the command, since $(2) and $(3) are used as flag by do_cmd
+ # already.
+ quiet_cmd_mac_tool = MACTOOL $(4) $<
+-cmd_mac_tool = /opt/homebrew/opt/python@3.14/bin/python3.14 gyp-mac-tool $(4) $< "$@"
++cmd_mac_tool = ./gyp-mac-tool $(4) $< "$@"
+ 
+ quiet_cmd_mac_package_framework = PACKAGE FRAMEWORK $@
+-cmd_mac_package_framework = /opt/homebrew/opt/python@3.14/bin/python3.14 gyp-mac-tool package-framework "$@" $(4)
++cmd_mac_package_framework = ./gyp-mac-tool package-framework "$@" $(4)
+ 
+ quiet_cmd_infoplist = INFOPLIST $@
+ cmd_infoplist = $(CC.$(TOOLSET)) -E -P -Wno-trigraphs -x c $(INFOPLIST_DEFINES) "$<" -o "$@"
+@@ -167,7 +167,7 @@ quiet_cmd_symlink = SYMLINK $@
+ cmd_symlink = ln -sf "$<" "$@"
+ 
+ quiet_cmd_alink = LIBTOOL-STATIC $@
+-cmd_alink = rm -f $@ && /opt/homebrew/opt/python@3.14/bin/python3.14 gyp-mac-tool filter-libtool libtool $(GYP_LIBTOOLFLAGS) -static -o $@ $(filter %.o,$^)
++cmd_alink = rm -f $@ && ./gyp-mac-tool filter-libtool libtool $(GYP_LIBTOOLFLAGS) -static -o $@ $(filter %.o,$^)
+ 
+ quiet_cmd_link = LINK($(TOOLSET)) $@
+ cmd_link = $(LINK.$(TOOLSET)) $(GYP_LDFLAGS) $(LDFLAGS.$(TOOLSET)) -o "$@" $(LD_INPUTS) $(LIBS)
+@@ -331,8 +331,8 @@ ifeq ($(strip $(foreach prefix,$(NO_LOAD),\
+ endif
+ 
+ quiet_cmd_regen_makefile = ACTION Regenerating $@
+-cmd_regen_makefile = cd $(srcdir); /Users/lolotachibana/.nvm/versions/node/v24.11.0/lib/node_modules/npm/node_modules/node-gyp/gyp/gyp_main.py -fmake --ignore-environment "-Dlibrary=shared_library" "-Dvisibility=default" "-Dnode_root_dir=/Users/lolotachibana/Library/Caches/node-gyp/24.11.0" "-Dnode_gyp_dir=/Users/lolotachibana/.nvm/versions/node/v24.11.0/lib/node_modules/npm/node_modules/node-gyp" "-Dnode_lib_file=/Users/lolotachibana/Library/Caches/node-gyp/24.11.0/<(target_arch)/node.lib" "-Dmodule_root_dir=/private/var/folders/j1/_9vf30bd78q5nqmvr52fxmmm0000gn/T/tmp-26420-Q4v6nogwbFJY/node_modules/ssh2/lib/protocol/crypto" "-Dnode_engine=v8" "--depth=." "-Goutput_dir=." "--generator-output=build" -I/private/var/folders/j1/_9vf30bd78q5nqmvr52fxmmm0000gn/T/tmp-26420-Q4v6nogwbFJY/node_modules/ssh2/lib/protocol/crypto/build/config.gypi -I/Users/lolotachibana/.nvm/versions/node/v24.11.0/lib/node_modules/npm/node_modules/node-gyp/addon.gypi -I/Users/lolotachibana/Library/Caches/node-gyp/24.11.0/include/node/common.gypi "--toplevel-dir=." binding.gyp
+-Makefile: $(srcdir)/../../../../../../../../../../../../Users/lolotachibana/.nvm/versions/node/v24.11.0/lib/node_modules/npm/node_modules/node-gyp/addon.gypi $(srcdir)/../../../../../../../../../../../../Users/lolotachibana/Library/Caches/node-gyp/24.11.0/include/node/common.gypi $(srcdir)/binding.gyp $(srcdir)/build/config.gypi
++cmd_regen_makefile = cd $(srcdir); /Users/lolotachibana/dev/Netcatty/node_modules/@electron/node-gyp/gyp/gyp_main.py -fmake --ignore-environment "-Dlibrary=shared_library" "-Dvisibility=default" "-Dnode_root_dir=/Users/lolotachibana/Library/Caches/node-gyp/24.11.0" "-Dnode_gyp_dir=/Users/lolotachibana/dev/Netcatty/node_modules/@electron/node-gyp" "-Dnode_lib_file=/Users/lolotachibana/Library/Caches/node-gyp/24.11.0/<(target_arch)/node.lib" "-Dmodule_root_dir=/Users/lolotachibana/dev/Netcatty/node_modules/ssh2/lib/protocol/crypto" "-Dnode_engine=v8" "--depth=." "-Goutput_dir=." "--generator-output=build" -I/Users/lolotachibana/dev/Netcatty/node_modules/ssh2/lib/protocol/crypto/build/config.gypi -I/Users/lolotachibana/dev/Netcatty/node_modules/@electron/node-gyp/addon.gypi -I/Users/lolotachibana/Library/Caches/node-gyp/24.11.0/include/node/common.gypi "--toplevel-dir=." binding.gyp
++Makefile: $(srcdir)/../../../../@electron/node-gyp/addon.gypi $(srcdir)/../../../../../../../Library/Caches/node-gyp/24.11.0/include/node/common.gypi $(srcdir)/build/config.gypi $(srcdir)/binding.gyp
+ 	$(call do_cmd,regen_makefile)
+ 
+ # "all" is a concatenation of the "all" targets from all the included
+diff --git a/node_modules/ssh2/lib/protocol/crypto/build/Release/obj.target/sshcrypto/src/binding.o b/node_modules/ssh2/lib/protocol/crypto/build/Release/obj.target/sshcrypto/src/binding.o
+index 9321dc4..f7568c9 100644
+Binary files a/node_modules/ssh2/lib/protocol/crypto/build/Release/obj.target/sshcrypto/src/binding.o and b/node_modules/ssh2/lib/protocol/crypto/build/Release/obj.target/sshcrypto/src/binding.o differ
+diff --git a/node_modules/ssh2/lib/protocol/crypto/build/Release/sshcrypto.node b/node_modules/ssh2/lib/protocol/crypto/build/Release/sshcrypto.node
+index 9695597..c677018 100755
+Binary files a/node_modules/ssh2/lib/protocol/crypto/build/Release/sshcrypto.node and b/node_modules/ssh2/lib/protocol/crypto/build/Release/sshcrypto.node differ
+diff --git a/node_modules/ssh2/lib/protocol/crypto/build/config.gypi b/node_modules/ssh2/lib/protocol/crypto/build/config.gypi
+index c75c7c9..c84b5f3 100644
+--- a/node_modules/ssh2/lib/protocol/crypto/build/config.gypi
++++ b/node_modules/ssh2/lib/protocol/crypto/build/config.gypi
+@@ -510,16 +510,15 @@
+     "standalone_static_library": 1,
+     "target": "v24.11.0",
+     "real_openssl_major": "3",
+-    "prefix": "/Users/lolotachibana/.nvm/versions/node/v24.11.0",
+-    "user_agent": "npm/11.6.1 node/v24.11.0 darwin arm64 workspaces/false",
+-    "cache": "/Users/lolotachibana/.npm",
+-    "node_gyp": "/Users/lolotachibana/.nvm/versions/node/v24.11.0/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js",
+-    "force": "true",
+-    "npm_version": "11.6.1",
+-    "userconfig": "/Users/lolotachibana/.npmrc",
+-    "init_module": "/Users/lolotachibana/.npm-init.js",
++    "global_prefix": "/Users/lolotachibana/.nvm/versions/node/v24.11.0",
++    "local_prefix": "/Users/lolotachibana/dev/Netcatty",
+     "globalconfig": "/Users/lolotachibana/.nvm/versions/node/v24.11.0/etc/npmrc",
+-    "local_prefix": "/private/var/folders/j1/_9vf30bd78q5nqmvr52fxmmm0000gn/T/tmp-26420-Q4v6nogwbFJY",
+-    "global_prefix": "/Users/lolotachibana/.nvm/versions/node/v24.11.0"
++    "init_module": "/Users/lolotachibana/.npm-init.js",
++    "userconfig": "/Users/lolotachibana/.npmrc",
++    "npm_version": "11.6.1",
++    "node_gyp": "/Users/lolotachibana/.nvm/versions/node/v24.11.0/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js",
++    "cache": "/Users/lolotachibana/.npm",
++    "user_agent": "npm/11.6.1 node/v24.11.0 darwin arm64 workspaces/false",
++    "prefix": "/Users/lolotachibana/.nvm/versions/node/v24.11.0"
+   }
+ }
+diff --git a/node_modules/ssh2/lib/protocol/crypto/build/gyp-mac-tool b/node_modules/ssh2/lib/protocol/crypto/build/gyp-mac-tool
+index ab21cf1..ffef860 100755
+--- a/node_modules/ssh2/lib/protocol/crypto/build/gyp-mac-tool
++++ b/node_modules/ssh2/lib/protocol/crypto/build/gyp-mac-tool
+@@ -9,6 +9,7 @@
+ These functions are executed via gyp-mac-tool when using the Makefile generator.
+ """
+ 
++
+ import fcntl
+ import fnmatch
+ import glob
+@@ -25,13 +26,14 @@ import tempfile
+ 
+ def main(args):
+     executor = MacTool()
+-    if (exit_code := executor.Dispatch(args)) is not None:
++    exit_code = executor.Dispatch(args)
++    if exit_code is not None:
+         sys.exit(exit_code)
+ 
+ 
+ class MacTool:
+     """This class performs all the Mac tooling steps. The methods can either be
+-    executed directly, or dispatched from an argument list."""
++  executed directly, or dispatched from an argument list."""
+ 
+     def Dispatch(self, args):
+         """Dispatches a string command to a method."""
+@@ -47,7 +49,7 @@ class MacTool:
+ 
+     def ExecCopyBundleResource(self, source, dest, convert_to_binary):
+         """Copies a resource file to the bundle/Resources directory, performing any
+-        necessary compilation on each resource."""
++    necessary compilation on each resource."""
+         convert_to_binary = convert_to_binary == "True"
+         extension = os.path.splitext(source)[1].lower()
+         if os.path.isdir(source):
+@@ -58,7 +60,9 @@ class MacTool:
+             if os.path.exists(dest):
+                 shutil.rmtree(dest)
+             shutil.copytree(source, dest)
+-        elif extension in {".xib", ".storyboard"}:
++        elif extension == ".xib":
++            return self._CopyXIBFile(source, dest)
++        elif extension == ".storyboard":
+             return self._CopyXIBFile(source, dest)
+         elif extension == ".strings" and not convert_to_binary:
+             self._CopyStringsFile(source, dest)
+@@ -67,7 +71,7 @@ class MacTool:
+                 os.unlink(dest)
+             shutil.copy(source, dest)
+ 
+-        if convert_to_binary and extension in {".plist", ".strings"}:
++        if convert_to_binary and extension in (".plist", ".strings"):
+             self._ConvertToBinary(dest)
+ 
+     def _CopyXIBFile(self, source, dest):
+@@ -141,7 +145,7 @@ class MacTool:
+         #     CFPropertyListCreateFromXMLData(): Old-style plist parser: missing
+         #     semicolon in dictionary.
+         # on invalid files. Do the same kind of validation.
+-        import CoreFoundation  # noqa: PLC0415
++        import CoreFoundation
+ 
+         with open(source, "rb") as in_file:
+             s = in_file.read()
+@@ -155,15 +159,17 @@ class MacTool:
+ 
+     def _DetectInputEncoding(self, file_name):
+         """Reads the first few bytes from file_name and tries to guess the text
+-        encoding. Returns None as a guess if it can't detect it."""
++    encoding. Returns None as a guess if it can't detect it."""
+         with open(file_name, "rb") as fp:
+             try:
+                 header = fp.read(3)
+             except Exception:
+                 return None
+-        if header.startswith((b"\xfe\xff", b"\xff\xfe")):
++        if header.startswith(b"\xFE\xFF"):
+             return "UTF-16"
+-        elif header.startswith(b"\xef\xbb\xbf"):
++        elif header.startswith(b"\xFF\xFE"):
++            return "UTF-16"
++        elif header.startswith(b"\xEF\xBB\xBF"):
+             return "UTF-8"
+         else:
+             return None
+@@ -254,9 +260,9 @@ class MacTool:
+ 
+     def ExecFilterLibtool(self, *cmd_list):
+         """Calls libtool and filters out '/path/to/libtool: file: foo.o has no
+-        symbols'."""
++    symbols'."""
+         libtool_re = re.compile(
+-            r"^.*libtool: (?:for architecture: \S* )?file: .* has no symbols$"
++            r"^.*libtool: (?:for architecture: \S* )?" r"file: .* has no symbols$"
+         )
+         libtool_re5 = re.compile(
+             r"^.*libtool: warning for library: "
+@@ -303,7 +309,7 @@ class MacTool:
+ 
+     def ExecPackageFramework(self, framework, version):
+         """Takes a path to Something.framework and the Current version of that and
+-        sets up all the symlinks."""
++    sets up all the symlinks."""
+         # Find the name of the binary based on the part before the ".framework".
+         binary = os.path.basename(framework).split(".")[0]
+ 
+@@ -332,7 +338,7 @@ class MacTool:
+ 
+     def _Relink(self, dest, link):
+         """Creates a symlink to |dest| named |link|. If |link| already exists,
+-        it is overwritten."""
++    it is overwritten."""
+         if os.path.lexists(link):
+             os.remove(link)
+         os.symlink(dest, link)
+@@ -357,14 +363,14 @@ class MacTool:
+     def ExecCompileXcassets(self, keys, *inputs):
+         """Compiles multiple .xcassets files into a single .car file.
+ 
+-        This invokes 'actool' to compile all the inputs .xcassets files. The
+-        |keys| arguments is a json-encoded dictionary of extra arguments to
+-        pass to 'actool' when the asset catalogs contains an application icon
+-        or a launch image.
++    This invokes 'actool' to compile all the inputs .xcassets files. The
++    |keys| arguments is a json-encoded dictionary of extra arguments to
++    pass to 'actool' when the asset catalogs contains an application icon
++    or a launch image.
+ 
+-        Note that 'actool' does not create the Assets.car file if the asset
+-        catalogs does not contains imageset.
+-        """
++    Note that 'actool' does not create the Assets.car file if the asset
++    catalogs does not contains imageset.
++    """
+         command_line = [
+             "xcrun",
+             "actool",
+@@ -437,13 +443,13 @@ class MacTool:
+     def ExecCodeSignBundle(self, key, entitlements, provisioning, path, preserve):
+         """Code sign a bundle.
+ 
+-        This function tries to code sign an iOS bundle, following the same
+-        algorithm as Xcode:
+-          1. pick the provisioning profile that best match the bundle identifier,
+-             and copy it into the bundle as embedded.mobileprovision,
+-          2. copy Entitlements.plist from user or SDK next to the bundle,
+-          3. code sign the bundle.
+-        """
++    This function tries to code sign an iOS bundle, following the same
++    algorithm as Xcode:
++      1. pick the provisioning profile that best match the bundle identifier,
++         and copy it into the bundle as embedded.mobileprovision,
++      2. copy Entitlements.plist from user or SDK next to the bundle,
++      3. code sign the bundle.
++    """
+         substitutions, overrides = self._InstallProvisioningProfile(
+             provisioning, self._GetCFBundleIdentifier()
+         )
+@@ -462,16 +468,16 @@ class MacTool:
+     def _InstallProvisioningProfile(self, profile, bundle_identifier):
+         """Installs embedded.mobileprovision into the bundle.
+ 
+-        Args:
+-          profile: string, optional, short name of the .mobileprovision file
+-            to use, if empty or the file is missing, the best file installed
+-            will be used
+-          bundle_identifier: string, value of CFBundleIdentifier from Info.plist
++    Args:
++      profile: string, optional, short name of the .mobileprovision file
++        to use, if empty or the file is missing, the best file installed
++        will be used
++      bundle_identifier: string, value of CFBundleIdentifier from Info.plist
+ 
+-        Returns:
+-          A tuple containing two dictionary: variables substitutions and values
+-          to overrides when generating the entitlements file.
+-        """
++    Returns:
++      A tuple containing two dictionary: variables substitutions and values
++      to overrides when generating the entitlements file.
++    """
+         source_path, provisioning_data, team_id = self._FindProvisioningProfile(
+             profile, bundle_identifier
+         )
+@@ -487,24 +493,24 @@ class MacTool:
+     def _FindProvisioningProfile(self, profile, bundle_identifier):
+         """Finds the .mobileprovision file to use for signing the bundle.
+ 
+-        Checks all the installed provisioning profiles (or if the user specified
+-        the PROVISIONING_PROFILE variable, only consult it) and select the most
+-        specific that correspond to the bundle identifier.
++    Checks all the installed provisioning profiles (or if the user specified
++    the PROVISIONING_PROFILE variable, only consult it) and select the most
++    specific that correspond to the bundle identifier.
+ 
+-        Args:
+-          profile: string, optional, short name of the .mobileprovision file
+-            to use, if empty or the file is missing, the best file installed
+-            will be used
+-          bundle_identifier: string, value of CFBundleIdentifier from Info.plist
++    Args:
++      profile: string, optional, short name of the .mobileprovision file
++        to use, if empty or the file is missing, the best file installed
++        will be used
++      bundle_identifier: string, value of CFBundleIdentifier from Info.plist
+ 
+-        Returns:
+-          A tuple of the path to the selected provisioning profile, the data of
+-          the embedded plist in the provisioning profile and the team identifier
+-          to use for code signing.
++    Returns:
++      A tuple of the path to the selected provisioning profile, the data of
++      the embedded plist in the provisioning profile and the team identifier
++      to use for code signing.
+ 
+-        Raises:
+-          SystemExit: if no .mobileprovision can be used to sign the bundle.
+-        """
++    Raises:
++      SystemExit: if no .mobileprovision can be used to sign the bundle.
++    """
+         profiles_dir = os.path.join(
+             os.environ["HOME"], "Library", "MobileDevice", "Provisioning Profiles"
+         )
+@@ -552,12 +558,12 @@ class MacTool:
+     def _LoadProvisioningProfile(self, profile_path):
+         """Extracts the plist embedded in a provisioning profile.
+ 
+-        Args:
+-          profile_path: string, path to the .mobileprovision file
++    Args:
++      profile_path: string, path to the .mobileprovision file
+ 
+-        Returns:
+-          Content of the plist embedded in the provisioning profile as a dictionary.
+-        """
++    Returns:
++      Content of the plist embedded in the provisioning profile as a dictionary.
++    """
+         with tempfile.NamedTemporaryFile() as temp:
+             subprocess.check_call(
+                 ["security", "cms", "-D", "-i", profile_path, "-o", temp.name]
+@@ -580,16 +586,16 @@ class MacTool:
+     def _LoadPlistMaybeBinary(self, plist_path):
+         """Loads into a memory a plist possibly encoded in binary format.
+ 
+-        This is a wrapper around plistlib.readPlist that tries to convert the
+-        plist to the XML format if it can't be parsed (assuming that it is in
+-        the binary format).
++    This is a wrapper around plistlib.readPlist that tries to convert the
++    plist to the XML format if it can't be parsed (assuming that it is in
++    the binary format).
+ 
+-        Args:
+-          plist_path: string, path to a plist file, in XML or binary format
++    Args:
++      plist_path: string, path to a plist file, in XML or binary format
+ 
+-        Returns:
+-          Content of the plist as a dictionary.
+-        """
++    Returns:
++      Content of the plist as a dictionary.
++    """
+         try:
+             # First, try to read the file using plistlib that only supports XML,
+             # and if an exception is raised, convert a temporary copy to XML and
+@@ -605,13 +611,13 @@ class MacTool:
+     def _GetSubstitutions(self, bundle_identifier, app_identifier_prefix):
+         """Constructs a dictionary of variable substitutions for Entitlements.plist.
+ 
+-        Args:
+-          bundle_identifier: string, value of CFBundleIdentifier from Info.plist
+-          app_identifier_prefix: string, value for AppIdentifierPrefix
++    Args:
++      bundle_identifier: string, value of CFBundleIdentifier from Info.plist
++      app_identifier_prefix: string, value for AppIdentifierPrefix
+ 
+-        Returns:
+-          Dictionary of substitutions to apply when generating Entitlements.plist.
+-        """
++    Returns:
++      Dictionary of substitutions to apply when generating Entitlements.plist.
++    """
+         return {
+             "CFBundleIdentifier": bundle_identifier,
+             "AppIdentifierPrefix": app_identifier_prefix,
+@@ -620,9 +626,9 @@ class MacTool:
+     def _GetCFBundleIdentifier(self):
+         """Extracts CFBundleIdentifier value from Info.plist in the bundle.
+ 
+-        Returns:
+-          Value of CFBundleIdentifier in the Info.plist located in the bundle.
+-        """
++    Returns:
++      Value of CFBundleIdentifier in the Info.plist located in the bundle.
++    """
+         info_plist_path = os.path.join(
+             os.environ["TARGET_BUILD_DIR"], os.environ["INFOPLIST_PATH"]
+         )
+@@ -632,19 +638,19 @@ class MacTool:
+     def _InstallEntitlements(self, entitlements, substitutions, overrides):
+         """Generates and install the ${BundleName}.xcent entitlements file.
+ 
+-        Expands variables "$(variable)" pattern in the source entitlements file,
+-        add extra entitlements defined in the .mobileprovision file and the copy
+-        the generated plist to "${BundlePath}.xcent".
++    Expands variables "$(variable)" pattern in the source entitlements file,
++    add extra entitlements defined in the .mobileprovision file and the copy
++    the generated plist to "${BundlePath}.xcent".
+ 
+-        Args:
+-          entitlements: string, optional, path to the Entitlements.plist template
+-            to use, defaults to "${SDKROOT}/Entitlements.plist"
+-          substitutions: dictionary, variable substitutions
+-          overrides: dictionary, values to add to the entitlements
++    Args:
++      entitlements: string, optional, path to the Entitlements.plist template
++        to use, defaults to "${SDKROOT}/Entitlements.plist"
++      substitutions: dictionary, variable substitutions
++      overrides: dictionary, values to add to the entitlements
+ 
+-        Returns:
+-          Path to the generated entitlements file.
+-        """
++    Returns:
++      Path to the generated entitlements file.
++    """
+         source_path = entitlements
+         target_path = os.path.join(
+             os.environ["BUILT_PRODUCTS_DIR"], os.environ["PRODUCT_NAME"] + ".xcent"
+@@ -664,15 +670,15 @@ class MacTool:
+     def _ExpandVariables(self, data, substitutions):
+         """Expands variables "$(variable)" in data.
+ 
+-        Args:
+-          data: object, can be either string, list or dictionary
+-          substitutions: dictionary, variable substitutions to perform
++    Args:
++      data: object, can be either string, list or dictionary
++      substitutions: dictionary, variable substitutions to perform
+ 
+-        Returns:
+-          Copy of data where each references to "$(variable)" has been replaced
+-          by the corresponding value found in substitutions, or left intact if
+-          the key was not found.
+-        """
++    Returns:
++      Copy of data where each references to "$(variable)" has been replaced
++      by the corresponding value found in substitutions, or left intact if
++      the key was not found.
++    """
+         if isinstance(data, str):
+             for key, value in substitutions.items():
+                 data = data.replace("$(%s)" % key, value)
+@@ -691,15 +697,15 @@ def NextGreaterPowerOf2(x):
+ def WriteHmap(output_name, filelist):
+     """Generates a header map based on |filelist|.
+ 
+-    Per Mark Mentovai:
+-      A header map is structured essentially as a hash table, keyed by names used
+-      in #includes, and providing pathnames to the actual files.
++  Per Mark Mentovai:
++    A header map is structured essentially as a hash table, keyed by names used
++    in #includes, and providing pathnames to the actual files.
+ 
+-    The implementation below and the comment above comes from inspecting:
+-      http://www.opensource.apple.com/source/distcc/distcc-2503/distcc_dist/include_server/headermap.py?txt
+-    while also looking at the implementation in clang in:
+-      https://llvm.org/svn/llvm-project/cfe/trunk/lib/Lex/HeaderMap.cpp
+-    """
++  The implementation below and the comment above comes from inspecting:
++    http://www.opensource.apple.com/source/distcc/distcc-2503/distcc_dist/include_server/headermap.py?txt
++  while also looking at the implementation in clang in:
++    https://llvm.org/svn/llvm-project/cfe/trunk/lib/Lex/HeaderMap.cpp
++  """
+     magic = 1751998832
+     version = 1
+     _reserved = 0

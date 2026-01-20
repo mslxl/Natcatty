@@ -550,7 +550,7 @@ const registerBridges = (win) => {
   });
 
   // Download SFTP file to temp and return local path
-  ipcMain.handle("netcatty:sftp:downloadToTemp", async (_event, { sftpId, remotePath, fileName }) => {
+  ipcMain.handle("netcatty:sftp:downloadToTemp", async (_event, { sftpId, remotePath, fileName, encoding }) => {
     console.log(`[Main] Downloading SFTP file to temp:`);
     console.log(`[Main]   SFTP ID: ${sftpId}`);
     console.log(`[Main]   Remote path: ${remotePath}`);
@@ -567,7 +567,7 @@ const registerBridges = (win) => {
     if (!sftpClients) {
       console.log(`[Main]   Using fallback readSftp method`);
       // Fallback: use readSftp and write to temp file
-      const content = await client.readSftp(null, { sftpId, path: remotePath });
+      const content = await client.readSftp(null, { sftpId, path: remotePath, encoding });
       if (typeof content === "string") {
         await fs.promises.writeFile(localPath, content, "utf-8");
       } else {
@@ -583,7 +583,10 @@ const registerBridges = (win) => {
       throw new Error("SFTP session not found");
     }
     
-    await sftpClient.fastGet(remotePath, localPath);
+    const encodedPath = client.encodePathForSession
+      ? client.encodePathForSession(sftpId, remotePath, encoding)
+      : remotePath;
+    await sftpClient.fastGet(encodedPath, localPath);
     console.log(`[Main]   File downloaded successfully`);
     return localPath;
   });

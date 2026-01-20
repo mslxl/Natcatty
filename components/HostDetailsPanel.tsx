@@ -34,6 +34,7 @@ import { Combobox, ComboboxOption, MultiCombobox } from "./ui/combobox";
 import { Input } from "./ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { ScrollArea } from "./ui/scroll-area";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 
 // Import host-details sub-panels
 import {
@@ -949,6 +950,27 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
               {t("hostDetails.sftp.sudo.passwordWarning")}
             </p>
           )}
+          <div className="space-y-1">
+            <div className="text-sm font-medium">
+              {t("hostDetails.sftp.encoding")}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {t("hostDetails.sftp.encoding.desc")}
+            </div>
+            <Select
+              value={form.sftpEncoding || "auto"}
+              onValueChange={(val) => update("sftpEncoding", val as Host["sftpEncoding"])}
+            >
+              <SelectTrigger className="h-8">
+                <SelectValue placeholder={t("sftp.encoding.label")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">{t("sftp.encoding.auto")}</SelectItem>
+                <SelectItem value="utf-8">{t("sftp.encoding.utf8")}</SelectItem>
+                <SelectItem value="gb18030">{t("sftp.encoding.gb18030")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </Card>
 
         <Card className="p-3 space-y-3 bg-card border-border/80">

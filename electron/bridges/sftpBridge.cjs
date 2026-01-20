@@ -7,8 +7,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const net = require("node:net");
+const { TextDecoder } = require("node:util");
 const SftpClient = require("ssh2-sftp-client");
 const { Client: SSHClient } = require("ssh2");
+const iconv = require("iconv-lite");
 let SFTPWrapper;
 try {
   // Try to load SFTPWrapper from ssh2 internals for sudo support
@@ -28,6 +30,195 @@ let electronModule = null;
 
 // Storage for jump host connections that need to be cleaned up
 const jumpConnectionsMap = new Map(); // connId -> { connections: SSHClient[], socket: stream }
+
+// Track requested/resolved filename encoding per SFTP session
+const sftpEncodingState = new Map(); // sftpId -> { requested: 'auto'|'utf-8'|'gb18030', resolved: 'utf-8'|'gb18030' }
+const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
+
+const normalizeEncoding = (encoding) => {
+  if (!encoding) return "auto";
+  const normalized = String(encoding).toLowerCase();
+  if (normalized === "utf8") return "utf-8";
+  return normalized;
+};
+
+const isValidUtf8 = (buffer) => {
+  try {
+    utf8Decoder.decode(buffer);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const detectEncodingFromList = (items) => {
+  for (const item of items) {
+    const raw = item?.filenameRaw || (item?.filename ? Buffer.from(item.filename, "utf8") : null);
+    if (raw && !isValidUtf8(raw)) {
+      return "gb18030";
+    }
+  }
+  return "utf-8";
+};
+
+const resolveEncodingForRequest = (sftpId, requestedEncoding) => {
+  const requested = normalizeEncoding(requestedEncoding);
+  if (requested && requested !== "auto") {
+    sftpEncodingState.set(sftpId, { requested, resolved: requested });
+    return requested;
+  }
+  const existing = sftpEncodingState.get(sftpId);
+  const resolved = existing?.resolved || "utf-8";
+  sftpEncodingState.set(sftpId, { requested: "auto", resolved });
+  return resolved;
+};
+
+const updateResolvedEncoding = (sftpId, requestedEncoding, resolvedEncoding) => {
+  const requested = normalizeEncoding(requestedEncoding);
+  const resolved = normalizeEncoding(resolvedEncoding);
+  const finalResolved = resolved === "auto" ? "utf-8" : resolved;
+  sftpEncodingState.set(sftpId, {
+    requested: requested || "auto",
+    resolved: finalResolved,
+  });
+  return finalResolved;
+};
+
+const encodePath = (input, encoding) => {
+  if (input === undefined || input === null) return input;
+  if (Buffer.isBuffer(input)) return input;
+  if (encoding === "utf-8") return input;
+  return iconv.encode(input, encoding);
+};
+
+const decodeName = (raw, encoding) => {
+  if (!raw) return "";
+  if (Buffer.isBuffer(raw)) {
+    return encoding === "utf-8" ? raw.toString("utf8") : iconv.decode(raw, encoding);
+  }
+  return raw;
+};
+
+const encodePathForSession = (sftpId, inputPath, requestedEncoding) => {
+  if (!sftpId) return inputPath;
+  const encoding = resolveEncodingForRequest(sftpId, requestedEncoding);
+  return encodePath(inputPath, encoding);
+};
+
+const getSftpChannel = (client) => client?.sftp || client?.client?.sftp;
+
+const statAsync = (sftp, targetPath) =>
+  new Promise((resolve, reject) => {
+    sftp.stat(targetPath, (err, stats) => (err ? reject(err) : resolve(stats)));
+  });
+
+const readdirAsync = (sftp, targetPath) =>
+  new Promise((resolve, reject) => {
+    sftp.readdir(targetPath, (err, items) => (err ? reject(err) : resolve(items || [])));
+  });
+
+const mkdirAsync = (sftp, targetPath) =>
+  new Promise((resolve, reject) => {
+    sftp.mkdir(targetPath, (err) => (err ? reject(err) : resolve()));
+  });
+
+const rmdirAsync = (sftp, targetPath) =>
+  new Promise((resolve, reject) => {
+    sftp.rmdir(targetPath, (err) => (err ? reject(err) : resolve()));
+  });
+
+const unlinkAsync = (sftp, targetPath) =>
+  new Promise((resolve, reject) => {
+    sftp.unlink(targetPath, (err) => (err ? reject(err) : resolve()));
+  });
+
+const normalizeRemotePathString = async (client, inputPath) => {
+  if (typeof inputPath !== "string") return inputPath;
+  if (inputPath.startsWith("..")) {
+    const root = await client.realPath("..");
+    return `${root}/${inputPath.slice(3)}`;
+  }
+  if (inputPath.startsWith(".")) {
+    const root = await client.realPath(".");
+    return `${root}/${inputPath.slice(2)}`;
+  }
+  return inputPath;
+};
+
+const ensureRemoteDirInternal = async (sftp, dirPath, encoding) => {
+  if (!dirPath || dirPath === ".") return;
+  const normalized = path.posix.normalize(dirPath);
+  if (!normalized || normalized === ".") return;
+
+  const isAbsolute = normalized.startsWith("/");
+  const parts = normalized.split("/").filter(Boolean);
+  let current = isAbsolute ? "/" : "";
+
+  for (const part of parts) {
+    current = current === "/" ? `/${part}` : (current ? `${current}/${part}` : part);
+    const encodedCurrent = encodePath(current, encoding);
+    try {
+      const stats = await statAsync(sftp, encodedCurrent);
+      if (!stats.isDirectory()) {
+        throw new Error(`Remote path is not a directory: ${current}`);
+      }
+    } catch (err) {
+      if (err && (err.code === 2 || err.code === 4)) {
+        await mkdirAsync(sftp, encodedCurrent);
+        continue;
+      }
+      throw err;
+    }
+  }
+};
+
+const removeRemotePathInternal = async (sftp, targetPath, encoding) => {
+  const encodedTarget = encodePath(targetPath, encoding);
+  let stats;
+  try {
+    stats = await statAsync(sftp, encodedTarget);
+  } catch (err) {
+    if (err && err.code === 2) return;
+    throw err;
+  }
+
+  if (stats.isDirectory()) {
+    const items = await readdirAsync(sftp, encodedTarget);
+    for (const item of items) {
+      const rawName =
+        item?.filenameRaw ||
+        (item?.filename ? Buffer.from(item.filename, "utf8") : null);
+      const name = decodeName(rawName, encoding);
+      if (!name || name === "." || name === "..") continue;
+      const childPath = path.posix.join(targetPath, name);
+      await removeRemotePathInternal(sftp, childPath, encoding);
+    }
+    await rmdirAsync(sftp, encodedTarget);
+  } else {
+    await unlinkAsync(sftp, encodedTarget);
+  }
+};
+
+const ensureRemoteDirForSession = async (sftpId, dirPath, requestedEncoding) => {
+  const client = sftpClients.get(sftpId);
+  if (!client) throw new Error("SFTP session not found");
+
+  if (!dirPath || dirPath === ".") return true;
+
+  const encoding = resolveEncodingForRequest(sftpId, requestedEncoding);
+  if (encoding === "utf-8") {
+    const encodedPath = encodePath(dirPath, encoding);
+    await client.mkdir(encodedPath, true);
+    return true;
+  }
+
+  const sftp = getSftpChannel(client);
+  if (!sftp) throw new Error("SFTP channel not ready");
+
+  const normalizedPath = await normalizeRemotePathString(client, dirPath);
+  await ensureRemoteDirInternal(sftp, normalizedPath, encoding);
+  return true;
+};
 
 /**
  * Send message to renderer safely
@@ -644,23 +835,54 @@ async function listSftp(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
-  const list = await client.list(payload.path || ".");
+  const requestedEncoding = normalizeEncoding(payload.encoding);
   const basePath = payload.path || ".";
+  const pathEncoding = resolveEncodingForRequest(payload.sftpId, requestedEncoding);
+  const encodedPath = encodePath(basePath, pathEncoding);
+
+  const sftp = client.sftp || client.client?.sftp;
+  if (!sftp) {
+    throw new Error("SFTP channel not ready");
+  }
+
+  const list = await new Promise((resolve, reject) => {
+    sftp.readdir(encodedPath, (err, items) => {
+      if (err) return reject(err);
+      resolve(items || []);
+    });
+  });
+
+  const detectedEncoding =
+    requestedEncoding === "auto" ? detectEncodingFromList(list) : requestedEncoding;
+  const resolvedEncoding = updateResolvedEncoding(payload.sftpId, requestedEncoding, detectedEncoding);
+
+  const modeToPermissions = (mode) => {
+    if (typeof mode !== "number") return undefined;
+    const toTriplet = (bits) =>
+      `${bits & 4 ? "r" : "-"}${bits & 2 ? "w" : "-"}${bits & 1 ? "x" : "-"}`;
+    return `${toTriplet((mode >> 6) & 7)}${toTriplet((mode >> 3) & 7)}${toTriplet(mode & 7)}`;
+  };
 
   // Process items and resolve symlinks
   const results = await Promise.all(list.map(async (item) => {
+    const filenameRaw = item.filenameRaw || (item.filename ? Buffer.from(item.filename, "utf8") : null);
+    const longnameRaw = item.longnameRaw || (item.longname ? Buffer.from(item.longname, "utf8") : null);
+    const name = decodeName(filenameRaw, resolvedEncoding) || item.filename || "";
+    const longname = decodeName(longnameRaw, resolvedEncoding) || item.longname || "";
+
     let type;
     let linkTarget = null;
 
-    if (item.type === "d") {
+    if (item.attrs?.isDirectory?.()) {
       type = "directory";
-    } else if (item.type === "l") {
+    } else if (item.attrs?.isSymbolicLink?.()) {
       // This is a symlink - try to resolve its target type
       type = "symlink";
       try {
         // Use path.posix.join to properly construct the path and avoid double slashes
-        const fullPath = path.posix.join(basePath === "." ? "/" : basePath, item.name);
-        const stat = await client.stat(fullPath);
+        const fullPath = path.posix.join(basePath === "." ? "/" : basePath, name);
+        const encodedFullPath = encodePath(fullPath, resolvedEncoding);
+        const stat = await client.stat(encodedFullPath);
         // stat follows symlinks, so we get the target's type
         if (stat.isDirectory) {
           linkTarget = "directory";
@@ -669,31 +891,32 @@ async function listSftp(event, payload) {
         }
       } catch (err) {
         // If we can't stat the symlink target (broken link), keep it as symlink
-        console.warn(`Could not resolve symlink target for ${item.name}:`, err.message);
+        console.warn(`Could not resolve symlink target for ${name}:`, err.message);
       }
     } else {
       type = "file";
     }
 
-    // Extract permissions from longname or rights
+    // Extract permissions from longname or attrs.mode
     let permissions = undefined;
-    if (item.rights) {
-      // ssh2-sftp-client returns rights object with user/group/other
-      permissions = `${item.rights.user || '---'}${item.rights.group || '---'}${item.rights.other || '---'}`;
-    } else if (item.longname) {
+    if (longname) {
       // Fallback: parse from longname (e.g., "-rwxr-xr-x 1 root root ...")
-      const match = item.longname.match(/^[dlsbc-]([rwxsStT-]{9})/);
+      const match = longname.match(/^[dlsbc-]([rwxsStT-]{9})/);
       if (match) {
         permissions = match[1];
       }
     }
+    if (!permissions && item.attrs?.mode) {
+      permissions = modeToPermissions(item.attrs.mode);
+    }
 
+    const modifyTime = item.attrs?.mtime ? item.attrs.mtime * 1000 : Date.now();
     return {
-      name: item.name,
+      name,
       type,
       linkTarget,
-      size: `${item.size} bytes`,
-      lastModified: new Date(item.modifyTime || Date.now()).toISOString(),
+      size: `${item.attrs?.size || 0} bytes`,
+      lastModified: new Date(modifyTime).toISOString(),
       permissions,
     };
   }));
@@ -708,7 +931,9 @@ async function readSftp(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
-  const buffer = await client.get(payload.path);
+  const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+  const encodedPath = encodePath(payload.path, encoding);
+  const buffer = await client.get(encodedPath);
   return buffer.toString();
 }
 
@@ -719,7 +944,9 @@ async function readSftpBinary(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
-  const buffer = await client.get(payload.path);
+  const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+  const encodedPath = encodePath(payload.path, encoding);
+  const buffer = await client.get(encodedPath);
   // Convert Node.js Buffer to ArrayBuffer
   return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
 }
@@ -731,7 +958,22 @@ async function writeSftp(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
-  await client.put(Buffer.from(payload.content, "utf-8"), payload.path);
+  const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+  const encodedPath = encodePath(payload.path, encoding);
+  await client.put(Buffer.from(payload.content, "utf-8"), encodedPath);
+  return true;
+}
+
+/**
+ * Write binary data
+ */
+async function writeSftpBinary(event, payload) {
+  const client = sftpClients.get(payload.sftpId);
+  if (!client) throw new Error("SFTP session not found");
+
+  const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+  const encodedPath = encodePath(payload.path, encoding);
+  await client.put(Buffer.from(payload.content), encodedPath);
   return true;
 }
 
@@ -743,6 +985,8 @@ async function writeSftpBinaryWithProgress(event, payload) {
   if (!client) throw new Error("SFTP session not found");
 
   const { sftpId, path: remotePath, content, transferId } = payload;
+  const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+  const encodedPath = encodePath(remotePath, encoding);
   const buffer = Buffer.from(content);
   const totalBytes = buffer.length;
   let transferredBytes = 0;
@@ -783,7 +1027,7 @@ async function writeSftpBinaryWithProgress(event, payload) {
   });
 
   try {
-    await client.put(readableStream, remotePath);
+    await client.put(readableStream, encodedPath);
 
     const contents = electronModule.webContents.fromId(event.sender.id);
     contents?.send("netcatty:upload:complete", { transferId });
@@ -817,6 +1061,7 @@ async function closeSftp(event, payload) {
     console.warn("SFTP close failed", err);
   }
   sftpClients.delete(payload.sftpId);
+  sftpEncodingState.delete(payload.sftpId);
 
   // Clean up jump connections if any
   const jumpData = jumpConnectionsMap.get(payload.sftpId);
@@ -833,10 +1078,7 @@ async function closeSftp(event, payload) {
  * Create a directory
  */
 async function mkdirSftp(event, payload) {
-  const client = sftpClients.get(payload.sftpId);
-  if (!client) throw new Error("SFTP session not found");
-
-  await client.mkdir(payload.path, true);
+  await ensureRemoteDirForSession(payload.sftpId, payload.path, payload.encoding);
   return true;
 }
 
@@ -847,12 +1089,23 @@ async function deleteSftp(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
-  const stat = await client.stat(payload.path);
-  if (stat.isDirectory) {
-    await client.rmdir(payload.path, true);
-  } else {
-    await client.delete(payload.path);
+  const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+  if (encoding === "utf-8") {
+    const encodedPath = encodePath(payload.path, encoding);
+    const stat = await client.stat(encodedPath);
+    if (stat.isDirectory) {
+      await client.rmdir(encodedPath, true);
+    } else {
+      await client.delete(encodedPath);
+    }
+    return true;
   }
+
+  const sftp = getSftpChannel(client);
+  if (!sftp) throw new Error("SFTP channel not ready");
+
+  const normalizedPath = await normalizeRemotePathString(client, payload.path);
+  await removeRemotePathInternal(sftp, normalizedPath, encoding);
   return true;
 }
 
@@ -863,7 +1116,10 @@ async function renameSftp(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
-  await client.rename(payload.oldPath, payload.newPath);
+  const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+  const encodedOldPath = encodePath(payload.oldPath, encoding);
+  const encodedNewPath = encodePath(payload.newPath, encoding);
+  await client.rename(encodedOldPath, encodedNewPath);
   return true;
 }
 
@@ -874,7 +1130,9 @@ async function statSftp(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
-  const stat = await client.stat(payload.path);
+  const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+  const encodedPath = encodePath(payload.path, encoding);
+  const stat = await client.stat(encodedPath);
   return {
     name: path.basename(payload.path),
     type: stat.isDirectory ? "directory" : stat.isSymbolicLink ? "symlink" : "file",
@@ -891,7 +1149,9 @@ async function chmodSftp(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
-  await client.chmod(payload.path, parseInt(payload.mode, 8));
+  const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+  const encodedPath = encodePath(payload.path, encoding);
+  await client.chmod(encodedPath, parseInt(payload.mode, 8));
   return true;
 }
 
@@ -904,6 +1164,7 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:sftp:read", readSftp);
   ipcMain.handle("netcatty:sftp:readBinary", readSftpBinary);
   ipcMain.handle("netcatty:sftp:write", writeSftp);
+  ipcMain.handle("netcatty:sftp:writeBinary", writeSftpBinary);
   ipcMain.handle("netcatty:sftp:writeBinaryWithProgress", writeSftpBinaryWithProgress);
   ipcMain.handle("netcatty:sftp:close", closeSftp);
   ipcMain.handle("netcatty:sftp:mkdir", mkdirSftp);
@@ -924,11 +1185,14 @@ module.exports = {
   init,
   registerHandlers,
   getSftpClients,
+  encodePathForSession,
+  ensureRemoteDirForSession,
   openSftp,
   listSftp,
   readSftp,
   readSftpBinary,
   writeSftp,
+  writeSftpBinary,
   writeSftpBinaryWithProgress,
   closeSftp,
   mkdirSftp,

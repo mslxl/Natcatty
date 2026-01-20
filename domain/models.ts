@@ -92,6 +92,7 @@ export interface Host {
   serialConfig?: SerialConfig;
   // SFTP specific configuration
   sftpSudo?: boolean; // Use sudo for SFTP operations (requires password)
+  sftpEncoding?: SftpFilenameEncoding; // Filename encoding for SFTP operations
 }
 
 export type KeyType = 'RSA' | 'ECDSA' | 'ED25519';
@@ -506,6 +507,8 @@ export interface Workspace {
 }
 
 // SFTP Types
+export type SftpFilenameEncoding = 'auto' | 'utf-8' | 'gb18030';
+
 export interface SftpFileEntry {
   name: string;
   type: 'file' | 'directory' | 'symlink';

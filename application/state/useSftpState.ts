@@ -5,6 +5,7 @@ import {
   Identity,
   SftpConnection,
   SftpFileEntry,
+  SftpFilenameEncoding,
   SSHKey,
   TransferDirection,
   TransferStatus,
@@ -121,6 +122,7 @@ export interface SftpPane {
   error: string | null;
   selectedFiles: Set<string>;
   filter: string;
+  filenameEncoding: SftpFilenameEncoding;
 }
 
 // Multi-tab state for left and right sides
@@ -142,6 +144,7 @@ const createEmptyPane = (id?: string): SftpPane => ({
   error: null,
   selectedFiles: new Set(),
   filter: "",
+  filenameEncoding: "auto",
 });
 
 // File watch event types
@@ -424,7 +427,8 @@ export const useSftpState = (
   });
 
   const makeCacheKey = useCallback(
-    (connectionId: string, path: string) => `${connectionId}::${path}`,
+    (connectionId: string, path: string, encoding?: SftpFilenameEncoding | "local") =>
+      `${connectionId}::${encoding || "local"}::${path}`,
     [],
   );
 
@@ -705,8 +709,12 @@ export const useSftpState = (
   );
 
   const listRemoteFiles = useCallback(
-    async (sftpId: string, path: string): Promise<SftpFileEntry[]> => {
-      const rawFiles = await netcattyBridge.get()?.listSftp(sftpId, path);
+    async (
+      sftpId: string,
+      path: string,
+      encoding: SftpFilenameEncoding,
+    ): Promise<SftpFileEntry[]> => {
+      const rawFiles = await netcattyBridge.get()?.listSftp(sftpId, path, encoding);
       if (!rawFiles) return [];
 
       return rawFiles.map((f) => {
@@ -807,12 +815,13 @@ export const useSftpState = (
           loading: true,
           reconnecting: false,
           error: null,
+          filenameEncoding: prev.filenameEncoding ?? "auto",
         }));
 
         try {
           const files = await listLocalFiles(homeDir);
           if (navSeqRef.current[side] !== connectRequestId) return;
-          dirCacheRef.current.set(makeCacheKey(connectionId, homeDir), {
+          dirCacheRef.current.set(makeCacheKey(connectionId, homeDir, "local"), {
             files,
             timestamp: Date.now(),
           });
@@ -853,6 +862,7 @@ export const useSftpState = (
           reconnecting: prev.reconnecting, // Preserve reconnecting state during connection
           error: null,
           files: prev.reconnecting ? prev.files : [], // Keep files if reconnecting
+          filenameEncoding: host.sftpEncoding ?? prev.filenameEncoding ?? "auto",
         }));
 
         try {
@@ -914,6 +924,8 @@ export const useSftpState = (
 
           sftpSessionsRef.current.set(connectionId, sftpId);
 
+          const initialEncoding = host.sftpEncoding ?? "auto";
+
           // Try to get home directory, default to "/"
           let startPath = "/";
           const statSftp = netcattyBridge.get()?.statSftp;
@@ -930,7 +942,7 @@ export const useSftpState = (
             }
             for (const candidate of candidates) {
               try {
-                const stat = await statSftp(sftpId, candidate);
+                const stat = await statSftp(sftpId, candidate, initialEncoding);
                 if (stat?.type === "directory") {
                   startPath = candidate;
                   break;
@@ -946,6 +958,7 @@ export const useSftpState = (
                 const rootFiles = await netcattyBridge.get()?.listSftp(
                   sftpId,
                   "/root",
+                  initialEncoding,
                 );
                 if (rootFiles) startPath = "/root";
               } catch {
@@ -956,6 +969,7 @@ export const useSftpState = (
                 const homeFiles = await netcattyBridge.get()?.listSftp(
                   sftpId,
                   `/home/${credentials.username}`,
+                  initialEncoding,
                 );
                 if (homeFiles) startPath = `/home/${credentials.username}`;
               } catch {
@@ -966,6 +980,7 @@ export const useSftpState = (
                   const rootFiles = await netcattyBridge.get()?.listSftp(
                     sftpId,
                     "/root",
+                    initialEncoding,
                   );
                   if (rootFiles) startPath = "/root";
                 } catch {
@@ -977,6 +992,7 @@ export const useSftpState = (
                 const rootFiles = await netcattyBridge.get()?.listSftp(
                   sftpId,
                   "/root",
+                  initialEncoding,
                 );
                 if (rootFiles) startPath = "/root";
               } catch {
@@ -984,10 +1000,13 @@ export const useSftpState = (
               }
             }
           }
-
-          const files = await listRemoteFiles(sftpId, startPath);
+          const files = await listRemoteFiles(
+            sftpId,
+            startPath,
+            initialEncoding,
+          );
           if (navSeqRef.current[side] !== connectRequestId) return;
-          dirCacheRef.current.set(makeCacheKey(connectionId, startPath), {
+          dirCacheRef.current.set(makeCacheKey(connectionId, startPath, initialEncoding), {
             files,
             timestamp: Date.now(),
           });
@@ -1566,7 +1585,7 @@ export const useSftpState = (
     async (
       side: "left" | "right",
       path: string,
-      options?: { force?: boolean },
+      options?: { force?: boolean; encodingOverride?: SftpFilenameEncoding },
     ) => {
       console.log("[SFTP navigateTo] called", { side, path, force: options?.force });
 
@@ -1587,7 +1606,10 @@ export const useSftpState = (
       }
 
       const requestId = ++navSeqRef.current[side];
-      const cacheKey = makeCacheKey(pane.connection.id, path);
+      const encodingKey = pane.connection.isLocal
+        ? "local"
+        : (options?.encodingOverride ?? pane.filenameEncoding ?? "auto");
+      const cacheKey = makeCacheKey(pane.connection.id, path, encodingKey);
       const cached = options?.force
         ? undefined
         : dirCacheRef.current.get(cacheKey);
@@ -1638,7 +1660,11 @@ export const useSftpState = (
           }
 
           try {
-            files = await listRemoteFiles(sftpId, path);
+            files = await listRemoteFiles(
+              sftpId,
+              path,
+              encodingKey === "local" ? "auto" : encodingKey,
+            );
           } catch (err) {
             if (isSessionError(err)) {
               // Clean up stale session reference
@@ -1847,6 +1873,21 @@ export const useSftpState = (
     updateActiveTab(side, (prev) => ({ ...prev, filter }));
   }, [updateActiveTab]);
 
+  const setFilenameEncoding = useCallback(
+    async (side: "left" | "right", encoding: SftpFilenameEncoding) => {
+      const pane = getActivePane(side);
+      if (!pane) return;
+
+      updateActiveTab(side, (prev) => ({ ...prev, filenameEncoding: encoding }));
+
+      if (!pane.connection || pane.connection.isLocal) return;
+
+      clearCacheForConnection(pane.connection.id);
+      await navigateTo(side, pane.connection.currentPath, { force: true, encodingOverride: encoding });
+    },
+    [clearCacheForConnection, getActivePane, navigateTo, updateActiveTab],
+  );
+
   // Create directory
   const createDirectory = useCallback(
     async (side: "left" | "right", name: string) => {
@@ -1864,7 +1905,11 @@ export const useSftpState = (
             handleSessionError(side, new Error("SFTP session not found"));
             return;
           }
-          await netcattyBridge.get()?.mkdirSftp(sftpId, fullPath);
+          await netcattyBridge.get()?.mkdirSftp(
+            sftpId,
+            fullPath,
+            pane.filenameEncoding ?? "auto",
+          );
         }
         await refresh(side);
       } catch (err) {
@@ -1904,13 +1949,14 @@ export const useSftpState = (
           }
           // Write empty content to create the file
           const bridge = netcattyBridge.get();
+          const encoding = pane.filenameEncoding ?? "auto";
           if (bridge?.writeSftpBinary) {
             // Use binary write with empty buffer for consistency
             const emptyBuffer = new ArrayBuffer(0);
-            await bridge.writeSftpBinary(sftpId, fullPath, emptyBuffer);
+            await bridge.writeSftpBinary(sftpId, fullPath, emptyBuffer, encoding);
           } else if (bridge?.writeSftp) {
             // Fallback to text write with empty string
-            await bridge.writeSftp(sftpId, fullPath, "");
+            await bridge.writeSftp(sftpId, fullPath, "", encoding);
           } else {
             throw new Error("No write method available");
           }
@@ -1945,7 +1991,11 @@ export const useSftpState = (
               handleSessionError(side, new Error("SFTP session not found"));
               return;
             }
-            await netcattyBridge.get()?.deleteSftp?.(sftpId, fullPath);
+            await netcattyBridge.get()?.deleteSftp?.(
+              sftpId,
+              fullPath,
+              pane.filenameEncoding ?? "auto",
+            );
           }
         }
         await refresh(side);
@@ -1978,7 +2028,12 @@ export const useSftpState = (
             handleSessionError(side, new Error("SFTP session not found"));
             return;
           }
-          await netcattyBridge.get()?.renameSftp?.(sftpId, oldPath, newPath);
+          await netcattyBridge.get()?.renameSftp?.(
+            sftpId,
+            oldPath,
+            newPath,
+            pane.filenameEncoding ?? "auto",
+          );
         }
         await refresh(side);
       } catch (err) {
@@ -2035,6 +2090,7 @@ export const useSftpState = (
               const stat = await netcattyBridge.get()?.statSftp?.(
                 sourceSftpId,
                 fullPath,
+                sourcePane.filenameEncoding ?? "auto",
               );
               if (stat) fileSize = stat.size;
             }
@@ -2099,6 +2155,7 @@ export const useSftpState = (
           const stat = await netcattyBridge.get()?.statSftp?.(
             sourceSftpId,
             task.sourcePath,
+            sourcePane.filenameEncoding ?? "auto",
           );
           if (stat) actualFileSize = stat.size;
         }
@@ -2173,6 +2230,7 @@ export const useSftpState = (
             const stat = await netcattyBridge.get()!.statSftp!(
               sourceSftpId,
               task.sourcePath,
+              sourcePane.filenameEncoding ?? "auto",
             );
             if (stat) {
               sourceStat = {
@@ -2200,6 +2258,7 @@ export const useSftpState = (
             const stat = await netcattyBridge.get()!.statSftp!(
               targetSftpId,
               task.targetPath,
+              targetPane.filenameEncoding ?? "auto",
             );
             if (stat) {
               targetExists = true;
@@ -2237,6 +2296,9 @@ export const useSftpState = (
         }
       }
 
+      const sourceEncoding = sourcePane.filenameEncoding ?? "auto";
+      const targetEncoding = targetPane.filenameEncoding ?? "auto";
+
       if (task.isDirectory) {
         // Handle directory transfer recursively
         await transferDirectory(
@@ -2245,6 +2307,8 @@ export const useSftpState = (
           targetSftpId,
           sourcePane.connection!.isLocal,
           targetPane.connection!.isLocal,
+          sourceEncoding,
+          targetEncoding,
         );
       } else {
         // Handle file transfer
@@ -2254,6 +2318,8 @@ export const useSftpState = (
           targetSftpId,
           sourcePane.connection!.isLocal,
           targetPane.connection!.isLocal,
+          sourceEncoding,
+          targetEncoding,
         );
       }
 
@@ -2299,6 +2365,8 @@ export const useSftpState = (
     targetSftpId: string | null,
     sourceIsLocal: boolean,
     targetIsLocal: boolean,
+    sourceEncoding: SftpFilenameEncoding,
+    targetEncoding: SftpFilenameEncoding,
   ): Promise<void> => {
     // Try to use streaming transfer if available
     if (netcattyBridge.get()?.startStreamTransfer) {
@@ -2312,6 +2380,8 @@ export const useSftpState = (
           sourceSftpId: sourceSftpId || undefined,
           targetSftpId: targetSftpId || undefined,
           totalBytes: task.totalBytes || undefined,
+          sourceEncoding: sourceIsLocal ? undefined : sourceEncoding,
+          targetEncoding: targetIsLocal ? undefined : targetEncoding,
         };
 
         const onProgress = (
@@ -2364,10 +2434,11 @@ export const useSftpState = (
         content = await netcattyBridge.get()!.readSftpBinary!(
           sourceSftpId,
           task.sourcePath,
+          sourceEncoding,
         );
       } else {
         content =
-          (await netcattyBridge.get()?.readSftp(sourceSftpId, task.sourcePath)) || "";
+          (await netcattyBridge.get()?.readSftp(sourceSftpId, task.sourcePath, sourceEncoding)) || "";
       }
     } else {
       throw new Error("No source connection");
@@ -2390,13 +2461,19 @@ export const useSftpState = (
           targetSftpId,
           task.targetPath,
           content,
+          targetEncoding,
         );
       } else {
         const text =
           content instanceof ArrayBuffer
             ? new TextDecoder().decode(content)
             : content;
-        await netcattyBridge.get()?.writeSftp(targetSftpId, task.targetPath, text);
+        await netcattyBridge.get()?.writeSftp(
+          targetSftpId,
+          task.targetPath,
+          text,
+          targetEncoding,
+        );
       }
     } else {
       throw new Error("No target connection");
@@ -2410,12 +2487,18 @@ export const useSftpState = (
     targetSftpId: string | null,
     sourceIsLocal: boolean,
     targetIsLocal: boolean,
+    sourceEncoding: SftpFilenameEncoding,
+    targetEncoding: SftpFilenameEncoding,
   ) => {
     // Create target directory
     if (targetIsLocal) {
       await netcattyBridge.get()?.mkdirLocal?.(task.targetPath);
     } else if (targetSftpId) {
-      await netcattyBridge.get()?.mkdirSftp(targetSftpId, task.targetPath);
+      await netcattyBridge.get()?.mkdirSftp(
+        targetSftpId,
+        task.targetPath,
+        targetEncoding,
+      );
     }
 
     // List source directory
@@ -2423,7 +2506,7 @@ export const useSftpState = (
     if (sourceIsLocal) {
       files = await listLocalFiles(task.sourcePath);
     } else if (sourceSftpId) {
-      files = await listRemoteFiles(sourceSftpId, task.sourcePath);
+      files = await listRemoteFiles(sourceSftpId, task.sourcePath, sourceEncoding);
     } else {
       throw new Error("No source connection");
     }
@@ -2449,6 +2532,8 @@ export const useSftpState = (
           targetSftpId,
           sourceIsLocal,
           targetIsLocal,
+          sourceEncoding,
+          targetEncoding,
         );
       } else {
         await transferFile(
@@ -2457,6 +2542,8 @@ export const useSftpState = (
           targetSftpId,
           sourceIsLocal,
           targetIsLocal,
+          sourceEncoding,
+          targetEncoding,
         );
       }
     }
@@ -2647,7 +2734,12 @@ export const useSftpState = (
       }
 
       try {
-        await netcattyBridge.get()!.chmodSftp!(sftpId, filePath, mode);
+        await netcattyBridge.get()!.chmodSftp!(
+          sftpId,
+          filePath,
+          mode,
+          pane.filenameEncoding ?? "auto",
+        );
         await refresh(side);
       } catch (err) {
         if (isSessionError(err)) {
@@ -2686,8 +2778,9 @@ export const useSftpState = (
       if (!bridge) {
         throw new Error("Bridge not available");
       }
+      const encoding = pane.filenameEncoding ?? "auto";
 
-      return await bridge.readSftp(sftpId, filePath);
+      return await bridge.readSftp(sftpId, filePath, encoding);
     },
     [getActivePane],
   );
@@ -2718,7 +2811,11 @@ export const useSftpState = (
         throw new Error("Binary file reading not supported");
       }
 
-      return await bridge.readSftpBinary(sftpId, filePath);
+      return await bridge.readSftpBinary(
+        sftpId,
+        filePath,
+        pane.filenameEncoding ?? "auto",
+      );
     },
     [getActivePane],
   );
@@ -2751,7 +2848,12 @@ export const useSftpState = (
         throw new Error("Bridge not available");
       }
 
-      await bridge.writeSftp(sftpId, filePath, content);
+      await bridge.writeSftp(
+        sftpId,
+        filePath,
+        content,
+        pane.filenameEncoding ?? "auto",
+      );
     },
     [getActivePane],
   );
@@ -2790,7 +2892,12 @@ export const useSftpState = (
 
       // Download to temp directory
       console.log("[SFTP] Downloading file to temp", { sftpId, remotePath, fileName });
-      const localTempPath = await bridge.downloadSftpToTemp(sftpId, remotePath, fileName);
+      const localTempPath = await bridge.downloadSftpToTemp(
+        sftpId,
+        remotePath,
+        fileName,
+        pane.filenameEncoding ?? "auto",
+      );
       console.log("[SFTP] File downloaded to temp", { localTempPath });
 
       // Register temp file for cleanup when SFTP session closes (regardless of auto-sync setting)
@@ -2813,7 +2920,12 @@ export const useSftpState = (
       if (options?.enableWatch && bridge.startFileWatch) {
         try {
           console.log("[SFTP] Starting file watch", { localTempPath, remotePath, sftpId });
-          const result = await bridge.startFileWatch(localTempPath, remotePath, sftpId);
+          const result = await bridge.startFileWatch(
+            localTempPath,
+            remotePath,
+            sftpId,
+            pane.filenameEncoding ?? "auto",
+          );
           watchId = result.watchId;
           console.log("[SFTP] File watch started successfully", { watchId, localTempPath, remotePath });
         } catch (err) {
@@ -2862,7 +2974,7 @@ export const useSftpState = (
               await bridge.mkdirLocal(dirPath);
             }
           } else if (sftpId) {
-            await bridge.mkdirSftp(sftpId, dirPath);
+            await bridge.mkdirSftp(sftpId, dirPath, encoding);
           }
           createdDirs.add(dirPath);
         } catch {
@@ -2970,6 +3082,7 @@ export const useSftpState = (
                     targetPath,
                     arrayBuffer,
                     crypto.randomUUID(),
+                    encoding,
                     undefined, // onProgress
                     undefined, // onComplete
                     undefined, // onError
@@ -2977,13 +3090,13 @@ export const useSftpState = (
 
                   if (!result || result.success === false) {
                     if (bridge.writeSftpBinary) {
-                      await bridge.writeSftpBinary(sftpId, targetPath, arrayBuffer);
+                      await bridge.writeSftpBinary(sftpId, targetPath, arrayBuffer, encoding);
                     } else {
                       throw new Error("Upload failed and no fallback method available");
                     }
                   }
                 } else if (bridge.writeSftpBinary) {
-                  await bridge.writeSftpBinary(sftpId, targetPath, arrayBuffer);
+                  await bridge.writeSftpBinary(sftpId, targetPath, arrayBuffer, encoding);
                 } else {
                   throw new Error("No SFTP write method available");
                 }
@@ -3063,6 +3176,7 @@ export const useSftpState = (
     clearSelection,
     selectAll,
     setFilter,
+    setFilenameEncoding,
     createDirectory,
     createFile,
     deleteFiles,
@@ -3102,6 +3216,7 @@ export const useSftpState = (
     clearSelection,
     selectAll,
     setFilter,
+    setFilenameEncoding,
     createDirectory,
     createFile,
     deleteFiles,
@@ -3145,6 +3260,8 @@ export const useSftpState = (
     clearSelection: (...args: Parameters<typeof clearSelection>) => methodsRef.current.clearSelection(...args),
     selectAll: (...args: Parameters<typeof selectAll>) => methodsRef.current.selectAll(...args),
     setFilter: (...args: Parameters<typeof setFilter>) => methodsRef.current.setFilter(...args),
+    setFilenameEncoding: (...args: Parameters<typeof setFilenameEncoding>) =>
+      methodsRef.current.setFilenameEncoding(...args),
     createDirectory: (...args: Parameters<typeof createDirectory>) => methodsRef.current.createDirectory(...args),
     createFile: (...args: Parameters<typeof createFile>) => methodsRef.current.createFile(...args),
     deleteFiles: (...args: Parameters<typeof deleteFiles>) => methodsRef.current.deleteFiles(...args),

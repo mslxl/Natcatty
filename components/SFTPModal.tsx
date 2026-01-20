@@ -47,7 +47,7 @@ import { useSettingsState } from "../application/state/useSettingsState";
 import { logger } from "../lib/logger";
 import { getFileExtension, isKnownBinaryFile, FileOpenerType, SystemAppInfo, extractDropEntries } from "../lib/sftpFileUtils";
 import { cn } from "../lib/utils";
-import { Host, RemoteFile } from "../types";
+import { Host, RemoteFile, SftpFilenameEncoding } from "../types";
 import { filterHiddenFiles } from "./sftp";
 import { DistroAvatar } from "./DistroAvatar";
 import FileOpenerDialog from "./FileOpenerDialog";
@@ -63,6 +63,7 @@ import {
 } from "./ui/context-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 
 // Comprehensive file icon helper
 const getFileIcon = (fileName: string, isDirectory: boolean, isSymlink?: boolean) => {
@@ -314,6 +315,9 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   const [currentPath, setCurrentPath] = useState("/");
   const [files, setFiles] = useState<RemoteFile[]>([]);
   const [loading, setLoading] = useState(false);
+  const [filenameEncoding, setFilenameEncoding] = useState<SftpFilenameEncoding>(
+    host.sftpEncoding ?? "auto",
+  );
   const [dragActive, setDragActive] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
@@ -582,7 +586,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   const loadFiles = useCallback(
     async (path: string, options?: { force?: boolean }) => {
       const requestId = ++loadSeqRef.current;
-      const cacheKey = `${host.id}::${path}`;
+      const cacheKey = `${host.id}::${isLocalSession ? "local" : filenameEncoding}::${path}`;
       const cached = options?.force
         ? undefined
         : dirCacheRef.current.get(cacheKey);
@@ -602,7 +606,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
         setLoading(true);
         const list = isLocalSession
           ? await listLocalDir(path)
-          : await listSftp(await ensureSftp(), path);
+          : await listSftp(await ensureSftp(), path, filenameEncoding);
         if (loadSeqRef.current !== requestId) return;
         dirCacheRef.current.set(cacheKey, {
           files: list,
@@ -632,12 +636,22 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
         }
       }
     },
-    [ensureSftp, host.id, isLocalSession, listLocalDir, listSftp, t, isSessionError, handleSessionError, files.length],
+    [ensureSftp, host.id, isLocalSession, listLocalDir, listSftp, t, isSessionError, handleSessionError, files.length, filenameEncoding],
   );
+
+  useEffect(() => {
+    setFilenameEncoding(host.sftpEncoding ?? "auto");
+  }, [host.id, host.sftpEncoding]);
+
+  useEffect(() => {
+    if (!open || isLocalSession) return;
+    dirCacheRef.current.clear();
+    void loadFiles(currentPath, { force: true });
+  }, [currentPath, filenameEncoding, isLocalSession, loadFiles, open]);
 
   useLayoutEffect(() => {
     if (!open) return;
-    const cacheKey = `${host.id}::${currentPath}`;
+    const cacheKey = `${host.id}::${isLocalSession ? "local" : filenameEncoding}::${currentPath}`;
     const cached = dirCacheRef.current.get(cacheKey);
     const isFresh =
       cached && Date.now() - cached.timestamp < DIR_CACHE_TTL_MS;
@@ -646,7 +660,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       setSelectedFiles(new Set());
     }
     setScrollTop(0);
-  }, [currentPath, host.id, open]);
+  }, [currentPath, host.id, open, isLocalSession, filenameEncoding]);
 
   const closeSftpSession = useCallback(async () => {
     if (!isLocalSession && sftpIdRef.current) {
@@ -697,8 +711,8 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
         sftpIdRef.current = sftpId;
 
         // Refresh current directory
-        const list = await listSftp(sftpId, currentPath);
-        dirCacheRef.current.set(`${host.id}::${currentPath}`, {
+        const list = await listSftp(sftpId, currentPath, filenameEncoding);
+        dirCacheRef.current.set(`${host.id}::${isLocalSession ? "local" : filenameEncoding}::${currentPath}`, {
           files: list,
           timestamp: Date.now(),
         });
@@ -730,7 +744,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     };
 
     attemptReconnect();
-  }, [reconnecting, isLocalSession, host.id, credentials, openSftp, listSftp, currentPath, t, handleSessionError]);
+  }, [reconnecting, isLocalSession, host.id, credentials, openSftp, listSftp, currentPath, t, handleSessionError, filenameEncoding]);
 
   useEffect(() => {
     if (open) {
@@ -767,11 +781,11 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
             if (initialPath) {
               try {
                 const sftpId = await ensureSftp();
-                const list = await listSftp(sftpId, initialPath);
+                const list = await listSftp(sftpId, initialPath, filenameEncoding);
                 setCurrentPath(initialPath);
                 setFiles(list);
                 setSelectedFiles(new Set());
-                dirCacheRef.current.set(`${host.id}::${initialPath}`, {
+                dirCacheRef.current.set(`${host.id}::${isLocalSession ? "local" : filenameEncoding}::${initialPath}`, {
                   files: list,
                   timestamp: Date.now(),
                 });
@@ -785,11 +799,11 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
 
             try {
               const sftpId = await ensureSftp();
-              const list = await listSftp(sftpId, homePath);
+              const list = await listSftp(sftpId, homePath, filenameEncoding);
               setCurrentPath(homePath);
               setFiles(list);
               setSelectedFiles(new Set());
-              dirCacheRef.current.set(`${host.id}::${homePath}`, {
+              dirCacheRef.current.set(`${host.id}::${isLocalSession ? "local" : filenameEncoding}::${homePath}`, {
                 files: list,
                 timestamp: Date.now(),
               });
@@ -799,11 +813,11 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
               logger.warn(`[SFTP] Home ${homePath} not accessible, using /`);
               try {
                 const sftpId = await ensureSftp();
-                const list = await listSftp(sftpId, '/');
+                const list = await listSftp(sftpId, '/', filenameEncoding);
                 setCurrentPath('/');
                 setFiles(list);
                 setSelectedFiles(new Set());
-                dirCacheRef.current.set(`${host.id}::/`, {
+                dirCacheRef.current.set(`${host.id}::${isLocalSession ? "local" : filenameEncoding}::/`, {
                   files: list,
                   timestamp: Date.now(),
                 });
@@ -825,7 +839,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       void closeSftpSession();
       initializedRef.current = false;
     }
-  }, [open, currentPath, loadFiles, closeSftpSession, getHomeDir, isLocalSession, credentials.username, ensureSftp, listSftp, host.id, t, initialPath]);
+  }, [open, currentPath, loadFiles, closeSftpSession, getHomeDir, isLocalSession, credentials.username, ensureSftp, listSftp, host.id, t, initialPath, filenameEncoding]);
 
   const handleNavigate = useCallback((path: string) => {
     // Prevent double navigation (e.g., from double-click race condition)
@@ -850,7 +864,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
         setLoading(true);
         const content = isLocalSession
           ? await readLocalFile(fullPath)
-          : await readSftp(await ensureSftp(), fullPath);
+          : await readSftp(await ensureSftp(), fullPath, filenameEncoding);
         const blob = new Blob([content], { type: "application/octet-stream" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -869,7 +883,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
         setLoading(false);
       }
     },
-    [currentPath, ensureSftp, isLocalSession, joinPath, readLocalFile, readSftp, t],
+    [currentPath, ensureSftp, isLocalSession, joinPath, readLocalFile, readSftp, t, filenameEncoding],
   );
 
   const handleUploadFile = async (
@@ -927,6 +941,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
         fullPath,
         arrayBuffer,
         taskId,
+        filenameEncoding,
         // Real-time progress callback
         (transferred: number, total: number, speed: number) => {
           const progress = total > 0 ? Math.round((transferred / total) * 100) : 0;
@@ -980,11 +995,11 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
 
       try {
         // Fallback to non-progress API
-        await writeSftpBinary(sftpId, fullPath, arrayBuffer);
+        await writeSftpBinary(sftpId, fullPath, arrayBuffer, filenameEncoding);
       } catch {
         // Fallback: read as text (works for text files)
         const text = await file.text();
-        await writeSftp(sftpId, fullPath, text);
+        await writeSftp(sftpId, fullPath, text, filenameEncoding);
       }
 
       // Calculate final speed (for fallback methods)
@@ -1072,7 +1087,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
           await mkdirLocal(dirPath);
         } else {
           const sftpId = await ensureSftp();
-          await mkdirSftp(sftpId, dirPath);
+          await mkdirSftp(sftpId, dirPath, filenameEncoding);
         }
         createdDirs.add(dirPath);
       } catch {
@@ -1152,7 +1167,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
         await deleteLocalFile(fullPath);
       } else {
         // Use deleteSftp which handles both files and directories
-        await deleteSftp(await ensureSftp(), fullPath);
+        await deleteSftp(await ensureSftp(), fullPath, filenameEncoding);
       }
       await loadFiles(currentPath, { force: true });
     } catch (e) {
@@ -1171,7 +1186,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       if (isLocalSession) {
         await mkdirLocal(fullPath);
       } else {
-        await mkdirSftp(await ensureSftp(), fullPath);
+        await mkdirSftp(await ensureSftp(), fullPath, filenameEncoding);
       }
       await loadFiles(currentPath, { force: true });
     } catch (e) {
@@ -1193,10 +1208,10 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       } else {
         // Write empty content to create the file using binary write for consistency
         try {
-          await writeSftpBinary(await ensureSftp(), fullPath, new ArrayBuffer(0));
+          await writeSftpBinary(await ensureSftp(), fullPath, new ArrayBuffer(0), filenameEncoding);
         } catch {
           // Fallback to text write if binary write is not available
-          await writeSftp(await ensureSftp(), fullPath, "");
+          await writeSftp(await ensureSftp(), fullPath, "", filenameEncoding);
         }
       }
       await loadFiles(currentPath, { force: true });
@@ -1230,7 +1245,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
         // For local, use renameLocalFile if available, otherwise show error
         toast.error("Local rename not implemented", "SFTP");
       } else {
-        await renameSftp(await ensureSftp(), oldPath, newPath);
+        await renameSftp(await ensureSftp(), oldPath, newPath, filenameEncoding);
       }
       setShowRenameDialog(false);
       setRenameTarget(null);
@@ -1317,7 +1332,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     let permsStr = file.permissions;
     try {
       const fullPath = joinPath(currentPath, file.name);
-      const stat = await statSftp(await ensureSftp(), fullPath);
+      const stat = await statSftp(await ensureSftp(), fullPath, filenameEncoding);
       if (stat.permissions) {
         permsStr = stat.permissions;
       }
@@ -1327,7 +1342,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
 
     setPermissions(parsePermissions(permsStr));
     setShowPermissionsDialog(true);
-  }, [isLocalSession, currentPath, joinPath, statSftp, parsePermissions, ensureSftp]);
+  }, [isLocalSession, currentPath, joinPath, statSftp, parsePermissions, ensureSftp, filenameEncoding]);
 
   // Toggle permission
   const togglePermission = useCallback((role: 'owner' | 'group' | 'others', perm: 'read' | 'write' | 'execute') => {
@@ -1357,7 +1372,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     setIsChangingPermissions(true);
     try {
       const fullPath = joinPath(currentPath, permissionsTarget.name);
-      await chmodSftp(await ensureSftp(), fullPath, getOctalPermissions());
+      await chmodSftp(await ensureSftp(), fullPath, getOctalPermissions(), filenameEncoding);
       setShowPermissionsDialog(false);
       setPermissionsTarget(null);
       await loadFiles(currentPath, { force: true });
@@ -1385,7 +1400,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       const fullPath = joinPath(currentPath, file.name);
       const content = isLocalSession
         ? await readLocalFile(fullPath).then(buf => new TextDecoder().decode(buf))
-        : await readSftp(await ensureSftp(), fullPath);
+        : await readSftp(await ensureSftp(), fullPath, filenameEncoding);
       setTextEditorContent(content);
       setShowTextEditor(true);
     } catch (e) {
@@ -1396,7 +1411,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     } finally {
       setLoadingTextContent(false);
     }
-  }, [currentPath, ensureSftp, isLocalSession, joinPath, readLocalFile, readSftp, t]);
+  }, [currentPath, ensureSftp, isLocalSession, joinPath, readLocalFile, readSftp, t, filenameEncoding]);
 
   const handleSaveTextFile = useCallback(async (content: string) => {
     if (!textEditorTarget) return;
@@ -1405,9 +1420,9 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       const encoder = new TextEncoder();
       await writeLocalFile(fullPath, encoder.encode(content).buffer);
     } else {
-      await writeSftp(await ensureSftp(), fullPath, content);
+      await writeSftp(await ensureSftp(), fullPath, content, filenameEncoding);
     }
-  }, [currentPath, ensureSftp, isLocalSession, joinPath, textEditorTarget, writeLocalFile, writeSftp]);
+  }, [currentPath, ensureSftp, isLocalSession, joinPath, textEditorTarget, writeLocalFile, writeSftp, filenameEncoding]);
 
   const handleOpenFile = useCallback(async (file: RemoteFile) => {
     const savedOpener = getOpenerForFile(file.name);
@@ -1428,7 +1443,13 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
             }
           } else {
             const sftpId = await ensureSftp();
-            await downloadSftpToTempAndOpen(sftpId, fullPath, file.name, savedOpener.systemApp.path, { enableWatch: sftpAutoSync });
+            await downloadSftpToTempAndOpen(
+              sftpId,
+              fullPath,
+              file.name,
+              savedOpener.systemApp.path,
+              { enableWatch: sftpAutoSync, encoding: filenameEncoding },
+            );
           }
         } catch (e) {
           toast.error(
@@ -1441,7 +1462,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       // Show opener dialog
       openFileOpenerDialog(file);
     }
-  }, [getOpenerForFile, handleEditFile, openFileOpenerDialog, joinPath, currentPath, isLocalSession, ensureSftp, downloadSftpToTempAndOpen, sftpAutoSync, t]);
+  }, [getOpenerForFile, handleEditFile, openFileOpenerDialog, joinPath, currentPath, isLocalSession, ensureSftp, downloadSftpToTempAndOpen, sftpAutoSync, t, filenameEncoding]);
 
   const handleFileOpenerSelect = useCallback(async (openerType: FileOpenerType, setAsDefault: boolean, systemApp?: SystemAppInfo) => {
     if (!fileOpenerTarget) return;
@@ -1468,7 +1489,13 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
           }
         } else {
           const sftpId = await ensureSftp();
-          await downloadSftpToTempAndOpen(sftpId, fullPath, fileOpenerTarget.name, systemApp.path, { enableWatch: sftpAutoSync });
+          await downloadSftpToTempAndOpen(
+            sftpId,
+            fullPath,
+            fileOpenerTarget.name,
+            systemApp.path,
+            { enableWatch: sftpAutoSync, encoding: filenameEncoding },
+          );
         }
       } catch (e) {
         toast.error(
@@ -1479,7 +1506,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     }
 
     setFileOpenerTarget(null);
-  }, [fileOpenerTarget, setOpenerForExtension, handleEditFile, joinPath, currentPath, isLocalSession, ensureSftp, downloadSftpToTempAndOpen, sftpAutoSync, t]);
+  }, [fileOpenerTarget, setOpenerForExtension, handleEditFile, joinPath, currentPath, isLocalSession, ensureSftp, downloadSftpToTempAndOpen, sftpAutoSync, t, filenameEncoding]);
 
   // Callback for FileOpenerDialog to select a system application
   const handleSelectSystemApp = useCallback(async (): Promise<SystemAppInfo | null> => {
@@ -1863,7 +1890,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
         if (isLocalSession) {
           await deleteLocalFile(fullPath);
         } else {
-          await deleteSftp(await ensureSftp(), fullPath);
+          await deleteSftp(await ensureSftp(), fullPath, filenameEncoding);
         }
       }
       await loadFiles(currentPath, { force: true });
@@ -1940,6 +1967,21 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
           >
             <RefreshCw size={14} className={cn((loading || reconnecting) && "animate-spin")} />
           </Button>
+          {!isLocalSession && (
+            <Select
+              value={filenameEncoding}
+              onValueChange={(value) => setFilenameEncoding(value as SftpFilenameEncoding)}
+            >
+              <SelectTrigger className="h-7 w-[130px] text-xs" title={t("sftp.encoding.label")}>
+                <SelectValue placeholder={t("sftp.encoding.label")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">{t("sftp.encoding.auto")}</SelectItem>
+                <SelectItem value="utf-8">{t("sftp.encoding.utf8")}</SelectItem>
+                <SelectItem value="gb18030">{t("sftp.encoding.gb18030")}</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
 
           {/* Editable Breadcrumbs */}
           <div className="flex items-center gap-1 text-sm flex-1 min-w-0 overflow-hidden">
