@@ -358,7 +358,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         case "paste": {
           navigator.clipboard.readText().then((text) => {
             const id = ctx.sessionRef.current;
-            if (id) ctx.terminalBackend.writeToSession(id, text);
+            // Normalize CRLF to LF to avoid extra blank lines when pasting from other terminals
+            if (id) ctx.terminalBackend.writeToSession(id, text.replace(/\r\n/g, "\n"));
           });
           break;
         }
@@ -390,7 +391,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       try {
         const text = await navigator.clipboard.readText();
         if (text && ctx.sessionRef.current) {
-          ctx.terminalBackend.writeToSession(ctx.sessionRef.current, text);
+          // Normalize CRLF to LF to avoid extra blank lines when pasting from other terminals
+          ctx.terminalBackend.writeToSession(ctx.sessionRef.current, text.replace(/\r\n/g, "\n"));
         }
       } catch (err) {
         logger.warn("[Terminal] Failed to paste from clipboard:", err);

@@ -32,7 +32,8 @@ export const useTerminalContextActions = ({
     if (!term) return;
     try {
       const text = await navigator.clipboard.readText();
-      if (text && sessionRef.current) terminalBackend.writeToSession(sessionRef.current, text);
+      // Normalize CRLF to LF to avoid extra blank lines when pasting from other terminals
+      if (text && sessionRef.current) terminalBackend.writeToSession(sessionRef.current, text.replace(/\r\n/g, "\n"));
     } catch (err) {
       logger.warn("Failed to paste from clipboard", err);
     }
