@@ -28,6 +28,7 @@ export interface KeyboardInteractiveRequest {
   instructions: string;
   prompts: KeyboardInteractivePrompt[];
   hostname?: string;
+  savedPassword?: string | null;
 }
 
 interface KeyboardInteractiveModalProps {
@@ -137,11 +138,7 @@ export const KeyboardInteractiveModal: React.FC<KeyboardInteractiveModalProps> =
                     value={responses[index] || ""}
                     onChange={(e) => handleResponseChange(index, e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder={
-                      isPassword
-                        ? t("keyboard.interactive.enterCode")
-                        : t("keyboard.interactive.enterResponse")
-                    }
+                    placeholder=""
                     className={isPassword ? "pr-10" : undefined}
                     autoFocus={index === 0}
                     disabled={isSubmitting}
@@ -149,7 +146,7 @@ export const KeyboardInteractiveModal: React.FC<KeyboardInteractiveModalProps> =
                   {isPassword && (
                     <button
                       type="button"
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground disabled:opacity-50"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground disabled:opacity-50 p-1"
                       onClick={() => toggleShowPassword(index)}
                       disabled={isSubmitting}
                     >
@@ -157,6 +154,20 @@ export const KeyboardInteractiveModal: React.FC<KeyboardInteractiveModalProps> =
                     </button>
                   )}
                 </div>
+                {/* Use saved password button - shown below input, right-aligned */}
+                {isPassword && request.savedPassword && !responses[index] && (
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 disabled:opacity-50"
+                      onClick={() => handleResponseChange(index, request.savedPassword!)}
+                      disabled={isSubmitting}
+                    >
+                      <KeyRound size={12} />
+                      <span>{t("keyboard.interactive.useSavedPassword")}</span>
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}

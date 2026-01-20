@@ -218,12 +218,12 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       identities: ctx.identities,
       override: pendingAuth
         ? {
-            authMethod: pendingAuth.authMethod,
-            username: pendingAuth.username,
-            password: pendingAuth.password,
-            keyId: pendingAuth.keyId,
-            passphrase: pendingAuth.passphrase,
-          }
+          authMethod: pendingAuth.authMethod,
+          username: pendingAuth.username,
+          password: pendingAuth.password,
+          keyId: pendingAuth.keyId,
+          passphrase: pendingAuth.passphrase,
+        }
         : null,
     });
 
@@ -247,12 +247,12 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
 
     const proxyConfig = ctx.host.proxyConfig
       ? {
-          type: ctx.host.proxyConfig.type,
-          host: ctx.host.proxyConfig.host,
-          port: ctx.host.proxyConfig.port,
-          username: ctx.host.proxyConfig.username,
-          password: ctx.host.proxyConfig.password,
-        }
+        type: ctx.host.proxyConfig.type,
+        host: ctx.host.proxyConfig.host,
+        port: ctx.host.proxyConfig.port,
+        username: ctx.host.proxyConfig.username,
+        password: ctx.host.proxyConfig.password,
+      }
       : undefined;
 
     const jumpHosts = ctx.resolvedChainHosts.map<NetcattyJumpHost>((jumpHost) => {
@@ -348,8 +348,11 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       };
 
       let id: string;
-      const hasKeyMaterial = !!key?.privateKey;
+      // Respect explicit auth method selection - don't use key if password auth was explicitly selected
+      const authMethod = resolvedAuth.authMethod;
+      const hasKeyMaterial = !!key?.privateKey && authMethod !== 'password';
       const hasPassword = !!effectivePassword;
+
 
       if (hasKeyMaterial) {
         try {

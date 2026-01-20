@@ -57,11 +57,12 @@ export const resolveHostAuth = (args: {
     host.username?.trim() ||
     "";
 
-  const keyId =
-    override?.keyId ||
-    identity?.keyId ||
-    host.identityFileId ||
-    undefined;
+  // Don't load key when explicit password auth is requested
+  // This ensures user's auth method selection is strictly respected
+  const keyId = override?.authMethod === 'password'
+    ? undefined
+    : (override?.keyId || identity?.keyId || host.identityFileId || undefined);
+
 
   const key = keyId ? keys.find((k) => k.id === keyId) : undefined;
 

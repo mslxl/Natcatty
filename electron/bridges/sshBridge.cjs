@@ -522,61 +522,21 @@ async function startSSHSession(event, options) {
           return;
         }
 
-        // Check if all prompts are password prompts that we can auto-answer
-        const responses = [];
-        const promptsNeedingUserInput = [];
-
-        for (let i = 0; i < prompts.length; i++) {
-          const prompt = prompts[i];
-          const promptText = (prompt.prompt || '').toLowerCase().trim();
-
-          // Auto-answer password prompts if we have a configured password
-          if (options.password && (
-            promptText.includes('password') ||
-            promptText === 'password:' ||
-            promptText === 'password'
-          )) {
-            console.log(`${logPrefix} Auto-answering password prompt at index ${i}`);
-            responses[i] = options.password;
-          } else {
-            // This prompt needs user input (likely 2FA)
-            promptsNeedingUserInput.push({ index: i, prompt: prompt });
-            responses[i] = null; // Placeholder
-          }
-        }
-
-        // If all prompts were auto-answered, finish immediately
-        if (promptsNeedingUserInput.length === 0) {
-          console.log(`${logPrefix} All prompts auto-answered, finishing keyboard-interactive`);
-          finish(responses);
-          return;
-        }
-
-        // If some prompts need user input, show the modal
-        // But only send the prompts that need user input
+        // Forward ALL prompts to user - no auto-fill to avoid semantic detection issues
+        // (Prompt text is admin-customizable and may not contain expected keywords)
         const requestId = keyboardInteractiveHandler.generateRequestId('ssh');
 
-        // Store finish callback with context about which responses are already filled
         keyboardInteractiveHandler.storeRequest(requestId, (userResponses) => {
-          // Merge user responses with auto-filled responses
-          let userResponseIndex = 0;
-          for (let i = 0; i < prompts.length; i++) {
-            if (responses[i] === null) {
-              responses[i] = userResponses[userResponseIndex] || '';
-              userResponseIndex++;
-            }
-          }
-          console.log(`${logPrefix} Merged responses, finishing keyboard-interactive`);
-          finish(responses);
+          console.log(`${logPrefix} Received user responses, finishing keyboard-interactive`);
+          finish(userResponses);
         }, sender.id, sessionId);
 
-        // Send only the prompts that need user input
-        const promptsData = promptsNeedingUserInput.map((item) => ({
-          prompt: item.prompt.prompt,
-          echo: item.prompt.echo,
+        const promptsData = prompts.map((p) => ({
+          prompt: p.prompt,
+          echo: p.echo,
         }));
 
-        console.log(`${logPrefix} Showing modal for ${promptsData.length} prompts that need user input`);
+        console.log(`${logPrefix} Showing modal for ${promptsData.length} prompts`);
 
         safeSend(sender, "netcatty:keyboard-interactive", {
           requestId,
@@ -585,8 +545,10 @@ async function startSSHSession(event, options) {
           instructions: instructions || "",
           prompts: promptsData,
           hostname: options.hostname,
+          savedPassword: options.password || null, // Pass saved password for optional fill button
         });
       });
+
 
       // Enable keyboard-interactive authentication in authHandler
       if (connectOpts.authHandler) {

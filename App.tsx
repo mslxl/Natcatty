@@ -151,8 +151,8 @@ function App({ settings }: { settings: SettingsState }) {
   const [protocolSelectHost, setProtocolSelectHost] = useState<Host | null>(null);
   // Navigation state for VaultView sections
   const [navigateToSection, setNavigateToSection] = useState<VaultSection | null>(null);
-  // Keyboard-interactive authentication state (2FA/MFA)
-  const [keyboardInteractiveRequest, setKeyboardInteractiveRequest] = useState<KeyboardInteractiveRequest | null>(null);
+  // Keyboard-interactive authentication queue (2FA/MFA) - queue-based to handle multiple concurrent sessions
+  const [keyboardInteractiveQueue, setKeyboardInteractiveQueue] = useState<KeyboardInteractiveRequest[]>([]);
 
   const {
     theme,
@@ -301,13 +301,15 @@ function App({ settings }: { settings: SettingsState }) {
 
     const unsubscribe = bridge.onKeyboardInteractive((request) => {
       console.log('[App] Keyboard-interactive request received:', request);
-      setKeyboardInteractiveRequest({
+      // Add to queue instead of replacing - supports multiple concurrent sessions
+      setKeyboardInteractiveQueue(prev => [...prev, {
         requestId: request.requestId,
         name: request.name,
         instructions: request.instructions,
         prompts: request.prompts,
         hostname: request.hostname,
-      });
+        savedPassword: request.savedPassword,
+      }]);
     });
 
     return () => {
@@ -321,7 +323,8 @@ function App({ settings }: { settings: SettingsState }) {
     if (bridge?.respondKeyboardInteractive) {
       void bridge.respondKeyboardInteractive(requestId, responses, false);
     }
-    setKeyboardInteractiveRequest(null);
+    // Remove from queue by requestId
+    setKeyboardInteractiveQueue(prev => prev.filter(r => r.requestId !== requestId));
   }, []);
 
   // Handle keyboard-interactive cancel
@@ -330,7 +333,8 @@ function App({ settings }: { settings: SettingsState }) {
     if (bridge?.respondKeyboardInteractive) {
       void bridge.respondKeyboardInteractive(requestId, [], true);
     }
-    setKeyboardInteractiveRequest(null);
+    // Remove from queue by requestId
+    setKeyboardInteractiveQueue(prev => prev.filter(r => r.requestId !== requestId));
   }, []);
 
   // Debounce ref for moveFocus to prevent double-triggering when focus switches
@@ -661,7 +665,7 @@ function App({ settings }: { settings: SettingsState }) {
   // Wrapper to connect to host with logging
   const handleConnectToHost = useCallback((host: Host) => {
     const { username, hostname: localHost } = systemInfoRef.current;
-    
+
     // Handle serial hosts separately
     if (host.protocol === 'serial') {
       const portName = host.hostname.split('/').pop() || host.hostname;
@@ -679,7 +683,7 @@ function App({ settings }: { settings: SettingsState }) {
       connectToHost(host);
       return;
     }
-    
+
     const protocol = host.moshEnabled ? 'mosh' : (host.protocol || 'ssh');
     const resolvedAuth = resolveHostAuth({ host, keys, identities });
     addConnectionLog({
@@ -1032,12 +1036,18 @@ function App({ settings }: { settings: SettingsState }) {
         </Suspense>
       )}
 
-      {/* Global Keyboard-Interactive Authentication Modal (2FA/MFA) */}
+      {/* Global Keyboard-Interactive Authentication Modal (2FA/MFA) - processes queue */}
       <KeyboardInteractiveModal
-        request={keyboardInteractiveRequest}
+        request={keyboardInteractiveQueue[0] || null}
         onSubmit={handleKeyboardInteractiveSubmit}
         onCancel={handleKeyboardInteractiveCancel}
       />
+      {/* Indicator when more 2FA requests are pending */}
+      {keyboardInteractiveQueue.length > 1 && (
+        <div className="fixed bottom-4 right-4 z-50 bg-muted/90 backdrop-blur-sm text-sm px-3 py-1.5 rounded-full border shadow-sm">
+          {keyboardInteractiveQueue.length - 1} more pending
+        </div>
+      )}
     </div>
   );
 }

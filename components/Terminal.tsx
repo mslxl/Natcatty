@@ -128,7 +128,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   onToggleBroadcast,
   onBroadcastInput,
 }) => {
-  const CONNECTION_TIMEOUT = 12000;
+  // Timeout for connection - increased to 120s to allow time for keyboard-interactive (2FA) authentication
+  const CONNECTION_TIMEOUT = 120000;
   const { t } = useI18n();
   const availableFonts = useAvailableFonts();
   const containerRef = useRef<HTMLDivElement>(null);
