@@ -399,6 +399,7 @@ const en: Messages = {
 
   // SFTP
   'sftp.newFolder': 'New Folder',
+  'sftp.newFile': 'New File',
   'sftp.filter': 'Filter',
   'sftp.filter.placeholder': 'Filter by filename...',
   'sftp.columns.name': 'Name',
@@ -433,6 +434,8 @@ const en: Messages = {
   'sftp.goHome': 'Go to home',
   'sftp.folderName': 'Folder name',
   'sftp.folderName.placeholder': 'Enter folder name',
+  'sftp.fileName': 'File name',
+  'sftp.fileName.placeholder': 'Enter file name',
   'sftp.prompt.newFolderName': 'New folder name?',
   'sftp.rename.title': 'Rename',
   'sftp.rename.newName': 'New name',
@@ -445,6 +448,7 @@ const en: Messages = {
   'sftp.error.uploadFailed': 'Upload failed',
   'sftp.error.deleteFailed': 'Delete failed',
   'sftp.error.createFolderFailed': 'Failed to create folder',
+  'sftp.error.createFileFailed': 'Failed to create file',
   'sftp.error.renameFailed': 'Failed to rename',
   'sftp.picker.title': 'Select Host',
   'sftp.picker.desc': 'Pick a host for the {side} pane',

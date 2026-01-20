@@ -1178,6 +1178,27 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     }
   };
 
+  const handleCreateFile = async () => {
+    const fileName = prompt(t("sftp.fileName.placeholder"));
+    if (!fileName) return;
+    try {
+      const fullPath = joinPath(currentPath, fileName);
+      if (isLocalSession) {
+        // Write an empty file
+        await writeLocalFile(fullPath, new ArrayBuffer(0));
+      } else {
+        // Write empty content to create the file
+        await writeSftp(await ensureSftp(), fullPath, "");
+      }
+      await loadFiles(currentPath, { force: true });
+    } catch (e) {
+      toast.error(
+        e instanceof Error ? e.message : t("sftp.error.createFileFailed"),
+        "SFTP",
+      );
+    }
+  };
+
   // Open rename dialog
   const openRenameDialog = useCallback((file: RemoteFile) => {
     setRenameTarget(file);
@@ -1999,6 +2020,14 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
             >
               <Plus size={14} className="mr-1.5" /> {t("sftp.newFolder")}
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7"
+              onClick={handleCreateFile}
+            >
+              <Plus size={14} className="mr-1.5" /> {t("sftp.newFile")}
+            </Button>
             <input
               type="file"
               className="hidden"
@@ -2280,6 +2309,9 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
             <ContextMenuContent>
               <ContextMenuItem onClick={handleCreateFolder}>
                 <Plus className="h-4 w-4 mr-2" /> {t("sftp.newFolder")}
+              </ContextMenuItem>
+              <ContextMenuItem onClick={handleCreateFile}>
+                <Plus className="h-4 w-4 mr-2" /> {t("sftp.newFile")}
               </ContextMenuItem>
               <ContextMenuItem onClick={() => inputRef.current?.click()}>
                 <Upload className="h-4 w-4 mr-2" /> {t("sftp.uploadFiles")}

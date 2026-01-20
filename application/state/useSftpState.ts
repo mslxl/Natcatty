@@ -1873,6 +1873,43 @@ export const useSftpState = (
     [getActivePane, refresh, handleSessionError],
   );
 
+  // Create empty file
+  const createFile = useCallback(
+    async (side: "left" | "right", name: string) => {
+      const pane = getActivePane(side);
+      if (!pane?.connection) return;
+
+      const fullPath = joinPath(pane.connection.currentPath, name);
+
+      try {
+        if (pane.connection.isLocal) {
+          // For local files, write an empty file
+          const bridge = netcattyBridge.get();
+          if (bridge?.writeLocalFile) {
+            const emptyBuffer = new ArrayBuffer(0);
+            await bridge.writeLocalFile(fullPath, emptyBuffer);
+          }
+        } else {
+          const sftpId = sftpSessionsRef.current.get(pane.connection.id);
+          if (!sftpId) {
+            handleSessionError(side, new Error("SFTP session not found"));
+            return;
+          }
+          // Write empty content to create the file
+          await netcattyBridge.get()?.writeSftp(sftpId, fullPath, "");
+        }
+        await refresh(side);
+      } catch (err) {
+        if (isSessionError(err)) {
+          handleSessionError(side, err as Error);
+          return;
+        }
+        throw err;
+      }
+    },
+    [getActivePane, refresh, handleSessionError],
+  );
+
   // Delete files
   const deleteFiles = useCallback(
     async (side: "left" | "right", fileNames: string[]) => {
@@ -2997,6 +3034,7 @@ export const useSftpState = (
     selectAll,
     setFilter,
     createDirectory,
+    createFile,
     deleteFiles,
     renameFile,
     changePermissions,
@@ -3035,6 +3073,7 @@ export const useSftpState = (
     selectAll,
     setFilter,
     createDirectory,
+    createFile,
     deleteFiles,
     renameFile,
     changePermissions,
@@ -3077,6 +3116,7 @@ export const useSftpState = (
     selectAll: (...args: Parameters<typeof selectAll>) => methodsRef.current.selectAll(...args),
     setFilter: (...args: Parameters<typeof setFilter>) => methodsRef.current.setFilter(...args),
     createDirectory: (...args: Parameters<typeof createDirectory>) => methodsRef.current.createDirectory(...args),
+    createFile: (...args: Parameters<typeof createFile>) => methodsRef.current.createFile(...args),
     deleteFiles: (...args: Parameters<typeof deleteFiles>) => methodsRef.current.deleteFiles(...args),
     renameFile: (...args: Parameters<typeof renameFile>) => methodsRef.current.renameFile(...args),
     changePermissions: (...args: Parameters<typeof changePermissions>) => methodsRef.current.changePermissions(...args),

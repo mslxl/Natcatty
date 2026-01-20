@@ -80,6 +80,7 @@ import {
   Download,
   Edit2,
   ExternalLink,
+  FilePlus,
   Folder,
   FolderPlus,
   HardDrive,
@@ -179,6 +180,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     onClearSelection,
     onSetFilter,
     onCreateDirectory,
+    onCreateFile,
     onDeleteFiles,
     onRenameFile,
     onCopyToOtherPane,
@@ -208,12 +210,15 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   const [hostSearch, setHostSearch] = useState("");
   const [showNewFolderDialog, setShowNewFolderDialog] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  const [showNewFileDialog, setShowNewFileDialog] = useState(false);
+  const [newFileName, setNewFileName] = useState("");
   const [showRenameDialog, setShowRenameDialog] = useState(false);
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
   const [renameName, setRenameName] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteTargets, setDeleteTargets] = useState<string[]>([]);
   const [isCreating, setIsCreating] = useState(false);
+  const [isCreatingFile, setIsCreatingFile] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -570,6 +575,20 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     }
   };
 
+  const handleCreateFile = async () => {
+    if (!newFileName.trim() || isCreatingFile) return;
+    setIsCreatingFile(true);
+    try {
+      await onCreateFile(newFileName.trim());
+      setShowNewFileDialog(false);
+      setNewFileName("");
+    } catch {
+      /* Error handling */
+    } finally {
+      setIsCreatingFile(false);
+    }
+  };
+
   const handleRename = async () => {
     if (!renameTarget || !renameName.trim() || isRenaming) return;
     setIsRenaming(true);
@@ -918,6 +937,9 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
             <ContextMenuItem onClick={() => setShowNewFolderDialog(true)}>
               <FolderPlus size={14} className="mr-2" /> {t("sftp.newFolder")}
             </ContextMenuItem>
+            <ContextMenuItem onClick={() => setShowNewFileDialog(true)}>
+              <FilePlus size={14} className="mr-2" /> {t("sftp.newFile")}
+            </ContextMenuItem>
           </ContextMenuContent>
         )}
       </ContextMenu>
@@ -944,6 +966,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
       pane.connection,
       pane.selectedFiles,
       setShowNewFolderDialog,
+      setShowNewFileDialog,
       t,
     ],
   );
@@ -1130,6 +1153,15 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
             title={t("sftp.newFolder")}
           >
             <FolderPlus size={14} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            onClick={() => setShowNewFileDialog(true)}
+            title={t("sftp.newFile")}
+          >
+            <FilePlus size={14} />
           </Button>
           <Button
             variant={showFilterBar || pane.filter ? "secondary" : "ghost"}
@@ -1390,6 +1422,43 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
               disabled={!newFolderName.trim() || isCreating}
             >
               {isCreating && (
+                <Loader2 size={14} className="mr-2 animate-spin" />
+              )}
+              {t("common.create")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showNewFileDialog} onOpenChange={setShowNewFileDialog}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t("sftp.newFile")}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>{t("sftp.fileName")}</Label>
+              <Input
+                value={newFileName}
+                onChange={(e) => setNewFileName(e.target.value)}
+                placeholder={t("sftp.fileName.placeholder")}
+                onKeyDown={(e) => e.key === "Enter" && handleCreateFile()}
+                autoFocus
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowNewFileDialog(false)}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              onClick={handleCreateFile}
+              disabled={!newFileName.trim() || isCreatingFile}
+            >
+              {isCreatingFile && (
                 <Loader2 size={14} className="mr-2 animate-spin" />
               )}
               {t("common.create")}
@@ -1721,6 +1790,14 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
   );
   const handleCreateDirectoryRight = useCallback(
     (name: string) => sftpRef.current.createDirectory("right", name),
+    [],
+  );
+  const handleCreateFileLeft = useCallback(
+    (name: string) => sftpRef.current.createFile("left", name),
+    [],
+  );
+  const handleCreateFileRight = useCallback(
+    (name: string) => sftpRef.current.createFile("right", name),
     [],
   );
   const handleDeleteFilesLeft = useCallback(
@@ -2098,6 +2175,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       onClearSelection: handleClearSelectionLeft,
       onSetFilter: handleSetFilterLeft,
       onCreateDirectory: handleCreateDirectoryLeft,
+      onCreateFile: handleCreateFileLeft,
       onDeleteFiles: handleDeleteFilesLeft,
       onRenameFile: handleRenameFileLeft,
       onCopyToOtherPane: handleCopyToOtherPaneLeft,
@@ -2125,6 +2203,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
       onClearSelection: handleClearSelectionRight,
       onSetFilter: handleSetFilterRight,
       onCreateDirectory: handleCreateDirectoryRight,
+      onCreateFile: handleCreateFileRight,
       onDeleteFiles: handleDeleteFilesRight,
       onRenameFile: handleRenameFileRight,
       onCopyToOtherPane: handleCopyToOtherPaneRight,
