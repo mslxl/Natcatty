@@ -266,6 +266,11 @@ const HostForm: React.FC<HostFormProps> = ({
                 <p className="text-xs text-muted-foreground">
                   {t("hostDetails.sftp.sudo.desc")}
                 </p>
+                {formData.sftpSudo && authType === "key" && (
+                  <p className="text-xs text-amber-500 mt-1">
+                    {t("hostDetails.sftp.sudo.passwordWarning")}
+                  </p>
+                )}
               </div>
               <Switch
                 id="sftp-sudo"

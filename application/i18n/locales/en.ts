@@ -613,6 +613,7 @@ const en: Messages = {
   'hostDetails.section.sftp': 'SFTP Settings',
   'hostDetails.sftp.sudo': 'Sudo Mode',
   'hostDetails.sftp.sudo.desc': 'Automatically acquire Root privileges using stored password',
+  'hostDetails.sftp.sudo.passwordWarning': 'Sudo mode requires a password. Configure one above, or ensure the server allows passwordless sudo.',
   'hostDetails.label.placeholder': 'Label (e.g., Production Server)',
   'hostDetails.group.placeholder': 'Parent Group',
   'hostDetails.section.credentials': 'Credentials',

@@ -944,6 +944,11 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
               onCheckedChange={(val) => update("sftpSudo", val)}
             />
           </div>
+          {form.sftpSudo && !form.password && !selectedIdentity?.password && (
+            <p className="text-xs text-amber-500">
+              {t("hostDetails.sftp.sudo.passwordWarning")}
+            </p>
+          )}
         </Card>
 
         <Card className="p-3 space-y-3 bg-card border-border/80">

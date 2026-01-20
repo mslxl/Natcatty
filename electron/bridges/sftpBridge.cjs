@@ -199,7 +199,7 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
  */
 async function connectSudoSftp(client, password) {
   if (!SFTPWrapper) {
-    throw new Error("SFTPWrapper not available, cannot use sudo mode");
+    throw new Error("SFTP sudo mode is not available on this platform. Please disable sudo mode in host settings.");
   }
 
   // Known sftp-server paths to try
@@ -213,7 +213,7 @@ async function connectSudoSftp(client, password) {
   ];
 
   console.log("[SFTP] Probing sftp-server path for sudo mode...");
-  
+
   let serverPath = null;
   // Try to find the path
   for (const p of sftpPaths) {
@@ -252,7 +252,7 @@ async function connectSudoSftp(client, password) {
     const readyMarkerBuffer = Buffer.from(readyMarker);
     // Add -e to sftp-server to log to stderr for debugging
     const cmd = `sudo -S -p '${prompt}' sh -c 'printf ${readyMarker}; exec ${serverPath} -e'`;
-    
+
     console.log(`[SFTP] Executing sudo command: ${cmd}`);
 
     // Disable pty to ensure clean binary stream for SFTP
@@ -277,7 +277,7 @@ async function connectSudoSftp(client, password) {
         settled = true;
         stream.stderr?.removeListener('data', onStderr);
         stream.removeListener('data', onStdout);
-        const error = new Error("SFTP sudo handshake timed out");
+        const error = new Error("SFTP sudo handshake timed out. This may happen if: (1) the password is incorrect, (2) sudo requires a TTY, or (3) the user does not have sudo privileges.");
         reject(error);
       }, timeoutMs);
 
@@ -301,7 +301,7 @@ async function connectSudoSftp(client, password) {
             outgoing: stream.outgoing
           };
           sftp = new SFTPWrapper(client, chanInfo, {
-             // debug: (str) => console.log(`[SFTP DEBUG] ${str}`)
+            // debug: (str) => console.log(`[SFTP DEBUG] ${str}`)
           });
 
           // Route any remaining channel data directly into the SFTP parser
@@ -323,7 +323,7 @@ async function connectSudoSftp(client, password) {
           });
 
           stream.on('end', () => {
-            try { sftp.push(null); } catch {}
+            try { sftp.push(null); } catch { }
           });
         } catch (e) {
           console.error("[SFTP] Initialization failed:", e.message);
@@ -365,13 +365,13 @@ async function connectSudoSftp(client, password) {
           // Found marker, stop listening to stdout here so SFTPWrapper can take over
           stream.removeListener('data', onStdout);
           stdoutBuffer = Buffer.alloc(0);
-          
+
           console.log("[SFTP] SFTPREADY detected, waiting for stream to stabilize...");
 
           // Delay SFTP initialization to ensure sftp-server is fully started and stream is clean
           // Increased timeout to 1000ms to be safe
           setTimeout(() => {
-              initSftp();
+            initSftp();
           }, 1000);
         } else if (stdoutBuffer.length > 256) {
           stdoutBuffer = stdoutBuffer.subarray(stdoutBuffer.length - 256);
@@ -380,7 +380,7 @@ async function connectSudoSftp(client, password) {
 
       const onStderr = (data) => {
         const chunk = data.toString();
-        console.log("[SFTP] stderr:", chunk); 
+        // Only log that we received stderr data, not the content (may contain sensitive prompts)
         stderrBuffer += chunk;
         if (stderrBuffer.includes(prompt)) {
           console.log("[SFTP] Sudo requested password, sending...");
@@ -404,7 +404,13 @@ async function connectSudoSftp(client, password) {
       stream.on('exit', (code) => {
         console.log(`[SFTP] Stream exited with code ${code}`);
         if (!sftpInitialized && code !== 0) {
-          const error = new Error(`SFTP server exited with code ${code}`);
+          let errorMsg = `SFTP sudo failed with exit code ${code}.`;
+          if (code === 1) {
+            errorMsg += " The password may be incorrect or sudo privileges are denied.";
+          } else if (code === 127) {
+            errorMsg += " sftp-server was not found on the remote system.";
+          }
+          const error = new Error(errorMsg);
           finalize(error);
         }
       });

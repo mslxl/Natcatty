@@ -373,6 +373,7 @@ const zhCN: Messages = {
   'hostDetails.section.sftp': 'SFTP 设置',
   'hostDetails.sftp.sudo': 'Sudo 提权模式',
   'hostDetails.sftp.sudo.desc': '使用保存的密码自动获取 Root 权限',
+  'hostDetails.sftp.sudo.passwordWarning': 'Sudo 模式需要密码。请在上方配置密码，或确保服务器允许免密 sudo。',
   'hostDetails.label.placeholder': '名称（例如：Production Server）',
   'hostDetails.group.placeholder': '父级 Group',
   'hostDetails.section.credentials': '凭据',
