@@ -553,6 +553,9 @@ const en: Messages = {
   'sftp.reconnecting.desc': 'Connection lost, attempting to reconnect',
   'sftp.reconnected': 'Connection restored',
   'sftp.error.reconnectFailed': 'Failed to reconnect. Please try again.',
+  'sftp.error.connectionLostManual': 'Connection lost. Please reconnect manually.',
+  'sftp.error.connectionLostReconnecting': 'Connection lost. Reconnecting...',
+  'sftp.error.sessionLost': 'SFTP session lost. Please reconnect.',
 
   // Settings > SFTP Show Hidden Files
   'settings.sftp.showHiddenFiles': 'Show hidden files',

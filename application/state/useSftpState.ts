@@ -543,7 +543,7 @@ export const useSftpState = (
         updateActiveTab(side, (prev) => ({
           ...prev,
           reconnecting: true,
-          error: "Connection lost. Reconnecting...",
+          error: "sftp.error.connectionLostReconnecting",
         }));
       } else {
         // No host info or empty files, just clear the connection
@@ -553,7 +553,7 @@ export const useSftpState = (
           files: [],
           loading: false,
           reconnecting: false,
-          error: "SFTP session lost. Please reconnect.",
+          error: "sftp.error.sessionLost",
           selectedFiles: new Set(),
           filter: "",
         }));
@@ -1705,13 +1705,13 @@ export const useSftpState = (
           updateActiveTab(side, (prev) => ({
             ...prev,
             reconnecting: true,
-            error: "Reconnecting...",
+            error: "sftp.reconnecting.title",
           }));
         } else if (!lastHost) {
           // No host info available - prompt user to manually reconnect
           updateActiveTab(side, (prev) => ({
             ...prev,
-            error: "Connection lost. Please reconnect manually.",
+            error: "sftp.error.connectionLostManual",
           }));
         }
       }

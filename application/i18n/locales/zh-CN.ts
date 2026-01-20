@@ -792,6 +792,9 @@ const zhCN: Messages = {
   'sftp.reconnecting.desc': '连接已断开，正在尝试重新连接',
   'sftp.reconnected': '连接已恢复',
   'sftp.error.reconnectFailed': '重连失败，请重试。',
+  'sftp.error.connectionLostManual': '连接已断开，请手动重新连接。',
+  'sftp.error.connectionLostReconnecting': '连接已断开，正在重连...',
+  'sftp.error.sessionLost': 'SFTP 会话已断开，请重新连接。',
 
   // Settings > SFTP Show Hidden Files
   'settings.sftp.showHiddenFiles': '显示隐藏文件',
