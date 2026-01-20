@@ -29,6 +29,9 @@ let electronModule = null;
 // Storage for jump host connections that need to be cleaned up
 const jumpConnectionsMap = new Map(); // connId -> { connections: SSHClient[], socket: stream }
 
+// Storage for active SFTP uploads that can be cancelled
+const activeSftpUploads = new Map(); // transferId -> { cancelled: boolean, stream: Readable }
+
 /**
  * Send message to renderer safely
  */
@@ -737,25 +740,45 @@ async function writeSftp(event, payload) {
 
 /**
  * Write binary data with progress callback
+ * Supports cancellation via activeSftpUploads map
+ * Optimized for performance with throttled progress updates
  */
 async function writeSftpBinaryWithProgress(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
   const { sftpId, path: remotePath, content, transferId } = payload;
-  const buffer = Buffer.from(content);
+
+  // Optimize: Use Buffer.isBuffer to avoid unnecessary copy if already a Buffer
+  // For ArrayBuffer from renderer, we still need to convert but use a more efficient method
+  const buffer = Buffer.isBuffer(content) ? content : Buffer.from(content);
   const totalBytes = buffer.length;
   let transferredBytes = 0;
   let lastProgressTime = Date.now();
   let lastTransferredBytes = 0;
+  let lastProgressSentTime = 0;
+
+  // Throttle settings: send progress at most every 100ms or every 1MB
+  const PROGRESS_THROTTLE_MS = 100;
+  const PROGRESS_THROTTLE_BYTES = 1024 * 1024; // 1MB
+  let lastProgressSentBytes = 0;
 
   const { Readable } = require("stream");
   const readableStream = new Readable({
     read() {
-      const chunkSize = 65536;
+      // Check for cancellation
+      const uploadState = activeSftpUploads.get(transferId);
+      if (uploadState?.cancelled) {
+        this.destroy(new Error("Upload cancelled"));
+        return;
+      }
+
+      // Use larger chunk size for better performance (256KB instead of 64KB)
+      const chunkSize = 262144;
       if (transferredBytes < totalBytes) {
         const end = Math.min(transferredBytes + chunkSize, totalBytes);
-        const chunk = buffer.slice(transferredBytes, end);
+        // Use subarray instead of slice to avoid copying
+        const chunk = buffer.subarray(transferredBytes, end);
         transferredBytes = end;
 
         const now = Date.now();
@@ -767,13 +790,22 @@ async function writeSftpBinaryWithProgress(event, payload) {
           lastTransferredBytes = transferredBytes;
         }
 
-        const contents = electronModule.webContents.fromId(event.sender.id);
-        contents?.send("netcatty:upload:progress", {
-          transferId,
-          transferred: transferredBytes,
-          totalBytes,
-          speed,
-        });
+        // Throttle IPC progress events: only send if enough time or bytes have passed
+        const timeSinceLastProgress = now - lastProgressSentTime;
+        const bytesSinceLastProgress = transferredBytes - lastProgressSentBytes;
+        const isComplete = transferredBytes >= totalBytes;
+
+        if (isComplete || timeSinceLastProgress >= PROGRESS_THROTTLE_MS || bytesSinceLastProgress >= PROGRESS_THROTTLE_BYTES) {
+          const contents = electronModule.webContents.fromId(event.sender.id);
+          contents?.send("netcatty:upload:progress", {
+            transferId,
+            transferred: transferredBytes,
+            totalBytes,
+            speed,
+          });
+          lastProgressSentTime = now;
+          lastProgressSentBytes = transferredBytes;
+        }
 
         this.push(chunk);
       } else {
@@ -781,6 +813,9 @@ async function writeSftpBinaryWithProgress(event, payload) {
       }
     }
   });
+
+  // Register this upload for potential cancellation
+  activeSftpUploads.set(transferId, { cancelled: false, stream: readableStream });
 
   try {
     await client.put(readableStream, remotePath);
@@ -791,9 +826,40 @@ async function writeSftpBinaryWithProgress(event, payload) {
     return { success: true, transferId };
   } catch (err) {
     const contents = electronModule.webContents.fromId(event.sender.id);
-    contents?.send("netcatty:upload:error", { transferId, error: err.message });
-    throw err;
+    // Only send error if it's not a cancellation
+    if (err.message !== "Upload cancelled") {
+      contents?.send("netcatty:upload:error", { transferId, error: err.message });
+      throw err;
+    }
+    contents?.send("netcatty:upload:cancelled", { transferId });
+    return { success: false, transferId, cancelled: true };
+  } finally {
+    // Cleanup
+    activeSftpUploads.delete(transferId);
   }
+}
+
+/**
+ * Cancel an in-progress SFTP upload
+ * Note: We only set the cancelled flag and destroy the stream here.
+ * The cleanup (deleting from activeSftpUploads) is handled by writeSftpBinaryWithProgress's finally block
+ * to avoid race conditions.
+ */
+async function cancelSftpUpload(event, payload) {
+  const { transferId } = payload;
+  const uploadState = activeSftpUploads.get(transferId);
+  if (uploadState) {
+    uploadState.cancelled = true;
+    try {
+      uploadState.stream?.destroy();
+    } catch (err) {
+      // Log but continue - stream may already be destroyed
+      console.warn("[SFTP] Error destroying upload stream:", err.message);
+    }
+    // Don't delete here - let the finally block in writeSftpBinaryWithProgress handle cleanup
+    // This avoids race conditions where the upload might still be in progress
+  }
+  return { success: true };
 }
 
 /**
@@ -905,6 +971,7 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:sftp:readBinary", readSftpBinary);
   ipcMain.handle("netcatty:sftp:write", writeSftp);
   ipcMain.handle("netcatty:sftp:writeBinaryWithProgress", writeSftpBinaryWithProgress);
+  ipcMain.handle("netcatty:sftp:cancelUpload", cancelSftpUpload);
   ipcMain.handle("netcatty:sftp:close", closeSftp);
   ipcMain.handle("netcatty:sftp:mkdir", mkdirSftp);
   ipcMain.handle("netcatty:sftp:delete", deleteSftp);
@@ -930,6 +997,7 @@ module.exports = {
   readSftpBinary,
   writeSftp,
   writeSftpBinaryWithProgress,
+  cancelSftpUpload,
   closeSftp,
   mkdirSftp,
   deleteSftp,
