@@ -117,9 +117,10 @@ export const useSftpTransfers = ({
     targetIsLocal: boolean,
     sourceEncoding: SftpFilenameEncoding,
     targetEncoding: SftpFilenameEncoding,
+    rootTaskId: string, // The original top-level task ID for cancellation checking
   ): Promise<void> => {
-    // Check if task was cancelled before starting
-    if (cancelledTasksRef.current.has(task.id) || cancelledTasksRef.current.has(task.parentTaskId || "")) {
+    // Check if task or root task was cancelled before starting
+    if (cancelledTasksRef.current.has(task.id) || cancelledTasksRef.current.has(rootTaskId)) {
       throw new Error("Transfer cancelled");
     }
 
@@ -233,9 +234,10 @@ export const useSftpTransfers = ({
     targetIsLocal: boolean,
     sourceEncoding: SftpFilenameEncoding,
     targetEncoding: SftpFilenameEncoding,
+    rootTaskId: string, // The original top-level task ID for cancellation checking
   ) => {
-    // Check if task was cancelled before starting
-    if (cancelledTasksRef.current.has(task.id) || cancelledTasksRef.current.has(task.parentTaskId || "")) {
+    // Check if task or root task was cancelled before starting
+    if (cancelledTasksRef.current.has(task.id) || cancelledTasksRef.current.has(rootTaskId)) {
       throw new Error("Transfer cancelled");
     }
 
@@ -257,8 +259,8 @@ export const useSftpTransfers = ({
     for (const file of files) {
       if (file.name === "..") continue;
 
-      // Check if task was cancelled during iteration
-      if (cancelledTasksRef.current.has(task.id) || cancelledTasksRef.current.has(task.parentTaskId || "")) {
+      // Check if root task was cancelled during iteration
+      if (cancelledTasksRef.current.has(task.id) || cancelledTasksRef.current.has(rootTaskId)) {
         throw new Error("Transfer cancelled");
       }
 
@@ -281,6 +283,7 @@ export const useSftpTransfers = ({
           targetIsLocal,
           sourceEncoding,
           targetEncoding,
+          rootTaskId,
         );
       } else {
         await transferFile(
@@ -291,6 +294,7 @@ export const useSftpTransfers = ({
           targetIsLocal,
           sourceEncoding,
           targetEncoding,
+          rootTaskId,
         );
       }
     }
@@ -470,6 +474,7 @@ export const useSftpTransfers = ({
           targetPane.connection!.isLocal,
           sourceEncoding,
           targetEncoding,
+          task.id, // rootTaskId - this is the top-level task
         );
       } else {
         await transferFile(
@@ -480,6 +485,7 @@ export const useSftpTransfers = ({
           targetPane.connection!.isLocal,
           sourceEncoding,
           targetEncoding,
+          task.id, // rootTaskId - this is the top-level task
         );
       }
 
