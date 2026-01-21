@@ -609,6 +609,43 @@ export default function SettingsTerminalTab(props: {
           />
         </SettingRow>
       </div>
+
+      <SectionHeader title={t("settings.terminal.section.serverStats")} />
+      <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
+        <SettingRow
+          label={t("settings.terminal.serverStats.show")}
+          description={t("settings.terminal.serverStats.show.desc")}
+        >
+          <Toggle
+            checked={terminalSettings.showServerStats}
+            onChange={(v) => updateTerminalSetting("showServerStats", v)}
+          />
+        </SettingRow>
+
+        {terminalSettings.showServerStats && (
+          <SettingRow
+            label={t("settings.terminal.serverStats.refreshInterval")}
+            description={t("settings.terminal.serverStats.refreshInterval.desc")}
+          >
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={5}
+                max={300}
+                value={terminalSettings.serverStatsRefreshInterval}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value) || 5;
+                  if (val >= 5 && val <= 300) {
+                    updateTerminalSetting("serverStatsRefreshInterval", val);
+                  }
+                }}
+                className="w-20"
+              />
+              <span className="text-sm text-muted-foreground">{t("settings.terminal.serverStats.seconds")}</span>
+            </div>
+          </SettingRow>
+        )}
+      </div>
     </SettingsTabContent>
   );
 }
