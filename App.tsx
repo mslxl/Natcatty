@@ -293,10 +293,16 @@ function App({ settings }: { settings: SettingsState }) {
     }
   }, [updateState.hasUpdate, updateState.latestRelease, t, openReleasePage, dismissUpdate]);
 
+  // Memoize keys for port forwarding to prevent unnecessary re-renders
+  const portForwardingKeys = useMemo(
+    () => keys.map((k) => ({ id: k.id, privateKey: k.privateKey })),
+    [keys]
+  );
+
   // Auto-start port forwarding rules on app launch
   usePortForwardingAutoStart({
     hosts,
-    keys: keys.map((k) => ({ id: k.id, privateKey: k.privateKey })),
+    keys: portForwardingKeys,
   });
 
   // Keyboard-interactive authentication (2FA/MFA) event listener
