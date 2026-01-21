@@ -162,15 +162,10 @@ export const useSftpModalTransfers = ({
             cancelledTransferIdsRef.current.delete(taskId);
           }
           return { success: result, cancelled: wasCancelled };
-        } catch (error) {
-          // Check for fatal errors like session not found
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          if (errorMessage.includes("session not found") || errorMessage.includes("SFTP session")) {
-            // Mark as cancelled to stop the upload loop
-            cancelledTransferIdsRef.current.add(taskId);
-            return { success: false, cancelled: true };
-          }
-          throw error;
+        } catch {
+          // Any error should stop the upload - mark as cancelled to stop the upload loop
+          cancelledTransferIdsRef.current.add(taskId);
+          return { success: false, cancelled: true };
         }
       },
       cancelSftpUpload,
@@ -211,7 +206,13 @@ export const useSftpModalTransfers = ({
           fileCount: task.fileCount,
           completedCount: 0,
         };
-        setUploadTasks(prev => [...prev, uploadTask]);
+        // Filter out any pending scanning tasks before adding the real task.
+        // This ensures that even if onScanningEnd's state update hasn't been applied yet
+        // (due to React state batching), the scanning placeholder will still be removed.
+        setUploadTasks(prev => [
+          ...prev.filter(t => !(t.status === "pending" && t.fileName === "Scanning files...")),
+          uploadTask
+        ]);
       },
       onTaskProgress: (taskId: string, progress: UploadProgress) => {
         setUploadTasks(prev =>
@@ -243,26 +244,21 @@ export const useSftpModalTransfers = ({
         );
       },
       onTaskFailed: (taskId: string, error: string) => {
-        // Check if this is a fatal session error - mark as cancelled instead
-        const isFatalError = error.includes("session not found") ||
-          error.includes("SFTP session") ||
-          error.includes("connection") ||
-          error.includes("disconnected");
-
+        // Any error marks the task as failed
         setUploadTasks(prev =>
           prev.map(task =>
             task.id === taskId
               ? {
                 ...task,
-                status: isFatalError ? "cancelled" as const : "failed" as const,
-                error: isFatalError ? t("sftp.error.sessionLost") : error,
+                status: "failed" as const,
+                error,
                 speed: 0,
               }
               : task
           )
         );
 
-        // Auto-clear failed/cancelled tasks after 3 seconds
+        // Auto-clear failed tasks after 3 seconds
         setTimeout(() => {
           setUploadTasks(prev => prev.filter(t => t.id !== taskId));
         }, 3000);
@@ -285,7 +281,7 @@ export const useSftpModalTransfers = ({
         }, 2000);
       },
     };
-  }, [t]);
+  }, []);
 
   const handleUploadMultiple = useCallback(
     async (fileList: FileList) => {

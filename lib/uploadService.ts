@@ -597,12 +597,6 @@ async function uploadEntries(
 
         const errorMessage = error instanceof Error ? error.message : String(error);
 
-        // Check for fatal errors that should stop the entire upload
-        const isFatalError = errorMessage.includes("session not found") ||
-                            errorMessage.includes("SFTP session") ||
-                            errorMessage.includes("connection") ||
-                            errorMessage.includes("disconnected");
-
         if (!entry.isDirectory) {
           results.push({
             fileName: entry.relativePath,
@@ -616,11 +610,9 @@ async function uploadEntries(
           }
         }
 
-        // Stop the entire upload loop on fatal errors
-        if (isFatalError) {
-          wasCancelled = true;
-          break;
-        }
+        // Any error stops the entire upload - fail fast approach
+        wasCancelled = true;
+        break;
       }
     }
   } finally {

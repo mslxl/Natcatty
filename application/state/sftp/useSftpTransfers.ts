@@ -608,7 +608,13 @@ export const useSftpTransfers = ({
   }, []);
 
   const addExternalUpload = useCallback((task: TransferTask) => {
-    setTransfers((prev) => [...prev, task]);
+    // Filter out any pending scanning tasks before adding the new task.
+    // This ensures that even if dismissExternalUpload's state update hasn't been applied yet
+    // (due to React state batching), the scanning placeholder will still be removed.
+    setTransfers((prev) => [
+      ...prev.filter(t => !(t.status === "pending" && t.fileName === "Scanning files...")),
+      task
+    ]);
   }, []);
 
   const updateExternalUpload = useCallback((taskId: string, updates: Partial<TransferTask>) => {
