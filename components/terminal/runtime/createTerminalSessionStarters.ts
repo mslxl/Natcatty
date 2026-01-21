@@ -74,7 +74,6 @@ export type TerminalSessionStartersContext = {
   disposeExitRef: RefObject<(() => void) | null>;
   fitAddonRef: RefObject<FitAddon | null>;
   serializeAddonRef: RefObject<SerializeAddon | null>;
-  highlightProcessorRef: RefObject<(text: string) => string>;
   pendingAuthRef: RefObject<PendingAuth>;
 
   updateStatus: (next: TerminalSession["status"]) => void;
@@ -133,7 +132,7 @@ const attachSessionToTerminal = (
       // Replace \n that is not preceded by \r with \r\n
       data = data.replace(/(?<!\r)\n/g, "\r\n");
     }
-    term.write(ctx.highlightProcessorRef.current(data));
+    term.write(data);
     if (!ctx.hasConnectedRef.current) {
       ctx.updateStatus("connected");
       opts?.onConnected?.();
@@ -556,7 +555,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
 
       ctx.sessionRef.current = id;
       ctx.disposeDataRef.current = ctx.terminalBackend.onSessionData(id, (chunk) => {
-        term.write(ctx.highlightProcessorRef.current(chunk));
+        term.write(chunk);
         if (!ctx.hasConnectedRef.current) {
           ctx.updateStatus("connected");
           setTimeout(() => {
