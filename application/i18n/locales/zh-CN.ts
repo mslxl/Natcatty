@@ -834,6 +834,7 @@ const zhCN: Messages = {
 
   // SFTP Folder Upload Progress
   'sftp.upload.progress': '正在上传 {current}/{total} 个文件...',
+  'sftp.upload.uploading': '正在上传...',
   'sftp.upload.currentFile': '当前: {fileName}',
   'sftp.upload.cancelled': '上传已取消',
   'sftp.upload.cancel': '取消',

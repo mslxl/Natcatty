@@ -585,6 +585,7 @@ const en: Messages = {
 
   // SFTP Folder Upload Progress
   'sftp.upload.progress': 'Uploading {current} of {total} files...',
+  'sftp.upload.uploading': 'Uploading...',
   'sftp.upload.currentFile': 'Current: {fileName}',
   'sftp.upload.cancelled': 'Upload cancelled',
   'sftp.upload.cancel': 'Cancel',
