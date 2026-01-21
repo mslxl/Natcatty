@@ -6,7 +6,7 @@ import {
   Terminal,
   TerminalSquare,
 } from "lucide-react";
-import React, { memo, useEffect, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { Host, TerminalSession, Workspace } from "../types";
 import { KeyBinding } from "../domain/models";
@@ -20,6 +20,42 @@ import { DistroAvatar } from "./DistroAvatar";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { ScrollArea } from "./ui/scroll-area";
+
+// Compute once at module level
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+
+// Memoized host item component to prevent unnecessary re-renders
+const HostItem = memo(({
+  host,
+  isSelected,
+  onSelect,
+  onMouseEnter,
+}: {
+  host: Host;
+  isSelected: boolean;
+  onSelect: (host: Host) => void;
+  onMouseEnter: () => void;
+}) => (
+  <div
+    className={`flex items-center justify-between px-4 py-2.5 cursor-pointer transition-colors ${isSelected ? "bg-primary/15" : "hover:bg-muted/50"
+      }`}
+    onClick={() => onSelect(host)}
+    onMouseEnter={onMouseEnter}
+  >
+    <div className="flex items-center gap-3 min-w-0">
+      <DistroAvatar
+        host={host}
+        fallback={host.label.slice(0, 2).toUpperCase()}
+        size="sm"
+      />
+      <span className="text-sm font-medium truncate">{host.label}</span>
+    </div>
+    <div className="text-[11px] text-muted-foreground">
+      {host.group ? `Personal / ${host.group}` : "Personal"}
+    </div>
+  </div>
+));
+HostItem.displayName = "HostItem";
 
 interface QuickSwitcherProps {
   isOpen: boolean;
@@ -52,12 +88,11 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
 }) => {
   const { t } = useI18n();
   // Get hotkey display strings
-  const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
-  const getHotkeyLabel = (actionId: string) => {
+  const getHotkeyLabel = useCallback((actionId: string) => {
     const binding = keyBindings?.find(k => k.id === actionId);
     if (!binding) return '';
-    return isMac ? binding.mac : binding.pc;
-  };
+    return IS_MAC ? binding.mac : binding.pc;
+  }, [keyBindings]);
   const quickSwitchKey = getHotkeyLabel('quick-switch');
   const [isFocused, setIsFocused] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -93,15 +128,16 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isOpen, onClose]);
 
-  if (!isOpen) return null;
+  // Memoize orphan sessions
+  const orphanSessions = useMemo(
+    () => sessions.filter((s) => !s.workspaceId),
+    [sessions]
+  );
 
   const showCategorized = isFocused || query.trim().length > 0;
 
-  // Get orphan sessions (sessions without workspace)
-  const orphanSessions = sessions.filter((s) => !s.workspaceId);
-
-  // Build categorized items for navigation
-  const buildFlatItems = () => {
+  // Memoize flat items list and index map
+  const { flatItems, itemIndexMap } = useMemo(() => {
     const items: QuickSwitcherItem[] = [];
 
     if (showCategorized) {
@@ -127,10 +163,21 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
       );
     }
 
-    return items;
-  };
+    // Build index map for O(1) lookup
+    const indexMap = new Map<string, number>();
+    items.forEach((item, idx) => {
+      indexMap.set(`${item.type}:${item.id}`, idx);
+    });
 
-  const flatItems = buildFlatItems();
+    return { flatItems: items, itemIndexMap: indexMap };
+  }, [showCategorized, results, orphanSessions, workspaces]);
+
+  // O(1) index lookup
+  const getItemIndex = useCallback((type: string, id: string) => {
+    return itemIndexMap.get(`${type}:${id}`) ?? -1;
+  }, [itemIndexMap]);
+
+  if (!isOpen) return null;
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
@@ -163,40 +210,6 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
         }
         break;
     }
-  };
-
-  // Helper to get item index in flat list
-  const getItemIndex = (type: string, id: string) => {
-    return flatItems.findIndex((item) => item.type === type && item.id === id);
-  };
-
-  const renderHostItem = (host: Host) => {
-    const idx = getItemIndex("host", host.id);
-    const isSelected = idx === selectedIndex;
-
-    return (
-      <div
-        key={host.id}
-        className={`flex items-center justify-between px-4 py-2.5 cursor-pointer transition-colors ${isSelected ? "bg-primary/15" : "hover:bg-muted/50"
-          }`}
-        onClick={() => {
-          onSelect(host);
-        }}
-        onMouseEnter={() => setSelectedIndex(idx)}
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          <DistroAvatar
-            host={host}
-            fallback={host.label.slice(0, 2).toUpperCase()}
-            size="sm"
-          />
-          <span className="text-sm font-medium truncate">{host.label}</span>
-        </div>
-        <div className="text-[11px] text-muted-foreground">
-          {host.group ? `Personal / ${host.group}` : "Personal"}
-        </div>
-      </div>
-    );
   };
 
   return (
@@ -260,7 +273,15 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
               </div>
               <div>
                 {results.length > 0 ? (
-                  results.map(renderHostItem)
+                  results.map((host) => (
+                    <HostItem
+                      key={host.id}
+                      host={host}
+                      isSelected={getItemIndex("host", host.id) === selectedIndex}
+                      onSelect={onSelect}
+                      onMouseEnter={() => setSelectedIndex(getItemIndex("host", host.id))}
+                    />
+                  ))
                 ) : (
                   <div className="px-4 py-6 text-sm text-muted-foreground text-center">
                     No recent connections
@@ -289,7 +310,15 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
                       Hosts
                     </span>
                   </div>
-                  {results.map(renderHostItem)}
+                  {results.map((host) => (
+                    <HostItem
+                      key={host.id}
+                      host={host}
+                      isSelected={getItemIndex("host", host.id) === selectedIndex}
+                      onSelect={onSelect}
+                      onMouseEnter={() => setSelectedIndex(getItemIndex("host", host.id))}
+                    />
+                  ))}
                 </div>
               )}
 
