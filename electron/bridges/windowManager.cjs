@@ -941,15 +941,16 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
   ipcMain.on("netcatty:settings:changed", (event, payload) => {
     const senderId = event?.sender?.id;
     // Notify all windows except the sender
+    // Check both isDestroyed() and webContents.isDestroyed() to handle HMR refresh
     try {
-      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.id !== senderId) {
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed() && mainWindow.webContents.id !== senderId) {
         mainWindow.webContents.send("netcatty:settings:changed", payload);
       }
-      if (settingsWindow && !settingsWindow.isDestroyed() && settingsWindow.webContents.id !== senderId) {
+      if (settingsWindow && !settingsWindow.isDestroyed() && !settingsWindow.webContents.isDestroyed() && settingsWindow.webContents.id !== senderId) {
         settingsWindow.webContents.send("netcatty:settings:changed", payload);
       }
     } catch {
-      // ignore
+      // ignore - frame may be disposed during HMR
     }
   });
 

@@ -7,7 +7,7 @@ import {
     Usb,
     User,
 } from "lucide-react";
-import React, { memo, useCallback, useMemo } from "react";
+import React, { memo, useCallback, useMemo, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { cn } from "../lib/utils";
 import { ConnectionLog, Host } from "../types";
@@ -149,7 +149,11 @@ const ConnectionLogsManager: React.FC<ConnectionLogsManagerProps> = ({
     onOpenLogView,
 }) => {
     const { t } = useI18n();
-    const RENDER_LIMIT = 100;
+    const INITIAL_RENDER_LIMIT = 30;
+    const LOAD_MORE_COUNT = 30;
+
+    // Track how many items to show
+    const [renderLimit, setRenderLimit] = useState(INITIAL_RENDER_LIMIT);
 
     // Sort logs by newest first
     const filteredLogs = useMemo(() => {
@@ -157,10 +161,14 @@ const ConnectionLogsManager: React.FC<ConnectionLogsManagerProps> = ({
     }, [logs]);
 
     const displayedLogs = useMemo(() => {
-        return filteredLogs.slice(0, RENDER_LIMIT);
-    }, [filteredLogs]);
+        return filteredLogs.slice(0, renderLimit);
+    }, [filteredLogs, renderLimit]);
 
-    const hasMore = filteredLogs.length > RENDER_LIMIT;
+    const hasMore = filteredLogs.length > renderLimit;
+
+    const handleLoadMore = useCallback(() => {
+        setRenderLimit(prev => prev + LOAD_MORE_COUNT);
+    }, []);
 
     const handleToggleSaved = useCallback(
         (id: string) => onToggleSaved(id),
@@ -222,9 +230,12 @@ const ConnectionLogsManager: React.FC<ConnectionLogsManagerProps> = ({
                         <>
                             {renderedItems}
                             {hasMore && (
-                                <div className="text-center py-4 text-sm text-muted-foreground">
-                                    {t("logs.showing", { limit: RENDER_LIMIT, total: filteredLogs.length })}
-                                </div>
+                                <button
+                                    onClick={handleLoadMore}
+                                    className="w-full py-3 text-sm text-primary hover:bg-secondary/50 transition-colors"
+                                >
+                                    {t("logs.loadMore", { count: Math.min(LOAD_MORE_COUNT, filteredLogs.length - renderLimit) })}
+                                </button>
                             )}
                         </>
                     )}

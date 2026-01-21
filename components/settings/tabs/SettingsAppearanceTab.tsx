@@ -2,10 +2,11 @@ import React, { useCallback } from "react";
 import { Check, Moon, Palette, Sun } from "lucide-react";
 import { useI18n } from "../../../application/i18n/I18nProvider";
 import { DARK_UI_THEMES, LIGHT_UI_THEMES } from "../../../infrastructure/config/uiThemes";
-import { UI_FONTS } from "../../../infrastructure/config/uiFonts";
+import { useAvailableUIFonts } from "../../../application/state/uiFontStore";
 import { SUPPORTED_UI_LOCALES } from "../../../infrastructure/config/i18n";
 import { cn } from "../../../lib/utils";
 import { SectionHeader, SettingsTabContent, SettingRow, Toggle, Select } from "../settings-ui";
+import { FontSelect } from "../FontSelect";
 
 export default function SettingsAppearanceTab(props: {
   theme: "dark" | "light";
@@ -26,6 +27,7 @@ export default function SettingsAppearanceTab(props: {
   setCustomCSS: (css: string) => void;
 }) {
   const { t } = useI18n();
+  const availableUIFonts = useAvailableUIFonts();
   const {
     theme,
     setTheme,
@@ -139,11 +141,11 @@ export default function SettingsAppearanceTab(props: {
           label={t("settings.appearance.uiFont")}
           description={t("settings.appearance.uiFont.desc")}
         >
-          <Select
+          <FontSelect
             value={uiFontFamilyId}
-            options={UI_FONTS.map((f) => ({ value: f.id, label: f.name }))}
+            fonts={availableUIFonts}
             onChange={(v) => setUiFontFamilyId(v)}
-            className="w-40"
+            className="w-48"
           />
         </SettingRow>
       </div>

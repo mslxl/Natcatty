@@ -8,6 +8,7 @@ import { useUpdateCheck } from './application/state/useUpdateCheck';
 import { useVaultState } from './application/state/useVaultState';
 import { useWindowControls } from './application/state/useWindowControls';
 import { initializeFonts } from './application/state/fontStore';
+import { initializeUIFonts } from './application/state/uiFontStore';
 import { I18nProvider, useI18n } from './application/i18n/I18nProvider';
 import { matchesKeyBinding } from './domain/models';
 import { resolveHostAuth } from './domain/sshAuth';
@@ -28,6 +29,7 @@ import type { TerminalLayer as TerminalLayerComponent } from './components/Termi
 
 // Initialize fonts eagerly at app startup
 initializeFonts();
+initializeUIFonts();
 
 // Visibility container for VaultView - isolates isActive subscription
 const VaultViewContainer: React.FC<{ children: React.ReactNode }> = ({ children }) => {

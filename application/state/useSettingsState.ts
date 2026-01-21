@@ -25,7 +25,8 @@ import { DEFAULT_UI_LOCALE, resolveSupportedLocale } from '../../infrastructure/
 import { TERMINAL_THEMES } from '../../infrastructure/config/terminalThemes';
 import { DEFAULT_FONT_SIZE } from '../../infrastructure/config/fonts';
 import { DARK_UI_THEMES, LIGHT_UI_THEMES, UiThemeTokens, getUiThemeById } from '../../infrastructure/config/uiThemes';
-import { UI_FONTS, DEFAULT_UI_FONT_ID, getUiFontById } from '../../infrastructure/config/uiFonts';
+import { UI_FONTS, DEFAULT_UI_FONT_ID } from '../../infrastructure/config/uiFonts';
+import { uiFontStore } from './uiFontStore';
 import { useAvailableFonts } from './fontStore';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
@@ -73,7 +74,11 @@ const isValidUiThemeId = (theme: 'light' | 'dark', value: string): boolean => {
 };
 
 const isValidUiFontId = (value: string): boolean => {
-  return UI_FONTS.some((font) => font.id === value);
+  // Local fonts are always considered valid
+  if (value.startsWith('local-')) return true;
+  // Check bundled fonts first, then check dynamically loaded fonts
+  return UI_FONTS.some((font) => font.id === value) ||
+         uiFontStore.getAvailableFonts().some((font) => font.id === value);
 };
 
 const applyThemeTokens = (
@@ -245,7 +250,7 @@ export const useSettingsState = () => {
 
   // Apply and persist UI font family
   useLayoutEffect(() => {
-    const font = getUiFontById(uiFontFamilyId);
+    const font = uiFontStore.getFontById(uiFontFamilyId);
     document.documentElement.style.setProperty('--font-sans', font.family);
     localStorageAdapter.writeString(STORAGE_KEY_UI_FONT_FAMILY, uiFontFamilyId);
     notifySettingsChanged(STORAGE_KEY_UI_FONT_FAMILY, uiFontFamilyId);

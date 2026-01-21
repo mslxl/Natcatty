@@ -459,7 +459,7 @@ const zhCN: Messages = {
   'logs.table.saved': '收藏',
   'logs.empty.title': '暂无连接日志',
   'logs.empty.desc': '当你连接主机或打开本地终端后，这里会显示连接历史。',
-  'logs.showing': '显示 {limit}/{total} 条日志。',
+  'logs.loadMore': '加载更多 ({count} 条)',
   'logs.ongoing': '进行中',
   'logs.localTerminal': '本地终端',
   'logs.action.save': '收藏',
