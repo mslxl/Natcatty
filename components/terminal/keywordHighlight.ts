@@ -1,5 +1,5 @@
 
-import { Terminal as XTerm, IDecoration, IDisposable, IMarker } from "@xterm/xterm";
+import { Terminal as XTerm, IDecoration, IDisposable, IMarker, IBufferLine } from "@xterm/xterm";
 import { KeywordHighlightRule } from "../../types";
 
 import { XTERM_PERFORMANCE_CONFIG } from "../../infrastructure/config/xtermPerformance";
@@ -88,6 +88,43 @@ export class KeywordHighlighter implements IDisposable {
     this.decorations = [];
   }
 
+  /**
+   * Build a mapping from string character index to terminal cell column.
+   * This handles wide characters (CJK, emoji) and combining characters correctly.
+   *
+   * For example, with "A中B":
+   * - String indices: 0='A', 1='中', 2='B'
+   * - Cell columns:   0='A', 1='中'(width 2), 3='B'
+   * - Result map: [0, 1, 3, 4] (includes end position)
+   */
+  private buildStringToCellMap(line: IBufferLine): number[] {
+    const map: number[] = [];
+    let cellCol = 0;
+
+    for (let col = 0; col < line.length; col++) {
+      const cell = line.getCell(col);
+      if (!cell) break;
+
+      const chars = cell.getChars();
+      const width = cell.getWidth();
+
+      // Skip continuation cells (width 0) - these are the 2nd cell of wide characters
+      if (width === 0) continue;
+
+      // Map each character in this cell to the current cell column
+      for (let i = 0; i < chars.length; i++) {
+        map.push(cellCol);
+      }
+
+      cellCol += width;
+    }
+
+    // Add final position for calculating end column of matches
+    map.push(cellCol);
+
+    return map;
+  }
+
   private refreshViewport() {
     // Safety check just in case
     if (!this.term?.buffer?.active) return;
@@ -111,6 +148,9 @@ export class KeywordHighlighter implements IDisposable {
       const lineText = line.translateToString(true); // true = trim right whitespace
       if (!lineText) continue;
 
+      // Build mapping from string index to cell column for wide char support
+      const cellMap = this.buildStringToCellMap(line);
+
       // Process each rule
       for (const rule of this.rules) {
         const patterns = rule.patterns;
@@ -121,8 +161,16 @@ export class KeywordHighlighter implements IDisposable {
             let match;
 
             while ((match = regex.exec(lineText)) !== null) {
-              const startCol = match.index;
-              const matchLen = match[0].length;
+              const strStart = match.index;
+              const strEnd = strStart + match[0].length;
+
+              // Map string indices to cell columns
+              const cellStartCol = cellMap[strStart] ?? strStart;
+              const cellEndCol = cellMap[strEnd] ?? strEnd;
+              const cellWidth = cellEndCol - cellStartCol;
+
+              // Skip if width is 0 or negative (shouldn't happen, but be safe)
+              if (cellWidth <= 0) continue;
 
               // Calculate offset relative to the absolute cursor position
               // offset = targetLineAbs - (baseY + cursorY)
@@ -132,8 +180,8 @@ export class KeywordHighlighter implements IDisposable {
               if (marker) {
                 const deco = this.term.registerDecoration({
                   marker,
-                  x: startCol,
-                  width: matchLen,
+                  x: cellStartCol,
+                  width: cellWidth,
                   foregroundColor: rule.color,
                 });
 
@@ -144,10 +192,7 @@ export class KeywordHighlighter implements IDisposable {
                   marker.dispose();
                 }
               }
-
-
             }
-
           } catch (err) {
             console.error("Highlight error", err);
           }

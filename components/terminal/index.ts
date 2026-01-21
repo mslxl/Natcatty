@@ -21,7 +21,7 @@ export type { TerminalContextMenuProps } from './TerminalContextMenu';
 export { TerminalSearchBar } from './TerminalSearchBar';
 export type { TerminalSearchBarProps } from './TerminalSearchBar';
 
-export { createHighlightProcessor, highlightKeywords, compileHighlightRules } from './keywordHighlight';
+export { KeywordHighlighter } from './keywordHighlight';
 
 export { useTerminalSearch } from './hooks/useTerminalSearch';
 export { useTerminalContextActions } from './hooks/useTerminalContextActions';
