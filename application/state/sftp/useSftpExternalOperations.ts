@@ -323,7 +323,26 @@ export const useSftpExternalOperations = (
         }
       },
       writeSftpBinary: bridge?.writeSftpBinary,
-      writeSftpBinaryWithProgress: bridge?.writeSftpBinaryWithProgress,
+      // Wrap writeSftpBinaryWithProgress to adapt UploadBridge interface to NetcattyBridge interface
+      // UploadBridge: (sftpId, path, data, taskId, onProgress, onComplete, onError)
+      // NetcattyBridge: (sftpId, path, content, transferId, encoding, onProgress, onComplete, onError)
+      writeSftpBinaryWithProgress: bridge?.writeSftpBinaryWithProgress
+        ? async (sftpId, path, data, taskId, onProgress, onComplete, onError) => {
+            const b = netcattyBridge.get();
+            if (!b?.writeSftpBinaryWithProgress) return undefined;
+            // Pass undefined for encoding to use session default, and forward callbacks
+            return b.writeSftpBinaryWithProgress(
+              sftpId,
+              path,
+              data,
+              taskId,
+              undefined, // encoding - use session default
+              onProgress,
+              onComplete,
+              onError
+            );
+          }
+        : undefined,
       cancelSftpUpload: bridge?.cancelSftpUpload,
     };
   }, []);
