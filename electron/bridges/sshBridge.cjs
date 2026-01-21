@@ -959,13 +959,15 @@ async function getServerStats(event, payload) {
   // Command to get CPU (overall + per-core), Memory, Disk, and Network stats
   // This command is designed to work across most Linux distributions
   // Note: Using semicolons and avoiding comments for single-line execution
+  // CPU: Output raw values (total and idle) instead of percentage - we calculate delta on backend
   const statsCommand = [
     // Get number of CPU cores
     `cores=$(nproc 2>/dev/null || grep -c "^processor" /proc/cpuinfo 2>/dev/null || echo "1")`,
-    // Get overall CPU usage from /proc/stat (more reliable than top)
-    `cpu=$(awk '/^cpu / {idle=$5; total=0; for(i=2;i<=NF;i++) total+=$i; printf "%.0f", 100-(idle/total*100)}' /proc/stat 2>/dev/null || echo "")`,
-    // Get per-core CPU usage from /proc/stat
-    `percore=$(awk '/^cpu[0-9]/ {idle=$5; total=0; for(i=2;i<=NF;i++) total+=$i; printf "%.0f,", 100-(idle/total*100)}' /proc/stat 2>/dev/null | sed 's/,$//' || echo "")`,
+    // Get raw CPU values from /proc/stat: "total idle" for overall CPU
+    // We output raw values and calculate delta-based percentage on the backend
+    `cpuraw=$(awk '/^cpu / {total=0; for(i=2;i<=NF;i++) total+=$i; printf "%d %d", total, $5}' /proc/stat 2>/dev/null || echo "")`,
+    // Get raw per-core CPU values from /proc/stat: "total:idle,total:idle,..."
+    `percoreraw=$(awk '/^cpu[0-9]/ {total=0; for(i=2;i<=NF;i++) total+=$i; printf "%d:%d,", total, $5}' /proc/stat 2>/dev/null | sed 's/,$//' || echo "")`,
     // Get memory details from /proc/meminfo (total, free, buffers, cached in KB)
     `meminfo=$(awk '/^MemTotal:/{t=$2} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} /^SReclaimable:/{s=$2} END{printf "%d %d %d %d", t/1024, f/1024, b/1024, (c+s)/1024}' /proc/meminfo 2>/dev/null || echo "")`,
     // Get top 10 processes by memory - with BusyBox fallback
@@ -978,8 +980,8 @@ async function getServerStats(event, payload) {
     `disks=$(df -BG 2>/dev/null | awk 'NR>1 && $1 ~ /^\\/dev/ {gsub(/G/,"",$2); gsub(/G/,"",$3); gsub(/%/,"",$5); printf "%s:%s:%s:%s,", $6, $3, $2, $5}' | sed 's/,$//' || df 2>/dev/null | awk 'NR>1 && $1 ~ /^\\/dev/ {total=$2/1048576; used=$3/1048576; pct=$5; gsub(/%/,"",pct); printf "%s:%.0f:%.0f:%s,", $6, used, total, pct}' | sed 's/,$//' || echo "")`,
     // Get network interface stats from /proc/net/dev (interface:rx_bytes:tx_bytes), excluding lo and virtual interfaces
     `net=$(cat /proc/net/dev 2>/dev/null | awk 'NR>2 {gsub(/^[ \\t]+/, ""); split($0, a, ":"); iface=a[1]; if(iface != "lo" && iface !~ /^veth/ && iface !~ /^docker/ && iface !~ /^br-/) {split(a[2], b); printf "%s:%s:%s,", iface, b[1], b[9]}}' | sed 's/,$//' || echo "")`,
-    // Output all stats
-    `echo "CPU:$cpu|CORES:$cores|PERCORE:$percore|MEMINFO:$meminfo|PROCS:$procs|DISKS:$disks|NET:$net"`
+    // Output all stats (using CPURAW and PERCORERAW instead of CPU and PERCORE)
+    `echo "CPURAW:$cpuraw|CORES:$cores|PERCORERAW:$percoreraw|MEMINFO:$meminfo|PROCS:$procs|DISKS:$disks|NET:$net"`
   ].join('; ');
 
   return new Promise((resolve) => {
@@ -1012,9 +1014,10 @@ async function getServerStats(event, payload) {
         const output = stdout.trim();
         const parts = output.split('|');
 
-        let cpu = null;
+        let cpuRawTotal = null;
+        let cpuRawIdle = null;
+        let cpuPerCoreRaw = [];  // Array of { total, idle }
         let cpuCores = null;
-        let cpuPerCore = [];
         let memTotal = null;
         let memFree = null;
         let memBuffers = null;
@@ -1025,20 +1028,30 @@ async function getServerStats(event, payload) {
         let networkInterfaces = [];  // Array of { name, rxBytes, txBytes }
 
         for (const part of parts) {
-          if (part.startsWith('CPU:')) {
-            const val = parseFloat(part.substring(4));
-            if (!isNaN(val)) cpu = Math.round(val);
+          if (part.startsWith('CPURAW:')) {
+            const rawParts = part.substring(7).trim().split(/\s+/);
+            if (rawParts.length >= 2) {
+              cpuRawTotal = parseInt(rawParts[0], 10);
+              cpuRawIdle = parseInt(rawParts[1], 10);
+            }
           } else if (part.startsWith('CORES:')) {
             const coreStr = part.substring(6).trim();
             const val = parseInt(coreStr, 10);
             if (!isNaN(val) && val > 0) cpuCores = val;
-          } else if (part.startsWith('PERCORE:')) {
-            const coreStr = part.substring(8).trim();
+          } else if (part.startsWith('PERCORERAW:')) {
+            const coreStr = part.substring(11).trim();
             if (coreStr && coreStr !== '') {
-              cpuPerCore = coreStr.split(',').map(v => {
-                const num = parseInt(v.trim(), 10);
-                return isNaN(num) ? 0 : num;
-              }).filter(n => !isNaN(n));
+              cpuPerCoreRaw = coreStr.split(',').map(v => {
+                const coreParts = v.trim().split(':');
+                if (coreParts.length >= 2) {
+                  const total = parseInt(coreParts[0], 10);
+                  const idle = parseInt(coreParts[1], 10);
+                  if (!isNaN(total) && !isNaN(idle)) {
+                    return { total, idle };
+                  }
+                }
+                return null;
+              }).filter(v => v !== null);
             }
           } else if (part.startsWith('MEMINFO:')) {
             const memParts = part.substring(8).trim().split(/\s+/);
@@ -1162,6 +1175,52 @@ async function getServerStats(event, payload) {
         // Store current reading for next calculation
         session.prevNetStats = {
           interfaces: networkInterfaces,
+          timestamp: now,
+        };
+
+        // Calculate CPU usage based on delta from previous reading
+        const prevCpu = session.prevCpuStats || { total: 0, idle: 0, perCore: [], timestamp: 0 };
+        let cpu = null;
+        let cpuPerCore = [];
+
+        if (cpuRawTotal !== null && cpuRawIdle !== null && prevCpu.total > 0) {
+          const totalDelta = cpuRawTotal - prevCpu.total;
+          const idleDelta = cpuRawIdle - prevCpu.idle;
+          if (totalDelta > 0) {
+            // CPU% = 100 - (idleDelta / totalDelta * 100)
+            cpu = Math.round(100 - (idleDelta / totalDelta * 100));
+            // Clamp to valid range
+            if (cpu < 0) cpu = 0;
+            if (cpu > 100) cpu = 100;
+          }
+        }
+
+        // Calculate per-core CPU usage from deltas
+        if (cpuPerCoreRaw.length > 0 && prevCpu.perCore.length > 0) {
+          cpuPerCore = cpuPerCoreRaw.map((core, index) => {
+            const prevCore = prevCpu.perCore[index];
+            if (prevCore) {
+              const totalDelta = core.total - prevCore.total;
+              const idleDelta = core.idle - prevCore.idle;
+              if (totalDelta > 0) {
+                let usage = Math.round(100 - (idleDelta / totalDelta * 100));
+                if (usage < 0) usage = 0;
+                if (usage > 100) usage = 100;
+                return usage;
+              }
+            }
+            return 0;
+          });
+        } else if (cpuPerCoreRaw.length > 0) {
+          // First reading - no delta data yet, return zeros
+          cpuPerCore = cpuPerCoreRaw.map(() => 0);
+        }
+
+        // Store current CPU reading for next calculation
+        session.prevCpuStats = {
+          total: cpuRawTotal || 0,
+          idle: cpuRawIdle || 0,
+          perCore: cpuPerCoreRaw,
           timestamp: now,
         };
 
