@@ -91,7 +91,10 @@ export const useSftpConnections = ({
       lastConnectedHostRef.current[side] = host;
 
       const currentPane = getActivePane(side);
-      const filenameEncoding = currentPane?.filenameEncoding || "auto";
+      // Reset encoding to host's configured encoding or "auto" when connecting to a new host
+      // This ensures proper auto-detection works and respects host-level encoding settings
+      const filenameEncoding: SftpFilenameEncoding =
+        host === "local" ? "auto" : (host.sftpEncoding ?? "auto");
 
       if (currentPane?.connection) {
         clearCacheForConnection(currentPane.connection.id);
@@ -131,6 +134,7 @@ export const useSftpConnections = ({
           loading: true,
           reconnecting: false,
           error: null,
+          filenameEncoding, // Reset encoding for new connection
         }));
 
         try {
@@ -174,6 +178,7 @@ export const useSftpConnections = ({
           reconnecting: prev.reconnecting,
           error: null,
           files: prev.reconnecting ? prev.files : [],
+          filenameEncoding, // Reset encoding for new connection
         }));
 
         try {
