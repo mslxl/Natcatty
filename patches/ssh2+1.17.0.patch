@@ -2,12 +2,14 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
 index 9f33c02..c311d3a 100644
 --- a/node_modules/ssh2/lib/protocol/SFTP.js
 +++ b/node_modules/ssh2/lib/protocol/SFTP.js
-@@ -117,6 +117,18 @@ const OPENSSH_MAX_PKT_LEN = 256 * 1024;
+@@ -117,6 +117,20 @@ const OPENSSH_MAX_PKT_LEN = 256 * 1024;
  
  const bufferParser = makeBufferParser();
  
-+function getStringLen(value) {
-+  return Buffer.isBuffer(value) ? value.length : Buffer.byteLength(value);
++function getStringLen(value, encoding) {
++  if (Buffer.isBuffer(value)) return value.length;
++  // Honor encoding parameter if provided, otherwise default to UTF-8
++  return encoding ? Buffer.byteLength(value, encoding) : Buffer.byteLength(value);
 +}
 +
 +function writeString(buf, offset, value, len) {

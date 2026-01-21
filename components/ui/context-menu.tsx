@@ -20,6 +20,17 @@ const getContextMenuPortalEl = () => {
       zIndex: "2147483647", // max safe z-index to avoid being covered
       pointerEvents: "none",
     });
+    // Prevent other modals/dialogs from setting aria-hidden on this container
+    // This avoids "Blocked aria-hidden on an element because its descendant retained focus" warnings
+    // when context menu is open inside a dialog
+    const originalSetAttribute = portal.setAttribute.bind(portal);
+    portal.setAttribute = (name: string, value: string) => {
+      // Block aria-hidden="true" when there are children (menu is open)
+      if (name === "aria-hidden" && value === "true" && portal && portal.children.length > 0) {
+        return;
+      }
+      originalSetAttribute(name, value);
+    };
     document.body.appendChild(portal);
   }
   return portal;
