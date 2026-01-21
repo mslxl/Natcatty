@@ -4,6 +4,12 @@ import { KeywordHighlightRule } from "../../types";
 
 import { XTERM_PERFORMANCE_CONFIG } from "../../infrastructure/config/xtermPerformance";
 
+/** Pre-compiled rule with regex ready for matching */
+interface CompiledRule {
+  regex: RegExp;
+  color: string;
+}
+
 /**
  * Manages terminal decorations for keyword highlighting.
  * Uses xterm.js Decoration API to overlay styles without modifying the data stream.
@@ -11,7 +17,7 @@ import { XTERM_PERFORMANCE_CONFIG } from "../../infrastructure/config/xtermPerfo
  */
 export class KeywordHighlighter implements IDisposable {
   private term: XTerm;
-  private rules: KeywordHighlightRule[] = [];
+  private compiledRules: CompiledRule[] = [];
   private decorations: { decoration: IDecoration; marker: IMarker }[] = [];
   private debounceTimer: NodeJS.Timeout | null = null;
   private enabled: boolean = false;
@@ -41,12 +47,28 @@ export class KeywordHighlighter implements IDisposable {
   }
 
   public setRules(rules: KeywordHighlightRule[], enabled: boolean) {
-    this.rules = rules.filter((r) => r.enabled && r.patterns.length > 0);
     this.enabled = enabled;
+
+    // Pre-compile all patterns into regexes for better performance
+    // This avoids creating new RegExp objects on every viewport refresh
+    this.compiledRules = [];
+    for (const rule of rules) {
+      if (!rule.enabled || rule.patterns.length === 0) continue;
+      for (const pattern of rule.patterns) {
+        try {
+          this.compiledRules.push({
+            regex: new RegExp(pattern, "gi"),
+            color: rule.color,
+          });
+        } catch (err) {
+          console.error("Invalid regex pattern:", pattern, err);
+        }
+      }
+    }
 
     // Clear existing and force an immediate refresh if enabling
     this.clearDecorations();
-    if (this.enabled) {
+    if (this.enabled && this.compiledRules.length > 0) {
       this.triggerRefresh();
     }
   }
@@ -61,7 +83,7 @@ export class KeywordHighlighter implements IDisposable {
   }
 
   private triggerRefresh() {
-    if (!this.enabled || this.rules.length === 0) return;
+    if (!this.enabled || this.compiledRules.length === 0) return;
 
     // Optimization: Disable highlighting in Alternate Buffer (e.g. Vim, Htop)
     // These apps manage their own highlighting and have rapid repaints.
@@ -151,50 +173,43 @@ export class KeywordHighlighter implements IDisposable {
       // Build mapping from string index to cell column for wide char support
       const cellMap = this.buildStringToCellMap(line);
 
-      // Process each rule
-      for (const rule of this.rules) {
-        const patterns = rule.patterns;
-        for (const pattern of patterns) {
-          try {
-            // Create regex for this pattern
-            const regex = new RegExp(pattern, "gi");
-            let match;
+      // Process each pre-compiled rule
+      for (const { regex, color } of this.compiledRules) {
+        // Reset regex state for reuse (global flag maintains lastIndex)
+        regex.lastIndex = 0;
+        let match;
 
-            while ((match = regex.exec(lineText)) !== null) {
-              const strStart = match.index;
-              const strEnd = strStart + match[0].length;
+        while ((match = regex.exec(lineText)) !== null) {
+          const strStart = match.index;
+          const strEnd = strStart + match[0].length;
 
-              // Map string indices to cell columns
-              const cellStartCol = cellMap[strStart] ?? strStart;
-              const cellEndCol = cellMap[strEnd] ?? strEnd;
-              const cellWidth = cellEndCol - cellStartCol;
+          // Map string indices to cell columns
+          const cellStartCol = cellMap[strStart] ?? strStart;
+          const cellEndCol = cellMap[strEnd] ?? strEnd;
+          const cellWidth = cellEndCol - cellStartCol;
 
-              // Skip if width is 0 or negative (shouldn't happen, but be safe)
-              if (cellWidth <= 0) continue;
+          // Skip if width is 0 or negative (shouldn't happen, but be safe)
+          if (cellWidth <= 0) continue;
 
-              // Calculate offset relative to the absolute cursor position
-              // offset = targetLineAbs - (baseY + cursorY)
-              const offset = lineY - cursorAbsoluteY;
-              const marker = this.term.registerMarker(offset);
+          // Calculate offset relative to the absolute cursor position
+          // offset = targetLineAbs - (baseY + cursorY)
+          const offset = lineY - cursorAbsoluteY;
+          const marker = this.term.registerMarker(offset);
 
-              if (marker) {
-                const deco = this.term.registerDecoration({
-                  marker,
-                  x: cellStartCol,
-                  width: cellWidth,
-                  foregroundColor: rule.color,
-                });
+          if (marker) {
+            const deco = this.term.registerDecoration({
+              marker,
+              x: cellStartCol,
+              width: cellWidth,
+              foregroundColor: color,
+            });
 
-                if (deco) {
-                  this.decorations.push({ decoration: deco, marker });
-                } else {
-                  // If decoration failed, cleanup marker
-                  marker.dispose();
-                }
-              }
+            if (deco) {
+              this.decorations.push({ decoration: deco, marker });
+            } else {
+              // If decoration failed, cleanup marker
+              marker.dispose();
             }
-          } catch (err) {
-            console.error("Highlight error", err);
           }
         }
       }
