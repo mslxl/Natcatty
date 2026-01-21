@@ -26,7 +26,7 @@ import { TERMINAL_THEMES } from '../../infrastructure/config/terminalThemes';
 import { DEFAULT_FONT_SIZE } from '../../infrastructure/config/fonts';
 import { DARK_UI_THEMES, LIGHT_UI_THEMES, UiThemeTokens, getUiThemeById } from '../../infrastructure/config/uiThemes';
 import { UI_FONTS, DEFAULT_UI_FONT_ID } from '../../infrastructure/config/uiFonts';
-import { uiFontStore } from './uiFontStore';
+import { uiFontStore, useUIFontsLoaded } from './uiFontStore';
 import { useAvailableFonts } from './fontStore';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
@@ -123,6 +123,7 @@ const applyThemeTokens = (
 
 export const useSettingsState = () => {
   const availableFonts = useAvailableFonts();
+  const uiFontsLoaded = useUIFontsLoaded();
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     const stored = readStoredString(STORAGE_KEY_THEME);
     return stored && isValidTheme(stored) ? stored : DEFAULT_THEME;
@@ -249,12 +250,13 @@ export const useSettingsState = () => {
   }, [uiLanguage, notifySettingsChanged]);
 
   // Apply and persist UI font family
+  // Re-run when fonts finish loading to get correct family for local fonts
   useLayoutEffect(() => {
     const font = uiFontStore.getFontById(uiFontFamilyId);
     document.documentElement.style.setProperty('--font-sans', font.family);
     localStorageAdapter.writeString(STORAGE_KEY_UI_FONT_FAMILY, uiFontFamilyId);
     notifySettingsChanged(STORAGE_KEY_UI_FONT_FAMILY, uiFontFamilyId);
-  }, [uiFontFamilyId, notifySettingsChanged]);
+  }, [uiFontFamilyId, uiFontsLoaded, notifySettingsChanged]);
 
   // Listen for settings changes from other windows via IPC
 	  useEffect(() => {

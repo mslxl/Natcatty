@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { UI_FONTS, DEFAULT_UI_FONT_ID, withUiCjkFallback, type UIFont } from '../../infrastructure/config/uiFonts';
+import { UI_FONTS, withUiCjkFallback, type UIFont } from '../../infrastructure/config/uiFonts';
 
 /**
  * UI Font Store - singleton pattern using useSyncExternalStore
@@ -169,6 +169,16 @@ export const useUIFontsLoading = (): boolean => {
   return useSyncExternalStore(
     uiFontStore.subscribe,
     uiFontStore.getIsLoading
+  );
+};
+
+/**
+ * Get UI font loaded state
+ */
+export const useUIFontsLoaded = (): boolean => {
+  return useSyncExternalStore(
+    uiFontStore.subscribe,
+    uiFontStore.getIsLoaded
   );
 };
 
