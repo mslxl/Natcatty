@@ -923,12 +923,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
             </div>
             {/* Server Stats Display - Linux only */}
             {host.os === 'linux' && terminalSettings?.showServerStats && status === 'connected' && serverStats.lastUpdated && (
-              <div className="flex items-center gap-2.5 ml-2 text-[10px] opacity-80">
+              <div className="flex items-center gap-2.5 ml-2 text-[10px] opacity-80 flex-nowrap overflow-hidden min-w-0">
                 {/* CPU with HoverCard for per-core details */}
                 <HoverCard openDelay={200} closeDelay={100}>
                   <HoverCardTrigger asChild>
                     <button
-                      className="flex items-center gap-0.5 hover:opacity-100 opacity-80 transition-opacity cursor-pointer"
+                      className="flex items-center gap-0.5 hover:opacity-100 opacity-80 transition-opacity cursor-pointer flex-shrink-0"
                       title={t("terminal.serverStats.cpu")}
                     >
                       <Cpu size={10} className="flex-shrink-0" />
@@ -979,7 +979,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                 <HoverCard openDelay={200} closeDelay={100}>
                   <HoverCardTrigger asChild>
                     <button
-                      className="flex items-center gap-0.5 hover:opacity-100 opacity-80 transition-opacity cursor-pointer"
+                      className="flex items-center gap-0.5 hover:opacity-100 opacity-80 transition-opacity cursor-pointer flex-shrink-0"
                       title={t("terminal.serverStats.memory")}
                     >
                       <MemoryStick size={10} className="flex-shrink-0" />
@@ -1077,7 +1077,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                 <HoverCard openDelay={200} closeDelay={100}>
                   <HoverCardTrigger asChild>
                     <button
-                      className="flex items-center gap-0.5 hover:opacity-100 opacity-80 transition-opacity cursor-pointer"
+                      className="flex items-center gap-0.5 hover:opacity-100 opacity-80 transition-opacity cursor-pointer flex-shrink-0"
                       title={t("terminal.serverStats.disk")}
                     >
                       <HardDrive size={10} className="flex-shrink-0" />
@@ -1139,7 +1139,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                   <HoverCard openDelay={200} closeDelay={100}>
                     <HoverCardTrigger asChild>
                       <button
-                        className="flex items-center gap-1 hover:opacity-100 opacity-80 transition-opacity cursor-pointer"
+                        className="flex items-center gap-1 hover:opacity-100 opacity-80 transition-opacity cursor-pointer flex-shrink-0"
                         title={t("terminal.serverStats.network")}
                       >
                         <ArrowDownToLine size={9} className="flex-shrink-0 text-emerald-400" />
