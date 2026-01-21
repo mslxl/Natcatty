@@ -169,6 +169,9 @@ function App({ settings }: { settings: SettingsState }) {
     hotkeyScheme,
     keyBindings,
     isHotkeyRecording,
+    sessionLogsEnabled,
+    sessionLogsDir,
+    sessionLogsFormat,
   } = settings;
 
   const {
@@ -753,10 +756,32 @@ function App({ settings }: { settings: SettingsState }) {
         terminalData: data,
       });
       if (IS_DEV) console.log('[handleTerminalDataCapture] Updated log with terminalData');
+
+      // Auto-save session log if enabled
+      if (sessionLogsEnabled && sessionLogsDir && data) {
+        import('./infrastructure/services/netcattyBridge').then(({ netcattyBridge }) => {
+          const bridge = netcattyBridge.get();
+          if (bridge?.autoSaveSessionLog) {
+            bridge.autoSaveSessionLog({
+              terminalData: data,
+              hostLabel: matchingLog.hostLabel,
+              hostname: matchingLog.hostname,
+              hostId: matchingLog.hostId,
+              startTime: matchingLog.startTime,
+              format: sessionLogsFormat,
+              directory: sessionLogsDir,
+            }).then(result => {
+              if (IS_DEV) console.log('[handleTerminalDataCapture] Auto-save result:', result);
+            }).catch(err => {
+              console.error('[handleTerminalDataCapture] Auto-save failed:', err);
+            });
+          }
+        });
+      }
     } else {
       if (IS_DEV) console.log('[handleTerminalDataCapture] No matching log found!');
     }
-  }, [sessions, connectionLogs, updateConnectionLog]);
+  }, [sessions, connectionLogs, updateConnectionLog, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat]);
 
   // Check if host has multiple protocols enabled
   const hasMultipleProtocols = useCallback((host: Host) => {

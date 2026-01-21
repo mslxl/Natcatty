@@ -65,6 +65,24 @@ const zhCN: Messages = {
   'settings.system.clearResult': '已删除 {deleted} 个文件，{failed} 个失败。',
   'settings.system.tempDirectoryHint': '临时文件在使用外部应用打开远程文件时创建。SFTP 会话关闭时会自动清理。',
 
+  // Settings > Session Logs
+  'settings.sessionLogs.title': '会话日志',
+  'settings.sessionLogs.description': '配置会话日志导出和自动保存设置。',
+  'settings.sessionLogs.autoSave': '自动保存',
+  'settings.sessionLogs.enableAutoSave': '启用自动保存',
+  'settings.sessionLogs.enableAutoSaveDesc': '在终端会话结束时自动保存会话日志。',
+  'settings.sessionLogs.directory': '保存目录',
+  'settings.sessionLogs.noDirectory': '未选择目录',
+  'settings.sessionLogs.browse': '浏览',
+  'settings.sessionLogs.openFolder': '打开文件夹',
+  'settings.sessionLogs.directoryHint': '日志将按主机名组织在子目录中。',
+  'settings.sessionLogs.format': '日志格式',
+  'settings.sessionLogs.formatDesc': '选择保存日志文件的格式。',
+  'settings.sessionLogs.formatTxt': '纯文本 (.txt)',
+  'settings.sessionLogs.formatRaw': '原始格式 (.log)',
+  'settings.sessionLogs.formatHtml': 'HTML (.html)',
+  'settings.sessionLogs.hint': '会话日志用于记录终端输出，便于故障排查和审计。',
+
   // Settings > Application
   'settings.application.checkUpdates': '检查更新',
   'settings.application.reportProblem': '反馈问题',
@@ -470,6 +488,7 @@ const zhCN: Messages = {
   'logView.customizeAppearance': '自定义外观',
   'logView.appearance': '外观',
   'logView.readOnly': '只读',
+  'logView.export': '导出',
 
   // Terminal toolbar / search / context menu / auth
   'terminal.toolbar.openSftp': '打开 SFTP',

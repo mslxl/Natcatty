@@ -459,6 +459,26 @@ declare global {
     clearTempDir?(): Promise<{ deletedCount: number; failedCount: number; error?: string }>;
     getTempDirPath?(): Promise<string>;
     openTempDir?(): Promise<{ success: boolean }>;
+
+    // Session Logs
+    exportSessionLog?(payload: {
+      terminalData: string;
+      hostLabel: string;
+      hostname: string;
+      startTime: number;
+      format: 'txt' | 'raw' | 'html';
+    }): Promise<{ success: boolean; canceled?: boolean; filePath?: string }>;
+    selectSessionLogsDir?(): Promise<{ success: boolean; canceled?: boolean; directory?: string }>;
+    autoSaveSessionLog?(payload: {
+      terminalData: string;
+      hostLabel: string;
+      hostname: string;
+      hostId: string;
+      startTime: number;
+      format: 'txt' | 'raw' | 'html';
+      directory: string;
+    }): Promise<{ success: boolean; error?: string; filePath?: string }>;
+    openSessionLogsDir?(directory: string): Promise<{ success: boolean; error?: string }>;
   }
 
   interface Window {

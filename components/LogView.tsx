@@ -2,7 +2,7 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
-import { FileText, Palette, X } from "lucide-react";
+import { FileText, Download, Palette, X } from "lucide-react";
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { cn } from "../lib/utils";
@@ -34,6 +34,7 @@ const LogViewComponent: React.FC<LogViewProps> = ({
     const fitAddonRef = useRef<FitAddon | null>(null);
     const [isReady, setIsReady] = useState(false);
     const [themeModalOpen, setThemeModalOpen] = useState(false);
+    const [isExporting, setIsExporting] = useState(false);
 
     // Use log's saved theme/fontSize or fall back to defaults
     const currentTheme = useMemo(() => {
@@ -66,6 +67,30 @@ const LogViewComponent: React.FC<LogViewProps> = ({
     const handleFontSizeChange = useCallback((fontSize: number) => {
         onUpdateLog(log.id, { fontSize });
     }, [log.id, onUpdateLog]);
+
+    // Handle export
+    const handleExport = useCallback(async () => {
+        if (!log.terminalData || isExporting) return;
+
+        setIsExporting(true);
+        try {
+            const { netcattyBridge } = await import("../infrastructure/services/netcattyBridge");
+            const bridge = netcattyBridge.get();
+            if (bridge?.exportSessionLog) {
+                await bridge.exportSessionLog({
+                    terminalData: log.terminalData,
+                    hostLabel: log.hostLabel,
+                    hostname: log.hostname,
+                    startTime: log.startTime,
+                    format: 'txt',
+                });
+            }
+        } catch (err) {
+            console.error('Failed to export session log:', err);
+        } finally {
+            setIsExporting(false);
+        }
+    }, [log.terminalData, log.hostLabel, log.hostname, log.startTime, isExporting]);
 
     // Initialize terminal
     useEffect(() => {
@@ -216,6 +241,21 @@ const LogViewComponent: React.FC<LogViewProps> = ({
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
+                    {/* Export button */}
+                    {log.terminalData && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="gap-1.5 h-8 px-2"
+                            onClick={handleExport}
+                            disabled={isExporting}
+                            title={t("logView.export")}
+                        >
+                            <Download size={14} />
+                            <span className="text-xs">{t("logView.export")}</span>
+                        </Button>
+                    )}
+
                     {/* Theme & font customization button */}
                     <Button
                         variant="ghost"

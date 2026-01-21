@@ -1,12 +1,14 @@
 /**
- * Settings System Tab - System information and temp file management
+ * Settings System Tab - System information, temp file management, and session logs
  */
-import { FolderOpen, HardDrive, RefreshCw, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { FileText, FolderOpen, HardDrive, RefreshCw, Trash2 } from "lucide-react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useI18n } from "../../../application/i18n/I18nProvider";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
+import { SessionLogFormat } from "../../../domain/models";
 import { TabsContent } from "../../ui/tabs";
 import { Button } from "../../ui/button";
+import { Toggle, Select, SettingRow } from "../settings-ui";
 
 interface TempDirInfo {
   path: string;
@@ -22,9 +24,25 @@ function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
 
-const SettingsSystemTab: React.FC = () => {
+interface SettingsSystemTabProps {
+  sessionLogsEnabled: boolean;
+  setSessionLogsEnabled: (enabled: boolean) => void;
+  sessionLogsDir: string;
+  setSessionLogsDir: (dir: string) => void;
+  sessionLogsFormat: SessionLogFormat;
+  setSessionLogsFormat: (format: SessionLogFormat) => void;
+}
+
+const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
+  sessionLogsEnabled,
+  setSessionLogsEnabled,
+  sessionLogsDir,
+  setSessionLogsDir,
+  sessionLogsFormat,
+  setSessionLogsFormat,
+}) => {
   const { t } = useI18n();
-  
+
   const [tempDirInfo, setTempDirInfo] = useState<TempDirInfo | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
@@ -33,7 +51,7 @@ const SettingsSystemTab: React.FC = () => {
   const loadTempDirInfo = useCallback(async () => {
     const bridge = netcattyBridge.get();
     if (!bridge?.getTempDirInfo) return;
-    
+
     setIsLoading(true);
     try {
       const info = await bridge.getTempDirInfo();
@@ -52,7 +70,7 @@ const SettingsSystemTab: React.FC = () => {
   const handleClearTempFiles = useCallback(async () => {
     const bridge = netcattyBridge.get();
     if (!bridge?.clearTempDir) return;
-    
+
     setIsClearing(true);
     setClearResult(null);
     try {
@@ -72,6 +90,37 @@ const SettingsSystemTab: React.FC = () => {
     if (!tempDirInfo?.path || !bridge?.openTempDir) return;
     await bridge.openTempDir();
   }, [tempDirInfo]);
+
+  const handleSelectSessionLogsDir = useCallback(async () => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.selectSessionLogsDir) return;
+
+    try {
+      const result = await bridge.selectSessionLogsDir();
+      if (result.success && result.directory) {
+        setSessionLogsDir(result.directory);
+      }
+    } catch (err) {
+      console.error("[SettingsSystemTab] Failed to select directory:", err);
+    }
+  }, [setSessionLogsDir]);
+
+  const handleOpenSessionLogsDir = useCallback(async () => {
+    const bridge = netcattyBridge.get();
+    if (!sessionLogsDir || !bridge?.openSessionLogsDir) return;
+
+    try {
+      await bridge.openSessionLogsDir(sessionLogsDir);
+    } catch (err) {
+      console.error("[SettingsSystemTab] Failed to open directory:", err);
+    }
+  }, [sessionLogsDir]);
+
+  const formatOptions = [
+    { value: "txt", label: t("settings.sessionLogs.formatTxt") },
+    { value: "raw", label: t("settings.sessionLogs.formatRaw") },
+    { value: "html", label: t("settings.sessionLogs.formatHtml") },
+  ];
 
   return (
     <TabsContent
@@ -169,6 +218,81 @@ const SettingsSystemTab: React.FC = () => {
 
             <p className="text-xs text-muted-foreground">
               {t("settings.system.tempDirectoryHint")}
+            </p>
+          </div>
+
+          {/* Session Logs Section */}
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <FileText size={18} className="text-muted-foreground" />
+              <h3 className="text-base font-medium">{t("settings.sessionLogs.title")}</h3>
+            </div>
+
+            <div className="bg-muted/30 rounded-lg p-4 space-y-4">
+              {/* Enable Toggle */}
+              <SettingRow
+                label={t("settings.sessionLogs.enableAutoSave")}
+                description={t("settings.sessionLogs.enableAutoSaveDesc")}
+              >
+                <Toggle
+                  checked={sessionLogsEnabled}
+                  onChange={setSessionLogsEnabled}
+                />
+              </SettingRow>
+
+              {/* Directory Selection */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">{t("settings.sessionLogs.directory")}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="bg-background border border-input rounded-md px-3 py-2 text-sm font-mono truncate">
+                      {sessionLogsDir || t("settings.sessionLogs.noDirectory")}
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSelectSessionLogsDir}
+                    className="shrink-0"
+                  >
+                    {t("settings.sessionLogs.browse")}
+                  </Button>
+                  {sessionLogsDir && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={handleOpenSessionLogsDir}
+                      className="shrink-0"
+                      title={t("settings.sessionLogs.openFolder")}
+                    >
+                      <FolderOpen size={16} />
+                    </Button>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {t("settings.sessionLogs.directoryHint")}
+                </p>
+              </div>
+
+              {/* Format Selection */}
+              <SettingRow
+                label={t("settings.sessionLogs.format")}
+                description={t("settings.sessionLogs.formatDesc")}
+              >
+                <Select
+                  value={sessionLogsFormat}
+                  options={formatOptions}
+                  onChange={(val) => setSessionLogsFormat(val as SessionLogFormat)}
+                  className="w-32"
+                  disabled={!sessionLogsEnabled}
+                />
+              </SettingRow>
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              {t("settings.sessionLogs.hint")}
             </p>
           </div>
         </div>

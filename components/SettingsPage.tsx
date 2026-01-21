@@ -203,7 +203,16 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                         </React.Suspense>
                     )}
 
-                    {mountedTabs.has("system") && <SettingsSystemTab />}
+                    {mountedTabs.has("system") && (
+                        <SettingsSystemTab
+                            sessionLogsEnabled={settings.sessionLogsEnabled}
+                            setSessionLogsEnabled={settings.setSessionLogsEnabled}
+                            sessionLogsDir={settings.sessionLogsDir}
+                            setSessionLogsDir={settings.setSessionLogsDir}
+                            sessionLogsFormat={settings.sessionLogsFormat}
+                            setSessionLogsFormat={settings.setSessionLogsFormat}
+                        />
+                    )}
                 </div>
             </Tabs>
         </div>

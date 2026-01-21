@@ -609,6 +609,16 @@ const api = {
     ipcRenderer.invoke("netcatty:tempdir:getPath"),
   openTempDir: () =>
     ipcRenderer.invoke("netcatty:tempdir:open"),
+
+  // Session Logs
+  exportSessionLog: (payload) =>
+    ipcRenderer.invoke("netcatty:sessionLogs:export", payload),
+  selectSessionLogsDir: () =>
+    ipcRenderer.invoke("netcatty:sessionLogs:selectDir"),
+  autoSaveSessionLog: (payload) =>
+    ipcRenderer.invoke("netcatty:sessionLogs:autoSave", payload),
+  openSessionLogsDir: (directory) =>
+    ipcRenderer.invoke("netcatty:sessionLogs:openDir", { directory }),
 };
 
 // Merge with existing netcatty (if any) to avoid stale objects on hot reload

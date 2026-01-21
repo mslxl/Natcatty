@@ -1,5 +1,5 @@
 import { useCallback,useEffect,useLayoutEffect,useMemo,useState } from 'react';
-import { SyncConfig, TerminalSettings, DEFAULT_TERMINAL_SETTINGS, HotkeyScheme, CustomKeyBindings, DEFAULT_KEY_BINDINGS, KeyBinding, UILanguage } from '../../domain/models';
+import { SyncConfig, TerminalSettings, DEFAULT_TERMINAL_SETTINGS, HotkeyScheme, CustomKeyBindings, DEFAULT_KEY_BINDINGS, KeyBinding, UILanguage, SessionLogFormat } from '../../domain/models';
 import {
 STORAGE_KEY_COLOR,
 STORAGE_KEY_SYNC,
@@ -20,6 +20,9 @@ STORAGE_KEY_UI_FONT_FAMILY,
 STORAGE_KEY_SFTP_DOUBLE_CLICK_BEHAVIOR,
 STORAGE_KEY_SFTP_AUTO_SYNC,
 STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES,
+STORAGE_KEY_SESSION_LOGS_ENABLED,
+STORAGE_KEY_SESSION_LOGS_DIR,
+STORAGE_KEY_SESSION_LOGS_FORMAT,
 } from '../../infrastructure/config/storageKeys';
 import { DEFAULT_UI_LOCALE, resolveSupportedLocale } from '../../infrastructure/config/i18n';
 import { TERMINAL_THEMES } from '../../infrastructure/config/terminalThemes';
@@ -46,6 +49,10 @@ const DEFAULT_HOTKEY_SCHEME: HotkeyScheme =
 const DEFAULT_SFTP_DOUBLE_CLICK_BEHAVIOR: 'open' | 'transfer' = 'open';
 const DEFAULT_SFTP_AUTO_SYNC = false;
 const DEFAULT_SFTP_SHOW_HIDDEN_FILES = false;
+
+// Session Logs defaults
+const DEFAULT_SESSION_LOGS_ENABLED = false;
+const DEFAULT_SESSION_LOGS_FORMAT: SessionLogFormat = 'txt';
 
 const readStoredString = (key: string): string | null => {
   const raw = localStorageAdapter.readString(key);
@@ -188,6 +195,20 @@ export const useSettingsState = () => {
   const [sftpShowHiddenFiles, setSftpShowHiddenFiles] = useState<boolean>(() => {
     const stored = readStoredString(STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES);
     return stored === 'true' ? true : DEFAULT_SFTP_SHOW_HIDDEN_FILES;
+  });
+
+  // Session Logs Settings
+  const [sessionLogsEnabled, setSessionLogsEnabled] = useState<boolean>(() => {
+    const stored = readStoredString(STORAGE_KEY_SESSION_LOGS_ENABLED);
+    return stored === 'true' ? true : DEFAULT_SESSION_LOGS_ENABLED;
+  });
+  const [sessionLogsDir, setSessionLogsDir] = useState<string>(() => {
+    return readStoredString(STORAGE_KEY_SESSION_LOGS_DIR) || '';
+  });
+  const [sessionLogsFormat, setSessionLogsFormat] = useState<SessionLogFormat>(() => {
+    const stored = readStoredString(STORAGE_KEY_SESSION_LOGS_FORMAT);
+    if (stored === 'txt' || stored === 'raw' || stored === 'html') return stored;
+    return DEFAULT_SESSION_LOGS_FORMAT;
   });
 
   // Helper to notify other windows about settings changes via IPC
@@ -519,6 +540,22 @@ export const useSettingsState = () => {
     notifySettingsChanged(STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES, sftpShowHiddenFiles);
   }, [sftpShowHiddenFiles, notifySettingsChanged]);
 
+  // Persist Session Logs settings
+  useEffect(() => {
+    localStorageAdapter.writeString(STORAGE_KEY_SESSION_LOGS_ENABLED, sessionLogsEnabled ? 'true' : 'false');
+    notifySettingsChanged(STORAGE_KEY_SESSION_LOGS_ENABLED, sessionLogsEnabled);
+  }, [sessionLogsEnabled, notifySettingsChanged]);
+
+  useEffect(() => {
+    localStorageAdapter.writeString(STORAGE_KEY_SESSION_LOGS_DIR, sessionLogsDir);
+    notifySettingsChanged(STORAGE_KEY_SESSION_LOGS_DIR, sessionLogsDir);
+  }, [sessionLogsDir, notifySettingsChanged]);
+
+  useEffect(() => {
+    localStorageAdapter.writeString(STORAGE_KEY_SESSION_LOGS_FORMAT, sessionLogsFormat);
+    notifySettingsChanged(STORAGE_KEY_SESSION_LOGS_FORMAT, sessionLogsFormat);
+  }, [sessionLogsFormat, notifySettingsChanged]);
+
   // Get merged key bindings (defaults + custom overrides)
   const keyBindings = useMemo((): KeyBinding[] => {
     return DEFAULT_KEY_BINDINGS.map(binding => {
@@ -634,5 +671,12 @@ export const useSettingsState = () => {
     sftpShowHiddenFiles,
     setSftpShowHiddenFiles,
     availableFonts,
+    // Session Logs
+    sessionLogsEnabled,
+    setSessionLogsEnabled,
+    sessionLogsDir,
+    setSessionLogsDir,
+    sessionLogsFormat,
+    setSessionLogsFormat,
   };
 };
