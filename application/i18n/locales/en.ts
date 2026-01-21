@@ -119,6 +119,8 @@ const en: Messages = {
     '/* Example: */\n.terminal { background: #1a1a2e !important; }\n:root { --radius: 0.25rem; }',
   'settings.appearance.language': 'Language',
   'settings.appearance.language.desc': 'Choose the UI language',
+  'settings.appearance.uiFont': 'Interface Font',
+  'settings.appearance.uiFont.desc': 'Choose the font for the application interface',
 
   // Settings > Terminal
   'settings.terminal.section.theme': 'Terminal Theme',

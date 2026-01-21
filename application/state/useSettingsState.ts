@@ -16,6 +16,7 @@ STORAGE_KEY_UI_LANGUAGE,
 STORAGE_KEY_ACCENT_MODE,
 STORAGE_KEY_UI_THEME_LIGHT,
 STORAGE_KEY_UI_THEME_DARK,
+STORAGE_KEY_UI_FONT_FAMILY,
 STORAGE_KEY_SFTP_DOUBLE_CLICK_BEHAVIOR,
 STORAGE_KEY_SFTP_AUTO_SYNC,
 STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES,
@@ -24,6 +25,7 @@ import { DEFAULT_UI_LOCALE, resolveSupportedLocale } from '../../infrastructure/
 import { TERMINAL_THEMES } from '../../infrastructure/config/terminalThemes';
 import { DEFAULT_FONT_SIZE } from '../../infrastructure/config/fonts';
 import { DARK_UI_THEMES, LIGHT_UI_THEMES, UiThemeTokens, getUiThemeById } from '../../infrastructure/config/uiThemes';
+import { UI_FONTS, DEFAULT_UI_FONT_ID, getUiFontById } from '../../infrastructure/config/uiFonts';
 import { useAvailableFonts } from './fontStore';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
@@ -68,6 +70,10 @@ const isValidHslToken = (value: string): boolean => {
 const isValidUiThemeId = (theme: 'light' | 'dark', value: string): boolean => {
   const list = theme === 'dark' ? DARK_UI_THEMES : LIGHT_UI_THEMES;
   return list.some((preset) => preset.id === value);
+};
+
+const isValidUiFontId = (value: string): boolean => {
+  return UI_FONTS.some((font) => font.id === value);
 };
 
 const applyThemeTokens = (
@@ -133,6 +139,10 @@ export const useSettingsState = () => {
     if (stored === 'theme' || stored === 'custom') return stored;
     const legacyColor = readStoredString(STORAGE_KEY_COLOR);
     return legacyColor && isValidHslToken(legacyColor) ? 'custom' : DEFAULT_ACCENT_MODE;
+  });
+  const [uiFontFamilyId, setUiFontFamilyId] = useState<string>(() => {
+    const stored = readStoredString(STORAGE_KEY_UI_FONT_FAMILY);
+    return stored && isValidUiFontId(stored) ? stored : DEFAULT_UI_FONT_ID;
   });
   const [syncConfig, setSyncConfig] = useState<SyncConfig | null>(() => localStorageAdapter.read<SyncConfig>(STORAGE_KEY_SYNC));
   const [terminalThemeId, setTerminalThemeId] = useState<string>(() => localStorageAdapter.readString(STORAGE_KEY_TERM_THEME) || DEFAULT_TERMINAL_THEME);
@@ -233,6 +243,14 @@ export const useSettingsState = () => {
     notifySettingsChanged(STORAGE_KEY_UI_LANGUAGE, uiLanguage);
   }, [uiLanguage, notifySettingsChanged]);
 
+  // Apply and persist UI font family
+  useLayoutEffect(() => {
+    const font = getUiFontById(uiFontFamilyId);
+    document.documentElement.style.setProperty('--font-sans', font.family);
+    localStorageAdapter.writeString(STORAGE_KEY_UI_FONT_FAMILY, uiFontFamilyId);
+    notifySettingsChanged(STORAGE_KEY_UI_FONT_FAMILY, uiFontFamilyId);
+  }, [uiFontFamilyId, notifySettingsChanged]);
+
   // Listen for settings changes from other windows via IPC
 	  useEffect(() => {
 	    const bridge = netcattyBridge.get();
@@ -256,6 +274,11 @@ export const useSettingsState = () => {
 	      }
       if (key === STORAGE_KEY_CUSTOM_CSS && typeof value === 'string') {
         syncCustomCssFromStorage();
+      }
+      if (key === STORAGE_KEY_UI_FONT_FAMILY && typeof value === 'string') {
+        if (isValidUiFontId(value)) {
+          setUiFontFamilyId(value);
+        }
       }
       if (key === STORAGE_KEY_TERM_THEME && typeof value === 'string') {
         setTerminalThemeId(value);
@@ -343,6 +366,11 @@ export const useSettingsState = () => {
           setCustomCSS(e.newValue);
         }
       }
+      if (e.key === STORAGE_KEY_UI_FONT_FAMILY && e.newValue) {
+        if (isValidUiFontId(e.newValue) && e.newValue !== uiFontFamilyId) {
+          setUiFontFamilyId(e.newValue);
+        }
+      }
       if (e.key === STORAGE_KEY_HOTKEY_SCHEME && e.newValue) {
         const newScheme = e.newValue as HotkeyScheme;
         if (newScheme !== hotkeyScheme) {
@@ -415,7 +443,7 @@ export const useSettingsState = () => {
 
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
-  }, [theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customCSS, hotkeyScheme, uiLanguage, terminalThemeId, terminalFontFamilyId, terminalFontSize, sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles]);
+  }, [theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage, terminalThemeId, terminalFontFamilyId, terminalFontSize, sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles]);
 
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_TERM_THEME, terminalThemeId);
@@ -564,6 +592,8 @@ export const useSettingsState = () => {
     setAccentMode,
     customAccent,
     setCustomAccent,
+    uiFontFamilyId,
+    setUiFontFamilyId,
     syncConfig,
     updateSyncConfig,
     uiLanguage,

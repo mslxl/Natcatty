@@ -106,6 +106,8 @@ const zhCN: Messages = {
     '/* 示例：*/\n.terminal { background: #1a1a2e !important; }\n:root { --radius: 0.25rem; }',
   'settings.appearance.language': '语言',
   'settings.appearance.language.desc': '选择界面语言',
+  'settings.appearance.uiFont': '界面字体',
+  'settings.appearance.uiFont.desc': '选择软件界面使用的字体',
 
   // Context menus / common actions
   'action.newHost': '新建主机',

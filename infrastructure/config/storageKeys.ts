@@ -9,6 +9,7 @@ export const STORAGE_KEY_COLOR = 'netcatty_color_v1';
 export const STORAGE_KEY_ACCENT_MODE = 'netcatty_accent_mode_v1';
 export const STORAGE_KEY_UI_THEME_LIGHT = 'netcatty_ui_theme_light_v1';
 export const STORAGE_KEY_UI_THEME_DARK = 'netcatty_ui_theme_dark_v1';
+export const STORAGE_KEY_UI_FONT_FAMILY = 'netcatty_ui_font_family_v1';
 export const STORAGE_KEY_SYNC = 'netcatty_sync_v1';
 export const STORAGE_KEY_TERM_THEME = 'netcatty_term_theme_v1';
 export const STORAGE_KEY_TERM_FONT_FAMILY = 'netcatty_term_font_family_v1';
