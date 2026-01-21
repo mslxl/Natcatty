@@ -17,6 +17,7 @@ import { Input } from "../../ui/input";
 import { Label } from "../../ui/label";
 import { SectionHeader, Select, SettingsTabContent, SettingRow, Toggle } from "../settings-ui";
 import { ThemeSelectModal } from "../ThemeSelectModal";
+import { TerminalFontSelect } from "../TerminalFontSelect";
 
 // Theme preview button component
 const ThemePreviewButton: React.FC<{
@@ -207,11 +208,11 @@ export default function SettingsTerminalTab(props: {
           label={t("settings.terminal.font.family")}
           description={t("settings.terminal.font.family.desc")}
         >
-          <Select
+          <TerminalFontSelect
             value={terminalFontFamilyId}
-            options={availableFonts.map((f) => ({ value: f.id, label: f.name }))}
+            fonts={availableFonts}
             onChange={(id) => setTerminalFontFamilyId(id)}
-            className="w-40"
+            className="w-48"
           />
         </SettingRow>
 

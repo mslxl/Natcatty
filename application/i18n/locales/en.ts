@@ -119,6 +119,8 @@ const en: Messages = {
     '/* Example: */\n.terminal { background: #1a1a2e !important; }\n:root { --radius: 0.25rem; }',
   'settings.appearance.language': 'Language',
   'settings.appearance.language.desc': 'Choose the UI language',
+  'settings.appearance.uiFont': 'Interface Font',
+  'settings.appearance.uiFont.desc': 'Choose the font for the application interface',
 
   // Settings > Terminal
   'settings.terminal.section.theme': 'Terminal Theme',
@@ -726,7 +728,7 @@ const en: Messages = {
   'logs.empty.title': 'No Connection Logs',
   'logs.empty.desc':
     'Your connection history will appear here when you connect to hosts or open local terminals.',
-  'logs.showing': 'Showing {limit} of {total} logs.',
+  'logs.loadMore': 'Load {count} more logs',
   'logs.ongoing': 'ongoing',
   'logs.localTerminal': 'Local Terminal',
   'logs.action.save': 'Save',
