@@ -38,9 +38,11 @@ const SftpHostPickerInner: React.FC<SftpHostPickerProps> = ({
     const filteredHosts = useMemo(() => {
         const term = hostSearch.trim().toLowerCase();
         return hosts.filter(h =>
-            !term ||
+            // Filter out serial hosts - SFTP is not supported for serial connections
+            h.protocol !== "serial" &&
+            (!term ||
             h.label.toLowerCase().includes(term) ||
-            h.hostname.toLowerCase().includes(term)
+            h.hostname.toLowerCase().includes(term))
         ).sort((a, b) => a.label.localeCompare(b.label));
     }, [hosts, hostSearch]);
     const sideLabel = side === 'left' ? t('common.left') : t('common.right');
