@@ -55,13 +55,20 @@ const isValidUtf8 = (buffer) => {
 };
 
 const detectEncodingFromList = (items) => {
+  // Return null if we can't definitively detect encoding (empty list or all valid UTF-8)
+  // This allows the caller to preserve the previous encoding instead of defaulting to UTF-8
+  if (!items || items.length === 0) {
+    return null;
+  }
   for (const item of items) {
     const raw = item?.filenameRaw || (item?.filename ? Buffer.from(item.filename, "utf8") : null);
     if (raw && !isValidUtf8(raw)) {
       return "gb18030";
     }
   }
-  return "utf-8";
+  // All filenames are valid UTF-8, but we can't prove they're not GB18030-encoded ASCII
+  // Return null to preserve previous encoding rather than forcing UTF-8
+  return null;
 };
 
 const resolveEncodingForRequest = (sftpId, requestedEncoding) => {
@@ -879,8 +886,22 @@ async function listSftp(event, payload) {
     }
   }
 
-  const detectedEncoding =
-    requestedEncoding === "auto" ? detectEncodingFromList(list) : requestedEncoding;
+  // When auto mode, try to detect encoding from list
+  // If detection returns null (empty list or can't prove non-UTF-8), preserve the previous encoding
+  let detectedEncoding;
+  if (requestedEncoding === "auto") {
+    const detected = detectEncodingFromList(list);
+    if (detected) {
+      // Definitive detection (e.g., found GB18030 bytes)
+      detectedEncoding = detected;
+    } else {
+      // Can't detect - preserve existing session encoding
+      const existing = sftpEncodingState.get(payload.sftpId);
+      detectedEncoding = existing?.resolved || "utf-8";
+    }
+  } else {
+    detectedEncoding = requestedEncoding;
+  }
   const resolvedEncoding = updateResolvedEncoding(payload.sftpId, requestedEncoding, detectedEncoding);
 
   // Process items and resolve symlinks
