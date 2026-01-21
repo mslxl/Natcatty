@@ -77,6 +77,24 @@ const en: Messages = {
   'settings.system.clearResult': 'Deleted {deleted} file(s), {failed} failed.',
   'settings.system.tempDirectoryHint': 'Temporary files are created when opening remote files with external applications. They are automatically cleaned up when SFTP sessions close.',
 
+  // Settings > Session Logs
+  'settings.sessionLogs.title': 'Session Logs',
+  'settings.sessionLogs.description': 'Configure session log export and auto-save settings.',
+  'settings.sessionLogs.autoSave': 'Auto-Save',
+  'settings.sessionLogs.enableAutoSave': 'Enable auto-save',
+  'settings.sessionLogs.enableAutoSaveDesc': 'Automatically save session logs when terminal sessions end.',
+  'settings.sessionLogs.directory': 'Save Directory',
+  'settings.sessionLogs.noDirectory': 'No directory selected',
+  'settings.sessionLogs.browse': 'Browse',
+  'settings.sessionLogs.openFolder': 'Open folder',
+  'settings.sessionLogs.directoryHint': 'Logs will be organized by host in subdirectories.',
+  'settings.sessionLogs.format': 'Log Format',
+  'settings.sessionLogs.formatDesc': 'Choose the format for saved log files.',
+  'settings.sessionLogs.formatTxt': 'Plain Text (.txt)',
+  'settings.sessionLogs.formatRaw': 'Raw with ANSI (.log)',
+  'settings.sessionLogs.formatHtml': 'HTML (.html)',
+  'settings.sessionLogs.hint': 'Session logs capture all terminal output for troubleshooting and auditing purposes.',
+
   // Settings > Application
   'settings.application.checkUpdates': 'Check for updates',
   'settings.application.reportProblem': 'Report a problem',
@@ -739,6 +757,7 @@ const en: Messages = {
   'logView.customizeAppearance': 'Customize appearance',
   'logView.appearance': 'Appearance',
   'logView.readOnly': 'Read-only',
+  'logView.export': 'Export',
 
   // Terminal toolbar / search / context menu / auth
   'terminal.toolbar.openSftp': 'Open SFTP',

@@ -78,6 +78,7 @@ const onedriveAuthBridge = require("./bridges/onedriveAuthBridge.cjs");
 const cloudSyncBridge = require("./bridges/cloudSyncBridge.cjs");
 const fileWatcherBridge = require("./bridges/fileWatcherBridge.cjs");
 const tempDirBridge = require("./bridges/tempDirBridge.cjs");
+const sessionLogsBridge = require("./bridges/sessionLogsBridge.cjs");
 const windowManager = require("./bridges/windowManager.cjs");
 
 // GPU settings
@@ -380,6 +381,7 @@ const registerBridges = (win) => {
   cloudSyncBridge.registerHandlers(ipcMain);
   fileWatcherBridge.registerHandlers(ipcMain);
   tempDirBridge.registerHandlers(ipcMain, shell);
+  sessionLogsBridge.registerHandlers(ipcMain);
 
   // Settings window handler
   ipcMain.handle("netcatty:settings:open", async () => {

@@ -631,3 +631,12 @@ export interface ConnectionLog {
   themeId?: string; // Terminal theme ID for this log view
   fontSize?: number; // Terminal font size for this log view
 }
+
+// Session Logs Settings - for auto-saving terminal logs to local filesystem
+export type SessionLogFormat = 'txt' | 'raw' | 'html';
+
+export interface SessionLogsSettings {
+  enabled: boolean; // Whether auto-save is enabled
+  directory: string; // Base directory for logs
+  format: SessionLogFormat; // Log file format
+}

@@ -76,10 +76,14 @@ export const usePortForwardingAutoStart = ({
     if (autoStartExecutedRef.current) return;
     if (hosts.length === 0) return;
 
+    // Mark as executed immediately to prevent duplicate runs
+    // (React StrictMode or dependency changes could cause re-runs)
+    autoStartExecutedRef.current = true;
+
     const runAutoStart = async () => {
       // First sync with backend to get any active tunnels
       await syncWithBackend();
-      
+
       // Load rules from storage
       const rules = localStorageAdapter.read<PortForwardingRule[]>(
         STORAGE_KEY_PORT_FORWARDING,
@@ -95,8 +99,6 @@ export const usePortForwardingAutoStart = ({
       });
 
       if (autoStartRules.length === 0) return;
-
-      autoStartExecutedRef.current = true;
       logger.info(`[PortForwardingAutoStart] Starting ${autoStartRules.length} auto-start rules`);
 
       // Start each auto-start rule
