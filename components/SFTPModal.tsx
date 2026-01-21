@@ -206,9 +206,17 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     onClearSelection: clearSelection,
   });
 
+  // Track previous encoding to detect changes
+  const prevEncodingRef = useRef(filenameEncoding);
+
+  // Force reload only when filenameEncoding changes (not on every path change)
   useEffect(() => {
     if (!open || isLocalSession) return;
-    loadFiles(currentPath, { force: true });
+    // Only force reload if encoding actually changed
+    if (prevEncodingRef.current !== filenameEncoding) {
+      prevEncodingRef.current = filenameEncoding;
+      loadFiles(currentPath, { force: true });
+    }
   }, [currentPath, filenameEncoding, isLocalSession, loadFiles, open]);
 
   const { getOpenerForFile, setOpenerForExtension } = useSftpFileAssociations();
