@@ -122,6 +122,12 @@ export const useTerminalBackend = () => {
     return bridge.getSessionPwd(sessionId);
   }, []);
 
+  const getServerStats = useCallback(async (sessionId: string) => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.getServerStats) return { success: false, error: 'getServerStats unavailable' };
+    return bridge.getServerStats(sessionId);
+  }, []);
+
   return {
     backendAvailable,
     telnetAvailable,
@@ -138,6 +144,7 @@ export const useTerminalBackend = () => {
     listSerialPorts,
     execCommand,
     getSessionPwd,
+    getServerStats,
     writeToSession,
     resizeSession,
     closeSession,

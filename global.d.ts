@@ -163,6 +163,8 @@ declare global {
       bits?: number;
       comment?: string;
     }): Promise<{ success: boolean; privateKey?: string; publicKey?: string; error?: string }>;
+    checkSshAgent?(): Promise<{ running: boolean; startupType: string | null; error: string | null }>;
+    getDefaultKeys?(): Promise<Array<{ name: string; path: string }>>;
     execCommand(options: {
       hostname: string;
       username: string;
@@ -174,6 +176,44 @@ declare global {
     }): Promise<{ stdout: string; stderr: string; code: number | null }>;
     /** Get current working directory from an active SSH session */
     getSessionPwd?(sessionId: string): Promise<{ success: boolean; cwd?: string; error?: string }>;
+    /** Get server stats (CPU, Memory, Disk, Network) from an active SSH session - Linux only */
+    getServerStats?(sessionId: string): Promise<{
+      success: boolean;
+      error?: string;
+      stats?: {
+        cpu: number | null;           // CPU usage percentage (0-100)
+        cpuCores: number | null;      // Number of CPU cores
+        cpuPerCore: number[];         // Per-core CPU usage array
+        memTotal: number | null;      // Total memory in MB
+        memUsed: number | null;       // Used memory in MB (excluding buffers/cache)
+        memFree: number | null;       // Free memory in MB
+        memBuffers: number | null;    // Buffers in MB
+        memCached: number | null;     // Cached in MB
+        topProcesses: Array<{         // Top 10 processes by memory
+          pid: string;
+          memPercent: number;
+          command: string;
+        }>;
+        diskPercent: number | null;   // Disk usage percentage for root partition
+        diskUsed: number | null;      // Disk used in GB
+        diskTotal: number | null;     // Total disk in GB
+        disks: Array<{                // All mounted disks
+          mountPoint: string;
+          used: number;               // Used in GB
+          total: number;              // Total in GB
+          percent: number;            // Usage percentage
+        }>;
+        netRxSpeed: number;           // Total network receive speed (bytes/sec)
+        netTxSpeed: number;           // Total network transmit speed (bytes/sec)
+        netInterfaces: Array<{        // Per-interface network stats
+          name: string;               // Interface name (e.g., eth0, ens33)
+          rxBytes: number;            // Total received bytes
+          txBytes: number;            // Total transmitted bytes
+          rxSpeed: number;            // Receive speed (bytes/sec)
+          txSpeed: number;            // Transmit speed (bytes/sec)
+        }>;
+      };
+    }>;
     writeToSession(sessionId: string, data: string): void;
     resizeSession(sessionId: string, cols: number, rows: number): void;
     closeSession(sessionId: string): void;
@@ -229,7 +269,10 @@ declare global {
       onProgress?: (transferred: number, total: number, speed: number) => void,
       onComplete?: () => void,
       onError?: (error: string) => void
-    ): Promise<{ success: boolean; transferId: string }>;
+    ): Promise<{ success: boolean; transferId: string; cancelled?: boolean }>;
+
+    // Cancel an in-progress SFTP upload
+    cancelSftpUpload?(transferId: string): Promise<{ success: boolean }>;
 
     // Transfer with progress
     uploadFile?(sftpId: string, localPath: string, remotePath: string, transferId: string): Promise<void>;
@@ -457,6 +500,26 @@ declare global {
     clearTempDir?(): Promise<{ deletedCount: number; failedCount: number; error?: string }>;
     getTempDirPath?(): Promise<string>;
     openTempDir?(): Promise<{ success: boolean }>;
+
+    // Session Logs
+    exportSessionLog?(payload: {
+      terminalData: string;
+      hostLabel: string;
+      hostname: string;
+      startTime: number;
+      format: 'txt' | 'raw' | 'html';
+    }): Promise<{ success: boolean; canceled?: boolean; filePath?: string }>;
+    selectSessionLogsDir?(): Promise<{ success: boolean; canceled?: boolean; directory?: string }>;
+    autoSaveSessionLog?(payload: {
+      terminalData: string;
+      hostLabel: string;
+      hostname: string;
+      hostId: string;
+      startTime: number;
+      format: 'txt' | 'raw' | 'html';
+      directory: string;
+    }): Promise<{ success: boolean; error?: string; filePath?: string }>;
+    openSessionLogsDir?(directory: string): Promise<{ success: boolean; error?: string }>;
   }
 
   interface Window {

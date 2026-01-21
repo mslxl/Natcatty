@@ -93,6 +93,7 @@
 
 body {
   min-height: 100vh;
+  font-family: var(--font-sans);
   background:
     radial-gradient(900px circle at 15% 0%, hsl(var(--primary) / 0.10), transparent 38%),
     radial-gradient(1200px circle at 85% 10%, hsl(var(--accent) / 0.16), transparent 40%),

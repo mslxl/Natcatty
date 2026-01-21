@@ -41,7 +41,6 @@ import {
   TerminalSession,
 } from "../types";
 import { AppLogo } from "./AppLogo";
-import ConnectionLogsManager from "./ConnectionLogsManager";
 import { DistroAvatar } from "./DistroAvatar";
 import HostDetailsPanel from "./HostDetailsPanel";
 import KeychainManager from "./KeychainManager";
@@ -76,6 +75,7 @@ import { TagFilterDropdown } from "./ui/tag-filter-dropdown";
 import { toast } from "./ui/toast";
 
 const LazyProtocolSelectDialog = lazy(() => import("./ProtocolSelectDialog"));
+const LazyConnectionLogsManager = lazy(() => import("./ConnectionLogsManager"));
 
 export type VaultSection = "hosts" | "keys" | "snippets" | "port" | "knownhosts" | "logs";
 
@@ -1350,14 +1350,16 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
         </div>
         {/* Connection Logs */}
         {currentSection === "logs" && (
-          <ConnectionLogsManager
-            logs={connectionLogs}
-            hosts={hosts}
-            onToggleSaved={onToggleConnectionLogSaved}
-            onDelete={onDeleteConnectionLog}
-            onClearUnsaved={onClearUnsavedConnectionLogs}
-            onOpenLogView={onOpenLogView}
-          />
+          <Suspense fallback={<div className="flex-1 flex items-center justify-center text-muted-foreground">Loading...</div>}>
+            <LazyConnectionLogsManager
+              logs={connectionLogs}
+              hosts={hosts}
+              onToggleSaved={onToggleConnectionLogSaved}
+              onDelete={onDeleteConnectionLog}
+              onClearUnsaved={onClearUnsavedConnectionLogs}
+              onOpenLogView={onOpenLogView}
+            />
+          </Suspense>
         )}
       </div>
 

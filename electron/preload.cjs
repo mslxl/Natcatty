@@ -273,8 +273,17 @@ const api = {
   getSessionPwd: async (sessionId) => {
     return ipcRenderer.invoke("netcatty:ssh:pwd", { sessionId });
   },
+  getServerStats: async (sessionId) => {
+    return ipcRenderer.invoke("netcatty:ssh:stats", { sessionId });
+  },
   generateKeyPair: async (options) => {
     return ipcRenderer.invoke("netcatty:key:generate", options);
+  },
+  checkSshAgent: async () => {
+    return ipcRenderer.invoke("netcatty:ssh:check-agent");
+  },
+  getDefaultKeys: async () => {
+    return ipcRenderer.invoke("netcatty:ssh:get-default-keys");
   },
   resizeSession: (sessionId, cols, rows) => {
     ipcRenderer.send("netcatty:resize", { sessionId, cols, rows });
@@ -360,6 +369,14 @@ const api = {
       transferId,
       encoding,
     });
+  },
+  // Cancel an in-progress SFTP upload
+  cancelSftpUpload: async (transferId) => {
+    // Cleanup listeners
+    uploadProgressListeners.delete(transferId);
+    uploadCompleteListeners.delete(transferId);
+    uploadErrorListeners.delete(transferId);
+    return ipcRenderer.invoke("netcatty:sftp:cancelUpload", { transferId });
   },
   // Local filesystem operations
   listLocalDir: async (path) => {
@@ -599,6 +616,16 @@ const api = {
     ipcRenderer.invoke("netcatty:tempdir:getPath"),
   openTempDir: () =>
     ipcRenderer.invoke("netcatty:tempdir:open"),
+
+  // Session Logs
+  exportSessionLog: (payload) =>
+    ipcRenderer.invoke("netcatty:sessionLogs:export", payload),
+  selectSessionLogsDir: () =>
+    ipcRenderer.invoke("netcatty:sessionLogs:selectDir"),
+  autoSaveSessionLog: (payload) =>
+    ipcRenderer.invoke("netcatty:sessionLogs:autoSave", payload),
+  openSessionLogsDir: (directory) =>
+    ipcRenderer.invoke("netcatty:sessionLogs:openDir", { directory }),
 };
 
 // Merge with existing netcatty (if any) to avoid stale objects on hot reload

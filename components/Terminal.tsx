@@ -3,7 +3,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
-import { Maximize2, Radio } from "lucide-react";
+import { Cpu, HardDrive, Maximize2, MemoryStick, Radio, ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
 import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useI18n } from "../application/i18n/I18nProvider";
@@ -26,6 +26,7 @@ import { useTerminalBackend } from "../application/state/useTerminalBackend";
 import KnownHostConfirmDialog, { HostKeyInfo } from "./KnownHostConfirmDialog";
 import SFTPModal from "./SFTPModal";
 import { Button } from "./ui/button";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
 import { toast } from "./ui/toast";
 import { useAvailableFonts } from "../application/state/fontStore";
 import { TERMINAL_THEMES } from "../infrastructure/config/terminalThemes";
@@ -34,13 +35,13 @@ import { TerminalConnectionDialog } from "./terminal/TerminalConnectionDialog";
 import { TerminalToolbar } from "./terminal/TerminalToolbar";
 import { TerminalContextMenu } from "./terminal/TerminalContextMenu";
 import { TerminalSearchBar } from "./terminal/TerminalSearchBar";
-import { createHighlightProcessor } from "./terminal/keywordHighlight";
 import { createTerminalSessionStarters, type PendingAuth } from "./terminal/runtime/createTerminalSessionStarters";
 import { createXTermRuntime, type XTermRuntime } from "./terminal/runtime/createXTermRuntime";
 import { XTERM_PERFORMANCE_CONFIG } from "../infrastructure/config/xtermPerformance";
 import { useTerminalSearch } from "./terminal/hooks/useTerminalSearch";
 import { useTerminalContextActions } from "./terminal/hooks/useTerminalContextActions";
 import { useTerminalAuthState } from "./terminal/hooks/useTerminalAuthState";
+import { useServerStats } from "./terminal/hooks/useServerStats";
 
 interface TerminalProps {
   host: Host;
@@ -86,6 +87,19 @@ interface TerminalProps {
   isBroadcastEnabled?: boolean;
   onToggleBroadcast?: () => void;
   onBroadcastInput?: (data: string, sourceSessionId: string) => void;
+}
+
+// Helper function to format network speed (bytes/sec) to human-readable format
+function formatNetSpeed(bytesPerSec: number): string {
+  if (bytesPerSec < 1024) {
+    return `${bytesPerSec}B/s`;
+  } else if (bytesPerSec < 1024 * 1024) {
+    return `${(bytesPerSec / 1024).toFixed(1)}K/s`;
+  } else if (bytesPerSec < 1024 * 1024 * 1024) {
+    return `${(bytesPerSec / (1024 * 1024)).toFixed(1)}M/s`;
+  } else {
+    return `${(bytesPerSec / (1024 * 1024 * 1024)).toFixed(1)}G/s`;
+  }
 }
 
 const TerminalComponent: React.FC<TerminalProps> = ({
@@ -149,12 +163,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const terminalSettingsRef = useRef(terminalSettings);
   terminalSettingsRef.current = terminalSettings;
 
-  const highlightProcessorRef = useRef<(text: string) => string>((t) => t);
   useEffect(() => {
-    highlightProcessorRef.current = createHighlightProcessor(
-      terminalSettings?.keywordHighlightRules ?? [],
-      terminalSettings?.keywordHighlightEnabled ?? false,
-    );
+    if (xtermRuntimeRef.current) {
+      xtermRuntimeRef.current.keywordHighlighter.setRules(
+        terminalSettings?.keywordHighlightRules ?? [],
+        terminalSettings?.keywordHighlightEnabled ?? false
+      );
+    }
   }, [terminalSettings?.keywordHighlightEnabled, terminalSettings?.keywordHighlightRules]);
 
   const hotkeySchemeRef = useRef(hotkeyScheme);
@@ -207,6 +222,15 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     handleFindPrevious,
     handleCloseSearch,
   } = terminalSearch;
+
+  // Server stats (CPU, Memory, Disk) for Linux servers
+  const { stats: serverStats } = useServerStats({
+    sessionId,
+    enabled: terminalSettings?.showServerStats ?? true,
+    refreshInterval: terminalSettings?.serverStatsRefreshInterval ?? 5,
+    isLinux: host.os === 'linux',
+    isConnected: status === 'connected',
+  });
 
   useEffect(() => {
     if (!error) {
@@ -298,7 +322,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     disposeExitRef,
     fitAddonRef,
     serializeAddonRef,
-    highlightProcessorRef,
     pendingAuthRef,
     updateStatus,
     setStatus,
@@ -525,7 +548,18 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           | 700
           | 800
           | 900;
-        termRef.current.options.fontWeightBold = terminalSettings.fontWeightBold as
+        const resolvedFontWeightBold = (() => {
+          const fontFamily = termRef.current?.options.fontFamily || "";
+          if (typeof document === "undefined" || !document.fonts?.check) {
+            return terminalSettings.fontWeightBold;
+          }
+          const weightSpec = `${terminalSettings.fontWeightBold} ${effectiveFontSize}px ${fontFamily}`;
+          return document.fonts.check(weightSpec)
+            ? terminalSettings.fontWeightBold
+            : terminalSettings.fontWeight;
+        })();
+
+        termRef.current.options.fontWeightBold = resolvedFontWeightBold as
           | 100
           | 200
           | 300
@@ -601,6 +635,27 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           logger.warn("Fit after fonts ready failed", err);
         }
 
+        if (terminalSettings && termRef.current) {
+          const fontFamily = termRef.current.options?.fontFamily || "";
+          const effectiveFontSize = host.fontSize || fontSize;
+          if (typeof document !== "undefined" && document.fonts?.check) {
+            const weightSpec = `${terminalSettings.fontWeightBold} ${effectiveFontSize}px ${fontFamily}`;
+            const resolvedBold = document.fonts.check(weightSpec)
+              ? terminalSettings.fontWeightBold
+              : terminalSettings.fontWeight;
+            termRef.current.options.fontWeightBold = resolvedBold as
+              | 100
+              | 200
+              | 300
+              | 400
+              | 500
+              | 600
+              | 700
+              | 800
+              | 900;
+          }
+        }
+
         const id = sessionRef.current;
         if (id && term) {
           try {
@@ -618,7 +673,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [host.id, sessionId, resizeSession]);
+  }, [host.id, host.fontFamily, host.fontSize, fontFamilyId, fontSize, resizeSession, sessionId, terminalSettings]);
 
   useEffect(() => {
     if (!containerRef.current || !fitAddonRef.current) return;
@@ -898,6 +953,266 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                 )}
               />
             </div>
+            {/* Server Stats Display - Linux only */}
+            {host.os === 'linux' && terminalSettings?.showServerStats && status === 'connected' && serverStats.lastUpdated && (
+              <div className="flex items-center gap-2.5 ml-2 text-[10px] opacity-80 flex-nowrap overflow-hidden min-w-0">
+                {/* CPU with HoverCard for per-core details */}
+                <HoverCard openDelay={200} closeDelay={100}>
+                  <HoverCardTrigger asChild>
+                    <button
+                      className="flex items-center gap-0.5 hover:opacity-100 opacity-80 transition-opacity cursor-pointer flex-shrink-0"
+                      title={t("terminal.serverStats.cpu")}
+                    >
+                      <Cpu size={10} className="flex-shrink-0" />
+                      <span>
+                        {serverStats.cpu !== null ? `${serverStats.cpu}%` : '--'}
+                        {serverStats.cpuCores !== null && ` (${serverStats.cpuCores}C)`}
+                      </span>
+                    </button>
+                  </HoverCardTrigger>
+                  <HoverCardContent
+                    className="w-auto p-3"
+                    side="bottom"
+                    align="start"
+                    sideOffset={8}
+                  >
+                    <div className="text-xs space-y-2">
+                      <div className="font-medium text-sm mb-2">{t("terminal.serverStats.cpuCores")}</div>
+                      {serverStats.cpuPerCore.length > 0 ? (
+                        <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.min(4, serverStats.cpuPerCore.length)}, 1fr)` }}>
+                          {serverStats.cpuPerCore.map((usage, index) => (
+                            <div key={index} className="flex flex-col items-center gap-1 min-w-[48px]">
+                              <div className="text-[10px] text-muted-foreground">Core {index}</div>
+                              <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                                <div
+                                  className={cn(
+                                    "h-full rounded-full transition-all",
+                                    usage >= 90 ? "bg-red-500" : usage >= 70 ? "bg-amber-500" : "bg-emerald-500"
+                                  )}
+                                  style={{ width: `${usage}%` }}
+                                />
+                              </div>
+                              <div className={cn(
+                                "text-[11px] font-medium",
+                                usage >= 90 ? "text-red-400" : usage >= 70 ? "text-amber-400" : "text-emerald-400"
+                              )}>
+                                {usage}%
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-muted-foreground">{t("terminal.serverStats.noData")}</div>
+                      )}
+                    </div>
+                  </HoverCardContent>
+                </HoverCard>
+                {/* Memory with HoverCard for htop-style bar and top processes */}
+                <HoverCard openDelay={200} closeDelay={100}>
+                  <HoverCardTrigger asChild>
+                    <button
+                      className="flex items-center gap-0.5 hover:opacity-100 opacity-80 transition-opacity cursor-pointer flex-shrink-0"
+                      title={t("terminal.serverStats.memory")}
+                    >
+                      <MemoryStick size={10} className="flex-shrink-0" />
+                      <span>
+                        {serverStats.memUsed !== null && serverStats.memTotal !== null
+                          ? `${(serverStats.memUsed / 1024).toFixed(1)}/${(serverStats.memTotal / 1024).toFixed(1)}G`
+                          : '--'}
+                      </span>
+                    </button>
+                  </HoverCardTrigger>
+                  <HoverCardContent
+                    className="w-auto p-3"
+                    side="bottom"
+                    align="start"
+                    sideOffset={8}
+                  >
+                    <div className="text-xs space-y-3 min-w-[280px]">
+                      <div className="font-medium text-sm">{t("terminal.serverStats.memoryDetails")}</div>
+                      {/* htop-style memory bar */}
+                      {serverStats.memTotal !== null && (
+                        <div className="space-y-1.5">
+                          <div className="w-full h-3 bg-muted rounded overflow-hidden flex">
+                            {/* Used (green) */}
+                            {serverStats.memUsed !== null && serverStats.memUsed > 0 && (
+                              <div
+                                className="h-full bg-emerald-500"
+                                style={{ width: `${(serverStats.memUsed / serverStats.memTotal) * 100}%` }}
+                                title={`${t("terminal.serverStats.memUsed")}: ${(serverStats.memUsed / 1024).toFixed(1)}G`}
+                              />
+                            )}
+                            {/* Buffers (blue) */}
+                            {serverStats.memBuffers !== null && serverStats.memBuffers > 0 && (
+                              <div
+                                className="h-full bg-blue-500"
+                                style={{ width: `${(serverStats.memBuffers / serverStats.memTotal) * 100}%` }}
+                                title={`${t("terminal.serverStats.memBuffers")}: ${(serverStats.memBuffers / 1024).toFixed(1)}G`}
+                              />
+                            )}
+                            {/* Cached (amber/orange) */}
+                            {serverStats.memCached !== null && serverStats.memCached > 0 && (
+                              <div
+                                className="h-full bg-amber-500"
+                                style={{ width: `${(serverStats.memCached / serverStats.memTotal) * 100}%` }}
+                                title={`${t("terminal.serverStats.memCached")}: ${(serverStats.memCached / 1024).toFixed(1)}G`}
+                              />
+                            )}
+                          </div>
+                          {/* Legend */}
+                          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px]">
+                            <div className="flex items-center gap-1">
+                              <div className="w-2 h-2 rounded-sm bg-emerald-500" />
+                              <span>{t("terminal.serverStats.memUsed")}: {serverStats.memUsed !== null ? `${(serverStats.memUsed / 1024).toFixed(1)}G` : '--'}</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <div className="w-2 h-2 rounded-sm bg-blue-500" />
+                              <span>{t("terminal.serverStats.memBuffers")}: {serverStats.memBuffers !== null ? `${(serverStats.memBuffers / 1024).toFixed(1)}G` : '--'}</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <div className="w-2 h-2 rounded-sm bg-amber-500" />
+                              <span>{t("terminal.serverStats.memCached")}: {serverStats.memCached !== null ? `${(serverStats.memCached / 1024).toFixed(1)}G` : '--'}</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <div className="w-2 h-2 rounded-sm bg-muted border border-border" />
+                              <span>{t("terminal.serverStats.memFree")}: {serverStats.memFree !== null ? `${(serverStats.memFree / 1024).toFixed(1)}G` : '--'}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {/* Top 10 processes */}
+                      {serverStats.topProcesses.length > 0 && (
+                        <div className="space-y-1.5">
+                          <div className="font-medium text-[11px] text-muted-foreground">{t("terminal.serverStats.topProcesses")}</div>
+                          <div className="space-y-0.5 max-h-[150px] overflow-y-auto">
+                            {serverStats.topProcesses.map((proc, index) => (
+                              <div key={index} className="flex items-center gap-2 text-[10px]">
+                                <span className="w-[32px] text-right text-muted-foreground">{proc.memPercent.toFixed(1)}%</span>
+                                <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full bg-emerald-500 rounded-full"
+                                    style={{ width: `${Math.min(100, proc.memPercent * 2)}%` }}
+                                  />
+                                </div>
+                                <span className="flex-shrink-0 font-mono truncate max-w-[140px]" title={proc.command}>
+                                  {proc.command.split('/').pop()?.split(' ')[0] || proc.command}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </HoverCardContent>
+                </HoverCard>
+                {/* Disk - with HoverCard for disk details */}
+                <HoverCard openDelay={200} closeDelay={100}>
+                  <HoverCardTrigger asChild>
+                    <button
+                      className="flex items-center gap-0.5 hover:opacity-100 opacity-80 transition-opacity cursor-pointer flex-shrink-0"
+                      title={t("terminal.serverStats.disk")}
+                    >
+                      <HardDrive size={10} className="flex-shrink-0" />
+                      <span className={cn(
+                        serverStats.diskPercent !== null && serverStats.diskPercent >= 90 && "text-red-400",
+                        serverStats.diskPercent !== null && serverStats.diskPercent >= 80 && serverStats.diskPercent < 90 && "text-amber-400"
+                      )}>
+                        {serverStats.diskUsed !== null && serverStats.diskTotal !== null && serverStats.diskPercent !== null
+                          ? `${serverStats.diskUsed}/${serverStats.diskTotal}G (${serverStats.diskPercent}%)`
+                          : serverStats.diskPercent !== null
+                            ? `${serverStats.diskPercent}%`
+                            : '--'}
+                      </span>
+                    </button>
+                  </HoverCardTrigger>
+                  <HoverCardContent
+                    className="w-auto p-3"
+                    side="bottom"
+                    align="start"
+                    sideOffset={8}
+                  >
+                    <div className="text-xs space-y-2">
+                      <div className="font-medium text-sm mb-2">{t("terminal.serverStats.diskDetails")}</div>
+                      {serverStats.disks.length > 0 ? (
+                        <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                          {serverStats.disks.map((disk, index) => (
+                            <div key={index} className="flex flex-col gap-1 min-w-[180px]">
+                              <div className="flex items-center justify-between gap-4">
+                                <span className="text-[10px] text-muted-foreground font-mono truncate max-w-[120px]" title={disk.mountPoint}>
+                                  {disk.mountPoint}
+                                </span>
+                                <span className={cn(
+                                  "text-[11px] font-medium whitespace-nowrap",
+                                  disk.percent >= 90 ? "text-red-400" : disk.percent >= 80 ? "text-amber-400" : "text-emerald-400"
+                                )}>
+                                  {disk.used}/{disk.total}G ({disk.percent}%)
+                                </span>
+                              </div>
+                              <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                                <div
+                                  className={cn(
+                                    "h-full rounded-full transition-all",
+                                    disk.percent >= 90 ? "bg-red-500" : disk.percent >= 80 ? "bg-amber-500" : "bg-emerald-500"
+                                  )}
+                                  style={{ width: `${disk.percent}%` }}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-muted-foreground">{t("terminal.serverStats.noData")}</div>
+                      )}
+                    </div>
+                  </HoverCardContent>
+                </HoverCard>
+                {/* Network - with HoverCard for per-interface details */}
+                {serverStats.netInterfaces.length > 0 && (
+                  <HoverCard openDelay={200} closeDelay={100}>
+                    <HoverCardTrigger asChild>
+                      <button
+                        className="flex items-center gap-1 hover:opacity-100 opacity-80 transition-opacity cursor-pointer flex-shrink-0"
+                        title={t("terminal.serverStats.network")}
+                      >
+                        <ArrowDownToLine size={9} className="flex-shrink-0 text-emerald-400" />
+                        <span>{formatNetSpeed(serverStats.netRxSpeed)}</span>
+                        <ArrowUpFromLine size={9} className="flex-shrink-0 text-sky-400" />
+                        <span>{formatNetSpeed(serverStats.netTxSpeed)}</span>
+                      </button>
+                    </HoverCardTrigger>
+                    <HoverCardContent
+                      className="w-auto p-3"
+                      side="bottom"
+                      align="start"
+                      sideOffset={8}
+                    >
+                      <div className="text-xs space-y-2">
+                        <div className="font-medium text-sm mb-2">{t("terminal.serverStats.networkDetails")}</div>
+                        <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                          {serverStats.netInterfaces.map((iface, index) => (
+                            <div key={index} className="flex items-center justify-between gap-4 min-w-[200px]">
+                              <span className="text-[10px] text-muted-foreground font-mono">
+                                {iface.name}
+                              </span>
+                              <div className="flex items-center gap-2">
+                                <span className="flex items-center gap-0.5 text-emerald-400">
+                                  <ArrowDownToLine size={9} />
+                                  {formatNetSpeed(iface.rxSpeed)}
+                                </span>
+                                <span className="flex items-center gap-0.5 text-sky-400">
+                                  <ArrowUpFromLine size={9} />
+                                  {formatNetSpeed(iface.txSpeed)}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </HoverCardContent>
+                  </HoverCard>
+                )}
+              </div>
+            )}
             <div className="flex-1" />
             <div className="flex items-center gap-0.5 flex-shrink-0">
               {inWorkspace && onToggleBroadcast && (

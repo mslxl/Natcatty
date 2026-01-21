@@ -8,6 +8,7 @@ import { useUpdateCheck } from './application/state/useUpdateCheck';
 import { useVaultState } from './application/state/useVaultState';
 import { useWindowControls } from './application/state/useWindowControls';
 import { initializeFonts } from './application/state/fontStore';
+import { initializeUIFonts } from './application/state/uiFontStore';
 import { I18nProvider, useI18n } from './application/i18n/I18nProvider';
 import { matchesKeyBinding } from './domain/models';
 import { resolveHostAuth } from './domain/sshAuth';
@@ -28,6 +29,7 @@ import type { TerminalLayer as TerminalLayerComponent } from './components/Termi
 
 // Initialize fonts eagerly at app startup
 initializeFonts();
+initializeUIFonts();
 
 // Visibility container for VaultView - isolates isActive subscription
 const VaultViewContainer: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -167,6 +169,9 @@ function App({ settings }: { settings: SettingsState }) {
     hotkeyScheme,
     keyBindings,
     isHotkeyRecording,
+    sessionLogsEnabled,
+    sessionLogsDir,
+    sessionLogsFormat,
   } = settings;
 
   const {
@@ -288,10 +293,16 @@ function App({ settings }: { settings: SettingsState }) {
     }
   }, [updateState.hasUpdate, updateState.latestRelease, t, openReleasePage, dismissUpdate]);
 
+  // Memoize keys for port forwarding to prevent unnecessary re-renders
+  const portForwardingKeys = useMemo(
+    () => keys.map((k) => ({ id: k.id, privateKey: k.privateKey })),
+    [keys]
+  );
+
   // Auto-start port forwarding rules on app launch
   usePortForwardingAutoStart({
     hosts,
-    keys: keys.map((k) => ({ id: k.id, privateKey: k.privateKey })),
+    keys: portForwardingKeys,
   });
 
   // Keyboard-interactive authentication (2FA/MFA) event listener
@@ -614,7 +625,7 @@ function App({ settings }: { settings: SettingsState }) {
         (h.group || '').toLowerCase().includes(term)
       )
       : hosts;
-    return filtered.slice(0, 8);
+    return filtered;
   }, [hosts, quickSearch, isQuickSwitcherOpen]);
 
   const handleDeleteHost = useCallback((hostId: string) => {
@@ -751,10 +762,32 @@ function App({ settings }: { settings: SettingsState }) {
         terminalData: data,
       });
       if (IS_DEV) console.log('[handleTerminalDataCapture] Updated log with terminalData');
+
+      // Auto-save session log if enabled
+      if (sessionLogsEnabled && sessionLogsDir && data) {
+        import('./infrastructure/services/netcattyBridge').then(({ netcattyBridge }) => {
+          const bridge = netcattyBridge.get();
+          if (bridge?.autoSaveSessionLog) {
+            bridge.autoSaveSessionLog({
+              terminalData: data,
+              hostLabel: matchingLog.hostLabel,
+              hostname: matchingLog.hostname,
+              hostId: matchingLog.hostId,
+              startTime: matchingLog.startTime,
+              format: sessionLogsFormat,
+              directory: sessionLogsDir,
+            }).then(result => {
+              if (IS_DEV) console.log('[handleTerminalDataCapture] Auto-save result:', result);
+            }).catch(err => {
+              console.error('[handleTerminalDataCapture] Auto-save failed:', err);
+            });
+          }
+        });
+      }
     } else {
       if (IS_DEV) console.log('[handleTerminalDataCapture] No matching log found!');
     }
-  }, [sessions, connectionLogs, updateConnectionLog]);
+  }, [sessions, connectionLogs, updateConnectionLog, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat]);
 
   // Check if host has multiple protocols enabled
   const hasMultipleProtocols = useCallback((host: Host) => {

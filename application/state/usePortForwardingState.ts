@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Host, PortForwardingRule } from "../../domain/models";
 import {
   STORAGE_KEY_PF_PREFER_FORM_MODE,
@@ -76,6 +76,9 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
     return localStorageAdapter.readBoolean(STORAGE_KEY_PF_PREFER_FORM_MODE) ?? false;
   });
 
+  // Track if sync has been executed for this component instance
+  const syncExecutedRef = useRef(false);
+
   const setPreferFormMode = useCallback((prefer: boolean) => {
     setPreferFormModeState(prefer);
     localStorageAdapter.writeBoolean(STORAGE_KEY_PF_PREFER_FORM_MODE, prefer);
@@ -84,9 +87,12 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
   // Load rules from storage on mount and sync with backend
   useEffect(() => {
     const loadAndSync = async () => {
-      // First, sync with backend to get any active tunnels
-      await syncWithBackend();
-      
+      // Only sync once per component instance (prevents duplicate calls from React StrictMode)
+      if (!syncExecutedRef.current) {
+        syncExecutedRef.current = true;
+        await syncWithBackend();
+      }
+
       const saved = localStorageAdapter.read<PortForwardingRule[]>(
         STORAGE_KEY_PORT_FORWARDING,
       );

@@ -11,6 +11,7 @@ import {
   getTerminalPassthroughActions,
 } from "../../../application/state/useGlobalHotkeys";
 import { fontStore } from "../../../application/state/fontStore";
+import { KeywordHighlighter } from "../keywordHighlight";
 import {
   XTERM_PERFORMANCE_CONFIG,
   type XTermPlatform,
@@ -41,6 +42,7 @@ export type XTermRuntime = {
   dispose: () => void;
   /** Current working directory detected via OSC 7 */
   currentCwd: string | undefined;
+  keywordHighlighter: KeywordHighlighter;
 };
 
 export type CreateXTermRuntimeContext = {
@@ -111,9 +113,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       ? (navigator as { deviceMemory?: number }).deviceMemory
       : undefined;
 
+  const settings = ctx.terminalSettingsRef.current;
+  const rendererType = settings?.rendererType ?? "auto";
+
   const performanceConfig = resolveXTermPerformanceConfig({
     platform,
     deviceMemoryGb,
+    rendererType,
   });
 
   const hostFontId = ctx.host.fontFamily || ctx.fontFamilyId || "menlo";
@@ -123,11 +129,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
   const effectiveFontSize = ctx.host.fontSize || ctx.fontSize;
 
-  const settings = ctx.terminalSettingsRef.current;
   const cursorStyle = settings?.cursorShape ?? "block";
   const cursorBlink = settings?.cursorBlink ?? true;
   const scrollback = settings?.scrollback ?? 10000;
-  const fontLigatures = settings?.fontLigatures ?? true;
   const drawBoldTextInBrightColors = settings?.drawBoldInBrightColors ?? true;
   const fontWeight = settings?.fontWeight ?? 400;
   const fontWeightBold = settings?.fontWeightBold ?? 700;
@@ -136,6 +140,16 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   const scrollOnUserInput = settings?.scrollOnInput ?? true;
   const altIsMeta = settings?.altAsMeta ?? false;
   const wordSeparator = settings?.wordSeparators ?? " ()[]{}'\"";
+  const keywordHighlightRules = settings?.keywordHighlightRules ?? [];
+  const keywordHighlightEnabled = settings?.keywordHighlightEnabled ?? false;
+
+  const resolvedFontWeightBold = (() => {
+    if (typeof document === "undefined" || !document.fonts?.check) {
+      return fontWeightBold;
+    }
+    const weightSpec = `${fontWeightBold} ${effectiveFontSize}px ${fontFamily}`;
+    return document.fonts.check(weightSpec) ? fontWeightBold : fontWeight;
+  })();
 
   const term = new XTerm({
     ...performanceConfig.options,
@@ -153,7 +167,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       | 900
       | "normal"
       | "bold",
-    fontWeightBold: fontWeightBold as
+    fontWeightBold: resolvedFontWeightBold as
       | 100
       | 200
       | 300
@@ -169,7 +183,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     cursorStyle,
     cursorBlink,
     scrollback,
-    allowProposedApi: fontLigatures,
+    // Decorations (keyword highlighting) use proposed APIs; enable globally so toggles work at runtime.
+    allowProposedApi: true,
     drawBoldTextInBrightColors,
     minimumContrastRatio,
     scrollOnUserInput,
@@ -534,13 +549,18 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     }, resizeDebounceMs);
   });
 
+  const keywordHighlighter = new KeywordHighlighter(term);
+  keywordHighlighter.setRules(keywordHighlightRules, keywordHighlightEnabled);
+
   return {
     term,
     fitAddon,
     serializeAddon,
     searchAddon,
+    keywordHighlighter,
     dispose: () => {
       cleanupMiddleClick?.();
+      keywordHighlighter.dispose();
       try {
         term.dispose();
       } catch (err) {

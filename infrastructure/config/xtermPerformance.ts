@@ -24,14 +24,14 @@ export const XTERM_PERFORMANCE_CONFIG = {
   rendering: {
     // Disable cursor blinking - reduces render calls significantly
     cursorBlink: false,
-    
+
     // Allow transparency is expensive on macOS with Metal
     // Disabling it improves performance by 15-20%
     allowTransparency: false,
-    
+
     // Custom glyphs require additional memory and processing
     customGlyphs: false,
-    
+
     // Font rendering settings
     letterSpacing: 0,
     lineHeight: 1,
@@ -41,10 +41,10 @@ export const XTERM_PERFORMANCE_CONFIG = {
   webgl: {
     // Enable WebGL by default for GPU acceleration
     enabled: true,
-    
-    // macOS 强制使用 WebGL；仅在非 macOS 平台可选择 Canvas
+
+    // User can choose Canvas renderer on any platform
     preferCanvas: false,
-    
+
     // Handle WebGL context loss gracefully
     enableContextLoss: true,
   },
@@ -53,13 +53,13 @@ export const XTERM_PERFORMANCE_CONFIG = {
   events: {
     // Use document override for better event routing on macOS
     documentOverride: true,
-    
+
     // Standard tab width (8 spaces)
     tabStopWidth: 8,
-    
+
     // Let the SSH daemon handle EOL conversion
     convertEol: false,
-    
+
     // Allow bracketed paste mode for better paste handling
     ignoreBracketedPasteMode: false,
   },
@@ -74,7 +74,7 @@ export const XTERM_PERFORMANCE_CONFIG = {
     // Debounce delay in milliseconds
     // Higher values reduce CPU usage but may feel less responsive
     debounceMs: 50,
-    
+
     // Use requestAnimationFrame for resize fitting
     useRAF: true,
   },
@@ -83,9 +83,16 @@ export const XTERM_PERFORMANCE_CONFIG = {
   monitoring: {
     // Log performance warning if render takes longer than this (ms)
     slowRenderThreshold: 16, // 60fps = 16.67ms per frame
-    
+
     // Log warning if data buffer gets too large
     largeBufferThreshold: 1024 * 1024, // 1MB
+  },
+
+  // Keyword highlighting optimizations
+  highlighting: {
+    // Debounce time for viewport scanning (ms)
+    // Higher values = better scrolling performance, but slower highlight "catch up"
+    debounceMs: 200,
   },
 };
 
@@ -124,26 +131,35 @@ export function getXTermConfig(platform: XTermPlatform = "darwin") {
   return resolveXTermPerformanceConfig({ platform }).options;
 }
 
+export type RendererPreference = "auto" | "webgl" | "canvas";
+
 /**
  * Resolve a platform and hardware aware performance profile.
- * Enables a Mac-specific canvas preference on low-memory devices to avoid WebGL overhead.
+ * When rendererType is 'auto', uses Canvas on low-memory devices to avoid WebGL overhead.
  */
 export function resolveXTermPerformanceConfig({
   platform = "darwin",
   deviceMemoryGb,
-  preferCanvasRenderer,
+  rendererType = "auto",
 }: {
   platform?: XTermPlatform;
   deviceMemoryGb?: number;
-  preferCanvasRenderer?: boolean;
+  rendererType?: RendererPreference;
 } = {}): ResolvedXTermPerformance {
   const baseConfig = XTERM_PERFORMANCE_CONFIG;
 
   const lowMem = isLowMemoryDevice(deviceMemoryGb);
-  const resolvedPreferCanvas =
-    typeof preferCanvasRenderer === "boolean"
-      ? preferCanvasRenderer && platform !== "darwin"
-      : platform !== "darwin" && (baseConfig.webgl.preferCanvas || lowMem);
+
+  // Determine if we should use Canvas renderer
+  let resolvedPreferCanvas: boolean;
+  if (rendererType === "canvas") {
+    resolvedPreferCanvas = true;
+  } else if (rendererType === "webgl") {
+    resolvedPreferCanvas = false;
+  } else {
+    // Auto mode: use Canvas on low-memory devices
+    resolvedPreferCanvas = baseConfig.webgl.preferCanvas || lowMem;
+  }
 
   const scrollbackProfile = lowMem
     ? "lowMemory"
@@ -151,7 +167,7 @@ export function resolveXTermPerformanceConfig({
       ? "macOS"
       : "default";
 
-  const rendererType = resolvedPreferCanvas ? ("canvas" as const) : undefined;
+  const resolvedRendererType = resolvedPreferCanvas ? ("canvas" as const) : undefined;
 
   const baseOptions = {
     scrollback: baseConfig.scrollback[scrollbackProfile],
@@ -167,8 +183,8 @@ export function resolveXTermPerformanceConfig({
     logLevel: baseConfig.logging.logLevel,
   };
 
-  const options = rendererType
-    ? { ...baseOptions, rendererType }
+  const options = resolvedRendererType
+    ? { ...baseOptions, rendererType: resolvedRendererType }
     : baseOptions;
 
   return {

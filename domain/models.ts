@@ -386,6 +386,13 @@ export interface TerminalSettings {
 
   // SSH Connection
   keepaliveInterval: number; // Seconds between SSH-level keepalive packets (0 = disabled)
+
+  // Server Stats Display (Linux only)
+  showServerStats: boolean; // Show CPU/Memory/Disk in terminal statusbar
+  serverStatsRefreshInterval: number; // Seconds between stats refresh (default: 30)
+
+  // Rendering
+  rendererType: 'auto' | 'webgl' | 'canvas'; // Terminal renderer: auto (detect based on hardware), webgl, or canvas
 }
 
 export const DEFAULT_KEYWORD_HIGHLIGHT_RULES: KeywordHighlightRule[] = [
@@ -424,6 +431,9 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   localShell: '', // Empty = use system default
   localStartDir: '', // Empty = use home directory
   keepaliveInterval: 0, // 0 = disabled (use SSH library defaults)
+  showServerStats: true, // Show server stats by default
+  serverStatsRefreshInterval: 5, // Refresh every 5 seconds
+  rendererType: 'auto', // Auto-detect best renderer based on hardware
 };
 
 export interface TerminalTheme {
@@ -633,4 +643,13 @@ export interface ConnectionLog {
   terminalData?: string; // Captured terminal output data for replay
   themeId?: string; // Terminal theme ID for this log view
   fontSize?: number; // Terminal font size for this log view
+}
+
+// Session Logs Settings - for auto-saving terminal logs to local filesystem
+export type SessionLogFormat = 'txt' | 'raw' | 'html';
+
+export interface SessionLogsSettings {
+  enabled: boolean; // Whether auto-save is enabled
+  directory: string; // Base directory for logs
+  format: SessionLogFormat; // Log file format
 }

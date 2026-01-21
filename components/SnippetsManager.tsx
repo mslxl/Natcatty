@@ -565,12 +565,12 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
 
         {!snippets.length && displayedPackages.length === 0 && (
           <div className="flex-1 flex items-center justify-center px-4">
-            <div className="max-w-md w-full text-center space-y-3 py-12 rounded-2xl bg-secondary/60 border border-border/60 shadow-lg">
-              <div className="mx-auto h-12 w-12 rounded-xl bg-muted text-muted-foreground flex items-center justify-center">
-                <FileCode size={22} />
+            <div className="flex flex-col items-center justify-center text-muted-foreground">
+              <div className="h-16 w-16 rounded-2xl bg-secondary/80 flex items-center justify-center mb-4">
+                <FileCode size={32} className="opacity-60" />
               </div>
-              <div className="text-sm font-semibold text-foreground">{t('snippets.empty.title')}</div>
-              <div className="text-xs text-muted-foreground px-8">{t('snippets.empty.desc')}</div>
+              <h3 className="text-lg font-semibold text-foreground mb-2">{t('snippets.empty.title')}</h3>
+              <p className="text-sm text-center max-w-sm">{t('snippets.empty.desc')}</p>
             </div>
           </div>
         )}

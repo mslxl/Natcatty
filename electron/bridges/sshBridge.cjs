@@ -6,10 +6,118 @@
 const net = require("node:net");
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
+const { exec } = require("node:child_process");
 const { Client: SSHClient, utils: sshUtils } = require("ssh2");
 const { NetcattyAgent } = require("./netcattyAgent.cjs");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
 const { createProxySocket } = require("./proxyUtils.cjs");
+
+// Default SSH key names in priority order
+const DEFAULT_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
+
+/**
+ * Check if an SSH private key is encrypted (requires passphrase)
+ * @param {string} keyContent - The content of the private key file
+ * @returns {boolean} - True if the key is encrypted
+ */
+function isKeyEncrypted(keyContent) {
+  // Check for PKCS#8 encrypted format (-----BEGIN ENCRYPTED PRIVATE KEY-----)
+  if (keyContent.includes("-----BEGIN ENCRYPTED PRIVATE KEY-----")) {
+    return true;
+  }
+
+  // Check for legacy PEM format encryption (e.g., RSA PRIVATE KEY with encryption)
+  if (keyContent.includes("Proc-Type:") && keyContent.includes("ENCRYPTED")) {
+    return true;
+  }
+
+  // Check for OpenSSH format keys
+  if (keyContent.includes("-----BEGIN OPENSSH PRIVATE KEY-----")) {
+    try {
+      // Extract the base64 content between the markers
+      const base64Match = keyContent.match(
+        /-----BEGIN OPENSSH PRIVATE KEY-----\s*([\s\S]*?)\s*-----END OPENSSH PRIVATE KEY-----/
+      );
+      if (base64Match) {
+        const base64Content = base64Match[1].replace(/\s/g, "");
+        const keyBuffer = Buffer.from(base64Content, "base64");
+
+        // OpenSSH key format: "openssh-key-v1\0" followed by cipher name
+        // If ciphername is "none", the key is not encrypted
+        const authMagic = "openssh-key-v1\0";
+        if (keyBuffer.toString("ascii", 0, authMagic.length) === authMagic) {
+          // After magic, read ciphername (length-prefixed string)
+          let offset = authMagic.length;
+          const cipherNameLen = keyBuffer.readUInt32BE(offset);
+          offset += 4;
+          const cipherName = keyBuffer.toString("ascii", offset, offset + cipherNameLen);
+          return cipherName !== "none";
+        }
+      }
+    } catch {
+      // If parsing fails, assume it might be encrypted to be safe
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Find default SSH private key from user's ~/.ssh directory
+ * Skips encrypted keys that require a passphrase to allow password/keyboard-interactive auth
+ * @returns {{ privateKey: string, keyPath: string, keyName: string } | null}
+ */
+function findDefaultPrivateKey() {
+  const sshDir = path.join(os.homedir(), ".ssh");
+  for (const name of DEFAULT_KEY_NAMES) {
+    const keyPath = path.join(sshDir, name);
+    if (fs.existsSync(keyPath)) {
+      try {
+        const privateKey = fs.readFileSync(keyPath, "utf8");
+        // Skip encrypted keys - they require a passphrase and would abort
+        // authentication before password/keyboard-interactive can be tried
+        if (isKeyEncrypted(privateKey)) {
+          log("Skipping encrypted default key", { keyPath, keyName: name });
+          continue;
+        }
+        log("Found default key", { keyPath, keyName: name });
+        return { privateKey, keyPath, keyName: name };
+      } catch (e) {
+        log("Failed to read default key", { keyPath, error: e.message });
+        continue;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Check if Windows SSH Agent service is running
+ * @returns {Promise<{ running: boolean, startupType: string | null, error: string | null }>}
+ */
+function checkWindowsSshAgent() {
+  return new Promise((resolve) => {
+    if (process.platform !== "win32") {
+      resolve({ running: true, startupType: null, error: null });
+      return;
+    }
+    exec("sc query ssh-agent", (err, stdout) => {
+      if (err) {
+        resolve({ running: false, startupType: null, error: "SSH Agent service not found" });
+        return;
+      }
+      const running = stdout.includes("RUNNING");
+      const stopped = stdout.includes("STOPPED");
+      resolve({
+        running,
+        startupType: stopped ? "stopped" : (running ? "running" : "unknown"),
+        error: null,
+      });
+    });
+  });
+}
 
 // Simple file logger for debugging
 const logFile = path.join(require("os").tmpdir(), "netcatty-ssh.log");
@@ -302,6 +410,17 @@ async function startSSHSession(event, options) {
 
     if (options.password) {
       connectOpts.password = options.password;
+    }
+
+    // Fallback to default SSH key if no authentication method is configured
+    let usedDefaultKey = null;
+    if (!connectOpts.privateKey && !connectOpts.password && !connectOpts.agent) {
+      const defaultKey = findDefaultPrivateKey();
+      if (defaultKey) {
+        log("Using default SSH key as fallback", { keyPath: defaultKey.keyPath });
+        connectOpts.privateKey = defaultKey.privateKey;
+        usedDefaultKey = defaultKey;
+      }
     }
 
     // Agent forwarding
@@ -824,13 +943,342 @@ async function getSessionPwd(event, payload) {
 }
 
 /**
+ * Get server stats (CPU, Memory, Disk) from an active SSH session
+ * Only works for Linux servers
+ */
+async function getServerStats(event, payload) {
+  const { sessionId } = payload;
+  const session = sessions.get(sessionId);
+
+  if (!session || !session.conn) {
+    return { success: false, error: 'Session not found or not connected' };
+  }
+
+  const conn = session.conn;
+
+  // Command to get CPU (overall + per-core), Memory, Disk, and Network stats
+  // This command is designed to work across most Linux distributions
+  // Note: Using semicolons and avoiding comments for single-line execution
+  // CPU: Output raw values (total and idle) instead of percentage - we calculate delta on backend
+  const statsCommand = [
+    // Get number of CPU cores
+    `cores=$(nproc 2>/dev/null || grep -c "^processor" /proc/cpuinfo 2>/dev/null || echo "1")`,
+    // Get raw CPU values from /proc/stat: "total idle" for overall CPU
+    // We output raw values and calculate delta-based percentage on the backend
+    `cpuraw=$(awk '/^cpu / {total=0; for(i=2;i<=NF;i++) total+=$i; printf "%d %d", total, $5}' /proc/stat 2>/dev/null || echo "")`,
+    // Get raw per-core CPU values from /proc/stat: "total:idle,total:idle,..."
+    `percoreraw=$(awk '/^cpu[0-9]/ {total=0; for(i=2;i<=NF;i++) total+=$i; printf "%d:%d,", total, $5}' /proc/stat 2>/dev/null | sed 's/,$//' || echo "")`,
+    // Get memory details from /proc/meminfo (total, free, buffers, cached in KB)
+    `meminfo=$(awk '/^MemTotal:/{t=$2} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} /^SReclaimable:/{s=$2} END{printf "%d %d %d %d", t/1024, f/1024, b/1024, (c+s)/1024}' /proc/meminfo 2>/dev/null || echo "")`,
+    // Get top 10 processes by memory - with BusyBox fallback
+    // GNU ps: ps -eo pid,%mem,comm --sort=-%mem
+    // BusyBox fallback: ps -o pid,vsz,comm and sort manually (BusyBox ps doesn't have %mem, use vsz instead)
+    `procs=$(ps -eo pid,%mem,comm --sort=-%mem 2>/dev/null | awk 'NR>1 && NR<=11 {gsub(/;/, "_", $3); printf "%s;%.1f;%s,", $1, $2, $3}' | sed 's/,$//' || ps -o pid,vsz,comm 2>/dev/null | awk 'NR>1 {gsub(/;/, "_", $3); print $2, $1, $3}' | sort -rn | head -10 | awk -v total=$(awk '/^MemTotal:/{print $2}' /proc/meminfo) '{if(total>0) pct=$1*100/total; else pct=0; printf "%s;%.1f;%s,", $2, pct, $3}' | sed 's/,$//' || echo "")`,
+    // Get all mounted disk info - with BusyBox fallback
+    // GNU df: df -BG (block size in GB)
+    // BusyBox fallback: df and calculate from 1K blocks, or df -h and parse units
+    `disks=$(df -BG 2>/dev/null | awk 'NR>1 && $1 ~ /^\\/dev/ {gsub(/G/,"",$2); gsub(/G/,"",$3); gsub(/%/,"",$5); printf "%s:%s:%s:%s,", $6, $3, $2, $5}' | sed 's/,$//' || df 2>/dev/null | awk 'NR>1 && $1 ~ /^\\/dev/ {total=$2/1048576; used=$3/1048576; pct=$5; gsub(/%/,"",pct); printf "%s:%.0f:%.0f:%s,", $6, used, total, pct}' | sed 's/,$//' || echo "")`,
+    // Get network interface stats from /proc/net/dev (interface:rx_bytes:tx_bytes), excluding lo and virtual interfaces
+    `net=$(cat /proc/net/dev 2>/dev/null | awk 'NR>2 {gsub(/^[ \\t]+/, ""); split($0, a, ":"); iface=a[1]; if(iface != "lo" && iface !~ /^veth/ && iface !~ /^docker/ && iface !~ /^br-/) {split(a[2], b); printf "%s:%s:%s,", iface, b[1], b[9]}}' | sed 's/,$//' || echo "")`,
+    // Output all stats (using CPURAW and PERCORERAW instead of CPU and PERCORE)
+    `echo "CPURAW:$cpuraw|CORES:$cores|PERCORERAW:$percoreraw|MEMINFO:$meminfo|PROCS:$procs|DISKS:$disks|NET:$net"`
+  ].join('; ');
+
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      resolve({ success: false, error: 'Timeout getting server stats' });
+    }, 5000);
+
+    conn.exec(statsCommand, (err, stream) => {
+      if (err) {
+        clearTimeout(timeout);
+        resolve({ success: false, error: err.message });
+        return;
+      }
+
+      let stdout = '';
+      let stderr = '';
+
+      stream.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      stream.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      stream.on('close', () => {
+        clearTimeout(timeout);
+
+        // Parse the output
+        const output = stdout.trim();
+        const parts = output.split('|');
+
+        let cpuRawTotal = null;
+        let cpuRawIdle = null;
+        let cpuPerCoreRaw = [];  // Array of { total, idle }
+        let cpuCores = null;
+        let memTotal = null;
+        let memFree = null;
+        let memBuffers = null;
+        let memCached = null;
+        let memUsed = null;
+        let topProcesses = [];  // Array of { pid, memPercent, command }
+        let disks = [];  // Array of { mountPoint, used, total, percent }
+        let networkInterfaces = [];  // Array of { name, rxBytes, txBytes }
+
+        for (const part of parts) {
+          if (part.startsWith('CPURAW:')) {
+            const rawParts = part.substring(7).trim().split(/\s+/);
+            if (rawParts.length >= 2) {
+              cpuRawTotal = parseInt(rawParts[0], 10);
+              cpuRawIdle = parseInt(rawParts[1], 10);
+            }
+          } else if (part.startsWith('CORES:')) {
+            const coreStr = part.substring(6).trim();
+            const val = parseInt(coreStr, 10);
+            if (!isNaN(val) && val > 0) cpuCores = val;
+          } else if (part.startsWith('PERCORERAW:')) {
+            const coreStr = part.substring(11).trim();
+            if (coreStr && coreStr !== '') {
+              cpuPerCoreRaw = coreStr.split(',').map(v => {
+                const coreParts = v.trim().split(':');
+                if (coreParts.length >= 2) {
+                  const total = parseInt(coreParts[0], 10);
+                  const idle = parseInt(coreParts[1], 10);
+                  if (!isNaN(total) && !isNaN(idle)) {
+                    return { total, idle };
+                  }
+                }
+                return null;
+              }).filter(v => v !== null);
+            }
+          } else if (part.startsWith('MEMINFO:')) {
+            const memParts = part.substring(8).trim().split(/\s+/);
+            if (memParts.length >= 4) {
+              const total = parseInt(memParts[0], 10);
+              const free = parseInt(memParts[1], 10);
+              const buffers = parseInt(memParts[2], 10);
+              const cached = parseInt(memParts[3], 10);
+              if (!isNaN(total)) memTotal = total;
+              if (!isNaN(free)) memFree = free;
+              if (!isNaN(buffers)) memBuffers = buffers;
+              if (!isNaN(cached)) memCached = cached;
+              // Calculate used memory (excluding buffers/cache)
+              if (memTotal !== null && memFree !== null && memBuffers !== null && memCached !== null) {
+                memUsed = memTotal - memFree - memBuffers - memCached;
+                if (memUsed < 0) memUsed = 0;
+              }
+            }
+          } else if (part.startsWith('PROCS:')) {
+            const procsStr = part.substring(6).trim();
+            if (procsStr && procsStr !== '') {
+              const procEntries = procsStr.split(',');
+              for (const entry of procEntries) {
+                const procParts = entry.split(';');  // Using ; as delimiter
+                if (procParts.length >= 3) {
+                  const pid = procParts[0];
+                  const memPercent = parseFloat(procParts[1]);
+                  const command = procParts.slice(2).join(';');  // Command might contain semicolons
+                  if (!isNaN(memPercent)) {
+                    topProcesses.push({ pid, memPercent, command });
+                  }
+                }
+              }
+            }
+          } else if (part.startsWith('DISKS:')) {
+            const disksStr = part.substring(6).trim();
+            if (disksStr && disksStr !== '') {
+              const diskEntries = disksStr.split(',');
+              for (const entry of diskEntries) {
+                const diskParts = entry.split(':');
+                if (diskParts.length >= 4) {
+                  const mountPoint = diskParts[0];
+                  const used = parseInt(diskParts[1], 10);
+                  const total = parseInt(diskParts[2], 10);
+                  const percent = parseInt(diskParts[3], 10);
+                  if (!isNaN(used) && !isNaN(total) && !isNaN(percent)) {
+                    disks.push({ mountPoint, used, total, percent });
+                  }
+                }
+              }
+            }
+          } else if (part.startsWith('NET:')) {
+            const netStr = part.substring(4).trim();
+            if (netStr && netStr !== '') {
+              const netEntries = netStr.split(',');
+              for (const entry of netEntries) {
+                const netParts = entry.split(':');
+                if (netParts.length >= 3) {
+                  const name = netParts[0];
+                  const rxBytes = parseInt(netParts[1], 10);
+                  const txBytes = parseInt(netParts[2], 10);
+                  if (!isNaN(rxBytes) && !isNaN(txBytes)) {
+                    networkInterfaces.push({ name, rxBytes, txBytes });
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // Calculate network speed based on previous reading
+        const now = Date.now();
+        const prevNet = session.prevNetStats || { interfaces: [], timestamp: 0 };
+        const timeDelta = (now - prevNet.timestamp) / 1000; // seconds
+
+        let netRxSpeed = 0;  // bytes per second
+        let netTxSpeed = 0;  // bytes per second
+        const netInterfaces = [];
+
+        if (timeDelta > 0 && prevNet.interfaces.length > 0) {
+          for (const iface of networkInterfaces) {
+            const prevIface = prevNet.interfaces.find(p => p.name === iface.name);
+            if (prevIface) {
+              const rxDelta = iface.rxBytes - prevIface.rxBytes;
+              const txDelta = iface.txBytes - prevIface.txBytes;
+              // Only count positive deltas (handles counter reset)
+              const rxSpeed = rxDelta > 0 ? Math.round(rxDelta / timeDelta) : 0;
+              const txSpeed = txDelta > 0 ? Math.round(txDelta / timeDelta) : 0;
+              netRxSpeed += rxSpeed;
+              netTxSpeed += txSpeed;
+              netInterfaces.push({
+                name: iface.name,
+                rxBytes: iface.rxBytes,
+                txBytes: iface.txBytes,
+                rxSpeed,
+                txSpeed,
+              });
+            } else {
+              netInterfaces.push({
+                name: iface.name,
+                rxBytes: iface.rxBytes,
+                txBytes: iface.txBytes,
+                rxSpeed: 0,
+                txSpeed: 0,
+              });
+            }
+          }
+        } else {
+          // First reading - no speed data yet
+          for (const iface of networkInterfaces) {
+            netInterfaces.push({
+              name: iface.name,
+              rxBytes: iface.rxBytes,
+              txBytes: iface.txBytes,
+              rxSpeed: 0,
+              txSpeed: 0,
+            });
+          }
+        }
+
+        // Store current reading for next calculation
+        session.prevNetStats = {
+          interfaces: networkInterfaces,
+          timestamp: now,
+        };
+
+        // Calculate CPU usage based on delta from previous reading
+        const prevCpu = session.prevCpuStats || { total: 0, idle: 0, perCore: [], timestamp: 0 };
+        let cpu = null;
+        let cpuPerCore = [];
+
+        if (cpuRawTotal !== null && cpuRawIdle !== null && prevCpu.total > 0) {
+          const totalDelta = cpuRawTotal - prevCpu.total;
+          const idleDelta = cpuRawIdle - prevCpu.idle;
+          if (totalDelta > 0) {
+            // CPU% = 100 - (idleDelta / totalDelta * 100)
+            cpu = Math.round(100 - (idleDelta / totalDelta * 100));
+            // Clamp to valid range
+            if (cpu < 0) cpu = 0;
+            if (cpu > 100) cpu = 100;
+          }
+        }
+
+        // Calculate per-core CPU usage from deltas
+        if (cpuPerCoreRaw.length > 0 && prevCpu.perCore.length > 0) {
+          cpuPerCore = cpuPerCoreRaw.map((core, index) => {
+            const prevCore = prevCpu.perCore[index];
+            if (prevCore) {
+              const totalDelta = core.total - prevCore.total;
+              const idleDelta = core.idle - prevCore.idle;
+              if (totalDelta > 0) {
+                let usage = Math.round(100 - (idleDelta / totalDelta * 100));
+                if (usage < 0) usage = 0;
+                if (usage > 100) usage = 100;
+                return usage;
+              }
+            }
+            return 0;
+          });
+        } else if (cpuPerCoreRaw.length > 0) {
+          // First reading - no delta data yet, return zeros
+          cpuPerCore = cpuPerCoreRaw.map(() => 0);
+        }
+
+        // Store current CPU reading for next calculation
+        session.prevCpuStats = {
+          total: cpuRawTotal || 0,
+          idle: cpuRawIdle || 0,
+          perCore: cpuPerCoreRaw,
+          timestamp: now,
+        };
+
+        // For backward compatibility, extract root disk info
+        const rootDisk = disks.find(d => d.mountPoint === '/');
+        const diskPercent = rootDisk ? rootDisk.percent : null;
+        const diskUsed = rootDisk ? rootDisk.used : null;
+        const diskTotal = rootDisk ? rootDisk.total : null;
+
+        resolve({
+          success: true,
+          stats: {
+            cpu,           // CPU usage percentage (0-100)
+            cpuCores,      // Number of CPU cores
+            cpuPerCore,    // Per-core CPU usage array
+            memTotal,      // Total memory in MB
+            memUsed,       // Used memory in MB (excluding buffers/cache)
+            memFree,       // Free memory in MB
+            memBuffers,    // Buffers in MB
+            memCached,     // Cached in MB
+            topProcesses,  // Top 10 processes by memory
+            diskPercent,   // Disk usage percentage for root partition (backward compat)
+            diskUsed,      // Disk used in GB for root partition (backward compat)
+            diskTotal,     // Total disk in GB for root partition (backward compat)
+            disks,         // Array of all mounted disks
+            netRxSpeed,    // Total network receive speed (bytes/sec)
+            netTxSpeed,    // Total network transmit speed (bytes/sec)
+            netInterfaces, // Per-interface network stats
+          },
+        });
+      });
+    });
+  });
+}
+
+/**
  * Register IPC handlers for SSH operations
  */
 function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:start", startSSHSessionWrapper);
   ipcMain.handle("netcatty:ssh:exec", execCommand);
   ipcMain.handle("netcatty:ssh:pwd", getSessionPwd);
+  ipcMain.handle("netcatty:ssh:stats", getServerStats);
   ipcMain.handle("netcatty:key:generate", generateKeyPair);
+  ipcMain.handle("netcatty:ssh:check-agent", async () => {
+    return await checkWindowsSshAgent();
+  });
+  ipcMain.handle("netcatty:ssh:get-default-keys", async () => {
+    const sshDir = path.join(os.homedir(), ".ssh");
+    const keys = [];
+    for (const name of DEFAULT_KEY_NAMES) {
+      const keyPath = path.join(sshDir, name);
+      if (fs.existsSync(keyPath)) {
+        keys.push({ name, path: keyPath });
+      }
+    }
+    return keys;
+  });
   // Register the shared keyboard-interactive response handler
   keyboardInteractiveHandler.registerHandler(ipcMain);
 }
@@ -842,5 +1290,8 @@ module.exports = {
   startSSHSession,
   execCommand,
   getSessionPwd,
+  getServerStats,
   generateKeyPair,
+  checkWindowsSshAgent,
+  findDefaultPrivateKey,
 };

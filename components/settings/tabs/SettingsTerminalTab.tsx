@@ -17,6 +17,7 @@ import { Input } from "../../ui/input";
 import { Label } from "../../ui/label";
 import { SectionHeader, Select, SettingsTabContent, SettingRow, Toggle } from "../settings-ui";
 import { ThemeSelectModal } from "../ThemeSelectModal";
+import { TerminalFontSelect } from "../TerminalFontSelect";
 
 // Theme preview button component
 const ThemePreviewButton: React.FC<{
@@ -207,11 +208,11 @@ export default function SettingsTerminalTab(props: {
           label={t("settings.terminal.font.family")}
           description={t("settings.terminal.font.family.desc")}
         >
-          <Select
+          <TerminalFontSelect
             value={terminalFontFamilyId}
-            options={availableFonts.map((f) => ({ value: f.id, label: f.name }))}
+            fonts={availableFonts}
             onChange={(id) => setTerminalFontFamilyId(id)}
-            className="w-40"
+            className="w-48"
           />
         </SettingRow>
 
@@ -605,6 +606,62 @@ export default function SettingsTerminalTab(props: {
               }
             }}
             className="w-24"
+          />
+        </SettingRow>
+      </div>
+
+      <SectionHeader title={t("settings.terminal.section.serverStats")} />
+      <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
+        <SettingRow
+          label={t("settings.terminal.serverStats.show")}
+          description={t("settings.terminal.serverStats.show.desc")}
+        >
+          <Toggle
+            checked={terminalSettings.showServerStats}
+            onChange={(v) => updateTerminalSetting("showServerStats", v)}
+          />
+        </SettingRow>
+
+        {terminalSettings.showServerStats && (
+          <SettingRow
+            label={t("settings.terminal.serverStats.refreshInterval")}
+            description={t("settings.terminal.serverStats.refreshInterval.desc")}
+          >
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={5}
+                max={300}
+                value={terminalSettings.serverStatsRefreshInterval}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value) || 5;
+                  if (val >= 5 && val <= 300) {
+                    updateTerminalSetting("serverStatsRefreshInterval", val);
+                  }
+                }}
+                className="w-20"
+              />
+              <span className="text-sm text-muted-foreground">{t("settings.terminal.serverStats.seconds")}</span>
+            </div>
+          </SettingRow>
+        )}
+      </div>
+
+      <SectionHeader title={t("settings.terminal.section.rendering")} />
+      <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
+        <SettingRow
+          label={t("settings.terminal.rendering.renderer")}
+          description={t("settings.terminal.rendering.renderer.desc")}
+        >
+          <Select
+            value={terminalSettings.rendererType}
+            options={[
+              { value: "auto", label: t("settings.terminal.rendering.auto") },
+              { value: "webgl", label: "WebGL" },
+              { value: "canvas", label: "Canvas" },
+            ]}
+            onChange={(v) => updateTerminalSetting("rendererType", v as "auto" | "webgl" | "canvas")}
+            className="w-32"
           />
         </SettingRow>
       </div>

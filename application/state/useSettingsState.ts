@@ -1,5 +1,5 @@
 import { useCallback,useEffect,useLayoutEffect,useMemo,useState } from 'react';
-import { SyncConfig, TerminalSettings, DEFAULT_TERMINAL_SETTINGS, HotkeyScheme, CustomKeyBindings, DEFAULT_KEY_BINDINGS, KeyBinding, UILanguage } from '../../domain/models';
+import { SyncConfig, TerminalSettings, DEFAULT_TERMINAL_SETTINGS, HotkeyScheme, CustomKeyBindings, DEFAULT_KEY_BINDINGS, KeyBinding, UILanguage, SessionLogFormat } from '../../domain/models';
 import {
 STORAGE_KEY_COLOR,
 STORAGE_KEY_SYNC,
@@ -16,14 +16,20 @@ STORAGE_KEY_UI_LANGUAGE,
 STORAGE_KEY_ACCENT_MODE,
 STORAGE_KEY_UI_THEME_LIGHT,
 STORAGE_KEY_UI_THEME_DARK,
+STORAGE_KEY_UI_FONT_FAMILY,
 STORAGE_KEY_SFTP_DOUBLE_CLICK_BEHAVIOR,
 STORAGE_KEY_SFTP_AUTO_SYNC,
 STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES,
+STORAGE_KEY_SESSION_LOGS_ENABLED,
+STORAGE_KEY_SESSION_LOGS_DIR,
+STORAGE_KEY_SESSION_LOGS_FORMAT,
 } from '../../infrastructure/config/storageKeys';
 import { DEFAULT_UI_LOCALE, resolveSupportedLocale } from '../../infrastructure/config/i18n';
 import { TERMINAL_THEMES } from '../../infrastructure/config/terminalThemes';
 import { DEFAULT_FONT_SIZE } from '../../infrastructure/config/fonts';
 import { DARK_UI_THEMES, LIGHT_UI_THEMES, UiThemeTokens, getUiThemeById } from '../../infrastructure/config/uiThemes';
+import { UI_FONTS, DEFAULT_UI_FONT_ID } from '../../infrastructure/config/uiFonts';
+import { uiFontStore, useUIFontsLoaded } from './uiFontStore';
 import { useAvailableFonts } from './fontStore';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
@@ -43,6 +49,10 @@ const DEFAULT_HOTKEY_SCHEME: HotkeyScheme =
 const DEFAULT_SFTP_DOUBLE_CLICK_BEHAVIOR: 'open' | 'transfer' = 'open';
 const DEFAULT_SFTP_AUTO_SYNC = false;
 const DEFAULT_SFTP_SHOW_HIDDEN_FILES = false;
+
+// Session Logs defaults
+const DEFAULT_SESSION_LOGS_ENABLED = false;
+const DEFAULT_SESSION_LOGS_FORMAT: SessionLogFormat = 'txt';
 
 const readStoredString = (key: string): string | null => {
   const raw = localStorageAdapter.readString(key);
@@ -68,6 +78,14 @@ const isValidHslToken = (value: string): boolean => {
 const isValidUiThemeId = (theme: 'light' | 'dark', value: string): boolean => {
   const list = theme === 'dark' ? DARK_UI_THEMES : LIGHT_UI_THEMES;
   return list.some((preset) => preset.id === value);
+};
+
+const isValidUiFontId = (value: string): boolean => {
+  // Local fonts are always considered valid
+  if (value.startsWith('local-')) return true;
+  // Check bundled fonts first, then check dynamically loaded fonts
+  return UI_FONTS.some((font) => font.id === value) ||
+         uiFontStore.getAvailableFonts().some((font) => font.id === value);
 };
 
 const applyThemeTokens = (
@@ -112,6 +130,7 @@ const applyThemeTokens = (
 
 export const useSettingsState = () => {
   const availableFonts = useAvailableFonts();
+  const uiFontsLoaded = useUIFontsLoaded();
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     const stored = readStoredString(STORAGE_KEY_THEME);
     return stored && isValidTheme(stored) ? stored : DEFAULT_THEME;
@@ -133,6 +152,10 @@ export const useSettingsState = () => {
     if (stored === 'theme' || stored === 'custom') return stored;
     const legacyColor = readStoredString(STORAGE_KEY_COLOR);
     return legacyColor && isValidHslToken(legacyColor) ? 'custom' : DEFAULT_ACCENT_MODE;
+  });
+  const [uiFontFamilyId, setUiFontFamilyId] = useState<string>(() => {
+    const stored = readStoredString(STORAGE_KEY_UI_FONT_FAMILY);
+    return stored && isValidUiFontId(stored) ? stored : DEFAULT_UI_FONT_ID;
   });
   const [syncConfig, setSyncConfig] = useState<SyncConfig | null>(() => localStorageAdapter.read<SyncConfig>(STORAGE_KEY_SYNC));
   const [terminalThemeId, setTerminalThemeId] = useState<string>(() => localStorageAdapter.readString(STORAGE_KEY_TERM_THEME) || DEFAULT_TERMINAL_THEME);
@@ -172,6 +195,20 @@ export const useSettingsState = () => {
   const [sftpShowHiddenFiles, setSftpShowHiddenFiles] = useState<boolean>(() => {
     const stored = readStoredString(STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES);
     return stored === 'true' ? true : DEFAULT_SFTP_SHOW_HIDDEN_FILES;
+  });
+
+  // Session Logs Settings
+  const [sessionLogsEnabled, setSessionLogsEnabled] = useState<boolean>(() => {
+    const stored = readStoredString(STORAGE_KEY_SESSION_LOGS_ENABLED);
+    return stored === 'true' ? true : DEFAULT_SESSION_LOGS_ENABLED;
+  });
+  const [sessionLogsDir, setSessionLogsDir] = useState<string>(() => {
+    return readStoredString(STORAGE_KEY_SESSION_LOGS_DIR) || '';
+  });
+  const [sessionLogsFormat, setSessionLogsFormat] = useState<SessionLogFormat>(() => {
+    const stored = readStoredString(STORAGE_KEY_SESSION_LOGS_FORMAT);
+    if (stored === 'txt' || stored === 'raw' || stored === 'html') return stored;
+    return DEFAULT_SESSION_LOGS_FORMAT;
   });
 
   // Helper to notify other windows about settings changes via IPC
@@ -233,6 +270,15 @@ export const useSettingsState = () => {
     notifySettingsChanged(STORAGE_KEY_UI_LANGUAGE, uiLanguage);
   }, [uiLanguage, notifySettingsChanged]);
 
+  // Apply and persist UI font family
+  // Re-run when fonts finish loading to get correct family for local fonts
+  useLayoutEffect(() => {
+    const font = uiFontStore.getFontById(uiFontFamilyId);
+    document.documentElement.style.setProperty('--font-sans', font.family);
+    localStorageAdapter.writeString(STORAGE_KEY_UI_FONT_FAMILY, uiFontFamilyId);
+    notifySettingsChanged(STORAGE_KEY_UI_FONT_FAMILY, uiFontFamilyId);
+  }, [uiFontFamilyId, uiFontsLoaded, notifySettingsChanged]);
+
   // Listen for settings changes from other windows via IPC
 	  useEffect(() => {
 	    const bridge = netcattyBridge.get();
@@ -256,6 +302,11 @@ export const useSettingsState = () => {
 	      }
       if (key === STORAGE_KEY_CUSTOM_CSS && typeof value === 'string') {
         syncCustomCssFromStorage();
+      }
+      if (key === STORAGE_KEY_UI_FONT_FAMILY && typeof value === 'string') {
+        if (isValidUiFontId(value)) {
+          setUiFontFamilyId(value);
+        }
       }
       if (key === STORAGE_KEY_TERM_THEME && typeof value === 'string') {
         setTerminalThemeId(value);
@@ -343,6 +394,11 @@ export const useSettingsState = () => {
           setCustomCSS(e.newValue);
         }
       }
+      if (e.key === STORAGE_KEY_UI_FONT_FAMILY && e.newValue) {
+        if (isValidUiFontId(e.newValue) && e.newValue !== uiFontFamilyId) {
+          setUiFontFamilyId(e.newValue);
+        }
+      }
       if (e.key === STORAGE_KEY_HOTKEY_SCHEME && e.newValue) {
         const newScheme = e.newValue as HotkeyScheme;
         if (newScheme !== hotkeyScheme) {
@@ -415,7 +471,7 @@ export const useSettingsState = () => {
 
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
-  }, [theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customCSS, hotkeyScheme, uiLanguage, terminalThemeId, terminalFontFamilyId, terminalFontSize, sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles]);
+  }, [theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage, terminalThemeId, terminalFontFamilyId, terminalFontSize, sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles]);
 
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_TERM_THEME, terminalThemeId);
@@ -483,6 +539,22 @@ export const useSettingsState = () => {
     localStorageAdapter.writeString(STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES, sftpShowHiddenFiles ? 'true' : 'false');
     notifySettingsChanged(STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES, sftpShowHiddenFiles);
   }, [sftpShowHiddenFiles, notifySettingsChanged]);
+
+  // Persist Session Logs settings
+  useEffect(() => {
+    localStorageAdapter.writeString(STORAGE_KEY_SESSION_LOGS_ENABLED, sessionLogsEnabled ? 'true' : 'false');
+    notifySettingsChanged(STORAGE_KEY_SESSION_LOGS_ENABLED, sessionLogsEnabled);
+  }, [sessionLogsEnabled, notifySettingsChanged]);
+
+  useEffect(() => {
+    localStorageAdapter.writeString(STORAGE_KEY_SESSION_LOGS_DIR, sessionLogsDir);
+    notifySettingsChanged(STORAGE_KEY_SESSION_LOGS_DIR, sessionLogsDir);
+  }, [sessionLogsDir, notifySettingsChanged]);
+
+  useEffect(() => {
+    localStorageAdapter.writeString(STORAGE_KEY_SESSION_LOGS_FORMAT, sessionLogsFormat);
+    notifySettingsChanged(STORAGE_KEY_SESSION_LOGS_FORMAT, sessionLogsFormat);
+  }, [sessionLogsFormat, notifySettingsChanged]);
 
   // Get merged key bindings (defaults + custom overrides)
   const keyBindings = useMemo((): KeyBinding[] => {
@@ -564,6 +636,8 @@ export const useSettingsState = () => {
     setAccentMode,
     customAccent,
     setCustomAccent,
+    uiFontFamilyId,
+    setUiFontFamilyId,
     syncConfig,
     updateSyncConfig,
     uiLanguage,
@@ -597,5 +671,12 @@ export const useSettingsState = () => {
     sftpShowHiddenFiles,
     setSftpShowHiddenFiles,
     availableFonts,
+    // Session Logs
+    sessionLogsEnabled,
+    setSessionLogsEnabled,
+    sessionLogsDir,
+    setSessionLogsDir,
+    sessionLogsFormat,
+    setSessionLogsFormat,
   };
 };

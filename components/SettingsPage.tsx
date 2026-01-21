@@ -71,7 +71,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
     }, [closeSettingsWindow]);
 
     return (
-        <div className="h-screen flex flex-col bg-background text-foreground">
+        <div className="h-screen flex flex-col bg-background text-foreground font-sans">
             <div className="shrink-0 border-b border-border app-drag">
                 <div className="flex items-center justify-between px-4 pt-3">
                     {isMac && <div className="h-6" />}
@@ -158,6 +158,8 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                             setAccentMode={settings.setAccentMode}
                             customAccent={settings.customAccent}
                             setCustomAccent={settings.setCustomAccent}
+                            uiFontFamilyId={settings.uiFontFamilyId}
+                            setUiFontFamilyId={settings.setUiFontFamilyId}
                             uiLanguage={settings.uiLanguage}
                             setUiLanguage={settings.setUiLanguage}
                             customCSS={settings.customCSS}
@@ -201,7 +203,16 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                         </React.Suspense>
                     )}
 
-                    {mountedTabs.has("system") && <SettingsSystemTab />}
+                    {mountedTabs.has("system") && (
+                        <SettingsSystemTab
+                            sessionLogsEnabled={settings.sessionLogsEnabled}
+                            setSessionLogsEnabled={settings.setSessionLogsEnabled}
+                            sessionLogsDir={settings.sessionLogsDir}
+                            setSessionLogsDir={settings.setSessionLogsDir}
+                            sessionLogsFormat={settings.sessionLogsFormat}
+                            setSessionLogsFormat={settings.setSessionLogsFormat}
+                        />
+                    )}
                 </div>
             </Tabs>
         </div>

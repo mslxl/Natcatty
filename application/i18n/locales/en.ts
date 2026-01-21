@@ -77,6 +77,24 @@ const en: Messages = {
   'settings.system.clearResult': 'Deleted {deleted} file(s), {failed} failed.',
   'settings.system.tempDirectoryHint': 'Temporary files are created when opening remote files with external applications. They are automatically cleaned up when SFTP sessions close.',
 
+  // Settings > Session Logs
+  'settings.sessionLogs.title': 'Session Logs',
+  'settings.sessionLogs.description': 'Configure session log export and auto-save settings.',
+  'settings.sessionLogs.autoSave': 'Auto-Save',
+  'settings.sessionLogs.enableAutoSave': 'Enable auto-save',
+  'settings.sessionLogs.enableAutoSaveDesc': 'Automatically save session logs when terminal sessions end.',
+  'settings.sessionLogs.directory': 'Save Directory',
+  'settings.sessionLogs.noDirectory': 'No directory selected',
+  'settings.sessionLogs.browse': 'Browse',
+  'settings.sessionLogs.openFolder': 'Open folder',
+  'settings.sessionLogs.directoryHint': 'Logs will be organized by host in subdirectories.',
+  'settings.sessionLogs.format': 'Log Format',
+  'settings.sessionLogs.formatDesc': 'Choose the format for saved log files.',
+  'settings.sessionLogs.formatTxt': 'Plain Text (.txt)',
+  'settings.sessionLogs.formatRaw': 'Raw with ANSI (.log)',
+  'settings.sessionLogs.formatHtml': 'HTML (.html)',
+  'settings.sessionLogs.hint': 'Session logs capture all terminal output for troubleshooting and auditing purposes.',
+
   // Settings > Application
   'settings.application.checkUpdates': 'Check for updates',
   'settings.application.reportProblem': 'Report a problem',
@@ -119,6 +137,8 @@ const en: Messages = {
     '/* Example: */\n.terminal { background: #1a1a2e !important; }\n:root { --radius: 0.25rem; }',
   'settings.appearance.language': 'Language',
   'settings.appearance.language.desc': 'Choose the UI language',
+  'settings.appearance.uiFont': 'Interface Font',
+  'settings.appearance.uiFont.desc': 'Choose the font for the application interface',
 
   // Settings > Terminal
   'settings.terminal.section.theme': 'Terminal Theme',
@@ -201,6 +221,18 @@ const en: Messages = {
   'settings.terminal.section.connection': 'Connection',
   'settings.terminal.connection.keepaliveInterval': 'Keepalive Interval',
   'settings.terminal.connection.keepaliveInterval.desc': 'How often (in seconds) to send SSH-level keepalive packets to server. Set to 0 to disable.',
+  'settings.terminal.section.serverStats': 'Server Stats (Linux)',
+  'settings.terminal.serverStats.show': 'Show Server Stats',
+  'settings.terminal.serverStats.show.desc': 'Display CPU, memory, and disk usage in the terminal statusbar (Linux servers only).',
+  'settings.terminal.serverStats.refreshInterval': 'Refresh Interval',
+  'settings.terminal.serverStats.refreshInterval.desc': 'How often to refresh server stats.',
+  'settings.terminal.serverStats.seconds': 'seconds',
+
+  // Settings > Terminal > Rendering
+  'settings.terminal.section.rendering': 'Rendering',
+  'settings.terminal.rendering.renderer': 'Renderer',
+  'settings.terminal.rendering.renderer.desc': 'Choose the terminal rendering technology. Auto will use Canvas on low-memory devices. Changes take effect on new terminal sessions.',
+  'settings.terminal.rendering.auto': 'Auto',
 
   // Settings > Shortcuts
   'settings.shortcuts.section.scheme': 'Hotkey Scheme',
@@ -640,6 +672,9 @@ const en: Messages = {
   'hostDetails.certs.empty': 'No certificates available',
   'hostDetails.agentForwarding': 'Forward SSH Agent',
   'hostDetails.agentForwarding.desc': 'Allow remote server to use your local SSH keys (e.g., for git operations)',
+  'hostDetails.agentForwarding.agentNotRunning': 'SSH Agent is not running',
+  'hostDetails.agentForwarding.agentNotRunningHint': 'Enable OpenSSH Authentication Agent service in Windows Services (services.msc) for agent forwarding to work.',
+  'hostDetails.section.agentForwarding': 'SSH Agent',
   'hostDetails.jumpHosts': 'Proxy via Hosts',
   'hostDetails.jumpHosts.hops': '{count} hop(s)',
   'hostDetails.jumpHosts.direct': 'Direct',
@@ -729,7 +764,7 @@ const en: Messages = {
   'logs.empty.title': 'No Connection Logs',
   'logs.empty.desc':
     'Your connection history will appear here when you connect to hosts or open local terminals.',
-  'logs.showing': 'Showing {limit} of {total} logs.',
+  'logs.loadMore': 'Load {count} more logs',
   'logs.ongoing': 'ongoing',
   'logs.localTerminal': 'Local Terminal',
   'logs.action.save': 'Save',
@@ -740,6 +775,7 @@ const en: Messages = {
   'logView.customizeAppearance': 'Customize appearance',
   'logView.appearance': 'Appearance',
   'logView.readOnly': 'Read-only',
+  'logView.export': 'Export',
 
   // Terminal toolbar / search / context menu / auth
   'terminal.toolbar.openSftp': 'Open SFTP',
@@ -757,6 +793,20 @@ const en: Messages = {
   'terminal.toolbar.focus': 'Focus',
   'terminal.toolbar.focusMode': 'Focus Mode',
   'terminal.toolbar.closeSession': 'Close session',
+  'terminal.serverStats.cpu': 'CPU Usage',
+  'terminal.serverStats.cpuCores': 'CPU Core Usage',
+  'terminal.serverStats.memory': 'Memory Usage',
+  'terminal.serverStats.memoryDetails': 'Memory Details',
+  'terminal.serverStats.memUsed': 'Used',
+  'terminal.serverStats.memBuffers': 'Buffers',
+  'terminal.serverStats.memCached': 'Cache',
+  'terminal.serverStats.memFree': 'Free',
+  'terminal.serverStats.topProcesses': 'Top Processes by Memory',
+  'terminal.serverStats.disk': 'Disk Usage (Root)',
+  'terminal.serverStats.diskDetails': 'Mounted Disks',
+  'terminal.serverStats.network': 'Network Speed',
+  'terminal.serverStats.networkDetails': 'Network Interfaces',
+  'terminal.serverStats.noData': 'No data available',
   'terminal.search.placeholder': 'Search...',
   'terminal.search.noResults': 'No results',
   'terminal.search.prevMatch': 'Previous match (Shift+Enter)',

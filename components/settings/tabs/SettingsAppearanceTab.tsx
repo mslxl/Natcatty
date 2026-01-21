@@ -2,9 +2,11 @@ import React, { useCallback } from "react";
 import { Check, Moon, Palette, Sun } from "lucide-react";
 import { useI18n } from "../../../application/i18n/I18nProvider";
 import { DARK_UI_THEMES, LIGHT_UI_THEMES } from "../../../infrastructure/config/uiThemes";
+import { useAvailableUIFonts } from "../../../application/state/uiFontStore";
 import { SUPPORTED_UI_LOCALES } from "../../../infrastructure/config/i18n";
 import { cn } from "../../../lib/utils";
 import { SectionHeader, SettingsTabContent, SettingRow, Toggle, Select } from "../settings-ui";
+import { FontSelect } from "../FontSelect";
 
 export default function SettingsAppearanceTab(props: {
   theme: "dark" | "light";
@@ -17,12 +19,15 @@ export default function SettingsAppearanceTab(props: {
   setAccentMode: (mode: "theme" | "custom") => void;
   customAccent: string;
   setCustomAccent: (color: string) => void;
+  uiFontFamilyId: string;
+  setUiFontFamilyId: (fontId: string) => void;
   uiLanguage: string;
   setUiLanguage: (language: string) => void;
   customCSS: string;
   setCustomCSS: (css: string) => void;
 }) {
   const { t } = useI18n();
+  const availableUIFonts = useAvailableUIFonts();
   const {
     theme,
     setTheme,
@@ -34,6 +39,8 @@ export default function SettingsAppearanceTab(props: {
     setAccentMode,
     customAccent,
     setCustomAccent,
+    uiFontFamilyId,
+    setUiFontFamilyId,
     uiLanguage,
     setUiLanguage,
     customCSS,
@@ -128,6 +135,17 @@ export default function SettingsAppearanceTab(props: {
             options={SUPPORTED_UI_LOCALES.map((l) => ({ value: l.id, label: l.label }))}
             onChange={(v) => setUiLanguage(v)}
             className="w-40"
+          />
+        </SettingRow>
+        <SettingRow
+          label={t("settings.appearance.uiFont")}
+          description={t("settings.appearance.uiFont.desc")}
+        >
+          <FontSelect
+            value={uiFontFamilyId}
+            fonts={availableUIFonts}
+            onChange={(v) => setUiFontFamilyId(v)}
+            className="w-48"
           />
         </SettingRow>
       </div>
