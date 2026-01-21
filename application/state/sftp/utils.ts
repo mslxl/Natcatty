@@ -1,4 +1,4 @@
-import { SftpFileEntry } from "../../domain/models";
+import { SftpFileEntry } from "../../../domain/models";
 
 export const formatFileSize = (bytes: number): string => {
   if (bytes === 0) return "--";

@@ -1,6 +1,6 @@
 import { useCallback } from "react";
-import type { Host, Identity, SSHKey } from "../../domain/models";
-import { resolveHostAuth } from "../../domain/sshAuth";
+import type { Host, Identity, SSHKey } from "../../../domain/models";
+import { resolveHostAuth } from "../../../domain/sshAuth";
 
 interface UseSftpHostCredentialsParams {
   hosts: Host[];

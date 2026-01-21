@@ -7,7 +7,7 @@ import type { Host } from "../../domain/models";
 interface SftpPaneEmptyStateProps {
   side: "left" | "right";
   showEmptyHeader: boolean;
-  t: (key: string, params?: Record<string, any>) => string;
+  t: (key: string, params?: Record<string, unknown>) => string;
   showHostPicker: boolean;
   setShowHostPicker: (open: boolean) => void;
   hostSearch: string;

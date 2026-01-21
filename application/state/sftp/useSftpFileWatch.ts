@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
+import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import type { FileWatchErrorEvent, FileWatchSyncedEvent, SftpStateOptions } from "./types";
 
 export const useSftpFileWatch = (options?: SftpStateOptions) => {

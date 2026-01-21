@@ -122,7 +122,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     showOverwriteConfirm,
     overwriteTarget,
     showRenameDialog,
-    renameTarget,
+    renameTarget: _renameTarget,
     renameName,
     showDeleteConfirm,
     deleteTargets,

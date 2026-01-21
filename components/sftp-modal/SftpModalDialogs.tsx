@@ -3,7 +3,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
-import type { RemoteFile } from "../types";
+import type { RemoteFile } from "../../types";
 
 interface PermissionsState {
   owner: { read: boolean; write: boolean; execute: boolean };
@@ -12,7 +12,7 @@ interface PermissionsState {
 }
 
 interface SftpModalDialogsProps {
-  t: (key: string, params?: Record<string, any>) => string;
+  t: (key: string, params?: Record<string, unknown>) => string;
   showRenameDialog: boolean;
   setShowRenameDialog: (open: boolean) => void;
   renameTarget: RemoteFile | null;

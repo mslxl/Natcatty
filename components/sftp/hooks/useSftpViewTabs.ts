@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import type { MutableRefObject } from "react";
 import type { Host } from "../../../types";
 import type { SftpStateApi } from "../../../application/state/useSftpState";
@@ -44,28 +44,28 @@ export const useSftpViewTabs = ({ sftp, sftpRef }: UseSftpViewTabsParams): UseSf
   const handleAddTabLeft = useCallback(() => {
     sftpRef.current.addTab("left");
     setShowHostPickerLeft(true);
-  }, []);
+  }, [sftpRef]);
 
   const handleAddTabRight = useCallback(() => {
     sftpRef.current.addTab("right");
     setShowHostPickerRight(true);
-  }, []);
+  }, [sftpRef]);
 
   const handleCloseTabLeft = useCallback((tabId: string) => {
     sftpRef.current.closeTab("left", tabId);
-  }, []);
+  }, [sftpRef]);
 
   const handleCloseTabRight = useCallback((tabId: string) => {
     sftpRef.current.closeTab("right", tabId);
-  }, []);
+  }, [sftpRef]);
 
   const handleSelectTabLeft = useCallback((tabId: string) => {
     sftpRef.current.selectTab("left", tabId);
-  }, []);
+  }, [sftpRef]);
 
   const handleSelectTabRight = useCallback((tabId: string) => {
     sftpRef.current.selectTab("right", tabId);
-  }, []);
+  }, [sftpRef]);
 
   const leftPanes = useMemo(
     () => (sftp.leftTabs.tabs.length > 0 ? sftp.leftTabs.tabs : [sftp.leftPane]),
@@ -80,33 +80,33 @@ export const useSftpViewTabs = ({ sftp, sftpRef }: UseSftpViewTabsParams): UseSf
     (draggedId: string, targetId: string, position: "before" | "after") => {
       sftpRef.current.reorderTabs("left", draggedId, targetId, position);
     },
-    [],
+    [sftpRef],
   );
 
   const handleReorderTabsRight = useCallback(
     (draggedId: string, targetId: string, position: "before" | "after") => {
       sftpRef.current.reorderTabs("right", draggedId, targetId, position);
     },
-    [],
+    [sftpRef],
   );
 
   const handleMoveTabFromLeftToRight = useCallback((tabId: string) => {
     sftpRef.current.moveTabToOtherSide("left", tabId);
-  }, []);
+  }, [sftpRef]);
 
   const handleMoveTabFromRightToLeft = useCallback((tabId: string) => {
     sftpRef.current.moveTabToOtherSide("right", tabId);
-  }, []);
+  }, [sftpRef]);
 
   const handleHostSelectLeft = useCallback((host: Host | "local") => {
     sftpRef.current.connect("left", host);
     setShowHostPickerLeft(false);
-  }, []);
+  }, [sftpRef]);
 
   const handleHostSelectRight = useCallback((host: Host | "local") => {
     sftpRef.current.connect("right", host);
     setShowHostPickerRight(false);
-  }, []);
+  }, [sftpRef]);
 
   const leftTabsInfo = useMemo(
     () =>

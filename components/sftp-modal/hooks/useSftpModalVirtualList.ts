@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { RemoteFile } from "../../types";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { RemoteFile } from "../../../types";
 
 interface UseSftpModalVirtualListParams {
   open: boolean;

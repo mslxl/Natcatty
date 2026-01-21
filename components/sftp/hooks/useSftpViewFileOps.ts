@@ -1,11 +1,11 @@
-import { useCallback, useState } from "react";
+import React, { useCallback, useState } from "react";
 import type { MutableRefObject } from "react";
 import type { SftpFileEntry } from "../../../types";
 import type { SftpStateApi } from "../../../application/state/useSftpState";
 import { logger } from "../../../lib/logger";
 import { toast } from "../../ui/toast";
 import { getFileExtension, FileOpenerType, SystemAppInfo } from "../../../lib/sftpFileUtils";
-import { isNavigableDirectory } from "../SftpTabBar";
+import { isNavigableDirectory } from "../index";
 
 interface UseSftpViewFileOpsParams {
   sftpRef: MutableRefObject<SftpStateApi>;
@@ -141,7 +141,7 @@ export const useSftpViewFileOps = ({
         setLoadingTextContent(false);
       }
     },
-    [],
+    [sftpRef],
   );
 
   const handleOpenFileForSide = useCallback(
@@ -175,7 +175,7 @@ export const useSftpViewFileOps = ({
       setFileOpenerTarget({ file, side, fullPath });
       setShowFileOpenerDialog(true);
     },
-    [handleEditFileForSide, getOpenerForFileRef, autoSyncRef],
+    [sftpRef, handleEditFileForSide, getOpenerForFileRef, autoSyncRef],
   );
 
   const handleFileOpenerSelect = useCallback(
@@ -207,7 +207,7 @@ export const useSftpViewFileOps = ({
 
       setFileOpenerTarget(null);
     },
-    [fileOpenerTarget, setOpenerForExtension, handleEditFileForSide, autoSyncRef],
+    [fileOpenerTarget, setOpenerForExtension, handleEditFileForSide, autoSyncRef, sftpRef],
   );
 
   const handleSelectSystemApp = useCallback(async (): Promise<SystemAppInfo | null> => {
@@ -216,7 +216,7 @@ export const useSftpViewFileOps = ({
       return { path: result.path, name: result.name };
     }
     return null;
-  }, []);
+  }, [sftpRef]);
 
   const handleSaveTextFile = useCallback(
     async (content: string) => {
@@ -228,7 +228,7 @@ export const useSftpViewFileOps = ({
         content,
       );
     },
-    [textEditorTarget],
+    [textEditorTarget, sftpRef],
   );
 
   const onEditFileLeft = useCallback(
@@ -257,7 +257,7 @@ export const useSftpViewFileOps = ({
       setFileOpenerTarget({ file, side, fullPath });
       setShowFileOpenerDialog(true);
     },
-    [],
+    [sftpRef],
   );
 
   const onOpenFileWithLeft = useCallback(
@@ -306,7 +306,7 @@ export const useSftpViewFileOps = ({
         );
       }
     },
-    [t],
+    [sftpRef, t],
   );
 
   const onUploadExternalFilesLeft = useCallback(
@@ -348,7 +348,7 @@ export const useSftpViewFileOps = ({
         );
       }
     },
-    [t],
+    [sftpRef, t],
   );
 
   const onDownloadFileLeft = useCallback(
@@ -380,7 +380,7 @@ export const useSftpViewFileOps = ({
         onOpenFileLeft(entry);
       }
     },
-    [onOpenFileLeft, behaviorRef],
+    [sftpRef, onOpenFileLeft, behaviorRef],
   );
 
   const onOpenEntryRight = useCallback(
@@ -402,7 +402,7 @@ export const useSftpViewFileOps = ({
         onOpenFileRight(entry);
       }
     },
-    [onOpenFileRight, behaviorRef],
+    [sftpRef, onOpenFileRight, behaviorRef],
   );
 
   return {

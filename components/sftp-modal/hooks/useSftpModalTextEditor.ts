@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import type { RemoteFile } from "../../types";
+import type { RemoteFile } from "../../../types";
 import { toast } from "../../ui/toast";
 
 interface UseSftpModalTextEditorParams {
@@ -11,13 +11,14 @@ interface UseSftpModalTextEditorParams {
   readSftp: (sftpId: string, path: string) => Promise<string>;
   writeLocalFile: (path: string, data: ArrayBuffer) => Promise<void>;
   writeSftp: (sftpId: string, path: string, data: string) => Promise<void>;
-  t: (key: string, params?: Record<string, any>) => string;
+  t: (key: string, params?: Record<string, unknown>) => string;
 }
 
 interface UseSftpModalTextEditorResult {
   showTextEditor: boolean;
   setShowTextEditor: (open: boolean) => void;
   textEditorTarget: RemoteFile | null;
+  setTextEditorTarget: (target: RemoteFile | null) => void;
   textEditorContent: string;
   setTextEditorContent: (value: string) => void;
   loadingTextContent: boolean;
@@ -76,6 +77,7 @@ export const useSftpModalTextEditor = ({
     showTextEditor,
     setShowTextEditor,
     textEditorTarget,
+    setTextEditorTarget,
     textEditorContent,
     setTextEditorContent,
     loadingTextContent,

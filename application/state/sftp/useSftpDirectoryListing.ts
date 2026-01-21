@@ -1,6 +1,6 @@
 import { useCallback } from "react";
-import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
-import type { SftpFileEntry } from "../../domain/models";
+import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
+import type { SftpFileEntry } from "../../../domain/models";
 import { buildMockLocalFiles } from "./mockLocalFiles";
 import { formatFileSize } from "./utils";
 

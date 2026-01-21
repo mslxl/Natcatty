@@ -1,5 +1,5 @@
-import { useCallback, useRef } from "react";
-import type { RemoteFile } from "../../types";
+import React, { useCallback, useRef } from "react";
+import type { RemoteFile } from "../../../types";
 
 interface UseSftpModalSelectionParams {
   files: RemoteFile[];

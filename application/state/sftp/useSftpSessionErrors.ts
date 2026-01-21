@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import type { MutableRefObject } from "react";
-import type { Host } from "../../domain/models";
+import type { Host } from "../../../domain/models";
 import type { SftpPane } from "./types";
 
 interface UseSftpSessionErrorsParams {

@@ -15,7 +15,7 @@ import { SftpHostPicker } from "./index";
 import type { Host } from "../../types";
 
 interface SftpPaneDialogsProps {
-  t: (key: string, params?: Record<string, any>) => string;
+  t: (key: string, params?: Record<string, unknown>) => string;
   // New folder
   showNewFolderDialog: boolean;
   setShowNewFolderDialog: (open: boolean) => void;

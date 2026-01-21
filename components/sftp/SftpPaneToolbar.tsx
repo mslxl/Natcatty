@@ -7,7 +7,7 @@ import { SftpBreadcrumb } from "./index";
 import type { SftpPane } from "../../application/state/sftp/types";
 
 interface SftpPaneToolbarProps {
-  t: (key: string, params?: Record<string, any>) => string;
+  t: (key: string, params?: Record<string, unknown>) => string;
   pane: SftpPane;
   onNavigateUp: () => void;
   onNavigateTo: (path: string) => void;

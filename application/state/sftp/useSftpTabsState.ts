@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import { createEmptyPane, EMPTY_LEFT_PANE_ID, EMPTY_RIGHT_PANE_ID, SftpPane, SftpSideTabs } from "./types";
-import { logger } from "../../lib/logger";
+import { logger } from "../../../lib/logger";
 
 export interface SftpTabsState {
   leftTabs: SftpSideTabs;

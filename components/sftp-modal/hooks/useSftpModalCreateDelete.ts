@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import type { RemoteFile } from "../../types";
+import type { RemoteFile } from "../../../types";
 import { toast } from "../../ui/toast";
 
 interface UseSftpModalCreateDeleteParams {
@@ -15,7 +15,7 @@ interface UseSftpModalCreateDeleteParams {
   writeLocalFile: (path: string, data: ArrayBuffer) => Promise<void>;
   writeSftpBinary: (sftpId: string, path: string, data: ArrayBuffer) => Promise<void>;
   writeSftp: (sftpId: string, path: string, data: string) => Promise<void>;
-  t: (key: string, params?: Record<string, any>) => string;
+  t: (key: string, params?: Record<string, unknown>) => string;
 }
 
 interface UseSftpModalCreateDeleteResult {

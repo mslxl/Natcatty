@@ -1,8 +1,8 @@
 import { useMemo } from "react";
-import type { SftpFileEntry } from "../../types";
-import type { SftpPane } from "../../application/state/sftp/types";
+import type { SftpFileEntry } from "../../../types";
+import type { SftpPane } from "../../../application/state/sftp/types";
 import type { SortField, SortOrder } from "../utils";
-import { filterHiddenFiles, isNavigableDirectory } from "../index";
+import { filterHiddenFiles } from "../index";
 
 interface UseSftpPaneFilesParams {
   files: SftpFileEntry[];

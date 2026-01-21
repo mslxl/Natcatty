@@ -1,7 +1,7 @@
-import { useCallback, useState } from "react";
-import type { RemoteFile } from "../../types";
+import React, { useCallback, useState } from "react";
+import type { RemoteFile } from "../../../types";
 import { toast } from "../../ui/toast";
-import { extractDropEntries } from "../../lib/sftpFileUtils";
+import { extractDropEntries } from "../../../lib/sftpFileUtils";
 
 interface UploadTask {
   id: string;
@@ -38,7 +38,7 @@ interface UseSftpModalTransfersParams {
   mkdirLocal: (path: string) => Promise<void>;
   mkdirSftp: (sftpId: string, path: string) => Promise<void>;
   setLoading: (loading: boolean) => void;
-  t: (key: string, params?: Record<string, any>) => string;
+  t: (key: string, params?: Record<string, unknown>) => string;
 }
 
 interface UseSftpModalTransfersResult {
@@ -103,7 +103,7 @@ export const useSftpModalTransfers = ({
     [currentPath, ensureSftp, isLocalSession, joinPath, readLocalFile, readSftp, setLoading, t],
   );
 
-  const handleUploadFile = async (
+  const handleUploadFile = useCallback(async (
     file: File,
     taskId: string,
     relativePath?: string,
@@ -233,7 +233,7 @@ export const useSftpModalTransfers = ({
       );
       return false;
     }
-  };
+  }, [currentPath, ensureSftp, isLocalSession, joinPath, t, writeLocalFile, writeSftp, writeSftpBinary, writeSftpBinaryWithProgress]);
 
   const handleUploadMultiple = useCallback(
     async (fileList: FileList) => {
@@ -265,7 +265,7 @@ export const useSftpModalTransfers = ({
         setUploadTasks((prev) => prev.filter((t) => t.status !== "completed"));
       }, 3000);
     },
-    [currentPath, loadFiles],
+    [currentPath, handleUploadFile, loadFiles],
   );
 
   const handleUploadFromDrop = useCallback(
@@ -343,7 +343,7 @@ export const useSftpModalTransfers = ({
         setUploadTasks((prev) => prev.filter((t) => t.status !== "completed"));
       }, 3000);
     },
-    [currentPath, ensureSftp, isLocalSession, joinPath, loadFiles, mkdirLocal, mkdirSftp],
+    [currentPath, ensureSftp, handleUploadFile, isLocalSession, joinPath, loadFiles, mkdirLocal, mkdirSftp],
   );
 
   const handleFileSelect = useCallback(

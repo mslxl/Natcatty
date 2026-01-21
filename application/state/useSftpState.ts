@@ -2,11 +2,11 @@ import { useCallback, useMemo, useRef } from "react";
 import {
   Host,
   Identity,
+  SftpFileEntry,
   SSHKey,
 } from "../../domain/models";
 import {
   createEmptyPane,
-  SftpPane,
   SftpStateOptions,
 } from "./sftp/types";
 import {

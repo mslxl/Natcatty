@@ -1,7 +1,7 @@
-import { useCallback } from "react";
-import { SftpFileEntry } from "../../domain/models";
-import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
-import { logger } from "../../lib/logger";
+import React, { useCallback } from "react";
+import type { Host, SftpFileEntry } from "../../../domain/models";
+import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
+import { logger } from "../../../lib/logger";
 import { SftpPane } from "./types";
 import { getParentPath, isNavigableDirectory, isWindowsRoot, joinPath } from "./utils";
 
@@ -14,7 +14,7 @@ interface UseSftpPaneActionsParams {
   navSeqRef: React.MutableRefObject<{ left: number; right: number }>;
   dirCacheRef: React.MutableRefObject<Map<string, { files: SftpFileEntry[]; timestamp: number }>>;
   sftpSessionsRef: React.MutableRefObject<Map<string, string>>;
-  lastConnectedHostRef: React.MutableRefObject<{ left: any; right: any }>;
+  lastConnectedHostRef: React.MutableRefObject<{ left: Host | "local" | null; right: Host | "local" | null }>;
   reconnectingRef: React.MutableRefObject<{ left: boolean; right: boolean }>;
   makeCacheKey: (connectionId: string, path: string) => string;
   clearCacheForConnection: (connectionId: string) => void;

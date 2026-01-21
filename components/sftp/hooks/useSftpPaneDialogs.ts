@@ -1,9 +1,9 @@
 import { useCallback, useState } from "react";
 import type { SftpPaneCallbacks } from "../SftpContext";
-import type { SftpPane } from "../../application/state/sftp/types";
+import type { SftpPane } from "../../../application/state/sftp/types";
 
 interface UseSftpPaneDialogsParams {
-  t: (key: string, params?: Record<string, any>) => string;
+  t: (key: string, params?: Record<string, unknown>) => string;
   pane: SftpPane;
   onCreateDirectory: SftpPaneCallbacks["onCreateDirectory"];
   onCreateFile: SftpPaneCallbacks["onCreateFile"];

@@ -1,8 +1,8 @@
 import React from "react";
 import { Download, Edit2, Folder, FolderOpen, Link, Loader2, MoreHorizontal, Plus, RefreshCw, Shield, Trash2, Upload } from "lucide-react";
-import { cn } from "../lib/utils";
-import type { RemoteFile } from "../types";
-import { isKnownBinaryFile } from "../lib/sftpFileUtils";
+import { cn } from "../../lib/utils";
+import type { RemoteFile } from "../../types";
+import { isKnownBinaryFile } from "../../lib/sftpFileUtils";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "../ui/context-menu";
 import { Button } from "../ui/button";
 import { getFileIcon } from "./fileIcons";
@@ -14,7 +14,7 @@ interface VisibleRow {
 }
 
 interface SftpModalFileListProps {
-  t: (key: string, params?: Record<string, any>) => string;
+  t: (key: string, params?: Record<string, unknown>) => string;
   currentPath: string;
   isLocalSession: boolean;
   files: RemoteFile[];

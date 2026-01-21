@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { Host, RemoteFile } from "../../types";
-import { logger } from "../../lib/logger";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { Host, RemoteFile } from "../../../types";
+import { logger } from "../../../lib/logger";
 import { toast } from "../../ui/toast";
 
 interface UseSftpModalSessionParams {
@@ -23,7 +23,7 @@ interface UseSftpModalSessionParams {
   };
   initialPath?: string;
   isLocalSession: boolean;
-  t: (key: string, params?: Record<string, any>) => string;
+  t: (key: string, params?: Record<string, unknown>) => string;
   openSftp: (params: {
     sessionId: string;
     hostname: string;

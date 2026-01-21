@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import type { MutableRefObject } from "react";
-import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
-import type { Host, Identity, SftpConnection, SftpFileEntry, SSHKey } from "../../domain/models";
+import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
+import type { Host, Identity, SftpConnection, SftpFileEntry, SSHKey } from "../../../domain/models";
 import type { SftpPane } from "./types";
 import { useSftpDirectoryListing } from "./useSftpDirectoryListing";
 import { useSftpHostCredentials } from "./useSftpHostCredentials";
@@ -44,7 +44,7 @@ export const useSftpConnections = ({
   leftTabsRef,
   rightTabsRef,
   leftTabs,
-  rightTabs,
+  rightTabs: _rightTabs,
   leftPane,
   rightPane,
   setLeftTabs,
@@ -333,6 +333,7 @@ export const useSftpConnections = ({
         }
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       getHostCredentials,
       getActivePane,
@@ -372,6 +373,7 @@ export const useSftpConnections = ({
     if (rightPane.reconnecting && reconnectingRef.current.right) {
       attemptReconnect("right");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leftPane.reconnecting, rightPane.reconnecting, connect]);
 
   const disconnect = useCallback(
@@ -405,6 +407,7 @@ export const useSftpConnections = ({
 
       updateTab(side, activeTabId, () => createEmptyPane(activeTabId));
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [getActivePane, clearCacheForConnection, updateTab],
   );
 

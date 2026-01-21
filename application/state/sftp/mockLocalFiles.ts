@@ -1,4 +1,4 @@
-import { SftpFileEntry } from "../../domain/models";
+import { SftpFileEntry } from "../../../domain/models";
 import { formatDate } from "./utils";
 
 // Mock local file data for development (when backend is not available)

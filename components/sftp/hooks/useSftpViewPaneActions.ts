@@ -66,103 +66,103 @@ export const useSftpViewPaneActions = ({
   const onCopyToOtherPaneLeft = useCallback(
     (files: { name: string; isDirectory: boolean }[]) =>
       sftpRef.current.startTransfer(files, "left", "right"),
-    [],
+    [sftpRef],
   );
   const onCopyToOtherPaneRight = useCallback(
     (files: { name: string; isDirectory: boolean }[]) =>
       sftpRef.current.startTransfer(files, "right", "left"),
-    [],
+    [sftpRef],
   );
   const onReceiveFromOtherPaneLeft = useCallback(
     (files: { name: string; isDirectory: boolean }[]) =>
       sftpRef.current.startTransfer(files, "right", "left"),
-    [],
+    [sftpRef],
   );
   const onReceiveFromOtherPaneRight = useCallback(
     (files: { name: string; isDirectory: boolean }[]) =>
       sftpRef.current.startTransfer(files, "left", "right"),
-    [],
+    [sftpRef],
   );
 
   const onConnectLeft = useCallback(
     (host: Parameters<SftpStateApi["connect"]>[1]) => sftpRef.current.connect("left", host),
-    [],
+    [sftpRef],
   );
   const onConnectRight = useCallback(
     (host: Parameters<SftpStateApi["connect"]>[1]) => sftpRef.current.connect("right", host),
-    [],
+    [sftpRef],
   );
-  const onDisconnectLeft = useCallback(() => sftpRef.current.disconnect("left"), []);
-  const onDisconnectRight = useCallback(() => sftpRef.current.disconnect("right"), []);
+  const onDisconnectLeft = useCallback(() => sftpRef.current.disconnect("left"), [sftpRef]);
+  const onDisconnectRight = useCallback(() => sftpRef.current.disconnect("right"), [sftpRef]);
   const onNavigateToLeft = useCallback(
     (path: string) => sftpRef.current.navigateTo("left", path),
-    [],
+    [sftpRef],
   );
   const onNavigateToRight = useCallback(
     (path: string) => sftpRef.current.navigateTo("right", path),
-    [],
+    [sftpRef],
   );
-  const onNavigateUpLeft = useCallback(() => sftpRef.current.navigateUp("left"), []);
-  const onNavigateUpRight = useCallback(() => sftpRef.current.navigateUp("right"), []);
-  const onRefreshLeft = useCallback(() => sftpRef.current.refresh("left"), []);
-  const onRefreshRight = useCallback(() => sftpRef.current.refresh("right"), []);
+  const onNavigateUpLeft = useCallback(() => sftpRef.current.navigateUp("left"), [sftpRef]);
+  const onNavigateUpRight = useCallback(() => sftpRef.current.navigateUp("right"), [sftpRef]);
+  const onRefreshLeft = useCallback(() => sftpRef.current.refresh("left"), [sftpRef]);
+  const onRefreshRight = useCallback(() => sftpRef.current.refresh("right"), [sftpRef]);
   const onToggleSelectionLeft = useCallback(
     (name: string, multi: boolean) => sftpRef.current.toggleSelection("left", name, multi),
-    [],
+    [sftpRef],
   );
   const onToggleSelectionRight = useCallback(
     (name: string, multi: boolean) => sftpRef.current.toggleSelection("right", name, multi),
-    [],
+    [sftpRef],
   );
   const onRangeSelectLeft = useCallback(
     (fileNames: string[]) => sftpRef.current.rangeSelect("left", fileNames),
-    [],
+    [sftpRef],
   );
   const onRangeSelectRight = useCallback(
     (fileNames: string[]) => sftpRef.current.rangeSelect("right", fileNames),
-    [],
+    [sftpRef],
   );
-  const onClearSelectionLeft = useCallback(() => sftpRef.current.clearSelection("left"), []);
-  const onClearSelectionRight = useCallback(() => sftpRef.current.clearSelection("right"), []);
+  const onClearSelectionLeft = useCallback(() => sftpRef.current.clearSelection("left"), [sftpRef]);
+  const onClearSelectionRight = useCallback(() => sftpRef.current.clearSelection("right"), [sftpRef]);
   const onSetFilterLeft = useCallback(
     (filter: string) => sftpRef.current.setFilter("left", filter),
-    [],
+    [sftpRef],
   );
   const onSetFilterRight = useCallback(
     (filter: string) => sftpRef.current.setFilter("right", filter),
-    [],
+    [sftpRef],
   );
   const onCreateDirectoryLeft = useCallback(
     (name: string) => sftpRef.current.createDirectory("left", name),
-    [],
+    [sftpRef],
   );
   const onCreateDirectoryRight = useCallback(
     (name: string) => sftpRef.current.createDirectory("right", name),
-    [],
+    [sftpRef],
   );
   const onCreateFileLeft = useCallback(
     (name: string) => sftpRef.current.createFile("left", name),
-    [],
+    [sftpRef],
   );
   const onCreateFileRight = useCallback(
     (name: string) => sftpRef.current.createFile("right", name),
-    [],
+    [sftpRef],
   );
   const onDeleteFilesLeft = useCallback(
     (names: string[]) => sftpRef.current.deleteFiles("left", names),
-    [],
+    [sftpRef],
   );
   const onDeleteFilesRight = useCallback(
     (names: string[]) => sftpRef.current.deleteFiles("right", names),
-    [],
+    [sftpRef],
   );
   const onRenameFileLeft = useCallback(
     (old: string, newName: string) => sftpRef.current.renameFile("left", old, newName),
-    [],
+    [sftpRef],
   );
   const onRenameFileRight = useCallback(
     (old: string, newName: string) => sftpRef.current.renameFile("right", old, newName),
-    [],
+    [sftpRef],
   );
 
   const dragCallbacks = useMemo<SftpDragCallbacks>(
@@ -170,7 +170,7 @@ export const useSftpViewPaneActions = ({
       onDragStart: handleDragStart,
       onDragEnd: handleDragEnd,
     }),
-    [],
+    [handleDragStart, handleDragEnd],
   );
 
   return {

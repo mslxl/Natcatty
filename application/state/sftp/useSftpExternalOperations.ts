@@ -1,7 +1,7 @@
-import { useCallback, useRef, useState } from "react";
-import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
-import { logger } from "../../lib/logger";
-import { extractDropEntries } from "../../lib/sftpFileUtils";
+import React, { useCallback, useRef, useState } from "react";
+import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
+import { logger } from "../../../lib/logger";
+import { extractDropEntries } from "../../../lib/sftpFileUtils";
 import { SftpPane, FolderUploadProgress } from "./types";
 import { joinPath } from "./utils";
 

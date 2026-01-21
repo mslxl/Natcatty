@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FileConflict,
   SftpFileEntry,
   TransferDirection,
   TransferStatus,
   TransferTask,
-} from "../../domain/models";
-import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
-import { logger } from "../../lib/logger";
+} from "../../../domain/models";
+import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
+import { logger } from "../../../lib/logger";
 import { SftpPane } from "./types";
 import { joinPath } from "./utils";
 
@@ -537,6 +537,7 @@ export const useSftpTransfers = ({
         await processTransfer(task, sourcePane, targetPane, targetSide);
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [getActivePane, sftpSessionsRef],
   );
 

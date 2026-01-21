@@ -1,10 +1,10 @@
-import type { RemoteFile } from "../../types";
+import type { RemoteFile } from "../../../types";
 import { useSftpModalCreateDelete } from "./useSftpModalCreateDelete";
 import { useSftpModalRename } from "./useSftpModalRename";
 import { useSftpModalPermissions } from "./useSftpModalPermissions";
 import { useSftpModalTextEditor } from "./useSftpModalTextEditor";
 import { useSftpModalFileOpener } from "./useSftpModalFileOpener";
-import type { FileOpenerType, SystemAppInfo } from "../../lib/sftpFileUtils";
+import type { FileOpenerType, SystemAppInfo } from "../../../lib/sftpFileUtils";
 
 interface UseSftpModalFileActionsParams {
   currentPath: string;
@@ -24,7 +24,7 @@ interface UseSftpModalFileActionsParams {
   renameSftp: (sftpId: string, oldPath: string, newPath: string) => Promise<void>;
   chmodSftp: (sftpId: string, path: string, permissions: string) => Promise<void>;
   statSftp: (sftpId: string, path: string) => Promise<{ permissions?: string }>;
-  t: (key: string, params?: Record<string, any>) => string;
+  t: (key: string, params?: Record<string, unknown>) => string;
   sftpAutoSync: boolean;
   getOpenerForFile: (name: string) => { openerType: FileOpenerType; systemApp?: SystemAppInfo } | null;
   setOpenerForExtension: (ext: string, openerType: FileOpenerType, systemApp?: SystemAppInfo) => void;
@@ -61,6 +61,7 @@ interface UseSftpModalFileActionsResult {
   showFileOpenerDialog: boolean;
   setShowFileOpenerDialog: (open: boolean) => void;
   fileOpenerTarget: RemoteFile | null;
+  setFileOpenerTarget: (target: RemoteFile | null) => void;
   openFileOpenerDialog: (file: RemoteFile) => void;
   handleFileOpenerSelect: (
     openerType: FileOpenerType,
@@ -71,6 +72,7 @@ interface UseSftpModalFileActionsResult {
   showTextEditor: boolean;
   setShowTextEditor: (open: boolean) => void;
   textEditorTarget: RemoteFile | null;
+  setTextEditorTarget: (target: RemoteFile | null) => void;
   textEditorContent: string;
   setTextEditorContent: (value: string) => void;
   loadingTextContent: boolean;
@@ -166,6 +168,7 @@ export const useSftpModalFileActions = ({
     showTextEditor,
     setShowTextEditor,
     textEditorTarget,
+    setTextEditorTarget,
     textEditorContent,
     setTextEditorContent,
     loadingTextContent,
@@ -187,6 +190,7 @@ export const useSftpModalFileActions = ({
     showFileOpenerDialog,
     setShowFileOpenerDialog,
     fileOpenerTarget,
+    setFileOpenerTarget,
     openFileOpenerDialog,
     handleOpenFile,
     handleFileOpenerSelect,
@@ -230,12 +234,14 @@ export const useSftpModalFileActions = ({
     showFileOpenerDialog,
     setShowFileOpenerDialog,
     fileOpenerTarget,
+    setFileOpenerTarget,
     openFileOpenerDialog,
     handleFileOpenerSelect,
     handleSelectSystemApp,
     showTextEditor,
     setShowTextEditor,
     textEditorTarget,
+    setTextEditorTarget,
     textEditorContent,
     setTextEditorContent,
     loadingTextContent,

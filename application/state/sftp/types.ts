@@ -1,4 +1,4 @@
-import { SftpConnection, SftpFileEntry } from "../../domain/models";
+import { SftpConnection, SftpFileEntry } from "../../../domain/models";
 
 export interface SftpPane {
   id: string;

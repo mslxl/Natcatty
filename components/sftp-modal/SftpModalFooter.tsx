@@ -1,10 +1,10 @@
 import React from "react";
 import { Download, Trash2 } from "lucide-react";
 import { Button } from "../ui/button";
-import type { RemoteFile } from "../types";
+import type { RemoteFile } from "../../types";
 
 interface SftpModalFooterProps {
-  t: (key: string, params?: Record<string, any>) => string;
+  t: (key: string, params?: Record<string, unknown>) => string;
   files: RemoteFile[];
   selectedFiles: Set<string>;
   loading: boolean;

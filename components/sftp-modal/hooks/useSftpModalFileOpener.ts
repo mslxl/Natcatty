@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
-import type { RemoteFile } from "../../types";
+import type { RemoteFile } from "../../../types";
 import { toast } from "../../ui/toast";
-import { getFileExtension, FileOpenerType, SystemAppInfo } from "../../lib/sftpFileUtils";
+import { getFileExtension, FileOpenerType, SystemAppInfo } from "../../../lib/sftpFileUtils";
 
 interface UseSftpModalFileOpenerParams {
   currentPath: string;
@@ -13,7 +13,7 @@ interface UseSftpModalFileOpenerParams {
   setOpenerForExtension: (ext: string, openerType: FileOpenerType, systemApp?: SystemAppInfo) => void;
   downloadSftpToTempAndOpen: (sftpId: string, path: string, fileName: string, appPath: string, opts: { enableWatch: boolean }) => Promise<void>;
   selectApplication: () => Promise<{ path: string; name: string } | null>;
-  t: (key: string, params?: Record<string, any>) => string;
+  t: (key: string, params?: Record<string, unknown>) => string;
   handleEditFile: (file: RemoteFile) => Promise<void>;
 }
 
@@ -21,6 +21,7 @@ interface UseSftpModalFileOpenerResult {
   showFileOpenerDialog: boolean;
   setShowFileOpenerDialog: (open: boolean) => void;
   fileOpenerTarget: RemoteFile | null;
+  setFileOpenerTarget: (target: RemoteFile | null) => void;
   openFileOpenerDialog: (file: RemoteFile) => void;
   handleOpenFile: (file: RemoteFile) => Promise<void>;
   handleFileOpenerSelect: (
@@ -144,6 +145,7 @@ export const useSftpModalFileOpener = ({
     showFileOpenerDialog,
     setShowFileOpenerDialog,
     fileOpenerTarget,
+    setFileOpenerTarget,
     openFileOpenerDialog,
     handleOpenFile,
     handleFileOpenerSelect,

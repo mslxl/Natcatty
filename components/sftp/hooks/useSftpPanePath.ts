@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useRef, useState } from "react";
-import type { SftpFileEntry } from "../../types";
-import type { SftpPane } from "../../application/state/sftp/types";
+import React, { useCallback, useMemo, useRef, useState } from "react";
+import type { SftpFileEntry } from "../../../types";
+import type { SftpPane } from "../../../application/state/sftp/types";
 import { isNavigableDirectory } from "../index";
 
 interface UseSftpPanePathParams {
@@ -81,7 +81,7 @@ export const useSftpPanePath = ({
     setTimeout(() => pathInputRef.current?.select(), 0);
   };
 
-  const handlePathSubmit = (pathOverride?: string) => {
+  const handlePathSubmit = useCallback((pathOverride?: string) => {
     const newPath = (pathOverride ?? editingPathValue).trim() || "/";
     setIsEditingPath(false);
     setShowPathSuggestions(false);
@@ -98,7 +98,7 @@ export const useSftpPanePath = ({
         onNavigateTo(newPath.startsWith("/") ? newPath : `/${newPath}`);
       }
     }
-  };
+  }, [connection, editingPathValue, onNavigateTo]);
 
   const handlePathKeyDown = (e: React.KeyboardEvent) => {
     if (showPathSuggestions && pathSuggestions.length > 0) {

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { SftpFileEntry } from "../../types";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { SftpFileEntry } from "../../../types";
 
 interface UseSftpPaneVirtualListParams {
   isActive: boolean;

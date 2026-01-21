@@ -24,6 +24,7 @@ import { useRenderTracker } from "../lib/useRenderTracker";
 import { cn } from "../lib/utils";
 import { Host, Identity, SSHKey } from "../types";
 import { useSftpFileAssociations } from "../application/state/useSftpFileAssociations";
+import { toast } from "./ui/toast";
 
 // Import extracted components
 import { SftpTabBar } from "./sftp";

@@ -137,7 +137,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     setTimeout(() => {
       navigatingRef.current = false;
     }, 300);
-  }, []);
+  }, [navigatingRef, setCurrentPath]);
 
   const handleUp = () => {
     if (isRootPathForSession(currentPath)) return;
@@ -191,12 +191,14 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     showFileOpenerDialog,
     setShowFileOpenerDialog,
     fileOpenerTarget,
+    setFileOpenerTarget,
     openFileOpenerDialog,
     handleFileOpenerSelect,
     handleSelectSystemApp,
     showTextEditor,
     setShowTextEditor,
     textEditorTarget,
+    setTextEditorTarget,
     textEditorContent,
     setTextEditorContent,
     loadingTextContent,
@@ -277,7 +279,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       lastModified: undefined,
     };
     return [parentEntry, ...visibleFiles.filter((f) => f.name !== "..")];
-  }, [files, currentPath, isRootPath, sftpShowHiddenFiles]);
+  }, [files, currentPath, isRootPathForSession, sftpShowHiddenFiles]);
 
   // Sorted files
   const sortedFiles = useMemo(() => {

@@ -1,7 +1,7 @@
 import React from "react";
 import { ArrowUp, ChevronRight, Home, MoreHorizontal, Plus, RefreshCw, Upload } from "lucide-react";
-import { cn } from "../lib/utils";
-import type { Host } from "../types";
+import { cn } from "../../lib/utils";
+import type { Host } from "../../types";
 import { DistroAvatar } from "../DistroAvatar";
 import { Button } from "../ui/button";
 import { DialogHeader, DialogTitle } from "../ui/dialog";
@@ -13,7 +13,7 @@ interface BreadcrumbPart {
 }
 
 interface SftpModalHeaderProps {
-  t: (key: string, params?: Record<string, any>) => string;
+  t: (key: string, params?: Record<string, unknown>) => string;
   host: Host;
   credentials: { username?: string; hostname: string; port?: number };
   currentPath: string;

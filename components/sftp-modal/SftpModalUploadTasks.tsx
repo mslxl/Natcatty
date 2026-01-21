@@ -1,6 +1,6 @@
 import React from "react";
 import { Loader2, Upload, X } from "lucide-react";
-import { cn } from "../lib/utils";
+import { cn } from "../../lib/utils";
 
 interface UploadTask {
   id: string;
@@ -15,7 +15,7 @@ interface UploadTask {
 
 interface SftpModalUploadTasksProps {
   tasks: UploadTask[];
-  t: (key: string, params?: Record<string, any>) => string;
+  t: (key: string, params?: Record<string, unknown>) => string;
 }
 
 export const SftpModalUploadTasks: React.FC<SftpModalUploadTasksProps> = ({ tasks, t }) => {

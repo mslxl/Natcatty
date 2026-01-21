@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { SftpFileEntry } from "../../types";
-import type { SftpPaneCallbacks } from "../SftpContext";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import type { SftpFileEntry } from "../../../types";
+import type { SftpPaneCallbacks, SftpDragCallbacks } from "../SftpContext";
 import { isNavigableDirectory } from "../index";
 
 interface UseSftpPaneDragAndSelectParams {
@@ -8,7 +8,7 @@ interface UseSftpPaneDragAndSelectParams {
   pane: { selectedFiles: Set<string> };
   sortedDisplayFiles: SftpFileEntry[];
   draggedFiles: { name: string; isDirectory: boolean; side: "left" | "right" }[] | null;
-  onDragStart: SftpPaneCallbacks["onDragStart"];
+  onDragStart: SftpDragCallbacks["onDragStart"];
   onReceiveFromOtherPane: SftpPaneCallbacks["onReceiveFromOtherPane"];
   onUploadExternalFiles?: SftpPaneCallbacks["onUploadExternalFiles"];
   onOpenEntry: SftpPaneCallbacks["onOpenEntry"];

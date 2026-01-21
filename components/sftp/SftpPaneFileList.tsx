@@ -17,7 +17,7 @@ import { isKnownBinaryFile } from "../../lib/sftpFileUtils";
 import { SftpFileRow } from "./index";
 
 interface SftpPaneFileListProps {
-  t: (key: string, params?: Record<string, any>) => string;
+  t: (key: string, params?: Record<string, unknown>) => string;
   pane: SftpPane;
   side: "left" | "right";
   columnWidths: ColumnWidths;
@@ -430,3 +430,4 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
     )}
   </>
 );
+};

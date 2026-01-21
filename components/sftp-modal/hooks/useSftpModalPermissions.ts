@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import type { RemoteFile } from "../../types";
+import type { RemoteFile } from "../../../types";
 import { toast } from "../../ui/toast";
 
 interface UseSftpModalPermissionsParams {
@@ -10,7 +10,7 @@ interface UseSftpModalPermissionsParams {
   loadFiles: (path: string, options?: { force?: boolean }) => Promise<void>;
   chmodSftp: (sftpId: string, path: string, permissions: string) => Promise<void>;
   statSftp: (sftpId: string, path: string) => Promise<{ permissions?: string }>;
-  t: (key: string, params?: Record<string, any>) => string;
+  t: (key: string, params?: Record<string, unknown>) => string;
 }
 
 interface PermissionsState {

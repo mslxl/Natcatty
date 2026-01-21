@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import type { RemoteFile } from "../../types";
+import type { RemoteFile } from "../../../types";
 import { toast } from "../../ui/toast";
 
 interface UseSftpModalRenameParams {
@@ -9,7 +9,7 @@ interface UseSftpModalRenameParams {
   ensureSftp: () => Promise<string>;
   loadFiles: (path: string, options?: { force?: boolean }) => Promise<void>;
   renameSftp: (sftpId: string, oldPath: string, newPath: string) => Promise<void>;
-  t: (key: string, params?: Record<string, any>) => string;
+  t: (key: string, params?: Record<string, unknown>) => string;
 }
 
 interface UseSftpModalRenameResult {

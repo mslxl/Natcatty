@@ -39,7 +39,7 @@ interface SftpOverlaysProps {
   setFileOpenerTarget: (target: { file: SftpFileEntry; side: "left" | "right"; fullPath: string } | null) => void;
   handleFileOpenerSelect: (openerType: FileOpenerType, setAsDefault: boolean, systemApp?: SystemAppInfo) => void;
   handleSelectSystemApp: (systemApp: { path: string; name: string }) => void;
-  t: (key: string, params?: Record<string, any>) => string;
+  t: (key: string, params?: Record<string, unknown>) => string;
 }
 
 export const SftpOverlays: React.FC<SftpOverlaysProps> = ({

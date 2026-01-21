@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import { breadcrumbPathAt, getBreadcrumbs, getRootPath, getWindowsDrive, isWindowsPath } from "../pathUtils";
 
 interface UseSftpModalPathParams {
