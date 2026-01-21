@@ -385,6 +385,10 @@ export interface TerminalSettings {
 
   // SSH Connection
   keepaliveInterval: number; // Seconds between SSH-level keepalive packets (0 = disabled)
+
+  // Server Stats Display (Linux only)
+  showServerStats: boolean; // Show CPU/Memory/Disk in terminal statusbar
+  serverStatsRefreshInterval: number; // Seconds between stats refresh (default: 30)
 }
 
 export const DEFAULT_KEYWORD_HIGHLIGHT_RULES: KeywordHighlightRule[] = [
@@ -423,6 +427,8 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   localShell: '', // Empty = use system default
   localStartDir: '', // Empty = use home directory
   keepaliveInterval: 0, // 0 = disabled (use SSH library defaults)
+  showServerStats: true, // Show server stats by default
+  serverStatsRefreshInterval: 5, // Refresh every 5 seconds
 };
 
 export interface TerminalTheme {
