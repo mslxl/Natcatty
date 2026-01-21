@@ -391,7 +391,7 @@ export interface TerminalSettings {
   serverStatsRefreshInterval: number; // Seconds between stats refresh (default: 30)
 
   // Rendering
-  preferCanvasRenderer: boolean; // Use Canvas instead of WebGL for terminal rendering
+  rendererType: 'auto' | 'webgl' | 'canvas'; // Terminal renderer: auto (detect based on hardware), webgl, or canvas
 }
 
 export const DEFAULT_KEYWORD_HIGHLIGHT_RULES: KeywordHighlightRule[] = [
@@ -432,7 +432,7 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   keepaliveInterval: 0, // 0 = disabled (use SSH library defaults)
   showServerStats: true, // Show server stats by default
   serverStatsRefreshInterval: 5, // Refresh every 5 seconds
-  preferCanvasRenderer: false, // Use WebGL by default
+  rendererType: 'auto', // Auto-detect best renderer based on hardware
 };
 
 export interface TerminalTheme {

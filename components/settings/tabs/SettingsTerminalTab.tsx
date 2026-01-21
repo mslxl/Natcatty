@@ -654,12 +654,13 @@ export default function SettingsTerminalTab(props: {
           description={t("settings.terminal.rendering.renderer.desc")}
         >
           <Select
-            value={terminalSettings.preferCanvasRenderer ? "canvas" : "webgl"}
+            value={terminalSettings.rendererType}
             options={[
+              { value: "auto", label: t("settings.terminal.rendering.auto") },
               { value: "webgl", label: "WebGL" },
               { value: "canvas", label: "Canvas" },
             ]}
-            onChange={(v) => updateTerminalSetting("preferCanvasRenderer", v === "canvas")}
+            onChange={(v) => updateTerminalSetting("rendererType", v as "auto" | "webgl" | "canvas")}
             className="w-32"
           />
         </SettingRow>

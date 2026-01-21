@@ -114,12 +114,12 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       : undefined;
 
   const settings = ctx.terminalSettingsRef.current;
-  const preferCanvasRenderer = settings?.preferCanvasRenderer ?? false;
+  const rendererType = settings?.rendererType ?? "auto";
 
   const performanceConfig = resolveXTermPerformanceConfig({
     platform,
     deviceMemoryGb,
-    preferCanvasRenderer,
+    rendererType,
   });
 
   const hostFontId = ctx.host.fontFamily || ctx.fontFamilyId || "menlo";
