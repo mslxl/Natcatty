@@ -625,7 +625,7 @@ function App({ settings }: { settings: SettingsState }) {
         (h.group || '').toLowerCase().includes(term)
       )
       : hosts;
-    return filtered.slice(0, 8);
+    return filtered;
   }, [hosts, quickSearch, isQuickSwitcherOpen]);
 
   const handleDeleteHost = useCallback((hostId: string) => {
