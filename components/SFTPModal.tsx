@@ -1,10 +1,10 @@
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useSftpBackend } from "../application/state/useSftpBackend";
 import { useSftpFileAssociations } from "../application/state/useSftpFileAssociations";
 import { useSettingsState } from "../application/state/useSettingsState";
 import { useSftpModalTransfers } from "./sftp-modal/hooks/useSftpModalTransfers";
-import { Host, RemoteFile } from "../types";
+import { Host, RemoteFile, SftpFilenameEncoding } from "../types";
 import { filterHiddenFiles } from "./sftp";
 import FileOpenerDialog from "./FileOpenerDialog";
 import TextEditorModal from "./TextEditorModal";
@@ -79,10 +79,98 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   const { t, resolvedLocale } = useI18n();
   const { sftpAutoSync, sftpShowHiddenFiles } = useSettingsState();
   const isLocalSession = host.protocol === "local";
+  const [filenameEncoding, setFilenameEncoding] = useState<SftpFilenameEncoding>("auto");
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
   const navigatingRef = useRef(false);
   const clearSelection = useCallback(() => setSelectedFiles(new Set()), []);
+
+  const listSftpWithEncoding = useCallback(
+    (sftpId: string, path: string) => listSftp(sftpId, path, filenameEncoding),
+    [listSftp, filenameEncoding],
+  );
+
+  const readSftpWithEncoding = useCallback(
+    (sftpId: string, path: string) => readSftp(sftpId, path, filenameEncoding),
+    [readSftp, filenameEncoding],
+  );
+
+  const writeSftpWithEncoding = useCallback(
+    (sftpId: string, path: string, data: string) =>
+      writeSftp(sftpId, path, data, filenameEncoding),
+    [writeSftp, filenameEncoding],
+  );
+
+  const writeSftpBinaryWithEncoding = useCallback(
+    (sftpId: string, path: string, data: ArrayBuffer) =>
+      writeSftpBinary(sftpId, path, data, filenameEncoding),
+    [writeSftpBinary, filenameEncoding],
+  );
+
+  const writeSftpBinaryWithProgressWithEncoding = useCallback(
+    (
+      sftpId: string,
+      path: string,
+      data: ArrayBuffer,
+      transferId: string,
+      onProgress?: (transferred: number, total: number, speed: number) => void,
+      onComplete?: () => void,
+      onError?: (error: string) => void,
+    ) =>
+      writeSftpBinaryWithProgress(
+        sftpId,
+        path,
+        data,
+        transferId,
+        filenameEncoding,
+        onProgress,
+        onComplete,
+        onError,
+      ),
+    [writeSftpBinaryWithProgress, filenameEncoding],
+  );
+
+  const deleteSftpWithEncoding = useCallback(
+    (sftpId: string, path: string) => deleteSftp(sftpId, path, filenameEncoding),
+    [deleteSftp, filenameEncoding],
+  );
+
+  const mkdirSftpWithEncoding = useCallback(
+    (sftpId: string, path: string) => mkdirSftp(sftpId, path, filenameEncoding),
+    [mkdirSftp, filenameEncoding],
+  );
+
+  const renameSftpWithEncoding = useCallback(
+    (sftpId: string, oldPath: string, newPath: string) =>
+      renameSftp(sftpId, oldPath, newPath, filenameEncoding),
+    [renameSftp, filenameEncoding],
+  );
+
+  const chmodSftpWithEncoding = useCallback(
+    (sftpId: string, path: string, mode: string) =>
+      chmodSftp(sftpId, path, mode, filenameEncoding),
+    [chmodSftp, filenameEncoding],
+  );
+
+  const statSftpWithEncoding = useCallback(
+    (sftpId: string, path: string) => statSftp(sftpId, path, filenameEncoding),
+    [statSftp, filenameEncoding],
+  );
+
+  const downloadSftpToTempAndOpenWithEncoding = useCallback(
+    (
+      sftpId: string,
+      remotePath: string,
+      fileName: string,
+      appPath: string,
+      options?: { enableWatch?: boolean },
+    ) =>
+      downloadSftpToTempAndOpen(sftpId, remotePath, fileName, appPath, {
+        ...options,
+        encoding: filenameEncoding,
+      }),
+    [downloadSftpToTempAndOpen, filenameEncoding],
+  );
 
   const {
     currentPath,
@@ -104,11 +192,16 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     t,
     openSftp,
     closeSftp: closeSftpBackend,
-    listSftp,
+    listSftp: listSftpWithEncoding,
     listLocalDir,
     getHomeDir,
     onClearSelection: clearSelection,
   });
+
+  useEffect(() => {
+    if (!open || isLocalSession) return;
+    loadFiles(currentPath, { force: true });
+  }, [currentPath, filenameEncoding, isLocalSession, loadFiles, open]);
 
   const { getOpenerForFile, setOpenerForExtension } = useSftpFileAssociations();
 
@@ -212,22 +305,22 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     ensureSftp,
     loadFiles,
     readLocalFile,
-    readSftp,
+    readSftp: readSftpWithEncoding,
     writeLocalFile,
-    writeSftp,
-    writeSftpBinary,
+    writeSftp: writeSftpWithEncoding,
+    writeSftpBinary: writeSftpBinaryWithEncoding,
     deleteLocalFile,
-    deleteSftp,
+    deleteSftp: deleteSftpWithEncoding,
     mkdirLocal,
-    mkdirSftp,
-    renameSftp,
-    chmodSftp,
-    statSftp,
+    mkdirSftp: mkdirSftpWithEncoding,
+    renameSftp: renameSftpWithEncoding,
+    chmodSftp: chmodSftpWithEncoding,
+    statSftp: statSftpWithEncoding,
     t,
     sftpAutoSync,
     getOpenerForFile,
     setOpenerForExtension,
-    downloadSftpToTempAndOpen,
+    downloadSftpToTempAndOpen: downloadSftpToTempAndOpenWithEncoding,
     selectApplication,
   });
 
@@ -246,13 +339,13 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     ensureSftp,
     loadFiles,
     readLocalFile,
-    readSftp,
+    readSftp: readSftpWithEncoding,
     writeLocalFile,
-    writeSftpBinaryWithProgress,
-    writeSftpBinary,
-    writeSftp,
+    writeSftpBinaryWithProgress: writeSftpBinaryWithProgressWithEncoding,
+    writeSftpBinary: writeSftpBinaryWithEncoding,
+    writeSftp: writeSftpWithEncoding,
     mkdirLocal,
-    mkdirSftp,
+    mkdirSftp: mkdirSftpWithEncoding,
     setLoading,
     t,
   });
@@ -355,7 +448,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
         if (isLocalSession) {
           await deleteLocalFile(fullPath);
         } else {
-          await deleteSftp(await ensureSftp(), fullPath);
+          await deleteSftpWithEncoding(await ensureSftp(), fullPath);
         }
       }
       await loadFiles(currentPath, { force: true });
@@ -385,6 +478,9 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
           t={t}
           host={host}
           credentials={credentials}
+          showEncoding={!isLocalSession}
+          filenameEncoding={filenameEncoding}
+          onFilenameEncodingChange={setFilenameEncoding}
           currentPath={currentPath}
           isEditingPath={isEditingPath}
           editingPathValue={editingPathValue}

@@ -1,4 +1,4 @@
-import type { RemoteFile } from "./types";
+import type { RemoteFile, SftpFilenameEncoding } from "./types";
 import type { S3Config, SMBConfig, SyncedFile, WebDAVConfig } from "./domain/sync";
 
 declare global {
@@ -247,24 +247,25 @@ declare global {
 
     // SFTP operations
     openSftp(options: NetcattySSHOptions): Promise<string>;
-    listSftp(sftpId: string, path: string): Promise<RemoteFile[]>;
-    readSftp(sftpId: string, path: string): Promise<string>;
-    readSftpBinary?(sftpId: string, path: string): Promise<ArrayBuffer>;
-    writeSftp(sftpId: string, path: string, content: string): Promise<void>;
-    writeSftpBinary?(sftpId: string, path: string, content: ArrayBuffer): Promise<void>;
+    listSftp(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<RemoteFile[]>;
+    readSftp(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<string>;
+    readSftpBinary?(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<ArrayBuffer>;
+    writeSftp(sftpId: string, path: string, content: string, encoding?: SftpFilenameEncoding): Promise<void>;
+    writeSftpBinary?(sftpId: string, path: string, content: ArrayBuffer, encoding?: SftpFilenameEncoding): Promise<void>;
     closeSftp(sftpId: string): Promise<void>;
-    mkdirSftp(sftpId: string, path: string): Promise<void>;
-    deleteSftp?(sftpId: string, path: string): Promise<void>;
-    renameSftp?(sftpId: string, oldPath: string, newPath: string): Promise<void>;
-    statSftp?(sftpId: string, path: string): Promise<SftpStatResult>;
-    chmodSftp?(sftpId: string, path: string, mode: string): Promise<void>;
+    mkdirSftp(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<void>;
+    deleteSftp?(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<void>;
+    renameSftp?(sftpId: string, oldPath: string, newPath: string, encoding?: SftpFilenameEncoding): Promise<void>;
+    statSftp?(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<SftpStatResult>;
+    chmodSftp?(sftpId: string, path: string, mode: string, encoding?: SftpFilenameEncoding): Promise<void>;
 
     // Write binary with real-time progress callback
     writeSftpBinaryWithProgress?(
-      sftpId: string,
-      path: string,
-      content: ArrayBuffer,
+      sftpId: string, 
+      path: string, 
+      content: ArrayBuffer, 
       transferId: string,
+      encoding?: SftpFilenameEncoding,
       onProgress?: (transferred: number, total: number, speed: number) => void,
       onComplete?: () => void,
       onError?: (error: string) => void
@@ -290,6 +291,8 @@ declare global {
         sourceSftpId?: string;
         targetSftpId?: string;
         totalBytes?: number;
+        sourceEncoding?: SftpFilenameEncoding;
+        targetEncoding?: SftpFilenameEncoding;
       },
       onProgress?: (transferred: number, total: number, speed: number) => void,
       onComplete?: () => void,
@@ -479,10 +482,10 @@ declare global {
     // File opener helpers (for "Open With" feature)
     selectApplication?(): Promise<{ path: string; name: string } | null>;
     openWithApplication?(filePath: string, appPath: string): Promise<boolean>;
-    downloadSftpToTemp?(sftpId: string, remotePath: string, fileName: string): Promise<string>;
+    downloadSftpToTemp?(sftpId: string, remotePath: string, fileName: string, encoding?: SftpFilenameEncoding): Promise<string>;
 
     // File watcher for auto-sync feature
-    startFileWatch?(localPath: string, remotePath: string, sftpId: string): Promise<{ watchId: string }>;
+    startFileWatch?(localPath: string, remotePath: string, sftpId: string, encoding?: SftpFilenameEncoding): Promise<{ watchId: string }>;
     stopFileWatch?(watchId: string, cleanupTempFile?: boolean): Promise<{ success: boolean }>;
     listFileWatches?(): Promise<Array<{ watchId: string; localPath: string; remotePath: string; sftpId: string }>>;
     registerTempFile?(sftpId: string, localPath: string): Promise<{ success: boolean }>;

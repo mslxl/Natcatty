@@ -2,8 +2,10 @@ import React from "react";
 import { ChevronLeft, FilePlus, Folder, FolderPlus, Home, RefreshCw, Search, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { cn } from "../../lib/utils";
 import { SftpBreadcrumb } from "./index";
+import type { SftpFilenameEncoding } from "../../types";
 import type { SftpPane } from "../../application/state/sftp/types";
 
 interface SftpPaneToolbarProps {
@@ -12,6 +14,7 @@ interface SftpPaneToolbarProps {
   onNavigateUp: () => void;
   onNavigateTo: (path: string) => void;
   onSetFilter: (value: string) => void;
+  onSetFilenameEncoding: (encoding: SftpFilenameEncoding) => void;
   onRefresh: () => void;
   showFilterBar: boolean;
   setShowFilterBar: (open: boolean) => void;
@@ -44,6 +47,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = ({
   onNavigateUp,
   onNavigateTo,
   onSetFilter,
+  onSetFilenameEncoding,
   onRefresh,
   showFilterBar,
   setShowFilterBar,
@@ -151,6 +155,21 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = ({
       )}
 
       <div className="ml-auto flex items-center gap-0.5">
+        {!pane.connection?.isLocal && (
+          <Select
+            value={pane.filenameEncoding}
+            onValueChange={(value) => onSetFilenameEncoding(value as SftpFilenameEncoding)}
+          >
+            <SelectTrigger className="h-6 w-[120px] text-[10px]" title={t("sftp.encoding.label")}>
+              <SelectValue placeholder={t("sftp.encoding.label")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">{t("sftp.encoding.auto")}</SelectItem>
+              <SelectItem value="utf-8">{t("sftp.encoding.utf8")}</SelectItem>
+              <SelectItem value="gb18030">{t("sftp.encoding.gb18030")}</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
         <Button
           variant="ghost"
           size="icon"

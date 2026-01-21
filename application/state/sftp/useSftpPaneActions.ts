@@ -1,5 +1,5 @@
-import React, { useCallback } from "react";
-import type { Host, SftpFileEntry } from "../../../domain/models";
+import { useCallback } from "react";
+import type { Host, SftpFileEntry, SftpFilenameEncoding } from "../../../domain/models";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { logger } from "../../../lib/logger";
 import { SftpPane } from "./types";
@@ -16,10 +16,10 @@ interface UseSftpPaneActionsParams {
   sftpSessionsRef: React.MutableRefObject<Map<string, string>>;
   lastConnectedHostRef: React.MutableRefObject<{ left: Host | "local" | null; right: Host | "local" | null }>;
   reconnectingRef: React.MutableRefObject<{ left: boolean; right: boolean }>;
-  makeCacheKey: (connectionId: string, path: string) => string;
+  makeCacheKey: (connectionId: string, path: string, encoding?: SftpFilenameEncoding) => string;
   clearCacheForConnection: (connectionId: string) => void;
   listLocalFiles: (path: string) => Promise<SftpFileEntry[]>;
-  listRemoteFiles: (sftpId: string, path: string) => Promise<SftpFileEntry[]>;
+  listRemoteFiles: (sftpId: string, path: string, encoding?: SftpFilenameEncoding) => Promise<SftpFileEntry[]>;
   handleSessionError: (side: "left" | "right", error: Error) => void;
   isSessionError: (err: unknown) => boolean;
   dirCacheTtlMs: number;
@@ -87,7 +87,7 @@ export const useSftpPaneActions = ({
       }
 
       const requestId = ++navSeqRef.current[side];
-      const cacheKey = makeCacheKey(pane.connection.id, path);
+      const cacheKey = makeCacheKey(pane.connection.id, path, pane.filenameEncoding);
       const cached = options?.force
         ? undefined
         : dirCacheRef.current.get(cacheKey);
@@ -137,7 +137,7 @@ export const useSftpPaneActions = ({
           }
 
           try {
-            files = await listRemoteFiles(sftpId, path);
+            files = await listRemoteFiles(sftpId, path, pane.filenameEncoding);
           } catch (err) {
             if (isSessionError(err)) {
               sftpSessionsRef.current.delete(pane.connection.id);
@@ -362,7 +362,7 @@ export const useSftpPaneActions = ({
             handleSessionError(side, new Error("SFTP session not found"));
             return;
           }
-          await netcattyBridge.get()?.mkdirSftp(sftpId, fullPath);
+          await netcattyBridge.get()?.mkdirSftp(sftpId, fullPath, pane.filenameEncoding);
         }
         await refresh(side);
       } catch (err) {
@@ -401,9 +401,9 @@ export const useSftpPaneActions = ({
           const bridge = netcattyBridge.get();
           if (bridge?.writeSftpBinary) {
             const emptyBuffer = new ArrayBuffer(0);
-            await bridge.writeSftpBinary(sftpId, fullPath, emptyBuffer);
+            await bridge.writeSftpBinary(sftpId, fullPath, emptyBuffer, pane.filenameEncoding);
           } else if (bridge?.writeSftp) {
-            await bridge.writeSftp(sftpId, fullPath, "");
+            await bridge.writeSftp(sftpId, fullPath, "", pane.filenameEncoding);
           } else {
             throw new Error("No write method available");
           }
@@ -437,7 +437,7 @@ export const useSftpPaneActions = ({
               handleSessionError(side, new Error("SFTP session not found"));
               return;
             }
-            await netcattyBridge.get()?.deleteSftp?.(sftpId, fullPath);
+            await netcattyBridge.get()?.deleteSftp?.(sftpId, fullPath, pane.filenameEncoding);
           }
         }
         await refresh(side);
@@ -469,7 +469,7 @@ export const useSftpPaneActions = ({
             handleSessionError(side, new Error("SFTP session not found"));
             return;
           }
-          await netcattyBridge.get()?.renameSftp?.(sftpId, oldPath, newPath);
+          await netcattyBridge.get()?.renameSftp?.(sftpId, oldPath, newPath, pane.filenameEncoding);
         }
         await refresh(side);
       } catch (err) {
@@ -502,7 +502,7 @@ export const useSftpPaneActions = ({
       }
 
       try {
-        await netcattyBridge.get()!.chmodSftp!(sftpId, filePath, mode);
+        await netcattyBridge.get()!.chmodSftp!(sftpId, filePath, mode, pane.filenameEncoding);
         await refresh(side);
       } catch (err) {
         if (isSessionError(err)) {

@@ -240,6 +240,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
         onNavigateUp={callbacks.onNavigateUp}
         onNavigateTo={callbacks.onNavigateTo}
         onSetFilter={callbacks.onSetFilter}
+        onSetFilenameEncoding={callbacks.onSetFilenameEncoding}
         onRefresh={callbacks.onRefresh}
         showFilterBar={showFilterBar}
         setShowFilterBar={setShowFilterBar}

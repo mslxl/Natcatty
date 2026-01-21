@@ -1,0 +1,554 @@
+diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/protocol/SFTP.js
+index 9f33c02..c311d3a 100644
+--- a/node_modules/ssh2/lib/protocol/SFTP.js
++++ b/node_modules/ssh2/lib/protocol/SFTP.js
+@@ -117,6 +117,18 @@ const OPENSSH_MAX_PKT_LEN = 256 * 1024;
+ 
+ const bufferParser = makeBufferParser();
+ 
++function getStringLen(value) {
++  return Buffer.isBuffer(value) ? value.length : Buffer.byteLength(value);
++}
++
++function writeString(buf, offset, value, len) {
++  if (Buffer.isBuffer(value)) {
++    buf.set(value, offset);
++    return len ?? value.length;
++  }
++  return buf.utf8Write(value, offset, len ?? Buffer.byteLength(value));
++}
++
+ const fakeStderr = {
+   readable: false,
+   writable: false,
+@@ -339,7 +351,7 @@ class SFTP extends EventEmitter {
+       uint32        pflags
+       ATTRS         attrs
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen + 4 + 4 + attrsLen);
+ 
+@@ -349,7 +361,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+     writeUInt32BE(buf, flags, p += pathLen);
+     writeUInt32BE(buf, attrsFlags, p += 4);
+     if (attrsLen) {
+@@ -734,7 +746,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     filename
+     */
+-    const fnameLen = Buffer.byteLength(filename);
++    const fnameLen = getStringLen(filename);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + fnameLen);
+ 
+@@ -744,7 +756,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, fnameLen, p);
+-    buf.utf8Write(filename, p += 4, fnameLen);
++    writeString(buf, p += 4, filename, fnameLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -762,8 +774,8 @@ class SFTP extends EventEmitter {
+       string     oldpath
+       string     newpath
+     */
+-    const oldLen = Buffer.byteLength(oldPath);
+-    const newLen = Buffer.byteLength(newPath);
++    const oldLen = getStringLen(oldPath);
++    const newLen = getStringLen(newPath);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + oldLen + 4 + newLen);
+ 
+@@ -773,9 +785,9 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, oldLen, p);
+-    buf.utf8Write(oldPath, p += 4, oldLen);
++    writeString(buf, p += 4, oldPath, oldLen);
+     writeUInt32BE(buf, newLen, p += oldLen);
+-    buf.utf8Write(newPath, p += 4, newLen);
++    writeString(buf, p += 4, newPath, newLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -806,7 +818,7 @@ class SFTP extends EventEmitter {
+       string     path
+       ATTRS      attrs
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen + 4 + attrsLen);
+ 
+@@ -816,7 +828,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+     writeUInt32BE(buf, flags, p += pathLen);
+     if (attrsLen) {
+       p += 4;
+@@ -844,7 +856,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
+ 
+@@ -854,7 +866,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -987,7 +999,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
+ 
+@@ -997,7 +1009,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -1014,7 +1026,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
+ 
+@@ -1024,7 +1036,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -1041,7 +1053,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
+ 
+@@ -1051,7 +1063,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -1080,7 +1092,7 @@ class SFTP extends EventEmitter {
+       string     path
+       ATTRS      attrs
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen + 4 + attrsLen);
+ 
+@@ -1090,7 +1102,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+     writeUInt32BE(buf, flags, p += pathLen);
+     if (attrsLen) {
+       p += 4;
+@@ -1205,7 +1217,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
+ 
+@@ -1215,7 +1227,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = {
+       cb: (err, names) => {
+@@ -1243,8 +1255,8 @@ class SFTP extends EventEmitter {
+       string     linkpath
+       string     targetpath
+     */
+-    const linkLen = Buffer.byteLength(linkPath);
+-    const targetLen = Buffer.byteLength(targetPath);
++    const linkLen = getStringLen(linkPath);
++    const targetLen = getStringLen(targetPath);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + linkLen + 4 + targetLen);
+ 
+@@ -1256,14 +1268,14 @@ class SFTP extends EventEmitter {
+     if (this._isOpenSSH) {
+       // OpenSSH has linkpath and targetpath positions switched
+       writeUInt32BE(buf, targetLen, p);
+-      buf.utf8Write(targetPath, p += 4, targetLen);
++      writeString(buf, p += 4, targetPath, targetLen);
+       writeUInt32BE(buf, linkLen, p += targetLen);
+-      buf.utf8Write(linkPath, p += 4, linkLen);
++      writeString(buf, p += 4, linkPath, linkLen);
+     } else {
+       writeUInt32BE(buf, linkLen, p);
+-      buf.utf8Write(linkPath, p += 4, linkLen);
++      writeString(buf, p += 4, linkPath, linkLen);
+       writeUInt32BE(buf, targetLen, p += linkLen);
+-      buf.utf8Write(targetPath, p += 4, targetLen);
++      writeString(buf, p += 4, targetPath, targetLen);
+     }
+ 
+     this._requests[reqid] = { cb };
+@@ -1281,7 +1293,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
+ 
+@@ -1291,7 +1303,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = {
+       cb: (err, names) => {
+@@ -1325,8 +1337,8 @@ class SFTP extends EventEmitter {
+       string    oldpath
+       string    newpath
+     */
+-    const oldLen = Buffer.byteLength(oldPath);
+-    const newLen = Buffer.byteLength(newPath);
++    const oldLen = getStringLen(oldPath);
++    const newLen = getStringLen(newPath);
+     let p = 9;
+     const buf =
+       Buffer.allocUnsafe(4 + 1 + 4 + 4 + 24 + 4 + oldLen + 4 + newLen);
+@@ -1337,11 +1349,11 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 24, p);
+-    buf.utf8Write('posix-rename@openssh.com', p += 4, 24);
++    writeString(buf, p += 4, 'posix-rename@openssh.com', 24);
+     writeUInt32BE(buf, oldLen, p += 24);
+-    buf.utf8Write(oldPath, p += 4, oldLen);
++    writeString(buf, p += 4, oldPath, oldLen);
+     writeUInt32BE(buf, newLen, p += oldLen);
+-    buf.utf8Write(newPath, p += 4, newLen);
++    writeString(buf, p += 4, newPath, newLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -1364,7 +1376,7 @@ class SFTP extends EventEmitter {
+       string    "statvfs@openssh.com"
+       string    path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + 19 + 4 + pathLen);
+ 
+@@ -1374,9 +1386,9 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 19, p);
+-    buf.utf8Write('statvfs@openssh.com', p += 4, 19);
++    writeString(buf, p += 4, 'statvfs@openssh.com', 19);
+     writeUInt32BE(buf, pathLen, p += 19);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = { extended: 'statvfs@openssh.com', cb };
+ 
+@@ -1411,7 +1423,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 20, p);
+-    buf.utf8Write('fstatvfs@openssh.com', p += 4, 20);
++    writeString(buf, p += 4, 'fstatvfs@openssh.com', 20);
+     writeUInt32BE(buf, handleLen, p += 20);
+     buf.set(handle, p += 4);
+ 
+@@ -1437,8 +1449,8 @@ class SFTP extends EventEmitter {
+       string    oldpath
+       string    newpath
+     */
+-    const oldLen = Buffer.byteLength(oldPath);
+-    const newLen = Buffer.byteLength(newPath);
++    const oldLen = getStringLen(oldPath);
++    const newLen = getStringLen(newPath);
+     let p = 9;
+     const buf =
+       Buffer.allocUnsafe(4 + 1 + 4 + 4 + 20 + 4 + oldLen + 4 + newLen);
+@@ -1449,11 +1461,11 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 20, p);
+-    buf.utf8Write('hardlink@openssh.com', p += 4, 20);
++    writeString(buf, p += 4, 'hardlink@openssh.com', 20);
+     writeUInt32BE(buf, oldLen, p += 20);
+-    buf.utf8Write(oldPath, p += 4, oldLen);
++    writeString(buf, p += 4, oldPath, oldLen);
+     writeUInt32BE(buf, newLen, p += oldLen);
+-    buf.utf8Write(newPath, p += 4, newLen);
++    writeString(buf, p += 4, newPath, newLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -1488,7 +1500,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 17, p);
+-    buf.utf8Write('fsync@openssh.com', p += 4, 17);
++    writeString(buf, p += 4, 'fsync@openssh.com', 17);
+     writeUInt32BE(buf, handleLen, p += 17);
+     buf.set(handle, p += 4);
+ 
+@@ -1524,7 +1536,7 @@ class SFTP extends EventEmitter {
+       string    path
+       ATTRS     attrs
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf =
+       Buffer.allocUnsafe(4 + 1 + 4 + 4 + 20 + 4 + pathLen + 4 + attrsLen);
+@@ -1535,10 +1547,10 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 20, p);
+-    buf.utf8Write('lsetstat@openssh.com', p += 4, 20);
++    writeString(buf, p += 4, 'lsetstat@openssh.com', 20);
+ 
+     writeUInt32BE(buf, pathLen, p += 20);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     writeUInt32BE(buf, flags, p += pathLen);
+     if (attrsLen) {
+@@ -1573,7 +1585,7 @@ class SFTP extends EventEmitter {
+       string    "expand-path@openssh.com"
+       string    path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + 23 + 4 + pathLen);
+ 
+@@ -1583,10 +1595,10 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 23, p);
+-    buf.utf8Write('expand-path@openssh.com', p += 4, 23);
++    writeString(buf, p += 4, 'expand-path@openssh.com', 23);
+ 
+     writeUInt32BE(buf, pathLen, p += 20);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = {
+       cb: (err, names) => {
+@@ -1653,7 +1665,7 @@ class SFTP extends EventEmitter {
+ 
+     writeUInt32BE(buf, 9, p);
+     p += 4;
+-    buf.utf8Write('copy-data', p, 9);
++    writeString(buf, p, 'copy-data', 9);
+     p += 9;
+ 
+     writeUInt32BE(buf, srcHandle.length, p);
+@@ -1708,7 +1720,7 @@ class SFTP extends EventEmitter {
+       string    username
+     */
+     let p = 0;
+-    const usernameLen = Buffer.byteLength(username);
++    const usernameLen = getStringLen(username);
+     const buf = Buffer.allocUnsafe(
+       4 + 1
+       + 4
+@@ -1728,12 +1740,12 @@ class SFTP extends EventEmitter {
+ 
+     writeUInt32BE(buf, 14, p);
+     p += 4;
+-    buf.utf8Write('home-directory', p, 14);
++    writeString(buf, p, 'home-directory', 14);
+     p += 14;
+ 
+     writeUInt32BE(buf, usernameLen, p);
+     p += 4;
+-    buf.utf8Write(username, p, usernameLen);
++    writeString(buf, p, username, usernameLen);
+     p += usernameLen;
+ 
+     this._requests[reqid] = {
+@@ -1806,7 +1818,7 @@ class SFTP extends EventEmitter {
+ 
+     writeUInt32BE(buf, 30, p);
+     p += 4;
+-    buf.utf8Write('users-groups-by-id@openssh.com', p, 30);
++    writeString(buf, p, 'users-groups-by-id@openssh.com', 30);
+     p += 30;
+ 
+     writeUInt32BE(buf, 4 * uids.length, p);
+@@ -1871,7 +1883,7 @@ class SFTP extends EventEmitter {
+ 
+     message || (message = '');
+ 
+-    const msgLen = Buffer.byteLength(message);
++    const msgLen = getStringLen(message);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + 4 + msgLen + 4);
+ 
+@@ -1884,7 +1896,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, msgLen, p += 4);
+     p += 4;
+     if (msgLen) {
+-      buf.utf8Write(message, p, msgLen);
++      writeString(buf, p, message, msgLen);
+       p += msgLen;
+     }
+ 
+@@ -1913,7 +1925,7 @@ class SFTP extends EventEmitter {
+     const dataLen = (
+       isBuffer
+       ? data.length
+-      : Buffer.byteLength(data, encoding)
++      : getStringLen(data, encoding)
+     );
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + dataLen);
+@@ -1927,7 +1939,7 @@ class SFTP extends EventEmitter {
+       if (isBuffer)
+         buf.set(data, p += 4);
+       else if (isUTF8)
+-        buf.utf8Write(data, p += 4, dataLen);
++        writeString(buf, p += 4, data, dataLen);
+       else
+         buf.write(data, p += 4, dataLen, encoding);
+     }
+@@ -1959,13 +1971,13 @@ class SFTP extends EventEmitter {
+         ? ''
+         : name.filename
+       );
+-      namesLen += 4 + Buffer.byteLength(filename);
++      namesLen += 4 + getStringLen(filename);
+       const longname = (
+         !name || !name.longname || typeof name.longname !== 'string'
+         ? ''
+         : name.longname
+       );
+-      namesLen += 4 + Buffer.byteLength(longname);
++      namesLen += 4 + getStringLen(longname);
+ 
+       if (typeof name.attrs === 'object' && name.attrs !== null) {
+         nameAttrs = attrsToBytes(name.attrs);
+@@ -2011,11 +2023,11 @@ class SFTP extends EventEmitter {
+           ? ''
+           : name.filename
+         );
+-        const len = Buffer.byteLength(filename);
++        const len = getStringLen(filename);
+         writeUInt32BE(buf, len, p);
+         p += 4;
+         if (len) {
+-          buf.utf8Write(filename, p, len);
++          writeString(buf, p, filename, len);
+           p += len;
+         }
+       }
+@@ -2026,11 +2038,11 @@ class SFTP extends EventEmitter {
+           ? ''
+           : name.longname
+         );
+-        const len = Buffer.byteLength(longname);
++        const len = getStringLen(longname);
+         writeUInt32BE(buf, len, p);
+         p += 4;
+         if (len) {
+-          buf.utf8Write(longname, p, len);
++          writeString(buf, p, longname, len);
+           p += len;
+         }
+       }
+@@ -2749,7 +2761,7 @@ function requestLimits(sftp, cb) {
+   writeUInt32BE(buf, reqid, 5);
+ 
+   writeUInt32BE(buf, 18, p);
+-  buf.utf8Write('limits@openssh.com', p += 4, 18);
++  writeString(buf, p += 4, 'limits@openssh.com', 18);
+ 
+   sftp._requests[reqid] = { extended: 'limits@openssh.com', cb };
+ 
+@@ -2953,18 +2965,28 @@ const CLIENT_HANDLERS = {
+         // spec not specifying an encoding because the specs for newer
+         // versions of the protocol all explicitly specify UTF-8 for
+         // filenames
+-        const filename = bufferParser.readString(true);
++        const filenameRaw = bufferParser.readString();
++        if (filenameRaw === undefined) {
++          names = undefined;
++          break;
++        }
++        const filename = filenameRaw.toString('utf8');
+ 
+         // `longname` only exists in SFTPv3 and since it typically will
+         // contain the filename, we assume it is also UTF-8
+-        const longname = bufferParser.readString(true);
++        const longnameRaw = bufferParser.readString();
++        if (longnameRaw === undefined) {
++          names = undefined;
++          break;
++        }
++        const longname = longnameRaw.toString('utf8');
+ 
+         const attrs = readAttrs(sftp._biOpt);
+         if (attrs === undefined) {
+           names = undefined;
+           break;
+         }
+-        names.push({ filename, longname, attrs });
++        names.push({ filename, longname, filenameRaw, longnameRaw, attrs });
+       }
+       if (names !== undefined) {
+         sftp._debug && sftp._debug(

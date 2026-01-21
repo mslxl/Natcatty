@@ -143,6 +143,14 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   const keywordHighlightRules = settings?.keywordHighlightRules ?? [];
   const keywordHighlightEnabled = settings?.keywordHighlightEnabled ?? false;
 
+  const resolvedFontWeightBold = (() => {
+    if (typeof document === "undefined" || !document.fonts?.check) {
+      return fontWeightBold;
+    }
+    const weightSpec = `${fontWeightBold} ${effectiveFontSize}px ${fontFamily}`;
+    return document.fonts.check(weightSpec) ? fontWeightBold : fontWeight;
+  })();
+
   const term = new XTerm({
     ...performanceConfig.options,
     fontSize: effectiveFontSize,
@@ -159,7 +167,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       | 900
       | "normal"
       | "bold",
-    fontWeightBold: fontWeightBold as
+    fontWeightBold: resolvedFontWeightBold as
       | 100
       | 200
       | 300

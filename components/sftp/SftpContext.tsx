@@ -7,7 +7,7 @@
  */
 
 import React, { createContext, useContext, useMemo, useSyncExternalStore } from "react";
-import { Host, SftpFileEntry } from "../../types";
+import { Host, SftpFileEntry, SftpFilenameEncoding } from "../../types";
 
 // Types for the context
 export interface SftpPaneCallbacks {
@@ -16,6 +16,7 @@ export interface SftpPaneCallbacks {
     onNavigateTo: (path: string) => void;
     onNavigateUp: () => void;
     onRefresh: () => void;
+    onSetFilenameEncoding: (encoding: SftpFilenameEncoding) => void;
     onOpenEntry: (entry: SftpFileEntry) => void;
     onToggleSelection: (fileName: string, multiSelect: boolean) => void;
     onRangeSelect: (fileNames: string[]) => void;

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   FileConflict,
   SftpFileEntry,
+  SftpFilenameEncoding,
   TransferDirection,
   TransferStatus,
   TransferTask,
@@ -16,7 +17,7 @@ interface UseSftpTransfersParams {
   refresh: (side: "left" | "right") => Promise<void>;
   sftpSessionsRef: React.MutableRefObject<Map<string, string>>;
   listLocalFiles: (path: string) => Promise<SftpFileEntry[]>;
-  listRemoteFiles: (sftpId: string, path: string) => Promise<SftpFileEntry[]>;
+  listRemoteFiles: (sftpId: string, path: string, encoding?: SftpFilenameEncoding) => Promise<SftpFileEntry[]>;
   handleSessionError: (side: "left" | "right", error: Error) => void;
 }
 
@@ -110,6 +111,8 @@ export const useSftpTransfers = ({
     targetSftpId: string | null,
     sourceIsLocal: boolean,
     targetIsLocal: boolean,
+    sourceEncoding: SftpFilenameEncoding,
+    targetEncoding: SftpFilenameEncoding,
   ): Promise<void> => {
     if (netcattyBridge.get()?.startStreamTransfer) {
       return new Promise((resolve, reject) => {
@@ -122,6 +125,8 @@ export const useSftpTransfers = ({
           sourceSftpId: sourceSftpId || undefined,
           targetSftpId: targetSftpId || undefined,
           totalBytes: task.totalBytes || undefined,
+          sourceEncoding: sourceIsLocal ? undefined : sourceEncoding,
+          targetEncoding: targetIsLocal ? undefined : targetEncoding,
         };
 
         const onProgress = (
@@ -171,10 +176,11 @@ export const useSftpTransfers = ({
         content = await netcattyBridge.get()!.readSftpBinary!(
           sourceSftpId,
           task.sourcePath,
+          sourceEncoding,
         );
       } else {
         content =
-          (await netcattyBridge.get()?.readSftp(sourceSftpId, task.sourcePath)) || "";
+          (await netcattyBridge.get()?.readSftp(sourceSftpId, task.sourcePath, sourceEncoding)) || "";
       }
     } else {
       throw new Error("No source connection");
@@ -196,13 +202,14 @@ export const useSftpTransfers = ({
           targetSftpId,
           task.targetPath,
           content,
+          targetEncoding,
         );
       } else {
         const text =
           content instanceof ArrayBuffer
             ? new TextDecoder().decode(content)
             : content;
-        await netcattyBridge.get()?.writeSftp(targetSftpId, task.targetPath, text);
+        await netcattyBridge.get()?.writeSftp(targetSftpId, task.targetPath, text, targetEncoding);
       }
     } else {
       throw new Error("No target connection");
@@ -215,18 +222,20 @@ export const useSftpTransfers = ({
     targetSftpId: string | null,
     sourceIsLocal: boolean,
     targetIsLocal: boolean,
+    sourceEncoding: SftpFilenameEncoding,
+    targetEncoding: SftpFilenameEncoding,
   ) => {
     if (targetIsLocal) {
       await netcattyBridge.get()?.mkdirLocal?.(task.targetPath);
     } else if (targetSftpId) {
-      await netcattyBridge.get()?.mkdirSftp(targetSftpId, task.targetPath);
+      await netcattyBridge.get()?.mkdirSftp(targetSftpId, task.targetPath, targetEncoding);
     }
 
     let files: SftpFileEntry[];
     if (sourceIsLocal) {
       files = await listLocalFiles(task.sourcePath);
     } else if (sourceSftpId) {
-      files = await listRemoteFiles(sourceSftpId, task.sourcePath);
+      files = await listRemoteFiles(sourceSftpId, task.sourcePath, sourceEncoding);
     } else {
       throw new Error("No source connection");
     }
@@ -251,6 +260,8 @@ export const useSftpTransfers = ({
           targetSftpId,
           sourceIsLocal,
           targetIsLocal,
+          sourceEncoding,
+          targetEncoding,
         );
       } else {
         await transferFile(
@@ -259,6 +270,8 @@ export const useSftpTransfers = ({
           targetSftpId,
           sourceIsLocal,
           targetIsLocal,
+          sourceEncoding,
+          targetEncoding,
         );
       }
     }
@@ -290,6 +303,7 @@ export const useSftpTransfers = ({
           const stat = await netcattyBridge.get()?.statSftp?.(
             sourceSftpId,
             task.sourcePath,
+            sourceEncoding,
           );
           if (stat) actualFileSize = stat.size;
         }
@@ -320,6 +334,13 @@ export const useSftpTransfers = ({
     const targetSftpId = targetPane.connection?.isLocal
       ? null
       : sftpSessionsRef.current.get(targetPane.connection!.id);
+
+    const sourceEncoding: SftpFilenameEncoding = sourcePane.connection?.isLocal
+      ? "auto"
+      : sourcePane.filenameEncoding || "auto";
+    const targetEncoding: SftpFilenameEncoding = targetPane.connection?.isLocal
+      ? "auto"
+      : targetPane.filenameEncoding || "auto";
 
     if (!sourcePane.connection?.isLocal && !sourceSftpId) {
       const sourceSide = targetSide === "left" ? "right" : "left";
@@ -357,6 +378,7 @@ export const useSftpTransfers = ({
             const stat = await netcattyBridge.get()?.statSftp?.(
               sourceSftpId,
               task.sourcePath,
+              sourceEncoding,
             );
             if (stat) {
               sourceStat = {
@@ -383,6 +405,7 @@ export const useSftpTransfers = ({
             const stat = await netcattyBridge.get()?.statSftp?.(
               targetSftpId,
               task.targetPath,
+              targetEncoding,
             );
             if (stat) {
               targetExists = true;
@@ -425,6 +448,8 @@ export const useSftpTransfers = ({
           targetSftpId,
           sourcePane.connection!.isLocal,
           targetPane.connection!.isLocal,
+          sourceEncoding,
+          targetEncoding,
         );
       } else {
         await transferFile(
@@ -433,6 +458,8 @@ export const useSftpTransfers = ({
           targetSftpId,
           sourcePane.connection!.isLocal,
           targetPane.connection!.isLocal,
+          sourceEncoding,
+          targetEncoding,
         );
       }
 
@@ -478,6 +505,10 @@ export const useSftpTransfers = ({
 
       if (!sourcePane?.connection || !targetPane?.connection) return;
 
+      const sourceEncoding: SftpFilenameEncoding = sourcePane.connection.isLocal
+        ? "auto"
+        : sourcePane.filenameEncoding || "auto";
+
       const sourcePath = sourcePane.connection.currentPath;
       const targetPath = targetPane.connection.currentPath;
 
@@ -503,10 +534,11 @@ export const useSftpTransfers = ({
               const stat = await netcattyBridge.get()?.statLocal?.(fullPath);
               if (stat) fileSize = stat.size;
             } else if (sourceSftpId) {
-              const stat = await netcattyBridge.get()?.statSftp?.(
-                sourceSftpId,
-                fullPath,
-              );
+            const stat = await netcattyBridge.get()?.statSftp?.(
+              sourceSftpId,
+              fullPath,
+              sourceEncoding,
+            );
               if (stat) fileSize = stat.size;
             }
           } catch {

@@ -6,6 +6,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
+const { encodePathForSession, ensureRemoteDirForSession } = require("./sftpBridge.cjs");
 
 // Shared references
 let sftpClients = null;
@@ -26,7 +27,18 @@ function init(deps) {
  * Start a file transfer
  */
 async function startTransfer(event, payload) {
-  const { transferId, sourcePath, targetPath, sourceType, targetType, sourceSftpId, targetSftpId, totalBytes } = payload;
+  const {
+    transferId,
+    sourcePath,
+    targetPath,
+    sourceType,
+    targetType,
+    sourceSftpId,
+    targetSftpId,
+    totalBytes,
+    sourceEncoding,
+    targetEncoding,
+  } = payload;
   const sender = event.sender;
   
   // Register transfer for cancellation
@@ -73,7 +85,8 @@ async function startTransfer(event, payload) {
       } else if (sourceType === 'sftp') {
         const client = sftpClients.get(sourceSftpId);
         if (!client) throw new Error("Source SFTP session not found");
-        const stat = await client.stat(sourcePath);
+        const encodedSourcePath = encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
+        const stat = await client.stat(encodedSourcePath);
         fileSize = stat.size;
       }
     }
@@ -88,9 +101,10 @@ async function startTransfer(event, payload) {
       if (!client) throw new Error("Target SFTP session not found");
       
       const dir = path.dirname(targetPath).replace(/\\/g, '/');
-      try { await client.mkdir(dir, true); } catch {}
+      try { await ensureRemoteDirForSession(targetSftpId, dir, targetEncoding); } catch {}
       
-      await client.fastPut(sourcePath, targetPath, {
+      const encodedTargetPath = encodePathForSession(targetSftpId, targetPath, targetEncoding);
+      await client.fastPut(sourcePath, encodedTargetPath, {
         step: (totalTransferred, chunk, total) => {
           if (isCancelled()) {
             throw new Error('Transfer cancelled');
@@ -107,7 +121,8 @@ async function startTransfer(event, payload) {
       const dir = path.dirname(targetPath);
       await fs.promises.mkdir(dir, { recursive: true });
       
-      await client.fastGet(sourcePath, targetPath, {
+      const encodedSourcePath = encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
+      await client.fastGet(encodedSourcePath, targetPath, {
         step: (totalTransferred, chunk, total) => {
           if (isCancelled()) {
             throw new Error('Transfer cancelled');
@@ -160,7 +175,8 @@ async function startTransfer(event, payload) {
       if (!targetClient) throw new Error("Target SFTP session not found");
       
       // Download phase (0-50%)
-      await sourceClient.fastGet(sourcePath, tempPath, {
+      const encodedSourcePath = encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
+      await sourceClient.fastGet(encodedSourcePath, tempPath, {
         step: (totalTransferred, chunk, total) => {
           if (isCancelled()) {
             throw new Error('Transfer cancelled');
@@ -176,9 +192,10 @@ async function startTransfer(event, payload) {
       
       // Upload phase (50-100%)
       const dir = path.dirname(targetPath).replace(/\\/g, '/');
-      try { await targetClient.mkdir(dir, true); } catch {}
+      try { await ensureRemoteDirForSession(targetSftpId, dir, targetEncoding); } catch {}
       
-      await targetClient.fastPut(tempPath, targetPath, {
+      const encodedTargetPath = encodePathForSession(targetSftpId, targetPath, targetEncoding);
+      await targetClient.fastPut(tempPath, encodedTargetPath, {
         step: (totalTransferred, chunk, total) => {
           if (isCancelled()) {
             throw new Error('Transfer cancelled');

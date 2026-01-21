@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { MutableRefObject } from "react";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
-import type { Host, Identity, SftpConnection, SftpFileEntry, SSHKey } from "../../../domain/models";
+import type { Host, Identity, SftpConnection, SftpFileEntry, SftpFilenameEncoding, SSHKey } from "../../../domain/models";
 import type { SftpPane } from "./types";
 import { useSftpDirectoryListing } from "./useSftpDirectoryListing";
 import { useSftpHostCredentials } from "./useSftpHostCredentials";
@@ -25,7 +25,7 @@ interface UseSftpConnectionsParams {
   sftpSessionsRef: MutableRefObject<Map<string, string>>;
   lastConnectedHostRef: MutableRefObject<{ left: Host | "local" | null; right: Host | "local" | null }>;
   reconnectingRef: MutableRefObject<{ left: boolean; right: boolean }>;
-  makeCacheKey: (connectionId: string, path: string) => string;
+  makeCacheKey: (connectionId: string, path: string, encoding?: SftpFilenameEncoding) => string;
   clearCacheForConnection: (connectionId: string) => void;
   createEmptyPane: (id?: string) => SftpPane;
 }
@@ -34,7 +34,7 @@ interface UseSftpConnectionsResult {
   connect: (side: "left" | "right", host: Host | "local") => Promise<void>;
   disconnect: (side: "left" | "right") => Promise<void>;
   listLocalFiles: (path: string) => Promise<SftpFileEntry[]>;
-  listRemoteFiles: (sftpId: string, path: string) => Promise<SftpFileEntry[]>;
+  listRemoteFiles: (sftpId: string, path: string, encoding?: SftpFilenameEncoding) => Promise<SftpFileEntry[]>;
 }
 
 export const useSftpConnections = ({
@@ -91,6 +91,7 @@ export const useSftpConnections = ({
       lastConnectedHostRef.current[side] = host;
 
       const currentPane = getActivePane(side);
+      const filenameEncoding = currentPane?.filenameEncoding || "auto";
 
       if (currentPane?.connection) {
         clearCacheForConnection(currentPane.connection.id);
@@ -135,7 +136,7 @@ export const useSftpConnections = ({
         try {
           const files = await listLocalFiles(homeDir);
           if (navSeqRef.current[side] !== connectRequestId) return;
-          dirCacheRef.current.set(makeCacheKey(connectionId, homeDir), {
+          dirCacheRef.current.set(makeCacheKey(connectionId, homeDir, filenameEncoding), {
             files,
             timestamp: Date.now(),
           });
@@ -246,7 +247,7 @@ export const useSftpConnections = ({
             }
             for (const candidate of candidates) {
               try {
-                const stat = await statSftp(sftpId, candidate);
+                const stat = await statSftp(sftpId, candidate, filenameEncoding);
                 if (stat?.type === "directory") {
                   startPath = candidate;
                   break;
@@ -258,7 +259,7 @@ export const useSftpConnections = ({
           } else {
             if (credentials.username === "root") {
               try {
-                const rootFiles = await netcattyBridge.get()?.listSftp(sftpId, "/root");
+                const rootFiles = await netcattyBridge.get()?.listSftp(sftpId, "/root", filenameEncoding);
                 if (rootFiles) startPath = "/root";
               } catch {
                 // Fallback path not available
@@ -268,6 +269,7 @@ export const useSftpConnections = ({
                 const homeFiles = await netcattyBridge.get()?.listSftp(
                   sftpId,
                   `/home/${credentials.username}`,
+                  filenameEncoding,
                 );
                 if (homeFiles) startPath = `/home/${credentials.username}`;
               } catch {
@@ -275,7 +277,7 @@ export const useSftpConnections = ({
               }
               if (startPath === "/") {
                 try {
-                  const rootFiles = await netcattyBridge.get()?.listSftp(sftpId, "/root");
+                  const rootFiles = await netcattyBridge.get()?.listSftp(sftpId, "/root", filenameEncoding);
                   if (rootFiles) startPath = "/root";
                 } catch {
                   // Fallback path not available
@@ -283,7 +285,7 @@ export const useSftpConnections = ({
               }
             } else {
               try {
-                const rootFiles = await netcattyBridge.get()?.listSftp(sftpId, "/root");
+                const rootFiles = await netcattyBridge.get()?.listSftp(sftpId, "/root", filenameEncoding);
                 if (rootFiles) startPath = "/root";
               } catch {
                 // Fallback path not available
@@ -291,9 +293,9 @@ export const useSftpConnections = ({
             }
           }
 
-          const files = await listRemoteFiles(sftpId, startPath);
+          const files = await listRemoteFiles(sftpId, startPath, filenameEncoding);
           if (navSeqRef.current[side] !== connectRequestId) return;
-          dirCacheRef.current.set(makeCacheKey(connectionId, startPath), {
+          dirCacheRef.current.set(makeCacheKey(connectionId, startPath, filenameEncoding), {
             files,
             timestamp: Date.now(),
           });

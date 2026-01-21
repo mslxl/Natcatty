@@ -2,10 +2,12 @@ import React from "react";
 import { ArrowUp, ChevronRight, Home, MoreHorizontal, Plus, RefreshCw, Upload } from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { Host } from "../../types";
+import type { Host, SftpFilenameEncoding } from "../../types";
 import { DistroAvatar } from "../DistroAvatar";
 import { Button } from "../ui/button";
 import { DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 
 interface BreadcrumbPart {
   part: string;
@@ -16,6 +18,9 @@ interface SftpModalHeaderProps {
   t: (key: string, params?: Record<string, unknown>) => string;
   host: Host;
   credentials: { username?: string; hostname: string; port?: number };
+  showEncoding: boolean;
+  filenameEncoding: SftpFilenameEncoding;
+  onFilenameEncodingChange: (encoding: SftpFilenameEncoding) => void;
   currentPath: string;
   isEditingPath: boolean;
   editingPathValue: string;
@@ -48,6 +53,9 @@ export const SftpModalHeader: React.FC<SftpModalHeaderProps> = ({
   t,
   host,
   credentials,
+  showEncoding,
+  filenameEncoding,
+  onFilenameEncodingChange,
   currentPath,
   isEditingPath,
   editingPathValue,
@@ -124,6 +132,21 @@ export const SftpModalHeader: React.FC<SftpModalHeaderProps> = ({
           className={cn(isRefreshing && "animate-spin")}
         />
       </Button>
+      {showEncoding && (
+        <Select
+          value={filenameEncoding}
+          onValueChange={(value) => onFilenameEncodingChange(value as SftpFilenameEncoding)}
+        >
+          <SelectTrigger className="h-7 w-[130px] text-xs" title={t("sftp.encoding.label")}>
+            <SelectValue placeholder={t("sftp.encoding.label")} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="auto">{t("sftp.encoding.auto")}</SelectItem>
+            <SelectItem value="utf-8">{t("sftp.encoding.utf8")}</SelectItem>
+            <SelectItem value="gb18030">{t("sftp.encoding.gb18030")}</SelectItem>
+          </SelectContent>
+        </Select>
+      )}
 
       <div className="flex items-center gap-1 text-sm flex-1 min-w-0 overflow-hidden">
         {isEditingPath ? (

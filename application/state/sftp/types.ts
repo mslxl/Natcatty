@@ -1,4 +1,4 @@
-import { SftpConnection, SftpFileEntry } from "../../../domain/models";
+import { SftpConnection, SftpFileEntry, SftpFilenameEncoding } from "../../../domain/models";
 
 export interface SftpPane {
   id: string;
@@ -9,6 +9,7 @@ export interface SftpPane {
   error: string | null;
   selectedFiles: Set<string>;
   filter: string;
+  filenameEncoding: SftpFilenameEncoding;
 }
 
 // Multi-tab state for left and right sides
@@ -30,6 +31,7 @@ export const createEmptyPane = (id?: string): SftpPane => ({
   error: null,
   selectedFiles: new Set(),
   filter: "",
+  filenameEncoding: "auto",
 });
 
 // File watch event types

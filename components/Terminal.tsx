@@ -548,7 +548,18 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           | 700
           | 800
           | 900;
-        termRef.current.options.fontWeightBold = terminalSettings.fontWeightBold as
+        const resolvedFontWeightBold = (() => {
+          const fontFamily = termRef.current?.options.fontFamily || "";
+          if (typeof document === "undefined" || !document.fonts?.check) {
+            return terminalSettings.fontWeightBold;
+          }
+          const weightSpec = `${terminalSettings.fontWeightBold} ${effectiveFontSize}px ${fontFamily}`;
+          return document.fonts.check(weightSpec)
+            ? terminalSettings.fontWeightBold
+            : terminalSettings.fontWeight;
+        })();
+
+        termRef.current.options.fontWeightBold = resolvedFontWeightBold as
           | 100
           | 200
           | 300
@@ -624,6 +635,27 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           logger.warn("Fit after fonts ready failed", err);
         }
 
+        if (terminalSettings && termRef.current) {
+          const fontFamily = termRef.current.options?.fontFamily || "";
+          const effectiveFontSize = host.fontSize || fontSize;
+          if (typeof document !== "undefined" && document.fonts?.check) {
+            const weightSpec = `${terminalSettings.fontWeightBold} ${effectiveFontSize}px ${fontFamily}`;
+            const resolvedBold = document.fonts.check(weightSpec)
+              ? terminalSettings.fontWeightBold
+              : terminalSettings.fontWeight;
+            termRef.current.options.fontWeightBold = resolvedBold as
+              | 100
+              | 200
+              | 300
+              | 400
+              | 500
+              | 600
+              | 700
+              | 800
+              | 900;
+          }
+        }
+
         const id = sessionRef.current;
         if (id && term) {
           try {
@@ -641,7 +673,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [host.id, sessionId, resizeSession]);
+  }, [host.id, host.fontFamily, host.fontSize, fontFamilyId, fontSize, resizeSession, sessionId, terminalSettings]);
 
   useEffect(() => {
     if (!containerRef.current || !fitAddonRef.current) return;

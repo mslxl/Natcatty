@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
-import type { SftpFileEntry } from "../../../domain/models";
+import type { SftpFileEntry, SftpFilenameEncoding } from "../../../domain/models";
 import { buildMockLocalFiles } from "./mockLocalFiles";
 import { formatFileSize } from "./utils";
 
@@ -34,8 +34,8 @@ export const useSftpDirectoryListing = () => {
   );
 
   const listRemoteFiles = useCallback(
-    async (sftpId: string, path: string): Promise<SftpFileEntry[]> => {
-      const rawFiles = await netcattyBridge.get()?.listSftp(sftpId, path);
+    async (sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<SftpFileEntry[]> => {
+      const rawFiles = await netcattyBridge.get()?.listSftp(sftpId, path, encoding);
       if (!rawFiles) return [];
 
       return rawFiles.map((f) => {

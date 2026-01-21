@@ -76,7 +76,7 @@ export const useSftpExternalOperations = (
         throw new Error("Bridge not available");
       }
 
-      return await bridge.readSftp(sftpId, filePath);
+      return await bridge.readSftp(sftpId, filePath, pane.filenameEncoding);
     },
     [getActivePane, sftpSessionsRef],
   );
@@ -106,7 +106,7 @@ export const useSftpExternalOperations = (
         throw new Error("Binary file reading not supported");
       }
 
-      return await bridge.readSftpBinary(sftpId, filePath);
+      return await bridge.readSftpBinary(sftpId, filePath, pane.filenameEncoding);
     },
     [getActivePane, sftpSessionsRef],
   );
@@ -138,7 +138,7 @@ export const useSftpExternalOperations = (
         throw new Error("Bridge not available");
       }
 
-      await bridge.writeSftp(sftpId, filePath, content);
+      await bridge.writeSftp(sftpId, filePath, content, pane.filenameEncoding);
     },
     [getActivePane, sftpSessionsRef],
   );
@@ -172,7 +172,12 @@ export const useSftpExternalOperations = (
       }
 
       console.log("[SFTP] Downloading file to temp", { sftpId, remotePath, fileName });
-      const localTempPath = await bridge.downloadSftpToTemp(sftpId, remotePath, fileName);
+      const localTempPath = await bridge.downloadSftpToTemp(
+        sftpId,
+        remotePath,
+        fileName,
+        pane.filenameEncoding,
+      );
       console.log("[SFTP] File downloaded to temp", { localTempPath });
 
       if (bridge.registerTempFile) {
@@ -192,7 +197,12 @@ export const useSftpExternalOperations = (
       if (options?.enableWatch && bridge.startFileWatch) {
         try {
           console.log("[SFTP] Starting file watch", { localTempPath, remotePath, sftpId });
-          const result = await bridge.startFileWatch(localTempPath, remotePath, sftpId);
+          const result = await bridge.startFileWatch(
+            localTempPath,
+            remotePath,
+            sftpId,
+            pane.filenameEncoding,
+          );
           watchId = result.watchId;
           console.log("[SFTP] File watch started successfully", { watchId, localTempPath, remotePath });
         } catch (err) {
@@ -233,7 +243,7 @@ export const useSftpExternalOperations = (
               await bridge.mkdirLocal(dirPath);
             }
           } else if (sftpId) {
-            await bridge.mkdirSftp(sftpId, dirPath);
+            await bridge.mkdirSftp(sftpId, dirPath, pane.filenameEncoding);
           }
           createdDirs.add(dirPath);
         } catch {
@@ -363,6 +373,7 @@ export const useSftpExternalOperations = (
                     targetPath,
                     arrayBuffer,
                     transferId,
+                    pane.filenameEncoding,
                     onProgress,
                     undefined,
                     undefined,
@@ -375,13 +386,23 @@ export const useSftpExternalOperations = (
 
                   if (!result || result.success === false) {
                     if (bridge.writeSftpBinary) {
-                      await bridge.writeSftpBinary(sftpId, targetPath, arrayBuffer);
+                      await bridge.writeSftpBinary(
+                        sftpId,
+                        targetPath,
+                        arrayBuffer,
+                        pane.filenameEncoding,
+                      );
                     } else {
                       throw new Error("Upload failed and no fallback method available");
                     }
                   }
                 } else if (bridge.writeSftpBinary) {
-                  await bridge.writeSftpBinary(sftpId, targetPath, arrayBuffer);
+                  await bridge.writeSftpBinary(
+                    sftpId,
+                    targetPath,
+                    arrayBuffer,
+                    pane.filenameEncoding,
+                  );
                 } else {
                   throw new Error("No SFTP write method available");
                 }

@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef } from "react";
 import {
   Host,
   Identity,
+  SftpFilenameEncoding,
   SftpFileEntry,
   SSHKey,
 } from "../../domain/models";
@@ -73,7 +74,8 @@ export const useSftpState = (
   });
 
   const makeCacheKey = useCallback(
-    (connectionId: string, path: string) => `${connectionId}::${path}`,
+    (connectionId: string, path: string, encoding?: SftpFilenameEncoding) =>
+      `${connectionId}::${encoding || "auto"}::${path}`,
     [],
   );
 
@@ -144,11 +146,11 @@ export const useSftpState = (
     refresh,
     navigateUp,
     openEntry,
+    setFilter,
     toggleSelection,
     rangeSelect,
     clearSelection,
     selectAll,
-    setFilter,
     getFilteredFiles,
     createDirectory,
     createFile,
@@ -174,6 +176,28 @@ export const useSftpState = (
     isSessionError,
     dirCacheTtlMs: DIR_CACHE_TTL_MS,
   });
+
+  const setFilenameEncoding = useCallback(
+    (side: "left" | "right", encoding: SftpFilenameEncoding) => {
+      updateActiveTab(side, (prev) => ({
+        ...prev,
+        filenameEncoding: encoding,
+      }));
+
+      const pane = getActivePane(side);
+      if (pane?.connection && !pane.connection.isLocal) {
+        clearCacheForConnection(pane.connection.id);
+        // Defer refresh so state update lands before we read filenameEncoding in navigateTo.
+        setTimeout(() => {
+          const refreshedPane = getActivePane(side);
+          if (refreshedPane?.connection) {
+            navigateTo(side, refreshedPane.connection.currentPath, { force: true });
+          }
+        }, 0);
+      }
+    },
+    [clearCacheForConnection, getActivePane, navigateTo, updateActiveTab],
+  );
 
   const {
     transfers,
@@ -232,6 +256,7 @@ export const useSftpState = (
     clearSelection,
     selectAll,
     setFilter,
+    setFilenameEncoding,
     createDirectory,
     createFile,
     deleteFiles,
@@ -271,6 +296,7 @@ export const useSftpState = (
     clearSelection,
     selectAll,
     setFilter,
+    setFilenameEncoding,
     createDirectory,
     createFile,
     deleteFiles,
@@ -314,6 +340,8 @@ export const useSftpState = (
     clearSelection: (...args: Parameters<typeof clearSelection>) => methodsRef.current.clearSelection(...args),
     selectAll: (...args: Parameters<typeof selectAll>) => methodsRef.current.selectAll(...args),
     setFilter: (...args: Parameters<typeof setFilter>) => methodsRef.current.setFilter(...args),
+    setFilenameEncoding: (...args: Parameters<typeof setFilenameEncoding>) =>
+      methodsRef.current.setFilenameEncoding(...args),
     createDirectory: (...args: Parameters<typeof createDirectory>) => methodsRef.current.createDirectory(...args),
     createFile: (...args: Parameters<typeof createFile>) => methodsRef.current.createFile(...args),
     deleteFiles: (...args: Parameters<typeof deleteFiles>) => methodsRef.current.deleteFiles(...args),
