@@ -180,6 +180,8 @@ export const useSftpState = (
     conflicts,
     activeTransfersCount,
     startTransfer,
+    addExternalUpload,
+    updateExternalUpload,
     cancelTransfer,
     retryTransfer,
     clearCompletedTransfers,
@@ -195,18 +197,20 @@ export const useSftpState = (
   });
 
   const {
-    folderUploadProgress,
     readTextFile,
     readBinaryFile,
     writeTextFile,
     downloadToTempAndOpen,
     uploadExternalFiles,
-    cancelFolderUpload,
+    cancelExternalUpload,
     selectApplication,
   } = useSftpExternalOperations({
     getActivePane,
     refresh,
     sftpSessionsRef,
+    addExternalUpload,
+    updateExternalUpload,
+    dismissExternalUpload: dismissTransfer,
   });
 
   // Store methods in a ref to create stable wrapper functions
@@ -242,6 +246,7 @@ export const useSftpState = (
     writeTextFile,
     downloadToTempAndOpen,
     uploadExternalFiles,
+    cancelExternalUpload,
     selectApplication,
     startTransfer,
     cancelTransfer,
@@ -281,7 +286,7 @@ export const useSftpState = (
     writeTextFile,
     downloadToTempAndOpen,
     uploadExternalFiles,
-    cancelFolderUpload,
+    cancelExternalUpload,
     selectApplication,
     startTransfer,
     cancelTransfer,
@@ -324,7 +329,7 @@ export const useSftpState = (
     writeTextFile: (...args: Parameters<typeof writeTextFile>) => methodsRef.current.writeTextFile(...args),
     downloadToTempAndOpen: (...args: Parameters<typeof downloadToTempAndOpen>) => methodsRef.current.downloadToTempAndOpen(...args),
     uploadExternalFiles: (...args: Parameters<typeof uploadExternalFiles>) => methodsRef.current.uploadExternalFiles(...args),
-    cancelFolderUpload: () => methodsRef.current.cancelFolderUpload(),
+    cancelExternalUpload: () => methodsRef.current.cancelExternalUpload(),
     selectApplication: () => methodsRef.current.selectApplication(),
     startTransfer: (...args: Parameters<typeof startTransfer>) => methodsRef.current.startTransfer(...args),
     cancelTransfer: (...args: Parameters<typeof cancelTransfer>) => methodsRef.current.cancelTransfer(...args),
@@ -345,7 +350,6 @@ export const useSftpState = (
     transfers,
     activeTransfersCount,
     conflicts,
-    folderUploadProgress,
 
     // Stable methods - never change reference
     ...stableMethods,
@@ -366,7 +370,6 @@ export const useSftpState = (
     transfers,
     activeTransfersCount,
     conflicts,
-    folderUploadProgress,
     stableMethods,
   ]);
 };
