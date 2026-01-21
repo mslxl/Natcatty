@@ -1,136 +1,158 @@
+
+import { Terminal as XTerm, IDecoration, IDisposable, IMarker } from "@xterm/xterm";
 import { KeywordHighlightRule } from "../../types";
 
-// ESC character as unicode escape for ESLint compatibility
-const ESC = "\u001b";
+import { XTERM_PERFORMANCE_CONFIG } from "../../infrastructure/config/xtermPerformance";
 
 /**
- * Convert a hex color to ANSI 24-bit true color escape sequence
- * Format: ESC[38;2;R;G;Bm for foreground color
+ * Manages terminal decorations for keyword highlighting.
+ * Uses xterm.js Decoration API to overlay styles without modifying the data stream.
+ * This ensures zero impact on scrolling performance ("lazy" highlighting).
  */
-function hexToAnsi(hex: string): string {
-  // Remove # if present
-  const cleanHex = hex.replace("#", "");
-  const r = parseInt(cleanHex.slice(0, 2), 16);
-  const g = parseInt(cleanHex.slice(2, 4), 16);
-  const b = parseInt(cleanHex.slice(4, 6), 16);
-  return `${ESC}[38;2;${r};${g};${b}m`;
-}
+export class KeywordHighlighter implements IDisposable {
+  private term: XTerm;
+  private rules: KeywordHighlightRule[] = [];
+  private decorations: { decoration: IDecoration; marker: IMarker }[] = [];
+  private debounceTimer: NodeJS.Timeout | null = null;
+  private enabled: boolean = false;
+  private disposables: IDisposable[] = [];
 
-const ANSI_RESET = `${ESC}[0m`;
+  constructor(term: XTerm) {
+    this.term = term;
 
-// Regex to match ANSI escape sequences (to skip them during highlighting)
-// Using RegExp constructor to avoid ESLint control character warning
-// eslint-disable-next-line no-control-regex
-const ANSI_ESCAPE_REGEX = /\u001b\[[0-9;]*[a-zA-Z]/g;
+    // Debug logging
+    console.log('[KeywordHighlighter] Initialized');
 
-interface CompiledRule {
-  regex: RegExp;
-  ansiColor: string;
-}
-
-/**
- * Pre-compile keyword highlight rules for better performance
- */
-export function compileHighlightRules(
-  rules: KeywordHighlightRule[],
-  enabled: boolean
-): CompiledRule[] {
-  if (!enabled) return [];
-  
-  return rules
-    .filter((rule) => rule.enabled && rule.patterns.length > 0)
-    .map((rule) => {
-      // Combine all patterns with OR, case-insensitive
-      const combinedPattern = rule.patterns.join("|");
-      return {
-        regex: new RegExp(`(${combinedPattern})`, "gi"),
-        ansiColor: hexToAnsi(rule.color),
-      };
-    });
-}
-
-/**
- * Apply keyword highlighting to terminal output
- * This processes text and adds ANSI color codes for matched keywords
- * 
- * Note: This is a simplified approach that works well for most cases.
- * It processes the text while preserving existing ANSI escape sequences.
- */
-export function highlightKeywords(
-  text: string,
-  compiledRules: CompiledRule[]
-): string {
-  if (compiledRules.length === 0 || !text) {
-    return text;
+    // Hook into terminal events to trigger highlighting
+    this.disposables.push(
+      // When user scrolls, refresh visible area
+      this.term.onScroll(() => {
+        // console.log('[KeywordHighlighter] onScroll');
+        this.triggerRefresh();
+      }),
+      // When new data is written, refresh
+      this.term.onWriteParsed(() => {
+        // console.log('[KeywordHighlighter] onWriteParsed');
+        this.triggerRefresh();
+      }),
+      // Also refresh on resize as viewport content changes
+      this.term.onResize(() => this.triggerRefresh())
+    );
   }
 
-  // Split text into segments: ANSI sequences and regular text
-  const segments: Array<{ isAnsi: boolean; content: string }> = [];
-  let lastIndex = 0;
-  
-  // Find all ANSI escape sequences
-  let match: RegExpExecArray | null;
-  const ansiRegex = new RegExp(ANSI_ESCAPE_REGEX.source, "g");
-  
-  while ((match = ansiRegex.exec(text)) !== null) {
-    // Add text before this ANSI sequence
-    if (match.index > lastIndex) {
-      segments.push({
-        isAnsi: false,
-        content: text.slice(lastIndex, match.index),
-      });
+  public setRules(rules: KeywordHighlightRule[], enabled: boolean) {
+    this.rules = rules.filter((r) => r.enabled && r.patterns.length > 0);
+    this.enabled = enabled;
+
+    // Clear existing and force an immediate refresh if enabling
+    this.clearDecorations();
+    if (this.enabled) {
+      this.triggerRefresh();
     }
-    // Add the ANSI sequence itself
-    segments.push({
-      isAnsi: true,
-      content: match[0],
-    });
-    lastIndex = match.index + match[0].length;
   }
-  
-  // Add remaining text after last ANSI sequence
-  if (lastIndex < text.length) {
-    segments.push({
-      isAnsi: false,
-      content: text.slice(lastIndex),
-    });
-  }
-  
-  // Process only non-ANSI segments
-  const processedSegments = segments.map((segment) => {
-    if (segment.isAnsi) {
-      return segment.content;
-    }
-    
-    let processed = segment.content;
-    
-    // Apply each rule
-    for (const rule of compiledRules) {
-      processed = processed.replace(rule.regex, (matched) => {
-        return `${rule.ansiColor}${matched}${ANSI_RESET}`;
-      });
-    }
-    
-    return processed;
-  });
-  
-  return processedSegments.join("");
-}
 
-/**
- * Create a highlight processor function with pre-compiled rules
- * Use this for better performance when processing multiple chunks
- */
-export function createHighlightProcessor(
-  rules: KeywordHighlightRule[],
-  enabled: boolean
-): (text: string) => string {
-  const compiledRules = compileHighlightRules(rules, enabled);
-  
-  if (compiledRules.length === 0) {
-    // Return identity function if no rules are enabled
-    return (text: string) => text;
+  public dispose() {
+    this.clearDecorations();
+    this.disposables.forEach(d => d.dispose());
+    this.disposables = [];
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
   }
-  
-  return (text: string) => highlightKeywords(text, compiledRules);
+
+  private triggerRefresh() {
+    if (!this.enabled || this.rules.length === 0) return;
+
+    // Optimization: Disable highlighting in Alternate Buffer (e.g. Vim, Htop)
+    // These apps manage their own highlighting and have rapid repaints.
+    if (this.term.buffer.active.type === 'alternate') {
+      if (this.decorations.length > 0) {
+        this.clearDecorations();
+      }
+      return;
+    }
+
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+
+    const delay = XTERM_PERFORMANCE_CONFIG.highlighting.debounceMs;
+    this.debounceTimer = setTimeout(() => this.refreshViewport(), delay);
+  }
+
+  private clearDecorations() {
+    this.decorations.forEach(({ decoration, marker }) => {
+      decoration.dispose();
+      marker.dispose();
+    });
+    this.decorations = [];
+  }
+
+  private refreshViewport() {
+    // Safety check just in case
+    if (!this.term?.buffer?.active) return;
+
+    const buffer = this.term.buffer.active;
+    const viewportY = buffer.viewportY;
+    const rows = this.term.rows;
+    const cursorY = buffer.cursorY;
+    const baseY = buffer.baseY;
+    const cursorAbsoluteY = baseY + cursorY;
+
+    // Clear old decorations to avoid duplicates/memory leaks
+    this.clearDecorations();
+
+    // Iterate only over the visible rows
+    for (let y = 0; y < rows; y++) {
+      const lineY = viewportY + y;
+      const line = buffer.getLine(lineY);
+      if (!line) continue;
+
+      const lineText = line.translateToString(true); // true = trim right whitespace
+      if (!lineText) continue;
+
+      // Process each rule
+      for (const rule of this.rules) {
+        const patterns = rule.patterns;
+        for (const pattern of patterns) {
+          try {
+            // Create regex for this pattern
+            const regex = new RegExp(pattern, "gi");
+            let match;
+
+            while ((match = regex.exec(lineText)) !== null) {
+              const startCol = match.index;
+              const matchLen = match[0].length;
+
+              // Calculate offset relative to the absolute cursor position
+              // offset = targetLineAbs - (baseY + cursorY)
+              const offset = lineY - cursorAbsoluteY;
+              const marker = this.term.registerMarker(offset);
+
+              if (marker) {
+                const deco = this.term.registerDecoration({
+                  marker,
+                  x: startCol,
+                  width: matchLen,
+                  foregroundColor: rule.color,
+                });
+
+                if (deco) {
+                  this.decorations.push({ decoration: deco, marker });
+                } else {
+                  // If decoration failed, cleanup marker
+                  marker.dispose();
+                }
+              }
+
+
+            }
+
+          } catch (err) {
+            console.error("Highlight error", err);
+          }
+        }
+      }
+    }
+  }
 }

@@ -34,7 +34,6 @@ import { TerminalConnectionDialog } from "./terminal/TerminalConnectionDialog";
 import { TerminalToolbar } from "./terminal/TerminalToolbar";
 import { TerminalContextMenu } from "./terminal/TerminalContextMenu";
 import { TerminalSearchBar } from "./terminal/TerminalSearchBar";
-import { createHighlightProcessor } from "./terminal/keywordHighlight";
 import { createTerminalSessionStarters, type PendingAuth } from "./terminal/runtime/createTerminalSessionStarters";
 import { createXTermRuntime, type XTermRuntime } from "./terminal/runtime/createXTermRuntime";
 import { XTERM_PERFORMANCE_CONFIG } from "../infrastructure/config/xtermPerformance";
@@ -149,12 +148,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const terminalSettingsRef = useRef(terminalSettings);
   terminalSettingsRef.current = terminalSettings;
 
-  const highlightProcessorRef = useRef<(text: string) => string>((t) => t);
   useEffect(() => {
-    highlightProcessorRef.current = createHighlightProcessor(
-      terminalSettings?.keywordHighlightRules ?? [],
-      terminalSettings?.keywordHighlightEnabled ?? false,
-    );
+    if (xtermRuntimeRef.current) {
+      xtermRuntimeRef.current.keywordHighlighter.setRules(
+        terminalSettings?.keywordHighlightRules ?? [],
+        terminalSettings?.keywordHighlightEnabled ?? false
+      );
+    }
   }, [terminalSettings?.keywordHighlightEnabled, terminalSettings?.keywordHighlightRules]);
 
   const hotkeySchemeRef = useRef(hotkeyScheme);
@@ -298,7 +298,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     disposeExitRef,
     fitAddonRef,
     serializeAddonRef,
-    highlightProcessorRef,
     pendingAuthRef,
     updateStatus,
     setStatus,
