@@ -1018,13 +1018,18 @@ export const exportHostsToCsv = (hosts: Host[]): string => {
   const exportableHosts = hosts.filter((h) => h.protocol !== "serial");
 
   for (const host of exportableHosts) {
+    // For telnet hosts, use telnetPort instead of port (which is the SSH port)
+    const effectivePort = host.protocol === "telnet"
+      ? (host.telnetPort ?? host.port ?? 23)
+      : (host.port ?? 22);
+
     rows.push([
       host.group ?? "",
       host.label ?? "",
       (host.tags ?? []).join(","),
       host.hostname,
       host.protocol ?? "ssh",
-      String(host.port ?? 22),
+      String(effectivePort),
       host.username ?? "",
     ]);
   }
