@@ -1003,6 +1003,11 @@ export const exportHostsToCsv = (hosts: Host[]): string => {
   const rows: string[][] = [header];
 
   const escapeCsv = (value: string) => {
+    // Prevent CSV formula injection by prefixing dangerous characters with a single quote
+    // These characters can be interpreted as formulas by spreadsheet applications
+    if (/^[=+\-@\t\r]/.test(value)) {
+      value = "'" + value;
+    }
     if (value.includes('"')) value = value.replace(/"/g, '""');
     if (/[",\r\n]/.test(value)) return `"${value}"`;
     return value;
