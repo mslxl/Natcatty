@@ -309,7 +309,7 @@ export const DEFAULT_KEY_BINDINGS: KeyBinding[] = [
   { id: 'copy', action: 'copy', label: 'Copy from Terminal', mac: '⌘ + C', pc: 'Ctrl + Shift + C', category: 'terminal' },
   { id: 'paste', action: 'paste', label: 'Paste to Terminal', mac: '⌘ + V', pc: 'Ctrl + Shift + V', category: 'terminal' },
   { id: 'select-all', action: 'selectAll', label: 'Select All in Terminal', mac: '⌘ + A', pc: 'Ctrl + Shift + A', category: 'terminal' },
-  { id: 'clear-buffer', action: 'clearBuffer', label: 'Clear Terminal Buffer', mac: '⌘ + K', pc: 'Ctrl + L', category: 'terminal' },
+  { id: 'clear-buffer', action: 'clearBuffer', label: 'Clear Terminal Buffer', mac: '⌘ + ⌃ + K', pc: 'Ctrl + Shift + K', category: 'terminal' },
   { id: 'search-terminal', action: 'searchTerminal', label: 'Open Terminal Search', mac: '⌘ + F', pc: 'Ctrl + Shift + F', category: 'terminal' },
 
   // Navigation / Split View
@@ -320,11 +320,11 @@ export const DEFAULT_KEY_BINDINGS: KeyBinding[] = [
   // App Features
   { id: 'open-hosts', action: 'openHosts', label: 'Open Hosts Page', mac: 'Disabled', pc: 'Disabled', category: 'app' },
   { id: 'open-local', action: 'openLocal', label: 'Open Local Terminal', mac: '⌘ + L', pc: 'Ctrl + L', category: 'app' },
-  { id: 'open-sftp', action: 'openSftp', label: 'Open SFTP', mac: '⌘ + Shift + S', pc: 'Ctrl + Shift + S', category: 'app' },
+  { id: 'open-sftp', action: 'openSftp', label: 'Open SFTP', mac: '⌘ + Shift + O', pc: 'Ctrl + Shift + O', category: 'app' },
   { id: 'port-forwarding', action: 'portForwarding', label: 'Open Port Forwarding', mac: '⌘ + P', pc: 'Ctrl + P', category: 'app' },
   { id: 'command-palette', action: 'commandPalette', label: 'Open Command Palette', mac: '⌘ + K', pc: 'Ctrl + K', category: 'app' },
   { id: 'quick-switch', action: 'quickSwitch', label: 'Quick Switch', mac: '⌘ + J', pc: 'Ctrl + J', category: 'app' },
-  { id: 'snippets', action: 'snippets', label: 'Open Snippets', mac: '⌘ + Shift + S', pc: 'Ctrl + Alt + S', category: 'app' },
+  { id: 'snippets', action: 'snippets', label: 'Open Snippets', mac: '⌘ + Shift + S', pc: 'Ctrl + Shift + S', category: 'app' },
   { id: 'broadcast', action: 'broadcast', label: 'Switch the Broadcast Mode', mac: '⌘ + B', pc: 'Ctrl + B', category: 'app' },
 ];
 

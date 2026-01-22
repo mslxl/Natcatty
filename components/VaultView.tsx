@@ -2,7 +2,9 @@ import {
   Activity,
   BookMarked,
   ChevronDown,
+  ClipboardCopy,
   Copy,
+  Download,
   Edit2,
   FileCode,
   FolderPlus,
@@ -24,7 +26,7 @@ import React, { Suspense, lazy, memo, useCallback, useEffect, useMemo, useState 
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useStoredViewMode } from "../application/state/useStoredViewMode";
 import { sanitizeHost } from "../domain/host";
-import { importVaultHostsFromText } from "../domain/vaultImport";
+import { importVaultHostsFromText, exportHostsToCsvWithStats } from "../domain/vaultImport";
 import type { VaultImportFormat } from "../domain/vaultImport";
 import { STORAGE_KEY_VAULT_HOSTS_VIEW_MODE } from "../infrastructure/config/storageKeys";
 import { cn } from "../lib/utils";
@@ -314,6 +316,105 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     setEditingHost(duplicatedHost);
     setIsHostPanelOpen(true);
   }, [t]);
+
+  // Export hosts to CSV
+  const handleExportHosts = useCallback(() => {
+    if (hosts.length === 0) {
+      toast({
+        title: t('vault.hosts.export.toast.noHosts'),
+      });
+      return;
+    }
+
+    const { csv, exportedCount, skippedCount } = exportHostsToCsvWithStats(hosts);
+
+    if (exportedCount === 0) {
+      toast({
+        title: t('vault.hosts.export.toast.noHosts'),
+      });
+      return;
+    }
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `hosts_export_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    if (skippedCount > 0) {
+      toast({
+        title: t('vault.hosts.export.toast.successWithSkipped', { count: exportedCount, skipped: skippedCount }),
+      });
+    } else {
+      toast({
+        title: t('vault.hosts.export.toast.success', { count: exportedCount }),
+      });
+    }
+  }, [hosts, t]);
+
+  // Copy host credentials to clipboard
+  const handleCopyCredentials = useCallback((host: Host) => {
+    const parts: string[] = [];
+
+    // Only use telnet-specific port and credentials when protocol is explicitly telnet
+    // Don't treat telnetEnabled as primary - that's just an optional protocol
+    const isTelnet = host.protocol === "telnet";
+
+    // Format: address:port username password
+    const defaultPort = isTelnet ? 23 : 22;
+    const effectivePort = isTelnet
+      ? (host.telnetPort ?? host.port ?? 23)
+      : (host.port ?? 22);
+
+    // Bracket IPv6 addresses when appending non-default port
+    let address: string;
+    if (effectivePort !== defaultPort) {
+      const isIPv6 = host.hostname.includes(":") && !host.hostname.startsWith("[");
+      const hostname = isIPv6 ? `[${host.hostname}]` : host.hostname;
+      address = `${hostname}:${effectivePort}`;
+    } else {
+      address = host.hostname;
+    }
+    parts.push(address);
+
+    // Resolve credentials from identity if configured, otherwise use host credentials
+    // For telnet hosts, use telnet-specific credentials
+    const identity = host.identityId
+      ? identities.find((i) => i.id === host.identityId)
+      : undefined;
+
+    const username = isTelnet
+      ? (host.telnetUsername?.trim() || host.username?.trim())
+      : (identity?.username?.trim() || host.username?.trim());
+
+    const password = isTelnet
+      ? (host.telnetPassword || host.password)
+      : (identity?.password || host.password);
+
+    if (username) {
+      parts.push(username);
+    }
+
+    if (password) {
+      parts.push(password);
+    } else {
+      toast({
+        title: t('vault.hosts.copyCredentials.toast.noPassword'),
+      });
+      return;
+    }
+
+    const text = parts.join(' ');
+    navigator.clipboard.writeText(text).then(() => {
+      toast({
+        title: t('vault.hosts.copyCredentials.toast.success'),
+      });
+    });
+  }, [identities, t]);
 
   const readTextFile = useCallback(async (file: File): Promise<string> => {
     const buf = await file.arrayBuffer();
@@ -966,6 +1067,13 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                     >
                       <Upload size={14} /> {t("vault.hosts.import")}
                     </Button>
+                    <Button
+                      variant="ghost"
+                      className="w-full justify-start gap-2"
+                      onClick={handleExportHosts}
+                    >
+                      <Download size={14} /> {t("vault.hosts.export")}
+                    </Button>
                   </DropdownContent>
                 </Dropdown>
               </div>
@@ -1244,6 +1352,11 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                                 onClick={() => handleDuplicateHost(host)}
                               >
                                 <Copy className="mr-2 h-4 w-4" /> {t('action.duplicate')}
+                              </ContextMenuItem>
+                              <ContextMenuItem
+                                onClick={() => handleCopyCredentials(host)}
+                              >
+                                <ClipboardCopy className="mr-2 h-4 w-4" /> {t('vault.hosts.copyCredentials')}
                               </ContextMenuItem>
                               <ContextMenuItem
                                 className="text-destructive"
