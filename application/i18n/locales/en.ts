@@ -333,6 +333,7 @@ const en: Messages = {
   'vault.hosts.import': 'Import',
   'vault.hosts.export': 'Export',
   'vault.hosts.export.toast.success': 'Exported {count} hosts to CSV',
+  'vault.hosts.export.toast.successWithSkipped': 'Exported {count} hosts to CSV ({skipped} serial hosts skipped)',
   'vault.hosts.export.toast.noHosts': 'No hosts to export',
   'vault.hosts.allHosts': 'All hosts',
   'vault.hosts.copyCredentials': 'Copy Credentials',

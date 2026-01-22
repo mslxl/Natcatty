@@ -204,6 +204,7 @@ const zhCN: Messages = {
   'vault.hosts.import': '导入',
   'vault.hosts.export': '导出',
   'vault.hosts.export.toast.success': '已导出 {count} 个主机到 CSV',
+  'vault.hosts.export.toast.successWithSkipped': '已导出 {count} 个主机到 CSV（跳过 {skipped} 个串口主机）',
   'vault.hosts.export.toast.noHosts': '没有主机可导出',
   'vault.hosts.allHosts': '全部主机',
   'vault.hosts.copyCredentials': '复制账密信息',

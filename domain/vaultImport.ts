@@ -1013,7 +1013,11 @@ export const exportHostsToCsv = (hosts: Host[]): string => {
     return value;
   };
 
-  for (const host of hosts) {
+  // Filter out serial hosts - CSV format doesn't support serial port configuration
+  // and importing them back would result in invalid SSH entries
+  const exportableHosts = hosts.filter((h) => h.protocol !== "serial");
+
+  for (const host of exportableHosts) {
     rows.push([
       host.group ?? "",
       host.label ?? "",
@@ -1026,5 +1030,22 @@ export const exportHostsToCsv = (hosts: Host[]): string => {
   }
 
   return rows.map((r) => r.map((c) => escapeCsv(c)).join(",")).join("\r\n") + "\r\n";
+};
+
+export interface ExportHostsResult {
+  csv: string;
+  exportedCount: number;
+  skippedSerialCount: number;
+}
+
+export const exportHostsToCsvWithStats = (hosts: Host[]): ExportHostsResult => {
+  const serialHosts = hosts.filter((h) => h.protocol === "serial");
+  const exportableHosts = hosts.filter((h) => h.protocol !== "serial");
+
+  return {
+    csv: exportHostsToCsv(hosts),
+    exportedCount: exportableHosts.length,
+    skippedSerialCount: serialHosts.length,
+  };
 };
 

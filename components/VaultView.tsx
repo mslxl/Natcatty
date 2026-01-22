@@ -26,7 +26,7 @@ import React, { Suspense, lazy, memo, useCallback, useEffect, useMemo, useState 
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useStoredViewMode } from "../application/state/useStoredViewMode";
 import { sanitizeHost } from "../domain/host";
-import { importVaultHostsFromText, exportHostsToCsv } from "../domain/vaultImport";
+import { importVaultHostsFromText, exportHostsToCsvWithStats } from "../domain/vaultImport";
 import type { VaultImportFormat } from "../domain/vaultImport";
 import { STORAGE_KEY_VAULT_HOSTS_VIEW_MODE } from "../infrastructure/config/storageKeys";
 import { cn } from "../lib/utils";
@@ -326,7 +326,15 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
       return;
     }
 
-    const csv = exportHostsToCsv(hosts);
+    const { csv, exportedCount, skippedSerialCount } = exportHostsToCsvWithStats(hosts);
+
+    if (exportedCount === 0) {
+      toast({
+        title: t('vault.hosts.export.toast.noHosts'),
+      });
+      return;
+    }
+
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -337,9 +345,15 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
 
-    toast({
-      title: t('vault.hosts.export.toast.success', { count: hosts.length }),
-    });
+    if (skippedSerialCount > 0) {
+      toast({
+        title: t('vault.hosts.export.toast.successWithSkipped', { count: exportedCount, skipped: skippedSerialCount }),
+      });
+    } else {
+      toast({
+        title: t('vault.hosts.export.toast.success', { count: exportedCount }),
+      });
+    }
   }, [hosts, t]);
 
   // Copy host credentials to clipboard
