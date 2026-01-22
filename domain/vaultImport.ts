@@ -1016,8 +1016,11 @@ export const exportHostsToCsv = (hosts: Host[]): string => {
   // Filter out serial and mosh hosts - CSV format doesn't support these protocols
   // Serial: no serial port configuration support
   // Mosh: normalizeProtocol only recognizes ssh/telnet/local, mosh would be converted to ssh on import
+  // Also filter moshEnabled hosts since mosh is typically represented as ssh + moshEnabled: true
   const unsupportedProtocols = ["serial", "mosh"];
-  const exportableHosts = hosts.filter((h) => !unsupportedProtocols.includes(h.protocol ?? "ssh"));
+  const isUnsupported = (h: Host) =>
+    unsupportedProtocols.includes(h.protocol ?? "ssh") || h.moshEnabled === true;
+  const exportableHosts = hosts.filter((h) => !isUnsupported(h));
 
   // Helper to bracket IPv6 addresses for CSV export
   // IPv6 addresses contain colons which would be misinterpreted as port separators on import
@@ -1057,8 +1060,10 @@ export interface ExportHostsResult {
 
 export const exportHostsToCsvWithStats = (hosts: Host[]): ExportHostsResult => {
   const unsupportedProtocols = ["serial", "mosh"];
-  const skippedHosts = hosts.filter((h) => unsupportedProtocols.includes(h.protocol ?? "ssh"));
-  const exportableHosts = hosts.filter((h) => !unsupportedProtocols.includes(h.protocol ?? "ssh"));
+  const isUnsupported = (h: Host) =>
+    unsupportedProtocols.includes(h.protocol ?? "ssh") || h.moshEnabled === true;
+  const skippedHosts = hosts.filter((h) => isUnsupported(h));
+  const exportableHosts = hosts.filter((h) => !isUnsupported(h));
 
   return {
     csv: exportHostsToCsv(hosts),
