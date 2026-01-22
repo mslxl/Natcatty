@@ -1017,6 +1017,16 @@ export const exportHostsToCsv = (hosts: Host[]): string => {
   // and importing them back would result in invalid SSH entries
   const exportableHosts = hosts.filter((h) => h.protocol !== "serial");
 
+  // Helper to bracket IPv6 addresses for CSV export
+  // IPv6 addresses contain colons which would be misinterpreted as port separators on import
+  const formatHostname = (hostname: string): string => {
+    // Check if it looks like an IPv6 address (contains colons but not already bracketed)
+    if (hostname.includes(":") && !hostname.startsWith("[")) {
+      return `[${hostname}]`;
+    }
+    return hostname;
+  };
+
   for (const host of exportableHosts) {
     // For telnet hosts, use telnetPort instead of port (which is the SSH port)
     const effectivePort = host.protocol === "telnet"
@@ -1027,7 +1037,7 @@ export const exportHostsToCsv = (hosts: Host[]): string => {
       host.group ?? "",
       host.label ?? "",
       (host.tags ?? []).join(","),
-      host.hostname,
+      formatHostname(host.hostname),
       host.protocol ?? "ssh",
       String(effectivePort),
       host.username ?? "",
