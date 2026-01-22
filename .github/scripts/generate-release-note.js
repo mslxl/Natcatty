@@ -1,8 +1,44 @@
 const fs = require('fs');
+const path = require('path');
 
-const version = process.env.VERSION || (process.env.GITHUB_REF_NAME ? process.env.GITHUB_REF_NAME.replace(/^v/, '') : '0.0.0');
+// Determine version priority:
+// 1. VERSION env variable
+// 2. Valid version tag (v1.2.3 format)
+// 3. Short commit ID (first 7 chars of GITHUB_SHA)
+// 4. package.json version as fallback
+function getVersion() {
+  if (process.env.VERSION) {
+    return process.env.VERSION;
+  }
+
+  const refName = process.env.GITHUB_REF_NAME;
+  // Check if refName is a valid version tag (e.g., v1.2.3)
+  if (refName && /^v\d+\.\d+\.\d+/.test(refName)) {
+    return refName.replace(/^v/, '');
+  }
+
+  // Use short commit ID
+  const sha = process.env.GITHUB_SHA;
+  if (sha) {
+    return sha.substring(0, 7);
+  }
+
+  // Fall back to package.json version
+  try {
+    const pkgPath = path.join(__dirname, '..', '..', 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    return pkg.version;
+  } catch {
+    return '0.0.0';
+  }
+}
+
+const version = getVersion();
 const repo = process.env.GITHUB_REPOSITORY || 'binaricat/netcatty';
-const tag = process.env.GITHUB_REF_NAME || `v${version}`;
+// For tag releases, use the tag; for workflow_dispatch, create a tag from version
+const tag = (process.env.GITHUB_REF_NAME && /^v\d+\.\d+\.\d+/.test(process.env.GITHUB_REF_NAME))
+  ? process.env.GITHUB_REF_NAME
+  : `v${version}`;
 const baseUrl = `https://github.com/${repo}/releases/download/${tag}`;
 
 // Filename patterns based on electron-builder.config.cjs artifactName: '${productName}-${version}-${os}-${arch}.${ext}'
