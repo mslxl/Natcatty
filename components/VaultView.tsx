@@ -368,7 +368,16 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     const effectivePort = isTelnet
       ? (host.telnetPort ?? host.port ?? 23)
       : (host.port ?? 22);
-    const address = host.hostname + (effectivePort !== defaultPort ? `:${effectivePort}` : '');
+
+    // Bracket IPv6 addresses when appending non-default port
+    let address: string;
+    if (effectivePort !== defaultPort) {
+      const isIPv6 = host.hostname.includes(":") && !host.hostname.startsWith("[");
+      const hostname = isIPv6 ? `[${host.hostname}]` : host.hostname;
+      address = `${hostname}:${effectivePort}`;
+    } else {
+      address = host.hostname;
+    }
     parts.push(address);
 
     // Resolve credentials from identity if configured, otherwise use host credentials
