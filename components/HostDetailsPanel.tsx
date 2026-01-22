@@ -169,6 +169,8 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
       }
       setForm(updatedData);
       setGroupInputValue(initialData.group || "");
+      // Reset password visibility when host changes for privacy
+      setShowPassword(false);
     }
   }, [initialData]);
 
