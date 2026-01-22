@@ -326,7 +326,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
       return;
     }
 
-    const { csv, exportedCount, skippedSerialCount } = exportHostsToCsvWithStats(hosts);
+    const { csv, exportedCount, skippedCount } = exportHostsToCsvWithStats(hosts);
 
     if (exportedCount === 0) {
       toast({
@@ -345,9 +345,9 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
 
-    if (skippedSerialCount > 0) {
+    if (skippedCount > 0) {
       toast({
-        title: t('vault.hosts.export.toast.successWithSkipped', { count: exportedCount, skipped: skippedSerialCount }),
+        title: t('vault.hosts.export.toast.successWithSkipped', { count: exportedCount, skipped: skippedCount }),
       });
     } else {
       toast({
