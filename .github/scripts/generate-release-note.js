@@ -55,7 +55,6 @@ const content = `
 
 | OS | Download |
 | :--- | :--- |
-| **Android** | Coming soon... |
 | **Windows** | ${badges.win.setup_x64} ${badges.win.setup_arm64} |
 | **macOS** | ${badges.mac.apple_silicon} ${badges.mac.intel} |
 | **Linux** | ${badges.linux.appimage_x64} ${badges.linux.deb_x64} ${badges.linux.rpm_x64} <br> ${badges.linux.appimage_arm64} ${badges.linux.deb_arm64} ${badges.linux.rpm_arm64} |
