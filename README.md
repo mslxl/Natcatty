@@ -279,11 +279,11 @@ Netcatty automatically detects and displays OS icons for connected hosts:
 
 Download the latest release for your platform from [GitHub Releases](https://github.com/binaricat/Netcatty/releases/latest).
 
-| Platform | Architecture | Status |
-|----------|--------------|--------|
-| **macOS** | Apple Silicon (M1/M2/M3) | ✅ Supported |
-| **macOS** | Intel | ✅ Supported |
-| **Windows** | x64 | ✅ Supported |
+| OS | Support |
+| :--- | :--- |
+| **macOS** | Universal (x64 / arm64) |
+| **Windows** | x64 / arm64 |
+| **Linux** | x64 / arm64 |
 
 Or browse all releases at [GitHub Releases](https://github.com/binaricat/Netcatty/releases).
 

@@ -280,11 +280,11 @@ Netcatty 自动检测并显示已连接主机的操作系统图标：
 
 从 [GitHub Releases](https://github.com/binaricat/Netcatty/releases/latest) 下载适合您平台的最新版本。
 
-| 平台 | 架构 | 状态 |
-|------|------|------|
-| **macOS** | Apple Silicon (M1/M2/M3) | ✅ 支持 |
-| **macOS** | Intel | ✅ 支持 |
-| **Windows** | x64 | ✅ 支持 |
+| 操作系统 | 支持情况 |
+| :--- | :--- |
+| **macOS** | Universal (x64 / arm64) |
+| **Windows** | x64 / arm64 |
+| **Linux** | x64 / arm64 |
 
 或在 [GitHub Releases](https://github.com/binaricat/Netcatty/releases) 浏览所有版本。
 
