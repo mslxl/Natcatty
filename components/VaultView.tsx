@@ -2,7 +2,9 @@ import {
   Activity,
   BookMarked,
   ChevronDown,
+  ClipboardCopy,
   Copy,
+  Download,
   Edit2,
   FileCode,
   FolderPlus,
@@ -24,7 +26,7 @@ import React, { Suspense, lazy, memo, useCallback, useEffect, useMemo, useState 
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useStoredViewMode } from "../application/state/useStoredViewMode";
 import { sanitizeHost } from "../domain/host";
-import { importVaultHostsFromText } from "../domain/vaultImport";
+import { importVaultHostsFromText, exportHostsToCsv } from "../domain/vaultImport";
 import type { VaultImportFormat } from "../domain/vaultImport";
 import { STORAGE_KEY_VAULT_HOSTS_VIEW_MODE } from "../infrastructure/config/storageKeys";
 import { cn } from "../lib/utils";
@@ -313,6 +315,60 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     // Open the edit panel with the duplicated host for modification
     setEditingHost(duplicatedHost);
     setIsHostPanelOpen(true);
+  }, [t]);
+
+  // Export hosts to CSV
+  const handleExportHosts = useCallback(() => {
+    if (hosts.length === 0) {
+      toast({
+        title: t('vault.hosts.export.toast.noHosts'),
+      });
+      return;
+    }
+
+    const csv = exportHostsToCsv(hosts);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `hosts_export_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    toast({
+      title: t('vault.hosts.export.toast.success', { count: hosts.length }),
+    });
+  }, [hosts, t]);
+
+  // Copy host credentials to clipboard
+  const handleCopyCredentials = useCallback((host: Host) => {
+    const parts: string[] = [];
+
+    // Format: address:port username password
+    const address = host.hostname + (host.port && host.port !== 22 ? `:${host.port}` : '');
+    parts.push(address);
+
+    if (host.username) {
+      parts.push(host.username);
+    }
+
+    if (host.password) {
+      parts.push(host.password);
+    } else {
+      toast({
+        title: t('vault.hosts.copyCredentials.toast.noPassword'),
+      });
+      return;
+    }
+
+    const text = parts.join(' ');
+    navigator.clipboard.writeText(text).then(() => {
+      toast({
+        title: t('vault.hosts.copyCredentials.toast.success'),
+      });
+    });
   }, [t]);
 
   const readTextFile = useCallback(async (file: File): Promise<string> => {
@@ -966,6 +1022,13 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                     >
                       <Upload size={14} /> {t("vault.hosts.import")}
                     </Button>
+                    <Button
+                      variant="ghost"
+                      className="w-full justify-start gap-2"
+                      onClick={handleExportHosts}
+                    >
+                      <Download size={14} /> {t("vault.hosts.export")}
+                    </Button>
                   </DropdownContent>
                 </Dropdown>
               </div>
@@ -1244,6 +1307,11 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                                 onClick={() => handleDuplicateHost(host)}
                               >
                                 <Copy className="mr-2 h-4 w-4" /> {t('action.duplicate')}
+                              </ContextMenuItem>
+                              <ContextMenuItem
+                                onClick={() => handleCopyCredentials(host)}
+                              >
+                                <ClipboardCopy className="mr-2 h-4 w-4" /> {t('vault.hosts.copyCredentials')}
                               </ContextMenuItem>
                               <ContextMenuItem
                                 className="text-destructive"

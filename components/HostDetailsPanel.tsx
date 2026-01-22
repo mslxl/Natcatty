@@ -2,6 +2,8 @@ import {
   AlertTriangle,
   Check,
   ChevronDown,
+  Eye,
+  EyeOff,
   FolderLock,
   FolderPlus,
   Forward,
@@ -122,6 +124,9 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
 
   // Identity suggestion dropdown state (popover anchored to username input)
   const [identitySuggestionsOpen, setIdentitySuggestionsOpen] = useState(false);
+
+  // Password visibility state
+  const [showPassword, setShowPassword] = useState(false);
 
   // New group creation state
   const [newGroupName, setNewGroupName] = useState("");
@@ -244,9 +249,12 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   };
 
   const handleSubmit = () => {
-    if (!form.hostname || !form.label) return;
+    if (!form.hostname) return;
+    // If label is empty, use hostname as label
+    const finalLabel = form.label?.trim() || form.hostname;
     const cleaned: Host = {
       ...form,
+      label: finalLabel,
       group: groupInputValue.trim() || form.group,
       tags: form.tags || [],
       port: form.port || 22,
@@ -501,7 +509,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
           size="icon"
           className="h-8 w-8"
           onClick={handleSubmit}
-          disabled={!form.hostname || !form.label}
+          disabled={!form.hostname}
           aria-label={t("hostDetails.saveAria")}
         >
           <Check size={16} />
@@ -800,13 +808,23 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
             )}
 
             {!selectedIdentity && !form.identityId && (
-              <Input
-                placeholder={t("hostDetails.password.placeholder")}
-                type="password"
-                value={form.password || ""}
-                onChange={(e) => update("password", e.target.value)}
-                className="h-10"
-              />
+              <div className="relative">
+                <Input
+                  placeholder={t("hostDetails.password.placeholder")}
+                  type={showPassword ? "text" : "password"}
+                  value={form.password || ""}
+                  onChange={(e) => update("password", e.target.value)}
+                  className="h-10 pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground transition-colors"
+                  title={showPassword ? t("hostDetails.password.hide") : t("hostDetails.password.show")}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
             )}
 
             {/* Save Password toggle - shown when password is entered */}
@@ -1460,7 +1478,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
         <Button
           className="w-full h-10"
           onClick={handleSubmit}
-          disabled={!form.hostname || !form.label}
+          disabled={!form.hostname}
         >
           {t("common.save")}
         </Button>

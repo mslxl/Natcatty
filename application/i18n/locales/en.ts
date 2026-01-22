@@ -331,7 +331,13 @@ const en: Messages = {
   'vault.hosts.newHost': 'New Host',
   'vault.hosts.newGroup': 'New Group',
   'vault.hosts.import': 'Import',
+  'vault.hosts.export': 'Export',
+  'vault.hosts.export.toast.success': 'Exported {count} hosts to CSV',
+  'vault.hosts.export.toast.noHosts': 'No hosts to export',
   'vault.hosts.allHosts': 'All hosts',
+  'vault.hosts.copyCredentials': 'Copy Credentials',
+  'vault.hosts.copyCredentials.toast.success': 'Credentials copied to clipboard',
+  'vault.hosts.copyCredentials.toast.noPassword': 'No password saved for this host',
 
   // Vault import
   'vault.import.title': 'Add data to your vault',
@@ -662,6 +668,8 @@ const en: Messages = {
   'hostDetails.section.mosh': 'Mosh',
   'hostDetails.username.placeholder': 'Username',
   'hostDetails.password.placeholder': 'Password',
+  'hostDetails.password.show': 'Show password',
+  'hostDetails.password.hide': 'Hide password',
   'hostDetails.password.save': 'Save password',
   'hostDetails.identity.suggestions': 'Identities',
   'hostDetails.identity.missing': 'Identity not found',

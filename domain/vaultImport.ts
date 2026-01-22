@@ -998,3 +998,28 @@ export const getVaultCsvTemplate = (
   return rows.map((r) => r.map((c) => escapeCsv(c)).join(",")).join("\r\n") + "\r\n";
 };
 
+export const exportHostsToCsv = (hosts: Host[]): string => {
+  const header = ["Groups", "Label", "Tags", "Hostname/IP", "Protocol", "Port", "Username"];
+  const rows: string[][] = [header];
+
+  const escapeCsv = (value: string) => {
+    if (value.includes('"')) value = value.replace(/"/g, '""');
+    if (/[",\r\n]/.test(value)) return `"${value}"`;
+    return value;
+  };
+
+  for (const host of hosts) {
+    rows.push([
+      host.group ?? "",
+      host.label ?? "",
+      (host.tags ?? []).join(","),
+      host.hostname,
+      host.protocol ?? "ssh",
+      String(host.port ?? 22),
+      host.username ?? "",
+    ]);
+  }
+
+  return rows.map((r) => r.map((c) => escapeCsv(c)).join(",")).join("\r\n") + "\r\n";
+};
+

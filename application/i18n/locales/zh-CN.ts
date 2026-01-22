@@ -202,7 +202,13 @@ const zhCN: Messages = {
   'vault.hosts.newHost': '新建主机',
   'vault.hosts.newGroup': '新建分组',
   'vault.hosts.import': '导入',
+  'vault.hosts.export': '导出',
+  'vault.hosts.export.toast.success': '已导出 {count} 个主机到 CSV',
+  'vault.hosts.export.toast.noHosts': '没有主机可导出',
   'vault.hosts.allHosts': '全部主机',
+  'vault.hosts.copyCredentials': '复制账密信息',
+  'vault.hosts.copyCredentials.toast.success': '账密信息已复制到剪贴板',
+  'vault.hosts.copyCredentials.toast.noPassword': '该主机未保存密码',
 
   // Vault import
   'vault.import.title': '添加数据到你的 Vault',
@@ -409,6 +415,8 @@ const zhCN: Messages = {
   'hostDetails.section.mosh': 'Mosh',
   'hostDetails.username.placeholder': '用户名',
   'hostDetails.password.placeholder': '密码',
+  'hostDetails.password.show': '显示密码',
+  'hostDetails.password.hide': '隐藏密码',
   'hostDetails.password.save': '保存密码',
   'hostDetails.identity.suggestions': '身份',
   'hostDetails.identity.missing': '身份不存在',
