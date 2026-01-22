@@ -98,7 +98,8 @@
 
 ### 📁 SFTP
 - **Dual-pane file browser** — local ↔ remote or remote ↔ remote
-- **Drag & drop** file transfers
+- **Sudo Privilege Escalation** — Browse and edit root-owned files with sudo
+- **Drag & Drop** uploads and downloads
 - **Queue management** for batch transfers
 - **Progress tracking** with transfer speed
 
