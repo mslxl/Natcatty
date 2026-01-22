@@ -21,23 +21,40 @@ const getContextMenuPortalEl = () => {
       pointerEvents: "none",
     });
 
-    // Use MutationObserver to prevent aria-hidden from being set when menu is open
+    // Intercept aria-hidden attribute to prevent it from being set when menu is open
     // This avoids "Blocked aria-hidden on an element because its descendant retained focus" warnings
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        if (
-          mutation.type === "attributes" &&
-          mutation.attributeName === "aria-hidden" &&
-          portal &&
-          portal.getAttribute("aria-hidden") === "true" &&
-          portal.children.length > 0
-        ) {
-          // Remove aria-hidden when there are children (menu is open)
-          portal.removeAttribute("aria-hidden");
+    let ariaHiddenValue: string | null = null;
+    Object.defineProperty(portal, "ariaHidden", {
+      get() {
+        return ariaHiddenValue;
+      },
+      set(value: string | null) {
+        // Block aria-hidden="true" when there are children (menu is open)
+        if (value === "true" && portal && portal.children.length > 0) {
+          return;
         }
-      }
+        ariaHiddenValue = value;
+      },
+      configurable: true,
     });
-    observer.observe(portal, { attributes: true });
+
+    // Also override setAttribute for aria-hidden
+    const originalSetAttribute = portal.setAttribute.bind(portal);
+    portal.setAttribute = function (name: string, value: string) {
+      if (name === "aria-hidden" && value === "true" && portal && portal.children.length > 0) {
+        return;
+      }
+      originalSetAttribute(name, value);
+    };
+
+    // Override removeAttribute to sync our internal state
+    const originalRemoveAttribute = portal.removeAttribute.bind(portal);
+    portal.removeAttribute = function (name: string) {
+      if (name === "aria-hidden") {
+        ariaHiddenValue = null;
+      }
+      originalRemoveAttribute(name);
+    };
 
     document.body.appendChild(portal);
   }
