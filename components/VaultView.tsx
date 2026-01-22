@@ -320,18 +320,14 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   // Export hosts to CSV
   const handleExportHosts = useCallback(() => {
     if (hosts.length === 0) {
-      toast({
-        title: t('vault.hosts.export.toast.noHosts'),
-      });
+      toast.warning(t('vault.hosts.export.toast.noHosts'));
       return;
     }
 
     const { csv, exportedCount, skippedCount } = exportHostsToCsvWithStats(hosts);
 
     if (exportedCount === 0) {
-      toast({
-        title: t('vault.hosts.export.toast.noHosts'),
-      });
+      toast.warning(t('vault.hosts.export.toast.noHosts'));
       return;
     }
 
@@ -346,25 +342,18 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     URL.revokeObjectURL(url);
 
     if (skippedCount > 0) {
-      toast({
-        title: t('vault.hosts.export.toast.successWithSkipped', { count: exportedCount, skipped: skippedCount }),
-      });
+      toast.warning(t('vault.hosts.export.toast.successWithSkipped', { count: exportedCount, skipped: skippedCount }));
     } else {
-      toast({
-        title: t('vault.hosts.export.toast.success', { count: exportedCount }),
-      });
+      toast.success(t('vault.hosts.export.toast.success', { count: exportedCount }));
     }
   }, [hosts, t]);
 
   // Copy host credentials to clipboard
   const handleCopyCredentials = useCallback((host: Host) => {
-    const parts: string[] = [];
-
     // Only use telnet-specific port and credentials when protocol is explicitly telnet
     // Don't treat telnetEnabled as primary - that's just an optional protocol
     const isTelnet = host.protocol === "telnet";
 
-    // Format: address:port username password
     const defaultPort = isTelnet ? 23 : 22;
     const effectivePort = isTelnet
       ? (host.telnetPort ?? host.port ?? 23)
@@ -379,7 +368,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     } else {
       address = host.hostname;
     }
-    parts.push(address);
 
     // Resolve credentials from identity if configured, otherwise use host credentials
     // For telnet hosts, use telnet-specific credentials
@@ -395,24 +383,14 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
       ? (host.telnetPassword || host.password)
       : (identity?.password || host.password);
 
-    if (username) {
-      parts.push(username);
-    }
-
-    if (password) {
-      parts.push(password);
-    } else {
-      toast({
-        title: t('vault.hosts.copyCredentials.toast.noPassword'),
-      });
+    if (!password) {
+      toast.warning(t('vault.hosts.copyCredentials.toast.noPassword'));
       return;
     }
 
-    const text = parts.join(' ');
+    const text = `host: ${address}\nusername: ${username ?? ''}\npassword: ${password}`;
     navigator.clipboard.writeText(text).then(() => {
-      toast({
-        title: t('vault.hosts.copyCredentials.toast.success'),
-      });
+      toast.success(t('vault.hosts.copyCredentials.toast.success'));
     });
   }, [identities, t]);
 
