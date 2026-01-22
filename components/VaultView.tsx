@@ -1398,8 +1398,10 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           allHosts={hosts}
           defaultGroup={editingHost ? undefined : selectedGroupPath}
           onSave={(host) => {
+            // Check if host already exists in the list (for updates vs. new/duplicate)
+            const hostExists = hosts.some((h) => h.id === host.id);
             onUpdateHosts(
-              editingHost
+              hostExists
                 ? hosts.map((h) => (h.id === host.id ? host : h))
                 : [...hosts, host],
             );
