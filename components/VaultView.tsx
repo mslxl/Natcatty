@@ -2,6 +2,7 @@ import {
   Activity,
   BookMarked,
   ChevronDown,
+  Copy,
   Edit2,
   FileCode,
   FolderPlus,
@@ -300,6 +301,19 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     setEditingHost(host);
     setIsHostPanelOpen(true);
   }, []);
+
+  const handleDuplicateHost = useCallback((host: Host) => {
+    // Create a copy of the host with a new ID and modified label
+    const duplicatedHost: Host = {
+      ...host,
+      id: crypto.randomUUID(),
+      label: `${host.label} (${t('action.copy')})`,
+      createdAt: Date.now(),
+    };
+    // Open the edit panel with the duplicated host for modification
+    setEditingHost(duplicatedHost);
+    setIsHostPanelOpen(true);
+  }, [t]);
 
   const readTextFile = useCallback(async (file: File): Promise<string> => {
     const buf = await file.arrayBuffer();
@@ -747,7 +761,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             className={cn(
               "w-full justify-start gap-3 h-10",
               currentSection === "hosts" &&
-              "bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40",
+              "bg-foreground/10 text-foreground hover:bg-foreground/15 border-border/40",
             )}
             onClick={() => {
               setCurrentSection("hosts");
@@ -761,7 +775,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             className={cn(
               "w-full justify-start gap-3 h-10",
               currentSection === "keys" &&
-              "bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40",
+              "bg-foreground/10 text-foreground hover:bg-foreground/15 border-border/40",
             )}
             onClick={() => {
               setCurrentSection("keys");
@@ -774,7 +788,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             className={cn(
               "w-full justify-start gap-3 h-10",
               currentSection === "port" &&
-              "bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40",
+              "bg-foreground/10 text-foreground hover:bg-foreground/15 border-border/40",
             )}
             onClick={() => setCurrentSection("port")}
           >
@@ -785,7 +799,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             className={cn(
               "w-full justify-start gap-3 h-10",
               currentSection === "snippets" &&
-              "bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40",
+              "bg-foreground/10 text-foreground hover:bg-foreground/15 border-border/40",
             )}
             onClick={() => {
               setCurrentSection("snippets");
@@ -798,7 +812,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             className={cn(
               "w-full justify-start gap-3 h-10",
               currentSection === "knownhosts" &&
-              "bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40",
+              "bg-foreground/10 text-foreground hover:bg-foreground/15 border-border/40",
             )}
             onClick={() => setCurrentSection("knownhosts")}
           >
@@ -809,7 +823,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             className={cn(
               "w-full justify-start gap-3 h-10",
               currentSection === "logs" &&
-              "bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40",
+              "bg-foreground/10 text-foreground hover:bg-foreground/15 border-border/40",
             )}
             onClick={() => setCurrentSection("logs")}
           >
@@ -1219,18 +1233,23 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                               <ContextMenuItem
                                 onClick={() => handleHostConnect(host)}
                               >
-                                <Plug className="mr-2 h-4 w-4" /> Connect
+                                <Plug className="mr-2 h-4 w-4" /> {t('vault.hosts.connect')}
                               </ContextMenuItem>
                               <ContextMenuItem
                                 onClick={() => handleEditHost(host)}
                               >
-                                <Edit2 className="mr-2 h-4 w-4" /> Edit
+                                <Edit2 className="mr-2 h-4 w-4" /> {t('action.edit')}
+                              </ContextMenuItem>
+                              <ContextMenuItem
+                                onClick={() => handleDuplicateHost(host)}
+                              >
+                                <Copy className="mr-2 h-4 w-4" /> {t('action.duplicate')}
                               </ContextMenuItem>
                               <ContextMenuItem
                                 className="text-destructive"
                                 onClick={() => onDeleteHost(host.id)}
                               >
-                                <Trash2 className="mr-2 h-4 w-4" /> Delete
+                                <Trash2 className="mr-2 h-4 w-4" /> {t('action.delete')}
                               </ContextMenuItem>
                             </ContextMenuContent>
                           </ContextMenu>
@@ -1379,8 +1398,10 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           allHosts={hosts}
           defaultGroup={editingHost ? undefined : selectedGroupPath}
           onSave={(host) => {
+            // Check if host already exists in the list (for updates vs. new/duplicate)
+            const hostExists = hosts.some((h) => h.id === host.id);
             onUpdateHosts(
-              editingHost
+              hostExists
                 ? hosts.map((h) => (h.id === host.id ? host : h))
                 : [...hosts, host],
             );

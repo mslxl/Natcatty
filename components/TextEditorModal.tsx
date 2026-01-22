@@ -7,7 +7,7 @@ import {
   Search,
   X,
 } from 'lucide-react';
-import Editor, { type OnMount, loader } from '@monaco-editor/react';
+import Editor, { type OnMount, loader, useMonaco } from '@monaco-editor/react';
 import type * as Monaco from 'monaco-editor';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -82,6 +82,50 @@ const languageIdToMonaco = (langId: string): string => {
   return mapping[langId] || 'plaintext';
 };
 
+// Convert HSL string "h s% l%" to hex color
+const hslToHex = (hslString: string): string => {
+  const parts = hslString.trim().split(/\s+/);
+  if (parts.length < 3) return '#1e1e1e';
+  const h = parseFloat(parts[0]) / 360;
+  const s = parseFloat(parts[1].replace('%', '')) / 100;
+  const l = parseFloat(parts[2].replace('%', '')) / 100;
+
+  const hue2rgb = (p: number, q: number, t: number) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+
+  let r: number, g: number, b: number;
+  if (s === 0) {
+    r = g = b = l;
+  } else {
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1 / 3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1 / 3);
+  }
+
+  const toHex = (x: number) => {
+    const hex = Math.round(x * 255).toString(16);
+    return hex.length === 1 ? '0' + hex : hex;
+  };
+
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+};
+
+// Get background color from CSS variable
+const getBackgroundColor = (): string => {
+  const bgValue = getComputedStyle(document.documentElement)
+    .getPropertyValue('--background')
+    .trim();
+  return bgValue ? hslToHex(bgValue) : '#1e1e1e';
+};
+
 export const TextEditorModal: React.FC<TextEditorModalProps> = ({
   open,
   onClose,
@@ -90,12 +134,13 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
   onSave,
 }) => {
   const { t } = useI18n();
+  const monaco = useMonaco();
   const [content, setContent] = useState(initialContent);
   const [saving, setSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const [languageId, setLanguageId] = useState(() => getLanguageId(fileName));
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
-  
+
   // Ref to store the latest save function to avoid stale closure in keyboard shortcut
   const handleSaveRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
@@ -104,13 +149,49 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
     document.documentElement.classList.contains('dark')
   );
 
-  // Listen for theme changes via MutationObserver on <html> class
+  // Track background color for custom theme
+  const [bgColor, setBgColor] = useState(() => getBackgroundColor());
+
+  // Custom theme name
+  const customThemeName = isDarkTheme ? 'netcatty-dark' : 'netcatty-light';
+
+  // Define and update custom Monaco themes based on UI background color
+  useEffect(() => {
+    if (!monaco) return;
+
+    // Define dark theme with custom background
+    monaco.editor.defineTheme('netcatty-dark', {
+      base: 'vs-dark',
+      inherit: true,
+      rules: [],
+      colors: {
+        'editor.background': bgColor,
+      },
+    });
+
+    // Define light theme with custom background
+    monaco.editor.defineTheme('netcatty-light', {
+      base: 'vs',
+      inherit: true,
+      rules: [],
+      colors: {
+        'editor.background': bgColor,
+      },
+    });
+
+    // Apply the current theme
+    monaco.editor.setTheme(customThemeName);
+  }, [monaco, isDarkTheme, bgColor, customThemeName]);
+
+  // Listen for theme changes via MutationObserver on <html> class and style
   useEffect(() => {
     const root = document.documentElement;
-    const observer = new MutationObserver(() => {
+    const updateTheme = () => {
       setIsDarkTheme(root.classList.contains('dark'));
-    });
-    observer.observe(root, { attributes: true, attributeFilter: ['class'] });
+      setBgColor(getBackgroundColor());
+    };
+    const observer = new MutationObserver(updateTheme);
+    observer.observe(root, { attributes: true, attributeFilter: ['class', 'style'] });
     return () => observer.disconnect();
   }, []);
 
@@ -185,7 +266,6 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
 
   const supportedLanguages = useMemo(() => getSupportedLanguages(), []);
   const monacoLanguage = useMemo(() => languageIdToMonaco(languageId), [languageId]);
-  const monacoTheme = isDarkTheme ? 'vs-dark' : 'light';
   const languageOptions = useMemo(
     () => supportedLanguages.map((lang) => ({ value: lang.id, label: lang.name })),
     [supportedLanguages],
@@ -265,7 +345,7 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
             value={content}
             onChange={handleEditorChange}
             onMount={handleEditorMount}
-            theme={monacoTheme}
+            theme={customThemeName}
             loading={
               <div className="absolute inset-0 flex items-center justify-center bg-background">
                 <Loader2 size={32} className="animate-spin text-muted-foreground" />
