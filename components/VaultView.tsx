@@ -350,12 +350,20 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     const address = host.hostname + (host.port && host.port !== 22 ? `:${host.port}` : '');
     parts.push(address);
 
-    if (host.username) {
-      parts.push(host.username);
+    // Resolve credentials from identity if configured, otherwise use host credentials
+    const identity = host.identityId
+      ? identities.find((i) => i.id === host.identityId)
+      : undefined;
+
+    const username = identity?.username?.trim() || host.username?.trim();
+    const password = identity?.password || host.password;
+
+    if (username) {
+      parts.push(username);
     }
 
-    if (host.password) {
-      parts.push(host.password);
+    if (password) {
+      parts.push(password);
     } else {
       toast({
         title: t('vault.hosts.copyCredentials.toast.noPassword'),
@@ -369,7 +377,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
         title: t('vault.hosts.copyCredentials.toast.success'),
       });
     });
-  }, [t]);
+  }, [identities, t]);
 
   const readTextFile = useCallback(async (file: File): Promise<string> => {
     const buf = await file.arrayBuffer();
