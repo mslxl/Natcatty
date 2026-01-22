@@ -70,15 +70,12 @@ jobs:
           name: netcatty-${{ matrix.os }}
           path: |
             release/*.dmg
-            release/*.zip
             release/*.exe
             release/*.msi
             release/*.AppImage
             release/*.deb
             release/*.rpm
             release/*.tar.gz
-            release/*.blockmap
-            release/latest*.yml
           if-no-files-found: ignore
 
   release:
