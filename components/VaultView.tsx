@@ -761,7 +761,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             className={cn(
               "w-full justify-start gap-3 h-10",
               currentSection === "hosts" &&
-              "bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40",
+              "bg-foreground/10 text-foreground hover:bg-foreground/15 border-border/40",
             )}
             onClick={() => {
               setCurrentSection("hosts");
@@ -775,7 +775,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             className={cn(
               "w-full justify-start gap-3 h-10",
               currentSection === "keys" &&
-              "bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40",
+              "bg-foreground/10 text-foreground hover:bg-foreground/15 border-border/40",
             )}
             onClick={() => {
               setCurrentSection("keys");
@@ -788,7 +788,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             className={cn(
               "w-full justify-start gap-3 h-10",
               currentSection === "port" &&
-              "bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40",
+              "bg-foreground/10 text-foreground hover:bg-foreground/15 border-border/40",
             )}
             onClick={() => setCurrentSection("port")}
           >
@@ -799,7 +799,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             className={cn(
               "w-full justify-start gap-3 h-10",
               currentSection === "snippets" &&
-              "bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40",
+              "bg-foreground/10 text-foreground hover:bg-foreground/15 border-border/40",
             )}
             onClick={() => {
               setCurrentSection("snippets");
@@ -812,7 +812,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             className={cn(
               "w-full justify-start gap-3 h-10",
               currentSection === "knownhosts" &&
-              "bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40",
+              "bg-foreground/10 text-foreground hover:bg-foreground/15 border-border/40",
             )}
             onClick={() => setCurrentSection("knownhosts")}
           >
@@ -823,7 +823,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             className={cn(
               "w-full justify-start gap-3 h-10",
               currentSection === "logs" &&
-              "bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40",
+              "bg-foreground/10 text-foreground hover:bg-foreground/15 border-border/40",
             )}
             onClick={() => setCurrentSection("logs")}
           >
