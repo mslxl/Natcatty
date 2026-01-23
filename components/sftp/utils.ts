@@ -48,14 +48,14 @@ export const formatTransferBytes = (bytes: number): string => {
 };
 
 /**
- * Format date as YYYY-MM-DD hh:mm:ss in local timezone
+ * Format date as YYYY-MM-DD hh:mm in local timezone
  */
 export const formatDate = (timestamp: number | undefined): string => {
     if (!timestamp) return '--';
     const date = new Date(timestamp);
     if (isNaN(date.getTime())) return '--';
     const pad = (n: number) => n.toString().padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 };
 
 /**
