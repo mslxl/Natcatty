@@ -12,5 +12,5 @@ export const formatDate = (dateStr: string | number | undefined): string => {
   const date = typeof dateStr === "number" ? new Date(dateStr) : new Date(dateStr);
   if (isNaN(date.getTime())) return String(dateStr);
   const pad = (value: number) => value.toString().padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 };

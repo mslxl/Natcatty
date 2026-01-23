@@ -11,13 +11,9 @@ export const formatFileSize = (bytes: number): string => {
 export const formatDate = (timestamp: number): string => {
   if (!timestamp) return "--";
   const date = new Date(timestamp);
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  if (isNaN(date.getTime())) return "--";
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 };
 
 export const getFileExtension = (name: string): string => {

@@ -563,7 +563,15 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   const displayedHosts = useMemo(() => {
     let filtered = hosts;
     if (selectedGroupPath) {
-      filtered = filtered.filter((h) => (h.group || "") === selectedGroupPath);
+      // Match hosts whose group equals the selected path
+      // For "General" group, also match hosts with empty/undefined group
+      filtered = filtered.filter((h) => {
+        const hostGroup = h.group || "";
+        if (selectedGroupPath === "General") {
+          return hostGroup === "" || hostGroup === "General";
+        }
+        return hostGroup === selectedGroupPath;
+      });
     }
     if (search.trim()) {
       const s = search.toLowerCase();
@@ -638,9 +646,10 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
 
   const displayedGroups = useMemo(() => {
     if (!selectedGroupPath) {
-      return (Object.values(buildGroupTree) as GroupNode[]).sort((a, b) =>
-        a.name.localeCompare(b.name),
-      );
+      // Hide "General" group at root level since all hosts are already shown below
+      return (Object.values(buildGroupTree) as GroupNode[])
+        .filter((node) => node.name !== "General")
+        .sort((a, b) => a.name.localeCompare(b.name));
     }
     const node = findGroupNode(selectedGroupPath);
     if (!node || !node.children) return [];

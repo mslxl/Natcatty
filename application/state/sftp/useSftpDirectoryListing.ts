@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import type { SftpFileEntry, SftpFilenameEncoding } from "../../../domain/models";
 import { buildMockLocalFiles } from "./mockLocalFiles";
-import { formatFileSize } from "./utils";
+import { formatFileSize, formatDate } from "./utils";
 
 export const useSftpDirectoryListing = () => {
   const getMockLocalFiles = useCallback((path: string): SftpFileEntry[] => {
@@ -18,13 +18,14 @@ export const useSftpDirectoryListing = () => {
 
       return rawFiles.map((f) => {
         const size = parseInt(f.size) || 0;
+        const lastModified = new Date(f.lastModified).getTime();
         return {
           name: f.name,
           type: f.type as "file" | "directory" | "symlink",
           size,
           sizeFormatted: formatFileSize(size),
-          lastModified: new Date(f.lastModified).getTime(),
-          lastModifiedFormatted: f.lastModified,
+          lastModified,
+          lastModifiedFormatted: formatDate(lastModified),
           linkTarget: f.linkTarget as "file" | "directory" | null | undefined,
           hidden: f.hidden,
         };
@@ -40,13 +41,14 @@ export const useSftpDirectoryListing = () => {
 
       return rawFiles.map((f) => {
         const size = parseInt(f.size) || 0;
+        const lastModified = new Date(f.lastModified).getTime();
         return {
           name: f.name,
           type: f.type as "file" | "directory" | "symlink",
           size,
           sizeFormatted: formatFileSize(size),
-          lastModified: new Date(f.lastModified).getTime(),
-          lastModifiedFormatted: f.lastModified,
+          lastModified,
+          lastModifiedFormatted: formatDate(lastModified),
           linkTarget: f.linkTarget as "file" | "directory" | null | undefined,
         };
       });
