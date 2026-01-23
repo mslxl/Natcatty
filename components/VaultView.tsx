@@ -646,9 +646,19 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
 
   const displayedGroups = useMemo(() => {
     if (!selectedGroupPath) {
-      // Hide "General" group at root level since all hosts are already shown below
+      // Hide "General" group at root level only if it's auto-generated
+      // (not user-created and has no subgroups)
+      const isGeneralUserCreated = customGroups.some(
+        (g) => g === "General" || g.startsWith("General/")
+      );
       return (Object.values(buildGroupTree) as GroupNode[])
-        .filter((node) => node.name !== "General")
+        .filter((node) => {
+          if (node.name !== "General") return true;
+          // Keep General if user explicitly created it or it has subgroups
+          if (isGeneralUserCreated) return true;
+          if (Object.keys(node.children).length > 0) return true;
+          return false;
+        })
         .sort((a, b) => a.name.localeCompare(b.name));
     }
     const node = findGroupNode(selectedGroupPath);
@@ -657,7 +667,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
       a.name.localeCompare(b.name),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- findGroupNode is derived from buildGroupTree
-  }, [buildGroupTree, selectedGroupPath]);
+  }, [buildGroupTree, selectedGroupPath, customGroups]);
 
   // Known Hosts callbacks - use refs to keep stable references
   // Store latest values in refs so callbacks don't need to depend on them
