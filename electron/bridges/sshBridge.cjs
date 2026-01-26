@@ -99,6 +99,36 @@ function findDefaultPrivateKey() {
 }
 
 /**
+ * Find ALL default SSH private keys from user's ~/.ssh directory
+ * Returns all non-encrypted keys for fallback authentication
+ * @returns {Array<{ privateKey: string, keyPath: string, keyName: string }>}
+ */
+function findAllDefaultPrivateKeys() {
+  const sshDir = path.join(os.homedir(), ".ssh");
+  const keys = [];
+  log("Searching for ALL default SSH keys", { sshDir, keyNames: DEFAULT_KEY_NAMES });
+  for (const name of DEFAULT_KEY_NAMES) {
+    const keyPath = path.join(sshDir, name);
+    if (fs.existsSync(keyPath)) {
+      try {
+        const privateKey = fs.readFileSync(keyPath, "utf8");
+        const encrypted = isKeyEncrypted(privateKey);
+        if (!encrypted) {
+          keys.push({ privateKey, keyPath, keyName: name });
+          log("Found default key for fallback", { keyPath, keyName: name });
+        } else {
+          log("Skipping encrypted key", { keyPath, keyName: name });
+        }
+      } catch (e) {
+        log("Failed to read key", { keyPath, error: e.message });
+      }
+    }
+  }
+  log("Found default SSH keys", { count: keys.length, keyNames: keys.map(k => k.keyName) });
+  return keys;
+}
+
+/**
  * Check if Windows SSH Agent service is running
  * @returns {Promise<{ running: boolean, startupType: string | null, error: string | null }>}
  */
@@ -449,22 +479,37 @@ async function startSSHSession(event, options) {
       connectOpts.password = options.password;
     }
 
-    // Always try to find default SSH key for fallback authentication
+    // Always try to find default SSH keys for fallback authentication
     // This allows fallback even when password auth fails
     let defaultKeyInfo = null;
+    let allDefaultKeys = [];
     let usedDefaultKeyAsPrimary = false;
     const defaultKey = findDefaultPrivateKey();
     if (defaultKey) {
       defaultKeyInfo = defaultKey;
       log("Found default SSH key for fallback", { keyPath: defaultKey.keyPath, keyName: defaultKey.keyName });
     }
+    // Also find ALL default keys for comprehensive fallback
+    allDefaultKeys = findAllDefaultPrivateKeys();
 
-    // If no primary auth method configured, use default key as primary
+    // If no primary auth method configured, try ssh-agent first, then ALL default keys
     if (!connectOpts.privateKey && !connectOpts.password && !connectOpts.agent) {
-      log("No auth method configured, using default SSH key as primary auth");
-      if (defaultKeyInfo) {
-        connectOpts.privateKey = defaultKeyInfo.privateKey;
-        usedDefaultKeyAsPrimary = true;  // Track that we promoted default key to primary
+      // First, try to use ssh-agent if available (this is what regular SSH does)
+      const sshAgentSocket = process.platform === "win32" 
+        ? "\\\\.\\pipe\\openssh-ssh-agent" 
+        : process.env.SSH_AUTH_SOCK;
+      
+      if (sshAgentSocket) {
+        log("No auth method configured, trying ssh-agent first", { agentSocket: sshAgentSocket });
+        connectOpts.agent = sshAgentSocket;
+      }
+      
+      // Mark that we need to try all default keys (handled in authMethods below)
+      if (allDefaultKeys.length > 0) {
+        log("Will try all default SSH keys as fallback", { count: allDefaultKeys.length, keyNames: allDefaultKeys.map(k => k.keyName) });
+        // Set first key for connectOpts.privateKey (required for ssh2 to allow publickey auth)
+        connectOpts.privateKey = allDefaultKeys[0].privateKey;
+        usedDefaultKeyAsPrimary = true;
       } else {
         log("No default SSH key found in ~/.ssh directory");
       }
@@ -515,25 +560,33 @@ async function startSSHSession(event, options) {
       const authMethods = [];
 
       // First try user-configured key if available (explicit user choice)
-      if (connectOpts.privateKey) {
+      if (connectOpts.privateKey && !usedDefaultKeyAsPrimary) {
         authMethods.push({ type: "publickey", key: connectOpts.privateKey, passphrase: connectOpts.passphrase, id: "publickey-user" });
       }
 
-      // Then try password if available (explicit user choice)
-      // Password before agent because agent may be auto-set via SSH_AUTH_SOCK
-      // and on servers with low MaxAuthTries, agent attempt could exhaust tries
-      if (connectOpts.password) {
-        authMethods.push({ type: "password", id: "password" });
-      }
-
-      // Then try agent if configured (agentForwarding or SSH_AUTH_SOCK)
-      // Agent after password since it may be auto-configured rather than explicit
+      // Then try agent if configured (try agent before password since it's usually faster)
       if (connectOpts.agent) {
         authMethods.push({ type: "agent", id: "agent" });
       }
 
-      // Then try default SSH key as fallback (if not already used as primary)
-      if (defaultKeyInfo && !options.privateKey && !usedDefaultKeyAsPrimary) {
+      // Then try password if available (explicit user choice)
+      if (connectOpts.password) {
+        authMethods.push({ type: "password", id: "password" });
+      }
+
+      // Then try ALL default SSH keys as fallback (not just the first one!)
+      // This is critical because different servers may have different keys in authorized_keys
+      if (usedDefaultKeyAsPrimary && allDefaultKeys.length > 0) {
+        for (const keyInfo of allDefaultKeys) {
+          authMethods.push({ 
+            type: "publickey", 
+            key: keyInfo.privateKey, 
+            isDefault: true, 
+            id: `publickey-default-${keyInfo.keyName}` 
+          });
+        }
+      } else if (defaultKeyInfo && !options.privateKey && !usedDefaultKeyAsPrimary) {
+        // Single default key fallback (when user has configured other auth methods)
         authMethods.push({ type: "publickey", key: defaultKeyInfo.privateKey, isDefault: true, id: "publickey-default" });
       }
 
@@ -542,7 +595,8 @@ async function startSSHSession(event, options) {
 
       log("Auth methods configured", {
         methods: authMethods.map(m => ({ type: m.type, id: m.id, isDefault: m.isDefault || false })),
-        cachedMethod
+        cachedMethod,
+        usedDefaultKeyAsPrimary
       });
 
       // Reorder methods based on cached successful method
@@ -959,16 +1013,29 @@ async function startSSHSession(event, options) {
         }
       } else if (typeof connectOpts.authHandler !== "function") {
         // Create authHandler with keyboard-interactive support
+        // This path is taken when usedDefaultKeyAsPrimary=true (only keyboard-interactive in authMethods)
+        // Using array format is more reliable - ssh2 uses connectOpts credentials directly
         const authMethods = [];
+        // Try agent FIRST (this is what regular SSH does - it checks ssh-agent before key files)
+        if (connectOpts.agent) authMethods.push("agent");
         if (connectOpts.privateKey) authMethods.push("publickey");
         if (connectOpts.password) authMethods.push("password");
         authMethods.push("keyboard-interactive");
         connectOpts.authHandler = authMethods;
+        log("Using simple array authHandler", { authMethods, usedDefaultKeyAsPrimary });
       }
       // If authHandler is a function, it already handles keyboard-interactive
 
       // Increase timeout to allow for keyboard-interactive auth
       connectOpts.readyTimeout = 120000; // 2 minutes for 2FA input
+
+      // Enable debug logging for ssh2 to diagnose auth issues
+      connectOpts.debug = (msg) => {
+        // Only log auth-related messages to avoid noise
+        if (msg.includes('Auth') || msg.includes('auth') || msg.includes('publickey') || msg.includes('keyboard')) {
+          log("ssh2 debug", { msg });
+        }
+      };
 
       console.log(`${logPrefix} Connecting to ${options.hostname}...`);
       conn.connect(connectOpts);
