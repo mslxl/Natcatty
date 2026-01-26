@@ -71,14 +71,18 @@ function isKeyEncrypted(keyContent) {
  */
 function findDefaultPrivateKey() {
   const sshDir = path.join(os.homedir(), ".ssh");
+  log("Searching for default SSH keys", { sshDir, keyNames: DEFAULT_KEY_NAMES });
   for (const name of DEFAULT_KEY_NAMES) {
     const keyPath = path.join(sshDir, name);
+    log("Checking key file", { keyPath, exists: fs.existsSync(keyPath) });
     if (fs.existsSync(keyPath)) {
       try {
         const privateKey = fs.readFileSync(keyPath, "utf8");
         // Skip encrypted keys - they require a passphrase and would abort
         // authentication before password/keyboard-interactive can be tried
-        if (isKeyEncrypted(privateKey)) {
+        const encrypted = isKeyEncrypted(privateKey);
+        log("Key file read", { keyPath, keyName: name, encrypted, keyLength: privateKey.length });
+        if (encrypted) {
           log("Skipping encrypted default key", { keyPath, keyName: name });
           continue;
         }
@@ -90,6 +94,7 @@ function findDefaultPrivateKey() {
       }
     }
   }
+  log("No suitable default SSH key found");
   return null;
 }
 
@@ -124,12 +129,44 @@ const logFile = path.join(require("os").tmpdir(), "netcatty-ssh.log");
 const log = (msg, data) => {
   const line = `[${new Date().toISOString()}] ${msg} ${data ? JSON.stringify(data) : ""}\n`;
   try { fs.appendFileSync(logFile, line); } catch { }
-  console.log("[SSH]", msg, data || "");
+  console.log("[SSH]", msg, data ? JSON.stringify(data, null, 2) : "");
 };
 
 // Session storage - shared reference passed from main
 let sessions = null;
 let electronModule = null;
+
+// Authentication method cache - remembers successful auth methods per host
+// Key format: "username@hostname:port"
+// Value: { method: "password" | "publickey" | "publickey-default" }
+// Cache persists until auth failure, then cleared to retry all methods
+const authMethodCache = new Map();
+
+function getAuthCacheKey(username, hostname, port) {
+  return `${username}@${hostname}:${port || 22}`;
+}
+
+function getCachedAuthMethod(username, hostname, port) {
+  const key = getAuthCacheKey(username, hostname, port);
+  const cached = authMethodCache.get(key);
+  if (cached) {
+    log("Using cached auth method", { key, method: cached.method });
+    return cached.method;
+  }
+  return null;
+}
+
+function setCachedAuthMethod(username, hostname, port, method) {
+  const key = getAuthCacheKey(username, hostname, port);
+  log("Caching successful auth method", { key, method });
+  authMethodCache.set(key, { method });
+}
+
+function clearCachedAuthMethod(username, hostname, port) {
+  const key = getAuthCacheKey(username, hostname, port);
+  log("Clearing cached auth method", { key });
+  authMethodCache.delete(key);
+}
 
 // Normalize charset inputs (often provided as bare encodings like "UTF-8")
 // into a usable LANG locale for remote shells.
@@ -408,20 +445,35 @@ async function startSSHSession(event, options) {
       }
     }
 
-    if (options.password) {
+    if (options.password && typeof options.password === "string" && options.password.trim().length > 0) {
       connectOpts.password = options.password;
     }
 
-    // Fallback to default SSH key if no authentication method is configured
-    let usedDefaultKey = null;
+    // Always try to find default SSH key for fallback authentication
+    // This allows fallback even when password auth fails
+    let defaultKeyInfo = null;
+    const defaultKey = findDefaultPrivateKey();
+    if (defaultKey) {
+      defaultKeyInfo = defaultKey;
+      log("Found default SSH key for fallback", { keyPath: defaultKey.keyPath, keyName: defaultKey.keyName });
+    }
+
+    // If no primary auth method configured, use default key as primary
     if (!connectOpts.privateKey && !connectOpts.password && !connectOpts.agent) {
-      const defaultKey = findDefaultPrivateKey();
-      if (defaultKey) {
-        log("Using default SSH key as fallback", { keyPath: defaultKey.keyPath });
-        connectOpts.privateKey = defaultKey.privateKey;
-        usedDefaultKey = defaultKey;
+      log("No auth method configured, using default SSH key as primary auth");
+      if (defaultKeyInfo) {
+        connectOpts.privateKey = defaultKeyInfo.privateKey;
+      } else {
+        log("No default SSH key found in ~/.ssh directory");
       }
     }
+
+    log("Final auth configuration", {
+      hasPrivateKey: !!connectOpts.privateKey,
+      hasPassword: !!connectOpts.password,
+      hasAgent: !!connectOpts.agent,
+      hasDefaultKeyFallback: !!defaultKeyInfo,
+    });
 
     // Agent forwarding
     if (options.agentForwarding) {
@@ -435,12 +487,118 @@ async function startSSHSession(event, options) {
       }
     }
 
-    // Prefer agent-based auth when we created an in-process agent (cert)
+    // Build authentication handler with fallback support
+    // ssh2 authHandler can be a function that returns the next auth method to try
+
+    // Check if we have a cached successful auth method for this host
+    const cachedMethod = getCachedAuthMethod(connectOpts.username, options.hostname, options.port);
+
+    // Track which method succeeded for caching
+    let lastTriedMethod = null;
+
     if (authAgent) {
       const order = ["agent"];
-      // Allow password fallback if provided
       if (connectOpts.password) order.push("password");
+      // Add default key fallback if available and no user key configured
+      if (defaultKeyInfo && !options.privateKey) {
+        order.push("publickey");
+      }
+      order.push("keyboard-interactive");
       connectOpts.authHandler = order;
+      log("Auth order (agent mode)", { order });
+    } else {
+      // Build dynamic auth handler for fallback support
+      const authMethods = [];
+
+      // First try user-configured key if available
+      if (connectOpts.privateKey) {
+        authMethods.push({ type: "publickey", key: connectOpts.privateKey, passphrase: connectOpts.passphrase, id: "publickey-user" });
+      }
+
+      // Then try password if available
+      if (connectOpts.password) {
+        authMethods.push({ type: "password", id: "password" });
+      }
+
+      // Then try default SSH key as fallback (if different from user key)
+      if (defaultKeyInfo && !options.privateKey) {
+        authMethods.push({ type: "publickey", key: defaultKeyInfo.privateKey, isDefault: true, id: "publickey-default" });
+      }
+
+      // Finally try keyboard-interactive
+      authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
+
+      log("Auth methods configured", {
+        methods: authMethods.map(m => ({ type: m.type, id: m.id, isDefault: m.isDefault || false })),
+        cachedMethod
+      });
+
+      // Reorder methods based on cached successful method
+      if (cachedMethod) {
+        const cachedIndex = authMethods.findIndex(m => m.id === cachedMethod);
+        if (cachedIndex > 0) {
+          const [cachedAuthMethod] = authMethods.splice(cachedIndex, 1);
+          authMethods.unshift(cachedAuthMethod);
+          log("Reordered auth methods based on cache", {
+            methods: authMethods.map(m => m.id)
+          });
+        }
+      }
+
+      // Use dynamic authHandler if we have multiple auth options
+      if (authMethods.length > 1) {
+        let authIndex = 0;
+        connectOpts.authHandler = (methodsLeft, partialSuccess, callback) => {
+          log("authHandler called", { methodsLeft, partialSuccess, authIndex });
+
+          // methodsLeft can be null on first call (before server responds with available methods)
+          const availableMethods = methodsLeft || ["publickey", "password", "keyboard-interactive"];
+
+          while (authIndex < authMethods.length) {
+            const method = authMethods[authIndex];
+            authIndex++;
+
+            // Check if this method is still available on server
+            const methodName = method.type === "password" ? "password" :
+                method.type === "publickey" ? "publickey" : "keyboard-interactive";
+            if (!availableMethods.includes(methodName)) {
+              log("Auth method not available on server, skipping", { method: method.id });
+              continue;
+            }
+
+            lastTriedMethod = method.id;
+
+            if (method.type === "publickey") {
+              log("Trying publickey auth", { id: method.id, isDefault: method.isDefault || false });
+              return callback({
+                type: "publickey",
+                username: connectOpts.username,
+                key: method.key,
+                passphrase: method.passphrase,
+              });
+            } else if (method.type === "password") {
+              log("Trying password auth", { id: method.id });
+              return callback({
+                type: "password",
+                username: connectOpts.username,
+                password: connectOpts.password,
+              });
+            } else if (method.type === "keyboard-interactive") {
+              log("Trying keyboard-interactive auth", { id: method.id });
+              return callback({
+                type: "keyboard-interactive",
+                username: connectOpts.username,
+              });
+            }
+          }
+
+          log("All auth methods exhausted");
+          return callback(false);
+        };
+
+        // Store lastTriedMethod reference for success callback
+        connectOpts._lastTriedMethodRef = () => lastTriedMethod;
+      }
     }
 
     // Handle chain/proxy connections
@@ -476,6 +634,15 @@ async function startSSHSession(event, options) {
       const logPrefix = hasJumpHosts ? '[Chain]' : '[SSH]';
       conn.on("ready", () => {
         console.log(`${logPrefix} ${options.hostname} ready`);
+
+        // Cache the successful auth method
+        if (connectOpts._lastTriedMethodRef) {
+          const successMethod = connectOpts._lastTriedMethodRef();
+          if (successMethod) {
+            setCachedAuthMethod(connectOpts.username, options.hostname, options.port, successMethod);
+          }
+        }
+
         if (hasJumpHosts || hasProxy) {
           sendProgress(totalHops, totalHops, options.hostname, 'connected');
         }
@@ -584,8 +751,9 @@ async function startSSHSession(event, options) {
           err.message?.toLowerCase().includes('password') ||
           err.level === 'client-authentication';
 
-        // Use log instead of error for auth failures (normal fallback scenario)
+        // Clear cached auth method on auth failure so next attempt tries all methods
         if (isAuthError) {
+          clearCachedAuthMethod(connectOpts.username, options.hostname, options.port);
           console.log(`${logPrefix} ${options.hostname} auth failed:`, err.message);
           safeSend(contents, "netcatty:auth:failed", {
             sessionId,
@@ -670,12 +838,14 @@ async function startSSHSession(event, options) {
 
 
       // Enable keyboard-interactive authentication in authHandler
-      if (connectOpts.authHandler) {
+      // Note: If authHandler is a function (for fallback support), keyboard-interactive
+      // is already included in the auth methods list
+      if (Array.isArray(connectOpts.authHandler)) {
         // Add keyboard-interactive after the existing methods
         if (!connectOpts.authHandler.includes("keyboard-interactive")) {
           connectOpts.authHandler.push("keyboard-interactive");
         }
-      } else {
+      } else if (typeof connectOpts.authHandler !== "function") {
         // Create authHandler with keyboard-interactive support
         const authMethods = [];
         if (connectOpts.privateKey) authMethods.push("publickey");
@@ -683,6 +853,7 @@ async function startSSHSession(event, options) {
         authMethods.push("keyboard-interactive");
         connectOpts.authHandler = authMethods;
       }
+      // If authHandler is a function, it already handles keyboard-interactive
 
       // Increase timeout to allow for keyboard-interactive auth
       connectOpts.readyTimeout = 120000; // 2 minutes for 2FA input
