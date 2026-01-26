@@ -514,19 +514,22 @@ async function startSSHSession(event, options) {
       // Build dynamic auth handler for fallback support
       const authMethods = [];
 
-      // First try agent if configured (agentForwarding or SSH_AUTH_SOCK)
-      if (connectOpts.agent) {
-        authMethods.push({ type: "agent", id: "agent" });
-      }
-
-      // Then try user-configured key if available
+      // First try user-configured key if available (explicit user choice)
       if (connectOpts.privateKey) {
         authMethods.push({ type: "publickey", key: connectOpts.privateKey, passphrase: connectOpts.passphrase, id: "publickey-user" });
       }
 
-      // Then try password if available
+      // Then try password if available (explicit user choice)
+      // Password before agent because agent may be auto-set via SSH_AUTH_SOCK
+      // and on servers with low MaxAuthTries, agent attempt could exhaust tries
       if (connectOpts.password) {
         authMethods.push({ type: "password", id: "password" });
+      }
+
+      // Then try agent if configured (agentForwarding or SSH_AUTH_SOCK)
+      // Agent after password since it may be auto-configured rather than explicit
+      if (connectOpts.agent) {
+        authMethods.push({ type: "agent", id: "agent" });
       }
 
       // Then try default SSH key as fallback (if not already used as primary)
