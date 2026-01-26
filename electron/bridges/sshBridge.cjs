@@ -502,7 +502,9 @@ async function startSSHSession(event, options) {
       const order = ["agent"];
       if (connectOpts.password) order.push("password");
       // Add default key fallback if available and no user key configured
+      // Must also set connectOpts.privateKey for ssh2 to actually try publickey auth
       if (defaultKeyInfo && !options.privateKey) {
+        connectOpts.privateKey = defaultKeyInfo.privateKey;
         order.push("publickey");
       }
       order.push("keyboard-interactive");
