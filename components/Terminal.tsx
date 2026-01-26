@@ -919,6 +919,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     <TerminalContextMenu
       hasSelection={hasSelection}
       hotkeyScheme={hotkeyScheme}
+      keyBindings={keyBindings}
       rightClickBehavior={terminalSettings?.rightClickBehavior}
       onCopy={terminalContextActions.onCopy}
       onPaste={terminalContextActions.onPaste}

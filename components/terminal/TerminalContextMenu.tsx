@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import React, { useCallback } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
-import { RightClickBehavior } from '../../domain/models';
+import { KeyBinding, RightClickBehavior } from '../../domain/models';
 import {
   ContextMenu,
   ContextMenuContent,
@@ -26,6 +26,7 @@ export interface TerminalContextMenuProps {
   children: React.ReactNode;
   hasSelection?: boolean;
   hotkeyScheme?: 'disabled' | 'mac' | 'pc';
+  keyBindings?: KeyBinding[];
   rightClickBehavior?: RightClickBehavior;
   onCopy?: () => void;
   onPaste?: () => void;
@@ -41,6 +42,7 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
   children,
   hasSelection = false,
   hotkeyScheme = 'mac',
+  keyBindings,
   rightClickBehavior = 'context-menu',
   onCopy,
   onPaste,
@@ -54,12 +56,22 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
   const { t } = useI18n();
   const isMac = hotkeyScheme === 'mac';
 
-  const copyShortcut = isMac ? '⌘C' : 'Ctrl+Shift+C';
-  const pasteShortcut = isMac ? '⌘V' : 'Ctrl+Shift+V';
-  const selectAllShortcut = isMac ? '⌘A' : 'Ctrl+Shift+A';
-  const splitHShortcut = isMac ? '⌘D' : 'Ctrl+Shift+D';
-  const splitVShortcut = isMac ? '⌘E' : 'Ctrl+Shift+E';
-  const clearShortcut = isMac ? '⌘K' : 'Ctrl+L';
+  // Helper to get shortcut from keyBindings and format for display
+  const getShortcut = (bindingId: string): string => {
+    const binding = keyBindings?.find(b => b.id === bindingId);
+    if (!binding) return '';
+    const key = isMac ? binding.mac : binding.pc;
+    if (!key || key === 'Disabled') return '';
+    // Replace " + " with space for cleaner display (e.g., "⌘ + Shift + D" → "⌘ Shift D")
+    return key.replace(/\s*\+\s*/g, ' ').trim();
+  };
+
+  const copyShortcut = getShortcut('copy');
+  const pasteShortcut = getShortcut('paste');
+  const selectAllShortcut = getShortcut('select-all');
+  const splitHShortcut = getShortcut('split-horizontal');
+  const splitVShortcut = getShortcut('split-vertical');
+  const clearShortcut = getShortcut('clear-buffer');
 
   const showContextMenu = rightClickBehavior === 'context-menu';
 
