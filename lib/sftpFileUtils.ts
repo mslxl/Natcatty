@@ -602,27 +602,35 @@ export async function extractDropEntries(
     // Process entries iteratively (non-recursive) to avoid stack overflow
     const results = await processEntriesIteratively(entries);
 
-    // Restore/construct the 'path' property for all files
-    // For root-level items, use the path from DataTransfer.files directly
-    // For nested items in folders, construct the path from the root folder path + relative path
+    // Restore the 'path' property for all files
+    // Try to get the path directly from webUtils.getPathForFile for each file
+    // This is more reliable than trying to reconstruct from folder paths
     for (const result of results) {
       if (result.file) {
-        const pathParts = result.relativePath.split('/');
-        const rootName = pathParts[0];
-        const rootPath = filePathMap.get(rootName);
-        console.log('[extractDropEntries] Matching:', { relativePath: result.relativePath, rootName, rootPath, fileName: result.file.name });
+        // First try to get path directly from the file
+        const directPath = getPathForFile(result.file);
+        if (directPath) {
+          (result.file as File & { path?: string }).path = directPath;
+          console.log('[extractDropEntries] Direct path for:', { relativePath: result.relativePath, path: directPath });
+        } else {
+          // Fallback: try to reconstruct from root folder path
+          const pathParts = result.relativePath.split('/');
+          const rootName = pathParts[0];
+          const rootPath = filePathMap.get(rootName);
+          console.log('[extractDropEntries] Fallback matching:', { relativePath: result.relativePath, rootName, rootPath });
 
-        if (rootPath) {
-          if (pathParts.length === 1) {
-            // Root-level file: use the path directly
-            (result.file as File & { path?: string }).path = rootPath;
-          } else {
-            // Nested file in a folder: construct full path
-            // rootPath is the path to the root folder, we need to append the rest
-            const restOfPath = pathParts.slice(1).join('/');
-            const separator = rootPath.includes('\\') ? '\\' : '/';
-            const fullPath = rootPath + separator + restOfPath.replace(/\//g, separator);
-            (result.file as File & { path?: string }).path = fullPath;
+          if (rootPath) {
+            if (pathParts.length === 1) {
+              // Root-level file: use the path directly
+              (result.file as File & { path?: string }).path = rootPath;
+            } else {
+              // Nested file in a folder: construct full path
+              // rootPath is the path to the root folder, we need to append the rest
+              const restOfPath = pathParts.slice(1).join('/');
+              const separator = rootPath.includes('\\') ? '\\' : '/';
+              const fullPath = rootPath + separator + restOfPath.replace(/\//g, separator);
+              (result.file as File & { path?: string }).path = fullPath;
+            }
           }
         }
       }
