@@ -452,6 +452,7 @@ async function startSSHSession(event, options) {
     // Always try to find default SSH key for fallback authentication
     // This allows fallback even when password auth fails
     let defaultKeyInfo = null;
+    let usedDefaultKeyAsPrimary = false;
     const defaultKey = findDefaultPrivateKey();
     if (defaultKey) {
       defaultKeyInfo = defaultKey;
@@ -463,6 +464,7 @@ async function startSSHSession(event, options) {
       log("No auth method configured, using default SSH key as primary auth");
       if (defaultKeyInfo) {
         connectOpts.privateKey = defaultKeyInfo.privateKey;
+        usedDefaultKeyAsPrimary = true;  // Track that we promoted default key to primary
       } else {
         log("No default SSH key found in ~/.ssh directory");
       }
@@ -520,8 +522,8 @@ async function startSSHSession(event, options) {
         authMethods.push({ type: "password", id: "password" });
       }
 
-      // Then try default SSH key as fallback (if different from user key)
-      if (defaultKeyInfo && !options.privateKey) {
+      // Then try default SSH key as fallback (if not already used as primary)
+      if (defaultKeyInfo && !options.privateKey && !usedDefaultKeyAsPrimary) {
         authMethods.push({ type: "publickey", key: defaultKeyInfo.privateKey, isDefault: true, id: "publickey-default" });
       }
 
