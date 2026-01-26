@@ -587,10 +587,10 @@ async function startSSHSession(event, options) {
               });
             } else if (method.type === "keyboard-interactive") {
               log("Trying keyboard-interactive auth", { id: method.id });
-              return callback({
-                type: "keyboard-interactive",
-                username: connectOpts.username,
-              });
+              // Return string instead of object - ssh2 requires a prompt function
+              // for keyboard-interactive objects. Returning the string lets ssh2
+              // use its default handling and trigger the keyboard-interactive event.
+              return callback("keyboard-interactive");
             }
           }
 
