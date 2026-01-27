@@ -275,7 +275,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         },
       };
 
-      // Auth - support agent (certificate), key, and password fallback
+      // Auth - support agent (certificate), key, password, and default key fallback
       const hasCertificate =
         typeof jump.certificate === "string" && jump.certificate.trim().length > 0;
 
@@ -299,7 +299,73 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
 
       if (jump.password) connOpts.password = jump.password;
 
-      if (authAgent) {
+      // If no auth method configured for this jump host, use default SSH keys (same as startSSHSession)
+      if (!connOpts.privateKey && !connOpts.password && !connOpts.agent) {
+        // First, try to use ssh-agent if available
+        const sshAgentSocket = process.platform === "win32" 
+          ? "\\\\.\\pipe\\openssh-ssh-agent" 
+          : process.env.SSH_AUTH_SOCK;
+        
+        if (sshAgentSocket) {
+          log("Jump host: No auth configured, trying ssh-agent", { hop: i + 1, agentSocket: sshAgentSocket });
+          connOpts.agent = sshAgentSocket;
+        }
+        
+        // Find all default keys for fallback
+        const jumpDefaultKeys = findAllDefaultPrivateKeys();
+        if (jumpDefaultKeys.length > 0) {
+          log("Jump host: Using default SSH keys as fallback", { hop: i + 1, keyCount: jumpDefaultKeys.length });
+          // Set first key for ssh2's internal use
+          connOpts.privateKey = jumpDefaultKeys[0].privateKey;
+          
+          // Build authMethods array with all keys
+          const authMethods = [];
+          if (connOpts.agent) authMethods.push("agent");
+          for (const keyInfo of jumpDefaultKeys) {
+            authMethods.push({ 
+              type: "publickey", 
+              key: keyInfo.privateKey, 
+              id: `publickey-default-${keyInfo.keyName}` 
+            });
+          }
+          authMethods.push("keyboard-interactive");
+          
+          // Use dynamic authHandler to try all keys
+          let authIndex = 0;
+          const attemptedMethodIds = new Set();
+          connOpts.authHandler = (methodsLeft, partialSuccess, callback) => {
+            const availableMethods = methodsLeft || ["publickey", "password", "keyboard-interactive", "agent"];
+            
+            while (authIndex < authMethods.length) {
+              const method = authMethods[authIndex];
+              authIndex++;
+              
+              if (typeof method === "string") {
+                // Simple method like "agent"
+                if (method === "agent" && (availableMethods.includes("publickey") || availableMethods.includes("agent"))) {
+                  return callback("agent");
+                }
+                continue;
+              }
+              
+              if (attemptedMethodIds.has(method.id)) continue;
+              attemptedMethodIds.add(method.id);
+              
+              if (method.type === "publickey" && availableMethods.includes("publickey")) {
+                log("Jump host: Trying publickey auth", { hop: i + 1, id: method.id });
+                return callback({
+                  type: "publickey",
+                  username: connOpts.username,
+                  key: method.key,
+                });
+              } else if (method.type === "keyboard-interactive" && availableMethods.includes("keyboard-interactive")) {
+                return callback("keyboard-interactive");
+              }
+            }
+            return callback(false);
+          };
+        }
+      } else if (authAgent) {
         const order = ["agent"];
         if (connOpts.password) order.push("password");
         connOpts.authHandler = order;
