@@ -23,6 +23,12 @@ const { NetcattyAgent } = require("./netcattyAgent.cjs");
 const fileWatcherBridge = require("./fileWatcherBridge.cjs");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
 const { createProxySocket } = require("./proxyUtils.cjs");
+const { 
+  buildAuthHandler, 
+  createKeyboardInteractiveHandler, 
+  applyAuthToConnOpts,
+  safeSend: authSafeSend,
+} = require("./sshAuthHelper.cjs");
 
 // SFTP clients storage - shared reference passed from main
 let sftpClients = null;
@@ -258,7 +264,8 @@ function init(deps) {
 /**
  * Connect through a chain of jump hosts for SFTP
  */
-async function connectThroughChainForSftp(event, options, jumpHosts, targetHost, targetPort) {
+async function connectThroughChainForSftp(event, options, jumpHosts, targetHost, targetPort, connId) {
+  const sender = event.sender;
   const connections = [];
   let currentSocket = null;
 
@@ -282,7 +289,7 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
         host: jump.hostname,
         port: jump.port || 22,
         username: jump.username || 'root',
-        readyTimeout: 20000,
+        readyTimeout: 120000, // 2 minutes to allow for keyboard-interactive (2FA/MFA)
         keepaliveInterval: 10000,
         keepaliveCountMax: 3,
         // Enable keyboard-interactive authentication (required for 2FA/MFA)
@@ -318,11 +325,16 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
 
       if (jump.password) connOpts.password = jump.password;
 
-      if (authAgent) {
-        const order = ["agent"];
-        if (connOpts.password) order.push("password");
-        connOpts.authHandler = order;
-      }
+      // Build auth handler using shared helper
+      const authConfig = buildAuthHandler({
+        privateKey: connOpts.privateKey,
+        password: connOpts.password,
+        passphrase: connOpts.passphrase,
+        agent: connOpts.agent,
+        username: connOpts.username,
+        logPrefix: `[SFTP Chain] Hop ${i + 1}`,
+      });
+      applyAuthToConnOpts(connOpts, authConfig);
 
       // If first hop and proxy is configured, connect through proxy
       if (isFirst && options.proxy) {
@@ -351,6 +363,14 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
           console.error(`[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}: ${hopLabel} timeout`);
           reject(new Error(`Connection timeout to ${hopLabel}`));
         });
+        // Handle keyboard-interactive authentication for jump hosts (2FA/MFA)
+        conn.on('keyboard-interactive', createKeyboardInteractiveHandler({
+          sender,
+          sessionId: connId,
+          hostname: hopLabel,
+          password: jump.password,
+          logPrefix: `[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}`,
+        }));
         conn.connect(connOpts);
       });
 
@@ -648,7 +668,8 @@ async function openSftp(event, options) {
       options,
       jumpHosts,
       options.hostname,
-      options.port || 22
+      options.port || 22,
+      connId
     );
     connectionSocket = chainResult.socket;
     chainConnections = chainResult.connections;
@@ -700,77 +721,28 @@ async function openSftp(event, options) {
 
   if (options.password) connectOpts.password = options.password;
 
-  if (authAgent) {
-    const order = ["agent"];
-    if (connectOpts.password) order.push("password");
-    connectOpts.authHandler = order;
-  } else if (options.privateKey && connectOpts.password) {
-    // Prefer key auth when both key and password are present (password still needed for sudo)
-    connectOpts.authHandler = ["publickey", "password"];
-  }
+  // Build auth handler using shared helper
+  const authConfig = buildAuthHandler({
+    privateKey: connectOpts.privateKey,
+    password: connectOpts.password,
+    passphrase: connectOpts.passphrase,
+    agent: connectOpts.agent,
+    username: connectOpts.username,
+    logPrefix: "[SFTP]",
+  });
+  applyAuthToConnOpts(connectOpts, authConfig);
 
-  // Add keyboard-interactive authentication support
-  // ssh2-sftp-client exposes the underlying ssh2 Client through its `on` method
-  const kiHandler = (name, instructions, instructionsLang, prompts, finish) => {
-    console.log(`[SFTP] ${options.hostname} keyboard-interactive auth requested`, {
-      name,
-      instructions,
-      promptCount: prompts?.length || 0,
-      prompts: prompts?.map(p => ({ prompt: p.prompt, echo: p.echo })),
-    });
-
-    // If there are no prompts, just call finish with empty array
-    if (!prompts || prompts.length === 0) {
-      console.log(`[SFTP] No prompts, finishing keyboard-interactive`);
-      finish([]);
-      return;
-    }
-
-    // Forward ALL prompts to user - no auto-fill to avoid semantic detection issues
-    // (Prompt text is admin-customizable and may not contain expected keywords)
-    const requestId = keyboardInteractiveHandler.generateRequestId('sftp');
-
-    keyboardInteractiveHandler.storeRequest(requestId, (userResponses) => {
-      console.log(`[SFTP] Received user responses, finishing keyboard-interactive`);
-      finish(userResponses);
-    }, event.sender.id, connId);
-
-    const promptsData = prompts.map((p) => ({
-      prompt: p.prompt,
-      echo: p.echo,
-    }));
-
-    console.log(`[SFTP] Showing modal for ${promptsData.length} prompts`);
-
-    safeSend(event.sender, "netcatty:keyboard-interactive", {
-      requestId,
-      sessionId: connId,
-      name: name || "",
-      instructions: instructions || "",
-      prompts: promptsData,
-      hostname: options.hostname,
-      savedPassword: options.password || null,
-    });
-  };
-
+  // Create keyboard-interactive handler using shared helper
+  const kiHandler = createKeyboardInteractiveHandler({
+    sender: event.sender,
+    sessionId: connId,
+    hostname: options.hostname,
+    password: options.password,
+    logPrefix: "[SFTP]",
+  });
 
   // Add keyboard-interactive listener BEFORE connecting
   client.on("keyboard-interactive", kiHandler);
-
-  // Enable keyboard-interactive authentication in authHandler
-  if (connectOpts.authHandler) {
-    // Add keyboard-interactive after the existing methods
-    if (!connectOpts.authHandler.includes("keyboard-interactive")) {
-      connectOpts.authHandler.push("keyboard-interactive");
-    }
-  } else {
-    // Create authHandler with keyboard-interactive support
-    const authMethods = [];
-    if (connectOpts.privateKey) authMethods.push("publickey");
-    if (connectOpts.password) authMethods.push("password");
-    authMethods.push("keyboard-interactive");
-    connectOpts.authHandler = authMethods;
-  }
 
   // Increase timeout to allow for keyboard-interactive auth
   connectOpts.readyTimeout = 120000; // 2 minutes for 2FA input

@@ -1216,6 +1216,16 @@ const en: Messages = {
   'keyboard.interactive.fillSaved': 'Fill with saved password',
   'keyboard.interactive.useSaved': 'Use saved',
   'keyboard.interactive.useSavedPassword': 'Use saved password',
+
+  // Passphrase Modal for encrypted SSH keys
+  'passphrase.title': 'SSH Key Passphrase',
+  'passphrase.desc': 'Enter the passphrase for {keyName}',
+  'passphrase.descWithHost': 'Enter the passphrase for {keyName} to connect to {hostname}',
+  'passphrase.label': 'Passphrase',
+  'passphrase.keyPath': 'Key',
+  'passphrase.unlock': 'Unlock',
+  'passphrase.unlocking': 'Unlocking...',
+  'passphrase.skip': 'Skip',
 };
 
 export default en;

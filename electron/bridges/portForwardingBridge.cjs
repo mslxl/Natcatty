@@ -6,6 +6,11 @@
 const net = require("node:net");
 const { Client: SSHClient } = require("ssh2");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
+const { 
+  buildAuthHandler, 
+  createKeyboardInteractiveHandler, 
+  applyAuthToConnOpts,
+} = require("./sshAuthHelper.cjs");
 
 // Active port forwarding tunnels
 const portForwardingTunnels = new Map();
@@ -38,6 +43,7 @@ async function startPortForward(event, payload) {
     username,
     password,
     privateKey,
+    passphrase,
   } = payload;
 
   return new Promise((resolve, reject) => {
@@ -63,59 +69,31 @@ async function startPortForward(event, payload) {
     if (privateKey) {
       connectOpts.privateKey = privateKey;
     }
+    if (passphrase) {
+      connectOpts.passphrase = passphrase;
+    }
     if (password) {
       connectOpts.password = password;
     }
 
-    // Build auth handler with keyboard-interactive support
-    const authMethods = [];
-    if (privateKey) authMethods.push("publickey");
-    if (password) authMethods.push("password");
-    authMethods.push("keyboard-interactive");
-    connectOpts.authHandler = authMethods;
+    // Build auth handler using shared helper
+    const authConfig = buildAuthHandler({
+      privateKey,
+      password,
+      passphrase,
+      username: connectOpts.username,
+      logPrefix: "[PortForward]",
+    });
+    applyAuthToConnOpts(connectOpts, authConfig);
 
     // Handle keyboard-interactive authentication (2FA/MFA)
-    conn.on("keyboard-interactive", (name, instructions, instructionsLang, prompts, finish) => {
-      console.log(`[PortForward] ${hostname} keyboard-interactive auth requested`, {
-        name,
-        instructions,
-        promptCount: prompts?.length || 0,
-        prompts: prompts?.map(p => ({ prompt: p.prompt, echo: p.echo })),
-      });
-
-      // If there are no prompts, just call finish with empty array
-      if (!prompts || prompts.length === 0) {
-        console.log(`[PortForward] No prompts, finishing keyboard-interactive`);
-        finish([]);
-        return;
-      }
-
-      // Forward ALL prompts to user - no auto-fill to avoid semantic detection issues
-      // (Prompt text is admin-customizable and may not contain expected keywords)
-      const requestId = keyboardInteractiveHandler.generateRequestId('pf');
-
-      keyboardInteractiveHandler.storeRequest(requestId, (userResponses) => {
-        console.log(`[PortForward] Received user responses, finishing keyboard-interactive`);
-        finish(userResponses);
-      }, sender.id, tunnelId);
-
-      const promptsData = prompts.map((p) => ({
-        prompt: p.prompt,
-        echo: p.echo,
-      }));
-
-      console.log(`[PortForward] Showing modal for ${promptsData.length} prompts`);
-
-      safeSend(sender, "netcatty:keyboard-interactive", {
-        requestId,
-        sessionId: tunnelId,
-        name: name || "",
-        instructions: instructions || "",
-        prompts: promptsData,
-        hostname: hostname,
-        savedPassword: password || null,
-      });
-    });
+    conn.on("keyboard-interactive", createKeyboardInteractiveHandler({
+      sender,
+      sessionId: tunnelId,
+      hostname,
+      password,
+      logPrefix: "[PortForward]",
+    }));
 
 
     conn.on('ready', () => {
