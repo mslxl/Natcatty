@@ -1205,6 +1205,16 @@ const zhCN: Messages = {
   'keyboard.interactive.fillSaved': '填入已保存的密码',
   'keyboard.interactive.useSaved': '使用已保存',
   'keyboard.interactive.useSavedPassword': '使用已保存的密码',
+
+  // Passphrase Modal for encrypted SSH keys
+  'passphrase.title': 'SSH 密钥密码',
+  'passphrase.desc': '请输入 {keyName} 的密码',
+  'passphrase.descWithHost': '请输入 {keyName} 的密码以连接到 {hostname}',
+  'passphrase.label': '密码',
+  'passphrase.keyPath': '密钥',
+  'passphrase.unlock': '解锁',
+  'passphrase.unlocking': '解锁中...',
+  'passphrase.skip': '跳过',
 };
 
 export default zhCN;

@@ -10,6 +10,8 @@ const authFailedListeners = new Map();
 const languageChangeListeners = new Set();
 const fullscreenChangeListeners = new Set();
 const keyboardInteractiveListeners = new Set();
+const passphraseListeners = new Set();
+const passphraseTimeoutListeners = new Set();
 
 ipcRenderer.on("netcatty:data", (_event, payload) => {
   const set = dataListeners.get(payload.sessionId);
@@ -94,6 +96,28 @@ ipcRenderer.on("netcatty:keyboard-interactive", (_event, payload) => {
       cb(payload);
     } catch (err) {
       console.error("Keyboard-interactive callback failed", err);
+    }
+  });
+});
+
+// Passphrase request events for encrypted SSH keys
+ipcRenderer.on("netcatty:passphrase-request", (_event, payload) => {
+  passphraseListeners.forEach((cb) => {
+    try {
+      cb(payload);
+    } catch (err) {
+      console.error("Passphrase request callback failed", err);
+    }
+  });
+});
+
+// Passphrase timeout events (request expired)
+ipcRenderer.on("netcatty:passphrase-timeout", (_event, payload) => {
+  passphraseTimeoutListeners.forEach((cb) => {
+    try {
+      cb(payload);
+    } catch (err) {
+      console.error("Passphrase timeout callback failed", err);
     }
   });
 });
@@ -317,6 +341,29 @@ const api = {
       responses,
       cancelled,
     });
+  },
+  // Passphrase request for encrypted SSH keys
+  onPassphraseRequest: (cb) => {
+    passphraseListeners.add(cb);
+    return () => passphraseListeners.delete(cb);
+  },
+  respondPassphrase: async (requestId, passphrase, cancelled = false) => {
+    return ipcRenderer.invoke("netcatty:passphrase:respond", {
+      requestId,
+      passphrase,
+      cancelled,
+    });
+  },
+  respondPassphraseSkip: async (requestId) => {
+    return ipcRenderer.invoke("netcatty:passphrase:respond", {
+      requestId,
+      passphrase: '',
+      skipped: true,
+    });
+  },
+  onPassphraseTimeout: (cb) => {
+    passphraseTimeoutListeners.add(cb);
+    return () => passphraseTimeoutListeners.delete(cb);
   },
   openSftp: async (options) => {
     const result = await ipcRenderer.invoke("netcatty:sftp:open", options);

@@ -21,6 +21,7 @@ import { Label } from './components/ui/label';
 import { ToastProvider, toast } from './components/ui/toast';
 import { VaultView, VaultSection } from './components/VaultView';
 import { KeyboardInteractiveModal, KeyboardInteractiveRequest } from './components/KeyboardInteractiveModal';
+import { PassphraseModal, PassphraseRequest } from './components/PassphraseModal';
 import { cn } from './lib/utils';
 import { ConnectionLog, Host, HostProtocol, SerialConfig, TerminalTheme } from './types';
 import { LogView as LogViewType } from './application/state/useSessionState';
@@ -155,6 +156,8 @@ function App({ settings }: { settings: SettingsState }) {
   const [navigateToSection, setNavigateToSection] = useState<VaultSection | null>(null);
   // Keyboard-interactive authentication queue (2FA/MFA) - queue-based to handle multiple concurrent sessions
   const [keyboardInteractiveQueue, setKeyboardInteractiveQueue] = useState<KeyboardInteractiveRequest[]>([]);
+  // Passphrase request queue for encrypted SSH keys
+  const [passphraseQueue, setPassphraseQueue] = useState<PassphraseRequest[]>([]);
 
   const {
     theme,
@@ -347,6 +350,76 @@ function App({ settings }: { settings: SettingsState }) {
     }
     // Remove from queue by requestId
     setKeyboardInteractiveQueue(prev => prev.filter(r => r.requestId !== requestId));
+  }, []);
+
+  // Passphrase request event listener for encrypted SSH keys
+  useEffect(() => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.onPassphraseRequest) return;
+
+    const unsubscribe = bridge.onPassphraseRequest((request) => {
+      console.log('[App] Passphrase request received:', request);
+      setPassphraseQueue(prev => [...prev, {
+        requestId: request.requestId,
+        keyPath: request.keyPath,
+        keyName: request.keyName,
+        hostname: request.hostname,
+      }]);
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
+
+  // Handle passphrase submit
+  const handlePassphraseSubmit = useCallback((requestId: string, passphrase: string) => {
+    const bridge = netcattyBridge.get();
+    if (bridge?.respondPassphrase) {
+      void bridge.respondPassphrase(requestId, passphrase, false);
+    }
+    setPassphraseQueue(prev => prev.filter(r => r.requestId !== requestId));
+  }, []);
+
+  // Handle passphrase cancel
+  const handlePassphraseCancel = useCallback((requestId: string) => {
+    const bridge = netcattyBridge.get();
+    if (bridge?.respondPassphrase) {
+      // Cancel = stop the entire passphrase flow
+      void bridge.respondPassphrase(requestId, '', true);
+    }
+    setPassphraseQueue(prev => prev.filter(r => r.requestId !== requestId));
+  }, []);
+
+  // Handle passphrase skip (skip this key, continue with others)
+  const handlePassphraseSkip = useCallback((requestId: string) => {
+    const bridge = netcattyBridge.get();
+    if (bridge?.respondPassphraseSkip) {
+      // Skip = skip this key but continue asking for others
+      void bridge.respondPassphraseSkip(requestId);
+    } else if (bridge?.respondPassphrase) {
+      // Fallback for older API
+      void bridge.respondPassphrase(requestId, '', false);
+    }
+    setPassphraseQueue(prev => prev.filter(r => r.requestId !== requestId));
+  }, []);
+
+  // Handle passphrase timeout (request expired on backend)
+  useEffect(() => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.onPassphraseTimeout) return;
+
+    const unsubscribe = bridge.onPassphraseTimeout((event) => {
+      console.log('[App] Passphrase request timed out:', event.requestId);
+      // Remove from queue - the modal will close automatically
+      setPassphraseQueue(prev => prev.filter(r => r.requestId !== event.requestId));
+      // Show a toast notification to inform user
+      toast.error('Passphrase request timed out. Please try connecting again.');
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
   }, []);
 
   // Debounce ref for moveFocus to prevent double-triggering when focus switches
@@ -1083,6 +1156,14 @@ function App({ settings }: { settings: SettingsState }) {
           {keyboardInteractiveQueue.length - 1} more pending
         </div>
       )}
+
+      {/* Global Passphrase Modal for encrypted SSH keys */}
+      <PassphraseModal
+        request={passphraseQueue[0] || null}
+        onSubmit={handlePassphraseSubmit}
+        onCancel={handlePassphraseCancel}
+        onSkip={handlePassphraseSkip}
+      />
     </div>
   );
 }

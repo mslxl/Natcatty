@@ -245,6 +245,27 @@ declare global {
       cancelled?: boolean
     ): Promise<{ success: boolean; error?: string }>;
 
+    // Passphrase request for encrypted SSH keys
+    onPassphraseRequest?(
+      cb: (request: {
+        requestId: string;
+        keyPath: string;
+        keyName: string;
+        hostname?: string;
+      }) => void
+    ): () => void;
+    respondPassphrase?(
+      requestId: string,
+      passphrase: string,
+      cancelled?: boolean
+    ): Promise<{ success: boolean; error?: string }>;
+    respondPassphraseSkip?(
+      requestId: string
+    ): Promise<{ success: boolean; error?: string }>;
+    onPassphraseTimeout?(
+      cb: (event: { requestId: string }) => void
+    ): () => void;
+
     // SFTP operations
     openSftp(options: NetcattySSHOptions): Promise<string>;
     listSftp(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<RemoteFile[]>;

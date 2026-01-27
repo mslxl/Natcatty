@@ -11,7 +11,16 @@ const { exec } = require("node:child_process");
 const { Client: SSHClient, utils: sshUtils } = require("ssh2");
 const { NetcattyAgent } = require("./netcattyAgent.cjs");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
+const passphraseHandler = require("./passphraseHandler.cjs");
 const { createProxySocket } = require("./proxyUtils.cjs");
+const { 
+  buildAuthHandler, 
+  createKeyboardInteractiveHandler, 
+  applyAuthToConnOpts,
+  safeSend: authSafeSend,
+  requestPassphrasesForEncryptedKeys,
+  findAllDefaultPrivateKeys: findAllDefaultPrivateKeysFromHelper,
+} = require("./sshAuthHelper.cjs");
 
 // Default SSH key names in priority order
 const DEFAULT_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
@@ -229,7 +238,7 @@ function init(deps) {
 /**
  * Connect through a chain of jump hosts
  */
-async function connectThroughChain(event, options, jumpHosts, targetHost, targetPort) {
+async function connectThroughChain(event, options, jumpHosts, targetHost, targetPort, sessionId) {
   const sender = event.sender;
   const connections = [];
   let currentSocket = null;
@@ -259,7 +268,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         host: jump.hostname,
         port: jump.port || 22,
         username: jump.username || 'root',
-        readyTimeout: 20000, // Reduced from 60s for faster failure detection
+        readyTimeout: 120000, // 2 minutes to allow for keyboard-interactive (2FA/MFA)
         // Use user-configured keepalive interval from options (in seconds -> convert to ms)
         // If 0 or not provided, use 10000ms as default
         keepaliveInterval: options.keepaliveInterval && options.keepaliveInterval > 0 ? options.keepaliveInterval * 1000 : 10000,
@@ -275,7 +284,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         },
       };
 
-      // Auth - support agent (certificate), key, and password fallback
+      // Auth - support agent (certificate), key, password, and default key fallback
       const hasCertificate =
         typeof jump.certificate === "string" && jump.certificate.trim().length > 0;
 
@@ -299,11 +308,18 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
 
       if (jump.password) connOpts.password = jump.password;
 
-      if (authAgent) {
-        const order = ["agent"];
-        if (connOpts.password) order.push("password");
-        connOpts.authHandler = order;
-      }
+      // Build auth handler using shared helper
+      // Pass unlocked encrypted keys from options so jump hosts can use them for retry
+      const authConfig = buildAuthHandler({
+        privateKey: connOpts.privateKey,
+        password: connOpts.password,
+        passphrase: connOpts.passphrase,
+        agent: connOpts.agent,
+        username: connOpts.username,
+        logPrefix: `[Chain] Hop ${i + 1}`,
+        unlockedEncryptedKeys: options._unlockedEncryptedKeys || [],
+      });
+      applyAuthToConnOpts(connOpts, authConfig);
 
       // If first hop and proxy is configured, connect through proxy
       if (isFirst && options.proxy) {
@@ -334,6 +350,14 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           console.error(`[Chain] Hop ${i + 1}/${totalHops}: ${hopLabel} timeout`);
           reject(new Error(`Connection timeout to ${hopLabel}`));
         });
+        // Handle keyboard-interactive authentication for jump hosts (2FA/MFA)
+        conn.on('keyboard-interactive', createKeyboardInteractiveHandler({
+          sender,
+          sessionId,
+          hostname: hopLabel,
+          password: jump.password,
+          logPrefix: `[Chain] Hop ${i + 1}/${totalHops}`,
+        }));
         console.log(`[Chain] Hop ${i + 1}/${totalHops}: Connecting to ${hopLabel}...`);
         conn.connect(connOpts);
       });
@@ -492,6 +516,16 @@ async function startSSHSession(event, options) {
     // Also find ALL default keys for comprehensive fallback
     allDefaultKeys = findAllDefaultPrivateKeys();
 
+    // Use unlocked encrypted keys if provided (from retry after auth failure)
+    // These are passed via _unlockedEncryptedKeys from startSSHSessionWrapper
+    const unlockedEncryptedKeys = options._unlockedEncryptedKeys || [];
+    if (unlockedEncryptedKeys.length > 0) {
+      log("Using unlocked encrypted keys from retry", { 
+        count: unlockedEncryptedKeys.length,
+        keyNames: unlockedEncryptedKeys.map(k => k.keyName)
+      });
+    }
+
     // If no primary auth method configured, try ssh-agent first, then ALL default keys
     if (!connectOpts.privateKey && !connectOpts.password && !connectOpts.agent) {
       // First, try to use ssh-agent if available (this is what regular SSH does)
@@ -588,6 +622,17 @@ async function startSSHSession(event, options) {
       } else if (defaultKeyInfo && !options.privateKey && !usedDefaultKeyAsPrimary) {
         // Single default key fallback (when user has configured other auth methods)
         authMethods.push({ type: "publickey", key: defaultKeyInfo.privateKey, isDefault: true, id: "publickey-default" });
+      }
+
+      // Add unlocked encrypted default keys (user provided passphrases for these)
+      for (const keyInfo of unlockedEncryptedKeys) {
+        authMethods.push({ 
+          type: "publickey", 
+          key: keyInfo.privateKey, 
+          passphrase: keyInfo.passphrase,
+          isDefault: true, 
+          id: `publickey-encrypted-${keyInfo.keyName}` 
+        });
       }
 
       // Finally try keyboard-interactive
@@ -774,7 +819,8 @@ async function startSSHSession(event, options) {
         options,
         jumpHosts,
         options.hostname,
-        options.port || 22
+        options.port || 22,
+        sessionId
       );
       connectionSocket = chainResult.socket;
       chainConnections = chainResult.connections;
@@ -1208,6 +1254,57 @@ async function startSSHSessionWrapper(event, options) {
       err.level === 'client-authentication';
 
     if (isAuthError) {
+      // Check if there are encrypted default keys we haven't tried yet
+      // Only offer retry if no unlocked keys were provided in this attempt
+      if (!options._unlockedEncryptedKeys || options._unlockedEncryptedKeys.length === 0) {
+        const allKeysWithEncrypted = findAllDefaultPrivateKeysFromHelper({ includeEncrypted: true });
+        const encryptedKeys = allKeysWithEncrypted.filter(k => k.isEncrypted);
+        
+        if (encryptedKeys.length > 0) {
+          console.log('[SSH] Auth failed, found encrypted default keys. Requesting passphrases for retry...');
+          
+          // Request passphrases from user
+          const passphraseResult = await requestPassphrasesForEncryptedKeys(
+            event.sender,
+            options.hostname
+          );
+          
+          // If user cancelled, don't retry even if some keys were unlocked
+          if (passphraseResult.cancelled) {
+            console.log('[SSH] User cancelled passphrase flow, not retrying');
+          } else if (passphraseResult.keys.length > 0) {
+            console.log('[SSH] User unlocked keys, retrying connection...', {
+              count: passphraseResult.keys.length,
+              keyNames: passphraseResult.keys.map(k => k.keyName)
+            });
+            
+            // Retry connection with unlocked keys
+            // Wrap in try-catch to ensure consistent error handling for retry failures
+            try {
+              return await startSSHSession(event, {
+                ...options,
+                _unlockedEncryptedKeys: passphraseResult.keys,
+              });
+            } catch (retryErr) {
+              // Re-wrap retry errors the same way as initial errors
+              const isRetryAuthError = retryErr.message?.toLowerCase().includes('authentication') ||
+                retryErr.message?.toLowerCase().includes('auth') ||
+                retryErr.level === 'client-authentication';
+              
+              if (isRetryAuthError) {
+                const authError = new Error(retryErr.message);
+                authError.level = 'client-authentication';
+                authError.isAuthError = true;
+                throw authError;
+              }
+              throw retryErr;
+            }
+          } else {
+            console.log('[SSH] User did not unlock any keys, not retrying');
+          }
+        }
+      }
+      
       // Re-throw with a clean error to avoid Electron printing full stack trace
       // The frontend will handle this as a normal auth failure for fallback
       const authError = new Error(err.message);
@@ -1631,6 +1728,8 @@ function registerHandlers(ipcMain) {
   });
   // Register the shared keyboard-interactive response handler
   keyboardInteractiveHandler.registerHandler(ipcMain);
+  // Register the passphrase response handler
+  passphraseHandler.registerHandler(ipcMain);
 }
 
 module.exports = {
@@ -1644,4 +1743,8 @@ module.exports = {
   generateKeyPair,
   checkWindowsSshAgent,
   findDefaultPrivateKey,
+  findAllDefaultPrivateKeys,
+  isKeyEncrypted,
+  findAllDefaultPrivateKeys,
+  isKeyEncrypted,
 };
