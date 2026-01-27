@@ -326,6 +326,7 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
       if (jump.password) connOpts.password = jump.password;
 
       // Build auth handler using shared helper
+      // Pass unlocked encrypted keys from options so jump hosts can use them for retry
       const authConfig = buildAuthHandler({
         privateKey: connOpts.privateKey,
         password: connOpts.password,
@@ -333,6 +334,7 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
         agent: connOpts.agent,
         username: connOpts.username,
         logPrefix: `[SFTP Chain] Hop ${i + 1}`,
+        unlockedEncryptedKeys: options._unlockedEncryptedKeys || [],
       });
       applyAuthToConnOpts(connOpts, authConfig);
 
