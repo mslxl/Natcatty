@@ -145,11 +145,31 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
   const displayedPackages = useMemo(() => {
     if (!selectedPackage) {
       const roots = packages
-        .map((p) => p.split('/')[0])
+        .map((p) => {
+          // Handle paths that start with '/' by removing the leading slash
+          const cleanPath = p.startsWith('/') ? p.substring(1) : p;
+          return cleanPath.split('/')[0];
+        })
         .filter(Boolean);
       return Array.from(new Set(roots)).map((name) => {
-        const path = name;
-        const count = snippets.filter((s) => (s.package || '') === path).length;
+        // For root level, we need to check both with and without leading slash
+        const pathWithSlash = `/${name}`;
+        const pathWithoutSlash = name;
+        
+        // Count snippets in this package AND all nested packages
+        const count = snippets.filter((s) => {
+          const pkg = s.package || '';
+          return pkg === pathWithSlash || pkg.startsWith(pathWithSlash + '/') ||
+                 pkg === pathWithoutSlash || pkg.startsWith(pathWithoutSlash + '/');
+        }).length;
+        
+        // Use the original format that exists in packages array
+        const actualPath = packages.find(p => 
+          p === pathWithSlash || p === pathWithoutSlash || 
+          p.startsWith(pathWithSlash + '/') || p.startsWith(pathWithoutSlash + '/')
+        );
+        const path = actualPath?.startsWith('/') ? pathWithSlash : pathWithoutSlash;
+        
         return { name, path, count };
       });
     }
@@ -160,7 +180,11 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
       .filter(Boolean);
     return Array.from(new Set(children)).map((name) => {
       const path = `${selectedPackage}/${name}`;
-      const count = snippets.filter((s) => (s.package || '') === path).length;
+      // Count snippets in this package AND all nested packages
+      const count = snippets.filter((s) => {
+        const pkg = s.package || '';
+        return pkg === path || pkg.startsWith(path + '/');
+      }).length;
       return { name, path, count };
     });
   }, [packages, selectedPackage, snippets]);
@@ -198,21 +222,50 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
   const createPackage = () => {
     const name = newPackageName.trim();
     if (!name) return;
+    
+    // Allow leading slash and validate the rest - no special characters except letters, numbers, hyphens, underscores, and slashes
+    if (!/^\/?\w+([\w/-]*\w+)*\/?$/.test(name)) {
+      // Could add toast notification here for invalid characters
+      return;
+    }
+    
     const full = selectedPackage ? `${selectedPackage}/${name}` : name;
-    if (!packages.includes(full)) onPackagesChange([...packages, full]);
+    
+    // Check for duplicate package names (case-insensitive)
+    const existingPackage = packages.find(p => p.toLowerCase() === full.toLowerCase());
+    if (existingPackage) {
+      // Could add toast notification here for duplicate package
+      return;
+    }
+    
+    onPackagesChange([...packages, full]);
     setNewPackageName('');
     setIsPackageDialogOpen(false);
   };
 
   const deletePackage = (path: string) => {
+    // Remove the package and all its children
     const keep = packages.filter((p) => !(p === path || p.startsWith(path + '/')));
+    
+    // Move all snippets from deleted packages to root
     const updatedSnippets = snippets.map((s) => {
       if (!s.package) return s;
-      if (s.package === path || s.package.startsWith(path + '/')) return { ...s, package: '' };
+      if (s.package === path || s.package.startsWith(path + '/')) {
+        return { ...s, package: '' };
+      }
       return s;
     });
+    
+    // Update packages first, then save snippets
     onPackagesChange(keep);
-    updatedSnippets.forEach(onSave);
+    
+    // Only save snippets that were actually modified
+    const modifiedSnippets = updatedSnippets.filter((s, index) => 
+      s.package !== snippets[index].package
+    );
+    modifiedSnippets.forEach(onSave);
+    
+    // Reset selected package if it was deleted
     if (selectedPackage && (selectedPackage === path || selectedPackage.startsWith(path + '/'))) {
       setSelectedPackage(null);
     }
@@ -222,17 +275,29 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     const name = source.split('/').pop() || '';
     const newPath = target ? `${target}/${name}` : name;
     if (newPath === source || newPath.startsWith(source + '/')) return;
+    
+    // Check if target path already exists
+    if (packages.includes(newPath)) return;
+    
     const updatedPackages = packages.map((p) => {
       if (p === source) return newPath;
-      if (p.startsWith(source + '/')) return p.replace(source, newPath);
+      // Use more precise replacement to avoid substring issues
+      if (p.startsWith(source + '/')) {
+        return newPath + p.substring(source.length);
+      }
       return p;
     });
+    
     const updatedSnippets = snippets.map((s) => {
       if (!s.package) return s;
       if (s.package === source) return { ...s, package: newPath };
-      if (s.package.startsWith(source + '/')) return { ...s, package: s.package.replace(source, newPath) };
+      // Use more precise replacement to avoid substring issues
+      if (s.package.startsWith(source + '/')) {
+        return { ...s, package: newPath + s.package.substring(source.length) };
+      }
       return s;
     });
+    
     onPackagesChange(Array.from(new Set(updatedPackages)));
     updatedSnippets.forEach(onSave);
     if (selectedPackage === source) setSelectedPackage(newPath);
@@ -246,11 +311,36 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
 
   // Package options for Combobox
   const packageOptions: ComboboxOption[] = useMemo(() => {
-    return packages.map(p => ({
-      value: p,
-      label: p.includes('/') ? p.split('/').pop()! : p,
-      sublabel: p.includes('/') ? p : undefined,
-    }));
+    // Generate all possible parent paths for each package
+    const allPaths = new Set<string>();
+    
+    packages.forEach(pkg => {
+      // Add the full package path
+      allPaths.add(pkg);
+      
+      // Add all parent paths
+      const parts = pkg.split('/').filter(Boolean);
+      const isAbsolute = pkg.startsWith('/');
+      
+      for (let i = 1; i < parts.length; i++) {
+        const parentPath = (isAbsolute ? '/' : '') + parts.slice(0, i).join('/');
+        allPaths.add(parentPath);
+      }
+    });
+    
+    return Array.from(allPaths)
+      .sort((a, b) => {
+        // Sort by depth first (shorter paths first), then alphabetically
+        const depthA = (a.match(/\//g) || []).length;
+        const depthB = (b.match(/\//g) || []).length;
+        if (depthA !== depthB) return depthA - depthB;
+        return a.localeCompare(b);
+      })
+      .map(p => ({
+        value: p,
+        label: p.includes('/') ? p.split('/').pop()! : p,
+        sublabel: p.includes('/') ? p : undefined,
+      }));
   }, [packages]);
 
   // Shell history lazy loading
@@ -729,6 +819,8 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                 value={newPackageName}
                 onChange={(e) => setNewPackageName(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && createPackage()}
+                pattern="^/?[\w-]+([/\w-]*[\w-]+)*/?$"
+                title="Package names can contain letters, numbers, hyphens, underscores, and forward slashes. Can optionally start with /"
               />
               <p className="text-[11px] text-muted-foreground">{t('snippets.packageDialog.hint')}</p>
             </div>
