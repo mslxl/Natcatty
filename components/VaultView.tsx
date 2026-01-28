@@ -1388,7 +1388,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                         onNewHost={(groupPath) => {
                           setEditingHost(null);
                           setIsHostPanelOpen(true);
-                          // TODO: Set default group for new host
                         }}
                         onNewGroup={(parentPath) => {
                           setTargetParentPath(parentPath || null);
