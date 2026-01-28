@@ -548,10 +548,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     return root;
   }, [hosts, customGroups]);
 
-  // Convert buildGroupTree to array for tree view
-  const groupTree = useMemo<GroupNode[]>(() => {
-    return (Object.values(buildGroupTree) as GroupNode[]).sort((a, b) => a.name.localeCompare(b.name));
-  }, [buildGroupTree]);
 
   const findGroupNode = (path: string | null): GroupNode | null => {
     if (!path)

@@ -2,6 +2,7 @@ import { ChevronRight, Folder, FolderOpen, Monitor, Server, Expand, Minimize2 } 
 import React, { useMemo } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { useTreeExpandedState } from '../application/state/useTreeExpandedState';
+import { sanitizeHost } from '../domain/host';
 import { STORAGE_KEY_VAULT_HOSTS_TREE_EXPANDED } from '../infrastructure/config/storageKeys';
 import { cn } from '../lib/utils';
 import { GroupNode, Host } from '../types';
@@ -236,10 +237,19 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
   onDuplicateHost,
   onDeleteHost,
   onCopyCredentials,
-  moveHostToGroup,
+  moveHostToGroup: _moveHostToGroup,
 }) => {
   const { t } = useI18n();
   const paddingLeft = `${depth * 20 + 12}px`;
+  const safeHost = sanitizeHost(host);
+  const tags = host.tags || [];
+  const isTelnet = host.protocol === 'telnet';
+  const displayUsername = isTelnet
+    ? (host.telnetUsername?.trim() || host.username?.trim() || '')
+    : (host.username?.trim() || '');
+  const displayPort = isTelnet
+    ? (host.telnetPort ?? host.port ?? 23)
+    : (host.port ?? 22);
 
   return (
     <ContextMenu>
@@ -249,7 +259,7 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
           style={{ paddingLeft }}
           draggable
           onDragStart={(e) => e.dataTransfer.setData("host-id", host.id)}
-          onDoubleClick={() => onConnect(host)}
+          onClick={() => onConnect(safeHost)}
         >
           <div className="mr-2 flex-shrink-0 w-4 h-4" />
           <div className="mr-3 flex-shrink-0">
@@ -258,7 +268,7 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
           <div className="flex-1 min-w-0">
             <div className="font-medium truncate">{host.label}</div>
             <div className="text-xs text-muted-foreground truncate">
-              {host.username}@{host.hostname}:{host.port}
+              {displayUsername}@{host.hostname}:{displayPort}
             </div>
           </div>
           <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -267,17 +277,17 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
                 {host.protocol.toUpperCase()}
               </span>
             )}
-            {host.tags.length > 0 && (
+            {tags.length > 0 && (
               <span className="text-xs opacity-60">
-                {host.tags.slice(0, 2).join(', ')}
-                {host.tags.length > 2 && '...'}
+                {tags.slice(0, 2).join(', ')}
+                {tags.length > 2 && '...'}
               </span>
             )}
           </div>
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
-        <ContextMenuItem onClick={() => onConnect(host)}>
+        <ContextMenuItem onClick={() => onConnect(safeHost)}>
           <Monitor className="mr-2 h-4 w-4" /> {t("vault.hosts.connect")}
         </ContextMenuItem>
         <ContextMenuItem onClick={() => onEditHost(host)}>
@@ -417,21 +427,6 @@ export const HostTreeView: React.FC<HostTreeViewProps> = ({
         </div>
       )}
 
-      {/* Ungrouped hosts at root level */}
-      {ungroupedHosts.map((host) => (
-        <HostTreeItem
-          key={host.id}
-          host={host}
-          depth={0}
-          onConnect={onConnect}
-          onEditHost={onEditHost}
-          onDuplicateHost={onDuplicateHost}
-          onDeleteHost={onDeleteHost}
-          onCopyCredentials={onCopyCredentials}
-          moveHostToGroup={moveHostToGroup}
-        />
-      ))}
-      
       {/* Group tree */}
       {sortedGroupTree.map((node) => (
         <TreeNode
@@ -452,6 +447,21 @@ export const HostTreeView: React.FC<HostTreeViewProps> = ({
           onDeleteGroup={onDeleteGroup}
           moveHostToGroup={moveHostToGroup}
           moveGroup={moveGroup}
+        />
+      ))}
+
+      {/* Ungrouped hosts at root level */}
+      {ungroupedHosts.map((host) => (
+        <HostTreeItem
+          key={host.id}
+          host={host}
+          depth={0}
+          onConnect={onConnect}
+          onEditHost={onEditHost}
+          onDuplicateHost={onDuplicateHost}
+          onDeleteHost={onDeleteHost}
+          onCopyCredentials={onCopyCredentials}
+          moveHostToGroup={moveHostToGroup}
         />
       ))}
       
