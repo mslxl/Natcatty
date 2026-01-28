@@ -300,7 +300,8 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
 
   const movePackage = (source: string, target: string | null) => {
     const name = source.split('/').pop() || '';
-    const newPath = target ? `${target}/${name}` : name;
+    const isAbsolute = source.startsWith('/');
+    const newPath = target ? `${target}/${name}` : (isAbsolute ? `/${name}` : name);
     if (newPath === source || newPath.startsWith(source + '/')) return;
     
     // Check if target path already exists
