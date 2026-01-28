@@ -242,7 +242,16 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
       return;
     }
     
-    const full = selectedPackage ? `${selectedPackage}/${name}` : name;
+    // Normalize path construction to avoid double slashes
+    let full: string;
+    if (selectedPackage) {
+      // Strip leading slash from name when we're inside a package to avoid double slashes
+      const normalizedName = name.startsWith('/') ? name.substring(1) : name;
+      full = `${selectedPackage}/${normalizedName}`;
+    } else {
+      // At root level, preserve the leading slash if user intended it
+      full = name;
+    }
     
     // Check for duplicate package names (case-insensitive)
     const existingPackage = packages.find(p => p.toLowerCase() === full.toLowerCase());
