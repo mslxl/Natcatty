@@ -192,6 +192,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   // Host panel state (local to hosts section)
   const [isHostPanelOpen, setIsHostPanelOpen] = useState(false);
   const [editingHost, setEditingHost] = useState<Host | null>(null);
+  const [newHostGroupPath, setNewHostGroupPath] = useState<string | null>(null);
 
   // Quick connect state
   const [quickConnectTarget, setQuickConnectTarget] = useState<{
@@ -302,6 +303,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
 
   const handleNewHost = useCallback(() => {
     setEditingHost(null);
+    setNewHostGroupPath(null);
     setIsHostPanelOpen(true);
   }, []);
 
@@ -546,47 +548,10 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     return root;
   }, [hosts, customGroups]);
 
-  // Create a separate group tree for tree view that doesn't include ungrouped hosts
-  const buildTreeViewGroupTree = useMemo<Record<string, GroupNode>>(() => {
-    const root: Record<string, GroupNode> = {};
-    const insertPath = (path: string, host?: Host) => {
-      const parts = path.split("/").filter(Boolean);
-      let currentLevel = root;
-      let currentPath = "";
-      parts.forEach((part, index) => {
-        currentPath = currentPath ? `${currentPath}/${part}` : part;
-        if (!currentLevel[part]) {
-          currentLevel[part] = {
-            name: part,
-            path: currentPath,
-            children: {},
-            hosts: [],
-          };
-        }
-        if (host && index === parts.length - 1)
-          currentLevel[part].hosts.push(host);
-        currentLevel = currentLevel[part].children;
-      });
-    };
-    customGroups.forEach((path) => insertPath(path));
-    // Only add hosts that have a non-empty group
-    hosts.forEach((host) => {
-      if (host.group && host.group.trim() !== "") {
-        insertPath(host.group, host);
-      }
-    });
-    return root;
-  }, [hosts, customGroups]);
-
   // Convert buildGroupTree to array for tree view
   const groupTree = useMemo<GroupNode[]>(() => {
     return (Object.values(buildGroupTree) as GroupNode[]).sort((a, b) => a.name.localeCompare(b.name));
   }, [buildGroupTree]);
-
-  // Create tree view specific group tree that excludes ungrouped hosts
-  const treeViewGroupTree = useMemo<GroupNode[]>(() => {
-    return (Object.values(buildTreeViewGroupTree) as GroupNode[]).sort((a, b) => a.name.localeCompare(b.name));
-  }, [buildTreeViewGroupTree]);
 
   const findGroupNode = (path: string | null): GroupNode | null => {
     if (!path)
@@ -689,6 +654,43 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     });
     return filtered;
   }, [hosts, search, selectedTags, sortMode]);
+
+  // Create a separate group tree for tree view that uses filtered hosts
+  const buildTreeViewGroupTree = useMemo<Record<string, GroupNode>>(() => {
+    const root: Record<string, GroupNode> = {};
+    const insertPath = (path: string, host?: Host) => {
+      const parts = path.split("/").filter(Boolean);
+      let currentLevel = root;
+      let currentPath = "";
+      parts.forEach((part, index) => {
+        currentPath = currentPath ? `${currentPath}/${part}` : part;
+        if (!currentLevel[part]) {
+          currentLevel[part] = {
+            name: part,
+            path: currentPath,
+            children: {},
+            hosts: [],
+          };
+        }
+        if (host && index === parts.length - 1)
+          currentLevel[part].hosts.push(host);
+        currentLevel = currentLevel[part].children;
+      });
+    };
+    customGroups.forEach((path) => insertPath(path));
+    // Use filtered hosts (treeViewHosts) instead of all hosts to respect search/tag filters
+    treeViewHosts.forEach((host) => {
+      if (host.group && host.group.trim() !== "") {
+        insertPath(host.group, host);
+      }
+    });
+    return root;
+  }, [treeViewHosts, customGroups]);
+
+  // Create tree view specific group tree that excludes ungrouped hosts
+  const treeViewGroupTree = useMemo<GroupNode[]>(() => {
+    return (Object.values(buildTreeViewGroupTree) as GroupNode[]).sort((a, b) => a.name.localeCompare(b.name));
+  }, [buildTreeViewGroupTree]);
 
   // Compute all unique tags across all hosts
   const allTags = useMemo(() => {
@@ -1387,6 +1389,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                         onCopyCredentials={handleCopyCredentials}
                         onNewHost={(groupPath) => {
                           setEditingHost(null);
+                          setNewHostGroupPath(groupPath || null);
                           setIsHostPanelOpen(true);
                         }}
                         onNewGroup={(parentPath) => {
@@ -1643,7 +1646,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           )}
           allTags={allTags}
           allHosts={hosts}
-          defaultGroup={editingHost ? undefined : selectedGroupPath}
+          defaultGroup={editingHost ? undefined : (newHostGroupPath || selectedGroupPath)}
           onSave={(host) => {
             // Check if host already exists in the list (for updates vs. new/duplicate)
             const hostExists = hosts.some((h) => h.id === host.id);
@@ -1654,10 +1657,12 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             );
             setIsHostPanelOpen(false);
             setEditingHost(null);
+            setNewHostGroupPath(null);
           }}
           onCancel={() => {
             setIsHostPanelOpen(false);
             setEditingHost(null);
+            setNewHostGroupPath(null);
           }}
           onCreateGroup={(groupPath) => {
             onUpdateCustomGroups(
