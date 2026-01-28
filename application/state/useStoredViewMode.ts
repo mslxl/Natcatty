@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { localStorageAdapter } from "../../infrastructure/persistence/localStorageAdapter";
 
-export type ViewMode = "grid" | "list";
+export type ViewMode = "grid" | "list" | "tree";
 
 const isViewMode = (value: string | null): value is ViewMode =>
-  value === "grid" || value === "list";
+  value === "grid" || value === "list" || value === "tree";
 
 export const useStoredViewMode = (
   storageKey: string,
