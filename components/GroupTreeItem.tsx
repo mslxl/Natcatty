@@ -1,4 +1,4 @@
-import { ChevronRight,Folder,FolderOpen,FolderPlus,Plus } from 'lucide-react';
+import { ChevronRight,FileSymlink,Folder,FolderOpen,FolderPlus,Plus } from 'lucide-react';
 import React,{ useMemo } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { cn } from '../lib/utils';
@@ -16,6 +16,7 @@ interface GroupTreeItemProps {
   onEditGroup: (path: string) => void;
   onNewHost: (path: string) => void;
   onNewSubfolder: (path: string) => void;
+  isManagedGroup?: (path: string) => boolean;
 }
 
 export const GroupTreeItem: React.FC<GroupTreeItemProps> = ({

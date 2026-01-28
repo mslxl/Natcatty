@@ -1,12 +1,14 @@
 import {
   Activity,
   BookMarked,
+  CheckSquare,
   ChevronDown,
   ClipboardCopy,
   Copy,
   Download,
   Edit2,
   FileCode,
+  FileSymlink,
   FolderPlus,
   FolderTree,
   Key,
@@ -17,10 +19,12 @@ import {
   Plus,
   Search,
   Settings,
+  Square,
   TerminalSquare,
   Trash2,
   Upload,
   Usb,
+  X,
   Zap,
 } from "lucide-react";
 import React, { Suspense, lazy, memo, useCallback, useEffect, useMemo, useState } from "react";
@@ -39,6 +43,7 @@ import {
   HostProtocol,
   Identity,
   KnownHost,
+  ManagedSource,
   SerialConfig,
   SSHKey,
   ShellHistoryEntry,
@@ -57,7 +62,7 @@ import { isQuickConnectInput, parseQuickConnectInputWithWarnings } from "../doma
 import SerialConnectModal from "./SerialConnectModal";
 import SerialHostDetailsPanel from "./SerialHostDetailsPanel";
 import SnippetsManager from "./SnippetsManager";
-import { ImportVaultDialog } from "./vault/ImportVaultDialog";
+import { ImportVaultDialog, ImportOptions } from "./vault/ImportVaultDialog";
 import { Button } from "./ui/button";
 import {
   ContextMenu,
@@ -79,6 +84,7 @@ import { Label } from "./ui/label";
 import { SortDropdown, SortMode } from "./ui/sort-dropdown";
 import { TagFilterDropdown } from "./ui/tag-filter-dropdown";
 import { toast } from "./ui/toast";
+import { Badge } from "./ui/badge";
 
 const LazyProtocolSelectDialog = lazy(() => import("./ProtocolSelectDialog"));
 const LazyConnectionLogsManager = lazy(() => import("./ConnectionLogsManager"));
@@ -96,6 +102,7 @@ interface VaultViewProps {
   knownHosts: KnownHost[];
   shellHistory: ShellHistoryEntry[];
   connectionLogs: ConnectionLog[];
+  managedSources: ManagedSource[];
   sessions: TerminalSession[];
   onOpenSettings: () => void;
   onOpenQuickSwitcher: () => void;
@@ -110,6 +117,7 @@ interface VaultViewProps {
   onUpdateSnippetPackages: (pkgs: string[]) => void;
   onUpdateCustomGroups: (groups: string[]) => void;
   onUpdateKnownHosts: (knownHosts: KnownHost[]) => void;
+  onUpdateManagedSources: (managedSources: ManagedSource[]) => void;
   onConvertKnownHost: (knownHost: KnownHost) => void;
   onToggleConnectionLogSaved: (id: string) => void;
   onDeleteConnectionLog: (id: string) => void;
@@ -131,6 +139,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   knownHosts,
   shellHistory,
   connectionLogs,
+  managedSources,
   sessions,
   onOpenSettings,
   onOpenQuickSwitcher,
@@ -145,6 +154,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   onUpdateSnippetPackages,
   onUpdateCustomGroups,
   onUpdateKnownHosts,
+  onUpdateManagedSources,
   onConvertKnownHost,
   onToggleConnectionLogSaved,
   onDeleteConnectionLog,
@@ -171,6 +181,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   const [isSerialModalOpen, setIsSerialModalOpen] = useState(false);
   const [isDeleteGroupOpen, setIsDeleteGroupOpen] = useState(false);
   const [deleteTargetPath, setDeleteTargetPath] = useState<string | null>(null);
+  const [deleteGroupWithHosts, setDeleteGroupWithHosts] = useState(false);
 
   // Handle external navigation requests
   useEffect(() => {
@@ -188,6 +199,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   const treeExpandedState = useTreeExpandedState(STORAGE_KEY_VAULT_HOSTS_TREE_EXPANDED);
   const [sortMode, setSortMode] = useState<SortMode>("az");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [selectedHostIds, setSelectedHostIds] = useState<Set<string>>(new Set());
+  const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
 
   // Host panel state (local to hosts section)
   const [isHostPanelOpen, setIsHostPanelOpen] = useState(false);
@@ -402,6 +415,31 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     });
   }, [identities, t]);
 
+  const toggleHostSelection = useCallback((hostId: string) => {
+    setSelectedHostIds(prev => {
+      const next = new Set(prev);
+      if (next.has(hostId)) {
+        next.delete(hostId);
+      } else {
+        next.add(hostId);
+      }
+      return next;
+    });
+  }, []);
+
+  const clearHostSelection = useCallback(() => {
+    setSelectedHostIds(new Set());
+    setIsMultiSelectMode(false);
+  }, []);
+
+  const deleteSelectedHosts = useCallback(() => {
+    if (selectedHostIds.size === 0) return;
+    const updatedHosts = hosts.filter(h => !selectedHostIds.has(h.id));
+    onUpdateHosts(updatedHosts);
+    clearHostSelection();
+    toast.success(t("vault.hosts.deleteMultiple.success", { count: selectedHostIds.size }));
+  }, [selectedHostIds, hosts, onUpdateHosts, clearHostSelection, t]);
+
   const readTextFile = useCallback(async (file: File): Promise<string> => {
     const buf = await file.arrayBuffer();
     const bytes = new Uint8Array(buf);
@@ -430,7 +468,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   }, []);
 
   const handleImportFileSelected = useCallback(
-    async (format: VaultImportFormat, file: File) => {
+    async (format: VaultImportFormat, file: File, options?: ImportOptions) => {
       setIsImportOpen(false);
 
       try {
@@ -452,11 +490,39 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           fileName: file.name,
         });
 
+        const isManaged = format === "ssh_config" && options?.managed === true;
+        const fileBaseName = file.name.replace(/\.[^/.]+$/, "");
+        const managedGroupName = `${fileBaseName} - Managed`;
+
         const makeKey = (h: Host) =>
           `${(h.protocol ?? "ssh").toLowerCase()}|${h.hostname.toLowerCase()}|${h.port}|${(h.username ?? "").toLowerCase()}`;
 
         const existingKeys = new Set(hosts.map(makeKey));
-        const newHosts = result.hosts.filter((h) => !existingKeys.has(makeKey(h)));
+        let newHosts = isManaged
+          ? result.hosts
+          : result.hosts.filter((h) => !existingKeys.has(makeKey(h)));
+
+        if (isManaged && newHosts.length > 0) {
+          const sourceId = crypto.randomUUID();
+          const bridge = (window as unknown as { netcatty?: { getPathForFile?: (file: File) => string | undefined } }).netcatty;
+          const filePath = bridge?.getPathForFile?.(file) || file.name;
+          console.log('[Import] File path resolved:', filePath);
+          const newSource: ManagedSource = {
+            id: sourceId,
+            type: "ssh_config",
+            filePath: filePath,
+            groupName: managedGroupName,
+            lastSyncedAt: Date.now(),
+          };
+
+          newHosts = newHosts.map((h) => ({
+            ...h,
+            group: managedGroupName,
+            managedSourceId: sourceId,
+          }));
+
+          onUpdateManagedSources([...managedSources, newSource]);
+        }
 
         if (newHosts.length > 0) {
           onUpdateHosts([...hosts, ...newHosts].map(sanitizeHost));
@@ -491,20 +557,27 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           return;
         }
 
-        const details = t("vault.import.toast.summary", {
-          count: newHosts.length,
-          skipped,
-          duplicates,
-        });
-
-        if (hasWarnings) {
-          const firstIssue = result.issues[0]?.message;
-          toast.warning(
-            firstIssue ? `${details} ${t("vault.import.toast.firstIssue", { issue: firstIssue })}` : details,
+        if (isManaged) {
+          toast.success(
+            t("vault.import.sshConfig.managedSuccess", { count: newHosts.length }),
             t("vault.import.toast.completedTitle"),
           );
         } else {
-          toast.success(details, t("vault.import.toast.completedTitle"));
+          const details = t("vault.import.toast.summary", {
+            count: newHosts.length,
+            skipped,
+            duplicates,
+          });
+
+          if (hasWarnings) {
+            const firstIssue = result.issues[0]?.message;
+            toast.warning(
+              firstIssue ? `${details} ${t("vault.import.toast.firstIssue", { issue: firstIssue })}` : details,
+              t("vault.import.toast.completedTitle"),
+            );
+          } else {
+            toast.success(details, t("vault.import.toast.completedTitle"));
+          }
         }
       } catch (err) {
         const message =
@@ -515,8 +588,10 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     [
       customGroups,
       hosts,
+      managedSources,
       onUpdateCustomGroups,
       onUpdateHosts,
+      onUpdateManagedSources,
       readTextFile,
       t,
     ],
@@ -597,7 +672,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
         selectedTags.some((t) => h.tags?.includes(t)),
       );
     }
-    // Apply sorting
     filtered = [...filtered].sort((a, b) => {
       switch (sortMode) {
         case "az":
@@ -608,6 +682,12 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           return (b.createdAt || 0) - (a.createdAt || 0);
         case "oldest":
           return (a.createdAt || 0) - (b.createdAt || 0);
+        case "group": {
+          const groupA = a.group || "";
+          const groupB = b.group || "";
+          const groupCmp = groupA.localeCompare(groupB);
+          return groupCmp !== 0 ? groupCmp : a.label.localeCompare(b.label);
+        }
         default:
           return 0;
       }
@@ -633,7 +713,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
         selectedTags.some((t) => h.tags?.includes(t)),
       );
     }
-    // Apply sorting
     filtered = [...filtered].sort((a, b) => {
       switch (sortMode) {
         case "az":
@@ -644,6 +723,12 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           return (b.createdAt || 0) - (a.createdAt || 0);
         case "oldest":
           return (a.createdAt || 0) - (b.createdAt || 0);
+        case "group": {
+          const groupA = a.group || "";
+          const groupB = b.group || "";
+          const groupCmp = groupA.localeCompare(groupB);
+          return groupCmp !== 0 ? groupCmp : a.label.localeCompare(b.label);
+        }
         default:
           return 0;
       }
@@ -651,7 +736,26 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     return filtered;
   }, [hosts, search, selectedTags, sortMode]);
 
-  // Create a separate group tree for tree view that uses filtered hosts
+  const groupedDisplayHosts = useMemo(() => {
+    if (sortMode !== "group") return null;
+    const groups: { name: string; hosts: Host[] }[] = [];
+    const groupMap = new Map<string, Host[]>();
+    
+    for (const host of displayedHosts) {
+      const groupName = host.group || "";
+      if (!groupMap.has(groupName)) {
+        groupMap.set(groupName, []);
+      }
+      groupMap.get(groupName)!.push(host);
+    }
+    
+    const sortedKeys = [...groupMap.keys()].sort((a, b) => a.localeCompare(b));
+    for (const key of sortedKeys) {
+      groups.push({ name: key, hosts: groupMap.get(key)! });
+    }
+    return groups;
+  }, [displayedHosts, sortMode]);
+
   const buildTreeViewGroupTree = useMemo<Record<string, GroupNode>>(() => {
     const root: Record<string, GroupNode> = {};
     const insertPath = (path: string, host?: Host) => {
@@ -869,15 +973,34 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     setIsRenameGroupOpen(false);
   };
 
-  const deleteGroupPath = (path: string) => {
+  const deleteGroupPath = (path: string, deleteHosts: boolean = false) => {
     const keepGroups = customGroups.filter(
       (g) => !(g === path || g.startsWith(path + "/")),
     );
-    const keepHosts = hosts.map((h) => {
-      const g = h.group || "";
-      if (g === path || g.startsWith(path + "/")) return { ...h, group: "" };
-      return h;
-    });
+    
+    const isManagedGroup = managedGroupPaths.has(path);
+    if (isManagedGroup) {
+      const source = managedSources.find(s => s.groupName === path);
+      if (source) {
+        const updatedSources = managedSources.filter(s => s.id !== source.id);
+        onUpdateManagedSources(updatedSources);
+      }
+    }
+    
+    let keepHosts: Host[];
+    if (deleteHosts) {
+      keepHosts = hosts.filter((h) => {
+        const g = h.group || "";
+        return !(g === path || g.startsWith(path + "/"));
+      });
+    } else {
+      keepHosts = hosts.map((h) => {
+        const g = h.group || "";
+        if (g === path || g.startsWith(path + "/")) return { ...h, group: "", managedSourceId: undefined };
+        return h;
+      });
+    }
+    
     onUpdateCustomGroups(keepGroups);
     onUpdateHosts(keepHosts);
     if (
@@ -915,13 +1038,45 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     }
   };
 
+  const managedGroupPaths = useMemo(() => {
+    return new Set(managedSources.map(s => s.groupName));
+  }, [managedSources]);
+
   const moveHostToGroup = (hostId: string, groupPath: string | null) => {
+    const targetGroup = groupPath || "";
+    const targetManagedSource = managedSources.find(s => 
+      targetGroup === s.groupName || targetGroup.startsWith(s.groupName + "/")
+    );
+    
     onUpdateHosts(
-      hosts.map((h) =>
-        h.id === hostId ? { ...h, group: groupPath || "" } : h,
-      ),
+      hosts.map((h) => {
+        if (h.id !== hostId) return h;
+        
+        return { 
+          ...h, 
+          group: targetGroup,
+          managedSourceId: targetManagedSource?.id,
+        };
+      }),
     );
   };
+
+  const handleUnmanageGroup = useCallback((groupPath: string) => {
+    const source = managedSources.find(s => s.groupName === groupPath);
+    if (!source) return;
+    
+    const updatedHosts = hosts.map(h => 
+      h.managedSourceId === source.id 
+        ? { ...h, managedSourceId: undefined } 
+        : h
+    );
+    onUpdateHosts(updatedHosts);
+    
+    const updatedSources = managedSources.filter(s => s.id !== source.id);
+    onUpdateManagedSources(updatedSources);
+    
+    toast.success(t("vault.managedSource.unmanageSuccess"));
+  }, [managedSources, hosts, onUpdateHosts, onUpdateManagedSources, t]);
 
   // Component no longer handles visibility - that's done by VaultViewWrapper
   return (
@@ -1113,6 +1268,21 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                   onChange={setSortMode}
                   className="h-10 w-10"
                 />
+                <Button
+                  variant={isMultiSelectMode ? "secondary" : "ghost"}
+                  size="icon"
+                  className="h-10 w-10"
+                  onClick={() => {
+                    if (isMultiSelectMode) {
+                      clearHostSelection();
+                    } else {
+                      setIsMultiSelectMode(true);
+                    }
+                  }}
+                  title={t("vault.hosts.multiSelect")}
+                >
+                  <CheckSquare size={16} />
+                </Button>
               </div>
               {/* New Host split button */}
               <div className="flex items-center app-no-drag">
@@ -1311,8 +1481,14 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                                   <FolderTree size={20} />
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                  <div className="text-sm font-semibold truncate">
+                                  <div className="text-sm font-semibold truncate flex items-center gap-2">
                                     {node.name}
+                                    {managedGroupPaths.has(node.path) && (
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-primary/15 text-primary shrink-0">
+                                        <FileSymlink size={10} />
+                                        Managed
+                                      </span>
+                                    )}
                                   </div>
                                   <div className="text-[11px] text-muted-foreground">
                                     {t("vault.groups.hostsCount", { count: node.hosts.length })}
@@ -1343,7 +1519,10 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                             </ContextMenuItem>
                             <ContextMenuItem
                               className="text-destructive"
-                              onClick={() => deleteGroupPath(node.path)}
+                              onClick={() => {
+                                setDeleteTargetPath(node.path);
+                                setIsDeleteGroupOpen(true);
+                              }}
                             >
                               <Trash2 className="mr-2 h-4 w-4" /> {t("vault.groups.delete")}
                             </ContextMenuItem>
@@ -1368,6 +1547,49 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                         </div>
                       </div>
                     </div>
+                    
+                    {isMultiSelectMode && (
+                      <div className="flex items-center gap-2 p-2 bg-secondary/60 rounded-lg border border-border/40">
+                        <span className="text-sm text-muted-foreground">
+                          {t("vault.hosts.selected", { count: selectedHostIds.size })}
+                        </span>
+                        <div className="flex-1" />
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            const allIds = new Set(displayedHosts.map(h => h.id));
+                            setSelectedHostIds(allIds);
+                          }}
+                        >
+                          {t("vault.hosts.selectAll")}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={clearHostSelection}
+                        >
+                          {t("vault.hosts.deselectAll")}
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          disabled={selectedHostIds.size === 0}
+                          onClick={deleteSelectedHosts}
+                        >
+                          <Trash2 size={14} className="mr-1" />
+                          {t("vault.hosts.deleteSelected", { count: selectedHostIds.size })}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={clearHostSelection}
+                        >
+                          <X size={14} />
+                        </Button>
+                      </div>
+                    )}
                     
                     {viewMode === "tree" ? (
                       <HostTreeView
@@ -1406,7 +1628,160 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                         }}
                         moveHostToGroup={moveHostToGroup}
                         moveGroup={moveGroup}
+                        managedGroupPaths={managedGroupPaths}
+                        onUnmanageGroup={handleUnmanageGroup}
                       />
+                    ) : sortMode === "group" && groupedDisplayHosts ? (
+                      <div className="space-y-6">
+                        {groupedDisplayHosts.map((group) => (
+                          <div key={group.name || "__ungrouped__"}>
+                            <div className="flex items-center gap-2 mb-3 pb-2 border-b border-border/40">
+                              <FolderTree size={14} className="text-muted-foreground" />
+                              <span className="text-sm font-medium text-muted-foreground">
+                                {group.name || t("vault.groups.ungrouped")}
+                              </span>
+                              <span className="text-xs text-muted-foreground/60">
+                                ({group.hosts.length})
+                              </span>
+                            </div>
+                            <div
+                              className={cn(
+                                viewMode === "grid"
+                                  ? "grid gap-3 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+                                  : "flex flex-col gap-0",
+                              )}
+                            >
+                              {group.hosts.map((host) => {
+                                const safeHost = sanitizeHost(host);
+                                const distroBadge = {
+                                  text: (safeHost.os || "L")[0].toUpperCase(),
+                                  label: safeHost.distro || safeHost.os || "Linux",
+                                };
+                                return (
+                                  <ContextMenu key={host.id}>
+                                    <ContextMenuTrigger>
+                                      <div
+                                        className={cn(
+                                          "group cursor-pointer",
+                                          viewMode === "grid"
+                                            ? "soft-card elevate rounded-xl h-[68px] px-3 py-2"
+                                            : "h-14 px-3 py-2 hover:bg-secondary/60 rounded-lg transition-colors",
+                                        )}
+                                        draggable
+                                        onDragStart={(e) => {
+                                          e.dataTransfer.effectAllowed = "move";
+                                          e.dataTransfer.setData("host-id", host.id);
+                                        }}
+                                        onClick={() => {
+                                          if (isMultiSelectMode) {
+                                            toggleHostSelection(host.id);
+                                          } else {
+                                            handleHostConnect(safeHost);
+                                          }
+                                        }}
+                                      >
+                                        <div className="flex items-center gap-3 h-full">
+                                          {isMultiSelectMode && (
+                                            <div 
+                                              className="shrink-0"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                toggleHostSelection(host.id);
+                                              }}
+                                            >
+                                              {selectedHostIds.has(host.id) ? (
+                                                <CheckSquare size={18} className="text-primary" />
+                                              ) : (
+                                                <Square size={18} className="text-muted-foreground" />
+                                              )}
+                                            </div>
+                                          )}
+                                          <DistroAvatar
+                                            host={safeHost}
+                                            fallback={distroBadge.text}
+                                          />
+                                          <div className="min-w-0 flex flex-col justify-center gap-0.5 flex-1">
+                                            <div className="flex items-center gap-1.5">
+                                              <span className="text-sm font-semibold truncate leading-5">
+                                                {safeHost.label}
+                                              </span>
+                                              {safeHost.managedSourceId && (
+                                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 shrink-0">
+                                                  managed
+                                                </Badge>
+                                              )}
+                                            </div>
+                                            <div className="text-[11px] text-muted-foreground font-mono truncate leading-4">
+                                              {safeHost.username}@{safeHost.hostname}
+                                            </div>
+                                          </div>
+                                          {viewMode === "list" && (
+                                            <>
+                                              <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  handleEditHost(host);
+                                                }}
+                                              >
+                                                <Edit2 size={14} />
+                                              </Button>
+                                            </>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </ContextMenuTrigger>
+                                    <ContextMenuContent>
+                                      <ContextMenuItem
+                                        onClick={() => handleHostConnect(host)}
+                                      >
+                                        <Plug className="mr-2 h-4 w-4" /> {t('vault.hosts.connect')}
+                                      </ContextMenuItem>
+                                      <ContextMenuItem
+                                        onClick={() => handleEditHost(host)}
+                                      >
+                                        <Edit2 className="mr-2 h-4 w-4" /> {t('action.edit')}
+                                      </ContextMenuItem>
+                                      <ContextMenuItem
+                                        onClick={() => handleDuplicateHost(host)}
+                                      >
+                                        <Copy className="mr-2 h-4 w-4" /> {t('action.duplicate')}
+                                      </ContextMenuItem>
+                                      <ContextMenuItem
+                                        onClick={() => handleCopyCredentials(host)}
+                                      >
+                                        <ClipboardCopy className="mr-2 h-4 w-4" /> {t('vault.hosts.copyCredentials')}
+                                      </ContextMenuItem>
+                                      <ContextMenuItem
+                                        className="text-destructive"
+                                        onClick={() => onDeleteHost(host.id)}
+                                      >
+                                        <Trash2 className="mr-2 h-4 w-4" /> {t('action.delete')}
+                                      </ContextMenuItem>
+                                    </ContextMenuContent>
+                                  </ContextMenu>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                        {groupedDisplayHosts.length === 0 && (
+                          <div className="col-span-full flex flex-col items-center justify-center py-24 text-muted-foreground">
+                            <div className="h-16 w-16 rounded-2xl bg-secondary/80 flex items-center justify-center mb-4">
+                              <LayoutGrid size={32} className="opacity-60" />
+                            </div>
+                            <h3 className="text-lg font-semibold text-foreground mb-2">
+                              Set up your hosts
+                            </h3>
+                            <p className="text-sm text-center max-w-sm">
+                              Save hosts to quickly connect to your servers, VMs,
+                              and containers.
+                            </p>
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       <div
                         className={cn(
@@ -1436,16 +1811,44 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                                     e.dataTransfer.effectAllowed = "move";
                                     e.dataTransfer.setData("host-id", host.id);
                                   }}
-                                  onClick={() => handleHostConnect(safeHost)}
+                                  onClick={() => {
+                                    if (isMultiSelectMode) {
+                                      toggleHostSelection(host.id);
+                                    } else {
+                                      handleHostConnect(safeHost);
+                                    }
+                                  }}
                                 >
                                   <div className="flex items-center gap-3 h-full">
+                                    {isMultiSelectMode && (
+                                      <div 
+                                        className="shrink-0"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          toggleHostSelection(host.id);
+                                        }}
+                                      >
+                                        {selectedHostIds.has(host.id) ? (
+                                          <CheckSquare size={18} className="text-primary" />
+                                        ) : (
+                                          <Square size={18} className="text-muted-foreground" />
+                                        )}
+                                      </div>
+                                    )}
                                     <DistroAvatar
                                       host={safeHost}
                                       fallback={distroBadge.text}
                                     />
                                     <div className="min-w-0 flex flex-col justify-center gap-0.5 flex-1">
-                                      <div className="text-sm font-semibold truncate leading-5">
-                                        {safeHost.label}
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-sm font-semibold truncate leading-5">
+                                          {safeHost.label}
+                                        </span>
+                                        {safeHost.managedSourceId && (
+                                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 shrink-0">
+                                            managed
+                                          </Badge>
+                                        )}
                                       </div>
                                       <div className="text-[11px] text-muted-foreground font-mono truncate leading-4">
                                         {safeHost.username}@{safeHost.hostname}
@@ -1640,6 +2043,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
               ...hosts.map((h) => h.group || "General"),
             ]),
           )}
+          managedSources={managedSources}
           allTags={allTags}
           allHosts={hosts}
           defaultGroup={editingHost ? undefined : (newHostGroupPath || selectedGroupPath)}
@@ -1791,6 +2195,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           setIsDeleteGroupOpen(open);
           if (!open) {
             setDeleteTargetPath(null);
+            setDeleteGroupWithHosts(false);
           }
         }}
       >
@@ -1798,15 +2203,30 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           <DialogHeader>
             <DialogTitle>{t("vault.groups.deleteDialogTitle")}</DialogTitle>
             <DialogDescription>
-              {t("vault.groups.deleteDialog.desc")}
+              {deleteTargetPath && managedGroupPaths.has(deleteTargetPath)
+                ? t("vault.groups.deleteDialog.managedDesc")
+                : t("vault.groups.deleteDialog.desc")}
             </DialogDescription>
           </DialogHeader>
-          <div className="py-4">
+          <div className="py-4 space-y-4">
             {deleteTargetPath && (
-              <p className="text-sm text-muted-foreground">
-                {t("vault.groups.pathLabel")}:{" "}
-                <span className="font-mono">{deleteTargetPath}</span>
-              </p>
+              <>
+                <p className="text-sm text-muted-foreground">
+                  {t("vault.groups.pathLabel")}:{" "}
+                  <span className="font-mono">{deleteTargetPath}</span>
+                </p>
+                {!managedGroupPaths.has(deleteTargetPath) && (
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={deleteGroupWithHosts}
+                      onChange={(e) => setDeleteGroupWithHosts(e.target.checked)}
+                      className="rounded border-border"
+                    />
+                    <span>{t("vault.groups.deleteDialog.deleteHosts")}</span>
+                  </label>
+                )}
+              </>
             )}
           </div>
           <DialogFooter>
@@ -1817,9 +2237,11 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
               variant="destructive" 
               onClick={() => {
                 if (deleteTargetPath) {
-                  deleteGroupPath(deleteTargetPath);
+                  const isManaged = managedGroupPaths.has(deleteTargetPath);
+                  deleteGroupPath(deleteTargetPath, isManaged || deleteGroupWithHosts);
                 }
                 setIsDeleteGroupOpen(false);
+                setDeleteGroupWithHosts(false);
               }}
             >
               {t("common.delete")}

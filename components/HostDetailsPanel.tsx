@@ -29,7 +29,7 @@ import { useApplicationBackend } from "../application/state/useApplicationBacken
 import { TERMINAL_THEMES } from "../infrastructure/config/terminalThemes";
 import { MIN_FONT_SIZE, MAX_FONT_SIZE } from "../infrastructure/config/fonts";
 import { cn } from "../lib/utils";
-import { EnvVar, Host, Identity, ProxyConfig, SSHKey } from "../types";
+import { EnvVar, Host, Identity, ManagedSource, ProxyConfig, SSHKey } from "../types";
 import { DistroAvatar } from "./DistroAvatar";
 import ThemeSelectPanel from "./ThemeSelectPanel";
 import {
@@ -70,6 +70,7 @@ interface HostDetailsPanelProps {
   availableKeys: SSHKey[];
   identities: Identity[];
   groups: string[];
+  managedSources?: ManagedSource[];
   allTags?: string[]; // All available tags for autocomplete
   allHosts?: Host[]; // All hosts for chain selection
   defaultGroup?: string | null; // Default group for new hosts (from current navigation)
@@ -84,6 +85,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   availableKeys,
   identities,
   groups,
+  managedSources = [],
   allTags = [],
   allHosts = [],
   defaultGroup,
@@ -254,14 +256,21 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
     if (!form.hostname) return;
     // If label is empty, use hostname as label
     const finalLabel = form.label?.trim() || form.hostname;
+    const finalGroup = groupInputValue.trim() || form.group || "";
+    
+    const targetManagedSource = managedSources.find(s => 
+      finalGroup === s.groupName || finalGroup.startsWith(s.groupName + "/")
+    );
+    
     const cleaned: Host = {
       ...form,
       label: finalLabel,
-      group: groupInputValue.trim() || form.group,
+      group: finalGroup,
       tags: form.tags || [],
       port: form.port || 22,
       // Clear password if savePassword is explicitly set to false
       password: form.savePassword === false ? undefined : form.password,
+      managedSourceId: targetManagedSource?.id,
     };
     onSave(cleaned);
   };
@@ -519,32 +528,6 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
       }
     >
       <AsidePanelContent>
-        <Card className="p-3 space-y-2 bg-card border-border/80">
-          <div className="flex items-center gap-2">
-            <MapPin size={14} className="text-muted-foreground" />
-            <p className="text-xs font-semibold">
-              {t("hostDetails.section.address")}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <DistroAvatar
-              host={form as Host}
-              fallback={
-                form.label?.slice(0, 2).toUpperCase() ||
-                form.hostname?.slice(0, 2).toUpperCase() ||
-                "H"
-              }
-              className="h-10 w-10"
-            />
-            <Input
-              placeholder={t("hostDetails.hostname.placeholder")}
-              value={form.hostname}
-              onChange={(e) => update("hostname", e.target.value)}
-              className="h-10 flex-1"
-            />
-          </div>
-        </Card>
-
         <Card className="p-3 space-y-3 bg-card border-border/80">
           <div className="flex items-center gap-2">
             <Settings2 size={14} className="text-muted-foreground" />
@@ -555,7 +538,13 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
           <Input
             placeholder={t("hostDetails.label.placeholder")}
             value={form.label}
-            onChange={(e) => update("label", e.target.value)}
+            onChange={(e) => {
+              let value = e.target.value;
+              if (form.managedSourceId) {
+                value = value.replace(/\s/g, '');
+              }
+              update("label", value);
+            }}
             className="h-10"
           />
 
@@ -597,6 +586,32 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
               onCreateNew={(val) => onCreateTag?.(val)}
               createText="Create Tag"
               triggerClassName="flex-1 min-h-10"
+            />
+          </div>
+        </Card>
+
+        <Card className="p-3 space-y-2 bg-card border-border/80">
+          <div className="flex items-center gap-2">
+            <MapPin size={14} className="text-muted-foreground" />
+            <p className="text-xs font-semibold">
+              {t("hostDetails.section.address")}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <DistroAvatar
+              host={form as Host}
+              fallback={
+                form.label?.slice(0, 2).toUpperCase() ||
+                form.hostname?.slice(0, 2).toUpperCase() ||
+                "H"
+              }
+              className="h-10 w-10"
+            />
+            <Input
+              placeholder={t("hostDetails.hostname.placeholder")}
+              value={form.hostname}
+              onChange={(e) => update("hostname", e.target.value)}
+              className="h-10 flex-1"
             />
           </div>
         </Card>
