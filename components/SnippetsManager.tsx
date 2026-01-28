@@ -257,6 +257,11 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
       // At root level, preserve the leading slash if user intended it
       full = name;
     }
+
+    // Strip trailing slash to ensure consistent path handling
+    if (full.endsWith('/')) {
+      full = full.slice(0, -1);
+    }
     
     // Check for duplicate package names (case-insensitive)
     const existingPackage = packages.find(p => p.toLowerCase() === full.toLowerCase());
