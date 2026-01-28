@@ -144,40 +144,53 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
 
   const displayedPackages = useMemo(() => {
     if (!selectedPackage) {
-      const roots = packages
-        .map((p) => {
-          // Handle paths that start with '/' by removing the leading slash
-          const cleanPath = p.startsWith('/') ? p.substring(1) : p;
-          return cleanPath.split('/')[0];
-        })
-        .filter(Boolean);
-      return Array.from(new Set(roots)).map((name) => {
-        // For root level, we need to check both with and without leading slash
-        const pathWithSlash = `/${name}`;
-        const pathWithoutSlash = name;
-        
-        // Count snippets in this package AND all nested packages
+      // Separate absolute paths (starting with /) from relative paths
+      const absolutePaths = packages.filter(p => p.startsWith('/'));
+      const relativePaths = packages.filter(p => !p.startsWith('/'));
+      
+      const results: { name: string; path: string; count: number }[] = [];
+      
+      // Process relative paths (traditional behavior)
+      const relativeRoots = relativePaths
+        .map((p) => p.split('/')[0])
+        .filter((name): name is string => Boolean(name) && name.length > 0);
+      
+      Array.from(new Set(relativeRoots)).forEach((name: string) => {
+        const path: string = name;
         const count = snippets.filter((s) => {
           const pkg = s.package || '';
-          return pkg === pathWithSlash || pkg.startsWith(pathWithSlash + '/') ||
-                 pkg === pathWithoutSlash || pkg.startsWith(pathWithoutSlash + '/');
+          return pkg === path || pkg.startsWith(path + '/');
         }).length;
-        
-        // Use the original format that exists in packages array
-        const actualPath = packages.find(p => 
-          p === pathWithSlash || p === pathWithoutSlash || 
-          p.startsWith(pathWithSlash + '/') || p.startsWith(pathWithoutSlash + '/')
-        );
-        const path = actualPath?.startsWith('/') ? pathWithSlash : pathWithoutSlash;
-        
-        return { name, path, count };
+        results.push({ name, path, count });
       });
+      
+      // Process absolute paths - show them as separate roots with "/" prefix
+      const absoluteRoots = absolutePaths
+        .map((p) => {
+          const cleanPath = p.substring(1); // Remove leading slash
+          const firstSegment = cleanPath.split('/')[0];
+          return firstSegment;
+        })
+        .filter((name): name is string => Boolean(name) && name.length > 0);
+      
+      Array.from(new Set(absoluteRoots)).forEach((name: string) => {
+        const path: string = `/${name}`;
+        const displayName: string = `/${name}`; // Show with leading slash to distinguish
+        const count = snippets.filter((s) => {
+          const pkg = s.package || '';
+          return pkg === path || pkg.startsWith(path + '/');
+        }).length;
+        results.push({ name: displayName, path, count });
+      });
+      
+      return results;
     }
+    
     const prefix = selectedPackage + '/';
     const children = packages
       .filter((p) => p.startsWith(prefix))
       .map((p) => p.replace(prefix, '').split('/')[0])
-      .filter(Boolean);
+      .filter((name): name is string => Boolean(name) && name.length > 0);
     return Array.from(new Set(children)).map((name) => {
       const path = `${selectedPackage}/${name}`;
       // Count snippets in this package AND all nested packages
