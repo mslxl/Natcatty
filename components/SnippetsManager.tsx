@@ -228,8 +228,13 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
 
   const breadcrumb = useMemo(() => {
     if (!selectedPackage) return [];
+    const isAbsolute = selectedPackage.startsWith('/');
     const parts = selectedPackage.split('/').filter(Boolean);
-    return parts.map((name, idx) => ({ name, path: parts.slice(0, idx + 1).join('/') }));
+    return parts.map((name, idx) => {
+      const pathSegments = parts.slice(0, idx + 1);
+      const path = isAbsolute ? `/${pathSegments.join('/')}` : pathSegments.join('/');
+      return { name, path };
+    });
   }, [selectedPackage]);
 
   const createPackage = () => {
