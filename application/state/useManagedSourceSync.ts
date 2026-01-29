@@ -19,6 +19,9 @@ export const useManagedSourceSync = ({
 }: UseManagedSourceSyncOptions) => {
   const previousHostsRef = useRef<Host[]>([]);
   const syncInProgressRef = useRef(false);
+  // Keep a ref to the latest managedSources to avoid stale closure issues
+  const managedSourcesRef = useRef(managedSources);
+  managedSourcesRef.current = managedSources;
 
   const getManagedHostsForSource = useCallback(
     (sourceId: string) => {
@@ -110,23 +113,28 @@ export const useManagedSourceSync = ({
       const success = await writeSshConfigToFile(source, managedHosts);
 
       if (success) {
-        const updatedSources = managedSources.map((s) =>
-          s.id === source.id ? { ...s, lastSyncedAt: Date.now() } : s,
-        );
-        onUpdateManagedSources(updatedSources);
+        // Use ref to get the latest managedSources to avoid overwriting concurrent changes
+        const currentSources = managedSourcesRef.current;
+        // Only update if the source still exists (wasn't removed during sync)
+        if (currentSources.some(s => s.id === source.id)) {
+          const updatedSources = currentSources.map((s) =>
+            s.id === source.id ? { ...s, lastSyncedAt: Date.now() } : s,
+          );
+          onUpdateManagedSources(updatedSources);
+        }
       }
 
       return success;
     },
-    [getManagedHostsForSource, managedSources, onUpdateManagedSources, writeSshConfigToFile],
+    [getManagedHostsForSource, onUpdateManagedSources, writeSshConfigToFile],
   );
 
   const unmanageSource = useCallback(
     (sourceId: string) => {
-      const updatedSources = managedSources.filter((s) => s.id !== sourceId);
+      const updatedSources = managedSourcesRef.current.filter((s) => s.id !== sourceId);
       onUpdateManagedSources(updatedSources);
     },
-    [managedSources, onUpdateManagedSources],
+    [onUpdateManagedSources],
   );
 
   const pendingSyncRef = useRef(false);
