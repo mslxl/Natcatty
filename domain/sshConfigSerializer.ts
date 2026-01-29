@@ -138,7 +138,6 @@ export const mergeWithExistingSshConfig = (
   let seenFirstBlock = false;
   let currentBlock: string[] = [];
   let currentHostPatterns: string[] = [];
-  let currentHostLine: string = "";
   let isMatchBlock = false; // Track if current block is a Match block (always preserve)
 
   const flush = () => {
@@ -166,7 +165,6 @@ export const mergeWithExistingSshConfig = (
 
       currentBlock = [];
       currentHostPatterns = [];
-      currentHostLine = "";
       isMatchBlock = false;
     }
   };
@@ -181,7 +179,6 @@ export const mergeWithExistingSshConfig = (
       flush();
       seenFirstBlock = true;
       currentHostPatterns = tokens.slice(1);
-      currentHostLine = line;
       currentBlock.push(line);
     } else if (keyword === "match") {
       flush();
