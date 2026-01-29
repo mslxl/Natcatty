@@ -1002,7 +1002,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     const keepGroups = customGroups.filter(
       (g) => !(g === path || g.startsWith(path + "/")),
     );
-    
+
     const isManagedGroup = managedGroupPaths.has(path);
     if (isManagedGroup) {
       const source = managedSources.find(s => s.groupName === path);
@@ -1011,7 +1011,12 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
         onUpdateManagedSources(updatedSources);
       }
     }
-    
+
+    // Check if this is a subgroup under a managed group
+    const parentManagedSource = managedSources.find(s =>
+      path.startsWith(s.groupName + "/")
+    );
+
     let keepHosts: Host[];
     if (deleteHosts) {
       keepHosts = hosts.filter((h) => {
@@ -1021,11 +1026,18 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     } else {
       keepHosts = hosts.map((h) => {
         const g = h.group || "";
-        if (g === path || g.startsWith(path + "/")) return { ...h, group: "", managedSourceId: undefined };
+        if (g === path || g.startsWith(path + "/")) {
+          // If deleting a subgroup under a managed group, keep managedSourceId
+          // so hosts remain managed and sync to the SSH config
+          if (parentManagedSource) {
+            return { ...h, group: "" };
+          }
+          return { ...h, group: "", managedSourceId: undefined };
+        }
         return h;
       });
     }
-    
+
     onUpdateCustomGroups(keepGroups);
     onUpdateHosts(keepHosts);
     if (
