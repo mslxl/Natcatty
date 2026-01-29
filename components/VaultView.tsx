@@ -119,6 +119,7 @@ interface VaultViewProps {
   onUpdateKnownHosts: (knownHosts: KnownHost[]) => void;
   onUpdateManagedSources: (managedSources: ManagedSource[]) => void;
   onClearAndRemoveManagedSource?: (source: ManagedSource) => Promise<boolean>;
+  onClearAndRemoveManagedSources?: (sources: ManagedSource[]) => Promise<void>;
   onUnmanageSource?: (sourceId: string) => void;
   onConvertKnownHost: (knownHost: KnownHost) => void;
   onToggleConnectionLogSaved: (id: string) => void;
@@ -158,6 +159,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   onUpdateKnownHosts,
   onUpdateManagedSources,
   onClearAndRemoveManagedSource,
+  onClearAndRemoveManagedSources,
   onUnmanageSource,
   onConvertKnownHost,
   onToggleConnectionLogSaved,
@@ -1072,8 +1074,11 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     );
 
     // Clear managed blocks in SSH config files before removing sources
-    // This ensures the files don't retain stale host entries
-    if (sourcesToRemove.length > 0 && onClearAndRemoveManagedSource) {
+    // Use batch removal to avoid race conditions when multiple sources are removed
+    if (sourcesToRemove.length > 0 && onClearAndRemoveManagedSources) {
+      await onClearAndRemoveManagedSources(sourcesToRemove);
+    } else if (sourcesToRemove.length > 0 && onClearAndRemoveManagedSource) {
+      // Fallback to single removal (may have race conditions with multiple sources)
       await Promise.all(sourcesToRemove.map(s => onClearAndRemoveManagedSource(s)));
     } else if (sourcesToRemove.length > 0) {
       // Fallback: just remove sources without clearing (if callback not provided)

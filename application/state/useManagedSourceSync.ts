@@ -173,6 +173,35 @@ export const useManagedSourceSync = ({
     [onUpdateManagedSources, writeSshConfigToFile],
   );
 
+  // Clear and remove multiple sources atomically to avoid race conditions
+  // when multiple sources are removed concurrently
+  const clearAndRemoveSources = useCallback(
+    async (sources: ManagedSource[]) => {
+      if (sources.length === 0) return;
+
+      console.log(`[ManagedSourceSync] Clearing ${sources.length} managed blocks`);
+
+      // Clear all files in parallel
+      const results = await Promise.all(
+        sources.map(async (source) => {
+          const success = await writeSshConfigToFile(source, []);
+          return { sourceId: source.id, success };
+        })
+      );
+
+      const successCount = results.filter(r => r.success).length;
+      console.log(`[ManagedSourceSync] Cleared ${successCount}/${sources.length} managed blocks`);
+
+      // Remove all sources atomically in a single update
+      const sourceIdsToRemove = new Set(sources.map(s => s.id));
+      const updatedSources = managedSourcesRef.current.filter(
+        (s) => !sourceIdsToRemove.has(s.id)
+      );
+      onUpdateManagedSources(updatedSources);
+    },
+    [onUpdateManagedSources, writeSshConfigToFile],
+  );
+
   const pendingSyncRef = useRef(false);
   const checkAndSyncRef = useRef<() => void>(() => {});
 
@@ -323,6 +352,7 @@ export const useManagedSourceSync = ({
     syncManagedSource,
     unmanageSource,
     clearAndRemoveSource,
+    clearAndRemoveSources,
     getManagedHostsForSource,
   };
 };
