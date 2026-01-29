@@ -534,7 +534,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           newHosts = newHosts.map((h) => ({
             ...h,
             group: managedGroupName,
-            managedSourceId: sourceId,
+            // Only SSH hosts can be managed (SSH config only supports SSH)
+            managedSourceId: (!h.protocol || h.protocol === "ssh") ? sourceId : undefined,
           }));
 
           onUpdateManagedSources([...managedSources, newSource]);
@@ -1111,9 +1112,12 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
       hosts.map((h) => {
         if (h.id !== hostId) return h;
 
+        // Only SSH hosts can be managed (SSH config only supports SSH)
+        const canBeManaged = !h.protocol || h.protocol === "ssh";
+
         // Sanitize label if moving to a managed group (SSH config requires no spaces in Host alias)
         let label = h.label;
-        if (targetManagedSource && label) {
+        if (targetManagedSource && canBeManaged && label) {
           label = label.replace(/\s/g, '');
         }
 
@@ -1121,7 +1125,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           ...h,
           label,
           group: targetGroup,
-          managedSourceId: targetManagedSource?.id,
+          managedSourceId: (targetManagedSource && canBeManaged) ? targetManagedSource.id : undefined,
         };
       }),
     );

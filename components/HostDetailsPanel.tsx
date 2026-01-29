@@ -271,13 +271,15 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
     }
 
     // Determine managedSourceId:
+    // - Only SSH hosts can be managed (SSH config only supports SSH protocol)
     // - If we found a matching managed source, use its id
     // - If managedSources was not provided (empty array) and host already has managedSourceId, preserve it
     // - Otherwise, clear it (host is not in a managed group)
     let finalManagedSourceId: string | undefined;
-    if (targetManagedSource) {
+    const canBeManaged = !form.protocol || form.protocol === "ssh";
+    if (targetManagedSource && canBeManaged) {
       finalManagedSourceId = targetManagedSource.id;
-    } else if (managedSources.length === 0 && form.managedSourceId) {
+    } else if (managedSources.length === 0 && form.managedSourceId && canBeManaged) {
       // managedSources not provided, preserve existing value
       finalManagedSourceId = form.managedSourceId;
     } else {
