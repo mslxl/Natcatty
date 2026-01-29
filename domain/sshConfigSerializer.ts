@@ -135,16 +135,29 @@ export const mergeWithExistingSshConfig = (
   const preservedBlocks: string[] = [];
   let currentBlock: string[] = [];
   let currentHostPatterns: string[] = [];
-  let isManaged = false;
+  let currentHostLine: string = "";
 
   const flush = () => {
     if (currentBlock.length > 0) {
-      if (!isManaged) {
+      // Filter out managed patterns from the Host line, keep non-managed ones
+      const nonManagedPatterns = currentHostPatterns.filter(
+        (p) => !managedHostnameSet.has(p.toLowerCase())
+      );
+
+      if (nonManagedPatterns.length === currentHostPatterns.length) {
+        // No managed patterns - preserve the entire block as-is
         preservedBlocks.push(currentBlock.join("\n"));
+      } else if (nonManagedPatterns.length > 0) {
+        // Some patterns are managed, some are not - rewrite Host line with only non-managed patterns
+        const newHostLine = `Host ${nonManagedPatterns.join(" ")}`;
+        const restOfBlock = currentBlock.slice(1); // Everything after Host line
+        preservedBlocks.push([newHostLine, ...restOfBlock].join("\n"));
       }
+      // If all patterns are managed (nonManagedPatterns.length === 0), drop the entire block
+
       currentBlock = [];
       currentHostPatterns = [];
-      isManaged = false;
+      currentHostLine = "";
     }
   };
 
@@ -158,7 +171,7 @@ export const mergeWithExistingSshConfig = (
     if (keyword === "host") {
       flush();
       currentHostPatterns = tokens.slice(1);
-      isManaged = currentHostPatterns.some((p) => managedHostnameSet.has(p.toLowerCase()));
+      currentHostLine = line;
       currentBlock.push(line);
     } else if (keyword === "match") {
       flush();
