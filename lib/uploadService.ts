@@ -941,28 +941,38 @@ async function uploadFoldersCompressed(
     // Extract folder path from the first file path
     const relativePath = (firstFile.file as File & { webkitRelativePath?: string }).webkitRelativePath || firstFile.file.name;
     
+    // Normalize path separators for cross-platform compatibility
+    const normalizePathSeparators = (path: string) => path.replace(/\\/g, '/');
+    const normalizedLocalPath = normalizePathSeparators(localFilePath);
+    const normalizedRelativePath = normalizePathSeparators(relativePath);
+    
     // Calculate the root folder path by removing the full relativePath from localFilePath
     // For example: if localFilePath is "/Users/rice/Downloads/110-temp/insideServer/subdir/file.txt"
-    // and relativePath is "insideServer/subdir/file.txt", we want "/Users/rice/Downloads/110-temp"
+    // and relativePath is "insideServer/subdir/file.txt", we want "/Users/rice/Downloads/110-temp/insideServer"
     let folderPath = localFilePath;
-    if (relativePath && localFilePath.endsWith(relativePath)) {
+    if (normalizedRelativePath && normalizedLocalPath.endsWith(normalizedRelativePath)) {
       // Remove the relativePath from the end to get the base directory
       const basePath = localFilePath.substring(0, localFilePath.length - relativePath.length);
-      // Remove trailing slash if present
-      folderPath = basePath.replace(/[/\\]$/, '');
+      // Remove trailing slash/backslash if present
+      const cleanBasePath = basePath.replace(/[/\\]$/, '');
       // Add the folder name to get the actual folder path
-      folderPath = folderPath + (folderPath ? '/' : '') + folderName;
+      folderPath = cleanBasePath + (cleanBasePath ? (localFilePath.includes('\\') ? '\\' : '/') : '') + folderName;
     } else {
-      // Fallback: try to extract based on folder name
-      const folderIndex = localFilePath.lastIndexOf('/' + folderName + '/');
+      // Fallback: try to extract based on folder name with normalized separators
+      const normalizedFolderPattern1 = '/' + folderName + '/';
+      const normalizedFolderPattern2 = '\\' + folderName + '\\';
+      const folderIndex1 = normalizedLocalPath.lastIndexOf(normalizedFolderPattern1);
+      const folderIndex2 = localFilePath.lastIndexOf(normalizedFolderPattern2);
+      const folderIndex = Math.max(folderIndex1, folderIndex2);
+      
       if (folderIndex >= 0) {
         folderPath = localFilePath.substring(0, folderIndex + folderName.length + 1);
       } else {
         // Last resort: remove just the filename (original logic)
-        const pathParts = relativePath.split('/');
+        const pathParts = normalizedRelativePath.split('/');
         if (pathParts.length > 1) {
           const fileName = pathParts[pathParts.length - 1];
-          if (localFilePath.endsWith(fileName)) {
+          if (normalizedLocalPath.endsWith(fileName)) {
             folderPath = localFilePath.substring(0, localFilePath.length - fileName.length - 1);
           }
         } else {

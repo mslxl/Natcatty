@@ -297,6 +297,9 @@ async function startCompressedUpload(event, payload) {
     });
   };
 
+  // Declare tempArchivePath in outer scope for cleanup access
+  let tempArchivePath = null;
+
   try {
     // Check if tar is available locally and remotely
     const localTarAvailable = await checkTarAvailable();
@@ -312,7 +315,7 @@ async function startCompressedUpload(event, payload) {
     // Phase 1: Compression (0-30%)
     sendProgress('compressing', 0, 100);
     
-    const tempArchivePath = getTempFilePath(`${folderName}.tar.gz`);
+    tempArchivePath = getTempFilePath(`${folderName}.tar.gz`);
     
     await compressFolder(folderPath, tempArchivePath, compressionId, (transferred) => {
       // Show compression progress (0-30%)
