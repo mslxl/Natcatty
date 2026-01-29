@@ -119,6 +119,7 @@ interface VaultViewProps {
   onUpdateKnownHosts: (knownHosts: KnownHost[]) => void;
   onUpdateManagedSources: (managedSources: ManagedSource[]) => void;
   onClearAndRemoveManagedSource?: (source: ManagedSource) => Promise<boolean>;
+  onUnmanageSource?: (sourceId: string) => void;
   onConvertKnownHost: (knownHost: KnownHost) => void;
   onToggleConnectionLogSaved: (id: string) => void;
   onDeleteConnectionLog: (id: string) => void;
@@ -157,6 +158,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   onUpdateKnownHosts,
   onUpdateManagedSources,
   onClearAndRemoveManagedSource,
+  onUnmanageSource,
   onConvertKnownHost,
   onToggleConnectionLogSaved,
   onDeleteConnectionLog,
@@ -1184,7 +1186,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     );
   };
 
-  const handleUnmanageGroup = useCallback(async (groupPath: string) => {
+  const handleUnmanageGroup = useCallback((groupPath: string) => {
     const source = managedSources.find(s => s.groupName === groupPath);
     if (!source) return;
 
@@ -1196,17 +1198,18 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     );
     onUpdateHosts(updatedHosts);
 
-    // Clear the managed block from SSH config file and remove the source
-    if (onClearAndRemoveManagedSource) {
-      await onClearAndRemoveManagedSource(source);
+    // Remove the source association without modifying the SSH config file
+    // This preserves the user's file contents while stopping sync
+    if (onUnmanageSource) {
+      onUnmanageSource(source.id);
     } else {
-      // Fallback if onClearAndRemoveManagedSource not available
+      // Fallback if onUnmanageSource not available
       const updatedSources = managedSources.filter(s => s.id !== source.id);
       onUpdateManagedSources(updatedSources);
     }
 
     toast.success(t("vault.managedSource.unmanageSuccess"));
-  }, [managedSources, hosts, onUpdateHosts, onUpdateManagedSources, onClearAndRemoveManagedSource, t]);
+  }, [managedSources, hosts, onUpdateHosts, onUpdateManagedSources, onUnmanageSource, t]);
 
   // Component no longer handles visibility - that's done by VaultViewWrapper
   return (
