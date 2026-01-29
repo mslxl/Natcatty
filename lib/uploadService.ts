@@ -369,7 +369,26 @@ export async function uploadFromFileList(
     
     if (folderEntries.length > 0) {
       console.log('[uploadFromFileList] Using compressed upload for folders:', folderEntries.map(([key]) => key));
-      return uploadFoldersCompressed(folderEntries, entries, targetPath, sftpId, callbacks, controller);
+      try {
+        const compressedResults = await uploadFoldersCompressed(folderEntries, entries, targetPath, sftpId, callbacks, controller);
+        
+        // Check if any folders failed due to lack of compression support
+        const failedFolders = compressedResults.filter(result => 
+          !result.success && result.error === "Compressed upload not supported - fallback needed"
+        );
+        
+        if (failedFolders.length > 0) {
+          console.log('[uploadFromFileList] Some folders failed compressed upload, falling back to regular upload');
+          // Fall back to regular upload for all entries
+          return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
+        }
+        
+        return compressedResults;
+      } catch (error) {
+        console.log('[uploadFromFileList] Compressed upload failed, falling back to regular upload:', error);
+        // Fall back to regular upload
+        return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
+      }
     }
   }
 
@@ -915,22 +934,15 @@ async function uploadFoldersCompressed(
       const support = await checkCompressedUploadSupport(sftpId);
       if (!support.supported) {
         console.log('[uploadFoldersCompressed] Compressed upload not supported, falling back to regular upload');
-        // Fall back to regular upload for this folder
-        const folderResults = await uploadEntries(
-          entries, 
-          targetPath, 
-          sftpId, 
-          false, 
-          // We need to create a minimal bridge for fallback
-          {
-            mkdirSftp: async () => {},
-            writeSftpBinary: async () => {},
-          } as UploadBridge,
-          (base: string, name: string) => `${base}/${name}`,
-          callbacks,
-          controller
-        );
-        results.push(...folderResults);
+        // Fall back to regular upload for this folder using the real bridge and config
+        // We need to get the original config from the parent function
+        // Since we don't have access to the original config here, we'll return an error
+        // and let the caller handle the fallback
+        results.push({ 
+          fileName: folderName, 
+          success: false, 
+          error: "Compressed upload not supported - fallback needed" 
+        });
         continue;
       }
       
