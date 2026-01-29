@@ -1015,9 +1015,10 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     }
 
     // Check if this is a subgroup under a managed group (that won't be deleted)
-    const parentManagedSource = managedSources.find(s =>
-      path.startsWith(s.groupName + "/") && s.groupName !== path && !path.startsWith(path + "/")
-    );
+    // Use the most specific (deepest) matching managed source
+    const parentManagedSource = managedSources
+      .filter(s => path.startsWith(s.groupName + "/") && s.groupName !== path)
+      .sort((a, b) => b.groupName.length - a.groupName.length)[0];
 
     let keepHosts: Host[];
     if (deleteHosts) {
@@ -1093,9 +1094,10 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
 
   const moveHostToGroup = (hostId: string, groupPath: string | null) => {
     const targetGroup = groupPath || "";
-    const targetManagedSource = managedSources.find(s =>
-      targetGroup === s.groupName || targetGroup.startsWith(s.groupName + "/")
-    );
+    // Find the most specific (deepest) managed source that matches the target group
+    const targetManagedSource = managedSources
+      .filter(s => targetGroup === s.groupName || targetGroup.startsWith(s.groupName + "/"))
+      .sort((a, b) => b.groupName.length - a.groupName.length)[0];
 
     onUpdateHosts(
       hosts.map((h) => {

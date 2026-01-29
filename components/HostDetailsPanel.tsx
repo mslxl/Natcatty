@@ -258,9 +258,12 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
     let finalLabel = form.label?.trim() || form.hostname;
     const finalGroup = groupInputValue.trim() || form.group || "";
 
-    const targetManagedSource = managedSources.find(s =>
-      finalGroup === s.groupName || finalGroup.startsWith(s.groupName + "/")
-    );
+    // Find the most specific (deepest) managed source that matches the group path
+    // This handles nested managed groups correctly by preferring exact matches
+    // and longer paths over shorter prefix matches
+    const targetManagedSource = managedSources
+      .filter(s => finalGroup === s.groupName || finalGroup.startsWith(s.groupName + "/"))
+      .sort((a, b) => b.groupName.length - a.groupName.length)[0];
 
     // Strip spaces from label if host is/will be managed (SSH config requires no spaces in Host alias)
     if (targetManagedSource) {
