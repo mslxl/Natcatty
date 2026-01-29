@@ -9,6 +9,15 @@ const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { getTempFilePath } = require("./tempDirBridge.cjs");
 
+/**
+ * Escape shell arguments to prevent injection attacks
+ * Wraps arguments in single quotes and escapes any existing single quotes
+ */
+function escapeShellArg(arg) {
+  // Replace single quotes with '\'' (end quote, escaped quote, start quote)
+  return "'" + arg.replace(/'/g, "'\\''") + "'";
+}
+
 // Shared references
 let sftpClients = null;
 let transferBridge = null;
@@ -169,7 +178,10 @@ async function extractRemoteArchive(sftpId, archivePath, targetDir) {
     // Create target directory, extract, then always clean up the archive
     // Use && for tar success, then always try cleanup regardless of tar result
     // Also exclude any ._* files that might have been included despite our compression exclusions
-    const command = `mkdir -p "${targetDir}" && cd "${targetDir}" && tar -xzf "${archivePath}" --exclude='._*' --exclude='.DS_Store' && rm -f "${archivePath}" || (rm -f "${archivePath}"; exit 1)`;
+    // Properly escape shell arguments to prevent injection attacks
+    const escapedTargetDir = escapeShellArg(targetDir);
+    const escapedArchivePath = escapeShellArg(archivePath);
+    const command = `mkdir -p ${escapedTargetDir} && cd ${escapedTargetDir} && tar -xzf ${escapedArchivePath} --exclude='._*' --exclude='.DS_Store' && rm -f ${escapedArchivePath} || (rm -f ${escapedArchivePath}; exit 1)`;
     console.log('[CompressUpload] Executing remote extraction command:', command);
     
     sshClient.exec(command, (err, stream) => {
@@ -413,7 +425,7 @@ async function startCompressedUpload(event, payload) {
         try {
           const client = sftpClients.get(sftpId);
           if (client && client.client) {
-            const cleanupCommand = `find "${targetPath}" -name "._*" -type f -delete 2>/dev/null || true`;
+            const cleanupCommand = `find ${escapeShellArg(targetPath)} -name "._*" -type f -delete 2>/dev/null || true`;
             client.client.exec(cleanupCommand, (err, stream) => {
               if (err) {
                 console.warn('[CompressUpload] ._* files cleanup command failed to execute:', err);
@@ -437,7 +449,7 @@ async function startCompressedUpload(event, payload) {
         try {
           const client = sftpClients.get(sftpId);
           if (client && client.client) {
-            client.client.exec(`rm -f "${remoteArchivePath}"`, (err, stream) => {
+            client.client.exec(`rm -f ${escapeShellArg(remoteArchivePath)}`, (err, stream) => {
               if (err) {
                 console.warn('[CompressUpload] Additional cleanup command failed to execute:', err);
                 return;
