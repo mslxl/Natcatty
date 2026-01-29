@@ -163,6 +163,7 @@ export function sortEntries(entries: DropEntry[]): DropEntry[] {
 export class UploadController {
   private cancelled = false;
   private activeFileTransferIds = new Set<string>();
+  private activeCompressionIds = new Set<string>();
   private currentTransferId = "";
   private bridge: UploadBridge | null = null;
 
@@ -171,7 +172,22 @@ export class UploadController {
    */
   async cancel(): Promise<void> {
     this.cancelled = true;
-    console.log('[UploadController] Cancelling uploads, active IDs:', Array.from(this.activeFileTransferIds));
+    console.log('[UploadController] Cancelling uploads, active file IDs:', Array.from(this.activeFileTransferIds));
+    console.log('[UploadController] Cancelling uploads, active compression IDs:', Array.from(this.activeCompressionIds));
+
+    // Cancel all active compressed uploads
+    const activeCompressionIds = Array.from(this.activeCompressionIds);
+    for (const compressionId of activeCompressionIds) {
+      try {
+        // Import and call cancelCompressedUpload
+        const { cancelCompressedUpload } = await import('../infrastructure/services/compressUploadService');
+        console.log('[UploadController] Calling cancelCompressedUpload for:', compressionId);
+        await cancelCompressedUpload(compressionId);
+      } catch (e) {
+        console.log('[UploadController] Cancel compression error:', e);
+        // Ignore cancel errors
+      }
+    }
 
     // Cancel all active file uploads
     const activeIds = Array.from(this.activeFileTransferIds);
@@ -226,7 +242,9 @@ export class UploadController {
     if (this.currentTransferId && !ids.includes(this.currentTransferId)) {
       ids.push(this.currentTransferId);
     }
-    return ids;
+    // Also include compression IDs
+    const compressionIds = Array.from(this.activeCompressionIds);
+    return [...ids, ...compressionIds];
   }
 
   /**
@@ -235,6 +253,7 @@ export class UploadController {
   reset(): void {
     this.cancelled = false;
     this.activeFileTransferIds.clear();
+    this.activeCompressionIds.clear();
     this.currentTransferId = "";
   }
 
@@ -268,6 +287,20 @@ export class UploadController {
    */
   clearCurrentTransfer(): void {
     this.currentTransferId = "";
+  }
+
+  /**
+   * Track a compression ID
+   */
+  addActiveCompression(id: string): void {
+    this.activeCompressionIds.add(id);
+  }
+
+  /**
+   * Remove a tracked compression ID
+   */
+  removeActiveCompression(id: string): void {
+    this.activeCompressionIds.delete(id);
   }
 }
 
@@ -965,6 +998,15 @@ async function uploadFoldersCompressed(
       
       const compressionId = crypto.randomUUID();
       
+      // Check for cancellation before starting
+      if (controller?.isCancelled()) {
+        results.push({ fileName: folderName, success: false, cancelled: true });
+        break;
+      }
+      
+      // Register compression ID with controller for cancellation support
+      controller?.addActiveCompression(compressionId);
+      
       // Create a task for this folder compression
       const totalBytes = entries.reduce((sum, entry) => sum + (entry.file?.size || 0), 0);
       taskId = compressionId;
@@ -993,6 +1035,11 @@ async function uploadFoldersCompressed(
           folderName,
         },
         (phase, transferred, total) => {
+          // Check for cancellation during progress updates
+          if (controller?.isCancelled()) {
+            return;
+          }
+          
           console.log(`[UploadService] Compress progress: ${phase} ${transferred}/${total}`);
           if (callbacks?.onTaskProgress) {
             // Map compression progress to actual file bytes
@@ -1024,6 +1071,8 @@ async function uploadFoldersCompressed(
         },
         () => {
           console.log(`[UploadService] Compress complete callback called for taskId: ${taskId}`);
+          // Remove compression ID from controller
+          controller?.removeActiveCompression(compressionId);
           // Mark task as completed immediately
           if (callbacks?.onTaskCompleted) {
             console.log(`[UploadService] Calling onTaskCompleted for taskId: ${taskId}`);
@@ -1031,6 +1080,8 @@ async function uploadFoldersCompressed(
           }
         },
         (error) => {
+          // Remove compression ID from controller on error
+          controller?.removeActiveCompression(compressionId);
           if (callbacks?.onTaskFailed) {
             callbacks.onTaskFailed(taskId, error);
           }
@@ -1039,17 +1090,36 @@ async function uploadFoldersCompressed(
       
       if (result.success) {
         results.push({ fileName: folderName, success: true });
+      } else if (result.error?.includes('cancelled') || controller?.isCancelled()) {
+        // Handle cancellation
+        results.push({ fileName: folderName, success: false, cancelled: true });
+        if (callbacks?.onTaskCancelled) {
+          callbacks.onTaskCancelled(taskId);
+        }
       } else {
         results.push({ fileName: folderName, success: false, error: result.error });
       }
       
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      results.push({ fileName: folderName, success: false, error: errorMessage });
       
-      // Only call onTaskFailed if we have a valid taskId (task was created)
-      if (callbacks?.onTaskFailed && taskId) {
-        callbacks.onTaskFailed(taskId, errorMessage);
+      // Remove compression ID from controller on error
+      if (taskId) {
+        controller?.removeActiveCompression(taskId);
+      }
+      
+      // Check if this was a cancellation
+      if (controller?.isCancelled() || errorMessage.includes('cancelled')) {
+        results.push({ fileName: folderName, success: false, cancelled: true });
+        if (callbacks?.onTaskCancelled && taskId) {
+          callbacks.onTaskCancelled(taskId);
+        }
+      } else {
+        results.push({ fileName: folderName, success: false, error: errorMessage });
+        // Only call onTaskFailed if we have a valid taskId (task was created) and it's not a cancellation
+        if (callbacks?.onTaskFailed && taskId) {
+          callbacks.onTaskFailed(taskId, errorMessage);
+        }
       }
     }
   }
