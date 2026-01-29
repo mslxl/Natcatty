@@ -139,25 +139,12 @@ export const useManagedSourceSync = ({
   );
 
   const syncManagedSource = useCallback(
-    async (source: ManagedSource) => {
+    async (source: ManagedSource): Promise<{ sourceId: string; success: boolean }> => {
       const managedHosts = getManagedHostsForSource(source.id);
       const success = await writeSshConfigToFile(source, managedHosts);
-
-      if (success) {
-        // Use ref to get the latest managedSources to avoid overwriting concurrent changes
-        const currentSources = managedSourcesRef.current;
-        // Only update if the source still exists (wasn't removed during sync)
-        if (currentSources.some(s => s.id === source.id)) {
-          const updatedSources = currentSources.map((s) =>
-            s.id === source.id ? { ...s, lastSyncedAt: Date.now() } : s,
-          );
-          onUpdateManagedSources(updatedSources);
-        }
-      }
-
-      return success;
+      return { sourceId: source.id, success };
     },
-    [getManagedHostsForSource, onUpdateManagedSources, writeSshConfigToFile],
+    [getManagedHostsForSource, writeSshConfigToFile],
   );
 
   const unmanageSource = useCallback(
@@ -294,7 +281,21 @@ export const useManagedSourceSync = ({
         managedSources
           .filter((s) => changedSourceIds.has(s.id))
           .map(syncManagedSource),
-      ).finally(() => {
+      ).then((results) => {
+        // Batch update lastSyncedAt for all successful syncs to avoid race conditions
+        const successfulSourceIds = new Set(
+          results.filter(r => r.success).map(r => r.sourceId)
+        );
+
+        if (successfulSourceIds.size > 0) {
+          const currentSources = managedSourcesRef.current;
+          const now = Date.now();
+          const updatedSources = currentSources.map((s) =>
+            successfulSourceIds.has(s.id) ? { ...s, lastSyncedAt: now } : s,
+          );
+          onUpdateManagedSources(updatedSources);
+        }
+      }).finally(() => {
         syncInProgressRef.current = false;
         // Check if there were changes during sync that need to be processed
         // Use ref to get the latest checkAndSync to avoid stale closure
@@ -304,7 +305,7 @@ export const useManagedSourceSync = ({
         }
       });
     }
-  }, [hosts, managedSources, syncManagedSource]);
+  }, [hosts, managedSources, syncManagedSource, onUpdateManagedSources]);
 
   // Keep ref updated with the latest checkAndSync
   checkAndSyncRef.current = checkAndSync;
