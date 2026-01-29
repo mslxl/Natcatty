@@ -137,6 +137,24 @@ export const useManagedSourceSync = ({
     [onUpdateManagedSources],
   );
 
+  // Clear the managed block in the SSH config file and then remove the source
+  // This should be called before deleting a managed group to avoid stale entries
+  const clearAndRemoveSource = useCallback(
+    async (source: ManagedSource) => {
+      console.log(`[ManagedSourceSync] Clearing managed block for ${source.groupName}`);
+      // Write empty hosts list to clear the managed block
+      const success = await writeSshConfigToFile(source, []);
+      if (success) {
+        console.log(`[ManagedSourceSync] Managed block cleared, removing source`);
+      }
+      // Remove the source regardless of write success
+      const updatedSources = managedSourcesRef.current.filter((s) => s.id !== source.id);
+      onUpdateManagedSources(updatedSources);
+      return success;
+    },
+    [onUpdateManagedSources, writeSshConfigToFile],
+  );
+
   const pendingSyncRef = useRef(false);
   const checkAndSyncRef = useRef<() => void>(() => {});
 
@@ -217,6 +235,7 @@ export const useManagedSourceSync = ({
   return {
     syncManagedSource,
     unmanageSource,
+    clearAndRemoveSource,
     getManagedHostsForSource,
   };
 };

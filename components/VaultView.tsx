@@ -118,6 +118,7 @@ interface VaultViewProps {
   onUpdateCustomGroups: (groups: string[]) => void;
   onUpdateKnownHosts: (knownHosts: KnownHost[]) => void;
   onUpdateManagedSources: (managedSources: ManagedSource[]) => void;
+  onClearAndRemoveManagedSource?: (source: ManagedSource) => Promise<boolean>;
   onConvertKnownHost: (knownHost: KnownHost) => void;
   onToggleConnectionLogSaved: (id: string) => void;
   onDeleteConnectionLog: (id: string) => void;
@@ -155,6 +156,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   onUpdateCustomGroups,
   onUpdateKnownHosts,
   onUpdateManagedSources,
+  onClearAndRemoveManagedSource,
   onConvertKnownHost,
   onToggleConnectionLogSaved,
   onDeleteConnectionLog,
@@ -998,16 +1000,22 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     setIsRenameGroupOpen(false);
   };
 
-  const deleteGroupPath = (path: string, deleteHosts: boolean = false) => {
+  const deleteGroupPath = async (path: string, deleteHosts: boolean = false) => {
     const keepGroups = customGroups.filter(
       (g) => !(g === path || g.startsWith(path + "/")),
     );
 
-    // Remove all managed sources under the deleted path (exact match or subgroups)
+    // Find all managed sources under the deleted path (exact match or subgroups)
     const sourcesToRemove = managedSources.filter(s =>
       s.groupName === path || s.groupName.startsWith(path + "/")
     );
-    if (sourcesToRemove.length > 0) {
+
+    // Clear managed blocks in SSH config files before removing sources
+    // This ensures the files don't retain stale host entries
+    if (sourcesToRemove.length > 0 && onClearAndRemoveManagedSource) {
+      await Promise.all(sourcesToRemove.map(s => onClearAndRemoveManagedSource(s)));
+    } else if (sourcesToRemove.length > 0) {
+      // Fallback: just remove sources without clearing (if callback not provided)
       const updatedSources = managedSources.filter(s =>
         s.groupName !== path && !s.groupName.startsWith(path + "/")
       );

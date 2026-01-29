@@ -274,7 +274,7 @@ function App({ settings }: { settings: SettingsState }) {
     },
   });
 
-  useManagedSourceSync({
+  const { clearAndRemoveSource } = useManagedSourceSync({
     hosts,
     managedSources,
     onUpdateManagedSources: updateManagedSources,
@@ -988,6 +988,7 @@ function App({ settings }: { settings: SettingsState }) {
             onUpdateCustomGroups={updateCustomGroups}
             onUpdateKnownHosts={updateKnownHosts}
             onUpdateManagedSources={updateManagedSources}
+            onClearAndRemoveManagedSource={clearAndRemoveSource}
             onConvertKnownHost={convertKnownHostToHost}
             onToggleConnectionLogSaved={toggleConnectionLogSaved}
             onDeleteConnectionLog={deleteConnectionLog}
