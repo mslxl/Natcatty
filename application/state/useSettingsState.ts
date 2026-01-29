@@ -20,6 +20,7 @@ STORAGE_KEY_UI_FONT_FAMILY,
 STORAGE_KEY_SFTP_DOUBLE_CLICK_BEHAVIOR,
 STORAGE_KEY_SFTP_AUTO_SYNC,
 STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES,
+STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD,
 STORAGE_KEY_SESSION_LOGS_ENABLED,
 STORAGE_KEY_SESSION_LOGS_DIR,
 STORAGE_KEY_SESSION_LOGS_FORMAT,
@@ -49,6 +50,7 @@ const DEFAULT_HOTKEY_SCHEME: HotkeyScheme =
 const DEFAULT_SFTP_DOUBLE_CLICK_BEHAVIOR: 'open' | 'transfer' = 'open';
 const DEFAULT_SFTP_AUTO_SYNC = false;
 const DEFAULT_SFTP_SHOW_HIDDEN_FILES = false;
+const DEFAULT_SFTP_USE_COMPRESSED_UPLOAD = 'ask' as const;
 
 // Session Logs defaults
 const DEFAULT_SESSION_LOGS_ENABLED = false;
@@ -195,6 +197,16 @@ export const useSettingsState = () => {
   const [sftpShowHiddenFiles, setSftpShowHiddenFiles] = useState<boolean>(() => {
     const stored = readStoredString(STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES);
     return stored === 'true' ? true : DEFAULT_SFTP_SHOW_HIDDEN_FILES;
+  });
+  const [sftpUseCompressedUpload, setSftpUseCompressedUpload] = useState<'ask' | 'enabled' | 'disabled'>(() => {
+    const stored = readStoredString(STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD);
+    if (stored === 'enabled' || stored === 'disabled' || stored === 'ask') {
+      return stored;
+    }
+    // 兼容旧的布尔值设置
+    if (stored === 'true') return 'enabled';
+    if (stored === 'false') return 'disabled';
+    return DEFAULT_SFTP_USE_COMPRESSED_UPLOAD;
   });
 
   // Session Logs Settings
@@ -467,11 +479,18 @@ export const useSettingsState = () => {
           setSftpShowHiddenFiles(newValue);
         }
       }
+      // Sync SFTP compressed upload setting from other windows
+      if (e.key === STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD && e.newValue !== null) {
+        const newValue = e.newValue as 'ask' | 'enabled' | 'disabled';
+        if (newValue !== sftpUseCompressedUpload && (newValue === 'ask' || newValue === 'enabled' || newValue === 'disabled')) {
+          setSftpUseCompressedUpload(newValue);
+        }
+      }
     };
 
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
-  }, [theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage, terminalThemeId, terminalFontFamilyId, terminalFontSize, sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles]);
+  }, [theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage, terminalThemeId, terminalFontFamilyId, terminalFontSize, sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload]);
 
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_TERM_THEME, terminalThemeId);
@@ -539,6 +558,12 @@ export const useSettingsState = () => {
     localStorageAdapter.writeString(STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES, sftpShowHiddenFiles ? 'true' : 'false');
     notifySettingsChanged(STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES, sftpShowHiddenFiles);
   }, [sftpShowHiddenFiles, notifySettingsChanged]);
+
+  // Persist SFTP compressed upload setting
+  useEffect(() => {
+    localStorageAdapter.writeString(STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD, sftpUseCompressedUpload);
+    notifySettingsChanged(STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD, sftpUseCompressedUpload);
+  }, [sftpUseCompressedUpload, notifySettingsChanged]);
 
   // Persist Session Logs settings
   useEffect(() => {
@@ -670,6 +695,8 @@ export const useSettingsState = () => {
     setSftpAutoSync,
     sftpShowHiddenFiles,
     setSftpShowHiddenFiles,
+    sftpUseCompressedUpload,
+    setSftpUseCompressedUpload,
     availableFonts,
     // Session Logs
     sessionLogsEnabled,

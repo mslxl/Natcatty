@@ -234,6 +234,14 @@ const en: Messages = {
   'settings.terminal.rendering.renderer.desc': 'Choose the terminal rendering technology. Auto will use Canvas on low-memory devices. Changes take effect on new terminal sessions.',
   'settings.terminal.rendering.auto': 'Auto',
 
+  // Settings > Terminal > Upload & Download
+  'settings.terminal.section.uploadDownload': 'Upload & Download',
+  'settings.terminal.uploadDownload.compressedUpload': 'Folder Compression Transfer',
+  'settings.terminal.uploadDownload.compressedUpload.desc': 'When enabled, significantly reduces transfer time for folders by using compression. Requires tar command support on the server.',
+  'settings.terminal.uploadDownload.compressedUpload.ask': 'Ask each time',
+  'settings.terminal.uploadDownload.compressedUpload.enabled': 'Always enabled',
+  'settings.terminal.uploadDownload.compressedUpload.disabled': 'Always disabled',
+
   // Settings > Shortcuts
   'settings.shortcuts.section.scheme': 'Hotkey Scheme',
   'settings.shortcuts.scheme.label': 'Keyboard shortcuts',
@@ -539,6 +547,15 @@ const en: Messages = {
   'sftp.conflict.action.skip': 'Skip',
   'sftp.conflict.action.keepBoth': 'Keep Both',
   'sftp.conflict.action.replace': 'Replace',
+  'sftp.compressedUpload.dialog.title': 'Choose Upload Method',
+  'sftp.compressedUpload.dialog.descSingle': 'You are uploading a folder. How would you like to transfer it?',
+  'sftp.compressedUpload.dialog.descMultiple': 'You are uploading {count} folders. How would you like to transfer them?',
+  'sftp.compressedUpload.dialog.compressed.title': 'Compressed Transfer (Recommended)',
+  'sftp.compressedUpload.dialog.compressed.desc': 'Faster transfer, requires tar command on server',
+  'sftp.compressedUpload.dialog.regular.title': 'Regular Transfer',
+  'sftp.compressedUpload.dialog.regular.desc': 'File-by-file transfer, works on all servers',
+  'sftp.compressedUpload.dialog.useCompressed': 'Use Compressed',
+  'sftp.compressedUpload.dialog.useRegular': 'Use Regular',
 
   // SFTP File Opener
   'sftp.context.openWith': 'Open with...',
@@ -604,6 +621,11 @@ const en: Messages = {
   // SFTP Folder Upload Progress
   'sftp.upload.progress': 'Uploading {current} of {total} files...',
   'sftp.upload.uploading': 'Uploading...',
+  'sftp.upload.compressing': 'Compressing...',
+  'sftp.upload.extracting': 'Extracting...',
+  'sftp.upload.scanning': 'Scanning files...',
+  'sftp.upload.completed': 'Completed',
+  'sftp.upload.compressed': 'Compressed Transfer',
   'sftp.upload.currentFile': 'Current: {fileName}',
   'sftp.upload.cancelled': 'Upload cancelled',
   'sftp.upload.cancel': 'Cancel',

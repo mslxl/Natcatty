@@ -9,6 +9,7 @@ import {
   UploadCallbacks,
   UploadTaskInfo,
   UploadProgress,
+  detectRootFolders,
 } from "../../../lib/uploadService";
 
 interface UploadTask {
@@ -43,7 +44,7 @@ interface UseSftpModalTransfersParams {
     onProgress: (transferred: number, total: number, speed: number) => void,
     onComplete: () => void,
     onError: (error: string) => void,
-  ) => Promise<boolean>;
+  ) => Promise<{ success: boolean; transferId: string; cancelled?: boolean }>;
   writeSftpBinary: (sftpId: string, path: string, data: ArrayBuffer) => Promise<void>;
   writeSftp: (sftpId: string, path: string, data: string) => Promise<void>;
   mkdirLocal: (path: string) => Promise<void>;
@@ -67,6 +68,7 @@ interface UseSftpModalTransfersParams {
   cancelTransfer?: (transferId: string) => Promise<void>;
   setLoading: (loading: boolean) => void;
   t: (key: string, params?: Record<string, unknown>) => string;
+  useCompressedUpload?: 'ask' | 'enabled' | 'disabled'; // New option for compressed folder uploads
 }
 
 interface UseSftpModalTransfersResult {
@@ -82,6 +84,14 @@ interface UseSftpModalTransfersResult {
   handleDrop: (e: React.DragEvent) => void;
   cancelUpload: () => Promise<void>;
   dismissTask: (taskId: string) => void;
+  // Compressed upload dialog
+  compressedUploadDialog: {
+    open: boolean;
+    folderCount: number;
+    pendingFiles: FileList | File[] | null;
+  };
+  handleCompressedUploadConfirm: (useCompressed: boolean) => Promise<void>;
+  handleCompressedUploadCancel: () => void;
 }
 
 export const useSftpModalTransfers = ({
@@ -102,10 +112,22 @@ export const useSftpModalTransfers = ({
   cancelTransfer,
   setLoading,
   t,
+  useCompressedUpload = 'disabled',
 }: UseSftpModalTransfersParams): UseSftpModalTransfersResult => {
   const [uploading, setUploading] = useState(false);
   const [uploadTasks, setUploadTasks] = useState<UploadTask[]>([]);
   const [dragActive, setDragActive] = useState(false);
+
+  // Compressed upload dialog state
+  const [compressedUploadDialog, setCompressedUploadDialog] = useState<{
+    open: boolean;
+    folderCount: number;
+    pendingFiles: FileList | File[] | null;
+  }>({
+    open: false,
+    folderCount: 0,
+    pendingFiles: null,
+  });
 
   // Upload controller for cancellation support
   const uploadControllerRef = useRef<UploadController | null>(null);
@@ -115,35 +137,6 @@ export const useSftpModalTransfers = ({
 
   // Track cancelled transfer IDs to detect cancellation in bridge wrapper
   const cancelledTransferIdsRef = useRef<Set<string>>(new Set());
-
-  const handleDownload = useCallback(
-    async (file: RemoteFile) => {
-      try {
-        const fullPath = joinPath(currentPath, file.name);
-        setLoading(true);
-        const content = isLocalSession
-          ? await readLocalFile(fullPath)
-          : await readSftp(await ensureSftp(), fullPath);
-        const blob = new Blob([content], { type: "application/octet-stream" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = file.name;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      } catch (e) {
-        toast.error(
-          e instanceof Error ? e.message : t("sftp.error.downloadFailed"),
-          "SFTP",
-        );
-      } finally {
-        setLoading(false);
-      }
-    },
-    [currentPath, ensureSftp, isLocalSession, joinPath, readLocalFile, readSftp, setLoading, t],
-  );
 
   // Create upload bridge that adapts the modal's functions to the service interface
   const createUploadBridge = useMemo((): UploadBridge => {
@@ -162,8 +155,8 @@ export const useSftpModalTransfers = ({
         data: ArrayBuffer,
         taskId: string,
         onProgress: (transferred: number, total: number, speed: number) => void,
-        _onComplete?: () => void,
-        _onError?: (error: string) => void
+        onComplete?: () => void,
+        onError?: (error: string) => void
       ) => {
         try {
           const result = await writeSftpBinaryWithProgress(
@@ -172,21 +165,22 @@ export const useSftpModalTransfers = ({
             data,
             taskId,
             onProgress,
-            () => { },
-            () => { }
+            onComplete || (() => { }),
+            onError || (() => { })
           );
+          
           // Check if this transfer was cancelled
           const wasCancelled = cancelledTransferIdsRef.current.has(taskId);
           if (wasCancelled) {
             cancelledTransferIdsRef.current.delete(taskId);
           }
-          return { success: result, cancelled: wasCancelled };
+          return { success: result.success, transferId: result.transferId, cancelled: wasCancelled || result.cancelled };
         } catch (error) {
           // Check if this was a user-initiated cancellation
           const wasCancelled = cancelledTransferIdsRef.current.has(taskId);
           if (wasCancelled) {
             cancelledTransferIdsRef.current.delete(taskId);
-            return { success: false, cancelled: true };
+            return { success: false, transferId: taskId, cancelled: true };
           }
           // Real error - propagate it by re-throwing
           throw error;
@@ -229,7 +223,7 @@ export const useSftpModalTransfers = ({
       onScanningStart: (taskId: string) => {
         const scanningTask: UploadTask = {
           id: taskId,
-          fileName: "Scanning files...",
+          fileName: t("sftp.upload.scanning"),
           status: "pending",
           progress: 0,
           totalBytes: 0,
@@ -247,41 +241,43 @@ export const useSftpModalTransfers = ({
         const uploadTask: UploadTask = {
           id: task.id,
           fileName: task.displayName,
-          status: "uploading",
+          status: "pending",
           progress: 0,
           totalBytes: task.totalBytes,
           transferredBytes: 0,
           speed: 0,
           startTime: Date.now(),
           isDirectory: task.isDirectory,
-          fileCount: task.fileCount,
-          completedCount: 0,
         };
-        // Filter out any pending scanning tasks before adding the real task.
-        // This ensures that even if onScanningEnd's state update hasn't been applied yet
-        // (due to React state batching), the scanning placeholder will still be removed.
-        setUploadTasks(prev => [
-          ...prev.filter(t => !(t.status === "pending" && t.fileName === "Scanning files...")),
-          uploadTask
-        ]);
+        setUploadTasks(prev => [...prev, uploadTask]);
       },
       onTaskProgress: (taskId: string, progress: UploadProgress) => {
+        console.log(`[useSftpModalTransfers] onTaskProgress called for taskId: ${taskId}, progress: ${progress.percent}%`);
         setUploadTasks(prev =>
-          prev.map(task =>
-            task.id === taskId && task.status === "uploading"
-              ? {
-                ...task,
-                transferredBytes: progress.transferred,
-                progress: progress.percent,
-                speed: progress.speed,
-              }
-              : task
-          )
+          prev.map(task => {
+            if (task.id !== taskId) return task;
+            
+            // Don't update progress if task is already completed, failed, or cancelled
+            if (task.status === "completed" || task.status === "failed" || task.status === "cancelled") {
+              console.log(`[useSftpModalTransfers] Ignoring progress update for ${taskId} - task already ${task.status}`);
+              return task;
+            }
+            
+            return {
+              ...task,
+              status: "uploading" as const,
+              progress: progress.percent,
+              transferredBytes: progress.transferred,
+              speed: progress.speed,
+            };
+          })
         );
       },
       onTaskCompleted: (taskId: string, totalBytes: number) => {
-        setUploadTasks(prev =>
-          prev.map(task =>
+        console.log(`[useSftpModalTransfers] onTaskCompleted called for taskId: ${taskId}`);
+        setUploadTasks(prev => {
+          console.log(`[useSftpModalTransfers] Current tasks before update:`, prev.map(t => ({ id: t.id, status: t.status, fileName: t.fileName })));
+          const updated = prev.map(task =>
             task.id === taskId
               ? {
                 ...task,
@@ -291,28 +287,24 @@ export const useSftpModalTransfers = ({
                 speed: 0,
               }
               : task
-          )
-        );
+          );
+          console.log(`[useSftpModalTransfers] Updated tasks:`, updated.map(t => ({ id: t.id, status: t.status, fileName: t.fileName })));
+          return updated;
+        });
       },
       onTaskFailed: (taskId: string, error: string) => {
-        // Any error marks the task as failed
+        console.error(`Upload task ${taskId} failed:`, error);
         setUploadTasks(prev =>
           prev.map(task =>
             task.id === taskId
               ? {
                 ...task,
                 status: "failed" as const,
-                error,
                 speed: 0,
               }
               : task
           )
         );
-
-        // Auto-clear failed tasks after 3 seconds
-        setTimeout(() => {
-          setUploadTasks(prev => prev.filter(t => t.id !== taskId));
-        }, 3000);
       },
       onTaskCancelled: (taskId: string) => {
         setUploadTasks(prev =>
@@ -326,13 +318,131 @@ export const useSftpModalTransfers = ({
               : task
           )
         );
-        // Auto-clear cancelled tasks after 2 seconds
-        setTimeout(() => {
-          setUploadTasks(prev => prev.filter(t => t.id !== taskId));
-        }, 2000);
+      },
+      onTaskNameUpdate: (taskId: string, newName: string) => {
+        setUploadTasks(prev =>
+          prev.map(task =>
+            task.id === taskId
+              ? {
+                ...task,
+                fileName: newName,
+              }
+              : task
+          )
+        );
       },
     };
-  }, []);
+  }, [t]);
+
+  // Helper function to check if we need to show compressed upload dialog
+  const shouldShowCompressedDialog = useCallback(async (files: FileList | File[]): Promise<{ shouldShow: boolean; folderCount: number }> => {
+    if (useCompressedUpload !== 'ask' || isLocalSession) {
+      return { shouldShow: false, folderCount: 0 };
+    }
+
+    // Convert FileList to entries to detect folders
+    const entries = Array.from(files).map(file => ({
+      file,
+      relativePath: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name,
+      isDirectory: false,
+    }));
+
+    const rootFolders = detectRootFolders(entries);
+    const folderEntries = Array.from(rootFolders.entries()).filter(([key]) => !key.startsWith("__file__"));
+    
+    return {
+      shouldShow: folderEntries.length > 0,
+      folderCount: folderEntries.length,
+    };
+  }, [useCompressedUpload, isLocalSession]);
+
+  // Helper function to perform upload with specified compression setting
+  const performUpload = useCallback(async (
+    files: FileList | File[], 
+    useCompressed: boolean
+  ): Promise<void> => {
+    console.log('[useSftpModalTransfers] performUpload called', {
+      length: files.length,
+      currentPath,
+      isLocalSession,
+      useCompressed
+    });
+    if (files.length === 0) return;
+
+    setUploading(true);
+
+    // Get SFTP ID for remote sessions
+    let sftpId: string | null = null;
+    if (!isLocalSession) {
+      sftpId = await ensureSftp();
+      cachedSftpIdRef.current = sftpId;
+    }
+
+    // Create controller for cancellation
+    const controller = new UploadController();
+    uploadControllerRef.current = controller;
+
+    const callbacks = createUploadCallbacks();
+
+    try {
+      await uploadFromFileList(
+        files,
+        {
+          targetPath: currentPath,
+          sftpId,
+          isLocal: isLocalSession,
+          bridge: createUploadBridge,
+          joinPath,
+          callbacks,
+          useCompressedUpload: useCompressed,
+        },
+        controller
+      );
+
+      await loadFiles(currentPath, { force: true });
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t("sftp.error.uploadFailed"),
+        "SFTP"
+      );
+    } finally {
+      // Upload process is complete - clear uploading state and controller
+      setUploading(false);
+      uploadControllerRef.current = null;
+      cachedSftpIdRef.current = null;
+    }
+  }, [currentPath, createUploadBridge, createUploadCallbacks, ensureSftp, isLocalSession, joinPath, loadFiles, t]);
+
+  const handleDownload = useCallback(
+    async (file: RemoteFile) => {
+      try {
+        const fullPath = joinPath(currentPath, file.name);
+        setLoading(true);
+        const content = isLocalSession
+          ? await readLocalFile(fullPath)
+          : await readSftp(await ensureSftp(), fullPath);
+        const blob = new Blob([content], { type: "application/octet-stream" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = file.name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        toast.error(
+          e instanceof Error ? e.message : t("sftp.error.downloadFailed"),
+          "SFTP",
+        );
+      } finally {
+        setLoading(false);
+      }
+    },
+    [currentPath, ensureSftp, isLocalSession, joinPath, readLocalFile, readSftp, setLoading, t],
+  );
+
+
 
   const handleUploadMultiple = useCallback(
     async (fileList: FileList) => {
@@ -343,53 +453,30 @@ export const useSftpModalTransfers = ({
       });
       if (fileList.length === 0) return;
 
-      setUploading(true);
-
-      // Get SFTP ID for remote sessions
-      let sftpId: string | null = null;
-      if (!isLocalSession) {
-        sftpId = await ensureSftp();
-        cachedSftpIdRef.current = sftpId;
+      // Check if we need to show compressed upload dialog
+      const { shouldShow, folderCount } = await shouldShowCompressedDialog(fileList);
+      
+      if (shouldShow) {
+        // Show dialog and store pending files
+        setCompressedUploadDialog({
+          open: true,
+          folderCount,
+          pendingFiles: fileList,
+        });
+        return;
       }
 
-      // Create controller for cancellation
-      const controller = new UploadController();
-      uploadControllerRef.current = controller;
-
-      const callbacks = createUploadCallbacks();
-
-      try {
-        await uploadFromFileList(
-          fileList,
-          {
-            targetPath: currentPath,
-            sftpId,
-            isLocal: isLocalSession,
-            bridge: createUploadBridge,
-            joinPath,
-            callbacks,
-          },
-          controller
-        );
-
-        await loadFiles(currentPath, { force: true });
-
-        // Auto-clear completed tasks after 3 seconds
-        setTimeout(() => {
-          setUploadTasks(prev => prev.filter(t => t.status !== "completed"));
-        }, 3000);
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : t("sftp.error.uploadFailed"),
-          "SFTP"
-        );
-      } finally {
-        setUploading(false);
-        uploadControllerRef.current = null;
-        cachedSftpIdRef.current = null;
+      // Determine compression setting based on user preference
+      let useCompressed = false;
+      if (useCompressedUpload === 'enabled') {
+        useCompressed = true;
+      } else if (useCompressedUpload === 'disabled') {
+        useCompressed = false;
       }
+
+      await performUpload(fileList, useCompressed);
     },
-    [currentPath, createUploadBridge, createUploadCallbacks, ensureSftp, isLocalSession, joinPath, loadFiles, t],
+    [currentPath, isLocalSession, shouldShowCompressedDialog, performUpload, useCompressedUpload],
   );
 
   const handleUploadFromDrop = useCallback(
@@ -424,17 +511,13 @@ export const useSftpModalTransfers = ({
         );
 
         await loadFiles(currentPath, { force: true });
-
-        // Auto-clear completed tasks after 3 seconds
-        setTimeout(() => {
-          setUploadTasks(prev => prev.filter(t => t.status !== "completed"));
-        }, 3000);
       } catch (error) {
         toast.error(
           error instanceof Error ? error.message : t("sftp.error.uploadFailed"),
           "SFTP"
         );
       } finally {
+        // Upload process is complete - clear uploading state and controller
         setUploading(false);
         uploadControllerRef.current = null;
         cachedSftpIdRef.current = null;
@@ -453,53 +536,30 @@ export const useSftpModalTransfers = ({
       });
       if (files.length === 0) return;
 
-      setUploading(true);
-
-      // Get SFTP ID for remote sessions
-      let sftpId: string | null = null;
-      if (!isLocalSession) {
-        sftpId = await ensureSftp();
-        cachedSftpIdRef.current = sftpId;
+      // Check if we need to show compressed upload dialog
+      const { shouldShow, folderCount } = await shouldShowCompressedDialog(files);
+      
+      if (shouldShow) {
+        // Show dialog and store pending files
+        setCompressedUploadDialog({
+          open: true,
+          folderCount,
+          pendingFiles: files,
+        });
+        return;
       }
 
-      // Create controller for cancellation
-      const controller = new UploadController();
-      uploadControllerRef.current = controller;
-
-      const callbacks = createUploadCallbacks();
-
-      try {
-        await uploadFromFileList(
-          files,
-          {
-            targetPath: currentPath,
-            sftpId,
-            isLocal: isLocalSession,
-            bridge: createUploadBridge,
-            joinPath,
-            callbacks,
-          },
-          controller
-        );
-
-        await loadFiles(currentPath, { force: true });
-
-        // Auto-clear completed tasks after 3 seconds
-        setTimeout(() => {
-          setUploadTasks(prev => prev.filter(t => t.status !== "completed"));
-        }, 3000);
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : t("sftp.error.uploadFailed"),
-          "SFTP"
-        );
-      } finally {
-        setUploading(false);
-        uploadControllerRef.current = null;
-        cachedSftpIdRef.current = null;
+      // Determine compression setting based on user preference
+      let useCompressed = false;
+      if (useCompressedUpload === 'enabled') {
+        useCompressed = true;
+      } else if (useCompressedUpload === 'disabled') {
+        useCompressed = false;
       }
+
+      await performUpload(files, useCompressed);
     },
-    [currentPath, createUploadBridge, createUploadCallbacks, ensureSftp, isLocalSession, joinPath, loadFiles, t],
+    [currentPath, isLocalSession, shouldShowCompressedDialog, performUpload, useCompressedUpload],
   );
 
   const handleFileSelect = useCallback(
@@ -581,14 +641,18 @@ export const useSftpModalTransfers = ({
       await controller.cancel();
       console.log('[useSftpModalTransfers] controller.cancel() completed');
     } else {
-      console.log('[useSftpModalTransfers] No controller found');
+      console.log('[useSftpModalTransfers] No controller found - tasks may have already completed');
     }
 
     // Always clear all uploading/pending tasks immediately, even without controller
     setUploadTasks(prev => {
       const hasActiveTasks = prev.some(t => t.status === "uploading" || t.status === "pending");
-      if (!hasActiveTasks) return prev;
+      if (!hasActiveTasks) {
+        console.log('[useSftpModalTransfers] No active tasks to cancel');
+        return prev;
+      }
 
+      console.log('[useSftpModalTransfers] Cancelling active tasks');
       return prev.map(task =>
         task.status === "uploading" || task.status === "pending"
           ? { ...task, status: "cancelled" as const, speed: 0 }
@@ -596,17 +660,34 @@ export const useSftpModalTransfers = ({
       );
     });
 
-    // Auto-clear cancelled tasks after 2 seconds
-    setTimeout(() => {
-      setUploadTasks(prev => prev.filter(t => t.status !== "cancelled"));
-    }, 2000);
-
     // Also reset uploading state
     setUploading(false);
   }, []);
 
   const dismissTask = useCallback((taskId: string) => {
     setUploadTasks(prev => prev.filter(t => t.id !== taskId));
+  }, []);
+
+  // Handle compressed upload dialog confirmation
+  const handleCompressedUploadConfirm = useCallback(async (useCompressed: boolean) => {
+    const { pendingFiles } = compressedUploadDialog;
+    setCompressedUploadDialog({
+      open: false,
+      folderCount: 0,
+      pendingFiles: null,
+    });
+    
+    if (pendingFiles) {
+      await performUpload(pendingFiles, useCompressed);
+    }
+  }, [compressedUploadDialog, performUpload]);
+
+  const handleCompressedUploadCancel = useCallback(() => {
+    setCompressedUploadDialog({
+      open: false,
+      folderCount: 0,
+      pendingFiles: null,
+    });
   }, []);
 
   return {
@@ -622,5 +703,9 @@ export const useSftpModalTransfers = ({
     handleDrop,
     cancelUpload,
     dismissTask,
+    // Compressed upload dialog
+    compressedUploadDialog,
+    handleCompressedUploadConfirm,
+    handleCompressedUploadCancel,
   };
 };

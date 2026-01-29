@@ -44,6 +44,7 @@ export const STORAGE_KEY_SFTP_FILE_ASSOCIATIONS = 'netcatty_sftp_file_associatio
 export const STORAGE_KEY_SFTP_DOUBLE_CLICK_BEHAVIOR = 'netcatty_sftp_double_click_behavior_v1';
 export const STORAGE_KEY_SFTP_AUTO_SYNC = 'netcatty_sftp_auto_sync_v1';
 export const STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES = 'netcatty_sftp_show_hidden_files_v1';
+export const STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD = 'netcatty_sftp_use_compressed_upload_v1';
 
 // Session Logs Settings
 export const STORAGE_KEY_SESSION_LOGS_ENABLED = 'netcatty_session_logs_enabled_v1';

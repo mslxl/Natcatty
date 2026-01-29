@@ -4,6 +4,7 @@ import { useSftpBackend } from "../application/state/useSftpBackend";
 import { useSftpFileAssociations } from "../application/state/useSftpFileAssociations";
 import { useSettingsState } from "../application/state/useSettingsState";
 import { useSftpModalTransfers } from "./sftp-modal/hooks/useSftpModalTransfers";
+import { CompressedUploadDialog } from "./sftp-modal/CompressedUploadDialog";
 import { Host, RemoteFile, SftpFilenameEncoding } from "../types";
 import { filterHiddenFiles } from "./sftp";
 import FileOpenerDialog from "./FileOpenerDialog";
@@ -80,7 +81,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     cancelTransfer,
   } = useSftpBackend();
   const { t } = useI18n();
-  const { sftpAutoSync, sftpShowHiddenFiles } = useSettingsState();
+  const { sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload } = useSettingsState();
   const isLocalSession = host.protocol === "local";
   const [filenameEncoding, setFilenameEncoding] = useState<SftpFilenameEncoding>(
     host.sftpEncoding ?? "auto"
@@ -354,6 +355,9 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     handleDrop,
     cancelUpload,
     dismissTask,
+    compressedUploadDialog,
+    handleCompressedUploadConfirm,
+    handleCompressedUploadCancel,
   } = useSftpModalTransfers({
     currentPath,
     isLocalSession,
@@ -373,6 +377,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     cancelTransfer,
     setLoading,
     t,
+    useCompressedUpload: sftpUseCompressedUpload,
   });
 
   const handleClose = async () => {
@@ -638,6 +643,14 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
         fileName={textEditorTarget?.name || ""}
         initialContent={textEditorContent}
         onSave={handleSaveTextFile}
+      />
+
+      {/* Compressed Upload Dialog */}
+      <CompressedUploadDialog
+        open={compressedUploadDialog.open}
+        onClose={handleCompressedUploadCancel}
+        onConfirm={handleCompressedUploadConfirm}
+        folderCount={compressedUploadDialog.folderCount}
       />
     </Dialog>
   );

@@ -80,6 +80,8 @@ export default function SettingsTerminalTab(props: {
     value: TerminalSettings[K],
   ) => void;
   availableFonts: TerminalFont[];
+  sftpUseCompressedUpload: 'ask' | 'enabled' | 'disabled';
+  setSftpUseCompressedUpload: (value: 'ask' | 'enabled' | 'disabled') => void;
 }) {
   const {
     terminalThemeId,
@@ -661,6 +663,25 @@ export default function SettingsTerminalTab(props: {
               { value: "canvas", label: "Canvas" },
             ]}
             onChange={(v) => updateTerminalSetting("rendererType", v as "auto" | "webgl" | "canvas")}
+            className="w-32"
+          />
+        </SettingRow>
+      </div>
+
+      <SectionHeader title={t("settings.terminal.section.uploadDownload")} />
+      <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
+        <SettingRow
+          label={t("settings.terminal.uploadDownload.compressedUpload")}
+          description={t("settings.terminal.uploadDownload.compressedUpload.desc")}
+        >
+          <Select
+            value={props.sftpUseCompressedUpload}
+            options={[
+              { value: "ask", label: t("settings.terminal.uploadDownload.compressedUpload.ask") },
+              { value: "enabled", label: t("settings.terminal.uploadDownload.compressedUpload.enabled") },
+              { value: "disabled", label: t("settings.terminal.uploadDownload.compressedUpload.disabled") },
+            ]}
+            onChange={(v) => props.setSftpUseCompressedUpload(v as 'ask' | 'enabled' | 'disabled')}
             className="w-32"
           />
         </SettingRow>

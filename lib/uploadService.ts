@@ -55,6 +55,8 @@ export interface UploadCallbacks {
   onScanningStart?: (taskId: string) => void;
   /** Called when scanning ends */
   onScanningEnd?: (taskId: string) => void;
+  /** Called when task name needs to be updated (for phase changes) */
+  onTaskNameUpdate?: (taskId: string, newName: string) => void;
 }
 
 export interface UploadBridge {
@@ -104,6 +106,8 @@ export interface UploadConfig {
   joinPath: (base: string, name: string) => string;
   /** Callbacks for progress updates */
   callbacks?: UploadCallbacks;
+  /** Use compressed upload for folders (requires tar on both local and remote) */
+  useCompressedUpload?: boolean;
 }
 
 // ============================================================================
@@ -319,8 +323,8 @@ export async function uploadFromFileList(
   controller?: UploadController
 ): Promise<UploadResult[]> {
   console.log('[uploadFromFileList] Called with', fileList.length, 'files');
-  const { targetPath, sftpId, isLocal, bridge, joinPath, callbacks } = config;
-  console.log('[uploadFromFileList] Config:', { targetPath, sftpId, isLocal });
+  const { targetPath, sftpId, isLocal, bridge, joinPath, callbacks, useCompressedUpload } = config;
+  console.log('[uploadFromFileList] Config:', { targetPath, sftpId, isLocal, useCompressedUpload });
 
   if (controller) {
     controller.reset();
@@ -358,7 +362,18 @@ export async function uploadFromFileList(
     return [];
   }
 
-  console.log('[uploadFromFileList] Calling uploadEntries');
+  // Check if this is a folder upload and compressed upload is enabled
+  if (useCompressedUpload && !isLocal && sftpId) {
+    const rootFolders = detectRootFolders(entries);
+    const folderEntries = Array.from(rootFolders.entries()).filter(([key]) => !key.startsWith("__file__"));
+    
+    if (folderEntries.length > 0) {
+      console.log('[uploadFromFileList] Using compressed upload for folders:', folderEntries.map(([key]) => key));
+      return uploadFoldersCompressed(folderEntries, entries, targetPath, sftpId, callbacks, controller);
+    }
+  }
+
+  console.log('[uploadFromFileList] Using regular upload');
   return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
 }
 
@@ -559,14 +574,19 @@ async function uploadEntries(
                     if (bundleTaskId) {
                       const progress = bundleProgress.get(bundleTaskId);
                       if (progress) {
+                        // For bundled tasks, only update the current file's progress
+                        // Don't add to completedFilesBytes until the file is fully completed
                         const newTransferred = progress.completedFilesBytes + update.transferred;
                         progress.transferredBytes = newTransferred;
                         progress.currentSpeed = update.speed;
+                        const percent = progress.totalBytes > 0 ? (newTransferred / progress.totalBytes) * 100 : 0;
+                        // Ensure progress doesn't exceed 99.9% until all files are completed
+                        const displayPercent = progress.completedCount >= progress.fileCount ? percent : Math.min(percent, 99.9);
                         callbacks.onTaskProgress(bundleTaskId, {
                           transferred: newTransferred,
                           total: progress.totalBytes,
                           speed: update.speed,
-                          percent: progress.totalBytes > 0 ? (newTransferred / progress.totalBytes) * 100 : 0,
+                          percent: displayPercent,
                         });
                       }
                     } else if (standaloneTransferId) {
@@ -606,6 +626,7 @@ async function uploadEntries(
             }
 
             if (streamResult?.cancelled || streamResult?.error?.includes('cancelled')) {
+              console.log(`[UploadService] Stream transfer cancelled for: ${entry.relativePath}`);
               wasCancelled = true;
               const taskId = bundleTaskId || standaloneTransferId;
               if (taskId) {
@@ -615,8 +636,11 @@ async function uploadEntries(
             }
 
             if (streamResult?.error) {
+              console.error(`[UploadService] Stream transfer failed for: ${entry.relativePath}`, streamResult.error);
               throw new Error(streamResult.error);
             }
+            
+            console.log(`[UploadService] Stream transfer successful for: ${entry.relativePath}`);
           } else {
             // Fallback: load file into memory (for small files or when stream transfer is not available)
             console.log('[UploadService] FALLBACK: Loading file into memory:', {
@@ -655,11 +679,14 @@ async function uploadEntries(
                             const newTransferred = progress.completedFilesBytes + update.transferred;
                             progress.transferredBytes = newTransferred;
                             progress.currentSpeed = update.speed;
+                            const percent = progress.totalBytes > 0 ? (newTransferred / progress.totalBytes) * 100 : 0;
+                            // Ensure progress doesn't show 100% until all files are completed
+                            const displayPercent = progress.completedCount >= progress.fileCount ? percent : Math.min(percent, 99.9);
                             callbacks.onTaskProgress(bundleTaskId, {
                               transferred: newTransferred,
                               total: progress.totalBytes,
                               speed: update.speed,
-                              percent: progress.totalBytes > 0 ? (newTransferred / progress.totalBytes) * 100 : 0,
+                              percent: displayPercent,
                             });
                           }
                         } else if (standaloneTransferId) {
@@ -687,8 +714,14 @@ async function uploadEntries(
                     arrayBuffer,
                     fileTransferId,
                     onProgress,
-                    undefined,
-                    undefined
+                    () => {
+                      // File upload completed successfully
+                      console.log(`[UploadService] File upload completed: ${entry.relativePath}`);
+                    },
+                    (error) => {
+                      // File upload failed
+                      console.error(`[UploadService] File upload failed: ${entry.relativePath}`, error);
+                    }
                   );
                 } finally {
                   controller?.removeActiveTransfer(fileTransferId);
@@ -718,8 +751,10 @@ async function uploadEntries(
             }
           }
 
+          // File processing completed (both stream transfer and fallback paths)
           controller?.clearCurrentTransfer();
           results.push({ fileName: entry.relativePath, success: true });
+          console.log(`[UploadService] File completed: ${entry.relativePath}, size: ${fileTotalBytes}`);
 
           // Update progress tracking
           if (bundleTaskId) {
@@ -727,16 +762,28 @@ async function uploadEntries(
             if (progress) {
               progress.completedCount++;
               progress.completedFilesBytes += fileTotalBytes;
+              // Set transferredBytes to completedFilesBytes to avoid double counting
               progress.transferredBytes = progress.completedFilesBytes;
 
               if (progress.completedCount >= progress.fileCount) {
+                // All files completed - set final progress to 100% and mark as completed
+                callbacks?.onTaskProgress?.(bundleTaskId, {
+                  transferred: progress.totalBytes,
+                  total: progress.totalBytes,
+                  speed: 0,
+                  percent: 100,
+                });
+                // Call completion callback synchronously
                 callbacks?.onTaskCompleted?.(bundleTaskId, progress.totalBytes);
               } else if (callbacks?.onTaskProgress) {
+                const percent = progress.totalBytes > 0 ? (progress.completedFilesBytes / progress.totalBytes) * 100 : 0;
+                // Ensure progress doesn't exceed 99.9% until all files are completed
+                const displayPercent = Math.min(percent, 99.9);
                 callbacks.onTaskProgress(bundleTaskId, {
                   transferred: progress.completedFilesBytes,
                   total: progress.totalBytes,
                   speed: 0,
-                  percent: progress.totalBytes > 0 ? (progress.completedFilesBytes / progress.totalBytes) * 100 : 0,
+                  percent: displayPercent,
                 });
               }
             }
@@ -804,4 +851,178 @@ export async function uploadEntriesDirect(
   }
 
   return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
+}
+/**
+ * Upload folders using compression
+ */
+async function uploadFoldersCompressed(
+  folderEntries: Array<[string, DropEntry[]]>,
+  allEntries: DropEntry[],
+  targetPath: string,
+  sftpId: string,
+  callbacks?: UploadCallbacks,
+  controller?: UploadController
+): Promise<UploadResult[]> {
+  const results: UploadResult[] = [];
+  
+  // Import the compressed upload service
+  const { startCompressedUpload, checkCompressedUploadSupport } = await import('../infrastructure/services/compressUploadService');
+  
+  for (const [folderName, entries] of folderEntries) {
+    if (controller?.isCancelled()) {
+      break;
+    }
+    
+    // Get the local folder path from the first file in the folder
+    const firstFile = entries.find(e => e.file);
+    if (!firstFile?.file) {
+      results.push({ fileName: folderName, success: false, error: "No files found in folder" });
+      continue;
+    }
+    
+    const localFilePath = getPathForFile(firstFile.file);
+    if (!localFilePath) {
+      results.push({ fileName: folderName, success: false, error: "Could not get local file path" });
+      continue;
+    }
+    
+    // Extract folder path from the first file path
+    const relativePath = (firstFile.file as File & { webkitRelativePath?: string }).webkitRelativePath || firstFile.file.name;
+    const pathParts = relativePath.split('/');
+    
+    // Get the parent directory of the file
+    // For example: if localFilePath is "/Users/rice/Downloads/110-temp/insideServer/file.txt"
+    // and relativePath is "insideServer/file.txt", we want "/Users/rice/Downloads/110-temp/insideServer"
+    let folderPath = localFilePath;
+    if (pathParts.length > 1) {
+      // Remove the filename from the end to get the folder path
+      const fileName = pathParts[pathParts.length - 1];
+      if (localFilePath.endsWith(fileName)) {
+        folderPath = localFilePath.substring(0, localFilePath.length - fileName.length - 1);
+      }
+    } else {
+      // Single file, get its parent directory
+      const lastSlash = Math.max(localFilePath.lastIndexOf('/'), localFilePath.lastIndexOf('\\'));
+      if (lastSlash > 0) {
+        folderPath = localFilePath.substring(0, lastSlash);
+      }
+    }
+    
+    console.log('[uploadFoldersCompressed] Processing folder:', { folderName, folderPath, localFilePath, relativePath });
+    
+    try {
+      // Check if compressed upload is supported
+      const support = await checkCompressedUploadSupport(sftpId);
+      if (!support.supported) {
+        console.log('[uploadFoldersCompressed] Compressed upload not supported, falling back to regular upload');
+        // Fall back to regular upload for this folder
+        const folderResults = await uploadEntries(
+          entries, 
+          targetPath, 
+          sftpId, 
+          false, 
+          // We need to create a minimal bridge for fallback
+          {
+            mkdirSftp: async () => {},
+            writeSftpBinary: async () => {},
+          } as UploadBridge,
+          (base: string, name: string) => `${base}/${name}`,
+          callbacks,
+          controller
+        );
+        results.push(...folderResults);
+        continue;
+      }
+      
+      const compressionId = crypto.randomUUID();
+      
+      // Create a task for this folder compression
+      const totalBytes = entries.reduce((sum, entry) => sum + (entry.file?.size || 0), 0);
+      const taskId = compressionId;
+      
+      if (callbacks?.onTaskCreated) {
+        callbacks.onTaskCreated({
+          id: taskId,
+          fileName: folderName,
+          displayName: `${folderName} (compressed)`,
+          isDirectory: true,
+          totalBytes,
+          transferredBytes: 0,
+          speed: 0,
+          fileCount: entries.length,
+          completedCount: 0,
+        });
+      }
+      
+      // Start compressed upload
+      const result = await startCompressedUpload(
+        {
+          compressionId,
+          folderPath,
+          targetPath,
+          sftpId,
+          folderName,
+        },
+        (phase, transferred, total) => {
+          console.log(`[UploadService] Compress progress: ${phase} ${transferred}/${total}`);
+          if (callbacks?.onTaskProgress) {
+            // Map compression progress to actual file bytes
+            const progressPercent = total > 0 ? (transferred / total) * 100 : 0;
+            const mappedTransferred = Math.floor((progressPercent / 100) * totalBytes);
+            
+            callbacks.onTaskProgress(taskId, {
+              transferred: mappedTransferred,
+              total: totalBytes,
+              speed: 0, // Speed is handled by the compression service
+              percent: progressPercent,
+            });
+          }
+          
+          // Update task name based on phase
+          if (callbacks?.onTaskNameUpdate) {
+            let displayName = folderName;
+            if (phase === 'compressing') {
+              displayName = `${folderName} (正在压缩)`;
+            } else if (phase === 'extracting') {
+              displayName = `${folderName} (正在解压)`;
+            } else if (phase === 'uploading') {
+              displayName = `${folderName} (正在上传)`;
+            } else {
+              displayName = `${folderName} (压缩传输)`;
+            }
+            callbacks.onTaskNameUpdate(taskId, displayName);
+          }
+        },
+        () => {
+          console.log(`[UploadService] Compress complete callback called for taskId: ${taskId}`);
+          // Mark task as completed immediately
+          if (callbacks?.onTaskCompleted) {
+            console.log(`[UploadService] Calling onTaskCompleted for taskId: ${taskId}`);
+            callbacks.onTaskCompleted(taskId, totalBytes);
+          }
+        },
+        (error) => {
+          if (callbacks?.onTaskFailed) {
+            callbacks.onTaskFailed(taskId, error);
+          }
+        }
+      );
+      
+      if (result.success) {
+        results.push({ fileName: folderName, success: true });
+      } else {
+        results.push({ fileName: folderName, success: false, error: result.error });
+      }
+      
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      results.push({ fileName: folderName, success: false, error: errorMessage });
+      
+      if (callbacks?.onTaskFailed) {
+        callbacks.onTaskFailed(folderName, errorMessage);
+      }
+    }
+  }
+  
+  return results;
 }

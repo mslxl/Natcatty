@@ -793,6 +793,15 @@ const zhCN: Messages = {
   'sftp.conflict.action.skip': '跳过',
   'sftp.conflict.action.keepBoth': '保留两者',
   'sftp.conflict.action.replace': '替换',
+  'sftp.compressedUpload.dialog.title': '选择上传方式',
+  'sftp.compressedUpload.dialog.descSingle': '您正在上传一个文件夹，请选择传输方式：',
+  'sftp.compressedUpload.dialog.descMultiple': '您正在上传 {count} 个文件夹，请选择传输方式：',
+  'sftp.compressedUpload.dialog.compressed.title': '压缩传输（推荐）',
+  'sftp.compressedUpload.dialog.compressed.desc': '传输更快，需要服务器支持 tar 命令',
+  'sftp.compressedUpload.dialog.regular.title': '常规传输',
+  'sftp.compressedUpload.dialog.regular.desc': '逐个文件传输，适用于所有服务器',
+  'sftp.compressedUpload.dialog.useCompressed': '使用压缩传输',
+  'sftp.compressedUpload.dialog.useRegular': '使用常规传输',
 
   // SFTP File Opener
   'sftp.context.openWith': '打开方式...',
@@ -858,6 +867,11 @@ const zhCN: Messages = {
   // SFTP Folder Upload Progress
   'sftp.upload.progress': '正在上传 {current}/{total} 个文件...',
   'sftp.upload.uploading': '正在上传...',
+  'sftp.upload.compressing': '正在压缩...',
+  'sftp.upload.extracting': '正在解压...',
+  'sftp.upload.scanning': '正在扫描文件...',
+  'sftp.upload.completed': '已完成',
+  'sftp.upload.compressed': '压缩传输',
   'sftp.upload.currentFile': '当前: {fileName}',
   'sftp.upload.cancelled': '上传已取消',
   'sftp.upload.cancel': '取消',
@@ -964,6 +978,14 @@ const zhCN: Messages = {
   'settings.terminal.rendering.renderer': '渲染器',
   'settings.terminal.rendering.renderer.desc': '选择终端渲染技术。自动模式会在低内存设备上使用 Canvas。更改将在新终端会话中生效。',
   'settings.terminal.rendering.auto': '自动',
+
+  // Settings > Terminal > Upload & Download
+  'settings.terminal.section.uploadDownload': '上传下载',
+  'settings.terminal.uploadDownload.compressedUpload': '启用文件夹压缩传输',
+  'settings.terminal.uploadDownload.compressedUpload.desc': '启用后，可大量减少传输文件夹时的传输量，需要服务器支持 tar 命令。',
+  'settings.terminal.uploadDownload.compressedUpload.ask': '每次询问',
+  'settings.terminal.uploadDownload.compressedUpload.enabled': '启用',
+  'settings.terminal.uploadDownload.compressedUpload.disabled': '不启用',
 
   // Settings > Shortcuts
   'settings.shortcuts.section.scheme': '快捷键方案',
