@@ -916,7 +916,7 @@ async function uploadFoldersCompressed(
       // Remove the relativePath from the end to get the base directory
       const basePath = localFilePath.substring(0, localFilePath.length - relativePath.length);
       // Remove trailing slash if present
-      folderPath = basePath.replace(/[\/\\]$/, '');
+      folderPath = basePath.replace(/[/\\]$/, '');
       // Add the folder name to get the actual folder path
       folderPath = folderPath + (folderPath ? '/' : '') + folderName;
     } else {
@@ -944,6 +944,8 @@ async function uploadFoldersCompressed(
     
     console.log('[uploadFoldersCompressed] Processing folder:', { folderName, folderPath, localFilePath, relativePath });
     
+    let taskId: string | null = null; // Declare taskId outside try block for error handling
+    
     try {
       // Check if compressed upload is supported
       const support = await checkCompressedUploadSupport(sftpId);
@@ -965,7 +967,7 @@ async function uploadFoldersCompressed(
       
       // Create a task for this folder compression
       const totalBytes = entries.reduce((sum, entry) => sum + (entry.file?.size || 0), 0);
-      const taskId = compressionId;
+      taskId = compressionId;
       
       if (callbacks?.onTaskCreated) {
         callbacks.onTaskCreated({
@@ -1045,8 +1047,9 @@ async function uploadFoldersCompressed(
       const errorMessage = error instanceof Error ? error.message : String(error);
       results.push({ fileName: folderName, success: false, error: errorMessage });
       
-      if (callbacks?.onTaskFailed) {
-        callbacks.onTaskFailed(folderName, errorMessage);
+      // Only call onTaskFailed if we have a valid taskId (task was created)
+      if (callbacks?.onTaskFailed && taskId) {
+        callbacks.onTaskFailed(taskId, errorMessage);
       }
     }
   }
