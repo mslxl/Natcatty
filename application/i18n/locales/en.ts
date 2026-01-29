@@ -383,6 +383,8 @@ const en: Messages = {
   'vault.import.sshConfig.managedSuccess': 'Imported {count} hosts. File is now managed.',
   'vault.import.sshConfig.alreadyManaged': 'This file is already being managed.',
   'vault.import.sshConfig.alreadyManagedDesc': 'This file is already managed under group "{group}". Remove the existing managed source first if you want to re-import.',
+  'vault.import.sshConfig.noFilePath': 'Cannot manage this file.',
+  'vault.import.sshConfig.noFilePathDesc': 'Unable to determine the file path. Managed sync requires access to the file system.',
 
   // Known Hosts
   'knownHosts.search.placeholder': 'Search known hosts...',

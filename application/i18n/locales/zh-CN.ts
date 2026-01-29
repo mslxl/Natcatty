@@ -252,6 +252,8 @@ const zhCN: Messages = {
   'vault.import.sshConfig.managedSuccess': '已导入 {count} 个主机，文件已托管。',
   'vault.import.sshConfig.alreadyManaged': '该文件已被托管。',
   'vault.import.sshConfig.alreadyManagedDesc': '该文件已在分组 "{group}" 下托管。如需重新导入，请先移除现有的托管源。',
+  'vault.import.sshConfig.noFilePath': '无法托管此文件。',
+  'vault.import.sshConfig.noFilePathDesc': '无法确定文件路径。托管同步需要访问文件系统。',
 
   // Known Hosts
   'knownHosts.search.placeholder': '搜索已知主机...',

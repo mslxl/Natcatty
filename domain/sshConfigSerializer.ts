@@ -133,6 +133,9 @@ export const mergeWithExistingSshConfig = (
 ): string => {
   const lines = existingContent.split(/\r?\n/);
   const preservedBlocks: string[] = [];
+  // Track preamble lines (comments/blank lines before first Host/Match block)
+  let preambleLines: string[] = [];
+  let seenFirstBlock = false;
   let currentBlock: string[] = [];
   let currentHostPatterns: string[] = [];
   let currentHostLine: string = "";
@@ -163,20 +166,29 @@ export const mergeWithExistingSshConfig = (
 
   for (const line of lines) {
     const trimmed = line.replace(/#.*/, "").trim();
-    if (!trimmed && currentBlock.length === 0) continue;
 
     const tokens = trimmed.split(/\s+/).filter(Boolean);
     const keyword = tokens[0]?.toLowerCase();
 
     if (keyword === "host") {
       flush();
+      seenFirstBlock = true;
       currentHostPatterns = tokens.slice(1);
       currentHostLine = line;
       currentBlock.push(line);
     } else if (keyword === "match") {
       flush();
+      seenFirstBlock = true;
+      currentBlock.push(line);
+    } else if (!seenFirstBlock) {
+      // Preserve preamble lines (comments, blank lines before first block)
+      preambleLines.push(line);
+    } else if (currentBlock.length > 0) {
+      // Inside a block - add to current block
       currentBlock.push(line);
     } else {
+      // Between blocks (comments/blank lines after a block ended)
+      // These will be included with the next block or preserved separately
       currentBlock.push(line);
     }
   }
@@ -186,8 +198,20 @@ export const mergeWithExistingSshConfig = (
   const managedBlock = `${MANAGED_BLOCK_BEGIN}\n${managedContent}${MANAGED_BLOCK_END}\n`;
   const preserved = preservedBlocks.join("\n\n");
 
-  if (preserved.trim()) {
-    return preserved + "\n\n" + managedBlock;
+  // Build final output: preamble + preserved blocks + managed block
+  const parts: string[] = [];
+
+  // Add preamble if it has content (trim trailing empty lines but keep structure)
+  const preamble = preambleLines.join("\n");
+  if (preamble.trim()) {
+    parts.push(preamble);
   }
-  return managedBlock;
+
+  if (preserved.trim()) {
+    parts.push(preserved);
+  }
+
+  parts.push(managedBlock);
+
+  return parts.join("\n\n");
 };

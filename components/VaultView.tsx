@@ -508,7 +508,18 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
 
         // Check if this file is already managed
         const bridge = (window as unknown as { netcatty?: { getPathForFile?: (file: File) => string | undefined } }).netcatty;
-        const filePath = bridge?.getPathForFile?.(file) || file.name;
+        // Try bridge.getPathForFile first, then fall back to file.path (Electron legacy)
+        const filePath = bridge?.getPathForFile?.(file) || (file as File & { path?: string }).path;
+
+        if (isManaged && !filePath) {
+          // Cannot proceed with managed import without a valid file path
+          toast({
+            title: t("vault.import.sshConfig.noFilePath"),
+            description: t("vault.import.sshConfig.noFilePathDesc"),
+            variant: "destructive",
+          });
+          return;
+        }
 
         if (isManaged) {
           const existingSource = managedSources.find(s => s.filePath === filePath);
