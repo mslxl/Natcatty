@@ -265,8 +265,12 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
       .filter(s => finalGroup === s.groupName || finalGroup.startsWith(s.groupName + "/"))
       .sort((a, b) => b.groupName.length - a.groupName.length)[0];
 
-    // Strip spaces from label if host is/will be managed (SSH config requires no spaces in Host alias)
-    if (targetManagedSource) {
+    // Only SSH hosts can be managed (SSH config only supports SSH protocol)
+    const canBeManaged = !form.protocol || form.protocol === "ssh";
+
+    // Strip spaces from label only if host can be managed and is in a managed group
+    // (SSH config requires no spaces in Host alias)
+    if (targetManagedSource && canBeManaged) {
       finalLabel = finalLabel.replace(/\s/g, '');
     }
 
@@ -276,7 +280,6 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
     // - If managedSources was not provided (empty array) and host already has managedSourceId, preserve it
     // - Otherwise, clear it (host is not in a managed group)
     let finalManagedSourceId: string | undefined;
-    const canBeManaged = !form.protocol || form.protocol === "ssh";
     if (targetManagedSource && canBeManaged) {
       finalManagedSourceId = targetManagedSource.id;
     } else if (managedSources.length === 0 && form.managedSourceId && canBeManaged) {
