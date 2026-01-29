@@ -907,23 +907,38 @@ async function uploadFoldersCompressed(
     
     // Extract folder path from the first file path
     const relativePath = (firstFile.file as File & { webkitRelativePath?: string }).webkitRelativePath || firstFile.file.name;
-    const pathParts = relativePath.split('/');
     
-    // Get the parent directory of the file
-    // For example: if localFilePath is "/Users/rice/Downloads/110-temp/insideServer/file.txt"
-    // and relativePath is "insideServer/file.txt", we want "/Users/rice/Downloads/110-temp/insideServer"
+    // Calculate the root folder path by removing the full relativePath from localFilePath
+    // For example: if localFilePath is "/Users/rice/Downloads/110-temp/insideServer/subdir/file.txt"
+    // and relativePath is "insideServer/subdir/file.txt", we want "/Users/rice/Downloads/110-temp"
     let folderPath = localFilePath;
-    if (pathParts.length > 1) {
-      // Remove the filename from the end to get the folder path
-      const fileName = pathParts[pathParts.length - 1];
-      if (localFilePath.endsWith(fileName)) {
-        folderPath = localFilePath.substring(0, localFilePath.length - fileName.length - 1);
-      }
+    if (relativePath && localFilePath.endsWith(relativePath)) {
+      // Remove the relativePath from the end to get the base directory
+      const basePath = localFilePath.substring(0, localFilePath.length - relativePath.length);
+      // Remove trailing slash if present
+      folderPath = basePath.replace(/[\/\\]$/, '');
+      // Add the folder name to get the actual folder path
+      folderPath = folderPath + (folderPath ? '/' : '') + folderName;
     } else {
-      // Single file, get its parent directory
-      const lastSlash = Math.max(localFilePath.lastIndexOf('/'), localFilePath.lastIndexOf('\\'));
-      if (lastSlash > 0) {
-        folderPath = localFilePath.substring(0, lastSlash);
+      // Fallback: try to extract based on folder name
+      const folderIndex = localFilePath.lastIndexOf('/' + folderName + '/');
+      if (folderIndex >= 0) {
+        folderPath = localFilePath.substring(0, folderIndex + folderName.length + 1);
+      } else {
+        // Last resort: remove just the filename (original logic)
+        const pathParts = relativePath.split('/');
+        if (pathParts.length > 1) {
+          const fileName = pathParts[pathParts.length - 1];
+          if (localFilePath.endsWith(fileName)) {
+            folderPath = localFilePath.substring(0, localFilePath.length - fileName.length - 1);
+          }
+        } else {
+          // Single file, get its parent directory
+          const lastSlash = Math.max(localFilePath.lastIndexOf('/'), localFilePath.lastIndexOf('\\'));
+          if (lastSlash > 0) {
+            folderPath = localFilePath.substring(0, lastSlash);
+          }
+        }
       }
     }
     
