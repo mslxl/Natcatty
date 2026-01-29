@@ -267,6 +267,20 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
       finalLabel = finalLabel.replace(/\s/g, '');
     }
 
+    // Determine managedSourceId:
+    // - If we found a matching managed source, use its id
+    // - If managedSources was not provided (empty array) and host already has managedSourceId, preserve it
+    // - Otherwise, clear it (host is not in a managed group)
+    let finalManagedSourceId: string | undefined;
+    if (targetManagedSource) {
+      finalManagedSourceId = targetManagedSource.id;
+    } else if (managedSources.length === 0 && form.managedSourceId) {
+      // managedSources not provided, preserve existing value
+      finalManagedSourceId = form.managedSourceId;
+    } else {
+      finalManagedSourceId = undefined;
+    }
+
     const cleaned: Host = {
       ...form,
       label: finalLabel,
@@ -275,7 +289,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
       port: form.port || 22,
       // Clear password if savePassword is explicitly set to false
       password: form.savePassword === false ? undefined : form.password,
-      managedSourceId: targetManagedSource?.id,
+      managedSourceId: finalManagedSourceId,
     };
     onSave(cleaned);
   };
