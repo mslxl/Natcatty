@@ -497,10 +497,15 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
         const isManaged = format === "ssh_config" && options?.managed === true;
         const fileBaseName = file.name.replace(/\.[^/.]+$/, "");
 
-        // Generate unique managed group name (check for conflicts with existing sources)
+        // Generate unique managed group name (check for conflicts with existing sources,
+        // custom groups, and host groups to avoid accidentally merging unrelated hosts)
         let managedGroupName = `${fileBaseName} - Managed`;
         if (isManaged) {
-          const existingGroupNames = new Set(managedSources.map(s => s.groupName));
+          const existingGroupNames = new Set([
+            ...managedSources.map(s => s.groupName),
+            ...customGroups,
+            ...hosts.map(h => h.group).filter((g): g is string => !!g),
+          ]);
           let suffix = 1;
           while (existingGroupNames.has(managedGroupName)) {
             managedGroupName = `${fileBaseName} - Managed (${suffix})`;
