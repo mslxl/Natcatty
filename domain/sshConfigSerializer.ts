@@ -3,6 +3,14 @@ import { Host } from "./models";
 const DEFAULT_SSH_PORT = 22;
 
 /**
+ * Check if a string is an IPv6 address
+ */
+const isIPv6 = (hostname: string): boolean => {
+  // IPv6 addresses contain colons and may be wrapped in brackets
+  return hostname.includes(':') && !hostname.startsWith('[');
+};
+
+/**
  * Serialize a single jump host to ProxyJump format
  * Format: [user@]host[:port]
  * @param host - The jump host to serialize
@@ -16,17 +24,25 @@ const serializeJumpHost = (host: Host, managedHostIds: Set<string>): string => {
 
   // Only use label as alias if this jump host is in the managed hosts (has a Host block)
   // and sanitize it by removing spaces. Otherwise use hostname directly.
+  let hostPart: string;
   if (managedHostIds.has(host.id) && host.label) {
     // Use sanitized label (same as the Host block alias)
-    result += host.label.replace(/\s/g, '') || host.hostname;
+    hostPart = host.label.replace(/\s/g, '') || host.hostname;
   } else {
     // Jump host is outside managed config, use hostname directly
-    result += host.hostname;
+    hostPart = host.hostname;
   }
 
-  if (host.port && host.port !== DEFAULT_SSH_PORT) {
-    result += `:${host.port}`;
+  // For IPv6 addresses with non-default port, wrap in brackets
+  if (host.port && host.port !== DEFAULT_SSH_PORT && isIPv6(hostPart)) {
+    result += `[${hostPart}]:${host.port}`;
+  } else {
+    result += hostPart;
+    if (host.port && host.port !== DEFAULT_SSH_PORT) {
+      result += `:${host.port}`;
+    }
   }
+
   return result;
 };
 
