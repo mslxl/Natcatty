@@ -516,11 +516,17 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           `${(h.protocol ?? "ssh").toLowerCase()}|${h.hostname.toLowerCase()}|${h.port}|${(h.username ?? "").toLowerCase()}`;
 
         const existingKeys = new Set(hosts.map(makeKey));
-        let newHosts = isManaged
-          ? result.hosts
-          : result.hosts.filter((h) => !existingKeys.has(makeKey(h)));
+        // Filter out duplicates for both managed and non-managed imports
+        let newHosts = result.hosts.filter((h) => !existingKeys.has(makeKey(h)));
 
-        if (isManaged && newHosts.length > 0) {
+        // For managed imports, also update existing hosts to be managed
+        let updatedExistingHosts: Host[] = [];
+        if (isManaged) {
+          const importedKeys = new Set(result.hosts.map(makeKey));
+          updatedExistingHosts = hosts.filter((h) => importedKeys.has(makeKey(h)));
+        }
+
+        if (isManaged && (newHosts.length > 0 || updatedExistingHosts.length > 0)) {
           const sourceId = crypto.randomUUID();
           console.log('[Import] File path resolved:', filePath);
           const newSource: ManagedSource = {
@@ -538,10 +544,33 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             managedSourceId: (!h.protocol || h.protocol === "ssh") ? sourceId : undefined,
           }));
 
-          onUpdateManagedSources([...managedSources, newSource]);
-        }
+          // Update existing hosts to be managed (move to managed group)
+          const existingHostIds = new Set(updatedExistingHosts.map(h => h.id));
+          const updatedHosts = hosts.map((h) => {
+            if (!existingHostIds.has(h.id)) return h;
+            const canBeManaged = !h.protocol || h.protocol === "ssh";
+            return {
+              ...h,
+              group: managedGroupName,
+              managedSourceId: canBeManaged ? sourceId : undefined,
+              // Sanitize label for managed hosts
+              label: canBeManaged && h.label ? h.label.replace(/\s/g, '') : h.label,
+            };
+          });
 
-        if (newHosts.length > 0) {
+          onUpdateManagedSources([...managedSources, newSource]);
+          onUpdateHosts([...updatedHosts, ...newHosts].map(sanitizeHost));
+
+          const nextGroups = Array.from(
+            new Set([
+              ...customGroups,
+              ...result.groups,
+              managedGroupName,
+              ...newHosts.map((h) => h.group).filter(Boolean),
+            ]),
+          ) as string[];
+          onUpdateCustomGroups(nextGroups);
+        } else if (newHosts.length > 0) {
           onUpdateHosts([...hosts, ...newHosts].map(sanitizeHost));
 
           const nextGroups = Array.from(
@@ -554,11 +583,14 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           onUpdateCustomGroups(nextGroups);
         }
 
+        // Count total hosts affected (new + converted to managed)
+        const totalAffected = newHosts.length + (isManaged ? updatedExistingHosts.length : 0);
+
         const skipped = result.stats.skipped;
         const duplicates = result.stats.duplicates;
         const hasWarnings = skipped > 0 || duplicates > 0 || result.issues.length > 0;
 
-        if (result.stats.parsed === 0 && newHosts.length === 0) {
+        if (result.stats.parsed === 0 && totalAffected === 0) {
           toast.error(
             t("vault.import.toast.noEntries", { format: formatLabel }),
             t("vault.import.toast.failedTitle"),
@@ -566,7 +598,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           return;
         }
 
-        if (newHosts.length === 0) {
+        if (totalAffected === 0) {
           toast.warning(
             t("vault.import.toast.noNewHosts", { format: formatLabel }),
             t("vault.import.toast.completedTitle"),
@@ -576,12 +608,12 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
 
         if (isManaged) {
           toast.success(
-            t("vault.import.sshConfig.managedSuccess", { count: newHosts.length }),
+            t("vault.import.sshConfig.managedSuccess", { count: totalAffected }),
             t("vault.import.toast.completedTitle"),
           );
         } else {
           const details = t("vault.import.toast.summary", {
-            count: newHosts.length,
+            count: totalAffected,
             skipped,
             duplicates,
           });
