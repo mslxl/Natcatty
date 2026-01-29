@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef } from "react";
 import { Host, ManagedSource } from "../../domain/models";
-import { serializeHostsToSshConfig } from "../../domain/sshConfigSerializer";
+import {
+  serializeHostsToSshConfig,
+  mergeWithExistingSshConfig,
+} from "../../domain/sshConfigSerializer";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
 
 const MANAGED_BLOCK_BEGIN = "# BEGIN NETCATTY MANAGED - DO NOT EDIT THIS BLOCK";
@@ -49,7 +52,14 @@ export const useManagedSourceSync = ({
   );
 
   const mergeWithExistingContent = useCallback(
-    (existingContent: string | null, managedContent: string): string => {
+    (
+      existingContent: string | null,
+      managedHosts: Host[],
+      allHosts: Host[],
+    ): string => {
+      // Serialize the managed hosts
+      const managedContent = serializeHostsToSshConfig(managedHosts, allHosts);
+
       if (!existingContent) {
         // No existing file, just wrap the managed content
         return `${MANAGED_BLOCK_BEGIN}\n${managedContent}${MANAGED_BLOCK_END}\n`;
@@ -59,9 +69,28 @@ export const useManagedSourceSync = ({
       const endIndex = existingContent.indexOf(MANAGED_BLOCK_END);
 
       if (beginIndex === -1 || endIndex === -1 || endIndex < beginIndex) {
-        // No existing managed block, append at the end
-        const trimmed = existingContent.trimEnd();
-        return `${trimmed}\n\n${MANAGED_BLOCK_BEGIN}\n${managedContent}${MANAGED_BLOCK_END}\n`;
+        // No existing managed block - need to remove duplicate Host entries
+        // Build a set of hostnames/aliases that will be managed
+        const managedHostnameSet = new Set<string>();
+        for (const host of managedHosts) {
+          if (!host.protocol || host.protocol === "ssh") {
+            // Add both hostname and sanitized label (alias) for matching
+            managedHostnameSet.add(host.hostname.toLowerCase());
+            if (host.label) {
+              managedHostnameSet.add(host.label.replace(/\s/g, "").toLowerCase());
+            }
+          }
+        }
+
+        // Use mergeWithExistingSshConfig to filter out existing Host blocks
+        // that match our managed hosts, then wrap with markers
+        const mergedContent = mergeWithExistingSshConfig(
+          existingContent,
+          managedHosts,
+          managedHostnameSet,
+          allHosts,
+        );
+        return `${MANAGED_BLOCK_BEGIN}\n${mergedContent}${MANAGED_BLOCK_END}\n`;
       }
 
       // Replace the existing managed block
@@ -86,12 +115,13 @@ export const useManagedSourceSync = ({
         // Read existing file content to preserve non-managed parts
         const existingContent = await readExistingFileContent(source.filePath);
 
-        // Pass all hosts for ProxyJump resolution (jump hosts may be outside this managed source)
-        const managedContent = serializeHostsToSshConfig(managedHosts, hosts);
-        console.log(`[ManagedSourceSync] Serialized content (${managedContent.length} chars):`, managedContent.substring(0, 200));
-
-        // Merge with existing content, preserving non-managed parts
-        const finalContent = mergeWithExistingContent(existingContent, managedContent);
+        // Merge with existing content, preserving non-managed parts and removing duplicates
+        const finalContent = mergeWithExistingContent(
+          existingContent,
+          managedHosts,
+          hosts,
+        );
+        console.log(`[ManagedSourceSync] Final content (${finalContent.length} chars)`);
 
         const encoder = new TextEncoder();
         const buffer = encoder.encode(finalContent);
