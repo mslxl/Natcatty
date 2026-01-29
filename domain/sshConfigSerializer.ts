@@ -5,14 +5,25 @@ const DEFAULT_SSH_PORT = 22;
 /**
  * Serialize a single jump host to ProxyJump format
  * Format: [user@]host[:port]
+ * @param host - The jump host to serialize
+ * @param managedHostIds - Set of host IDs that have Host blocks in the managed config
  */
-const serializeJumpHost = (host: Host): string => {
+const serializeJumpHost = (host: Host, managedHostIds: Set<string>): string => {
   let result = "";
   if (host.username) {
     result += `${host.username}@`;
   }
-  // Use label as the host alias if it matches a Host block, otherwise use hostname
-  result += host.label || host.hostname;
+
+  // Only use label as alias if this jump host is in the managed hosts (has a Host block)
+  // and sanitize it by removing spaces. Otherwise use hostname directly.
+  if (managedHostIds.has(host.id) && host.label) {
+    // Use sanitized label (same as the Host block alias)
+    result += host.label.replace(/\s/g, '') || host.hostname;
+  } else {
+    // Jump host is outside managed config, use hostname directly
+    result += host.hostname;
+  }
+
   if (host.port && host.port !== DEFAULT_SSH_PORT) {
     result += `:${host.port}`;
   }
@@ -23,9 +34,14 @@ const serializeJumpHost = (host: Host): string => {
  * Build ProxyJump directive from hostChain
  * @param host - The host with hostChain
  * @param allHosts - All hosts to look up jump host details
+ * @param managedHostIds - Set of host IDs that have Host blocks in the managed config
  * @returns ProxyJump value string or null if chain is empty/invalid
  */
-const buildProxyJumpValue = (host: Host, allHosts: Host[]): string | null => {
+const buildProxyJumpValue = (
+  host: Host,
+  allHosts: Host[],
+  managedHostIds: Set<string>,
+): string | null => {
   if (!host.hostChain?.hostIds || host.hostChain.hostIds.length === 0) {
     return null;
   }
@@ -36,7 +52,7 @@ const buildProxyJumpValue = (host: Host, allHosts: Host[]): string | null => {
   for (const jumpHostId of host.hostChain.hostIds) {
     const jumpHost = hostMap.get(jumpHostId);
     if (jumpHost) {
-      jumpParts.push(serializeJumpHost(jumpHost));
+      jumpParts.push(serializeJumpHost(jumpHost, managedHostIds));
     }
   }
 
@@ -48,11 +64,19 @@ export const serializeHostsToSshConfig = (hosts: Host[], allHosts?: Host[]): str
   // Use provided allHosts for jump host lookup, or fall back to hosts array
   const hostsForLookup = allHosts || hosts;
 
+  // Build set of managed host IDs (SSH hosts that will have Host blocks)
+  const managedHostIds = new Set(
+    hosts
+      .filter(h => !h.protocol || h.protocol === "ssh")
+      .map(h => h.id)
+  );
+
   for (const host of hosts) {
     if (host.protocol && host.protocol !== "ssh") continue;
 
     const lines: string[] = [];
-    const alias = host.label || host.hostname;
+    // Sanitize alias by removing spaces (SSH config doesn't allow spaces in Host patterns)
+    const alias = (host.label?.replace(/\s/g, '') || host.hostname);
     lines.push(`Host ${alias}`);
 
     if (host.hostname !== alias) {
@@ -68,7 +92,7 @@ export const serializeHostsToSshConfig = (hosts: Host[], allHosts?: Host[]): str
     }
 
     // Serialize ProxyJump if host has a chain
-    const proxyJumpValue = buildProxyJumpValue(host, hostsForLookup);
+    const proxyJumpValue = buildProxyJumpValue(host, hostsForLookup, managedHostIds);
     if (proxyJumpValue) {
       lines.push(`    ProxyJump ${proxyJumpValue}`);
     }
