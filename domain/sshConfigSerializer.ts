@@ -139,28 +139,35 @@ export const mergeWithExistingSshConfig = (
   let currentBlock: string[] = [];
   let currentHostPatterns: string[] = [];
   let currentHostLine: string = "";
+  let isMatchBlock = false; // Track if current block is a Match block (always preserve)
 
   const flush = () => {
     if (currentBlock.length > 0) {
-      // Filter out managed patterns from the Host line, keep non-managed ones
-      const nonManagedPatterns = currentHostPatterns.filter(
-        (p) => !managedHostnameSet.has(p.toLowerCase())
-      );
-
-      if (nonManagedPatterns.length === currentHostPatterns.length) {
-        // No managed patterns - preserve the entire block as-is
+      // Match blocks are always preserved (we don't manage them)
+      if (isMatchBlock) {
         preservedBlocks.push(currentBlock.join("\n"));
-      } else if (nonManagedPatterns.length > 0) {
-        // Some patterns are managed, some are not - rewrite Host line with only non-managed patterns
-        const newHostLine = `Host ${nonManagedPatterns.join(" ")}`;
-        const restOfBlock = currentBlock.slice(1); // Everything after Host line
-        preservedBlocks.push([newHostLine, ...restOfBlock].join("\n"));
+      } else {
+        // Filter out managed patterns from the Host line, keep non-managed ones
+        const nonManagedPatterns = currentHostPatterns.filter(
+          (p) => !managedHostnameSet.has(p.toLowerCase())
+        );
+
+        if (nonManagedPatterns.length === currentHostPatterns.length) {
+          // No managed patterns - preserve the entire block as-is
+          preservedBlocks.push(currentBlock.join("\n"));
+        } else if (nonManagedPatterns.length > 0) {
+          // Some patterns are managed, some are not - rewrite Host line with only non-managed patterns
+          const newHostLine = `Host ${nonManagedPatterns.join(" ")}`;
+          const restOfBlock = currentBlock.slice(1); // Everything after Host line
+          preservedBlocks.push([newHostLine, ...restOfBlock].join("\n"));
+        }
+        // If all patterns are managed (nonManagedPatterns.length === 0), drop the entire block
       }
-      // If all patterns are managed (nonManagedPatterns.length === 0), drop the entire block
 
       currentBlock = [];
       currentHostPatterns = [];
       currentHostLine = "";
+      isMatchBlock = false;
     }
   };
 
@@ -179,6 +186,7 @@ export const mergeWithExistingSshConfig = (
     } else if (keyword === "match") {
       flush();
       seenFirstBlock = true;
+      isMatchBlock = true;
       currentBlock.push(line);
     } else if (!seenFirstBlock) {
       // Preserve preamble lines (comments, blank lines before first block)
