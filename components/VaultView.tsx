@@ -970,6 +970,17 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
       return h;
     });
 
+    // Update managed sources if any match the renamed group path
+    const updatedManagedSources = managedSources.map((s) => {
+      if (s.groupName === renameTargetPath) return { ...s, groupName: nextPath };
+      if (s.groupName.startsWith(renameTargetPath + "/"))
+        return { ...s, groupName: nextPath + s.groupName.slice(renameTargetPath.length) };
+      return s;
+    });
+    if (updatedManagedSources.some((s, i) => s !== managedSources[i])) {
+      onUpdateManagedSources(updatedManagedSources);
+    }
+
     onUpdateCustomGroups(Array.from(new Set(updatedGroups)));
     onUpdateHosts(updatedHosts);
     if (
@@ -1041,6 +1052,16 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
         return { ...h, group: g.replace(sourcePath, newPath) };
       return h;
     });
+    // Update managed sources if any match the moved group path
+    const updatedManagedSources = managedSources.map((s) => {
+      if (s.groupName === sourcePath) return { ...s, groupName: newPath };
+      if (s.groupName.startsWith(sourcePath + "/"))
+        return { ...s, groupName: s.groupName.replace(sourcePath, newPath) };
+      return s;
+    });
+    if (updatedManagedSources.some((s, i) => s !== managedSources[i])) {
+      onUpdateManagedSources(updatedManagedSources);
+    }
     onUpdateCustomGroups(Array.from(new Set(updatedGroups)));
     onUpdateHosts(updatedHosts);
     if (

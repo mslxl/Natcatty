@@ -3,6 +3,9 @@ import { Host, ManagedSource } from "../../domain/models";
 import { serializeHostsToSshConfig } from "../../domain/sshConfigSerializer";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
 
+const MANAGED_BLOCK_BEGIN = "# BEGIN NETCATTY MANAGED - DO NOT EDIT THIS BLOCK";
+const MANAGED_BLOCK_END = "# END NETCATTY MANAGED";
+
 export interface UseManagedSourceSyncOptions {
   hosts: Host[];
   managedSources: ManagedSource[];
@@ -24,10 +27,52 @@ export const useManagedSourceSync = ({
     [hosts],
   );
 
+  const readExistingFileContent = useCallback(
+    async (filePath: string): Promise<string | null> => {
+      const bridge = netcattyBridge.get();
+      if (!bridge?.readLocalFile) {
+        return null;
+      }
+      try {
+        const buffer = await bridge.readLocalFile(filePath);
+        const decoder = new TextDecoder();
+        return decoder.decode(buffer);
+      } catch {
+        // File might not exist yet
+        return null;
+      }
+    },
+    [],
+  );
+
+  const mergeWithExistingContent = useCallback(
+    (existingContent: string | null, managedContent: string): string => {
+      if (!existingContent) {
+        // No existing file, just wrap the managed content
+        return `${MANAGED_BLOCK_BEGIN}\n${managedContent}${MANAGED_BLOCK_END}\n`;
+      }
+
+      const beginIndex = existingContent.indexOf(MANAGED_BLOCK_BEGIN);
+      const endIndex = existingContent.indexOf(MANAGED_BLOCK_END);
+
+      if (beginIndex === -1 || endIndex === -1 || endIndex < beginIndex) {
+        // No existing managed block, append at the end
+        const trimmed = existingContent.trimEnd();
+        return `${trimmed}\n\n${MANAGED_BLOCK_BEGIN}\n${managedContent}${MANAGED_BLOCK_END}\n`;
+      }
+
+      // Replace the existing managed block
+      const before = existingContent.substring(0, beginIndex);
+      const after = existingContent.substring(endIndex + MANAGED_BLOCK_END.length);
+      return `${before}${MANAGED_BLOCK_BEGIN}\n${managedContent}${MANAGED_BLOCK_END}${after}`;
+    },
+    [],
+  );
+
   const writeSshConfigToFile = useCallback(
     async (source: ManagedSource, managedHosts: Host[]) => {
       console.log(`[ManagedSourceSync] writeSshConfigToFile called for ${source.groupName}, hosts:`, managedHosts.length);
-      
+
       const bridge = netcattyBridge.get();
       if (!bridge?.writeLocalFile) {
         console.warn("[ManagedSourceSync] writeLocalFile not available");
@@ -35,13 +80,19 @@ export const useManagedSourceSync = ({
       }
 
       try {
-        const content = serializeHostsToSshConfig(managedHosts);
-        console.log(`[ManagedSourceSync] Serialized content (${content.length} chars):`, content.substring(0, 200));
-        
+        // Read existing file content to preserve non-managed parts
+        const existingContent = await readExistingFileContent(source.filePath);
+
+        const managedContent = serializeHostsToSshConfig(managedHosts);
+        console.log(`[ManagedSourceSync] Serialized content (${managedContent.length} chars):`, managedContent.substring(0, 200));
+
+        // Merge with existing content, preserving non-managed parts
+        const finalContent = mergeWithExistingContent(existingContent, managedContent);
+
         const encoder = new TextEncoder();
-        const buffer = encoder.encode(content);
+        const buffer = encoder.encode(finalContent);
         console.log(`[ManagedSourceSync] Writing to ${source.filePath}`);
-        
+
         await bridge.writeLocalFile(source.filePath, buffer.buffer as ArrayBuffer);
         console.log(`[ManagedSourceSync] Write successful`);
         return true;
@@ -50,7 +101,7 @@ export const useManagedSourceSync = ({
         return false;
       }
     },
-    [],
+    [readExistingFileContent, mergeWithExistingContent],
   );
 
   const syncManagedSource = useCallback(
