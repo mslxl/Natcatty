@@ -2083,6 +2083,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             }
             onRunSnippet={onRunSnippet}
             availableKeys={keys}
+            managedSources={managedSources}
             onSaveHost={(host) => onUpdateHosts([...hosts, host])}
             onCreateGroup={(groupPath) =>
               onUpdateCustomGroups(
@@ -2097,6 +2098,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             identities={identities}
             hosts={hosts}
             customGroups={customGroups}
+            managedSources={managedSources}
             onSave={(k) => onUpdateKeys([...keys, k])}
             onUpdate={(k) =>
               onUpdateKeys(
@@ -2138,6 +2140,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             keys={keys}
             identities={identities}
             customGroups={customGroups}
+            managedSources={managedSources}
             onSaveHost={(host) => onUpdateHosts([...hosts, host])}
             onCreateGroup={(groupPath) =>
               onUpdateCustomGroups(
