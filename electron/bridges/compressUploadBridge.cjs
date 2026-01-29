@@ -534,6 +534,17 @@ async function cancelCompression(event, payload) {
         console.log('[compressUploadBridge] Error killing process:', e);
       }
     }
+    
+    // Cancel the associated transfer if it's running
+    const transferId = `compress-${compressionId}`;
+    if (transferBridge && transferBridge.cancelTransfer) {
+      try {
+        console.log('[compressUploadBridge] Cancelling transfer:', transferId);
+        await transferBridge.cancelTransfer(event, { transferId });
+      } catch (e) {
+        console.log('[compressUploadBridge] Error cancelling transfer:', e);
+      }
+    }
   }
   
   return { success: true };
