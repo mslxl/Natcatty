@@ -255,13 +255,18 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   const handleSubmit = () => {
     if (!form.hostname) return;
     // If label is empty, use hostname as label
-    const finalLabel = form.label?.trim() || form.hostname;
+    let finalLabel = form.label?.trim() || form.hostname;
     const finalGroup = groupInputValue.trim() || form.group || "";
-    
-    const targetManagedSource = managedSources.find(s => 
+
+    const targetManagedSource = managedSources.find(s =>
       finalGroup === s.groupName || finalGroup.startsWith(s.groupName + "/")
     );
-    
+
+    // Strip spaces from label if host is/will be managed (SSH config requires no spaces in Host alias)
+    if (targetManagedSource) {
+      finalLabel = finalLabel.replace(/\s/g, '');
+    }
+
     const cleaned: Host = {
       ...form,
       label: finalLabel,
@@ -540,7 +545,12 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
             value={form.label}
             onChange={(e) => {
               let value = e.target.value;
-              if (form.managedSourceId) {
+              // Check if current or target group belongs to a managed source
+              const currentGroup = groupInputValue.trim() || form.group || "";
+              const isManaged = form.managedSourceId || managedSources.some(s =>
+                currentGroup === s.groupName || currentGroup.startsWith(s.groupName + "/")
+              );
+              if (isManaged) {
                 value = value.replace(/\s/g, '');
               }
               update("label", value);

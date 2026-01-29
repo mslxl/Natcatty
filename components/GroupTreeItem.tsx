@@ -1,4 +1,4 @@
-import { ChevronRight,FileSymlink,Folder,FolderOpen,FolderPlus,Plus } from 'lucide-react';
+import { ChevronRight,Folder,FolderOpen,FolderPlus,Plus } from 'lucide-react';
 import React,{ useMemo } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { cn } from '../lib/utils';

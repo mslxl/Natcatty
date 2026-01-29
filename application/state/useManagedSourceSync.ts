@@ -78,8 +78,10 @@ export const useManagedSourceSync = ({
     [managedSources, onUpdateManagedSources],
   );
 
-  useEffect(() => {
-    if (syncInProgressRef.current) return;
+  const pendingSyncRef = useRef(false);
+  const checkAndSyncRef = useRef<() => void>(() => {});
+
+  const checkAndSync = useCallback(() => {
     if (managedSources.length === 0) return;
 
     const prevHosts = previousHostsRef.current;
@@ -130,9 +132,27 @@ export const useManagedSourceSync = ({
           .map(syncManagedSource),
       ).finally(() => {
         syncInProgressRef.current = false;
+        // Check if there were changes during sync that need to be processed
+        // Use ref to get the latest checkAndSync to avoid stale closure
+        if (pendingSyncRef.current) {
+          pendingSyncRef.current = false;
+          checkAndSyncRef.current();
+        }
       });
     }
   }, [hosts, managedSources, syncManagedSource]);
+
+  // Keep ref updated with the latest checkAndSync
+  checkAndSyncRef.current = checkAndSync;
+
+  useEffect(() => {
+    if (syncInProgressRef.current) {
+      // Mark that we need to re-sync after current sync completes
+      pendingSyncRef.current = true;
+      return;
+    }
+    checkAndSync();
+  }, [hosts, managedSources, checkAndSync]);
 
   return {
     syncManagedSource,
