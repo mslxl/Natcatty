@@ -83,14 +83,14 @@ export const useManagedSourceSync = ({
         }
 
         // Use mergeWithExistingSshConfig to filter out existing Host blocks
-        // that match our managed hosts, then wrap with markers
+        // that match our managed hosts, keeping preserved content outside markers
         const mergedContent = mergeWithExistingSshConfig(
           existingContent,
           managedHosts,
           managedHostnameSet,
           allHosts,
         );
-        return `${MANAGED_BLOCK_BEGIN}\n${mergedContent}${MANAGED_BLOCK_END}\n`;
+        return mergedContent;
       }
 
       // Replace the existing managed block

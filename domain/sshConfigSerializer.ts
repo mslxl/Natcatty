@@ -1,6 +1,8 @@
 import { Host } from "./models";
 
 const DEFAULT_SSH_PORT = 22;
+const MANAGED_BLOCK_BEGIN = "# BEGIN NETCATTY MANAGED - DO NOT EDIT THIS BLOCK";
+const MANAGED_BLOCK_END = "# END NETCATTY MANAGED";
 
 /**
  * Check if a string is an IPv6 address
@@ -33,9 +35,13 @@ const serializeJumpHost = (host: Host, managedHostIds: Set<string>): string => {
     hostPart = host.hostname;
   }
 
-  // For IPv6 addresses with non-default port, wrap in brackets
-  if (host.port && host.port !== DEFAULT_SSH_PORT && isIPv6(hostPart)) {
-    result += `[${hostPart}]:${host.port}`;
+  // For IPv6 addresses, always wrap in brackets to disambiguate colons
+  // OpenSSH requires brackets for IPv6 in ProxyJump regardless of port
+  if (isIPv6(hostPart)) {
+    result += `[${hostPart}]`;
+    if (host.port && host.port !== DEFAULT_SSH_PORT) {
+      result += `:${host.port}`;
+    }
   } else {
     result += hostPart;
     if (host.port && host.port !== DEFAULT_SSH_PORT) {
@@ -164,10 +170,11 @@ export const mergeWithExistingSshConfig = (
   flush();
 
   const managedContent = serializeHostsToSshConfig(managedHosts, allHosts);
+  const managedBlock = `${MANAGED_BLOCK_BEGIN}\n${managedContent}${MANAGED_BLOCK_END}\n`;
   const preserved = preservedBlocks.join("\n\n");
 
   if (preserved.trim()) {
-    return preserved + "\n\n" + managedContent;
+    return preserved + "\n\n" + managedBlock;
   }
-  return managedContent;
+  return managedBlock;
 };
