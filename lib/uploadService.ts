@@ -399,6 +399,7 @@ export async function uploadFromFileList(
   if (useCompressedUpload && !isLocal && sftpId) {
     const rootFolders = detectRootFolders(entries);
     const folderEntries = Array.from(rootFolders.entries()).filter(([key]) => !key.startsWith("__file__"));
+    const standaloneFileEntries = Array.from(rootFolders.entries()).filter(([key]) => key.startsWith("__file__"));
     
     if (folderEntries.length > 0) {
       console.log('[uploadFromFileList] Using compressed upload for folders:', folderEntries.map(([key]) => key));
@@ -414,6 +415,16 @@ export async function uploadFromFileList(
           console.log('[uploadFromFileList] Some folders failed compressed upload, falling back to regular upload');
           // Fall back to regular upload for all entries
           return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
+        }
+        
+        // Upload standalone files using regular upload if any exist
+        if (standaloneFileEntries.length > 0) {
+          console.log('[uploadFromFileList] Uploading standalone files after compressed folders:', standaloneFileEntries.map(([key]) => key));
+          const standaloneEntries = standaloneFileEntries.flatMap(([, entries]) => entries);
+          const standaloneResults = await uploadEntries(standaloneEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
+          
+          // Combine results from compressed folders and standalone files
+          return [...compressedResults, ...standaloneResults];
         }
         
         return compressedResults;
