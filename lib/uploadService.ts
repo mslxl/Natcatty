@@ -55,6 +55,8 @@ export interface UploadCallbacks {
   onScanningStart?: (taskId: string) => void;
   /** Called when scanning ends */
   onScanningEnd?: (taskId: string) => void;
+  /** Called when task name needs to be updated (for phase changes) */
+  onTaskNameUpdate?: (taskId: string, newName: string) => void;
 }
 
 export interface UploadBridge {
@@ -104,6 +106,8 @@ export interface UploadConfig {
   joinPath: (base: string, name: string) => string;
   /** Callbacks for progress updates */
   callbacks?: UploadCallbacks;
+  /** Use compressed upload for folders (requires tar on both local and remote) */
+  useCompressedUpload?: boolean;
 }
 
 // ============================================================================
@@ -159,6 +163,7 @@ export function sortEntries(entries: DropEntry[]): DropEntry[] {
 export class UploadController {
   private cancelled = false;
   private activeFileTransferIds = new Set<string>();
+  private activeCompressionIds = new Set<string>();
   private currentTransferId = "";
   private bridge: UploadBridge | null = null;
 
@@ -167,7 +172,18 @@ export class UploadController {
    */
   async cancel(): Promise<void> {
     this.cancelled = true;
-    console.log('[UploadController] Cancelling uploads, active IDs:', Array.from(this.activeFileTransferIds));
+
+    // Cancel all active compressed uploads
+    const activeCompressionIds = Array.from(this.activeCompressionIds);
+    for (const compressionId of activeCompressionIds) {
+      try {
+        // Import and call cancelCompressedUpload
+        const { cancelCompressedUpload } = await import('../infrastructure/services/compressUploadService');
+        await cancelCompressedUpload(compressionId);
+      } catch {
+        // Ignore cancel errors
+      }
+    }
 
     // Cancel all active file uploads
     const activeIds = Array.from(this.activeFileTransferIds);
@@ -175,16 +191,13 @@ export class UploadController {
       try {
         // Try cancelTransfer first (for stream transfers)
         if (this.bridge?.cancelTransfer) {
-          console.log('[UploadController] Calling cancelTransfer for:', transferId);
           await this.bridge.cancelTransfer(transferId);
         }
         // Also try cancelSftpUpload (for legacy uploads)
         if (this.bridge?.cancelSftpUpload) {
-          console.log('[UploadController] Calling cancelSftpUpload for:', transferId);
           await this.bridge.cancelSftpUpload(transferId);
         }
-      } catch (e) {
-        console.log('[UploadController] Cancel error:', e);
+      } catch {
         // Ignore cancel errors
       }
     }
@@ -193,15 +206,12 @@ export class UploadController {
     if (this.currentTransferId && !activeIds.includes(this.currentTransferId)) {
       try {
         if (this.bridge?.cancelTransfer) {
-          console.log('[UploadController] Calling cancelTransfer for current:', this.currentTransferId);
           await this.bridge.cancelTransfer(this.currentTransferId);
         }
         if (this.bridge?.cancelSftpUpload) {
-          console.log('[UploadController] Calling cancelSftpUpload for current:', this.currentTransferId);
           await this.bridge.cancelSftpUpload(this.currentTransferId);
         }
-      } catch (e) {
-        console.log('[UploadController] Cancel current error:', e);
+      } catch {
         // Ignore cancel errors
       }
     }
@@ -222,7 +232,9 @@ export class UploadController {
     if (this.currentTransferId && !ids.includes(this.currentTransferId)) {
       ids.push(this.currentTransferId);
     }
-    return ids;
+    // Also include compression IDs
+    const compressionIds = Array.from(this.activeCompressionIds);
+    return [...ids, ...compressionIds];
   }
 
   /**
@@ -231,6 +243,7 @@ export class UploadController {
   reset(): void {
     this.cancelled = false;
     this.activeFileTransferIds.clear();
+    this.activeCompressionIds.clear();
     this.currentTransferId = "";
   }
 
@@ -265,6 +278,20 @@ export class UploadController {
   clearCurrentTransfer(): void {
     this.currentTransferId = "";
   }
+
+  /**
+   * Track a compression ID
+   */
+  addActiveCompression(id: string): void {
+    this.activeCompressionIds.add(id);
+  }
+
+  /**
+   * Remove a tracked compression ID
+   */
+  removeActiveCompression(id: string): void {
+    this.activeCompressionIds.delete(id);
+  }
 }
 
 // ============================================================================
@@ -284,7 +311,7 @@ export async function uploadFromDataTransfer(
   config: UploadConfig,
   controller?: UploadController
 ): Promise<UploadResult[]> {
-  const { targetPath, sftpId, isLocal, bridge, joinPath, callbacks } = config;
+  const { targetPath, sftpId, isLocal, bridge, joinPath, callbacks, useCompressedUpload } = config;
 
   // Reset controller if provided
   if (controller) {
@@ -307,6 +334,54 @@ export async function uploadFromDataTransfer(
     return [];
   }
 
+  // Check if this is a folder upload and compressed upload is enabled
+  if (useCompressedUpload && !isLocal && sftpId) {
+    const rootFolders = detectRootFolders(entries);
+    const folderEntries = Array.from(rootFolders.entries()).filter(([key]) => !key.startsWith("__file__"));
+    const standaloneFileEntries = Array.from(rootFolders.entries()).filter(([key]) => key.startsWith("__file__"));
+
+    if (folderEntries.length > 0) {
+      try {
+        const compressedResults = await uploadFoldersCompressed(folderEntries, entries, targetPath, sftpId, callbacks, controller);
+
+        // Check if any folders failed due to lack of compression support
+        const failedFolders = compressedResults.filter(result =>
+          !result.success && result.error === "Compressed upload not supported - fallback needed"
+        );
+        const successfulFolders = compressedResults.filter(result =>
+          result.success || result.error !== "Compressed upload not supported - fallback needed"
+        );
+
+        let fallbackResults: UploadResult[] = [];
+        if (failedFolders.length > 0) {
+          // Get entries only for failed folders, not already successful ones
+          const failedFolderNames = new Set(failedFolders.map(f => f.fileName));
+          const failedFolderEntries = entries.filter(entry => {
+            const topFolder = entry.relativePath.split('/')[0];
+            return failedFolderNames.has(topFolder);
+          });
+
+          if (failedFolderEntries.length > 0) {
+            fallbackResults = await uploadEntries(failedFolderEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
+          }
+        }
+
+        // Upload standalone files using regular upload if any exist
+        let standaloneResults: UploadResult[] = [];
+        if (standaloneFileEntries.length > 0) {
+          const standaloneEntries = standaloneFileEntries.flatMap(([, entries]) => entries);
+          standaloneResults = await uploadEntries(standaloneEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
+        }
+
+        // Combine results: successful compressed + fallback results + standalone files
+        return [...successfulFolders, ...fallbackResults, ...standaloneResults];
+      } catch {
+        // Fall back to regular upload
+        return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
+      }
+    }
+  }
+
   return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
 }
 
@@ -318,39 +393,82 @@ export async function uploadFromFileList(
   config: UploadConfig,
   controller?: UploadController
 ): Promise<UploadResult[]> {
-  console.log('[uploadFromFileList] Called with', fileList.length, 'files');
-  const { targetPath, sftpId, isLocal, bridge, joinPath, callbacks } = config;
-  console.log('[uploadFromFileList] Config:', { targetPath, sftpId, isLocal });
+  const { targetPath, sftpId, isLocal, bridge, joinPath, callbacks, useCompressedUpload } = config;
 
   if (controller) {
     controller.reset();
     controller.setBridge(bridge);
   }
 
-  // Convert FileList to DropEntry array (simple files, no folders)
-  // Use getPathForFile to get the local file path for stream transfer
+  // Convert FileList to DropEntry array
+  // Use webkitRelativePath for folder uploads, fallback to file.name for regular file uploads
   const entries: DropEntry[] = Array.from(fileList).map(file => {
     const localPath = getPathForFile(file);
-    console.log('[uploadFromFileList] File:', { name: file.name, size: file.size, localPath });
+    // Use webkitRelativePath if available (folder upload), otherwise use file.name (regular file upload)
+    const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
     if (localPath) {
       // Set the path property on the file for stream transfer
       (file as File & { path?: string }).path = localPath;
     }
     return {
       file,
-      relativePath: file.name,
+      relativePath,
       isDirectory: false,
     };
   });
 
-  console.log('[uploadFromFileList] Created', entries.length, 'entries');
-
   if (entries.length === 0) {
-    console.log('[uploadFromFileList] No entries, returning empty');
     return [];
   }
 
-  console.log('[uploadFromFileList] Calling uploadEntries');
+  // Check if this is a folder upload and compressed upload is enabled
+  if (useCompressedUpload && !isLocal && sftpId) {
+    const rootFolders = detectRootFolders(entries);
+    const folderEntries = Array.from(rootFolders.entries()).filter(([key]) => !key.startsWith("__file__"));
+    const standaloneFileEntries = Array.from(rootFolders.entries()).filter(([key]) => key.startsWith("__file__"));
+
+    if (folderEntries.length > 0) {
+      try {
+        const compressedResults = await uploadFoldersCompressed(folderEntries, entries, targetPath, sftpId, callbacks, controller);
+
+        // Check if any folders failed due to lack of compression support
+        const failedFolders = compressedResults.filter(result =>
+          !result.success && result.error === "Compressed upload not supported - fallback needed"
+        );
+        const successfulFolders = compressedResults.filter(result =>
+          result.success || result.error !== "Compressed upload not supported - fallback needed"
+        );
+
+        let fallbackResults: UploadResult[] = [];
+        if (failedFolders.length > 0) {
+          // Get entries only for failed folders, not already successful ones
+          const failedFolderNames = new Set(failedFolders.map(f => f.fileName));
+          const failedFolderEntries = entries.filter(entry => {
+            const topFolder = entry.relativePath.split('/')[0];
+            return failedFolderNames.has(topFolder);
+          });
+
+          if (failedFolderEntries.length > 0) {
+            fallbackResults = await uploadEntries(failedFolderEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
+          }
+        }
+
+        // Upload standalone files using regular upload if any exist
+        let standaloneResults: UploadResult[] = [];
+        if (standaloneFileEntries.length > 0) {
+          const standaloneEntries = standaloneFileEntries.flatMap(([, entries]) => entries);
+          standaloneResults = await uploadEntries(standaloneEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
+        }
+
+        // Combine results: successful compressed + fallback results + standalone files
+        return [...successfulFolders, ...fallbackResults, ...standaloneResults];
+      } catch {
+        // Fall back to regular upload
+        return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
+      }
+    }
+  }
+
   return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
 }
 
@@ -520,18 +638,8 @@ async function uploadEntries(
           // Check if file has a local path (Electron provides file.path for dropped files)
           const localFilePath = (entry.file as File & { path?: string }).path;
 
-          console.log('[UploadService] Processing file:', {
-            relativePath: entry.relativePath,
-            localFilePath,
-            hasStreamTransfer: !!bridge.startStreamTransfer,
-            sftpId,
-            isLocal,
-            fileSize: fileTotalBytes,
-          });
-
           // Use stream transfer if available and we have a local file path (avoids loading file into memory)
           if (localFilePath && bridge.startStreamTransfer && sftpId && !isLocal) {
-            console.log('[UploadService] Using stream transfer for:', localFilePath);
             let pendingProgressUpdate: { transferred: number; total: number; speed: number } | null = null;
             let rafScheduled = false;
 
@@ -551,14 +659,19 @@ async function uploadEntries(
                     if (bundleTaskId) {
                       const progress = bundleProgress.get(bundleTaskId);
                       if (progress) {
+                        // For bundled tasks, only update the current file's progress
+                        // Don't add to completedFilesBytes until the file is fully completed
                         const newTransferred = progress.completedFilesBytes + update.transferred;
                         progress.transferredBytes = newTransferred;
                         progress.currentSpeed = update.speed;
+                        const percent = progress.totalBytes > 0 ? (newTransferred / progress.totalBytes) * 100 : 0;
+                        // Ensure progress doesn't exceed 99.9% until all files are completed
+                        const displayPercent = progress.completedCount >= progress.fileCount ? percent : Math.min(percent, 99.9);
                         callbacks.onTaskProgress(bundleTaskId, {
                           transferred: newTransferred,
                           total: progress.totalBytes,
                           speed: update.speed,
-                          percent: progress.totalBytes > 0 ? (newTransferred / progress.totalBytes) * 100 : 0,
+                          percent: displayPercent,
                         });
                       }
                     } else if (standaloneTransferId) {
@@ -611,11 +724,6 @@ async function uploadEntries(
             }
           } else {
             // Fallback: load file into memory (for small files or when stream transfer is not available)
-            console.log('[UploadService] FALLBACK: Loading file into memory:', {
-              relativePath: entry.relativePath,
-              fileSize: fileTotalBytes,
-              reason: !localFilePath ? 'no local path' : !bridge.startStreamTransfer ? 'no stream transfer' : 'other',
-            });
             const arrayBuffer = await entry.file.arrayBuffer();
 
             if (isLocal) {
@@ -647,11 +755,14 @@ async function uploadEntries(
                             const newTransferred = progress.completedFilesBytes + update.transferred;
                             progress.transferredBytes = newTransferred;
                             progress.currentSpeed = update.speed;
+                            const percent = progress.totalBytes > 0 ? (newTransferred / progress.totalBytes) * 100 : 0;
+                            // Ensure progress doesn't show 100% until all files are completed
+                            const displayPercent = progress.completedCount >= progress.fileCount ? percent : Math.min(percent, 99.9);
                             callbacks.onTaskProgress(bundleTaskId, {
                               transferred: newTransferred,
                               total: progress.totalBytes,
                               speed: update.speed,
-                              percent: progress.totalBytes > 0 ? (newTransferred / progress.totalBytes) * 100 : 0,
+                              percent: displayPercent,
                             });
                           }
                         } else if (standaloneTransferId) {
@@ -679,8 +790,13 @@ async function uploadEntries(
                     arrayBuffer,
                     fileTransferId,
                     onProgress,
-                    undefined,
-                    undefined
+                    () => {
+                      // File upload completed successfully
+                    },
+                    (error) => {
+                      // File upload failed - error is handled by the caller
+                      void error;
+                    }
                   );
                 } finally {
                   controller?.removeActiveTransfer(fileTransferId);
@@ -710,6 +826,7 @@ async function uploadEntries(
             }
           }
 
+          // File processing completed (both stream transfer and fallback paths)
           controller?.clearCurrentTransfer();
           results.push({ fileName: entry.relativePath, success: true });
 
@@ -719,16 +836,28 @@ async function uploadEntries(
             if (progress) {
               progress.completedCount++;
               progress.completedFilesBytes += fileTotalBytes;
+              // Set transferredBytes to completedFilesBytes to avoid double counting
               progress.transferredBytes = progress.completedFilesBytes;
 
               if (progress.completedCount >= progress.fileCount) {
+                // All files completed - set final progress to 100% and mark as completed
+                callbacks?.onTaskProgress?.(bundleTaskId, {
+                  transferred: progress.totalBytes,
+                  total: progress.totalBytes,
+                  speed: 0,
+                  percent: 100,
+                });
+                // Call completion callback synchronously
                 callbacks?.onTaskCompleted?.(bundleTaskId, progress.totalBytes);
               } else if (callbacks?.onTaskProgress) {
+                const percent = progress.totalBytes > 0 ? (progress.completedFilesBytes / progress.totalBytes) * 100 : 0;
+                // Ensure progress doesn't exceed 99.9% until all files are completed
+                const displayPercent = Math.min(percent, 99.9);
                 callbacks.onTaskProgress(bundleTaskId, {
                   transferred: progress.completedFilesBytes,
                   total: progress.totalBytes,
                   speed: 0,
-                  percent: progress.totalBytes > 0 ? (progress.completedFilesBytes / progress.totalBytes) * 100 : 0,
+                  percent: displayPercent,
                 });
               }
             }
@@ -796,4 +925,227 @@ export async function uploadEntriesDirect(
   }
 
   return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
+}
+/**
+ * Upload folders using compression
+ */
+async function uploadFoldersCompressed(
+  folderEntries: Array<[string, DropEntry[]]>,
+  allEntries: DropEntry[],
+  targetPath: string,
+  sftpId: string,
+  callbacks?: UploadCallbacks,
+  controller?: UploadController
+): Promise<UploadResult[]> {
+  const results: UploadResult[] = [];
+  
+  // Import the compressed upload service
+  const { startCompressedUpload, checkCompressedUploadSupport } = await import('../infrastructure/services/compressUploadService');
+  
+  for (const [folderName, entries] of folderEntries) {
+    if (controller?.isCancelled()) {
+      break;
+    }
+
+    // Get the local folder path from the first file in the folder
+    const firstFile = entries.find(e => e.file);
+    if (!firstFile?.file) {
+      // Empty folder - mark for fallback to regular upload which will create the directory
+      results.push({ fileName: folderName, success: false, error: "Compressed upload not supported - fallback needed" });
+      continue;
+    }
+    
+    const localFilePath = getPathForFile(firstFile.file);
+    if (!localFilePath) {
+      results.push({ fileName: folderName, success: false, error: "Could not get local file path" });
+      continue;
+    }
+
+    // Extract folder path from the first file path
+    // Use DropEntry.relativePath which works for both file input and drag-drop scenarios
+    // For file input: webkitRelativePath is set (e.g., "folder/subdir/file.txt")
+    // For drag-drop: DropEntry.relativePath contains the correct path from extractDropEntries
+    const relativePath = firstFile.relativePath || (firstFile.file as File & { webkitRelativePath?: string }).webkitRelativePath || firstFile.file.name;
+    
+    // Normalize path separators for cross-platform compatibility
+    const normalizePathSeparators = (path: string) => path.replace(/\\/g, '/');
+    const normalizedLocalPath = normalizePathSeparators(localFilePath);
+    const normalizedRelativePath = normalizePathSeparators(relativePath);
+    
+    // Calculate the root folder path by removing the full relativePath from localFilePath
+    // For example: if localFilePath is "/Users/rice/Downloads/110-temp/insideServer/subdir/file.txt"
+    // and relativePath is "insideServer/subdir/file.txt", we want "/Users/rice/Downloads/110-temp/insideServer"
+    let folderPath = localFilePath;
+    if (normalizedRelativePath && normalizedLocalPath.endsWith(normalizedRelativePath)) {
+      // Remove the relativePath from the end to get the base directory
+      const basePath = localFilePath.substring(0, localFilePath.length - relativePath.length);
+      // Remove trailing slash/backslash if present
+      const cleanBasePath = basePath.replace(/[/\\]$/, '');
+      // Add the folder name to get the actual folder path
+      folderPath = cleanBasePath + (cleanBasePath ? (localFilePath.includes('\\') ? '\\' : '/') : '') + folderName;
+    } else {
+      // Fallback: try to extract based on folder name with normalized separators
+      const normalizedFolderPattern1 = '/' + folderName + '/';
+      const normalizedFolderPattern2 = '\\' + folderName + '\\';
+      const folderIndex1 = normalizedLocalPath.lastIndexOf(normalizedFolderPattern1);
+      const folderIndex2 = localFilePath.lastIndexOf(normalizedFolderPattern2);
+      const folderIndex = Math.max(folderIndex1, folderIndex2);
+      
+      if (folderIndex >= 0) {
+        folderPath = localFilePath.substring(0, folderIndex + folderName.length + 1);
+      } else {
+        // Last resort: remove just the filename (original logic)
+        const pathParts = normalizedRelativePath.split('/');
+        if (pathParts.length > 1) {
+          const fileName = pathParts[pathParts.length - 1];
+          if (normalizedLocalPath.endsWith(fileName)) {
+            folderPath = localFilePath.substring(0, localFilePath.length - fileName.length - 1);
+          }
+        } else {
+          // Single file, get its parent directory
+          const lastSlash = Math.max(localFilePath.lastIndexOf('/'), localFilePath.lastIndexOf('\\'));
+          if (lastSlash > 0) {
+            folderPath = localFilePath.substring(0, lastSlash);
+          }
+        }
+      }
+    }
+
+    let taskId: string | null = null; // Declare taskId outside try block for error handling
+
+    try {
+      // Check if compressed upload is supported
+      const support = await checkCompressedUploadSupport(sftpId);
+      if (!support.supported) {
+        // Fall back to regular upload for this folder
+        results.push({
+          fileName: folderName,
+          success: false,
+          error: "Compressed upload not supported - fallback needed"
+        });
+        continue;
+      }
+      
+      const compressionId = crypto.randomUUID();
+      
+      // Check for cancellation before starting
+      if (controller?.isCancelled()) {
+        results.push({ fileName: folderName, success: false, cancelled: true });
+        break;
+      }
+      
+      // Register compression ID with controller for cancellation support
+      controller?.addActiveCompression(compressionId);
+      
+      // Create a task for this folder compression
+      const totalBytes = entries.reduce((sum, entry) => sum + (entry.file?.size || 0), 0);
+      taskId = compressionId;
+      
+      if (callbacks?.onTaskCreated) {
+        callbacks.onTaskCreated({
+          id: taskId,
+          fileName: folderName,
+          displayName: `${folderName} (compressed)`,
+          isDirectory: true,
+          totalBytes,
+          transferredBytes: 0,
+          speed: 0,
+          fileCount: entries.length,
+          completedCount: 0,
+        });
+      }
+      
+      // Start compressed upload
+      const result = await startCompressedUpload(
+        {
+          compressionId,
+          folderPath,
+          targetPath,
+          sftpId,
+          folderName,
+        },
+        (phase, transferred, total) => {
+          // Check for cancellation during progress updates
+          if (controller?.isCancelled()) {
+            return;
+          }
+
+          if (callbacks?.onTaskProgress) {
+            // Map compression progress to actual file bytes
+            const progressPercent = total > 0 ? (transferred / total) * 100 : 0;
+            const mappedTransferred = Math.floor((progressPercent / 100) * totalBytes);
+
+            callbacks.onTaskProgress(taskId, {
+              transferred: mappedTransferred,
+              total: totalBytes,
+              speed: 0, // Speed is handled by the compression service
+              percent: progressPercent,
+            });
+          }
+
+          // Update task name based on phase
+          if (callbacks?.onTaskNameUpdate) {
+            // Pass phase identifier for UI layer to handle i18n
+            // Format: "folderName|phase" where phase is: compressing, extracting, uploading, or compressed
+            const phaseKey = phase === 'compressing' ? 'compressing'
+              : phase === 'extracting' ? 'extracting'
+              : phase === 'uploading' ? 'uploading'
+              : 'compressed';
+            callbacks.onTaskNameUpdate(taskId, `${folderName}|${phaseKey}`);
+          }
+        },
+        () => {
+          // Remove compression ID from controller
+          controller?.removeActiveCompression(compressionId);
+          // Mark task as completed immediately
+          if (callbacks?.onTaskCompleted) {
+            callbacks.onTaskCompleted(taskId, totalBytes);
+          }
+        },
+        (error) => {
+          // Remove compression ID from controller on error
+          controller?.removeActiveCompression(compressionId);
+          if (callbacks?.onTaskFailed) {
+            callbacks.onTaskFailed(taskId, error);
+          }
+        }
+      );
+      
+      if (result.success) {
+        results.push({ fileName: folderName, success: true });
+      } else if (result.error?.includes('cancelled') || controller?.isCancelled()) {
+        // Handle cancellation
+        results.push({ fileName: folderName, success: false, cancelled: true });
+        if (callbacks?.onTaskCancelled) {
+          callbacks.onTaskCancelled(taskId);
+        }
+      } else {
+        results.push({ fileName: folderName, success: false, error: result.error });
+      }
+      
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // Remove compression ID from controller on error
+      if (taskId) {
+        controller?.removeActiveCompression(taskId);
+      }
+      
+      // Check if this was a cancellation
+      if (controller?.isCancelled() || errorMessage.includes('cancelled')) {
+        results.push({ fileName: folderName, success: false, cancelled: true });
+        if (callbacks?.onTaskCancelled && taskId) {
+          callbacks.onTaskCancelled(taskId);
+        }
+      } else {
+        results.push({ fileName: folderName, success: false, error: errorMessage });
+        // Only call onTaskFailed if we have a valid taskId (task was created) and it's not a cancellation
+        if (callbacks?.onTaskFailed && taskId) {
+          callbacks.onTaskFailed(taskId, errorMessage);
+        }
+      }
+    }
+  }
+  
+  return results;
 }

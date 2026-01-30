@@ -330,8 +330,12 @@ const zhCN: Messages = {
   'sftp.columns.kind': '类型',
   'sftp.columns.actions': '操作',
   'sftp.emptyDirectory': '空目录',
+  'sftp.nav.up': '返回上层',
+  'sftp.nav.home': '返回主目录',
+  'sftp.nav.refresh': '刷新',
   'sftp.upload': '上传',
   'sftp.uploadFiles': '上传文件',
+  'sftp.uploadFolder': '上传文件夹',
   'sftp.dragDropToUpload': '拖拽文件到这里上传',
   'sftp.retry': '重试',
   'sftp.context.open': '打开',
@@ -818,6 +822,12 @@ const zhCN: Messages = {
   'sftp.conflict.action.keepBoth': '保留两者',
   'sftp.conflict.action.replace': '替换',
 
+  // SFTP Upload Phases
+  'sftp.upload.phase.compressing': '正在压缩',
+  'sftp.upload.phase.uploading': '正在上传',
+  'sftp.upload.phase.extracting': '正在解压',
+  'sftp.upload.phase.compressed': '压缩传输',
+
   // SFTP File Opener
   'sftp.context.openWith': '打开方式...',
   'sftp.context.edit': '编辑',
@@ -882,6 +892,11 @@ const zhCN: Messages = {
   // SFTP Folder Upload Progress
   'sftp.upload.progress': '正在上传 {current}/{total} 个文件...',
   'sftp.upload.uploading': '正在上传...',
+  'sftp.upload.compressing': '正在压缩...',
+  'sftp.upload.extracting': '正在解压...',
+  'sftp.upload.scanning': '正在扫描文件...',
+  'sftp.upload.completed': '已完成',
+  'sftp.upload.compressed': '压缩传输',
   'sftp.upload.currentFile': '当前: {fileName}',
   'sftp.upload.cancelled': '上传已取消',
   'sftp.upload.cancel': '取消',
@@ -900,6 +915,12 @@ const zhCN: Messages = {
   'settings.sftp.showHiddenFiles.desc': '在浏览本地 Windows 文件系统时，显示具有 Windows 隐藏属性的文件。',
   'settings.sftp.showHiddenFiles.enable': '显示隐藏文件',
   'settings.sftp.showHiddenFiles.enableDesc': '浏览本地文件系统时显示 Windows 隐藏文件',
+
+  // Settings > SFTP Compressed Upload
+  'settings.sftp.compressedUpload': '文件夹压缩传输',
+  'settings.sftp.compressedUpload.desc': '上传前压缩文件夹，可大幅减少传输时间。',
+  'settings.sftp.compressedUpload.enable': '启用文件夹压缩',
+  'settings.sftp.compressedUpload.enableDesc': '自动使用 tar 压缩文件夹后再传输。需要服务器支持 tar 命令，不支持时自动回退到普通传输。',
 
   // Settings > Terminal
   'settings.terminal.section.theme': '终端主题',

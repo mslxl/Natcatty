@@ -1012,6 +1012,11 @@ async function writeSftpBinaryWithProgress(event, payload) {
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
   const encodedPath = encodePath(remotePath, encoding);
 
+  // Extract callback functions from payload
+  const onProgress = payload.onProgress;
+  const onComplete = payload.onComplete;
+  const onError = payload.onError;
+
   // Optimize: Use Buffer.isBuffer to avoid unnecessary copy if already a Buffer
   // For ArrayBuffer from renderer, we still need to convert but use a more efficient method
   const buffer = Buffer.isBuffer(content) ? content : Buffer.from(content);
@@ -1059,13 +1064,22 @@ async function writeSftpBinaryWithProgress(event, payload) {
         const isComplete = transferredBytes >= totalBytes;
 
         if (isComplete || timeSinceLastProgress >= PROGRESS_THROTTLE_MS || bytesSinceLastProgress >= PROGRESS_THROTTLE_BYTES) {
-          const contents = electronModule.webContents.fromId(event.sender.id);
-          contents?.send("netcatty:upload:progress", {
-            transferId,
-            transferred: transferredBytes,
-            totalBytes,
-            speed,
-          });
+          // Call the progress callback if provided, otherwise send IPC event
+          if (typeof onProgress === 'function') {
+            try {
+              onProgress(transferredBytes, totalBytes, speed);
+            } catch (err) {
+              console.warn('[SFTP] Progress callback error:', err);
+            }
+          } else {
+            const contents = electronModule.webContents.fromId(event.sender.id);
+            contents?.send("netcatty:upload:progress", {
+              transferId,
+              transferred: transferredBytes,
+              totalBytes,
+              speed,
+            });
+          }
           lastProgressSentTime = now;
           lastProgressSentBytes = transferredBytes;
         }
@@ -1083,22 +1097,40 @@ async function writeSftpBinaryWithProgress(event, payload) {
   try {
     await client.put(readableStream, encodedPath);
 
-    const contents = electronModule.webContents.fromId(event.sender.id);
-    contents?.send("netcatty:upload:complete", { transferId });
+    // Call the complete callback if provided, otherwise send IPC event
+    if (typeof onComplete === 'function') {
+      try {
+        onComplete();
+      } catch (err) {
+        console.warn('[SFTP] Complete callback error:', err);
+      }
+    } else {
+      const contents = electronModule.webContents.fromId(event.sender.id);
+      contents?.send("netcatty:upload:complete", { transferId });
+    }
 
     return { success: true, transferId };
   } catch (err) {
-    const contents = electronModule.webContents.fromId(event.sender.id);
-
     // Check if this upload was cancelled - the error might not be exactly "Upload cancelled"
     // when stream is destroyed, SFTP server may return different errors like "Write stream error"
     const uploadState = activeSftpUploads.get(transferId);
     if (uploadState?.cancelled || err.message === "Upload cancelled") {
+      const contents = electronModule.webContents.fromId(event.sender.id);
       contents?.send("netcatty:upload:cancelled", { transferId });
       return { success: false, transferId, cancelled: true };
     }
 
-    contents?.send("netcatty:upload:error", { transferId, error: err.message });
+    // Call the error callback if provided, otherwise send IPC event
+    if (typeof onError === 'function') {
+      try {
+        onError(err.message);
+      } catch (callbackErr) {
+        console.warn('[SFTP] Error callback error:', callbackErr);
+      }
+    } else {
+      const contents = electronModule.webContents.fromId(event.sender.id);
+      contents?.send("netcatty:upload:error", { transferId, error: err.message });
+    }
     throw err;
   } finally {
     // Cleanup

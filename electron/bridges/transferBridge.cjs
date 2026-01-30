@@ -157,8 +157,11 @@ async function downloadWithStreams(remotePath, localPath, client, fileSize, tran
 
 /**
  * Start a file transfer
+ * @param {object} event - IPC event
+ * @param {object} payload - Transfer configuration
+ * @param {function} [onProgress] - Optional progress callback (transferred, total, speed)
  */
-async function startTransfer(event, payload) {
+async function startTransfer(event, payload, onProgress) {
   const {
     transferId,
     sourcePath,
@@ -190,6 +193,11 @@ async function startTransfer(event, payload) {
       speed = Math.round((transferred - lastTransferred) / (elapsed / 1000));
       lastTime = now;
       lastTransferred = transferred;
+    }
+
+    // Call optional progress callback if provided
+    if (onProgress) {
+      onProgress(transferred, total, speed);
     }
 
     sender.send("netcatty:transfer:progress", { transferId, transferred, speed, totalBytes: total });

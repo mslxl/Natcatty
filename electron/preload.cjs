@@ -176,6 +176,11 @@ const uploadProgressListeners = new Map();
 const uploadCompleteListeners = new Map();
 const uploadErrorListeners = new Map();
 
+// Compress upload listeners
+const compressProgressListeners = new Map();
+const compressCompleteListeners = new Map();
+const compressErrorListeners = new Map();
+
 ipcRenderer.on("netcatty:upload:progress", (_event, payload) => {
   const cb = uploadProgressListeners.get(payload.transferId);
   if (cb) {
@@ -215,6 +220,55 @@ ipcRenderer.on("netcatty:upload:error", (_event, payload) => {
   uploadProgressListeners.delete(payload.transferId);
   uploadCompleteListeners.delete(payload.transferId);
   uploadErrorListeners.delete(payload.transferId);
+});
+
+// Compress upload events
+ipcRenderer.on("netcatty:compress:progress", (_event, payload) => {
+  const cb = compressProgressListeners.get(payload.compressionId);
+  if (cb) {
+    try {
+      cb(payload.phase, payload.transferred, payload.total);
+    } catch (err) {
+      console.error("Compress progress callback failed", err);
+    }
+  }
+});
+
+ipcRenderer.on("netcatty:compress:complete", (_event, payload) => {
+  const cb = compressCompleteListeners.get(payload.compressionId);
+  if (cb) {
+    try {
+      cb();
+    } catch (err) {
+      console.error("Compress complete callback failed", err);
+    }
+  }
+  // Cleanup listeners
+  compressProgressListeners.delete(payload.compressionId);
+  compressCompleteListeners.delete(payload.compressionId);
+  compressErrorListeners.delete(payload.compressionId);
+});
+
+ipcRenderer.on("netcatty:compress:error", (_event, payload) => {
+  const cb = compressErrorListeners.get(payload.compressionId);
+  if (cb) {
+    try {
+      cb(payload.error);
+    } catch (err) {
+      console.error("Compress error callback failed", err);
+    }
+  }
+  // Cleanup listeners
+  compressProgressListeners.delete(payload.compressionId);
+  compressCompleteListeners.delete(payload.compressionId);
+  compressErrorListeners.delete(payload.compressionId);
+});
+
+ipcRenderer.on("netcatty:compress:cancelled", (_event, payload) => {
+  // Just cleanup listeners, the UI already knows it's cancelled
+  compressProgressListeners.delete(payload.compressionId);
+  compressCompleteListeners.delete(payload.compressionId);
+  compressErrorListeners.delete(payload.compressionId);
 });
 
 // Port forwarding status listeners
@@ -486,6 +540,26 @@ const api = {
     transferCompleteListeners.delete(transferId);
     transferErrorListeners.delete(transferId);
     return ipcRenderer.invoke("netcatty:transfer:cancel", { transferId });
+  },
+  // Compressed folder upload
+  startCompressedUpload: async (options, onProgress, onComplete, onError) => {
+    const { compressionId } = options;
+    // Register callbacks
+    if (onProgress) compressProgressListeners.set(compressionId, onProgress);
+    if (onComplete) compressCompleteListeners.set(compressionId, onComplete);
+    if (onError) compressErrorListeners.set(compressionId, onError);
+    
+    return ipcRenderer.invoke("netcatty:compress:start", options);
+  },
+  cancelCompressedUpload: async (compressionId) => {
+    // Cleanup listeners
+    compressProgressListeners.delete(compressionId);
+    compressCompleteListeners.delete(compressionId);
+    compressErrorListeners.delete(compressionId);
+    return ipcRenderer.invoke("netcatty:compress:cancel", { compressionId });
+  },
+  checkCompressedUploadSupport: async (sftpId) => {
+    return ipcRenderer.invoke("netcatty:compress:checkSupport", { sftpId });
   },
   // Window controls for custom title bar
   windowMinimize: () => ipcRenderer.invoke("netcatty:window:minimize"),

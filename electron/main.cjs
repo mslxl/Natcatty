@@ -79,6 +79,7 @@ const cloudSyncBridge = require("./bridges/cloudSyncBridge.cjs");
 const fileWatcherBridge = require("./bridges/fileWatcherBridge.cjs");
 const tempDirBridge = require("./bridges/tempDirBridge.cjs");
 const sessionLogsBridge = require("./bridges/sessionLogsBridge.cjs");
+const compressUploadBridge = require("./bridges/compressUploadBridge.cjs");
 const windowManager = require("./bridges/windowManager.cjs");
 
 // GPU settings
@@ -363,6 +364,12 @@ const registerBridges = (win) => {
   transferBridge.init(deps);
   terminalBridge.init(deps);
   fileWatcherBridge.init(deps);
+  
+  // Initialize compress upload bridge with transferBridge dependency
+  compressUploadBridge.init({
+    ...deps,
+    transferBridge,
+  });
 
   // Initialize temp directory (synchronously)
   tempDirBridge.ensureTempDir();
@@ -382,6 +389,7 @@ const registerBridges = (win) => {
   fileWatcherBridge.registerHandlers(ipcMain);
   tempDirBridge.registerHandlers(ipcMain, shell);
   sessionLogsBridge.registerHandlers(ipcMain);
+  compressUploadBridge.registerHandlers(ipcMain);
 
   // Settings window handler
   ipcMain.handle("netcatty:settings:open", async () => {

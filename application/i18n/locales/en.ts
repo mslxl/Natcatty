@@ -477,8 +477,12 @@ const en: Messages = {
   'sftp.columns.kind': 'Kind',
   'sftp.columns.actions': 'Actions',
   'sftp.emptyDirectory': 'Empty directory',
+  'sftp.nav.up': 'Go up',
+  'sftp.nav.home': 'Go to home',
+  'sftp.nav.refresh': 'Refresh',
   'sftp.upload': 'Upload',
   'sftp.uploadFiles': 'Upload files',
+  'sftp.uploadFolder': 'Upload folder',
   'sftp.dragDropToUpload': 'Drag and drop files here to upload',
   'sftp.retry': 'Retry',
   'sftp.context.open': 'Open',
@@ -564,6 +568,12 @@ const en: Messages = {
   'sftp.conflict.action.keepBoth': 'Keep Both',
   'sftp.conflict.action.replace': 'Replace',
 
+  // SFTP Upload Phases
+  'sftp.upload.phase.compressing': 'Compressing',
+  'sftp.upload.phase.uploading': 'Uploading',
+  'sftp.upload.phase.extracting': 'Extracting',
+  'sftp.upload.phase.compressed': 'Compressed',
+
   // SFTP File Opener
   'sftp.context.openWith': 'Open with...',
   'sftp.context.edit': 'Edit',
@@ -628,6 +638,11 @@ const en: Messages = {
   // SFTP Folder Upload Progress
   'sftp.upload.progress': 'Uploading {current} of {total} files...',
   'sftp.upload.uploading': 'Uploading...',
+  'sftp.upload.compressing': 'Compressing...',
+  'sftp.upload.extracting': 'Extracting...',
+  'sftp.upload.scanning': 'Scanning files...',
+  'sftp.upload.completed': 'Completed',
+  'sftp.upload.compressed': 'Compressed Transfer',
   'sftp.upload.currentFile': 'Current: {fileName}',
   'sftp.upload.cancelled': 'Upload cancelled',
   'sftp.upload.cancel': 'Cancel',
@@ -646,6 +661,12 @@ const en: Messages = {
   'settings.sftp.showHiddenFiles.desc': 'Display files with the Windows hidden attribute in the SFTP file browser when browsing local Windows filesystem.',
   'settings.sftp.showHiddenFiles.enable': 'Show hidden files',
   'settings.sftp.showHiddenFiles.enableDesc': 'Display Windows hidden files when browsing local filesystem',
+
+  // Settings > SFTP Compressed Upload
+  'settings.sftp.compressedUpload': 'Folder Compression Transfer',
+  'settings.sftp.compressedUpload.desc': 'Compress folders before uploading to significantly reduce transfer time.',
+  'settings.sftp.compressedUpload.enable': 'Enable folder compression',
+  'settings.sftp.compressedUpload.enableDesc': 'Automatically compress folders using tar before transfer. Requires tar support on the server. Falls back to regular transfer if not available.',
 
   // Quick Switcher
   'qs.search.placeholder': 'Search hosts or tabs',

@@ -80,13 +80,14 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     cancelTransfer,
   } = useSftpBackend();
   const { t } = useI18n();
-  const { sftpAutoSync, sftpShowHiddenFiles } = useSettingsState();
+  const { sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload } = useSettingsState();
   const isLocalSession = host.protocol === "local";
   const [filenameEncoding, setFilenameEncoding] = useState<SftpFilenameEncoding>(
     host.sftpEncoding ?? "auto"
   );
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const navigatingRef = useRef(false);
   const clearSelection = useCallback(() => setSelectedFiles(new Set()), []);
 
@@ -348,6 +349,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     dragActive,
     handleDownload,
     handleFileSelect,
+    handleFolderSelect,
     handleDrag,
     handleDrop,
     cancelUpload,
@@ -371,6 +373,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     cancelTransfer,
     setLoading,
     t,
+    useCompressedUpload: sftpUseCompressedUpload,
   });
 
   const handleClose = async () => {
@@ -526,12 +529,15 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
           onBreadcrumbSelect={(index) => setCurrentPath(breadcrumbPathAtForIndex(index))}
           onRootSelect={() => setCurrentPath(rootPath)}
           inputRef={inputRef}
+          folderInputRef={folderInputRef}
           pathInputRef={pathInputRef}
           uploading={uploading}
           onTriggerUpload={() => inputRef.current?.click()}
+          onTriggerFolderUpload={() => folderInputRef.current?.click()}
           onCreateFolder={handleCreateFolder}
           onCreateFile={handleCreateFile}
           onFileSelect={handleFileSelect}
+          onFolderSelect={handleFolderSelect}
         />
 
         <SftpModalFileList
@@ -552,6 +558,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
           visibleRows={visibleRows}
           fileListRef={fileListRef}
           inputRef={inputRef}
+          folderInputRef={folderInputRef}
           handleSort={handleSort}
           handleResizeStart={handleResizeStart}
           handleFileListScroll={handleFileListScroll}

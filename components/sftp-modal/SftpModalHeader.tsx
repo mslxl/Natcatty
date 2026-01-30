@@ -1,12 +1,13 @@
 import React from "react";
-import { ArrowUp, ChevronRight, Home, MoreHorizontal, Plus, RefreshCw, Upload } from "lucide-react";
+import { ArrowUp, Check, ChevronRight, FilePlus, FolderPlus, FolderUp, Home, Languages, MoreHorizontal, RefreshCw, Upload } from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { Host, SftpFilenameEncoding } from "../../types";
 import { DistroAvatar } from "../DistroAvatar";
 import { Button } from "../ui/button";
 import { DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "../ui/popover";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 
 interface BreadcrumbPart {
   part: string;
@@ -40,12 +41,15 @@ interface SftpModalHeaderProps {
   onBreadcrumbSelect: (index: number) => void;
   onRootSelect: () => void;
   inputRef: React.RefObject<HTMLInputElement>;
+  folderInputRef: React.RefObject<HTMLInputElement>;
   pathInputRef: React.RefObject<HTMLInputElement>;
   uploading: boolean;
   onTriggerUpload: () => void;
+  onTriggerFolderUpload: () => void;
   onCreateFolder: () => void;
   onCreateFile: () => void;
   onFileSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onFolderSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }
 
 export const SftpModalHeader: React.FC<SftpModalHeaderProps> = ({
@@ -75,12 +79,15 @@ export const SftpModalHeader: React.FC<SftpModalHeaderProps> = ({
   onBreadcrumbSelect,
   onRootSelect,
   inputRef,
+  folderInputRef,
   pathInputRef,
   uploading,
   onTriggerUpload,
+  onTriggerFolderUpload,
   onCreateFolder,
   onCreateFile,
   onFileSelect,
+  onFolderSelect,
 }) => (
   <>
     <DialogHeader className="px-4 py-3 border-b border-border/60 flex-shrink-0">
@@ -102,49 +109,90 @@ export const SftpModalHeader: React.FC<SftpModalHeaderProps> = ({
       </div>
     </DialogHeader>
 
+    <TooltipProvider delayDuration={300}>
     <div className="px-4 py-2 border-b border-border/60 flex items-center gap-2 flex-shrink-0 bg-muted/30">
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-7 w-7"
-        onClick={onUp}
-        disabled={isAtRoot}
-      >
-        <ArrowUp size={14} />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-7 w-7"
-        onClick={onHome}
-      >
-        <Home size={14} />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-7 w-7"
-        onClick={onRefresh}
-      >
-        <RefreshCw
-          size={14}
-          className={cn(isRefreshing && "animate-spin")}
-        />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={onUp}
+            disabled={isAtRoot}
+          >
+            <ArrowUp size={14} />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{t("sftp.nav.up")}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={onHome}
+          >
+            <Home size={14} />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{t("sftp.nav.home")}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={onRefresh}
+          >
+            <RefreshCw
+              size={14}
+              className={cn(isRefreshing && "animate-spin")}
+            />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{t("sftp.nav.refresh")}</TooltipContent>
+      </Tooltip>
       {showEncoding && (
-        <Select
-          value={filenameEncoding}
-          onValueChange={(value) => onFilenameEncodingChange(value as SftpFilenameEncoding)}
-        >
-          <SelectTrigger className="h-7 w-[130px] text-xs" title={t("sftp.encoding.label")}>
-            <SelectValue placeholder={t("sftp.encoding.label")} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="auto">{t("sftp.encoding.auto")}</SelectItem>
-            <SelectItem value="utf-8">{t("sftp.encoding.utf8")}</SelectItem>
-            <SelectItem value="gb18030">{t("sftp.encoding.gb18030")}</SelectItem>
-          </SelectContent>
-        </Select>
+        <Popover>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                >
+                  <Languages size={14} />
+                </Button>
+              </PopoverTrigger>
+            </TooltipTrigger>
+            <TooltipContent>{t("sftp.encoding.label")}</TooltipContent>
+          </Tooltip>
+          <PopoverContent className="w-36 p-1" align="start">
+            {(["auto", "utf-8", "gb18030"] as const).map((encoding) => (
+              <PopoverClose asChild key={encoding}>
+                <button
+                  className={cn(
+                    "w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded-sm hover:bg-secondary transition-colors",
+                    filenameEncoding === encoding && "bg-secondary"
+                  )}
+                  onClick={() => onFilenameEncodingChange(encoding)}
+                >
+                  <Check
+                    size={14}
+                    className={cn(
+                      "shrink-0",
+                      filenameEncoding === encoding ? "opacity-100" : "opacity-0"
+                    )}
+                  />
+                  {t(`sftp.encoding.${encoding === "utf-8" ? "utf8" : encoding}`)}
+                </button>
+              </PopoverClose>
+            ))}
+          </PopoverContent>
+        </Popover>
       )}
 
       <div className="flex items-center gap-1 text-sm flex-1 min-w-0 overflow-hidden">
@@ -214,32 +262,61 @@ export const SftpModalHeader: React.FC<SftpModalHeaderProps> = ({
         )}
       </div>
 
-      <div className="flex items-center gap-2 ml-auto">
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7"
-          onClick={onTriggerUpload}
-          disabled={uploading}
-        >
-          <Upload size={14} className="mr-1.5" /> {t("sftp.upload")}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7"
-          onClick={onCreateFolder}
-        >
-          <Plus size={14} className="mr-1.5" /> {t("sftp.newFolder")}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7"
-          onClick={onCreateFile}
-        >
-          <Plus size={14} className="mr-1.5" /> {t("sftp.newFile")}
-        </Button>
+        <div className="flex items-center gap-1 ml-auto">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7"
+                onClick={onTriggerUpload}
+                disabled={uploading}
+              >
+                <Upload size={14} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("sftp.upload")}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7"
+                onClick={onTriggerFolderUpload}
+                disabled={uploading}
+              >
+                <FolderUp size={14} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("sftp.uploadFolder")}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7"
+                onClick={onCreateFolder}
+              >
+                <FolderPlus size={14} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("sftp.newFolder")}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7"
+                onClick={onCreateFile}
+              >
+                <FilePlus size={14} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("sftp.newFile")}</TooltipContent>
+          </Tooltip>
         <input
           type="file"
           className="hidden"
@@ -247,7 +324,16 @@ export const SftpModalHeader: React.FC<SftpModalHeaderProps> = ({
           onChange={onFileSelect}
           multiple
         />
-      </div>
+        <input
+          type="file"
+          className="hidden"
+          ref={folderInputRef}
+          onChange={onFolderSelect}
+          webkitdirectory=""
+          multiple
+        />
+        </div>
     </div>
+    </TooltipProvider>
   </>
 );

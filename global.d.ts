@@ -2,6 +2,15 @@ import type { RemoteFile, SftpFilenameEncoding } from "./types";
 import type { S3Config, SMBConfig, SyncedFile, WebDAVConfig } from "./domain/sync";
 
 declare global {
+  // Extend HTMLInputElement to support webkitdirectory attribute
+  namespace JSX {
+    interface IntrinsicElements {
+      input: React.DetailedHTMLProps<React.InputHTMLAttributes<HTMLInputElement> & {
+        webkitdirectory?: string;
+      }, HTMLInputElement>;
+    }
+  }
+
   // Proxy configuration for SSH connections
   interface NetcattyProxyConfig {
     type: 'http' | 'socks5';
@@ -299,6 +308,28 @@ declare global {
     uploadFile?(sftpId: string, localPath: string, remotePath: string, transferId: string): Promise<void>;
     downloadFile?(sftpId: string, remotePath: string, localPath: string, transferId: string): Promise<void>;
     cancelTransfer?(transferId: string): Promise<void>;
+    
+    // Compressed folder upload
+    startCompressedUpload?(
+      options: {
+        compressionId: string;
+        folderPath: string;
+        targetPath: string;
+        sftpId: string;
+        folderName: string;
+      },
+      onProgress?: (phase: string, transferred: number, total: number) => void,
+      onComplete?: () => void,
+      onError?: (error: string) => void
+    ): Promise<{ compressionId: string; success?: boolean; error?: string }>;
+    cancelCompressedUpload?(compressionId: string): Promise<{ success: boolean }>;
+    checkCompressedUploadSupport?(sftpId: string): Promise<{
+      supported: boolean;
+      localTar: boolean;
+      remoteTar: boolean;
+      error?: string;
+    }>;
+    
     onTransferProgress?(transferId: string, cb: (progress: SftpTransferProgress) => void): () => void;
 
     // Streaming transfer with real progress and cancellation

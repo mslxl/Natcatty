@@ -24,6 +24,41 @@ interface SftpModalUploadTasksProps {
 export const SftpModalUploadTasks: React.FC<SftpModalUploadTasksProps> = ({ tasks, t, onCancel, onDismiss }) => {
   if (tasks.length === 0) return null;
 
+  // Helper function to get localized display name for compressed uploads
+  const getDisplayName = (task: UploadTask) => {
+    // Check for explicit phase marker format: "folderName|phase"
+    // This is the format sent by uploadService.ts for compressed uploads
+    if (task.fileName.includes('|')) {
+      const pipeIndex = task.fileName.lastIndexOf('|');
+      const baseName = task.fileName.substring(0, pipeIndex);
+      const phase = task.fileName.substring(pipeIndex + 1);
+
+      if (phase === 'compressing' || phase === 'extracting' || phase === 'uploading' || phase === 'compressed') {
+        const phaseLabel = t(`sftp.upload.phase.${phase}`);
+        return `${baseName} (${phaseLabel})`;
+      }
+    }
+
+    // Check for exact matches of phase status strings (legacy support)
+    if (task.fileName === t('sftp.upload.compressing') || task.fileName === 'Compressing...' || task.fileName === 'Compressing') {
+      return t('sftp.upload.compressing');
+    }
+    if (task.fileName === t('sftp.upload.extracting') || task.fileName === 'Extracting...' || task.fileName === 'Extracting') {
+      return t('sftp.upload.extracting');
+    }
+    if (task.fileName === t('sftp.upload.scanning') || task.fileName === 'Scanning files...' || task.fileName === 'Scanning files') {
+      return t('sftp.upload.scanning');
+    }
+
+    // Check if this is a compressed upload task (legacy format)
+    if (task.fileName.includes('(compressed)')) {
+      const baseName = task.fileName.replace(' (compressed)', '');
+      return `${baseName} (${t('sftp.upload.compressed')})`;
+    }
+
+    return task.fileName;
+  };
+
   return (
     <div className="border-t border-border/60 bg-secondary/50 flex-shrink-0">
       <div className="max-h-40 overflow-y-auto overflow-x-hidden">
@@ -80,7 +115,7 @@ export const SftpModalUploadTasks: React.FC<SftpModalUploadTasksProps> = ({ task
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium truncate">
-                    {task.fileName}
+                    {getDisplayName(task)}
                   </span>
                   {task.status === "uploading" && task.speed > 0 && (
                     <span className="text-[10px] text-primary font-mono shrink-0">
@@ -123,12 +158,12 @@ export const SftpModalUploadTasks: React.FC<SftpModalUploadTasksProps> = ({ task
                 )}
                 {task.status === "completed" && (
                   <div className="text-[10px] text-green-600 mt-0.5">
-                    Completed - {formatBytes(task.totalBytes)}
+                    {t("sftp.upload.completed")} - {formatBytes(task.totalBytes)}
                   </div>
                 )}
                 {task.status === "cancelled" && (
                   <div className="text-[10px] text-muted-foreground mt-0.5">
-                    Cancelled
+                    {t("sftp.upload.cancelled")}
                   </div>
                 )}
                 {task.status === "failed" && task.error && (
