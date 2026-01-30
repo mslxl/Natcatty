@@ -1,5 +1,5 @@
 import React from "react";
-import { ArrowUp, ChevronRight, FolderUp, Home, MoreHorizontal, Plus, RefreshCw, Upload } from "lucide-react";
+import { ArrowUp, ChevronRight, FilePlus, FolderPlus, FolderUp, Home, MoreHorizontal, RefreshCw, Upload } from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { Host, SftpFilenameEncoding } from "../../types";
 import { DistroAvatar } from "../DistroAvatar";
@@ -7,6 +7,7 @@ import { Button } from "../ui/button";
 import { DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 
 interface BreadcrumbPart {
   part: string;
@@ -220,41 +221,62 @@ export const SftpModalHeader: React.FC<SftpModalHeaderProps> = ({
         )}
       </div>
 
-      <div className="flex items-center gap-2 ml-auto">
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7"
-          onClick={onTriggerUpload}
-          disabled={uploading}
-        >
-          <Upload size={14} className="mr-1.5" /> {t("sftp.upload")}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7"
-          onClick={onTriggerFolderUpload}
-          disabled={uploading}
-        >
-          <FolderUp size={14} className="mr-1.5" /> {t("sftp.uploadFolder")}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7"
-          onClick={onCreateFolder}
-        >
-          <Plus size={14} className="mr-1.5" /> {t("sftp.newFolder")}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7"
-          onClick={onCreateFile}
-        >
-          <Plus size={14} className="mr-1.5" /> {t("sftp.newFile")}
-        </Button>
+      <TooltipProvider delayDuration={300}>
+        <div className="flex items-center gap-1 ml-auto">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7"
+                onClick={onTriggerUpload}
+                disabled={uploading}
+              >
+                <Upload size={14} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("sftp.upload")}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7"
+                onClick={onTriggerFolderUpload}
+                disabled={uploading}
+              >
+                <FolderUp size={14} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("sftp.uploadFolder")}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7"
+                onClick={onCreateFolder}
+              >
+                <FolderPlus size={14} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("sftp.newFolder")}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7"
+                onClick={onCreateFile}
+              >
+                <FilePlus size={14} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("sftp.newFile")}</TooltipContent>
+          </Tooltip>
         <input
           type="file"
           className="hidden"
@@ -270,7 +292,8 @@ export const SftpModalHeader: React.FC<SftpModalHeaderProps> = ({
           webkitdirectory=""
           multiple
         />
-      </div>
+        </div>
+      </TooltipProvider>
     </div>
   </>
 );
