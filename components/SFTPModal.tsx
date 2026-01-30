@@ -389,16 +389,24 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   // Handle initial entries to upload (from drag-and-drop to terminal)
   const initialUploadTriggeredRef = useRef(false);
   const prevLoadingRef = useRef(loading);
+  const prevEntriesRef = useRef<DropEntry[] | undefined>(undefined);
   useEffect(() => {
     // Detect when loading transitions from true to false (initial load complete)
     const wasLoading = prevLoadingRef.current;
     prevLoadingRef.current = loading;
     const justFinishedLoading = wasLoading && !loading;
 
-    // Reset the flag when initialEntriesToUpload changes
+    // Reset the flag when initialEntriesToUpload is cleared
     if (!initialEntriesToUpload || initialEntriesToUpload.length === 0) {
       initialUploadTriggeredRef.current = false;
+      prevEntriesRef.current = undefined;
       return;
+    }
+
+    // Reset the flag when new entries arrive (different reference = new drop)
+    if (initialEntriesToUpload !== prevEntriesRef.current) {
+      initialUploadTriggeredRef.current = false;
+      prevEntriesRef.current = initialEntriesToUpload;
     }
 
     // Prevent duplicate uploads
