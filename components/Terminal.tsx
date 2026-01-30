@@ -224,7 +224,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   } = terminalSearch;
 
   // Check if this is a local or serial connection (doesn't need connection dialog during connecting)
-  const isLocalConnection = host.protocol === "local" || host.hostname === "localhost";
+  const isLocalConnection = host.protocol === "local";
   const isSerialConnection = host.protocol === "serial";
 
   // Server stats (CPU, Memory, Disk) for Linux servers
