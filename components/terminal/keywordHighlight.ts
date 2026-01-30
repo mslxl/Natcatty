@@ -22,6 +22,7 @@ export class KeywordHighlighter implements IDisposable {
   private debounceTimer: NodeJS.Timeout | null = null;
   private enabled: boolean = false;
   private disposables: IDisposable[] = [];
+  private lastViewportY: number = -1;
 
   constructor(term: XTerm) {
     this.term = term;
@@ -42,7 +43,16 @@ export class KeywordHighlighter implements IDisposable {
         this.triggerRefresh();
       }),
       // Also refresh on resize as viewport content changes
-      this.term.onResize(() => this.triggerRefresh())
+      this.term.onResize(() => this.triggerRefresh()),
+      // onRender fires after each render cycle - catch scrolls that onScroll might miss
+      this.term.onRender(() => {
+        // Only trigger refresh if viewport position changed
+        const currentViewportY = this.term.buffer.active?.viewportY ?? 0;
+        if (currentViewportY !== this.lastViewportY) {
+          this.lastViewportY = currentViewportY;
+          this.triggerRefresh();
+        }
+      })
     );
   }
 
