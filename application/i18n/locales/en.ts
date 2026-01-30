@@ -237,10 +237,7 @@ const en: Messages = {
   // Settings > Terminal > Upload & Download
   'settings.terminal.section.uploadDownload': 'Upload & Download',
   'settings.terminal.uploadDownload.compressedUpload': 'Folder Compression Transfer',
-  'settings.terminal.uploadDownload.compressedUpload.desc': 'When enabled, significantly reduces transfer time for folders by using compression. Requires tar command support on the server.',
-  'settings.terminal.uploadDownload.compressedUpload.ask': 'Ask each time',
-  'settings.terminal.uploadDownload.compressedUpload.enabled': 'Always enabled',
-  'settings.terminal.uploadDownload.compressedUpload.disabled': 'Always disabled',
+  'settings.terminal.uploadDownload.compressedUpload.desc': 'When enabled, automatically compresses folders before transfer to significantly reduce transfer time. Requires tar command support on the server. Falls back to regular transfer if not available.',
 
   // Settings > Shortcuts
   'settings.shortcuts.section.scheme': 'Hotkey Scheme',
@@ -547,15 +544,12 @@ const en: Messages = {
   'sftp.conflict.action.skip': 'Skip',
   'sftp.conflict.action.keepBoth': 'Keep Both',
   'sftp.conflict.action.replace': 'Replace',
-  'sftp.compressedUpload.dialog.title': 'Choose Upload Method',
-  'sftp.compressedUpload.dialog.descSingle': 'You are uploading a folder. How would you like to transfer it?',
-  'sftp.compressedUpload.dialog.descMultiple': 'You are uploading {count} folders. How would you like to transfer them?',
-  'sftp.compressedUpload.dialog.compressed.title': 'Compressed Transfer (Recommended)',
-  'sftp.compressedUpload.dialog.compressed.desc': 'Faster transfer, requires tar command on server',
-  'sftp.compressedUpload.dialog.regular.title': 'Regular Transfer',
-  'sftp.compressedUpload.dialog.regular.desc': 'File-by-file transfer, works on all servers',
-  'sftp.compressedUpload.dialog.useCompressed': 'Use Compressed',
-  'sftp.compressedUpload.dialog.useRegular': 'Use Regular',
+
+  // SFTP Upload Phases
+  'sftp.upload.phase.compressing': 'Compressing',
+  'sftp.upload.phase.uploading': 'Uploading',
+  'sftp.upload.phase.extracting': 'Extracting',
+  'sftp.upload.phase.compressed': 'Compressed',
 
   // SFTP File Opener
   'sftp.context.openWith': 'Open with...',

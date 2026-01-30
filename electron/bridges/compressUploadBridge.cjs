@@ -166,14 +166,27 @@ async function compressFolder(folderPath, outputPath, compressionId, sendProgres
 
 /**
  * Extract archive on remote server
+ * @param {string} sftpId - SFTP session ID
+ * @param {string} archivePath - Path to the archive on remote server
+ * @param {string} targetDir - Target directory for extraction
+ * @param {number} [archiveSize] - Size of the archive in bytes (optional, for timeout calculation)
  */
-async function extractRemoteArchive(sftpId, archivePath, targetDir) {
+async function extractRemoteArchive(sftpId, archivePath, targetDir, archiveSize) {
   const client = sftpClients.get(sftpId);
   if (!client) throw new Error("SFTP session not found");
-  
+
   const sshClient = client.client;
   if (!sshClient) throw new Error("SSH client not available");
-  
+
+  // Calculate timeout based on archive size
+  // Base: 60 seconds minimum
+  // Add 30 seconds per 10MB of archive size
+  // This accounts for slower servers and larger archives
+  const baseTimeout = 60000; // 60 seconds minimum
+  const sizeBasedTimeout = archiveSize ? Math.ceil(archiveSize / (10 * 1024 * 1024)) * 30000 : 0;
+  const extractionTimeout = Math.max(baseTimeout, baseTimeout + sizeBasedTimeout);
+  console.log(`[CompressUpload] Extraction timeout: ${extractionTimeout / 1000}s (archive size: ${archiveSize ? (archiveSize / 1024 / 1024).toFixed(2) + 'MB' : 'unknown'})`);
+
   return new Promise((resolve, reject) => {
     // Create target directory, extract, then always clean up the archive
     // Use && for tar success, then always try cleanup regardless of tar result
@@ -244,15 +257,15 @@ async function extractRemoteArchive(sftpId, archivePath, targetDir) {
         clearTimeout(timeout);
         reject(new Error(`Stream error: ${err.message}`));
       });
-      
-      // Add timeout to prevent hanging
+
+      // Add timeout to prevent hanging (uses dynamic timeout based on archive size)
       const timeout = setTimeout(() => {
         if (resolved) return;
         resolved = true;
-        
-        console.error('[CompressUpload] Remote extraction timed out');
-        reject(new Error('Remote extraction timed out after 30 seconds'));
-      }, 30000);
+
+        console.error(`[CompressUpload] Remote extraction timed out after ${extractionTimeout / 1000} seconds`);
+        reject(new Error(`Remote extraction timed out after ${extractionTimeout / 1000} seconds`));
+      }, extractionTimeout);
     });
   });
 }
@@ -353,52 +366,29 @@ async function startCompressedUpload(event, payload) {
 
     // Phase 2: Upload (30-90%)
     sendProgress('uploading', 30, 100);
-    
+
     const remoteArchivePath = `${targetPath}/${folderName}.tar.gz`;
-    
+
     // Use existing transfer bridge for upload with progress
     const transferId = `compress-${compressionId}`;
-    
-    const uploadResult = await new Promise((resolve, reject) => {
-      // Set up transfer progress listener
-      const progressListener = (transferred, total, speed) => {
-        if (compression.cancelled) return;
-        // Map upload progress to 30-90%
-        const uploadProgress = Math.min(60, (transferred / total) * 60);
-        sendProgress('uploading', 30 + uploadProgress, 100);
-      };
-      
-      const completeListener = () => {
-        resolve({ success: true });
-      };
-      
-      const errorListener = (error) => {
-        reject(new Error(error));
-      };
-      
-      // Register temporary listeners
-      const progressMap = new Map();
-      const completeMap = new Map();
-      const errorMap = new Map();
-      
-      progressMap.set(transferId, progressListener);
-      completeMap.set(transferId, completeListener);
-      errorMap.set(transferId, errorListener);
-      
-      // Temporarily add to preload listeners (this is a hack, but works)
-      sender.send("netcatty:transfer:progress", { transferId, transferred: 0, totalBytes: compressedSize, speed: 0 });
-      
-      // Start the transfer
-      transferBridge.startTransfer(event, {
-        transferId,
-        sourcePath: tempArchivePath,
-        targetPath: remoteArchivePath,
-        sourceType: 'local',
-        targetType: 'sftp',
-        targetSftpId: sftpId,
-        totalBytes: compressedSize
-      }).then(resolve).catch(reject);
-    });
+
+    // Progress callback to map upload progress to 30-90%
+    const onUploadProgress = (transferred, total, speed) => {
+      if (compression.cancelled) return;
+      const uploadProgress = Math.min(60, (transferred / total) * 60);
+      sendProgress('uploading', 30 + uploadProgress, 100);
+    };
+
+    // Start the transfer with progress callback
+    await transferBridge.startTransfer(event, {
+      transferId,
+      sourcePath: tempArchivePath,
+      targetPath: remoteArchivePath,
+      sourceType: 'local',
+      targetType: 'sftp',
+      targetSftpId: sftpId,
+      totalBytes: compressedSize
+    }, onUploadProgress);
 
     if (compression.cancelled) {
       await fs.promises.unlink(tempArchivePath).catch(() => {});
@@ -411,9 +401,9 @@ async function startCompressedUpload(event, payload) {
     // Phase 3: Extraction (90-100%)
     sendProgress('extracting', 90, 100);
     console.log('[CompressUpload] Starting remote extraction phase');
-    
+
     try {
-      await extractRemoteArchive(sftpId, remoteArchivePath, targetPath);
+      await extractRemoteArchive(sftpId, remoteArchivePath, targetPath, compressedSize);
       console.log('[CompressUpload] Remote extraction completed successfully');
       
       // Update progress to 95% after extraction
@@ -484,7 +474,14 @@ async function startCompressedUpload(event, payload) {
     } catch (error) {
       console.warn(`[CompressUpload] Failed to delete local temp file: ${tempArchivePath}`, error);
     }
-    
+
+    // Check if cancelled during extraction before reporting completion
+    if (compression.cancelled) {
+      console.log('[CompressUpload] Upload was cancelled during extraction phase');
+      sender.send("netcatty:compress:cancelled", { compressionId });
+      return { compressionId, cancelled: true };
+    }
+
     sendComplete();
     console.log('[CompressUpload] Compression upload completed successfully');
     
@@ -503,7 +500,7 @@ async function startCompressedUpload(event, payload) {
       }
     }
     
-    if (err.message === 'Upload cancelled' || err.message === 'Compression cancelled') {
+    if (err.message === 'Upload cancelled' || err.message === 'Compression cancelled' || err.message === 'Transfer cancelled') {
       activeCompressions.delete(compressionId);
       sender.send("netcatty:compress:cancelled", { compressionId });
     } else {

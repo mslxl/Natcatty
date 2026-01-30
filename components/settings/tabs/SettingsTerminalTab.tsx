@@ -80,8 +80,8 @@ export default function SettingsTerminalTab(props: {
     value: TerminalSettings[K],
   ) => void;
   availableFonts: TerminalFont[];
-  sftpUseCompressedUpload: 'ask' | 'enabled' | 'disabled';
-  setSftpUseCompressedUpload: (value: 'ask' | 'enabled' | 'disabled') => void;
+  sftpUseCompressedUpload: boolean;
+  setSftpUseCompressedUpload: (value: boolean) => void;
 }) {
   const {
     terminalThemeId,
@@ -674,15 +674,9 @@ export default function SettingsTerminalTab(props: {
           label={t("settings.terminal.uploadDownload.compressedUpload")}
           description={t("settings.terminal.uploadDownload.compressedUpload.desc")}
         >
-          <Select
-            value={props.sftpUseCompressedUpload}
-            options={[
-              { value: "ask", label: t("settings.terminal.uploadDownload.compressedUpload.ask") },
-              { value: "enabled", label: t("settings.terminal.uploadDownload.compressedUpload.enabled") },
-              { value: "disabled", label: t("settings.terminal.uploadDownload.compressedUpload.disabled") },
-            ]}
-            onChange={(v) => props.setSftpUseCompressedUpload(v as 'ask' | 'enabled' | 'disabled')}
-            className="w-32"
+          <Toggle
+            checked={props.sftpUseCompressedUpload}
+            onChange={(checked) => props.setSftpUseCompressedUpload(checked)}
           />
         </SettingRow>
       </div>

@@ -321,7 +321,7 @@ export async function uploadFromDataTransfer(
   config: UploadConfig,
   controller?: UploadController
 ): Promise<UploadResult[]> {
-  const { targetPath, sftpId, isLocal, bridge, joinPath, callbacks } = config;
+  const { targetPath, sftpId, isLocal, bridge, joinPath, callbacks, useCompressedUpload } = config;
 
   // Reset controller if provided
   if (controller) {
@@ -342,6 +342,59 @@ export async function uploadFromDataTransfer(
 
   if (entries.length === 0) {
     return [];
+  }
+
+  // Check if this is a folder upload and compressed upload is enabled
+  if (useCompressedUpload && !isLocal && sftpId) {
+    const rootFolders = detectRootFolders(entries);
+    const folderEntries = Array.from(rootFolders.entries()).filter(([key]) => !key.startsWith("__file__"));
+    const standaloneFileEntries = Array.from(rootFolders.entries()).filter(([key]) => key.startsWith("__file__"));
+
+    if (folderEntries.length > 0) {
+      console.log('[uploadFromDataTransfer] Using compressed upload for folders:', folderEntries.map(([key]) => key));
+      try {
+        const compressedResults = await uploadFoldersCompressed(folderEntries, entries, targetPath, sftpId, callbacks, controller);
+
+        // Check if any folders failed due to lack of compression support
+        const failedFolders = compressedResults.filter(result =>
+          !result.success && result.error === "Compressed upload not supported - fallback needed"
+        );
+        const successfulFolders = compressedResults.filter(result =>
+          result.success || result.error !== "Compressed upload not supported - fallback needed"
+        );
+
+        let fallbackResults: UploadResult[] = [];
+        if (failedFolders.length > 0) {
+          console.log('[uploadFromDataTransfer] Some folders failed compressed upload, falling back for failed folders only:', failedFolders.map(f => f.fileName));
+
+          // Get entries only for failed folders, not already successful ones
+          const failedFolderNames = new Set(failedFolders.map(f => f.fileName));
+          const failedFolderEntries = entries.filter(entry => {
+            const topFolder = entry.relativePath.split('/')[0];
+            return failedFolderNames.has(topFolder);
+          });
+
+          if (failedFolderEntries.length > 0) {
+            fallbackResults = await uploadEntries(failedFolderEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
+          }
+        }
+
+        // Upload standalone files using regular upload if any exist
+        let standaloneResults: UploadResult[] = [];
+        if (standaloneFileEntries.length > 0) {
+          console.log('[uploadFromDataTransfer] Uploading standalone files after compressed folders');
+          const standaloneEntries = standaloneFileEntries.flatMap(([, entries]) => entries);
+          standaloneResults = await uploadEntries(standaloneEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
+        }
+
+        // Combine results: successful compressed + fallback results + standalone files
+        return [...successfulFolders, ...fallbackResults, ...standaloneResults];
+      } catch (error) {
+        console.log('[uploadFromDataTransfer] Compressed upload failed, falling back to regular upload:', error);
+        // Fall back to regular upload
+        return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
+      }
+    }
   }
 
   return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
@@ -400,34 +453,46 @@ export async function uploadFromFileList(
     const rootFolders = detectRootFolders(entries);
     const folderEntries = Array.from(rootFolders.entries()).filter(([key]) => !key.startsWith("__file__"));
     const standaloneFileEntries = Array.from(rootFolders.entries()).filter(([key]) => key.startsWith("__file__"));
-    
+
     if (folderEntries.length > 0) {
       console.log('[uploadFromFileList] Using compressed upload for folders:', folderEntries.map(([key]) => key));
       try {
         const compressedResults = await uploadFoldersCompressed(folderEntries, entries, targetPath, sftpId, callbacks, controller);
-        
+
         // Check if any folders failed due to lack of compression support
-        const failedFolders = compressedResults.filter(result => 
+        const failedFolders = compressedResults.filter(result =>
           !result.success && result.error === "Compressed upload not supported - fallback needed"
         );
-        
+        const successfulFolders = compressedResults.filter(result =>
+          result.success || result.error !== "Compressed upload not supported - fallback needed"
+        );
+
+        let fallbackResults: UploadResult[] = [];
         if (failedFolders.length > 0) {
-          console.log('[uploadFromFileList] Some folders failed compressed upload, falling back to regular upload');
-          // Fall back to regular upload for all entries
-          return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
+          console.log('[uploadFromFileList] Some folders failed compressed upload, falling back for failed folders only:', failedFolders.map(f => f.fileName));
+
+          // Get entries only for failed folders, not already successful ones
+          const failedFolderNames = new Set(failedFolders.map(f => f.fileName));
+          const failedFolderEntries = entries.filter(entry => {
+            const topFolder = entry.relativePath.split('/')[0];
+            return failedFolderNames.has(topFolder);
+          });
+
+          if (failedFolderEntries.length > 0) {
+            fallbackResults = await uploadEntries(failedFolderEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
+          }
         }
-        
+
         // Upload standalone files using regular upload if any exist
+        let standaloneResults: UploadResult[] = [];
         if (standaloneFileEntries.length > 0) {
           console.log('[uploadFromFileList] Uploading standalone files after compressed folders:', standaloneFileEntries.map(([key]) => key));
           const standaloneEntries = standaloneFileEntries.flatMap(([, entries]) => entries);
-          const standaloneResults = await uploadEntries(standaloneEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
-          
-          // Combine results from compressed folders and standalone files
-          return [...compressedResults, ...standaloneResults];
+          standaloneResults = await uploadEntries(standaloneEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller);
         }
-        
-        return compressedResults;
+
+        // Combine results: successful compressed + fallback results + standalone files
+        return [...successfulFolders, ...fallbackResults, ...standaloneResults];
       } catch (error) {
         console.log('[uploadFromFileList] Compressed upload failed, falling back to regular upload:', error);
         // Fall back to regular upload
@@ -935,11 +1000,12 @@ async function uploadFoldersCompressed(
     if (controller?.isCancelled()) {
       break;
     }
-    
+
     // Get the local folder path from the first file in the folder
     const firstFile = entries.find(e => e.file);
     if (!firstFile?.file) {
-      results.push({ fileName: folderName, success: false, error: "No files found in folder" });
+      // Empty folder - mark for fallback to regular upload which will create the directory
+      results.push({ fileName: folderName, success: false, error: "Compressed upload not supported - fallback needed" });
       continue;
     }
     
@@ -948,9 +1014,12 @@ async function uploadFoldersCompressed(
       results.push({ fileName: folderName, success: false, error: "Could not get local file path" });
       continue;
     }
-    
+
     // Extract folder path from the first file path
-    const relativePath = (firstFile.file as File & { webkitRelativePath?: string }).webkitRelativePath || firstFile.file.name;
+    // Use DropEntry.relativePath which works for both file input and drag-drop scenarios
+    // For file input: webkitRelativePath is set (e.g., "folder/subdir/file.txt")
+    // For drag-drop: DropEntry.relativePath contains the correct path from extractDropEntries
+    const relativePath = firstFile.relativePath || (firstFile.file as File & { webkitRelativePath?: string }).webkitRelativePath || firstFile.file.name;
     
     // Normalize path separators for cross-platform compatibility
     const normalizePathSeparators = (path: string) => path.replace(/\\/g, '/');
@@ -1077,17 +1146,13 @@ async function uploadFoldersCompressed(
           
           // Update task name based on phase
           if (callbacks?.onTaskNameUpdate) {
-            let displayName = folderName;
-            if (phase === 'compressing') {
-              displayName = `${folderName} (正在压缩)`;
-            } else if (phase === 'extracting') {
-              displayName = `${folderName} (正在解压)`;
-            } else if (phase === 'uploading') {
-              displayName = `${folderName} (正在上传)`;
-            } else {
-              displayName = `${folderName} (压缩传输)`;
-            }
-            callbacks.onTaskNameUpdate(taskId, displayName);
+            // Pass phase identifier for UI layer to handle i18n
+            // Format: "folderName|phase" where phase is: compressing, extracting, uploading, or compressed
+            const phaseKey = phase === 'compressing' ? 'compressing'
+              : phase === 'extracting' ? 'extracting'
+              : phase === 'uploading' ? 'uploading'
+              : 'compressed';
+            callbacks.onTaskNameUpdate(taskId, `${folderName}|${phaseKey}`);
           }
         },
         () => {

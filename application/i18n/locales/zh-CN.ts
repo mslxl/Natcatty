@@ -793,15 +793,12 @@ const zhCN: Messages = {
   'sftp.conflict.action.skip': '跳过',
   'sftp.conflict.action.keepBoth': '保留两者',
   'sftp.conflict.action.replace': '替换',
-  'sftp.compressedUpload.dialog.title': '选择上传方式',
-  'sftp.compressedUpload.dialog.descSingle': '您正在上传一个文件夹，请选择传输方式：',
-  'sftp.compressedUpload.dialog.descMultiple': '您正在上传 {count} 个文件夹，请选择传输方式：',
-  'sftp.compressedUpload.dialog.compressed.title': '压缩传输（推荐）',
-  'sftp.compressedUpload.dialog.compressed.desc': '传输更快，需要服务器支持 tar 命令',
-  'sftp.compressedUpload.dialog.regular.title': '常规传输',
-  'sftp.compressedUpload.dialog.regular.desc': '逐个文件传输，适用于所有服务器',
-  'sftp.compressedUpload.dialog.useCompressed': '使用压缩传输',
-  'sftp.compressedUpload.dialog.useRegular': '使用常规传输',
+
+  // SFTP Upload Phases
+  'sftp.upload.phase.compressing': '正在压缩',
+  'sftp.upload.phase.uploading': '正在上传',
+  'sftp.upload.phase.extracting': '正在解压',
+  'sftp.upload.phase.compressed': '压缩传输',
 
   // SFTP File Opener
   'sftp.context.openWith': '打开方式...',
@@ -981,11 +978,8 @@ const zhCN: Messages = {
 
   // Settings > Terminal > Upload & Download
   'settings.terminal.section.uploadDownload': '上传下载',
-  'settings.terminal.uploadDownload.compressedUpload': '启用文件夹压缩传输',
-  'settings.terminal.uploadDownload.compressedUpload.desc': '启用后，可大量减少传输文件夹时的传输量，需要服务器支持 tar 命令。',
-  'settings.terminal.uploadDownload.compressedUpload.ask': '每次询问',
-  'settings.terminal.uploadDownload.compressedUpload.enabled': '启用',
-  'settings.terminal.uploadDownload.compressedUpload.disabled': '不启用',
+  'settings.terminal.uploadDownload.compressedUpload': '文件夹压缩传输',
+  'settings.terminal.uploadDownload.compressedUpload.desc': '启用后，自动压缩文件夹后再传输，可大幅减少传输时间。需要服务器支持 tar 命令，不支持时自动回退到普通传输。',
 
   // Settings > Shortcuts
   'settings.shortcuts.section.scheme': '快捷键方案',

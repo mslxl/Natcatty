@@ -9,7 +9,6 @@ import {
   UploadCallbacks,
   UploadTaskInfo,
   UploadProgress,
-  detectRootFolders,
 } from "../../../lib/uploadService";
 
 interface UploadTask {
@@ -68,7 +67,7 @@ interface UseSftpModalTransfersParams {
   cancelTransfer?: (transferId: string) => Promise<void>;
   setLoading: (loading: boolean) => void;
   t: (key: string, params?: Record<string, unknown>) => string;
-  useCompressedUpload?: 'ask' | 'enabled' | 'disabled'; // New option for compressed folder uploads
+  useCompressedUpload?: boolean; // Enable compressed folder uploads
 }
 
 interface UseSftpModalTransfersResult {
@@ -84,14 +83,6 @@ interface UseSftpModalTransfersResult {
   handleDrop: (e: React.DragEvent) => void;
   cancelUpload: () => Promise<void>;
   dismissTask: (taskId: string) => void;
-  // Compressed upload dialog
-  compressedUploadDialog: {
-    open: boolean;
-    folderCount: number;
-    pendingFiles: FileList | File[] | null;
-  };
-  handleCompressedUploadConfirm: (useCompressed: boolean) => Promise<void>;
-  handleCompressedUploadCancel: () => void;
 }
 
 export const useSftpModalTransfers = ({
@@ -112,22 +103,11 @@ export const useSftpModalTransfers = ({
   cancelTransfer,
   setLoading,
   t,
-  useCompressedUpload = 'disabled',
+  useCompressedUpload = false,
 }: UseSftpModalTransfersParams): UseSftpModalTransfersResult => {
   const [uploading, setUploading] = useState(false);
   const [uploadTasks, setUploadTasks] = useState<UploadTask[]>([]);
   const [dragActive, setDragActive] = useState(false);
-
-  // Compressed upload dialog state
-  const [compressedUploadDialog, setCompressedUploadDialog] = useState<{
-    open: boolean;
-    folderCount: number;
-    pendingFiles: FileList | File[] | null;
-  }>({
-    open: false,
-    folderCount: 0,
-    pendingFiles: null,
-  });
 
   // Upload controller for cancellation support
   const uploadControllerRef = useRef<UploadController | null>(null);
@@ -301,6 +281,7 @@ export const useSftpModalTransfers = ({
                 ...task,
                 status: "failed" as const,
                 speed: 0,
+                error,
               }
               : task
           )
@@ -320,12 +301,22 @@ export const useSftpModalTransfers = ({
         );
       },
       onTaskNameUpdate: (taskId: string, newName: string) => {
+        // Parse the phase format: "folderName|phase"
+        let displayName = newName;
+        if (newName.includes('|')) {
+          const [folderName, phase] = newName.split('|');
+          const phaseLabel = phase === 'compressing' ? t('sftp.upload.phase.compressing')
+            : phase === 'extracting' ? t('sftp.upload.phase.extracting')
+            : phase === 'uploading' ? t('sftp.upload.phase.uploading')
+            : t('sftp.upload.phase.compressed');
+          displayName = `${folderName} (${phaseLabel})`;
+        }
         setUploadTasks(prev =>
           prev.map(task =>
             task.id === taskId
               ? {
                 ...task,
-                fileName: newName,
+                fileName: displayName,
               }
               : task
           )
@@ -334,29 +325,7 @@ export const useSftpModalTransfers = ({
     };
   }, [t]);
 
-  // Helper function to check if we need to show compressed upload dialog
-  const shouldShowCompressedDialog = useCallback(async (files: FileList | File[]): Promise<{ shouldShow: boolean; folderCount: number }> => {
-    if (useCompressedUpload !== 'ask' || isLocalSession) {
-      return { shouldShow: false, folderCount: 0 };
-    }
-
-    // Convert FileList to entries to detect folders
-    const entries = Array.from(files).map(file => ({
-      file,
-      relativePath: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name,
-      isDirectory: false,
-    }));
-
-    const rootFolders = detectRootFolders(entries);
-    const folderEntries = Array.from(rootFolders.entries()).filter(([key]) => !key.startsWith("__file__"));
-    
-    return {
-      shouldShow: folderEntries.length > 0,
-      folderCount: folderEntries.length,
-    };
-  }, [useCompressedUpload, isLocalSession]);
-
-  // Helper function to perform upload with specified compression setting
+  // Helper function to perform upload with compression setting from user preference
   const performUpload = useCallback(async (
     files: FileList | File[], 
     useCompressed: boolean
@@ -453,30 +422,10 @@ export const useSftpModalTransfers = ({
       });
       if (fileList.length === 0) return;
 
-      // Check if we need to show compressed upload dialog
-      const { shouldShow, folderCount } = await shouldShowCompressedDialog(fileList);
-      
-      if (shouldShow) {
-        // Show dialog and store pending files
-        setCompressedUploadDialog({
-          open: true,
-          folderCount,
-          pendingFiles: fileList,
-        });
-        return;
-      }
-
-      // Determine compression setting based on user preference
-      let useCompressed = false;
-      if (useCompressedUpload === 'enabled') {
-        useCompressed = true;
-      } else if (useCompressedUpload === 'disabled') {
-        useCompressed = false;
-      }
-
-      await performUpload(fileList, useCompressed);
+      // Use compressed upload if enabled in settings (auto-fallback is handled in uploadService)
+      await performUpload(fileList, useCompressedUpload);
     },
-    [currentPath, isLocalSession, shouldShowCompressedDialog, performUpload, useCompressedUpload],
+    [currentPath, isLocalSession, performUpload, useCompressedUpload],
   );
 
   const handleUploadFromDrop = useCallback(
@@ -506,6 +455,7 @@ export const useSftpModalTransfers = ({
             bridge: createUploadBridge,
             joinPath,
             callbacks,
+            useCompressedUpload,
           },
           controller
         );
@@ -523,7 +473,7 @@ export const useSftpModalTransfers = ({
         cachedSftpIdRef.current = null;
       }
     },
-    [currentPath, createUploadBridge, createUploadCallbacks, ensureSftp, isLocalSession, joinPath, loadFiles, t],
+    [currentPath, createUploadBridge, createUploadCallbacks, ensureSftp, isLocalSession, joinPath, loadFiles, t, useCompressedUpload],
   );
 
   // Handle upload from File array (used by file input after copying files)
@@ -536,30 +486,10 @@ export const useSftpModalTransfers = ({
       });
       if (files.length === 0) return;
 
-      // Check if we need to show compressed upload dialog
-      const { shouldShow, folderCount } = await shouldShowCompressedDialog(files);
-      
-      if (shouldShow) {
-        // Show dialog and store pending files
-        setCompressedUploadDialog({
-          open: true,
-          folderCount,
-          pendingFiles: files,
-        });
-        return;
-      }
-
-      // Determine compression setting based on user preference
-      let useCompressed = false;
-      if (useCompressedUpload === 'enabled') {
-        useCompressed = true;
-      } else if (useCompressedUpload === 'disabled') {
-        useCompressed = false;
-      }
-
-      await performUpload(files, useCompressed);
+      // Use compressed upload if enabled in settings (auto-fallback is handled in uploadService)
+      await performUpload(files, useCompressedUpload);
     },
-    [currentPath, isLocalSession, shouldShowCompressedDialog, performUpload, useCompressedUpload],
+    [currentPath, isLocalSession, performUpload, useCompressedUpload],
   );
 
   const handleFileSelect = useCallback(
@@ -668,28 +598,6 @@ export const useSftpModalTransfers = ({
     setUploadTasks(prev => prev.filter(t => t.id !== taskId));
   }, []);
 
-  // Handle compressed upload dialog confirmation
-  const handleCompressedUploadConfirm = useCallback(async (useCompressed: boolean) => {
-    const { pendingFiles } = compressedUploadDialog;
-    setCompressedUploadDialog({
-      open: false,
-      folderCount: 0,
-      pendingFiles: null,
-    });
-    
-    if (pendingFiles) {
-      await performUpload(pendingFiles, useCompressed);
-    }
-  }, [compressedUploadDialog, performUpload]);
-
-  const handleCompressedUploadCancel = useCallback(() => {
-    setCompressedUploadDialog({
-      open: false,
-      folderCount: 0,
-      pendingFiles: null,
-    });
-  }, []);
-
   return {
     uploading,
     uploadTasks,
@@ -703,9 +611,5 @@ export const useSftpModalTransfers = ({
     handleDrop,
     cancelUpload,
     dismissTask,
-    // Compressed upload dialog
-    compressedUploadDialog,
-    handleCompressedUploadConfirm,
-    handleCompressedUploadCancel,
   };
 };

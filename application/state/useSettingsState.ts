@@ -50,7 +50,7 @@ const DEFAULT_HOTKEY_SCHEME: HotkeyScheme =
 const DEFAULT_SFTP_DOUBLE_CLICK_BEHAVIOR: 'open' | 'transfer' = 'open';
 const DEFAULT_SFTP_AUTO_SYNC = false;
 const DEFAULT_SFTP_SHOW_HIDDEN_FILES = false;
-const DEFAULT_SFTP_USE_COMPRESSED_UPLOAD = 'ask' as const;
+const DEFAULT_SFTP_USE_COMPRESSED_UPLOAD = true;
 
 // Session Logs defaults
 const DEFAULT_SESSION_LOGS_ENABLED = false;
@@ -198,14 +198,11 @@ export const useSettingsState = () => {
     const stored = readStoredString(STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES);
     return stored === 'true' ? true : DEFAULT_SFTP_SHOW_HIDDEN_FILES;
   });
-  const [sftpUseCompressedUpload, setSftpUseCompressedUpload] = useState<'ask' | 'enabled' | 'disabled'>(() => {
+  const [sftpUseCompressedUpload, setSftpUseCompressedUpload] = useState<boolean>(() => {
     const stored = readStoredString(STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD);
-    if (stored === 'enabled' || stored === 'disabled' || stored === 'ask') {
-      return stored;
-    }
-    // 兼容旧的布尔值设置
-    if (stored === 'true') return 'enabled';
-    if (stored === 'false') return 'disabled';
+    // 兼容旧的设置值
+    if (stored === 'true' || stored === 'enabled' || stored === 'ask') return true;
+    if (stored === 'false' || stored === 'disabled') return false;
     return DEFAULT_SFTP_USE_COMPRESSED_UPLOAD;
   });
 
@@ -481,8 +478,8 @@ export const useSettingsState = () => {
       }
       // Sync SFTP compressed upload setting from other windows
       if (e.key === STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD && e.newValue !== null) {
-        const newValue = e.newValue as 'ask' | 'enabled' | 'disabled';
-        if (newValue !== sftpUseCompressedUpload && (newValue === 'ask' || newValue === 'enabled' || newValue === 'disabled')) {
+        const newValue = e.newValue === 'true' || e.newValue === 'enabled';
+        if (newValue !== sftpUseCompressedUpload) {
           setSftpUseCompressedUpload(newValue);
         }
       }
@@ -561,7 +558,7 @@ export const useSettingsState = () => {
 
   // Persist SFTP compressed upload setting
   useEffect(() => {
-    localStorageAdapter.writeString(STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD, sftpUseCompressedUpload);
+    localStorageAdapter.writeString(STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD, sftpUseCompressedUpload ? 'true' : 'false');
     notifySettingsChanged(STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD, sftpUseCompressedUpload);
   }, [sftpUseCompressedUpload, notifySettingsChanged]);
 

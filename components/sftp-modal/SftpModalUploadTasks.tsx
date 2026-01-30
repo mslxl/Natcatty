@@ -29,34 +29,36 @@ export const SftpModalUploadTasks: React.FC<SftpModalUploadTasksProps> = ({ task
 
   // Helper function to get localized display name for compressed uploads
   const getDisplayName = (task: UploadTask) => {
-    // Check for phase-specific status in fileName for compressed uploads
-    if (task.fileName === t('sftp.upload.compressing') || task.fileName.includes('compressing')) {
+    // Check for explicit phase marker format: "folderName|phase"
+    // This is the format sent by uploadService.ts for compressed uploads
+    if (task.fileName.includes('|')) {
+      const pipeIndex = task.fileName.lastIndexOf('|');
+      const baseName = task.fileName.substring(0, pipeIndex);
+      const phase = task.fileName.substring(pipeIndex + 1);
+
+      if (phase === 'compressing' || phase === 'extracting' || phase === 'uploading' || phase === 'compressed') {
+        const phaseLabel = t(`sftp.upload.phase.${phase}`);
+        return `${baseName} (${phaseLabel})`;
+      }
+    }
+
+    // Check for exact matches of phase status strings (legacy support)
+    if (task.fileName === t('sftp.upload.compressing') || task.fileName === 'Compressing...' || task.fileName === 'Compressing') {
       return t('sftp.upload.compressing');
     }
-    if (task.fileName === t('sftp.upload.extracting') || task.fileName.includes('extracting')) {
+    if (task.fileName === t('sftp.upload.extracting') || task.fileName === 'Extracting...' || task.fileName === 'Extracting') {
       return t('sftp.upload.extracting');
     }
-    if (task.fileName === t('sftp.upload.scanning') || task.fileName.includes('scanning')) {
+    if (task.fileName === t('sftp.upload.scanning') || task.fileName === 'Scanning files...' || task.fileName === 'Scanning files') {
       return t('sftp.upload.scanning');
     }
-    
-    // Check if this is a compressed upload task
+
+    // Check if this is a compressed upload task (legacy format)
     if (task.fileName.includes('(compressed)')) {
       const baseName = task.fileName.replace(' (compressed)', '');
       return `${baseName} (${t('sftp.upload.compressed')})`;
     }
-    
-    // Check for English hardcoded strings and translate them
-    if (task.fileName === 'Compressing...' || task.fileName === 'Compressing') {
-      return t('sftp.upload.compressing');
-    }
-    if (task.fileName === 'Extracting...' || task.fileName === 'Extracting') {
-      return t('sftp.upload.extracting');
-    }
-    if (task.fileName === 'Scanning files...' || task.fileName === 'Scanning files') {
-      return t('sftp.upload.scanning');
-    }
-    
+
     return task.fileName;
   };
 
