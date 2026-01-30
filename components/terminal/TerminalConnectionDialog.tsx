@@ -34,6 +34,24 @@ export interface TerminalConnectionDialogProps {
     progressProps: Omit<TerminalConnectionProgressProps, 'status' | 'error' | 'showLogs' | '_setShowLogs'>;
 }
 
+// Helper to get protocol display info
+const getProtocolInfo = (host: Host): { label: string; showPort: boolean } => {
+    const protocol = host.protocol || 'ssh';
+    switch (protocol) {
+        case 'local':
+            return { label: 'Local Shell', showPort: false };
+        case 'telnet':
+            return { label: 'Telnet', showPort: true };
+        case 'mosh':
+            return { label: 'Mosh', showPort: true };
+        case 'serial':
+            return { label: 'Serial', showPort: false };
+        case 'ssh':
+        default:
+            return { label: 'SSH', showPort: true };
+    }
+};
+
 export const TerminalConnectionDialog: React.FC<TerminalConnectionDialogProps> = ({
     host,
     status,
@@ -50,6 +68,7 @@ export const TerminalConnectionDialog: React.FC<TerminalConnectionDialogProps> =
     const { t } = useI18n();
     const hasError = Boolean(error);
     const isConnecting = status === 'connecting';
+    const protocolInfo = getProtocolInfo(host);
 
     return (
         <div className={cn(
@@ -75,14 +94,14 @@ export const TerminalConnectionDialog: React.FC<TerminalConnectionDialogProps> =
                                         <span>{chainProgress.currentHostLabel}</span>
                                     </div>
                                     <div className="text-[11px] text-muted-foreground font-mono">
-                                        SSH {host.hostname}:{host.port || 22}
+                                        {protocolInfo.label} {protocolInfo.showPort ? `${host.hostname}:${host.port || 22}` : host.hostname}
                                     </div>
                                 </>
                             ) : (
                                 <>
                                     <div className="text-sm font-semibold">{host.label}</div>
                                     <div className="text-[11px] text-muted-foreground font-mono">
-                                        SSH {host.hostname}:{host.port || 22}
+                                        {protocolInfo.label} {protocolInfo.showPort ? `${host.hostname}:${host.port || 22}` : host.hostname}
                                     </div>
                                 </>
                             )}
