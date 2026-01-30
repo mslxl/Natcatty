@@ -385,6 +385,24 @@ export const useSftpViewFileOps = ({
         }
 
         const transferId = `download-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const fileSize = typeof file.size === 'string' ? parseInt(file.size, 10) || 0 : (file.size || 0);
+
+        // Add download task to transfer queue for progress display
+        sftpRef.current.addExternalUpload({
+          id: transferId,
+          fileName: file.name,
+          sourcePath: fullPath,
+          targetPath,
+          sourceConnectionId: pane.connection.id,
+          targetConnectionId: 'local',
+          direction: 'download',
+          status: 'transferring',
+          totalBytes: fileSize,
+          transferredBytes: 0,
+          speed: 0,
+          startTime: Date.now(),
+          isDirectory: false,
+        });
 
         // Track if error was already handled by callback
         let errorHandled = false;
@@ -397,15 +415,35 @@ export const useSftpViewFileOps = ({
             sourceType: 'sftp',
             targetType: 'local',
             sourceSftpId: sftpId,
+            totalBytes: fileSize,
           },
-          undefined, // onProgress - SftpView uses its own transfer queue UI
+          (transferred, total, speed) => {
+            // Update transfer progress in the queue
+            sftpRef.current.updateExternalUpload(transferId, {
+              transferredBytes: transferred,
+              totalBytes: total,
+              speed,
+            });
+          },
           () => {
+            // Mark as completed
+            sftpRef.current.updateExternalUpload(transferId, {
+              status: 'completed',
+              transferredBytes: fileSize,
+              endTime: Date.now(),
+            });
             toast.success(`${t("sftp.context.download")}: ${file.name}`, "SFTP");
           },
           (error) => {
             errorHandled = true;
             // Check if this is a cancellation - don't show error toast for cancellations
-            if (!error.includes('cancelled') && !error.includes('canceled')) {
+            const isCancelError = error.includes('cancelled') || error.includes('canceled');
+            sftpRef.current.updateExternalUpload(transferId, {
+              status: isCancelError ? 'cancelled' : 'failed',
+              error: isCancelError ? undefined : error,
+              endTime: Date.now(),
+            });
+            if (!isCancelError) {
               toast.error(error, "SFTP");
             }
           }
@@ -413,6 +451,11 @@ export const useSftpViewFileOps = ({
 
         // Check if bridge doesn't support streaming (returns undefined)
         if (result === undefined) {
+          sftpRef.current.updateExternalUpload(transferId, {
+            status: 'failed',
+            error: t("sftp.error.downloadFailed"),
+            endTime: Date.now(),
+          });
           toast.error(t("sftp.error.downloadFailed"), "SFTP");
           return;
         }
@@ -420,6 +463,11 @@ export const useSftpViewFileOps = ({
         // Handle error from result only if onError callback wasn't called
         if (result?.error && !errorHandled) {
           const isCancelError = result.error.includes('cancelled') || result.error.includes('canceled');
+          sftpRef.current.updateExternalUpload(transferId, {
+            status: isCancelError ? 'cancelled' : 'failed',
+            error: isCancelError ? undefined : result.error,
+            endTime: Date.now(),
+          });
           if (!isCancelError) {
             toast.error(result.error, "SFTP");
           }
