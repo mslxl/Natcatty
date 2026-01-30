@@ -234,11 +234,6 @@ const en: Messages = {
   'settings.terminal.rendering.renderer.desc': 'Choose the terminal rendering technology. Auto will use Canvas on low-memory devices. Changes take effect on new terminal sessions.',
   'settings.terminal.rendering.auto': 'Auto',
 
-  // Settings > Terminal > Upload & Download
-  'settings.terminal.section.uploadDownload': 'Upload & Download',
-  'settings.terminal.uploadDownload.compressedUpload': 'Folder Compression Transfer',
-  'settings.terminal.uploadDownload.compressedUpload.desc': 'When enabled, automatically compresses folders before transfer to significantly reduce transfer time. Requires tar command support on the server. Falls back to regular transfer if not available.',
-
   // Settings > Shortcuts
   'settings.shortcuts.section.scheme': 'Hotkey Scheme',
   'settings.shortcuts.scheme.label': 'Keyboard shortcuts',
@@ -638,6 +633,12 @@ const en: Messages = {
   'settings.sftp.showHiddenFiles.desc': 'Display files with the Windows hidden attribute in the SFTP file browser when browsing local Windows filesystem.',
   'settings.sftp.showHiddenFiles.enable': 'Show hidden files',
   'settings.sftp.showHiddenFiles.enableDesc': 'Display Windows hidden files when browsing local filesystem',
+
+  // Settings > SFTP Compressed Upload
+  'settings.sftp.compressedUpload': 'Folder Compression Transfer',
+  'settings.sftp.compressedUpload.desc': 'Compress folders before uploading to significantly reduce transfer time.',
+  'settings.sftp.compressedUpload.enable': 'Enable folder compression',
+  'settings.sftp.compressedUpload.enableDesc': 'Automatically compress folders using tar before transfer. Requires tar support on the server. Falls back to regular transfer if not available.',
 
   // Quick Switcher
   'qs.search.placeholder': 'Search hosts or tabs',

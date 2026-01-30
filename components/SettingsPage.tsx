@@ -178,8 +178,6 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                             terminalSettings={settings.terminalSettings}
                             updateTerminalSetting={settings.updateTerminalSetting}
                             availableFonts={settings.availableFonts}
-                            sftpUseCompressedUpload={settings.sftpUseCompressedUpload}
-                            setSftpUseCompressedUpload={settings.setSftpUseCompressedUpload}
                         />
                     )}
 

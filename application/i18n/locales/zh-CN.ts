@@ -888,6 +888,12 @@ const zhCN: Messages = {
   'settings.sftp.showHiddenFiles.enable': '显示隐藏文件',
   'settings.sftp.showHiddenFiles.enableDesc': '浏览本地文件系统时显示 Windows 隐藏文件',
 
+  // Settings > SFTP Compressed Upload
+  'settings.sftp.compressedUpload': '文件夹压缩传输',
+  'settings.sftp.compressedUpload.desc': '上传前压缩文件夹，可大幅减少传输时间。',
+  'settings.sftp.compressedUpload.enable': '启用文件夹压缩',
+  'settings.sftp.compressedUpload.enableDesc': '自动使用 tar 压缩文件夹后再传输。需要服务器支持 tar 命令，不支持时自动回退到普通传输。',
+
   // Settings > Terminal
   'settings.terminal.section.theme': '终端主题',
   'settings.terminal.themeModal.title': '选择主题',
@@ -975,11 +981,6 @@ const zhCN: Messages = {
   'settings.terminal.rendering.renderer': '渲染器',
   'settings.terminal.rendering.renderer.desc': '选择终端渲染技术。自动模式会在低内存设备上使用 Canvas。更改将在新终端会话中生效。',
   'settings.terminal.rendering.auto': '自动',
-
-  // Settings > Terminal > Upload & Download
-  'settings.terminal.section.uploadDownload': '上传下载',
-  'settings.terminal.uploadDownload.compressedUpload': '文件夹压缩传输',
-  'settings.terminal.uploadDownload.compressedUpload.desc': '启用后，自动压缩文件夹后再传输，可大幅减少传输时间。需要服务器支持 tar 命令，不支持时自动回退到普通传输。',
 
   // Settings > Shortcuts
   'settings.shortcuts.section.scheme': '快捷键方案',
