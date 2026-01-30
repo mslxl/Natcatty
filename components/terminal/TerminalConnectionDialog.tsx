@@ -35,24 +35,25 @@ export interface TerminalConnectionDialogProps {
 }
 
 // Helper to get protocol display info
-const getProtocolInfo = (host: Host): { i18nKey: string; showPort: boolean; defaultPort: number } => {
+const getProtocolInfo = (host: Host): { i18nKey: string; showPort: boolean; port: number } => {
     // Check moshEnabled first since mosh uses protocol: "ssh" with moshEnabled: true
     if (host.moshEnabled) {
-        return { i18nKey: 'terminal.connection.protocol.mosh', showPort: true, defaultPort: 22 };
+        return { i18nKey: 'terminal.connection.protocol.mosh', showPort: true, port: host.port || 22 };
     }
     const protocol = host.protocol || 'ssh';
     switch (protocol) {
         case 'local':
-            return { i18nKey: 'terminal.connection.protocol.local', showPort: false, defaultPort: 0 };
+            return { i18nKey: 'terminal.connection.protocol.local', showPort: false, port: 0 };
         case 'telnet':
-            return { i18nKey: 'terminal.connection.protocol.telnet', showPort: true, defaultPort: 23 };
+            // Telnet uses telnetPort, not port (which is SSH port)
+            return { i18nKey: 'terminal.connection.protocol.telnet', showPort: true, port: host.telnetPort ?? host.port ?? 23 };
         case 'mosh':
-            return { i18nKey: 'terminal.connection.protocol.mosh', showPort: true, defaultPort: 22 };
+            return { i18nKey: 'terminal.connection.protocol.mosh', showPort: true, port: host.port || 22 };
         case 'serial':
-            return { i18nKey: 'terminal.connection.protocol.serial', showPort: false, defaultPort: 0 };
+            return { i18nKey: 'terminal.connection.protocol.serial', showPort: false, port: 0 };
         case 'ssh':
         default:
-            return { i18nKey: 'terminal.connection.protocol.ssh', showPort: true, defaultPort: 22 };
+            return { i18nKey: 'terminal.connection.protocol.ssh', showPort: true, port: host.port || 22 };
     }
 };
 
@@ -98,14 +99,14 @@ export const TerminalConnectionDialog: React.FC<TerminalConnectionDialogProps> =
                                         <span>{chainProgress.currentHostLabel}</span>
                                     </div>
                                     <div className="text-[11px] text-muted-foreground font-mono">
-                                        {t(protocolInfo.i18nKey)} {protocolInfo.showPort ? `${host.hostname}:${host.port || protocolInfo.defaultPort}` : host.hostname}
+                                        {t(protocolInfo.i18nKey)} {protocolInfo.showPort ? `${host.hostname}:${protocolInfo.port}` : host.hostname}
                                     </div>
                                 </>
                             ) : (
                                 <>
                                     <div className="text-sm font-semibold">{host.label}</div>
                                     <div className="text-[11px] text-muted-foreground font-mono">
-                                        {t(protocolInfo.i18nKey)} {protocolInfo.showPort ? `${host.hostname}:${host.port || protocolInfo.defaultPort}` : host.hostname}
+                                        {t(protocolInfo.i18nKey)} {protocolInfo.showPort ? `${host.hostname}:${protocolInfo.port}` : host.hostname}
                                     </div>
                                 </>
                             )}
