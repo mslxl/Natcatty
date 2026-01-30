@@ -36,6 +36,10 @@ export interface TerminalConnectionDialogProps {
 
 // Helper to get protocol display info
 const getProtocolInfo = (host: Host): { i18nKey: string; showPort: boolean; defaultPort: number } => {
+    // Check moshEnabled first since mosh uses protocol: "ssh" with moshEnabled: true
+    if (host.moshEnabled) {
+        return { i18nKey: 'terminal.connection.protocol.mosh', showPort: true, defaultPort: 22 };
+    }
     const protocol = host.protocol || 'ssh';
     switch (protocol) {
         case 'local':
