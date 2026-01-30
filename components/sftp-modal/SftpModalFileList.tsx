@@ -1,5 +1,5 @@
 import React from "react";
-import { Download, Edit2, Folder, FolderOpen, Link, Loader2, MoreHorizontal, Plus, RefreshCw, Shield, Trash2, Upload } from "lucide-react";
+import { Download, Edit2, Folder, FolderOpen, FolderUp, Link, Loader2, MoreHorizontal, Plus, RefreshCw, Shield, Trash2, Upload } from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { RemoteFile } from "../../types";
 import { isKnownBinaryFile } from "../../lib/sftpFileUtils";
@@ -401,7 +401,7 @@ export const SftpModalFileList: React.FC<SftpModalFileListProps> = ({
             <Upload className="h-4 w-4 mr-2" /> {t("sftp.uploadFiles")}
           </ContextMenuItem>
           <ContextMenuItem onClick={() => folderInputRef.current?.click()}>
-            <Upload className="h-4 w-4 mr-2" /> {t("sftp.uploadFolder")}
+            <FolderUp className="h-4 w-4 mr-2" /> {t("sftp.uploadFolder")}
           </ContextMenuItem>
           <ContextMenuItem onClick={() => loadFiles(currentPath, { force: true })}>
             <RefreshCw className="h-4 w-4 mr-2" /> {t("sftp.context.refresh")}

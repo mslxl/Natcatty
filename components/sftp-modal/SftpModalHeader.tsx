@@ -6,7 +6,7 @@ import { DistroAvatar } from "../DistroAvatar";
 import { Button } from "../ui/button";
 import { DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
+import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 
 interface BreadcrumbPart {
@@ -172,23 +172,24 @@ export const SftpModalHeader: React.FC<SftpModalHeaderProps> = ({
           </Tooltip>
           <PopoverContent className="w-36 p-1" align="start">
             {(["auto", "utf-8", "gb18030"] as const).map((encoding) => (
-              <button
-                key={encoding}
-                className={cn(
-                  "w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded-sm hover:bg-secondary transition-colors",
-                  filenameEncoding === encoding && "bg-secondary"
-                )}
-                onClick={() => onFilenameEncodingChange(encoding)}
-              >
-                <Check
-                  size={14}
+              <PopoverClose asChild key={encoding}>
+                <button
                   className={cn(
-                    "shrink-0",
-                    filenameEncoding === encoding ? "opacity-100" : "opacity-0"
+                    "w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded-sm hover:bg-secondary transition-colors",
+                    filenameEncoding === encoding && "bg-secondary"
                   )}
-                />
-                {t(`sftp.encoding.${encoding === "utf-8" ? "utf8" : encoding}`)}
-              </button>
+                  onClick={() => onFilenameEncodingChange(encoding)}
+                >
+                  <Check
+                    size={14}
+                    className={cn(
+                      "shrink-0",
+                      filenameEncoding === encoding ? "opacity-100" : "opacity-0"
+                    )}
+                  />
+                  {t(`sftp.encoding.${encoding === "utf-8" ? "utf8" : encoding}`)}
+                </button>
+              </PopoverClose>
             ))}
           </PopoverContent>
         </Popover>
