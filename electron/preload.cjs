@@ -224,7 +224,6 @@ ipcRenderer.on("netcatty:upload:error", (_event, payload) => {
 
 // Compress upload events
 ipcRenderer.on("netcatty:compress:progress", (_event, payload) => {
-  console.log(`[Preload] Received compress progress:`, payload);
   const cb = compressProgressListeners.get(payload.compressionId);
   if (cb) {
     try {
@@ -232,13 +231,10 @@ ipcRenderer.on("netcatty:compress:progress", (_event, payload) => {
     } catch (err) {
       console.error("Compress progress callback failed", err);
     }
-  } else {
-    console.warn(`[Preload] No progress callback found for compressionId: ${payload.compressionId}`);
   }
 });
 
 ipcRenderer.on("netcatty:compress:complete", (_event, payload) => {
-  console.log(`[Preload] Received compress complete:`, payload);
   const cb = compressCompleteListeners.get(payload.compressionId);
   if (cb) {
     try {
@@ -246,8 +242,6 @@ ipcRenderer.on("netcatty:compress:complete", (_event, payload) => {
     } catch (err) {
       console.error("Compress complete callback failed", err);
     }
-  } else {
-    console.warn(`[Preload] No complete callback found for compressionId: ${payload.compressionId}`);
   }
   // Cleanup listeners
   compressProgressListeners.delete(payload.compressionId);

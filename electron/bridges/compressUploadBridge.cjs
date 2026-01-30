@@ -201,15 +201,14 @@ async function extractRemoteArchive(sftpId, archivePath, targetDir, archiveSize)
         reject(new Error(`Failed to execute extraction command: ${err.message}`));
         return;
       }
-      
+
       let stderr = '';
-      let stdout = '';
       let resolved = false;
-      
-      stream.on('data', (data) => {
-        stdout += data.toString();
+
+      stream.on('data', () => {
+        // stdout not needed, just consume the data
       });
-      
+
       stream.stderr.on('data', (data) => {
         stderr += data.toString();
       });
@@ -385,69 +384,63 @@ async function startCompressedUpload(event, payload) {
     // Phase 3: Extraction (90-100%)
     sendProgress('extracting', 90, 100);
 
-    try {
-      await extractRemoteArchive(sftpId, remoteArchivePath, targetPath, compressedSize);
+    await extractRemoteArchive(sftpId, remoteArchivePath, targetPath, compressedSize);
 
-      // Update progress to 95% after extraction
-      sendProgress('extracting', 95, 100);
-      
-      // Perform cleanup operations asynchronously without blocking completion
-      // Note: These cleanup operations are best-effort; if the SFTP session closes before
-      // cleanup completes, errors will be silently ignored
-      setImmediate(async () => {
-        // Additional cleanup: remove any ._* files that might have been extracted
-        try {
-          const client = sftpClients.get(sftpId);
-          // Check both that client exists and connection is still open
-          if (client && client.client && client.client.writable !== false) {
-            const cleanupCommand = `find ${escapeShellArg(targetPath)} -name "._*" -type f -delete 2>/dev/null || true`;
-            client.client.exec(cleanupCommand, (err, stream) => {
-              if (err) {
-                // Silently ignore - session may have closed
-                return;
-              }
+    // Update progress to 95% after extraction
+    sendProgress('extracting', 95, 100);
 
-              stream.on('close', () => {
-                // Cleanup completed
-              });
+    // Perform cleanup operations asynchronously without blocking completion
+    // Note: These cleanup operations are best-effort; if the SFTP session closes before
+    // cleanup completes, errors will be silently ignored
+    setImmediate(async () => {
+      // Additional cleanup: remove any ._* files that might have been extracted
+      try {
+        const client = sftpClients.get(sftpId);
+        // Check both that client exists and connection is still open
+        if (client && client.client && client.client.writable !== false) {
+          const cleanupCommand = `find ${escapeShellArg(targetPath)} -name "._*" -type f -delete 2>/dev/null || true`;
+          client.client.exec(cleanupCommand, (err, stream) => {
+            if (err) {
+              // Silently ignore - session may have closed
+              return;
+            }
 
-              stream.on('error', () => {
-                // Silently ignore cleanup errors
-              });
+            stream.on('close', () => {
+              // Cleanup completed
             });
-          }
-        } catch {
-          // Silently ignore cleanup errors
-        }
 
-        // Additional cleanup attempt - ensure remote archive is removed
-        try {
-          const client = sftpClients.get(sftpId);
-          if (client && client.client && client.client.writable !== false) {
-            client.client.exec(`rm -f ${escapeShellArg(remoteArchivePath)}`, (err, stream) => {
-              if (err) {
-                // Silently ignore - session may have closed
-                return;
-              }
-
-              stream.on('close', () => {
-                // Cleanup completed
-              });
-
-              stream.on('error', () => {
-                // Silently ignore cleanup errors
-              });
+            stream.on('error', () => {
+              // Silently ignore cleanup errors
             });
-          }
-        } catch {
-          // Silently ignore cleanup errors
+          });
         }
-      });
+      } catch {
+        // Silently ignore cleanup errors
+      }
 
-      // Extraction completed successfully - don't wait for cleanup
-    } catch (error) {
-      throw error;
-    }
+      // Additional cleanup attempt - ensure remote archive is removed
+      try {
+        const client = sftpClients.get(sftpId);
+        if (client && client.client && client.client.writable !== false) {
+          client.client.exec(`rm -f ${escapeShellArg(remoteArchivePath)}`, (err, stream) => {
+            if (err) {
+              // Silently ignore - session may have closed
+              return;
+            }
+
+            stream.on('close', () => {
+              // Cleanup completed
+            });
+
+            stream.on('error', () => {
+              // Silently ignore cleanup errors
+            });
+          });
+        }
+      } catch {
+        // Silently ignore cleanup errors
+      }
+    });
 
     // Clean up local temp file
     try {
