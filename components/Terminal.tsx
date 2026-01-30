@@ -42,6 +42,57 @@ import { useTerminalSearch } from "./terminal/hooks/useTerminalSearch";
 import { useTerminalContextActions } from "./terminal/hooks/useTerminalContextActions";
 import { useTerminalAuthState } from "./terminal/hooks/useTerminalAuthState";
 import { useServerStats } from "./terminal/hooks/useServerStats";
+import { extractDropEntries, getPathForFile, DropEntry } from "../lib/sftpFileUtils";
+
+/**
+ * Extract unique root paths from drop entries for local terminal path insertion.
+ * For nested files, extracts the root folder path; for single files, uses the full path.
+ * Paths with spaces are quoted.
+ */
+function extractRootPathsFromDropEntries(dropEntries: DropEntry[]): string[] {
+  const paths: string[] = [];
+  const seenPaths = new Set<string>();
+
+  for (const entry of dropEntries) {
+    if (!entry.file) continue;
+
+    const fullPath = getPathForFile(entry.file);
+    if (!fullPath) continue;
+
+    const pathParts = entry.relativePath.split('/');
+
+    if (pathParts.length > 1) {
+      // Nested file in a folder - extract the root folder path
+      const rootFolderName = pathParts[0];
+      const separator = fullPath.includes('\\') ? '\\' : '/';
+
+      // Find the position of the root folder name in the full path
+      const rootFolderIndex = fullPath.lastIndexOf(separator + rootFolderName + separator);
+      const altRootFolderIndex = fullPath.lastIndexOf(separator + rootFolderName);
+      const folderStartIndex = rootFolderIndex !== -1
+        ? rootFolderIndex + 1
+        : (altRootFolderIndex !== -1 ? altRootFolderIndex + 1 : -1);
+
+      if (folderStartIndex !== -1) {
+        const folderEndIndex = folderStartIndex + rootFolderName.length;
+        const folderPath = fullPath.substring(0, folderEndIndex);
+
+        if (!seenPaths.has(folderPath)) {
+          paths.push(folderPath.includes(' ') ? `"${folderPath}"` : folderPath);
+          seenPaths.add(folderPath);
+        }
+      }
+    } else {
+      // Single file (not in a folder)
+      if (!seenPaths.has(fullPath)) {
+        paths.push(fullPath.includes(' ') ? `"${fullPath}"` : fullPath);
+        seenPaths.add(fullPath);
+      }
+    }
+  }
+
+  return paths;
+}
 
 interface TerminalProps {
   host: Host;
@@ -210,6 +261,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     totalHops: number;
     currentHostLabel: string;
   } | null>(null);
+
+  // Drag and drop state
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const dragCounterRef = useRef(0);
+  const [pendingUploadEntries, setPendingUploadEntries] = useState<DropEntry[]>([]);
 
   const terminalSearch = useTerminalSearch({ searchAddonRef, termRef });
   const {
@@ -890,6 +946,95 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }
   };
 
+  // Drag and drop handlers
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current++;
+    if (e.dataTransfer.types.includes('Files')) {
+      setIsDraggingOver(true);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes('Files')) {
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current--;
+    if (dragCounterRef.current === 0) {
+      setIsDraggingOver(false);
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDraggingOver(false);
+
+    if (!e.dataTransfer.types.includes('Files')) {
+      return;
+    }
+
+    // Only handle drops on connected terminals
+    if (status !== 'connected') {
+      toast.error(t("terminal.dragDrop.notConnected"), t("terminal.dragDrop.errorTitle"));
+      return;
+    }
+
+    try {
+      const dropEntries = await extractDropEntries(e.dataTransfer);
+      
+      if (dropEntries.length === 0) {
+        return;
+      }
+
+      if (isLocalConnection) {
+        // Local terminal: Insert absolute paths
+        const paths = extractRootPathsFromDropEntries(dropEntries);
+
+        if (paths.length > 0 && termRef.current && sessionRef.current) {
+          const pathsText = paths.join(' ');
+          // Write the paths to the terminal
+          terminalBackend.writeToSession(sessionRef.current, pathsText);
+          termRef.current.focus();
+        }
+      } else {
+        // Remote terminal: Trigger SFTP upload
+        // Get current working directory for SFTP initial path
+        let initialPath: string | undefined = undefined;
+        if (sessionRef.current) {
+          try {
+            const result = await terminalBackend.getSessionPwd(sessionRef.current);
+            if (result.success && result.cwd) {
+              initialPath = result.cwd;
+            }
+          } catch {
+            // Silently fail and open SFTP without initial path
+          }
+        }
+
+        setPendingUploadEntries(dropEntries);
+        // Use flushSync to ensure sftpInitialPath is updated synchronously
+        // before setShowSFTP(true) triggers the modal open
+        flushSync(() => {
+          setSftpInitialPath(initialPath);
+        });
+        setShowSFTP(true);
+      }
+    } catch (error) {
+      logger.error("Failed to handle file drop", error);
+      toast.error(t("terminal.dragDrop.errorMessage"), t("terminal.dragDrop.errorTitle"));
+    }
+  };
+
   const renderControls = (opts?: { showClose?: boolean }) => (
     <TerminalToolbar
       status={status}
@@ -937,7 +1082,34 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       onSplitVertical={onSplitVertical}
       onClose={inWorkspace ? () => onCloseSession?.(sessionId) : undefined}
     >
-      <div className="relative h-full w-full flex overflow-hidden bg-gradient-to-br from-[#050910] via-[#06101a] to-[#0b1220]">
+      <div 
+        className="relative h-full w-full flex overflow-hidden bg-gradient-to-br from-[#050910] via-[#06101a] to-[#0b1220]"
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {/* Drag and drop overlay */}
+        {isDraggingOver && (
+          <div className="absolute inset-0 z-50 bg-blue-600/20 backdrop-blur-sm border-4 border-dashed border-blue-400 pointer-events-none flex items-center justify-center">
+            <div className="bg-background/90 backdrop-blur-md rounded-lg shadow-lg p-6 border border-border">
+              <div className="text-center">
+                <div className="text-lg font-semibold mb-2">
+                  {isLocalConnection 
+                    ? t("terminal.dragDrop.localTitle")
+                    : t("terminal.dragDrop.remoteTitle")
+                  }
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  {isLocalConnection 
+                    ? t("terminal.dragDrop.localMessage")
+                    : t("terminal.dragDrop.remoteMessage")
+                  }
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="absolute left-0 right-0 top-0 z-20 pointer-events-none">
           <div
             className="flex items-center gap-1 px-2 py-0.5 backdrop-blur-md pointer-events-auto min-w-0 border-b-[0.5px]"
@@ -1410,8 +1582,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
             };
           })()}
           open={showSFTP && status === "connected"}
-          onClose={() => setShowSFTP(false)}
+          onClose={() => {
+            setShowSFTP(false);
+            setPendingUploadEntries([]);
+          }}
           initialPath={sftpInitialPath}
+          initialEntriesToUpload={pendingUploadEntries}
         />
       </div>
     </TerminalContextMenu>

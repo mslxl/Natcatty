@@ -6,6 +6,7 @@ import { useSettingsState } from "../application/state/useSettingsState";
 import { useSftpModalTransfers } from "./sftp-modal/hooks/useSftpModalTransfers";
 import { Host, RemoteFile, SftpFilenameEncoding } from "../types";
 import { filterHiddenFiles } from "./sftp";
+import { DropEntry } from "../lib/sftpFileUtils";
 import FileOpenerDialog from "./FileOpenerDialog";
 import TextEditorModal from "./TextEditorModal";
 import { SftpModalFileList } from "./sftp-modal/SftpModalFileList";
@@ -45,6 +46,8 @@ interface SFTPModalProps {
   onClose: () => void;
   /** Initial path to open in SFTP. If not accessible, falls back to home directory. */
   initialPath?: string;
+  /** Initial entries to upload when SFTP modal opens. Used for drag-and-drop to terminal. */
+  initialEntriesToUpload?: DropEntry[];
 }
 
 const SFTPModal: React.FC<SFTPModalProps> = ({
@@ -53,6 +56,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   open,
   onClose,
   initialPath,
+  initialEntriesToUpload,
 }) => {
   const {
     openSftp,
@@ -348,6 +352,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     uploadTasks,
     dragActive,
     handleDownload,
+    handleUploadEntries,
     handleFileSelect,
     handleFolderSelect,
     handleDrag,
@@ -380,6 +385,35 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     await closeSftpSession();
     onClose();
   };
+
+  // Handle initial entries to upload (from drag-and-drop to terminal)
+  const initialUploadTriggeredRef = useRef(false);
+  const prevLoadingRef = useRef(loading);
+  useEffect(() => {
+    // Detect when loading transitions from true to false (initial load complete)
+    const wasLoading = prevLoadingRef.current;
+    prevLoadingRef.current = loading;
+    const justFinishedLoading = wasLoading && !loading;
+
+    // Reset the flag when initialEntriesToUpload changes
+    if (!initialEntriesToUpload || initialEntriesToUpload.length === 0) {
+      initialUploadTriggeredRef.current = false;
+      return;
+    }
+
+    // Prevent duplicate uploads
+    if (initialUploadTriggeredRef.current) return;
+
+    // Wait for SFTP connection to be established
+    // Trigger when: modal is open AND loading just finished (works for empty directories too)
+    if (!open || loading) return;
+    if (!justFinishedLoading) return;
+
+    initialUploadTriggeredRef.current = true;
+
+    // Trigger upload with full DropEntry data (preserves directory structure)
+    handleUploadEntries(initialEntriesToUpload);
+  }, [initialEntriesToUpload, open, loading, handleUploadEntries]);
 
   // Display files with parent entry (like SftpView)
   const displayFiles = useMemo(() => {
