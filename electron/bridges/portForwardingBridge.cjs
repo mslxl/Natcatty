@@ -47,59 +47,59 @@ async function startPortForward(event, payload) {
     passphrase,
   } = payload;
 
+  const conn = new SSHClient();
+  const sender = event.sender;
+
+  const sendStatus = (status, error = null) => {
+    if (!sender.isDestroyed()) {
+      sender.send("netcatty:portforward:status", { tunnelId, status, error });
+    }
+  };
+
+  const connectOpts = {
+    host: hostname,
+    port: port,
+    username: username || 'root',
+    readyTimeout: 120000, // 2 minutes for 2FA input
+    keepaliveInterval: 10000,
+    // Enable keyboard-interactive authentication (required for 2FA/MFA)
+    tryKeyboard: true,
+  };
+
+  if (privateKey) {
+    connectOpts.privateKey = privateKey;
+  }
+  if (passphrase) {
+    connectOpts.passphrase = passphrase;
+  }
+  if (password) {
+    connectOpts.password = password;
+  }
+
+  // Get default keys
+  const defaultKeys = await findAllDefaultPrivateKeysFromHelper();
+
+  // Build auth handler using shared helper
+  const authConfig = buildAuthHandler({
+    privateKey,
+    password,
+    passphrase,
+    username: connectOpts.username,
+    logPrefix: "[PortForward]",
+    defaultKeys,
+  });
+  applyAuthToConnOpts(connectOpts, authConfig);
+
+  // Handle keyboard-interactive authentication (2FA/MFA)
+  conn.on("keyboard-interactive", createKeyboardInteractiveHandler({
+    sender,
+    sessionId: tunnelId,
+    hostname,
+    password,
+    logPrefix: "[PortForward]",
+  }));
+
   return new Promise((resolve, reject) => {
-    const conn = new SSHClient();
-    const sender = event.sender;
-
-    const sendStatus = (status, error = null) => {
-      if (!sender.isDestroyed()) {
-        sender.send("netcatty:portforward:status", { tunnelId, status, error });
-      }
-    };
-
-    const connectOpts = {
-      host: hostname,
-      port: port,
-      username: username || 'root',
-      readyTimeout: 120000, // 2 minutes for 2FA input
-      keepaliveInterval: 10000,
-      // Enable keyboard-interactive authentication (required for 2FA/MFA)
-      tryKeyboard: true,
-    };
-
-    if (privateKey) {
-      connectOpts.privateKey = privateKey;
-    }
-    if (passphrase) {
-      connectOpts.passphrase = passphrase;
-    }
-    if (password) {
-      connectOpts.password = password;
-    }
-
-    // Get default keys
-    const defaultKeys = await findAllDefaultPrivateKeysFromHelper();
-
-    // Build auth handler using shared helper
-    const authConfig = buildAuthHandler({
-      privateKey,
-      password,
-      passphrase,
-      username: connectOpts.username,
-      logPrefix: "[PortForward]",
-      defaultKeys,
-    });
-    applyAuthToConnOpts(connectOpts, authConfig);
-
-    // Handle keyboard-interactive authentication (2FA/MFA)
-    conn.on("keyboard-interactive", createKeyboardInteractiveHandler({
-      sender,
-      sessionId: tunnelId,
-      hostname,
-      password,
-      logPrefix: "[PortForward]",
-    }));
-
 
     conn.on('ready', () => {
       console.log(`[PortForward] SSH connection ready for tunnel ${tunnelId}`);

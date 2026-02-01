@@ -94,7 +94,6 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
     return IS_MAC ? binding.mac : binding.pc;
   }, [keyBindings]);
   const quickSwitchKey = getHotkeyLabel('quick-switch');
-  const [isFocused, setIsFocused] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -102,7 +101,6 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
   // Reset state when opening
   useEffect(() => {
     if (isOpen) {
-      setIsFocused(false);
       setSelectedIndex(0);
       // Auto focus the input after a short delay
       setTimeout(() => {
@@ -232,7 +230,6 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
               onQueryChange(e.target.value);
               setSelectedIndex(0);
             }}
-            onFocus={() => setIsFocused(true)}
             onKeyDown={handleKeyDown}
             placeholder={t("qs.search.placeholder")}
             className="flex-1 h-8 border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 px-0 text-sm"

@@ -101,7 +101,6 @@ export const useSftpModalTransfers = ({
   ensureSftp,
   loadFiles,
   readLocalFile,
-  readSftp,
   writeLocalFile,
   writeSftpBinaryWithProgress,
   writeSftpBinary,
@@ -768,7 +767,7 @@ export const useSftpModalTransfers = ({
       if (cancelTransfer) {
         try {
           await cancelTransfer(taskId);
-        } catch (e) {
+        } catch {
           // Ignore cancellation errors
         }
       }
