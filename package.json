@@ -80,5 +80,8 @@
     "typescript": "~5.9.3",
     "vite": "^7.2.7",
     "wait-on": "^9.0.3"
+  },
+  "overrides": {
+    "cpu-features": "npm:empty-npm-package@1.0.0"
   }
 }
