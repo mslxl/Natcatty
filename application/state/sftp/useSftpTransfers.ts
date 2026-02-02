@@ -29,7 +29,13 @@ interface UseSftpTransfersResult {
     sourceFiles: { name: string; isDirectory: boolean }[],
     sourceSide: "left" | "right",
     targetSide: "left" | "right",
-  ) => Promise<void>;
+    options?: {
+      sourcePane?: SftpPane;
+      sourcePath?: string;
+      sourceConnectionId?: string;
+      onTransferComplete?: (result: TransferResult) => void | Promise<void>;
+    },
+  ) => Promise<TransferResult[]>;
   addExternalUpload: (task: TransferTask) => void;
   updateExternalUpload: (taskId: string, updates: Partial<TransferTask>) => void;
   cancelTransfer: (transferId: string) => Promise<void>;
@@ -37,6 +43,13 @@ interface UseSftpTransfersResult {
   clearCompletedTransfers: () => void;
   dismissTransfer: (transferId: string) => void;
   resolveConflict: (conflictId: string, action: "replace" | "skip" | "duplicate") => Promise<void>;
+}
+
+interface TransferResult {
+  id: string;
+  fileName: string;
+  originalFileName?: string;
+  status: TransferStatus;
 }
 
 export const useSftpTransfers = ({
@@ -53,6 +66,7 @@ export const useSftpTransfers = ({
   const progressIntervalsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
   // Track cancelled task IDs for checking during async operations
   const cancelledTasksRef = useRef<Set<string>>(new Set());
+  const completionHandlersRef = useRef<Map<string, (result: TransferResult) => void | Promise<void>>>(new Map());
 
   useEffect(() => {
     const intervalsRef = progressIntervalsRef.current;
@@ -268,6 +282,7 @@ export const useSftpTransfers = ({
         ...task,
         id: crypto.randomUUID(),
         fileName: file.name,
+        originalFileName: file.name,
         sourcePath: joinPath(task.sourcePath, file.name),
         targetPath: joinPath(task.targetPath, file.name),
         isDirectory: file.type === "directory",
@@ -305,7 +320,7 @@ export const useSftpTransfers = ({
     sourcePane: SftpPane,
     targetPane: SftpPane,
     targetSide: "left" | "right",
-  ) => {
+  ): Promise<TransferStatus> => {
     const updateTask = (updates: Partial<TransferTask>) => {
       setTransfers((prev) =>
         prev.map((t) => (t.id === task.id ? { ...t, ...updates } : t)),
@@ -461,7 +476,7 @@ export const useSftpTransfers = ({
             status: "pending",
             totalBytes: sourceStat?.size || estimatedSize,
           });
-          return;
+          return "pending";
         }
       }
 
@@ -507,6 +522,20 @@ export const useSftpTransfers = ({
       );
 
       await refresh(targetSide);
+      const completionHandler = completionHandlersRef.current.get(task.id);
+      if (completionHandler) {
+        try {
+          await completionHandler({
+            id: task.id,
+            fileName: task.fileName,
+            originalFileName: task.originalFileName ?? task.fileName,
+            status: "completed",
+          });
+        } finally {
+          completionHandlersRef.current.delete(task.id);
+        }
+      }
+      return "completed";
     } catch (err) {
       if (useSimulatedProgress) {
         stopProgressSimulation(task.id);
@@ -518,7 +547,20 @@ export const useSftpTransfers = ({
 
       if (isCancelled) {
         // Don't update status - cancelTransfer already set it to cancelled
-        return;
+        const completionHandler = completionHandlersRef.current.get(task.id);
+        if (completionHandler) {
+          try {
+            await completionHandler({
+              id: task.id,
+              fileName: task.fileName,
+              originalFileName: task.originalFileName ?? task.fileName,
+              status: "cancelled",
+            });
+          } finally {
+            completionHandlersRef.current.delete(task.id);
+          }
+        }
+        return "cancelled";
       }
 
       updateTask({
@@ -527,6 +569,20 @@ export const useSftpTransfers = ({
         endTime: Date.now(),
         speed: 0,
       });
+      const completionHandler = completionHandlersRef.current.get(task.id);
+      if (completionHandler) {
+        try {
+          await completionHandler({
+            id: task.id,
+            fileName: task.fileName,
+            originalFileName: task.originalFileName ?? task.fileName,
+            status: "failed",
+          });
+        } finally {
+          completionHandlersRef.current.delete(task.id);
+        }
+      }
+      return "failed";
     }
   };
 
@@ -534,23 +590,30 @@ export const useSftpTransfers = ({
     async (
       sourceFiles: { name: string; isDirectory: boolean }[],
       sourceSide: "left" | "right",
-      targetSide: "left" | "right",
-    ) => {
-      const sourcePane = getActivePane(sourceSide);
+    targetSide: "left" | "right",
+    options?: {
+      sourcePane?: SftpPane;
+      sourcePath?: string;
+      sourceConnectionId?: string;
+      onTransferComplete?: (result: TransferResult) => void | Promise<void>;
+    },
+  ) => {
+      const sourcePane = options?.sourcePane ?? getActivePane(sourceSide);
       const targetPane = getActivePane(targetSide);
 
-      if (!sourcePane?.connection || !targetPane?.connection) return;
+      if (!sourcePane?.connection || !targetPane?.connection) return [];
 
       const sourceEncoding: SftpFilenameEncoding = sourcePane.connection.isLocal
         ? "auto"
         : sourcePane.filenameEncoding || "auto";
 
-      const sourcePath = sourcePane.connection.currentPath;
+      const sourcePath = options?.sourcePath ?? sourcePane.connection.currentPath;
       const targetPath = targetPane.connection.currentPath;
+      const sourceConnectionId = options?.sourceConnectionId ?? sourcePane.connection.id;
 
       const sourceSftpId = sourcePane.connection.isLocal
         ? null
-        : sftpSessionsRef.current.get(sourcePane.connection.id);
+        : sftpSessionsRef.current.get(sourceConnectionId);
 
       const newTasks: TransferTask[] = [];
 
@@ -585,9 +648,10 @@ export const useSftpTransfers = ({
         newTasks.push({
           id: crypto.randomUUID(),
           fileName: file.name,
+          originalFileName: file.name,
           sourcePath: joinPath(sourcePath, file.name),
           targetPath: joinPath(targetPath, file.name),
-          sourceConnectionId: sourcePane.connection!.id,
+          sourceConnectionId,
           targetConnectionId: targetPane.connection!.id,
           direction,
           status: "pending" as TransferStatus,
@@ -601,9 +665,25 @@ export const useSftpTransfers = ({
 
       setTransfers((prev) => [...prev, ...newTasks]);
 
-      for (const task of newTasks) {
-        await processTransfer(task, sourcePane, targetPane, targetSide);
+      if (options?.onTransferComplete) {
+        for (const task of newTasks) {
+          completionHandlersRef.current.set(task.id, options.onTransferComplete);
+        }
       }
+
+      const results: TransferResult[] = [];
+
+      for (const task of newTasks) {
+        const status = await processTransfer(task, sourcePane, targetPane, targetSide);
+        results.push({
+          id: task.id,
+          fileName: task.fileName,
+          originalFileName: task.originalFileName ?? task.fileName,
+          status,
+        });
+      }
+
+      return results;
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [getActivePane, sftpSessionsRef],
@@ -715,6 +795,19 @@ export const useSftpTransfers = ({
               : t,
           ),
         );
+        const completionHandler = completionHandlersRef.current.get(conflictId);
+        if (completionHandler) {
+          try {
+            await completionHandler({
+              id: task.id,
+              fileName: task.fileName,
+              originalFileName: task.originalFileName ?? task.fileName,
+              status: "cancelled",
+            });
+          } finally {
+            completionHandlersRef.current.delete(conflictId);
+          }
+        }
         return;
       }
 

@@ -174,7 +174,7 @@ export interface KeyBinding {
   label: string;
   mac: string; // e.g., '⌘+1', '⌘+⌥+arrows'
   pc: string; // e.g., 'Ctrl+1', 'Ctrl+Alt+arrows'
-  category: 'tabs' | 'terminal' | 'navigation' | 'app';
+  category: 'tabs' | 'terminal' | 'navigation' | 'app' | 'sftp';
 }
 
 // User's custom key bindings - only stores overrides from defaults
@@ -292,18 +292,26 @@ export const matchesKeyBinding = (e: KeyboardEvent, keyStr: string, isMac: boole
     if (e.metaKey !== needMeta) return false;
   }
   
-  // Check key
-  let eventKey = e.key;
-  if (eventKey === ' ') eventKey = 'Space';
-  else if (eventKey === 'ArrowUp') eventKey = '↑';
-  else if (eventKey === 'ArrowDown') eventKey = '↓';
-  else if (eventKey === 'ArrowLeft') eventKey = '←';
-  else if (eventKey === 'ArrowRight') eventKey = '→';
-  else if (eventKey === 'Escape') eventKey = 'Esc';
-  else if (eventKey === '[') eventKey = '[';
-  else if (eventKey === ']') eventKey = ']';
-  
-  return eventKey.toLowerCase() === key.toLowerCase();
+  const normalizeKey = (rawKey: string): string => {
+    let normalizedKey = rawKey;
+    if (normalizedKey === ' ') normalizedKey = 'Space';
+    else if (normalizedKey === 'ArrowUp') normalizedKey = '↑';
+    else if (normalizedKey === 'ArrowDown') normalizedKey = '↓';
+    else if (normalizedKey === 'ArrowLeft') normalizedKey = '←';
+    else if (normalizedKey === 'ArrowRight') normalizedKey = '→';
+    else if (normalizedKey === 'Escape') normalizedKey = 'Esc';
+    else if (normalizedKey === 'Backspace') normalizedKey = '⌫';
+    else if (normalizedKey === 'Delete') normalizedKey = 'Del';
+    else if (normalizedKey === '[') normalizedKey = '[';
+    else if (normalizedKey === ']') normalizedKey = ']';
+    else if (normalizedKey === 'Del') normalizedKey = 'Del';
+    return normalizedKey;
+  };
+
+  const eventKey = normalizeKey(e.key);
+  const parsedKey = normalizeKey(key);
+
+  return eventKey.toLowerCase() === parsedKey.toLowerCase();
 };
 
 export const DEFAULT_KEY_BINDINGS: KeyBinding[] = [
@@ -335,6 +343,16 @@ export const DEFAULT_KEY_BINDINGS: KeyBinding[] = [
   { id: 'quick-switch', action: 'quickSwitch', label: 'Quick Switch', mac: '⌘ + J', pc: 'Ctrl + J', category: 'app' },
   { id: 'snippets', action: 'snippets', label: 'Open Snippets', mac: '⌘ + Shift + S', pc: 'Ctrl + Shift + S', category: 'app' },
   { id: 'broadcast', action: 'broadcast', label: 'Switch the Broadcast Mode', mac: '⌘ + B', pc: 'Ctrl + B', category: 'app' },
+
+  // SFTP Operations
+  { id: 'sftp-copy', action: 'sftpCopy', label: 'Copy Files', mac: '⌘ + C', pc: 'Ctrl + C', category: 'sftp' },
+  { id: 'sftp-cut', action: 'sftpCut', label: 'Cut Files', mac: '⌘ + X', pc: 'Ctrl + X', category: 'sftp' },
+  { id: 'sftp-paste', action: 'sftpPaste', label: 'Paste Files', mac: '⌘ + V', pc: 'Ctrl + V', category: 'sftp' },
+  { id: 'sftp-select-all', action: 'sftpSelectAll', label: 'Select All Files', mac: '⌘ + A', pc: 'Ctrl + A', category: 'sftp' },
+  { id: 'sftp-rename', action: 'sftpRename', label: 'Rename File', mac: 'F2', pc: 'F2', category: 'sftp' },
+  { id: 'sftp-delete', action: 'sftpDelete', label: 'Delete Files', mac: '⌘ + ⌫', pc: 'Delete', category: 'sftp' },
+  { id: 'sftp-refresh', action: 'sftpRefresh', label: 'Refresh', mac: '⌘ + R', pc: 'F5', category: 'sftp' },
+  { id: 'sftp-new-folder', action: 'sftpNewFolder', label: 'New Folder', mac: '⌘ + Shift + N', pc: 'Ctrl + Shift + N', category: 'sftp' },
 ];
 
 // Terminal appearance settings
@@ -560,6 +578,7 @@ export type TransferDirection = 'upload' | 'download' | 'remote-to-remote' | 'lo
 export interface TransferTask {
   id: string;
   fileName: string;
+  originalFileName?: string;
   sourcePath: string;
   targetPath: string;
   sourceConnectionId: string;
