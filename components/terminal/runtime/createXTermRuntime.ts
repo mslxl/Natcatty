@@ -18,7 +18,7 @@ import {
   resolveXTermPerformanceConfig,
 } from "../../../infrastructure/config/xtermPerformance";
 import { logger } from "../../../lib/logger";
-import { normalizeLineEndings } from "../../../lib/utils";
+import { isMacPlatform, normalizeLineEndings } from "../../../lib/utils";
 import type {
   Host,
   KeyBinding,
@@ -26,6 +26,7 @@ import type {
   TerminalSettings,
   TerminalTheme,
 } from "../../../types";
+import { matchesKeyBinding } from "../../../domain/models";
 
 type TerminalBackendApi = {
   openExternalAvailable: () => boolean;
@@ -65,6 +66,9 @@ export type CreateXTermRuntimeContext = {
   onBroadcastInputRef: RefObject<
     ((data: string, sourceSessionId: string) => void) | undefined
   >;
+
+  // Snippets for shortkey support
+  snippetsRef?: RefObject<{ id: string; command: string; shortkey?: string }[]>;
 
   sessionId: string;
   statusRef: RefObject<TerminalSession["status"]>;
@@ -333,12 +337,41 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     }
 
     const currentScheme = ctx.hotkeySchemeRef.current;
+    // Use shared utility for platform detection when hotkey scheme is disabled
+    const isMac = currentScheme === "mac" || (currentScheme === "disabled" && isMacPlatform());
+
+    // Check snippet shortcuts first (even if hotkeys are disabled)
+    const snippets = ctx.snippetsRef?.current;
+    if (snippets && snippets.length > 0) {
+      for (const snippet of snippets) {
+        if (snippet.shortkey && matchesKeyBinding(e, snippet.shortkey, isMac)) {
+          const id = ctx.sessionRef.current;
+          if (id && ctx.statusRef.current === "connected") {
+            e.preventDefault();
+            e.stopPropagation();
+            // Send the snippet command to the terminal
+            const payload = `${normalizeLineEndings(snippet.command)}\r`;
+            ctx.terminalBackend.writeToSession(id, payload);
+            if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
+              ctx.onBroadcastInputRef.current(payload, ctx.sessionId);
+            }
+            if (ctx.onCommandExecuted) {
+              const cmd = snippet.command.trim();
+              if (cmd) ctx.onCommandExecuted(cmd, ctx.host.id, ctx.host.label, ctx.sessionId);
+              ctx.commandBufferRef.current = "";
+            }
+            return false;
+          }
+          return true;
+        }
+      }
+    }
+
     const currentBindings = ctx.keyBindingsRef.current;
     if (currentScheme === "disabled" || currentBindings.length === 0) {
       return true;
     }
 
-    const isMac = currentScheme === "mac";
     const matched = checkAppShortcut(e, currentBindings, isMac);
     if (!matched) return true;
 

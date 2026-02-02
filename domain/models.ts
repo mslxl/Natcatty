@@ -136,6 +136,7 @@ export interface Snippet {
   tags?: string[];
   package?: string; // package path
   targets?: string[]; // host ids
+  shortkey?: string; // Keyboard shortcut to send this snippet in terminal (e.g., "F1", "Ctrl + F1")
 }
 
 export interface TerminalLine {
@@ -261,6 +262,12 @@ export const matchesKeyBinding = (e: KeyboardEvent, keyStr: string, isMac: boole
   if (!parsed) return false;
   
   const { modifiers, key } = parsed;
+
+  const hasMacModifiers = modifiers.some((modifier) => ['⌘', '⌃', '⌥'].includes(modifier));
+  const hasPcModifiers = modifiers.some((modifier) => ['Ctrl', 'Alt', 'Win'].includes(modifier));
+  if ((!isMac && hasMacModifiers) || (isMac && hasPcModifiers)) {
+    return false;
+  }
   
   // Check modifiers
   if (isMac) {

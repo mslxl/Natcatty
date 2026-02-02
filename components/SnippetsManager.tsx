@@ -1,11 +1,11 @@
-import { Check, ChevronDown, Clock, Copy, Edit2, FileCode, FolderPlus, LayoutGrid, List as ListIcon, Loader2, Package, Play, Plus, Search, Trash2 } from 'lucide-react';
+import { Check, ChevronDown, Clock, Copy, Edit2, FileCode, FolderPlus, Keyboard, LayoutGrid, List as ListIcon, Loader2, Package, Play, Plus, RotateCcw, Search, Trash2 } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { useStoredViewMode } from '../application/state/useStoredViewMode';
 import { STORAGE_KEY_VAULT_SNIPPETS_VIEW_MODE } from '../infrastructure/config/storageKeys';
-import { cn } from '../lib/utils';
+import { cn, isMacPlatform } from '../lib/utils';
 import { Host, ShellHistoryEntry, Snippet, SSHKey } from '../types';
-import { ManagedSource } from '../domain/models';
+import { HotkeyScheme, KeyBinding, keyEventToString, ManagedSource, matchesKeyBinding, parseKeyCombo } from '../domain/models';
 import { DistroAvatar } from './DistroAvatar';
 import SelectHostPanel from './SelectHostPanel';
 import { AsidePanel, AsidePanelContent } from './ui/aside-panel';
@@ -25,6 +25,8 @@ interface SnippetsManagerProps {
   hosts: Host[];
   customGroups?: string[];
   shellHistory: ShellHistoryEntry[];
+  hotkeyScheme: HotkeyScheme;
+  keyBindings: KeyBinding[];
   onSave: (snippet: Snippet) => void;
   onDelete: (id: string) => void;
   onPackagesChange: (packages: string[]) => void;
@@ -46,6 +48,8 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
   hosts,
   customGroups = [],
   shellHistory,
+  hotkeyScheme,
+  keyBindings,
   onSave,
   onDelete,
   onPackagesChange,
@@ -89,6 +93,187 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
   const historyScrollRef = useRef<HTMLDivElement>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
+  // Shortkey recording state
+  const [isRecordingShortkey, setIsRecordingShortkey] = useState(false);
+  const [shortkeyError, setShortkeyError] = useState<string | null>(null);
+
+  const existingShortkeys = useMemo(() => (
+    snippets.filter(s => Boolean(s.shortkey) && s.id !== editingSnippet.id)
+  ), [snippets, editingSnippet.id]);
+
+  const isMac = useMemo(() => (
+    hotkeyScheme === 'mac' || (hotkeyScheme === 'disabled' && isMacPlatform())
+  ), [hotkeyScheme]);
+
+  const activeSystemBindings = useMemo(() => {
+    return keyBindings.flatMap((binding) => {
+      const entries: { binding: string; isMac: boolean }[] = [];
+      const macBinding = binding.mac;
+      const pcBinding = binding.pc;
+
+      if (hotkeyScheme === 'mac') {
+        if (macBinding && macBinding !== 'Disabled') {
+          entries.push({ binding: macBinding, isMac: true });
+        }
+        return entries;
+      }
+
+      if (hotkeyScheme === 'pc') {
+        if (pcBinding && pcBinding !== 'Disabled') {
+          entries.push({ binding: pcBinding, isMac: false });
+        }
+        return entries;
+      }
+
+      if (macBinding && macBinding !== 'Disabled') {
+        entries.push({ binding: macBinding, isMac: true });
+      }
+      if (pcBinding && pcBinding !== 'Disabled') {
+        entries.push({ binding: pcBinding, isMac: false });
+      }
+      return entries;
+    });
+  }, [hotkeyScheme, keyBindings]);
+
+  const buildKeyEventFromString = useCallback((keyString: string) => {
+    const parsed = parseKeyCombo(keyString);
+    if (!parsed) return null;
+
+    const modifiers = new Set(parsed.modifiers);
+    const key = parsed.key;
+    const normalizedKey = (() => {
+      switch (key) {
+        case 'Space':
+          return ' ';
+        case '↑':
+          return 'ArrowUp';
+        case '↓':
+          return 'ArrowDown';
+        case '←':
+          return 'ArrowLeft';
+        case '→':
+          return 'ArrowRight';
+        case 'Esc':
+          return 'Escape';
+        case '⌫':
+          return 'Backspace';
+        case 'Del':
+          return 'Delete';
+        case '↵':
+          return 'Enter';
+        case '⇥':
+          return 'Tab';
+        default:
+          return key.length === 1 ? key.toLowerCase() : key;
+      }
+    })();
+
+    return new KeyboardEvent('keydown', {
+      key: normalizedKey,
+      metaKey: modifiers.has('⌘') || modifiers.has('Win'),
+      ctrlKey: modifiers.has('⌃') || modifiers.has('Ctrl'),
+      altKey: modifiers.has('⌥') || modifiers.has('Alt'),
+      shiftKey: modifiers.has('Shift'),
+    });
+  }, []);
+
+  // Validate shortkey for conflicts (case-insensitive comparison)
+  const normalizeKeyString = useCallback((value: string) => (
+    value.toLowerCase().replace(/\s+/g, '')
+  ), []);
+
+  const validateShortkey = useCallback((key: string): string | null => {
+    if (!key) return null;
+    
+    const syntheticEvent = buildKeyEventFromString(key);
+    if (syntheticEvent) {
+      const conflictsSystem = activeSystemBindings.some(({ binding, isMac: bindingIsMac }) => (
+        matchesKeyBinding(syntheticEvent, binding, bindingIsMac)
+      ));
+      if (conflictsSystem) {
+        return t('snippets.shortkey.error.systemConflict');
+      }
+    }
+    
+    // Check other snippet shortcuts
+    if (syntheticEvent) {
+      for (const snippet of existingShortkeys) {
+        if (snippet.shortkey && matchesKeyBinding(syntheticEvent, snippet.shortkey, isMac)) {
+          return t('snippets.shortkey.error.snippetConflict', { name: snippet.label });
+        }
+      }
+    } else {
+      const normalizedKey = normalizeKeyString(key);
+      const conflictingSnippet = existingShortkeys.find(snippet => (
+        snippet.shortkey && normalizeKeyString(snippet.shortkey) === normalizedKey
+      ));
+      if (conflictingSnippet) {
+        return t('snippets.shortkey.error.snippetConflict', { name: conflictingSnippet.label });
+      }
+    }
+    
+    return null;
+  }, [
+    activeSystemBindings,
+    buildKeyEventFromString,
+    existingShortkeys,
+    isMac,
+    normalizeKeyString,
+    t,
+  ]);
+
+  // Handle shortkey recording
+  useEffect(() => {
+    if (!isRecordingShortkey) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      // Escape cancels recording
+      if (e.key === 'Escape') {
+        setIsRecordingShortkey(false);
+        setShortkeyError(null);
+        return;
+      }
+
+      // Skip pure modifier keys
+      if (['Meta', 'Control', 'Alt', 'Shift'].includes(e.key)) return;
+
+      const keyString = keyEventToString(e, isMac);
+      
+      // Validate the new shortkey
+      const error = validateShortkey(keyString);
+      if (error) {
+        setShortkeyError(error);
+        // Don't stop recording, let user try again
+        return;
+      }
+      
+      setShortkeyError(null);
+      setEditingSnippet(prev => ({ ...prev, shortkey: keyString }));
+      setIsRecordingShortkey(false);
+    };
+
+    const handleClick = () => {
+      setIsRecordingShortkey(false);
+      setShortkeyError(null);
+    };
+
+    // Delay adding click handler by 100ms to prevent the button click that
+    // initiated recording from immediately triggering the click handler
+    const timer = setTimeout(() => {
+      window.addEventListener('click', handleClick, true);
+    }, 100);
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('click', handleClick, true);
+    };
+  }, [isRecordingShortkey, isMac, validateShortkey]);
+
   const handleEdit = (snippet?: Snippet) => {
     if (snippet) {
       setEditingSnippet(snippet);
@@ -114,6 +299,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
         tags: editingSnippet.tags || [],
         package: editingSnippet.package || '',
         targets: targetSelection,
+        shortkey: editingSnippet.shortkey,
       });
       setRightPanelMode('none');
     }
@@ -606,6 +792,50 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
               />
             </Card>
 
+            {/* Shortkey */}
+            <Card className="p-3 space-y-2 bg-card border-border/80">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-muted-foreground">{t('snippets.field.shortkey')}</p>
+                {editingSnippet.shortkey && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={() => {
+                      setEditingSnippet(prev => ({ ...prev, shortkey: undefined }));
+                      setShortkeyError(null);
+                    }}
+                    title={t('snippets.shortkey.clear')}
+                  >
+                    <RotateCcw size={12} />
+                  </Button>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsRecordingShortkey(true);
+                  setShortkeyError(null);
+                }}
+                className={cn(
+                  "w-full h-10 px-3 text-sm font-mono rounded-lg border transition-colors flex items-center justify-center gap-2",
+                  isRecordingShortkey
+                    ? "border-primary bg-primary/10 animate-pulse"
+                    : "border-border hover:border-primary/50 bg-background"
+                )}
+              >
+                <Keyboard size={14} className="text-muted-foreground" />
+                {isRecordingShortkey
+                  ? t('snippets.shortkey.recording')
+                  : editingSnippet.shortkey || t('snippets.shortkey.placeholder')}
+              </button>
+              {shortkeyError && (
+                <p className="text-xs text-destructive">{shortkeyError}</p>
+              )}
+              <p className="text-[11px] text-muted-foreground">{t('snippets.shortkey.hint')}</p>
+            </Card>
+
             {/* Targets */}
             <Card className="p-3 space-y-3 bg-card border-border/80">
               <div className="flex items-center justify-between">
@@ -895,6 +1125,11 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                               {snippet.command.replace(/\s+/g, ' ') || t('snippets.commandFallback')}
                             </div>
                           </div>
+                          {snippet.shortkey && (
+                            <div className="shrink-0 px-2 py-1 text-[10px] font-mono rounded border border-border bg-muted/50 text-muted-foreground">
+                              {snippet.shortkey}
+                            </div>
+                          )}
                           {viewMode === 'list' && (
                             <Button
                               variant="ghost"
