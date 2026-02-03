@@ -224,7 +224,7 @@ export const useSftpKeyboardShortcuts = ({
                 sourceConnectionId: clipboard.sourceConnectionId,
                 onTransferComplete: handleTransferComplete,
               });
-            } catch (error) {
+            } catch {
               toast.error("Paste failed. Please try again.", "SFTP");
             }
           } else {

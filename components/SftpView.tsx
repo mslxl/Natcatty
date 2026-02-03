@@ -14,7 +14,7 @@
  * - components/sftp/SftpHostPicker.tsx - Host selection dialog
  */
 
-import React, { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useIsSftpActive } from "../application/state/activeTabStore";
 import { useSftpState } from "../application/state/useSftpState";

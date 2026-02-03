@@ -5,7 +5,7 @@
  * This store allows keyboard shortcuts to trigger dialogs in the appropriate pane.
  */
 
-import { useSyncExternalStore, useCallback, useEffect } from "react";
+import { useSyncExternalStore, useEffect } from "react";
 import { sftpFocusStore, SftpFocusedSide } from "./useSftpFocusedPane";
 
 export type SftpDialogActionType = "rename" | "delete" | "newFolder" | "newFile" | null;
