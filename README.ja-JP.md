@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="public/icon.png" alt="Netcatty" width="128" height="128">
-</p>
-
 <h1 align="center">Netcatty</h1>
 
 <p align="center">
@@ -11,27 +7,15 @@
 
 <p align="center">
   Electron、React、xterm.js で構築された機能豊富な SSH ワークスペース。<br/>
-  ホスト管理、分割ターミナル、SFTP、ポートフォワーディング、クラウド同期 — すべてが一つに。
+  分割ターミナル、Vault ビュー、SFTP ワークフロー、カスタムテーマ、キーワードハイライト — すべてが一つに。
 </p>
 
 <p align="center">
-  <a href="https://github.com/binaricat/Netcatty/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/binaricat/Netcatty?style=for-the-badge&logo=github&label=Release"></a>
-  &nbsp;
-  <a href="#"><img alt="Platform" src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-blue?style=for-the-badge&logo=electron"></a>
-  &nbsp;
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-GPL--3.0-green?style=for-the-badge"></a>
-</p>
-
-<p align="center">
-  <a href="https://github.com/binaricat/Netcatty/releases/latest">
-    <img src="https://img.shields.io/github/v/release/binaricat/Netcatty?style=for-the-badge&logo=github&label=最新版をダウンロード&color=success" alt="最新版をダウンロード">
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://ko-fi.com/binaricat">
-    <img src="https://cdn.ko-fi.com/cdn/kofi3.png?v=2" width="150" alt="Ko-fi でサポート">
-  </a>
+  <a href="https://github.com/binaricat/Netcatty/releases/latest"><strong>最新版をダウンロード</strong></a>
+  &nbsp;·&nbsp;
+  <a href="LICENSE"><strong>GPL-3.0 ライセンス</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://ko-fi.com/binaricat"><strong>Ko-fi でサポート</strong></a>
 </p>
 
 <p align="center">
@@ -40,22 +24,20 @@
 
 ---
 
-[![Netcatty メインインターフェース](screenshots/vault_grid_view.png)](screenshots/vault_grid_view.png)
+[![Netcatty メインインターフェース](screenshots/main-window-dark.png)](screenshots/main-window-dark.png)
 
 ---
 
 # 目次 <!-- omit in toc -->
 
 - [Netcatty とは](#netcatty-とは)
+- [なぜ Netcatty](#なぜ-netcatty)
 - [機能](#機能)
+- [デモ](#デモ)
 - [スクリーンショット](#スクリーンショット)
-  - [ホスト管理](#ホスト管理)
-  - [ターミナル](#ターミナル)
-  - [SFTP](#sftp)
-  - [キーチェーン](#キーチェーン)
-  - [ポートフォワーディング](#ポートフォワーディング)
-  - [クラウド同期](#クラウド同期)
-  - [テーマとカスタマイズ](#テーマとカスタマイズ)
+  - [メインウィンドウ](#メインウィンドウ)
+  - [Vault ビュー](#vault-ビュー)
+  - [分割ターミナル](#分割ターミナル)
 - [対応ディストリビューション](#対応ディストリビューション)
 - [はじめに](#はじめに)
 - [ビルドとパッケージ](#ビルドとパッケージ)
@@ -71,190 +53,119 @@
 **Netcatty** は、複数のリモートサーバーを効率的に管理する必要がある開発者、システム管理者、DevOps エンジニア向けに設計された、モダンなクロスプラットフォーム SSH クライアントおよびターミナルマネージャーです。
 
 - **Netcatty は** PuTTY、Termius、SecureCRT、macOS Terminal.app の代替となる SSH 接続ツール
-- **Netcatty は** デュアルペインファイルブラウザを備えた強力な SFTP クライアント
+- **Netcatty は** 強力な SFTP クライアント（ドラッグ＆ドロップ + 内蔵エディタ）
 - **Netcatty は** 分割ペイン、タブ、セッション管理を備えたターミナルワークスペース
-- **Netcatty は** シェルの代替ではありません — SSH/Telnet またはローカルターミナル経由でリモートシェルに接続します
+- **Netcatty は** シェルの代替ではありません — SSH/Telnet/Mosh やローカル/シリアル経由でシェルに接続します（環境により異なります）
+
+---
+
+<a name="なぜ-netcatty"></a>
+# なぜ Netcatty
+
+複数サーバーを日常的に扱うなら、Netcatty は「スピード」と「流れ」を重視した作りになっています：
+
+- **ワークスペース中心** — 分割ペインで複数セッションを並行操作
+- **Vault の見やすさ** — グリッド/リスト/ツリーで状況に合わせて切り替え
+- **SFTP の作業感** — ドラッグ＆ドロップと内蔵エディタでサクッと編集
 
 ---
 
 <a name="機能"></a>
 # 機能
 
-### 🖥️ ターミナルとセッション
-- **xterm.js ベースのターミナル**、GPU アクセラレーションレンダリング対応
+### 🗂️ Vault
+- **複数ビュー** — グリッド / リスト / ツリー
+- **高速検索** — ホストやグループを素早く見つける
+
+### 🖥️ ターミナルワークスペース
 - **分割ペイン** — 水平・垂直分割でマルチタスク
-- **タブ管理** — ドラッグ＆ドロップで並べ替え可能な複数セッション
-- **セッション永続化** — 再起動後もセッションを復元
-- **ブロードキャストモード** — 一度の入力で複数のターミナルに送信
+- **セッション管理** — 複数の接続を並行して扱う
 
-### 🔐 SSH クライアント
-- **SSH2 プロトコル**、完全な認証サポート
-- **パスワード＆キー認証**
-- **SSH 証明書**サポート
-- **ジャンプホスト / 踏み台サーバー** — 複数ホストを経由した接続
-- **プロキシサポート** — HTTP CONNECT および SOCKS5 プロキシ
-- **エージェント転送** — OpenSSH Agent および Pageant 対応
-- **環境変数** — ホストごとにカスタム環境変数を設定
+### 📁 SFTP + 内蔵エディタ
+- **ファイル作業** — ドラッグ＆ドロップでアップロード/ダウンロード
+- **その場で編集** — 内蔵エディタで小さな修正を素早く
 
-### 📁 SFTP
-- **デュアルペインファイルブラウザ** — ローカル ↔ リモート または リモート ↔ リモート
-- **Sudo 特権昇格** — sudo を使用して root 権限のファイルを閲覧および編集
-- **ドラッグ＆ドロップ** アップロードおよびダウンロード
-- **ドラッグ＆ドロップ**ファイル転送
-- **キュー管理**でバッチ転送
-- **進捗追跡**、転送速度表示
+### 🎨 パーソナライズ
+- **カスタムテーマ** — UI の見た目を好みに調整
+- **キーワードハイライト** — ターミナル出力の強調表示ルールをカスタマイズ
 
-### 🔑 キーチェーン
-- **SSH キー生成** — RSA、ECDSA、ED25519
-- **既存キーのインポート** — PEM、OpenSSH 形式
-- **SSH 証明書**サポート
-- **アイデンティティ管理** — 再利用可能なユーザー名＋認証方式の組み合わせ
-- **公開鍵をエクスポート**してリモートホストへ
+---
 
-### 🔌 ポートフォワーディング
-- **ローカルフォワーディング** — リモートサービスをローカルに公開
-- **リモートフォワーディング** — ローカルサービスをリモートに公開
-- **ダイナミックフォワーディング** — SOCKS5 プロキシ
-- **ビジュアルトンネル管理**
+<a name="デモ"></a>
+# デモ
 
-### ☁️ クラウド同期
-- **エンドツーエンド暗号化同期** — デバイスを離れる前にデータを暗号化
-- **複数のプロバイダー** — GitHub Gist、S3 互換ストレージ、WebDAV、Google Drive、OneDrive
-- **ホスト、キー、スニペット、設定を同期**
+GIF で機能をさっと確認できます（素材は `screenshots/gifs/`）：
 
-### 🎨 テーマとカスタマイズ
-- **ライト＆ダークモード**
-- **カスタムアクセントカラー**
-- **50以上のターミナル配色**
-- **フォントカスタマイズ** — JetBrains Mono、Fira Code など
-- **多言語対応** — English、简体中文 など
+### Vault ビュー：グリッド / リスト / ツリー
+状況に合わせて見え方を切り替え。グリッドで全体像、リストで密度、ツリーで階層を扱えます。
+
+![Vault ビュー：グリッド/リスト/ツリー](screenshots/gifs/gird-list-tre-views.gif)
+
+### 分割ターミナル + セッション管理
+複数セッションを分割ペインで並べて作業。関連タスクを横並びにしてコンテキストスイッチを減らします。
+
+![分割ターミナル + セッション管理](screenshots/gifs/dual-terminal--split-manage.gif)
+
+### SFTP：ドラッグ＆ドロップ + 内蔵エディタ
+ドラッグ＆ドロップでファイルを移動し、内蔵エディタでそのまま編集できます。
+
+![SFTP：ドラッグ＆ドロップ + 内蔵エディタ](screenshots/gifs/sftpview-with-drag-and-built-in-editor.gif)
+
+### ドラッグでアップロード
+ファイルをそのままドロップしてアップロードを開始。ダイアログ操作を減らせます。
+
+![ドラッグでアップロード](screenshots/gifs/drag-file-upload.gif)
+
+### カスタムテーマ
+テーマを調整して自分の好みに合わせた見た目に。
+
+![カスタムテーマ](screenshots/gifs/custom-themes.gif)
+
+### キーワードハイライト
+重要な出力（エラー/警告/マーカーなど）を見つけやすくするために、ハイライトをカスタマイズできます。
+
+![キーワードハイライト](screenshots/gifs/custom-highlight.gif)
 
 ---
 
 <a name="スクリーンショット"></a>
 # スクリーンショット
 
-<a name="ホスト管理"></a>
-## ホスト管理
+<a name="メインウィンドウ"></a>
+## メインウィンドウ
 
-Vault ビューはすべての SSH 接続を管理するコマンドセンターです。右クリックメニューで階層的なグループを作成し、グループ間でホストをドラッグ、パンくずナビゲーションでホストツリーを素早く移動できます。各ホストは接続状態、OS アイコン、クイック接続ボタンを表示。グリッドとリストビューを切り替え、強力な検索で名前、ホスト名、タグ、グループでフィルタリングできます。
+メインウィンドウは、長時間の SSH 作業を前提に設計されています。セッション、ナビゲーション、主要ツールへ素早くアクセスできます。
 
-**ダークモード**
+![メインウィンドウ（ダーク）](screenshots/main-window-dark.png)
 
-![ホスト管理](screenshots/vault_grid_view.png)
+![メインウィンドウ（ライト）](screenshots/main-window-light.png)
 
-**ネストされたフォルダと整理**
+<a name="vault-ビュー"></a>
+## Vault ビュー
 
-![ネストされたフォルダ](screenshots/nested_folder_structure.png)
+作業に合わせて見え方を切り替え：グリッドで全体像、リストでスキャン、ツリーで整理と階層ナビゲーション。
 
-**リストビュー**
+![Vault グリッドビュー](screenshots/vault_grid_view.png)
 
-![リストビュー](screenshots/vault_list_view.png)
+![Vault リストビュー](screenshots/vault_list_view.png)
 
-<a name="ターミナル"></a>
-## ターミナル
+![Vault ツリービュー（ダーク）](screenshots/treeview-dark.png)
 
-WebGL アクセラレーション対応の xterm.js ベースのターミナルで、スムーズでレスポンシブな体験を提供。ワークスペースを水平または垂直に分割して、複数のセッションを同時に監視。ブロードキャストモードを有効にすると、すべてのターミナルに一度にコマンドを送信できます — フリート管理に最適。テーマカスタマイズパネルでは、50以上の配色スキームをライブプレビュー、フォントサイズの調整、JetBrains Mono や Fira Code を含む複数のフォントファミリーを選択できます。
+![Vault ツリービュー（ライト）](screenshots/treeview-light.png)
 
-**分割ウィンドウ**
+<a name="分割ターミナル"></a>
+## 分割ターミナル
 
-**ブロードキャストモード**
+分割ペインで複数のサーバー/タスクを同時に扱えます（例：デプロイ + ログ + 監視）。
 
-一度入力すれば、どこでも実行できます。複数のサーバーを同時にメンテナンスするのに最適です。
-
-![ブロードキャストモード](screenshots/broadcast_mode.png)
-
-**パフォーマンス情報とカスタマイズ**
-
-接続の健全性を監視し、ターミナルのあらゆる側面をカスタマイズします。
-
-![ターミナルパフォーマンス](screenshots/terminal_performance.png)
-
-<a name="sftp"></a>
-## SFTP
-
-デュアルペイン SFTP ブラウザは、ローカルからリモート、リモートからリモートへのファイル転送をサポート。シングルクリックでディレクトリを移動、ペイン間でファイルをドラッグ＆ドロップ、転送進捗をリアルタイムで監視。インターフェースにはファイル権限、サイズ、変更日時を表示。複数の転送をキューに入れ、詳細な速度と進捗インジケーターで完了を確認。コンテキストメニューから名前変更、削除、ダウンロード、アップロード操作にすばやくアクセス。
-
-![SFTP デュアルペイン](screenshots/sftp_dual_pane.png)
-
-**転送キュー**
-
-![転送キュー](screenshots/sftp_transfer_queue.png)
-
-<a name="キーチェーン"></a>
-## キーチェーン
-
-キーチェーンは SSH 認証情報を保管する安全な保管庫です。新しいキーを生成、既存のキーをインポート、エンタープライズ認証用の SSH 証明書を管理できます。
-
-| キータイプ | アルゴリズム | 推奨用途 |
-|----------|------------|---------|
-| **ED25519** | EdDSA | モダン、高速、最も安全（推奨） |
-| **ECDSA** | NIST P-256/384/521 | 高いセキュリティ、広くサポート |
-| **RSA** | RSA 2048/4096 | レガシー互換性、ユニバーサルサポート |
-| **証明書** | CA 署名 | エンタープライズ環境、短期認証 |
-
-**機能：**
-- 🔑 カスタマイズ可能なビット長でキーを生成
-- 📥 PEM/OpenSSH 形式のキーをインポート
-- 👤 再利用可能なアイデンティティを作成（ユーザー名＋認証方式）
-- 📤 ワンクリックで公開鍵をリモートホストにエクスポート
-
-![キーマネージャー](screenshots/key-manager.png)
-
-**キー生成**
-
-![キー生成](screenshots/key_generator_ui.png)
-
-<a name="ポートフォワーディング"></a>
-## ポートフォワーディング
-
-直感的なビジュアルインターフェースで SSH トンネルをセットアップ。各トンネルはリアルタイムステータスを表示し、アクティブ、接続中、エラー状態を明確に示します。トンネル設定を保存してセッション間で素早く再利用。
-
-| タイプ | 方向 | ユースケース | 例 |
-|-------|-----|------------|---|
-| **ローカル** | リモート → ローカル | リモートサービスをローカルマシンでアクセス | リモート MySQL `3306` を `localhost:3306` に転送 |
-| **リモート** | ローカル → リモート | ローカルサービスをリモートサーバーと共有 | ローカル開発サーバーをリモートマシンに公開 |
-| **ダイナミック** | SOCKS5 プロキシ | SSH トンネル経由で安全にブラウジング | 暗号化された SSH 接続経由でインターネットをブラウズ |
-
-![ポートフォワーディング](screenshots/port-forwadring.png)
-
-<a name="クラウド同期"></a>
-## クラウド同期
-
-エンドツーエンド暗号化で、すべてのデバイス間でホスト、キー、スニペット、設定を同期。マスターパスワードがアップロード前にすべてのデータをローカルで暗号化 — クラウドプロバイダーは平文を見ることはありません。
-
-| プロバイダー | 最適な用途 | セットアップ複雑度 |
-|------------|----------|-----------------|
-| **GitHub Gist** | クイックセットアップ、バージョン履歴 | ⭐ 簡単 |
-| **Google Drive** | 個人利用、大容量ストレージ | ⭐ 簡単 |
-| **OneDrive** | Microsoft エコシステムユーザー | ⭐ 簡単 |
-| **S3 互換** | AWS、MinIO、Cloudflare R2、セルフホスト | ⭐⭐ 中程度 |
-| **WebDAV** | Nextcloud、ownCloud、セルフホスト | ⭐⭐ 中程度 |
-
-**同期対象：**
-- ✅ ホストと接続設定
-- ✅ SSH キーと証明書
-- ✅ アイデンティティと認証情報
-- ✅ スニペットとスクリプト
-- ✅ カスタムグループとタグ
-- ✅ ポートフォワーディングルール
-- ✅ アプリケーション設定
-
-![クラウド同期](screenshots/cloud-sync.png)
-
-<a name="テーマとカスタマイズ"></a>
-## テーマとカスタマイズ
-
-Netcatty を自分だけのものに。ライトモードとダークモードを切り替えたり、システム設定に従わせたり。好みに合わせてアクセントカラーを選択。アプリケーションは English や简体中文を含む複数の言語をサポートしており、コミュニティによる翻訳貢献を歓迎しています。クラウド同期を有効にすると、すべての設定がデバイス間で同期され、パーソナライズされた体験がどこでも利用できます。
-
-![テーマと国際化](screenshots/app-themes-i18n.png)
+![分割ウィンドウ](screenshots/split-window.png)
 
 ---
 
 <a name="対応ディストリビューション"></a>
 # 対応ディストリビューション
 
-Netcatty は接続したホストの OS アイコンを自動的に検出・表示します：
+Netcatty は接続したホストの OS を検出し、ホスト一覧でアイコンとして表示します：
 
 <p align="center">
   <img src="public/distro/ubuntu.svg" width="48" alt="Ubuntu" title="Ubuntu">
@@ -346,7 +257,7 @@ npm run pack
 # 特定のプラットフォーム用にパッケージ
 npm run pack:mac     # macOS (DMG + ZIP)
 npm run pack:win     # Windows (NSIS インストーラー)
-npm run pack:linux   # Linux (AppImage, deb, rpm)
+npm run pack:linux   # Linux (AppImage + DEB + RPM)
 ```
 
 ---
@@ -356,7 +267,7 @@ npm run pack:linux   # Linux (AppImage, deb, rpm)
 
 | カテゴリ | テクノロジー |
 |--------|------------|
-| フレームワーク | Electron 39 |
+| フレームワーク | Electron 40 |
 | フロントエンド | React 19, TypeScript |
 | ビルドツール | Vite 7 |
 | ターミナル | xterm.js 5 |
@@ -379,17 +290,6 @@ npm run pack:linux   # Linux (AppImage, deb, rpm)
 5. Pull Request をオープン
 
 アーキテクチャの概要とコーディング規約については [agents.md](agents.md) を参照してください。
-
----
-
-<a name="コントリビューター"></a>
-# コントリビューター
-
-貢献してくれたすべての人々に感謝します！
-
-<a href="https://github.com/binaricat/Netcatty/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=binaricat/Netcatty" alt="contributors" />
-</a>
 
 ---
 

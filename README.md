@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="public/icon.png" alt="Netcatty" width="128" height="128">
-</p>
-
 <h1 align="center">Netcatty</h1>
 
 <p align="center">
@@ -11,27 +7,15 @@
 
 <p align="center">
   A beautiful, feature-rich SSH workspace built with Electron, React, and xterm.js.<br/>
-  Host management, split terminals, SFTP, port forwarding, and cloud sync — all in one.
+  Split terminals, Vault views, SFTP workflows, custom themes, and keyword highlighting — all in one.
 </p>
 
 <p align="center">
-  <a href="https://github.com/binaricat/Netcatty/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/binaricat/Netcatty?style=for-the-badge&logo=github&label=Release"></a>
-  &nbsp;
-  <a href="#"><img alt="Platform" src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=for-the-badge&logo=electron"></a>
-  &nbsp;
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-GPL--3.0-green?style=for-the-badge"></a>
-</p>
-
-<p align="center">
-  <a href="https://github.com/binaricat/Netcatty/releases/latest">
-    <img src="https://img.shields.io/github/v/release/binaricat/Netcatty?style=for-the-badge&logo=github&label=Download%20Latest&color=success" alt="Download Latest Release">
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://ko-fi.com/binaricat">
-    <img src="https://cdn.ko-fi.com/cdn/kofi3.png?v=2" width="150" alt="Support on Ko-fi">
-  </a>
+  <a href="https://github.com/binaricat/Netcatty/releases/latest"><strong>Download Latest Release</strong></a>
+  &nbsp;·&nbsp;
+  <a href="LICENSE"><strong>GPL-3.0 License</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://ko-fi.com/binaricat"><strong>Support on Ko-fi</strong></a>
 </p>
 
 <p align="center">
@@ -40,22 +24,20 @@
 
 ---
 
-[![Netcatty Main Interface](screenshots/vault_grid_view.png)](screenshots/vault_grid_view.png)
+[![Netcatty Main Interface](screenshots/main-window-dark.png)](screenshots/main-window-dark.png)
 
 ---
 
 # Contents <!-- omit in toc -->
 
 - [What is Netcatty](#what-is-netcatty)
+- [Why Netcatty](#why-netcatty)
 - [Features](#features)
+- [Demos](#demos)
 - [Screenshots](#screenshots)
-  - [Host Management](#host-management)
-  - [Terminal](#terminal)
-  - [SFTP](#sftp)
-  - [Keychain](#keychain)
-  - [Port Forwarding](#port-forwarding)
-  - [Cloud Sync](#cloud-sync)
-  - [Themes & Customization](#themes--customization)
+  - [Main Window](#main-window)
+  - [Vault Views](#vault-views)
+  - [Split Terminals](#split-terminals)
 - [Supported Distros](#supported-distros)
 - [Getting Started](#getting-started)
 - [Build & Package](#build--package)
@@ -73,180 +55,111 @@
 - **Netcatty is** an alternative to PuTTY, Termius, SecureCRT, and macOS Terminal.app for SSH connections
 - **Netcatty is** a powerful SFTP client with dual-pane file browser
 - **Netcatty is** a terminal workspace with split panes, tabs, and session management
-- **Netcatty is not** a shell replacement — it connects to remote shells via SSH/Telnet or local terminals
+- **Netcatty supports** SSH, local terminal, Telnet, Mosh, and Serial connections (when available)
+- **Netcatty is not** a shell replacement — it connects to shells via SSH/Telnet/Mosh or local/serial sessions
+
+---
+
+<a name="why-netcatty"></a>
+# Why Netcatty
+
+If you regularly work with a fleet of servers, Netcatty is built for speed and flow:
+
+- **Workspace-first** — split panes + tabs + session restore for “always-on” workflows
+- **Vault organization** — grid/list/tree views with fast search and drag-friendly workflows
+- **Serious SFTP** — built-in editor + drag & drop + smooth file operations
 
 ---
 
 <a name="features"></a>
 # Features
 
-### 🖥️ Terminal & Sessions
-- **xterm.js-based terminal** with GPU-accelerated rendering
+### 🗂️ Vault
+- **Multiple views** — grid / list / tree
+- **Fast search** — locate hosts and groups quickly
+
+### 🖥️ Terminal Workspaces
 - **Split panes** — horizontal and vertical splits for multi-tasking
-- **Tab management** — multiple sessions with drag-to-reorder
-- **Session persistence** — restore sessions on restart
-- **Broadcast mode** — type once, send to multiple terminals
+- **Session management** — run multiple connections side-by-side
 
-### 🔐 SSH Client
-- **SSH2 protocol** with full authentication support
-- **Password & key-based authentication**
-- **SSH certificates** support
-- **Jump hosts / Bastion** — chain through multiple hosts
-- **Proxy support** — HTTP CONNECT and SOCKS5 proxies
-- **Agent forwarding** — including OpenSSH Agent and Pageant
-- **Environment variables** — set custom env vars per host
+### 📁 SFTP + Built-in Editor
+- **File workflows** — drag & drop uploads/downloads
+- **Edit in place** — built-in editor for quick changes
 
-### 📁 SFTP
-- **Dual-pane file browser** — local ↔ remote or remote ↔ remote
-- **Sudo Privilege Escalation** — Browse and edit root-owned files with sudo
-- **Drag & Drop** uploads and downloads
-- **Queue management** for batch transfers
-- **Progress tracking** with transfer speed
+### 🎨 Personalization
+- **Custom themes** — tune the app appearance to your taste
+- **Keyword highlighting** — customize highlight rules for terminal output
 
-### 🔑 Keychain
-- **Generate SSH keys** — RSA, ECDSA, ED25519
-- **Import existing keys** — PEM, OpenSSH formats
-- **SSH certificates** support
-- **Identity management** — reusable username + auth combinations
-- **Export public keys** to remote hosts
+---
 
-### 🔌 Port Forwarding
-- **Local forwarding** — expose remote services locally
-- **Remote forwarding** — expose local services remotely
-- **Dynamic forwarding** — SOCKS5 proxy
-- **Visual tunnel management**
+<a name="demos"></a>
+# Demos
 
-### ☁️ Cloud Sync
-- **End-to-end encrypted sync** — your data is encrypted before leaving your device
-- **Multiple providers** — GitHub Gist, S3-compatible storage, WebDAV, Google Drive, OneDrive
-- **Sync hosts, keys, snippets, and settings**
+GIF previews (stored in `screenshots/gifs/`), rendered inline on GitHub:
 
-### 🎨 Themes & Customization
-- **Light & Dark mode**
-- **Custom accent colors**
-- **50+ terminal color schemes**
-- **Font customization** — JetBrains Mono, Fira Code, and more
-- **i18n support** — English, 简体中文, and more
+### Vault views: grid / list / tree
+Switch between different Vault views to match your workflow: overview in grid, dense scanning in list, and hierarchical navigation in tree.
+
+![Vault views: grid/list/tree](screenshots/gifs/gird-list-tre-views.gif)
+
+### Split terminals + session management
+Work in multiple sessions at once with split panes. Keep related tasks side-by-side and reduce context switching.
+
+![Split terminals + session management](screenshots/gifs/dual-terminal--split-manage.gif)
+
+### SFTP: drag & drop + built-in editor
+Move files with drag & drop, then edit quickly using the built-in editor without leaving the app.
+
+![SFTP: drag & drop + built-in editor](screenshots/gifs/sftpview-with-drag-and-built-in-editor.gif)
+
+### Drag file upload
+Drop files into the app to kick off uploads without hunting through dialogs.
+
+![Drag file upload](screenshots/gifs/drag-file-upload.gif)
+
+### Custom themes
+Make Netcatty yours: customize themes and UI appearance.
+
+![Custom themes](screenshots/gifs/custom-themes.gif)
+
+### Keyword highlighting
+Highlight important terminal output so errors, warnings, and key events stand out at a glance.
+
+![Keyword highlighting](screenshots/gifs/custom-highlight.gif)
 
 ---
 
 <a name="screenshots"></a>
 # Screenshots
 
-<a name="host-management"></a>
-## Host Management
+<a name="main-window"></a>
+## Main Window
 
-The Vault view is your command center for managing all SSH connections. Create hierarchical groups with right-click context menus, drag hosts between groups, and use breadcrumb navigation to quickly traverse your host tree. Each host displays its connection status, OS icon, and quick-connect button. Switch between grid and list views based on your preference, and use the powerful search to filter hosts by name, hostname, tags, or group.
+The main window is designed for long-running SSH workflows: quick access to sessions, navigation, and core tools in one place.
 
-**Dark Mode**
+![Main Window (Dark)](screenshots/main-window-dark.png)
 
-![Host Management](screenshots/vault_grid_view.png)
+![Main Window (Light)](screenshots/main-window-light.png)
 
-**Nested Folders & Organization**
+<a name="vault-views"></a>
+## Vault Views
 
-![Nested Folders](screenshots/nested_folder_structure.png)
+Organize and navigate your hosts using the view that best fits the moment: grid for overview, list for scanning, tree for structure.
 
-**List View**
+![Vault Grid View](screenshots/vault_grid_view.png)
 
-![List View](screenshots/vault_list_view.png)
+![Vault List View](screenshots/vault_list_view.png)
 
-<a name="terminal"></a>
-## Terminal
+![Vault Tree View (Dark)](screenshots/treeview-dark.png)
 
-Powered by xterm.js with WebGL acceleration, the terminal delivers a smooth, responsive experience. Split your workspace horizontally or vertically to monitor multiple sessions simultaneously. Enable broadcast mode to send commands to all terminals at once — perfect for fleet management. The theme customization panel offers 50+ color schemes with live preview, adjustable font size, and multiple font family options including JetBrains Mono and Fira Code.
+![Vault Tree View (Light)](screenshots/treeview-light.png)
 
-**Split Windows**
+<a name="split-terminals"></a>
+## Split Terminals
 
-**Broadcast Mode**
+Split panes help you monitor multiple servers/services at the same time (deploy + logs + metrics) without juggling windows.
 
-Type once, execute everywhere. Great for maintaining multiple servers simultaneously.
-
-![Broadcast Mode](screenshots/broadcast_mode.png)
-
-**Performance Info & Customization**
-
-Monitor your connection health and customize every aspect of your terminal.
-
-![Terminal Performance](screenshots/terminal_performance.png)
-
-<a name="sftp"></a>
-## SFTP
-
-The dual-pane SFTP browser supports local-to-remote and remote-to-remote file transfers. Navigate directories with single-click, drag files between panes, and monitor transfer progress in real-time. The interface shows file permissions, sizes, and modification dates. Queue multiple transfers and watch them complete with detailed speed and progress indicators. Context menus provide quick access to rename, delete, download, and upload operations.
-
-![SFTP Dual Pane](screenshots/sftp_dual_pane.png)
-
-**Transfer Queue**
-
-![Transfer Queue](screenshots/sftp_transfer_queue.png)
-
-<a name="keychain"></a>
-## Keychain
-
-The Keychain is your secure vault for SSH credentials. Generate new keys, import existing ones, or manage SSH certificates for enterprise authentication.
-
-| Key Type | Algorithm | Recommended Use |
-|----------|-----------|----------------|
-| **ED25519** | EdDSA | Modern, fast, most secure (recommended) |
-| **ECDSA** | NIST P-256/384/521 | Good security, widely supported |
-| **RSA** | RSA 2048/4096 | Legacy compatibility, universal support |
-| **Certificate** | CA-signed | Enterprise environments, short-lived auth |
-
-**Features:**
-- 🔑 Generate keys with customizable bit lengths
-- 📥 Import PEM/OpenSSH format keys
-- 👤 Create reusable identities (username + auth method)
-- 📤 One-click export public keys to remote hosts
-
-![Key Manager](screenshots/key-manager.png)
-
-**Key Generator**
-
-![Key Generator](screenshots/key_generator_ui.png)
-
-<a name="port-forwarding"></a>
-## Port Forwarding
-
-Set up SSH tunnels with an intuitive visual interface. Each tunnel shows real-time status with clear indicators for active, connecting, or error states. Save tunnel configurations for quick reuse across sessions.
-
-| Type | Direction | Use Case | Example |
-|------|-----------|----------|--------|
-| **Local** | Remote → Local | Access remote services on your machine | Forward remote MySQL `3306` to `localhost:3306` |
-| **Remote** | Local → Remote | Share local services with remote server | Expose local dev server to remote machine |
-| **Dynamic** | SOCKS5 Proxy | Secure browsing through SSH tunnel | Browse internet via encrypted SSH connection |
-
-![Port Forwarding](screenshots/port-forwadring.png)
-
-<a name="cloud-sync"></a>
-## Cloud Sync
-
-Keep your hosts, keys, snippets, and settings synchronized across all your devices with end-to-end encryption. Your master password encrypts all data locally before upload — the cloud provider never sees plaintext.
-
-| Provider | Best For | Setup Complexity |
-|----------|----------|------------------|
-| **GitHub Gist** | Quick setup, version history | ⭐ Easy |
-| **Google Drive** | Personal use, large storage | ⭐ Easy |
-| **OneDrive** | Microsoft ecosystem users | ⭐ Easy |
-| **S3-Compatible** | AWS, MinIO, Cloudflare R2, self-hosted | ⭐⭐ Medium |
-| **WebDAV** | Nextcloud, ownCloud, self-hosted | ⭐⭐ Medium |
-
-**What syncs:**
-- ✅ Hosts & connection settings
-- ✅ SSH keys & certificates
-- ✅ Identities & credentials
-- ✅ Snippets & scripts
-- ✅ Custom groups & tags
-- ✅ Port forwarding rules
-- ✅ Application preferences
-
-![Cloud Sync](screenshots/cloud-sync.png)
-
-<a name="themes--customization"></a>
-## Themes & Customization
-
-Make Netcatty truly yours with extensive customization options. Toggle between light and dark modes, or let the app follow your system preference. Pick any accent color to match your style. The application supports multiple languages including English and 简体中文, with more translations welcome via community contributions. All preferences sync across devices when cloud sync is enabled, so your personalized experience follows you everywhere.
-
-![Themes & i18n](screenshots/app-themes-i18n.png)
+![Split Windows](screenshots/split-window.png)
 
 ---
 
@@ -269,8 +182,6 @@ Netcatty automatically detects and displays OS icons for connected hosts:
   <img src="public/distro/oracle.svg" width="48" alt="Oracle Linux" title="Oracle Linux">
   <img src="public/distro/kali.svg" width="48" alt="Kali Linux" title="Kali Linux">
 </p>
-
----
 
 <a name="getting-started"></a>
 # Getting Started
@@ -355,7 +266,7 @@ npm run pack:linux   # Linux (AppImage + DEB + RPM)
 
 | Category | Technology |
 |----------|------------|
-| Framework | Electron 39 |
+| Framework | Electron 40 |
 | Frontend | React 19, TypeScript |
 | Build Tool | Vite 7 |
 | Terminal | xterm.js 5 |
@@ -386,9 +297,7 @@ See [agents.md](agents.md) for architecture overview and coding conventions.
 
 Thanks to all the people who contribute!
 
-<a href="https://github.com/binaricat/Netcatty/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=binaricat/Netcatty" alt="contributors" />
-</a>
+See: https://github.com/binaricat/Netcatty/graphs/contributors
 
 ---
 

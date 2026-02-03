@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="public/icon.png" alt="Netcatty" width="128" height="128">
-</p>
-
 <h1 align="center">Netcatty</h1>
 
 <p align="center">
@@ -11,27 +7,17 @@
 
 <p align="center">
   一个基于 Electron、React 和 xterm.js 构建的功能丰富的 SSH 工作空间。<br/>
-  主机管理、分屏终端、SFTP、端口转发、云同步 —— 一应俱全。
-</p>
-
-<p align="center">
-  <a href="https://github.com/binaricat/Netcatty/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/binaricat/Netcatty?style=for-the-badge&logo=github&label=Release"></a>
-  &nbsp;
-  <a href="#"><img alt="Platform" src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-blue?style=for-the-badge&logo=electron"></a>
-  &nbsp;
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-GPL--3.0-green?style=for-the-badge"></a>
+  分屏终端、Vault 多视图、SFTP 工作流、自定义主题、关键词高亮 —— 一应俱全。
 </p>
 
 <p align="center">
   <a href="https://github.com/binaricat/Netcatty/releases/latest">
-    <img src="https://img.shields.io/github/v/release/binaricat/Netcatty?style=for-the-badge&logo=github&label=下载最新版&color=success" alt="下载最新版">
+    <strong>下载最新版</strong>
   </a>
-</p>
-
-<p align="center">
-  <a href="https://ko-fi.com/binaricat">
-    <img src="https://cdn.ko-fi.com/cdn/kofi3.png?v=2" width="150" alt="在 Ko-fi 上支持我">
-  </a>
+  &nbsp;·&nbsp;
+  <a href="LICENSE"><strong>GPL-3.0 协议</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://ko-fi.com/binaricat"><strong>在 Ko-fi 上支持我</strong></a>
 </p>
 
 <p align="center">
@@ -40,22 +26,20 @@
 
 ---
 
-[![Netcatty 主界面](screenshots/vault_grid_view.png)](screenshots/vault_grid_view.png)
+[![Netcatty 主界面](screenshots/main-window-dark.png)](screenshots/main-window-dark.png)
 
 ---
 
 # 目录 <!-- omit in toc -->
 
 - [Netcatty 是什么](#netcatty-是什么)
+- [为什么是 Netcatty](#为什么是-netcatty)
 - [功能特性](#功能特性)
+- [演示](#演示)
 - [界面截图](#界面截图)
-  - [主机管理](#主机管理)
-  - [终端](#终端)
-  - [SFTP](#sftp)
-  - [密钥管理](#密钥管理)
-  - [端口转发](#端口转发)
-  - [云同步](#云同步)
-  - [主题与定制](#主题与定制)
+  - [主界面](#主界面)
+  - [Vault 视图](#vault-视图)
+  - [分屏终端](#分屏终端)
 - [支持的发行版](#支持的发行版)
 - [快速开始](#快速开始)
 - [构建与打包](#构建与打包)
@@ -73,188 +57,118 @@
 - **Netcatty 是** PuTTY、Termius、SecureCRT 和 macOS Terminal.app 的现代替代品
 - **Netcatty 是** 一个强大的 SFTP 客户端，支持双窗格文件浏览
 - **Netcatty 是** 一个终端工作空间，支持分屏、标签页和会话管理
-- **Netcatty 不是** Shell 替代品 —— 它通过 SSH/Telnet 或本地终端连接到远程 Shell
+- **Netcatty 支持** SSH、本地终端、Telnet、Mosh、串口（Serial）等连接方式（视环境而定）
+- **Netcatty 不是** Shell 替代品 —— 它通过 SSH/Telnet/Mosh 或本地/串口会话连接到 Shell
+
+---
+
+<a name="为什么是-netcatty"></a>
+# 为什么是 Netcatty
+
+如果你需要同时维护多台服务器，Netcatty 更像是“工作台”而不是单一终端：
+
+- **以工作区为核心** —— 分屏 + 多会话并行，适合长期驻留的工作流
+- **Vault 管理** —— 网格/列表/树形视图，配合搜索与拖拽更顺手
+- **认真做的 SFTP** —— 内置编辑器 + 拖拽上传，文件操作更丝滑
 
 ---
 
 <a name="功能特性"></a>
 # 功能特性
 
-### 🖥️ 终端与会话
-- **基于 xterm.js 的终端**，支持 GPU 加速渲染
-- **分屏功能** —— 水平和垂直分割，多任务并行
-- **标签页管理** —— 多会话支持，拖拽排序
-- **会话持久化** —— 重启后恢复会话
-- **广播模式** —— 一次输入，发送到多个终端
+### 🗂️ Vault
+- **多种视图** —— 网格 / 列表 / 树形
+- **快速搜索** —— 迅速定位主机与分组
 
-### 🔐 SSH 客户端
-- **SSH2 协议**，完整的认证支持
-- **密码和密钥认证**
-- **SSH 证书**支持
-- **跳板机 / 堡垒机** —— 多主机链式连接
-- **代理支持** —— HTTP CONNECT 和 SOCKS5 代理
-- **Agent 转发** —— 支持 OpenSSH Agent 和 Pageant
-- **环境变量** —— 为每个主机设置自定义环境变量
+### 🖥️ 终端工作区
+- **分屏** —— 水平/垂直分割，多任务并行
+- **多会话管理** —— 多连接并排处理
 
-### 📁 SFTP
-- **双窗格文件浏览器** —— 本地 ↔ 远程 或 远程 ↔ 远程
-- **Sudo 提权支持** —— 使用 sudo 浏览和编辑 root 权限文件
-- **拖放操作** —— 支持上传和下载
-- **拖放传输** 文件
-- **队列管理** 批量传输
-- **进度跟踪** 显示传输速度
+### 📁 SFTP + 内置编辑器
+- **文件工作流** —— 拖拽上传/下载更直观
+- **就地编辑** —— 内置编辑器快速修改文件
 
-### 🔑 密钥管理
-- **生成 SSH 密钥** —— RSA、ECDSA、ED25519
-- **导入已有密钥** —— PEM、OpenSSH 格式
-- **SSH 证书**支持
-- **身份管理** —— 可复用的用户名 + 认证方式组合
-- **导出公钥**到远程主机
+### 🎨 个性化
+- **自定义主题** —— 按喜好调整应用外观
+- **关键词高亮** —— 自定义终端输出高亮规则
 
-### 🔌 端口转发
-- **本地转发** —— 将远程服务暴露到本地
-- **远程转发** —— 将本地服务暴露到远程
-- **动态转发** —— SOCKS5 代理
-- **可视化隧道管理**
+---
 
-### ☁️ 云同步
-- **端到端加密同步** —— 数据在离开设备前加密
-- **多种存储后端** —— GitHub Gist、S3 兼容存储、WebDAV、Google Drive、OneDrive
-- **同步主机、密钥、代码片段和设置**
+<a name="演示"></a>
+# 演示
 
-### 🎨 主题与定制
-- **浅色 & 深色模式**
-- **自定义强调色**
-- **50+ 终端配色方案**
-- **字体自定义** —— JetBrains Mono、Fira Code 等
-- **多语言支持** —— English、简体中文 等
+GIF 预览（素材均在 `screenshots/gifs/`），在 GitHub README 中可直接观看：
+
+### Vault 视图：网格 / 列表 / 树形
+根据不同场景自由切换视图：网格适合总览，列表适合密集浏览，树形适合层级导航与整理。
+
+![Vault 视图：网格/列表/树形](screenshots/gifs/gird-list-tre-views.gif)
+
+### 分屏终端 + 会话管理
+用分屏把多个会话并排放在同一个工作区里，降低来回切换窗口/标签页的成本。
+
+![分屏终端 + 会话管理](screenshots/gifs/dual-terminal--split-manage.gif)
+
+### SFTP：拖拽 + 内置编辑器
+通过拖拽完成文件传输，并用内置编辑器快速修改文件内容，不用来回切换工具。
+
+![SFTP：拖拽 + 内置编辑器](screenshots/gifs/sftpview-with-drag-and-built-in-editor.gif)
+
+### 拖拽文件上传
+把文件直接拖进应用即可触发上传流程，省去多层对话框与路径选择。
+
+![拖拽文件上传](screenshots/gifs/drag-file-upload.gif)
+
+### 自定义主题
+按自己的审美与习惯定制主题与界面外观，让日常使用更顺手。
+
+![自定义主题](screenshots/gifs/custom-themes.gif)
+
+### 关键词高亮
+让关键输出一眼可见：错误、告警或特定标记被高亮后更容易扫到与定位。
+
+![关键词高亮](screenshots/gifs/custom-highlight.gif)
 
 ---
 
 <a name="界面截图"></a>
 # 界面截图
 
-<a name="主机管理"></a>
-## 主机管理
+<a name="主界面"></a>
+## 主界面
 
-Vault 视图是管理所有 SSH 连接的控制中心。通过右键菜单创建层级分组，在分组间拖拽主机，使用面包屑导航快速遍历主机树。每个主机显示连接状态、操作系统图标和快速连接按钮。根据偏好在网格和列表视图之间切换，使用强大的搜索按名称、主机名、标签或分组过滤主机。
+主界面围绕长期 SSH 工作流设计：把会话、导航和常用工具集中到同一处，减少切换成本。
 
-**深色模式**
+![主界面（深色）](screenshots/main-window-dark.png)
 
-![主机管理](screenshots/vault_grid_view.png)
+![主界面（浅色）](screenshots/main-window-light.png)
 
-**层级文件夹与分组**
+<a name="vault-视图"></a>
+## Vault 视图
 
-![层级文件夹](screenshots/nested_folder_structure.png)
+用更适合当前任务的方式管理与浏览主机：网格看全局，列表做筛选，树形做整理与层级导航。
 
-**列表视图**
+![Vault 网格视图](screenshots/vault_grid_view.png)
 
-![列表视图](screenshots/vault_list_view.png)
+![Vault 列表视图](screenshots/vault_list_view.png)
 
-<a name="终端"></a>
-## 终端
+![Vault 树形视图（深色）](screenshots/treeview-dark.png)
 
-基于 xterm.js 的 WebGL 加速终端，提供流畅、响应迅速的体验。水平或垂直分割工作区，同时监控多个会话。启用广播模式可一次向所有终端发送命令 —— 非常适合批量管理。主题定制面板提供 50+ 配色方案和实时预览、可调节字号以及多种字体选择，包括 JetBrains Mono 和 Fira Code。
+![Vault 树形视图（浅色）](screenshots/treeview-light.png)
 
-**分屏窗口**
+<a name="分屏终端"></a>
+## 分屏终端
 
-**广播模式**
+分屏适合同时处理多个任务（例如部署 + 日志 + 排障），不用频繁切换窗口。
 
-一次输入，多处执行。非常适合同时维护这多台服务器。
-
-![广播模式](screenshots/broadcast_mode.png)
-
-**性能信息与定制**
-
-监控连接健康状况，并自定义终端的方方面面。
-
-![终端性能](screenshots/terminal_performance.png)
-
-<a name="sftp"></a>
-## SFTP
-
-双窗格 SFTP 浏览器支持本地到远程和远程到远程的文件传输。单击导航目录，在窗格之间拖放文件，实时监控传输进度。界面显示文件权限、大小和修改日期。批量传输队列管理，详细的速度和进度指示器。右键菜单快速访问重命名、删除、下载和上传操作。
-
-![SFTP 双窗格](screenshots/sftp_dual_pane.png)
-
-**传输队列**
-
-![传输队列](screenshots/sftp_transfer_queue.png)
-
-<a name="密钥管理"></a>
-## 密钥管理
-
-密钥库是您存储 SSH 凭证的安全保险库。生成新密钥、导入已有密钥或管理企业认证的 SSH 证书。
-
-| 密钥类型 | 算法 | 推荐用途 |
-|---------|------|---------|
-| **ED25519** | EdDSA | 现代、快速、最安全（推荐） |
-| **ECDSA** | NIST P-256/384/521 | 安全性好、广泛支持 |
-| **RSA** | RSA 2048/4096 | 旧版兼容、通用支持 |
-| **证书** | CA 签名 | 企业环境、短期认证 |
-
-**功能：**
-- 🔑 生成可自定义位长的密钥
-- 📥 导入 PEM/OpenSSH 格式密钥
-- 👤 创建可复用身份（用户名 + 认证方式）
-- 📤 一键导出公钥到远程主机
-
-![密钥管理器](screenshots/key-manager.png)
-
-**密钥生成器**
-
-![密钥生成器](screenshots/key_generator_ui.png)
-
-<a name="端口转发"></a>
-## 端口转发
-
-通过直观的可视化界面设置 SSH 隧道。每个隧道显示实时状态，清晰指示活动、连接中或错误状态。保存隧道配置以便跨会话快速复用。
-
-| 类型 | 方向 | 使用场景 | 示例 |
-|-----|-----|---------|-----|
-| **本地** | 远程 → 本地 | 在本机访问远程服务 | 将远程 MySQL `3306` 转发到 `localhost:3306` |
-| **远程** | 本地 → 远程 | 与远程服务器共享本地服务 | 将本地开发服务器暴露给远程机器 |
-| **动态** | SOCKS5 代理 | 通过 SSH 隧道安全浏览 | 通过加密 SSH 连接浏览互联网 |
-
-![端口转发](screenshots/port-forwadring.png)
-
-<a name="云同步"></a>
-## 云同步
-
-通过端到端加密在所有设备间同步主机、密钥、代码片段和设置。主密码在上传前本地加密所有数据 —— 云服务商永远看不到明文。
-
-| 服务商 | 最适合 | 配置复杂度 |
-|-------|-------|----------|
-| **GitHub Gist** | 快速设置、版本历史 | ⭐ 简单 |
-| **Google Drive** | 个人使用、大容量存储 | ⭐ 简单 |
-| **OneDrive** | 微软生态用户 | ⭐ 简单 |
-| **S3 兼容存储** | AWS、MinIO、Cloudflare R2、自托管 | ⭐⭐ 中等 |
-| **WebDAV** | Nextcloud、ownCloud、自托管 | ⭐⭐ 中等 |
-
-**同步内容：**
-- ✅ 主机与连接设置
-- ✅ SSH 密钥与证书
-- ✅ 身份与凭证
-- ✅ 代码片段与脚本
-- ✅ 自定义分组与标签
-- ✅ 端口转发规则
-- ✅ 应用程序偏好设置
-
-![云同步](screenshots/cloud-sync.png)
-
-<a name="主题与定制"></a>
-## 主题与定制
-
-让 Netcatty 真正属于你。在浅色和深色模式之间切换，或让应用跟随系统偏好。选择任意强调色来匹配你的风格。应用支持多种语言，包括 English 和简体中文，欢迎社区贡献更多翻译。启用云同步后，所有偏好设置都会跨设备同步，个性化体验随处可用。
-
-![主题与国际化](screenshots/app-themes-i18n.png)
+![分屏窗口](screenshots/split-window.png)
 
 ---
 
 <a name="支持的发行版"></a>
 # 支持的发行版
 
-Netcatty 自动检测并显示已连接主机的操作系统图标：
+Netcatty 会自动识别并在主机列表中展示对应的系统图标：
 
 <p align="center">
   <img src="public/distro/ubuntu.svg" width="48" alt="Ubuntu" title="Ubuntu">
@@ -270,8 +184,6 @@ Netcatty 自动检测并显示已连接主机的操作系统图标：
   <img src="public/distro/oracle.svg" width="48" alt="Oracle Linux" title="Oracle Linux">
   <img src="public/distro/kali.svg" width="48" alt="Kali Linux" title="Kali Linux">
 </p>
-
----
 
 <a name="快速开始"></a>
 # 快速开始
@@ -356,7 +268,7 @@ npm run pack:linux   # Linux (AppImage, deb, rpm)
 
 | 分类 | 技术 |
 |-----|-----|
-| 框架 | Electron 39 |
+| 框架 | Electron 40 |
 | 前端 | React 19, TypeScript |
 | 构建工具 | Vite 7 |
 | 终端 | xterm.js 5 |
@@ -387,9 +299,7 @@ npm run pack:linux   # Linux (AppImage, deb, rpm)
 
 感谢所有参与贡献的人！
 
-<a href="https://github.com/binaricat/Netcatty/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=binaricat/Netcatty" alt="contributors" />
-</a>
+查看：https://github.com/binaricat/Netcatty/graphs/contributors
 
 ---
 
