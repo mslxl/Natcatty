@@ -6,6 +6,7 @@ import { toast } from "./ui/toast";
 import { cn } from "../lib/utils";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useTrayPanelBackend } from "../application/state/useTrayPanelBackend";
+import { useActiveTabId } from "../application/state/activeTabStore";
 
 const TrayPanel: React.FC = () => {
   const { t } = useI18n();
@@ -14,6 +15,7 @@ const TrayPanel: React.FC = () => {
   const { hosts, keys } = useVaultState();
   const { sessions, setActiveTabId } = useSessionState();
   const { rules: portForwardingRules, startTunnel, stopTunnel } = usePortForwardingState();
+  const activeTabId = useActiveTabId();
 
   const keysForPf = useMemo(
     () => keys.map((k) => ({ id: k.id, privateKey: k.privateKey })),
@@ -95,10 +97,11 @@ const TrayPanel: React.FC = () => {
                   className={cn(
                     "w-full text-left px-2 py-1.5 rounded hover:bg-muted",
                     s.status === "connected" ? "" : "text-muted-foreground",
+                    activeTabId === s.id ? "bg-muted" : "",
                   )}
                 >
                   <span className="truncate">{s.hostLabel || s.hostname}</span>
-                  <span className="ml-2 text-xs text-muted-foreground">({s.status})</span>
+                  <span className="ml-2 text-xs text-muted-foreground">({t(`tray.status.${s.status}`)})</span>
                 </button>
               ))}
             </div>
@@ -141,7 +144,7 @@ const TrayPanel: React.FC = () => {
                   >
                     <span className="truncate">{label}</span>
                     <span className="ml-2 text-xs text-muted-foreground">
-                      {rule.status}
+                      {t(`tray.status.${rule.status}`)}
                     </span>
                   </button>
                 );

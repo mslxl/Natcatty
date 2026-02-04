@@ -492,10 +492,17 @@ function buildTrayMenuTemplate() {
  */
 function updateTrayMenu() {
   if (!tray) return;
-  
+  // When tray panel is enabled, keep context menu minimal to avoid showing both menu and panel.
   const { Menu } = electronModule;
-  const menuTemplate = buildTrayMenuTemplate();
-  const contextMenu = Menu.buildFromTemplate(menuTemplate);
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: "Quit",
+      click: () => {
+        closeToTray = false;
+        electronModule.app.quit();
+      },
+    },
+  ]);
   tray.setContextMenu(contextMenu);
 }
 
