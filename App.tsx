@@ -351,12 +351,17 @@ function App({ settings }: { settings: SettingsState }) {
     const timer = setTimeout(() => {
       if (cancelled) return;
 
-      const sessionsForTray = sessions.map((s) => ({
-        id: s.id,
-        label: s.hostname,
-        hostLabel: s.hostLabel,
-        status: s.status,
-      }));
+      const sessionsForTray = sessions.map((s) => {
+        const ws = s.workspaceId ? workspaces.find((w) => w.id === s.workspaceId) : undefined;
+        return {
+          id: s.id,
+          label: s.hostname,
+          hostLabel: s.hostLabel,
+          status: s.status,
+          workspaceId: s.workspaceId,
+          workspaceTitle: ws?.title,
+        };
+      });
 
       void bridge.updateTrayMenuData({
         sessions: sessionsForTray,
@@ -368,14 +373,23 @@ function App({ settings }: { settings: SettingsState }) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [sessions, portForwardingRules]);
+  }, [sessions, portForwardingRules, workspaces]);
 
   useEffect(() => {
     const bridge = netcattyBridge.get();
     if (!bridge?.onTrayFocusSession || !bridge?.onTrayTogglePortForward) return;
 
     const unsubscribeFocus = bridge.onTrayFocusSession((sessionId) => {
-      setActiveTabId(sessionId);
+      // Find the session to check if it belongs to a workspace
+      const session = sessions.find((s) => s.id === sessionId);
+      if (session?.workspaceId) {
+        // Session is in a workspace - navigate to workspace and focus the session
+        setActiveTabId(session.workspaceId);
+        setWorkspaceFocusedSession(session.workspaceId, sessionId);
+      } else {
+        // Standalone session or session not found - just set tab
+        setActiveTabId(sessionId);
+      }
     });
 
     const unsubscribeToggle = bridge.onTrayTogglePortForward((ruleId, start) => {
@@ -401,12 +415,21 @@ function App({ settings }: { settings: SettingsState }) {
       unsubscribeFocus?.();
       unsubscribeToggle?.();
     };
-  }, [hosts, keys, portForwardingRules, setActiveTabId, startTunnel, stopTunnel, t]);
+  }, [hosts, keys, portForwardingRules, sessions, setActiveTabId, setWorkspaceFocusedSession, startTunnel, stopTunnel, t]);
 
   // Tray panel actions (from main process)
   useEffect(() => {
     const handlerJump = (_event: unknown, sessionId: string) => {
-      setActiveTabId(sessionId);
+      // Find the session to check if it belongs to a workspace
+      const session = sessions.find((s) => s.id === sessionId);
+      if (session?.workspaceId) {
+        // Session is in a workspace - navigate to workspace and focus the session
+        setActiveTabId(session.workspaceId);
+        setWorkspaceFocusedSession(session.workspaceId, sessionId);
+      } else {
+        // Standalone session or session not found - just set tab
+        setActiveTabId(sessionId);
+      }
     };
 
     const handlerConnect = (_event: unknown, hostId: string) => {
@@ -437,7 +460,7 @@ function App({ settings }: { settings: SettingsState }) {
       unsubscribeJump?.();
       unsubscribeConnect?.();
     };
-  }, [addConnectionLog, connectToHost, hosts, setActiveTabId, t]);
+  }, [addConnectionLog, connectToHost, hosts, sessions, setActiveTabId, setWorkspaceFocusedSession, t]);
 
   // Keyboard-interactive authentication (2FA/MFA) event listener
   useEffect(() => {

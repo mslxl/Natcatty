@@ -293,9 +293,9 @@ declare global {
 
     // Write binary with real-time progress callback
     writeSftpBinaryWithProgress?(
-      sftpId: string, 
-      path: string, 
-      content: ArrayBuffer, 
+      sftpId: string,
+      path: string,
+      content: ArrayBuffer,
       transferId: string,
       encoding?: SftpFilenameEncoding,
       onProgress?: (transferred: number, total: number, speed: number) => void,
@@ -310,7 +310,7 @@ declare global {
     uploadFile?(sftpId: string, localPath: string, remotePath: string, transferId: string): Promise<void>;
     downloadFile?(sftpId: string, remotePath: string, localPath: string, transferId: string): Promise<void>;
     cancelTransfer?(transferId: string): Promise<void>;
-    
+
     // Compressed folder upload
     startCompressedUpload?(
       options: {
@@ -331,7 +331,7 @@ declare global {
       remoteTar: boolean;
       error?: string;
     }>;
-    
+
     onTransferProgress?(transferId: string, cb: (progress: SftpTransferProgress) => void): () => void;
 
     // Streaming transfer with real progress and cancellation
@@ -590,7 +590,7 @@ declare global {
     setCloseToTray?(enabled: boolean): Promise<{ success: boolean; enabled: boolean }>;
     isCloseToTray?(): Promise<{ enabled: boolean }>;
     updateTrayMenuData?(data: {
-      sessions?: Array<{ id: string; label: string; hostLabel: string; status: "connecting" | "connected" | "disconnected" }>;
+      sessions?: Array<{ id: string; label: string; hostLabel: string; status: "connecting" | "connected" | "disconnected"; workspaceId?: string; workspaceTitle?: string }>;
       portForwardRules?: Array<{
         id: string;
         label: string;
@@ -614,7 +614,7 @@ declare global {
     onTrayPanelCloseRequest?(callback: () => void): () => void;
     onTrayPanelRefresh?(callback: () => void): () => void;
     onTrayPanelMenuData?(callback: (data: {
-      sessions?: Array<{ id: string; label: string; hostLabel: string; status: "connecting" | "connected" | "disconnected" }>;
+      sessions?: Array<{ id: string; label: string; hostLabel: string; status: "connecting" | "connected" | "disconnected"; workspaceId?: string; workspaceTitle?: string }>;
       portForwardRules?: Array<{
         id: string;
         label: string;

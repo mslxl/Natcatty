@@ -35,7 +35,7 @@ export const useTrayPanelBackend = () => {
   const onTrayPanelMenuData = useCallback(
     (
       callback: (data: {
-        sessions?: Array<{ id: string; label: string; hostLabel: string; status: "connecting" | "connected" | "disconnected" }>;
+        sessions?: Array<{ id: string; label: string; hostLabel: string; status: "connecting" | "connected" | "disconnected"; workspaceId?: string; workspaceTitle?: string }>;
         portForwardRules?: Array<{
           id: string;
           label: string;

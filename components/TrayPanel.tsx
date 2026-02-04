@@ -10,6 +10,8 @@ import { I18nProvider } from "../application/i18n/I18nProvider";
 import { useSettingsState } from "../application/state/useSettingsState";
 import { useTrayPanelBackend } from "../application/state/useTrayPanelBackend";
 import { useActiveTabId } from "../application/state/activeTabStore";
+import { X, Maximize2, ChevronRight, ChevronDown } from "lucide-react";
+import { AppLogo } from "./AppLogo";
 
 const StatusDot: React.FC<{ status: "success" | "warning" | "error" | "neutral"; spinning?: boolean }> = ({
   status,
@@ -35,6 +37,73 @@ const StatusDot: React.FC<{ status: "success" | "warning" | "error" | "neutral";
   );
 };
 
+// Session type for workspace grouping
+type TraySession = {
+  id: string;
+  label: string;
+  hostLabel: string;
+  status: "connecting" | "connected" | "disconnected";
+  workspaceId?: string;
+  workspaceTitle?: string;
+};
+
+// Collapsible workspace group component
+const WorkspaceGroup: React.FC<{
+  workspaceId: string;
+  title: string;
+  sessions: TraySession[];
+  activeTabId: string | null;
+  jumpToSession: (sessionId: string) => Promise<void>;
+  t: (key: string) => string;
+}> = ({ workspaceId, title, sessions, activeTabId, jumpToSession, t }) => {
+  const [expanded, setExpanded] = useState(true);
+  const isAnyActive = sessions.some((s) => s.id === activeTabId) || activeTabId === workspaceId;
+
+  return (
+    <div>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className={cn(
+          "w-full text-left px-2 py-1.5 rounded hover:bg-muted flex items-center gap-1",
+          isAnyActive ? "bg-muted" : "",
+        )}
+      >
+        {expanded ? <ChevronDown size={14} className="text-muted-foreground" /> : <ChevronRight size={14} className="text-muted-foreground" />}
+        <span className="font-medium truncate">{title}</span>
+        <span className="ml-auto text-xs text-muted-foreground">{sessions.length}</span>
+      </button>
+      {expanded && (
+        <div className="ml-4 mt-0.5 space-y-0.5">
+          {sessions.map((s) => (
+            <button
+              key={s.id}
+              title={s.hostLabel || s.label}
+              onClick={() => {
+                // Jump to session (using session id)
+                void jumpToSession(s.id);
+              }}
+              className={cn(
+                "w-full text-left px-2 py-1 rounded hover:bg-muted flex items-center justify-between text-sm",
+                s.status === "connected" ? "" : "text-muted-foreground",
+                activeTabId === s.id ? "bg-muted/60" : "",
+              )}
+            >
+              <span className="flex items-center gap-2 min-w-0">
+                <StatusDot
+                  status={s.status === "connected" ? "success" : s.status === "connecting" ? "warning" : "error"}
+                  spinning={s.status === "connecting"}
+                />
+                <span className="truncate">{s.hostLabel || s.label}</span>
+              </span>
+              <span className="ml-2 text-xs text-muted-foreground">{t(`tray.status.${s.status}`)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const TrayPanelContent: React.FC = () => {
   const { t } = useI18n();
   const {
@@ -46,12 +115,12 @@ const TrayPanelContent: React.FC = () => {
     onTrayPanelMenuData,
   } = useTrayPanelBackend();
 
-  const { hosts: _hosts, keys } = useVaultState();
+  const { hosts, keys } = useVaultState();
   useSessionState();
   const { rules: portForwardingRules, startTunnel, stopTunnel } = usePortForwardingState();
   const activeTabId = useActiveTabId();
 
-  const [traySessions, setTraySessions] = useState<Array<{ id: string; label: string; hostLabel: string; status: "connecting" | "connected" | "disconnected" }>>([]);
+  const [traySessions, setTraySessions] = useState<TraySession[]>([]);
 
   const jumpableSessions = useMemo(
     () => traySessions.filter((s) => s.status === "connected" || s.status === "connecting"),
@@ -134,53 +203,95 @@ const TrayPanelContent: React.FC = () => {
   return (
     <div id="tray-panel-root" className="w-full h-full bg-background/95 backdrop-blur border border-border/60 rounded-lg shadow-lg overflow-hidden">
       <div className="px-3 py-2 border-b border-border/60 flex items-center justify-between app-no-drag">
-        <div className="text-sm font-medium">Netcatty</div>
-        <button
-          className="text-xs text-muted-foreground hover:text-foreground"
-          onClick={handleClose}
-        >
-          Esc
-        </button>
+        <div className="flex items-center gap-2">
+          <AppLogo className="w-5 h-5" />
+          <span className="text-sm font-medium">Netcatty</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+            onClick={handleOpenMain}
+            title={t("tray.openMainWindow")}
+          >
+            <Maximize2 size={14} />
+          </button>
+          <button
+            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+            onClick={handleClose}
+            title="Close"
+          >
+            <X size={14} />
+          </button>
+        </div>
       </div>
 
       <div className="p-2 space-y-3 text-sm">
-        <button
-          onClick={handleOpenMain}
-          className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
-        >
-          {t("tray.openMainWindow")}
-        </button>
 
-        {jumpableSessions.length > 0 && (
-          <div>
-            <div className="px-2 py-1 text-xs text-muted-foreground">{t("tray.sessions")}</div>
-            <div className="space-y-1">
-              {jumpableSessions.map((s) => (
-                <button
-                  key={s.id}
-                  title={s.hostLabel || s.label}
-                  onClick={() => {
-                    void jumpToSession(s.id);
-                  }}
-                  className={cn(
-                    "w-full text-left px-2 py-1.5 rounded hover:bg-muted",
-                    s.status === "connected" ? "" : "text-muted-foreground",
-                    activeTabId === s.id ? "bg-muted" : "",
-                  )}
-                >
-                  <span className="flex items-center gap-2 min-w-0">
-                    <StatusDot
-                      status={s.status === "connected" ? "success" : s.status === "connecting" ? "warning" : "error"}
-                      spinning={s.status === "connecting"}
-                    />
-                    <span className="truncate">{s.hostLabel || s.label}</span>
-                  </span>
-                  <span className="ml-2 text-xs text-muted-foreground">{t(`tray.status.${s.status}`)}</span>
-                </button>
-              ))}
+        {jumpableSessions.length > 0 && (() => {
+          // Group sessions by workspace
+          const workspaceGroups = new Map<string, { title: string; sessions: typeof jumpableSessions }>();
+          const soloSessions: typeof jumpableSessions = [];
+
+          jumpableSessions.forEach((s) => {
+            if (s.workspaceId) {
+              const existing = workspaceGroups.get(s.workspaceId);
+              if (existing) {
+                existing.sessions.push(s);
+              } else {
+                workspaceGroups.set(s.workspaceId, {
+                  title: s.workspaceTitle || "Workspace",
+                  sessions: [s],
+                });
+              }
+            } else {
+              soloSessions.push(s);
+            }
+          });
+
+          return (
+            <div>
+              <div className="px-2 py-1 text-xs text-muted-foreground">{t("tray.sessions")}</div>
+              <div className="space-y-1">
+                {/* Workspace groups */}
+                {Array.from(workspaceGroups.entries()).map(([wsId, group]) => (
+                  <WorkspaceGroup
+                    key={wsId}
+                    workspaceId={wsId}
+                    title={group.title}
+                    sessions={group.sessions}
+                    activeTabId={activeTabId}
+                    jumpToSession={jumpToSession}
+                    t={t}
+                  />
+                ))}
+                {/* Solo sessions */}
+                {soloSessions.map((s) => (
+                  <button
+                    key={s.id}
+                    title={s.hostLabel || s.label}
+                    onClick={() => {
+                      void jumpToSession(s.id);
+                    }}
+                    className={cn(
+                      "w-full text-left px-2 py-1.5 rounded hover:bg-muted flex items-center justify-between",
+                      s.status === "connected" ? "" : "text-muted-foreground",
+                      activeTabId === s.id ? "bg-muted" : "",
+                    )}
+                  >
+                    <span className="flex items-center gap-2 min-w-0">
+                      <StatusDot
+                        status={s.status === "connected" ? "success" : s.status === "connecting" ? "warning" : "error"}
+                        spinning={s.status === "connecting"}
+                      />
+                      <span className="truncate">{s.hostLabel || s.label}</span>
+                    </span>
+                    <span className="ml-2 text-xs text-muted-foreground">{t(`tray.status.${s.status}`)}</span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {activeSession && (
           <div>
