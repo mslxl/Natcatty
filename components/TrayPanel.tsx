@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "./ui/button";
 import { useSessionState } from "../application/state/useSessionState";
 import { usePortForwardingState } from "../application/state/usePortForwardingState";
@@ -36,49 +36,43 @@ const StatusDot: React.FC<{ status: "success" | "warning" | "error" | "neutral";
 };
 
 const TrayPanelContent: React.FC = () => {
-  // debug
-  console.log("[TrayPanel] render", JSON.stringify({ hash: window.location.hash }));
   const { t } = useI18n();
-  const { hideTrayPanel, openMainWindow, onTrayPanelCloseRequest, onTrayPanelRefresh } = useTrayPanelBackend();
+  const { hideTrayPanel, openMainWindow, onTrayPanelCloseRequest, onTrayPanelRefresh, onTrayPanelMenuData } = useTrayPanelBackend();
 
   const { hosts, keys } = useVaultState();
-  const { sessions, setActiveTabId, connectToHost } = useSessionState();
+  const { setActiveTabId, connectToHost } = useSessionState();
   const { rules: portForwardingRules, startTunnel, stopTunnel } = usePortForwardingState();
   const activeTabId = useActiveTabId();
 
+  const [traySessions, setTraySessions] = useState<Array<{ id: string; label: string; hostLabel: string; status: "connecting" | "connected" | "disconnected" }>>([]);
+
   const jumpableSessions = useMemo(
-    () => sessions.filter((s) => s.status === "connected" || s.status === "connecting"),
-    [sessions],
+    () => traySessions.filter((s) => s.status === "connected" || s.status === "connecting"),
+    [traySessions],
   );
 
   const recentHosts = useMemo(() => {
     const seen = new Set<string>();
     const result: Array<{ hostId: string; label: string }> = [];
-    for (let i = sessions.length - 1; i >= 0; i -= 1) {
-      const s = sessions[i];
-      if (!s.hostId) continue;
-      if (s.hostId.startsWith("local-") || s.hostId.startsWith("serial-")) continue;
-      if (seen.has(s.hostId)) continue;
-      const host = hosts.find((h) => h.id === s.hostId);
+    for (let i = traySessions.length - 1; i >= 0; i -= 1) {
+      const s = traySessions[i];
+      // tray sessions only include hostLabel/label; map by hostLabel -> host
+      const host = hosts.find((h) => (h.label || h.hostname) === s.hostLabel);
       if (!host) continue;
-      seen.add(s.hostId);
+      if (seen.has(host.id)) continue;
+      seen.add(host.id);
       result.push({ hostId: host.id, label: host.label || host.hostname });
       if (result.length >= 5) break;
     }
     return result;
-  }, [hosts, sessions]);
+  }, [hosts, traySessions]);
 
-  // debug
-  console.log(
-    "[TrayPanel] data",
-    JSON.stringify({
-      sessions: sessions.map((s) => ({ id: s.id, status: s.status, hostId: s.hostId, hostLabel: s.hostLabel })),
-      jumpableCount: jumpableSessions.length,
-      recentHosts,
-      hostsCount: hosts.length,
-      pfrCount: portForwardingRules.length,
-    }),
-  );
+  useEffect(() => {
+    const unsubscribe = onTrayPanelMenuData?.((data) => {
+      setTraySessions(data.sessions || []);
+    });
+    return () => unsubscribe?.();
+  }, [onTrayPanelMenuData]);
 
   useEffect(() => {
     const unsubscribe = onTrayPanelRefresh?.(() => {
@@ -164,7 +158,7 @@ const TrayPanelContent: React.FC = () => {
               {jumpableSessions.map((s) => (
                 <button
                   key={s.id}
-                  title={s.hostLabel || s.hostname}
+                  title={s.hostLabel || s.label}
                   onClick={() => {
                     setActiveTabId(s.id);
                     void openMainWindow();
@@ -180,7 +174,7 @@ const TrayPanelContent: React.FC = () => {
                       status={s.status === "connected" ? "success" : s.status === "connecting" ? "warning" : "error"}
                       spinning={s.status === "connecting"}
                     />
-                    <span className="truncate">{s.hostLabel || s.hostname}</span>
+                    <span className="truncate">{s.hostLabel || s.label}</span>
                   </span>
                   <span className="ml-2 text-xs text-muted-foreground">{t(`tray.status.${s.status}`)}</span>
                 </button>

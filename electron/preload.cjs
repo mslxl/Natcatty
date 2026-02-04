@@ -794,6 +794,12 @@ const api = {
     return () => ipcRenderer.removeListener("netcatty:trayPanel:refresh", handler);
   },
 
+  onTrayPanelMenuData: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on("netcatty:trayPanel:setMenuData", handler);
+    return () => ipcRenderer.removeListener("netcatty:trayPanel:setMenuData", handler);
+  },
+
   // Get file path from File object (for drag-and-drop)
   getPathForFile: (file) => {
     try {

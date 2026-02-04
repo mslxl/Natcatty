@@ -608,6 +608,19 @@ declare global {
     openMainWindow?(): Promise<{ success: boolean }>;
     onTrayPanelCloseRequest?(callback: () => void): () => void;
     onTrayPanelRefresh?(callback: () => void): () => void;
+    onTrayPanelMenuData?(callback: (data: {
+      sessions?: Array<{ id: string; label: string; hostLabel: string; status: "connecting" | "connected" | "disconnected" }>;
+      portForwardRules?: Array<{
+        id: string;
+        label: string;
+        type: "local" | "remote" | "dynamic";
+        localPort: number;
+        remoteHost?: string;
+        remotePort?: number;
+        status: "inactive" | "connecting" | "active" | "error";
+        hostId?: string;
+      }>;
+    }) => void): () => void;
   }
 
   interface Window {

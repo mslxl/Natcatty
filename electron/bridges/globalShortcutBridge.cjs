@@ -100,6 +100,14 @@ function ensureTrayPanelWindow() {
   console.log("[TrayPanel] loadURL", url);
   void trayPanelWindow.loadURL(url);
 
+  trayPanelWindow.webContents.on("did-finish-load", () => {
+    try {
+      trayPanelWindow?.webContents?.send("netcatty:trayPanel:setMenuData", trayMenuData);
+    } catch {
+      // ignore
+    }
+  });
+
   return trayPanelWindow;
 }
 
@@ -122,6 +130,12 @@ function showTrayPanel() {
   win.setBounds({ x, y, width: panelBounds.width, height: panelBounds.height }, false);
   win.show();
   win.focus();
+
+  try {
+    win.webContents?.send("netcatty:trayPanel:setMenuData", trayMenuData);
+  } catch {
+    // ignore
+  }
 
   if (trayPanelRefreshTimer) clearInterval(trayPanelRefreshTimer);
   trayPanelRefreshTimer = setInterval(() => {
