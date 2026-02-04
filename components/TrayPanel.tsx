@@ -127,6 +127,7 @@ const TrayPanelContent: React.FC = () => {
               {sessions.map((s) => (
                 <button
                   key={s.id}
+                  title={s.hostLabel || s.hostname}
                   onClick={() => {
                     setActiveTabId(s.id);
                     void openMainWindow();
@@ -166,6 +167,7 @@ const TrayPanelContent: React.FC = () => {
                   <button
                     key={rule.id}
                     disabled={isConnecting}
+                    title={label}
                     onClick={() => {
                       const host = rule.hostId ? hosts.find((h) => h.id === rule.hostId) : undefined;
                       if (!host) {
