@@ -79,8 +79,8 @@ const setGlobalRules = (newRules: PortForwardingRule[]) => {
   localStorageAdapter.write(STORAGE_KEY_PORT_FORWARDING, newRules);
 };
 
-const normalizeRulesWithConnections = (rules: PortForwardingRule[]) => {
-  return rules.map((rule) => {
+const normalizeRulesWithConnections = (rules: PortForwardingRule[]): PortForwardingRule[] => {
+  return rules.map((rule): PortForwardingRule => {
     const connection = getActiveConnection(rule.id);
     if (connection) {
       return {
@@ -92,7 +92,7 @@ const normalizeRulesWithConnections = (rules: PortForwardingRule[]) => {
 
     return {
       ...rule,
-      status: "inactive",
+      status: "inactive" as const,
       error: undefined,
     };
   });
@@ -151,6 +151,31 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
       listeners.delete(listener);
     };
   }, [rules]);
+
+  // Listen for storage events for cross-window sync (main window <-> tray panel)
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      // Only handle changes from our specific key
+      if (e.key !== STORAGE_KEY_PORT_FORWARDING) return;
+
+      // Parse the new value
+      if (e.newValue) {
+        try {
+          const newRules = JSON.parse(e.newValue) as PortForwardingRule[];
+          if (Array.isArray(newRules)) {
+            // Update global state without triggering another localStorage write
+            globalRules = normalizeRulesWithConnections(newRules);
+            notifyListeners();
+          }
+        } catch {
+          // ignore parse errors
+        }
+      }
+    };
+
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
+  }, []);
 
   const addRule = useCallback(
     (
