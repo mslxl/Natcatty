@@ -426,9 +426,6 @@ const zhCN: Messages = {
 
   // Quick Switcher
   'qs.search.placeholder': '搜索主机或标签页',
-  'qs.recentConnections': '最近连接',
-  'qs.createWorkspace': '创建工作区',
-  'qs.restore': '恢复',
   'qs.jumpTo': '跳转到',
   'qs.localTerminal': '本地终端',
 

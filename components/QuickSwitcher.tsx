@@ -17,7 +17,6 @@ type QuickSwitcherItem = {
   data?: Host | TerminalSession | Workspace;
 };
 import { DistroAvatar } from "./DistroAvatar";
-import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { ScrollArea } from "./ui/scroll-area";
 
@@ -68,7 +67,7 @@ interface QuickSwitcherProps {
   onSelectTab: (tabId: string) => void;
   onClose: () => void;
   onCreateLocalTerminal?: () => void;
-  onCreateWorkspace?: () => void;
+  // onCreateWorkspace removed - feature not currently used
   keyBindings?: KeyBinding[];
 }
 
@@ -83,7 +82,6 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
   onSelectTab,
   onClose,
   onCreateLocalTerminal,
-  onCreateWorkspace,
   keyBindings,
 }) => {
   const { t } = useI18n();
@@ -132,7 +130,8 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
     [sessions]
   );
 
-  const showCategorized = query.trim().length > 0;
+  // Always show categorized view (Hosts/Tabs/Quick connect)
+  const showCategorized = true;
 
   // Memoize flat items list and index map
   const { flatItems, itemIndexMap } = useMemo(() => {
@@ -242,209 +241,163 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
         </div>
 
         <ScrollArea className="flex-1 h-full">
-          {!showCategorized ? (
-            /* Default view: Recent connections with header */
-            <div>
-              <div className="px-4 py-2 flex items-center justify-between">
-                <span className="text-xs font-medium text-muted-foreground">
-                  {t("qs.recentConnections")}
-                </span>
-                <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-6 px-2 text-[11px]"
-                    onClick={() => onCreateWorkspace?.()}
-                  >
-                    {t("qs.createWorkspace")}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-6 px-2 text-[11px]"
-                    disabled
-                  >
-                    {t("qs.restore")}
-                  </Button>
-                </div>
-              </div>
-              <div>
-                {results.length > 0 ? (
-                  results.map((host) => (
-                    <HostItem
-                      key={host.id}
-                      host={host}
-                      isSelected={getItemIndex("host", host.id) === selectedIndex}
-                      onSelect={onSelect}
-                      onMouseEnter={() => setSelectedIndex(getItemIndex("host", host.id))}
-                    />
-                  ))
-                ) : (
-                  <div className="px-4 py-6 text-sm text-muted-foreground text-center">
-                    No recent connections
-                  </div>
-                )}
-              </div>
+          {/* Categorized view: Hosts/Tabs/Quick connect */}
+          <div>
+            {/* Jump To hint */}
+            <div className="px-4 py-2 flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">{t("qs.jumpTo")}</span>
+              {quickSwitchKey && (
+                <kbd className="text-[10px] text-muted-foreground bg-muted px-1 py-0.5 rounded">
+                  {quickSwitchKey.replace(/ \+ /g, '+')}
+                </kbd>
+              )}
             </div>
-          ) : (
-            /* Focused/searching view: Categorized items */
+
+            {/* Hosts section */}
+            {results.length > 0 && (
+              <div>
+                <div className="px-4 py-1.5">
+                  <span className="text-xs font-medium text-muted-foreground">
+                    Hosts
+                  </span>
+                </div>
+                {results.map((host) => (
+                  <HostItem
+                    key={host.id}
+                    host={host}
+                    isSelected={getItemIndex("host", host.id) === selectedIndex}
+                    onSelect={onSelect}
+                    onMouseEnter={() => setSelectedIndex(getItemIndex("host", host.id))}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Tabs section */}
             <div>
-              {/* Jump To hint */}
-              <div className="px-4 py-2 flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">{t("qs.jumpTo")}</span>
-                {quickSwitchKey && (
-                  <kbd className="text-[10px] text-muted-foreground bg-muted px-1 py-0.5 rounded">
-                    {quickSwitchKey.replace(/ \+ /g, '+')}
-                  </kbd>
-                )}
+              <div className="px-4 py-1.5">
+                <span className="text-xs font-medium text-muted-foreground">
+                  Tabs
+                </span>
               </div>
 
-              {/* Hosts section */}
-              {results.length > 0 && (
-                <div>
-                  <div className="px-4 py-1.5">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      Hosts
+              {/* Built-in tabs */}
+              {["vault", "sftp"].map((tabId) => {
+                const idx = getItemIndex("tab", tabId);
+                const isSelected = idx === selectedIndex;
+                const icon =
+                  tabId === "vault" ? (
+                    <Shield size={16} />
+                  ) : (
+                    <Folder size={16} />
+                  );
+                const label = tabId === "vault" ? "Vaults" : "SFTP";
+
+                return (
+                  <div
+                    key={tabId}
+                    className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${isSelected ? "bg-primary/15" : "hover:bg-muted/50"
+                      }`}
+                    onClick={() => {
+                      onSelectTab(tabId);
+                      onClose();
+                    }}
+                    onMouseEnter={() => setSelectedIndex(idx)}
+                  >
+                    <div className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground">
+                      {icon}
+                    </div>
+                    <span className="text-sm font-medium">{label}</span>
+                  </div>
+                );
+              })}
+
+              {/* Workspaces */}
+              {workspaces.map((workspace) => {
+                const idx = getItemIndex("workspace", workspace.id);
+                const isSelected = idx === selectedIndex;
+
+                return (
+                  <div
+                    key={workspace.id}
+                    className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${isSelected ? "bg-primary/15" : "hover:bg-muted/50"
+                      }`}
+                    onClick={() => {
+                      onSelectTab(workspace.id);
+                      onClose();
+                    }}
+                    onMouseEnter={() => setSelectedIndex(idx)}
+                  >
+                    <div className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground">
+                      <LayoutGrid size={16} />
+                    </div>
+                    <span className="text-sm font-medium">
+                      {workspace.title}
                     </span>
                   </div>
-                  {results.map((host) => (
-                    <HostItem
-                      key={host.id}
-                      host={host}
-                      isSelected={getItemIndex("host", host.id) === selectedIndex}
-                      onSelect={onSelect}
-                      onMouseEnter={() => setSelectedIndex(getItemIndex("host", host.id))}
-                    />
-                  ))}
+                );
+              })}
+
+              {/* Orphan sessions */}
+              {orphanSessions.map((session) => {
+                const idx = getItemIndex("tab", session.id);
+                const isSelected = idx === selectedIndex;
+
+                return (
+                  <div
+                    key={session.id}
+                    className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${isSelected ? "bg-primary/15" : "hover:bg-muted/50"
+                      }`}
+                    onClick={() => {
+                      onSelectTab(session.id);
+                      onClose();
+                    }}
+                    onMouseEnter={() => setSelectedIndex(idx)}
+                  >
+                    <div className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground">
+                      <TerminalSquare size={16} />
+                    </div>
+                    <span className="text-sm font-medium">
+                      {session.hostLabel}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Quick connect section */}
+            <div>
+              <div className="px-4 py-1.5">
+                <span className="text-xs font-medium text-muted-foreground">
+                  Quick connect
+                </span>
+              </div>
+
+              {/* Local Terminal */}
+              {onCreateLocalTerminal && (
+                <div
+                  className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${getItemIndex("action", "local-terminal") === selectedIndex
+                    ? "bg-primary/15"
+                    : "hover:bg-muted/50"
+                    }`}
+                  onClick={() => {
+                    onCreateLocalTerminal();
+                    onClose();
+                  }}
+                  onMouseEnter={() =>
+                    setSelectedIndex(getItemIndex("action", "local-terminal"))
+                  }
+                >
+                  <div className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground">
+                    <Terminal size={16} />
+                  </div>
+                  <span className="text-sm font-medium">{t("qs.localTerminal")}</span>
                 </div>
               )}
 
-              {/* Tabs section */}
-              <div>
-                <div className="px-4 py-1.5">
-                  <span className="text-xs font-medium text-muted-foreground">
-                    Tabs
-                  </span>
-                </div>
-
-                {/* Built-in tabs */}
-                {["vault", "sftp"].map((tabId) => {
-                  const idx = getItemIndex("tab", tabId);
-                  const isSelected = idx === selectedIndex;
-                  const icon =
-                    tabId === "vault" ? (
-                      <Shield size={16} />
-                    ) : (
-                      <Folder size={16} />
-                    );
-                  const label = tabId === "vault" ? "Vaults" : "SFTP";
-
-                  return (
-                    <div
-                      key={tabId}
-                      className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${isSelected ? "bg-primary/15" : "hover:bg-muted/50"
-                        }`}
-                      onClick={() => {
-                        onSelectTab(tabId);
-                        onClose();
-                      }}
-                      onMouseEnter={() => setSelectedIndex(idx)}
-                    >
-                      <div className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground">
-                        {icon}
-                      </div>
-                      <span className="text-sm font-medium">{label}</span>
-                    </div>
-                  );
-                })}
-
-                {/* Workspaces */}
-                {workspaces.map((workspace) => {
-                  const idx = getItemIndex("workspace", workspace.id);
-                  const isSelected = idx === selectedIndex;
-
-                  return (
-                    <div
-                      key={workspace.id}
-                      className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${isSelected ? "bg-primary/15" : "hover:bg-muted/50"
-                        }`}
-                      onClick={() => {
-                        onSelectTab(workspace.id);
-                        onClose();
-                      }}
-                      onMouseEnter={() => setSelectedIndex(idx)}
-                    >
-                      <div className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground">
-                        <LayoutGrid size={16} />
-                      </div>
-                      <span className="text-sm font-medium">
-                        {workspace.title}
-                      </span>
-                    </div>
-                  );
-                })}
-
-                {/* Orphan sessions */}
-                {orphanSessions.map((session) => {
-                  const idx = getItemIndex("tab", session.id);
-                  const isSelected = idx === selectedIndex;
-
-                  return (
-                    <div
-                      key={session.id}
-                      className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${isSelected ? "bg-primary/15" : "hover:bg-muted/50"
-                        }`}
-                      onClick={() => {
-                        onSelectTab(session.id);
-                        onClose();
-                      }}
-                      onMouseEnter={() => setSelectedIndex(idx)}
-                    >
-                      <div className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground">
-                        <TerminalSquare size={16} />
-                      </div>
-                      <span className="text-sm font-medium">
-                        {session.hostLabel}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Quick connect section */}
-              <div>
-                <div className="px-4 py-1.5">
-                  <span className="text-xs font-medium text-muted-foreground">
-                    Quick connect
-                  </span>
-                </div>
-
-                {/* Local Terminal */}
-                {onCreateLocalTerminal && (
-                  <div
-                    className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${getItemIndex("action", "local-terminal") === selectedIndex
-                      ? "bg-primary/15"
-                      : "hover:bg-muted/50"
-                      }`}
-                    onClick={() => {
-                      onCreateLocalTerminal();
-                      onClose();
-                    }}
-                    onMouseEnter={() =>
-                      setSelectedIndex(getItemIndex("action", "local-terminal"))
-                    }
-                  >
-                    <div className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground">
-                      <Terminal size={16} />
-                    </div>
-                    <span className="text-sm font-medium">{t("qs.localTerminal")}</span>
-                  </div>
-                )}
-
-                {/* Serial removed (not supported) */}
-              </div>
+              {/* Serial removed (not supported) */}
             </div>
-          )}
+          </div>
         </ScrollArea>
       </div>
     </div>

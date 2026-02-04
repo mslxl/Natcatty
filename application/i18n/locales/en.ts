@@ -707,9 +707,6 @@ const en: Messages = {
 
   // Quick Switcher
   'qs.search.placeholder': 'Search hosts or tabs',
-  'qs.recentConnections': 'Recent connections',
-  'qs.createWorkspace': 'Create a workspace',
-  'qs.restore': 'Restore',
   'qs.jumpTo': 'Jump To',
   'qs.localTerminal': 'Local Terminal',
 
