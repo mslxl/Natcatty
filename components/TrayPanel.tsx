@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo } from "react";
+import { Button } from "./ui/button";
 import { useSessionState } from "../application/state/useSessionState";
 import { usePortForwardingState } from "../application/state/usePortForwardingState";
 import { useVaultState } from "../application/state/useVaultState";
@@ -39,9 +40,31 @@ const TrayPanelContent: React.FC = () => {
   const { hideTrayPanel, openMainWindow, onTrayPanelCloseRequest, onTrayPanelRefresh } = useTrayPanelBackend();
 
   const { hosts, keys } = useVaultState();
-  const { sessions, setActiveTabId } = useSessionState();
+  const { sessions, setActiveTabId, connectToHost } = useSessionState();
   const { rules: portForwardingRules, startTunnel, stopTunnel } = usePortForwardingState();
   const activeTabId = useActiveTabId();
+
+  const jumpableSessions = useMemo(
+    () => sessions.filter((s) => s.status === "connected" || s.status === "connecting"),
+    [sessions],
+  );
+
+  const recentHosts = useMemo(() => {
+    const seen = new Set<string>();
+    const result: Array<{ hostId: string; label: string }> = [];
+    for (let i = sessions.length - 1; i >= 0; i -= 1) {
+      const s = sessions[i];
+      if (!s.hostId) continue;
+      if (s.hostId.startsWith("local-") || s.hostId.startsWith("serial-")) continue;
+      if (seen.has(s.hostId)) continue;
+      const host = hosts.find((h) => h.id === s.hostId);
+      if (!host) continue;
+      seen.add(s.hostId);
+      result.push({ hostId: host.id, label: host.label || host.hostname });
+      if (result.length >= 5) break;
+    }
+    return result;
+  }, [hosts, sessions]);
 
   useEffect(() => {
     const unsubscribe = onTrayPanelRefresh?.(() => {
@@ -120,11 +143,11 @@ const TrayPanelContent: React.FC = () => {
           {t("tray.openMainWindow")}
         </button>
 
-        {sessions.length > 0 && (
+        {jumpableSessions.length > 0 && (
           <div>
             <div className="px-2 py-1 text-xs text-muted-foreground">{t("tray.sessions")}</div>
             <div className="space-y-1">
-              {sessions.map((s) => (
+              {jumpableSessions.map((s) => (
                 <button
                   key={s.id}
                   title={s.hostLabel || s.hostname}
@@ -147,6 +170,30 @@ const TrayPanelContent: React.FC = () => {
                   </span>
                   <span className="ml-2 text-xs text-muted-foreground">{t(`tray.status.${s.status}`)}</span>
                 </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {recentHosts.length > 0 && (
+          <div>
+            <div className="px-2 py-1 text-xs text-muted-foreground">{t("tray.recentHosts")}</div>
+            <div className="space-y-1">
+              {recentHosts.map((rh) => (
+                <Button
+                  key={rh.hostId}
+                  variant="ghost"
+                  className="w-full justify-start px-2 h-8"
+                  title={rh.label}
+                  onClick={() => {
+                    const host = hosts.find((h) => h.id === rh.hostId);
+                    if (!host) return;
+                    connectToHost(host);
+                    void openMainWindow();
+                  }}
+                >
+                  <span className="truncate">{rh.label}</span>
+                </Button>
               ))}
             </div>
           </div>

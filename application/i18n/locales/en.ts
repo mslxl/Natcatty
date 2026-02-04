@@ -119,6 +119,7 @@ const en: Messages = {
   'tray.status.active': 'Active',
   'tray.status.inactive': 'Inactive',
   'tray.status.error': 'Error',
+  'tray.recentHosts': 'Recent Hosts',
 
   // Settings > Application
   'settings.application.checkUpdates': 'Check for updates',

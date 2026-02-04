@@ -104,6 +104,7 @@ const zhCN: Messages = {
   'tray.status.active': '已启用',
   'tray.status.inactive': '未启用',
   'tray.status.error': '错误',
+  'tray.recentHosts': '最近连接的主机',
 
   // Settings > Application
   'settings.application.checkUpdates': '检查更新',
