@@ -12,6 +12,8 @@ let closeToTray = false;
 let currentHotkey = null;
 let hotkeyEnabled = false;
 
+let t = (key) => key;
+
 // Dynamic tray menu data (synced from renderer)
 let trayMenuData = {
   sessions: [],        // { id, label, hostLabel, status }
@@ -49,6 +51,9 @@ function resolveTrayIconPath() {
  */
 function init(deps) {
   electronModule = deps.electronModule;
+  if (typeof deps.t === "function") {
+    t = deps.t;
+  }
 }
 
 /**
@@ -278,7 +283,7 @@ function buildTrayMenuTemplate() {
 
   // Open Main Window
   menuTemplate.push({
-    label: "Open Main Window",
+    label: t("tray.openMainWindow"),
     click: () => {
       const win = getMainWindow();
       if (win) {
@@ -299,13 +304,18 @@ function buildTrayMenuTemplate() {
   // Active Sessions
   if (trayMenuData.sessions && trayMenuData.sessions.length > 0) {
     menuTemplate.push({
-      label: "Sessions",
+      label: t("tray.sessions"),
       enabled: false,
     });
     for (const session of trayMenuData.sessions) {
-      const statusIcon = session.status === "connected" ? "🟢" : session.status === "connecting" ? "🟡" : "🔴";
+      const statusText =
+        session.status === "connected"
+          ? t("tray.status.connected")
+          : session.status === "connecting"
+            ? t("tray.status.connecting")
+            : t("tray.status.disconnected");
       menuTemplate.push({
-        label: `  ${statusIcon} ${session.hostLabel || session.label}`,
+        label: `  ${session.hostLabel || session.label}  (${statusText})`,
         click: () => {
           // Focus window and switch to this session
           const win = getMainWindow();
@@ -325,20 +335,27 @@ function buildTrayMenuTemplate() {
   // Port Forwarding Rules
   if (trayMenuData.portForwardRules && trayMenuData.portForwardRules.length > 0) {
     menuTemplate.push({
-      label: "Port Forwarding",
+      label: t("tray.portForwarding"),
       enabled: false,
     });
     for (const rule of trayMenuData.portForwardRules) {
       const isActive = rule.status === "active";
       const isConnecting = rule.status === "connecting";
-      const statusIcon = rule.status === "active" ? "🟢" : rule.status === "connecting" ? "🟡" : rule.status === "error" ? "🔴" : "⚫";
+      const statusText =
+        rule.status === "active"
+          ? t("tray.status.active")
+          : rule.status === "connecting"
+            ? t("tray.status.connecting")
+            : rule.status === "error"
+              ? t("tray.status.error")
+              : t("tray.status.inactive");
       const typeLabel = rule.type === "local" ? "L" : rule.type === "remote" ? "R" : "D";
       const portInfo = rule.type === "dynamic" 
         ? `${rule.localPort}` 
         : `${rule.localPort} → ${rule.remoteHost}:${rule.remotePort}`;
       
       menuTemplate.push({
-        label: `  ${statusIcon} [${typeLabel}] ${rule.label || portInfo}`,
+        label: `  [${typeLabel}] ${rule.label || portInfo}  (${statusText})`,
         enabled: !isConnecting,
         click: () => {
           const win = getMainWindow();
@@ -353,7 +370,7 @@ function buildTrayMenuTemplate() {
 
   // Quit
   menuTemplate.push({
-    label: "Quit",
+    label: t("tray.quit"),
     click: () => {
       closeToTray = false;
       app.quit();
