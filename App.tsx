@@ -383,7 +383,7 @@ function App({ settings }: { settings: SettingsState }) {
       if (!rule) return;
       const host = rule.hostId ? hosts.find((h) => h.id === rule.hostId) : undefined;
       if (!host) {
-        toast.error("Port forwarding host not found");
+        toast.error(t("pf.error.hostNotFound"));
         return;
       }
 
