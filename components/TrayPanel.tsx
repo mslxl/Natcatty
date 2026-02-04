@@ -36,6 +36,8 @@ const StatusDot: React.FC<{ status: "success" | "warning" | "error" | "neutral";
 };
 
 const TrayPanelContent: React.FC = () => {
+  // debug
+  console.log("[TrayPanel] render", { hash: window.location.hash });
   const { t } = useI18n();
   const { hideTrayPanel, openMainWindow, onTrayPanelCloseRequest, onTrayPanelRefresh } = useTrayPanelBackend();
 

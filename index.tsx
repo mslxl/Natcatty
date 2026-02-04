@@ -45,7 +45,7 @@ const renderApp = () => {
   } else if (route === 'tray') {
     root.render(
       <ToastProvider>
-        <Suspense fallback={null}>
+        <Suspense fallback={<div style={{ padding: 12, color: '#fff' }}>Loading tray panel…</div>}>
           <LazyTrayPanel />
         </Suspense>
       </ToastProvider>
