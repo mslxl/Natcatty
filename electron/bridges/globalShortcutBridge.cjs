@@ -169,13 +169,13 @@ function toggleTrayPanel() {
 
 function resolveTrayIconPath() {
   const { app } = electronModule;
-  
+
   // Use different icons for different platforms
   // macOS: template image (black + transparent, system handles color)
   // Windows/Linux: colored icon
   const isMac = process.platform === "darwin";
   const iconName = isMac ? "tray-iconTemplate.png" : "tray-icon.png";
-  
+
   // Security: Only use known packaged icon locations, ignore renderer-provided paths
   const candidates = [
     path.join(app.getAppPath(), "dist", iconName),
@@ -202,12 +202,20 @@ function init(deps) {
 
 /**
  * Get the main window reference
+ * Uses windowManager's tracked mainWindow for reliability
  */
 function getMainWindow() {
+  // Prefer the explicitly tracked main window from windowManager
+  const windowManager = require("./windowManager.cjs");
+  const tracked = windowManager.getMainWindow?.();
+  if (tracked && !tracked.isDestroyed?.()) {
+    return tracked;
+  }
+  // Fallback: filter out tray panel window from all windows
   const { BrowserWindow } = electronModule;
   const wins = BrowserWindow.getAllWindows();
-  // Return the first window (main window)
-  return wins && wins.length ? wins[0] : null;
+  const mainWins = wins.filter((w) => w !== trayPanelWindow && !w.isDestroyed?.());
+  return mainWins && mainWins.length ? mainWins[0] : null;
 }
 
 /**
@@ -301,7 +309,7 @@ function toggleWindowVisibility() {
     } else {
       // Window is hidden - show and focus it
       win.show();
-        win.focus();
+      win.focus();
       const { app } = electronModule;
       try {
         app.focus({ steal: true });
@@ -494,10 +502,10 @@ function buildTrayMenuTemplate() {
               ? STATUS_TEXT.portForward.error
               : STATUS_TEXT.portForward.inactive;
       const typeLabel = rule.type === "local" ? "L" : rule.type === "remote" ? "R" : "D";
-      const portInfo = rule.type === "dynamic" 
-        ? `${rule.localPort}` 
+      const portInfo = rule.type === "dynamic"
+        ? `${rule.localPort}`
         : `${rule.localPort} → ${rule.remoteHost}:${rule.remotePort}`;
-      
+
       menuTemplate.push({
         label: `  [${typeLabel}] ${rule.label || portInfo}  (${statusText})`,
         enabled: !isConnecting,

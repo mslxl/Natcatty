@@ -419,7 +419,7 @@ function App({ settings }: { settings: SettingsState }) {
 
   // Tray panel actions (from main process)
   useEffect(() => {
-    const handlerJump = (_event: unknown, sessionId: string) => {
+    const handlerJump = (sessionId: string) => {
       // Find the session to check if it belongs to a workspace
       const session = sessions.find((s) => s.id === sessionId);
       if (session?.workspaceId) {
@@ -432,7 +432,7 @@ function App({ settings }: { settings: SettingsState }) {
       }
     };
 
-    const handlerConnect = (_event: unknown, hostId: string) => {
+    const handlerConnect = (hostId: string) => {
       const host = hosts.find((h) => h.id === hostId);
       if (!host) {
         toast.error(t("pf.error.hostNotFound"));
