@@ -606,6 +606,8 @@ declare global {
 
     hideTrayPanel?(): Promise<{ success: boolean }>;
     openMainWindow?(): Promise<{ success: boolean }>;
+    jumpToSessionFromTrayPanel?(sessionId: string): Promise<{ success: boolean }>;
+    connectToHostFromTrayPanel?(hostId: string): Promise<{ success: boolean }>;
     onTrayPanelCloseRequest?(callback: () => void): () => void;
     onTrayPanelRefresh?(callback: () => void): () => void;
     onTrayPanelMenuData?(callback: (data: {

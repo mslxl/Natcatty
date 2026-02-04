@@ -37,10 +37,18 @@ const StatusDot: React.FC<{ status: "success" | "warning" | "error" | "neutral";
 
 const TrayPanelContent: React.FC = () => {
   const { t } = useI18n();
-  const { hideTrayPanel, openMainWindow, onTrayPanelCloseRequest, onTrayPanelRefresh, onTrayPanelMenuData } = useTrayPanelBackend();
+  const {
+    hideTrayPanel,
+    openMainWindow,
+    jumpToSession,
+    connectToHostFromTrayPanel,
+    onTrayPanelCloseRequest,
+    onTrayPanelRefresh,
+    onTrayPanelMenuData,
+  } = useTrayPanelBackend();
 
   const { hosts, keys } = useVaultState();
-  const { setActiveTabId, connectToHost } = useSessionState();
+  useSessionState();
   const { rules: portForwardingRules, startTunnel, stopTunnel } = usePortForwardingState();
   const activeTabId = useActiveTabId();
 
@@ -160,8 +168,7 @@ const TrayPanelContent: React.FC = () => {
                   key={s.id}
                   title={s.hostLabel || s.label}
                   onClick={() => {
-                    setActiveTabId(s.id);
-                    void openMainWindow();
+                    void jumpToSession(s.id);
                   }}
                   className={cn(
                     "w-full text-left px-2 py-1.5 rounded hover:bg-muted",
@@ -194,10 +201,7 @@ const TrayPanelContent: React.FC = () => {
                   className="w-full justify-start px-2 h-8"
                   title={rh.label}
                   onClick={() => {
-                    const host = hosts.find((h) => h.id === rh.hostId);
-                    if (!host) return;
-                    connectToHost(host);
-                    void openMainWindow();
+                    void connectToHostFromTrayPanel(rh.hostId);
                   }}
                 >
                   <span className="truncate">{rh.label}</span>

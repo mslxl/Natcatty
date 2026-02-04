@@ -661,6 +661,28 @@ function registerHandlers(ipcMain) {
     return { success: true };
   });
 
+  ipcMain.handle("netcatty:trayPanel:jumpToSession", async (_event, sessionId) => {
+    openMainWindow();
+    try {
+      const win = getMainWindow();
+      win?.webContents?.send("netcatty:trayPanel:jumpToSession", sessionId);
+    } catch {
+      // ignore
+    }
+    return { success: true };
+  });
+
+  ipcMain.handle("netcatty:trayPanel:connectToHost", async (_event, hostId) => {
+    openMainWindow();
+    try {
+      const win = getMainWindow();
+      win?.webContents?.send("netcatty:trayPanel:connectToHost", hostId);
+    } catch {
+      // ignore
+    }
+    return { success: true };
+  });
+
   console.log("[GlobalShortcut] IPC handlers registered");
 }
 

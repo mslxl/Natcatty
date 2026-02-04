@@ -403,6 +403,45 @@ function App({ settings }: { settings: SettingsState }) {
     };
   }, [hosts, keys, portForwardingRules, setActiveTabId, startTunnel, stopTunnel, t]);
 
+  // Tray panel actions (from main process)
+  useEffect(() => {
+    const handlerJump = (_event: unknown, sessionId: string) => {
+      setActiveTabId(sessionId);
+    };
+
+    const handlerConnect = (_event: unknown, hostId: string) => {
+      const host = hosts.find((h) => h.id === hostId);
+      if (!host) {
+        toast.error(t("pf.error.hostNotFound"));
+        return;
+      }
+
+      addConnectionLog({
+        hostId: host.id,
+        hostLabel: host.label,
+        hostname: host.hostname,
+        username: host.username,
+        localHostname: "",
+        saved: false,
+      });
+
+      connectToHost(host);
+    };
+
+    window.electron?.ipcRenderer?.on?.("netcatty:trayPanel:jumpToSession", handlerJump);
+    window.electron?.ipcRenderer?.on?.("netcatty:trayPanel:connectToHost", handlerConnect);
+    return () => {
+      window.electron?.ipcRenderer?.removeListener?.(
+        "netcatty:trayPanel:jumpToSession",
+        handlerJump,
+      );
+      window.electron?.ipcRenderer?.removeListener?.(
+        "netcatty:trayPanel:connectToHost",
+        handlerConnect,
+      );
+    };
+  }, [addConnectionLog, connectToHost, hosts, setActiveTabId, t]);
+
   // Keyboard-interactive authentication (2FA/MFA) event listener
   useEffect(() => {
     const bridge = netcattyBridge.get();

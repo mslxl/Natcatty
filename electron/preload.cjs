@@ -782,6 +782,10 @@ const api = {
   // Tray panel window
   hideTrayPanel: () => ipcRenderer.invoke("netcatty:trayPanel:hide"),
   openMainWindow: () => ipcRenderer.invoke("netcatty:trayPanel:openMainWindow"),
+  jumpToSessionFromTrayPanel: (sessionId) =>
+    ipcRenderer.invoke("netcatty:trayPanel:jumpToSession", sessionId),
+  connectToHostFromTrayPanel: (hostId) =>
+    ipcRenderer.invoke("netcatty:trayPanel:connectToHost", hostId),
   onTrayPanelCloseRequest: (callback) => {
     const handler = () => callback();
     ipcRenderer.on("netcatty:trayPanel:closeRequest", handler);
