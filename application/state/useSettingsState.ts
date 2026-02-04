@@ -24,6 +24,8 @@ STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD,
 STORAGE_KEY_SESSION_LOGS_ENABLED,
 STORAGE_KEY_SESSION_LOGS_DIR,
 STORAGE_KEY_SESSION_LOGS_FORMAT,
+STORAGE_KEY_TOGGLE_WINDOW_HOTKEY,
+STORAGE_KEY_CLOSE_TO_TRAY,
 } from '../../infrastructure/config/storageKeys';
 import { DEFAULT_UI_LOCALE, resolveSupportedLocale } from '../../infrastructure/config/i18n';
 import { TERMINAL_THEMES } from '../../infrastructure/config/terminalThemes';
@@ -219,6 +221,22 @@ export const useSettingsState = () => {
     if (stored === 'txt' || stored === 'raw' || stored === 'html') return stored;
     return DEFAULT_SESSION_LOGS_FORMAT;
   });
+
+  // Global Toggle Window Settings (Quake Mode)
+  const [toggleWindowHotkey, setToggleWindowHotkey] = useState<string>(() => {
+    const stored = readStoredString(STORAGE_KEY_TOGGLE_WINDOW_HOTKEY);
+    if (stored !== null) return stored;
+    // Default: Ctrl+` (Control+backtick) - similar to VS Code terminal toggle
+    const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
+    return isMac ? '⌃ + `' : 'Ctrl + `';
+  });
+  const [closeToTray, setCloseToTray] = useState<boolean>(() => {
+    const stored = readStoredString(STORAGE_KEY_CLOSE_TO_TRAY);
+    // Default to true (enabled)
+    if (stored === null) return true;
+    return stored === 'true';
+  });
+  const [hotkeyRegistrationError, setHotkeyRegistrationError] = useState<string | null>(null);
 
   // Helper to notify other windows about settings changes via IPC
   const notifySettingsChanged = useCallback((key: string, value: unknown) => {
@@ -578,6 +596,49 @@ export const useSettingsState = () => {
     notifySettingsChanged(STORAGE_KEY_SESSION_LOGS_FORMAT, sessionLogsFormat);
   }, [sessionLogsFormat, notifySettingsChanged]);
 
+  // Persist and sync toggle window hotkey setting
+  useEffect(() => {
+    localStorageAdapter.writeString(STORAGE_KEY_TOGGLE_WINDOW_HOTKEY, toggleWindowHotkey);
+    notifySettingsChanged(STORAGE_KEY_TOGGLE_WINDOW_HOTKEY, toggleWindowHotkey);
+    // Register/unregister the global hotkey in main process
+    const bridge = netcattyBridge.get();
+    if (bridge?.registerGlobalHotkey) {
+      if (toggleWindowHotkey) {
+        setHotkeyRegistrationError(null);
+        bridge
+          .registerGlobalHotkey(toggleWindowHotkey)
+          .then((result) => {
+            if (result?.success === false) {
+              console.warn('[GlobalHotkey] Hotkey registration failed:', result.error);
+              setHotkeyRegistrationError(result.error || 'Failed to register hotkey');
+            }
+          })
+          .catch((err) => {
+            console.warn('[GlobalHotkey] Failed to register hotkey:', err);
+            setHotkeyRegistrationError(err?.message || 'Failed to register hotkey');
+          });
+      } else {
+        setHotkeyRegistrationError(null);
+        bridge.unregisterGlobalHotkey?.().catch((err) => {
+          console.warn('[GlobalHotkey] Failed to unregister hotkey:', err);
+        });
+      }
+    }
+  }, [toggleWindowHotkey, notifySettingsChanged]);
+
+  // Persist and sync close to tray setting
+  useEffect(() => {
+    localStorageAdapter.writeString(STORAGE_KEY_CLOSE_TO_TRAY, closeToTray ? 'true' : 'false');
+    notifySettingsChanged(STORAGE_KEY_CLOSE_TO_TRAY, closeToTray);
+    // Update main process tray behavior
+    const bridge = netcattyBridge.get();
+    if (bridge?.setCloseToTray) {
+      bridge.setCloseToTray(closeToTray).catch((err) => {
+        console.warn('[SystemTray] Failed to set close-to-tray:', err);
+      });
+    }
+  }, [closeToTray, notifySettingsChanged]);
+
   // Get merged key bindings (defaults + custom overrides)
   const keyBindings = useMemo((): KeyBinding[] => {
     return DEFAULT_KEY_BINDINGS.map(binding => {
@@ -702,5 +763,11 @@ export const useSettingsState = () => {
     setSessionLogsDir,
     sessionLogsFormat,
     setSessionLogsFormat,
+    // Global Toggle Window (Quake Mode)
+    toggleWindowHotkey,
+    setToggleWindowHotkey,
+    closeToTray,
+    setCloseToTray,
+    hotkeyRegistrationError,
   };
 };

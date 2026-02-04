@@ -1,14 +1,15 @@
 /**
- * Settings System Tab - System information, temp file management, and session logs
+ * Settings System Tab - System information, temp file management, session logs, and global hotkey
  */
-import { FileText, FolderOpen, HardDrive, RefreshCw, Trash2 } from "lucide-react";
+import { FileText, FolderOpen, HardDrive, Keyboard, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import React, { useCallback, useEffect, useState } from "react";
 import { useI18n } from "../../../application/i18n/I18nProvider";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
-import { SessionLogFormat } from "../../../domain/models";
+import { SessionLogFormat, keyEventToString } from "../../../domain/models";
 import { TabsContent } from "../../ui/tabs";
 import { Button } from "../../ui/button";
 import { Toggle, Select, SettingRow } from "../settings-ui";
+import { cn } from "../../../lib/utils";
 
 interface TempDirInfo {
   path: string;
@@ -31,6 +32,11 @@ interface SettingsSystemTabProps {
   setSessionLogsDir: (dir: string) => void;
   sessionLogsFormat: SessionLogFormat;
   setSessionLogsFormat: (format: SessionLogFormat) => void;
+  toggleWindowHotkey: string;
+  setToggleWindowHotkey: (hotkey: string) => void;
+  closeToTray: boolean;
+  setCloseToTray: (enabled: boolean) => void;
+  hotkeyRegistrationError: string | null;
 }
 
 const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
@@ -40,13 +46,21 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   setSessionLogsDir,
   sessionLogsFormat,
   setSessionLogsFormat,
+  toggleWindowHotkey,
+  setToggleWindowHotkey,
+  closeToTray,
+  setCloseToTray,
+  hotkeyRegistrationError,
 }) => {
   const { t } = useI18n();
+  const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
 
   const [tempDirInfo, setTempDirInfo] = useState<TempDirInfo | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
   const [clearResult, setClearResult] = useState<{ deletedCount: number; failedCount: number } | null>(null);
+  const [isRecordingHotkey, setIsRecordingHotkey] = useState(false);
+  const [hotkeyError, setHotkeyError] = useState<string | null>(null);
 
   const loadTempDirInfo = useCallback(async () => {
     const bridge = netcattyBridge.get();
@@ -115,6 +129,56 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
       console.error("[SettingsSystemTab] Failed to open directory:", err);
     }
   }, [sessionLogsDir]);
+
+  // Handle global toggle hotkey recording
+  const cancelHotkeyRecording = useCallback(() => {
+    setIsRecordingHotkey(false);
+  }, []);
+
+  const handleResetHotkey = useCallback(() => {
+    // Reset to default hotkey (Ctrl+` or ⌃+` on Mac)
+    const defaultHotkey = isMac ? '⌃ + `' : 'Ctrl + `';
+    setToggleWindowHotkey(defaultHotkey);
+    setHotkeyError(null);
+  }, [isMac, setToggleWindowHotkey]);
+
+  // Hotkey recording effect
+  useEffect(() => {
+    if (!isRecordingHotkey) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (e.key === "Escape") {
+        cancelHotkeyRecording();
+        return;
+      }
+
+      // Ignore modifier-only keys
+      if (["Meta", "Control", "Alt", "Shift"].includes(e.key)) return;
+
+      const keyString = keyEventToString(e, isMac);
+      setToggleWindowHotkey(keyString);
+      setHotkeyError(null);
+      cancelHotkeyRecording();
+    };
+
+    const handleClick = () => {
+      cancelHotkeyRecording();
+    };
+
+    const timer = setTimeout(() => {
+      window.addEventListener("click", handleClick, true);
+    }, 100);
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("keydown", handleKeyDown, true);
+      window.removeEventListener("click", handleClick, true);
+    };
+  }, [isRecordingHotkey, isMac, setToggleWindowHotkey, cancelHotkeyRecording]);
 
   const formatOptions = [
     { value: "txt", label: t("settings.sessionLogs.formatTxt") },
@@ -293,6 +357,68 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
 
             <p className="text-xs text-muted-foreground">
               {t("settings.sessionLogs.hint")}
+            </p>
+          </div>
+
+          {/* Global Toggle Window Section (Quake Mode) */}
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <Keyboard size={18} className="text-muted-foreground" />
+              <h3 className="text-base font-medium">{t("settings.globalHotkey.title")}</h3>
+            </div>
+
+            <div className="bg-muted/30 rounded-lg p-4 space-y-4">
+              {/* Toggle Window Hotkey */}
+              <SettingRow
+                label={t("settings.globalHotkey.toggleWindow")}
+                description={t("settings.globalHotkey.toggleWindowDesc")}
+              >
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsRecordingHotkey(true);
+                    }}
+                    className={cn(
+                      "px-3 py-1.5 text-sm font-mono rounded border transition-colors min-w-[100px] text-center",
+                      isRecordingHotkey
+                        ? "border-primary bg-primary/10 animate-pulse"
+                        : "border-border hover:border-primary/50",
+                    )}
+                  >
+                    {isRecordingHotkey
+                      ? t("settings.shortcuts.recording")
+                      : toggleWindowHotkey || t("settings.globalHotkey.notSet")}
+                  </button>
+                  {toggleWindowHotkey && (
+                    <button
+                      onClick={handleResetHotkey}
+                      className="p-1 hover:bg-muted rounded"
+                      title={t("settings.globalHotkey.reset")}
+                    >
+                      <RotateCcw size={14} />
+                    </button>
+                  )}
+                </div>
+              </SettingRow>
+              {(hotkeyError || hotkeyRegistrationError) && (
+                <p className="text-sm text-destructive">{hotkeyError || hotkeyRegistrationError}</p>
+              )}
+
+              {/* Close to Tray */}
+              <SettingRow
+                label={t("settings.globalHotkey.closeToTray")}
+                description={t("settings.globalHotkey.closeToTrayDesc")}
+              >
+                <Toggle
+                  checked={closeToTray}
+                  onChange={setCloseToTray}
+                />
+              </SettingRow>
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              {t("settings.globalHotkey.hint")}
             </p>
           </div>
         </div>

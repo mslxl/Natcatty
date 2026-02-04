@@ -80,6 +80,7 @@ const fileWatcherBridge = require("./bridges/fileWatcherBridge.cjs");
 const tempDirBridge = require("./bridges/tempDirBridge.cjs");
 const sessionLogsBridge = require("./bridges/sessionLogsBridge.cjs");
 const compressUploadBridge = require("./bridges/compressUploadBridge.cjs");
+const globalShortcutBridge = require("./bridges/globalShortcutBridge.cjs");
 const windowManager = require("./bridges/windowManager.cjs");
 
 // GPU settings
@@ -364,6 +365,7 @@ const registerBridges = (win) => {
   transferBridge.init(deps);
   terminalBridge.init(deps);
   fileWatcherBridge.init(deps);
+  globalShortcutBridge.init(deps);
   
   // Initialize compress upload bridge with transferBridge dependency
   compressUploadBridge.init({
@@ -390,6 +392,7 @@ const registerBridges = (win) => {
   tempDirBridge.registerHandlers(ipcMain, shell);
   sessionLogsBridge.registerHandlers(ipcMain);
   compressUploadBridge.registerHandlers(ipcMain);
+  globalShortcutBridge.registerHandlers(ipcMain);
 
   // Settings window handler
   ipcMain.handle("netcatty:settings:open", async () => {
@@ -745,6 +748,10 @@ app.on("window-all-closed", () => {
   }
 });
 
+app.on("before-quit", () => {
+  windowManager.setIsQuitting(true);
+});
+
 // Cleanup all PTY sessions and port forwarding tunnels before quitting
 app.on("will-quit", () => {
   try {
@@ -756,6 +763,11 @@ app.on("will-quit", () => {
     portForwardingBridge.stopAllPortForwards();
   } catch (err) {
     console.warn("Error during port forwarding cleanup:", err);
+  }
+  try {
+    globalShortcutBridge.cleanup();
+  } catch (err) {
+    console.warn("Error during global shortcut cleanup:", err);
   }
 });
 

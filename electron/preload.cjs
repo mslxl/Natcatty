@@ -752,6 +752,20 @@ const api = {
   openSessionLogsDir: (directory) =>
     ipcRenderer.invoke("netcatty:sessionLogs:openDir", { directory }),
 
+  // Global Toggle Hotkey (Quake Mode)
+  registerGlobalHotkey: (hotkey) =>
+    ipcRenderer.invoke("netcatty:globalHotkey:register", { hotkey }),
+  unregisterGlobalHotkey: () =>
+    ipcRenderer.invoke("netcatty:globalHotkey:unregister"),
+  getGlobalHotkeyStatus: () =>
+    ipcRenderer.invoke("netcatty:globalHotkey:status"),
+
+  // System Tray / Close to Tray
+  setCloseToTray: (enabled) =>
+    ipcRenderer.invoke("netcatty:tray:setCloseToTray", { enabled }),
+  isCloseToTray: () =>
+    ipcRenderer.invoke("netcatty:tray:isCloseToTray"),
+
   // Get file path from File object (for drag-and-drop)
   getPathForFile: (file) => {
     try {

@@ -580,6 +580,15 @@ declare global {
 
     // Get file path from File object (for drag-and-drop, uses Electron's webUtils)
     getPathForFile?(file: File): string | undefined;
+
+    // Global Toggle Hotkey (Quake Mode)
+    registerGlobalHotkey?(hotkey: string): Promise<{ success: boolean; enabled?: boolean; error?: string; accelerator?: string }>;
+    unregisterGlobalHotkey?(): Promise<{ success: boolean }>;
+    getGlobalHotkeyStatus?(): Promise<{ enabled: boolean; hotkey: string | null }>;
+
+    // System Tray / Close to Tray
+    setCloseToTray?(enabled: boolean): Promise<{ success: boolean; enabled: boolean }>;
+    isCloseToTray?(): Promise<{ enabled: boolean }>;
   }
 
   interface Window {

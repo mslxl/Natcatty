@@ -84,6 +84,16 @@ const zhCN: Messages = {
   'settings.sessionLogs.formatHtml': 'HTML (.html)',
   'settings.sessionLogs.hint': '会话日志用于记录终端输出，便于故障排查和审计。',
 
+  // Settings > Global Hotkey (Quake Mode)
+  'settings.globalHotkey.title': '全局快捷键',
+  'settings.globalHotkey.toggleWindow': '切换窗口',
+  'settings.globalHotkey.toggleWindowDesc': '按下组合键以设置显示/隐藏窗口的全局快捷键。',
+  'settings.globalHotkey.notSet': '未设置',
+  'settings.globalHotkey.reset': '恢复默认',
+  'settings.globalHotkey.closeToTray': '关闭时最小化到托盘',
+  'settings.globalHotkey.closeToTrayDesc': '启用后，关闭窗口将最小化到系统托盘而不是退出程序。',
+  'settings.globalHotkey.hint': '全局快捷键在系统范围内工作，可快速显示或隐藏窗口（下拉式终端风格）。',
+
   // Settings > Application
   'settings.application.checkUpdates': '检查更新',
   'settings.application.reportProblem': '反馈问题',

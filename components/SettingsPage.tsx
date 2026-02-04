@@ -211,6 +211,11 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                             setSessionLogsDir={settings.setSessionLogsDir}
                             sessionLogsFormat={settings.sessionLogsFormat}
                             setSessionLogsFormat={settings.setSessionLogsFormat}
+                            toggleWindowHotkey={settings.toggleWindowHotkey}
+                            setToggleWindowHotkey={settings.setToggleWindowHotkey}
+                            closeToTray={settings.closeToTray}
+                            setCloseToTray={settings.setCloseToTray}
+                            hotkeyRegistrationError={settings.hotkeyRegistrationError}
                         />
                     )}
                 </div>

@@ -5,6 +5,7 @@
 
 const path = require("node:path");
 const fs = require("node:fs");
+const globalShortcutBridge = require("./globalShortcutBridge.cjs");
 
 // Theme colors configuration
 const THEME_COLORS = {
@@ -28,6 +29,7 @@ let currentLanguage = "en";
 let handlersRegistered = false; // Prevent duplicate IPC handler registration
 let menuDeps = null;
 let electronApp = null; // Reference to Electron app for userData path
+let isQuitting = false;
 const rendererReadyCallbacksByWebContentsId = new Map();
 const DEBUG_WINDOWS = process.env.NETCATTY_DEBUG_WINDOWS === "1";
 const OAUTH_DEFAULT_WIDTH = 600;
@@ -45,6 +47,10 @@ function debugLog(...args) {
   } catch {
     // ignore
   }
+}
+
+function setIsQuitting(nextValue) {
+  isQuitting = Boolean(nextValue);
 }
 
 /**
@@ -653,6 +659,15 @@ async function createWindow(electronModule, options) {
 
   // Save state when window is about to close
   win.on("close", (event) => {
+    // Check if close-to-tray is enabled
+    if (!isQuitting && globalShortcutBridge.handleWindowClose(event, win)) {
+      // Window was hidden to tray - save state before returning
+      if (saveStateTimer) clearTimeout(saveStateTimer);
+      const state = getWindowBoundsState(win, lastNormalBounds);
+      if (state) saveWindowStateSync(state);
+      return;
+    }
+
     if (windowStateCloseRequested) {
       return;
     }
@@ -1111,5 +1126,6 @@ module.exports = {
   buildAppMenu,
   getMainWindow,
   getSettingsWindow,
+  setIsQuitting,
   THEME_COLORS,
 };

@@ -99,6 +99,16 @@ const en: Messages = {
   'settings.sessionLogs.formatHtml': 'HTML (.html)',
   'settings.sessionLogs.hint': 'Session logs capture all terminal output for troubleshooting and auditing purposes.',
 
+  // Settings > Global Hotkey (Quake Mode)
+  'settings.globalHotkey.title': 'Global Hotkey',
+  'settings.globalHotkey.toggleWindow': 'Toggle Window',
+  'settings.globalHotkey.toggleWindowDesc': 'Press a key combination to set a global shortcut for showing/hiding the window.',
+  'settings.globalHotkey.notSet': 'Not set',
+  'settings.globalHotkey.reset': 'Reset to default',
+  'settings.globalHotkey.closeToTray': 'Close to System Tray',
+  'settings.globalHotkey.closeToTrayDesc': 'When enabled, closing the window will minimize to the system tray instead of quitting.',
+  'settings.globalHotkey.hint': 'Global hotkey works system-wide to quickly show or hide the window (Quake-style terminal).',
+
   // Settings > Application
   'settings.application.checkUpdates': 'Check for updates',
   'settings.application.reportProblem': 'Report a problem',
