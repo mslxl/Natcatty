@@ -779,6 +779,15 @@ const api = {
     return () => ipcRenderer.removeListener("netcatty:tray:togglePortForward", handler);
   },
 
+  // Tray panel window
+  hideTrayPanel: () => ipcRenderer.invoke("netcatty:trayPanel:hide"),
+  openMainWindow: () => ipcRenderer.invoke("netcatty:trayPanel:openMainWindow"),
+  onTrayPanelCloseRequest: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on("netcatty:trayPanel:closeRequest", handler);
+    return () => ipcRenderer.removeListener("netcatty:trayPanel:closeRequest", handler);
+  },
+
   // Get file path from File object (for drag-and-drop)
   getPathForFile: (file) => {
     try {

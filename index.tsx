@@ -11,6 +11,7 @@ import App from './App';
 import { ToastProvider } from './components/ui/toast';
 
 const LazySettingsPage = lazy(() => import('./components/SettingsPage'));
+const LazyTrayPanel = lazy(() => import('./components/TrayPanel'));
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -22,6 +23,9 @@ const getRoute = () => {
   const hash = window.location.hash;
   if (hash === '#/settings' || hash.startsWith('#/settings')) {
     return 'settings';
+  }
+  if (hash === '#/tray' || hash.startsWith('#/tray')) {
+    return 'tray';
   }
   return 'main';
 };
@@ -35,6 +39,14 @@ const renderApp = () => {
       <ToastProvider>
         <Suspense fallback={null}>
           <LazySettingsPage />
+        </Suspense>
+      </ToastProvider>
+    );
+  } else if (route === 'tray') {
+    root.render(
+      <ToastProvider>
+        <Suspense fallback={null}>
+          <LazyTrayPanel />
         </Suspense>
       </ToastProvider>
     );

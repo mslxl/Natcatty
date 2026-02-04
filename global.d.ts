@@ -603,6 +603,10 @@ declare global {
     }): Promise<{ success: boolean }>;
     onTrayFocusSession?(callback: (sessionId: string) => void): () => void;
     onTrayTogglePortForward?(callback: (ruleId: string, start: boolean) => void): () => void;
+
+    hideTrayPanel?(): Promise<{ success: boolean }>;
+    openMainWindow?(): Promise<{ success: boolean }>;
+    onTrayPanelCloseRequest?(callback: () => void): () => void;
   }
 
   interface Window {

@@ -31,6 +31,105 @@ let trayMenuData = {
   portForwardRules: [], // { id, label, type, localPort, remoteHost, remotePort, status, hostId }
 };
 
+let trayPanelWindow = null;
+
+function openMainWindow() {
+  const { app } = electronModule;
+  const win = getMainWindow();
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  try {
+    app.focus({ steal: true });
+  } catch {
+    // ignore
+  }
+}
+
+function getTrayPanelUrl() {
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devServerUrl) {
+    return `${devServerUrl.replace(/\/$/, "")}/#/tray`;
+  }
+  return "app://netcatty/index.html#/tray";
+}
+
+function ensureTrayPanelWindow() {
+  const { BrowserWindow } = electronModule;
+  if (trayPanelWindow && !trayPanelWindow.isDestroyed()) return trayPanelWindow;
+
+  trayPanelWindow = new BrowserWindow({
+    width: 360,
+    height: 520,
+    show: false,
+    frame: false,
+    resizable: false,
+    movable: false,
+    fullscreenable: false,
+    minimizable: false,
+    maximizable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    transparent: true,
+    hasShadow: true,
+    webPreferences: {
+      preload: path.join(__dirname, "../preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  trayPanelWindow.on("blur", () => {
+    try {
+      trayPanelWindow?.hide();
+    } catch {
+      // ignore
+    }
+  });
+
+  const url = getTrayPanelUrl();
+  void trayPanelWindow.loadURL(url);
+
+  return trayPanelWindow;
+}
+
+function showTrayPanel() {
+  if (!tray) return;
+  const { screen } = electronModule;
+  const win = ensureTrayPanelWindow();
+
+  const trayBounds = tray.getBounds();
+  const display = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y });
+  const workArea = display.workArea;
+
+  const panelBounds = win.getBounds();
+  const x = Math.min(
+    Math.max(trayBounds.x + Math.round(trayBounds.width / 2) - Math.round(panelBounds.width / 2), workArea.x),
+    workArea.x + workArea.width - panelBounds.width,
+  );
+  const y = Math.min(trayBounds.y + trayBounds.height + 6, workArea.y + workArea.height - panelBounds.height);
+
+  win.setBounds({ x, y, width: panelBounds.width, height: panelBounds.height }, false);
+  win.show();
+  win.focus();
+}
+
+function hideTrayPanel() {
+  if (trayPanelWindow && !trayPanelWindow.isDestroyed()) {
+    trayPanelWindow.hide();
+  }
+}
+
+function toggleTrayPanel() {
+  if (trayPanelWindow && !trayPanelWindow.isDestroyed() && trayPanelWindow.isVisible()) {
+    hideTrayPanel();
+  } else {
+    showTrayPanel();
+  }
+}
+
 function resolveTrayIconPath() {
   const { app } = electronModule;
   
@@ -271,9 +370,9 @@ function createTray() {
     // Build and set initial context menu
     updateTrayMenu();
 
-    // Click on tray icon shows menu
+    // Click on tray icon toggles tray panel
     tray.on("click", () => {
-      if (tray) tray.popUpContextMenu();
+      toggleTrayPanel();
     });
 
     console.log("[GlobalShortcut] System tray created");
@@ -510,6 +609,16 @@ function registerHandlers(ipcMain) {
   // Update tray menu data
   ipcMain.handle("netcatty:tray:updateMenuData", async (_event, data) => {
     setTrayMenuData(data);
+    return { success: true };
+  });
+
+  ipcMain.handle("netcatty:trayPanel:hide", async () => {
+    hideTrayPanel();
+    return { success: true };
+  });
+
+  ipcMain.handle("netcatty:trayPanel:openMainWindow", async () => {
+    openMainWindow();
     return { success: true };
   });
 
