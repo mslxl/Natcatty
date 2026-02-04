@@ -492,18 +492,13 @@ function buildTrayMenuTemplate() {
  */
 function updateTrayMenu() {
   if (!tray) return;
-  // When tray panel is enabled, keep context menu minimal to avoid showing both menu and panel.
-  const { Menu } = electronModule;
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: "Quit",
-      click: () => {
-        closeToTray = false;
-        electronModule.app.quit();
-      },
-    },
-  ]);
-  tray.setContextMenu(contextMenu);
+  // Avoid showing a context menu on left-click; we toggle our custom panel instead.
+  // On macOS, right-click may still show a menu if one is set, so we don't set any.
+  try {
+    tray.setContextMenu(null);
+  } catch {
+    // ignore
+  }
 }
 
 /**

@@ -5,10 +5,36 @@ import { useVaultState } from "../application/state/useVaultState";
 import { toast } from "./ui/toast";
 import { cn } from "../lib/utils";
 import { useI18n } from "../application/i18n/I18nProvider";
+import { I18nProvider } from "../application/i18n/I18nProvider";
+import { useSettingsState } from "../application/state/useSettingsState";
 import { useTrayPanelBackend } from "../application/state/useTrayPanelBackend";
 import { useActiveTabId } from "../application/state/activeTabStore";
 
-const TrayPanel: React.FC = () => {
+const StatusDot: React.FC<{ status: "success" | "warning" | "error" | "neutral"; spinning?: boolean }> = ({
+  status,
+  spinning,
+}) => {
+  const color =
+    status === "success"
+      ? "bg-emerald-500"
+      : status === "warning"
+        ? "bg-amber-500"
+        : status === "error"
+          ? "bg-rose-500"
+          : "bg-zinc-500";
+
+  return (
+    <span
+      className={cn(
+        "inline-block h-2 w-2 rounded-full",
+        color,
+        spinning ? "animate-spin" : "",
+      )}
+    />
+  );
+};
+
+const TrayPanelContent: React.FC = () => {
   const { t } = useI18n();
   const { hideTrayPanel, openMainWindow, onTrayPanelCloseRequest } = useTrayPanelBackend();
 
@@ -100,8 +126,14 @@ const TrayPanel: React.FC = () => {
                     activeTabId === s.id ? "bg-muted" : "",
                   )}
                 >
-                  <span className="truncate">{s.hostLabel || s.hostname}</span>
-                  <span className="ml-2 text-xs text-muted-foreground">({t(`tray.status.${s.status}`)})</span>
+                  <span className="flex items-center gap-2 min-w-0">
+                    <StatusDot
+                      status={s.status === "connected" ? "success" : s.status === "connecting" ? "warning" : "error"}
+                      spinning={s.status === "connecting"}
+                    />
+                    <span className="truncate">{s.hostLabel || s.hostname}</span>
+                  </span>
+                  <span className="ml-2 text-xs text-muted-foreground">{t(`tray.status.${s.status}`)}</span>
                 </button>
               ))}
             </div>
@@ -142,7 +174,21 @@ const TrayPanel: React.FC = () => {
                       isConnecting ? "opacity-60" : "",
                     )}
                   >
-                    <span className="truncate">{label}</span>
+                    <span className="flex items-center gap-2 min-w-0">
+                      <StatusDot
+                        status={
+                          rule.status === "active"
+                            ? "success"
+                            : rule.status === "connecting"
+                              ? "warning"
+                              : rule.status === "error"
+                                ? "error"
+                                : "neutral"
+                        }
+                        spinning={rule.status === "connecting"}
+                      />
+                      <span className="truncate">{label}</span>
+                    </span>
                     <span className="ml-2 text-xs text-muted-foreground">
                       {t(`tray.status.${rule.status}`)}
                     </span>
@@ -154,6 +200,15 @@ const TrayPanel: React.FC = () => {
         )}
       </div>
     </div>
+  );
+};
+
+const TrayPanel: React.FC = () => {
+  const settings = useSettingsState();
+  return (
+    <I18nProvider locale={settings.uiLanguage}>
+      <TrayPanelContent />
+    </I18nProvider>
   );
 };
 
