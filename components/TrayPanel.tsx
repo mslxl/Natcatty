@@ -106,6 +106,10 @@ const TrayPanelContent: React.FC = () => {
       const target = e.target;
       if (!(target instanceof Node)) return;
       if (document.body && !document.body.contains(target)) return;
+      // Ignore clicks on interactive elements inside the panel.
+      if (target instanceof HTMLElement && target.closest("button,a,input,select,textarea,[role='button']")) {
+        return;
+      }
       // Clicking on background should close panel
       const root = document.getElementById("tray-panel-root");
       if (root && !root.contains(target)) {
