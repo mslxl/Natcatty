@@ -36,12 +36,23 @@ const StatusDot: React.FC<{ status: "success" | "warning" | "error" | "neutral";
 
 const TrayPanelContent: React.FC = () => {
   const { t } = useI18n();
-  const { hideTrayPanel, openMainWindow, onTrayPanelCloseRequest } = useTrayPanelBackend();
+  const { hideTrayPanel, openMainWindow, onTrayPanelCloseRequest, onTrayPanelRefresh } = useTrayPanelBackend();
 
   const { hosts, keys } = useVaultState();
   const { sessions, setActiveTabId } = useSessionState();
   const { rules: portForwardingRules, startTunnel, stopTunnel } = usePortForwardingState();
   const activeTabId = useActiveTabId();
+
+  useEffect(() => {
+    const unsubscribe = onTrayPanelRefresh?.(() => {
+      try {
+        window.dispatchEvent(new Event("storage"));
+      } catch {
+        // ignore
+      }
+    });
+    return () => unsubscribe?.();
+  }, [onTrayPanelRefresh]);
 
   const keysForPf = useMemo(
     () => keys.map((k) => ({ id: k.id, privateKey: k.privateKey })),

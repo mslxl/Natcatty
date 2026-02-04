@@ -33,6 +33,8 @@ let trayMenuData = {
 
 let trayPanelWindow = null;
 
+let trayPanelRefreshTimer = null;
+
 function openMainWindow() {
   const { app } = electronModule;
   const win = getMainWindow();
@@ -114,11 +116,26 @@ function showTrayPanel() {
   win.setBounds({ x, y, width: panelBounds.width, height: panelBounds.height }, false);
   win.show();
   win.focus();
+
+  if (trayPanelRefreshTimer) clearInterval(trayPanelRefreshTimer);
+  trayPanelRefreshTimer = setInterval(() => {
+    try {
+      if (!trayPanelWindow || trayPanelWindow.isDestroyed() || !trayPanelWindow.isVisible()) return;
+      trayPanelWindow.webContents?.send("netcatty:trayPanel:refresh");
+    } catch {
+      // ignore
+    }
+  }, 1000);
 }
 
 function hideTrayPanel() {
   if (trayPanelWindow && !trayPanelWindow.isDestroyed()) {
     trayPanelWindow.hide();
+  }
+
+  if (trayPanelRefreshTimer) {
+    clearInterval(trayPanelRefreshTimer);
+    trayPanelRefreshTimer = null;
   }
 }
 

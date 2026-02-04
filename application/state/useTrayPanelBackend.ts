@@ -17,5 +17,10 @@ export const useTrayPanelBackend = () => {
     return bridge?.onTrayPanelCloseRequest?.(callback);
   }, []);
 
-  return { hideTrayPanel, openMainWindow, onTrayPanelCloseRequest };
+  const onTrayPanelRefresh = useCallback((callback: () => void) => {
+    const bridge = netcattyBridge.get();
+    return bridge?.onTrayPanelRefresh?.(callback);
+  }, []);
+
+  return { hideTrayPanel, openMainWindow, onTrayPanelCloseRequest, onTrayPanelRefresh };
 };

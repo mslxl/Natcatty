@@ -607,6 +607,7 @@ declare global {
     hideTrayPanel?(): Promise<{ success: boolean }>;
     openMainWindow?(): Promise<{ success: boolean }>;
     onTrayPanelCloseRequest?(callback: () => void): () => void;
+    onTrayPanelRefresh?(callback: () => void): () => void;
   }
 
   interface Window {
