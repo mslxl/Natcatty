@@ -92,6 +92,7 @@ function ensureTrayPanelWindow() {
   });
 
   const url = getTrayPanelUrl();
+  console.log("[TrayPanel] loadURL", url);
   void trayPanelWindow.loadURL(url);
 
   return trayPanelWindow;
