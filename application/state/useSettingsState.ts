@@ -354,6 +354,21 @@ export const useSettingsState = () => {
       if (key === STORAGE_KEY_TERM_FONT_SIZE && typeof value === 'number') {
         setTerminalFontSize(value);
       }
+      if (key === STORAGE_KEY_TERM_SETTINGS) {
+        if (typeof value === 'string') {
+          try {
+            const parsed = JSON.parse(value) as Partial<TerminalSettings>;
+            setTerminalSettings((prev) => ({ ...prev, ...parsed }));
+          } catch {
+            // ignore parse errors
+          }
+        } else if (value && typeof value === 'object') {
+          setTerminalSettings((prev) => ({ ...prev, ...value as Partial<TerminalSettings> }));
+        }
+      }
+      if (key === STORAGE_KEY_EDITOR_WORD_WRAP && typeof value === 'boolean') {
+        setEditorWordWrapState((prev) => (prev === value ? prev : value));
+      }
       if (key === STORAGE_KEY_HOTKEY_SCHEME && (value === 'disabled' || value === 'mac' || value === 'pc')) {
         setHotkeyScheme(value);
       }
@@ -504,6 +519,12 @@ export const useSettingsState = () => {
           setSftpShowHiddenFiles(newValue);
         }
       }
+      if (e.key === STORAGE_KEY_EDITOR_WORD_WRAP && e.newValue !== null) {
+        const newValue = e.newValue === 'true';
+        if (newValue !== editorWordWrap) {
+          setEditorWordWrapState(newValue);
+        }
+      }
       // Sync SFTP compressed upload setting from other windows
       if (e.key === STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD && e.newValue !== null) {
         const newValue = e.newValue === 'true' || e.newValue === 'enabled';
@@ -515,7 +536,7 @@ export const useSettingsState = () => {
 
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
-  }, [theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage, terminalThemeId, terminalFontFamilyId, terminalFontSize, sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload]);
+  }, [theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage, terminalThemeId, terminalFontFamilyId, terminalFontSize, sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload, editorWordWrap]);
 
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_TERM_THEME, terminalThemeId);
@@ -534,7 +555,8 @@ export const useSettingsState = () => {
 
   useEffect(() => {
     localStorageAdapter.write(STORAGE_KEY_TERM_SETTINGS, terminalSettings);
-  }, [terminalSettings]);
+    notifySettingsChanged(STORAGE_KEY_TERM_SETTINGS, terminalSettings);
+  }, [terminalSettings, notifySettingsChanged]);
 
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_HOTKEY_SCHEME, hotkeyScheme);
