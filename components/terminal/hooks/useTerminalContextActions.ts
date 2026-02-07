@@ -2,7 +2,7 @@ import type { Terminal as XTerm } from "@xterm/xterm";
 import { useCallback } from "react";
 import type { RefObject } from "react";
 import { logger } from "../../../lib/logger";
-import { normalizeLineEndings } from "../../../lib/utils";
+import { normalizeLineEndings, wrapBracketedPaste } from "../../../lib/utils";
 
 type TerminalBackendWriteApi = {
   writeToSession: (sessionId: string, data: string) => void;
@@ -33,7 +33,11 @@ export const useTerminalContextActions = ({
     if (!term) return;
     try {
       const text = await navigator.clipboard.readText();
-      if (text && sessionRef.current) terminalBackend.writeToSession(sessionRef.current, normalizeLineEndings(text));
+      if (text && sessionRef.current) {
+        let data = normalizeLineEndings(text);
+        if (term.modes.bracketedPasteMode) data = wrapBracketedPaste(data);
+        terminalBackend.writeToSession(sessionRef.current, data);
+      }
     } catch (err) {
       logger.warn("Failed to paste from clipboard", err);
     }

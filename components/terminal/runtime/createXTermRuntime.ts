@@ -18,7 +18,7 @@ import {
   resolveXTermPerformanceConfig,
 } from "../../../infrastructure/config/xtermPerformance";
 import { logger } from "../../../lib/logger";
-import { isMacPlatform, normalizeLineEndings } from "../../../lib/utils";
+import { isMacPlatform, normalizeLineEndings, wrapBracketedPaste } from "../../../lib/utils";
 import type {
   Host,
   KeyBinding,
@@ -407,7 +407,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         case "paste": {
           navigator.clipboard.readText().then((text) => {
             const id = ctx.sessionRef.current;
-            if (id) ctx.terminalBackend.writeToSession(id, normalizeLineEndings(text));
+            if (id) {
+              let data = normalizeLineEndings(text);
+              if (term.modes.bracketedPasteMode) data = wrapBracketedPaste(data);
+              ctx.terminalBackend.writeToSession(id, data);
+            }
           });
           break;
         }
@@ -439,7 +443,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       try {
         const text = await navigator.clipboard.readText();
         if (text && ctx.sessionRef.current) {
-          ctx.terminalBackend.writeToSession(ctx.sessionRef.current, normalizeLineEndings(text));
+          let data = normalizeLineEndings(text);
+          if (term.modes.bracketedPasteMode) data = wrapBracketedPaste(data);
+          ctx.terminalBackend.writeToSession(ctx.sessionRef.current, data);
         }
       } catch (err) {
         logger.warn("[Terminal] Failed to paste from clipboard:", err);
