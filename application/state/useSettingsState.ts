@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
 import { SyncConfig, TerminalSettings, DEFAULT_TERMINAL_SETTINGS, HotkeyScheme, CustomKeyBindings, DEFAULT_KEY_BINDINGS, KeyBinding, UILanguage, SessionLogFormat } from '../../domain/models';
 import {
   STORAGE_KEY_COLOR,
@@ -179,7 +179,7 @@ export const useSettingsState = () => {
     const stored = readStoredString(STORAGE_KEY_UI_LANGUAGE);
     return resolveSupportedLocale(stored || DEFAULT_UI_LOCALE);
   });
-  const [terminalSettings, setTerminalSettings] = useState<TerminalSettings>(() => {
+  const [terminalSettings, setTerminalSettingsState] = useState<TerminalSettings>(() => {
     const stored = localStorageAdapter.read<TerminalSettings>(STORAGE_KEY_TERM_SETTINGS);
     return stored ? { ...DEFAULT_TERMINAL_SETTINGS, ...stored } : DEFAULT_TERMINAL_SETTINGS;
   });
@@ -254,9 +254,24 @@ export const useSettingsState = () => {
   });
   const [hotkeyRegistrationError, setHotkeyRegistrationError] = useState<string | null>(null);
   const incomingTerminalSettingsSignatureRef = useRef<string | null>(null);
+  const localTerminalSettingsVersionRef = useRef(0);
+  const broadcastedLocalTerminalSettingsVersionRef = useRef(0);
+
+  const setTerminalSettings = useCallback((nextValue: SetStateAction<TerminalSettings>) => {
+    setTerminalSettingsState((prev) => {
+      const next = typeof nextValue === 'function'
+        ? (nextValue as (prevState: TerminalSettings) => TerminalSettings)(prev)
+        : nextValue;
+      if (areTerminalSettingsEqual(prev, next)) {
+        return prev;
+      }
+      localTerminalSettingsVersionRef.current += 1;
+      return next;
+    });
+  }, []);
 
   const mergeIncomingTerminalSettings = useCallback((incoming: Partial<TerminalSettings>) => {
-    setTerminalSettings((prev) => {
+    setTerminalSettingsState((prev) => {
       const next = { ...prev, ...incoming };
       if (areTerminalSettingsEqual(prev, next)) {
         return prev;
@@ -575,12 +590,15 @@ export const useSettingsState = () => {
   useEffect(() => {
     localStorageAdapter.write(STORAGE_KEY_TERM_SETTINGS, terminalSettings);
     const currentSignature = serializeTerminalSettings(terminalSettings);
-    if (incomingTerminalSettingsSignatureRef.current === currentSignature) {
+    const hasPendingUnbroadcastLocalChanges =
+      localTerminalSettingsVersionRef.current !== broadcastedLocalTerminalSettingsVersionRef.current;
+    if (incomingTerminalSettingsSignatureRef.current === currentSignature && !hasPendingUnbroadcastLocalChanges) {
       incomingTerminalSettingsSignatureRef.current = null;
       return;
     }
     incomingTerminalSettingsSignatureRef.current = null;
     notifySettingsChanged(STORAGE_KEY_TERM_SETTINGS, terminalSettings);
+    broadcastedLocalTerminalSettingsVersionRef.current = localTerminalSettingsVersionRef.current;
   }, [terminalSettings, notifySettingsChanged]);
 
   useEffect(() => {
@@ -763,7 +781,7 @@ export const useSettingsState = () => {
     value: TerminalSettings[K]
   ) => {
     setTerminalSettings(prev => ({ ...prev, [key]: value }));
-  }, []);
+  }, [setTerminalSettings]);
 
   return {
     theme,
