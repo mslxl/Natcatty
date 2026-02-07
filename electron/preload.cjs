@@ -312,6 +312,13 @@ ipcRenderer.on("netcatty:filewatch:error", (_event, payload) => {
   });
 });
 
+// Buffer the latest tray menu data so it can be replayed when the React
+// component subscribes after lazy-mount (avoiding the first-open race).
+let _lastTrayMenuData = null;
+ipcRenderer.on("netcatty:trayPanel:setMenuData", (_event, data) => {
+  _lastTrayMenuData = data;
+});
+
 const api = {
   startSSHSession: async (options) => {
     const result = await ipcRenderer.invoke("netcatty:start", options);
@@ -811,7 +818,15 @@ const api = {
   },
 
   onTrayPanelMenuData: (callback) => {
-    const handler = (_event, data) => callback(data);
+    // Replay buffered data so late subscribers (e.g. after React lazy-mount) don't miss
+    // the initial payload that was sent before the useEffect listener was registered.
+    if (_lastTrayMenuData) {
+      queueMicrotask(() => callback(_lastTrayMenuData));
+    }
+    const handler = (_event, data) => {
+      _lastTrayMenuData = data;
+      callback(data);
+    };
     ipcRenderer.on("netcatty:trayPanel:setMenuData", handler);
     return () => ipcRenderer.removeListener("netcatty:trayPanel:setMenuData", handler);
   },
