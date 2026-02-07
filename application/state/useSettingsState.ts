@@ -96,8 +96,11 @@ const isValidUiFontId = (value: string): boolean => {
     uiFontStore.getAvailableFonts().some((font) => font.id === value);
 };
 
+const serializeTerminalSettings = (settings: TerminalSettings): string =>
+  JSON.stringify(settings);
+
 const areTerminalSettingsEqual = (a: TerminalSettings, b: TerminalSettings): boolean =>
-  JSON.stringify(a) === JSON.stringify(b);
+  serializeTerminalSettings(a) === serializeTerminalSettings(b);
 
 const applyThemeTokens = (
   theme: 'light' | 'dark',
@@ -250,7 +253,7 @@ export const useSettingsState = () => {
     return stored === 'true';
   });
   const [hotkeyRegistrationError, setHotkeyRegistrationError] = useState<string | null>(null);
-  const skipNextTerminalSettingsBroadcastRef = useRef(false);
+  const incomingTerminalSettingsSignatureRef = useRef<string | null>(null);
 
   const mergeIncomingTerminalSettings = useCallback((incoming: Partial<TerminalSettings>) => {
     setTerminalSettings((prev) => {
@@ -258,8 +261,8 @@ export const useSettingsState = () => {
       if (areTerminalSettingsEqual(prev, next)) {
         return prev;
       }
-      // This update came from another window; persist locally but don't echo back via IPC.
-      skipNextTerminalSettingsBroadcastRef.current = true;
+      // Mark the exact incoming snapshot so only this state is skipped for IPC rebroadcast.
+      incomingTerminalSettingsSignatureRef.current = serializeTerminalSettings(next);
       return next;
     });
   }, []);
@@ -571,10 +574,12 @@ export const useSettingsState = () => {
 
   useEffect(() => {
     localStorageAdapter.write(STORAGE_KEY_TERM_SETTINGS, terminalSettings);
-    if (skipNextTerminalSettingsBroadcastRef.current) {
-      skipNextTerminalSettingsBroadcastRef.current = false;
+    const currentSignature = serializeTerminalSettings(terminalSettings);
+    if (incomingTerminalSettingsSignatureRef.current === currentSignature) {
+      incomingTerminalSettingsSignatureRef.current = null;
       return;
     }
+    incomingTerminalSettingsSignatureRef.current = null;
     notifySettingsChanged(STORAGE_KEY_TERM_SETTINGS, terminalSettings);
   }, [terminalSettings, notifySettingsChanged]);
 
