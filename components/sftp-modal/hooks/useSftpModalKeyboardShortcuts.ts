@@ -71,11 +71,12 @@ export const useSftpModalKeyboardShortcuts = ({
 
       // Skip if focus is on an input element
       const target = e.target as HTMLElement;
-      if (
+      const isEditableTarget =
         target.tagName === "INPUT" ||
         target.tagName === "TEXTAREA" ||
-        target.isContentEditable
-      ) {
+        target.isContentEditable ||
+        !!target.closest?.(".monaco-editor, .monaco-diff-editor, .monaco-inputbox");
+      if (isEditableTarget) {
         return;
       }
 

@@ -167,8 +167,8 @@ function getWindowBoundsState(win, overrideBounds) {
 }
 
 const MENU_LABELS = {
-  en: { edit: "Edit", view: "View", window: "Window" },
-  "zh-CN": { edit: "编辑", view: "视图", window: "窗口" },
+  en: { edit: "Edit", view: "View", window: "Window", reload: "Reload" },
+  "zh-CN": { edit: "编辑", view: "视图", window: "窗口", reload: "重新加载" },
 };
 
 function tMenu(language, key) {
@@ -1079,7 +1079,7 @@ function buildAppMenu(Menu, app, isMac, language = currentLanguage) {
     {
       label: tMenu(language, "view"),
       submenu: [
-        { role: "reload" },
+        { label: tMenu(language, "reload"), click: (_, win) => { if (win) win.reload(); } },
         { role: "forceReload" },
         { role: "toggleDevTools" },
         { type: "separator" },

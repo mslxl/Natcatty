@@ -580,6 +580,7 @@ declare global {
 
     // Get file path from File object (for drag-and-drop, uses Electron's webUtils)
     getPathForFile?(file: File): string | undefined;
+    readClipboardText?(): Promise<string>;
 
     // Global Toggle Hotkey (Quake Mode)
     registerGlobalHotkey?(hotkey: string): Promise<{ success: boolean; enabled?: boolean; error?: string; accelerator?: string }>;

@@ -36,7 +36,7 @@ try {
   electronModule = require("electron");
 }
 
-const { app, BrowserWindow, Menu, protocol, shell } = electronModule || {};
+const { app, BrowserWindow, Menu, protocol, shell, clipboard } = electronModule || {};
 if (!app || !BrowserWindow) {
   throw new Error("Failed to load Electron runtime. Ensure the app is launched with the Electron binary.");
 }
@@ -451,6 +451,15 @@ const registerBridges = (win) => {
       version: app.getVersion(),
       platform: process.platform,
     };
+  });
+
+  // Clipboard helpers for renderer fallback paths (e.g. Monaco paste in Electron)
+  ipcMain.handle("netcatty:clipboard:readText", async () => {
+    try {
+      return clipboard?.readText?.() || "";
+    } catch {
+      return "";
+    }
   });
 
   // Select an application from system file picker

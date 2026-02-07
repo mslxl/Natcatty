@@ -824,6 +824,11 @@ const api = {
       return undefined;
     }
   },
+
+  // Clipboard fallback helpers
+  readClipboardText: async () => {
+    return ipcRenderer.invoke("netcatty:clipboard:readText");
+  },
 };
 
 // Merge with existing netcatty (if any) to avoid stale objects on hot reload

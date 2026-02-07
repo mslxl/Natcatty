@@ -19,6 +19,7 @@ const monacoBasePath = import.meta.env.DEV
 loader.config({ paths: { vs: monacoBasePath } });
 
 import { useI18n } from '../application/i18n/I18nProvider';
+import { useClipboardBackend } from '../application/state/useClipboardBackend';
 import { getLanguageId, getLanguageName, getSupportedLanguages } from '../lib/sftpFileUtils';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
@@ -139,6 +140,7 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
   onToggleWordWrap,
 }) => {
   const { t } = useI18n();
+  const { readClipboardText: readClipboardTextFromBridge } = useClipboardBackend();
   const monaco = useMonaco();
   const [content, setContent] = useState(initialContent);
   const [saving, setSaving] = useState(false);
@@ -148,6 +150,7 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
 
   // Ref to store the latest save function to avoid stale closure in keyboard shortcut
   const handleSaveRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const handlePasteRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   // Track theme from document.documentElement class (syncs with app theme)
   const [isDarkTheme, setIsDarkTheme] = useState(() =>
@@ -234,6 +237,58 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
     handleSaveRef.current = handleSave;
   }, [handleSave]);
 
+  const readClipboardText = useCallback(async (): Promise<string | null> => {
+    try {
+      if (navigator.clipboard?.readText) {
+        return await navigator.clipboard.readText();
+      }
+    } catch {
+      // Fall through to Electron bridge
+    }
+
+    try {
+      return await readClipboardTextFromBridge();
+    } catch {
+      // Both clipboard APIs unavailable; signal failure so caller can fall back.
+      return null;
+    }
+  }, [readClipboardTextFromBridge]);
+
+  const handlePaste = useCallback(async () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const text = await readClipboardText();
+    if (text === null) {
+      // Clipboard read unavailable; fall back to Monaco's native paste.
+      editor.trigger('keyboard', 'editor.action.clipboardPasteAction', null);
+      return;
+    }
+    if (!text) return;
+
+    const selections = editor.getSelections();
+    if (!selections || selections.length === 0) return;
+
+    // Match Monaco's default multicursorPaste:'spread' behavior:
+    // distribute one line per cursor when line count equals cursor count.
+    const lines = text.split(/\r\n|\n/);
+    const distribute = selections.length > 1 && lines.length === selections.length;
+
+    editor.executeEdits(
+      'netcatty-paste',
+      selections.map((selection, i) => ({
+        range: selection,
+        text: distribute ? lines[i] : text,
+        forceMoveMarkers: true,
+      })),
+    );
+    editor.focus();
+  }, [readClipboardText]);
+
+  useEffect(() => {
+    handlePasteRef.current = handlePaste;
+  }, [handlePaste]);
+
   const handleClose = useCallback(() => {
     if (hasChanges) {
       const confirmed = confirm(t('sftp.editor.unsavedChanges'));
@@ -258,6 +313,11 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => {
       // Trigger Monaco's built-in find widget
       editor.trigger('keyboard', 'actions.find', null);
+    });
+
+    // Fallback paste path for Electron environments where Monaco paste can fail.
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => {
+      void handlePasteRef.current();
     });
   }, []);
 
@@ -368,6 +428,8 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
               </div>
             }
             options={{
+              // Prefer native context menu in Electron so right-click Paste uses OS clipboard path.
+              contextmenu: false,
               minimap: { enabled: true },
               fontSize: 14,
               lineNumbers: 'on',

@@ -769,11 +769,15 @@ function App({ settings }: { settings: SettingsState }) {
       // Note: xterm terminal handles its own key interception via attachCustomKeyEventHandler
       const target = e.target as HTMLElement;
       const isFormElement = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+      const isMonacoElement =
+        target instanceof HTMLElement &&
+        !!target.closest?.('.monaco-editor, .monaco-diff-editor, .monaco-inputbox');
       const isXtermInput =
         target instanceof HTMLElement &&
         !!target.closest?.(".xterm, .xterm-helper-textarea, .xterm-screen, .xterm-viewport");
 
-      if (isFormElement && !isXtermInput && e.key !== 'Escape') {
+      // Monaco is not always contentEditable/input, so treat it as an editor surface.
+      if ((isFormElement || isMonacoElement) && !isXtermInput && e.key !== 'Escape') {
         return;
       }
 
@@ -797,6 +801,10 @@ function App({ settings }: { settings: SettingsState }) {
         const keyStr = isMac ? binding.mac : binding.pc;
         if (matchesKeyBinding(e, keyStr, isMac)) {
           if (HOTKEY_DEBUG) console.log('[Hotkeys] Matched binding:', binding.action, keyStr);
+          // SFTP shortcuts are handled by SFTP-specific hooks.
+          if (binding.category === 'sftp') {
+            continue;
+          }
           // Terminal-specific actions should be handled by the terminal
           // Don't handle them at app level
           const terminalActions = ['copy', 'paste', 'selectAll', 'clearBuffer', 'searchTerminal'];
@@ -1078,8 +1086,36 @@ function App({ settings }: { settings: SettingsState }) {
     setDraggingSessionId(null);
   }, [setDraggingSessionId]);
 
+  const handleRootContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const editableSelector =
+      "input, textarea, [contenteditable], .monaco-editor, .monaco-diff-editor, .monaco-inputbox, .monaco-menu-container";
+
+    const nativeEvent = e.nativeEvent;
+    const path = typeof nativeEvent.composedPath === "function" ? nativeEvent.composedPath() : [];
+    const allowFromPath = path.some(
+      (node) => node instanceof Element && !!node.closest(editableSelector),
+    );
+
+    const target = e.target;
+    const targetElement =
+      target instanceof Element
+        ? target
+        : target instanceof Node
+          ? target.parentElement
+          : null;
+    const allowFromTarget = !!targetElement?.closest(editableSelector);
+
+    const allowNativeContextMenu = allowFromPath || allowFromTarget;
+
+    if (allowNativeContextMenu) {
+      return;
+    }
+
+    e.preventDefault();
+  }, []);
+
   return (
-    <div className="flex flex-col h-screen text-foreground font-sans netcatty-shell" onContextMenu={(e) => e.preventDefault()}>
+    <div className="flex flex-col h-screen text-foreground font-sans netcatty-shell" onContextMenu={handleRootContextMenu}>
       <TopTabs
         theme={theme}
         sessions={sessions}
