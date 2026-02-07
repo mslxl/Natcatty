@@ -19,7 +19,6 @@ const monacoBasePath = import.meta.env.DEV
 loader.config({ paths: { vs: monacoBasePath } });
 
 import { useI18n } from '../application/i18n/I18nProvider';
-import { useSettingsState } from '../application/state/useSettingsState';
 import { getLanguageId, getLanguageName, getSupportedLanguages } from '../lib/sftpFileUtils';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
@@ -32,6 +31,8 @@ interface TextEditorModalProps {
   fileName: string;
   initialContent: string;
   onSave: (content: string) => Promise<void>;
+  editorWordWrap: boolean;
+  onToggleWordWrap: () => void;
 }
 
 // Map our language IDs to Monaco language IDs
@@ -134,9 +135,10 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
   fileName,
   initialContent,
   onSave,
+  editorWordWrap,
+  onToggleWordWrap,
 }) => {
   const { t } = useI18n();
-  const { editorWordWrap, setEditorWordWrap } = useSettingsState();
   const monaco = useMonaco();
   const [content, setContent] = useState(initialContent);
   const [saving, setSaving] = useState(false);
@@ -307,7 +309,7 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
                 variant={editorWordWrap ? 'secondary' : 'ghost'}
                 size="icon"
                 className="h-7 w-7"
-                onClick={() => setEditorWordWrap(!editorWordWrap)}
+                onClick={onToggleWordWrap}
                 title={t('sftp.editor.wordWrap')}
               >
                 <WrapText size={14} />

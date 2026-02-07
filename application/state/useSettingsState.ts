@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { SyncConfig, TerminalSettings, DEFAULT_TERMINAL_SETTINGS, HotkeyScheme, CustomKeyBindings, DEFAULT_KEY_BINDINGS, KeyBinding, UILanguage, SessionLogFormat } from '../../domain/models';
 import {
   STORAGE_KEY_COLOR,
@@ -95,6 +95,9 @@ const isValidUiFontId = (value: string): boolean => {
   return UI_FONTS.some((font) => font.id === value) ||
     uiFontStore.getAvailableFonts().some((font) => font.id === value);
 };
+
+const areTerminalSettingsEqual = (a: TerminalSettings, b: TerminalSettings): boolean =>
+  JSON.stringify(a) === JSON.stringify(b);
 
 const applyThemeTokens = (
   theme: 'light' | 'dark',
@@ -247,6 +250,19 @@ export const useSettingsState = () => {
     return stored === 'true';
   });
   const [hotkeyRegistrationError, setHotkeyRegistrationError] = useState<string | null>(null);
+  const skipNextTerminalSettingsBroadcastRef = useRef(false);
+
+  const mergeIncomingTerminalSettings = useCallback((incoming: Partial<TerminalSettings>) => {
+    setTerminalSettings((prev) => {
+      const next = { ...prev, ...incoming };
+      if (areTerminalSettingsEqual(prev, next)) {
+        return prev;
+      }
+      // This update came from another window; persist locally but don't echo back via IPC.
+      skipNextTerminalSettingsBroadcastRef.current = true;
+      return next;
+    });
+  }, []);
 
   // Helper to notify other windows about settings changes via IPC
   const notifySettingsChanged = useCallback((key: string, value: unknown) => {
@@ -358,12 +374,12 @@ export const useSettingsState = () => {
         if (typeof value === 'string') {
           try {
             const parsed = JSON.parse(value) as Partial<TerminalSettings>;
-            setTerminalSettings((prev) => ({ ...prev, ...parsed }));
+            mergeIncomingTerminalSettings(parsed);
           } catch {
             // ignore parse errors
           }
         } else if (value && typeof value === 'object') {
-          setTerminalSettings((prev) => ({ ...prev, ...value as Partial<TerminalSettings> }));
+          mergeIncomingTerminalSettings(value as Partial<TerminalSettings>);
         }
       }
       if (key === STORAGE_KEY_EDITOR_WORD_WRAP && typeof value === 'boolean') {
@@ -394,7 +410,7 @@ export const useSettingsState = () => {
         // ignore
       }
     };
-  }, [syncAppearanceFromStorage, syncCustomCssFromStorage]);
+  }, [mergeIncomingTerminalSettings, syncAppearanceFromStorage, syncCustomCssFromStorage]);
 
   useEffect(() => {
     const bridge = netcattyBridge.get();
@@ -475,7 +491,7 @@ export const useSettingsState = () => {
       if (e.key === STORAGE_KEY_TERM_SETTINGS && e.newValue) {
         try {
           const newSettings = JSON.parse(e.newValue) as TerminalSettings;
-          setTerminalSettings(_prev => ({ ...DEFAULT_TERMINAL_SETTINGS, ...newSettings }));
+          mergeIncomingTerminalSettings({ ...DEFAULT_TERMINAL_SETTINGS, ...newSettings });
         } catch {
           // ignore parse errors
         }
@@ -536,7 +552,7 @@ export const useSettingsState = () => {
 
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
-  }, [theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage, terminalThemeId, terminalFontFamilyId, terminalFontSize, sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload, editorWordWrap]);
+  }, [theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage, terminalThemeId, terminalFontFamilyId, terminalFontSize, sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload, editorWordWrap, mergeIncomingTerminalSettings]);
 
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_TERM_THEME, terminalThemeId);
@@ -555,6 +571,10 @@ export const useSettingsState = () => {
 
   useEffect(() => {
     localStorageAdapter.write(STORAGE_KEY_TERM_SETTINGS, terminalSettings);
+    if (skipNextTerminalSettingsBroadcastRef.current) {
+      skipNextTerminalSettingsBroadcastRef.current = false;
+      return;
+    }
     notifySettingsChanged(STORAGE_KEY_TERM_SETTINGS, terminalSettings);
   }, [terminalSettings, notifySettingsChanged]);
 

@@ -53,7 +53,15 @@ interface SftpViewProps {
 const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => {
   const { t } = useI18n();
   const isActive = useIsSftpActive();
-  const { sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles, hotkeyScheme, keyBindings } = useSettingsState();
+  const {
+    sftpDoubleClickBehavior,
+    sftpAutoSync,
+    sftpShowHiddenFiles,
+    hotkeyScheme,
+    keyBindings,
+    editorWordWrap,
+    setEditorWordWrap,
+  } = useSettingsState();
 
   // File watch event handlers (stable refs to avoid re-creating the useSftpState options)
   const fileWatchHandlers = useMemo(() => ({
@@ -356,6 +364,8 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities }) => 
           textEditorContent={textEditorContent}
           setTextEditorContent={setTextEditorContent}
           handleSaveTextFile={handleSaveTextFile}
+          editorWordWrap={editorWordWrap}
+          setEditorWordWrap={setEditorWordWrap}
           showFileOpenerDialog={showFileOpenerDialog}
           setShowFileOpenerDialog={setShowFileOpenerDialog}
           fileOpenerTarget={fileOpenerTarget}

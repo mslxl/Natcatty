@@ -32,6 +32,8 @@ interface SftpOverlaysProps {
   textEditorContent: string;
   setTextEditorContent: (content: string) => void;
   handleSaveTextFile: (content: string) => Promise<void>;
+  editorWordWrap: boolean;
+  setEditorWordWrap: (enabled: boolean) => void;
   showFileOpenerDialog: boolean;
   setShowFileOpenerDialog: (open: boolean) => void;
   fileOpenerTarget: { file: SftpFileEntry; side: "left" | "right"; fullPath: string } | null;
@@ -63,6 +65,8 @@ export const SftpOverlays: React.FC<SftpOverlaysProps> = ({
   textEditorContent,
   setTextEditorContent,
   handleSaveTextFile,
+  editorWordWrap,
+  setEditorWordWrap,
   showFileOpenerDialog,
   setShowFileOpenerDialog,
   fileOpenerTarget,
@@ -178,6 +182,8 @@ export const SftpOverlays: React.FC<SftpOverlaysProps> = ({
         fileName={textEditorTarget?.file.name || ""}
         initialContent={textEditorContent}
         onSave={handleSaveTextFile}
+        editorWordWrap={editorWordWrap}
+        onToggleWordWrap={() => setEditorWordWrap(!editorWordWrap)}
       />
 
       {/* File Opener Dialog */}

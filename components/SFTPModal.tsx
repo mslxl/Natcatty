@@ -86,7 +86,15 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     showSaveDialog,
   } = useSftpBackend();
   const { t } = useI18n();
-  const { sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload, hotkeyScheme, keyBindings } = useSettingsState();
+  const {
+    sftpAutoSync,
+    sftpShowHiddenFiles,
+    sftpUseCompressedUpload,
+    hotkeyScheme,
+    keyBindings,
+    editorWordWrap,
+    setEditorWordWrap,
+  } = useSettingsState();
   const isLocalSession = host.protocol === "local";
   const [filenameEncoding, setFilenameEncoding] = useState<SftpFilenameEncoding>(
     host.sftpEncoding ?? "auto"
@@ -735,6 +743,8 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
         fileName={textEditorTarget?.name || ""}
         initialContent={textEditorContent}
         onSave={handleSaveTextFile}
+        editorWordWrap={editorWordWrap}
+        onToggleWordWrap={() => setEditorWordWrap(!editorWordWrap)}
       />
     </Dialog>
   );
