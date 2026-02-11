@@ -7,6 +7,7 @@ const os = require("node:os");
 const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
+const { StringDecoder } = require("node:string_decoder");
 const pty = require("node-pty");
 const { SerialPort } = require("serialport");
 
@@ -315,15 +316,30 @@ async function startTelnetSession(event, options) {
       resolve({ sessionId });
     });
 
+    const charsetToNodeEncoding = (charset) => {
+      if (!charset) return 'utf8';
+      const normalized = String(charset).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (['utf8', 'utf-8'].includes(normalized)) return 'utf8';
+      if (['latin1', 'iso88591', 'iso-8859-1', 'binary'].includes(normalized)) return 'latin1';
+      if (normalized === 'ascii') return 'ascii';
+      if (['utf16le', 'ucs2'].includes(normalized)) return 'utf16le';
+      return 'utf8';
+    };
+
+    const telnetDecoder = new StringDecoder(charsetToNodeEncoding(options.charset));
+
     socket.on('data', (data) => {
       const session = sessions.get(sessionId);
       if (!session) return;
 
       const cleanData = handleTelnetNegotiation(data);
-      
+
       if (cleanData.length > 0) {
-        const contents = electronModule.webContents.fromId(session.webContentsId);
-        contents?.send("netcatty:data", { sessionId, data: cleanData.toString('binary') });
+        const decoded = telnetDecoder.write(cleanData);
+        if (decoded) {
+          const contents = electronModule.webContents.fromId(session.webContentsId);
+          contents?.send("netcatty:data", { sessionId, data: decoded });
+        }
       }
     });
 
@@ -513,9 +529,14 @@ async function startSerialSession(event, options) {
         };
         sessions.set(sessionId, session);
 
+        const serialDecoder = new StringDecoder('latin1');
+
         serialPort.on('data', (data) => {
-          const contents = electronModule.webContents.fromId(session.webContentsId);
-          contents?.send("netcatty:data", { sessionId, data: data.toString('binary') });
+          const decoded = serialDecoder.write(data);
+          if (decoded) {
+            const contents = electronModule.webContents.fromId(session.webContentsId);
+            contents?.send("netcatty:data", { sessionId, data: decoded });
+          }
         });
 
         serialPort.on('error', (err) => {
