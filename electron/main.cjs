@@ -241,6 +241,15 @@ function focusMainWindow() {
     const win = wins && wins.length ? wins[0] : null;
     if (!win) return false;
 
+    // Check if the webContents has crashed or been destroyed
+    try {
+      if (win.webContents?.isCrashed?.()) {
+        console.warn('[Main] Main window webContents has crashed, destroying window');
+        win.destroy();
+        return false;
+      }
+    } catch {}
+
     try {
       if (win.isMinimized && win.isMinimized()) win.restore();
     } catch {}
@@ -693,7 +702,13 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on("second-instance", () => {
-    focusMainWindow();
+    if (!focusMainWindow()) {
+      // Window is missing or crashed — try to recreate it
+      void createWindow().catch((err) => {
+        console.error("[Main] Failed to recreate window on second-instance:", err);
+        showStartupError(err);
+      });
+    }
   });
 
   // Application lifecycle
@@ -777,6 +792,14 @@ if (!gotLock) {
     } catch (err) {
       console.warn("Error during global shortcut cleanup:", err);
     }
+  });
+}
+
+// Graceful shutdown on SIGTERM/SIGINT to prevent zombie processes
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.on(sig, () => {
+    console.log(`[Main] Received ${sig}, quitting…`);
+    app.quit();
   });
 }
 

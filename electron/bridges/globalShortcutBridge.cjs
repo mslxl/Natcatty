@@ -707,6 +707,20 @@ function registerHandlers(ipcMain) {
 function cleanup() {
   unregisterGlobalHotkey();
   destroyTray();
+
+  if (trayPanelRefreshTimer) {
+    clearInterval(trayPanelRefreshTimer);
+    trayPanelRefreshTimer = null;
+  }
+
+  if (trayPanelWindow && !trayPanelWindow.isDestroyed()) {
+    try {
+      trayPanelWindow.destroy();
+    } catch {
+      // ignore
+    }
+    trayPanelWindow = null;
+  }
 }
 
 module.exports = {
