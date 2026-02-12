@@ -685,100 +685,100 @@ function showStartupError(err) {
   }
 }
 
-// Application lifecycle
-app.whenReady().then(() => {
-  registerAppProtocol();
+// Ensure single-instance behavior — must run before app.whenReady() so
+// the second instance never attempts to register the app:// protocol or
+// create a BrowserWindow (which would fail with ERR_FAILED).
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    focusMainWindow();
+  });
 
-  // Set dock icon on macOS
-  if (isMac && appIcon && app.dock?.setIcon) {
-    try {
-      app.dock.setIcon(appIcon);
-    } catch (err) {
-      console.warn("Failed to set dock icon", err);
-    }
-  }
+  // Application lifecycle
+  app.whenReady().then(() => {
+    registerAppProtocol();
 
-  // Build and set application menu
-  const menu = windowManager.buildAppMenu(Menu, app, isMac);
-  Menu.setApplicationMenu(menu);
-
-  app.on("browser-window-created", (_event, win) => {
-    try {
-      const mainWin = windowManager.getMainWindow();
-      const settingsWin = windowManager.getSettingsWindow();
-      const isPrimary = win === mainWin || win === settingsWin;
-      if (!isPrimary) {
-        win.setMenuBarVisibility(false);
-        win.autoHideMenuBar = true;
-        win.setMenu(null);
-        if (appIcon && win.setIcon) win.setIcon(appIcon);
+    // Set dock icon on macOS
+    if (isMac && appIcon && app.dock?.setIcon) {
+      try {
+        app.dock.setIcon(appIcon);
+      } catch (err) {
+        console.warn("Failed to set dock icon", err);
       }
-    } catch {
-      // ignore
     }
-  });
 
-  // Create the main window
-  void createWindow().catch((err) => {
-    console.error("[Main] Failed to create main window:", err);
-    showStartupError(err);
-    try {
-      app.quit();
-    } catch {}
-  });
+    // Build and set application menu
+    const menu = windowManager.buildAppMenu(Menu, app, isMac);
+    Menu.setApplicationMenu(menu);
 
-  // Re-create window on macOS dock click
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      void createWindow().catch((err) => {
-        console.error("[Main] Failed to create window on activate:", err);
-        showStartupError(err);
-      });
-    }
-  });
-});
-
-// Ensure single-instance behavior focuses existing window
-try {
-  const gotLock = app.requestSingleInstanceLock();
-  if (!gotLock) {
-    app.quit();
-  } else {
-    app.on("second-instance", () => {
-      focusMainWindow();
+    app.on("browser-window-created", (_event, win) => {
+      try {
+        const mainWin = windowManager.getMainWindow();
+        const settingsWin = windowManager.getSettingsWindow();
+        const isPrimary = win === mainWin || win === settingsWin;
+        if (!isPrimary) {
+          win.setMenuBarVisibility(false);
+          win.autoHideMenuBar = true;
+          win.setMenu(null);
+          if (appIcon && win.setIcon) win.setIcon(appIcon);
+        }
+      } catch {
+        // ignore
+      }
     });
-  }
-} catch {}
 
-// Cleanup on all windows closed
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
-});
+    // Create the main window
+    void createWindow().catch((err) => {
+      console.error("[Main] Failed to create main window:", err);
+      showStartupError(err);
+      try {
+        app.quit();
+      } catch {}
+    });
 
-app.on("before-quit", () => {
-  windowManager.setIsQuitting(true);
-});
+    // Re-create window on macOS dock click
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        void createWindow().catch((err) => {
+          console.error("[Main] Failed to create window on activate:", err);
+          showStartupError(err);
+        });
+      }
+    });
+  });
 
-// Cleanup all PTY sessions and port forwarding tunnels before quitting
-app.on("will-quit", () => {
-  try {
-    terminalBridge.cleanupAllSessions();
-  } catch (err) {
-    console.warn("Error during terminal cleanup:", err);
-  }
-  try {
-    portForwardingBridge.stopAllPortForwards();
-  } catch (err) {
-    console.warn("Error during port forwarding cleanup:", err);
-  }
-  try {
-    globalShortcutBridge.cleanup();
-  } catch (err) {
-    console.warn("Error during global shortcut cleanup:", err);
-  }
-});
+  // Cleanup on all windows closed
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") {
+      app.quit();
+    }
+  });
+
+  app.on("before-quit", () => {
+    windowManager.setIsQuitting(true);
+  });
+
+  // Cleanup all PTY sessions and port forwarding tunnels before quitting
+  app.on("will-quit", () => {
+    try {
+      terminalBridge.cleanupAllSessions();
+    } catch (err) {
+      console.warn("Error during terminal cleanup:", err);
+    }
+    try {
+      portForwardingBridge.stopAllPortForwards();
+    } catch (err) {
+      console.warn("Error during port forwarding cleanup:", err);
+    }
+    try {
+      globalShortcutBridge.cleanup();
+    } catch (err) {
+      console.warn("Error during global shortcut cleanup:", err);
+    }
+  });
+}
 
 // Export for testing
 module.exports = {
