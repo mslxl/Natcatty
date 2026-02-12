@@ -1,4 +1,4 @@
-import { ChevronRight, FileSymlink, Folder, FolderOpen, Monitor, Server, Expand, Minimize2 } from 'lucide-react';
+import { CheckSquare, ChevronRight, FileSymlink, Folder, FolderOpen, Monitor, Server, Square, Expand, Minimize2 } from 'lucide-react';
 import React, { useMemo } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { useTreeExpandedState } from '../application/state/useTreeExpandedState';
@@ -32,6 +32,9 @@ interface HostTreeViewProps {
   moveGroup: (sourcePath: string, targetPath: string) => void;
   managedGroupPaths?: Set<string>;
   onUnmanageGroup?: (groupPath: string) => void;
+  isMultiSelectMode?: boolean;
+  selectedHostIds?: Set<string>;
+  toggleHostSelection?: (hostId: string) => void;
 }
 
 interface TreeNodeProps {
@@ -53,6 +56,9 @@ interface TreeNodeProps {
   moveGroup: (sourcePath: string, targetPath: string) => void;
   managedGroupPaths?: Set<string>;
   onUnmanageGroup?: (groupPath: string) => void;
+  isMultiSelectMode?: boolean;
+  selectedHostIds?: Set<string>;
+  toggleHostSelection?: (hostId: string) => void;
 }
 
 const TreeNode: React.FC<TreeNodeProps> = ({
@@ -74,6 +80,9 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   moveGroup,
   managedGroupPaths,
   onUnmanageGroup,
+  isMultiSelectMode,
+  selectedHostIds,
+  toggleHostSelection,
 }) => {
   const { t } = useI18n();
   const isExpanded = expandedPaths.has(node.path);
@@ -215,9 +224,12 @@ const TreeNode: React.FC<TreeNodeProps> = ({
               moveGroup={moveGroup}
               managedGroupPaths={managedGroupPaths}
               onUnmanageGroup={onUnmanageGroup}
+              isMultiSelectMode={isMultiSelectMode}
+              selectedHostIds={selectedHostIds}
+              toggleHostSelection={toggleHostSelection}
             />
           ))}
-          
+
           {/* Hosts in this group */}
           {sortedHosts.map((host) => (
             <HostTreeItem
@@ -230,6 +242,9 @@ const TreeNode: React.FC<TreeNodeProps> = ({
               onDeleteHost={onDeleteHost}
               onCopyCredentials={onCopyCredentials}
               moveHostToGroup={moveHostToGroup}
+              isMultiSelectMode={isMultiSelectMode}
+              selectedHostIds={selectedHostIds}
+              toggleHostSelection={toggleHostSelection}
             />
           ))}
         </CollapsibleContent>
@@ -247,6 +262,9 @@ interface HostTreeItemProps {
   onDeleteHost: (host: Host) => void;
   onCopyCredentials: (host: Host) => void;
   moveHostToGroup: (hostId: string, groupPath: string | null) => void;
+  isMultiSelectMode?: boolean;
+  selectedHostIds?: Set<string>;
+  toggleHostSelection?: (hostId: string) => void;
 }
 
 const HostTreeItem: React.FC<HostTreeItemProps> = ({
@@ -258,6 +276,9 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
   onDeleteHost,
   onCopyCredentials,
   moveHostToGroup: _moveHostToGroup,
+  isMultiSelectMode,
+  selectedHostIds,
+  toggleHostSelection,
 }) => {
   const { t } = useI18n();
   const paddingLeft = `${depth * 20 + 12}px`;
@@ -270,18 +291,40 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
   const displayPort = isTelnet
     ? (host.telnetPort ?? host.port ?? 23)
     : (host.port ?? 22);
+  const isSelected = isMultiSelectMode && selectedHostIds?.has(host.id);
 
   return (
     <ContextMenu>
       <ContextMenuTrigger>
         <div
-          className="flex items-center py-2 pr-3 text-sm cursor-pointer transition-colors select-none group hover:bg-secondary/40 rounded-lg"
+          className={cn(
+            "flex items-center py-2 pr-3 text-sm cursor-pointer transition-colors select-none group hover:bg-secondary/40 rounded-lg",
+            isSelected ? "bg-primary/10" : "",
+          )}
           style={{ paddingLeft }}
-          draggable
+          draggable={!isMultiSelectMode}
           onDragStart={(e) => e.dataTransfer.setData("host-id", host.id)}
-          onClick={() => onConnect(safeHost)}
+          onClick={() => {
+            if (isMultiSelectMode && toggleHostSelection) {
+              toggleHostSelection(host.id);
+            } else {
+              onConnect(safeHost);
+            }
+          }}
         >
-          <div className="mr-2 flex-shrink-0 w-4 h-4" />
+          {isMultiSelectMode && (
+            <div className="mr-2 flex-shrink-0" onClick={(e) => {
+              e.stopPropagation();
+              toggleHostSelection?.(host.id);
+            }}>
+              {isSelected ? (
+                <CheckSquare size={18} className="text-primary" />
+              ) : (
+                <Square size={18} className="text-muted-foreground" />
+              )}
+            </div>
+          )}
+          {!isMultiSelectMode && <div className="mr-2 flex-shrink-0 w-4 h-4" />}
           <div className="mr-3 flex-shrink-0">
             <DistroAvatar host={host} fallback={(host.os || "L")[0].toUpperCase()} size="sm" />
           </div>
@@ -351,6 +394,9 @@ export const HostTreeView: React.FC<HostTreeViewProps> = ({
   moveGroup,
   managedGroupPaths,
   onUnmanageGroup,
+  isMultiSelectMode,
+  selectedHostIds,
+  toggleHostSelection,
 }) => {
   const { t } = useI18n();
   
@@ -471,6 +517,9 @@ export const HostTreeView: React.FC<HostTreeViewProps> = ({
           moveGroup={moveGroup}
           managedGroupPaths={managedGroupPaths}
           onUnmanageGroup={onUnmanageGroup}
+          isMultiSelectMode={isMultiSelectMode}
+          selectedHostIds={selectedHostIds}
+          toggleHostSelection={toggleHostSelection}
         />
       ))}
 
@@ -486,6 +535,9 @@ export const HostTreeView: React.FC<HostTreeViewProps> = ({
           onDeleteHost={onDeleteHost}
           onCopyCredentials={onCopyCredentials}
           moveHostToGroup={moveHostToGroup}
+          isMultiSelectMode={isMultiSelectMode}
+          selectedHostIds={selectedHostIds}
+          toggleHostSelection={toggleHostSelection}
         />
       ))}
       

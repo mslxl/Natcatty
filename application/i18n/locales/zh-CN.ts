@@ -107,6 +107,7 @@ const zhCN: Messages = {
   'tray.recentHosts': '最近连接的主机',
   'tray.empty.title': '一切都很安静',
   'tray.empty.subtitle': '去连接个服务器吧，它们想念你了 🚀',
+  'tray.quit': '退出 Netcatty',
 
   // Vault Sidebar
   'vault.sidebar.collapse': '收起侧边栏',

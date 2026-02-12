@@ -10,7 +10,7 @@ import { I18nProvider } from "../application/i18n/I18nProvider";
 import { useSettingsState } from "../application/state/useSettingsState";
 import { useTrayPanelBackend } from "../application/state/useTrayPanelBackend";
 import { useActiveTabId } from "../application/state/activeTabStore";
-import { X, Maximize2, ChevronRight, ChevronDown } from "lucide-react";
+import { X, Maximize2, ChevronRight, ChevronDown, Power } from "lucide-react";
 import { AppLogo } from "./AppLogo";
 
 const StatusDot: React.FC<{ status: "success" | "warning" | "error" | "neutral"; spinning?: boolean }> = ({
@@ -109,6 +109,7 @@ const TrayPanelContent: React.FC = () => {
   const {
     hideTrayPanel,
     openMainWindow,
+    quitApp,
     jumpToSession,
     onTrayPanelCloseRequest,
     onTrayPanelRefresh,
@@ -200,8 +201,12 @@ const TrayPanelContent: React.FC = () => {
     void openMainWindow();
   }, [openMainWindow]);
 
+  const handleQuit = useCallback(() => {
+    void quitApp();
+  }, [quitApp]);
+
   return (
-    <div id="tray-panel-root" className="w-full h-full bg-background/95 backdrop-blur border border-border/60 rounded-lg shadow-lg overflow-hidden">
+    <div id="tray-panel-root" className="w-full h-full bg-background/95 backdrop-blur border border-border/60 rounded-lg shadow-lg overflow-hidden flex flex-col">
       <div className="px-3 py-2 border-b border-border/60 flex items-center justify-between app-no-drag">
         <div className="flex items-center gap-2">
           <AppLogo className="w-5 h-5" />
@@ -225,7 +230,7 @@ const TrayPanelContent: React.FC = () => {
         </div>
       </div>
 
-      <div className="p-2 space-y-3 text-sm">
+      <div className="p-2 space-y-3 text-sm flex-1 overflow-y-auto min-h-0">
 
         {jumpableSessions.length > 0 && (() => {
           // Group sessions by workspace
@@ -377,6 +382,17 @@ const TrayPanelContent: React.FC = () => {
             <span className="text-xs text-muted-foreground/60 mt-1">{t("tray.empty.subtitle")}</span>
           </div>
         )}
+      </div>
+
+      {/* Quit button at the bottom */}
+      <div className="px-3 py-2 border-t border-border/60">
+        <button
+          className="w-full text-left px-2 py-1.5 rounded hover:bg-destructive/10 flex items-center gap-2 text-sm text-muted-foreground hover:text-destructive transition-colors"
+          onClick={handleQuit}
+        >
+          <Power size={14} />
+          <span>{t("tray.quit")}</span>
+        </button>
       </div>
     </div>
   );

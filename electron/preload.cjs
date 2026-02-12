@@ -801,6 +801,7 @@ const api = {
   // Tray panel window
   hideTrayPanel: () => ipcRenderer.invoke("netcatty:trayPanel:hide"),
   openMainWindow: () => ipcRenderer.invoke("netcatty:trayPanel:openMainWindow"),
+  quitApp: () => ipcRenderer.invoke("netcatty:trayPanel:quitApp"),
   jumpToSessionFromTrayPanel: (sessionId) =>
     ipcRenderer.invoke("netcatty:trayPanel:jumpToSession", sessionId),
   connectToHostFromTrayPanel: (hostId) =>

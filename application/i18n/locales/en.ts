@@ -122,6 +122,7 @@ const en: Messages = {
   'tray.recentHosts': 'Recent Hosts',
   'tray.empty.title': 'Nothing here yet',
   'tray.empty.subtitle': 'Go connect to a server, they miss you 🚀',
+  'tray.quit': 'Quit Netcatty',
 
   // Vault Sidebar
   'vault.sidebar.collapse': 'Collapse sidebar',

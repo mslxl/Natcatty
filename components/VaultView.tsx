@@ -1857,6 +1857,9 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                         moveGroup={moveGroup}
                         managedGroupPaths={managedGroupPaths}
                         onUnmanageGroup={handleUnmanageGroup}
+                        isMultiSelectMode={isMultiSelectMode}
+                        selectedHostIds={selectedHostIds}
+                        toggleHostSelection={toggleHostSelection}
                       />
                     ) : sortMode === "group" && groupedDisplayHosts ? (
                       <div className="space-y-6">

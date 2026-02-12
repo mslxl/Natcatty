@@ -691,6 +691,13 @@ function registerHandlers(ipcMain) {
     return { success: true };
   });
 
+  ipcMain.handle("netcatty:trayPanel:quitApp", async () => {
+    const { app } = electronModule;
+    closeToTray = false;
+    app.quit();
+    return { success: true };
+  });
+
   console.log("[GlobalShortcut] IPC handlers registered");
 }
 

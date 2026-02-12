@@ -12,6 +12,11 @@ export const useTrayPanelBackend = () => {
     await bridge?.openMainWindow?.();
   }, []);
 
+  const quitApp = useCallback(async () => {
+    const bridge = netcattyBridge.get();
+    await bridge?.quitApp?.();
+  }, []);
+
   const jumpToSession = useCallback(async (sessionId: string) => {
     const bridge = netcattyBridge.get();
     await bridge?.jumpToSessionFromTrayPanel?.(sessionId);
@@ -57,6 +62,7 @@ export const useTrayPanelBackend = () => {
   return {
     hideTrayPanel,
     openMainWindow,
+    quitApp,
     jumpToSession,
     connectToHostFromTrayPanel,
     onTrayPanelCloseRequest,
