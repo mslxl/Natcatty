@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { normalizeDistroId, sanitizeHost } from "../../domain/host";
 import {
   ConnectionLog,
@@ -107,27 +107,39 @@ export const useVaultState = () => {
   const [connectionLogs, setConnectionLogs] = useState<ConnectionLog[]>([]);
   const [managedSources, setManagedSources] = useState<ManagedSource[]>([]);
 
+  // Write-version counters prevent out-of-order async writes from overwriting
+  // newer data.  Each update bumps the counter; the .then() callback only
+  // persists if its version still matches the latest.
+  const hostsWriteVersion = useRef(0);
+  const keysWriteVersion = useRef(0);
+  const identitiesWriteVersion = useRef(0);
+
   const updateHosts = useCallback((data: Host[]) => {
     const cleaned = data.map(sanitizeHost);
     setHosts(cleaned);
-    // Encrypt sensitive fields then persist
-    encryptHosts(cleaned).then((enc) =>
-      localStorageAdapter.write(STORAGE_KEY_HOSTS, enc),
-    );
+    const ver = ++hostsWriteVersion.current;
+    encryptHosts(cleaned).then((enc) => {
+      if (ver === hostsWriteVersion.current)
+        localStorageAdapter.write(STORAGE_KEY_HOSTS, enc);
+    });
   }, []);
 
   const updateKeys = useCallback((data: SSHKey[]) => {
     setKeys(data);
-    encryptKeys(data).then((enc) =>
-      localStorageAdapter.write(STORAGE_KEY_KEYS, enc),
-    );
+    const ver = ++keysWriteVersion.current;
+    encryptKeys(data).then((enc) => {
+      if (ver === keysWriteVersion.current)
+        localStorageAdapter.write(STORAGE_KEY_KEYS, enc);
+    });
   }, []);
 
   const updateIdentities = useCallback((data: Identity[]) => {
     setIdentities(data);
-    encryptIdentities(data).then((enc) =>
-      localStorageAdapter.write(STORAGE_KEY_IDENTITIES, enc),
-    );
+    const ver = ++identitiesWriteVersion.current;
+    encryptIdentities(data).then((enc) => {
+      if (ver === identitiesWriteVersion.current)
+        localStorageAdapter.write(STORAGE_KEY_IDENTITIES, enc);
+    });
   }, []);
 
   const updateSnippets = useCallback((data: Snippet[]) => {
@@ -286,9 +298,11 @@ export const useVaultState = () => {
     // Add to hosts using functional update
     setHosts((prevHosts) => {
       const updated = [...prevHosts, sanitizeHost(newHost)];
-      encryptHosts(updated).then((enc) =>
-        localStorageAdapter.write(STORAGE_KEY_HOSTS, enc),
-      );
+      const ver = ++hostsWriteVersion.current;
+      encryptHosts(updated).then((enc) => {
+        if (ver === hostsWriteVersion.current)
+          localStorageAdapter.write(STORAGE_KEY_HOSTS, enc);
+      });
       return updated;
     });
 
@@ -478,9 +492,11 @@ export const useVaultState = () => {
       const next = prev.map((h) =>
         h.id === hostId ? { ...h, distro: normalized } : h,
       );
-      encryptHosts(next).then((enc) =>
-        localStorageAdapter.write(STORAGE_KEY_HOSTS, enc),
-      );
+      const ver = ++hostsWriteVersion.current;
+      encryptHosts(next).then((enc) => {
+        if (ver === hostsWriteVersion.current)
+          localStorageAdapter.write(STORAGE_KEY_HOSTS, enc);
+      });
       return next;
     });
   }, []);

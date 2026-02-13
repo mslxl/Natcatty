@@ -106,8 +106,10 @@ export async function encryptProviderSecrets(conn: ProviderConnection): Promise<
   }
 
   if (out.config) {
-    // WebDAV
-    if ("password" in out.config) {
+    // WebDAV — use authType (required field unique to WebDAVConfig) as discriminator
+    // so that token-auth configs (which may lack a password key after JSON round-trip)
+    // still get their token field encrypted.
+    if ("authType" in out.config) {
       const c = { ...out.config } as WebDAVConfig;
       c.password = await encryptField(c.password);
       c.token = await encryptField(c.token);
@@ -136,7 +138,7 @@ export async function decryptProviderSecrets(conn: ProviderConnection): Promise<
   }
 
   if (out.config) {
-    if ("password" in out.config) {
+    if ("authType" in out.config) {
       const c = { ...out.config } as WebDAVConfig;
       c.password = await decryptField(c.password);
       c.token = await decryptField(c.token);
