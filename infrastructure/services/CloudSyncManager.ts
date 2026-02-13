@@ -83,6 +83,11 @@ export class CloudSyncManager {
   private autoSyncTimer: ReturnType<typeof setInterval> | null = null;
   private masterPassword: string | null = null; // In memory only!
   private hasStorageListener = false;
+  // Per-provider sequence counters to guard async decrypt callbacks against
+  // out-of-order resolution (startup decryption + cross-window storage events).
+  private providerSeq: Record<CloudProvider, number> = {
+    github: 0, google: 0, onedrive: 0, webdav: 0, s3: 0,
+  };
 
   constructor() {
     this.state = this.loadInitialState();
@@ -184,7 +189,12 @@ export class CloudSyncManager {
       try {
         const conn = this.state.providers[p];
         if (conn.tokens || conn.config) {
-          this.state.providers[p] = await decryptProviderSecrets(conn);
+          const seq = ++this.providerSeq[p];
+          const decrypted = await decryptProviderSecrets(conn);
+          // Only apply if no newer update has occurred during the async gap
+          if (seq === this.providerSeq[p]) {
+            this.state.providers[p] = decrypted;
+          }
         }
       } catch {
         // Decryption failure is non-fatal; the adapter will fail on use
@@ -319,11 +329,14 @@ export class CloudSyncManager {
     const provider = providerByKey[key];
     if (provider) {
       const rawNext = this.loadProviderConnection(provider);
+      const seq = ++this.providerSeq[provider];
 
       // Decrypt secrets asynchronously, then update state.
-      // Read `prev` inside .then() so we compare against the latest state
-      // rather than a stale snapshot captured before the async gap.
+      // Use sequence counter to discard stale results when multiple events
+      // for the same provider arrive in quick succession.
       decryptProviderSecrets(rawNext).then((next) => {
+        if (seq !== this.providerSeq[provider]) return; // stale — discard
+
         const prev = this.state.providers[provider];
         const preserveTransientStatus =
           prev.status === 'connecting' || prev.status === 'syncing';

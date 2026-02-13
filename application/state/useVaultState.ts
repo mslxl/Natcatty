@@ -114,6 +114,14 @@ export const useVaultState = () => {
   const keysWriteVersion = useRef(0);
   const identitiesWriteVersion = useRef(0);
 
+  // Read-sequence counters for cross-window storage events.  Each incoming
+  // event bumps the counter; the async decrypt callback only applies state if
+  // its sequence still matches, preventing stale decrypts from overwriting
+  // newer data when multiple events arrive in quick succession.
+  const hostsReadSeq = useRef(0);
+  const keysReadSeq = useRef(0);
+  const identitiesReadSeq = useRef(0);
+
   const updateHosts = useCallback((data: Host[]) => {
     const cleaned = data.map(sanitizeHost);
     setHosts(cleaned);
@@ -425,7 +433,10 @@ export const useVaultState = () => {
 
       if (key === STORAGE_KEY_HOSTS) {
         const next = safeParse<Host[]>(event.newValue) ?? [];
-        decryptHosts(next).then((dec) => setHosts(dec.map(sanitizeHost)));
+        const seq = ++hostsReadSeq.current;
+        decryptHosts(next).then((dec) => {
+          if (seq === hostsReadSeq.current) setHosts(dec.map(sanitizeHost));
+        });
         return;
       }
 
@@ -438,13 +449,19 @@ export const useVaultState = () => {
           if (!record || isLegacyUnsupportedKey(record)) continue;
           migratedKeys.push(migrateKey(record as Partial<SSHKey>));
         }
-        decryptKeys(migratedKeys).then((dec) => setKeys(dec));
+        const seq = ++keysReadSeq.current;
+        decryptKeys(migratedKeys).then((dec) => {
+          if (seq === keysReadSeq.current) setKeys(dec);
+        });
         return;
       }
 
       if (key === STORAGE_KEY_IDENTITIES) {
         const next = safeParse<Identity[]>(event.newValue) ?? [];
-        decryptIdentities(next).then((dec) => setIdentities(dec));
+        const seq = ++identitiesReadSeq.current;
+        decryptIdentities(next).then((dec) => {
+          if (seq === identitiesReadSeq.current) setIdentities(dec);
+        });
         return;
       }
 
