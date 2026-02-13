@@ -205,6 +205,8 @@ export class CloudSyncManager {
 
   private async saveProviderConnection(provider: CloudProvider, connection: ProviderConnection): Promise<void> {
     const key = SYNC_STORAGE_KEYS[`PROVIDER_${provider.toUpperCase()}` as keyof typeof SYNC_STORAGE_KEYS];
+    // Bump sequence to invalidate any in-flight async decrypt for this provider
+    ++this.providerSeq[provider];
     // Encrypt sensitive tokens and config secrets before persisting
     const encrypted = await encryptProviderSecrets(connection);
     this.saveToStorage(key, encrypted);
@@ -683,6 +685,7 @@ export class CloudSyncManager {
     try {
       const tokens = await ghAdapter.completeAuth(deviceCode, interval, expiresAt, onPending);
 
+      ++this.providerSeq.github;
       this.state.providers.github = {
         ...this.state.providers.github,
         status: 'connected',
@@ -735,6 +738,7 @@ export class CloudSyncManager {
         account = odAdapter.accountInfo;
       }
 
+      ++this.providerSeq[provider];
       this.state.providers[provider] = {
         ...this.state.providers[provider],
         status: 'connected',
@@ -775,6 +779,7 @@ export class CloudSyncManager {
       const resourceId = await adapter.initializeSync();
       const account = adapter.accountInfo || this.buildAccountFromConfig(provider, config);
 
+      ++this.providerSeq[provider];
       this.state.providers[provider] = {
         provider,
         status: 'connected',
@@ -805,6 +810,7 @@ export class CloudSyncManager {
       this.adapters.delete(provider);
     }
 
+    ++this.providerSeq[provider];
     this.state.providers[provider] = {
       provider,
       status: 'disconnected',
@@ -819,6 +825,8 @@ export class CloudSyncManager {
     status: ProviderConnection['status'],
     error?: string
   ): void {
+    // Bump sequence to invalidate any in-flight async decrypt for this provider
+    ++this.providerSeq[provider];
     this.state.providers[provider] = {
       ...this.state.providers[provider],
       status,

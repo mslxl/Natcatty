@@ -433,6 +433,9 @@ export const useVaultState = () => {
 
       if (key === STORAGE_KEY_HOSTS) {
         const next = safeParse<Host[]>(event.newValue) ?? [];
+        // Bump write version to invalidate any in-flight encrypt from this
+        // window — the cross-window data is newer and must not be overwritten.
+        ++hostsWriteVersion.current;
         const seq = ++hostsReadSeq.current;
         decryptHosts(next).then((dec) => {
           if (seq === hostsReadSeq.current) setHosts(dec.map(sanitizeHost));
@@ -449,6 +452,7 @@ export const useVaultState = () => {
           if (!record || isLegacyUnsupportedKey(record)) continue;
           migratedKeys.push(migrateKey(record as Partial<SSHKey>));
         }
+        ++keysWriteVersion.current;
         const seq = ++keysReadSeq.current;
         decryptKeys(migratedKeys).then((dec) => {
           if (seq === keysReadSeq.current) setKeys(dec);
@@ -458,6 +462,7 @@ export const useVaultState = () => {
 
       if (key === STORAGE_KEY_IDENTITIES) {
         const next = safeParse<Identity[]>(event.newValue) ?? [];
+        ++identitiesWriteVersion.current;
         const seq = ++identitiesReadSeq.current;
         decryptIdentities(next).then((dec) => {
           if (seq === identitiesReadSeq.current) setIdentities(dec);
