@@ -441,8 +441,12 @@ export const useVaultState = () => {
         // window — the cross-window data is newer and must not be overwritten.
         ++hostsWriteVersion.current;
         const seq = ++hostsReadSeq.current;
+        const writeAtStart = hostsWriteVersion.current;
         decryptHosts(next).then((dec) => {
-          if (seq === hostsReadSeq.current) setHosts(dec.map(sanitizeHost));
+          // Discard if a newer storage event arrived OR a local write occurred
+          // during the decrypt (writeVersion would have advanced).
+          if (seq === hostsReadSeq.current && writeAtStart === hostsWriteVersion.current)
+            setHosts(dec.map(sanitizeHost));
         });
         return;
       }
@@ -458,8 +462,10 @@ export const useVaultState = () => {
         }
         ++keysWriteVersion.current;
         const seq = ++keysReadSeq.current;
+        const writeAtStart = keysWriteVersion.current;
         decryptKeys(migratedKeys).then((dec) => {
-          if (seq === keysReadSeq.current) setKeys(dec);
+          if (seq === keysReadSeq.current && writeAtStart === keysWriteVersion.current)
+            setKeys(dec);
         });
         return;
       }
@@ -468,8 +474,10 @@ export const useVaultState = () => {
         const next = safeParse<Identity[]>(event.newValue) ?? [];
         ++identitiesWriteVersion.current;
         const seq = ++identitiesReadSeq.current;
+        const writeAtStart = identitiesWriteVersion.current;
         decryptIdentities(next).then((dec) => {
-          if (seq === identitiesReadSeq.current) setIdentities(dec);
+          if (seq === identitiesReadSeq.current && writeAtStart === identitiesWriteVersion.current)
+            setIdentities(dec);
         });
         return;
       }

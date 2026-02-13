@@ -906,6 +906,9 @@ export class CloudSyncManager {
       this.state.localUpdatedAt = syncedFile.meta.updatedAt;
       this.state.remoteVersion = syncedFile.meta.version;
       this.state.remoteUpdatedAt = syncedFile.meta.updatedAt;
+      // Invalidate any pending provider decrypt so it cannot overwrite
+      // the lastSync/lastSyncVersion we are about to set.
+      ++this.providerDecryptSeq[provider];
       this.state.providers[provider].lastSync = Date.now();
       this.state.providers[provider].lastSyncVersion = syncedFile.meta.version;
 
