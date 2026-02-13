@@ -2007,6 +2007,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                             </h3>
                             <p className="text-sm text-center max-w-sm">
                               {t('vault.hosts.empty.desc')}
+                            </p>
                           </div>
                         )}
                       </div>
@@ -2141,6 +2142,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                             </h3>
                             <p className="text-sm text-center max-w-sm">
                               {t('vault.hosts.empty.desc')}
+                            </p>
                           </div>
                         )}
                       </div>
