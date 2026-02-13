@@ -257,6 +257,8 @@ const zhCN: Messages = {
   'vault.hosts.deselectAll': '取消全选',
   'vault.hosts.deleteSelected': '删除 ({count})',
   'vault.hosts.deleteMultiple.success': '已删除 {count} 个主机',
+  'vault.hosts.empty.title': '设置你的主机',
+  'vault.hosts.empty.desc': '保存主机以快速连接到你的服务器、虚拟机和容器。',
 
   // Vault import
   'vault.import.title': '添加数据到你的 Vault',

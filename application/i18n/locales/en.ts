@@ -390,6 +390,8 @@ const en: Messages = {
   'vault.hosts.deselectAll': 'Deselect All',
   'vault.hosts.deleteSelected': 'Delete ({count})',
   'vault.hosts.deleteMultiple.success': 'Deleted {count} hosts',
+  'vault.hosts.empty.title': 'Set up your hosts',
+  'vault.hosts.empty.desc': 'Save hosts to quickly connect to your servers, VMs, and containers.',
 
   // Vault import
   'vault.import.title': 'Add data to your vault',
