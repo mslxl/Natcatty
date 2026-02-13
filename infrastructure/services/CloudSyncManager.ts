@@ -83,9 +83,16 @@ export class CloudSyncManager {
   private autoSyncTimer: ReturnType<typeof setInterval> | null = null;
   private masterPassword: string | null = null; // In memory only!
   private hasStorageListener = false;
-  // Per-provider sequence counters to guard async decrypt callbacks against
-  // out-of-order resolution (startup decryption + cross-window storage events).
-  private providerSeq: Record<CloudProvider, number> = {
+  // Per-provider sequence counters for async decrypt callbacks (startup,
+  // cross-window storage events).  Bumped by any state mutation so stale
+  // decrypt results are discarded.
+  private providerDecryptSeq: Record<CloudProvider, number> = {
+    github: 0, google: 0, onedrive: 0, webdav: 0, s3: 0,
+  };
+  // Per-provider write sequence counters for saveProviderConnection.
+  // Only bumped when a new save is initiated, so status-only updates
+  // (which don't persist) cannot discard an in-flight encrypted write.
+  private providerWriteSeq: Record<CloudProvider, number> = {
     github: 0, google: 0, onedrive: 0, webdav: 0, s3: 0,
   };
 
@@ -189,10 +196,10 @@ export class CloudSyncManager {
       try {
         const conn = this.state.providers[p];
         if (conn.tokens || conn.config) {
-          const seq = ++this.providerSeq[p];
+          const seq = ++this.providerDecryptSeq[p];
           const decrypted = await decryptProviderSecrets(conn);
           // Only apply if no newer update has occurred during the async gap
-          if (seq === this.providerSeq[p]) {
+          if (seq === this.providerDecryptSeq[p]) {
             this.state.providers[p] = decrypted;
           }
         }
@@ -205,12 +212,12 @@ export class CloudSyncManager {
 
   private async saveProviderConnection(provider: CloudProvider, connection: ProviderConnection): Promise<void> {
     const key = SYNC_STORAGE_KEYS[`PROVIDER_${provider.toUpperCase()}` as keyof typeof SYNC_STORAGE_KEYS];
-    // Bump sequence to invalidate any in-flight async decrypt for this provider
-    const seq = ++this.providerSeq[provider];
-    // Encrypt sensitive tokens and config secrets before persisting
+    // Use write-specific counter so status-only updates cannot discard
+    // an in-flight encrypted write that must be persisted.
+    const seq = ++this.providerWriteSeq[provider];
     const encrypted = await encryptProviderSecrets(connection);
     // Only persist if no newer save has started during the async gap
-    if (seq === this.providerSeq[provider]) {
+    if (seq === this.providerWriteSeq[provider]) {
       this.saveToStorage(key, encrypted);
     }
   }
@@ -334,13 +341,13 @@ export class CloudSyncManager {
     const provider = providerByKey[key];
     if (provider) {
       const rawNext = this.loadProviderConnection(provider);
-      const seq = ++this.providerSeq[provider];
+      const seq = ++this.providerDecryptSeq[provider];
 
       // Decrypt secrets asynchronously, then update state.
       // Use sequence counter to discard stale results when multiple events
       // for the same provider arrive in quick succession.
       decryptProviderSecrets(rawNext).then((next) => {
-        if (seq !== this.providerSeq[provider]) return; // stale — discard
+        if (seq !== this.providerDecryptSeq[provider]) return; // stale — discard
 
         const prev = this.state.providers[provider];
         const preserveTransientStatus =
@@ -688,7 +695,7 @@ export class CloudSyncManager {
     try {
       const tokens = await ghAdapter.completeAuth(deviceCode, interval, expiresAt, onPending);
 
-      ++this.providerSeq.github;
+      ++this.providerDecryptSeq.github;
       this.state.providers.github = {
         ...this.state.providers.github,
         status: 'connected',
@@ -741,7 +748,7 @@ export class CloudSyncManager {
         account = odAdapter.accountInfo;
       }
 
-      ++this.providerSeq[provider];
+      ++this.providerDecryptSeq[provider];
       this.state.providers[provider] = {
         ...this.state.providers[provider],
         status: 'connected',
@@ -782,7 +789,7 @@ export class CloudSyncManager {
       const resourceId = await adapter.initializeSync();
       const account = adapter.accountInfo || this.buildAccountFromConfig(provider, config);
 
-      ++this.providerSeq[provider];
+      ++this.providerDecryptSeq[provider];
       this.state.providers[provider] = {
         provider,
         status: 'connected',
@@ -813,7 +820,7 @@ export class CloudSyncManager {
       this.adapters.delete(provider);
     }
 
-    ++this.providerSeq[provider];
+    ++this.providerDecryptSeq[provider];
     this.state.providers[provider] = {
       provider,
       status: 'disconnected',
@@ -829,7 +836,7 @@ export class CloudSyncManager {
     error?: string
   ): void {
     // Bump sequence to invalidate any in-flight async decrypt for this provider
-    ++this.providerSeq[provider];
+    ++this.providerDecryptSeq[provider];
     this.state.providers[provider] = {
       ...this.state.providers[provider],
       status,
