@@ -2003,11 +2003,10 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                               <LayoutGrid size={32} className="opacity-60" />
                             </div>
                             <h3 className="text-lg font-semibold text-foreground mb-2">
-                              Set up your hosts
+                              配置您的主机
                             </h3>
                             <p className="text-sm text-center max-w-sm">
-                              Save hosts to quickly connect to your servers, VMs,
-                              and containers.
+                              保存主机以便快速连接到您的服务器、虚拟机和容器。
                             </p>
                           </div>
                         )}
@@ -2139,11 +2138,10 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                               <LayoutGrid size={32} className="opacity-60" />
                             </div>
                             <h3 className="text-lg font-semibold text-foreground mb-2">
-                              Set up your hosts
+                              配置您的主机
                             </h3>
                             <p className="text-sm text-center max-w-sm">
-                              Save hosts to quickly connect to your servers, VMs,
-                              and containers.
+                              保存主机以便快速连接到您的服务器、虚拟机和容器。
                             </p>
                           </div>
                         )}
