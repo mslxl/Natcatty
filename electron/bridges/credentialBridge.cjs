@@ -33,12 +33,22 @@ function registerHandlers(ipcMain, electronModule) {
     if (typeof plaintext !== "string" || plaintext.length === 0) {
       return plaintext ?? "";
     }
-    // Already encrypted — return as-is
-    if (plaintext.startsWith(ENC_PREFIX)) {
-      return plaintext;
-    }
     if (!safeStorage?.isEncryptionAvailable?.()) {
       return plaintext;
+    }
+    // If value looks like it might already be encrypted, verify by attempting
+    // to decode and decrypt.  If it succeeds the value is genuinely encrypted
+    // and we return it as-is; if it fails, the prefix was a coincidence and
+    // we proceed to encrypt the raw plaintext.
+    if (plaintext.startsWith(ENC_PREFIX)) {
+      try {
+        const base64 = plaintext.slice(ENC_PREFIX.length);
+        const buf = Buffer.from(base64, "base64");
+        safeStorage.decryptString(buf); // throws on invalid ciphertext
+        return plaintext; // verified — already encrypted
+      } catch {
+        // Not valid ciphertext — fall through to encrypt
+      }
     }
     try {
       const encrypted = safeStorage.encryptString(plaintext);

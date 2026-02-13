@@ -206,10 +206,13 @@ export class CloudSyncManager {
   private async saveProviderConnection(provider: CloudProvider, connection: ProviderConnection): Promise<void> {
     const key = SYNC_STORAGE_KEYS[`PROVIDER_${provider.toUpperCase()}` as keyof typeof SYNC_STORAGE_KEYS];
     // Bump sequence to invalidate any in-flight async decrypt for this provider
-    ++this.providerSeq[provider];
+    const seq = ++this.providerSeq[provider];
     // Encrypt sensitive tokens and config secrets before persisting
     const encrypted = await encryptProviderSecrets(connection);
-    this.saveToStorage(key, encrypted);
+    // Only persist if no newer save has started during the async gap
+    if (seq === this.providerSeq[provider]) {
+      this.saveToStorage(key, encrypted);
+    }
   }
 
   private loadFromStorage<T>(key: string): T | null {
