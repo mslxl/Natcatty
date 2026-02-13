@@ -582,6 +582,11 @@ declare global {
     getPathForFile?(file: File): string | undefined;
     readClipboardText?(): Promise<string>;
 
+    // Credential encryption (field-level safeStorage for sensitive data at rest)
+    credentialsAvailable?(): Promise<boolean>;
+    credentialsEncrypt?(plaintext: string): Promise<string>;
+    credentialsDecrypt?(value: string): Promise<string>;
+
     // Global Toggle Hotkey (Quake Mode)
     registerGlobalHotkey?(hotkey: string): Promise<{ success: boolean; enabled?: boolean; error?: string; accelerator?: string }>;
     unregisterGlobalHotkey?(): Promise<{ success: boolean }>;

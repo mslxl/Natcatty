@@ -38,6 +38,10 @@ import { createAdapter, type CloudAdapter } from './adapters';
 import type { GitHubAdapter } from './adapters/GitHubAdapter';
 import type { GoogleDriveAdapter } from './adapters/GoogleDriveAdapter';
 import type { OneDriveAdapter } from './adapters/OneDriveAdapter';
+import {
+  decryptProviderSecrets,
+  encryptProviderSecrets,
+} from '../persistence/secureFieldAdapter';
 
 const SYNC_HISTORY_STORAGE_KEY = 'netcatty_sync_history_v1';
 
@@ -79,11 +83,25 @@ export class CloudSyncManager {
   private autoSyncTimer: ReturnType<typeof setInterval> | null = null;
   private masterPassword: string | null = null; // In memory only!
   private hasStorageListener = false;
+  // Per-provider sequence counters for async decrypt callbacks (startup,
+  // cross-window storage events).  Bumped by any state mutation so stale
+  // decrypt results are discarded.
+  private providerDecryptSeq: Record<CloudProvider, number> = {
+    github: 0, google: 0, onedrive: 0, webdav: 0, s3: 0,
+  };
+  // Per-provider write sequence counters for saveProviderConnection.
+  // Only bumped when a new save is initiated, so status-only updates
+  // (which don't persist) cannot discard an in-flight encrypted write.
+  private providerWriteSeq: Record<CloudProvider, number> = {
+    github: 0, google: 0, onedrive: 0, webdav: 0, s3: 0,
+  };
 
   constructor() {
     this.state = this.loadInitialState();
     this.stateSnapshot = { ...this.state };
     this.setupCrossWindowSync();
+    // Decrypt provider secrets asynchronously after initial load
+    this.initProviderDecryption();
   }
 
   // ==========================================================================
@@ -167,11 +185,41 @@ export class CloudSyncManager {
     } as ProviderConnection;
   }
 
-  private saveProviderConnection(provider: CloudProvider, connection: ProviderConnection): void {
+  /**
+   * Asynchronously decrypt provider connection secrets after initial load.
+   * Runs once at construction; decrypted tokens replace the encrypted ones
+   * in-memory so adapters can use them.
+   */
+  private async initProviderDecryption(): Promise<void> {
+    const providers: CloudProvider[] = ['github', 'google', 'onedrive', 'webdav', 's3'];
+    for (const p of providers) {
+      try {
+        const conn = this.state.providers[p];
+        if (conn.tokens || conn.config) {
+          const seq = ++this.providerDecryptSeq[p];
+          const decrypted = await decryptProviderSecrets(conn);
+          // Only apply if no newer update has occurred during the async gap
+          if (seq === this.providerDecryptSeq[p]) {
+            this.state.providers[p] = decrypted;
+          }
+        }
+      } catch {
+        // Decryption failure is non-fatal; the adapter will fail on use
+      }
+    }
+    this.notifyStateChange();
+  }
+
+  private async saveProviderConnection(provider: CloudProvider, connection: ProviderConnection): Promise<void> {
     const key = SYNC_STORAGE_KEYS[`PROVIDER_${provider.toUpperCase()}` as keyof typeof SYNC_STORAGE_KEYS];
-    // Don't persist sensitive tokens directly - use safeStorage in production
-    const { tokens, ...safeData } = connection;
-    this.saveToStorage(key, { ...safeData, tokens }); // In production, encrypt tokens/config
+    // Use write-specific counter so status-only updates cannot discard
+    // an in-flight encrypted write that must be persisted.
+    const seq = ++this.providerWriteSeq[provider];
+    const encrypted = await encryptProviderSecrets(connection);
+    // Only persist if no newer save has started during the async gap
+    if (seq === this.providerWriteSeq[provider]) {
+      this.saveToStorage(key, encrypted);
+    }
   }
 
   private loadFromStorage<T>(key: string): T | null {
@@ -292,48 +340,61 @@ export class CloudSyncManager {
     };
     const provider = providerByKey[key];
     if (provider) {
-      const prev = this.state.providers[provider];
-      const next = this.loadProviderConnection(provider);
+      const rawNext = this.loadProviderConnection(provider);
+      const seq = ++this.providerDecryptSeq[provider];
+      // Also bump write seq so any in-flight save from this window for the
+      // same provider is discarded — the cross-window data is newer.
+      ++this.providerWriteSeq[provider];
 
-      const preserveTransientStatus =
-        prev.status === 'connecting' || prev.status === 'syncing';
+      // Decrypt secrets asynchronously, then update state.
+      // Use sequence counter to discard stale results when multiple events
+      // for the same provider arrive in quick succession.
+      decryptProviderSecrets(rawNext).then((next) => {
+        if (seq !== this.providerDecryptSeq[provider]) return; // stale — discard
 
-      this.state.providers[provider] = {
-        ...next,
-        status: preserveTransientStatus ? prev.status : next.status,
-        error: preserveTransientStatus ? prev.error : next.error,
-      };
+        const prev = this.state.providers[provider];
+        const preserveTransientStatus =
+          prev.status === 'connecting' || prev.status === 'syncing';
 
-      const nextTokens = next.tokens;
-      const nextConfig = next.config;
-      const adapter = this.adapters.get(provider);
-      if (!nextTokens && !nextConfig) {
-        if (adapter) {
+        this.state.providers[provider] = {
+          ...next,
+          status: preserveTransientStatus ? prev.status : next.status,
+          error: preserveTransientStatus ? prev.error : next.error,
+        };
+
+        const nextTokens = next.tokens;
+        const nextConfig = next.config;
+        const adapter = this.adapters.get(provider);
+        if (!nextTokens && !nextConfig) {
+          if (adapter) {
+            adapter.signOut();
+            this.adapters.delete(provider);
+          }
+          this.notifyStateChange();
+          return;
+        }
+
+        const tokenChanged =
+          (prev.tokens?.accessToken || null) !== (nextTokens?.accessToken || null) ||
+          (prev.tokens?.refreshToken || null) !== (nextTokens?.refreshToken || null) ||
+          (prev.tokens?.expiresAt || null) !== (nextTokens?.expiresAt || null) ||
+          (prev.tokens?.tokenType || null) !== (nextTokens?.tokenType || null) ||
+          (prev.tokens?.scope || null) !== (nextTokens?.scope || null);
+
+        const configChanged =
+          JSON.stringify(prev.config || null) !== JSON.stringify(nextConfig || null);
+
+        const resourceChanged = (adapter?.resourceId || null) !== (next.resourceId || null);
+
+        if (adapter && (tokenChanged || configChanged || resourceChanged)) {
           adapter.signOut();
           this.adapters.delete(provider);
         }
+
         this.notifyStateChange();
-        return;
-      }
-
-      const tokenChanged =
-        (prev.tokens?.accessToken || null) !== (nextTokens?.accessToken || null) ||
-        (prev.tokens?.refreshToken || null) !== (nextTokens?.refreshToken || null) ||
-        (prev.tokens?.expiresAt || null) !== (nextTokens?.expiresAt || null) ||
-        (prev.tokens?.tokenType || null) !== (nextTokens?.tokenType || null) ||
-        (prev.tokens?.scope || null) !== (nextTokens?.scope || null);
-
-      const configChanged =
-        JSON.stringify(prev.config || null) !== JSON.stringify(nextConfig || null);
-
-      const resourceChanged = (adapter?.resourceId || null) !== (next.resourceId || null);
-
-      if (adapter && (tokenChanged || configChanged || resourceChanged)) {
-        adapter.signOut();
-        this.adapters.delete(provider);
-      }
-
-      this.notifyStateChange();
+      }).catch(() => {
+        // Decryption failure in cross-window handler is non-fatal
+      });
     }
   };
 
@@ -637,6 +698,7 @@ export class CloudSyncManager {
     try {
       const tokens = await ghAdapter.completeAuth(deviceCode, interval, expiresAt, onPending);
 
+      ++this.providerDecryptSeq.github;
       this.state.providers.github = {
         ...this.state.providers.github,
         status: 'connected',
@@ -650,7 +712,7 @@ export class CloudSyncManager {
         this.state.providers.github.resourceId = resourceId;
       }
 
-      this.saveProviderConnection('github', this.state.providers.github);
+      await this.saveProviderConnection('github', this.state.providers.github);
       this.emit({
         type: 'AUTH_COMPLETED',
         provider: 'github',
@@ -689,6 +751,7 @@ export class CloudSyncManager {
         account = odAdapter.accountInfo;
       }
 
+      ++this.providerDecryptSeq[provider];
       this.state.providers[provider] = {
         ...this.state.providers[provider],
         status: 'connected',
@@ -702,7 +765,7 @@ export class CloudSyncManager {
         this.state.providers[provider].resourceId = resourceId;
       }
 
-      this.saveProviderConnection(provider, this.state.providers[provider]);
+      await this.saveProviderConnection(provider, this.state.providers[provider]);
       this.emit({
         type: 'AUTH_COMPLETED',
         provider,
@@ -729,6 +792,7 @@ export class CloudSyncManager {
       const resourceId = await adapter.initializeSync();
       const account = adapter.accountInfo || this.buildAccountFromConfig(provider, config);
 
+      ++this.providerDecryptSeq[provider];
       this.state.providers[provider] = {
         provider,
         status: 'connected',
@@ -737,7 +801,7 @@ export class CloudSyncManager {
         resourceId: resourceId || undefined,
       };
 
-      this.saveProviderConnection(provider, this.state.providers[provider]);
+      await this.saveProviderConnection(provider, this.state.providers[provider]);
       this.emit({
         type: 'AUTH_COMPLETED',
         provider,
@@ -759,12 +823,13 @@ export class CloudSyncManager {
       this.adapters.delete(provider);
     }
 
+    ++this.providerDecryptSeq[provider];
     this.state.providers[provider] = {
       provider,
       status: 'disconnected',
     };
 
-    this.saveProviderConnection(provider, this.state.providers[provider]);
+    await this.saveProviderConnection(provider, this.state.providers[provider]);
     this.notifyStateChange(); // Ensure UI updates immediately after disconnect
   }
 
@@ -773,6 +838,8 @@ export class CloudSyncManager {
     status: ProviderConnection['status'],
     error?: string
   ): void {
+    // Bump sequence to invalidate any in-flight async decrypt for this provider
+    ++this.providerDecryptSeq[provider];
     this.state.providers[provider] = {
       ...this.state.providers[provider],
       status,
@@ -842,11 +909,14 @@ export class CloudSyncManager {
       this.state.localUpdatedAt = syncedFile.meta.updatedAt;
       this.state.remoteVersion = syncedFile.meta.version;
       this.state.remoteUpdatedAt = syncedFile.meta.updatedAt;
+      // Invalidate any pending provider decrypt so it cannot overwrite
+      // the lastSync/lastSyncVersion we are about to set.
+      ++this.providerDecryptSeq[provider];
       this.state.providers[provider].lastSync = Date.now();
       this.state.providers[provider].lastSyncVersion = syncedFile.meta.version;
 
       this.saveSyncConfig();
-      this.saveProviderConnection(provider, this.state.providers[provider]);
+      await this.saveProviderConnection(provider, this.state.providers[provider]);
       this.notifyStateChange();
 
       // Add to sync history

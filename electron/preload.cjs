@@ -845,6 +845,11 @@ const api = {
   readClipboardText: async () => {
     return ipcRenderer.invoke("netcatty:clipboard:readText");
   },
+
+  // Credential encryption (field-level safeStorage)
+  credentialsAvailable: () => ipcRenderer.invoke("netcatty:credentials:available"),
+  credentialsEncrypt: (plaintext) => ipcRenderer.invoke("netcatty:credentials:encrypt", plaintext),
+  credentialsDecrypt: (value) => ipcRenderer.invoke("netcatty:credentials:decrypt", value),
 };
 
 // Merge with existing netcatty (if any) to avoid stale objects on hot reload

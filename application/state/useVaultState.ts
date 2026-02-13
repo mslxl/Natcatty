@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { normalizeDistroId, sanitizeHost } from "../../domain/host";
 import {
   ConnectionLog,
@@ -29,6 +29,14 @@ import {
   STORAGE_KEY_SNIPPETS,
 } from "../../infrastructure/config/storageKeys";
 import { localStorageAdapter } from "../../infrastructure/persistence/localStorageAdapter";
+import {
+  decryptHosts,
+  decryptIdentities,
+  decryptKeys,
+  encryptHosts,
+  encryptIdentities,
+  encryptKeys,
+} from "../../infrastructure/persistence/secureFieldAdapter";
 
 type ExportableVaultData = {
   hosts: Host[];
@@ -99,20 +107,47 @@ export const useVaultState = () => {
   const [connectionLogs, setConnectionLogs] = useState<ConnectionLog[]>([]);
   const [managedSources, setManagedSources] = useState<ManagedSource[]>([]);
 
+  // Write-version counters prevent out-of-order async writes from overwriting
+  // newer data.  Each update bumps the counter; the .then() callback only
+  // persists if its version still matches the latest.
+  const hostsWriteVersion = useRef(0);
+  const keysWriteVersion = useRef(0);
+  const identitiesWriteVersion = useRef(0);
+
+  // Read-sequence counters for cross-window storage events.  Each incoming
+  // event bumps the counter; the async decrypt callback only applies state if
+  // its sequence still matches, preventing stale decrypts from overwriting
+  // newer data when multiple events arrive in quick succession.
+  const hostsReadSeq = useRef(0);
+  const keysReadSeq = useRef(0);
+  const identitiesReadSeq = useRef(0);
+
   const updateHosts = useCallback((data: Host[]) => {
     const cleaned = data.map(sanitizeHost);
     setHosts(cleaned);
-    localStorageAdapter.write(STORAGE_KEY_HOSTS, cleaned);
+    const ver = ++hostsWriteVersion.current;
+    encryptHosts(cleaned).then((enc) => {
+      if (ver === hostsWriteVersion.current)
+        localStorageAdapter.write(STORAGE_KEY_HOSTS, enc);
+    });
   }, []);
 
   const updateKeys = useCallback((data: SSHKey[]) => {
     setKeys(data);
-    localStorageAdapter.write(STORAGE_KEY_KEYS, data);
+    const ver = ++keysWriteVersion.current;
+    encryptKeys(data).then((enc) => {
+      if (ver === keysWriteVersion.current)
+        localStorageAdapter.write(STORAGE_KEY_KEYS, enc);
+    });
   }, []);
 
   const updateIdentities = useCallback((data: Identity[]) => {
     setIdentities(data);
-    localStorageAdapter.write(STORAGE_KEY_IDENTITIES, data);
+    const ver = ++identitiesWriteVersion.current;
+    encryptIdentities(data).then((enc) => {
+      if (ver === identitiesWriteVersion.current)
+        localStorageAdapter.write(STORAGE_KEY_IDENTITIES, enc);
+    });
   }, []);
 
   const updateSnippets = useCallback((data: Snippet[]) => {
@@ -271,7 +306,11 @@ export const useVaultState = () => {
     // Add to hosts using functional update
     setHosts((prevHosts) => {
       const updated = [...prevHosts, sanitizeHost(newHost)];
-      localStorageAdapter.write(STORAGE_KEY_HOSTS, updated);
+      const ver = ++hostsWriteVersion.current;
+      encryptHosts(updated).then((enc) => {
+        if (ver === hostsWriteVersion.current)
+          localStorageAdapter.write(STORAGE_KEY_HOSTS, enc);
+      });
       return updated;
     });
 
@@ -279,82 +318,120 @@ export const useVaultState = () => {
   }, []);
 
   useEffect(() => {
-    const savedHosts = localStorageAdapter.read<Host[]>(STORAGE_KEY_HOSTS);
-    const savedKeysRaw = localStorageAdapter.read<unknown[]>(STORAGE_KEY_KEYS);
-    const savedIdentities =
-      localStorageAdapter.read<Identity[]>(STORAGE_KEY_IDENTITIES);
-    const savedGroups = localStorageAdapter.read<string[]>(STORAGE_KEY_GROUPS);
-    const savedSnippets =
-      localStorageAdapter.read<Snippet[]>(STORAGE_KEY_SNIPPETS);
-    const savedSnippetPackages = localStorageAdapter.read<string[]>(
-      STORAGE_KEY_SNIPPET_PACKAGES,
-    );
+    const init = async () => {
+      const savedHosts = localStorageAdapter.read<Host[]>(STORAGE_KEY_HOSTS);
 
-    if (savedHosts) {
-      const sanitized = savedHosts.map(sanitizeHost);
-      setHosts(sanitized);
-      localStorageAdapter.write(STORAGE_KEY_HOSTS, sanitized);
-    } else {
-      updateHosts(INITIAL_HOSTS);
-    }
+      if (savedHosts) {
+        // Capture version before the async gap so that any write occurring
+        // during decryption (storage event, user edit) advances the counter
+        // and causes this stale result to be discarded.
+        const ver = ++hostsWriteVersion.current;
+        const decrypted = await decryptHosts(savedHosts);
+        if (ver === hostsWriteVersion.current) {
+          const sanitized = decrypted.map(sanitizeHost);
+          setHosts(sanitized);
+          encryptHosts(sanitized).then((enc) => {
+            if (ver === hostsWriteVersion.current)
+              localStorageAdapter.write(STORAGE_KEY_HOSTS, enc);
+          });
+        }
+      } else {
+        updateHosts(INITIAL_HOSTS);
+      }
 
-    // Migrate old keys to new format with source/category fields
-    if (savedKeysRaw?.length) {
-      const migratedKeys: SSHKey[] = [];
-      const legacyKeys: LegacyKeyRecord[] = [];
+      // Read keys fresh here (not before the hosts await) so we don't apply
+      // a stale snapshot if keys were updated during host decryption.
+      const savedKeysRaw = localStorageAdapter.read<unknown[]>(STORAGE_KEY_KEYS);
 
-      for (const entry of savedKeysRaw) {
-        const record =
-          entry && typeof entry === "object" ? (entry as LegacyKeyRecord) : null;
-        if (!record) continue;
+      // Migrate old keys to new format with source/category fields
+      if (savedKeysRaw?.length) {
+        const migratedKeys: SSHKey[] = [];
+        const legacyKeys: LegacyKeyRecord[] = [];
 
-        if (isLegacyUnsupportedKey(record)) {
-          legacyKeys.push(record);
-          continue;
+        for (const entry of savedKeysRaw) {
+          const record =
+            entry && typeof entry === "object" ? (entry as LegacyKeyRecord) : null;
+          if (!record) continue;
+
+          if (isLegacyUnsupportedKey(record)) {
+            legacyKeys.push(record);
+            continue;
+          }
+
+          migratedKeys.push(migrateKey(record as Partial<SSHKey>));
         }
 
-        migratedKeys.push(migrateKey(record as Partial<SSHKey>));
+        // Decrypt sensitive fields (passphrase, privateKey)
+        const keyVer = ++keysWriteVersion.current;
+        const decryptedKeys = await decryptKeys(migratedKeys);
+        if (keyVer === keysWriteVersion.current) {
+          setKeys(decryptedKeys);
+          encryptKeys(decryptedKeys).then((enc) => {
+            if (keyVer === keysWriteVersion.current)
+              localStorageAdapter.write(STORAGE_KEY_KEYS, enc);
+          });
+        }
+        if (legacyKeys.length) {
+          localStorageAdapter.write(STORAGE_KEY_LEGACY_KEYS, legacyKeys);
+        }
       }
 
-      setKeys(migratedKeys);
-      // Persist migrated keys
-      localStorageAdapter.write(STORAGE_KEY_KEYS, migratedKeys);
-      if (legacyKeys.length) {
-        localStorageAdapter.write(STORAGE_KEY_LEGACY_KEYS, legacyKeys);
+      // Read identities fresh here (not before the hosts/keys awaits) so we
+      // don't apply a stale snapshot if identities were updated during prior decryption.
+      const savedIdentities =
+        localStorageAdapter.read<Identity[]>(STORAGE_KEY_IDENTITIES);
+      if (savedIdentities) {
+        const idVer = ++identitiesWriteVersion.current;
+        const decryptedIds = await decryptIdentities(savedIdentities);
+        if (idVer === identitiesWriteVersion.current) {
+          setIdentities(decryptedIds);
+          encryptIdentities(decryptedIds).then((enc) => {
+            if (idVer === identitiesWriteVersion.current)
+              localStorageAdapter.write(STORAGE_KEY_IDENTITIES, enc);
+          });
+        }
       }
-    }
 
-    if (savedIdentities) setIdentities(savedIdentities);
+      // Read remaining non-encrypted data fresh after all async gaps above
+      const savedGroups = localStorageAdapter.read<string[]>(STORAGE_KEY_GROUPS);
+      const savedSnippets =
+        localStorageAdapter.read<Snippet[]>(STORAGE_KEY_SNIPPETS);
+      const savedSnippetPackages = localStorageAdapter.read<string[]>(
+        STORAGE_KEY_SNIPPET_PACKAGES,
+      );
 
-    if (savedSnippets) setSnippets(savedSnippets);
-    else updateSnippets(INITIAL_SNIPPETS);
+      if (savedSnippets) setSnippets(savedSnippets);
+      else updateSnippets(INITIAL_SNIPPETS);
 
-    if (savedGroups) setCustomGroups(savedGroups);
-    if (savedSnippetPackages) setSnippetPackages(savedSnippetPackages);
+      if (savedGroups) setCustomGroups(savedGroups);
+      if (savedSnippetPackages) setSnippetPackages(savedSnippetPackages);
 
-    // Load known hosts
-    const savedKnownHosts = localStorageAdapter.read<KnownHost[]>(
-      STORAGE_KEY_KNOWN_HOSTS,
-    );
-    if (savedKnownHosts) setKnownHosts(savedKnownHosts);
+      // Load known hosts
+      const savedKnownHosts = localStorageAdapter.read<KnownHost[]>(
+        STORAGE_KEY_KNOWN_HOSTS,
+      );
+      if (savedKnownHosts) setKnownHosts(savedKnownHosts);
 
-    // Load shell history
-    const savedShellHistory = localStorageAdapter.read<ShellHistoryEntry[]>(
-      STORAGE_KEY_SHELL_HISTORY,
-    );
-    if (savedShellHistory) setShellHistory(savedShellHistory);
+      // Load shell history
+      const savedShellHistory = localStorageAdapter.read<ShellHistoryEntry[]>(
+        STORAGE_KEY_SHELL_HISTORY,
+      );
+      if (savedShellHistory) setShellHistory(savedShellHistory);
 
-    // Load connection logs
-    const savedConnectionLogs = localStorageAdapter.read<ConnectionLog[]>(
-      STORAGE_KEY_CONNECTION_LOGS,
-    );
-    if (savedConnectionLogs) setConnectionLogs(savedConnectionLogs);
+      // Load connection logs
+      const savedConnectionLogs = localStorageAdapter.read<ConnectionLog[]>(
+        STORAGE_KEY_CONNECTION_LOGS,
+      );
+      if (savedConnectionLogs) setConnectionLogs(savedConnectionLogs);
 
-    // Load managed sources
-    const savedManagedSources = localStorageAdapter.read<ManagedSource[]>(
-      STORAGE_KEY_MANAGED_SOURCES,
-    );
-    if (savedManagedSources) setManagedSources(savedManagedSources);
+      // Load managed sources
+      const savedManagedSources = localStorageAdapter.read<ManagedSource[]>(
+        STORAGE_KEY_MANAGED_SOURCES,
+      );
+      if (savedManagedSources) setManagedSources(savedManagedSources);
+    };
+
+    init();
   }, [updateHosts, updateSnippets]);
 
   useEffect(() => {
@@ -367,7 +444,17 @@ export const useVaultState = () => {
 
       if (key === STORAGE_KEY_HOSTS) {
         const next = safeParse<Host[]>(event.newValue) ?? [];
-        setHosts(next.map(sanitizeHost));
+        // Bump write version to invalidate any in-flight encrypt from this
+        // window — the cross-window data is newer and must not be overwritten.
+        ++hostsWriteVersion.current;
+        const seq = ++hostsReadSeq.current;
+        const writeAtStart = hostsWriteVersion.current;
+        decryptHosts(next).then((dec) => {
+          // Discard if a newer storage event arrived OR a local write occurred
+          // during the decrypt (writeVersion would have advanced).
+          if (seq === hostsReadSeq.current && writeAtStart === hostsWriteVersion.current)
+            setHosts(dec.map(sanitizeHost));
+        });
         return;
       }
 
@@ -380,13 +467,25 @@ export const useVaultState = () => {
           if (!record || isLegacyUnsupportedKey(record)) continue;
           migratedKeys.push(migrateKey(record as Partial<SSHKey>));
         }
-        setKeys(migratedKeys);
+        ++keysWriteVersion.current;
+        const seq = ++keysReadSeq.current;
+        const writeAtStart = keysWriteVersion.current;
+        decryptKeys(migratedKeys).then((dec) => {
+          if (seq === keysReadSeq.current && writeAtStart === keysWriteVersion.current)
+            setKeys(dec);
+        });
         return;
       }
 
       if (key === STORAGE_KEY_IDENTITIES) {
         const next = safeParse<Identity[]>(event.newValue) ?? [];
-        setIdentities(next);
+        ++identitiesWriteVersion.current;
+        const seq = ++identitiesReadSeq.current;
+        const writeAtStart = identitiesWriteVersion.current;
+        decryptIdentities(next).then((dec) => {
+          if (seq === identitiesReadSeq.current && writeAtStart === identitiesWriteVersion.current)
+            setIdentities(dec);
+        });
         return;
       }
 
@@ -442,7 +541,11 @@ export const useVaultState = () => {
       const next = prev.map((h) =>
         h.id === hostId ? { ...h, distro: normalized } : h,
       );
-      localStorageAdapter.write(STORAGE_KEY_HOSTS, next);
+      const ver = ++hostsWriteVersion.current;
+      encryptHosts(next).then((enc) => {
+        if (ver === hostsWriteVersion.current)
+          localStorageAdapter.write(STORAGE_KEY_HOSTS, enc);
+      });
       return next;
     });
   }, []);
