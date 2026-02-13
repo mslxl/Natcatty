@@ -29,6 +29,14 @@ import {
   STORAGE_KEY_SNIPPETS,
 } from "../../infrastructure/config/storageKeys";
 import { localStorageAdapter } from "../../infrastructure/persistence/localStorageAdapter";
+import {
+  decryptHosts,
+  decryptIdentities,
+  decryptKeys,
+  encryptHosts,
+  encryptIdentities,
+  encryptKeys,
+} from "../../infrastructure/persistence/secureFieldAdapter";
 
 type ExportableVaultData = {
   hosts: Host[];
@@ -102,17 +110,24 @@ export const useVaultState = () => {
   const updateHosts = useCallback((data: Host[]) => {
     const cleaned = data.map(sanitizeHost);
     setHosts(cleaned);
-    localStorageAdapter.write(STORAGE_KEY_HOSTS, cleaned);
+    // Encrypt sensitive fields then persist
+    encryptHosts(cleaned).then((enc) =>
+      localStorageAdapter.write(STORAGE_KEY_HOSTS, enc),
+    );
   }, []);
 
   const updateKeys = useCallback((data: SSHKey[]) => {
     setKeys(data);
-    localStorageAdapter.write(STORAGE_KEY_KEYS, data);
+    encryptKeys(data).then((enc) =>
+      localStorageAdapter.write(STORAGE_KEY_KEYS, enc),
+    );
   }, []);
 
   const updateIdentities = useCallback((data: Identity[]) => {
     setIdentities(data);
-    localStorageAdapter.write(STORAGE_KEY_IDENTITIES, data);
+    encryptIdentities(data).then((enc) =>
+      localStorageAdapter.write(STORAGE_KEY_IDENTITIES, enc),
+    );
   }, []);
 
   const updateSnippets = useCallback((data: Snippet[]) => {
@@ -271,7 +286,9 @@ export const useVaultState = () => {
     // Add to hosts using functional update
     setHosts((prevHosts) => {
       const updated = [...prevHosts, sanitizeHost(newHost)];
-      localStorageAdapter.write(STORAGE_KEY_HOSTS, updated);
+      encryptHosts(updated).then((enc) =>
+        localStorageAdapter.write(STORAGE_KEY_HOSTS, enc),
+      );
       return updated;
     });
 
@@ -279,82 +296,101 @@ export const useVaultState = () => {
   }, []);
 
   useEffect(() => {
-    const savedHosts = localStorageAdapter.read<Host[]>(STORAGE_KEY_HOSTS);
-    const savedKeysRaw = localStorageAdapter.read<unknown[]>(STORAGE_KEY_KEYS);
-    const savedIdentities =
-      localStorageAdapter.read<Identity[]>(STORAGE_KEY_IDENTITIES);
-    const savedGroups = localStorageAdapter.read<string[]>(STORAGE_KEY_GROUPS);
-    const savedSnippets =
-      localStorageAdapter.read<Snippet[]>(STORAGE_KEY_SNIPPETS);
-    const savedSnippetPackages = localStorageAdapter.read<string[]>(
-      STORAGE_KEY_SNIPPET_PACKAGES,
-    );
+    const init = async () => {
+      const savedHosts = localStorageAdapter.read<Host[]>(STORAGE_KEY_HOSTS);
+      const savedKeysRaw = localStorageAdapter.read<unknown[]>(STORAGE_KEY_KEYS);
+      const savedIdentities =
+        localStorageAdapter.read<Identity[]>(STORAGE_KEY_IDENTITIES);
+      const savedGroups = localStorageAdapter.read<string[]>(STORAGE_KEY_GROUPS);
+      const savedSnippets =
+        localStorageAdapter.read<Snippet[]>(STORAGE_KEY_SNIPPETS);
+      const savedSnippetPackages = localStorageAdapter.read<string[]>(
+        STORAGE_KEY_SNIPPET_PACKAGES,
+      );
 
-    if (savedHosts) {
-      const sanitized = savedHosts.map(sanitizeHost);
-      setHosts(sanitized);
-      localStorageAdapter.write(STORAGE_KEY_HOSTS, sanitized);
-    } else {
-      updateHosts(INITIAL_HOSTS);
-    }
+      if (savedHosts) {
+        // Decrypt (handles both plaintext and encrypted via enc:v1: sentinel)
+        const decrypted = await decryptHosts(savedHosts);
+        const sanitized = decrypted.map(sanitizeHost);
+        setHosts(sanitized);
+        // Re-encrypt to migrate any plaintext values
+        encryptHosts(sanitized).then((enc) =>
+          localStorageAdapter.write(STORAGE_KEY_HOSTS, enc),
+        );
+      } else {
+        updateHosts(INITIAL_HOSTS);
+      }
 
-    // Migrate old keys to new format with source/category fields
-    if (savedKeysRaw?.length) {
-      const migratedKeys: SSHKey[] = [];
-      const legacyKeys: LegacyKeyRecord[] = [];
+      // Migrate old keys to new format with source/category fields
+      if (savedKeysRaw?.length) {
+        const migratedKeys: SSHKey[] = [];
+        const legacyKeys: LegacyKeyRecord[] = [];
 
-      for (const entry of savedKeysRaw) {
-        const record =
-          entry && typeof entry === "object" ? (entry as LegacyKeyRecord) : null;
-        if (!record) continue;
+        for (const entry of savedKeysRaw) {
+          const record =
+            entry && typeof entry === "object" ? (entry as LegacyKeyRecord) : null;
+          if (!record) continue;
 
-        if (isLegacyUnsupportedKey(record)) {
-          legacyKeys.push(record);
-          continue;
+          if (isLegacyUnsupportedKey(record)) {
+            legacyKeys.push(record);
+            continue;
+          }
+
+          migratedKeys.push(migrateKey(record as Partial<SSHKey>));
         }
 
-        migratedKeys.push(migrateKey(record as Partial<SSHKey>));
+        // Decrypt sensitive fields (passphrase, privateKey)
+        const decryptedKeys = await decryptKeys(migratedKeys);
+        setKeys(decryptedKeys);
+        // Re-encrypt to migrate any plaintext values
+        encryptKeys(decryptedKeys).then((enc) =>
+          localStorageAdapter.write(STORAGE_KEY_KEYS, enc),
+        );
+        if (legacyKeys.length) {
+          localStorageAdapter.write(STORAGE_KEY_LEGACY_KEYS, legacyKeys);
+        }
       }
 
-      setKeys(migratedKeys);
-      // Persist migrated keys
-      localStorageAdapter.write(STORAGE_KEY_KEYS, migratedKeys);
-      if (legacyKeys.length) {
-        localStorageAdapter.write(STORAGE_KEY_LEGACY_KEYS, legacyKeys);
+      if (savedIdentities) {
+        const decryptedIds = await decryptIdentities(savedIdentities);
+        setIdentities(decryptedIds);
+        encryptIdentities(decryptedIds).then((enc) =>
+          localStorageAdapter.write(STORAGE_KEY_IDENTITIES, enc),
+        );
       }
-    }
 
-    if (savedIdentities) setIdentities(savedIdentities);
+      if (savedSnippets) setSnippets(savedSnippets);
+      else updateSnippets(INITIAL_SNIPPETS);
 
-    if (savedSnippets) setSnippets(savedSnippets);
-    else updateSnippets(INITIAL_SNIPPETS);
+      if (savedGroups) setCustomGroups(savedGroups);
+      if (savedSnippetPackages) setSnippetPackages(savedSnippetPackages);
 
-    if (savedGroups) setCustomGroups(savedGroups);
-    if (savedSnippetPackages) setSnippetPackages(savedSnippetPackages);
+      // Load known hosts
+      const savedKnownHosts = localStorageAdapter.read<KnownHost[]>(
+        STORAGE_KEY_KNOWN_HOSTS,
+      );
+      if (savedKnownHosts) setKnownHosts(savedKnownHosts);
 
-    // Load known hosts
-    const savedKnownHosts = localStorageAdapter.read<KnownHost[]>(
-      STORAGE_KEY_KNOWN_HOSTS,
-    );
-    if (savedKnownHosts) setKnownHosts(savedKnownHosts);
+      // Load shell history
+      const savedShellHistory = localStorageAdapter.read<ShellHistoryEntry[]>(
+        STORAGE_KEY_SHELL_HISTORY,
+      );
+      if (savedShellHistory) setShellHistory(savedShellHistory);
 
-    // Load shell history
-    const savedShellHistory = localStorageAdapter.read<ShellHistoryEntry[]>(
-      STORAGE_KEY_SHELL_HISTORY,
-    );
-    if (savedShellHistory) setShellHistory(savedShellHistory);
+      // Load connection logs
+      const savedConnectionLogs = localStorageAdapter.read<ConnectionLog[]>(
+        STORAGE_KEY_CONNECTION_LOGS,
+      );
+      if (savedConnectionLogs) setConnectionLogs(savedConnectionLogs);
 
-    // Load connection logs
-    const savedConnectionLogs = localStorageAdapter.read<ConnectionLog[]>(
-      STORAGE_KEY_CONNECTION_LOGS,
-    );
-    if (savedConnectionLogs) setConnectionLogs(savedConnectionLogs);
+      // Load managed sources
+      const savedManagedSources = localStorageAdapter.read<ManagedSource[]>(
+        STORAGE_KEY_MANAGED_SOURCES,
+      );
+      if (savedManagedSources) setManagedSources(savedManagedSources);
+    };
 
-    // Load managed sources
-    const savedManagedSources = localStorageAdapter.read<ManagedSource[]>(
-      STORAGE_KEY_MANAGED_SOURCES,
-    );
-    if (savedManagedSources) setManagedSources(savedManagedSources);
+    init();
   }, [updateHosts, updateSnippets]);
 
   useEffect(() => {
@@ -367,7 +403,7 @@ export const useVaultState = () => {
 
       if (key === STORAGE_KEY_HOSTS) {
         const next = safeParse<Host[]>(event.newValue) ?? [];
-        setHosts(next.map(sanitizeHost));
+        decryptHosts(next).then((dec) => setHosts(dec.map(sanitizeHost)));
         return;
       }
 
@@ -380,13 +416,13 @@ export const useVaultState = () => {
           if (!record || isLegacyUnsupportedKey(record)) continue;
           migratedKeys.push(migrateKey(record as Partial<SSHKey>));
         }
-        setKeys(migratedKeys);
+        decryptKeys(migratedKeys).then((dec) => setKeys(dec));
         return;
       }
 
       if (key === STORAGE_KEY_IDENTITIES) {
         const next = safeParse<Identity[]>(event.newValue) ?? [];
-        setIdentities(next);
+        decryptIdentities(next).then((dec) => setIdentities(dec));
         return;
       }
 
@@ -442,7 +478,9 @@ export const useVaultState = () => {
       const next = prev.map((h) =>
         h.id === hostId ? { ...h, distro: normalized } : h,
       );
-      localStorageAdapter.write(STORAGE_KEY_HOSTS, next);
+      encryptHosts(next).then((enc) =>
+        localStorageAdapter.write(STORAGE_KEY_HOSTS, enc),
+      );
       return next;
     });
   }, []);
