@@ -342,6 +342,9 @@ export class CloudSyncManager {
     if (provider) {
       const rawNext = this.loadProviderConnection(provider);
       const seq = ++this.providerDecryptSeq[provider];
+      // Also bump write seq so any in-flight save from this window for the
+      // same provider is discarded — the cross-window data is newer.
+      ++this.providerWriteSeq[provider];
 
       // Decrypt secrets asynchronously, then update state.
       // Use sequence counter to discard stale results when multiple events

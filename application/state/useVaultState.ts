@@ -320,15 +320,6 @@ export const useVaultState = () => {
   useEffect(() => {
     const init = async () => {
       const savedHosts = localStorageAdapter.read<Host[]>(STORAGE_KEY_HOSTS);
-      const savedKeysRaw = localStorageAdapter.read<unknown[]>(STORAGE_KEY_KEYS);
-      const savedIdentities =
-        localStorageAdapter.read<Identity[]>(STORAGE_KEY_IDENTITIES);
-      const savedGroups = localStorageAdapter.read<string[]>(STORAGE_KEY_GROUPS);
-      const savedSnippets =
-        localStorageAdapter.read<Snippet[]>(STORAGE_KEY_SNIPPETS);
-      const savedSnippetPackages = localStorageAdapter.read<string[]>(
-        STORAGE_KEY_SNIPPET_PACKAGES,
-      );
 
       if (savedHosts) {
         // Capture version before the async gap so that any write occurring
@@ -347,6 +338,10 @@ export const useVaultState = () => {
       } else {
         updateHosts(INITIAL_HOSTS);
       }
+
+      // Read keys fresh here (not before the hosts await) so we don't apply
+      // a stale snapshot if keys were updated during host decryption.
+      const savedKeysRaw = localStorageAdapter.read<unknown[]>(STORAGE_KEY_KEYS);
 
       // Migrate old keys to new format with source/category fields
       if (savedKeysRaw?.length) {
@@ -381,6 +376,10 @@ export const useVaultState = () => {
         }
       }
 
+      // Read identities fresh here (not before the hosts/keys awaits) so we
+      // don't apply a stale snapshot if identities were updated during prior decryption.
+      const savedIdentities =
+        localStorageAdapter.read<Identity[]>(STORAGE_KEY_IDENTITIES);
       if (savedIdentities) {
         const idVer = ++identitiesWriteVersion.current;
         const decryptedIds = await decryptIdentities(savedIdentities);
@@ -392,6 +391,14 @@ export const useVaultState = () => {
           });
         }
       }
+
+      // Read remaining non-encrypted data fresh after all async gaps above
+      const savedGroups = localStorageAdapter.read<string[]>(STORAGE_KEY_GROUPS);
+      const savedSnippets =
+        localStorageAdapter.read<Snippet[]>(STORAGE_KEY_SNIPPETS);
+      const savedSnippetPackages = localStorageAdapter.read<string[]>(
+        STORAGE_KEY_SNIPPET_PACKAGES,
+      );
 
       if (savedSnippets) setSnippets(savedSnippets);
       else updateSnippets(INITIAL_SNIPPETS);
