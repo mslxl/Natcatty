@@ -318,11 +318,13 @@ export class CloudSyncManager {
     };
     const provider = providerByKey[key];
     if (provider) {
-      const prev = this.state.providers[provider];
       const rawNext = this.loadProviderConnection(provider);
 
-      // Decrypt secrets asynchronously, then update state
+      // Decrypt secrets asynchronously, then update state.
+      // Read `prev` inside .then() so we compare against the latest state
+      // rather than a stale snapshot captured before the async gap.
       decryptProviderSecrets(rawNext).then((next) => {
+        const prev = this.state.providers[provider];
         const preserveTransientStatus =
           prev.status === 'connecting' || prev.status === 'syncing';
 
