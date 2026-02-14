@@ -755,8 +755,24 @@ if (!gotLock) {
       } catch {}
     });
 
-    // Re-create window on macOS dock click
+    // Re-create or focus window on macOS dock click
     app.on("activate", () => {
+      // If the main window was hidden (e.g. "close to tray"), clicking the Dock icon
+      // should bring it back. Fallback to creating a new window if none exists.
+      try {
+        const mainWin = windowManager.getMainWindow?.();
+        if (mainWin && !mainWin.isDestroyed?.()) {
+          if (mainWin.isMinimized?.()) mainWin.restore();
+          mainWin.show?.();
+          mainWin.focus?.();
+          try {
+            app.focus({ steal: true });
+          } catch {}
+          return;
+        }
+      } catch {}
+
+      if (focusMainWindow()) return;
       if (BrowserWindow.getAllWindows().length === 0) {
         void createWindow().catch((err) => {
           console.error("[Main] Failed to create window on activate:", err);
