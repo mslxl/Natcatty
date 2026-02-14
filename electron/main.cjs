@@ -289,7 +289,8 @@ const ensureKeyDir = async () => {
 const writeKeyToDisk = async (keyId, privateKey) => {
   if (!privateKey) return null;
   await ensureKeyDir();
-  const filename = `${keyId || "temp"}.pem`;
+  const safeId = String(keyId || "temp").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 120);
+  const filename = `${safeId}.pem`;
   const target = path.join(keyRoot, filename);
   const normalized = privateKey.endsWith("\n") ? privateKey : `${privateKey}\n`;
   try {
@@ -644,9 +645,9 @@ const registerBridges = (win) => {
   ipcMain.handle("netcatty:deleteTempFile", async (_event, { filePath }) => {
     try {
       // Only allow deleting files in Netcatty temp directory for security
-      const netcattyTempDir = tempDirBridge.getTempDir();
-      const resolvedPath = path.resolve(filePath);
-      if (!resolvedPath.startsWith(netcattyTempDir)) {
+      const netcattyTempDir = path.resolve(tempDirBridge.getTempDir());
+      const resolvedPath = path.resolve(String(filePath || ""));
+      if (!isPathInside(netcattyTempDir, resolvedPath)) {
         console.warn(`[Main] Refused to delete file outside Netcatty temp dir: ${filePath}`);
         return { success: false };
       }

@@ -35,6 +35,7 @@ const DEBUG_WINDOWS = process.env.NETCATTY_DEBUG_WINDOWS === "1";
 const OAUTH_DEFAULT_WIDTH = 600;
 const OAUTH_DEFAULT_HEIGHT = 700;
 const OAUTH_OVERLAY_ID = "__netcatty_oauth_loading__";
+const OAUTH_LOOPBACK_PORT = 45678; // must match electron/bridges/oauthBridge.cjs
 const WINDOW_STATE_FILE = "window-state.json";
 const DEFAULT_WINDOW_WIDTH = 1400;
 const DEFAULT_WINDOW_HEIGHT = 900;
@@ -368,6 +369,86 @@ function parseWindowOpenFeatures(features) {
   };
 }
 
+function createExternalOnlyWindowOpenHandler(shell) {
+  return (details) => {
+    const targetUrl = details?.url;
+    if (targetUrl && typeof targetUrl === "string" && /^https?:/i.test(targetUrl)) {
+      try {
+        void shell?.openExternal?.(targetUrl);
+      } catch {
+        // ignore
+      }
+    }
+    return { action: "deny" };
+  };
+}
+
+function createAppWindowOpenHandler(shell, { backgroundColor, appIcon }) {
+  const allowedPopupHosts = new Set([
+    // OAuth (PKCE loopback)
+    "accounts.google.com",
+    "login.microsoftonline.com",
+    "login.live.com",
+  ]);
+
+  const isAllowedInAppPopupUrl = (rawUrl) => {
+    try {
+      const u = new URL(String(rawUrl));
+      if (u.protocol === "https:") {
+        return allowedPopupHosts.has(u.hostname);
+      }
+      if (u.protocol === "http:") {
+        // Allow ONLY the loopback OAuth callback page.
+        const isLoopback =
+          u.hostname === "127.0.0.1" || u.hostname === "localhost";
+        return isLoopback && u.port === String(OAUTH_LOOPBACK_PORT) && u.pathname === "/oauth/callback";
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  };
+
+  return (details) => {
+    const targetUrl = details?.url;
+    if (!targetUrl || typeof targetUrl !== "string" || !/^https?:/i.test(targetUrl)) {
+      return { action: "deny" };
+    }
+
+    // Default: open in system browser to reduce remote-content attack surface.
+    if (!isAllowedInAppPopupUrl(targetUrl)) {
+      try {
+        void shell?.openExternal?.(targetUrl);
+      } catch {
+        // ignore
+      }
+      return { action: "deny" };
+    }
+
+    const size = parseWindowOpenFeatures(details?.features);
+    return {
+      action: "allow",
+      overrideBrowserWindowOptions: {
+        width: size.width || OAUTH_DEFAULT_WIDTH,
+        height: size.height || OAUTH_DEFAULT_HEIGHT,
+        minWidth: 420,
+        minHeight: 560,
+        backgroundColor,
+        icon: appIcon,
+        autoHideMenuBar: true,
+        menuBarVisible: false,
+        title: "Netcatty Authorization",
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false,
+          // Sandboxed because this window renders remote content and does not need a preload bridge.
+          sandbox: true,
+        },
+      },
+    };
+  };
+}
+
 function attachOAuthLoadingOverlay(win) {
   if (!win || win.isDestroyed?.()) return;
 
@@ -543,7 +624,7 @@ function setupDeferredShow(win, { timeoutMs = 3000, waitForRendererReady = true 
  * Create the main application window
  */
 async function createWindow(electronModule, options) {
-  const { BrowserWindow, nativeTheme, app, screen } = electronModule;
+  const { BrowserWindow, nativeTheme, app, screen, shell } = electronModule;
   const { preload, devServerUrl, isDev, appIcon, isMac, onRegisterBridge, electronDir } = options;
   
   // Store app reference for window state persistence
@@ -610,6 +691,35 @@ async function createWindow(electronModule, options) {
   });
 
   mainWindow = win;
+
+  // Prevent top-level navigation away from the app origin. If a remote origin ever
+  // loads in a privileged window (with preload), it can become an RCE vector.
+  const allowedOrigins = new Set(["app://netcatty"]);
+  if (isDev && devServerUrl) {
+    try {
+      allowedOrigins.add(new URL(getDevRendererBaseUrl(devServerUrl)).origin);
+    } catch {
+      // ignore invalid dev server URL
+    }
+  }
+  const isAllowedTopLevelUrl = (targetUrl) => {
+    try {
+      return allowedOrigins.has(new URL(String(targetUrl)).origin);
+    } catch {
+      return false;
+    }
+  };
+  const blockUntrustedNavigation = (event, targetUrl) => {
+    if (isAllowedTopLevelUrl(targetUrl)) return;
+    try {
+      event.preventDefault();
+    } catch {
+      // ignore
+    }
+    debugLog("Blocked navigation to untrusted origin", { targetUrl });
+  };
+  win.webContents.on("will-navigate", blockUntrustedNavigation);
+  win.webContents.on("will-redirect", blockUntrustedNavigation);
 
   // Restore maximized state if it was saved
   if (savedState?.isMaximized && !savedState?.isFullScreen) {
@@ -732,36 +842,18 @@ async function createWindow(electronModule, options) {
     } catch {
       // ignore
     }
+    // Never allow chained popups from remote content windows.
+    try {
+      childWindow.webContents?.setWindowOpenHandler?.(createExternalOnlyWindowOpenHandler(shell));
+    } catch {
+      // ignore
+    }
     attachOAuthLoadingOverlay(childWindow);
   });
 
-  win.webContents.setWindowOpenHandler((details) => {
-    const url = details?.url;
-    if (!url || !/^https?:/i.test(url)) {
-      return { action: "deny" };
-    }
-
-    const size = parseWindowOpenFeatures(details?.features);
-    return {
-      action: "allow",
-      overrideBrowserWindowOptions: {
-        width: size.width || OAUTH_DEFAULT_WIDTH,
-        height: size.height || OAUTH_DEFAULT_HEIGHT,
-        minWidth: 420,
-        minHeight: 560,
-        backgroundColor,
-        icon: appIcon,
-        autoHideMenuBar: true,
-        menuBarVisible: false,
-        title: "Netcatty Authorization",
-        webPreferences: {
-          contextIsolation: true,
-          nodeIntegration: false,
-          sandbox: false,
-        },
-      },
-    };
-  });
+  win.webContents.setWindowOpenHandler(
+    createAppWindowOpenHandler(shell, { backgroundColor, appIcon })
+  );
 
   // Register window control handlers
   registerWindowHandlers(electronModule.ipcMain, nativeTheme);
@@ -788,7 +880,7 @@ async function createWindow(electronModule, options) {
  * Create or focus the settings window
  */
 async function openSettingsWindow(electronModule, options) {
-  const { BrowserWindow } = electronModule;
+  const { BrowserWindow, shell } = electronModule;
   const { preload, devServerUrl, isDev, appIcon, isMac, electronDir } = options;
   
   // If settings window already exists, just focus it
@@ -829,6 +921,52 @@ async function openSettingsWindow(electronModule, options) {
   });
 
   settingsWindow = win;
+
+  // Open external links in system browser by default, and allow only known OAuth hosts in-app.
+  try {
+    win.webContents?.setWindowOpenHandler?.(
+      createAppWindowOpenHandler(shell, { backgroundColor, appIcon })
+    );
+  } catch {
+    // ignore
+  }
+
+  // Never allow chained popups from remote content windows spawned from settings.
+  win.webContents?.on?.("did-create-window", (childWindow) => {
+    try {
+      childWindow.webContents?.setWindowOpenHandler?.(createExternalOnlyWindowOpenHandler(shell));
+    } catch {
+      // ignore
+    }
+  });
+
+  // Same navigation hardening as the main window (settings has preload access too).
+  const allowedOrigins = new Set(["app://netcatty"]);
+  if (isDev && devServerUrl) {
+    try {
+      allowedOrigins.add(new URL(getDevRendererBaseUrl(devServerUrl)).origin);
+    } catch {
+      // ignore invalid dev server URL
+    }
+  }
+  const isAllowedTopLevelUrl = (targetUrl) => {
+    try {
+      return allowedOrigins.has(new URL(String(targetUrl)).origin);
+    } catch {
+      return false;
+    }
+  };
+  const blockUntrustedNavigation = (event, targetUrl) => {
+    if (isAllowedTopLevelUrl(targetUrl)) return;
+    try {
+      event.preventDefault();
+    } catch {
+      // ignore
+    }
+    debugLog("Blocked navigation to untrusted origin (settings)", { targetUrl });
+  };
+  win.webContents.on("will-navigate", blockUntrustedNavigation);
+  win.webContents.on("will-redirect", blockUntrustedNavigation);
 
   if (isMac) {
     try {

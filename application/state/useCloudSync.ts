@@ -286,7 +286,7 @@ export const useCloudSync = (): CloudSyncHook => {
       
       // Open browser after starting server
       setTimeout(() => {
-        window.open(data.url, '_blank', 'width=600,height=700');
+        window.open(data.url, "_blank", "width=600,height=700,noopener,noreferrer");
       }, 100);
       
       // Wait for callback
@@ -319,7 +319,7 @@ export const useCloudSync = (): CloudSyncHook => {
       
       // Open browser after starting server
       setTimeout(() => {
-        window.open(data.url, '_blank', 'width=600,height=700');
+        window.open(data.url, "_blank", "width=600,height=700,noopener,noreferrer");
       }, 100);
       
       // Wait for callback

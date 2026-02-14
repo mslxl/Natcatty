@@ -854,4 +854,50 @@ const api = {
 
 // Merge with existing netcatty (if any) to avoid stale objects on hot reload
 const existing = (typeof window !== "undefined" && window.netcatty) ? window.netcatty : {};
-contextBridge.exposeInMainWorld("netcatty", { ...existing, ...api });
+
+function getAllowedRendererOrigins() {
+  const origins = new Set(["app://netcatty"]);
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (typeof devServerUrl === "string" && devServerUrl.length > 0) {
+    try {
+      const u = new URL(devServerUrl);
+      origins.add(u.origin);
+      // Vite often binds to 0.0.0.0, but Chromium navigates via localhost.
+      if (
+        u.hostname === "0.0.0.0" ||
+        u.hostname === "127.0.0.1" ||
+        u.hostname === "::1" ||
+        u.hostname === "[::1]" ||
+        u.hostname === "::" ||
+        u.hostname === "[::]"
+      ) {
+        u.hostname = "localhost";
+        origins.add(u.origin);
+      }
+    } catch {
+      // ignore invalid dev URL
+    }
+  }
+  return origins;
+}
+
+function isTrustedRendererLocation(allowedOrigins) {
+  try {
+    const origin = window?.location?.origin;
+    return typeof origin === "string" && allowedOrigins.has(origin);
+  } catch {
+    return false;
+  }
+}
+
+const allowedOrigins = getAllowedRendererOrigins();
+if (isTrustedRendererLocation(allowedOrigins)) {
+  contextBridge.exposeInMainWorld("netcatty", { ...existing, ...api });
+} else {
+  // If a window navigates to an untrusted origin, do NOT expose the bridge.
+  try {
+    console.warn("[Preload] Refusing to expose netcatty bridge to untrusted origin:", window?.location?.origin);
+  } catch {
+    // ignore
+  }
+}

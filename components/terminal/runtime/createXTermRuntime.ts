@@ -316,7 +316,12 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     if (ctx.terminalBackend.openExternalAvailable()) {
       void ctx.terminalBackend.openExternal(uri);
     } else {
-      window.open(uri, "_blank");
+      const safeUri = String(uri || "");
+      if (/^https?:\/\//i.test(safeUri)) {
+        window.open(safeUri, "_blank", "noopener,noreferrer");
+      } else {
+        logger.warn("[XTerm] Refusing to open non-http(s) link:", safeUri);
+      }
     }
   });
   term.loadAddon(webLinksAddon);

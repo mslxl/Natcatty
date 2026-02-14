@@ -482,7 +482,7 @@ const GitHubDeviceFlowModal: React.FC<GitHubDeviceFlowModalProps> = ({
                     </div>
 
                     <Button
-                        onClick={() => window.open(verificationUri, '_blank')}
+                        onClick={() => window.open(verificationUri, "_blank", "noopener,noreferrer")}
                         className="w-full gap-2 mb-4"
                     >
                         <ExternalLink size={14} />

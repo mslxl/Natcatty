@@ -82,6 +82,7 @@
     "wait-on": "^9.0.3"
   },
   "overrides": {
-    "cpu-features": "npm:empty-npm-package@1.0.0"
+    "cpu-features": "npm:empty-npm-package@1.0.0",
+    "axios": "1.13.5"
   }
 }
