@@ -1299,6 +1299,34 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                           </div>
                         </div>
                       )}
+                      {/* Swap bar */}
+                      {serverStats.swapTotal !== null && serverStats.swapTotal > 0 && (
+                        <div className="space-y-1.5">
+                          <div className="font-medium text-[11px] text-muted-foreground">{t("terminal.serverStats.swap")}</div>
+                          <div className="w-full h-3 bg-muted rounded overflow-hidden flex">
+                            {serverStats.swapUsed !== null && serverStats.swapUsed > 0 && (
+                              <div
+                                className="h-full bg-rose-500"
+                                style={{ width: `${(serverStats.swapUsed / serverStats.swapTotal) * 100}%` }}
+                                title={`${t("terminal.serverStats.swapUsed")}: ${(serverStats.swapUsed / 1024).toFixed(1)}G`}
+                              />
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px]">
+                            <div className="flex items-center gap-1">
+                              <div className="w-2 h-2 rounded-sm bg-rose-500" />
+                              <span>{t("terminal.serverStats.swapUsed")}: {serverStats.swapUsed !== null ? `${(serverStats.swapUsed / 1024).toFixed(1)}G` : '--'}</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <div className="w-2 h-2 rounded-sm bg-muted border border-border" />
+                              <span>{t("terminal.serverStats.swapFree")}: {serverStats.swapTotal !== null && serverStats.swapUsed !== null ? `${((serverStats.swapTotal - serverStats.swapUsed) / 1024).toFixed(1)}G` : '--'}</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <span className="text-muted-foreground">{t("terminal.serverStats.swapTotal")}: {`${(serverStats.swapTotal / 1024).toFixed(1)}G`}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                       {/* Top 10 processes */}
                       {serverStats.topProcesses.length > 0 && (
                         <div className="space-y-1.5">

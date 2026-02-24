@@ -31,6 +31,8 @@ export interface ServerStats {
   memFree: number | null;       // Free memory in MB
   memBuffers: number | null;    // Buffers in MB
   memCached: number | null;     // Cached in MB
+  swapTotal: number | null;     // Total swap in MB
+  swapUsed: number | null;      // Used swap in MB
   topProcesses: ProcessInfo[];  // Top 10 processes by memory
   diskPercent: number | null;   // Disk usage percentage for root partition
   diskUsed: number | null;      // Disk used in GB
@@ -66,6 +68,8 @@ export function useServerStats({
     memFree: null,
     memBuffers: null,
     memCached: null,
+    swapTotal: null,
+    swapUsed: null,
     topProcesses: [],
     diskPercent: null,
     diskUsed: null,
@@ -109,6 +113,8 @@ export function useServerStats({
           memFree: result.stats.memFree,
           memBuffers: result.stats.memBuffers,
           memCached: result.stats.memCached,
+          swapTotal: result.stats.swapTotal ?? null,
+          swapUsed: result.stats.swapUsed ?? null,
           topProcesses: result.stats.topProcesses || [],
           diskPercent: result.stats.diskPercent,
           diskUsed: result.stats.diskUsed,
@@ -155,6 +161,8 @@ export function useServerStats({
         memFree: null,
         memBuffers: null,
         memCached: null,
+        swapTotal: null,
+        swapUsed: null,
         topProcesses: [],
         diskPercent: null,
         diskUsed: null,

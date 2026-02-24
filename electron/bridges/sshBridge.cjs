@@ -1470,8 +1470,8 @@ async function getServerStats(event, payload) {
     `cpuraw=$(awk '/^cpu / {total=0; for(i=2;i<=NF;i++) total+=$i; printf "%d %d", total, $5}' /proc/stat 2>/dev/null || echo "")`,
     // Get raw per-core CPU values from /proc/stat: "total:idle,total:idle,..."
     `percoreraw=$(awk '/^cpu[0-9]/ {total=0; for(i=2;i<=NF;i++) total+=$i; printf "%d:%d,", total, $5}' /proc/stat 2>/dev/null | sed 's/,$//' || echo "")`,
-    // Get memory details from /proc/meminfo (total, free, buffers, cached in KB)
-    `meminfo=$(awk '/^MemTotal:/{t=$2} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} /^SReclaimable:/{s=$2} END{printf "%d %d %d %d", t/1024, f/1024, b/1024, (c+s)/1024}' /proc/meminfo 2>/dev/null || echo "")`,
+    // Get memory details from /proc/meminfo (total, free, buffers, cached, swapTotal, swapFree in KB)
+    `meminfo=$(awk '/^MemTotal:/{t=$2} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} /^SReclaimable:/{s=$2} /^SwapTotal:/{st=$2} /^SwapFree:/{sf=$2} END{printf "%d %d %d %d %d %d", t/1024, f/1024, b/1024, (c+s)/1024, st/1024, sf/1024}' /proc/meminfo 2>/dev/null || echo "")`,
     // Get top 10 processes by memory - with BusyBox fallback
     // GNU ps: ps -eo pid,%mem,comm --sort=-%mem
     // BusyBox fallback: ps -o pid,vsz,comm and sort manually (BusyBox ps doesn't have %mem, use vsz instead)
@@ -1525,6 +1525,8 @@ async function getServerStats(event, payload) {
         let memBuffers = null;
         let memCached = null;
         let memUsed = null;
+        let swapTotal = null;
+        let swapUsed = null;
         let topProcesses = [];  // Array of { pid, memPercent, command }
         let disks = [];  // Array of { mountPoint, used, total, percent }
         let networkInterfaces = [];  // Array of { name, rxBytes, txBytes }
@@ -1570,6 +1572,16 @@ async function getServerStats(event, payload) {
               if (memTotal !== null && memFree !== null && memBuffers !== null && memCached !== null) {
                 memUsed = memTotal - memFree - memBuffers - memCached;
                 if (memUsed < 0) memUsed = 0;
+              }
+              // Parse swap info (fields 5 and 6)
+              if (memParts.length >= 6) {
+                const st = parseInt(memParts[4], 10);
+                const sf = parseInt(memParts[5], 10);
+                if (!isNaN(st)) swapTotal = st;
+                if (!isNaN(sf)) {
+                  swapUsed = (swapTotal !== null) ? swapTotal - sf : null;
+                  if (swapUsed !== null && swapUsed < 0) swapUsed = 0;
+                }
               }
             }
           } else if (part.startsWith('PROCS:')) {
@@ -1743,6 +1755,8 @@ async function getServerStats(event, payload) {
             memFree,       // Free memory in MB
             memBuffers,    // Buffers in MB
             memCached,     // Cached in MB
+            swapTotal,     // Swap total in MB
+            swapUsed,      // Swap used in MB
             topProcesses,  // Top 10 processes by memory
             diskPercent,   // Disk usage percentage for root partition (backward compat)
             diskUsed,      // Disk used in GB for root partition (backward compat)

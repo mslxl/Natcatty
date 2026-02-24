@@ -200,6 +200,8 @@ declare global {
         memFree: number | null;       // Free memory in MB
         memBuffers: number | null;    // Buffers in MB
         memCached: number | null;     // Cached in MB
+        swapTotal: number | null;     // Total swap in MB
+        swapUsed: number | null;      // Used swap in MB
         topProcesses: Array<{         // Top 10 processes by memory
           pid: string;
           memPercent: number;
