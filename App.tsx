@@ -14,6 +14,7 @@ import { initializeUIFonts } from './application/state/uiFontStore';
 import { I18nProvider, useI18n } from './application/i18n/I18nProvider';
 import { matchesKeyBinding } from './domain/models';
 import { resolveHostAuth } from './domain/sshAuth';
+import { getCredentialProtectionAvailability } from './infrastructure/services/credentialProtection';
 import { netcattyBridge } from './infrastructure/services/netcattyBridge';
 import { TopTabs } from './components/TopTabs';
 import { Button } from './components/ui/button';
@@ -1081,6 +1082,30 @@ function App({ settings }: { settings: SettingsState }) {
       if (!opened) toast.error(t('toast.settingsUnavailable'), t('common.settings'));
     })();
   }, [openSettingsWindow, t]);
+
+  const hasShownCredentialProtectionWarningRef = useRef(false);
+
+  useEffect(() => {
+    if (hasShownCredentialProtectionWarningRef.current) return;
+
+    let cancelled = false;
+    void (async () => {
+      const available = await getCredentialProtectionAvailability();
+      if (cancelled || available !== false) return;
+      hasShownCredentialProtectionWarningRef.current = true;
+
+      toast.warning(t('credentials.protectionUnavailable.message'), {
+        title: t('credentials.protectionUnavailable.title'),
+        actionLabel: t('credentials.protectionUnavailable.action'),
+        duration: 10000,
+        onClick: handleOpenSettings,
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [handleOpenSettings, t]);
 
   const handleEndSessionDrag = useCallback(() => {
     setDraggingSessionId(null);

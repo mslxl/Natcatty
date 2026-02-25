@@ -416,6 +416,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     setProgressLogs,
     setProgressValue,
     setChainProgress,
+    t,
     onSessionExit,
     onTerminalDataCapture,
     onOsDetected,

@@ -57,6 +57,9 @@ const en: Messages = {
   'placeholder.sessionName': 'Session name',
   'placeholder.searchHosts': 'Search hosts...',
   'toast.settingsUnavailable': 'Settings window is unavailable on this platform.',
+  'credentials.protectionUnavailable.title': 'Credential Protection Unavailable',
+  'credentials.protectionUnavailable.message': 'Saved passwords and keys cannot be auto-decrypted on this device. Re-enter credentials before connecting.',
+  'credentials.protectionUnavailable.action': 'Open Settings',
 
   // Settings shell
   'settings.title': 'Settings',
@@ -80,6 +83,14 @@ const en: Messages = {
   'settings.system.clearing': 'Clearing...',
   'settings.system.clearResult': 'Deleted {deleted} file(s), {failed} failed.',
   'settings.system.tempDirectoryHint': 'Temporary files are created when opening remote files with external applications. They are automatically cleaned up when SFTP sessions close.',
+  'settings.system.credentials.title': 'Credential Protection',
+  'settings.system.credentials.status': 'Status',
+  'settings.system.credentials.checking': 'Checking...',
+  'settings.system.credentials.available': 'Available (OS keychain ready)',
+  'settings.system.credentials.unavailable': 'Unavailable (cannot decrypt saved credentials)',
+  'settings.system.credentials.unknown': 'Unknown (not supported in this environment)',
+  'settings.system.credentials.unavailableHint': 'Credentials encrypted on another user profile or machine cannot be decrypted here. Re-enter and save credentials on this device.',
+  'settings.system.credentials.portabilityHint': 'Cloud Sync is portable because it uses your master key encryption. Local safeStorage encryption is device/user scoped.',
 
   // Settings > Session Logs
   'settings.sessionLogs.title': 'Session Logs',
@@ -324,6 +335,7 @@ const en: Messages = {
   'sync.autoSync.vaultLocked': 'Vault is locked. Open Settings → Sync & Cloud to unlock.',
   'sync.autoSync.conflictDetected': 'Sync conflict detected. Open Settings → Sync & Cloud to resolve.',
   'sync.autoSync.syncFailed': 'Sync failed',
+  'sync.credentialsUnavailable': 'This device cannot decrypt some saved credentials. Re-enter credentials locally before syncing.',
   'time.never': 'Never',
   'time.justNow': 'Just now',
   'time.minutesAgo': '{minutes}m ago',
@@ -956,6 +968,10 @@ const en: Messages = {
   'terminal.auth.selectKey': 'Select Key',
   'terminal.auth.noKeysHint': 'No keys available. Add keys in Keychain.',
   'terminal.auth.continueSave': 'Continue & Save',
+  'terminal.auth.credentialsUnavailable': 'Saved credentials cannot be decrypted on this device. Please re-enter and save them again.',
+  'terminal.auth.jumpCredentialsUnavailable': 'A jump host has saved credentials that cannot be decrypted on this device. Open host settings and re-enter them.',
+  'terminal.auth.proxyCredentialsUnavailable': 'Proxy credentials cannot be decrypted on this device. Open host settings and re-enter the proxy password.',
+  'terminal.auth.keyUnavailableFallbackPassword': 'Saved SSH key is unavailable on this device. Falling back to password authentication.',
   'terminal.progress.timeoutIn': 'Timeout in {seconds}s',
   'terminal.progress.disconnected': 'Disconnected',
   'terminal.progress.cancelling': 'Cancelling...',

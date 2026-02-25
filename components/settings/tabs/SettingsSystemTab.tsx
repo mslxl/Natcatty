@@ -4,6 +4,7 @@
 import { FileText, FolderOpen, HardDrive, Keyboard, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import React, { useCallback, useEffect, useState } from "react";
 import { useI18n } from "../../../application/i18n/I18nProvider";
+import { getCredentialProtectionAvailability } from "../../../infrastructure/services/credentialProtection";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { SessionLogFormat, keyEventToString } from "../../../domain/models";
 import { TabsContent } from "../../ui/tabs";
@@ -61,6 +62,8 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   const [clearResult, setClearResult] = useState<{ deletedCount: number; failedCount: number } | null>(null);
   const [isRecordingHotkey, setIsRecordingHotkey] = useState(false);
   const [hotkeyError, setHotkeyError] = useState<string | null>(null);
+  const [credentialsAvailable, setCredentialsAvailable] = useState<boolean | null>(null);
+  const [isCheckingCredentials, setIsCheckingCredentials] = useState(false);
 
   const loadTempDirInfo = useCallback(async () => {
     const bridge = netcattyBridge.get();
@@ -80,6 +83,20 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   useEffect(() => {
     loadTempDirInfo();
   }, [loadTempDirInfo]);
+
+  const loadCredentialProtectionStatus = useCallback(async () => {
+    setIsCheckingCredentials(true);
+    try {
+      const available = await getCredentialProtectionAvailability();
+      setCredentialsAvailable(available);
+    } finally {
+      setIsCheckingCredentials(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadCredentialProtectionStatus();
+  }, [loadCredentialProtectionStatus]);
 
   const handleClearTempFiles = useCallback(async () => {
     const bridge = netcattyBridge.get();
@@ -199,6 +216,59 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
             <p className="text-sm text-muted-foreground mt-1">
               {t("settings.system.description")}
             </p>
+          </div>
+
+          {/* Credential Protection Section */}
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <HardDrive size={18} className="text-muted-foreground" />
+              <h3 className="text-base font-medium">{t("settings.system.credentials.title")}</h3>
+            </div>
+
+            <div className="bg-muted/30 rounded-lg p-4 space-y-3">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm text-muted-foreground">
+                    {t("settings.system.credentials.status")}
+                  </p>
+                  <p
+                    className={cn(
+                      "text-sm font-medium mt-1",
+                      credentialsAvailable === true && "text-emerald-600 dark:text-emerald-400",
+                      credentialsAvailable === false && "text-amber-600 dark:text-amber-400",
+                    )}
+                  >
+                    {isCheckingCredentials
+                      ? t("settings.system.credentials.checking")
+                      : credentialsAvailable === true
+                        ? t("settings.system.credentials.available")
+                        : credentialsAvailable === false
+                          ? t("settings.system.credentials.unavailable")
+                          : t("settings.system.credentials.unknown")}
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={loadCredentialProtectionStatus}
+                  disabled={isCheckingCredentials}
+                  className="gap-1.5"
+                >
+                  <RefreshCw size={14} className={isCheckingCredentials ? "animate-spin" : ""} />
+                  {t("settings.system.refresh")}
+                </Button>
+              </div>
+
+              {credentialsAvailable === false && (
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  {t("settings.system.credentials.unavailableHint")}
+                </p>
+              )}
+
+              <p className="text-xs text-muted-foreground">
+                {t("settings.system.credentials.portabilityHint")}
+              </p>
+            </div>
           </div>
 
           {/* Temp Directory Section */}

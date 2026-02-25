@@ -32,6 +32,9 @@ import {
 } from 'lucide-react';
 import { useCloudSync } from '../application/state/useCloudSync';
 import { useI18n } from '../application/i18n/I18nProvider';
+import {
+    findSyncPayloadEncryptedCredentialPaths,
+} from '../domain/credentials';
 import type { CloudProvider, ConflictInfo, SyncPayload, WebDAVAuthType, WebDAVConfig, S3Config } from '../domain/sync';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
@@ -751,6 +754,17 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
     // Clear local data dialog
     const [showClearLocalDialog, setShowClearLocalDialog] = useState(false);
 
+    const ensureSyncablePayload = useCallback(
+        (payload: SyncPayload): boolean => {
+            const encryptedCredentialPaths = findSyncPayloadEncryptedCredentialPaths(payload);
+            if (encryptedCredentialPaths.length === 0) return true;
+
+            toast.error(t('sync.credentialsUnavailable'), t('sync.toast.errorTitle'));
+            return false;
+        },
+        [t],
+    );
+
     // Handle conflict detection
     useEffect(() => {
         if (sync.currentConflict) {
@@ -958,6 +972,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
     const handleSync = async (provider: CloudProvider) => {
         try {
             const payload = onBuildPayload();
+            if (!ensureSyncablePayload(payload)) return;
             const result = await sync.syncToProvider(provider, payload);
 
             if (result.success) {
@@ -982,6 +997,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
             } else if (resolution === 'USE_LOCAL') {
                 // Re-sync with local data
                 const localPayload = onBuildPayload();
+                if (!ensureSyncablePayload(localPayload)) return;
                 await sync.syncNow(localPayload);
                 toast.success(t('cloudSync.resolve.uploaded'));
             }
@@ -1556,6 +1572,16 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
                                     return;
                                 }
 
+                                let payloadForReencrypt: SyncPayload | null = null;
+                                if (sync.hasAnyConnectedProvider) {
+                                    const payload = onBuildPayload();
+                                    if (!ensureSyncablePayload(payload)) {
+                                        setChangeKeyError(t('sync.credentialsUnavailable'));
+                                        return;
+                                    }
+                                    payloadForReencrypt = payload;
+                                }
+
                                 setIsChangingKey(true);
                                 try {
                                     const ok = await sync.changeMasterKey(currentMasterKey, newMasterKey);
@@ -1564,9 +1590,8 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
                                         return;
                                     }
 
-                                    if (sync.hasAnyConnectedProvider) {
-                                        const payload = onBuildPayload();
-                                        await sync.syncNow(payload);
+                                    if (payloadForReencrypt) {
+                                        await sync.syncNow(payloadForReencrypt);
                                     }
 
                                     toast.success(t('cloudSync.changeKey.updatedToast'));

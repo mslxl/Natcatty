@@ -4,6 +4,10 @@ import type { Terminal as XTerm } from "@xterm/xterm";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { logger } from "../../../lib/logger";
 import type { Host, Identity, SerialConfig, SSHKey, TerminalSession, TerminalSettings } from "../../../types";
+import {
+  isEncryptedCredentialPlaceholder,
+  sanitizeCredentialValue,
+} from "../../../domain/credentials";
 import { resolveHostAuth } from "../../../domain/sshAuth";
 
 type TerminalBackendApi = {
@@ -85,6 +89,7 @@ export type TerminalSessionStartersContext = {
   setProgressLogs: Dispatch<SetStateAction<string[]>>;
   setProgressValue: Dispatch<SetStateAction<number>>;
   setChainProgress: Dispatch<SetStateAction<ChainProgressState>>;
+  t?: (key: string) => string;
 
   onSessionExit?: (sessionId: string) => void;
   onTerminalDataCapture?: (sessionId: string, data: string) => void;
@@ -194,6 +199,12 @@ const runDistroDetection = async (
 };
 
 export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContext) => {
+  const tr = (key: string, fallback: string): string => {
+    const translated = ctx.t?.(key);
+    if (!translated || translated === key) return fallback;
+    return translated;
+  };
+
   const startSSH = async (term: XTerm) => {
     try {
       term.clear?.();
@@ -227,9 +238,11 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     });
 
     const effectiveUsername = resolvedAuth.username || "root";
-    const effectivePassword = resolvedAuth.password;
     const key = resolvedAuth.key;
-    const effectivePassphrase = resolvedAuth.passphrase;
+    const effectivePassword = sanitizeCredentialValue(resolvedAuth.password);
+    const effectivePassphrase = sanitizeCredentialValue(resolvedAuth.passphrase);
+    const hasEncryptedPrimaryPassword = isEncryptedCredentialPlaceholder(resolvedAuth.password);
+    const hasEncryptedPrimaryKey = isEncryptedCredentialPlaceholder(key?.privateKey);
     let usedKey: SSHKey | undefined;
     let usedPassword: string | undefined;
 
@@ -244,16 +257,19 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       );
     };
 
+    const rawProxyPassword = ctx.host.proxyConfig?.password;
+    const hasEncryptedProxyPassword = isEncryptedCredentialPlaceholder(rawProxyPassword);
     const proxyConfig = ctx.host.proxyConfig
       ? {
         type: ctx.host.proxyConfig.type,
         host: ctx.host.proxyConfig.host,
         port: ctx.host.proxyConfig.port,
         username: ctx.host.proxyConfig.username,
-        password: ctx.host.proxyConfig.password,
+        password: sanitizeCredentialValue(rawProxyPassword),
       }
       : undefined;
 
+    const jumpHostsWithUnavailableCredentials: string[] = [];
     const jumpHosts = ctx.resolvedChainHosts.map<NetcattyJumpHost>((jumpHost) => {
       const jumpAuth = resolveHostAuth({
         host: jumpHost,
@@ -261,20 +277,68 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         identities: ctx.identities,
       });
       const jumpKey = jumpAuth.key;
+      const rawJumpPassword = jumpAuth.password;
+      const rawJumpPrivateKey = jumpKey?.privateKey;
+      const rawJumpPassphrase = jumpAuth.passphrase || jumpKey?.passphrase;
+      const jumpPassword = sanitizeCredentialValue(rawJumpPassword);
+      const jumpPrivateKey = sanitizeCredentialValue(rawJumpPrivateKey);
+      const jumpPassphrase = sanitizeCredentialValue(rawJumpPassphrase);
+
+      const hasEncryptedJumpCredential =
+        isEncryptedCredentialPlaceholder(rawJumpPassword) ||
+        isEncryptedCredentialPlaceholder(rawJumpPrivateKey) ||
+        isEncryptedCredentialPlaceholder(rawJumpPassphrase);
+
+      if (hasEncryptedJumpCredential && !jumpPassword && !jumpPrivateKey) {
+        jumpHostsWithUnavailableCredentials.push(jumpHost.label || jumpHost.hostname);
+      }
+
       return {
         hostname: jumpHost.hostname,
         port: jumpHost.port || 22,
         username: jumpAuth.username || "root",
-        password: jumpAuth.password,
-        privateKey: jumpKey?.privateKey,
+        password: jumpPassword,
+        privateKey: jumpPrivateKey,
         certificate: jumpKey?.certificate,
-        passphrase: jumpAuth.passphrase || jumpKey?.passphrase,
+        passphrase: jumpPassphrase,
         publicKey: jumpKey?.publicKey,
         keyId: jumpAuth.keyId,
         keySource: jumpKey?.source,
         label: jumpHost.label,
       };
     });
+
+    if (hasEncryptedProxyPassword && !proxyConfig?.password && proxyConfig?.username) {
+      const message = tr(
+        "terminal.auth.proxyCredentialsUnavailable",
+        "Proxy credentials cannot be decrypted on this device. Open host settings and re-enter the proxy password.",
+      );
+      ctx.setNeedsAuth(false);
+      ctx.setAuthRetryMessage(null);
+      ctx.setError(message);
+      term.writeln(`\r\n[${message}]`);
+      ctx.updateStatus("disconnected");
+      return;
+    }
+
+    if (jumpHostsWithUnavailableCredentials.length > 0) {
+      const jumpList = jumpHostsWithUnavailableCredentials.slice(0, 2).join(", ");
+      const suffix =
+        jumpHostsWithUnavailableCredentials.length > 2
+          ? ` +${jumpHostsWithUnavailableCredentials.length - 2}`
+          : "";
+      const base = tr(
+        "terminal.auth.jumpCredentialsUnavailable",
+        "A jump host has saved credentials that cannot be decrypted on this device. Open host settings and re-enter them.",
+      );
+      const message = `${base} (${jumpList}${suffix})`;
+      ctx.setNeedsAuth(false);
+      ctx.setAuthRetryMessage(null);
+      ctx.setError(message);
+      term.writeln(`\r\n[${message}]`);
+      ctx.updateStatus("disconnected");
+      return;
+    }
 
     const totalHops = jumpHosts.length + 1;
     let unsubscribeChainProgress: (() => void) | undefined;
@@ -334,7 +398,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           publicKey: attempt.key?.publicKey,
           keyId: attempt.key?.id,
           keySource: attempt.key?.source,
-          passphrase: attempt.key ? (effectivePassphrase || attempt.key.passphrase) : undefined,
+          passphrase: attempt.key
+            ? (effectivePassphrase || sanitizeCredentialValue(attempt.key.passphrase))
+            : undefined,
           agentForwarding: ctx.host.agentForwarding,
           cols: term.cols,
           rows: term.rows,
@@ -349,8 +415,45 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       let id: string;
       // Respect explicit auth method selection - don't use key if password auth was explicitly selected
       const authMethod = resolvedAuth.authMethod;
-      const hasKeyMaterial = !!key?.privateKey && authMethod !== 'password';
+      const hasKeyMaterial = !!sanitizeCredentialValue(key?.privateKey) && authMethod !== 'password';
       const hasPassword = !!effectivePassword;
+
+      const needsCredentialReentry =
+        (authMethod === "password" && hasEncryptedPrimaryPassword && !hasPassword) ||
+        (authMethod !== "password" && hasEncryptedPrimaryKey && !hasKeyMaterial && !hasPassword);
+
+      if (needsCredentialReentry) {
+        if (unsubscribeChainProgress) unsubscribeChainProgress();
+        ctx.setError(null);
+        ctx.setNeedsAuth(true);
+        ctx.setAuthRetryMessage(
+          tr(
+            "terminal.auth.credentialsUnavailable",
+            "Saved credentials cannot be decrypted on this device. Please re-enter and save them again.",
+          ),
+        );
+        ctx.setAuthPassword("");
+        ctx.setProgressLogs((prev) => [
+          ...prev,
+          tr(
+            "terminal.auth.credentialsUnavailable",
+            "Saved credentials cannot be decrypted on this device. Please re-enter and save them again.",
+          ),
+        ]);
+        ctx.setStatus("connecting");
+        ctx.setChainProgress(null);
+        return;
+      }
+
+      if (!hasKeyMaterial && authMethod !== "password" && hasEncryptedPrimaryKey && hasPassword) {
+        ctx.setProgressLogs((prev) => [
+          ...prev,
+          tr(
+            "terminal.auth.keyUnavailableFallbackPassword",
+            "Saved SSH key is unavailable on this device. Falling back to password authentication.",
+          ),
+        ]);
+      }
 
 
       if (hasKeyMaterial) {

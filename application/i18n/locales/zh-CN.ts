@@ -42,6 +42,9 @@ const zhCN: Messages = {
   'placeholder.workspaceName': '工作区名称',
   'placeholder.sessionName': '会话名称',
   'toast.settingsUnavailable': '当前平台无法打开设置窗口。',
+  'credentials.protectionUnavailable.title': '凭据保护不可用',
+  'credentials.protectionUnavailable.message': '当前设备无法自动解密已保存的密码和密钥。连接前请重新输入凭据。',
+  'credentials.protectionUnavailable.action': '打开设置',
 
   // Settings shell
   'settings.title': '设置',
@@ -65,6 +68,14 @@ const zhCN: Messages = {
   'settings.system.clearing': '清理中...',
   'settings.system.clearResult': '已删除 {deleted} 个文件，{failed} 个失败。',
   'settings.system.tempDirectoryHint': '临时文件在使用外部应用打开远程文件时创建。SFTP 会话关闭时会自动清理。',
+  'settings.system.credentials.title': '凭据保护',
+  'settings.system.credentials.status': '状态',
+  'settings.system.credentials.checking': '检查中...',
+  'settings.system.credentials.available': '可用（系统钥匙串正常）',
+  'settings.system.credentials.unavailable': '不可用（无法解密已保存凭据）',
+  'settings.system.credentials.unknown': '未知（当前环境不支持）',
+  'settings.system.credentials.unavailableHint': '在其他用户或机器上加密的凭据无法在此处解密。请在当前设备重新输入并保存凭据。',
+  'settings.system.credentials.portabilityHint': '云同步可跨设备，因为使用主密钥加密；本地 safeStorage 加密仅绑定当前系统用户/设备。',
 
   // Settings > Session Logs
   'settings.sessionLogs.title': '会话日志',
@@ -191,6 +202,7 @@ const zhCN: Messages = {
   'sync.autoSync.vaultLocked': 'Vault 处于锁定状态。请打开 设置 → Sync & Cloud 解锁。',
   'sync.autoSync.conflictDetected': '检测到同步冲突。请打开 设置 → Sync & Cloud 处理。',
   'sync.autoSync.syncFailed': '同步失败',
+  'sync.credentialsUnavailable': '当前设备无法解密部分已保存凭据。请先在本地重新输入凭据后再同步。',
   'time.never': '从未',
   'time.justNow': '刚刚',
   'time.minutesAgo': '{minutes} 分钟前',
@@ -642,6 +654,10 @@ const zhCN: Messages = {
   'terminal.auth.selectKey': '选择密钥',
   'terminal.auth.noKeysHint': '暂无密钥，请先在钥匙串中添加。',
   'terminal.auth.continueSave': '继续并保存',
+  'terminal.auth.credentialsUnavailable': '当前设备无法解密已保存凭据，请重新输入并再次保存。',
+  'terminal.auth.jumpCredentialsUnavailable': '某个跳板机的已保存凭据无法在当前设备解密，请到主机设置中重新填写。',
+  'terminal.auth.proxyCredentialsUnavailable': '代理凭据无法在当前设备解密，请到主机设置中重新填写代理密码。',
+  'terminal.auth.keyUnavailableFallbackPassword': '已保存 SSH 密钥在当前设备不可用，改用密码认证。',
   'terminal.connectionErrorTitle': '连接错误',
   'terminal.progress.timeoutIn': '将在 {seconds}s 后超时',
   'terminal.progress.disconnected': '已断开',

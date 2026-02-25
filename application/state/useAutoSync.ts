@@ -12,6 +12,9 @@ import { useCloudSync } from './useCloudSync';
 import { useI18n } from '../i18n/I18nProvider';
 import { getCloudSyncManager } from '../../infrastructure/services/CloudSyncManager';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
+import {
+  findSyncPayloadEncryptedCredentialPaths,
+} from '../../domain/credentials';
 import type { SyncPayload } from '../../domain/sync';
 import { toast } from '../../components/ui/toast';
 
@@ -109,6 +112,12 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       }
 
       const payload = buildPayload();
+      const encryptedCredentialPaths = findSyncPayloadEncryptedCredentialPaths(payload);
+      if (encryptedCredentialPaths.length > 0) {
+        console.warn('[AutoSync] Blocked: encrypted credential placeholders found at:', encryptedCredentialPaths.join(', '));
+        throw new Error(t('sync.credentialsUnavailable'));
+      }
+
       const results = await sync.syncNow(payload);
 
       for (const result of results.values()) {
