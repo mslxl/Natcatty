@@ -262,15 +262,10 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
   if (performanceConfig.useWebGLAddon) {
     try {
-      webglAddon = (() => {
-        const webglOptions: Record<string, unknown> = { useCustomGlyphHandler: true };
-        try {
-          const WebglCtor = WebglAddon as unknown as new (options?: unknown) => WebglAddon;
-          return new WebglCtor(webglOptions);
-        } catch {
-          return new WebglAddon();
-        }
-      })();
+      // WebglAddon constructor only accepts `preserveDrawingBuffer?: boolean`.
+      // Passing an object here (legacy API assumption) unintentionally enables
+      // preserveDrawingBuffer and can cause sporadic glyph artifacts/ghosting.
+      webglAddon = new WebglAddon();
       webglAddon.onContextLoss(() => {
         logger.warn("[XTerm] WebGL context loss detected, disposing addon");
         webglAddon?.dispose();
