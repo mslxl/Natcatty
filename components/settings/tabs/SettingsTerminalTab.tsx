@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState, useMemo } from "react";
-import { AlertCircle, ChevronRight, Minus, Plus, RotateCcw } from "lucide-react";
+import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { AlertCircle, ChevronRight, Import, Minus, Palette, Pencil, Plus, RotateCcw, Trash2 } from "lucide-react";
 import type {
   CursorShape,
   LinkModifier,
@@ -11,6 +11,8 @@ import { DEFAULT_KEYWORD_HIGHLIGHT_RULES } from "../../../domain/models";
 import { useI18n } from "../../../application/i18n/I18nProvider";
 import { MAX_FONT_SIZE, MIN_FONT_SIZE, type TerminalFont } from "../../../infrastructure/config/fonts";
 import { TERMINAL_THEMES } from "../../../infrastructure/config/terminalThemes";
+import { customThemeStore, useCustomThemes } from "../../../application/state/customThemeStore";
+import { parseItermcolors } from "../../../infrastructure/parsers/itermcolorsParser";
 import { cn } from "../../../lib/utils";
 import { Button } from "../../ui/button";
 import { Input } from "../../ui/input";
@@ -18,6 +20,8 @@ import { Label } from "../../ui/label";
 import { SectionHeader, Select, SettingsTabContent, SettingRow, Toggle } from "../settings-ui";
 import { ThemeSelectModal } from "../ThemeSelectModal";
 import { TerminalFontSelect } from "../TerminalFontSelect";
+import { CustomThemeModal } from "../../terminal/CustomThemeModal";
+import type { TerminalTheme } from "../../../domain/models";
 
 // Theme preview button component
 const ThemePreviewButton: React.FC<{
@@ -100,10 +104,85 @@ export default function SettingsTerminalTab(props: {
   const [dirValidation, setDirValidation] = useState<{ valid: boolean; message?: string } | null>(null);
   const [themeModalOpen, setThemeModalOpen] = useState(false);
 
+  // Subscribe to custom theme changes so editing in-place triggers re-render
+  const customThemes = useCustomThemes();
+
   // Get current selected theme
   const currentTheme = useMemo(() => {
-    return TERMINAL_THEMES.find(t => t.id === terminalThemeId) || TERMINAL_THEMES[0];
+    return TERMINAL_THEMES.find(t => t.id === terminalThemeId)
+      || customThemes.find(t => t.id === terminalThemeId)
+      || TERMINAL_THEMES[0];
+  }, [terminalThemeId, customThemes]);
+
+  // Import .itermcolors file
+  const importFileRef = useRef<HTMLInputElement>(null);
+  const handleImportItermcolors = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      console.log('[Settings] No file selected');
+      return;
+    }
+    console.log('[Settings] File selected:', file.name, 'size:', file.size);
+    const name = file.name.replace(/\.(itermcolors|xml)$/i, '');
+    const reader = new FileReader();
+    reader.onload = () => {
+      const xml = reader.result as string;
+      console.log('[Settings] File read successfully, length:', xml.length);
+      const parsed = parseItermcolors(xml, name);
+      if (parsed) {
+        console.log('[Settings] Theme parsed successfully:', parsed.id, parsed.name);
+        customThemeStore.addTheme(parsed);
+        setTerminalThemeId(parsed.id);
+      } else {
+        console.error('[Settings] Failed to parse .itermcolors file:', file.name);
+        window.alert(t('terminal.customTheme.importError') || 'Failed to parse the selected file. Please ensure it is a valid .itermcolors XML file.');
+      }
+    };
+    reader.onerror = () => {
+      console.error('[Settings] Failed to read file:', file.name, reader.error);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  }, [setTerminalThemeId, t]);
+
+  // New custom theme modal
+  const [customThemeModalOpen, setCustomThemeModalOpen] = useState(false);
+  const [customThemeData, setCustomThemeData] = useState<TerminalTheme | null>(null);
+  const [isEditingTheme, setIsEditingTheme] = useState(false);
+
+  // Check if current theme is a custom theme
+  const isCustomTheme = useMemo(() => {
+    return currentTheme?.isCustom === true;
+  }, [currentTheme]);
+
+  const handleNewCustomTheme = useCallback(() => {
+    const base = TERMINAL_THEMES.find(t => t.id === terminalThemeId)
+      || customThemeStore.getThemeById(terminalThemeId)
+      || TERMINAL_THEMES[0];
+    const newTheme: TerminalTheme = {
+      ...base,
+      id: `custom-${Date.now()}`,
+      name: `${base.name} (Custom)`,
+      isCustom: true,
+      colors: { ...base.colors },
+    };
+    setCustomThemeData(newTheme);
+    setIsEditingTheme(false);
+    setCustomThemeModalOpen(true);
   }, [terminalThemeId]);
+
+  const handleEditCustomTheme = useCallback(() => {
+    if (!currentTheme?.isCustom) return;
+    setCustomThemeData({ ...currentTheme, colors: { ...currentTheme.colors } });
+    setIsEditingTheme(true);
+    setCustomThemeModalOpen(true);
+  }, [currentTheme]);
+
+  const handleDeleteCustomTheme = useCallback(() => {
+    if (!currentTheme?.isCustom) return;
+    customThemeStore.deleteTheme(currentTheme.id);
+    setTerminalThemeId(TERMINAL_THEMES[0].id);
+  }, [currentTheme, setTerminalThemeId]);
 
   // Fetch default shell on mount
   useEffect(() => {
@@ -201,6 +280,86 @@ export default function SettingsTerminalTab(props: {
         selectedThemeId={terminalThemeId}
         onSelect={setTerminalThemeId}
       />
+
+      {/* Theme action buttons */}
+      <div className="flex items-center gap-2 -mt-1">
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5"
+          onClick={handleNewCustomTheme}
+        >
+          <Palette size={14} />
+          {t('terminal.customTheme.new')}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5"
+          onClick={() => importFileRef.current?.click()}
+        >
+          <Import size={14} />
+          {t('terminal.customTheme.import')}
+        </Button>
+        {isCustomTheme && (
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={handleEditCustomTheme}
+            >
+              <Pencil size={14} />
+              {t('common.edit')}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-destructive hover:text-destructive"
+              onClick={handleDeleteCustomTheme}
+            >
+              <Trash2 size={14} />
+              {t('common.delete')}
+            </Button>
+          </>
+        )}
+        <input
+          ref={importFileRef}
+          type="file"
+          accept=".itermcolors"
+          className="hidden"
+          onChange={handleImportItermcolors}
+        />
+      </div>
+
+      {/* Custom Theme Modal */}
+      {customThemeData && (
+        <CustomThemeModal
+          open={customThemeModalOpen}
+          theme={customThemeData}
+          isNew={!isEditingTheme}
+          onSave={(theme) => {
+            if (isEditingTheme) {
+              customThemeStore.updateTheme(theme.id, theme);
+            } else {
+              customThemeStore.addTheme(theme);
+            }
+            setTerminalThemeId(theme.id);
+            setCustomThemeModalOpen(false);
+            setCustomThemeData(null);
+          }}
+          onDelete={isEditingTheme ? (themeId) => {
+            customThemeStore.deleteTheme(themeId);
+            setTerminalThemeId(TERMINAL_THEMES[0].id);
+            setCustomThemeModalOpen(false);
+            setCustomThemeData(null);
+          } : undefined}
+          onCancel={() => {
+            setCustomThemeModalOpen(false);
+            setCustomThemeData(null);
+          }}
+        />
+      )}
 
       <SectionHeader title={t("settings.terminal.section.font")} />
       <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
