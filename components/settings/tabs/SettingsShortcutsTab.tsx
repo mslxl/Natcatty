@@ -179,7 +179,7 @@ export default function SettingsShortcutsTab(props: {
 
                     return (
                       <div key={binding.id} className="flex items-center justify-between px-4 py-2">
-                        <span className="text-sm">{binding.label}</span>
+                        <span className="text-sm">{t(`settings.shortcuts.binding.${binding.id}`) !== `settings.shortcuts.binding.${binding.id}` ? t(`settings.shortcuts.binding.${binding.id}`) : binding.label}</span>
                         <div className="flex items-center gap-2">
                           {isSpecialBinding ? (
                             <div className="flex items-center gap-1">

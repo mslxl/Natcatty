@@ -298,6 +298,13 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     handleDelete,
     handleCreateFolder,
     handleCreateFile,
+    showCreateDialog,
+    setShowCreateDialog,
+    createType,
+    createName,
+    setCreateName,
+    isCreating,
+    handleCreateSubmit,
     showRenameDialog,
     setShowRenameDialog,
     renameTarget,
@@ -749,6 +756,13 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
         getSymbolicPermissions={getSymbolicPermissions}
         handleSavePermissions={handleSavePermissions}
         isChangingPermissions={isChangingPermissions}
+        showCreateDialog={showCreateDialog}
+        setShowCreateDialog={setShowCreateDialog}
+        createType={createType}
+        createName={createName}
+        setCreateName={setCreateName}
+        isCreating={isCreating}
+        handleCreateSubmit={handleCreateSubmit}
       />
 
       {/* File Opener Dialog */}
