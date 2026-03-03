@@ -1243,13 +1243,13 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
             enabled={!!form.legacyAlgorithms}
             onToggle={() => update("legacyAlgorithms", !form.legacyAlgorithms)}
           />
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground break-words">
             {t("hostDetails.legacyAlgorithms.desc")}
           </p>
           {form.legacyAlgorithms && (
             <div className="flex items-start gap-2 p-2 rounded-md bg-yellow-500/10 border border-yellow-500/20">
               <AlertTriangle size={14} className="text-yellow-500 mt-0.5 flex-shrink-0" />
-              <p className="text-xs text-yellow-600 dark:text-yellow-400">
+              <p className="text-xs text-yellow-600 dark:text-yellow-400 break-words">
                 {t("hostDetails.legacyAlgorithms.warning")}
               </p>
             </div>
@@ -1339,26 +1339,24 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
           </div>
           {form.proxyConfig?.host ? (
             <button
-              className="w-full flex items-center gap-2 p-2 rounded-md bg-secondary/50 hover:bg-secondary transition-colors cursor-pointer overflow-hidden"
+              className="w-full min-w-0 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 p-2 rounded-md bg-secondary/50 hover:bg-secondary transition-colors cursor-pointer overflow-hidden"
               onClick={() => setActiveSubPanel("proxy")}
             >
-              <div className="flex items-center gap-1 min-w-0 flex-1">
-                <Badge variant="secondary" className="text-xs shrink-0">
-                  {form.proxyConfig.type?.toUpperCase()}
-                </Badge>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="text-sm block truncate min-w-0">
-                        {form.proxyConfig.host}:{form.proxyConfig.port}
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" align="start" className="max-w-xs break-all">
-                      {form.proxyConfig.type?.toUpperCase()} {form.proxyConfig.host}:{form.proxyConfig.port}
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
+              <Badge variant="secondary" className="text-xs shrink-0">
+                {form.proxyConfig.type?.toUpperCase()}
+              </Badge>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="block min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm">
+                      {form.proxyConfig.host}:{form.proxyConfig.port}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" align="start" className="max-w-xs break-all">
+                    {form.proxyConfig.type?.toUpperCase()} {form.proxyConfig.host}:{form.proxyConfig.port}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
               <X
                 size={14}
                 className="text-muted-foreground hover:text-destructive flex-shrink-0"
