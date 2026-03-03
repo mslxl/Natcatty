@@ -855,6 +855,8 @@ async function openSftp(event, options) {
       client.client.setMaxListeners(0); // 0 means unlimited
     }
 
+    // Used by transferBridge to decide whether isolated fast-transfer channels are safe.
+    client.__netcattySudoMode = !!options.sudo;
     sftpClients.set(connId, client);
 
     // Store jump connections for cleanup when SFTP is closed

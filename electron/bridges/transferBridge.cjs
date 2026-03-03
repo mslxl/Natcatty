@@ -35,6 +35,18 @@ function init(deps) {
   sftpClients = deps.sftpClients;
 }
 
+async function openIsolatedSftpChannel(client) {
+  const sshClient = client?.client;
+  if (!sshClient || typeof sshClient.sftp !== "function") return null;
+
+  return new Promise((resolve, reject) => {
+    sshClient.sftp((err, sftp) => {
+      if (err) reject(err);
+      else resolve(sftp);
+    });
+  });
+}
+
 /**
  * Upload a local file to SFTP using ssh2's fastPut (parallel SFTP requests).
  * Falls back to sequential stream piping if fastPut is unavailable.
@@ -43,22 +55,64 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
   const sftp = client.sftp;
   if (!sftp) throw new Error("SFTP client not ready");
 
-  // Prefer fastPut: sends multiple SFTP WRITE requests in parallel
-  if (typeof sftp.fastPut === 'function') {
-    return new Promise((resolve, reject) => {
-      sftp.fastPut(localPath, remotePath, {
-        chunkSize: TRANSFER_CHUNK_SIZE,
-        concurrency: TRANSFER_CONCURRENCY,
-        step: (transferred, _chunk, total) => {
-          if (transfer.cancelled) return;
-          sendProgress(transferred, total || fileSize);
+  // Prefer fastPut on an isolated SFTP channel so cancellation can abort just this transfer.
+  if (!client.__netcattySudoMode) {
+    let fastSftp = null;
+    try {
+      fastSftp = await openIsolatedSftpChannel(client);
+    } catch (err) {
+      console.warn("[transferBridge] Failed to open isolated SFTP channel for fastPut, falling back to streams:", err.message || String(err));
+    }
+
+    if (fastSftp && typeof fastSftp.fastPut === "function") {
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        let onFastSftpError = null;
+        const finish = (err) => {
+          if (settled) return;
+          settled = true;
+          if (transfer.abort === abortFastTransfer) {
+            transfer.abort = null;
+          }
+          if (onFastSftpError) {
+            try { fastSftp.removeListener("error", onFastSftpError); } catch { }
+            onFastSftpError = null;
+          }
+          try { fastSftp.end(); } catch { }
+
+          if (transfer.cancelled) reject(new Error("Transfer cancelled"));
+          else if (err) reject(err);
+          else resolve();
+        };
+        const abortFastTransfer = () => {
+          if (settled) return;
+          transfer.cancelled = true;
+          try { fastSftp.end(); } catch { }
+          finish(new Error("Transfer cancelled"));
+        };
+        transfer.abort = abortFastTransfer;
+        onFastSftpError = (err) => finish(err);
+        fastSftp.once("error", onFastSftpError);
+
+        if (transfer.cancelled) {
+          finish(new Error("Transfer cancelled"));
+          return;
         }
-      }, (err) => {
-        if (transfer.cancelled) reject(new Error('Transfer cancelled'));
-        else if (err) reject(err);
-        else resolve();
+
+        fastSftp.fastPut(localPath, remotePath, {
+          chunkSize: TRANSFER_CHUNK_SIZE,
+          concurrency: TRANSFER_CONCURRENCY,
+          step: (transferred, _chunk, total) => {
+            if (transfer.cancelled) return;
+            sendProgress(transferred, total || fileSize);
+          },
+        }, finish);
       });
-    });
+    }
+
+    if (fastSftp && typeof fastSftp.end === "function") {
+      try { fastSftp.end(); } catch { }
+    }
   }
 
   // Fallback: sequential stream piping
@@ -108,22 +162,64 @@ async function downloadFile(remotePath, localPath, client, fileSize, transfer, s
   const sftp = client.sftp;
   if (!sftp) throw new Error("SFTP client not ready");
 
-  // Prefer fastGet: sends multiple SFTP READ requests in parallel
-  if (typeof sftp.fastGet === 'function') {
-    return new Promise((resolve, reject) => {
-      sftp.fastGet(remotePath, localPath, {
-        chunkSize: TRANSFER_CHUNK_SIZE,
-        concurrency: TRANSFER_CONCURRENCY,
-        step: (transferred, _chunk, total) => {
-          if (transfer.cancelled) return;
-          sendProgress(transferred, total || fileSize);
+  // Prefer fastGet on an isolated SFTP channel so cancellation can abort just this transfer.
+  if (!client.__netcattySudoMode) {
+    let fastSftp = null;
+    try {
+      fastSftp = await openIsolatedSftpChannel(client);
+    } catch (err) {
+      console.warn("[transferBridge] Failed to open isolated SFTP channel for fastGet, falling back to streams:", err.message || String(err));
+    }
+
+    if (fastSftp && typeof fastSftp.fastGet === "function") {
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        let onFastSftpError = null;
+        const finish = (err) => {
+          if (settled) return;
+          settled = true;
+          if (transfer.abort === abortFastTransfer) {
+            transfer.abort = null;
+          }
+          if (onFastSftpError) {
+            try { fastSftp.removeListener("error", onFastSftpError); } catch { }
+            onFastSftpError = null;
+          }
+          try { fastSftp.end(); } catch { }
+
+          if (transfer.cancelled) reject(new Error("Transfer cancelled"));
+          else if (err) reject(err);
+          else resolve();
+        };
+        const abortFastTransfer = () => {
+          if (settled) return;
+          transfer.cancelled = true;
+          try { fastSftp.end(); } catch { }
+          finish(new Error("Transfer cancelled"));
+        };
+        transfer.abort = abortFastTransfer;
+        onFastSftpError = (err) => finish(err);
+        fastSftp.once("error", onFastSftpError);
+
+        if (transfer.cancelled) {
+          finish(new Error("Transfer cancelled"));
+          return;
         }
-      }, (err) => {
-        if (transfer.cancelled) reject(new Error('Transfer cancelled'));
-        else if (err) reject(err);
-        else resolve();
+
+        fastSftp.fastGet(remotePath, localPath, {
+          chunkSize: TRANSFER_CHUNK_SIZE,
+          concurrency: TRANSFER_CONCURRENCY,
+          step: (transferred, _chunk, total) => {
+            if (transfer.cancelled) return;
+            sendProgress(transferred, total || fileSize);
+          },
+        }, finish);
       });
-    });
+    }
+
+    if (fastSftp && typeof fastSftp.end === "function") {
+      try { fastSftp.end(); } catch { }
+    }
   }
 
   // Fallback: sequential stream piping
@@ -186,7 +282,7 @@ async function startTransfer(event, payload, onProgress) {
   } = payload;
   const sender = event.sender;
 
-  const transfer = { cancelled: false, readStream: null, writeStream: null };
+  const transfer = { cancelled: false, readStream: null, writeStream: null, abort: null };
   activeTransfers.set(transferId, transfer);
   const transferCreatedAt = Date.now();
 
@@ -437,6 +533,10 @@ async function cancelTransfer(event, payload) {
   const transfer = activeTransfers.get(transferId);
   if (transfer) {
     transfer.cancelled = true;
+
+    if (typeof transfer.abort === "function") {
+      try { transfer.abort(); } catch { }
+    }
 
     // Destroy streams for stream-based fallback transfers
     if (transfer.readStream) {
