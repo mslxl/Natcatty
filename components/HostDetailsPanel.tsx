@@ -1332,35 +1332,42 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
 
         {/* Proxy Configuration */}
         <Card className="p-3 space-y-2 bg-card border-border/80">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Globe size={14} className="text-muted-foreground" />
-              <p className="text-xs font-semibold">{t("hostDetails.proxy")}</p>
-            </div>
-            {form.proxyConfig?.host ? (
-              <Badge variant="secondary" className="text-xs">
-                {form.proxyConfig.type?.toUpperCase()} {form.proxyConfig.host}:
-                {form.proxyConfig.port}
-              </Badge>
-            ) : (
-              <Badge
-                variant="outline"
-                className="text-xs text-muted-foreground"
-              >
-                {t("hostDetails.proxy.none")}
-              </Badge>
-            )}
+          <div className="flex items-center gap-2">
+            <Globe size={14} className="text-muted-foreground" />
+            <p className="text-xs font-semibold">{t("hostDetails.proxy")}</p>
           </div>
-          <Button
-            variant="ghost"
-            className="w-full h-9 justify-start gap-2 text-sm"
-            onClick={() => setActiveSubPanel("proxy")}
-          >
-            <Plus size={14} />
-            {form.proxyConfig?.host
-              ? t("hostDetails.proxy.edit")
-              : t("hostDetails.proxy.configure")}
-          </Button>
+          {form.proxyConfig?.host ? (
+            <button
+              className="w-full flex items-center gap-2 p-2 rounded-md bg-secondary/50 hover:bg-secondary transition-colors cursor-pointer"
+              onClick={() => setActiveSubPanel("proxy")}
+            >
+              <div className="flex items-center gap-1 min-w-0 flex-1">
+                <Badge variant="secondary" className="text-xs shrink-0">
+                  {form.proxyConfig.type?.toUpperCase()}
+                </Badge>
+                <span className="text-sm truncate">
+                  {form.proxyConfig.host}:{form.proxyConfig.port}
+                </span>
+              </div>
+              <X
+                size={14}
+                className="text-muted-foreground hover:text-destructive flex-shrink-0"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  clearProxyConfig();
+                }}
+              />
+            </button>
+          ) : (
+            <Button
+              variant="ghost"
+              className="w-full h-9 justify-start gap-2 text-sm"
+              onClick={() => setActiveSubPanel("proxy")}
+            >
+              <Plus size={14} />
+              {t("hostDetails.proxy.configure")}
+            </Button>
+          )}
         </Card>
 
         {/* Environment Variables */}
