@@ -473,7 +473,7 @@ export default function SettingsTerminalTab(props: {
             onChange={(v) =>
               updateTerminalSetting("terminalEmulationType", v as TerminalEmulationType)
             }
-            className="w-36"
+            className="w-44"
           />
         </SettingRow>
       </div>
