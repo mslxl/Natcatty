@@ -1338,7 +1338,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
           </div>
           {form.proxyConfig?.host ? (
             <button
-              className="w-full flex items-center gap-2 p-2 rounded-md bg-secondary/50 hover:bg-secondary transition-colors cursor-pointer"
+              className="w-full flex items-center gap-2 p-2 rounded-md bg-secondary/50 hover:bg-secondary transition-colors cursor-pointer overflow-hidden"
               onClick={() => setActiveSubPanel("proxy")}
             >
               <div className="flex items-center gap-1 min-w-0 flex-1">
