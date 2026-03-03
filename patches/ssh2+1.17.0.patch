@@ -1,3 +1,112 @@
+diff --git a/node_modules/ssh2/lib/client.js b/node_modules/ssh2/lib/client.js
+index 7291c2c..8943c9a 100644
+--- a/node_modules/ssh2/lib/client.js
++++ b/node_modules/ssh2/lib/client.js
+@@ -2170,6 +2170,29 @@ function getKeyAlgos(client, key, serverSigAlgs) {
+           return [];
+       }
+       return [['ssh-rsa', 'sha1']];
++
++    // OpenSSH RSA user certificates
++    // - publickey algorithm name must be the *cert* variant
++    // - signature algorithm uses the non-cert variant (handled in Protocol.js)
++    case 'ssh-rsa-cert-v01@openssh.com':
++    case 'rsa-sha2-256-cert-v01@openssh.com':
++    case 'rsa-sha2-512-cert-v01@openssh.com':
++      if (client._protocol._compatFlags & COMPAT.IMPLY_RSA_SHA2_SIGALGS) {
++        if (!Array.isArray(serverSigAlgs))
++          serverSigAlgs = ['rsa-sha2-256', 'rsa-sha2-512'];
++        else
++          serverSigAlgs = ['rsa-sha2-256', 'rsa-sha2-512', ...serverSigAlgs];
++      }
++      if (Array.isArray(serverSigAlgs)) {
++        // Prefer SHA-512 when available (matches modern OpenSSH default)
++        if (serverSigAlgs.indexOf('rsa-sha2-512') !== -1)
++          return [['rsa-sha2-512-cert-v01@openssh.com', 'sha512']];
++        if (serverSigAlgs.indexOf('rsa-sha2-256') !== -1)
++          return [['rsa-sha2-256-cert-v01@openssh.com', 'sha256']];
++        if (serverSigAlgs.indexOf('ssh-rsa') === -1)
++          return [];
++      }
++      return [['ssh-rsa-cert-v01@openssh.com', 'sha1']];
+   }
+ }
+ 
+diff --git a/node_modules/ssh2/lib/protocol/Protocol.js b/node_modules/ssh2/lib/protocol/Protocol.js
+index 7302488..95584c5 100644
+--- a/node_modules/ssh2/lib/protocol/Protocol.js
++++ b/node_modules/ssh2/lib/protocol/Protocol.js
+@@ -701,11 +701,19 @@ class Protocol {
+       if (signature === false)
+         throw new Error('Error while converting handshake signature');
+ 
++      let sigAlgo = keyAlgo;
++      if (signature && typeof signature === 'object' && signature._signatureAlgorithm)
++        sigAlgo = signature._signatureAlgorithm;
++      else if (typeof keyAlgo === 'string'
++               && keyAlgo.endsWith('-cert-v01@openssh.com'))
++        sigAlgo = keyAlgo.slice(0, -'-cert-v01@openssh.com'.length);
++
+       const sigLen = signature.length;
++      const sigAlgoLen = Buffer.byteLength(sigAlgo);
+       p = this._packetRW.write.allocStart;
+       packet = this._packetRW.write.alloc(
+         1 + 4 + userLen + 4 + 14 + 4 + 9 + 1 + 4 + algoLen + 4 + pubKeyLen + 4
+-          + 4 + algoLen + 4 + sigLen
++          + 4 + sigAlgoLen + 4 + sigLen
+       );
+ 
+       // TODO: simply copy from original "packet" to new `packet` to avoid
+@@ -729,12 +737,12 @@ class Protocol {
+       writeUInt32BE(packet, pubKeyLen, p += algoLen);
+       packet.set(pubKey, p += 4);
+ 
+-      writeUInt32BE(packet, 4 + algoLen + 4 + sigLen, p += pubKeyLen);
++      writeUInt32BE(packet, 4 + sigAlgoLen + 4 + sigLen, p += pubKeyLen);
+ 
+-      writeUInt32BE(packet, algoLen, p += 4);
+-      packet.utf8Write(keyAlgo, p += 4, algoLen);
++      writeUInt32BE(packet, sigAlgoLen, p += 4);
++      packet.utf8Write(sigAlgo, p += 4, sigAlgoLen);
+ 
+-      writeUInt32BE(packet, sigLen, p += algoLen);
++      writeUInt32BE(packet, sigLen, p += sigAlgoLen);
+       packet.set(signature, p += 4);
+ 
+       // Servers shouldn't send packet type 60 in response to signed publickey
+@@ -810,19 +818,27 @@ class Protocol {
+       if (!signature)
+         throw new Error('Error while converting handshake signature');
+ 
++      let sigAlgo = keyAlgo;
++      if (signature && typeof signature === 'object' && signature._signatureAlgorithm)
++        sigAlgo = signature._signatureAlgorithm;
++      else if (typeof keyAlgo === 'string'
++               && keyAlgo.endsWith('-cert-v01@openssh.com'))
++        sigAlgo = keyAlgo.slice(0, -'-cert-v01@openssh.com'.length);
++
+       const sigLen = signature.length;
++      const sigAlgoLen = Buffer.byteLength(sigAlgo);
+       const reqDataLen = (data.length - sesLen - 4);
+       p = this._packetRW.write.allocStart;
+       const packet = this._packetRW.write.alloc(
+-        reqDataLen + 4 + 4 + algoLen + 4 + sigLen
++        reqDataLen + 4 + 4 + sigAlgoLen + 4 + sigLen
+       );
+ 
+       bufferCopy(data, packet, 4 + sesLen, data.length, p);
+ 
+-      writeUInt32BE(packet, 4 + algoLen + 4 + sigLen, p += reqDataLen);
+-      writeUInt32BE(packet, algoLen, p += 4);
+-      packet.utf8Write(keyAlgo, p += 4, algoLen);
+-      writeUInt32BE(packet, sigLen, p += algoLen);
++      writeUInt32BE(packet, 4 + sigAlgoLen + 4 + sigLen, p += reqDataLen);
++      writeUInt32BE(packet, sigAlgoLen, p += 4);
++      packet.utf8Write(sigAlgo, p += 4, sigAlgoLen);
++      writeUInt32BE(packet, sigLen, p += sigAlgoLen);
+       packet.set(signature, p += 4);
+ 
+       this._authsQueue.push('hostbased');
 diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/protocol/SFTP.js
 index 9f33c02..9751164 100644
 --- a/node_modules/ssh2/lib/protocol/SFTP.js
