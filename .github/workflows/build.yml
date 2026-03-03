@@ -13,12 +13,24 @@ on:
 
 jobs:
   build:
-    name: build-${{ matrix.os }}
+    name: build-${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
+        include:
+          - name: macos
+            os: macos-latest
+            pack_script: pack:mac
+          - name: windows
+            os: windows-latest
+            pack_script: pack:win
+          - name: linux-x64
+            os: ubuntu-latest
+            pack_script: pack:linux-x64
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            pack_script: pack:linux-arm64
     env:
       VITE_SYNC_GITHUB_CLIENT_ID: ${{ secrets.VITE_SYNC_GITHUB_CLIENT_ID }}
       VITE_SYNC_GOOGLE_CLIENT_ID: ${{ secrets.VITE_SYNC_GOOGLE_CLIENT_ID }}
@@ -50,29 +62,16 @@ jobs:
           echo "Setting version to ${VERSION}"
           npm pkg set version="${VERSION}"
 
-      - name: Build package (macOS)
-        if: matrix.os == 'macos-latest'
+      - name: Build package
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.name == 'macos' && 'false' || '' }}
           ELECTRON_BUILDER_PUBLISH: "never"
-        run: npm run pack:mac
-
-      - name: Build package (Windows)
-        if: matrix.os == 'windows-latest'
-        env:
-          ELECTRON_BUILDER_PUBLISH: "never"
-        run: npm run pack:win
-
-      - name: Build package (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        env:
-          ELECTRON_BUILDER_PUBLISH: "never"
-        run: npm run pack:linux
+        run: npm run ${{ matrix.pack_script }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: netcatty-${{ matrix.os }}
+          name: netcatty-${{ matrix.name }}
           path: |
             release/*.dmg
             release/*.exe

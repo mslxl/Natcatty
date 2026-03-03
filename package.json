@@ -20,6 +20,8 @@
     "pack:win": "npm run build && cross-env NODE_OPTIONS=--disable-warning=DEP0190 electron-builder --config electron-builder.config.cjs --win --publish=never",
     "pack:mac": "npm run build && cross-env NODE_OPTIONS=--disable-warning=DEP0190 electron-builder --config electron-builder.config.cjs --mac --publish=never",
     "pack:linux": "npm run build && cross-env NODE_OPTIONS=--disable-warning=DEP0190 electron-builder --config electron-builder.config.cjs --linux --publish=never",
+    "pack:linux-x64": "npm run build && cross-env NODE_OPTIONS=--disable-warning=DEP0190 electron-builder --config electron-builder.config.cjs --linux --x64 --publish=never",
+    "pack:linux-arm64": "npm run build && cross-env NODE_OPTIONS=--disable-warning=DEP0190 electron-builder --config electron-builder.config.cjs --linux --arm64 --publish=never",
     "postinstall": "electron-builder install-app-deps && patch-package",
     "rebuild": "electron-builder install-app-deps",
     "lint": "eslint .",
