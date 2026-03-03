@@ -157,6 +157,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
   const term = new XTerm({
     ...performanceConfig.options,
+    // Override ignoreBracketedPasteMode if user explicitly disables bracketed paste
+    ignoreBracketedPasteMode: settings?.disableBracketedPaste ?? performanceConfig.options.ignoreBracketedPasteMode,
     fontSize: effectiveFontSize,
     fontFamily,
     fontWeight: fontWeight as
@@ -409,7 +411,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
             const id = ctx.sessionRef.current;
             if (id) {
               let data = normalizeLineEndings(text);
-              if (term.modes.bracketedPasteMode) data = wrapBracketedPaste(data);
+              if (term.modes.bracketedPasteMode && !ctx.terminalSettingsRef.current?.disableBracketedPaste) data = wrapBracketedPaste(data);
               ctx.terminalBackend.writeToSession(id, data);
             }
           });
@@ -444,7 +446,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         const text = await navigator.clipboard.readText();
         if (text && ctx.sessionRef.current) {
           let data = normalizeLineEndings(text);
-          if (term.modes.bracketedPasteMode) data = wrapBracketedPaste(data);
+          if (term.modes.bracketedPasteMode && !ctx.terminalSettingsRef.current?.disableBracketedPaste) data = wrapBracketedPaste(data);
           ctx.terminalBackend.writeToSession(ctx.sessionRef.current, data);
         }
       } catch (err) {

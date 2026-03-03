@@ -13,11 +13,13 @@ export const useTerminalContextActions = ({
   sessionRef,
   terminalBackend,
   onHasSelectionChange,
+  disableBracketedPasteRef,
 }: {
   termRef: RefObject<XTerm | null>;
   sessionRef: RefObject<string | null>;
   terminalBackend: TerminalBackendWriteApi;
   onHasSelectionChange?: (hasSelection: boolean) => void;
+  disableBracketedPasteRef?: RefObject<boolean>;
 }) => {
   const onCopy = useCallback(() => {
     const term = termRef.current;
@@ -35,13 +37,13 @@ export const useTerminalContextActions = ({
       const text = await navigator.clipboard.readText();
       if (text && sessionRef.current) {
         let data = normalizeLineEndings(text);
-        if (term.modes.bracketedPasteMode) data = wrapBracketedPaste(data);
+        if (term.modes.bracketedPasteMode && !disableBracketedPasteRef?.current) data = wrapBracketedPaste(data);
         terminalBackend.writeToSession(sessionRef.current, data);
       }
     } catch (err) {
       logger.warn("Failed to paste from clipboard", err);
     }
-  }, [sessionRef, termRef, terminalBackend]);
+  }, [sessionRef, termRef, terminalBackend, disableBracketedPasteRef]);
 
   const onSelectAll = useCallback(() => {
     const term = termRef.current;

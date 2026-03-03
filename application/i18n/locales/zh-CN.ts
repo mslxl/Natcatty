@@ -1051,6 +1051,9 @@ const zhCN: Messages = {
   'settings.terminal.behavior.copyOnSelect.desc': '自动复制选中的文本',
   'settings.terminal.behavior.middleClickPaste': '中键粘贴',
   'settings.terminal.behavior.middleClickPaste.desc': '中键点击时粘贴剪贴板内容',
+  'settings.terminal.behavior.bracketedPaste': '括号粘贴模式',
+  'settings.terminal.behavior.bracketedPaste.desc':
+    '粘贴文本时使用转义序列包裹，以便终端区分粘贴和键入。如果出现 ^[[200~ 字样请关闭此选项。',
   'settings.terminal.behavior.scrollOnInput': '输入时自动滚动',
   'settings.terminal.behavior.scrollOnInput.desc': '输入时将终端滚动到底部',
   'settings.terminal.behavior.scrollOnOutput': '输出时自动滚动',

@@ -680,6 +680,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         termRef.current.options.scrollOnUserInput = terminalSettings.scrollOnInput;
         termRef.current.options.altClickMovesCursor = !terminalSettings.altAsMeta;
         termRef.current.options.wordSeparator = terminalSettings.wordSeparators;
+        termRef.current.options.ignoreBracketedPasteMode = terminalSettings.disableBracketedPaste ?? false;
       }
 
       setTimeout(() => safeFit(), 50);
@@ -876,11 +877,15 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     };
   }, []);
 
+  const disableBracketedPasteRef = useRef(terminalSettings?.disableBracketedPaste ?? false);
+  disableBracketedPasteRef.current = terminalSettings?.disableBracketedPaste ?? false;
+
   const terminalContextActions = useTerminalContextActions({
     termRef,
     sessionRef,
     terminalBackend,
     onHasSelectionChange: setHasSelection,
+    disableBracketedPasteRef,
   });
 
   const handleSnippetClick = (cmd: string) => {

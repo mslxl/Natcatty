@@ -431,6 +431,9 @@ export interface TerminalSettings {
   showServerStats: boolean; // Show CPU/Memory/Disk in terminal statusbar
   serverStatsRefreshInterval: number; // Seconds between stats refresh (default: 30)
 
+  // Paste
+  disableBracketedPaste: boolean; // Disable bracketed paste mode (avoid ^[[200~ artifacts)
+
   // Rendering
   rendererType: 'auto' | 'webgl' | 'canvas'; // Terminal renderer: auto (detect based on hardware), webgl, or canvas
 }
@@ -473,6 +476,7 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   keepaliveInterval: 0, // 0 = disabled (use SSH library defaults)
   showServerStats: true, // Show server stats by default
   serverStatsRefreshInterval: 5, // Refresh every 5 seconds
+  disableBracketedPaste: false, // Bracketed paste enabled by default
   rendererType: 'auto', // Auto-detect best renderer based on hardware
 };
 

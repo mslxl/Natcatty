@@ -51,13 +51,13 @@ const ThemePreviewButton: React.FC<{
           <span className="inline-block w-1.5 h-2 animate-pulse" style={{ backgroundColor: c.cursor }} />
         </div>
       </div>
-      
+
       {/* Theme info */}
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium">{theme.name}</div>
         <div className="text-xs text-muted-foreground capitalize">{theme.type}</div>
       </div>
-      
+
       {/* Action button area */}
       <div className="flex items-center gap-2 text-muted-foreground">
         <span className="text-xs">{buttonLabel}</span>
@@ -194,7 +194,7 @@ export default function SettingsTerminalTab(props: {
         onClick={() => setThemeModalOpen(true)}
         buttonLabel={t("settings.terminal.theme.selectButton")}
       />
-      
+
       <ThemeSelectModal
         open={themeModalOpen}
         onClose={() => setThemeModalOpen(false)}
@@ -407,6 +407,13 @@ export default function SettingsTerminalTab(props: {
           description={t("settings.terminal.behavior.middleClickPaste.desc")}
         >
           <Toggle checked={terminalSettings.middleClickPaste} onChange={(v) => updateTerminalSetting("middleClickPaste", v)} />
+        </SettingRow>
+
+        <SettingRow
+          label={t("settings.terminal.behavior.bracketedPaste")}
+          description={t("settings.terminal.behavior.bracketedPaste.desc")}
+        >
+          <Toggle checked={!terminalSettings.disableBracketedPaste} onChange={(v) => updateTerminalSetting("disableBracketedPaste", !v)} />
         </SettingRow>
 
         <SettingRow

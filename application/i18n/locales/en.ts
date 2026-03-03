@@ -229,6 +229,9 @@ const en: Messages = {
   'settings.terminal.behavior.middleClickPaste': 'Middle-click paste',
   'settings.terminal.behavior.middleClickPaste.desc':
     'Paste clipboard content on middle-click',
+  'settings.terminal.behavior.bracketedPaste': 'Bracketed paste mode',
+  'settings.terminal.behavior.bracketedPaste.desc':
+    'Wrap pasted text with escape sequences so the shell can distinguish paste from typed input. Disable if you see ^[[200~ artifacts.',
   'settings.terminal.behavior.scrollOnInput': 'Scroll on input',
   'settings.terminal.behavior.scrollOnInput.desc': 'Scroll terminal to bottom when typing',
   'settings.terminal.behavior.scrollOnOutput': 'Scroll on output',
