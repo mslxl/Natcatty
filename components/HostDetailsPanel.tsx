@@ -39,6 +39,7 @@ import {
   AsidePanelFooter,
 } from "./ui/aside-panel";
 import { Badge } from "./ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { Button } from "./ui/button";
 import { Switch } from "./ui/switch";
 import { Card } from "./ui/card";
@@ -1345,9 +1346,16 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
                 <Badge variant="secondary" className="text-xs shrink-0">
                   {form.proxyConfig.type?.toUpperCase()}
                 </Badge>
-                <span className="text-sm truncate">
-                  {form.proxyConfig.host}:{form.proxyConfig.port}
-                </span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="text-sm truncate">
+                      {form.proxyConfig.host}:{form.proxyConfig.port}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" align="start" className="max-w-xs break-all">
+                    {form.proxyConfig.type?.toUpperCase()} {form.proxyConfig.host}:{form.proxyConfig.port}
+                  </TooltipContent>
+                </Tooltip>
               </div>
               <X
                 size={14}
