@@ -1332,7 +1332,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
         </Card>
 
         {/* Proxy Configuration */}
-        <Card className="p-3 space-y-2 bg-card border-border/80">
+        <Card className="p-3 space-y-2 bg-card border-border/80 overflow-hidden">
           <div className="flex items-center gap-2">
             <Globe size={14} className="text-muted-foreground" />
             <p className="text-xs font-semibold">{t("hostDetails.proxy")}</p>
@@ -1342,14 +1342,14 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
               className="w-full flex items-center gap-2 p-2 rounded-md bg-secondary/50 hover:bg-secondary transition-colors cursor-pointer overflow-hidden"
               onClick={() => setActiveSubPanel("proxy")}
             >
-              <div className="flex items-center gap-1 min-w-0 flex-1 overflow-hidden">
+              <div className="flex items-center gap-1 min-w-0 flex-1">
                 <Badge variant="secondary" className="text-xs shrink-0">
                   {form.proxyConfig.type?.toUpperCase()}
                 </Badge>
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <span className="text-sm truncate">
+                      <span className="text-sm block truncate min-w-0">
                         {form.proxyConfig.host}:{form.proxyConfig.port}
                       </span>
                     </TooltipTrigger>
