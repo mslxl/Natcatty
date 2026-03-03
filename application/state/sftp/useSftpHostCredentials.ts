@@ -20,12 +20,12 @@ export const useSftpHostCredentials = ({
 
       const proxyConfig = host.proxyConfig
         ? {
-            type: host.proxyConfig.type,
-            host: host.proxyConfig.host,
-            port: host.proxyConfig.port,
-            username: host.proxyConfig.username,
-            password: host.proxyConfig.password,
-          }
+          type: host.proxyConfig.type,
+          host: host.proxyConfig.host,
+          port: host.proxyConfig.port,
+          username: host.proxyConfig.username,
+          password: host.proxyConfig.password,
+        }
         : undefined;
 
       let jumpHosts: NetcattyJumpHost[] | undefined;
@@ -63,6 +63,7 @@ export const useSftpHostCredentials = ({
         password: resolved.password,
         privateKey: key?.privateKey,
         certificate: key?.certificate,
+        passphrase: resolved.passphrase || key?.passphrase,
         publicKey: key?.publicKey,
         keyId: resolved.keyId,
         keySource: key?.source,
