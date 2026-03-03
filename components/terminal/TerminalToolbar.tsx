@@ -2,7 +2,7 @@
  * Terminal Toolbar
  * Displays SFTP, Scripts, Theme, Highlight, Search buttons and close button in terminal status bar
  */
-import { FolderInput, X, Zap, Palette, Search } from 'lucide-react';
+import { FolderInput, X, Zap, Palette, Search, TextCursorInput } from 'lucide-react';
 import React, { useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { Snippet, Host } from '../../types';
@@ -32,6 +32,9 @@ export interface TerminalToolbarProps {
     // Search functionality
     isSearchOpen?: boolean;
     onToggleSearch?: () => void;
+    // Compose bar
+    isComposeBarOpen?: boolean;
+    onToggleComposeBar?: () => void;
 }
 
 export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
@@ -53,6 +56,8 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
     onClose,
     isSearchOpen,
     onToggleSearch,
+    isComposeBarOpen,
+    onToggleComposeBar,
 }) => {
     const { t } = useI18n();
     const [themeModalOpen, setThemeModalOpen] = useState(false);
@@ -172,6 +177,18 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                 setIsOpen={setHighlightPopoverOpen}
                 buttonClassName={buttonBase}
             />
+
+            <Button
+                variant="secondary"
+                size="icon"
+                className={buttonBase}
+                title={t("terminal.toolbar.composeBar")}
+                aria-label={t("terminal.toolbar.composeBar")}
+                aria-pressed={isComposeBarOpen}
+                onClick={onToggleComposeBar}
+            >
+                <TextCursorInput size={12} />
+            </Button>
 
             <Button
                 variant="secondary"
