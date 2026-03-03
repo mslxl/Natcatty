@@ -1342,7 +1342,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
               className="w-full flex items-center gap-2 p-2 rounded-md bg-secondary/50 hover:bg-secondary transition-colors cursor-pointer overflow-hidden"
               onClick={() => setActiveSubPanel("proxy")}
             >
-              <div className="flex items-center gap-1 min-w-0 flex-1">
+              <div className="flex items-center gap-1 min-w-0 flex-1 overflow-hidden">
                 <Badge variant="secondary" className="text-xs shrink-0">
                   {form.proxyConfig.type?.toUpperCase()}
                 </Badge>
