@@ -502,8 +502,10 @@ export const useSftpModalTransfers = ({
                 if (isDir) {
                   try {
                     await createUploadBridge.mkdirLocal(localEntryPath);
-                  } catch {
-                    // Subdirectory may already exist, continue regardless
+                  } catch (mkdirErr: unknown) {
+                    // Only ignore EEXIST (directory already exists), propagate other errors
+                    const isEEXIST = mkdirErr instanceof Error && mkdirErr.message.includes('EEXIST');
+                    if (!isEEXIST) throw mkdirErr;
                   }
                   await downloadDir(remoteEntryPath, localEntryPath);
                 } else {
@@ -563,7 +565,13 @@ export const useSftpModalTransfers = ({
                         activeChildTransferId = null;
                         reject(new Error(error));
                       }
-                    ).catch(reject);
+                    ).then((result) => {
+                      // Handle resolved result with error (e.g. cancellation)
+                      if (result?.error) {
+                        activeChildTransferId = null;
+                        reject(new Error(result.error));
+                      }
+                    }).catch(reject);
                   });
                 }
               }
