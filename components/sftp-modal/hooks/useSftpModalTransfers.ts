@@ -498,7 +498,8 @@ export const useSftpModalTransfers = ({
                 const remoteEntryPath = joinPath(remotePath, entry.name);
                 const localEntryPath = `${localPath}/${entry.name}`;
 
-                if (entry.type === 'directory') {
+                const isDir = entry.type === 'directory' || (entry.type === 'symlink' && entry.linkTarget === 'directory');
+                if (isDir) {
                   try {
                     await createUploadBridge.mkdirLocal(localEntryPath);
                   } catch {
@@ -524,7 +525,13 @@ export const useSftpModalTransfers = ({
                       },
                       // onProgress - update parent task
                       (transferred, total, speed) => {
-                        if (cancelledTransferIdsRef.current.has(transferId)) return;
+                        if (cancelledTransferIdsRef.current.has(transferId)) {
+                          // Actively cancel the in-flight child transfer
+                          if (cancelTransfer) {
+                            cancelTransfer(childTransferId).catch(() => { /* ignore */ });
+                          }
+                          return;
+                        }
                         const totalProgress = completedBytes + transferred;
                         setUploadTasks(prev =>
                           prev.map(task =>
