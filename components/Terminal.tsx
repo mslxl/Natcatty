@@ -380,7 +380,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onStatusChange?.(sessionId, next);
     // Sync terminal encoding to backend when session becomes connected,
     // in case user changed encoding while still connecting
-    if (next === "connected" && sessionRef.current && terminalEncodingRef.current !== "utf-8") {
+    if (next === "connected" && sessionRef.current) {
       setSessionEncoding(sessionRef.current, terminalEncodingRef.current);
     }
   };
