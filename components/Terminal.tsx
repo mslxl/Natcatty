@@ -301,6 +301,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     if (host?.charset && /^gb/i.test(String(host.charset).trim())) return 'gb18030';
     return 'utf-8';
   });
+  const terminalEncodingRef = useRef(terminalEncoding);
+  terminalEncodingRef.current = terminalEncoding;
 
   const terminalSearch = useTerminalSearch({ searchAddonRef, termRef });
   const {
@@ -376,6 +378,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     setStatus(next);
     hasConnectedRef.current = next === "connected";
     onStatusChange?.(sessionId, next);
+    // Sync terminal encoding to backend when session becomes connected,
+    // in case user changed encoding while still connecting
+    if (next === "connected" && sessionRef.current && terminalEncodingRef.current !== "utf-8") {
+      setSessionEncoding(sessionRef.current, terminalEncodingRef.current);
+    }
   };
 
   const cleanupSession = () => {
