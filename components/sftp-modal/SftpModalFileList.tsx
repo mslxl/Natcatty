@@ -329,18 +329,26 @@ export const SftpModalFileList: React.FC<SftpModalFileListProps> = ({
                     ) : (
                       <>
                         {isNavigableDirectory && (
-                          <ContextMenuItem
-                            onClick={() =>
-                              handleNavigate(
-                                currentPath === "/"
-                                  ? `/${file.name}`
-                                  : `${currentPath}/${file.name}`,
-                              )
-                            }
-                          >
-                            <FolderOpen size={14} className="mr-2" />
-                            {t("sftp.context.open")}
-                          </ContextMenuItem>
+                          <>
+                            <ContextMenuItem
+                              onClick={() =>
+                                handleNavigate(
+                                  currentPath === "/"
+                                    ? `/${file.name}`
+                                    : `${currentPath}/${file.name}`,
+                                )
+                              }
+                            >
+                              <FolderOpen size={14} className="mr-2" />
+                              {t("sftp.context.open")}
+                            </ContextMenuItem>
+                            {!isLocalSession && (
+                              <ContextMenuItem onClick={() => handleDownload(file)}>
+                                <Download size={14} className="mr-2" />
+                                {t("sftp.context.download")}
+                              </ContextMenuItem>
+                            )}
+                          </>
                         )}
                         {isDownloadableFile && (
                           <>
