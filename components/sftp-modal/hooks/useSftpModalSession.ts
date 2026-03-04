@@ -79,11 +79,12 @@ export const useSftpModalSession = ({
   getHomeDir,
   onClearSelection,
 }: UseSftpModalSessionParams): UseSftpModalSessionResult => {
-  const [currentPath, setCurrentPath] = useState("/");
+  const [currentPath, setCurrentPathState] = useState("/");
   const [files, setFiles] = useState<RemoteFile[]>([]);
   const [loading, setLoading] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [sessionVersion, setSessionVersion] = useState(0);
+  const currentPathRef = useRef(currentPath);
   const sftpIdRef = useRef<string | null>(null);
   const closingPromiseRef = useRef<Promise<void> | null>(null);
   const initializedRef = useRef(false);
@@ -99,6 +100,10 @@ export const useSftpModalSession = ({
     Map<string, { files: RemoteFile[]; timestamp: number }>
   >(new Map());
   const loadSeqRef = useRef(0);
+  const setCurrentPath = useCallback((path: string) => {
+    currentPathRef.current = path;
+    setCurrentPathState(path);
+  }, []);
   const bumpSessionVersion = useCallback(() => {
     setSessionVersion((prev) => prev + 1);
   }, []);
@@ -206,9 +211,17 @@ export const useSftpModalSession = ({
 
         // Auto-reload current directory after successful reconnect
         try {
-          const list = await listSftp(newSftpId, currentPath);
+          const reloadPath = currentPathRef.current;
+          const reloadRequestId = loadSeqRef.current;
+          const list = await listSftp(newSftpId, reloadPath);
+          if (
+            reloadRequestId !== loadSeqRef.current ||
+            currentPathRef.current !== reloadPath
+          ) {
+            return;
+          }
           setFiles(list);
-          dirCacheRef.current.set(`${host.id}::${currentPath}`, {
+          dirCacheRef.current.set(`${host.id}::${reloadPath}`, {
             files: list,
             timestamp: Date.now(),
           });
@@ -230,7 +243,7 @@ export const useSftpModalSession = ({
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     }
-  }, [closeSftpSession, ensureSftp, listSftp, currentPath, host.id, t]);
+  }, [closeSftpSession, ensureSftp, listSftp, host.id, t]);
 
   const loadFiles = useCallback(
     async (path: string, options?: { force?: boolean }) => {
@@ -401,6 +414,7 @@ export const useSftpModalSession = ({
     loadFiles,
     onClearSelection,
     open,
+    setCurrentPath,
     t,
   ]);
 
