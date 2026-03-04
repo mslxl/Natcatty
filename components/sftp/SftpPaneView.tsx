@@ -25,6 +25,7 @@ import { useSftpPaneSorting } from "./hooks/useSftpPaneSorting";
 import { useSftpPaneVirtualList } from "./hooks/useSftpPaneVirtualList";
 import { useSftpDialogActionHandler } from "./hooks/useSftpDialogAction";
 import { useSftpBookmarks } from "./hooks/useSftpBookmarks";
+import { useLocalSftpBookmarks } from "./hooks/useLocalSftpBookmarks";
 
 interface SftpPaneWrapperProps {
   side: "left" | "right";
@@ -98,16 +99,20 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     (updated: Host) => updateHosts(hosts.map((h) => (h.id === updated.id ? updated : h))),
     [hosts, updateHosts],
   );
+  const remoteBookmarks = useSftpBookmarks({
+    host: currentHost,
+    currentPath: pane.connection?.currentPath,
+    onUpdateHost,
+  });
+  const localBookmarks = useLocalSftpBookmarks({
+    currentPath: pane.connection?.currentPath,
+  });
   const {
     bookmarks,
     isCurrentPathBookmarked,
     toggleBookmark,
     deleteBookmark,
-  } = useSftpBookmarks({
-    host: currentHost,
-    currentPath: pane.connection?.currentPath,
-    onUpdateHost,
-  });
+  } = pane.connection?.isLocal ? localBookmarks : remoteBookmarks;
 
   const { filteredFiles, sortedDisplayFiles } = useSftpPaneFiles({
     files: pane.files,
