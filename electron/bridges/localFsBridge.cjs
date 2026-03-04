@@ -161,17 +161,6 @@ async function renameLocalFile(event, payload) {
  * Create a local directory
  */
 async function mkdirLocal(event, payload) {
-  // If a file (not directory) exists at this path, remove it first.
-  // This can happen when Electron's showSaveDialog "Replace" action
-  // replaces an existing folder with an empty file.
-  try {
-    const stat = await fs.promises.stat(payload.path);
-    if (!stat.isDirectory()) {
-      await fs.promises.unlink(payload.path);
-    }
-  } catch {
-    // Path doesn't exist, which is fine
-  }
   await fs.promises.mkdir(payload.path, { recursive: true });
   return true;
 }

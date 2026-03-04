@@ -404,6 +404,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     t,
     useCompressedUpload: sftpUseCompressedUpload,
     listSftp: listSftpWithEncoding,
+    deleteLocalFile,
   });
   const hasEverOpenedRef = useRef(false);
 

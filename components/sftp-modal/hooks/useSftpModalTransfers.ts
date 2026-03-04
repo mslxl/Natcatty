@@ -41,6 +41,7 @@ interface UseSftpModalTransfersParams {
   readLocalFile: (path: string) => Promise<ArrayBuffer>;
   readSftp: (sftpId: string, path: string) => Promise<string>;
   listSftp?: (sftpId: string, path: string) => Promise<RemoteFile[]>;
+  deleteLocalFile?: (path: string) => Promise<void>;
   writeLocalFile: (path: string, data: ArrayBuffer) => Promise<void>;
   writeSftpBinaryWithProgress: (
     sftpId: string,
@@ -115,6 +116,7 @@ export const useSftpModalTransfers = ({
   t,
   useCompressedUpload = false,
   listSftp,
+  deleteLocalFile,
 }: UseSftpModalTransfersParams): UseSftpModalTransfersResult => {
   const [uploading, setUploading] = useState(false);
   const [uploadTasks, setUploadTasks] = useState<UploadTask[]>([]);
@@ -435,6 +437,9 @@ export const useSftpModalTransfers = ({
           const sftpId = await ensureSftp();
           const transferId = `download-dir-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
+          // Track the currently active child transfer ID for cancellation
+          let activeChildTransferId: string | null = null;
+
           // Create download task for progress display
           const downloadTask: TransferTask = {
             id: transferId,
@@ -451,21 +456,44 @@ export const useSftpModalTransfers = ({
           setUploadTasks(prev => [...prev, downloadTask]);
 
           try {
-            // Create target directory
+            // Safely create target directory.
+            // showSaveDialog "Replace" may leave a file (not directory) at the path,
+            // so we remove it first — ONLY in this explicit overwrite context.
             try {
               await createUploadBridge.mkdirLocal(targetPath);
-            } catch {
-              // Directory may already exist, continue regardless
+            } catch (mkdirErr: unknown) {
+              const isEEXIST = mkdirErr instanceof Error && mkdirErr.message.includes('EEXIST');
+              if (isEEXIST && deleteLocalFile) {
+                // Path exists as a file (from save dialog replace), remove it and retry
+                await deleteLocalFile(targetPath);
+                await createUploadBridge.mkdirLocal(targetPath);
+              } else {
+                throw mkdirErr;
+              }
             }
 
             // Recursively download directory contents
             let completedBytes = 0;
 
             const downloadDir = async (remotePath: string, localPath: string): Promise<void> => {
+              // Check if transfer was cancelled
+              if (cancelledTransferIdsRef.current.has(transferId)) {
+                throw new Error('Transfer cancelled');
+              }
+
               const entries = await listSftp(sftpId, remotePath);
 
               for (const entry of entries) {
                 if (entry.name === '..' || entry.name === '.') continue;
+
+                // Check cancellation between files
+                if (cancelledTransferIdsRef.current.has(transferId)) {
+                  // Cancel the active child transfer if any
+                  if (activeChildTransferId && cancelTransfer) {
+                    try { await cancelTransfer(activeChildTransferId); } catch { /* ignore */ }
+                  }
+                  throw new Error('Transfer cancelled');
+                }
 
                 const remoteEntryPath = joinPath(remotePath, entry.name);
                 const localEntryPath = `${localPath}/${entry.name}`;
@@ -474,12 +502,13 @@ export const useSftpModalTransfers = ({
                   try {
                     await createUploadBridge.mkdirLocal(localEntryPath);
                   } catch {
-                    // Directory may already exist, continue regardless
+                    // Subdirectory may already exist, continue regardless
                   }
                   await downloadDir(remoteEntryPath, localEntryPath);
                 } else {
                   // Download individual file
                   const childTransferId = `download-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+                  activeChildTransferId = childTransferId;
                   const entrySize = typeof entry.size === 'number' ? entry.size : parseInt(String(entry.size), 10) || 0;
 
                   await new Promise<void>((resolve, reject) => {
@@ -495,6 +524,7 @@ export const useSftpModalTransfers = ({
                       },
                       // onProgress - update parent task
                       (transferred, total, speed) => {
+                        if (cancelledTransferIdsRef.current.has(transferId)) return;
                         const totalProgress = completedBytes + transferred;
                         setUploadTasks(prev =>
                           prev.map(task =>
@@ -518,10 +548,12 @@ export const useSftpModalTransfers = ({
                       // onComplete
                       () => {
                         completedBytes += entrySize;
+                        activeChildTransferId = null;
                         resolve();
                       },
                       // onError
                       (error) => {
+                        activeChildTransferId = null;
                         reject(new Error(error));
                       }
                     ).catch(reject);
@@ -550,7 +582,8 @@ export const useSftpModalTransfers = ({
             toast.success(`${t("sftp.context.download")}: ${file.name}`, "SFTP");
           } catch (e) {
             const errorMsg = e instanceof Error ? e.message : t("sftp.error.downloadFailed");
-            const isCancelError = errorMsg.includes('cancelled') || errorMsg.includes('canceled');
+            const isCancelError = errorMsg.includes('cancelled') || errorMsg.includes('canceled')
+              || cancelledTransferIdsRef.current.has(transferId);
             setUploadTasks(prev =>
               prev.map(task =>
                 task.id === transferId
@@ -566,6 +599,8 @@ export const useSftpModalTransfers = ({
             if (!isCancelError) {
               toast.error(errorMsg, "SFTP");
             }
+          } finally {
+            cancelledTransferIdsRef.current.delete(transferId);
           }
           return;
         }
@@ -723,7 +758,7 @@ export const useSftpModalTransfers = ({
         setLoading(false);
       }
     },
-    [currentPath, ensureSftp, isLocalSession, joinPath, readLocalFile, setLoading, showSaveDialog, startStreamTransfer, t, listSftp, createUploadBridge],
+    [currentPath, ensureSftp, isLocalSession, joinPath, readLocalFile, setLoading, showSaveDialog, startStreamTransfer, t, listSftp, createUploadBridge, deleteLocalFile, cancelledTransferIdsRef, cancelTransfer],
   );
 
 
@@ -940,9 +975,13 @@ export const useSftpModalTransfers = ({
     if (!task) return;
 
     if (task.direction === "download") {
-      // For download tasks, cancel only this specific transfer
+      // For download tasks, cancel the specific transfer
+      // Add to cancelled set so recursive downloads can check
+      cancelledTransferIdsRef.current.add(taskId);
+
       if (cancelTransfer) {
         try {
+          // Cancel the parent task ID (works for single-file downloads)
           await cancelTransfer(taskId);
         } catch {
           // Ignore cancellation errors
