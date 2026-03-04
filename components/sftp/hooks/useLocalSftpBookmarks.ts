@@ -28,10 +28,10 @@ export const useLocalSftpBookmarks = ({
         if (isCurrentPathBookmarked) {
             setBookmarks((prev) => prev.filter((b) => b.path !== currentPath));
         } else {
-            const label =
-                currentPath === "/"
-                    ? "/"
-                    : currentPath.split("/").filter(Boolean).pop() || currentPath;
+            const isRoot = currentPath === "/" || /^[A-Za-z]:\\?$/.test(currentPath);
+            const label = isRoot
+                ? currentPath
+                : currentPath.split(/[\\/]/).filter(Boolean).pop() || currentPath;
             const newBookmark: SftpBookmark = {
                 id: `bm-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
                 path: currentPath,
