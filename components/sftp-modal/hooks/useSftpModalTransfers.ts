@@ -40,6 +40,8 @@ interface UseSftpModalTransfersParams {
   loadFiles: (path: string, options?: { force?: boolean }) => Promise<void>;
   readLocalFile: (path: string) => Promise<ArrayBuffer>;
   readSftp: (sftpId: string, path: string) => Promise<string>;
+  listSftp?: (sftpId: string, path: string) => Promise<RemoteFile[]>;
+  deleteLocalFile?: (path: string) => Promise<void>;
   writeLocalFile: (path: string, data: ArrayBuffer) => Promise<void>;
   writeSftpBinaryWithProgress: (
     sftpId: string,
@@ -113,6 +115,8 @@ export const useSftpModalTransfers = ({
   setLoading,
   t,
   useCompressedUpload = false,
+  listSftp,
+  deleteLocalFile,
 }: UseSftpModalTransfersParams): UseSftpModalTransfersResult => {
   const [uploading, setUploading] = useState(false);
   const [uploadTasks, setUploadTasks] = useState<UploadTask[]>([]);
@@ -126,6 +130,9 @@ export const useSftpModalTransfers = ({
 
   // Track cancelled transfer IDs to detect cancellation in bridge wrapper
   const cancelledTransferIdsRef = useRef<Set<string>>(new Set());
+
+  // Track active child transfer IDs for directory downloads (parentId -> childId)
+  const activeChildTransferIdsRef = useRef<Map<string, string>>(new Map());
 
   // Create upload bridge that adapts the modal's functions to the service interface
   const createUploadBridge = useMemo((): UploadBridge => {
@@ -157,7 +164,7 @@ export const useSftpModalTransfers = ({
             onComplete || (() => { }),
             onError || (() => { })
           );
-          
+
           // Check if this transfer was cancelled
           const wasCancelled = cancelledTransferIdsRef.current.has(taskId);
           if (wasCancelled) {
@@ -251,13 +258,22 @@ export const useSftpModalTransfers = ({
             if (task.status === "completed" || task.status === "failed" || task.status === "cancelled") {
               return task;
             }
-            
+
+            const totalBytes = progress.total > 0 ? progress.total : task.totalBytes;
+            const clampedTransferred = Math.max(
+              task.transferredBytes,
+              Math.min(progress.transferred, totalBytes > 0 ? totalBytes : progress.transferred)
+            );
+            const rawPercent = totalBytes > 0 ? (clampedTransferred / totalBytes) * 100 : task.progress;
+            const clampedPercent = Math.max(task.progress, Math.min(rawPercent, 100));
+
             return {
               ...task,
               status: "uploading" as const,
-              progress: progress.percent,
-              transferredBytes: progress.transferred,
-              speed: progress.speed,
+              totalBytes,
+              progress: clampedPercent,
+              transferredBytes: clampedTransferred,
+              speed: Number.isFinite(progress.speed) && progress.speed > 0 ? progress.speed : 0,
             };
           })
         );
@@ -311,8 +327,8 @@ export const useSftpModalTransfers = ({
           const [folderName, phase] = newName.split('|');
           const phaseLabel = phase === 'compressing' ? t('sftp.upload.phase.compressing')
             : phase === 'extracting' ? t('sftp.upload.phase.extracting')
-            : phase === 'uploading' ? t('sftp.upload.phase.uploading')
-            : t('sftp.upload.phase.compressed');
+              : phase === 'uploading' ? t('sftp.upload.phase.uploading')
+                : t('sftp.upload.phase.compressed');
           displayName = `${folderName} (${phaseLabel})`;
         }
         setUploadTasks(prev =>
@@ -401,9 +417,233 @@ export const useSftpModalTransfers = ({
           return;
         }
 
-        // For remote SFTP files, use streaming download with save dialog
+        // For remote SFTP files/directories, use streaming download with save dialog
         if (!showSaveDialog || !startStreamTransfer) {
           toast.error(t("sftp.error.downloadFailed"), "SFTP");
+          return;
+        }
+
+        // Check if this is a directory download
+        const isDirectory = file.type === 'directory' || (file.type === 'symlink' && file.linkTarget === 'directory');
+
+        if (isDirectory) {
+          // For directories, download recursively
+          if (!listSftp) {
+            toast.error(t("sftp.error.downloadFailed"), "SFTP");
+            return;
+          }
+
+          // Show save dialog to get target path (the saved "file" becomes the folder path)
+          const targetPath = await showSaveDialog(file.name);
+          if (!targetPath) return;
+
+          const sftpId = await ensureSftp();
+          const transferId = `download-dir-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+          // Track the currently active child transfer ID for cancellation
+          let activeChildTransferId: string | null = null;
+          const setActiveChild = (childId: string | null) => {
+            activeChildTransferId = childId;
+            if (childId) {
+              activeChildTransferIdsRef.current.set(transferId, childId);
+            } else {
+              activeChildTransferIdsRef.current.delete(transferId);
+            }
+          };
+
+          // Create download task for progress display
+          const downloadTask: TransferTask = {
+            id: transferId,
+            fileName: file.name,
+            status: "downloading",
+            progress: 0,
+            totalBytes: 0,
+            transferredBytes: 0,
+            speed: 0,
+            startTime: Date.now(),
+            direction: "download",
+            isDirectory: true,
+          };
+          setUploadTasks(prev => [...prev, downloadTask]);
+
+          try {
+            // Safely create target directory.
+            // showSaveDialog "Replace" may leave a file (not directory) at the path,
+            // so we remove it first — ONLY in this explicit overwrite context.
+            try {
+              await createUploadBridge.mkdirLocal(targetPath);
+            } catch (mkdirErr: unknown) {
+              const isEEXIST = mkdirErr instanceof Error && mkdirErr.message.includes('EEXIST');
+              if (isEEXIST && deleteLocalFile) {
+                // Path exists as a file (from save dialog replace), remove it and retry
+                await deleteLocalFile(targetPath);
+                await createUploadBridge.mkdirLocal(targetPath);
+              } else {
+                throw mkdirErr;
+              }
+            }
+
+            // Recursively download directory contents
+            let completedBytes = 0;
+            // Track visited remote paths to prevent symlink cycles
+            const visitedPaths = new Set<string>();
+            // Max symlink-directory nesting depth to prevent cycles (only applies to symlinks)
+            const MAX_SYMLINK_DEPTH = 32;
+
+            const downloadDir = async (remotePath: string, localPath: string, symlinkDepth = 0): Promise<void> => {
+              // Prevent revisiting the same path
+              if (visitedPaths.has(remotePath)) return;
+              visitedPaths.add(remotePath);
+              // Check if transfer was cancelled
+              if (cancelledTransferIdsRef.current.has(transferId)) {
+                throw new Error('Transfer cancelled');
+              }
+
+              const entries = await listSftp(sftpId, remotePath);
+
+              for (const entry of entries) {
+                if (entry.name === '..' || entry.name === '.') continue;
+
+                // Check cancellation between files
+                if (cancelledTransferIdsRef.current.has(transferId)) {
+                  // Cancel the active child transfer if any
+                  if (activeChildTransferId && cancelTransfer) {
+                    try { await cancelTransfer(activeChildTransferId); } catch { /* ignore */ }
+                  }
+                  throw new Error('Transfer cancelled');
+                }
+
+                const remoteEntryPath = joinPath(remotePath, entry.name);
+                const localEntryPath = `${localPath}/${entry.name}`;
+
+                const isRealDir = entry.type === 'directory';
+                const isSymlinkDir = entry.type === 'symlink' && entry.linkTarget === 'directory';
+                if (isRealDir || isSymlinkDir) {
+                  // Only symlink directories can form cycles; enforce depth limit for them
+                  if (isSymlinkDir && symlinkDepth >= MAX_SYMLINK_DEPTH) {
+                    throw new Error('Maximum symlink directory depth exceeded (possible symlink cycle)');
+                  }
+                  try {
+                    await createUploadBridge.mkdirLocal(localEntryPath);
+                  } catch (mkdirErr: unknown) {
+                    // Only ignore EEXIST (directory already exists), propagate other errors
+                    const isEEXIST = mkdirErr instanceof Error && mkdirErr.message.includes('EEXIST');
+                    if (!isEEXIST) throw mkdirErr;
+                  }
+                  await downloadDir(remoteEntryPath, localEntryPath, isSymlinkDir ? symlinkDepth + 1 : symlinkDepth);
+                } else {
+                  // Download individual file
+                  const childTransferId = `download-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+                  activeChildTransferId = childTransferId;
+                  setActiveChild(childTransferId);
+                  const entrySize = typeof entry.size === 'number' ? entry.size : parseInt(String(entry.size), 10) || 0;
+
+                  await new Promise<void>((resolve, reject) => {
+                    startStreamTransfer(
+                      {
+                        transferId: childTransferId,
+                        sourcePath: remoteEntryPath,
+                        targetPath: localEntryPath,
+                        sourceType: 'sftp',
+                        targetType: 'local',
+                        sourceSftpId: sftpId,
+                        totalBytes: entrySize,
+                      },
+                      // onProgress - update parent task
+                      (transferred, total, speed) => {
+                        if (cancelledTransferIdsRef.current.has(transferId)) {
+                          // Actively cancel the in-flight child transfer
+                          if (cancelTransfer) {
+                            cancelTransfer(childTransferId).catch(() => { /* ignore */ });
+                          }
+                          return;
+                        }
+                        const totalProgress = completedBytes + transferred;
+                        setUploadTasks(prev =>
+                          prev.map(task =>
+                            task.id === transferId
+                              ? {
+                                ...task,
+                                transferredBytes: Math.max(task.transferredBytes, totalProgress),
+                                totalBytes: Math.max(task.totalBytes, totalProgress, completedBytes + total),
+                                progress: (() => {
+                                  const effectiveTotal = Math.max(task.totalBytes, completedBytes + total);
+                                  if (effectiveTotal <= 0) return task.progress;
+                                  const percent = (totalProgress / effectiveTotal) * 100;
+                                  return Math.max(task.progress, Math.min(percent, 99));
+                                })(),
+                                speed: Number.isFinite(speed) && speed > 0 ? speed : 0,
+                              }
+                              : task
+                          )
+                        );
+                      },
+                      // onComplete
+                      () => {
+                        completedBytes += entrySize;
+                        setActiveChild(null);
+                        resolve();
+                      },
+                      // onError
+                      (error) => {
+                        setActiveChild(null);
+                        reject(new Error(error));
+                      }
+                    ).then((result) => {
+                      // Handle resolved result with error (e.g. cancellation)
+                      if (result === undefined) {
+                        setActiveChild(null);
+                        reject(new Error('Stream transfer unavailable'));
+                      } else if (result?.error) {
+                        setActiveChild(null);
+                        reject(new Error(result.error));
+                      }
+                    }).catch(reject);
+                  });
+                }
+              }
+            };
+
+            await downloadDir(fullPath, targetPath);
+
+            // Mark as completed
+            setUploadTasks(prev =>
+              prev.map(task =>
+                task.id === transferId
+                  ? {
+                    ...task,
+                    status: "completed" as const,
+                    progress: 100,
+                    transferredBytes: completedBytes,
+                    totalBytes: completedBytes,
+                    speed: 0,
+                  }
+                  : task
+              )
+            );
+            toast.success(`${t("sftp.context.download")}: ${file.name}`, "SFTP");
+          } catch (e) {
+            const errorMsg = e instanceof Error ? e.message : t("sftp.error.downloadFailed");
+            const isCancelError = errorMsg.includes('cancelled') || errorMsg.includes('canceled')
+              || cancelledTransferIdsRef.current.has(transferId);
+            setUploadTasks(prev =>
+              prev.map(task =>
+                task.id === transferId
+                  ? {
+                    ...task,
+                    status: isCancelError ? "cancelled" as const : "failed" as const,
+                    speed: 0,
+                    error: isCancelError ? undefined : errorMsg,
+                  }
+                  : task
+              )
+            );
+            if (!isCancelError) {
+              toast.error(errorMsg, "SFTP");
+            }
+          } finally {
+            cancelledTransferIdsRef.current.delete(transferId);
+          }
           return;
         }
 
@@ -452,12 +692,20 @@ export const useSftpModalTransfers = ({
               prev.map(task =>
                 task.id === transferId
                   ? {
-                      ...task,
-                      transferredBytes: transferred,
-                      totalBytes: total,
-                      progress: total > 0 ? Math.round((transferred / total) * 100) : 0,
-                      speed,
-                    }
+                    ...task,
+                    transferredBytes: Math.max(
+                      task.transferredBytes,
+                      Math.min(transferred, total > 0 ? total : transferred)
+                    ),
+                    totalBytes: total > 0 ? total : task.totalBytes,
+                    progress: (() => {
+                      const effectiveTotal = total > 0 ? total : task.totalBytes;
+                      if (effectiveTotal <= 0) return task.progress;
+                      const percent = (Math.max(task.transferredBytes, transferred) / effectiveTotal) * 100;
+                      return Math.max(task.progress, Math.min(percent, 100));
+                    })(),
+                    speed: Number.isFinite(speed) && speed > 0 ? speed : 0,
+                  }
                   : task
               )
             );
@@ -467,7 +715,13 @@ export const useSftpModalTransfers = ({
             setUploadTasks(prev =>
               prev.map(task =>
                 task.id === transferId
-                  ? { ...task, status: "completed" as const, progress: 100 }
+                  ? {
+                    ...task,
+                    status: "completed" as const,
+                    progress: 100,
+                    transferredBytes: task.totalBytes > 0 ? task.totalBytes : task.transferredBytes,
+                    speed: 0,
+                  }
                   : task
               )
             );
@@ -546,7 +800,7 @@ export const useSftpModalTransfers = ({
         setLoading(false);
       }
     },
-    [currentPath, ensureSftp, isLocalSession, joinPath, readLocalFile, setLoading, showSaveDialog, startStreamTransfer, t],
+    [currentPath, ensureSftp, isLocalSession, joinPath, readLocalFile, setLoading, showSaveDialog, startStreamTransfer, t, listSftp, createUploadBridge, deleteLocalFile, cancelledTransferIdsRef, cancelTransfer],
   );
 
 
@@ -763,12 +1017,26 @@ export const useSftpModalTransfers = ({
     if (!task) return;
 
     if (task.direction === "download") {
-      // For download tasks, cancel only this specific transfer
+      // For download tasks, cancel the specific transfer
+      // Add to cancelled set so recursive downloads can check
+      cancelledTransferIdsRef.current.add(taskId);
+
       if (cancelTransfer) {
         try {
+          // Cancel the parent task ID (works for single-file downloads)
           await cancelTransfer(taskId);
         } catch {
           // Ignore cancellation errors
+        }
+        // Also cancel the active child transfer for directory downloads
+        const activeChildId = activeChildTransferIdsRef.current.get(taskId);
+        if (activeChildId) {
+          try {
+            await cancelTransfer(activeChildId);
+          } catch {
+            // Ignore cancellation errors
+          }
+          activeChildTransferIdsRef.current.delete(taskId);
         }
       }
       // Mark task as cancelled

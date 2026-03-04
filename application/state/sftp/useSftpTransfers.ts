@@ -132,6 +132,7 @@ export const useSftpTransfers = ({
     sourceEncoding: SftpFilenameEncoding,
     targetEncoding: SftpFilenameEncoding,
     rootTaskId: string, // The original top-level task ID for cancellation checking
+    onStreamProgress?: (transferred: number, total: number, speed: number) => void,
   ): Promise<void> => {
     // Check if task or root task was cancelled before starting
     if (cancelledTasksRef.current.has(task.id) || cancelledTasksRef.current.has(rootTaskId)) {
@@ -158,15 +159,23 @@ export const useSftpTransfers = ({
           total: number,
           speed: number,
         ) => {
+          // Bubble up streaming progress to parent (for directory transfers)
+          onStreamProgress?.(transferred, total, speed);
+
           setTransfers((prev) =>
             prev.map((t) => {
               if (t.id !== task.id) return t;
               if (t.status === "cancelled") return t;
+              const normalizedTotal = total > 0 ? total : t.totalBytes;
+              const normalizedTransferred = Math.max(
+                t.transferredBytes,
+                Math.min(transferred, normalizedTotal > 0 ? normalizedTotal : transferred),
+              );
               return {
                 ...t,
-                transferredBytes: transferred,
-                totalBytes: total || t.totalBytes,
-                speed,
+                transferredBytes: normalizedTransferred,
+                totalBytes: normalizedTotal,
+                speed: Number.isFinite(speed) && speed > 0 ? speed : 0,
               };
             }),
           );
@@ -249,6 +258,7 @@ export const useSftpTransfers = ({
     sourceEncoding: SftpFilenameEncoding,
     targetEncoding: SftpFilenameEncoding,
     rootTaskId: string, // The original top-level task ID for cancellation checking
+    onChildProgress?: (completedBytes: number, currentFileTransferred: number, currentFileTotal: number, speed: number) => void,
   ) => {
     // Check if task or root task was cancelled before starting
     if (cancelledTasksRef.current.has(task.id) || cancelledTasksRef.current.has(rootTaskId)) {
@@ -270,6 +280,9 @@ export const useSftpTransfers = ({
       throw new Error("No source connection");
     }
 
+    // Track bytes completed so far in this directory (including subdirectories)
+    let completedBytesInDir = 0;
+
     for (const file of files) {
       if (file.name === "..") continue;
 
@@ -290,6 +303,13 @@ export const useSftpTransfers = ({
       };
 
       if (file.type === "directory") {
+        // For subdirectories, create a nested progress tracker
+        let subDirCompletedBytes = 0;
+        const onSubDirChildProgress = (subCompleted: number, currentTransferred: number, currentTotal: number, speed: number) => {
+          subDirCompletedBytes = subCompleted;
+          // Report to parent: our completed + subdirectory's (completed + in-progress)
+          onChildProgress?.(completedBytesInDir + subCompleted, currentTransferred, currentTotal, speed);
+        };
         await transferDirectory(
           childTask,
           sourceSftpId,
@@ -299,8 +319,14 @@ export const useSftpTransfers = ({
           sourceEncoding,
           targetEncoding,
           rootTaskId,
+          onSubDirChildProgress,
         );
+        completedBytesInDir += subDirCompletedBytes;
       } else {
+        // For files, report streaming progress
+        const onFileStreamProgress = (transferred: number, total: number, speed: number) => {
+          onChildProgress?.(completedBytesInDir, transferred, total, speed);
+        };
         await transferFile(
           childTask,
           sourceSftpId,
@@ -310,7 +336,12 @@ export const useSftpTransfers = ({
           sourceEncoding,
           targetEncoding,
           rootTaskId,
+          onFileStreamProgress,
         );
+        // After file completes, add its bytes to completed total
+        const childSize = typeof file.size === 'string' ? parseInt(file.size, 10) || 0 : (file.size || 0);
+        completedBytesInDir += childSize;
+        onChildProgress?.(completedBytesInDir, 0, 0, 0);
       }
     }
   };
@@ -393,7 +424,7 @@ export const useSftpTransfers = ({
     }
 
     let useSimulatedProgress = false;
-    if (!hasStreamingTransfer || task.isDirectory) {
+    if (!hasStreamingTransfer && !task.isDirectory) {
       useSimulatedProgress = true;
       startProgressSimulation(task.id, estimatedSize);
     }
@@ -481,6 +512,24 @@ export const useSftpTransfers = ({
       }
 
       if (task.isDirectory) {
+        // Track real progress for directory transfers:
+        // completedBytes = sum of all finished child files
+        // + currentFileTransferred = in-progress bytes of the currently transferring file
+        const onChildProgress = (completedBytes: number, currentFileTransferred: number, currentFileTotal: number, speed: number) => {
+          const totalProgress = completedBytes + currentFileTransferred;
+          setTransfers((prev) =>
+            prev.map((t) => {
+              if (t.id !== task.id || t.status === "cancelled") return t;
+              const newTotal = Math.max(t.totalBytes, totalProgress, completedBytes + currentFileTotal);
+              return {
+                ...t,
+                transferredBytes: Math.max(t.transferredBytes, totalProgress),
+                totalBytes: newTotal,
+                speed: Number.isFinite(speed) && speed > 0 ? speed : t.speed,
+              };
+            }),
+          );
+        };
         await transferDirectory(
           task,
           sourceSftpId,
@@ -490,6 +539,7 @@ export const useSftpTransfers = ({
           sourceEncoding,
           targetEncoding,
           task.id, // rootTaskId - this is the top-level task
+          onChildProgress,
         );
       } else {
         await transferFile(
@@ -590,14 +640,14 @@ export const useSftpTransfers = ({
     async (
       sourceFiles: { name: string; isDirectory: boolean }[],
       sourceSide: "left" | "right",
-    targetSide: "left" | "right",
-    options?: {
-      sourcePane?: SftpPane;
-      sourcePath?: string;
-      sourceConnectionId?: string;
-      onTransferComplete?: (result: TransferResult) => void | Promise<void>;
-    },
-  ) => {
+      targetSide: "left" | "right",
+      options?: {
+        sourcePane?: SftpPane;
+        sourcePath?: string;
+        sourceConnectionId?: string;
+        onTransferComplete?: (result: TransferResult) => void | Promise<void>;
+      },
+    ) => {
       const sourcePane = options?.sourcePane ?? getActivePane(sourceSide);
       const targetPane = getActivePane(targetSide);
 
@@ -633,11 +683,11 @@ export const useSftpTransfers = ({
               const stat = await netcattyBridge.get()?.statLocal?.(fullPath);
               if (stat) fileSize = stat.size;
             } else if (sourceSftpId) {
-            const stat = await netcattyBridge.get()?.statSftp?.(
-              sourceSftpId,
-              fullPath,
-              sourceEncoding,
-            );
+              const stat = await netcattyBridge.get()?.statSftp?.(
+                sourceSftpId,
+                fullPath,
+                sourceEncoding,
+              );
               if (stat) fileSize = stat.size;
             }
           } catch {
@@ -773,7 +823,27 @@ export const useSftpTransfers = ({
 
   const updateExternalUpload = useCallback((taskId: string, updates: Partial<TransferTask>) => {
     setTransfers((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, ...updates } : t)),
+      prev.map((t) => {
+        if (t.id !== taskId) return t;
+
+        const merged: TransferTask = { ...t, ...updates };
+
+        // Keep progress monotonic and bounded for stable progress UI.
+        if (typeof merged.totalBytes === "number" && merged.totalBytes > 0) {
+          merged.transferredBytes = Math.max(
+            t.transferredBytes,
+            Math.min(merged.transferredBytes, merged.totalBytes),
+          );
+        } else {
+          merged.transferredBytes = Math.max(t.transferredBytes, merged.transferredBytes);
+        }
+
+        if (!Number.isFinite(merged.speed) || merged.speed < 0) {
+          merged.speed = 0;
+        }
+
+        return merged;
+      }),
     );
   }, []);
 

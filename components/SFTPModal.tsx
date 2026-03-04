@@ -42,6 +42,7 @@ interface SFTPModalProps {
     proxy?: NetcattyProxyConfig;
     jumpHosts?: NetcattyJumpHost[];
     sftpSudo?: boolean;
+    legacyAlgorithms?: boolean;
   };
   open: boolean;
   onClose: () => void;
@@ -49,6 +50,8 @@ interface SFTPModalProps {
   initialPath?: string;
   /** Initial entries to upload when SFTP modal opens. Used for drag-and-drop to terminal. */
   initialEntriesToUpload?: DropEntry[];
+  /** Callback to update the host (e.g. for bookmark persistence). */
+  onUpdateHost?: (host: Host) => void;
 }
 
 const SFTPModal: React.FC<SFTPModalProps> = ({
@@ -58,6 +61,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   onClose,
   initialPath,
   initialEntriesToUpload,
+  onUpdateHost,
 }) => {
   const {
     openSftp,
@@ -204,6 +208,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     loading,
     setLoading,
     reconnecting,
+    sessionVersion,
     ensureSftp,
     loadFiles,
     closeSftpSession,
@@ -296,6 +301,13 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     handleDelete,
     handleCreateFolder,
     handleCreateFile,
+    showCreateDialog,
+    setShowCreateDialog,
+    createType,
+    createName,
+    setCreateName,
+    isCreating,
+    handleCreateSubmit,
     showRenameDialog,
     setShowRenameDialog,
     renameTarget,
@@ -391,9 +403,40 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     setLoading,
     t,
     useCompressedUpload: sftpUseCompressedUpload,
+    listSftp: listSftpWithEncoding,
+    deleteLocalFile,
   });
+  const hasEverOpenedRef = useRef(false);
+
+  const hasActiveTransferTasks = useMemo(
+    () =>
+      uploadTasks.some(
+        (task) =>
+          task.status === "pending" ||
+          task.status === "uploading" ||
+          task.status === "downloading",
+      ),
+    [uploadTasks],
+  );
+
+  useEffect(() => {
+    if (open) {
+      hasEverOpenedRef.current = true;
+      return;
+    }
+
+    if (!hasEverOpenedRef.current) return;
+    if (uploading || hasActiveTransferTasks) return;
+
+    void closeSftpSession();
+  }, [closeSftpSession, hasActiveTransferTasks, open, sessionVersion, uploading]);
 
   const handleClose = async () => {
+    if (uploading || hasActiveTransferTasks) {
+      onClose();
+      return;
+    }
+
     await closeSftpSession();
     onClose();
   };
@@ -438,7 +481,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   // Display files with parent entry (like SftpView)
   const displayFiles = useMemo(() => {
     // Filter hidden files using utility function
-    const visibleFiles = filterHiddenFiles(files, sftpShowHiddenFiles);
+    const visibleFiles = filterHiddenFiles(files, sftpShowHiddenFiles, isLocalSession);
 
     // Check if we're at root
     const atRoot = isRootPathForSession(currentPath);
@@ -452,7 +495,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
       lastModified: undefined,
     };
     return [parentEntry, ...visibleFiles.filter((f) => f.name !== "..")];
-  }, [files, currentPath, isRootPathForSession, sftpShowHiddenFiles]);
+  }, [files, currentPath, isRootPathForSession, sftpShowHiddenFiles, isLocalSession]);
 
   // Sorted files
   const sortedFiles = useMemo(() => {
@@ -526,7 +569,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     // Find the files to pass to confirm dialog
     if (fileNames.length === 0) return;
     if (!confirm(t("sftp.deleteConfirm.title", { count: fileNames.length }))) return;
-    
+
     // Delete files
     (async () => {
       try {
@@ -642,6 +685,8 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
           onCreateFile={handleCreateFile}
           onFileSelect={handleFileSelect}
           onFolderSelect={handleFolderSelect}
+          onUpdateHost={onUpdateHost}
+          onNavigateToBookmark={(path) => setCurrentPath(path)}
         />
 
         <SftpModalFileList
@@ -718,6 +763,13 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
         getSymbolicPermissions={getSymbolicPermissions}
         handleSavePermissions={handleSavePermissions}
         isChangingPermissions={isChangingPermissions}
+        showCreateDialog={showCreateDialog}
+        setShowCreateDialog={setShowCreateDialog}
+        createType={createType}
+        createName={createName}
+        setCreateName={setCreateName}
+        isCreating={isCreating}
+        handleCreateSubmit={handleCreateSubmit}
       />
 
       {/* File Opener Dialog */}

@@ -1,7 +1,7 @@
-import { ArrowLeft,MoreVertical,X } from 'lucide-react';
-import React,{ createContext,ReactNode,useCallback,useContext,useState } from 'react';
+import { ArrowLeft, MoreVertical, X } from 'lucide-react';
+import React, { createContext, ReactNode, useCallback, useContext, useState } from 'react';
 import { cn } from '../../lib/utils';
-import { Popover,PopoverContent,PopoverTrigger } from './popover';
+import { Popover, PopoverContent, PopoverTrigger } from './popover';
 import { ScrollArea } from './scroll-area';
 
 // Types
@@ -102,7 +102,7 @@ export const AsidePanelContent: React.FC<{ children: ReactNode; className?: stri
 }) => {
     return (
         <ScrollArea className={cn("flex-1", className)}>
-            <div className="p-4 space-y-4">
+            <div className="p-4 space-y-4 overflow-hidden">
                 {children}
             </div>
         </ScrollArea>

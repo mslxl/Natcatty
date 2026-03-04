@@ -1,6 +1,6 @@
-import { Users } from 'lucide-react';
 import React, { useMemo, useState } from 'react';
 import { TERMINAL_THEMES } from '../infrastructure/config/terminalThemes';
+import { useCustomThemes } from '../application/state/customThemeStore';
 import { cn } from '../lib/utils';
 import { TerminalTheme } from '../types';
 import {
@@ -63,17 +63,24 @@ const ThemeSelectPanel: React.FC<ThemeSelectPanelProps> = ({
     // Reserved for future hover preview feature
     const [_hoveredThemeId, setHoveredThemeId] = useState<string | null>(null);
 
+    const customThemes = useCustomThemes();
+
+    // All themes combined
+    const allThemes = useMemo(() => {
+        return [...TERMINAL_THEMES, ...customThemes];
+    }, [customThemes]);
+
     // Group themes by type - reserved for future sectioned view
     const _groupedThemes = useMemo(() => {
-        const dark = TERMINAL_THEMES.filter(t => t.type === 'dark');
-        const light = TERMINAL_THEMES.filter(t => t.type === 'light');
+        const dark = allThemes.filter(t => t.type === 'dark');
+        const light = allThemes.filter(t => t.type === 'light');
         return { dark, light };
-    }, []);
+    }, [allThemes]);
 
     // Find selected theme info - reserved for displaying selection details
     const _selectedTheme = useMemo(() => {
-        return TERMINAL_THEMES.find(t => t.id === selectedThemeId);
-    }, [selectedThemeId]);
+        return allThemes.find(t => t.id === selectedThemeId);
+    }, [selectedThemeId, allThemes]);
 
     const renderThemeItem = (theme: TerminalTheme) => {
         const isSelected = theme.id === selectedThemeId;
@@ -99,36 +106,12 @@ const ThemeSelectPanel: React.FC<ThemeSelectPanelProps> = ({
                     )}>
                         {theme.name}
                     </div>
-                    {/* Show usage stats or badge */}
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                        {theme.id === 'netcatty-dark' && (
-                            <span className="text-muted-foreground">Default</span>
-                        )}
-                        {theme.id === 'netcatty-light' && (
-                            <>
-                                <Users size={10} />
-                                <span>Light mode</span>
-                            </>
-                        )}
-                        {theme.id === 'flexoki-dark' && (
-                            <span className="text-xs">new</span>
-                        )}
-                        {theme.id === 'flexoki-light' && (
-                            <span className="text-xs">new</span>
-                        )}
-                        {theme.id.startsWith('kanagawa') && (
-                            <>
-                                <Users size={10} />
-                                <span>{Math.floor(Math.random() * 20000)}</span>
-                            </>
-                        )}
-                        {theme.id.startsWith('hacker') && (
-                            <>
-                                <Users size={10} />
-                                <span>{Math.floor(Math.random() * 15000)}</span>
-                            </>
-                        )}
-                    </div>
+                    {theme.id === 'netcatty-dark' && (
+                        <div className="text-xs text-muted-foreground">Default</div>
+                    )}
+                    {theme.id === 'netcatty-light' && (
+                        <div className="text-xs text-muted-foreground">Light mode</div>
+                    )}
                 </div>
             </button>
         );
@@ -146,7 +129,7 @@ const ThemeSelectPanel: React.FC<ThemeSelectPanelProps> = ({
                 <ScrollArea className="h-full">
                     <div className="py-2">
                         {/* All themes in a single list */}
-                        {TERMINAL_THEMES.map(renderThemeItem)}
+                        {allThemes.map(renderThemeItem)}
                     </div>
                 </ScrollArea>
             </AsidePanelContent>

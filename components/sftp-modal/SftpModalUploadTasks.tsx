@@ -64,7 +64,7 @@ export const SftpModalUploadTasks: React.FC<SftpModalUploadTasksProps> = ({ task
   return (
     <div className="border-t border-border/60 bg-secondary/50 flex-shrink-0">
       <div className="max-h-40 overflow-y-auto overflow-x-hidden">
-        {tasks.map((task) => {
+        {[...tasks].reverse().map((task) => {
           const formatSpeed = (bytesPerSec: number) => {
             if (bytesPerSec <= 0) return "";
             if (bytesPerSec >= 1024 * 1024)
@@ -83,8 +83,9 @@ export const SftpModalUploadTasks: React.FC<SftpModalUploadTasksProps> = ({ task
           };
 
           const remainingBytes = task.totalBytes - task.transferredBytes;
+          const effectiveSpeed = task.speed > 0 ? task.speed : 0;
           const remainingTime =
-            task.speed > 0 ? Math.ceil(remainingBytes / task.speed) : 0;
+            effectiveSpeed > 0 ? Math.ceil(remainingBytes / effectiveSpeed) : 0;
           const remainingStr =
             remainingTime > 60
               ? `~${Math.ceil(remainingTime / 60)}m left`
@@ -123,9 +124,9 @@ export const SftpModalUploadTasks: React.FC<SftpModalUploadTasksProps> = ({ task
                   <span className="text-xs font-medium truncate">
                     {getDisplayName(task)}
                   </span>
-                  {(task.status === "uploading" || task.status === "downloading") && task.speed > 0 && (
+                  {(task.status === "uploading" || task.status === "downloading") && effectiveSpeed > 0 && (
                     <span className="text-[10px] text-primary font-mono shrink-0">
-                      {formatSpeed(task.speed)}
+                      {formatSpeed(effectiveSpeed)}
                     </span>
                   )}
                   {(task.status === "uploading" || task.status === "downloading") && remainingStr && (

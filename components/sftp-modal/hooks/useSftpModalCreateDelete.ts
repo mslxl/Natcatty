@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import type { RemoteFile } from "../../../types";
 import { toast } from "../../ui/toast";
 
@@ -20,8 +20,16 @@ interface UseSftpModalCreateDeleteParams {
 
 interface UseSftpModalCreateDeleteResult {
   handleDelete: (file: RemoteFile) => Promise<void>;
-  handleCreateFolder: () => Promise<void>;
-  handleCreateFile: () => Promise<void>;
+  handleCreateFolder: () => void;
+  handleCreateFile: () => void;
+  // Create dialog state
+  showCreateDialog: boolean;
+  setShowCreateDialog: (open: boolean) => void;
+  createType: "file" | "folder";
+  createName: string;
+  setCreateName: (value: string) => void;
+  isCreating: boolean;
+  handleCreateSubmit: () => Promise<void>;
 }
 
 export const useSftpModalCreateDelete = ({
@@ -39,6 +47,11 @@ export const useSftpModalCreateDelete = ({
   writeSftp,
   t,
 }: UseSftpModalCreateDeleteParams): UseSftpModalCreateDeleteResult => {
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [createType, setCreateType] = useState<"file" | "folder">("folder");
+  const [createName, setCreateName] = useState("");
+  const [isCreating, setIsCreating] = useState(false);
+
   const handleDelete = useCallback(
     async (file: RemoteFile) => {
       if (file.name === "..") return;
@@ -62,47 +75,66 @@ export const useSftpModalCreateDelete = ({
     [currentPath, deleteLocalFile, deleteSftp, ensureSftp, isLocalSession, joinPath, loadFiles, t],
   );
 
-  const handleCreateFolder = useCallback(async () => {
-    const folderName = prompt(t("sftp.prompt.newFolderName"));
-    if (!folderName) return;
-    try {
-      const fullPath = joinPath(currentPath, folderName);
-      if (isLocalSession) {
-        await mkdirLocal(fullPath);
-      } else {
-        await mkdirSftp(await ensureSftp(), fullPath);
-      }
-      await loadFiles(currentPath, { force: true });
-    } catch (e) {
-      toast.error(
-        e instanceof Error ? e.message : t("sftp.error.createFolderFailed"),
-        "SFTP",
-      );
-    }
-  }, [currentPath, ensureSftp, isLocalSession, joinPath, loadFiles, mkdirLocal, mkdirSftp, t]);
+  const handleCreateFolder = useCallback(() => {
+    setCreateType("folder");
+    setCreateName("");
+    setShowCreateDialog(true);
+  }, []);
 
-  const handleCreateFile = useCallback(async () => {
-    const fileName = prompt(t("sftp.fileName.placeholder"));
-    if (!fileName) return;
+  const handleCreateFile = useCallback(() => {
+    setCreateType("file");
+    setCreateName("");
+    setShowCreateDialog(true);
+  }, []);
+
+  const handleCreateSubmit = useCallback(async () => {
+    const name = createName.trim();
+    if (!name || isCreating) return;
+    setIsCreating(true);
     try {
-      const fullPath = joinPath(currentPath, fileName);
-      if (isLocalSession) {
-        await writeLocalFile(fullPath, new ArrayBuffer(0));
+      const fullPath = joinPath(currentPath, name);
+      if (createType === "folder") {
+        if (isLocalSession) {
+          await mkdirLocal(fullPath);
+        } else {
+          await mkdirSftp(await ensureSftp(), fullPath);
+        }
       } else {
-        try {
-          await writeSftpBinary(await ensureSftp(), fullPath, new ArrayBuffer(0));
-        } catch {
-          await writeSftp(await ensureSftp(), fullPath, "");
+        if (isLocalSession) {
+          await writeLocalFile(fullPath, new ArrayBuffer(0));
+        } else {
+          try {
+            await writeSftpBinary(await ensureSftp(), fullPath, new ArrayBuffer(0));
+          } catch {
+            await writeSftp(await ensureSftp(), fullPath, "");
+          }
         }
       }
+      setShowCreateDialog(false);
+      setCreateName("");
       await loadFiles(currentPath, { force: true });
     } catch (e) {
       toast.error(
-        e instanceof Error ? e.message : t("sftp.error.createFileFailed"),
+        e instanceof Error
+          ? e.message
+          : t(createType === "folder" ? "sftp.error.createFolderFailed" : "sftp.error.createFileFailed"),
         "SFTP",
       );
+    } finally {
+      setIsCreating(false);
     }
-  }, [currentPath, ensureSftp, isLocalSession, joinPath, loadFiles, t, writeLocalFile, writeSftp, writeSftpBinary]);
+  }, [createName, createType, currentPath, ensureSftp, isCreating, isLocalSession, joinPath, loadFiles, mkdirLocal, mkdirSftp, t, writeLocalFile, writeSftp, writeSftpBinary]);
 
-  return { handleDelete, handleCreateFolder, handleCreateFile };
+  return {
+    handleDelete,
+    handleCreateFolder,
+    handleCreateFile,
+    showCreateDialog,
+    setShowCreateDialog,
+    createType,
+    createName,
+    setCreateName,
+    isCreating,
+    handleCreateSubmit,
+  };
 };

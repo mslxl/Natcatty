@@ -34,8 +34,15 @@ interface UseSftpModalFileActionsParams {
 
 interface UseSftpModalFileActionsResult {
   handleDelete: (file: RemoteFile) => Promise<void>;
-  handleCreateFolder: () => Promise<void>;
-  handleCreateFile: () => Promise<void>;
+  handleCreateFolder: () => void;
+  handleCreateFile: () => void;
+  showCreateDialog: boolean;
+  setShowCreateDialog: (open: boolean) => void;
+  createType: "file" | "folder";
+  createName: string;
+  setCreateName: (value: string) => void;
+  isCreating: boolean;
+  handleCreateSubmit: () => Promise<void>;
   showRenameDialog: boolean;
   setShowRenameDialog: (open: boolean) => void;
   renameTarget: RemoteFile | null;
@@ -106,7 +113,18 @@ export const useSftpModalFileActions = ({
   downloadSftpToTempAndOpen,
   selectApplication,
 }: UseSftpModalFileActionsParams): UseSftpModalFileActionsResult => {
-  const { handleDelete, handleCreateFolder, handleCreateFile } =
+  const {
+    handleDelete,
+    handleCreateFolder,
+    handleCreateFile,
+    showCreateDialog,
+    setShowCreateDialog,
+    createType,
+    createName,
+    setCreateName,
+    isCreating,
+    handleCreateSubmit,
+  } =
     useSftpModalCreateDelete({
       currentPath,
       isLocalSession,
@@ -213,6 +231,13 @@ export const useSftpModalFileActions = ({
     handleDelete,
     handleCreateFolder,
     handleCreateFile,
+    showCreateDialog,
+    setShowCreateDialog,
+    createType,
+    createName,
+    setCreateName,
+    isCreating,
+    handleCreateSubmit,
     showRenameDialog,
     setShowRenameDialog,
     renameTarget,

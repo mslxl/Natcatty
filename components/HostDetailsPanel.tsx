@@ -16,6 +16,7 @@ import {
   Plus,
   Settings2,
   Shield,
+  ShieldAlert,
   Tag,
   TerminalSquare,
   User,
@@ -26,7 +27,7 @@ import {
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useApplicationBackend } from "../application/state/useApplicationBackend";
-import { TERMINAL_THEMES } from "../infrastructure/config/terminalThemes";
+import { customThemeStore } from "../application/state/customThemeStore";
 import { MIN_FONT_SIZE, MAX_FONT_SIZE } from "../infrastructure/config/fonts";
 import { cn } from "../lib/utils";
 import { EnvVar, Host, Identity, ManagedSource, ProxyConfig, SSHKey } from "../types";
@@ -38,6 +39,7 @@ import {
   AsidePanelFooter,
 } from "./ui/aside-panel";
 import { Badge } from "./ui/badge";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { Button } from "./ui/button";
 import { Switch } from "./ui/switch";
 import { Card } from "./ui/card";
@@ -1115,21 +1117,15 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
               className="w-12 h-8 rounded-md border border-border/60 flex items-center justify-center text-[6px] font-mono overflow-hidden"
               style={{
                 backgroundColor:
-                  TERMINAL_THEMES.find(
-                    (t) => t.id === (form.theme || "flexoki-dark"),
-                  )?.colors.background || "#100F0F",
+                  customThemeStore.getThemeById(form.theme || "flexoki-dark")?.colors.background || "#100F0F",
                 color:
-                  TERMINAL_THEMES.find(
-                    (t) => t.id === (form.theme || "flexoki-dark"),
-                  )?.colors.foreground || "#CECDC3",
+                  customThemeStore.getThemeById(form.theme || "flexoki-dark")?.colors.foreground || "#CECDC3",
               }}
             >
               <div className="p-0.5">
                 <div
                   style={{
-                    color: TERMINAL_THEMES.find(
-                      (t) => t.id === (form.theme || "flexoki-dark"),
-                    )?.colors.green,
+                    color: customThemeStore.getThemeById(form.theme || "flexoki-dark")?.colors.green,
                   }}
                 >
                   $
@@ -1137,9 +1133,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
               </div>
             </div>
             <span className="text-sm flex-1">
-              {TERMINAL_THEMES.find(
-                (t) => t.id === (form.theme || "flexoki-dark"),
-              )?.name || "Flexoki Dark"}
+              {customThemeStore.getThemeById(form.theme || "flexoki-dark")?.name || "Flexoki Dark"}
             </span>
           </button>
 
@@ -1230,6 +1224,30 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
           )}
         </Card>
 
+        {/* Legacy Algorithms */}
+        <Card className="p-3 space-y-2 bg-card border-border/80">
+          <div className="flex items-center gap-2">
+            <ShieldAlert size={14} className="text-muted-foreground" />
+            <p className="text-xs font-semibold">{t("hostDetails.section.legacyAlgorithms")}</p>
+          </div>
+          <ToggleRow
+            label={t("hostDetails.legacyAlgorithms")}
+            enabled={!!form.legacyAlgorithms}
+            onToggle={() => update("legacyAlgorithms", !form.legacyAlgorithms)}
+          />
+          <p className="text-xs text-muted-foreground break-words">
+            {t("hostDetails.legacyAlgorithms.desc")}
+          </p>
+          {form.legacyAlgorithms && (
+            <div className="flex items-start gap-2 p-2 rounded-md bg-yellow-500/10 border border-yellow-500/20">
+              <AlertTriangle size={14} className="text-yellow-500 mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-yellow-600 dark:text-yellow-400 break-words">
+                {t("hostDetails.legacyAlgorithms.warning")}
+              </p>
+            </div>
+          )}
+        </Card>
+
         {/* Proxy via Hosts (Jump Hosts / ProxyJump) */}
         <Card className="p-3 space-y-2 bg-card border-border/80">
           <div className="flex items-center justify-between">
@@ -1306,36 +1324,50 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
         </Card>
 
         {/* Proxy Configuration */}
-        <Card className="p-3 space-y-2 bg-card border-border/80">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Globe size={14} className="text-muted-foreground" />
-              <p className="text-xs font-semibold">{t("hostDetails.proxy")}</p>
-            </div>
-            {form.proxyConfig?.host ? (
-              <Badge variant="secondary" className="text-xs">
-                {form.proxyConfig.type?.toUpperCase()} {form.proxyConfig.host}:
-                {form.proxyConfig.port}
-              </Badge>
-            ) : (
-              <Badge
-                variant="outline"
-                className="text-xs text-muted-foreground"
-              >
-                {t("hostDetails.proxy.none")}
-              </Badge>
-            )}
+        <Card className="p-3 space-y-2 bg-card border-border/80 overflow-hidden">
+          <div className="flex items-center gap-2">
+            <Globe size={14} className="text-muted-foreground" />
+            <p className="text-xs font-semibold">{t("hostDetails.proxy")}</p>
           </div>
-          <Button
-            variant="ghost"
-            className="w-full h-9 justify-start gap-2 text-sm"
-            onClick={() => setActiveSubPanel("proxy")}
-          >
-            <Plus size={14} />
-            {form.proxyConfig?.host
-              ? t("hostDetails.proxy.edit")
-              : t("hostDetails.proxy.configure")}
-          </Button>
+          {form.proxyConfig?.host ? (
+            <button
+              className="w-full min-w-0 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 p-2 rounded-md bg-secondary/50 hover:bg-secondary transition-colors cursor-pointer overflow-hidden"
+              onClick={() => setActiveSubPanel("proxy")}
+            >
+              <Badge variant="secondary" className="text-xs shrink-0">
+                {form.proxyConfig.type?.toUpperCase()}
+              </Badge>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="block min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm">
+                      {form.proxyConfig.host}:{form.proxyConfig.port}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" align="start" className="max-w-xs break-all">
+                    {form.proxyConfig.type?.toUpperCase()} {form.proxyConfig.host}:{form.proxyConfig.port}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <X
+                size={14}
+                className="text-muted-foreground hover:text-destructive flex-shrink-0"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  clearProxyConfig();
+                }}
+              />
+            </button>
+          ) : (
+            <Button
+              variant="ghost"
+              className="w-full h-9 justify-start gap-2 text-sm"
+              onClick={() => setActiveSubPanel("proxy")}
+            >
+              <Plus size={14} />
+              {t("hostDetails.proxy.configure")}
+            </Button>
+          )}
         </Card>
 
         {/* Environment Variables */}
@@ -1466,35 +1498,20 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
                 className="w-12 h-8 rounded-md border border-border/60 flex items-center justify-center text-[6px] font-mono overflow-hidden"
                 style={{
                   backgroundColor:
-                    TERMINAL_THEMES.find(
-                      (t) =>
-                        t.id ===
-                        (form.protocols?.find((p) => p.protocol === "telnet")
-                          ?.theme ||
-                          form.theme ||
-                          "flexoki-dark"),
+                    customThemeStore.getThemeById(
+                      form.protocols?.find((p) => p.protocol === "telnet")?.theme || form.theme || "flexoki-dark"
                     )?.colors.background || "#100F0F",
                   color:
-                    TERMINAL_THEMES.find(
-                      (t) =>
-                        t.id ===
-                        (form.protocols?.find((p) => p.protocol === "telnet")
-                          ?.theme ||
-                          form.theme ||
-                          "flexoki-dark"),
+                    customThemeStore.getThemeById(
+                      form.protocols?.find((p) => p.protocol === "telnet")?.theme || form.theme || "flexoki-dark"
                     )?.colors.foreground || "#CECDC3",
                 }}
               >
                 <div className="p-0.5">
                   <div
                     style={{
-                      color: TERMINAL_THEMES.find(
-                        (t) =>
-                          t.id ===
-                          (form.protocols?.find((p) => p.protocol === "telnet")
-                            ?.theme ||
-                            form.theme ||
-                            "flexoki-dark"),
+                      color: customThemeStore.getThemeById(
+                        form.protocols?.find((p) => p.protocol === "telnet")?.theme || form.theme || "flexoki-dark"
                       )?.colors.green,
                     }}
                   >
@@ -1503,13 +1520,8 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
                 </div>
               </div>
               <span className="text-sm flex-1">
-                {TERMINAL_THEMES.find(
-                  (t) =>
-                    t.id ===
-                    (form.protocols?.find((p) => p.protocol === "telnet")
-                      ?.theme ||
-                      form.theme ||
-                      "flexoki-dark"),
+                {customThemeStore.getThemeById(
+                  form.protocols?.find((p) => p.protocol === "telnet")?.theme || form.theme || "flexoki-dark"
                 )?.name || "Flexoki Dark"}
               </span>
             </button>

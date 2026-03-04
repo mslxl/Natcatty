@@ -9,6 +9,9 @@ import { cn } from '../lib/utils';
 import { Host, Identity, KnownHost, SSHKey, Snippet, TerminalSession, TerminalTheme, Workspace, WorkspaceNode } from '../types';
 import { DistroAvatar } from './DistroAvatar';
 import Terminal from './Terminal';
+import { TerminalComposeBar } from './terminal/TerminalComposeBar';
+import { TERMINAL_THEMES } from '../infrastructure/config/terminalThemes';
+import { useCustomThemes } from '../application/state/customThemeStore';
 import { Button } from './ui/button';
 import { ScrollArea } from './ui/scroll-area';
 
@@ -178,6 +181,9 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       terminalBackend.writeToSession(targetSessionId, data);
     }
   }, [activeWorkspace, sessions, terminalBackend]);
+
+  // Workspace-level compose bar state
+  const [isComposeBarOpen, setIsComposeBarOpen] = useState(false);
 
   // Pre-compute host lookup map for O(1) access
   const hostMap = useMemo(() => {
@@ -429,6 +435,48 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const isFocusMode = activeWorkspace?.viewMode === 'focus';
   const focusedSessionId = activeWorkspace?.focusedSessionId;
 
+  // Subscribe to custom theme changes so editing triggers re-render
+  const customThemes = useCustomThemes();
+
+  // Resolve the effective theme for the compose bar in workspace mode
+  const composeBarThemeColors = useMemo(() => {
+    if (!activeWorkspace || !focusedSessionId) return terminalTheme.colors;
+    const focusedHost = sessionHostsMap.get(focusedSessionId);
+    if (focusedHost?.theme) {
+      const hostTheme = TERMINAL_THEMES.find(t => t.id === focusedHost.theme)
+        || customThemes.find(t => t.id === focusedHost.theme);
+      if (hostTheme) return hostTheme.colors;
+    }
+    return terminalTheme.colors;
+  }, [activeWorkspace, focusedSessionId, sessionHostsMap, terminalTheme, customThemes]);
+
+  // Handle compose bar send for workspace mode
+  const handleComposeSend = useCallback((text: string) => {
+    if (!activeWorkspace) return;
+    const payload = text + '\r';
+    const broadcastEnabled = isBroadcastEnabled?.(activeWorkspace.id);
+
+    if (broadcastEnabled) {
+      // Send to all sessions in the workspace
+      const allSessionIds = sessions
+        .filter(s => s.workspaceId === activeWorkspace.id)
+        .map(s => s.id);
+      for (const sid of allSessionIds) {
+        terminalBackend.writeToSession(sid, payload);
+      }
+    } else {
+      // Validate focusedSessionId is a live session, then fallback to first available
+      const workspaceSessions = sessions.filter(s => s.workspaceId === activeWorkspace.id);
+      const validFocusedId = focusedSessionId && workspaceSessions.some(s => s.id === focusedSessionId)
+        ? focusedSessionId
+        : undefined;
+      const targetId = validFocusedId ?? workspaceSessions[0]?.id;
+      if (targetId) {
+        terminalBackend.writeToSession(targetId, payload);
+      }
+    }
+  }, [activeWorkspace, focusedSessionId, sessions, terminalBackend, isBroadcastEnabled]);
+
   useEffect(() => {
     if (isFocusMode && dropHint) {
       setDropHint(null);
@@ -569,198 +617,222 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   return (
     <div
       ref={workspaceOuterRef}
-      className="absolute inset-0 bg-background flex"
+      className="absolute inset-0 bg-background flex flex-col"
       style={{ display: isTerminalLayerVisible ? 'flex' : 'none', zIndex: isTerminalLayerVisible ? 10 : 0 }}
     >
-      {/* Focus mode sidebar */}
-      {isFocusMode && renderFocusModeSidebar()}
+      <div className="flex-1 flex min-h-0 relative">
+        {/* Focus mode sidebar */}
+        {isFocusMode && renderFocusModeSidebar()}
 
-      {draggingSessionId && !isFocusMode && (
-        <div
-          ref={workspaceOverlayRef}
-          className="absolute inset-0 z-30"
-          onDragOver={(e) => {
-            if (isFocusMode) return;
-            if (!e.dataTransfer.types.includes('session-id')) return;
-            e.preventDefault();
-            e.stopPropagation();
-            const hint = computeSplitHint(e);
-            setDropHint(hint);
-          }}
-          onDragLeave={(e) => {
-            if (!e.dataTransfer.types.includes('session-id')) return;
-            setDropHint(null);
-          }}
-          onDrop={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            handleWorkspaceDrop(e);
-          }}
-        >
-          {dropHint && (
-            <div className="absolute inset-0 pointer-events-none">
-              <div
-                className="absolute bg-emerald-600/35 border border-emerald-400/70 backdrop-blur-sm transition-all duration-150"
-                style={{
-                  width: dropHint.rect ? `${dropHint.rect.w}px` : dropHint.direction === 'vertical' ? '50%' : '100%',
-                  height: dropHint.rect ? `${dropHint.rect.h}px` : dropHint.direction === 'vertical' ? '100%' : '50%',
-                  left: dropHint.rect ? `${dropHint.rect.x}px` : dropHint.direction === 'vertical' ? (dropHint.position === 'left' ? 0 : '50%') : 0,
-                  top: dropHint.rect ? `${dropHint.rect.y}px` : dropHint.direction === 'vertical' ? 0 : (dropHint.position === 'top' ? 0 : '50%'),
-                }}
-              />
-            </div>
-          )}
-        </div>
-      )}
-      <div ref={workspaceInnerRef} className={cn("absolute overflow-hidden", isFocusMode ? "left-56 right-0 top-0 bottom-0" : "inset-0")}>
-        {sessions.map(session => {
-          // Use pre-computed host to avoid creating new objects on every render
-          const host = sessionHostsMap.get(session.id)!;
-          const inActiveWorkspace = !!activeWorkspace && session.workspaceId === activeWorkspace.id;
-          const isActiveSolo = activeTabId === session.id && !activeWorkspace && isTerminalLayerVisible;
+        {draggingSessionId && !isFocusMode && (
+          <div
+            ref={workspaceOverlayRef}
+            className="absolute inset-0 z-30"
+            onDragOver={(e) => {
+              if (isFocusMode) return;
+              if (!e.dataTransfer.types.includes('session-id')) return;
+              e.preventDefault();
+              e.stopPropagation();
+              const hint = computeSplitHint(e);
+              setDropHint(hint);
+            }}
+            onDragLeave={(e) => {
+              if (!e.dataTransfer.types.includes('session-id')) return;
+              setDropHint(null);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              handleWorkspaceDrop(e);
+            }}
+          >
+            {dropHint && (
+              <div className="absolute inset-0 pointer-events-none">
+                <div
+                  className="absolute bg-emerald-600/35 border border-emerald-400/70 backdrop-blur-sm transition-all duration-150"
+                  style={{
+                    width: dropHint.rect ? `${dropHint.rect.w}px` : dropHint.direction === 'vertical' ? '50%' : '100%',
+                    height: dropHint.rect ? `${dropHint.rect.h}px` : dropHint.direction === 'vertical' ? '100%' : '50%',
+                    left: dropHint.rect ? `${dropHint.rect.x}px` : dropHint.direction === 'vertical' ? (dropHint.position === 'left' ? 0 : '50%') : 0,
+                    top: dropHint.rect ? `${dropHint.rect.y}px` : dropHint.direction === 'vertical' ? 0 : (dropHint.position === 'top' ? 0 : '50%'),
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        )}
+        <div ref={workspaceInnerRef} className={cn("absolute overflow-hidden", isFocusMode ? "left-56 right-0 top-0 bottom-0" : "inset-0")}>
+          {sessions.map(session => {
+            // Use pre-computed host to avoid creating new objects on every render
+            const host = sessionHostsMap.get(session.id)!;
+            const inActiveWorkspace = !!activeWorkspace && session.workspaceId === activeWorkspace.id;
+            const isActiveSolo = activeTabId === session.id && !activeWorkspace && isTerminalLayerVisible;
 
-          // In focus mode, only the focused session is visible
-          const isFocusedInWorkspace = isFocusMode && inActiveWorkspace && session.id === focusedSessionId;
-          const isSplitViewVisible = !isFocusMode && inActiveWorkspace;
+            // In focus mode, only the focused session is visible
+            const isFocusedInWorkspace = isFocusMode && inActiveWorkspace && session.id === focusedSessionId;
+            const isSplitViewVisible = !isFocusMode && inActiveWorkspace;
 
-          const isVisible = ((isFocusedInWorkspace || isSplitViewVisible || isActiveSolo) && isTerminalLayerVisible);
+            const isVisible = ((isFocusedInWorkspace || isSplitViewVisible || isActiveSolo) && isTerminalLayerVisible);
 
-          // In focus mode, use full area; in split mode, use computed rects
-          const rect = (isSplitViewVisible && !isFocusMode) ? activeWorkspaceRects[session.id] : null;
+            // In focus mode, use full area; in split mode, use computed rects
+            const rect = (isSplitViewVisible && !isFocusMode) ? activeWorkspaceRects[session.id] : null;
 
-          const layoutStyle = rect
-            ? {
-              left: `${rect.x}px`,
-              top: `${rect.y}px`,
-              width: `${rect.w}px`,
-              height: `${rect.h}px`,
+            const layoutStyle = rect
+              ? {
+                left: `${rect.x}px`,
+                top: `${rect.y}px`,
+                width: `${rect.w}px`,
+                height: `${rect.h}px`,
+              }
+              : { left: 0, top: 0, width: '100%', height: '100%' };
+
+            const style: React.CSSProperties = { ...layoutStyle };
+
+            if (!isVisible) {
+              style.display = 'none';
             }
-            : { left: 0, top: 0, width: '100%', height: '100%' };
 
-          const style: React.CSSProperties = { ...layoutStyle };
+            // Check if this pane is the focused one in the workspace
+            const isFocusedPane = inActiveWorkspace && !isFocusMode && session.id === focusedSessionId;
 
-          if (!isVisible) {
-            style.display = 'none';
-          }
-
-          // Check if this pane is the focused one in the workspace
-          const isFocusedPane = inActiveWorkspace && !isFocusMode && session.id === focusedSessionId;
-
-          return (
-            <div
-              key={session.id}
-              data-session-id={session.id}
-              className={cn(
-                "absolute bg-background",
-                inActiveWorkspace && "workspace-pane",
-                isVisible && "z-10",
-                isFocusedPane && "ring-1 ring-primary/50 ring-inset"
-              )}
-              style={style}
-              tabIndex={-1}
-              onClick={() => {
-                // Set focused session when clicking on a pane in split view
-                if (inActiveWorkspace && !isFocusMode && activeWorkspace) {
-                  onSetWorkspaceFocusedSession?.(activeWorkspace.id, session.id);
-                }
-              }}
-            >
-              <Terminal
-                host={host}
-                keys={keys}
-                identities={identities}
-                snippets={snippets}
-                allHosts={hosts}
-                knownHosts={knownHosts}
-                isVisible={isVisible}
-                inWorkspace={inActiveWorkspace}
-                isResizing={!!resizing}
-                isFocusMode={isFocusMode}
-                isFocused={isFocusedPane}
-                fontFamilyId={terminalFontFamilyId}
-                fontSize={fontSize}
-                terminalTheme={terminalTheme}
-                terminalSettings={terminalSettings}
-                sessionId={session.id}
-                startupCommand={session.startupCommand}
-                serialConfig={session.serialConfig}
-                onUpdateTerminalThemeId={onUpdateTerminalThemeId}
-                onUpdateTerminalFontFamilyId={onUpdateTerminalFontFamilyId}
-                onUpdateTerminalFontSize={onUpdateTerminalFontSize}
-                hotkeyScheme={hotkeyScheme}
-                keyBindings={keyBindings}
-                onHotkeyAction={onHotkeyAction}
-                onCloseSession={handleCloseSession}
-                onStatusChange={handleStatusChange}
-                onSessionExit={handleSessionExit}
-                onTerminalDataCapture={handleTerminalDataCapture}
-                onOsDetected={handleOsDetected}
-                onUpdateHost={handleUpdateHost}
-                onAddKnownHost={handleAddKnownHost}
-                onCommandExecuted={handleCommandExecuted}
-                onExpandToFocus={inActiveWorkspace && !isFocusMode && activeWorkspace ? () => onToggleWorkspaceViewMode?.(activeWorkspace.id) : undefined}
-                onSplitHorizontal={onSplitSession ? () => onSplitSession(session.id, 'horizontal') : undefined}
-                onSplitVertical={onSplitSession ? () => onSplitSession(session.id, 'vertical') : undefined}
-                isBroadcastEnabled={inActiveWorkspace && activeWorkspace ? isBroadcastEnabled?.(activeWorkspace.id) : false}
-                onToggleBroadcast={inActiveWorkspace && activeWorkspace ? () => onToggleBroadcast?.(activeWorkspace.id) : undefined}
-                onBroadcastInput={inActiveWorkspace && activeWorkspace && isBroadcastEnabled?.(activeWorkspace.id) ? handleBroadcastInput : undefined}
-              />
-            </div>
-          );
-        })}
-        {/* Only show resizers in split view mode, not in focus mode */}
-        {!isFocusMode && activeResizers.map(handle => {
-          const isVertical = handle.direction === 'vertical';
-          // Expand hit area perpendicular to the split line, but stay within bounds
-          // Vertical split (left-right): expand horizontally, keep vertical bounds
-          // Horizontal split (top-bottom): expand vertically, keep horizontal bounds
-          const left = isVertical ? handle.rect.x - 3 : handle.rect.x;
-          const top = isVertical ? handle.rect.y : handle.rect.y - 3;
-          const width = isVertical ? handle.rect.w + 6 : handle.rect.w;
-          const height = isVertical ? handle.rect.h : handle.rect.h + 6;
-
-          return (
-            <div
-              key={handle.id}
-              className={cn("absolute group", isVertical ? "cursor-ew-resize" : "cursor-ns-resize")}
-              style={{
-                left: `${left}px`,
-                top: `${top}px`,
-                width: `${width}px`,
-                height: `${height}px`,
-                zIndex: 25,
-              }}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const ws = activeWorkspace;
-                if (!ws) return;
-                const split = findSplitNode(ws.root, handle.splitId);
-                const childCount = split && split.type === 'split' ? split.children.length : 0;
-                const sizes = split && split.type === 'split' && split.sizes && split.sizes.length === childCount
-                  ? split.sizes
-                  : Array(childCount).fill(1);
-                setResizing({
-                  workspaceId: ws.id,
-                  splitId: handle.splitId,
-                  index: handle.index,
-                  direction: handle.direction,
-                  startSizes: sizes.length ? sizes : [1, 1],
-                  startArea: handle.splitArea,
-                  startClient: { x: e.clientX, y: e.clientY },
-                });
-              }}
-            >
+            return (
               <div
+                key={session.id}
+                data-session-id={session.id}
                 className={cn(
-                  "absolute bg-border/70 group-hover:bg-primary/60 transition-colors",
-                  isVertical ? "w-px h-full left-1/2 -translate-x-1/2" : "h-px w-full top-1/2 -translate-y-1/2"
+                  "absolute bg-background",
+                  inActiveWorkspace && "workspace-pane",
+                  isVisible && "z-10",
+                  isFocusedPane && "ring-1 ring-primary/50 ring-inset"
                 )}
-              />
-            </div>
-          );
-        })}
+                style={style}
+                tabIndex={-1}
+                onClick={() => {
+                  // Set focused session when clicking on a pane in split view
+                  if (inActiveWorkspace && !isFocusMode && activeWorkspace) {
+                    onSetWorkspaceFocusedSession?.(activeWorkspace.id, session.id);
+                  }
+                }}
+              >
+                <Terminal
+                  host={host}
+                  keys={keys}
+                  identities={identities}
+                  snippets={snippets}
+                  allHosts={hosts}
+                  knownHosts={knownHosts}
+                  isVisible={isVisible}
+                  inWorkspace={inActiveWorkspace}
+                  isResizing={!!resizing}
+                  isFocusMode={isFocusMode}
+                  isFocused={isFocusedPane}
+                  fontFamilyId={terminalFontFamilyId}
+                  fontSize={fontSize}
+                  terminalTheme={terminalTheme}
+                  terminalSettings={terminalSettings}
+                  sessionId={session.id}
+                  startupCommand={session.startupCommand}
+                  serialConfig={session.serialConfig}
+                  onUpdateTerminalThemeId={onUpdateTerminalThemeId}
+                  onUpdateTerminalFontFamilyId={onUpdateTerminalFontFamilyId}
+                  onUpdateTerminalFontSize={onUpdateTerminalFontSize}
+                  hotkeyScheme={hotkeyScheme}
+                  keyBindings={keyBindings}
+                  onHotkeyAction={onHotkeyAction}
+                  onCloseSession={handleCloseSession}
+                  onStatusChange={handleStatusChange}
+                  onSessionExit={handleSessionExit}
+                  onTerminalDataCapture={handleTerminalDataCapture}
+                  onOsDetected={handleOsDetected}
+                  onUpdateHost={handleUpdateHost}
+                  onAddKnownHost={handleAddKnownHost}
+                  onCommandExecuted={handleCommandExecuted}
+                  onExpandToFocus={inActiveWorkspace && !isFocusMode && activeWorkspace ? () => onToggleWorkspaceViewMode?.(activeWorkspace.id) : undefined}
+                  onSplitHorizontal={onSplitSession ? () => onSplitSession(session.id, 'horizontal') : undefined}
+                  onSplitVertical={onSplitSession ? () => onSplitSession(session.id, 'vertical') : undefined}
+                  isBroadcastEnabled={inActiveWorkspace && activeWorkspace ? isBroadcastEnabled?.(activeWorkspace.id) : false}
+                  onToggleBroadcast={inActiveWorkspace && activeWorkspace ? () => onToggleBroadcast?.(activeWorkspace.id) : undefined}
+                  onToggleComposeBar={inActiveWorkspace ? () => setIsComposeBarOpen(prev => !prev) : undefined}
+                  isWorkspaceComposeBarOpen={inActiveWorkspace ? isComposeBarOpen : undefined}
+                  onBroadcastInput={inActiveWorkspace && activeWorkspace && isBroadcastEnabled?.(activeWorkspace.id) ? handleBroadcastInput : undefined}
+                />
+              </div>
+            );
+          })}
+          {/* Only show resizers in split view mode, not in focus mode */}
+          {!isFocusMode && activeResizers.map(handle => {
+            const isVertical = handle.direction === 'vertical';
+            // Expand hit area perpendicular to the split line, but stay within bounds
+            // Vertical split (left-right): expand horizontally, keep vertical bounds
+            // Horizontal split (top-bottom): expand vertically, keep horizontal bounds
+            const left = isVertical ? handle.rect.x - 3 : handle.rect.x;
+            const top = isVertical ? handle.rect.y : handle.rect.y - 3;
+            const width = isVertical ? handle.rect.w + 6 : handle.rect.w;
+            const height = isVertical ? handle.rect.h : handle.rect.h + 6;
+
+            return (
+              <div
+                key={handle.id}
+                className={cn("absolute group", isVertical ? "cursor-ew-resize" : "cursor-ns-resize")}
+                style={{
+                  left: `${left}px`,
+                  top: `${top}px`,
+                  width: `${width}px`,
+                  height: `${height}px`,
+                  zIndex: 25,
+                }}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const ws = activeWorkspace;
+                  if (!ws) return;
+                  const split = findSplitNode(ws.root, handle.splitId);
+                  const childCount = split && split.type === 'split' ? split.children.length : 0;
+                  const sizes = split && split.type === 'split' && split.sizes && split.sizes.length === childCount
+                    ? split.sizes
+                    : Array(childCount).fill(1);
+                  setResizing({
+                    workspaceId: ws.id,
+                    splitId: handle.splitId,
+                    index: handle.index,
+                    direction: handle.direction,
+                    startSizes: sizes.length ? sizes : [1, 1],
+                    startArea: handle.splitArea,
+                    startClient: { x: e.clientX, y: e.clientY },
+                  });
+                }}
+              >
+                <div
+                  className={cn(
+                    "absolute bg-border/70 group-hover:bg-primary/60 transition-colors",
+                    isVertical ? "w-px h-full left-1/2 -translate-x-1/2" : "h-px w-full top-1/2 -translate-y-1/2"
+                  )}
+                />
+              </div>
+            );
+          })}
+        </div>
       </div>
+
+      {/* Global compose bar for workspace mode */}
+      {activeWorkspace && isComposeBarOpen && (
+        <TerminalComposeBar
+          onSend={handleComposeSend}
+          onClose={() => {
+            setIsComposeBarOpen(false);
+            // Refocus the terminal pane (matching solo-session behavior)
+            if (focusedSessionId) {
+              requestAnimationFrame(() => {
+                const pane = document.querySelector(`[data-session-id="${focusedSessionId}"]`);
+                const textarea = pane?.querySelector('textarea.xterm-helper-textarea') as HTMLTextAreaElement | null;
+                textarea?.focus();
+              });
+            }
+          }}
+          isBroadcastEnabled={isBroadcastEnabled?.(activeWorkspace.id)}
+          themeColors={composeBarThemeColors}
+        />
+      )}
     </div>
   );
 };

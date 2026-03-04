@@ -30,9 +30,11 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
 import { toast } from "./ui/toast";
 import { useAvailableFonts } from "../application/state/fontStore";
 import { TERMINAL_THEMES } from "../infrastructure/config/terminalThemes";
+import { useCustomThemes } from "../application/state/customThemeStore";
 
 import { TerminalConnectionDialog } from "./terminal/TerminalConnectionDialog";
 import { TerminalToolbar } from "./terminal/TerminalToolbar";
+import { TerminalComposeBar } from "./terminal/TerminalComposeBar";
 import { TerminalContextMenu } from "./terminal/TerminalContextMenu";
 import { TerminalSearchBar } from "./terminal/TerminalSearchBar";
 import { createTerminalSessionStarters, type PendingAuth } from "./terminal/runtime/createTerminalSessionStarters";
@@ -137,6 +139,8 @@ interface TerminalProps {
   onSplitVertical?: () => void;
   isBroadcastEnabled?: boolean;
   onToggleBroadcast?: () => void;
+  onToggleComposeBar?: () => void;
+  isWorkspaceComposeBarOpen?: boolean;
   onBroadcastInput?: (data: string, sourceSessionId: string) => void;
 }
 
@@ -191,6 +195,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   onSplitVertical,
   isBroadcastEnabled,
   onToggleBroadcast,
+  onToggleComposeBar,
+  isWorkspaceComposeBarOpen,
   onBroadcastInput,
 }) => {
   // Timeout for connection - increased to 120s to allow time for keyboard-interactive (2FA) authentication
@@ -290,6 +296,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const dragCounterRef = useRef(0);
   const [pendingUploadEntries, setPendingUploadEntries] = useState<DropEntry[]>([]);
+  const [isComposeBarOpen, setIsComposeBarOpen] = useState(false);
 
   const terminalSearch = useTerminalSearch({ searchAddonRef, termRef });
   const {
@@ -344,13 +351,17 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const [pendingHostKeyInfo, setPendingHostKeyInfo] = useState<HostKeyInfo | null>(null);
   const pendingConnectionRef = useRef<(() => void) | null>(null);
 
+  // Subscribe to custom theme changes so editing triggers re-render
+  const customThemes = useCustomThemes();
+
   const effectiveTheme = useMemo(() => {
     if (host.theme) {
-      const hostTheme = TERMINAL_THEMES.find((t) => t.id === host.theme);
+      const hostTheme = TERMINAL_THEMES.find((t) => t.id === host.theme)
+        || customThemes.find((t) => t.id === host.theme);
       if (hostTheme) return hostTheme;
     }
     return terminalTheme;
-  }, [host.theme, terminalTheme]);
+  }, [host.theme, terminalTheme, customThemes]);
 
   const resolvedChainHosts =
     (host.hostChain?.hostIds
@@ -680,6 +691,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         termRef.current.options.scrollOnUserInput = terminalSettings.scrollOnInput;
         termRef.current.options.altClickMovesCursor = !terminalSettings.altAsMeta;
         termRef.current.options.wordSeparator = terminalSettings.wordSeparators;
+        termRef.current.options.ignoreBracketedPasteMode = terminalSettings.disableBracketedPaste ?? false;
       }
 
       setTimeout(() => safeFit(), 50);
@@ -876,11 +888,15 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     };
   }, []);
 
+  const disableBracketedPasteRef = useRef(terminalSettings?.disableBracketedPaste ?? false);
+  disableBracketedPasteRef.current = terminalSettings?.disableBracketedPaste ?? false;
+
   const terminalContextActions = useTerminalContextActions({
     termRef,
     sessionRef,
     terminalBackend,
     onHasSelectionChange: setHasSelection,
+    disableBracketedPasteRef,
   });
 
   const handleSnippetClick = (cmd: string) => {
@@ -1095,6 +1111,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       onClose={() => onCloseSession?.(sessionId)}
       isSearchOpen={isSearchOpen}
       onToggleSearch={handleToggleSearch}
+      isComposeBarOpen={inWorkspace ? isWorkspaceComposeBarOpen : isComposeBarOpen}
+      onToggleComposeBar={inWorkspace ? onToggleComposeBar : () => setIsComposeBarOpen(prev => !prev)}
     />
   );
 
@@ -1123,7 +1141,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       onClose={inWorkspace ? () => onCloseSession?.(sessionId) : undefined}
     >
       <div
-        className="relative h-full w-full flex overflow-hidden bg-gradient-to-br from-[#050910] via-[#06101a] to-[#0b1220]"
+        className={cn(
+          "relative h-full w-full flex overflow-hidden bg-gradient-to-br from-[#050910] via-[#06101a] to-[#0b1220]",
+          isComposeBarOpen && !inWorkspace && "flex-col"
+        )}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -1588,6 +1609,25 @@ const TerminalComponent: React.FC<TerminalProps> = ({
             )}
         </div>
 
+        {/* Compose Bar (solo sessions only; workspace uses TerminalLayer's global bar) */}
+        {isComposeBarOpen && !inWorkspace && (
+          <TerminalComposeBar
+            onSend={(text) => {
+              if (sessionRef.current) {
+                const payload = text + '\r';
+                terminalBackend.writeToSession(sessionRef.current, payload);
+                onBroadcastInput?.(payload, sessionRef.current);
+              }
+            }}
+            onClose={() => {
+              setIsComposeBarOpen(false);
+              termRef.current?.focus();
+            }}
+            isBroadcastEnabled={isBroadcastEnabled}
+            themeColors={effectiveTheme.colors}
+          />
+        )}
+
         <SFTPModal
           host={host}
           credentials={(() => {
@@ -1647,6 +1687,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
               proxy: proxyConfig,
               jumpHosts: jumpHosts && jumpHosts.length > 0 ? jumpHosts : undefined,
               sftpSudo: host.sftpSudo,
+              legacyAlgorithms: host.legacyAlgorithms,
             };
           })()}
           open={showSFTP && status === "connected"}
@@ -1656,6 +1697,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           }}
           initialPath={sftpInitialPath}
           initialEntriesToUpload={pendingUploadEntries}
+          onUpdateHost={onUpdateHost}
         />
       </div>
     </TerminalContextMenu>

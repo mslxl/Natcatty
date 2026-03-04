@@ -29,6 +29,13 @@ interface SftpModalDialogsProps {
   getSymbolicPermissions: () => string;
   handleSavePermissions: () => void;
   isChangingPermissions: boolean;
+  showCreateDialog: boolean;
+  setShowCreateDialog: (open: boolean) => void;
+  createType: "file" | "folder";
+  createName: string;
+  setCreateName: (value: string) => void;
+  isCreating: boolean;
+  handleCreateSubmit: () => void;
 }
 
 export const SftpModalDialogs: React.FC<SftpModalDialogsProps> = ({
@@ -49,6 +56,13 @@ export const SftpModalDialogs: React.FC<SftpModalDialogsProps> = ({
   getSymbolicPermissions,
   handleSavePermissions,
   isChangingPermissions,
+  showCreateDialog,
+  setShowCreateDialog,
+  createType,
+  createName,
+  setCreateName,
+  isCreating,
+  handleCreateSubmit,
 }) => (
   <>
     <Dialog open={showRenameDialog} onOpenChange={setShowRenameDialog}>
@@ -130,6 +144,39 @@ export const SftpModalDialogs: React.FC<SftpModalDialogsProps> = ({
           </Button>
           <Button onClick={handleSavePermissions} disabled={isChangingPermissions}>
             {isChangingPermissions ? <Loader2 size={14} className="mr-2 animate-spin" /> : null}
+            {t("common.apply")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+      <DialogContent className="sm:max-w-[400px]">
+        <DialogHeader>
+          <DialogTitle>
+            {t(createType === "folder" ? "sftp.newFolder" : "sftp.newFile")}
+          </DialogTitle>
+          <DialogDescription>
+            {t(createType === "folder" ? "sftp.prompt.newFolderName" : "sftp.fileName.placeholder")}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="py-4">
+          <Input
+            value={createName}
+            onChange={(e) => setCreateName(e.target.value)}
+            placeholder={t(createType === "folder" ? "sftp.prompt.newFolderName" : "sftp.fileName.placeholder")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleCreateSubmit();
+            }}
+            autoFocus
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
+            {t("common.cancel")}
+          </Button>
+          <Button onClick={handleCreateSubmit} disabled={isCreating || !createName.trim()}>
+            {isCreating ? <Loader2 size={14} className="mr-2 animate-spin" /> : null}
             {t("common.apply")}
           </Button>
         </DialogFooter>

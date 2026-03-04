@@ -157,6 +157,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
   const term = new XTerm({
     ...performanceConfig.options,
+    // Override ignoreBracketedPasteMode if user explicitly disables bracketed paste
+    ignoreBracketedPasteMode: settings?.disableBracketedPaste ?? performanceConfig.options.ignoreBracketedPasteMode,
     fontSize: effectiveFontSize,
     fontFamily,
     fontWeight: fontWeight as
@@ -262,15 +264,10 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
   if (performanceConfig.useWebGLAddon) {
     try {
-      webglAddon = (() => {
-        const webglOptions: Record<string, unknown> = { useCustomGlyphHandler: true };
-        try {
-          const WebglCtor = WebglAddon as unknown as new (options?: unknown) => WebglAddon;
-          return new WebglCtor(webglOptions);
-        } catch {
-          return new WebglAddon();
-        }
-      })();
+      // WebglAddon constructor only accepts `preserveDrawingBuffer?: boolean`.
+      // Passing an object here (legacy API assumption) unintentionally enables
+      // preserveDrawingBuffer and can cause sporadic glyph artifacts/ghosting.
+      webglAddon = new WebglAddon();
       webglAddon.onContextLoss(() => {
         logger.warn("[XTerm] WebGL context loss detected, disposing addon");
         webglAddon?.dispose();
@@ -414,7 +411,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
             const id = ctx.sessionRef.current;
             if (id) {
               let data = normalizeLineEndings(text);
-              if (term.modes.bracketedPasteMode) data = wrapBracketedPaste(data);
+              if (term.modes.bracketedPasteMode && !ctx.terminalSettingsRef.current?.disableBracketedPaste) data = wrapBracketedPaste(data);
               ctx.terminalBackend.writeToSession(id, data);
             }
           });
@@ -449,7 +446,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         const text = await navigator.clipboard.readText();
         if (text && ctx.sessionRef.current) {
           let data = normalizeLineEndings(text);
-          if (term.modes.bracketedPasteMode) data = wrapBracketedPaste(data);
+          if (term.modes.bracketedPasteMode && !ctx.terminalSettingsRef.current?.disableBracketedPaste) data = wrapBracketedPaste(data);
           ctx.terminalBackend.writeToSession(ctx.sessionRef.current, data);
         }
       } catch (err) {
