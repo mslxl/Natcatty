@@ -220,6 +220,7 @@ export const useSftpModalSession = ({
           ) {
             return;
           }
+          onClearSelection();
           setFiles(list);
           dirCacheRef.current.set(`${host.id}::${reloadPath}`, {
             files: list,
@@ -243,7 +244,7 @@ export const useSftpModalSession = ({
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     }
-  }, [closeSftpSession, ensureSftp, listSftp, host.id, t]);
+  }, [closeSftpSession, ensureSftp, listSftp, host.id, onClearSelection, t]);
 
   const loadFiles = useCallback(
     async (path: string, options?: { force?: boolean }) => {

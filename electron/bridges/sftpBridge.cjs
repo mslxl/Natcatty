@@ -148,16 +148,23 @@ const tryOpenSftpChannel = (client) =>
       settled = true;
       reject(new Error("SFTP channel open timed out"));
     }, SFTP_CHANNEL_OPEN_TIMEOUT_MS);
-    sshClient.sftp((err, sftp) => {
+    try {
+      sshClient.sftp((err, sftp) => {
+        clearTimeout(timer);
+        if (settled) {
+          // Timeout already fired — close the orphaned channel to prevent leaks
+          try { sftp?.end?.(); } catch { }
+          return;
+        }
+        if (err) return reject(err);
+        resolve(sftp || null);
+      });
+    } catch (err) {
       clearTimeout(timer);
-      if (settled) {
-        // Timeout already fired — close the orphaned channel to prevent leaks
-        try { sftp?.end?.(); } catch { }
-        return;
-      }
-      if (err) return reject(err);
-      resolve(sftp || null);
-    });
+      if (settled) return;
+      settled = true;
+      reject(err);
+    }
   });
 
 const getSftpChannel = async (client) => {
