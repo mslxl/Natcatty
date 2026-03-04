@@ -169,8 +169,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = ({
       )}
 
       {/* Bookmark button with dropdown */}
-      {!pane.connection?.isLocal && (
-        <Popover>
+      <Popover>
           <PopoverTrigger asChild>
             <Button
               variant="ghost"
@@ -237,7 +236,6 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = ({
             )}
           </PopoverContent>
         </Popover>
-      )}
 
       <div className="ml-auto flex items-center gap-0.5">
         {!pane.connection?.isLocal && (
