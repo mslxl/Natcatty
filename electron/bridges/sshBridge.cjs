@@ -601,7 +601,6 @@ async function startSSHSession(event, options) {
 
     // Agent forwarding
     if (options.agentForwarding) {
-      connectOpts.agentForward = true;
       if (!connectOpts.agent) {
         if (process.platform === "win32") {
           const agentStatus = await checkWindowsSshAgent();
@@ -612,6 +611,12 @@ async function startSSHSession(event, options) {
         } else {
           connectOpts.agent = process.env.SSH_AUTH_SOCK;
         }
+      }
+      // Only enable forwarding when an agent is actually available
+      if (connectOpts.agent) {
+        connectOpts.agentForward = true;
+      } else {
+        log("Agent forwarding requested but no agent available, skipping");
       }
     }
 
