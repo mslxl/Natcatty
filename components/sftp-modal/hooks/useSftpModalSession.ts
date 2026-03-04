@@ -165,9 +165,21 @@ export const useSftpModalSession = ({
           }
           sftpIdRef.current = null;
         }
-        await ensureSftp();
+        const newSftpId = await ensureSftp();
         reconnectingRef.current = false;
         setReconnecting(false);
+
+        // Auto-reload current directory after successful reconnect
+        try {
+          const list = await listSftp(newSftpId, currentPath);
+          setFiles(list);
+          dirCacheRef.current.set(`${host.id}::${currentPath}`, {
+            files: list,
+            timestamp: Date.now(),
+          });
+        } catch {
+          // Reload failed — UI still shows old data, user can manually refresh
+        }
         return;
       } catch (err) {
         logger.warn(
@@ -183,7 +195,7 @@ export const useSftpModalSession = ({
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     }
-  }, [closeSftp, ensureSftp, t]);
+  }, [closeSftp, ensureSftp, listSftp, currentPath, host.id, t]);
 
   const loadFiles = useCallback(
     async (path: string, options?: { force?: boolean }) => {

@@ -143,18 +143,22 @@ const tryOpenSftpChannel = (client) =>
       resolve(null);
       return;
     }
+    let settled = false;
     const timer = setTimeout(() => {
+      settled = true;
       reject(new Error("SFTP channel open timed out"));
     }, SFTP_CHANNEL_OPEN_TIMEOUT_MS);
     sshClient.sftp((err, sftp) => {
       clearTimeout(timer);
+      if (settled) {
+        // Timeout already fired — close the orphaned channel to prevent leaks
+        try { sftp?.end?.(); } catch { }
+        return;
+      }
       if (err) return reject(err);
       resolve(sftp || null);
     });
   });
-
-// Deduplication: avoid concurrent channel re-open attempts on the same client
-let _reopeningPromise = null;
 
 const getSftpChannel = async (client) => {
   if (!client) return null;
@@ -169,16 +173,16 @@ const getSftpChannel = async (client) => {
     return null;
   }
 
-  // Deduplicate: if another caller is already re-opening, wait for it
-  if (_reopeningPromise) {
+  // Deduplicate per-client: avoid concurrent channel re-open attempts
+  if (client._reopeningPromise) {
     try {
-      return await _reopeningPromise;
+      return await client._reopeningPromise;
     } catch {
       return null;
     }
   }
 
-  _reopeningPromise = (async () => {
+  client._reopeningPromise = (async () => {
     try {
       const reopened = await tryOpenSftpChannel(client);
       if (hasSftpChannelApi(reopened)) {
@@ -192,9 +196,9 @@ const getSftpChannel = async (client) => {
   })();
 
   try {
-    return await _reopeningPromise;
+    return await client._reopeningPromise;
   } finally {
-    _reopeningPromise = null;
+    client._reopeningPromise = null;
   }
 };
 

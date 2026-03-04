@@ -7,13 +7,14 @@ export const isSessionError = (err: unknown): boolean => {
     msg.includes("session lost") ||
     msg.includes("channel not ready") ||
     msg.includes("readdir is not a function") ||
-    msg.includes("not found") ||
-    msg.includes("closed") ||
+    msg.includes("channel closed") ||
+    msg.includes("connection closed") ||
     msg.includes("connection reset") ||
     msg.includes("write after end") ||
     msg.includes("no response") ||
     msg.includes("not connected") ||
-    msg.includes("client disconnected")
+    msg.includes("client disconnected") ||
+    msg.includes("timed out")
   );
 };
 
