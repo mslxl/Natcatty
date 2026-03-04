@@ -22,17 +22,14 @@ export const isSessionError = (err: unknown): boolean => {
  * This includes session errors AND target directory deletion errors.
  */
 export const isFatalUploadError = (errorMessage: string): boolean => {
+  // Reuse isSessionError for session-related checks
+  const asError = new Error(errorMessage);
+  if (isSessionError(asError)) return true;
+
   const msg = errorMessage.toLowerCase();
   return (
-    // Session-related errors
-    msg.includes("session not found") ||
-    msg.includes("sftp session") ||
-    msg.includes("session lost") ||
-    msg.includes("channel not ready") ||
-    msg.includes("readdir is not a function") ||
+    // Connection-related (broader than session errors)
     msg.includes("connection") ||
-    msg.includes("disconnected") ||
-    msg.includes("not connected") ||
     // Target directory was deleted during upload
     msg.includes("no such file") ||
     msg.includes("enoent") ||

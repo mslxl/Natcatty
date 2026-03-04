@@ -23,9 +23,9 @@ const { NetcattyAgent } = require("./netcattyAgent.cjs");
 const fileWatcherBridge = require("./fileWatcherBridge.cjs");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
 const { createProxySocket } = require("./proxyUtils.cjs");
-const { 
-  buildAuthHandler, 
-  createKeyboardInteractiveHandler, 
+const {
+  buildAuthHandler,
+  createKeyboardInteractiveHandler,
   applyAuthToConnOpts,
   safeSend: authSafeSend,
   findAllDefaultPrivateKeys: findAllDefaultPrivateKeysFromHelper,
@@ -134,6 +134,8 @@ const hasSftpChannelApi = (value) =>
   typeof value.mkdir === "function" &&
   typeof value.unlink === "function";
 
+const SFTP_CHANNEL_OPEN_TIMEOUT_MS = 10_000;
+
 const tryOpenSftpChannel = (client) =>
   new Promise((resolve, reject) => {
     const sshClient = client?.client;
@@ -141,11 +143,18 @@ const tryOpenSftpChannel = (client) =>
       resolve(null);
       return;
     }
+    const timer = setTimeout(() => {
+      reject(new Error("SFTP channel open timed out"));
+    }, SFTP_CHANNEL_OPEN_TIMEOUT_MS);
     sshClient.sftp((err, sftp) => {
+      clearTimeout(timer);
       if (err) return reject(err);
       resolve(sftp || null);
     });
   });
+
+// Deduplication: avoid concurrent channel re-open attempts on the same client
+let _reopeningPromise = null;
 
 const getSftpChannel = async (client) => {
   if (!client) return null;
@@ -160,17 +169,33 @@ const getSftpChannel = async (client) => {
     return null;
   }
 
-  try {
-    const reopened = await tryOpenSftpChannel(client);
-    if (hasSftpChannelApi(reopened)) {
-      client.sftp = reopened;
-      return reopened;
+  // Deduplicate: if another caller is already re-opening, wait for it
+  if (_reopeningPromise) {
+    try {
+      return await _reopeningPromise;
+    } catch {
+      return null;
     }
-  } catch (err) {
-    console.warn("[SFTP] Failed to recover SFTP channel", err?.message || String(err));
   }
 
-  return null;
+  _reopeningPromise = (async () => {
+    try {
+      const reopened = await tryOpenSftpChannel(client);
+      if (hasSftpChannelApi(reopened)) {
+        client.sftp = reopened;
+        return reopened;
+      }
+    } catch (err) {
+      console.warn("[SFTP] Failed to recover SFTP channel", err?.message || String(err));
+    }
+    return null;
+  })();
+
+  try {
+    return await _reopeningPromise;
+  } finally {
+    _reopeningPromise = null;
+  }
 };
 
 const requireSftpChannel = async (client) => {
@@ -1037,6 +1062,7 @@ async function readSftp(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
+  await requireSftpChannel(client);
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
   const encodedPath = encodePath(payload.path, encoding);
   const buffer = await client.get(encodedPath);
@@ -1050,6 +1076,7 @@ async function readSftpBinary(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
+  await requireSftpChannel(client);
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
   const encodedPath = encodePath(payload.path, encoding);
   const buffer = await client.get(encodedPath);
@@ -1064,6 +1091,7 @@ async function writeSftp(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
+  await requireSftpChannel(client);
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
   const encodedPath = encodePath(payload.path, encoding);
   await client.put(Buffer.from(payload.content, "utf-8"), encodedPath);
@@ -1077,6 +1105,7 @@ async function writeSftpBinary(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
+  await requireSftpChannel(client);
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
   const encodedPath = encodePath(payload.path, encoding);
   await client.put(Buffer.from(payload.content), encodedPath);
@@ -1093,6 +1122,7 @@ async function writeSftpBinaryWithProgress(event, payload) {
   if (!client) throw new Error("SFTP session not found");
 
   const { sftpId, path: remotePath, content, transferId } = payload;
+  await requireSftpChannel(client);
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
   const encodedPath = encodePath(remotePath, encoding);
 
@@ -1327,6 +1357,7 @@ async function deleteSftp(event, payload) {
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
 
   if (encoding === "utf-8") {
+    await requireSftpChannel(client);
     const encodedPath = encodePath(payload.path, encoding);
     const stat = await client.stat(encodedPath);
     if (stat.isDirectory) {
@@ -1377,6 +1408,7 @@ async function renameSftp(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
+  await requireSftpChannel(client);
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
   const encodedOldPath = encodePath(payload.oldPath, encoding);
   const encodedNewPath = encodePath(payload.newPath, encoding);
@@ -1391,6 +1423,7 @@ async function statSftp(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
+  await requireSftpChannel(client);
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
   const encodedPath = encodePath(payload.path, encoding);
   const stat = await client.stat(encodedPath);
@@ -1410,6 +1443,7 @@ async function chmodSftp(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
+  await requireSftpChannel(client);
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
   const encodedPath = encodePath(payload.path, encoding);
   await client.chmod(encodedPath, parseInt(payload.mode, 8));
