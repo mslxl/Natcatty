@@ -127,7 +127,102 @@ const encodePathForSession = (sftpId, inputPath, requestedEncoding) => {
   return encodePath(inputPath, encoding);
 };
 
-const getSftpChannel = (client) => client?.sftp || client?.client?.sftp;
+const hasSftpChannelApi = (value) =>
+  !!value &&
+  typeof value.readdir === "function" &&
+  typeof value.stat === "function" &&
+  typeof value.mkdir === "function" &&
+  typeof value.unlink === "function";
+
+const SFTP_CHANNEL_OPEN_TIMEOUT_MS = 10_000;
+
+const tryOpenSftpChannel = (client) =>
+  new Promise((resolve, reject) => {
+    const sshClient = client?.client;
+    if (!sshClient || typeof sshClient.sftp !== "function") {
+      resolve(null);
+      return;
+    }
+    let settled = false;
+    const timer = setTimeout(() => {
+      settled = true;
+      reject(new Error("SFTP channel open timed out"));
+    }, SFTP_CHANNEL_OPEN_TIMEOUT_MS);
+    try {
+      sshClient.sftp((err, sftp) => {
+        clearTimeout(timer);
+        if (settled) {
+          // Timeout already fired — close the orphaned channel to prevent leaks
+          try { sftp?.end?.(); } catch { }
+          return;
+        }
+        if (err) return reject(err);
+        resolve(sftp || null);
+      });
+    } catch (err) {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      reject(err);
+    }
+  });
+
+const getSftpChannel = async (client) => {
+  if (!client) return null;
+
+  if (hasSftpChannelApi(client.sftp)) {
+    return client.sftp;
+  }
+
+  // sudo sessions must keep using the sudo-bootstrapped SFTP wrapper.
+  // Reopening with sshClient.sftp() would silently downgrade permissions.
+  if (client.__netcattySudoMode) {
+    console.warn("[SFTP] Sudo SFTP channel is unavailable; automatic recovery is disabled for sudo sessions. Please reconnect.");
+    return null;
+  }
+
+  // Do not treat ssh2's "client.sftp" method as a channel object.
+  // Re-open a fresh channel when the cached channel is stale.
+  if (!client.client || typeof client.client.sftp !== "function") {
+    return null;
+  }
+
+  // Deduplicate per-client: avoid concurrent channel re-open attempts
+  if (client._reopeningPromise) {
+    try {
+      return await client._reopeningPromise;
+    } catch {
+      return null;
+    }
+  }
+
+  client._reopeningPromise = (async () => {
+    try {
+      const reopened = await tryOpenSftpChannel(client);
+      if (hasSftpChannelApi(reopened)) {
+        client.sftp = reopened;
+        return reopened;
+      }
+    } catch (err) {
+      console.warn("[SFTP] Failed to recover SFTP channel", err?.message || String(err));
+    }
+    return null;
+  })();
+
+  try {
+    return await client._reopeningPromise;
+  } finally {
+    client._reopeningPromise = null;
+  }
+};
+
+const requireSftpChannel = async (client) => {
+  const sftp = await getSftpChannel(client);
+  if (!sftp) {
+    throw new Error("SFTP session lost. Please reconnect.");
+  }
+  return sftp;
+};
 
 const statAsync = (sftp, targetPath) =>
   new Promise((resolve, reject) => {
@@ -241,13 +336,13 @@ const ensureRemoteDirForSession = async (sftpId, dirPath, requestedEncoding) => 
 
   const encoding = resolveEncodingForRequest(sftpId, requestedEncoding);
   if (encoding === "utf-8") {
+    await requireSftpChannel(client);
     const encodedPath = encodePath(dirPath, encoding);
     await client.mkdir(encodedPath, true);
     return true;
   }
 
-  const sftp = getSftpChannel(client);
-  if (!sftp) throw new Error("SFTP channel not ready");
+  const sftp = await requireSftpChannel(client);
 
   const normalizedPath = await normalizeRemotePathString(client, dirPath);
   await ensureRemoteDirInternal(sftp, normalizedPath, encoding);
@@ -891,10 +986,7 @@ async function listSftp(event, payload) {
   const pathEncoding = resolveEncodingForRequest(payload.sftpId, requestedEncoding);
   const encodedPath = encodePath(basePath, pathEncoding);
 
-  const sftp = getSftpChannel(client);
-  if (!sftp) {
-    throw new Error("SFTP channel not ready");
-  }
+  const sftp = await requireSftpChannel(client);
 
   let list;
   try {
@@ -1015,6 +1107,7 @@ async function readSftp(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
+  await requireSftpChannel(client);
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
   const encodedPath = encodePath(payload.path, encoding);
   const buffer = await client.get(encodedPath);
@@ -1028,6 +1121,7 @@ async function readSftpBinary(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
+  await requireSftpChannel(client);
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
   const encodedPath = encodePath(payload.path, encoding);
   const buffer = await client.get(encodedPath);
@@ -1042,6 +1136,7 @@ async function writeSftp(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
+  await requireSftpChannel(client);
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
   const encodedPath = encodePath(payload.path, encoding);
   await client.put(Buffer.from(payload.content, "utf-8"), encodedPath);
@@ -1055,6 +1150,7 @@ async function writeSftpBinary(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
+  await requireSftpChannel(client);
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
   const encodedPath = encodePath(payload.path, encoding);
   await client.put(Buffer.from(payload.content), encodedPath);
@@ -1071,6 +1167,7 @@ async function writeSftpBinaryWithProgress(event, payload) {
   if (!client) throw new Error("SFTP session not found");
 
   const { sftpId, path: remotePath, content, transferId } = payload;
+  await requireSftpChannel(client);
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
   const encodedPath = encodePath(remotePath, encoding);
 
@@ -1305,6 +1402,7 @@ async function deleteSftp(event, payload) {
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
 
   if (encoding === "utf-8") {
+    await requireSftpChannel(client);
     const encodedPath = encodePath(payload.path, encoding);
     const stat = await client.stat(encodedPath);
     if (stat.isDirectory) {
@@ -1342,8 +1440,7 @@ async function deleteSftp(event, payload) {
     return true;
   }
 
-  const sftp = getSftpChannel(client);
-  if (!sftp) throw new Error("SFTP channel not ready");
+  const sftp = await requireSftpChannel(client);
   const normalizedPath = await normalizeRemotePathString(client, payload.path);
   await removeRemotePathInternal(sftp, normalizedPath, encoding);
   return true;
@@ -1356,6 +1453,7 @@ async function renameSftp(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
+  await requireSftpChannel(client);
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
   const encodedOldPath = encodePath(payload.oldPath, encoding);
   const encodedNewPath = encodePath(payload.newPath, encoding);
@@ -1370,6 +1468,7 @@ async function statSftp(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
+  await requireSftpChannel(client);
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
   const encodedPath = encodePath(payload.path, encoding);
   const stat = await client.stat(encodedPath);
@@ -1389,6 +1488,7 @@ async function chmodSftp(event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
 
+  await requireSftpChannel(client);
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
   const encodedPath = encodePath(payload.path, encoding);
   await client.chmod(encodedPath, parseInt(payload.mode, 8));
@@ -1426,6 +1526,7 @@ module.exports = {
   init,
   registerHandlers,
   getSftpClients,
+  requireSftpChannel,
   encodePathForSession,
   ensureRemoteDirForSession,
   openSftp,

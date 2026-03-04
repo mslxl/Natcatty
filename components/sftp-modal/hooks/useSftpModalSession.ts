@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Host, RemoteFile } from "../../../types";
 import { logger } from "../../../lib/logger";
+import { isSessionError } from "../../../application/state/sftp/errors";
 import { toast } from "../../ui/toast";
 
 interface UseSftpModalSessionParams {
@@ -78,11 +79,12 @@ export const useSftpModalSession = ({
   getHomeDir,
   onClearSelection,
 }: UseSftpModalSessionParams): UseSftpModalSessionResult => {
-  const [currentPath, setCurrentPath] = useState("/");
+  const [currentPath, setCurrentPathState] = useState("/");
   const [files, setFiles] = useState<RemoteFile[]>([]);
   const [loading, setLoading] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [sessionVersion, setSessionVersion] = useState(0);
+  const currentPathRef = useRef(currentPath);
   const sftpIdRef = useRef<string | null>(null);
   const closingPromiseRef = useRef<Promise<void> | null>(null);
   const initializedRef = useRef(false);
@@ -98,6 +100,10 @@ export const useSftpModalSession = ({
     Map<string, { files: RemoteFile[]; timestamp: number }>
   >(new Map());
   const loadSeqRef = useRef(0);
+  const setCurrentPath = useCallback((path: string) => {
+    currentPathRef.current = path;
+    setCurrentPathState(path);
+  }, []);
   const bumpSessionVersion = useCallback(() => {
     setSessionVersion((prev) => prev + 1);
   }, []);
@@ -187,20 +193,7 @@ export const useSftpModalSession = ({
     await currentClosePromise;
   }, [bumpSessionVersion, closeSftp, isLocalSession]);
 
-  const isSessionError = useCallback((err: unknown): boolean => {
-    if (!(err instanceof Error)) return false;
-    const msg = err.message.toLowerCase();
-    return (
-      msg.includes("session not found") ||
-      msg.includes("sftp session") ||
-      msg.includes("not found") ||
-      msg.includes("closed") ||
-      msg.includes("connection reset") ||
-      msg.includes("write after end") ||
-      msg.includes("no response") ||
-      msg.includes("client disconnected")
-    );
-  }, []);
+  // Use shared session-error classifier from errors.ts
 
   const handleSessionError = useCallback(async () => {
     if (reconnectingRef.current) return;
@@ -212,9 +205,30 @@ export const useSftpModalSession = ({
       try {
         reconnectAttemptsRef.current += 1;
         await closeSftpSession();
-        await ensureSftp();
+        const newSftpId = await ensureSftp();
         reconnectingRef.current = false;
         setReconnecting(false);
+
+        // Auto-reload current directory after successful reconnect
+        try {
+          const reloadPath = currentPathRef.current;
+          const reloadRequestId = loadSeqRef.current;
+          const list = await listSftp(newSftpId, reloadPath);
+          if (
+            reloadRequestId !== loadSeqRef.current ||
+            currentPathRef.current !== reloadPath
+          ) {
+            return;
+          }
+          onClearSelection();
+          setFiles(list);
+          dirCacheRef.current.set(`${host.id}::${reloadPath}`, {
+            files: list,
+            timestamp: Date.now(),
+          });
+        } catch {
+          // Reload failed — UI still shows old data, user can manually refresh
+        }
         return;
       } catch (err) {
         logger.warn(
@@ -230,7 +244,7 @@ export const useSftpModalSession = ({
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     }
-  }, [closeSftpSession, ensureSftp, t]);
+  }, [closeSftpSession, ensureSftp, listSftp, host.id, onClearSelection, t]);
 
   const loadFiles = useCallback(
     async (path: string, options?: { force?: boolean }) => {
@@ -283,7 +297,7 @@ export const useSftpModalSession = ({
         }
       }
     },
-    [ensureSftp, host.id, isLocalSession, listLocalDir, listSftp, t, isSessionError, handleSessionError, files.length, onClearSelection],
+    [ensureSftp, host.id, isLocalSession, listLocalDir, listSftp, t, handleSessionError, files.length, onClearSelection],
   );
 
   useLayoutEffect(() => {
@@ -401,6 +415,7 @@ export const useSftpModalSession = ({
     loadFiles,
     onClearSelection,
     open,
+    setCurrentPath,
     t,
   ]);
 

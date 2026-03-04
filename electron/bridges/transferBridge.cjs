@@ -6,7 +6,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
-const { encodePathForSession, ensureRemoteDirForSession } = require("./sftpBridge.cjs");
+const { encodePathForSession, ensureRemoteDirForSession, requireSftpChannel } = require("./sftpBridge.cjs");
 
 // ── Transfer performance tuning ──────────────────────────────────────────────
 // ssh2's fastPut/fastGet send multiple SFTP read/write requests in parallel,
@@ -52,6 +52,7 @@ async function openIsolatedSftpChannel(client) {
  * Falls back to sequential stream piping if fastPut is unavailable.
  */
 async function uploadFile(localPath, remotePath, client, fileSize, transfer, sendProgress) {
+  await requireSftpChannel(client);
   const sftp = client.sftp;
   if (!sftp) throw new Error("SFTP client not ready");
 
@@ -159,6 +160,7 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
  * Falls back to sequential stream piping if fastGet is unavailable.
  */
 async function downloadFile(remotePath, localPath, client, fileSize, transfer, sendProgress) {
+  await requireSftpChannel(client);
   const sftp = client.sftp;
   if (!sftp) throw new Error("SFTP client not ready");
 
@@ -404,6 +406,7 @@ async function startTransfer(event, payload, onProgress) {
       } else if (sourceType === 'sftp') {
         const client = sftpClients.get(sourceSftpId);
         if (!client) throw new Error("Source SFTP session not found");
+        await requireSftpChannel(client);
         const encodedSourcePath = encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
         const stat = await client.stat(encodedSourcePath);
         fileSize = stat.size;
