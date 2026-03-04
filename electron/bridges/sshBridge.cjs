@@ -227,6 +227,31 @@ let electronModule = null;
 // Cache persists until auth failure, then cleared to retry all methods
 const authMethodCache = new Map();
 
+// Per-session terminal encoding (default: utf-8)
+const sessionEncodings = new Map();
+// Per-session stateful iconv decoders (keyed by sessionId, value: { stdout, stderr })
+const sessionDecoders = new Map();
+const iconv = require("iconv-lite");
+
+function getSessionDecoder(sessionId, stream) {
+  let decoders = sessionDecoders.get(sessionId);
+  if (!decoders) {
+    decoders = { stdout: null, stderr: null };
+    sessionDecoders.set(sessionId, decoders);
+  }
+  if (!decoders[stream]) {
+    const enc = sessionEncodings.get(sessionId) || "utf-8";
+    decoders[stream] = iconv.getDecoder(enc);
+  }
+  return decoders[stream];
+}
+
+function resetSessionDecoders(sessionId) {
+  const enc = sessionEncodings.get(sessionId) || "utf-8";
+  const decoders = { stdout: iconv.getDecoder(enc), stderr: iconv.getDecoder(enc) };
+  sessionDecoders.set(sessionId, decoders);
+}
+
 function getAuthCacheKey(username, hostname, port) {
   return `${username}@${hostname}:${port || 22}`;
 }
@@ -976,11 +1001,13 @@ async function startSSHSession(event, options) {
             };
 
             stream.on("data", (data) => {
-              bufferData(data.toString("utf8"));
+              const decoder = getSessionDecoder(sessionId, "stdout");
+              bufferData(decoder.write(data));
             });
 
             stream.stderr?.on("data", (data) => {
-              bufferData(data.toString("utf8"));
+              const decoder = getSessionDecoder(sessionId, "stderr");
+              bufferData(decoder.write(data));
             });
 
             stream.on("close", () => {
@@ -992,11 +1019,18 @@ async function startSSHSession(event, options) {
               const contents = event.sender;
               safeSend(contents, "netcatty:exit", { sessionId, exitCode: 0 });
               sessions.delete(sessionId);
+              sessionEncodings.delete(sessionId);
+              sessionDecoders.delete(sessionId);
               conn.end();
               for (const c of chainConnections) {
                 try { c.end(); } catch { }
               }
             });
+
+            // Pre-seed encoding from host charset if it's a GB variant
+            if (options.charset && /^gb/i.test(String(options.charset).trim())) {
+              sessionEncodings.set(sessionId, "gb18030");
+            }
 
             // Run startup command if specified
             if (options.startupCommand) {
@@ -1803,6 +1837,24 @@ async function getServerStats(event, payload) {
 }
 
 /**
+ * Set terminal encoding for an active SSH session
+ */
+async function setSessionEncoding(_event, { sessionId, encoding }) {
+  const session = sessions?.get(sessionId);
+  if (!session || !session.stream) {
+    return { ok: false, encoding: encoding || "utf-8" };
+  }
+  const enc = String(encoding || "utf-8").toLowerCase();
+  if (!iconv.encodingExists(enc)) {
+    return { ok: false, encoding: enc };
+  }
+  sessionEncodings.set(sessionId, enc);
+  // Reset stateful decoders so new data uses the updated encoding
+  resetSessionDecoders(sessionId);
+  return { ok: true, encoding: enc };
+}
+
+/**
  * Register IPC handlers for SSH operations
  */
 function registerHandlers(ipcMain) {
@@ -1811,6 +1863,7 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:ssh:pwd", getSessionPwd);
   ipcMain.handle("netcatty:ssh:stats", getServerStats);
   ipcMain.handle("netcatty:key:generate", generateKeyPair);
+  ipcMain.handle("netcatty:ssh:setEncoding", setSessionEncoding);
   ipcMain.handle("netcatty:ssh:check-agent", async () => {
     return await checkWindowsSshAgent();
   });
