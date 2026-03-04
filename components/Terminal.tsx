@@ -378,12 +378,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     setStatus(next);
     hasConnectedRef.current = next === "connected";
     onStatusChange?.(sessionId, next);
-    // Sync terminal encoding to backend when SSH session becomes connected,
-    // in case user changed encoding while still connecting
-    const isSSH = host.protocol !== 'local' && host.protocol !== 'serial' && host.protocol !== 'telnet' && host.protocol !== 'mosh' && !host.moshEnabled && !host.id?.startsWith('local-') && !host.id?.startsWith('serial-');
-    if (next === "connected" && sessionRef.current && isSSH) {
-      setSessionEncoding(sessionRef.current, terminalEncodingRef.current);
-    }
   };
 
   const cleanupSession = () => {
@@ -440,6 +434,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     setProgressValue,
     setChainProgress,
     t,
+    onSessionAttached: (id: string) => {
+      // Sync terminal encoding to SSH backend before first data arrives
+      const isSSH = host.protocol !== 'local' && host.protocol !== 'serial' && host.protocol !== 'telnet' && host.protocol !== 'mosh' && !host.moshEnabled && !host.id?.startsWith('local-') && !host.id?.startsWith('serial-');
+      if (isSSH) {
+        setSessionEncoding(id, terminalEncodingRef.current);
+      }
+    },
     onSessionExit,
     onTerminalDataCapture,
     onOsDetected,

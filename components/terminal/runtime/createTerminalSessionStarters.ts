@@ -91,6 +91,7 @@ export type TerminalSessionStartersContext = {
   setChainProgress: Dispatch<SetStateAction<ChainProgressState>>;
   t?: (key: string) => string;
 
+  onSessionAttached?: (sessionId: string) => void;
   onSessionExit?: (sessionId: string) => void;
   onTerminalDataCapture?: (sessionId: string, data: string) => void;
   onOsDetected?: (hostId: string, distro: string) => void;
@@ -128,6 +129,7 @@ const attachSessionToTerminal = (
   },
 ) => {
   ctx.sessionRef.current = id;
+  ctx.onSessionAttached?.(id);
 
   ctx.disposeDataRef.current = ctx.terminalBackend.onSessionData(id, (chunk) => {
     let data = chunk;
