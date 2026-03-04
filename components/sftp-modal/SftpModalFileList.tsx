@@ -342,10 +342,12 @@ export const SftpModalFileList: React.FC<SftpModalFileListProps> = ({
                               <FolderOpen size={14} className="mr-2" />
                               {t("sftp.context.open")}
                             </ContextMenuItem>
-                            <ContextMenuItem onClick={() => handleDownload(file)}>
-                              <Download size={14} className="mr-2" />
-                              {t("sftp.context.download")}
-                            </ContextMenuItem>
+                            {!isLocalSession && (
+                              <ContextMenuItem onClick={() => handleDownload(file)}>
+                                <Download size={14} className="mr-2" />
+                                {t("sftp.context.download")}
+                              </ContextMenuItem>
+                            )}
                           </>
                         )}
                         {isDownloadableFile && (

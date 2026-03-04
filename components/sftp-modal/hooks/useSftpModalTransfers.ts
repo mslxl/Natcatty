@@ -480,7 +480,9 @@ export const useSftpModalTransfers = ({
 
             const downloadDir = async (remotePath: string, localPath: string, depth = 0): Promise<void> => {
               // Prevent excessive recursion (catches symlink cycles like loop -> .)
-              if (depth > MAX_RECURSION_DEPTH) return;
+              if (depth > MAX_RECURSION_DEPTH) {
+                throw new Error('Maximum directory depth exceeded (possible symlink cycle)');
+              }
               // Prevent revisiting the same path
               if (visitedPaths.has(remotePath)) return;
               visitedPaths.add(remotePath);
