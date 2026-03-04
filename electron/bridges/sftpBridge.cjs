@@ -1486,6 +1486,7 @@ module.exports = {
   init,
   registerHandlers,
   getSftpClients,
+  requireSftpChannel,
   encodePathForSession,
   ensureRemoteDirForSession,
   openSftp,

@@ -6,7 +6,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
-const { encodePathForSession, ensureRemoteDirForSession } = require("./sftpBridge.cjs");
+const { encodePathForSession, ensureRemoteDirForSession, requireSftpChannel } = require("./sftpBridge.cjs");
 
 // Shared references
 let sftpClients = null;
@@ -27,6 +27,9 @@ function init(deps) {
  * Upload a local file to SFTP using streams (supports cancellation)
  */
 async function uploadWithStreams(localPath, remotePath, client, fileSize, transfer, sendProgress) {
+  // Ensure channel is valid before starting stream transfer
+  await requireSftpChannel(client);
+
   return new Promise((resolve, reject) => {
     const readStream = fs.createReadStream(localPath);
 
@@ -55,8 +58,8 @@ async function uploadWithStreams(localPath, remotePath, client, fileSize, transf
 
       if (err) {
         // Destroy streams on error
-        try { readStream.destroy(); } catch {}
-        try { writeStream.destroy(); } catch {}
+        try { readStream.destroy(); } catch { }
+        try { writeStream.destroy(); } catch { }
         reject(err);
       } else {
         resolve();
@@ -90,6 +93,9 @@ async function uploadWithStreams(localPath, remotePath, client, fileSize, transf
  * Download from SFTP to local file using streams (supports cancellation)
  */
 async function downloadWithStreams(remotePath, localPath, client, fileSize, transfer, sendProgress) {
+  // Ensure channel is valid before starting stream transfer
+  await requireSftpChannel(client);
+
   return new Promise((resolve, reject) => {
     // Get the underlying sftp object from ssh2-sftp-client
     const sftp = client.sftp;
@@ -117,8 +123,8 @@ async function downloadWithStreams(remotePath, localPath, client, fileSize, tran
 
       if (err) {
         // Destroy streams on error
-        try { readStream.destroy(); } catch {}
-        try { writeStream.destroy(); } catch {}
+        try { readStream.destroy(); } catch { }
+        try { writeStream.destroy(); } catch { }
         reject(err);
       } else {
         resolve();
@@ -224,6 +230,7 @@ async function startTransfer(event, payload, onProgress) {
       } else if (sourceType === 'sftp') {
         const client = sftpClients.get(sourceSftpId);
         if (!client) throw new Error("Source SFTP session not found");
+        await requireSftpChannel(client);
         const encodedSourcePath = encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
         const stat = await client.stat(encodedSourcePath);
         fileSize = stat.size;
@@ -240,7 +247,7 @@ async function startTransfer(event, payload, onProgress) {
       if (!client) throw new Error("Target SFTP session not found");
 
       const dir = path.dirname(targetPath).replace(/\\/g, '/');
-      try { await ensureRemoteDirForSession(targetSftpId, dir, targetEncoding); } catch {}
+      try { await ensureRemoteDirForSession(targetSftpId, dir, targetEncoding); } catch { }
 
       const encodedTargetPath = encodePathForSession(targetSftpId, targetPath, targetEncoding);
       await uploadWithStreams(sourcePath, encodedTargetPath, client, fileSize, transfer, sendProgress);
@@ -276,8 +283,8 @@ async function startTransfer(event, payload, onProgress) {
           readStream.removeAllListeners();
           writeStream.removeAllListeners();
           if (err) {
-            try { readStream.destroy(); } catch {}
-            try { writeStream.destroy(); } catch {}
+            try { readStream.destroy(); } catch { }
+            try { writeStream.destroy(); } catch { }
             reject(err);
           } else {
             resolve();
@@ -330,13 +337,13 @@ async function startTransfer(event, payload, onProgress) {
       await downloadWithStreams(encodedSourcePath, tempPath, sourceClient, fileSize, transfer, downloadProgress);
 
       if (transfer.cancelled) {
-        try { await fs.promises.unlink(tempPath); } catch {}
+        try { await fs.promises.unlink(tempPath); } catch { }
         throw new Error('Transfer cancelled');
       }
 
       // Upload phase (50-100%) - wrap progress to show 50-100%
       const dir = path.dirname(targetPath).replace(/\\/g, '/');
-      try { await ensureRemoteDirForSession(targetSftpId, dir, targetEncoding); } catch {}
+      try { await ensureRemoteDirForSession(targetSftpId, dir, targetEncoding); } catch { }
 
       const encodedTargetPath = encodePathForSession(targetSftpId, targetPath, targetEncoding);
       const uploadProgress = (transferred, total) => {
@@ -345,16 +352,16 @@ async function startTransfer(event, payload, onProgress) {
       await uploadWithStreams(tempPath, encodedTargetPath, targetClient, fileSize, transfer, uploadProgress);
 
       // Cleanup temp file
-      try { await fs.promises.unlink(tempPath); } catch {}
+      try { await fs.promises.unlink(tempPath); } catch { }
 
     } else {
       throw new Error("Invalid transfer configuration");
     }
-    
+
     // Send final 100% progress
     sendProgress(fileSize, fileSize);
     sendComplete();
-    
+
     return { transferId, totalBytes: fileSize };
   } catch (err) {
     if (err.message === 'Transfer cancelled') {
@@ -372,24 +379,17 @@ async function startTransfer(event, payload, onProgress) {
  */
 async function cancelTransfer(event, payload) {
   const { transferId } = payload;
-  console.log('[transferBridge] cancelTransfer called for:', transferId);
   const transfer = activeTransfers.get(transferId);
-  console.log('[transferBridge] Found transfer:', !!transfer, 'activeTransfers keys:', Array.from(activeTransfers.keys()));
   if (transfer) {
     transfer.cancelled = true;
-    console.log('[transferBridge] Set cancelled=true for transfer:', transferId);
 
     // Destroy streams to immediately stop the transfer
     if (transfer.readStream) {
-      console.log('[transferBridge] Destroying read stream');
-      try { transfer.readStream.destroy(); } catch (e) { console.log('[transferBridge] Error destroying readStream:', e); }
+      try { transfer.readStream.destroy(); } catch { }
     }
     if (transfer.writeStream) {
-      console.log('[transferBridge] Destroying write stream');
-      try { transfer.writeStream.destroy(); } catch (e) { console.log('[transferBridge] Error destroying writeStream:', e); }
+      try { transfer.writeStream.destroy(); } catch { }
     }
-
-    console.log('[transferBridge] Transfer marked for cancellation');
   }
   return { success: true };
 }
