@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Host, RemoteFile } from "../../../types";
 import { logger } from "../../../lib/logger";
+import { isSessionError } from "../../../application/state/sftp/errors";
 import { toast } from "../../ui/toast";
 
 interface UseSftpModalSessionParams {
@@ -145,24 +146,7 @@ export const useSftpModalSession = ({
     sftpIdRef.current = null;
   }, [closeSftp, isLocalSession]);
 
-  const isSessionError = useCallback((err: unknown): boolean => {
-    if (!(err instanceof Error)) return false;
-    const msg = err.message.toLowerCase();
-    return (
-      msg.includes("session not found") ||
-      msg.includes("sftp session") ||
-      msg.includes("session lost") ||
-      msg.includes("channel not ready") ||
-      msg.includes("readdir is not a function") ||
-      msg.includes("not found") ||
-      msg.includes("closed") ||
-      msg.includes("connection reset") ||
-      msg.includes("write after end") ||
-      msg.includes("no response") ||
-      msg.includes("not connected") ||
-      msg.includes("client disconnected")
-    );
-  }, []);
+  // Use shared session-error classifier from errors.ts
 
   const handleSessionError = useCallback(async () => {
     if (reconnectingRef.current) return;
@@ -252,7 +236,7 @@ export const useSftpModalSession = ({
         }
       }
     },
-    [ensureSftp, host.id, isLocalSession, listLocalDir, listSftp, t, isSessionError, handleSessionError, files.length, onClearSelection],
+    [ensureSftp, host.id, isLocalSession, listLocalDir, listSftp, t, handleSessionError, files.length, onClearSelection],
   );
 
   useLayoutEffect(() => {

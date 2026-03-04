@@ -10,6 +10,8 @@ export const isSessionError = (err: unknown): boolean => {
     msg.includes("not found") ||
     msg.includes("closed") ||
     msg.includes("connection reset") ||
+    msg.includes("write after end") ||
+    msg.includes("no response") ||
     msg.includes("not connected") ||
     msg.includes("client disconnected")
   );
