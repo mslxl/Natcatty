@@ -487,13 +487,10 @@ export const useSftpModalTransfers = ({
             let completedBytes = 0;
             // Track visited remote paths to prevent symlink cycles
             const visitedPaths = new Set<string>();
-            const MAX_RECURSION_DEPTH = 32;
+            // Max symlink-directory nesting depth to prevent cycles (only applies to symlinks)
+            const MAX_SYMLINK_DEPTH = 32;
 
-            const downloadDir = async (remotePath: string, localPath: string, depth = 0): Promise<void> => {
-              // Prevent excessive recursion (catches symlink cycles like loop -> .)
-              if (depth > MAX_RECURSION_DEPTH) {
-                throw new Error('Maximum directory depth exceeded (possible symlink cycle)');
-              }
+            const downloadDir = async (remotePath: string, localPath: string, symlinkDepth = 0): Promise<void> => {
               // Prevent revisiting the same path
               if (visitedPaths.has(remotePath)) return;
               visitedPaths.add(remotePath);
@@ -519,8 +516,13 @@ export const useSftpModalTransfers = ({
                 const remoteEntryPath = joinPath(remotePath, entry.name);
                 const localEntryPath = `${localPath}/${entry.name}`;
 
-                const isDir = entry.type === 'directory' || (entry.type === 'symlink' && entry.linkTarget === 'directory');
-                if (isDir) {
+                const isRealDir = entry.type === 'directory';
+                const isSymlinkDir = entry.type === 'symlink' && entry.linkTarget === 'directory';
+                if (isRealDir || isSymlinkDir) {
+                  // Only symlink directories can form cycles; enforce depth limit for them
+                  if (isSymlinkDir && symlinkDepth >= MAX_SYMLINK_DEPTH) {
+                    throw new Error('Maximum symlink directory depth exceeded (possible symlink cycle)');
+                  }
                   try {
                     await createUploadBridge.mkdirLocal(localEntryPath);
                   } catch (mkdirErr: unknown) {
@@ -528,7 +530,7 @@ export const useSftpModalTransfers = ({
                     const isEEXIST = mkdirErr instanceof Error && mkdirErr.message.includes('EEXIST');
                     if (!isEEXIST) throw mkdirErr;
                   }
-                  await downloadDir(remoteEntryPath, localEntryPath, depth + 1);
+                  await downloadDir(remoteEntryPath, localEntryPath, isSymlinkDir ? symlinkDepth + 1 : symlinkDepth);
                 } else {
                   // Download individual file
                   const childTransferId = `download-${Date.now()}-${Math.random().toString(36).slice(2)}`;
