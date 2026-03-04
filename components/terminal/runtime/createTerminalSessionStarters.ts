@@ -188,9 +188,9 @@ const runDistroDetection = async (
       timeout: 8000,
     });
     const data = `${res.stdout || ""}\n${res.stderr || ""}`;
-    const idMatch = data.match(/ID=([\\w\\-]+)/i);
+    const idMatch = data.match(/^ID="?([\w-]+)"?$/im);
     const distro = idMatch
-      ? idMatch[1].replace(/"/g, "")
+      ? idMatch[1]
       : (data.split(/\s+/)[0] || "").toLowerCase();
     if (distro) ctx.onOsDetected?.(ctx.host.id, distro);
   } catch (err) {
