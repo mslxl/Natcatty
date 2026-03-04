@@ -167,6 +167,13 @@ const getSftpChannel = async (client) => {
     return client.sftp;
   }
 
+  // sudo sessions must keep using the sudo-bootstrapped SFTP wrapper.
+  // Reopening with sshClient.sftp() would silently downgrade permissions.
+  if (client.__netcattySudoMode) {
+    console.warn("[SFTP] Sudo SFTP channel is unavailable; automatic recovery is disabled for sudo sessions. Please reconnect.");
+    return null;
+  }
+
   // Do not treat ssh2's "client.sftp" method as a channel object.
   // Re-open a fresh channel when the cached channel is stale.
   if (!client.client || typeof client.client.sftp !== "function") {
