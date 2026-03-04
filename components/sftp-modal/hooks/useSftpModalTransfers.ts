@@ -474,8 +474,13 @@ export const useSftpModalTransfers = ({
 
             // Recursively download directory contents
             let completedBytes = 0;
+            // Track visited remote paths to prevent symlink cycles
+            const visitedPaths = new Set<string>();
 
             const downloadDir = async (remotePath: string, localPath: string): Promise<void> => {
+              // Prevent symlink cycles
+              if (visitedPaths.has(remotePath)) return;
+              visitedPaths.add(remotePath);
               // Check if transfer was cancelled
               if (cancelledTransferIdsRef.current.has(transferId)) {
                 throw new Error('Transfer cancelled');
@@ -567,7 +572,10 @@ export const useSftpModalTransfers = ({
                       }
                     ).then((result) => {
                       // Handle resolved result with error (e.g. cancellation)
-                      if (result?.error) {
+                      if (result === undefined) {
+                        activeChildTransferId = null;
+                        reject(new Error('Stream transfer unavailable'));
+                      } else if (result?.error) {
                         activeChildTransferId = null;
                         reject(new Error(result.error));
                       }
