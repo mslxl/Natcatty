@@ -476,9 +476,12 @@ export const useSftpModalTransfers = ({
             let completedBytes = 0;
             // Track visited remote paths to prevent symlink cycles
             const visitedPaths = new Set<string>();
+            const MAX_RECURSION_DEPTH = 32;
 
-            const downloadDir = async (remotePath: string, localPath: string): Promise<void> => {
-              // Prevent symlink cycles
+            const downloadDir = async (remotePath: string, localPath: string, depth = 0): Promise<void> => {
+              // Prevent excessive recursion (catches symlink cycles like loop -> .)
+              if (depth > MAX_RECURSION_DEPTH) return;
+              // Prevent revisiting the same path
               if (visitedPaths.has(remotePath)) return;
               visitedPaths.add(remotePath);
               // Check if transfer was cancelled
@@ -512,7 +515,7 @@ export const useSftpModalTransfers = ({
                     const isEEXIST = mkdirErr instanceof Error && mkdirErr.message.includes('EEXIST');
                     if (!isEEXIST) throw mkdirErr;
                   }
-                  await downloadDir(remoteEntryPath, localEntryPath);
+                  await downloadDir(remoteEntryPath, localEntryPath, depth + 1);
                 } else {
                   // Download individual file
                   const childTransferId = `download-${Date.now()}-${Math.random().toString(36).slice(2)}`;
