@@ -72,6 +72,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
 
     const isLocalTerminal = host?.protocol === 'local' || host?.id?.startsWith('local-');
     const isSerialTerminal = host?.protocol === 'serial' || host?.id?.startsWith('serial-');
+    const isSSHSession = !isLocalTerminal && !isSerialTerminal && host?.protocol !== 'telnet' && host?.protocol !== 'mosh';
     const hidesSftp = isLocalTerminal || isSerialTerminal;
 
     const currentThemeId = host?.theme || defaultThemeId;
@@ -124,7 +125,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                 </Button>
             )}
 
-            {!hidesSftp && onSetTerminalEncoding && (
+            {isSSHSession && onSetTerminalEncoding && (
                 <Popover>
                     <PopoverTrigger asChild>
                         <Button

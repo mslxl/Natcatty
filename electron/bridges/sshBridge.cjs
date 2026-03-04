@@ -229,7 +229,28 @@ const authMethodCache = new Map();
 
 // Per-session terminal encoding (default: utf-8)
 const sessionEncodings = new Map();
+// Per-session stateful iconv decoders (keyed by sessionId, value: { stdout, stderr })
+const sessionDecoders = new Map();
 const iconv = require("iconv-lite");
+
+function getSessionDecoder(sessionId, stream) {
+  let decoders = sessionDecoders.get(sessionId);
+  if (!decoders) {
+    decoders = { stdout: null, stderr: null };
+    sessionDecoders.set(sessionId, decoders);
+  }
+  if (!decoders[stream]) {
+    const enc = sessionEncodings.get(sessionId) || "utf-8";
+    decoders[stream] = iconv.getDecoder(enc);
+  }
+  return decoders[stream];
+}
+
+function resetSessionDecoders(sessionId) {
+  const enc = sessionEncodings.get(sessionId) || "utf-8";
+  const decoders = { stdout: iconv.getDecoder(enc), stderr: iconv.getDecoder(enc) };
+  sessionDecoders.set(sessionId, decoders);
+}
 
 function getAuthCacheKey(username, hostname, port) {
   return `${username}@${hostname}:${port || 22}`;
@@ -980,15 +1001,13 @@ async function startSSHSession(event, options) {
             };
 
             stream.on("data", (data) => {
-              const enc = sessionEncodings.get(sessionId) || "utf-8";
-              const decoded = enc === "utf-8" ? data.toString("utf8") : iconv.decode(data, enc);
-              bufferData(decoded);
+              const decoder = getSessionDecoder(sessionId, "stdout");
+              bufferData(decoder.write(data));
             });
 
             stream.stderr?.on("data", (data) => {
-              const enc = sessionEncodings.get(sessionId) || "utf-8";
-              const decoded = enc === "utf-8" ? data.toString("utf8") : iconv.decode(data, enc);
-              bufferData(decoded);
+              const decoder = getSessionDecoder(sessionId, "stderr");
+              bufferData(decoder.write(data));
             });
 
             stream.on("close", () => {
@@ -1001,6 +1020,7 @@ async function startSSHSession(event, options) {
               safeSend(contents, "netcatty:exit", { sessionId, exitCode: 0 });
               sessions.delete(sessionId);
               sessionEncodings.delete(sessionId);
+              sessionDecoders.delete(sessionId);
               conn.end();
               for (const c of chainConnections) {
                 try { c.end(); } catch { }
@@ -1825,6 +1845,8 @@ async function setSessionEncoding(_event, { sessionId, encoding }) {
     return { ok: false, encoding: enc };
   }
   sessionEncodings.set(sessionId, enc);
+  // Reset stateful decoders so new data uses the updated encoding
+  resetSessionDecoders(sessionId);
   return { ok: true, encoding: enc };
 }
 
