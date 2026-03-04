@@ -1325,7 +1325,8 @@ async function startSSHSessionWrapper(event, options) {
     if (isAuthError) {
       // Check if there are encrypted default keys we haven't tried yet
       // Only offer retry if no unlocked keys were provided in this attempt
-      if (!options._unlockedEncryptedKeys || options._unlockedEncryptedKeys.length === 0) {
+      const isPasswordOnly = !!options.password && !options.privateKey && !options.certificate;
+      if (!isPasswordOnly && (!options._unlockedEncryptedKeys || options._unlockedEncryptedKeys.length === 0)) {
         const allKeysWithEncrypted = await findAllDefaultPrivateKeysFromHelper({ includeEncrypted: true });
         const encryptedKeys = allKeysWithEncrypted.filter(k => k.isEncrypted);
 
