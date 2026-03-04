@@ -4,9 +4,14 @@ export const isSessionError = (err: unknown): boolean => {
   return (
     msg.includes("session not found") ||
     msg.includes("sftp session") ||
+    msg.includes("session lost") ||
+    msg.includes("channel not ready") ||
+    msg.includes("readdir is not a function") ||
     msg.includes("not found") ||
     msg.includes("closed") ||
-    msg.includes("connection reset")
+    msg.includes("connection reset") ||
+    msg.includes("not connected") ||
+    msg.includes("client disconnected")
   );
 };
 
@@ -20,8 +25,12 @@ export const isFatalUploadError = (errorMessage: string): boolean => {
     // Session-related errors
     msg.includes("session not found") ||
     msg.includes("sftp session") ||
+    msg.includes("session lost") ||
+    msg.includes("channel not ready") ||
+    msg.includes("readdir is not a function") ||
     msg.includes("connection") ||
     msg.includes("disconnected") ||
+    msg.includes("not connected") ||
     // Target directory was deleted during upload
     msg.includes("no such file") ||
     msg.includes("enoent") ||

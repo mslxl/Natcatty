@@ -127,7 +127,59 @@ const encodePathForSession = (sftpId, inputPath, requestedEncoding) => {
   return encodePath(inputPath, encoding);
 };
 
-const getSftpChannel = (client) => client?.sftp || client?.client?.sftp;
+const hasSftpChannelApi = (value) =>
+  !!value &&
+  typeof value.readdir === "function" &&
+  typeof value.stat === "function" &&
+  typeof value.mkdir === "function" &&
+  typeof value.unlink === "function";
+
+const tryOpenSftpChannel = (client) =>
+  new Promise((resolve, reject) => {
+    const sshClient = client?.client;
+    if (!sshClient || typeof sshClient.sftp !== "function") {
+      resolve(null);
+      return;
+    }
+    sshClient.sftp((err, sftp) => {
+      if (err) return reject(err);
+      resolve(sftp || null);
+    });
+  });
+
+const getSftpChannel = async (client) => {
+  if (!client) return null;
+
+  if (hasSftpChannelApi(client.sftp)) {
+    return client.sftp;
+  }
+
+  // Do not treat ssh2's "client.sftp" method as a channel object.
+  // Re-open a fresh channel when the cached channel is stale.
+  if (!client.client || typeof client.client.sftp !== "function") {
+    return null;
+  }
+
+  try {
+    const reopened = await tryOpenSftpChannel(client);
+    if (hasSftpChannelApi(reopened)) {
+      client.sftp = reopened;
+      return reopened;
+    }
+  } catch (err) {
+    console.warn("[SFTP] Failed to recover SFTP channel", err?.message || String(err));
+  }
+
+  return null;
+};
+
+const requireSftpChannel = async (client) => {
+  const sftp = await getSftpChannel(client);
+  if (!sftp) {
+    throw new Error("SFTP session lost. Please reconnect.");
+  }
+  return sftp;
+};
 
 const statAsync = (sftp, targetPath) =>
   new Promise((resolve, reject) => {
@@ -246,8 +298,7 @@ const ensureRemoteDirForSession = async (sftpId, dirPath, requestedEncoding) => 
     return true;
   }
 
-  const sftp = getSftpChannel(client);
-  if (!sftp) throw new Error("SFTP channel not ready");
+  const sftp = await requireSftpChannel(client);
 
   const normalizedPath = await normalizeRemotePathString(client, dirPath);
   await ensureRemoteDirInternal(sftp, normalizedPath, encoding);
@@ -865,10 +916,7 @@ async function listSftp(event, payload) {
   const pathEncoding = resolveEncodingForRequest(payload.sftpId, requestedEncoding);
   const encodedPath = encodePath(basePath, pathEncoding);
 
-  const sftp = getSftpChannel(client);
-  if (!sftp) {
-    throw new Error("SFTP channel not ready");
-  }
+  const sftp = await requireSftpChannel(client);
 
   let list;
   try {
@@ -1316,8 +1364,7 @@ async function deleteSftp(event, payload) {
     return true;
   }
 
-  const sftp = getSftpChannel(client);
-  if (!sftp) throw new Error("SFTP channel not ready");
+  const sftp = await requireSftpChannel(client);
   const normalizedPath = await normalizeRemotePathString(client, payload.path);
   await removeRemotePathInternal(sftp, normalizedPath, encoding);
   return true;
