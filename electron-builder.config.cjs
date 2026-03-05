@@ -47,7 +47,6 @@ module.exports = {
     },
     dmg: {
         title: '${productName}',
-        background: 'public/dmg-background.jpg',
         iconSize: 100,
         iconTextSize: 12,
         window: {
