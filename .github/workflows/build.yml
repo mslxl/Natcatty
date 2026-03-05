@@ -37,7 +37,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install deps
@@ -100,7 +100,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install deps
@@ -150,7 +150,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y curl build-essential python3 git libfuse2 file rpm
-          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
           apt-get install -y nodejs
 
       - name: Checkout
