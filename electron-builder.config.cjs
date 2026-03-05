@@ -1,6 +1,3 @@
-/* global __dirname */
-const path = require('path');
-
 /**
  * @type {import('electron-builder').Configuration}
  */
@@ -37,8 +34,9 @@ module.exports = {
             }
         ],
         category: 'public.app-category.developer-tools',
-        hardenedRuntime: false,
+        hardenedRuntime: true,
         gatekeeperAssess: false,
+        notarize: true,
         entitlements: 'electron/entitlements.mac.plist',
         entitlementsInherit: 'electron/entitlements.mac.plist',
         extendInfo: {
@@ -49,24 +47,15 @@ module.exports = {
     },
     dmg: {
         title: '${productName}',
-        background: 'public/dmg-background.jpg',
         iconSize: 100,
         iconTextSize: 12,
         window: {
-            width: 672,
-            height: 500
+            width: 540,
+            height: 380
         },
         contents: [
-            { x: 150, y: 158 },
-            { x: 550, y: 158, type: 'link', path: '/Applications' },
-            {
-                x: 350,
-                y: 330,
-                type: 'file',
-                // Use absolute path resolved at build time
-                path: path.resolve(__dirname, 'scripts/FixQuarantine.app'),
-                name: '已损坏修复.app'
-            }
+            { x: 140, y: 158 },
+            { x: 400, y: 158, type: 'link', path: '/Applications' }
         ]
     },
     win: {
