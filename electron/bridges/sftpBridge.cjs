@@ -262,9 +262,20 @@ const normalizeRemotePathString = async (client, inputPath) => {
   return inputPath;
 };
 
+const isWindowsRemotePath = (dirPath) => /^[A-Za-z]:[\\/]/.test(dirPath) || /^[A-Za-z]:$/.test(dirPath);
+
+const normalizeRemoteDirPath = (dirPath) => {
+  if (isWindowsRemotePath(dirPath)) {
+    const normalized = dirPath.replace(/\//g, "\\").replace(/\\+/g, "\\");
+    if (/^[A-Za-z]:$/.test(normalized)) return `${normalized}\\`;
+    return normalized;
+  }
+  return path.posix.normalize(dirPath);
+};
+
 const ensureRemoteDirInternal = async (sftp, dirPath, encoding) => {
   if (!dirPath || dirPath === ".") return;
-  const normalized = path.posix.normalize(dirPath);
+  const normalized = normalizeRemoteDirPath(dirPath);
   if (!normalized || normalized === ".") return;
 
   // Optimization: Check if the full path already exists to avoid O(N) round trips
@@ -279,12 +290,22 @@ const ensureRemoteDirInternal = async (sftp, dirPath, encoding) => {
     // If path doesn't exist or other error, proceed to recursive check
   }
 
+  const isWindowsPath = isWindowsRemotePath(normalized);
   const isAbsolute = normalized.startsWith("/");
-  const parts = normalized.split("/").filter(Boolean);
-  let current = isAbsolute ? "/" : "";
+  const parts = isWindowsPath
+    ? normalized.slice(2).replace(/^[\\]+/, "").split(/[\\]+/).filter(Boolean)
+    : normalized.split("/").filter(Boolean);
+  let current = isWindowsPath
+    ? `${normalized.slice(0, 2)}\\`
+    : (isAbsolute ? "/" : "");
 
   for (const part of parts) {
-    current = current === "/" ? `/${part}` : (current ? `${current}/${part}` : part);
+    if (isWindowsPath) {
+      const base = current.replace(/[\\]+$/, "");
+      current = `${base}\\${part}`;
+    } else {
+      current = current === "/" ? `/${part}` : (current ? `${current}/${part}` : part);
+    }
     const encodedCurrent = encodePath(current, encoding);
     try {
       const stats = await statAsync(sftp, encodedCurrent);
@@ -335,15 +356,11 @@ const ensureRemoteDirForSession = async (sftpId, dirPath, requestedEncoding) => 
   if (!dirPath || dirPath === ".") return true;
 
   const encoding = resolveEncodingForRequest(sftpId, requestedEncoding);
-  if (encoding === "utf-8") {
-    await requireSftpChannel(client);
-    const encodedPath = encodePath(dirPath, encoding);
-    await client.mkdir(encodedPath, true);
-    return true;
-  }
-
   const sftp = await requireSftpChannel(client);
 
+  // Always walk the path segment-by-segment. This lets sftp.stat() follow
+  // symlinked directory segments before deciding whether the next mkdir is
+  // valid, which avoids recursive mkdir failures on paths like /link/subdir.
   const normalizedPath = await normalizeRemotePathString(client, dirPath);
   await ensureRemoteDirInternal(sftp, normalizedPath, encoding);
   return true;

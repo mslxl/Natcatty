@@ -123,6 +123,73 @@ export const useSftpTransfers = ({
     }
   }, []);
 
+  const clearCancelledTask = useCallback((taskId: string) => {
+    cancelledTasksRef.current.delete(taskId);
+  }, []);
+
+  const isTransferCancelledError = useCallback(
+    (error: unknown): boolean =>
+      error instanceof Error && error.message === "Transfer cancelled",
+    [],
+  );
+
+  const getEntrySize = useCallback((entry: SftpFileEntry): number => {
+    if (typeof entry.size === "string") {
+      const parsed = parseInt(entry.size, 10);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+    }
+    return typeof entry.size === "number" && entry.size > 0 ? entry.size : 0;
+  }, []);
+
+  const estimateDirectoryBytes = useCallback(
+    async (
+      sourcePath: string,
+      sourceSftpId: string | null,
+      sourceIsLocal: boolean,
+      sourceEncoding: SftpFilenameEncoding,
+      rootTaskId: string,
+    ): Promise<number> => {
+      if (cancelledTasksRef.current.has(rootTaskId)) {
+        throw new Error("Transfer cancelled");
+      }
+
+      const files = sourceIsLocal
+        ? await listLocalFiles(sourcePath)
+        : sourceSftpId
+          ? await listRemoteFiles(sourceSftpId, sourcePath, sourceEncoding)
+          : null;
+
+      if (!files) {
+        throw new Error("No source connection");
+      }
+
+      let totalBytes = 0;
+
+      for (const file of files) {
+        if (file.name === "..") continue;
+
+        if (cancelledTasksRef.current.has(rootTaskId)) {
+          throw new Error("Transfer cancelled");
+        }
+
+        if (file.type === "directory") {
+          totalBytes += await estimateDirectoryBytes(
+            joinPath(sourcePath, file.name),
+            sourceSftpId,
+            sourceIsLocal,
+            sourceEncoding,
+            rootTaskId,
+          );
+        } else {
+          totalBytes += getEntrySize(file);
+        }
+      }
+
+      return totalBytes;
+    },
+    [getEntrySize, listLocalFiles, listRemoteFiles],
+  );
+
   const transferFile = async (
     task: TransferTask,
     sourceSftpId: string | null,
@@ -367,7 +434,27 @@ export const useSftpTransfers = ({
       : targetPane.filenameEncoding || "auto";
 
     let actualFileSize = task.totalBytes;
-    if (!task.isDirectory && actualFileSize === 0) {
+    let prescanCancelled = false;
+    if (task.isDirectory) {
+      try {
+        const sourceSftpId = sourcePane.connection?.isLocal
+          ? null
+          : sftpSessionsRef.current.get(sourcePane.connection!.id);
+
+        actualFileSize = await estimateDirectoryBytes(
+          task.sourcePath,
+          sourceSftpId,
+          sourcePane.connection!.isLocal,
+          sourceEncoding,
+          task.id,
+        );
+      } catch (err) {
+        if (isTransferCancelledError(err)) {
+          prescanCancelled = true;
+        }
+        // Fall back to the existing estimate below if size discovery fails.
+      }
+    } else if (actualFileSize === 0) {
       try {
         const sourceSftpId = sourcePane.connection?.isLocal
           ? null
@@ -398,13 +485,6 @@ export const useSftpTransfers = ({
 
     const hasStreamingTransfer = !!netcattyBridge.get()?.startStreamTransfer;
 
-    updateTask({
-      status: "transferring",
-      totalBytes: estimatedSize,
-      transferredBytes: 0,
-      startTime: Date.now(),
-    });
-
     const sourceSftpId = sourcePane.connection?.isLocal
       ? null
       : sftpSessionsRef.current.get(sourcePane.connection!.id);
@@ -424,12 +504,24 @@ export const useSftpTransfers = ({
     }
 
     let useSimulatedProgress = false;
-    if (!hasStreamingTransfer && !task.isDirectory) {
-      useSimulatedProgress = true;
-      startProgressSimulation(task.id, estimatedSize);
-    }
 
     try {
+      if (prescanCancelled) {
+        throw new Error("Transfer cancelled");
+      }
+
+      updateTask({
+        status: "transferring",
+        totalBytes: estimatedSize,
+        transferredBytes: 0,
+        startTime: Date.now(),
+      });
+
+      if (!hasStreamingTransfer && !task.isDirectory) {
+        useSimulatedProgress = true;
+        startProgressSimulation(task.id, estimatedSize);
+      }
+
       if (!task.skipConflictCheck && !task.isDirectory && targetPane.connection) {
         let targetExists = false;
         let existingStat: { size: number; mtime: number } | null = null;
@@ -520,10 +612,17 @@ export const useSftpTransfers = ({
           setTransfers((prev) =>
             prev.map((t) => {
               if (t.id !== task.id || t.status === "cancelled") return t;
-              const newTotal = Math.max(t.totalBytes, totalProgress, completedBytes + currentFileTotal);
+              const newTotal = Math.max(
+                t.totalBytes,
+                totalProgress,
+                completedBytes + currentFileTotal,
+              );
               return {
                 ...t,
-                transferredBytes: Math.max(t.transferredBytes, totalProgress),
+                transferredBytes: Math.max(
+                  t.transferredBytes,
+                  Math.min(totalProgress, newTotal),
+                ),
                 totalBytes: newTotal,
                 speed: Number.isFinite(speed) && speed > 0 ? speed : t.speed,
               };
@@ -610,6 +709,7 @@ export const useSftpTransfers = ({
             completionHandlersRef.current.delete(task.id);
           }
         }
+        clearCancelledTask(task.id);
         return "cancelled";
       }
 
@@ -768,10 +868,6 @@ export const useSftpTransfers = ({
         }
       }
 
-      // Clean up cancelled task ID after a delay to ensure all async ops see it
-      setTimeout(() => {
-        cancelledTasksRef.current.delete(transferId);
-      }, 5000);
     },
     [stopProgressSimulation],
   );
@@ -781,20 +877,37 @@ export const useSftpTransfers = ({
       const task = transfers.find((t) => t.id === transferId);
       if (!task) return;
 
+      const retriedTask: TransferTask = {
+        ...task,
+        id: crypto.randomUUID(),
+        status: "pending" as TransferStatus,
+        error: undefined,
+        transferredBytes: 0,
+        speed: 0,
+        startTime: Date.now(),
+        endTime: undefined,
+      };
+
       const sourceSide = task.sourceConnectionId.startsWith("left") ? "left" : "right";
       const targetSide = task.targetConnectionId.startsWith("left") ? "left" : "right";
       const sourcePane = getActivePane(sourceSide as "left" | "right");
       const targetPane = getActivePane(targetSide as "left" | "right");
 
       if (sourcePane?.connection && targetPane?.connection) {
+        const completionHandler = completionHandlersRef.current.get(transferId);
+        if (completionHandler) {
+          completionHandlersRef.current.set(retriedTask.id, completionHandler);
+          completionHandlersRef.current.delete(transferId);
+        }
+
         setTransfers((prev) =>
           prev.map((t) =>
             t.id === transferId
-              ? { ...t, status: "pending" as TransferStatus, error: undefined }
+              ? retriedTask
               : t,
           ),
         );
-        await processTransfer(task, sourcePane, targetPane, targetSide);
+        await processTransfer(retriedTask, sourcePane, targetPane, targetSide);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- processTransfer is defined inline

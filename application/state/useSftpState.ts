@@ -238,6 +238,7 @@ export const useSftpState = (
     getActivePane,
     refresh,
     sftpSessionsRef,
+    useCompressedUpload: options?.useCompressedUpload,
     addExternalUpload,
     updateExternalUpload,
     dismissExternalUpload: dismissTransfer,
