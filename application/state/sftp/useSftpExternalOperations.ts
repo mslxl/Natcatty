@@ -23,6 +23,7 @@ interface UseSftpExternalOperationsParams {
   useCompressedUpload?: boolean;
   addExternalUpload?: (task: TransferTask) => void;
   updateExternalUpload?: (taskId: string, updates: Partial<TransferTask>) => void;
+  isTransferCancelled?: (taskId: string) => boolean;
   dismissExternalUpload?: (taskId: string) => void;
 }
 
@@ -55,6 +56,7 @@ export const useSftpExternalOperations = (
     useCompressedUpload = false,
     addExternalUpload,
     updateExternalUpload,
+    isTransferCancelled,
     dismissExternalUpload,
   } = params;
 
@@ -182,14 +184,113 @@ export const useSftpExternalOperations = (
         throw new Error("SFTP session not found");
       }
 
-      console.log("[SFTP] Downloading file to temp", { sftpId, remotePath, fileName });
-      const localTempPath = await bridge.downloadSftpToTemp(
-        sftpId,
-        remotePath,
-        fileName,
-        pane.filenameEncoding,
-      );
-      console.log("[SFTP] File downloaded to temp", { localTempPath });
+      let localTempPath: string;
+      let wasCancelled = false;
+      let externalTransferId: string | undefined;
+      const isLocalTempDownloadCancelled = () =>
+        !!externalTransferId && !!isTransferCancelled?.(externalTransferId);
+      const cleanupTempDownload = async (filePath: string) => {
+        if (!bridge.deleteTempFile) return;
+        try {
+          await bridge.deleteTempFile(filePath);
+        } catch (err) {
+          console.warn("[SFTP] Failed to delete cancelled temp download:", err);
+        }
+      };
+
+      if (bridge.downloadSftpToTempWithProgress && addExternalUpload && updateExternalUpload) {
+        externalTransferId = `download-temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+        addExternalUpload({
+          id: externalTransferId,
+          fileName,
+          sourcePath: remotePath,
+          targetPath: "(temp)",
+          sourceConnectionId: pane.connection.id,
+          targetConnectionId: "local",
+          direction: "download",
+          status: "transferring" as TransferStatus,
+          totalBytes: 0,
+          transferredBytes: 0,
+          speed: 0,
+          startTime: Date.now(),
+          isDirectory: false,
+          retryable: false,
+        });
+
+        try {
+          const result = await bridge.downloadSftpToTempWithProgress(
+            sftpId,
+            remotePath,
+            fileName,
+            pane.filenameEncoding,
+            externalTransferId,
+            (transferred, total, speed) => {
+              updateExternalUpload(externalTransferId, {
+                transferredBytes: transferred,
+                totalBytes: total,
+                speed,
+              });
+            },
+            undefined,
+            (error) => {
+              updateExternalUpload(externalTransferId, {
+                status: "failed" as TransferStatus,
+                endTime: Date.now(),
+                error,
+                speed: 0,
+              });
+            },
+            () => {
+              updateExternalUpload(externalTransferId, {
+                status: "cancelled" as TransferStatus,
+                endTime: Date.now(),
+                speed: 0,
+              });
+            },
+          );
+          wasCancelled = result.cancelled;
+          localTempPath = result.localPath;
+        } catch (err) {
+          updateExternalUpload(externalTransferId, {
+            status: "failed" as TransferStatus,
+            endTime: Date.now(),
+            error: err instanceof Error ? err.message : String(err),
+            speed: 0,
+          });
+          throw err;
+        }
+
+        if (wasCancelled) {
+          if (localTempPath && bridge.deleteTempFile) {
+            bridge.deleteTempFile(localTempPath).catch(() => {});
+          }
+          return { localTempPath: "" };
+        }
+
+        if (isLocalTempDownloadCancelled()) {
+          await cleanupTempDownload(localTempPath);
+          return { localTempPath: "" };
+        }
+
+        updateExternalUpload(externalTransferId, {
+          status: "completed" as TransferStatus,
+          endTime: Date.now(),
+          speed: 0,
+        });
+      } else {
+        localTempPath = await bridge.downloadSftpToTemp(
+          sftpId,
+          remotePath,
+          fileName,
+          pane.filenameEncoding,
+        );
+      }
+
+      if (isLocalTempDownloadCancelled()) {
+        await cleanupTempDownload(localTempPath);
+        return { localTempPath: "" };
+      }
 
       if (bridge.registerTempFile) {
         try {
@@ -199,15 +300,23 @@ export const useSftpExternalOperations = (
         }
       }
 
-      console.log("[SFTP] Opening with application", { localTempPath, appPath });
-      await bridge.openWithApplication(localTempPath, appPath);
-      console.log("[SFTP] Application launched");
+      try {
+        await bridge.openWithApplication(localTempPath, appPath);
+      } catch (err) {
+        if (externalTransferId) {
+          updateExternalUpload(externalTransferId, {
+            status: "failed" as TransferStatus,
+            endTime: Date.now(),
+            error: err instanceof Error ? err.message : String(err),
+            speed: 0,
+          });
+        }
+        throw err;
+      }
 
       let watchId: string | undefined;
-      console.log("[SFTP] Auto-sync enabled check", { enableWatch: options?.enableWatch, hasStartFileWatch: !!bridge.startFileWatch });
       if (options?.enableWatch && bridge.startFileWatch) {
         try {
-          console.log("[SFTP] Starting file watch", { localTempPath, remotePath, sftpId });
           const result = await bridge.startFileWatch(
             localTempPath,
             remotePath,
@@ -215,17 +324,14 @@ export const useSftpExternalOperations = (
             pane.filenameEncoding,
           );
           watchId = result.watchId;
-          console.log("[SFTP] File watch started successfully", { watchId, localTempPath, remotePath });
         } catch (err) {
           console.warn("[SFTP] Failed to start file watch:", err);
         }
-      } else {
-        console.log("[SFTP] File watching not enabled or not available");
       }
 
       return { localTempPath, watchId };
     },
-    [getActivePane, sftpSessionsRef],
+    [getActivePane, sftpSessionsRef, addExternalUpload, updateExternalUpload, isTransferCancelled],
   );
 
   // Create upload callbacks that translate to TransferTask updates
