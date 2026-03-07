@@ -86,6 +86,12 @@ export class CloudSyncManager {
   // Promise that resolves once startup provider secret decryption finishes.
   // Awaited by getConnectedAdapter() to prevent using still-encrypted tokens.
   private decryptionReady: Promise<void>;
+  // Per-provider flag: true once that provider's secrets have been
+  // successfully decrypted.  When false, getConnectedAdapter() will
+  // retry decryption before using the tokens.
+  private providerDecrypted: Record<CloudProvider, boolean> = {
+    github: false, google: false, onedrive: false, webdav: false, s3: false,
+  };
   // Per-provider sequence counters for async decrypt callbacks (startup,
   // cross-window storage events).  Bumped by any state mutation so stale
   // decrypt results are discarded.
@@ -204,10 +210,15 @@ export class CloudSyncManager {
           // Only apply if no newer update has occurred during the async gap
           if (seq === this.providerDecryptSeq[p]) {
             this.state.providers[p] = decrypted;
+            this.providerDecrypted[p] = true;
           }
+        } else {
+          // No secrets to decrypt — mark as done
+          this.providerDecrypted[p] = true;
         }
       } catch {
-        // Decryption failure is non-fatal; the adapter will fail on use
+        // Decryption failed — likely the Electron IPC handler is not yet
+        // registered.  getConnectedAdapter() will retry for this provider.
       }
     }
     this.notifyStateChange();
@@ -404,6 +415,33 @@ export class CloudSyncManager {
   private async getConnectedAdapter(provider: CloudProvider): Promise<CloudAdapter> {
     // Ensure startup decryption has finished before reading tokens
     await this.decryptionReady;
+
+    // If this provider's secrets were not successfully decrypted at
+    // startup (IPC handler not registered yet), retry now.
+    if (!this.providerDecrypted[provider]) {
+      const conn = this.state.providers[provider];
+      if (conn.tokens || conn.config) {
+        try {
+          const seq = ++this.providerDecryptSeq[provider];
+          const decrypted = await decryptProviderSecrets(conn);
+          if (seq === this.providerDecryptSeq[provider]) {
+            this.state.providers[provider] = decrypted;
+            this.providerDecrypted[provider] = true;
+            // Evict any adapter cached with the old (encrypted) tokens
+            // so a fresh one is built from the decrypted credentials below.
+            const stale = this.adapters.get(provider);
+            if (stale) {
+              stale.signOut();
+              this.adapters.delete(provider);
+            }
+            this.notifyStateChange();
+          }
+        } catch {
+          // Still failing — will surface when adapter tries to use tokens
+        }
+      }
+    }
+
     const connection = this.state.providers[provider];
     const tokens = connection?.tokens;
     const config = connection?.config;
