@@ -17,6 +17,7 @@ let electronModule = null;
 
 const DEFAULT_UTF8_LOCALE = "en_US.UTF-8";
 const LOGIN_SHELLS = new Set(["bash", "zsh", "fish", "ksh"]);
+const POWERSHELL_SHELLS = new Set(["powershell", "powershell.exe", "pwsh", "pwsh.exe"]);
 
 const getLoginShellArgs = (shellPath) => {
   if (!shellPath || process.platform === "win32") return [];
@@ -35,15 +36,34 @@ function init(deps) {
 /**
  * Find executable path on Windows
  */
+function isWindowsAppExecutionAlias(filePath) {
+  if (!filePath || process.platform !== "win32") return false;
+
+  const normalizedPath = path.normalize(filePath).toLowerCase();
+  const windowsAppsDir = path.join(
+    process.env.LOCALAPPDATA || "",
+    "Microsoft",
+    "WindowsApps",
+  ).toLowerCase();
+
+  return !!windowsAppsDir && normalizedPath.startsWith(`${windowsAppsDir}${path.sep}`);
+}
+
 function findExecutable(name) {
   if (process.platform !== "win32") return name;
   
   const { execFileSync } = require("child_process");
   try {
     const result = execFileSync("where.exe", [name], { encoding: "utf8" });
-    const firstLine = result.split(/\r?\n/)[0].trim();
-    if (firstLine && fs.existsSync(firstLine)) {
-      return firstLine;
+    const candidates = result
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    for (const candidate of candidates) {
+      if (!fs.existsSync(candidate)) continue;
+      if (name === "pwsh" && isWindowsAppExecutionAlias(candidate)) continue;
+      return candidate;
     }
   } catch (err) {
     console.warn(`Could not find ${name} via where.exe:`, err.message);
@@ -51,17 +71,71 @@ function findExecutable(name) {
   
   // Fallback to common locations
   const path = require("node:path");
-  const commonPaths = [
+  const commonPaths = [];
+
+  if (name === "pwsh") {
+    commonPaths.push(
+      path.join(process.env.ProgramFiles || "C:\\Program Files", "PowerShell", "7", "pwsh.exe"),
+      path.join(process.env.ProgramW6432 || "C:\\Program Files", "PowerShell", "7", "pwsh.exe"),
+    );
+  }
+
+  if (name === "powershell") {
+    commonPaths.push(
+      path.join(
+        process.env.SystemRoot || "C:\\Windows",
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe",
+      ),
+    );
+  }
+
+  commonPaths.push(
     path.join(process.env.SystemRoot || "C:\\Windows", "System32", "OpenSSH", `${name}.exe`),
     path.join(process.env.ProgramFiles || "C:\\Program Files", "Git", "usr", "bin", `${name}.exe`),
     path.join(process.env.ProgramFiles || "C:\\Program Files", "OpenSSH", `${name}.exe`),
-  ];
+  );
   
   for (const p of commonPaths) {
     if (fs.existsSync(p)) return p;
   }
   
   return name;
+}
+
+function getDefaultLocalShell() {
+  if (process.platform !== "win32") {
+    return process.env.SHELL || "/bin/bash";
+  }
+
+  const pwsh = findExecutable("pwsh");
+  if (pwsh && pwsh.toLowerCase() !== "pwsh") {
+    return pwsh;
+  }
+
+  const powershell = findExecutable("powershell");
+  if (powershell && powershell.toLowerCase() !== "powershell") {
+    return powershell;
+  }
+
+  return "powershell.exe";
+}
+
+function getLocalShellArgs(shellPath) {
+  if (!shellPath) return [];
+
+  if (process.platform !== "win32") {
+    return getLoginShellArgs(shellPath);
+  }
+
+  const shellName = path.basename(shellPath).toLowerCase();
+  if (POWERSHELL_SHELLS.has(shellName)) {
+    return ["-NoLogo"];
+  }
+
+  return [];
 }
 
 const isUtf8Locale = (value) => typeof value === "string" && /utf-?8/i.test(value);
@@ -97,11 +171,9 @@ function startLocalSession(event, payload) {
   const sessionId =
     payload?.sessionId ||
     `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const defaultShell = process.platform === "win32" 
-    ? findExecutable("powershell") || "powershell.exe"
-    : process.env.SHELL || "/bin/bash";
+  const defaultShell = getDefaultLocalShell();
   const shell = payload?.shell || defaultShell;
-  const shellArgs = getLoginShellArgs(shell);
+  const shellArgs = getLocalShellArgs(shell);
   const env = applyLocaleDefaults({
     ...process.env,
     ...(payload?.env || {}),
@@ -129,6 +201,7 @@ function startLocalSession(event, payload) {
   }
   
   const proc = pty.spawn(shell, shellArgs, {
+    name: env.TERM || "xterm-256color",
     cols: payload?.cols || 80,
     rows: payload?.rows || 24,
     env,
@@ -666,10 +739,7 @@ function registerHandlers(ipcMain) {
  * Get the default shell for the current platform
  */
 function getDefaultShell() {
-  if (process.platform === "win32") {
-    return findExecutable("powershell") || "powershell.exe";
-  }
-  return process.env.SHELL || "/bin/bash";
+  return getDefaultLocalShell();
 }
 
 /**
