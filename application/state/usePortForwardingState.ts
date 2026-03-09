@@ -10,6 +10,7 @@ import {
   clearReconnectTimer,
   getActiveConnection,
   startPortForward,
+  stopAndCleanupRule,
   stopPortForward,
   syncWithBackend,
 } from "../../infrastructure/services/portForwardingService";
@@ -207,6 +208,8 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
 
   const deleteRule = useCallback(
     (id: string) => {
+      // Stop any active tunnel before removing the rule
+      stopAndCleanupRule(id);
       const updated = globalRules.filter((r) => r.id !== id);
       setGlobalRules(updated);
       if (selectedRuleId === id) {
@@ -238,6 +241,13 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
   );
 
   const importRules = useCallback((newRules: PortForwardingRule[]) => {
+    // Stop tunnels for any rules that are being removed by this import
+    const newRuleIds = new Set(newRules.map((r) => r.id));
+    for (const existing of globalRules) {
+      if (!newRuleIds.has(existing.id)) {
+        stopAndCleanupRule(existing.id);
+      }
+    }
     setGlobalRules(normalizeRulesWithConnections(newRules));
   }, []);
 

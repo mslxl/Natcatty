@@ -108,6 +108,32 @@ export const getActiveRuleIds = (): string[] => {
     .map(([ruleId]) => ruleId);
 };
 
+/**
+ * Stop and clean up a single rule's tunnel.
+ * Used when a rule is deleted or replaced via import, where we need to ensure
+ * the backend tunnel is torn down and all reconnect timers are cancelled.
+ * This is a fire-and-forget cleanup — errors are logged but not propagated.
+ */
+export const stopAndCleanupRule = (ruleId: string): void => {
+  clearReconnectTimer(ruleId);
+
+  const conn = activeConnections.get(ruleId);
+  if (!conn) return;
+
+  // Unsubscribe from status events
+  conn.unsubscribe?.();
+
+  // Ask the backend to tear down the tunnel
+  const bridge = netcattyBridge.get();
+  if (bridge?.stopPortForward && conn.tunnelId) {
+    bridge.stopPortForward(conn.tunnelId).catch((err: unknown) => {
+      logger.warn(`[PortForwardingService] Cleanup stop failed for ${ruleId}:`, err);
+    });
+  }
+
+  activeConnections.delete(ruleId);
+};
+
 // Tunnel ID prefix and UUID regex pattern for parsing
 const TUNNEL_ID_PREFIX = 'pf-';
 // UUID format: 8-4-4-4-12 hexadecimal characters
