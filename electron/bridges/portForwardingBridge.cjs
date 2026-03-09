@@ -316,11 +316,19 @@ async function startPortForward(event, payload) {
         portForwardingTunnels.delete(tunnelId);
       }
       // If the Promise was never settled (tunnel killed during
-      // handshake by stopPortForwardByRuleId), reject so callers
-      // don't hang indefinitely in pendingOperations.
+      // handshake by stopPortForwardByRuleId), settle it.
       if (!settled) {
         settled = true;
-        reject(new Error(`Tunnel ${tunnelId} closed before connection established`));
+        // Check if this was an intentional cancellation (rule deleted/replaced)
+        // vs. an unexpected close.  Intentional cancellations resolve gracefully
+        // so the renderer doesn't show a bogus error toast.
+        const wasCancelled = portForwardingTunnels.get(tunnelId)?.cancelled
+          || !portForwardingTunnels.has(tunnelId); // already deleted by stopPortForwardByRuleId
+        if (wasCancelled) {
+          resolve({ tunnelId, success: false, cancelled: true });
+        } else {
+          reject(new Error(`Tunnel ${tunnelId} closed before connection established`));
+        }
       }
     });
 
@@ -429,6 +437,9 @@ function stopPortForwardByRuleId(_event, { ruleId }) {
   for (const [tunnelId, tunnel] of portForwardingTunnels) {
     if (tunnelId.includes(ruleId)) {
       try {
+        // Mark as intentionally cancelled BEFORE conn.end() so the
+        // close handler resolves gracefully instead of rejecting.
+        tunnel.cancelled = true;
         if (tunnel.server) tunnel.server.close();
         if (tunnel.conn) tunnel.conn.end();
         portForwardingTunnels.delete(tunnelId);

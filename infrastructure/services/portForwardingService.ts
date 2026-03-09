@@ -309,7 +309,7 @@ export const reconcileWithBackend = async (): Promise<{
       if (ruleId) {
         backendRuleIds.add(ruleId);
 
-        // Case 2: backend has it, renderer doesn't
+        // Case 2: backend has it, renderer doesn't — insert it
         if (!activeConnections.has(ruleId)) {
           activeConnections.set(ruleId, {
             ruleId,
@@ -317,6 +317,17 @@ export const reconcileWithBackend = async (): Promise<{
             status: (tunnel.status === 'active' ? 'active' : 'connecting') as 'active' | 'connecting',
           });
           result.appeared.push(ruleId);
+        } else {
+          // Case 3: renderer tracks it, but status may have changed
+          // (e.g. connecting → active after SSH handshake completed
+          // in another window).
+          const existing = activeConnections.get(ruleId)!;
+          const backendStatus = (tunnel.status === 'active' ? 'active' : 'connecting') as 'active' | 'connecting';
+          if (existing.status !== backendStatus) {
+            existing.status = backendStatus;
+            existing.tunnelId = tunnel.tunnelId;
+            result.appeared.push(ruleId);
+          }
         }
       }
     }
