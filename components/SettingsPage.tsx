@@ -3,8 +3,9 @@
  * This component is rendered in a separate Electron window
  */
 import { AppWindow, Cloud, FileType, HardDrive, Keyboard, Palette, TerminalSquare, X } from "lucide-react";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useSettingsState } from "../application/state/useSettingsState";
+import { usePortForwardingState } from "../application/state/usePortForwardingState";
 import { useVaultState } from "../application/state/useVaultState";
 import { useWindowControls } from "../application/state/useWindowControls";
 import { I18nProvider, useI18n } from "../application/i18n/I18nProvider";
@@ -31,17 +32,37 @@ const SettingsSyncTabWithVault: React.FC = () => {
         keys,
         identities,
         snippets,
+        customGroups,
+        knownHosts,
         importDataFromString,
         clearVaultData,
     } = useVaultState();
 
+    const { rules: portForwardingRules, importRules: importPortForwardingRules } = usePortForwardingState();
+
+    // Strip transient runtime fields before passing to sync
+    const portForwardingRulesForSync = useMemo(
+        () =>
+            portForwardingRules.map((rule) => ({
+                ...rule,
+                status: "inactive" as const,
+                error: undefined,
+                lastUsedAt: undefined,
+            })),
+        [portForwardingRules],
+    );
+
+    const vault = useMemo(
+        () => ({ hosts, keys, identities, snippets, customGroups, knownHosts }),
+        [hosts, keys, identities, snippets, customGroups, knownHosts],
+    );
+
     return (
         <SettingsSyncTab
-            hosts={hosts}
-            keys={keys}
-            identities={identities}
-            snippets={snippets}
+            vault={vault}
+            portForwardingRules={portForwardingRulesForSync}
             importDataFromString={importDataFromString}
+            importPortForwardingRules={importPortForwardingRules}
             clearVaultData={clearVaultData}
         />
     );

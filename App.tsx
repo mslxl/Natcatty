@@ -14,6 +14,7 @@ import { initializeUIFonts } from './application/state/uiFontStore';
 import { I18nProvider, useI18n } from './application/i18n/I18nProvider';
 import { matchesKeyBinding } from './domain/models';
 import { resolveHostAuth } from './domain/sshAuth';
+import { applySyncPayload } from './domain/syncPayload';
 import { getCredentialProtectionAvailability } from './infrastructure/services/credentialProtection';
 import { netcattyBridge } from './infrastructure/services/netcattyBridge';
 import { TopTabs } from './components/TopTabs';
@@ -285,17 +286,10 @@ function App({ settings }: { settings: SettingsState }) {
     portForwardingRules: portForwardingRulesForSync,
     knownHosts,
     onApplyPayload: (payload) => {
-      importDataFromString(JSON.stringify({
-        hosts: payload.hosts,
-        keys: payload.keys,
-        identities: payload.identities,
-        snippets: payload.snippets,
-        customGroups: payload.customGroups,
-      }));
-
-      if (payload.portForwardingRules) {
-        importPortForwardingRules(payload.portForwardingRules);
-      }
+      applySyncPayload(payload, {
+        importVaultData: importDataFromString,
+        importPortForwardingRules,
+      });
     },
   });
 

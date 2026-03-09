@@ -70,10 +70,12 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       keys: config.keys,
       identities: config.identities,
       snippets: config.snippets,
+      customGroups: config.customGroups,
       portForwardingRules: config.portForwardingRules,
+      knownHosts: config.knownHosts,
     };
     return JSON.stringify(data);
-  }, [config.hosts, config.keys, config.identities, config.snippets, config.portForwardingRules]);
+  }, [config.hosts, config.keys, config.identities, config.snippets, config.customGroups, config.portForwardingRules, config.knownHosts]);
   
   // Sync now handler - get fresh state directly from manager
   const syncNow = useCallback(async (options?: SyncNowOptions) => {

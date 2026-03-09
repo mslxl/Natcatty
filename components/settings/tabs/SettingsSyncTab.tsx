@@ -1,50 +1,45 @@
 import React, { useCallback } from "react";
-import type { Host, Identity, Snippet, SSHKey } from "../../../domain/models";
+import type { PortForwardingRule } from "../../../domain/models";
 import type { SyncPayload } from "../../../domain/sync";
+import { buildSyncPayload, applySyncPayload } from "../../../domain/syncPayload";
+import type { SyncableVaultData } from "../../../domain/syncPayload";
 import { CloudSyncSettings } from "../../CloudSyncSettings";
 import { SettingsTabContent } from "../settings-ui";
 
 export default function SettingsSyncTab(props: {
-  hosts: Host[];
-  keys: SSHKey[];
-  identities: Identity[];
-  snippets: Snippet[];
+  vault: SyncableVaultData;
+  portForwardingRules: PortForwardingRule[];
   importDataFromString: (data: string) => void;
+  importPortForwardingRules: (rules: PortForwardingRule[]) => void;
   clearVaultData: () => void;
 }) {
-  const { hosts, keys, identities, snippets, importDataFromString, clearVaultData } = props;
+  const {
+    vault,
+    portForwardingRules,
+    importDataFromString,
+    importPortForwardingRules,
+    clearVaultData,
+  } = props;
 
-  const buildSyncPayload = useCallback((): SyncPayload => {
-    return {
-      hosts,
-      keys,
-      identities,
-      snippets,
-      customGroups: [],
-      syncedAt: Date.now(),
-    };
-  }, [hosts, keys, identities, snippets]);
+  const onBuildPayload = useCallback((): SyncPayload => {
+    return buildSyncPayload(vault, portForwardingRules);
+  }, [vault, portForwardingRules]);
 
-  const applySyncPayload = useCallback(
+  const onApplyPayload = useCallback(
     (payload: SyncPayload) => {
-      importDataFromString(
-        JSON.stringify({
-          hosts: payload.hosts,
-          keys: payload.keys,
-          identities: payload.identities,
-          snippets: payload.snippets,
-          customGroups: payload.customGroups,
-        }),
-      );
+      applySyncPayload(payload, {
+        importVaultData: importDataFromString,
+        importPortForwardingRules,
+      });
     },
-    [importDataFromString],
+    [importDataFromString, importPortForwardingRules],
   );
 
   return (
     <SettingsTabContent value="sync">
       <CloudSyncSettings
-        onBuildPayload={buildSyncPayload}
-        onApplyPayload={applySyncPayload}
+        onBuildPayload={onBuildPayload}
+        onApplyPayload={onApplyPayload}
         onClearLocalData={clearVaultData}
       />
     </SettingsTabContent>
