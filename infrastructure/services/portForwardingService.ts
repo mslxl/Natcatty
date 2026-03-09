@@ -179,33 +179,17 @@ export const stopAndCleanupRule = (ruleId: string): void => {
   if (conn) {
     // Unsubscribe from status events
     conn.unsubscribe?.();
-
-    // Ask the backend to tear down the tunnel
-    const bridge = netcattyBridge.get();
-    if (bridge?.stopPortForward && conn.tunnelId) {
-      bridge.stopPortForward(conn.tunnelId).catch((err: unknown) => {
-        logger.warn(`[PortForwardingService] Cleanup stop failed for ${ruleId}:`, err);
-      });
-    }
-
     activeConnections.delete(ruleId);
-    // Also ask backend to stop by rule ID — catches tunnels this renderer
-    // doesn't track (e.g. started by another window, or still connecting).
-    if (bridge?.stopPortForwardByRuleId) {
-      bridge.stopPortForwardByRuleId(ruleId).catch((err: unknown) => {
-        logger.warn(`[PortForwardingService] Backend stopByRuleId failed for ${ruleId}:`, err);
-      });
-    }
-    return;
   }
 
-  // No local activeConnections entry — use targeted backend stop by rule ID.
-  // This is simpler and more reliable than listPortForwards + match because
-  // it catches tunnels in ANY state (including SSH handshake in progress).
+  // Use stopPortForwardByRuleId exclusively — it sets tunnel.cancelled = true
+  // before conn.end(), so the close handler resolves gracefully.  The old
+  // stopPortForward(tunnelId) IPC deletes the tunnel entry immediately,
+  // which makes the cancelled flag invisible to the close handler.
   const bridge = netcattyBridge.get();
   if (bridge?.stopPortForwardByRuleId) {
     bridge.stopPortForwardByRuleId(ruleId).catch((err: unknown) => {
-      logger.warn(`[PortForwardingService] Cross-window stopByRuleId failed for ${ruleId}:`, err);
+      logger.warn(`[PortForwardingService] Backend stopByRuleId failed for ${ruleId}:`, err);
     });
   }
 };

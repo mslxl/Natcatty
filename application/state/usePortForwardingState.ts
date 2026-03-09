@@ -19,11 +19,14 @@ import {
 } from "../../infrastructure/services/portForwardingService";
 import { useStoredViewMode, ViewMode } from "./useStoredViewMode";
 
-// Module-level guards: these side effects must run at most once per
+// Module-level ref-counts: these side effects must run at most once per
 // window, not per hook instance (the hook mounts from both App.tsx
-// and PortForwardingNew.tsx).
-let reconnectCancelListenerActive = false;
-let heartbeatActive = false;
+// and PortForwardingNew.tsx).  Ref-counting ensures the resources
+// stay alive as long as ANY instance is mounted.
+let reconnectCancelListenerRefs = 0;
+let reconnectCancelCleanup: (() => void) | undefined;
+let heartbeatRefs = 0;
+let heartbeatIntervalId: ReturnType<typeof setInterval> | undefined;
 
 export type { ViewMode };
 
@@ -188,37 +191,49 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
   }, []);
 
   // Listen for cross-window reconnect cancellation events.
-  // Guarded to run only once per window (multiple hook instances mount
-  // from App.tsx and PortForwardingNew.tsx).
+  // Ref-counted so the listener stays alive as long as ANY hook
+  // instance is mounted (App.tsx outlives PortForwardingNew.tsx).
   useEffect(() => {
-    if (reconnectCancelListenerActive) return;
-    reconnectCancelListenerActive = true;
-    const cleanup = initReconnectCancelListener();
+    reconnectCancelListenerRefs++;
+    let cleanup: (() => void) | undefined;
+    if (reconnectCancelListenerRefs === 1) {
+      cleanup = initReconnectCancelListener();
+      reconnectCancelCleanup = cleanup;
+    }
     return () => {
-      reconnectCancelListenerActive = false;
-      cleanup();
+      reconnectCancelListenerRefs--;
+      if (reconnectCancelListenerRefs === 0 && reconnectCancelCleanup) {
+        reconnectCancelCleanup();
+        reconnectCancelCleanup = undefined;
+      }
     };
   }, []);
 
   // Periodic heartbeat: reconcile renderer state with the backend every 4s.
-  // Guarded to run only once per window.
+  // Ref-counted — same pattern as the reconnect cancel listener.
   useEffect(() => {
-    if (heartbeatActive) return;
-    heartbeatActive = true;
-    const HEARTBEAT_INTERVAL_MS = 4_000;
+    heartbeatRefs++;
+    let intervalId: ReturnType<typeof setInterval> | undefined;
+    if (heartbeatRefs === 1) {
+      const HEARTBEAT_INTERVAL_MS = 4_000;
 
-    const tick = async () => {
-      const { gone, appeared } = await reconcileWithBackend();
-      if (gone.length === 0 && appeared.length === 0) return;
+      const tick = async () => {
+        const { gone, appeared } = await reconcileWithBackend();
+        if (gone.length === 0 && appeared.length === 0) return;
 
-      // Re-derive statuses from the now-updated activeConnections map
-      setGlobalRules(normalizeRulesWithConnections(globalRules));
-    };
+        // Re-derive statuses from the now-updated activeConnections map
+        setGlobalRules(normalizeRulesWithConnections(globalRules));
+      };
 
-    const id = setInterval(tick, HEARTBEAT_INTERVAL_MS);
+      intervalId = setInterval(tick, HEARTBEAT_INTERVAL_MS);
+      heartbeatIntervalId = intervalId;
+    }
     return () => {
-      heartbeatActive = false;
-      clearInterval(id);
+      heartbeatRefs--;
+      if (heartbeatRefs === 0 && heartbeatIntervalId !== undefined) {
+        clearInterval(heartbeatIntervalId);
+        heartbeatIntervalId = undefined;
+      }
     };
   }, []);
 
