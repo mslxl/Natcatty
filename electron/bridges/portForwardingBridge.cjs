@@ -100,6 +100,9 @@ async function startPortForward(event, payload) {
   }));
 
   return new Promise((resolve, reject) => {
+    // Track whether the Promise has been settled so conn.on('close')
+    // can reject if the tunnel was killed during SSH handshake.
+    let settled = false;
 
     conn.on('ready', () => {
       console.log(`[PortForward] SSH connection ready for tunnel ${tunnelId}`);
@@ -131,6 +134,7 @@ async function startPortForward(event, payload) {
           sendStatus('error', err.message);
           conn.end();
           portForwardingTunnels.delete(tunnelId);
+          settled = true;
           reject(err);
         });
 
@@ -140,9 +144,11 @@ async function startPortForward(event, payload) {
             type: 'local',
             conn,
             server,
+            status: 'active',
             webContentsId: sender.id
           });
           sendStatus('active');
+          settled = true;
           resolve({ tunnelId, success: true });
         });
 
@@ -153,6 +159,7 @@ async function startPortForward(event, payload) {
             console.error(`[PortForward] Remote forward error:`, err.message);
             sendStatus('error', err.message);
             conn.end();
+            settled = true;
             reject(err);
             return;
           }
@@ -161,9 +168,11 @@ async function startPortForward(event, payload) {
           portForwardingTunnels.set(tunnelId, {
             type: 'remote',
             conn,
+            status: 'active',
             webContentsId: sender.id
           });
           sendStatus('active');
+          settled = true;
           resolve({ tunnelId, success: true });
         });
 
@@ -265,6 +274,7 @@ async function startPortForward(event, payload) {
           sendStatus('error', err.message);
           conn.end();
           portForwardingTunnels.delete(tunnelId);
+          settled = true;
           reject(err);
         });
 
@@ -274,12 +284,15 @@ async function startPortForward(event, payload) {
             type: 'dynamic',
             conn,
             server,
+            status: 'active',
             webContentsId: sender.id
           });
           sendStatus('active');
+          settled = true;
           resolve({ tunnelId, success: true });
         });
       } else {
+        settled = true;
         reject(new Error(`Unknown forwarding type: ${type}`));
       }
     });
@@ -288,12 +301,15 @@ async function startPortForward(event, payload) {
       console.error(`[PortForward] SSH error:`, err.message);
       sendStatus('error', err.message);
       portForwardingTunnels.delete(tunnelId);
+      settled = true;
       reject(err);
     });
 
     conn.on('close', () => {
       console.log(`[PortForward] SSH connection closed for tunnel ${tunnelId}`);
       const tunnel = portForwardingTunnels.get(tunnelId);
+      // Capture the cancelled flag BEFORE cleanup deletes the entry.
+      const wasCancelled = !!tunnel?.cancelled;
       if (tunnel) {
         if (tunnel.server) {
           try { tunnel.server.close(); } catch { }
@@ -301,9 +317,30 @@ async function startPortForward(event, payload) {
         sendStatus('inactive');
         portForwardingTunnels.delete(tunnelId);
       }
+      // If the Promise was never settled (tunnel killed during
+      // handshake by stopPortForwardByRuleId), settle it.
+      if (!settled) {
+        settled = true;
+        if (wasCancelled) {
+          resolve({ tunnelId, success: false, cancelled: true });
+        } else {
+          reject(new Error(`Tunnel ${tunnelId} closed before connection established`));
+        }
+      }
     });
 
     sendStatus('connecting');
+    // Register the connection BEFORE the handshake starts so that
+    // stopPortForwardByRuleId can find and kill it at any point,
+    // including during the SSH handshake window.  The conn.on('ready')
+    // handler updates the entry to include the server object later.
+    portForwardingTunnels.set(tunnelId, {
+      type,
+      conn,
+      server: null,
+      status: 'connecting',
+      webContentsId: sender.id,
+    });
     conn.connect(connectOpts);
   });
 }
@@ -320,13 +357,17 @@ async function stopPortForward(event, payload) {
   }
 
   try {
+    // Mark as cancelled so conn.on('close') resolves gracefully
+    // instead of rejecting for in-flight handshakes.
+    tunnel.cancelled = true;
     if (tunnel.server) {
       tunnel.server.close();
     }
     if (tunnel.conn) {
       tunnel.conn.end();
     }
-    portForwardingTunnels.delete(tunnelId);
+    // Don't delete here — let conn.on('close') handle cleanup
+    // so it can read the cancelled flag.
 
     return { tunnelId, success: true };
   } catch (err) {
@@ -345,7 +386,7 @@ async function getPortForwardStatus(event, payload) {
     return { tunnelId, status: 'inactive' };
   }
 
-  return { tunnelId, status: 'active', type: tunnel.type };
+  return { tunnelId, status: tunnel.status || 'active', type: tunnel.type };
 }
 
 /**
@@ -357,7 +398,7 @@ async function listPortForwards() {
     list.push({
       tunnelId,
       type: tunnel.type,
-      status: 'active',
+      status: tunnel.status || 'active',
     });
   }
   return list;
@@ -370,19 +411,52 @@ function stopAllPortForwards() {
   console.log(`[PortForward] Stopping all ${portForwardingTunnels.size} active tunnels...`);
   for (const [tunnelId, tunnel] of portForwardingTunnels) {
     try {
+      // Mark as cancelled so conn.on('close') resolves gracefully
+      // instead of rejecting with an error for in-flight handshakes.
+      tunnel.cancelled = true;
       if (tunnel.server) {
         tunnel.server.close();
       }
       if (tunnel.conn) {
         tunnel.conn.end();
       }
+      // Don't delete here — let conn.on('close') handle cleanup
+      // so it can read the cancelled flag.
       console.log(`[PortForward] Stopped tunnel ${tunnelId}`);
     } catch (err) {
       console.warn(`[PortForward] Failed to stop tunnel ${tunnelId}:`, err.message);
     }
   }
-  portForwardingTunnels.clear();
   console.log('[PortForward] All tunnels stopped');
+}
+
+/**
+ * Stop all active port forwards for a given rule ID.
+ * Tunnel IDs follow the format `pf-{ruleId}-{timestamp}`, so we match
+ * by checking if the tunnelId contains the ruleId.
+ * This catches tunnels in ANY state (connecting, active) because it
+ * operates on the main-process portForwardingTunnels map directly.
+ */
+function stopPortForwardByRuleId(_event, { ruleId }) {
+  let stopped = 0;
+  for (const [tunnelId, tunnel] of portForwardingTunnels) {
+    if (tunnelId.includes(ruleId)) {
+      try {
+        // Mark as intentionally cancelled BEFORE conn.end() so the
+        // close handler resolves gracefully instead of rejecting.
+        tunnel.cancelled = true;
+        if (tunnel.server) tunnel.server.close();
+        if (tunnel.conn) tunnel.conn.end();
+        // Don't delete here — let the conn.on('close') handler delete
+        // the entry so it can read tunnel.cancelled first.
+        console.log(`[PortForward] Stopped tunnel ${tunnelId} for rule ${ruleId}`);
+        stopped++;
+      } catch (err) {
+        console.warn(`[PortForward] Failed to stop tunnel ${tunnelId}:`, err.message);
+      }
+    }
+  }
+  return { stopped };
 }
 
 /**
@@ -393,6 +467,8 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:portforward:stop", stopPortForward);
   ipcMain.handle("netcatty:portforward:status", getPortForwardStatus);
   ipcMain.handle("netcatty:portforward:list", listPortForwards);
+  ipcMain.handle("netcatty:portforward:stopAll", () => stopAllPortForwards());
+  ipcMain.handle("netcatty:portforward:stopByRuleId", stopPortForwardByRuleId);
 }
 
 module.exports = {
@@ -402,4 +478,5 @@ module.exports = {
   getPortForwardStatus,
   listPortForwards,
   stopAllPortForwards,
+  stopPortForwardByRuleId,
 };

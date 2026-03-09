@@ -690,6 +690,12 @@ const api = {
   listPortForwards: async () => {
     return ipcRenderer.invoke("netcatty:portforward:list");
   },
+  stopAllPortForwards: async () => {
+    return ipcRenderer.invoke("netcatty:portforward:stopAll");
+  },
+  stopPortForwardByRuleId: async (ruleId) => {
+    return ipcRenderer.invoke("netcatty:portforward:stopByRuleId", { ruleId });
+  },
   onPortForwardStatus: (tunnelId, cb) => {
     if (!portForwardStatusListeners.has(tunnelId)) {
       portForwardStatusListeners.set(tunnelId, new Set());

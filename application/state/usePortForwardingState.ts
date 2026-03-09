@@ -9,11 +9,24 @@ import { localStorageAdapter } from "../../infrastructure/persistence/localStora
 import {
   clearReconnectTimer,
   getActiveConnection,
+  initReconnectCancelListener,
+  reconcileWithBackend,
   startPortForward,
+  stopAllPortForwards,
+  stopAndCleanupRule,
   stopPortForward,
   syncWithBackend,
 } from "../../infrastructure/services/portForwardingService";
 import { useStoredViewMode, ViewMode } from "./useStoredViewMode";
+
+// Module-level ref-counts: these side effects must run at most once per
+// window, not per hook instance (the hook mounts from both App.tsx
+// and PortForwardingNew.tsx).  Ref-counting ensures the resources
+// stay alive as long as ANY instance is mounted.
+let reconnectCancelListenerRefs = 0;
+let reconnectCancelCleanup: (() => void) | undefined;
+let heartbeatRefs = 0;
+let heartbeatIntervalId: ReturnType<typeof setInterval> | undefined;
 
 export type { ViewMode };
 
@@ -177,6 +190,53 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
     return () => window.removeEventListener("storage", handleStorageChange);
   }, []);
 
+  // Listen for cross-window reconnect cancellation events.
+  // Ref-counted so the listener stays alive as long as ANY hook
+  // instance is mounted (App.tsx outlives PortForwardingNew.tsx).
+  useEffect(() => {
+    reconnectCancelListenerRefs++;
+    let cleanup: (() => void) | undefined;
+    if (reconnectCancelListenerRefs === 1) {
+      cleanup = initReconnectCancelListener();
+      reconnectCancelCleanup = cleanup;
+    }
+    return () => {
+      reconnectCancelListenerRefs--;
+      if (reconnectCancelListenerRefs === 0 && reconnectCancelCleanup) {
+        reconnectCancelCleanup();
+        reconnectCancelCleanup = undefined;
+      }
+    };
+  }, []);
+
+  // Periodic heartbeat: reconcile renderer state with the backend every 4s.
+  // Ref-counted — same pattern as the reconnect cancel listener.
+  useEffect(() => {
+    heartbeatRefs++;
+    let intervalId: ReturnType<typeof setInterval> | undefined;
+    if (heartbeatRefs === 1) {
+      const HEARTBEAT_INTERVAL_MS = 4_000;
+
+      const tick = async () => {
+        const { gone, appeared } = await reconcileWithBackend();
+        if (gone.length === 0 && appeared.length === 0) return;
+
+        // Re-derive statuses from the now-updated activeConnections map
+        setGlobalRules(normalizeRulesWithConnections(globalRules));
+      };
+
+      intervalId = setInterval(tick, HEARTBEAT_INTERVAL_MS);
+      heartbeatIntervalId = intervalId;
+    }
+    return () => {
+      heartbeatRefs--;
+      if (heartbeatRefs === 0 && heartbeatIntervalId !== undefined) {
+        clearInterval(heartbeatIntervalId);
+        heartbeatIntervalId = undefined;
+      }
+    };
+  }, []);
+
   const addRule = useCallback(
     (
       rule: Omit<PortForwardingRule, "id" | "createdAt" | "status">,
@@ -207,6 +267,8 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
 
   const deleteRule = useCallback(
     (id: string) => {
+      // Stop any active tunnel before removing the rule
+      stopAndCleanupRule(id);
       const updated = globalRules.filter((r) => r.id !== id);
       setGlobalRules(updated);
       if (selectedRuleId === id) {
@@ -238,6 +300,60 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
   );
 
   const importRules = useCallback((newRules: PortForwardingRule[]) => {
+    // When clearing all rules (e.g. "Clear local data"), stop ALL tunnels
+    // and broadcast per-rule reconnect cancellation.  stopAllPortForwards
+    // handles the backend, but we also need per-rule broadcasts so other
+    // windows cancel their pending reconnect timers.
+    if (newRules.length === 0) {
+      // Read from localStorage since globalRules may be empty (uninitialized)
+      const storedRules = localStorageAdapter.read<PortForwardingRule[]>(
+        STORAGE_KEY_PORT_FORWARDING,
+      );
+      const rulesToCancel = globalRules.length > 0
+        ? globalRules
+        : (storedRules && Array.isArray(storedRules) ? storedRules : []);
+      for (const rule of rulesToCancel) {
+        stopAndCleanupRule(rule.id);
+      }
+      // Safety net: also stop anything the renderer doesn't know about
+      void stopAllPortForwards();
+    }
+
+    // Stop tunnels for rules that are being removed or whose connection
+    // config has changed (same ID but different host/port/type means the
+    // old tunnel is pointing at stale parameters and must be torn down).
+    //
+    // Use globalRules as the diff baseline.  In a freshly opened settings
+    // window, globalRules may still be empty because initializeStore is
+    // async.  Fall back to reading directly from localStorage to avoid
+    // missing tunnels that need to be stopped.
+    let diffBaseline = globalRules;
+    if (diffBaseline.length === 0 && newRules.length > 0) {
+      const stored = localStorageAdapter.read<PortForwardingRule[]>(
+        STORAGE_KEY_PORT_FORWARDING,
+      );
+      if (stored && Array.isArray(stored) && stored.length > 0) {
+        diffBaseline = stored;
+      }
+    }
+    const newRulesById = new Map(newRules.map((r) => [r.id, r]));
+    for (const existing of diffBaseline) {
+      const incoming = newRulesById.get(existing.id);
+      if (!incoming) {
+        // Rule removed entirely
+        stopAndCleanupRule(existing.id);
+      } else if (
+        existing.type !== incoming.type ||
+        existing.localPort !== incoming.localPort ||
+        existing.remoteHost !== incoming.remoteHost ||
+        existing.remotePort !== incoming.remotePort ||
+        existing.bindAddress !== incoming.bindAddress ||
+        existing.hostId !== incoming.hostId
+      ) {
+        // Connection-relevant config changed — tear down the old tunnel
+        stopAndCleanupRule(existing.id);
+      }
+    }
     setGlobalRules(normalizeRulesWithConnections(newRules));
   }, []);
 

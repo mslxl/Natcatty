@@ -52,6 +52,53 @@ export const clearReconnectTimer = (ruleId: string): void => {
   }
 };
 
+// Cross-window reconnect cancellation via localStorage broadcast.
+// When one window deletes/replaces a rule, it writes to this key so
+// other windows (with pending reconnect timers) can cancel them.
+const RECONNECT_CANCEL_KEY = '__netcatty_pf_cancel_reconnect';
+
+const broadcastReconnectCancel = (ruleId: string): void => {
+  try {
+    // Write then immediately remove so the storage event fires on
+    // other windows without leaving stale data.
+    window.localStorage.setItem(RECONNECT_CANCEL_KEY, ruleId);
+    window.localStorage.removeItem(RECONNECT_CANCEL_KEY);
+  } catch {
+    // localStorage may be unavailable in some contexts
+  }
+};
+
+/**
+ * Start listening for cross-window reconnect cancellation events.
+ * Should be called once at app init (e.g. in the port-forwarding state hook).
+ * Returns a cleanup function.
+ */
+export const initReconnectCancelListener = (): (() => void) => {
+  const handler = (e: StorageEvent) => {
+    if (e.key !== RECONNECT_CANCEL_KEY || !e.newValue) return;
+    const ruleId = e.newValue;
+    clearReconnectTimer(ruleId);
+
+    const conn = activeConnections.get(ruleId);
+    if (conn) {
+      conn.unsubscribe?.();
+      activeConnections.delete(ruleId);
+    }
+
+    // Also ask the backend to stop any tunnel for this rule.
+    // This catches tunnels still in SSH handshake that aren't yet
+    // in the renderer's activeConnections or the backend's list output.
+    const bridge = netcattyBridge.get();
+    if (bridge?.stopPortForwardByRuleId) {
+      bridge.stopPortForwardByRuleId(ruleId).catch((err: unknown) => {
+        logger.warn(`[PortForwardingService] Cross-window stopByRuleId failed for ${ruleId}:`, err);
+      });
+    }
+  };
+  window.addEventListener('storage', handler);
+  return () => window.removeEventListener('storage', handler);
+};
+
 /**
  * Helper function to schedule a reconnection attempt
  * Returns true if a reconnect was scheduled, false otherwise
@@ -69,16 +116,22 @@ const scheduleReconnectIfNeeded = (
   const attempts = (currentConn?.reconnectAttempts ?? 0) + 1;
 
   if (attempts <= MAX_RECONNECT_ATTEMPTS) {
+    // If the activeConnections entry was already deleted (e.g. by
+    // stopAndCleanupRule while the handshake was in-flight), we
+    // can't actually schedule a reconnect.  Return false so the
+    // caller transitions to 'inactive' instead of stuck 'connecting'.
+    if (!currentConn) {
+      return false;
+    }
+
     logger.info(`[PortForwardingService] Scheduling reconnect ${attempts}/${MAX_RECONNECT_ATTEMPTS}`);
 
-    if (currentConn) {
-      currentConn.reconnectAttempts = attempts;
-      currentConn.reconnectTimeoutId = setTimeout(() => {
-        if (reconnectCallback) {
-          reconnectCallback(ruleId, onStatusChange);
-        }
-      }, RECONNECT_DELAY_MS);
-    }
+    currentConn.reconnectAttempts = attempts;
+    currentConn.reconnectTimeoutId = setTimeout(() => {
+      if (reconnectCallback) {
+        reconnectCallback(ruleId, onStatusChange);
+      }
+    }, RECONNECT_DELAY_MS);
 
     onStatusChange('connecting', `Reconnecting (${attempts}/${MAX_RECONNECT_ATTEMPTS})...`);
     return true;
@@ -106,6 +159,39 @@ export const getActiveRuleIds = (): string[] => {
   return Array.from(activeConnections.entries())
     .filter(([_, conn]) => conn.status === 'active' || conn.status === 'connecting')
     .map(([ruleId]) => ruleId);
+};
+
+/**
+ * Stop and clean up a single rule's tunnel.
+ * Used when a rule is deleted or replaced via import, where we need to ensure
+ * the backend tunnel is torn down and all reconnect timers are cancelled.
+ * This is a fire-and-forget cleanup — errors are logged but not propagated.
+ */
+export const stopAndCleanupRule = (ruleId: string): void => {
+  clearReconnectTimer(ruleId);
+
+  // Broadcast to other windows so they cancel any pending reconnect
+  // timers for this rule (e.g. main window has a reconnect scheduled
+  // but settings window just deleted the rule).
+  broadcastReconnectCancel(ruleId);
+
+  const conn = activeConnections.get(ruleId);
+  if (conn) {
+    // Unsubscribe from status events
+    conn.unsubscribe?.();
+    activeConnections.delete(ruleId);
+  }
+
+  // Use stopPortForwardByRuleId exclusively — it sets tunnel.cancelled = true
+  // before conn.end(), so the close handler resolves gracefully.  The old
+  // stopPortForward(tunnelId) IPC deletes the tunnel entry immediately,
+  // which makes the cancelled flag invisible to the close handler.
+  const bridge = netcattyBridge.get();
+  if (bridge?.stopPortForwardByRuleId) {
+    bridge.stopPortForwardByRuleId(ruleId).catch((err: unknown) => {
+      logger.warn(`[PortForwardingService] Backend stopByRuleId failed for ${ruleId}:`, err);
+    });
+  }
 };
 
 // Tunnel ID prefix and UUID regex pattern for parsing
@@ -166,7 +252,7 @@ export const syncWithBackend = async (): Promise<void> => {
         activeConnections.set(ruleId, {
           ruleId,
           tunnelId: tunnel.tunnelId,
-          status: 'active',
+          status: (tunnel.status === 'active' ? 'active' : 'connecting') as 'active' | 'connecting',
         });
         
         logger.info(`[PortForwardingService] Synced active tunnel for rule ${ruleId}`);
@@ -175,6 +261,93 @@ export const syncWithBackend = async (): Promise<void> => {
   } catch (err) {
     logger.error('[PortForwardingService] Failed to sync with backend:', err);
   }
+};
+
+/**
+ * Reconcile renderer-side connection state with the backend (heartbeat).
+ *
+ * Returns the set of ruleIds whose status changed so the caller can update
+ * React state accordingly.
+ *
+ * Cases handled:
+ * 1. Renderer thinks a tunnel is active, but backend says it's gone
+ *    → clean up activeConnections, return ruleId as "gone"
+ * 2. Backend has an active tunnel that the renderer doesn't track
+ *    → add to activeConnections, return ruleId as "appeared"
+ */
+export const reconcileWithBackend = async (): Promise<{
+  gone: string[];
+  appeared: string[];
+}> => {
+  const result = { gone: [] as string[], appeared: [] as string[] };
+  const bridge = netcattyBridge.get();
+
+  if (!bridge?.listPortForwards) return result;
+
+  try {
+    const backendTunnels = await bridge.listPortForwards();
+    const backendRuleIds = new Set<string>();
+
+    for (const tunnel of backendTunnels) {
+      const ruleId = parseRuleIdFromTunnelId(tunnel.tunnelId);
+      if (ruleId) {
+        backendRuleIds.add(ruleId);
+
+        // Case 2: backend has it, renderer doesn't — insert it
+        if (!activeConnections.has(ruleId)) {
+          activeConnections.set(ruleId, {
+            ruleId,
+            tunnelId: tunnel.tunnelId,
+            status: (tunnel.status === 'active' ? 'active' : 'connecting') as 'active' | 'connecting',
+          });
+          result.appeared.push(ruleId);
+        } else {
+          // Case 3: renderer tracks it, but status may have changed
+          // (e.g. connecting → active after SSH handshake completed
+          // in another window).
+          const existing = activeConnections.get(ruleId)!;
+          const backendStatus = (tunnel.status === 'active' ? 'active' : 'connecting') as 'active' | 'connecting';
+          if (existing.status !== backendStatus) {
+            existing.status = backendStatus;
+            existing.tunnelId = tunnel.tunnelId;
+            result.appeared.push(ruleId);
+          }
+        }
+      }
+    }
+
+    // Case 1: renderer thinks tunnel is active/connecting, but backend
+    // says it's gone.  For 'connecting' entries seeded by a previous
+    // reconcile (observing another window's handshake), also evict if the
+    // backend no longer reports them — the handshake failed or was
+    // cancelled.  Only skip 'connecting' entries that this renderer
+    // initiated itself (they have an unsubscribe callback because this
+    // renderer called startPortForward and registered a status listener).
+    for (const [ruleId, conn] of activeConnections) {
+      if (!backendRuleIds.has(ruleId)) {
+        // Skip locally-initiated connecting tunnels (have unsubscribe)
+        // — the backend hasn't reported them yet because the handshake
+        // is still in progress.
+        if (conn.status === 'connecting' && conn.unsubscribe) {
+          continue;
+        }
+        conn.unsubscribe?.();
+        clearReconnectTimer(ruleId);
+        activeConnections.delete(ruleId);
+        result.gone.push(ruleId);
+      }
+    }
+
+    if (result.gone.length || result.appeared.length) {
+      logger.info(
+        `[PortForwardingService] Reconcile: ${result.gone.length} gone, ${result.appeared.length} appeared`,
+      );
+    }
+  } catch (err) {
+    logger.warn('[PortForwardingService] Reconcile failed:', err);
+  }
+
+  return result;
 };
 
 /**
@@ -259,6 +432,15 @@ export const startPortForward = async (
     });
     
     if (!result.success) {
+      // Intentional cancellation (rule deleted/replaced during handshake).
+      // Clean up quietly — no error state, no reconnect.
+      if ((result as { cancelled?: boolean }).cancelled) {
+        activeConnections.delete(rule.id);
+        unsubscribe?.();
+        onStatusChange('inactive');
+        return { success: false, error: undefined };
+      }
+
       // Check if we should attempt reconnect
       const reconnectScheduled = scheduleReconnectIfNeeded(rule.id, enableReconnect, onStatusChange);
       if (reconnectScheduled) {
@@ -360,6 +542,7 @@ export const isBackendAvailable = (): boolean => {
 export const stopAllPortForwards = async (): Promise<void> => {
   const bridge = netcattyBridge.get();
   
+  // Stop everything the renderer knows about
   for (const [ruleId, conn] of activeConnections) {
     // Clear any pending reconnect timer
     clearReconnectTimer(ruleId);
@@ -375,6 +558,18 @@ export const stopAllPortForwards = async (): Promise<void> => {
   }
   
   activeConnections.clear();
+
+  // Also ask the backend to stop ALL tunnels it knows about.
+  // This covers tunnels that were started by other windows or that
+  // this renderer doesn't have in its activeConnections map (e.g.
+  // settings window opened before initializeStore finished).
+  if (bridge?.stopAllPortForwards) {
+    try {
+      await bridge.stopAllPortForwards();
+    } catch (err) {
+      logger.warn('[PortForwardingService] Backend stopAllPortForwards failed:', err);
+    }
+  }
 };
 
 /**
