@@ -183,7 +183,7 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
   // This catches state drift (e.g. tunnel died without IPC notification,
   // or unsubscribed status callbacks after page navigation).
   useEffect(() => {
-    const HEARTBEAT_INTERVAL_MS = 30_000;
+    const HEARTBEAT_INTERVAL_MS = 4_000;
 
     const tick = async () => {
       const { gone, appeared } = await reconcileWithBackend();
