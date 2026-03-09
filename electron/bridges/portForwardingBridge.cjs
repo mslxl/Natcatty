@@ -304,6 +304,16 @@ async function startPortForward(event, payload) {
     });
 
     sendStatus('connecting');
+    // Register the connection BEFORE the handshake starts so that
+    // stopPortForwardByRuleId can find and kill it at any point,
+    // including during the SSH handshake window.  The conn.on('ready')
+    // handler updates the entry to include the server object later.
+    portForwardingTunnels.set(tunnelId, {
+      type,
+      conn,
+      server: null,
+      webContentsId: sender.id,
+    });
     conn.connect(connectOpts);
   });
 }
