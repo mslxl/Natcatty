@@ -908,6 +908,37 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     return () => disposable.dispose();
   }, [sessionId]);
 
+  // Prevent xterm.js's built-in rightClickHandler and right-button mouseup
+  // from interfering with tmux/vim popup menus when mouse tracking is active.
+  // - contextmenu: xterm.js calls textarea.select() which steals focus
+  // - mouseup (button 2): tmux interprets the right-button release as a
+  //   dismiss action, closing the popup menu immediately after it appears
+  // Both are intercepted at the capture phase before xterm.js's own listeners.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const handleContextMenuCapture = (e: MouseEvent) => {
+      if (mouseTrackingRef.current) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    };
+
+    const handleMouseUpCapture = (e: MouseEvent) => {
+      if (e.button === 2 && mouseTrackingRef.current) {
+        e.stopImmediatePropagation();
+      }
+    };
+
+    el.addEventListener('contextmenu', handleContextMenuCapture, true);
+    el.addEventListener('mouseup', handleMouseUpCapture, true);
+    return () => {
+      el.removeEventListener('contextmenu', handleContextMenuCapture, true);
+      el.removeEventListener('mouseup', handleMouseUpCapture, true);
+    };
+  }, [sessionId]);
+
   useEffect(() => {
     let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
 
