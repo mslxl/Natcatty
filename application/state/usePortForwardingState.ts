@@ -12,6 +12,7 @@ import {
   initReconnectCancelListener,
   reconcileWithBackend,
   startPortForward,
+  stopAllPortForwards,
   stopAndCleanupRule,
   stopPortForward,
   syncWithBackend,
@@ -268,6 +269,14 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
   );
 
   const importRules = useCallback((newRules: PortForwardingRule[]) => {
+    // When clearing all rules (e.g. "Clear local data"), use the backend's
+    // stopAllPortForwards as a safety net.  In a freshly opened settings
+    // window, globalRules may still be empty (initializeStore is async),
+    // so the per-rule loop below wouldn't catch any active tunnels.
+    if (newRules.length === 0) {
+      void stopAllPortForwards();
+    }
+
     // Stop tunnels for rules that are being removed or whose connection
     // config has changed (same ID but different host/port/type means the
     // old tunnel is pointing at stale parameters and must be torn down).

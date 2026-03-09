@@ -3,6 +3,8 @@ import type { PortForwardingRule } from "../../../domain/models";
 import type { SyncPayload } from "../../../domain/sync";
 import { buildSyncPayload, applySyncPayload } from "../../../domain/syncPayload";
 import type { SyncableVaultData } from "../../../domain/syncPayload";
+import { STORAGE_KEY_PORT_FORWARDING } from "../../../infrastructure/config/storageKeys";
+import { localStorageAdapter } from "../../../infrastructure/persistence/localStorageAdapter";
 import { CloudSyncSettings } from "../../CloudSyncSettings";
 import { SettingsTabContent } from "../settings-ui";
 
@@ -22,7 +24,19 @@ export default function SettingsSyncTab(props: {
   } = props;
 
   const onBuildPayload = useCallback((): SyncPayload => {
-    return buildSyncPayload(vault, portForwardingRules);
+    // If hook state is empty but localStorage has data, the async store
+    // initialization hasn't finished yet.  Read from localStorage directly
+    // to avoid uploading empty arrays and overwriting the remote snapshot.
+    let effectiveRules = portForwardingRules;
+    if (effectiveRules.length === 0) {
+      const stored = localStorageAdapter.read<PortForwardingRule[]>(
+        STORAGE_KEY_PORT_FORWARDING,
+      );
+      if (stored && Array.isArray(stored) && stored.length > 0) {
+        effectiveRules = stored;
+      }
+    }
+    return buildSyncPayload(vault, effectiveRules);
   }, [vault, portForwardingRules]);
 
   const onApplyPayload = useCallback(
