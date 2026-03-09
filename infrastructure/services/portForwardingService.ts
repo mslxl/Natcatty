@@ -118,20 +118,41 @@ export const stopAndCleanupRule = (ruleId: string): void => {
   clearReconnectTimer(ruleId);
 
   const conn = activeConnections.get(ruleId);
-  if (!conn) return;
+  if (conn) {
+    // Unsubscribe from status events
+    conn.unsubscribe?.();
 
-  // Unsubscribe from status events
-  conn.unsubscribe?.();
+    // Ask the backend to tear down the tunnel
+    const bridge = netcattyBridge.get();
+    if (bridge?.stopPortForward && conn.tunnelId) {
+      bridge.stopPortForward(conn.tunnelId).catch((err: unknown) => {
+        logger.warn(`[PortForwardingService] Cleanup stop failed for ${ruleId}:`, err);
+      });
+    }
 
-  // Ask the backend to tear down the tunnel
-  const bridge = netcattyBridge.get();
-  if (bridge?.stopPortForward && conn.tunnelId) {
-    bridge.stopPortForward(conn.tunnelId).catch((err: unknown) => {
-      logger.warn(`[PortForwardingService] Cleanup stop failed for ${ruleId}:`, err);
-    });
+    activeConnections.delete(ruleId);
+    return;
   }
 
-  activeConnections.delete(ruleId);
+  // No local activeConnections entry — this renderer may not have started
+  // the tunnel (e.g. settings window cleaning up a tunnel the main window
+  // started).  Query the backend for any tunnel matching this rule ID and
+  // stop it to prevent orphaned tunnels.
+  const bridge = netcattyBridge.get();
+  if (bridge?.listPortForwards && bridge?.stopPortForward) {
+    bridge.listPortForwards().then((tunnels: { tunnelId: string }[]) => {
+      for (const tunnel of tunnels) {
+        const parsedId = parseRuleIdFromTunnelId(tunnel.tunnelId);
+        if (parsedId === ruleId) {
+          bridge.stopPortForward(tunnel.tunnelId).catch((err: unknown) => {
+            logger.warn(`[PortForwardingService] Cross-window cleanup stop failed for ${ruleId}:`, err);
+          });
+        }
+      }
+    }).catch((err: unknown) => {
+      logger.warn(`[PortForwardingService] Cross-window cleanup list failed:`, err);
+    });
+  }
 };
 
 // Tunnel ID prefix and UUID regex pattern for parsing
@@ -245,10 +266,13 @@ export const reconcileWithBackend = async (): Promise<{
       }
     }
 
-    // Case 1: renderer has it, backend doesn't
+    // Case 1: renderer thinks tunnel is active, but backend says it's gone.
+    // IMPORTANT: skip 'connecting' entries — the backend does not report a
+    // tunnel until the SSH handshake completes, so slow connections (MFA,
+    // network latency) would be falsely evicted.
     for (const [ruleId, conn] of activeConnections) {
       if (
-        (conn.status === 'active' || conn.status === 'connecting') &&
+        conn.status === 'active' &&
         !backendRuleIds.has(ruleId)
       ) {
         conn.unsubscribe?.();

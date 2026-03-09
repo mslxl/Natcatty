@@ -76,22 +76,28 @@ export function applySyncPayload(
   payload: SyncPayload,
   importers: SyncPayloadImporters,
 ): void {
-  importers.importVaultData(
-    JSON.stringify({
-      hosts: payload.hosts,
-      keys: payload.keys,
-      identities: payload.identities,
-      snippets: payload.snippets,
-      customGroups: payload.customGroups,
-      // Older payloads may omit knownHosts — treat as empty to ensure
-      // "download and replace" truly replaces all data.
-      knownHosts: payload.knownHosts ?? [],
-    }),
-  );
+  // Build the vault import object.  knownHosts is only included when the
+  // payload explicitly carries the field (even if it's []).  Legacy cloud
+  // snapshots may omit it entirely — in that case we leave the local
+  // known-hosts list untouched rather than destructively wiping it.
+  const vaultImport: Record<string, unknown> = {
+    hosts: payload.hosts,
+    keys: payload.keys,
+    identities: payload.identities,
+    snippets: payload.snippets,
+    customGroups: payload.customGroups,
+  };
+  if (payload.knownHosts !== undefined) {
+    vaultImport.knownHosts = payload.knownHosts;
+  }
 
-  // Always import port-forwarding rules (empty array if absent in payload)
-  // so that "download and replace" clears stale local-only rules.
-  if (importers.importPortForwardingRules) {
-    importers.importPortForwardingRules(payload.portForwardingRules ?? []);
+  importers.importVaultData(JSON.stringify(vaultImport));
+
+  // Only import port-forwarding rules when the payload explicitly carries
+  // them.  Absent field = "payload was created before this feature existed",
+  // so local rules are preserved.  Explicitly present [] = "remote has no
+  // rules, clear local state".
+  if (payload.portForwardingRules !== undefined && importers.importPortForwardingRules) {
+    importers.importPortForwardingRules(payload.portForwardingRules);
   }
 }
