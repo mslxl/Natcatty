@@ -308,6 +308,8 @@ async function startPortForward(event, payload) {
     conn.on('close', () => {
       console.log(`[PortForward] SSH connection closed for tunnel ${tunnelId}`);
       const tunnel = portForwardingTunnels.get(tunnelId);
+      // Capture the cancelled flag BEFORE cleanup deletes the entry.
+      const wasCancelled = !!tunnel?.cancelled;
       if (tunnel) {
         if (tunnel.server) {
           try { tunnel.server.close(); } catch { }
@@ -319,11 +321,6 @@ async function startPortForward(event, payload) {
       // handshake by stopPortForwardByRuleId), settle it.
       if (!settled) {
         settled = true;
-        // Check if this was an intentional cancellation (rule deleted/replaced)
-        // vs. an unexpected close.  Intentional cancellations resolve gracefully
-        // so the renderer doesn't show a bogus error toast.
-        const wasCancelled = portForwardingTunnels.get(tunnelId)?.cancelled
-          || !portForwardingTunnels.has(tunnelId); // already deleted by stopPortForwardByRuleId
         if (wasCancelled) {
           resolve({ tunnelId, success: false, cancelled: true });
         } else {
@@ -442,7 +439,8 @@ function stopPortForwardByRuleId(_event, { ruleId }) {
         tunnel.cancelled = true;
         if (tunnel.server) tunnel.server.close();
         if (tunnel.conn) tunnel.conn.end();
-        portForwardingTunnels.delete(tunnelId);
+        // Don't delete here — let the conn.on('close') handler delete
+        // the entry so it can read tunnel.cancelled first.
         console.log(`[PortForward] Stopped tunnel ${tunnelId} for rule ${ruleId}`);
         stopped++;
       } catch (err) {
