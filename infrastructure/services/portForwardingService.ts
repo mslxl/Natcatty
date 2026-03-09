@@ -332,15 +332,21 @@ export const reconcileWithBackend = async (): Promise<{
       }
     }
 
-    // Case 1: renderer thinks tunnel is active, but backend says it's gone.
-    // IMPORTANT: skip 'connecting' entries — the backend does not report a
-    // tunnel until the SSH handshake completes, so slow connections (MFA,
-    // network latency) would be falsely evicted.
+    // Case 1: renderer thinks tunnel is active/connecting, but backend
+    // says it's gone.  For 'connecting' entries seeded by a previous
+    // reconcile (observing another window's handshake), also evict if the
+    // backend no longer reports them — the handshake failed or was
+    // cancelled.  Only skip 'connecting' entries that this renderer
+    // initiated itself (they have an unsubscribe callback because this
+    // renderer called startPortForward and registered a status listener).
     for (const [ruleId, conn] of activeConnections) {
-      if (
-        conn.status === 'active' &&
-        !backendRuleIds.has(ruleId)
-      ) {
+      if (!backendRuleIds.has(ruleId)) {
+        // Skip locally-initiated connecting tunnels (have unsubscribe)
+        // — the backend hasn't reported them yet because the handshake
+        // is still in progress.
+        if (conn.status === 'connecting' && conn.unsubscribe) {
+          continue;
+        }
         conn.unsubscribe?.();
         clearReconnectTimer(ruleId);
         activeConnections.delete(ruleId);
@@ -442,6 +448,15 @@ export const startPortForward = async (
     });
     
     if (!result.success) {
+      // Intentional cancellation (rule deleted/replaced during handshake).
+      // Clean up quietly — no error state, no reconnect.
+      if ((result as { cancelled?: boolean }).cancelled) {
+        activeConnections.delete(rule.id);
+        unsubscribe?.();
+        onStatusChange('inactive');
+        return { success: false, error: undefined };
+      }
+
       // Check if we should attempt reconnect
       const reconnectScheduled = scheduleReconnectIfNeeded(rule.id, enableReconnect, onStatusChange);
       if (reconnectScheduled) {
