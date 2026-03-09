@@ -52,6 +52,43 @@ export const clearReconnectTimer = (ruleId: string): void => {
   }
 };
 
+// Cross-window reconnect cancellation via localStorage broadcast.
+// When one window deletes/replaces a rule, it writes to this key so
+// other windows (with pending reconnect timers) can cancel them.
+const RECONNECT_CANCEL_KEY = '__netcatty_pf_cancel_reconnect';
+
+const broadcastReconnectCancel = (ruleId: string): void => {
+  try {
+    // Write then immediately remove so the storage event fires on
+    // other windows without leaving stale data.
+    window.localStorage.setItem(RECONNECT_CANCEL_KEY, ruleId);
+    window.localStorage.removeItem(RECONNECT_CANCEL_KEY);
+  } catch {
+    // localStorage may be unavailable in some contexts
+  }
+};
+
+/**
+ * Start listening for cross-window reconnect cancellation events.
+ * Should be called once at app init (e.g. in the port-forwarding state hook).
+ * Returns a cleanup function.
+ */
+export const initReconnectCancelListener = (): (() => void) => {
+  const handler = (e: StorageEvent) => {
+    if (e.key !== RECONNECT_CANCEL_KEY || !e.newValue) return;
+    const ruleId = e.newValue;
+    clearReconnectTimer(ruleId);
+    // Also clean up activeConnections if this window had a connecting entry
+    const conn = activeConnections.get(ruleId);
+    if (conn) {
+      conn.unsubscribe?.();
+      activeConnections.delete(ruleId);
+    }
+  };
+  window.addEventListener('storage', handler);
+  return () => window.removeEventListener('storage', handler);
+};
+
 /**
  * Helper function to schedule a reconnection attempt
  * Returns true if a reconnect was scheduled, false otherwise
@@ -116,6 +153,11 @@ export const getActiveRuleIds = (): string[] => {
  */
 export const stopAndCleanupRule = (ruleId: string): void => {
   clearReconnectTimer(ruleId);
+
+  // Broadcast to other windows so they cancel any pending reconnect
+  // timers for this rule (e.g. main window has a reconnect scheduled
+  // but settings window just deleted the rule).
+  broadcastReconnectCancel(ruleId);
 
   const conn = activeConnections.get(ruleId);
   if (conn) {

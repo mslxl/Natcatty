@@ -9,6 +9,7 @@ import { localStorageAdapter } from "../../infrastructure/persistence/localStora
 import {
   clearReconnectTimer,
   getActiveConnection,
+  initReconnectCancelListener,
   reconcileWithBackend,
   startPortForward,
   stopAndCleanupRule,
@@ -177,6 +178,13 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
 
     window.addEventListener("storage", handleStorageChange);
     return () => window.removeEventListener("storage", handleStorageChange);
+  }, []);
+
+  // Listen for cross-window reconnect cancellation events.
+  // When another window deletes/replaces a rule, it broadcasts via
+  // localStorage so this window can cancel any pending reconnect timer.
+  useEffect(() => {
+    return initReconnectCancelListener();
   }, []);
 
   // Periodic heartbeat: reconcile renderer state with the backend every 30s.
