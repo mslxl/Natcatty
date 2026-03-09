@@ -66,6 +66,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
           ...rule,
           status: 'inactive' as const,
           error: undefined,
+          lastUsedAt: undefined,
         }));
       }
     }
@@ -94,6 +95,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
           ...rule,
           status: 'inactive' as const,
           error: undefined,
+          lastUsedAt: undefined,
         }));
       }
     }

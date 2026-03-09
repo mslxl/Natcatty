@@ -308,7 +308,7 @@ export const reconcileWithBackend = async (): Promise<{
           activeConnections.set(ruleId, {
             ruleId,
             tunnelId: tunnel.tunnelId,
-            status: 'active',
+            status: (tunnel.status === 'active' ? 'active' : 'connecting') as 'active' | 'connecting',
           });
           result.appeared.push(ruleId);
         }
