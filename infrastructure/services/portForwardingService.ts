@@ -116,16 +116,22 @@ const scheduleReconnectIfNeeded = (
   const attempts = (currentConn?.reconnectAttempts ?? 0) + 1;
 
   if (attempts <= MAX_RECONNECT_ATTEMPTS) {
+    // If the activeConnections entry was already deleted (e.g. by
+    // stopAndCleanupRule while the handshake was in-flight), we
+    // can't actually schedule a reconnect.  Return false so the
+    // caller transitions to 'inactive' instead of stuck 'connecting'.
+    if (!currentConn) {
+      return false;
+    }
+
     logger.info(`[PortForwardingService] Scheduling reconnect ${attempts}/${MAX_RECONNECT_ATTEMPTS}`);
 
-    if (currentConn) {
-      currentConn.reconnectAttempts = attempts;
-      currentConn.reconnectTimeoutId = setTimeout(() => {
-        if (reconnectCallback) {
-          reconnectCallback(ruleId, onStatusChange);
-        }
-      }, RECONNECT_DELAY_MS);
-    }
+    currentConn.reconnectAttempts = attempts;
+    currentConn.reconnectTimeoutId = setTimeout(() => {
+      if (reconnectCallback) {
+        reconnectCallback(ruleId, onStatusChange);
+      }
+    }, RECONNECT_DELAY_MS);
 
     onStatusChange('connecting', `Reconnecting (${attempts}/${MAX_RECONNECT_ATTEMPTS})...`);
     return true;
@@ -262,7 +268,7 @@ export const syncWithBackend = async (): Promise<void> => {
         activeConnections.set(ruleId, {
           ruleId,
           tunnelId: tunnel.tunnelId,
-          status: 'active',
+          status: (tunnel.status === 'active' ? 'active' : 'connecting') as 'active' | 'connecting',
         });
         
         logger.info(`[PortForwardingService] Synced active tunnel for rule ${ruleId}`);

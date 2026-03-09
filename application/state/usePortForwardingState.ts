@@ -19,6 +19,12 @@ import {
 } from "../../infrastructure/services/portForwardingService";
 import { useStoredViewMode, ViewMode } from "./useStoredViewMode";
 
+// Module-level guards: these side effects must run at most once per
+// window, not per hook instance (the hook mounts from both App.tsx
+// and PortForwardingNew.tsx).
+let reconnectCancelListenerActive = false;
+let heartbeatActive = false;
+
 export type { ViewMode };
 
 export type SortMode = "az" | "za" | "newest" | "oldest";
@@ -182,16 +188,23 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
   }, []);
 
   // Listen for cross-window reconnect cancellation events.
-  // When another window deletes/replaces a rule, it broadcasts via
-  // localStorage so this window can cancel any pending reconnect timer.
+  // Guarded to run only once per window (multiple hook instances mount
+  // from App.tsx and PortForwardingNew.tsx).
   useEffect(() => {
-    return initReconnectCancelListener();
+    if (reconnectCancelListenerActive) return;
+    reconnectCancelListenerActive = true;
+    const cleanup = initReconnectCancelListener();
+    return () => {
+      reconnectCancelListenerActive = false;
+      cleanup();
+    };
   }, []);
 
-  // Periodic heartbeat: reconcile renderer state with the backend every 30s.
-  // This catches state drift (e.g. tunnel died without IPC notification,
-  // or unsubscribed status callbacks after page navigation).
+  // Periodic heartbeat: reconcile renderer state with the backend every 4s.
+  // Guarded to run only once per window.
   useEffect(() => {
+    if (heartbeatActive) return;
+    heartbeatActive = true;
     const HEARTBEAT_INTERVAL_MS = 4_000;
 
     const tick = async () => {
@@ -203,7 +216,10 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
     };
 
     const id = setInterval(tick, HEARTBEAT_INTERVAL_MS);
-    return () => clearInterval(id);
+    return () => {
+      heartbeatActive = false;
+      clearInterval(id);
+    };
   }, []);
 
   const addRule = useCallback(
