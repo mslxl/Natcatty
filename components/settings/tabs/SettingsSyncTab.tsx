@@ -40,6 +40,7 @@ export default function SettingsSyncTab(props: {
           ...rest,
           status: "inactive" as const,
           error: undefined,
+          lastUsedAt: undefined,
         }));
       }
     }
