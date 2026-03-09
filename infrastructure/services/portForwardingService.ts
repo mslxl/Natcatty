@@ -519,6 +519,7 @@ export const isBackendAvailable = (): boolean => {
 export const stopAllPortForwards = async (): Promise<void> => {
   const bridge = netcattyBridge.get();
   
+  // Stop everything the renderer knows about
   for (const [ruleId, conn] of activeConnections) {
     // Clear any pending reconnect timer
     clearReconnectTimer(ruleId);
@@ -534,6 +535,18 @@ export const stopAllPortForwards = async (): Promise<void> => {
   }
   
   activeConnections.clear();
+
+  // Also ask the backend to stop ALL tunnels it knows about.
+  // This covers tunnels that were started by other windows or that
+  // this renderer doesn't have in its activeConnections map (e.g.
+  // settings window opened before initializeStore finished).
+  if (bridge?.stopAllPortForwards) {
+    try {
+      await bridge.stopAllPortForwards();
+    } catch (err) {
+      logger.warn('[PortForwardingService] Backend stopAllPortForwards failed:', err);
+    }
+  }
 };
 
 /**

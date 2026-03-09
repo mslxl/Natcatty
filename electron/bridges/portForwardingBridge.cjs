@@ -393,6 +393,7 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:portforward:stop", stopPortForward);
   ipcMain.handle("netcatty:portforward:status", getPortForwardStatus);
   ipcMain.handle("netcatty:portforward:list", listPortForwards);
+  ipcMain.handle("netcatty:portforward:stopAll", () => stopAllPortForwards());
 }
 
 module.exports = {
