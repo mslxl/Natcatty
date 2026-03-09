@@ -83,11 +83,15 @@ export function applySyncPayload(
       identities: payload.identities,
       snippets: payload.snippets,
       customGroups: payload.customGroups,
-      knownHosts: payload.knownHosts,
+      // Older payloads may omit knownHosts — treat as empty to ensure
+      // "download and replace" truly replaces all data.
+      knownHosts: payload.knownHosts ?? [],
     }),
   );
 
-  if (payload.portForwardingRules && importers.importPortForwardingRules) {
-    importers.importPortForwardingRules(payload.portForwardingRules);
+  // Always import port-forwarding rules (empty array if absent in payload)
+  // so that "download and replace" clears stale local-only rules.
+  if (importers.importPortForwardingRules) {
+    importers.importPortForwardingRules(payload.portForwardingRules ?? []);
   }
 }

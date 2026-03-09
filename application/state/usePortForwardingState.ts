@@ -260,10 +260,24 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
   );
 
   const importRules = useCallback((newRules: PortForwardingRule[]) => {
-    // Stop tunnels for any rules that are being removed by this import
-    const newRuleIds = new Set(newRules.map((r) => r.id));
+    // Stop tunnels for rules that are being removed or whose connection
+    // config has changed (same ID but different host/port/type means the
+    // old tunnel is pointing at stale parameters and must be torn down).
+    const newRulesById = new Map(newRules.map((r) => [r.id, r]));
     for (const existing of globalRules) {
-      if (!newRuleIds.has(existing.id)) {
+      const incoming = newRulesById.get(existing.id);
+      if (!incoming) {
+        // Rule removed entirely
+        stopAndCleanupRule(existing.id);
+      } else if (
+        existing.type !== incoming.type ||
+        existing.localPort !== incoming.localPort ||
+        existing.remoteHost !== incoming.remoteHost ||
+        existing.remotePort !== incoming.remotePort ||
+        existing.bindAddress !== incoming.bindAddress ||
+        existing.hostId !== incoming.hostId
+      ) {
+        // Connection-relevant config changed — tear down the old tunnel
         stopAndCleanupRule(existing.id);
       }
     }
