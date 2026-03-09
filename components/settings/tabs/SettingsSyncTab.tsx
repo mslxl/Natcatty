@@ -35,12 +35,17 @@ export default function SettingsSyncTab(props: {
     [importDataFromString, importPortForwardingRules],
   );
 
+  const clearAllLocalData = useCallback(() => {
+    clearVaultData();
+    importPortForwardingRules([]);
+  }, [clearVaultData, importPortForwardingRules]);
+
   return (
     <SettingsTabContent value="sync">
       <CloudSyncSettings
         onBuildPayload={onBuildPayload}
         onApplyPayload={onApplyPayload}
-        onClearLocalData={clearVaultData}
+        onClearLocalData={clearAllLocalData}
       />
     </SettingsTabContent>
   );
