@@ -9,6 +9,7 @@ import { localStorageAdapter } from "../../infrastructure/persistence/localStora
 import {
   clearReconnectTimer,
   getActiveConnection,
+  reconcileWithBackend,
   startPortForward,
   stopAndCleanupRule,
   stopPortForward,
@@ -176,6 +177,24 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
 
     window.addEventListener("storage", handleStorageChange);
     return () => window.removeEventListener("storage", handleStorageChange);
+  }, []);
+
+  // Periodic heartbeat: reconcile renderer state with the backend every 30s.
+  // This catches state drift (e.g. tunnel died without IPC notification,
+  // or unsubscribed status callbacks after page navigation).
+  useEffect(() => {
+    const HEARTBEAT_INTERVAL_MS = 30_000;
+
+    const tick = async () => {
+      const { gone, appeared } = await reconcileWithBackend();
+      if (gone.length === 0 && appeared.length === 0) return;
+
+      // Re-derive statuses from the now-updated activeConnections map
+      setGlobalRules(normalizeRulesWithConnections(globalRules));
+    };
+
+    const id = setInterval(tick, HEARTBEAT_INTERVAL_MS);
+    return () => clearInterval(id);
   }, []);
 
   const addRule = useCallback(

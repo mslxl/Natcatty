@@ -204,6 +204,73 @@ export const syncWithBackend = async (): Promise<void> => {
 };
 
 /**
+ * Reconcile renderer-side connection state with the backend (heartbeat).
+ *
+ * Returns the set of ruleIds whose status changed so the caller can update
+ * React state accordingly.
+ *
+ * Cases handled:
+ * 1. Renderer thinks a tunnel is active, but backend says it's gone
+ *    → clean up activeConnections, return ruleId as "gone"
+ * 2. Backend has an active tunnel that the renderer doesn't track
+ *    → add to activeConnections, return ruleId as "appeared"
+ */
+export const reconcileWithBackend = async (): Promise<{
+  gone: string[];
+  appeared: string[];
+}> => {
+  const result = { gone: [] as string[], appeared: [] as string[] };
+  const bridge = netcattyBridge.get();
+
+  if (!bridge?.listPortForwards) return result;
+
+  try {
+    const backendTunnels = await bridge.listPortForwards();
+    const backendRuleIds = new Set<string>();
+
+    for (const tunnel of backendTunnels) {
+      const ruleId = parseRuleIdFromTunnelId(tunnel.tunnelId);
+      if (ruleId) {
+        backendRuleIds.add(ruleId);
+
+        // Case 2: backend has it, renderer doesn't
+        if (!activeConnections.has(ruleId)) {
+          activeConnections.set(ruleId, {
+            ruleId,
+            tunnelId: tunnel.tunnelId,
+            status: 'active',
+          });
+          result.appeared.push(ruleId);
+        }
+      }
+    }
+
+    // Case 1: renderer has it, backend doesn't
+    for (const [ruleId, conn] of activeConnections) {
+      if (
+        (conn.status === 'active' || conn.status === 'connecting') &&
+        !backendRuleIds.has(ruleId)
+      ) {
+        conn.unsubscribe?.();
+        clearReconnectTimer(ruleId);
+        activeConnections.delete(ruleId);
+        result.gone.push(ruleId);
+      }
+    }
+
+    if (result.gone.length || result.appeared.length) {
+      logger.info(
+        `[PortForwardingService] Reconcile: ${result.gone.length} gone, ${result.appeared.length} appeared`,
+      );
+    }
+  } catch (err) {
+    logger.warn('[PortForwardingService] Reconcile failed:', err);
+  }
+
+  return result;
+};
+
+/**
  * Start a port forwarding tunnel
  * @param enableReconnect - If true, will automatically attempt to reconnect on disconnect
  */
