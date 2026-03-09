@@ -33,7 +33,14 @@ export default function SettingsSyncTab(props: {
         STORAGE_KEY_PORT_FORWARDING,
       );
       if (stored && Array.isArray(stored) && stored.length > 0) {
-        effectiveRules = stored;
+        // Strip transient per-device fields (status, error, lastUsedAt)
+        // that setGlobalRules persists to localStorage but shouldn't be
+        // included in the cloud sync snapshot.
+        effectiveRules = stored.map(({ status: _status, error: _error, ...rest }) => ({
+          ...rest,
+          status: "inactive" as const,
+          error: undefined,
+        }));
       }
     }
     return buildSyncPayload(vault, effectiveRules);

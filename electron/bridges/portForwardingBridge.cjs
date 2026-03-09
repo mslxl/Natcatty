@@ -140,6 +140,7 @@ async function startPortForward(event, payload) {
             type: 'local',
             conn,
             server,
+            status: 'active',
             webContentsId: sender.id
           });
           sendStatus('active');
@@ -161,6 +162,7 @@ async function startPortForward(event, payload) {
           portForwardingTunnels.set(tunnelId, {
             type: 'remote',
             conn,
+            status: 'active',
             webContentsId: sender.id
           });
           sendStatus('active');
@@ -274,6 +276,7 @@ async function startPortForward(event, payload) {
             type: 'dynamic',
             conn,
             server,
+            status: 'active',
             webContentsId: sender.id
           });
           sendStatus('active');
@@ -312,6 +315,7 @@ async function startPortForward(event, payload) {
       type,
       conn,
       server: null,
+      status: 'connecting',
       webContentsId: sender.id,
     });
     conn.connect(connectOpts);
@@ -355,7 +359,7 @@ async function getPortForwardStatus(event, payload) {
     return { tunnelId, status: 'inactive' };
   }
 
-  return { tunnelId, status: 'active', type: tunnel.type };
+  return { tunnelId, status: tunnel.status || 'active', type: tunnel.type };
 }
 
 /**
@@ -367,7 +371,7 @@ async function listPortForwards() {
     list.push({
       tunnelId,
       type: tunnel.type,
-      status: 'active',
+      status: tunnel.status || 'active',
     });
   }
   return list;

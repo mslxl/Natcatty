@@ -269,11 +269,22 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
   );
 
   const importRules = useCallback((newRules: PortForwardingRule[]) => {
-    // When clearing all rules (e.g. "Clear local data"), use the backend's
-    // stopAllPortForwards as a safety net.  In a freshly opened settings
-    // window, globalRules may still be empty (initializeStore is async),
-    // so the per-rule loop below wouldn't catch any active tunnels.
+    // When clearing all rules (e.g. "Clear local data"), stop ALL tunnels
+    // and broadcast per-rule reconnect cancellation.  stopAllPortForwards
+    // handles the backend, but we also need per-rule broadcasts so other
+    // windows cancel their pending reconnect timers.
     if (newRules.length === 0) {
+      // Read from localStorage since globalRules may be empty (uninitialized)
+      const storedRules = localStorageAdapter.read<PortForwardingRule[]>(
+        STORAGE_KEY_PORT_FORWARDING,
+      );
+      const rulesToCancel = globalRules.length > 0
+        ? globalRules
+        : (storedRules && Array.isArray(storedRules) ? storedRules : []);
+      for (const rule of rulesToCancel) {
+        stopAndCleanupRule(rule.id);
+      }
+      // Safety net: also stop anything the renderer doesn't know about
       void stopAllPortForwards();
     }
 
