@@ -357,13 +357,17 @@ async function stopPortForward(event, payload) {
   }
 
   try {
+    // Mark as cancelled so conn.on('close') resolves gracefully
+    // instead of rejecting for in-flight handshakes.
+    tunnel.cancelled = true;
     if (tunnel.server) {
       tunnel.server.close();
     }
     if (tunnel.conn) {
       tunnel.conn.end();
     }
-    portForwardingTunnels.delete(tunnelId);
+    // Don't delete here — let conn.on('close') handle cleanup
+    // so it can read the cancelled flag.
 
     return { tunnelId, success: true };
   } catch (err) {
