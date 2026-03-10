@@ -6,6 +6,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
+const { exec } = require("node:child_process");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
 const passphraseHandler = require("./passphraseHandler.cjs");
 
@@ -123,11 +124,33 @@ async function findAllDefaultPrivateKeys(options = {}) {
 }
 
 /**
- * Get ssh-agent socket path based on platform
+ * Check if Windows SSH Agent service is running
+ * @returns {Promise<boolean>}
+ */
+function checkWindowsSshAgentRunning() {
+  return new Promise((resolve) => {
+    if (process.platform !== "win32") {
+      resolve(true);
+      return;
+    }
+    exec("sc query ssh-agent", (err, stdout) => {
+      if (err) {
+        resolve(false);
+        return;
+      }
+      resolve(stdout.includes("RUNNING"));
+    });
+  });
+}
+
+/**
+ * Get ssh-agent socket path based on platform (synchronous, best-effort)
  * @returns {string|null}
  */
 function getSshAgentSocket() {
   if (process.platform === "win32") {
+    // On Windows, always return the pipe path; the caller should use
+    // getAvailableAgentSocket() for a reliable async check.
     return "\\\\.\\pipe\\openssh-ssh-agent";
   }
   const agentSocket = process.env.SSH_AUTH_SOCK;
@@ -144,6 +167,18 @@ function getSshAgentSocket() {
 }
 
 /**
+ * Get ssh-agent socket path with async validation (checks Windows service status)
+ * @returns {Promise<string|null>}
+ */
+async function getAvailableAgentSocket() {
+  if (process.platform === "win32") {
+    const running = await checkWindowsSshAgentRunning();
+    return running ? "\\\\.\\pipe\\openssh-ssh-agent" : null;
+  }
+  return getSshAgentSocket();
+}
+
+/**
  * Build authentication handler with default key fallback support
  * @param {Object} options
  * @param {string} [options.privateKey] - Explicitly configured private key
@@ -156,7 +191,7 @@ function getSshAgentSocket() {
 * @param {Array} [options.unlockedEncryptedKeys] - Array of unlocked encrypted keys with passphrases
  */
 function buildAuthHandler(options) {
-  const { privateKey, password, passphrase, agent, username, logPrefix = "[SSH]", unlockedEncryptedKeys = [], defaultKeys = [] } = options;
+  const { privateKey, password, passphrase, agent, username, logPrefix = "[SSH]", unlockedEncryptedKeys = [], defaultKeys = [], sshAgentSocketOverride } = options;
 
   // Determine what type of explicit auth the user configured
   const hasExplicitKey = !!privateKey;
@@ -168,7 +203,10 @@ function buildAuthHandler(options) {
   const isPasswordOnly = hasExplicitPassword && !hasExplicitKey && !hasExplicitAgent;
   const isKeyOnly = hasExplicitKey && !hasExplicitAgent;
 
-  const sshAgentSocket = getSshAgentSocket();
+  // Allow callers to pass in a pre-validated agent socket (e.g. from async
+  // getAvailableAgentSocket). Fall back to synchronous getSshAgentSocket()
+  // which on Windows always returns the pipe path without checking the service.
+  const sshAgentSocket = sshAgentSocketOverride !== undefined ? sshAgentSocketOverride : getSshAgentSocket();
 
   // Only use system ssh-agent BEFORE user's auth when:
   // - User explicitly configured agent, OR
@@ -522,6 +560,7 @@ module.exports = {
   findDefaultPrivateKey,
   findAllDefaultPrivateKeys,
   getSshAgentSocket,
+  getAvailableAgentSocket,
   buildAuthHandler,
   createKeyboardInteractiveHandler,
   applyAuthToConnOpts,

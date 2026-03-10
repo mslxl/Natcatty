@@ -29,6 +29,7 @@ const {
   applyAuthToConnOpts,
   safeSend: authSafeSend,
   findAllDefaultPrivateKeys: findAllDefaultPrivateKeysFromHelper,
+  getAvailableAgentSocket,
 } = require("./sshAuthHelper.cjs");
 
 // SFTP clients storage - shared reference passed from main
@@ -427,7 +428,7 @@ function init(deps) {
 /**
  * Connect through a chain of jump hosts for SFTP
  */
-async function connectThroughChainForSftp(event, options, jumpHosts, targetHost, targetPort, connId) {
+async function connectThroughChainForSftp(event, options, jumpHosts, targetHost, targetPort, connId, agentSocket) {
   const sender = event.sender;
   const connections = [];
   let currentSocket = null;
@@ -498,6 +499,7 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
         logPrefix: `[SFTP Chain] Hop ${i + 1}`,
         unlockedEncryptedKeys: options._unlockedEncryptedKeys || [],
         defaultKeys,
+        sshAgentSocketOverride: agentSocket,
       });
       applyAuthToConnOpts(connOpts, authConfig);
 
@@ -521,6 +523,11 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
           resolve();
         });
         conn.on('error', (err) => {
+          // Filter out non-fatal agent auth errors (same as in openSftp)
+          if (err.level === 'agent') {
+            console.log(`[SFTP Chain] Hop ${i + 1} non-fatal agent auth error (will try next method):`, err.message);
+            return;
+          }
           console.error(`[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}: ${hopLabel} error:`, err.message);
           reject(err);
         });
@@ -828,6 +835,10 @@ async function openSftp(event, options) {
   let chainConnections = [];
   let connectionSocket = null;
 
+  // Pre-fetch agent socket (async check for Windows SSH Agent service)
+  // This is used by both jump host chain auth and final host auth
+  const agentSocket = await getAvailableAgentSocket();
+
   // Handle chain/proxy connections
   if (hasJumpHosts) {
     console.log(`[SFTP] Opening connection through ${jumpHosts.length} jump host(s) to ${options.hostname}:${options.port || 22}`);
@@ -841,7 +852,8 @@ async function openSftp(event, options) {
       jumpHosts,
       options.hostname,
       options.port || 22,
-      connId
+      connId,
+      agentSocket
     );
     connectionSocket = chainResult.socket;
     chainConnections = chainResult.connections;
@@ -895,6 +907,7 @@ async function openSftp(event, options) {
   if (options.password) connectOpts.password = options.password;
 
   // Build auth handler using shared helper
+  // Use pre-fetched agentSocket (validated async, including Windows service check)
   const authConfig = buildAuthHandler({
     privateKey: connectOpts.privateKey,
     password: connectOpts.password,
@@ -903,6 +916,7 @@ async function openSftp(event, options) {
     username: connectOpts.username,
     logPrefix: "[SFTP]",
     defaultKeys,
+    sshAgentSocketOverride: agentSocket,
   });
   applyAuthToConnOpts(connectOpts, authConfig);
 
@@ -922,44 +936,63 @@ async function openSftp(event, options) {
   connectOpts.readyTimeout = 120000; // 2 minutes for 2FA input
 
   try {
-    if (options.sudo) {
-      console.log(`[SFTP] Using sudo mode for connection: ${connId}`);
-      const sshClient = client.client;
+    // IMPORTANT: We bypass ssh2-sftp-client's connect() method and use the
+    // underlying ssh2 Client directly. This is because ssh2-sftp-client adds
+    // temporary error listeners that reject the entire connect promise on ANY
+    // error, including non-fatal auth errors (e.g. 'Failed to connect to agent'
+    // when ssh2 tries agent auth and falls through to the next method).
+    // By connecting directly, we can filter these non-fatal errors and allow
+    // the auth flow to continue to keyboard-interactive/password/etc.
+    const sshClient = client.client;
 
-      await new Promise((resolve, reject) => {
-        // Set up error handler for initial connection
-        const onConnectError = (err) => reject(err);
-        sshClient.once('error', onConnectError);
+    await new Promise((resolve, reject) => {
+      const onError = (err) => {
+        // Filter out non-fatal authentication errors.
+        // ssh2 sets err.level = 'agent' when agent auth fails — it then
+        // internally calls tryNextAuth() to proceed with the next method.
+        // We must NOT reject here, or the fallback won't execute.
+        if (err.level === 'agent') {
+          console.log('[SFTP] Non-fatal agent auth error (will try next method):', err.message);
+          return;
+        }
+        reject(err);
+      };
 
-        sshClient.once('ready', async () => {
-          sshClient.removeListener('error', onConnectError);
-          try {
-            // Use provided password or try empty if using key auth (and hope for nopasswd sudo)
-            const sudoPass = options.password || "";
-            const sftpWrapper = await connectSudoSftp(sshClient, sudoPass);
+      sshClient.on('error', onError);
 
-            // Inject into sftp-client
-            client.sftp = sftpWrapper;
+      sshClient.once('ready', () => {
+        sshClient.removeListener('error', onError);
 
-            // Important: attach cleanup listener expected by sftp-client
-            client.sftp.on('close', () => client.end());
-
+        if (options.sudo) {
+          console.log(`[SFTP] Using sudo mode for connection: ${connId}`);
+          (async () => {
+            try {
+              const sudoPass = options.password || "";
+              const sftpWrapper = await connectSudoSftp(sshClient, sudoPass);
+              client.sftp = sftpWrapper;
+              client.sftp.on('close', () => client.end());
+              resolve();
+            } catch (e) {
+              sshClient.end();
+              reject(e);
+            }
+          })();
+        } else {
+          // Open standard SFTP subsystem channel
+          sshClient.sftp((err, sftp) => {
+            if (err) return reject(err);
+            client.sftp = sftp;
             resolve();
-          } catch (e) {
-            sshClient.end();
-            reject(e);
-          }
-        });
-
-        try {
-          sshClient.connect(connectOpts);
-        } catch (e) {
-          reject(e);
+          });
         }
       });
-    } else {
-      await client.connect(connectOpts);
-    }
+
+      try {
+        sshClient.connect(connectOpts);
+      } catch (e) {
+        reject(e);
+      }
+    });
     // Increase max listeners AFTER connect, when the internal ssh2 Client exists
     // This prevents Node.js MaxListenersExceededWarning when performing many operations
     // ssh2-sftp-client adds temporary listeners for each operation, so we need a high limit
