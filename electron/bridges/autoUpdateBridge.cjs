@@ -31,6 +31,9 @@ function isAutoUpdateSupported() {
 /** Lazily resolved autoUpdater — avoids importing electron-updater in
  *  contexts where native modules might not be available. */
 let _autoUpdater = null;
+
+/** Guard against duplicate listener registration */
+let _listenersRegistered = false;
 function getAutoUpdater() {
   if (_autoUpdater) return _autoUpdater;
   try {
@@ -53,8 +56,10 @@ function getAutoUpdater() {
  * even when no manual download was initiated.
  */
 function setupGlobalListeners() {
+  if (_listenersRegistered) return;
   const updater = getAutoUpdater();
   if (!updater) return;
+  _listenersRegistered = true;
 
   updater.on("update-available", (info) => {
     const win = getSenderWindow();
