@@ -13,6 +13,7 @@ interface TransferTask {
   status: "pending" | "uploading" | "downloading" | "completed" | "failed" | "cancelled";
   error?: string;
   direction: "upload" | "download";
+  targetPath?: string;
 }
 
 interface SftpModalUploadTasksProps {
@@ -166,6 +167,9 @@ export const SftpModalUploadTasks: React.FC<SftpModalUploadTasksProps> = ({ task
                 {task.status === "completed" && (
                   <div className="text-[10px] text-green-600 mt-0.5">
                     {t(task.direction === "download" ? "sftp.download.completed" : "sftp.upload.completed")} - {formatBytes(task.totalBytes)}
+                    {task.targetPath && (
+                      <span className="text-muted-foreground ml-1">→ {task.targetPath}</span>
+                    )}
                   </div>
                 )}
                 {task.status === "cancelled" && (
