@@ -177,6 +177,12 @@ const en: Messages = {
   'update.error': 'Failed to check for updates',
   'update.downloadNow': 'Download Now',
   'update.viewInSettings': 'View in Settings',
+  'update.readyToInstall.title': 'Update Ready',
+  'update.readyToInstall.message': 'Version {version} downloaded and ready to install.',
+  'update.restartNow': 'Restart Now',
+  'update.downloadFailed.title': 'Update Failed',
+  'update.downloadFailed.message': 'Failed to download update. You can download it manually.',
+  'update.openReleases': 'Open Releases',
   'update.remindLater': 'Remind Later',
   'update.skipVersion': 'Skip This Version',
 

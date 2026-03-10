@@ -161,6 +161,12 @@ const zhCN: Messages = {
   'update.error': '检查更新失败',
   'update.downloadNow': '立即下载',
   'update.viewInSettings': '在设置中查看',
+  'update.readyToInstall.title': '更新已就绪',
+  'update.readyToInstall.message': '版本 {version} 已下载完成，准备安装。',
+  'update.restartNow': '立即重启',
+  'update.downloadFailed.title': '更新失败',
+  'update.downloadFailed.message': '下载更新失败，可前往 GitHub 手动下载。',
+  'update.openReleases': '打开 Releases',
   'update.remindLater': '稍后提醒',
   'update.skipVersion': '跳过此版本',
 
