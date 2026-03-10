@@ -973,8 +973,25 @@ async function openSftp(event, options) {
               client.sftp.on('close', () => client.end());
               resolve();
             } catch (e) {
-              sshClient.end();
-              reject(e);
+              // Fallback: if sftp-server binary is missing (exit code 127),
+              // try standard SFTP subsystem instead of failing completely.
+              // This handles systems like ESXi that don't have sftp-server
+              // but support the SFTP subsystem natively.
+              if (e.message && e.message.includes('exit code 127')) {
+                console.warn('[SFTP] sftp-server not found, falling back to standard SFTP subsystem');
+                options.sudo = false; // Mark as non-sudo for downstream logic
+                sshClient.sftp((sftpErr, sftp) => {
+                  if (sftpErr) {
+                    sshClient.end();
+                    return reject(sftpErr);
+                  }
+                  client.sftp = sftp;
+                  resolve();
+                });
+              } else {
+                sshClient.end();
+                reject(e);
+              }
             }
           })();
         } else {
