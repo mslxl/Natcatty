@@ -10,11 +10,9 @@ import {
   checkForUpdate,
   downloadUpdate,
   installUpdate,
-  onDownloadProgress,
-  onDownloaded,
-  onError as onUpdateError,
   getReleasesUrl,
 } from "../../../infrastructure/services/updateService";
+import type { AutoDownloadStatus } from '../../../application/state/useUpdateCheck';
 import { SessionLogFormat, keyEventToString } from "../../../domain/models";
 import { TabsContent } from "../../ui/tabs";
 import { Button } from "../../ui/button";
@@ -47,6 +45,8 @@ interface SettingsSystemTabProps {
   closeToTray: boolean;
   setCloseToTray: (enabled: boolean) => void;
   hotkeyRegistrationError: string | null;
+  autoDownloadStatus: AutoDownloadStatus;
+  downloadPercent: number;
 }
 
 const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
@@ -61,6 +61,8 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   closeToTray,
   setCloseToTray,
   hotkeyRegistrationError,
+  autoDownloadStatus,
+  downloadPercent,
 }) => {
   const { t } = useI18n();
   const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
@@ -93,24 +95,16 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
     }
   }, []);
 
-  // Subscribe to auto-update events
+  // Sync auto-download progress from parent (useUpdateCheck) into local state.
+  // Only overrides 'downloading' and 'ready' — manual check states are unaffected.
   useEffect(() => {
-    const cleanupProgress = onDownloadProgress((p) => {
-      setUpdatePercent(Math.round(p.percent));
-    });
-    const cleanupDownloaded = onDownloaded(() => {
+    if (autoDownloadStatus === 'downloading') {
+      setUpdateStatus('downloading');
+      setUpdatePercent(downloadPercent);
+    } else if (autoDownloadStatus === 'ready') {
       setUpdateStatus('ready');
-    });
-    const cleanupError = onUpdateError((payload) => {
-      setUpdateError(payload.error);
-      setUpdateStatus('error');
-    });
-    return () => {
-      cleanupProgress?.();
-      cleanupDownloaded?.();
-      cleanupError?.();
-    };
-  }, []);
+    }
+  }, [autoDownloadStatus, downloadPercent]);
 
   const handleCheckForUpdate = useCallback(async () => {
     setUpdateStatus('checking');

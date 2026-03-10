@@ -304,13 +304,15 @@ function App({ settings }: { settings: SettingsState }) {
   }, [handleSyncNow]);
 
   // Update check hook - checks for new versions on startup
-  const { updateState, dismissUpdate } = useUpdateCheck();
+  const { updateState, dismissUpdate, openReleasePage, installUpdate } = useUpdateCheck();
 
   // Window controls - must be before update toast effect which uses openSettingsWindow
   const { openSettingsWindow } = useWindowControls();
 
   // Show toast notification when update is available
   useEffect(() => {
+    // Skip "update available" toast if auto-download has already started or completed
+    if (updateState.autoDownloadStatus !== 'idle') return;
     if (updateState.hasUpdate && updateState.latestRelease) {
       const version = updateState.latestRelease.version;
       toast.info(
@@ -326,7 +328,35 @@ function App({ settings }: { settings: SettingsState }) {
         }
       );
     }
-  }, [updateState.hasUpdate, updateState.latestRelease, t, openSettingsWindow, dismissUpdate]);
+  }, [updateState.hasUpdate, updateState.latestRelease, updateState.autoDownloadStatus, t, openSettingsWindow, dismissUpdate]);
+
+  // Persistent toast when update is downloaded and ready to install
+  useEffect(() => {
+    if (updateState.autoDownloadStatus !== 'ready') return;
+    const version = updateState.latestRelease?.version ?? '';
+    toast.info(
+      t('update.readyToInstall.message', { version }),
+      {
+        title: t('update.readyToInstall.title'),
+        duration: Infinity,
+        actionLabel: t('update.restartNow'),
+        onClick: () => installUpdate(),
+      }
+    );
+  }, [updateState.autoDownloadStatus, updateState.latestRelease?.version, t, installUpdate]);
+
+  // Error toast when auto-download fails, with manual fallback
+  useEffect(() => {
+    if (updateState.autoDownloadStatus !== 'error') return;
+    toast.error(
+      t('update.downloadFailed.message'),
+      {
+        title: t('update.downloadFailed.title'),
+        actionLabel: t('update.openReleases'),
+        onClick: () => openReleasePage(),
+      }
+    );
+  }, [updateState.autoDownloadStatus, t, openReleasePage]);
 
   // Memoize keys for port forwarding to prevent unnecessary re-renders
   const portForwardingKeys = useMemo(
