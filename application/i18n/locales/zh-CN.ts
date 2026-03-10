@@ -1053,6 +1053,7 @@ const zhCN: Messages = {
   'sftp.upload.currentFile': '当前: {fileName}',
   'sftp.upload.cancelled': '上传已取消',
   'sftp.upload.cancel': '取消',
+  'sftp.upload.completedToPath': '已上传至 {path}',
 
   // SFTP Download
   'sftp.download.completed': '已下载',

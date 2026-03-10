@@ -27,6 +27,7 @@ interface TransferTask {
   fileCount?: number;
   completedCount?: number;
   direction: "upload" | "download";
+  targetPath?: string;
 }
 
 // Keep UploadTask as alias for backwards compatibility
@@ -246,6 +247,7 @@ export const useSftpModalTransfers = ({
           startTime: Date.now(),
           isDirectory: task.isDirectory,
           direction: "upload",
+          targetPath: currentPath,
         };
         setUploadTasks(prev => [...prev, uploadTask]);
       },
@@ -343,7 +345,7 @@ export const useSftpModalTransfers = ({
         );
       },
     };
-  }, [t]);
+  }, [t, currentPath]);
 
   // Helper function to perform upload with compression setting from user preference
   const performUpload = useCallback(async (
