@@ -946,6 +946,14 @@ async function openSftp(event, options) {
     const sshClient = client.client;
 
     await new Promise((resolve, reject) => {
+      let settled = false;
+      const settle = (fn, val) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        fn(val);
+      };
+
       const onError = (err) => {
         // Filter out non-fatal authentication errors.
         // ssh2 sets err.level = 'agent' when agent auth fails — it then
@@ -955,13 +963,29 @@ async function openSftp(event, options) {
           console.log('[SFTP] Non-fatal agent auth error (will try next method):', err.message);
           return;
         }
-        reject(err);
+        settle(reject, err);
+      };
+
+      const onEnd = () => {
+        settle(reject, new Error('Connection closed before SFTP session was ready'));
+      };
+
+      const onClose = () => {
+        settle(reject, new Error('Connection closed before SFTP session was ready'));
+      };
+
+      const cleanup = () => {
+        sshClient.removeListener('error', onError);
+        sshClient.removeListener('end', onEnd);
+        sshClient.removeListener('close', onClose);
       };
 
       sshClient.on('error', onError);
+      sshClient.on('end', onEnd);
+      sshClient.on('close', onClose);
 
       sshClient.once('ready', () => {
-        sshClient.removeListener('error', onError);
+        cleanup();
 
         if (options.sudo) {
           console.log(`[SFTP] Using sudo mode for connection: ${connId}`);
@@ -1007,7 +1031,7 @@ async function openSftp(event, options) {
       try {
         sshClient.connect(connectOpts);
       } catch (e) {
-        reject(e);
+        settle(reject, e);
       }
     });
     // Increase max listeners AFTER connect, when the internal ssh2 Client exists
