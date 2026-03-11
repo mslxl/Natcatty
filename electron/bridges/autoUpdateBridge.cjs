@@ -71,6 +71,12 @@ function setupGlobalListeners() {
   if (!updater) return;
   _listenersRegistered = true;
 
+  updater.on("update-not-available", () => {
+    // Reset stale status so late-opening windows don't hydrate from a
+    // previous 'error' or 'ready' snapshot after a "no update" check.
+    _lastStatus = { status: 'idle', percent: 0, error: null, version: null };
+  });
+
   updater.on("update-available", (info) => {
     // autoDownload=true means the download begins immediately after this event
     _isDownloading = true;
