@@ -159,8 +159,9 @@ export function useUpdateCheck(): UseUpdateCheckResult {
         autoDownloadStatus: 'downloading',
         downloadPercent: 0,
         downloadError: null,
-        // Use electron-updater's version as fallback if GitHub API hasn't resolved yet
-        latestRelease: prev.latestRelease ?? {
+        // Use electron-updater's version if GitHub API hasn't resolved yet or
+        // if the updater reports a different version than the cached release.
+        latestRelease: (!prev.latestRelease || prev.latestRelease.version !== info.version) ? {
           version: info.version,
           tagName: `v${info.version}`,
           name: `v${info.version}`,
@@ -168,7 +169,7 @@ export function useUpdateCheck(): UseUpdateCheckResult {
           htmlUrl: '',
           publishedAt: info.releaseDate || new Date().toISOString(),
           assets: [],
-        },
+        } : prev.latestRelease,
       }));
     });
 
@@ -353,8 +354,19 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     } else if (nextStatus === 'available' && autoDownloadStatusRef.current === 'idle') {
       // Update found but electron-updater hasn't started a download yet
       // (startAutoCheck may not have fired yet, or may have been skipped).
-      // Trigger electron-updater asynchronously — fire-and-forget, never blocks UI.
-      void netcattyBridge.get()?.checkForUpdate?.();
+      // Trigger electron-updater and surface any check-phase failures so
+      // users know auto-download won't proceed on broken feeds.
+      void netcattyBridge.get()?.checkForUpdate?.().then((res) => {
+        if (res?.error || res?.supported === false) {
+          setUpdateState((prev) => ({
+            ...prev,
+            autoDownloadStatus: 'error',
+            downloadError: res.error || 'Auto-update is not supported on this platform.',
+          }));
+        }
+      }).catch(() => {
+        // Bridge unavailable — ignore; the manual download link remains visible
+      });
     }
 
     return result;
