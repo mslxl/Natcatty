@@ -622,12 +622,20 @@ declare global {
     }>;
     downloadUpdate?(): Promise<{ success: boolean; error?: string }>;
     installUpdate?(): void;
+    getUpdateStatus?(): Promise<{ status: 'idle' | 'downloading' | 'ready' | 'error'; percent: number; error: string | null; version: string | null; isChecking?: boolean }>;
+
     onUpdateDownloadProgress?(cb: (progress: {
       percent: number;
       bytesPerSecond: number;
       transferred: number;
       total: number;
     }) => void): () => void;
+    onUpdateAvailable?(cb: (info: {
+      version: string;
+      releaseNotes: string;
+      releaseDate: string | null;
+    }) => void): () => void;
+    onUpdateNotAvailable?(cb: () => void): () => void;
     onUpdateDownloaded?(cb: () => void): () => void;
     onUpdateError?(cb: (payload: { error: string }) => void): () => void;
 

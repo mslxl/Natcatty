@@ -109,6 +109,10 @@ const en: Messages = {
   'settings.update.manualDownload': 'Download from GitHub',
   'settings.update.manualDownloadHint': 'Auto-update is not available on this platform. Download the latest version from GitHub.',
   'settings.update.hint': 'Netcatty checks for updates from GitHub Releases.',
+  'settings.update.lastCheckedJustNow': 'just now',
+  'settings.update.lastCheckedMinutesAgo': '{n} min ago',
+  'settings.update.lastCheckedHoursAgo': '{n} hr ago',
+  'settings.update.lastCheckedPrefix': 'Last checked: ',
 
   // Settings > Session Logs
   'settings.sessionLogs.title': 'Session Logs',
@@ -177,6 +181,12 @@ const en: Messages = {
   'update.error': 'Failed to check for updates',
   'update.downloadNow': 'Download Now',
   'update.viewInSettings': 'View in Settings',
+  'update.readyToInstall.title': 'Update Ready',
+  'update.readyToInstall.message': 'Version {version} downloaded and ready to install.',
+  'update.restartNow': 'Restart Now',
+  'update.downloadFailed.title': 'Update Failed',
+  'update.downloadFailed.message': 'Failed to download update. You can download it manually.',
+  'update.openReleases': 'Open Releases',
   'update.remindLater': 'Remind Later',
   'update.skipVersion': 'Skip This Version',
 

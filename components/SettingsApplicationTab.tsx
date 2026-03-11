@@ -4,7 +4,7 @@ import AppLogo from "./AppLogo";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import { useApplicationBackend } from "../application/state/useApplicationBackend";
-import { useUpdateCheck } from "../application/state/useUpdateCheck";
+import type { UpdateState, UseUpdateCheckResult } from "../application/state/useUpdateCheck";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { SettingsTabContent } from "./settings/settings-ui";
 import { toast } from "./ui/toast";
@@ -63,13 +63,18 @@ const ActionRow: React.FC<{
   </button>
 );
 
-export default function SettingsApplicationTab() {
+interface SettingsApplicationTabProps {
+  updateState: UpdateState;
+  checkNow: UseUpdateCheckResult['checkNow'];
+  openReleasePage: UseUpdateCheckResult['openReleasePage'];
+  installUpdate: UseUpdateCheckResult['installUpdate'];
+}
+
+export default function SettingsApplicationTab({ updateState, checkNow, openReleasePage, installUpdate }: SettingsApplicationTabProps) {
   const { t } = useI18n();
   const { openExternal, getApplicationInfo } = useApplicationBackend();
-  const { updateState, checkNow, openReleasePage } = useUpdateCheck();
   const [appInfo, setAppInfo] = useState<AppInfo>({ name: "Netcatty", version: "" });
   const [lastCheckResult, setLastCheckResult] = useState<'none' | 'available' | 'upToDate'>('none');
-  const [hasAutoChecked, setHasAutoChecked] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,19 +98,6 @@ export default function SettingsApplicationTab() {
   const isUpdateDemoMode = typeof window !== 'undefined' &&
     window.localStorage?.getItem('debug.updateDemo') === '1';
 
-  // Auto check for updates when entering this page
-  useEffect(() => {
-    if (hasAutoChecked) return;
-    if (updateState.isChecking) return;
-
-    // In demo mode or when we have a valid version, auto-check
-    const canCheck = isUpdateDemoMode || (appInfo.version && appInfo.version !== '0.0.0');
-    if (!canCheck) return;
-
-    setHasAutoChecked(true);
-    void checkNow();
-  }, [hasAutoChecked, updateState.isChecking, isUpdateDemoMode, appInfo.version, checkNow]);
-
   const handleCheckForUpdates = async () => {
     // In demo mode, allow checking even for dev builds
     if (!isUpdateDemoMode && (!appInfo.version || appInfo.version === '0.0.0')) {
@@ -124,8 +116,9 @@ export default function SettingsApplicationTab() {
         t('update.available.message', { version: result.latestRelease.version }),
         t('update.available.title')
       );
-      // Open the release page
-      openReleasePage();
+      // Don't auto-open the release page here — checkNow() already triggers
+      // electron-updater on supported platforms, and the Settings > System tab
+      // shows a "Manual Download" link on unsupported platforms.
     } else if (result) {
       setLastCheckResult('upToDate');
       toast.success(
@@ -154,18 +147,25 @@ export default function SettingsApplicationTab() {
                 <span className="text-sm text-muted-foreground">
                   {appInfo.version ? appInfo.version : " "}
                 </span>
-                {/* Update available badge - inline with version */}
-                {updateState.hasUpdate && updateState.latestRelease && (
+                {/* Update badge - reflects auto-download state */}
+                {updateState.latestRelease && (updateState.hasUpdate || updateState.autoDownloadStatus === 'downloading' || updateState.autoDownloadStatus === 'ready') && (
                   <button
-                    onClick={() => void openReleasePage()}
+                    onClick={() => updateState.autoDownloadStatus === 'ready' ? installUpdate() : void openReleasePage()}
                     className={cn(
                       "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium",
-                      "bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300",
-                      "hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors cursor-pointer"
+                      updateState.autoDownloadStatus === 'ready'
+                        ? "bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-800"
+                        : "bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-800",
+                      "transition-colors cursor-pointer"
                     )}
                   >
                     <ArrowUpCircle size={12} />
-                    v{updateState.latestRelease.version} {t('update.downloadNow')}
+                    v{updateState.latestRelease.version}{' '}
+                    {updateState.autoDownloadStatus === 'ready'
+                      ? t('update.restartNow')
+                      : updateState.autoDownloadStatus === 'downloading'
+                        ? `${updateState.downloadPercent}%`
+                        : t('update.downloadNow')}
                   </button>
                 )}
               </div>

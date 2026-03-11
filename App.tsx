@@ -304,13 +304,15 @@ function App({ settings }: { settings: SettingsState }) {
   }, [handleSyncNow]);
 
   // Update check hook - checks for new versions on startup
-  const { updateState, dismissUpdate } = useUpdateCheck();
+  const { updateState, dismissUpdate, openReleasePage, installUpdate } = useUpdateCheck();
 
   // Window controls - must be before update toast effect which uses openSettingsWindow
   const { openSettingsWindow } = useWindowControls();
 
-  // Show toast notification when update is available
+  // Show toast notification when update is available (only when auto-download is idle)
   useEffect(() => {
+    // Skip "update available" toast if auto-download has already started or completed
+    if (updateState.autoDownloadStatus !== 'idle') return;
     if (updateState.hasUpdate && updateState.latestRelease) {
       const version = updateState.latestRelease.version;
       toast.info(
@@ -320,13 +322,50 @@ function App({ settings }: { settings: SettingsState }) {
           duration: 8000, // Show longer for update notifications
           onClick: () => {
             void openSettingsWindow();
+            // Dismiss the update so the toast doesn't re-fire on every render.
+            // On unsupported platforms (where autoDownloadStatus stays 'idle')
+            // this is the only way to suppress the notification for this version.
+            // On supported platforms this toast only shows before auto-download
+            // starts, and the Settings window's own useUpdateCheck will pick up
+            // the download state via IPC events independently of the dismiss.
             dismissUpdate();
           },
           actionLabel: t('update.viewInSettings'),
         }
       );
     }
-  }, [updateState.hasUpdate, updateState.latestRelease, t, openSettingsWindow, dismissUpdate]);
+  }, [updateState.hasUpdate, updateState.latestRelease, updateState.autoDownloadStatus, t, openSettingsWindow, dismissUpdate]);
+
+  // Track previous autoDownloadStatus so toast effects fire only on actual transitions,
+  // not when unrelated deps (openReleasePage, installUpdate) change their reference.
+  const prevAutoDownloadStatusRef = useRef(updateState.autoDownloadStatus);
+  useEffect(() => {
+    const prev = prevAutoDownloadStatusRef.current;
+    prevAutoDownloadStatusRef.current = updateState.autoDownloadStatus;
+    if (prev === updateState.autoDownloadStatus) return;
+
+    if (updateState.autoDownloadStatus === 'ready') {
+      const version = updateState.latestRelease?.version ?? '';
+      toast.info(
+        t('update.readyToInstall.message', { version }),
+        {
+          title: t('update.readyToInstall.title'),
+          duration: 0,
+          actionLabel: t('update.restartNow'),
+          onClick: () => installUpdate(),
+        }
+      );
+    } else if (updateState.autoDownloadStatus === 'error') {
+      toast.error(
+        t('update.downloadFailed.message'),
+        {
+          title: t('update.downloadFailed.title'),
+          actionLabel: t('update.openReleases'),
+          onClick: () => openReleasePage(),
+        }
+      );
+    }
+  }, [updateState.autoDownloadStatus, updateState.latestRelease?.version, t, installUpdate, openReleasePage]);
 
   // Memoize keys for port forwarding to prevent unnecessary re-renders
   const portForwardingKeys = useMemo(

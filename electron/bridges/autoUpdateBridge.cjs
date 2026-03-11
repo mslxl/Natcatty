@@ -31,11 +31,27 @@ function isAutoUpdateSupported() {
 /** Lazily resolved autoUpdater — avoids importing electron-updater in
  *  contexts where native modules might not be available. */
 let _autoUpdater = null;
+
+/** Guard against duplicate listener registration */
+let _listenersRegistered = false;
+
+/** Track whether a download is in progress to distinguish download errors from check errors */
+let _isDownloading = false;
+
+/** Track whether a checkForUpdates call is in flight (set before call, cleared on result event) */
+let _isChecking = false;
+
+/**
+ * Snapshot of the last known update status so newly opened windows can hydrate
+ * without waiting for the next IPC event.
+ * @type {{ status: 'idle' | 'downloading' | 'ready' | 'error', percent: number, error: string | null, version: string | null, isChecking: boolean }}
+ */
+let _lastStatus = { status: 'idle', percent: 0, error: null, version: null, isChecking: false };
 function getAutoUpdater() {
   if (_autoUpdater) return _autoUpdater;
   try {
     const { autoUpdater } = require("electron-updater");
-    autoUpdater.autoDownload = false;
+    autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = false;
     // Silence the default electron-log transport (we log ourselves).
     autoUpdater.logger = null;
@@ -47,28 +63,156 @@ function getAutoUpdater() {
   }
 }
 
-function init(deps) {
-  _deps = deps;
+/**
+ * Register persistent global IPC event listeners for auto-download flow.
+ * Called once in init(). Forwards electron-updater events to the renderer
+ * even when no manual download was initiated.
+ */
+function setupGlobalListeners() {
+  if (_listenersRegistered) return;
+  const updater = getAutoUpdater();
+  if (!updater) return;
+  _listenersRegistered = true;
+
+  updater.on("update-not-available", () => {
+    _isChecking = false;
+    // Reset stale status so late-opening windows don't hydrate from a
+    // previous 'error' or 'ready' snapshot after a "no update" check.
+    _lastStatus = { status: 'idle', percent: 0, error: null, version: null, isChecking: false };
+    broadcastToAllWindows("netcatty:update:update-not-available", {});
+  });
+
+  updater.on("update-available", (info) => {
+    _isChecking = false;
+    // autoDownload=true means the download begins immediately after this event
+    _isDownloading = true;
+    _lastStatus = { status: 'downloading', percent: 0, error: null, version: info.version || null, isChecking: false };
+    broadcastToAllWindows("netcatty:update:update-available", {
+      version: info.version || "",
+      releaseNotes: typeof info.releaseNotes === "string" ? info.releaseNotes : "",
+      releaseDate: info.releaseDate || null,
+    });
+  });
+
+  updater.on("download-progress", (info) => {
+    _lastStatus.percent = Math.round(info.percent ?? 0);
+    broadcastToAllWindows("netcatty:update:download-progress", {
+      percent: info.percent ?? 0,
+      bytesPerSecond: info.bytesPerSecond ?? 0,
+      transferred: info.transferred ?? 0,
+      total: info.total ?? 0,
+    });
+  });
+
+  updater.on("update-downloaded", () => {
+    _isDownloading = false;
+    _lastStatus = { ..._lastStatus, status: 'ready', percent: 100 };
+    broadcastToAllWindows("netcatty:update:downloaded");
+  });
+
+  updater.on("error", (err) => {
+    _isChecking = false;
+    // Only broadcast download-phase errors; check-phase errors (e.g. network failures
+    // during checkForUpdates) are not download failures and must not set autoDownloadStatus.
+    if (!_isDownloading) {
+      _lastStatus = { ..._lastStatus, isChecking: false };
+      console.warn("[AutoUpdate] Check-phase error (not broadcast to renderer):", err?.message || err);
+      return;
+    }
+    _isDownloading = false;
+    const errorMsg = err?.message || "Unknown update error";
+    _lastStatus = { ..._lastStatus, status: 'error', error: errorMsg };
+    broadcastToAllWindows("netcatty:update:error", {
+      error: errorMsg,
+    });
+  });
+
+  console.log("[AutoUpdate] Global listeners registered");
 }
 
-/** Get the focused or first available BrowserWindow to send events to. */
-function getSenderWindow() {
+/**
+ * Trigger an automatic update check after a delay.
+ * No-op on platforms that don't support auto-update (Linux deb/rpm/snap).
+ * Called from main process after the main window is created.
+ *
+ * @param {number} delayMs - Milliseconds to wait before checking (default: 5000)
+ */
+let _autoCheckTimer = null;
+
+function startAutoCheck(delayMs = 5000) {
+  if (!isAutoUpdateSupported()) {
+    console.log("[AutoUpdate] Platform does not support auto-update, skipping auto-check");
+    return;
+  }
+  _autoCheckTimer = setTimeout(async () => {
+    _autoCheckTimer = null;
+    const updater = getAutoUpdater();
+    if (!updater) {
+      console.warn("[AutoUpdate] Auto-check skipped — updater not available");
+      return;
+    }
+    _isChecking = true;
+    _lastStatus = { ..._lastStatus, isChecking: true };
+    try {
+      console.log("[AutoUpdate] Starting automatic update check...");
+      await updater.checkForUpdates();
+    } catch (err) {
+      _isChecking = false;
+      _lastStatus = { ..._lastStatus, isChecking: false };
+      console.warn("[AutoUpdate] Auto-check failed:", err?.message || err);
+    }
+  }, delayMs);
+}
+
+/**
+ * Cancel a pending startAutoCheck timer.  Called when the renderer triggers
+ * a manual check to avoid racing with the queued auto-check.
+ */
+function cancelAutoCheck() {
+  if (_autoCheckTimer) {
+    clearTimeout(_autoCheckTimer);
+    _autoCheckTimer = null;
+  }
+}
+
+function init(deps) {
+  _deps = deps;
+  setupGlobalListeners();
+}
+
+/**
+ * Broadcast an IPC event to all non-destroyed BrowserWindows.
+ * Ensures both the main window and settings window always receive
+ * auto-update events.
+ * @param {string} channel
+ * @param {unknown} [payload]
+ */
+function broadcastToAllWindows(channel, payload) {
   try {
     const { BrowserWindow } = _deps?.electronModule || {};
-    if (!BrowserWindow) return null;
-    const focused = BrowserWindow.getFocusedWindow();
-    if (focused && !focused.isDestroyed()) return focused;
-    const all = BrowserWindow.getAllWindows();
-    for (const win of all) {
-      if (!win.isDestroyed()) return win;
+    if (!BrowserWindow) return;
+    const windows = BrowserWindow.getAllWindows();
+    for (const win of windows) {
+      if (!win.isDestroyed()) {
+        if (payload !== undefined) {
+          win.webContents.send(channel, payload);
+        } else {
+          win.webContents.send(channel);
+        }
+      }
     }
-  } catch {}
-  return null;
+  } catch (err) {
+    console.warn("[AutoUpdate] broadcastToAllWindows failed:", err?.message || err);
+  }
 }
 
 function registerHandlers(ipcMain) {
   // ---- Check for updates ------------------------------------------------
   ipcMain.handle("netcatty:update:check", async () => {
+    // Cancel any pending auto-check to prevent concurrent checkForUpdates()
+    // calls — electron-updater rejects them and surfaces false errors.
+    cancelAutoCheck();
+
     if (!isAutoUpdateSupported()) {
       return {
         available: false,
@@ -86,7 +230,16 @@ function registerHandlers(ipcMain) {
       };
     }
 
+    // If a check is already in flight (e.g. from startAutoCheck), don't
+    // start a concurrent one — electron-updater rejects it and surfaces a
+    // confusing error.  Return a sentinel so the renderer knows to wait.
+    if (_isChecking) {
+      return { available: false, supported: true, checking: true };
+    }
+
     try {
+      _isChecking = true;
+      _lastStatus = { ..._lastStatus, isChecking: true };
       const result = await updater.checkForUpdates();
       if (!result || !result.updateInfo) {
         return { available: false, supported: true };
@@ -112,6 +265,8 @@ function registerHandlers(ipcMain) {
         releaseDate: releaseDate || null,
       };
     } catch (err) {
+      _isChecking = false;
+      _lastStatus = { ..._lastStatus, isChecking: false };
       console.warn("[AutoUpdate] Check failed:", err?.message || err);
       return {
         available: false,
@@ -127,63 +282,20 @@ function registerHandlers(ipcMain) {
     if (!updater) {
       return { success: false, error: "Update module not available." };
     }
-
     try {
-      // Capture the requesting window NOW so events always go back to the
-      // renderer that initiated the download, even if focus changes later.
-      const senderWindow = getSenderWindow();
-
-      // Wire progress events before starting the download.
-      const progressHandler = (info) => {
-        if (senderWindow && !senderWindow.isDestroyed()) {
-          senderWindow.webContents.send("netcatty:update:download-progress", {
-            percent: info.percent ?? 0,
-            bytesPerSecond: info.bytesPerSecond ?? 0,
-            transferred: info.transferred ?? 0,
-            total: info.total ?? 0,
-          });
-        }
-      };
-
-      const downloadedHandler = () => {
-        if (senderWindow && !senderWindow.isDestroyed()) {
-          senderWindow.webContents.send("netcatty:update:downloaded");
-        }
-        // Cleanup one-shot listeners.
-        updater.removeListener("download-progress", progressHandler);
-        updater.removeListener("update-downloaded", downloadedHandler);
-        updater.removeListener("error", errorHandler);
-      };
-
-      const errorHandler = (err) => {
-        if (senderWindow && !senderWindow.isDestroyed()) {
-          senderWindow.webContents.send("netcatty:update:error", {
-            error: err?.message || "Download failed",
-          });
-        }
-        updater.removeListener("download-progress", progressHandler);
-        updater.removeListener("update-downloaded", downloadedHandler);
-        updater.removeListener("error", errorHandler);
-      };
-
-      updater.on("download-progress", progressHandler);
-      updater.on("update-downloaded", downloadedHandler);
-      updater.on("error", errorHandler);
-
+      // Global listeners (registered in setupGlobalListeners) handle all
+      // progress/downloaded/error events. Just trigger the download.
       await updater.downloadUpdate();
       return { success: true };
     } catch (err) {
-      // Clean up listeners to prevent leaks if downloadUpdate() rejects
-      // before the error event is emitted.
-      const updaterForCleanup = getAutoUpdater();
-      if (updaterForCleanup) {
-        updaterForCleanup.removeAllListeners("download-progress");
-        updaterForCleanup.removeAllListeners("update-downloaded");
-        updaterForCleanup.removeAllListeners("error");
-      }
       console.error("[AutoUpdate] Download failed:", err?.message || err);
       return { success: false, error: err?.message || "Download failed" };
     }
+  });
+
+  // ---- Get current update status (for late-opening windows) ---------------
+  ipcMain.handle("netcatty:update:getStatus", () => {
+    return { ..._lastStatus };
   });
 
   // ---- Install (quit & install) ------------------------------------------
@@ -196,4 +308,4 @@ function registerHandlers(ipcMain) {
   console.log("[AutoUpdate] Handlers registered");
 }
 
-module.exports = { init, registerHandlers, isAutoUpdateSupported };
+module.exports = { init, registerHandlers, isAutoUpdateSupported, startAutoCheck };

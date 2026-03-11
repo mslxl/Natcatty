@@ -8,6 +8,7 @@ import { useSettingsState } from "../application/state/useSettingsState";
 import { usePortForwardingState } from "../application/state/usePortForwardingState";
 import { useVaultState } from "../application/state/useVaultState";
 import { useWindowControls } from "../application/state/useWindowControls";
+import { useUpdateCheck } from "../application/state/useUpdateCheck";
 import { I18nProvider, useI18n } from "../application/i18n/I18nProvider";
 import SettingsApplicationTab from "./SettingsApplicationTab";
 import SettingsAppearanceTab from "./settings/tabs/SettingsAppearanceTab";
@@ -71,6 +72,7 @@ const SettingsSyncTabWithVault: React.FC = () => {
 const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }) => {
     const { t } = useI18n();
     const { notifyRendererReady, closeSettingsWindow } = useWindowControls();
+    const { updateState, checkNow, installUpdate, openReleasePage } = useUpdateCheck();
     const [activeTab, setActiveTab] = useState("application");
     const [mountedTabs, setMountedTabs] = useState(() => new Set(["application"]));
 
@@ -165,7 +167,14 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                 </div>
 
                 <div className="flex-1 h-full flex flex-col min-h-0 bg-muted/10">
-                    {mountedTabs.has("application") && <SettingsApplicationTab />}
+                    {mountedTabs.has("application") && (
+                        <SettingsApplicationTab
+                            updateState={updateState}
+                            checkNow={checkNow}
+                            openReleasePage={openReleasePage}
+                            installUpdate={installUpdate}
+                        />
+                    )}
 
                     {mountedTabs.has("appearance") && (
                         <SettingsAppearanceTab
@@ -237,6 +246,10 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                             closeToTray={settings.closeToTray}
                             setCloseToTray={settings.setCloseToTray}
                             hotkeyRegistrationError={settings.hotkeyRegistrationError}
+                            updateState={updateState}
+                            checkNow={checkNow}
+                            installUpdate={installUpdate}
+                            openReleasePage={openReleasePage}
                         />
                     )}
                 </div>

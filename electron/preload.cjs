@@ -16,6 +16,8 @@ const passphraseListeners = new Set();
 const passphraseTimeoutListeners = new Set();
 const updateDownloadProgressListeners = new Set();
 const updateDownloadedListeners = new Set();
+const updateAvailableListeners = new Set();
+const updateNotAvailableListeners = new Set();
 const updateErrorListeners = new Set();
 
 function cleanupTransferListeners(transferId) {
@@ -135,6 +137,26 @@ ipcRenderer.on("netcatty:passphrase-timeout", (_event, payload) => {
 });
 
 // Auto-update events
+ipcRenderer.on("netcatty:update:update-available", (_event, payload) => {
+  updateAvailableListeners.forEach((cb) => {
+    try {
+      cb(payload);
+    } catch (err) {
+      console.error("onUpdateAvailable callback failed", err);
+    }
+  });
+});
+
+ipcRenderer.on("netcatty:update:update-not-available", () => {
+  updateNotAvailableListeners.forEach((cb) => {
+    try {
+      cb();
+    } catch (err) {
+      console.error("onUpdateNotAvailable callback failed", err);
+    }
+  });
+});
+
 ipcRenderer.on("netcatty:update:download-progress", (_event, payload) => {
   updateDownloadProgressListeners.forEach((cb) => {
     try {
@@ -923,6 +945,15 @@ const api = {
   checkForUpdate: () => ipcRenderer.invoke("netcatty:update:check"),
   downloadUpdate: () => ipcRenderer.invoke("netcatty:update:download"),
   installUpdate: () => ipcRenderer.invoke("netcatty:update:install"),
+  getUpdateStatus: () => ipcRenderer.invoke("netcatty:update:getStatus"),
+  onUpdateAvailable: (cb) => {
+    updateAvailableListeners.add(cb);
+    return () => updateAvailableListeners.delete(cb);
+  },
+  onUpdateNotAvailable: (cb) => {
+    updateNotAvailableListeners.add(cb);
+    return () => updateNotAvailableListeners.delete(cb);
+  },
   onUpdateDownloadProgress: (cb) => {
     updateDownloadProgressListeners.add(cb);
     return () => updateDownloadProgressListeners.delete(cb);
