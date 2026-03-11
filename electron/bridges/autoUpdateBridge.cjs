@@ -133,8 +133,8 @@ function init(deps) {
 
 /**
  * Broadcast an IPC event to all non-destroyed BrowserWindows.
- * Replaces single-target getSenderWindow() for auto-update events,
- * ensuring both the main window and settings window always receive them.
+ * Ensures both the main window and settings window always receive
+ * auto-update events.
  * @param {string} channel
  * @param {unknown} [payload]
  */
