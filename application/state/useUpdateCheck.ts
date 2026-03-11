@@ -7,9 +7,10 @@ import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 // Check for updates at most once per hour
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 // Delay startup check to avoid slowing down app launch.
-// 8s instead of 5s gives electron-updater's startAutoCheck(5000) time to
-// emit 'update-available' first, so the redundancy guard can skip the GitHub
-// API check when auto-download is already active.
+// 8s gives electron-updater's startAutoCheck(5000) time to emit
+// 'update-available' first.  The `onUpdateAvailable` handler also cancels
+// any pending startup timeout, so even on slow networks where the event
+// arrives after 8s the duplicate check is avoided.
 const STARTUP_CHECK_DELAY_MS = 8000;
 // Enable demo mode for development (set via localStorage: localStorage.setItem('debug.updateDemo', '1'))
 const IS_UPDATE_DEMO_MODE = typeof window !== 'undefined' && 
@@ -150,15 +151,25 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     const bridge = netcattyBridge.get();
 
     const cleanupAvailable = bridge?.onUpdateAvailable?.((info) => {
+      // Cancel any pending startup GitHub API check — electron-updater is
+      // now authoritative and we don't want a duplicate toast.
+      if (startupCheckTimeoutRef.current) {
+        clearTimeout(startupCheckTimeoutRef.current);
+        startupCheckTimeoutRef.current = null;
+      }
+
       // Check if this version was dismissed by the user
       const dismissedVersion = localStorageAdapter.readString(STORAGE_KEY_UPDATE_DISMISSED_VERSION);
       const isDismissed = dismissedVersion === info.version;
       setUpdateState((prev) => ({
         ...prev,
         hasUpdate: !isDismissed,
-        autoDownloadStatus: 'downloading',
-        downloadPercent: 0,
-        downloadError: null,
+        // Only transition to 'downloading' if the user hasn't dismissed this
+        // version — otherwise leave the status at 'idle' so no download
+        // progress/ready toast appears for a release they don't want.
+        autoDownloadStatus: isDismissed ? prev.autoDownloadStatus : 'downloading',
+        downloadPercent: isDismissed ? prev.downloadPercent : 0,
+        downloadError: isDismissed ? prev.downloadError : null,
         // Use electron-updater's version if GitHub API hasn't resolved yet or
         // if the updater reports a different version than the cached release.
         latestRelease: (!prev.latestRelease || prev.latestRelease.version !== info.version) ? {
@@ -174,27 +185,43 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     });
 
     const cleanupProgress = bridge?.onUpdateDownloadProgress?.((p) => {
-      setUpdateState((prev) => ({
-        ...prev,
-        autoDownloadStatus: 'downloading',
-        downloadPercent: Math.round(p.percent),
-      }));
+      setUpdateState((prev) => {
+        // If we suppressed the 'downloading' transition (dismissed version),
+        // don't surface progress events either.
+        if (prev.autoDownloadStatus === 'idle') return prev;
+        return {
+          ...prev,
+          autoDownloadStatus: 'downloading',
+          downloadPercent: Math.round(p.percent),
+        };
+      });
     });
 
     const cleanupDownloaded = bridge?.onUpdateDownloaded?.(() => {
-      setUpdateState((prev) => ({
-        ...prev,
-        autoDownloadStatus: 'ready',
-        downloadPercent: 100,
-      }));
+      setUpdateState((prev) => {
+        // If the download was for a dismissed version (autoDownloadStatus
+        // stayed 'idle'), don't transition to 'ready' — that would trigger
+        // the "Update ready" toast for a release the user already dismissed.
+        if (prev.autoDownloadStatus === 'idle') return prev;
+        return {
+          ...prev,
+          autoDownloadStatus: 'ready',
+          downloadPercent: 100,
+        };
+      });
     });
 
     const cleanupError = bridge?.onUpdateError?.((payload) => {
-      setUpdateState((prev) => ({
-        ...prev,
-        autoDownloadStatus: 'error',
-        downloadError: payload.error,
-      }));
+      setUpdateState((prev) => {
+        // If we suppressed the download (dismissed version), don't surface
+        // errors from the background download either.
+        if (prev.autoDownloadStatus === 'idle') return prev;
+        return {
+          ...prev,
+          autoDownloadStatus: 'error',
+          downloadError: payload.error,
+        };
+      });
     });
 
     return () => {
