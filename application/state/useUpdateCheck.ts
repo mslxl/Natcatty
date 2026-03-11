@@ -79,6 +79,10 @@ export function useUpdateCheck(): UseUpdateCheckResult {
   const autoDownloadStatusRef = useRef<AutoDownloadStatus>('idle');
   // Timer ref for auto-resetting manualCheckStatus='up-to-date' back to 'idle'
   const manualCheckResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Flag: true when we suppressed auto-download because the version was dismissed.
+  // Used to distinguish "idle because dismissed" from "idle because not hydrated yet"
+  // in the progress/downloaded/error callbacks.
+  const dismissedAutoDownloadRef = useRef(false);
 
   // Keep currentVersionRef in sync so checkNow always reads the latest version
   useEffect(() => {
@@ -166,15 +170,11 @@ export function useUpdateCheck(): UseUpdateCheckResult {
       }
       const now = Date.now();
       localStorageAdapter.writeNumber(STORAGE_KEY_UPDATE_LAST_CHECK, now);
-      // Clear any stale "update available" state that may have been set by
-      // an earlier GitHub API check — the updater feed is authoritative on
-      // supported platforms and has just confirmed no compatible update.
-      setUpdateState((prev) => ({
-        ...prev,
-        lastCheckedAt: now,
-        hasUpdate: false,
-        manualCheckStatus: prev.manualCheckStatus === 'available' ? 'up-to-date' : prev.manualCheckStatus,
-      }));
+      // Only record the check time — don't clear hasUpdate or manualCheckStatus.
+      // The GitHub release may exist even when electron-updater's feed says
+      // "not available" (e.g. assets not yet published for this platform).
+      // The GitHub-based fallback with manual download link must remain visible.
+      setUpdateState((prev) => ({ ...prev, lastCheckedAt: now }));
     });
 
     const cleanupAvailable = bridge?.onUpdateAvailable?.((info) => {
@@ -188,6 +188,9 @@ export function useUpdateCheck(): UseUpdateCheckResult {
       // Check if this version was dismissed by the user
       const dismissedVersion = localStorageAdapter.readString(STORAGE_KEY_UPDATE_DISMISSED_VERSION);
       const isDismissed = dismissedVersion === info.version;
+      if (isDismissed) {
+        dismissedAutoDownloadRef.current = true;
+      }
       setUpdateState((prev) => ({
         ...prev,
         hasUpdate: !isDismissed,
@@ -212,43 +215,34 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     });
 
     const cleanupProgress = bridge?.onUpdateDownloadProgress?.((p) => {
-      setUpdateState((prev) => {
-        // If we suppressed the 'downloading' transition (dismissed version),
-        // don't surface progress events either.
-        if (prev.autoDownloadStatus === 'idle') return prev;
-        return {
-          ...prev,
-          autoDownloadStatus: 'downloading',
-          downloadPercent: Math.round(p.percent),
-        };
-      });
+      // If we suppressed the download for a dismissed version, ignore progress.
+      if (dismissedAutoDownloadRef.current) return;
+      setUpdateState((prev) => ({
+        ...prev,
+        autoDownloadStatus: 'downloading',
+        downloadPercent: Math.round(p.percent),
+      }));
     });
 
     const cleanupDownloaded = bridge?.onUpdateDownloaded?.(() => {
-      setUpdateState((prev) => {
-        // If the download was for a dismissed version (autoDownloadStatus
-        // stayed 'idle'), don't transition to 'ready' — that would trigger
-        // the "Update ready" toast for a release the user already dismissed.
-        if (prev.autoDownloadStatus === 'idle') return prev;
-        return {
-          ...prev,
-          autoDownloadStatus: 'ready',
-          downloadPercent: 100,
-        };
-      });
+      // If the download was for a dismissed version, don't transition to
+      // 'ready' — that would trigger the "Update ready" toast.
+      if (dismissedAutoDownloadRef.current) return;
+      setUpdateState((prev) => ({
+        ...prev,
+        autoDownloadStatus: 'ready',
+        downloadPercent: 100,
+      }));
     });
 
     const cleanupError = bridge?.onUpdateError?.((payload) => {
-      setUpdateState((prev) => {
-        // If we suppressed the download (dismissed version), don't surface
-        // errors from the background download either.
-        if (prev.autoDownloadStatus === 'idle') return prev;
-        return {
-          ...prev,
-          autoDownloadStatus: 'error',
-          downloadError: payload.error,
-        };
-      });
+      // If we suppressed the download for a dismissed version, ignore errors.
+      if (dismissedAutoDownloadRef.current) return;
+      setUpdateState((prev) => ({
+        ...prev,
+        autoDownloadStatus: 'error',
+        downloadError: payload.error,
+      }));
     });
 
     return () => {
@@ -373,6 +367,9 @@ export function useUpdateCheck(): UseUpdateCheckResult {
       clearTimeout(manualCheckResetTimeoutRef.current);
       manualCheckResetTimeoutRef.current = null;
     }
+
+    // Reset dismissed flag so a manual retry can surface download events again
+    dismissedAutoDownloadRef.current = false;
 
     // Immediately reflect 'checking' in the UI; reset download error so the user can retry
     setUpdateState((prev) => {
