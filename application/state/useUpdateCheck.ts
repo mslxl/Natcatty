@@ -129,8 +129,12 @@ export function useUpdateCheck(): UseUpdateCheckResult {
 
       // Respect dismissed versions: if the user dismissed this release,
       // don't surface download progress/ready state in late-opening windows.
+      // Also set the dismissed ref so subsequent IPC events are suppressed.
       const dismissedVersion = localStorageAdapter.readString(STORAGE_KEY_UPDATE_DISMISSED_VERSION);
-      if (snapshot.version && snapshot.version === dismissedVersion) return;
+      if (snapshot.version && snapshot.version === dismissedVersion) {
+        dismissedAutoDownloadRef.current = true;
+        return;
+      }
 
       setUpdateState((prev) => {
         // Don't overwrite if the renderer already has a newer state
@@ -423,15 +427,25 @@ export function useUpdateCheck(): UseUpdateCheckResult {
       //    environments where api.github.com is blocked would never attempt
       //    the auto-download path.
       void netcattyBridge.get()?.checkForUpdate?.().then((res) => {
-        // Only surface actual download-feed errors; unsupported platforms
-        // (res.supported === false) are expected and should keep
-        // autoDownloadStatus at 'idle' so the manual download link shows.
         if (res?.error && res?.supported !== false) {
+          // Surface actual download-feed errors; unsupported platforms
+          // (res.supported === false) should keep autoDownloadStatus at
+          // 'idle' so the manual download link shows.
           setUpdateState((prev) => ({
             ...prev,
             autoDownloadStatus: 'error',
             downloadError: res.error,
           }));
+        } else if (nextStatus === 'error' && !res?.error && !res?.available) {
+          // GitHub API failed but electron-updater says no update available.
+          // Clear the error status so Settings doesn't stay stuck in error state.
+          setUpdateState((prev) => ({
+            ...prev,
+            manualCheckStatus: 'up-to-date',
+          }));
+          manualCheckResetTimeoutRef.current = setTimeout(() => {
+            setUpdateState((prev) => ({ ...prev, manualCheckStatus: 'idle' }));
+          }, 5000);
         }
       }).catch(() => {
         // Bridge unavailable — ignore; the manual download link remains visible
