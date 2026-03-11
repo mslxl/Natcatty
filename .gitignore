@@ -48,3 +48,12 @@ CLAUDE.md
 # Test suite (local only, not committed)
 /tests/
 /vitest.config.ts
+
+# Serena MCP project config (local only)
+/.serena/
+
+# Windows VS Build environment scripts (local dev only)
+Directory.Build.props
+Directory.Build.targets
+build_with_vs.bat
+build_with_vs2022.bat
