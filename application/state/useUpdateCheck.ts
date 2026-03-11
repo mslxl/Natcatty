@@ -160,14 +160,12 @@ export function useUpdateCheck(): UseUpdateCheckResult {
   useEffect(() => {
     const bridge = netcattyBridge.get();
 
-    // When electron-updater confirms no update in its feed, record the check
-    // time but do NOT cancel the startup GitHub API fallback — the GitHub
-    // release may exist even when updater-feed assets aren't published yet.
-    // The fallback will surface the manual download link in that case.
+    // When electron-updater confirms no update in its feed, don't write
+    // STORAGE_KEY_UPDATE_LAST_CHECK — that would throttle the GitHub API
+    // fallback for an hour.  Let performCheck write it on success so the
+    // GitHub check can still discover releases not yet in the updater feed.
     const cleanupNotAvailable = bridge?.onUpdateNotAvailable?.(() => {
-      const now = Date.now();
-      localStorageAdapter.writeNumber(STORAGE_KEY_UPDATE_LAST_CHECK, now);
-      setUpdateState((prev) => ({ ...prev, lastCheckedAt: now }));
+      // No-op for now — the GitHub fallback will handle lastCheckedAt.
     });
 
     const cleanupAvailable = bridge?.onUpdateAvailable?.((info) => {
