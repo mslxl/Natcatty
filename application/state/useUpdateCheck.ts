@@ -436,6 +436,9 @@ export function useUpdateCheck(): UseUpdateCheckResult {
             autoDownloadStatus: 'error',
             downloadError: res.error,
           }));
+        } else if (res?.checking) {
+          // Another check is already in flight — don't change status; the
+          // in-flight check will resolve via IPC events.
         } else if (nextStatus === 'error' && !res?.error && !res?.available) {
           // GitHub API failed but electron-updater says no update available.
           // Clear the error status so Settings doesn't stay stuck in error state.

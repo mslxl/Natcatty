@@ -304,7 +304,7 @@ function App({ settings }: { settings: SettingsState }) {
   }, [handleSyncNow]);
 
   // Update check hook - checks for new versions on startup
-  const { updateState, openReleasePage, installUpdate } = useUpdateCheck();
+  const { updateState, dismissUpdate, openReleasePage, installUpdate } = useUpdateCheck();
 
   // Window controls - must be before update toast effect which uses openSettingsWindow
   const { openSettingsWindow } = useWindowControls();
@@ -321,16 +321,20 @@ function App({ settings }: { settings: SettingsState }) {
           title: t('update.available.title'),
           duration: 8000, // Show longer for update notifications
           onClick: () => {
-            // Only navigate to Settings — don't dismiss, as that writes to
-            // STORAGE_KEY_UPDATE_DISMISSED_VERSION and would cause the Settings
-            // window's hydration to skip the download state.
             void openSettingsWindow();
+            // Dismiss the update so the toast doesn't re-fire on every render.
+            // On unsupported platforms (where autoDownloadStatus stays 'idle')
+            // this is the only way to suppress the notification for this version.
+            // On supported platforms this toast only shows before auto-download
+            // starts, and the Settings window's own useUpdateCheck will pick up
+            // the download state via IPC events independently of the dismiss.
+            dismissUpdate();
           },
           actionLabel: t('update.viewInSettings'),
         }
       );
     }
-  }, [updateState.hasUpdate, updateState.latestRelease, updateState.autoDownloadStatus, t, openSettingsWindow]);
+  }, [updateState.hasUpdate, updateState.latestRelease, updateState.autoDownloadStatus, t, openSettingsWindow, dismissUpdate]);
 
   // Track previous autoDownloadStatus so toast effects fire only on actual transitions,
   // not when unrelated deps (openReleasePage, installUpdate) change their reference.
