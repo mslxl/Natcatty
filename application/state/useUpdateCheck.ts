@@ -6,8 +6,11 @@ import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 
 // Check for updates at most once per hour
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
-// Delay startup check to avoid slowing down app launch
-const STARTUP_CHECK_DELAY_MS = 5000;
+// Delay startup check to avoid slowing down app launch.
+// 8s instead of 5s gives electron-updater's startAutoCheck(5000) time to
+// emit 'update-available' first, so the redundancy guard can skip the GitHub
+// API check when auto-download is already active.
+const STARTUP_CHECK_DELAY_MS = 8000;
 // Enable demo mode for development (set via localStorage: localStorage.setItem('debug.updateDemo', '1'))
 const IS_UPDATE_DEMO_MODE = typeof window !== 'undefined' && 
   window.localStorage?.getItem('debug.updateDemo') === '1';
