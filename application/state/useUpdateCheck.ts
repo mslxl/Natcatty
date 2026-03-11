@@ -235,117 +235,41 @@ export function useUpdateCheck(): UseUpdateCheckResult {
   }, []);
 
   const checkNow = useCallback(async (): Promise<null> => {
-    // Prevent concurrent checks (same guard used by performCheck)
+    // Prevent concurrent checks (performCheck owns isCheckingRef)
     if (isCheckingRef.current) {
       debugLog('checkNow: already checking, skipping');
       return null;
     }
 
-    isCheckingRef.current = true;
+    // Immediately reflect 'checking' in the UI
     setUpdateState((prev) => ({
       ...prev,
-      isChecking: true,
       manualCheckStatus: 'checking',
       error: null,
     }));
 
-    try {
-      const bridge = netcattyBridge.get();
-      const result = await bridge?.checkForUpdate?.();
-
-      // Bridge unavailable (no Electron context)
-      if (!result) {
-        setUpdateState((prev) => ({
-          ...prev,
-          isChecking: false,
-          manualCheckStatus: 'error',
-          error: 'Update check unavailable',
-        }));
-        return null;
-      }
-
-      // Platform does not support electron-updater (Linux deb/rpm/snap) →
-      // fall back to GitHub API for version awareness only (no auto-download)
-      if (result?.supported === false) {
-        // Read version from ref to avoid stale closure
-        const effectiveVersion = IS_UPDATE_DEMO_MODE ? '0.0.1' : currentVersionRef.current;
-        if (!effectiveVersion || effectiveVersion === '0.0.0') {
-          setUpdateState((prev) => ({
-            ...prev,
-            isChecking: false,
-            manualCheckStatus: 'up-to-date',
-          }));
-          return null;
-        }
-        // Temporarily release the ref so performCheck can use its own guard
-        isCheckingRef.current = false;
-        const githubResult = await performCheck(effectiveVersion);
-        // performCheck already updates the state (hasUpdate, latestRelease, etc.)
-        // We only need to set manualCheckStatus from the result.
-        // isCheckingRef is now false (performCheck's finally cleared it), so finally
-        // block below is harmless.
-        setUpdateState((prev) => ({
-          ...prev,
-          isChecking: false,
-          manualCheckStatus: githubResult?.hasUpdate ? 'available' : 'up-to-date',
-        }));
-        return null;
-      }
-
-      // IPC returned an error
-      if (result?.error) {
-        setUpdateState((prev) => ({
-          ...prev,
-          isChecking: false,
-          manualCheckStatus: 'error',
-          error: result.error ?? 'Update check failed',
-        }));
-        return null;
-      }
-
-      if (result?.available && result.version) {
-        // autoDownload=true: electron-updater starts download immediately.
-        // The onUpdateAvailable IPC event will set autoDownloadStatus='downloading'.
-        // We set hasUpdate=true and populate latestRelease so UI can show version.
-        const now = Date.now();
-        localStorageAdapter.writeNumber(STORAGE_KEY_UPDATE_LAST_CHECK, now);
-        setUpdateState((prev) => ({
-          ...prev,
-          isChecking: false,
-          manualCheckStatus: 'available',
-          hasUpdate: true,
-          lastCheckedAt: now,
-          latestRelease: prev.latestRelease ?? {
-            version: result.version!,
-            tagName: `v${result.version}`,
-            name: `v${result.version}`,
-            body: typeof result.releaseNotes === 'string' ? result.releaseNotes : '',
-            htmlUrl: '',
-            publishedAt: result.releaseDate ?? new Date().toISOString(),
-            assets: [],
-          },
-        }));
-      } else {
-        setUpdateState((prev) => ({
-          ...prev,
-          isChecking: false,
-          manualCheckStatus: 'up-to-date',
-        }));
-      }
-
-      return null;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
+    // Skip check for dev/invalid builds (demo mode overrides to '0.0.1' inside performCheck)
+    const effectiveVersion = IS_UPDATE_DEMO_MODE ? '0.0.1' : currentVersionRef.current;
+    if (!effectiveVersion || effectiveVersion === '0.0.0') {
       setUpdateState((prev) => ({
         ...prev,
-        isChecking: false,
-        manualCheckStatus: 'error',
-        error: msg,
+        manualCheckStatus: 'up-to-date',
       }));
       return null;
-    } finally {
-      isCheckingRef.current = false;
     }
+
+    // Delegate to performCheck (GitHub API) — completely independent of
+    // electron-updater's startAutoCheck() in the main process.
+    // performCheck sets isCheckingRef, isChecking, hasUpdate, latestRelease.
+    const result = await performCheck(effectiveVersion);
+
+    setUpdateState((prev) => ({
+      ...prev,
+      manualCheckStatus:
+        result === null ? 'error' : result.hasUpdate ? 'available' : 'up-to-date',
+    }));
+
+    return null;
   }, [performCheck]);
 
   const dismissUpdate = useCallback(() => {
