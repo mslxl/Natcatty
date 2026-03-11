@@ -172,6 +172,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                             updateState={updateState}
                             checkNow={checkNow}
                             openReleasePage={openReleasePage}
+                            installUpdate={installUpdate}
                         />
                     )}
 

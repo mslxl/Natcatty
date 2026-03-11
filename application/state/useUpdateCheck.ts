@@ -357,11 +357,14 @@ export function useUpdateCheck(): UseUpdateCheckResult {
       // Trigger electron-updater and surface any check-phase failures so
       // users know auto-download won't proceed on broken feeds.
       void netcattyBridge.get()?.checkForUpdate?.().then((res) => {
-        if (res?.error || res?.supported === false) {
+        // Only surface actual download-feed errors; unsupported platforms
+        // (res.supported === false) are expected and should keep
+        // autoDownloadStatus at 'idle' so the manual download link shows.
+        if (res?.error && res?.supported !== false) {
           setUpdateState((prev) => ({
             ...prev,
             autoDownloadStatus: 'error',
-            downloadError: res.error || 'Auto-update is not supported on this platform.',
+            downloadError: res.error,
           }));
         }
       }).catch(() => {

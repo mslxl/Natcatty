@@ -67,14 +67,14 @@ interface SettingsApplicationTabProps {
   updateState: UpdateState;
   checkNow: UseUpdateCheckResult['checkNow'];
   openReleasePage: UseUpdateCheckResult['openReleasePage'];
+  installUpdate: UseUpdateCheckResult['installUpdate'];
 }
 
-export default function SettingsApplicationTab({ updateState, checkNow, openReleasePage }: SettingsApplicationTabProps) {
+export default function SettingsApplicationTab({ updateState, checkNow, openReleasePage, installUpdate }: SettingsApplicationTabProps) {
   const { t } = useI18n();
   const { openExternal, getApplicationInfo } = useApplicationBackend();
   const [appInfo, setAppInfo] = useState<AppInfo>({ name: "Netcatty", version: "" });
   const [lastCheckResult, setLastCheckResult] = useState<'none' | 'available' | 'upToDate'>('none');
-  const [hasAutoChecked, setHasAutoChecked] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -97,19 +97,6 @@ export default function SettingsApplicationTab({ updateState, checkNow, openRele
   // Check if demo mode is enabled for development testing
   const isUpdateDemoMode = typeof window !== 'undefined' &&
     window.localStorage?.getItem('debug.updateDemo') === '1';
-
-  // Auto check for updates when entering this page
-  useEffect(() => {
-    if (hasAutoChecked) return;
-    if (updateState.isChecking) return;
-
-    // In demo mode or when we have a valid version, auto-check
-    const canCheck = isUpdateDemoMode || (appInfo.version && appInfo.version !== '0.0.0');
-    if (!canCheck) return;
-
-    setHasAutoChecked(true);
-    void checkNow();
-  }, [hasAutoChecked, updateState.isChecking, isUpdateDemoMode, appInfo.version, checkNow]);
 
   const handleCheckForUpdates = async () => {
     // In demo mode, allow checking even for dev builds
@@ -160,18 +147,25 @@ export default function SettingsApplicationTab({ updateState, checkNow, openRele
                 <span className="text-sm text-muted-foreground">
                   {appInfo.version ? appInfo.version : " "}
                 </span>
-                {/* Update available badge - inline with version */}
-                {updateState.hasUpdate && updateState.latestRelease && (
+                {/* Update badge - reflects auto-download state */}
+                {updateState.latestRelease && (updateState.hasUpdate || updateState.autoDownloadStatus === 'downloading' || updateState.autoDownloadStatus === 'ready') && (
                   <button
-                    onClick={() => void openReleasePage()}
+                    onClick={() => updateState.autoDownloadStatus === 'ready' ? installUpdate() : void openReleasePage()}
                     className={cn(
                       "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium",
-                      "bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300",
-                      "hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors cursor-pointer"
+                      updateState.autoDownloadStatus === 'ready'
+                        ? "bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-800"
+                        : "bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-800",
+                      "transition-colors cursor-pointer"
                     )}
                   >
                     <ArrowUpCircle size={12} />
-                    v{updateState.latestRelease.version} {t('update.downloadNow')}
+                    v{updateState.latestRelease.version}{' '}
+                    {updateState.autoDownloadStatus === 'ready'
+                      ? t('update.restartNow')
+                      : updateState.autoDownloadStatus === 'downloading'
+                        ? `${updateState.downloadPercent}%`
+                        : t('update.downloadNow')}
                   </button>
                 )}
               </div>
