@@ -147,8 +147,12 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     const bridge = netcattyBridge.get();
 
     const cleanupAvailable = bridge?.onUpdateAvailable?.((info) => {
+      // Check if this version was dismissed by the user
+      const dismissedVersion = localStorageAdapter.readString(STORAGE_KEY_UPDATE_DISMISSED_VERSION);
+      const isDismissed = dismissedVersion === info.version;
       setUpdateState((prev) => ({
         ...prev,
+        hasUpdate: !isDismissed,
         autoDownloadStatus: 'downloading',
         downloadPercent: 0,
         downloadError: null,
@@ -440,6 +444,12 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     debugLog('Starting delayed update check for version:', updateState.currentVersion);
 
     startupCheckTimeoutRef.current = setTimeout(() => {
+      // If electron-updater's auto-check already started a download, skip the
+      // redundant GitHub API check to avoid duplicate toast notifications.
+      if (autoDownloadStatusRef.current !== 'idle') {
+        debugLog('Skipping startup check — auto-download already active');
+        return;
+      }
       debugLog('=== Delayed check triggered ===');
       void performCheck(updateState.currentVersion);
     }, STARTUP_CHECK_DELAY_MS);

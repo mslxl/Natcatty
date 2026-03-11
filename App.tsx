@@ -338,7 +338,7 @@ function App({ settings }: { settings: SettingsState }) {
     prevAutoDownloadStatusRef.current = updateState.autoDownloadStatus;
     if (prev === updateState.autoDownloadStatus) return;
 
-    if (updateState.autoDownloadStatus === 'ready') {
+    if (updateState.autoDownloadStatus === 'ready' && updateState.hasUpdate) {
       const version = updateState.latestRelease?.version ?? '';
       toast.info(
         t('update.readyToInstall.message', { version }),
@@ -359,7 +359,7 @@ function App({ settings }: { settings: SettingsState }) {
         }
       );
     }
-  }, [updateState.autoDownloadStatus, updateState.latestRelease?.version, t, installUpdate, openReleasePage]);
+  }, [updateState.autoDownloadStatus, updateState.hasUpdate, updateState.latestRelease?.version, t, installUpdate, openReleasePage]);
 
   // Memoize keys for port forwarding to prevent unnecessary re-renders
   const portForwardingKeys = useMemo(
