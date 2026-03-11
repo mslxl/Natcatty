@@ -122,6 +122,12 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     const bridge = netcattyBridge.get();
     void bridge?.getUpdateStatus?.().then((snapshot) => {
       if (!snapshot || snapshot.status === 'idle') return;
+
+      // Respect dismissed versions: if the user dismissed this release,
+      // don't surface download progress/ready state in late-opening windows.
+      const dismissedVersion = localStorageAdapter.readString(STORAGE_KEY_UPDATE_DISMISSED_VERSION);
+      if (snapshot.version && snapshot.version === dismissedVersion) return;
+
       setUpdateState((prev) => {
         // Don't overwrite if the renderer already has a newer state
         if (prev.autoDownloadStatus !== 'idle') return prev;
@@ -280,10 +286,15 @@ export function useUpdateCheck(): UseUpdateCheckResult {
       debugLog('Latest release version:', result.latestRelease?.version);
       const now = Date.now();
 
-      // Save last check time and release info for cross-window hydration
-      localStorageAdapter.writeNumber(STORAGE_KEY_UPDATE_LAST_CHECK, now);
-      if (result.latestRelease) {
-        localStorageAdapter.writeString(STORAGE_KEY_UPDATE_LATEST_RELEASE, JSON.stringify(result.latestRelease));
+      // Only advance last-check time and cache release on successful checks.
+      // Failed checks (result.error set, no latestRelease) must not update
+      // the timestamp — otherwise stale cached release data persists for an
+      // hour while the throttle prevents re-checking.
+      if (!result.error) {
+        localStorageAdapter.writeNumber(STORAGE_KEY_UPDATE_LAST_CHECK, now);
+        if (result.latestRelease) {
+          localStorageAdapter.writeString(STORAGE_KEY_UPDATE_LATEST_RELEASE, JSON.stringify(result.latestRelease));
+        }
       }
 
       // Check if this version was dismissed
