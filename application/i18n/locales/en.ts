@@ -728,6 +728,7 @@ const en: Messages = {
   'sftp.upload.currentFile': 'Current: {fileName}',
   'sftp.upload.cancelled': 'Upload cancelled',
   'sftp.upload.cancel': 'Cancel',
+  'sftp.upload.completedToPath': 'Uploaded to {path}',
 
   // SFTP Download
   'sftp.download.completed': 'Downloaded',
