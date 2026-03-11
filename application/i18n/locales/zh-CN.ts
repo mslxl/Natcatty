@@ -93,6 +93,10 @@ const zhCN: Messages = {
   'settings.update.manualDownload': '前往 GitHub 下载',
   'settings.update.manualDownloadHint': '当前平台不支持自动更新，请前往 GitHub 下载最新版本。',
   'settings.update.hint': 'Netcatty 从 GitHub Releases 检查更新。',
+  'settings.update.lastCheckedJustNow': '刚刚',
+  'settings.update.lastCheckedMinutesAgo': '{n} 分钟前',
+  'settings.update.lastCheckedHoursAgo': '{n} 小时前',
+  'settings.update.lastCheckedPrefix': '上次检查：',
 
   // Settings > Session Logs
   'settings.sessionLogs.title': '会话日志',

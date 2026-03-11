@@ -27,6 +27,21 @@ function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
 
+/** Returns a locale-agnostic relative time string for the given timestamp. */
+function formatLastChecked(
+  timestamp: number | null,
+  t: (key: string) => string,
+): string {
+  if (!timestamp) return '';
+  const diffMs = Date.now() - timestamp;
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return t('settings.update.lastCheckedJustNow');
+  if (diffMins < 60)
+    return t('settings.update.lastCheckedMinutesAgo').replace('{n}', String(diffMins));
+  const diffHours = Math.floor(diffMins / 60);
+  return t('settings.update.lastCheckedHoursAgo').replace('{n}', String(diffHours));
+}
+
 interface SettingsSystemTabProps {
   sessionLogsEnabled: boolean;
   setSessionLogsEnabled: (enabled: boolean) => void;
@@ -352,6 +367,13 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
               </div>
             </div>
             <p className="text-xs text-muted-foreground">
+              {updateState.lastCheckedAt && (
+                <span>
+                  {t('settings.update.lastCheckedPrefix')}
+                  {formatLastChecked(updateState.lastCheckedAt, t)}
+                  {'　'}
+                </span>
+              )}
               {t('settings.update.hint')}
             </p>
           </div>

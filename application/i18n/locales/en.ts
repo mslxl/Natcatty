@@ -109,6 +109,10 @@ const en: Messages = {
   'settings.update.manualDownload': 'Download from GitHub',
   'settings.update.manualDownloadHint': 'Auto-update is not available on this platform. Download the latest version from GitHub.',
   'settings.update.hint': 'Netcatty checks for updates from GitHub Releases.',
+  'settings.update.lastCheckedJustNow': 'just now',
+  'settings.update.lastCheckedMinutesAgo': '{n} min ago',
+  'settings.update.lastCheckedHoursAgo': '{n} hr ago',
+  'settings.update.lastCheckedPrefix': 'Last checked: ',
 
   // Settings > Session Logs
   'settings.sessionLogs.title': 'Session Logs',

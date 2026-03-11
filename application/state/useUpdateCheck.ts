@@ -71,11 +71,29 @@ export function useUpdateCheck(): UseUpdateCheckResult {
   const startupCheckTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Track current version in a ref to avoid stale closure in checkNow
   const currentVersionRef = useRef(updateState.currentVersion);
+  // Track autoDownloadStatus in a ref so checkNow always reads the latest value
+  const autoDownloadStatusRef = useRef<AutoDownloadStatus>('idle');
+  // Timer ref for auto-resetting manualCheckStatus='up-to-date' back to 'idle'
+  const manualCheckResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Keep currentVersionRef in sync so checkNow always reads the latest version
   useEffect(() => {
     currentVersionRef.current = updateState.currentVersion;
   }, [updateState.currentVersion]);
+
+  // Keep autoDownloadStatusRef in sync so checkNow always reads the latest download state
+  useEffect(() => {
+    autoDownloadStatusRef.current = updateState.autoDownloadStatus;
+  }, [updateState.autoDownloadStatus]);
+
+  // Cleanup: clear any pending manualCheckStatus reset timer on unmount
+  useEffect(() => {
+    return () => {
+      if (manualCheckResetTimeoutRef.current) {
+        clearTimeout(manualCheckResetTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Get current app version
   useEffect(() => {
@@ -241,6 +259,12 @@ export function useUpdateCheck(): UseUpdateCheckResult {
       return null;
     }
 
+    // Clear any pending "up-to-date" auto-reset timer
+    if (manualCheckResetTimeoutRef.current) {
+      clearTimeout(manualCheckResetTimeoutRef.current);
+      manualCheckResetTimeoutRef.current = null;
+    }
+
     // Immediately reflect 'checking' in the UI
     setUpdateState((prev) => ({
       ...prev,
@@ -255,6 +279,10 @@ export function useUpdateCheck(): UseUpdateCheckResult {
         ...prev,
         manualCheckStatus: 'up-to-date',
       }));
+      // Auto-reset after 5s so the badge doesn't stay forever
+      manualCheckResetTimeoutRef.current = setTimeout(() => {
+        setUpdateState((prev) => ({ ...prev, manualCheckStatus: 'idle' }));
+      }, 5000);
       return null;
     }
 
@@ -263,11 +291,25 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     // performCheck sets isCheckingRef, isChecking, hasUpdate, latestRelease.
     const result = await performCheck(effectiveVersion);
 
+    const nextStatus: ManualCheckStatus =
+      result === null ? 'error' : result.hasUpdate ? 'available' : 'up-to-date';
+
     setUpdateState((prev) => ({
       ...prev,
-      manualCheckStatus:
-        result === null ? 'error' : result.hasUpdate ? 'available' : 'up-to-date',
+      manualCheckStatus: nextStatus,
     }));
+
+    if (nextStatus === 'up-to-date') {
+      // Auto-reset "up-to-date" badge back to idle after 5s
+      manualCheckResetTimeoutRef.current = setTimeout(() => {
+        setUpdateState((prev) => ({ ...prev, manualCheckStatus: 'idle' }));
+      }, 5000);
+    } else if (nextStatus === 'available' && autoDownloadStatusRef.current === 'idle') {
+      // Update found but electron-updater hasn't started a download yet
+      // (startAutoCheck may not have fired yet, or may have been skipped).
+      // Trigger electron-updater asynchronously — fire-and-forget, never blocks UI.
+      void netcattyBridge.get()?.checkForUpdate?.();
+    }
 
     return null;
   }, [performCheck]);
