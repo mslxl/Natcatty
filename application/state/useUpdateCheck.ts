@@ -19,6 +19,8 @@ const debugLog = (...args: unknown[]) => {
   }
 };
 
+export type AutoDownloadStatus = 'idle' | 'downloading' | 'ready' | 'error';
+
 export interface UpdateState {
   isChecking: boolean;
   hasUpdate: boolean;
@@ -26,6 +28,10 @@ export interface UpdateState {
   latestRelease: ReleaseInfo | null;
   error: string | null;
   lastCheckedAt: number | null;
+  // Auto-download state — driven by electron-updater IPC events
+  autoDownloadStatus: AutoDownloadStatus;
+  downloadPercent: number;
+  downloadError: string | null;
 }
 
 export interface UseUpdateCheckResult {
@@ -33,6 +39,7 @@ export interface UseUpdateCheckResult {
   checkNow: () => Promise<UpdateCheckResult | null>;
   dismissUpdate: () => void;
   openReleasePage: () => void;
+  installUpdate: () => void;
 }
 
 /**
@@ -49,6 +56,9 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     latestRelease: null,
     error: null,
     lastCheckedAt: null,
+    autoDownloadStatus: 'idle',
+    downloadPercent: 0,
+    downloadError: null,
   });
 
   const hasCheckedOnStartupRef = useRef(false);
@@ -69,6 +79,62 @@ export function useUpdateCheck(): UseUpdateCheckResult {
       }
     };
     void loadVersion();
+  }, []);
+
+  // Subscribe to electron-updater auto-download IPC events.
+  // These fire automatically when autoDownload=true in the main process.
+  useEffect(() => {
+    const bridge = netcattyBridge.get();
+
+    const cleanupAvailable = bridge?.onUpdateAvailable?.((info) => {
+      setUpdateState((prev) => ({
+        ...prev,
+        autoDownloadStatus: 'downloading',
+        downloadPercent: 0,
+        downloadError: null,
+        // Use electron-updater's version as fallback if GitHub API hasn't resolved yet
+        latestRelease: prev.latestRelease ?? {
+          version: info.version,
+          tagName: `v${info.version}`,
+          name: `v${info.version}`,
+          body: info.releaseNotes || '',
+          htmlUrl: '',
+          publishedAt: info.releaseDate || new Date().toISOString(),
+          assets: [],
+        },
+      }));
+    });
+
+    const cleanupProgress = bridge?.onUpdateDownloadProgress?.((p) => {
+      setUpdateState((prev) => ({
+        ...prev,
+        autoDownloadStatus: 'downloading',
+        downloadPercent: Math.round(p.percent),
+      }));
+    });
+
+    const cleanupDownloaded = bridge?.onUpdateDownloaded?.(() => {
+      setUpdateState((prev) => ({
+        ...prev,
+        autoDownloadStatus: 'ready',
+        downloadPercent: 100,
+      }));
+    });
+
+    const cleanupError = bridge?.onUpdateError?.((payload) => {
+      setUpdateState((prev) => ({
+        ...prev,
+        autoDownloadStatus: 'error',
+        downloadError: payload.error,
+      }));
+    });
+
+    return () => {
+      cleanupAvailable?.();
+      cleanupProgress?.();
+      cleanupDownloaded?.();
+      cleanupError?.();
+    };
   }, []);
 
   const performCheck = useCallback(async (currentVersion: string): Promise<UpdateCheckResult | null> => {
@@ -189,6 +255,10 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     window.open(url, '_blank', 'noopener,noreferrer');
   }, [updateState.latestRelease]);
 
+  const installUpdate = useCallback(() => {
+    netcattyBridge.get()?.installUpdate?.();
+  }, []);
+
   // Startup check with delay - runs once on mount
   useEffect(() => {
     debugLog('Startup check effect mounted, IS_UPDATE_DEMO_MODE:', IS_UPDATE_DEMO_MODE);
@@ -261,5 +331,6 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     checkNow,
     dismissUpdate,
     openReleasePage,
+    installUpdate,
   };
 }

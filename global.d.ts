@@ -628,6 +628,11 @@ declare global {
       transferred: number;
       total: number;
     }) => void): () => void;
+    onUpdateAvailable?(cb: (info: {
+      version: string;
+      releaseNotes: string;
+      releaseDate: string | null;
+    }) => void): () => void;
     onUpdateDownloaded?(cb: () => void): () => void;
     onUpdateError?(cb: (payload: { error: string }) => void): () => void;
 

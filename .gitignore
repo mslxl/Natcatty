@@ -37,3 +37,14 @@ coverage
 
 # Claude Code local settings
 /.claude/settings.local.json
+CLAUDE.md
+
+# AI / Superpowers generated docs (local only)
+/docs/superpowers/
+
+# Dev-only electron-updater test config (not for production)
+/dev-app-update.yml
+
+# Test suite (local only, not committed)
+/tests/
+/vitest.config.ts

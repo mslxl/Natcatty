@@ -31,11 +31,14 @@ function isAutoUpdateSupported() {
 /** Lazily resolved autoUpdater — avoids importing electron-updater in
  *  contexts where native modules might not be available. */
 let _autoUpdater = null;
+
+/** Guard against duplicate listener registration */
+let _listenersRegistered = false;
 function getAutoUpdater() {
   if (_autoUpdater) return _autoUpdater;
   try {
     const { autoUpdater } = require("electron-updater");
-    autoUpdater.autoDownload = false;
+    autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = false;
     // Silence the default electron-log transport (we log ourselves).
     autoUpdater.logger = null;
@@ -47,8 +50,84 @@ function getAutoUpdater() {
   }
 }
 
+/**
+ * Register persistent global IPC event listeners for auto-download flow.
+ * Called once in init(). Forwards electron-updater events to the renderer
+ * even when no manual download was initiated.
+ */
+function setupGlobalListeners() {
+  if (_listenersRegistered) return;
+  const updater = getAutoUpdater();
+  if (!updater) return;
+  _listenersRegistered = true;
+
+  updater.on("update-available", (info) => {
+    const win = getSenderWindow();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send("netcatty:update:update-available", {
+        version: info.version || "",
+        releaseNotes: typeof info.releaseNotes === "string" ? info.releaseNotes : "",
+        releaseDate: info.releaseDate || null,
+      });
+    }
+  });
+
+  updater.on("download-progress", (info) => {
+    const win = getSenderWindow();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send("netcatty:update:download-progress", {
+        percent: info.percent ?? 0,
+        bytesPerSecond: info.bytesPerSecond ?? 0,
+        transferred: info.transferred ?? 0,
+        total: info.total ?? 0,
+      });
+    }
+  });
+
+  updater.on("update-downloaded", () => {
+    const win = getSenderWindow();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send("netcatty:update:downloaded");
+    }
+  });
+
+  updater.on("error", (err) => {
+    const win = getSenderWindow();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send("netcatty:update:error", {
+        error: err?.message || "Unknown update error",
+      });
+    }
+  });
+
+  console.log("[AutoUpdate] Global listeners registered");
+}
+
+/**
+ * Trigger an automatic update check after a delay.
+ * No-op on platforms that don't support auto-update (Linux deb/rpm/snap).
+ * Called from main process after the main window is created.
+ *
+ * @param {number} delayMs - Milliseconds to wait before checking (default: 5000)
+ */
+function startAutoCheck(delayMs = 5000) {
+  if (!isAutoUpdateSupported()) {
+    console.log("[AutoUpdate] Platform does not support auto-update, skipping auto-check");
+    return;
+  }
+  setTimeout(async () => {
+    try {
+      console.log("[AutoUpdate] Starting automatic update check...");
+      await getAutoUpdater()?.checkForUpdates();
+    } catch (err) {
+      console.warn("[AutoUpdate] Auto-check failed:", err?.message || err);
+    }
+  }, delayMs);
+}
+
 function init(deps) {
   _deps = deps;
+  setupGlobalListeners();
 }
 
 /** Get the focused or first available BrowserWindow to send events to. */
@@ -127,60 +206,12 @@ function registerHandlers(ipcMain) {
     if (!updater) {
       return { success: false, error: "Update module not available." };
     }
-
     try {
-      // Capture the requesting window NOW so events always go back to the
-      // renderer that initiated the download, even if focus changes later.
-      const senderWindow = getSenderWindow();
-
-      // Wire progress events before starting the download.
-      const progressHandler = (info) => {
-        if (senderWindow && !senderWindow.isDestroyed()) {
-          senderWindow.webContents.send("netcatty:update:download-progress", {
-            percent: info.percent ?? 0,
-            bytesPerSecond: info.bytesPerSecond ?? 0,
-            transferred: info.transferred ?? 0,
-            total: info.total ?? 0,
-          });
-        }
-      };
-
-      const downloadedHandler = () => {
-        if (senderWindow && !senderWindow.isDestroyed()) {
-          senderWindow.webContents.send("netcatty:update:downloaded");
-        }
-        // Cleanup one-shot listeners.
-        updater.removeListener("download-progress", progressHandler);
-        updater.removeListener("update-downloaded", downloadedHandler);
-        updater.removeListener("error", errorHandler);
-      };
-
-      const errorHandler = (err) => {
-        if (senderWindow && !senderWindow.isDestroyed()) {
-          senderWindow.webContents.send("netcatty:update:error", {
-            error: err?.message || "Download failed",
-          });
-        }
-        updater.removeListener("download-progress", progressHandler);
-        updater.removeListener("update-downloaded", downloadedHandler);
-        updater.removeListener("error", errorHandler);
-      };
-
-      updater.on("download-progress", progressHandler);
-      updater.on("update-downloaded", downloadedHandler);
-      updater.on("error", errorHandler);
-
+      // Global listeners (registered in setupGlobalListeners) handle all
+      // progress/downloaded/error events. Just trigger the download.
       await updater.downloadUpdate();
       return { success: true };
     } catch (err) {
-      // Clean up listeners to prevent leaks if downloadUpdate() rejects
-      // before the error event is emitted.
-      const updaterForCleanup = getAutoUpdater();
-      if (updaterForCleanup) {
-        updaterForCleanup.removeAllListeners("download-progress");
-        updaterForCleanup.removeAllListeners("update-downloaded");
-        updaterForCleanup.removeAllListeners("error");
-      }
       console.error("[AutoUpdate] Download failed:", err?.message || err);
       return { success: false, error: err?.message || "Download failed" };
     }
@@ -196,4 +227,4 @@ function registerHandlers(ipcMain) {
   console.log("[AutoUpdate] Handlers registered");
 }
 
-module.exports = { init, registerHandlers, isAutoUpdateSupported };
+module.exports = { init, registerHandlers, isAutoUpdateSupported, startAutoCheck };
