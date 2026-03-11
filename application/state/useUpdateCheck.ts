@@ -166,7 +166,15 @@ export function useUpdateCheck(): UseUpdateCheckResult {
       }
       const now = Date.now();
       localStorageAdapter.writeNumber(STORAGE_KEY_UPDATE_LAST_CHECK, now);
-      setUpdateState((prev) => ({ ...prev, lastCheckedAt: now }));
+      // Clear any stale "update available" state that may have been set by
+      // an earlier GitHub API check — the updater feed is authoritative on
+      // supported platforms and has just confirmed no compatible update.
+      setUpdateState((prev) => ({
+        ...prev,
+        lastCheckedAt: now,
+        hasUpdate: false,
+        manualCheckStatus: prev.manualCheckStatus === 'available' ? 'up-to-date' : prev.manualCheckStatus,
+      }));
     });
 
     const cleanupAvailable = bridge?.onUpdateAvailable?.((info) => {
@@ -553,12 +561,18 @@ export function useUpdateCheck(): UseUpdateCheckResult {
         debugLog('Skipping startup check — auto-download already active');
         return;
       }
-      // Also skip if the main process is still running its own check
-      // (slow network where 8s wasn't enough for the result to arrive).
+      // If the main process check is still in flight, reschedule the
+      // fallback instead of permanently skipping it — the auto-check may
+      // fail silently (check-phase errors aren't broadcast to the renderer).
       try {
         const snapshot = await netcattyBridge.get()?.getUpdateStatus?.();
         if (snapshot?.isChecking) {
-          debugLog('Skipping startup check — main process check still in flight');
+          debugLog('Main process check still in flight — rescheduling fallback');
+          startupCheckTimeoutRef.current = setTimeout(() => {
+            if (autoDownloadStatusRef.current !== 'idle') return;
+            debugLog('=== Rescheduled fallback check triggered ===');
+            void performCheck(updateState.currentVersion);
+          }, 5000);
           return;
         }
       } catch {
