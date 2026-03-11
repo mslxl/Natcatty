@@ -464,7 +464,8 @@ export function useUpdateCheck(): UseUpdateCheckResult {
         try {
           const release = JSON.parse(cachedRelease) as ReleaseInfo;
           const dismissedVersion = localStorageAdapter.readString(STORAGE_KEY_UPDATE_DISMISSED_VERSION);
-          const showUpdate = release.version !== updateState.currentVersion && release.version !== dismissedVersion;
+          const isNewer = updateState.currentVersion.localeCompare(release.version, undefined, { numeric: true, sensitivity: 'base' }) < 0;
+          const showUpdate = isNewer && release.version !== dismissedVersion;
           setUpdateState((prev) => ({
             ...prev,
             latestRelease: prev.latestRelease ?? release,

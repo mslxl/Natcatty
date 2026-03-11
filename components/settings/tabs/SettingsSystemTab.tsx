@@ -357,9 +357,9 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                   </Button>
                 )}
 
-                {/* Open releases — shown when update found on unsupported platform (no auto-download) */}
+                {/* Open releases — shown when update found on unsupported platform, or on check error */}
                 {updateState.autoDownloadStatus === 'idle' &&
-                  (updateState.manualCheckStatus === 'available' || (updateState.manualCheckStatus === 'idle' && updateState.hasUpdate)) && (
+                  (updateState.manualCheckStatus === 'available' || updateState.manualCheckStatus === 'error' || (updateState.manualCheckStatus === 'idle' && updateState.hasUpdate)) && (
                   <Button variant="ghost" size="sm" onClick={openReleasePage}>
                     <ExternalLink size={14} className="mr-1.5" />
                     {t('settings.update.manualDownload')}

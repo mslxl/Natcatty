@@ -16,8 +16,6 @@ import { matchesKeyBinding } from './domain/models';
 import { resolveHostAuth } from './domain/sshAuth';
 import { applySyncPayload } from './domain/syncPayload';
 import { getCredentialProtectionAvailability } from './infrastructure/services/credentialProtection';
-import { localStorageAdapter } from './infrastructure/persistence/localStorageAdapter';
-import { STORAGE_KEY_UPDATE_DISMISSED_VERSION } from './infrastructure/config/storageKeys';
 import { netcattyBridge } from './infrastructure/services/netcattyBridge';
 import { TopTabs } from './components/TopTabs';
 import { Button } from './components/ui/button';
@@ -306,7 +304,7 @@ function App({ settings }: { settings: SettingsState }) {
   }, [handleSyncNow]);
 
   // Update check hook - checks for new versions on startup
-  const { updateState, openReleasePage, installUpdate } = useUpdateCheck();
+  const { updateState, dismissUpdate, openReleasePage, installUpdate } = useUpdateCheck();
 
   // Window controls - must be before update toast effect which uses openSettingsWindow
   const { openSettingsWindow } = useWindowControls();
@@ -324,12 +322,13 @@ function App({ settings }: { settings: SettingsState }) {
           duration: 8000, // Show longer for update notifications
           onClick: () => {
             void openSettingsWindow();
+            dismissUpdate();
           },
           actionLabel: t('update.viewInSettings'),
         }
       );
     }
-  }, [updateState.hasUpdate, updateState.latestRelease, updateState.autoDownloadStatus, t, openSettingsWindow]);
+  }, [updateState.hasUpdate, updateState.latestRelease, updateState.autoDownloadStatus, t, openSettingsWindow, dismissUpdate]);
 
   // Track previous autoDownloadStatus so toast effects fire only on actual transitions,
   // not when unrelated deps (openReleasePage, installUpdate) change their reference.
@@ -340,11 +339,6 @@ function App({ settings }: { settings: SettingsState }) {
     if (prev === updateState.autoDownloadStatus) return;
 
     if (updateState.autoDownloadStatus === 'ready') {
-      // Suppress the restart prompt if the user has dismissed this release
-      const dismissedVersion = localStorageAdapter.readString(STORAGE_KEY_UPDATE_DISMISSED_VERSION);
-      if (updateState.latestRelease?.version && updateState.latestRelease.version === dismissedVersion) {
-        return;
-      }
       const version = updateState.latestRelease?.version ?? '';
       toast.info(
         t('update.readyToInstall.message', { version }),
