@@ -75,6 +75,7 @@ function setupGlobalListeners() {
     // Reset stale status so late-opening windows don't hydrate from a
     // previous 'error' or 'ready' snapshot after a "no update" check.
     _lastStatus = { status: 'idle', percent: 0, error: null, version: null };
+    broadcastToAllWindows("netcatty:update:update-not-available", {});
   });
 
   updater.on("update-available", (info) => {

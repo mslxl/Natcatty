@@ -635,6 +635,7 @@ declare global {
       releaseNotes: string;
       releaseDate: string | null;
     }) => void): () => void;
+    onUpdateNotAvailable?(cb: () => void): () => void;
     onUpdateDownloaded?(cb: () => void): () => void;
     onUpdateError?(cb: (payload: { error: string }) => void): () => void;
 

@@ -156,6 +156,15 @@ export function useUpdateCheck(): UseUpdateCheckResult {
   useEffect(() => {
     const bridge = netcattyBridge.get();
 
+    // When electron-updater confirms no update is available, cancel the
+    // pending startup GitHub API check to avoid a redundant network request.
+    const cleanupNotAvailable = bridge?.onUpdateNotAvailable?.(() => {
+      if (startupCheckTimeoutRef.current) {
+        clearTimeout(startupCheckTimeoutRef.current);
+        startupCheckTimeoutRef.current = null;
+      }
+    });
+
     const cleanupAvailable = bridge?.onUpdateAvailable?.((info) => {
       // Cancel any pending startup GitHub API check — electron-updater is
       // now authoritative and we don't want a duplicate toast.
@@ -231,6 +240,7 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     });
 
     return () => {
+      cleanupNotAvailable?.();
       cleanupAvailable?.();
       cleanupProgress?.();
       cleanupDownloaded?.();
@@ -336,6 +346,14 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     if (isCheckingRef.current) {
       debugLog('checkNow: already checking, skipping');
       return null;
+    }
+
+    // Cancel any pending startup auto-check to avoid racing with
+    // electron-updater's startAutoCheck — concurrent checkForUpdates()
+    // calls are rejected by electron-updater and would surface a false error.
+    if (startupCheckTimeoutRef.current) {
+      clearTimeout(startupCheckTimeoutRef.current);
+      startupCheckTimeoutRef.current = null;
     }
 
     // Clear any pending "up-to-date" auto-reset timer
