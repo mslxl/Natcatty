@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import type { Host, SftpFileEntry, SftpFilenameEncoding } from "../../../domain/models";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { logger } from "../../../lib/logger";
@@ -68,6 +68,18 @@ export const useSftpPaneActions = ({
   isSessionError,
   dirCacheTtlMs,
 }: UseSftpPaneActionsParams): UseSftpPaneActionsResult => {
+  // Track the latest navigation request ID per tab, so we can distinguish
+  // whether a superseded request was superseded by the same tab or a different tab.
+  const tabNavSeqRef = useRef(new Map<string, number>());
+
+  // Track the last confirmed (successfully loaded) state per tab, so that
+  // restore-on-error/supersede always reverts to a known-good state rather
+  // than an intermediate optimistic state from another in-flight navigation.
+  // Includes connectionId so stale entries from a previous host are ignored.
+  const lastConfirmedRef = useRef(
+    new Map<string, { connectionId: string; path: string; files: SftpFileEntry[]; selectedFiles: Set<string> }>(),
+  );
+
   const navigateTo = useCallback(
     async (
       side: "left" | "right",
@@ -92,8 +104,9 @@ export const useSftpPaneActions = ({
         return;
       }
 
+      const connectionId = pane.connection.id;
       const requestId = ++navSeqRef.current[side];
-      const cacheKey = makeCacheKey(pane.connection.id, path, pane.filenameEncoding);
+      const cacheKey = makeCacheKey(connectionId, path, pane.filenameEncoding);
       const cached = options?.force
         ? undefined
         : dirCacheRef.current.get(cacheKey);
@@ -104,6 +117,13 @@ export const useSftpPaneActions = ({
         cached.files
       ) {
         console.log("[SFTP navigateTo] Using cached files for path", { path, cacheKey });
+        tabNavSeqRef.current.set(activeTabId, requestId);
+        lastConfirmedRef.current.set(activeTabId, {
+          connectionId,
+          path,
+          files: cached.files,
+          selectedFiles: new Set(),
+        });
         updateTab(side, activeTabId, (prev) => ({
           ...prev,
           connection: prev.connection
@@ -118,7 +138,36 @@ export const useSftpPaneActions = ({
       }
 
       console.log("[SFTP navigateTo] Fetching files from server for path", { path });
-      updateTab(side, activeTabId, (prev) => ({ ...prev, loading: true, error: null }));
+      // Re-seed confirmed state whenever the pane is settled (not loading), or
+      // when the connection has changed. This captures post-mutation state from
+      // optimistic updates (e.g. deleteFilesAtPath) so that a failed refresh
+      // doesn't resurrect deleted items.
+      const existing = lastConfirmedRef.current.get(activeTabId);
+      if (!existing || existing.connectionId !== connectionId || !pane.loading) {
+        lastConfirmedRef.current.set(activeTabId, {
+          connectionId,
+          path: pane.connection.currentPath,
+          files: pane.files,
+          selectedFiles: pane.selectedFiles,
+        });
+      }
+      const confirmed = lastConfirmedRef.current.get(activeTabId)!;
+      const previousPath = confirmed.path;
+      const previousFiles = confirmed.files;
+      const previousSelection = confirmed.selectedFiles;
+      tabNavSeqRef.current.set(activeTabId, requestId);
+      // Keep existing files visible during loading — the loading overlay
+      // (pointer-events-none) prevents interaction. This avoids blanking a tab
+      // that gets superseded by another tab navigating on the same side.
+      updateTab(side, activeTabId, (prev) => ({
+        ...prev,
+        connection: prev.connection
+          ? { ...prev.connection, currentPath: path }
+          : null,
+        selectedFiles: new Set(),
+        loading: true,
+        error: null,
+      }));
 
       try {
         let files: SftpFileEntry[];
@@ -164,11 +213,40 @@ export const useSftpPaneActions = ({
           }
         }
 
-        if (navSeqRef.current[side] !== requestId) return;
+        if (navSeqRef.current[side] !== requestId) {
+          // Another navigation on this side superseded this request.
+          // Only restore if no newer navigation has occurred on this specific tab
+          // AND the tab still belongs to the same connection (connect/disconnect
+          // bump navSeqRef but not tabNavSeqRef).
+          if (tabNavSeqRef.current.get(activeTabId) !== requestId) {
+            return;
+          }
+          updateTab(side, activeTabId, (prev) => {
+            if (prev.connection?.id !== connectionId) {
+              // Tab was reconnected or disconnected; don't restore stale state.
+              return prev;
+            }
+            return {
+              ...prev,
+              connection: { ...prev.connection, currentPath: previousPath },
+              files: previousFiles,
+              selectedFiles: previousSelection,
+              loading: false,
+            };
+          });
+          return;
+        }
 
         dirCacheRef.current.set(cacheKey, {
           files,
           timestamp: Date.now(),
+        });
+
+        lastConfirmedRef.current.set(activeTabId, {
+          connectionId,
+          path,
+          files,
+          selectedFiles: new Set(),
         });
 
         updateTab(side, activeTabId, (prev) => ({
@@ -181,13 +259,38 @@ export const useSftpPaneActions = ({
           selectedFiles: new Set(),
         }));
       } catch (err) {
-        if (navSeqRef.current[side] !== requestId) return;
-        updateTab(side, activeTabId, (prev) => ({
-          ...prev,
-          error:
-            err instanceof Error ? err.message : "Failed to list directory",
-          loading: false,
-        }));
+        if (navSeqRef.current[side] !== requestId) {
+          if (tabNavSeqRef.current.get(activeTabId) !== requestId) {
+            return;
+          }
+          updateTab(side, activeTabId, (prev) => {
+            if (prev.connection?.id !== connectionId) {
+              return prev;
+            }
+            return {
+              ...prev,
+              connection: { ...prev.connection, currentPath: previousPath },
+              files: previousFiles,
+              selectedFiles: previousSelection,
+              loading: false,
+            };
+          });
+          return;
+        }
+        updateTab(side, activeTabId, (prev) => {
+          if (prev.connection?.id !== connectionId) {
+            return prev;
+          }
+          return {
+            ...prev,
+            connection: { ...prev.connection, currentPath: previousPath },
+            files: previousFiles,
+            selectedFiles: previousSelection,
+            error:
+              err instanceof Error ? err.message : "Failed to list directory",
+            loading: false,
+          };
+        });
       }
     },
     [
