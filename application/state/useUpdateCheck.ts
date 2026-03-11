@@ -414,11 +414,14 @@ export function useUpdateCheck(): UseUpdateCheckResult {
       manualCheckResetTimeoutRef.current = setTimeout(() => {
         setUpdateState((prev) => ({ ...prev, manualCheckStatus: 'idle' }));
       }, 5000);
-    } else if (nextStatus === 'available' && autoDownloadStatusRef.current === 'idle') {
-      // Update found but electron-updater hasn't started a download yet
-      // (startAutoCheck may not have fired yet, or may have been skipped).
-      // Trigger electron-updater and surface any check-phase failures so
-      // users know auto-download won't proceed on broken feeds.
+    } else if ((nextStatus === 'available' || nextStatus === 'error') && autoDownloadStatusRef.current === 'idle') {
+      // Trigger electron-updater as a fallback. This covers two cases:
+      // 1. 'available': GitHub found an update but electron-updater hasn't
+      //    started a download yet — kick it off.
+      // 2. 'error': GitHub API failed (blocked/rate-limited), but the
+      //    electron-updater feed may still be reachable. Without this,
+      //    environments where api.github.com is blocked would never attempt
+      //    the auto-download path.
       void netcattyBridge.get()?.checkForUpdate?.().then((res) => {
         // Only surface actual download-feed errors; unsupported platforms
         // (res.supported === false) are expected and should keep
