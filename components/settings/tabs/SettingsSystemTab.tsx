@@ -34,6 +34,7 @@ function formatLastChecked(
 ): string {
   if (!timestamp) return '';
   const diffMs = Date.now() - timestamp;
+  if (diffMs < 0) return t('settings.update.lastCheckedJustNow');
   const diffMins = Math.floor(diffMs / 60000);
   if (diffMins < 1) return t('settings.update.lastCheckedJustNow');
   if (diffMins < 60)
