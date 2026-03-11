@@ -306,7 +306,7 @@ function App({ settings }: { settings: SettingsState }) {
   }, [handleSyncNow]);
 
   // Update check hook - checks for new versions on startup
-  const { updateState, dismissUpdate, openReleasePage, installUpdate } = useUpdateCheck();
+  const { updateState, openReleasePage, installUpdate } = useUpdateCheck();
 
   // Window controls - must be before update toast effect which uses openSettingsWindow
   const { openSettingsWindow } = useWindowControls();
@@ -324,13 +324,12 @@ function App({ settings }: { settings: SettingsState }) {
           duration: 8000, // Show longer for update notifications
           onClick: () => {
             void openSettingsWindow();
-            dismissUpdate();
           },
           actionLabel: t('update.viewInSettings'),
         }
       );
     }
-  }, [updateState.hasUpdate, updateState.latestRelease, updateState.autoDownloadStatus, t, openSettingsWindow, dismissUpdate]);
+  }, [updateState.hasUpdate, updateState.latestRelease, updateState.autoDownloadStatus, t, openSettingsWindow]);
 
   // Track previous autoDownloadStatus so toast effects fire only on actual transitions,
   // not when unrelated deps (openReleasePage, installUpdate) change their reference.

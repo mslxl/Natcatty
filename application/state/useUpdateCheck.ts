@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { checkForUpdates, getReleaseUrl, type ReleaseInfo, type UpdateCheckResult } from '../../infrastructure/services/updateService';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
-import { STORAGE_KEY_UPDATE_DISMISSED_VERSION, STORAGE_KEY_UPDATE_LAST_CHECK } from '../../infrastructure/config/storageKeys';
+import { STORAGE_KEY_UPDATE_DISMISSED_VERSION, STORAGE_KEY_UPDATE_LAST_CHECK, STORAGE_KEY_UPDATE_LATEST_RELEASE } from '../../infrastructure/config/storageKeys';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 
 // Check for updates at most once per hour
@@ -253,8 +253,11 @@ export function useUpdateCheck(): UseUpdateCheckResult {
       debugLog('Latest release version:', result.latestRelease?.version);
       const now = Date.now();
 
-      // Save last check time
+      // Save last check time and release info for cross-window hydration
       localStorageAdapter.writeNumber(STORAGE_KEY_UPDATE_LAST_CHECK, now);
+      if (result.latestRelease) {
+        localStorageAdapter.writeString(STORAGE_KEY_UPDATE_LATEST_RELEASE, JSON.stringify(result.latestRelease));
+      }
 
       // Check if this version was dismissed
       const dismissedVersion = localStorageAdapter.readString(STORAGE_KEY_UPDATE_DISMISSED_VERSION);
@@ -455,6 +458,23 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     const now = Date.now();
     if (lastCheck && now - lastCheck < UPDATE_CHECK_INTERVAL_MS) {
       hasCheckedOnStartupRef.current = true;
+      // Hydrate cached release info so late-opening windows show the result
+      const cachedRelease = localStorageAdapter.readString(STORAGE_KEY_UPDATE_LATEST_RELEASE);
+      if (cachedRelease) {
+        try {
+          const release = JSON.parse(cachedRelease) as ReleaseInfo;
+          const dismissedVersion = localStorageAdapter.readString(STORAGE_KEY_UPDATE_DISMISSED_VERSION);
+          const showUpdate = release.version !== updateState.currentVersion && release.version !== dismissedVersion;
+          setUpdateState((prev) => ({
+            ...prev,
+            latestRelease: prev.latestRelease ?? release,
+            hasUpdate: prev.hasUpdate || showUpdate,
+            lastCheckedAt: lastCheck,
+          }));
+        } catch {
+          // Ignore corrupted cache
+        }
+      }
       return;
     }
 
