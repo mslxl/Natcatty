@@ -111,6 +111,36 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     void loadVersion();
   }, []);
 
+  // Hydrate auto-download status from the main process so windows opened
+  // after the download started (e.g. Settings) immediately reflect the
+  // current state instead of showing stale 'idle'.
+  useEffect(() => {
+    const bridge = netcattyBridge.get();
+    void bridge?.getUpdateStatus?.().then((snapshot) => {
+      if (!snapshot || snapshot.status === 'idle') return;
+      setUpdateState((prev) => {
+        // Don't overwrite if the renderer already has a newer state
+        if (prev.autoDownloadStatus !== 'idle') return prev;
+        return {
+          ...prev,
+          autoDownloadStatus: snapshot.status,
+          downloadPercent: snapshot.percent,
+          downloadError: snapshot.error,
+          // Provide minimal release info so the UI can display version
+          latestRelease: prev.latestRelease ?? (snapshot.version ? {
+            version: snapshot.version,
+            tagName: `v${snapshot.version}`,
+            name: `v${snapshot.version}`,
+            body: '',
+            htmlUrl: '',
+            publishedAt: new Date().toISOString(),
+            assets: [],
+          } : null),
+        };
+      });
+    });
+  }, []);
+
   // Subscribe to electron-updater auto-download IPC events.
   // These fire automatically when autoDownload=true in the main process.
   useEffect(() => {

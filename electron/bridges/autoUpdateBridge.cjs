@@ -37,6 +37,13 @@ let _listenersRegistered = false;
 
 /** Track whether a download is in progress to distinguish download errors from check errors */
 let _isDownloading = false;
+
+/**
+ * Snapshot of the last known update status so newly opened windows can hydrate
+ * without waiting for the next IPC event.
+ * @type {{ status: 'idle' | 'downloading' | 'ready' | 'error', percent: number, error: string | null, version: string | null }}
+ */
+let _lastStatus = { status: 'idle', percent: 0, error: null, version: null };
 function getAutoUpdater() {
   if (_autoUpdater) return _autoUpdater;
   try {
@@ -67,6 +74,7 @@ function setupGlobalListeners() {
   updater.on("update-available", (info) => {
     // autoDownload=true means the download begins immediately after this event
     _isDownloading = true;
+    _lastStatus = { status: 'downloading', percent: 0, error: null, version: info.version || null };
     broadcastToAllWindows("netcatty:update:update-available", {
       version: info.version || "",
       releaseNotes: typeof info.releaseNotes === "string" ? info.releaseNotes : "",
@@ -75,6 +83,7 @@ function setupGlobalListeners() {
   });
 
   updater.on("download-progress", (info) => {
+    _lastStatus.percent = Math.round(info.percent ?? 0);
     broadcastToAllWindows("netcatty:update:download-progress", {
       percent: info.percent ?? 0,
       bytesPerSecond: info.bytesPerSecond ?? 0,
@@ -85,6 +94,7 @@ function setupGlobalListeners() {
 
   updater.on("update-downloaded", () => {
     _isDownloading = false;
+    _lastStatus = { ..._lastStatus, status: 'ready', percent: 100 };
     broadcastToAllWindows("netcatty:update:downloaded");
   });
 
@@ -96,8 +106,10 @@ function setupGlobalListeners() {
       return;
     }
     _isDownloading = false;
+    const errorMsg = err?.message || "Unknown update error";
+    _lastStatus = { ..._lastStatus, status: 'error', error: errorMsg };
     broadcastToAllWindows("netcatty:update:error", {
-      error: err?.message || "Unknown update error",
+      error: errorMsg,
     });
   });
 
@@ -227,6 +239,11 @@ function registerHandlers(ipcMain) {
       console.error("[AutoUpdate] Download failed:", err?.message || err);
       return { success: false, error: err?.message || "Download failed" };
     }
+  });
+
+  // ---- Get current update status (for late-opening windows) ---------------
+  ipcMain.handle("netcatty:update:getStatus", () => {
+    return { ..._lastStatus };
   });
 
   // ---- Install (quit & install) ------------------------------------------

@@ -309,7 +309,7 @@ function App({ settings }: { settings: SettingsState }) {
   // Window controls - must be before update toast effect which uses openSettingsWindow
   const { openSettingsWindow } = useWindowControls();
 
-  // Show toast notification when update is available
+  // Show toast notification when update is available (only when auto-download is idle)
   useEffect(() => {
     // Skip "update available" toast if auto-download has already started or completed
     if (updateState.autoDownloadStatus !== 'idle') return;
@@ -330,33 +330,36 @@ function App({ settings }: { settings: SettingsState }) {
     }
   }, [updateState.hasUpdate, updateState.latestRelease, updateState.autoDownloadStatus, t, openSettingsWindow, dismissUpdate]);
 
-  // Persistent toast when update is downloaded and ready to install
+  // Track previous autoDownloadStatus so toast effects fire only on actual transitions,
+  // not when unrelated deps (openReleasePage, installUpdate) change their reference.
+  const prevAutoDownloadStatusRef = useRef(updateState.autoDownloadStatus);
   useEffect(() => {
-    if (updateState.autoDownloadStatus !== 'ready') return;
-    const version = updateState.latestRelease?.version ?? '';
-    toast.info(
-      t('update.readyToInstall.message', { version }),
-      {
-        title: t('update.readyToInstall.title'),
-        duration: 0,
-        actionLabel: t('update.restartNow'),
-        onClick: () => installUpdate(),
-      }
-    );
-  }, [updateState.autoDownloadStatus, updateState.latestRelease?.version, t, installUpdate]);
+    const prev = prevAutoDownloadStatusRef.current;
+    prevAutoDownloadStatusRef.current = updateState.autoDownloadStatus;
+    if (prev === updateState.autoDownloadStatus) return;
 
-  // Error toast when auto-download fails, with manual fallback
-  useEffect(() => {
-    if (updateState.autoDownloadStatus !== 'error') return;
-    toast.error(
-      t('update.downloadFailed.message'),
-      {
-        title: t('update.downloadFailed.title'),
-        actionLabel: t('update.openReleases'),
-        onClick: () => openReleasePage(),
-      }
-    );
-  }, [updateState.autoDownloadStatus, t, openReleasePage]);
+    if (updateState.autoDownloadStatus === 'ready') {
+      const version = updateState.latestRelease?.version ?? '';
+      toast.info(
+        t('update.readyToInstall.message', { version }),
+        {
+          title: t('update.readyToInstall.title'),
+          duration: 0,
+          actionLabel: t('update.restartNow'),
+          onClick: () => installUpdate(),
+        }
+      );
+    } else if (updateState.autoDownloadStatus === 'error') {
+      toast.error(
+        t('update.downloadFailed.message'),
+        {
+          title: t('update.downloadFailed.title'),
+          actionLabel: t('update.openReleases'),
+          onClick: () => openReleasePage(),
+        }
+      );
+    }
+  }, [updateState.autoDownloadStatus, updateState.latestRelease?.version, t, installUpdate, openReleasePage]);
 
   // Memoize keys for port forwarding to prevent unnecessary re-renders
   const portForwardingKeys = useMemo(
