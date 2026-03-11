@@ -62,42 +62,30 @@ function setupGlobalListeners() {
   _listenersRegistered = true;
 
   updater.on("update-available", (info) => {
-    const win = getSenderWindow();
-    if (win && !win.isDestroyed()) {
-      win.webContents.send("netcatty:update:update-available", {
-        version: info.version || "",
-        releaseNotes: typeof info.releaseNotes === "string" ? info.releaseNotes : "",
-        releaseDate: info.releaseDate || null,
-      });
-    }
+    broadcastToAllWindows("netcatty:update:update-available", {
+      version: info.version || "",
+      releaseNotes: typeof info.releaseNotes === "string" ? info.releaseNotes : "",
+      releaseDate: info.releaseDate || null,
+    });
   });
 
   updater.on("download-progress", (info) => {
-    const win = getSenderWindow();
-    if (win && !win.isDestroyed()) {
-      win.webContents.send("netcatty:update:download-progress", {
-        percent: info.percent ?? 0,
-        bytesPerSecond: info.bytesPerSecond ?? 0,
-        transferred: info.transferred ?? 0,
-        total: info.total ?? 0,
-      });
-    }
+    broadcastToAllWindows("netcatty:update:download-progress", {
+      percent: info.percent ?? 0,
+      bytesPerSecond: info.bytesPerSecond ?? 0,
+      transferred: info.transferred ?? 0,
+      total: info.total ?? 0,
+    });
   });
 
   updater.on("update-downloaded", () => {
-    const win = getSenderWindow();
-    if (win && !win.isDestroyed()) {
-      win.webContents.send("netcatty:update:downloaded");
-    }
+    broadcastToAllWindows("netcatty:update:downloaded");
   });
 
   updater.on("error", (err) => {
-    const win = getSenderWindow();
-    if (win && !win.isDestroyed()) {
-      win.webContents.send("netcatty:update:error", {
-        error: err?.message || "Unknown update error",
-      });
-    }
+    broadcastToAllWindows("netcatty:update:error", {
+      error: err?.message || "Unknown update error",
+    });
   });
 
   console.log("[AutoUpdate] Global listeners registered");
@@ -143,6 +131,32 @@ function getSenderWindow() {
     }
   } catch {}
   return null;
+}
+
+/**
+ * Broadcast an IPC event to all non-destroyed BrowserWindows.
+ * Replaces single-target getSenderWindow() for auto-update events,
+ * ensuring both the main window and settings window always receive them.
+ * @param {string} channel
+ * @param {unknown} [payload]
+ */
+function broadcastToAllWindows(channel, payload) {
+  try {
+    const { BrowserWindow } = _deps?.electronModule || {};
+    if (!BrowserWindow) return;
+    const windows = BrowserWindow.getAllWindows();
+    for (const win of windows) {
+      if (!win.isDestroyed()) {
+        if (payload !== undefined) {
+          win.webContents.send(channel, payload);
+        } else {
+          win.webContents.send(channel);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[AutoUpdate] broadcastToAllWindows failed:", err?.message || err);
+  }
 }
 
 function registerHandlers(ipcMain) {
