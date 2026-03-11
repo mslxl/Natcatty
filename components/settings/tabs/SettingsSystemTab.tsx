@@ -322,14 +322,14 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
               {/* Action buttons */}
               <div className="flex items-center gap-2 pt-1">
                 {/* Checking spinner — shown when isChecking OR manualCheckStatus=checking, but no active download */}
-                {updateState.autoDownloadStatus === 'idle' &&
+                {(updateState.autoDownloadStatus === 'idle' || updateState.autoDownloadStatus === 'error') &&
                   (updateState.isChecking || updateState.manualCheckStatus === 'checking') ? (
                   <Button variant="outline" size="sm" disabled>
                     <RefreshCw size={14} className="mr-1.5 animate-spin" />
                     {t('settings.update.checking')}
                   </Button>
-                ) : updateState.autoDownloadStatus === 'idle' ? (
-                  /* Check button — shown in all idle states when not checking */
+                ) : (updateState.autoDownloadStatus === 'idle' || updateState.autoDownloadStatus === 'error') ? (
+                  /* Check button — shown in idle states and in error state (allows retry) */
                   <Button
                     variant="outline"
                     size="sm"

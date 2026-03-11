@@ -40,7 +40,7 @@ export interface UpdateState {
 
 export interface UseUpdateCheckResult {
   updateState: UpdateState;
-  checkNow: () => Promise<null>;
+  checkNow: () => Promise<UpdateCheckResult | null>;
   dismissUpdate: () => void;
   openReleasePage: () => void;
   installUpdate: () => void;
@@ -252,7 +252,7 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     }
   }, []);
 
-  const checkNow = useCallback(async (): Promise<null> => {
+  const checkNow = useCallback(async (): Promise<UpdateCheckResult | null> => {
     // Prevent concurrent checks (performCheck owns isCheckingRef)
     if (isCheckingRef.current) {
       debugLog('checkNow: already checking, skipping');
@@ -265,11 +265,14 @@ export function useUpdateCheck(): UseUpdateCheckResult {
       manualCheckResetTimeoutRef.current = null;
     }
 
-    // Immediately reflect 'checking' in the UI
+    // Immediately reflect 'checking' in the UI; reset download error so the user can retry
     setUpdateState((prev) => ({
       ...prev,
       manualCheckStatus: 'checking',
       error: null,
+      // P2: reset download error state so auto-download can retry on next available update
+      autoDownloadStatus: prev.autoDownloadStatus === 'error' ? 'idle' : prev.autoDownloadStatus,
+      downloadError: prev.autoDownloadStatus === 'error' ? null : prev.downloadError,
     }));
 
     // Skip check for dev/invalid builds (demo mode overrides to '0.0.1' inside performCheck)
@@ -311,7 +314,7 @@ export function useUpdateCheck(): UseUpdateCheckResult {
       void netcattyBridge.get()?.checkForUpdate?.();
     }
 
-    return null;
+    return result;
   }, [performCheck]);
 
   const dismissUpdate = useCallback(() => {
