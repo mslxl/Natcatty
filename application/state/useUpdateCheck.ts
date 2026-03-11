@@ -295,7 +295,7 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     const result = await performCheck(effectiveVersion);
 
     const nextStatus: ManualCheckStatus =
-      result === null ? 'error' : result.hasUpdate ? 'available' : 'up-to-date';
+      result === null || result.error ? 'error' : result.hasUpdate ? 'available' : 'up-to-date';
 
     setUpdateState((prev) => ({
       ...prev,
