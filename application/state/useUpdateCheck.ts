@@ -157,12 +157,16 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     const bridge = netcattyBridge.get();
 
     // When electron-updater confirms no update is available, cancel the
-    // pending startup GitHub API check to avoid a redundant network request.
+    // pending startup GitHub API check to avoid a redundant network request,
+    // and record the successful check time so the throttle works correctly.
     const cleanupNotAvailable = bridge?.onUpdateNotAvailable?.(() => {
       if (startupCheckTimeoutRef.current) {
         clearTimeout(startupCheckTimeoutRef.current);
         startupCheckTimeoutRef.current = null;
       }
+      const now = Date.now();
+      localStorageAdapter.writeNumber(STORAGE_KEY_UPDATE_LAST_CHECK, now);
+      setUpdateState((prev) => ({ ...prev, lastCheckedAt: now }));
     });
 
     const cleanupAvailable = bridge?.onUpdateAvailable?.((info) => {

@@ -130,12 +130,15 @@ function setupGlobalListeners() {
  *
  * @param {number} delayMs - Milliseconds to wait before checking (default: 5000)
  */
+let _autoCheckTimer = null;
+
 function startAutoCheck(delayMs = 5000) {
   if (!isAutoUpdateSupported()) {
     console.log("[AutoUpdate] Platform does not support auto-update, skipping auto-check");
     return;
   }
-  setTimeout(async () => {
+  _autoCheckTimer = setTimeout(async () => {
+    _autoCheckTimer = null;
     try {
       console.log("[AutoUpdate] Starting automatic update check...");
       await getAutoUpdater()?.checkForUpdates();
@@ -143,6 +146,17 @@ function startAutoCheck(delayMs = 5000) {
       console.warn("[AutoUpdate] Auto-check failed:", err?.message || err);
     }
   }, delayMs);
+}
+
+/**
+ * Cancel a pending startAutoCheck timer.  Called when the renderer triggers
+ * a manual check to avoid racing with the queued auto-check.
+ */
+function cancelAutoCheck() {
+  if (_autoCheckTimer) {
+    clearTimeout(_autoCheckTimer);
+    _autoCheckTimer = null;
+  }
 }
 
 function init(deps) {
@@ -179,6 +193,10 @@ function broadcastToAllWindows(channel, payload) {
 function registerHandlers(ipcMain) {
   // ---- Check for updates ------------------------------------------------
   ipcMain.handle("netcatty:update:check", async () => {
+    // Cancel any pending auto-check to prevent concurrent checkForUpdates()
+    // calls — electron-updater rejects them and surfaces false errors.
+    cancelAutoCheck();
+
     if (!isAutoUpdateSupported()) {
       return {
         available: false,
