@@ -398,8 +398,15 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     // performCheck sets isCheckingRef, isChecking, hasUpdate, latestRelease.
     const result = await performCheck(effectiveVersion);
 
+    // Determine manual check status.  performCheck already suppressed dismissed
+    // versions in state (hasUpdate=false), so we must respect that here too —
+    // otherwise a dismissed release would be reported as 'available' and could
+    // trigger a background download via checkForUpdate below.
+    const dismissedVersion = localStorageAdapter.readString(STORAGE_KEY_UPDATE_DISMISSED_VERSION);
+    const isAvailable = result !== null && !result.error && result.hasUpdate &&
+      result.latestRelease?.version !== dismissedVersion;
     const nextStatus: ManualCheckStatus =
-      result === null || result.error ? 'error' : result.hasUpdate ? 'available' : 'up-to-date';
+      result === null || result.error ? 'error' : isAvailable ? 'available' : 'up-to-date';
 
     setUpdateState((prev) => ({
       ...prev,

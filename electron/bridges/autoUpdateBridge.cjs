@@ -146,12 +146,19 @@ function startAutoCheck(delayMs = 5000) {
   }
   _autoCheckTimer = setTimeout(async () => {
     _autoCheckTimer = null;
+    const updater = getAutoUpdater();
+    if (!updater) {
+      console.warn("[AutoUpdate] Auto-check skipped — updater not available");
+      return;
+    }
     _isChecking = true;
     _lastStatus = { ..._lastStatus, isChecking: true };
     try {
       console.log("[AutoUpdate] Starting automatic update check...");
-      await getAutoUpdater()?.checkForUpdates();
+      await updater.checkForUpdates();
     } catch (err) {
+      _isChecking = false;
+      _lastStatus = { ..._lastStatus, isChecking: false };
       console.warn("[AutoUpdate] Auto-check failed:", err?.message || err);
     }
   }, delayMs);
@@ -258,6 +265,8 @@ function registerHandlers(ipcMain) {
         releaseDate: releaseDate || null,
       };
     } catch (err) {
+      _isChecking = false;
+      _lastStatus = { ..._lastStatus, isChecking: false };
       console.warn("[AutoUpdate] Check failed:", err?.message || err);
       return {
         available: false,
