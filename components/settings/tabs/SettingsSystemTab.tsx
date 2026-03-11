@@ -6,13 +6,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useI18n } from "../../../application/i18n/I18nProvider";
 import { getCredentialProtectionAvailability } from "../../../infrastructure/services/credentialProtection";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
-import {
-  checkForUpdate,
-  downloadUpdate,
-  installUpdate,
-  getReleasesUrl,
-} from "../../../infrastructure/services/updateService";
-import type { AutoDownloadStatus } from '../../../application/state/useUpdateCheck';
+import type { UpdateState } from '../../../application/state/useUpdateCheck';
 import { SessionLogFormat, keyEventToString } from "../../../domain/models";
 import { TabsContent } from "../../ui/tabs";
 import { Button } from "../../ui/button";
@@ -45,8 +39,11 @@ interface SettingsSystemTabProps {
   closeToTray: boolean;
   setCloseToTray: (enabled: boolean) => void;
   hotkeyRegistrationError: string | null;
-  autoDownloadStatus: AutoDownloadStatus;
-  downloadPercent: number;
+  // Unified update state — from useUpdateCheck hook in SettingsPageContent
+  updateState: UpdateState;
+  checkNow: () => Promise<unknown>;
+  installUpdate: () => void;
+  openReleasePage: () => void;
 }
 
 const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
@@ -61,8 +58,10 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   closeToTray,
   setCloseToTray,
   hotkeyRegistrationError,
-  autoDownloadStatus,
-  downloadPercent,
+  updateState,
+  checkNow,
+  installUpdate,
+  openReleasePage,
 }) => {
   const { t } = useI18n();
   const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
@@ -76,13 +75,6 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   const [credentialsAvailable, setCredentialsAvailable] = useState<boolean | null>(null);
   const [isCheckingCredentials, setIsCheckingCredentials] = useState(false);
 
-  // Software Update state
-  type UpdateStatus = 'idle' | 'checking' | 'available' | 'up-to-date' | 'downloading' | 'ready' | 'error';
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
-  const [updateVersion, setUpdateVersion] = useState('');
-  const [updatePercent, setUpdatePercent] = useState(0);
-  const [updateError, setUpdateError] = useState('');
-  const [updateSupported, setUpdateSupported] = useState(true);
   const [appVersion, setAppVersion] = useState('');
 
   // Load app version on mount
@@ -94,55 +86,6 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
       }).catch(() => {});
     }
   }, []);
-
-  // Sync auto-download progress from parent (useUpdateCheck) into local state.
-  // Only overrides 'downloading' and 'ready' — manual check states are unaffected.
-  useEffect(() => {
-    if (autoDownloadStatus === 'downloading') {
-      setUpdateStatus('downloading');
-      setUpdatePercent(downloadPercent);
-    } else if (autoDownloadStatus === 'ready') {
-      setUpdateStatus('ready');
-    }
-  }, [autoDownloadStatus, downloadPercent]);
-
-  const handleCheckForUpdate = useCallback(async () => {
-    setUpdateStatus('checking');
-    setUpdateError('');
-    const result = await checkForUpdate();
-    if (result.error) {
-      setUpdateError(result.error);
-      setUpdateSupported(result.supported !== false);
-      setUpdateStatus('error');
-    } else if (result.available && result.version) {
-      setUpdateVersion(result.version);
-      setUpdateSupported(result.supported !== false);
-      setUpdateStatus('available');
-    } else {
-      setUpdateSupported(result.supported !== false);
-      setUpdateStatus('up-to-date');
-    }
-  }, []);
-
-  const handleDownloadUpdate = useCallback(async () => {
-    setUpdateStatus('downloading');
-    setUpdatePercent(0);
-    const result = await downloadUpdate();
-    if (!result.success) {
-      setUpdateError(result.error ?? t('settings.update.downloadError'));
-      setUpdateStatus('error');
-    }
-    // Success path: autoDownloadStatus prop transitions to 'ready' via useUpdateCheck
-  }, [t]);
-
-  const handleInstallUpdate = useCallback(() => {
-    installUpdate();
-  }, []);
-
-  const handleOpenReleases = useCallback(() => {
-    const url = updateVersion ? getReleasesUrl(updateVersion) : getReleasesUrl();
-    netcattyBridge.get()?.openExternal?.(url);
-  }, [updateVersion]);
 
   const loadTempDirInfo = useCallback(async () => {
     const bridge = netcattyBridge.get();
@@ -309,85 +252,99 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                 <span className="text-sm text-muted-foreground">
                   {t('settings.update.currentVersion')}
                 </span>
-                <span className="text-sm font-mono">{appVersion || '...'}</span>
+                <span className="text-sm font-mono">
+                  {updateState.currentVersion || appVersion || '...'}
+                </span>
               </div>
 
-              {/* Status message */}
-              {updateStatus === 'up-to-date' && (
-                <p className="text-sm text-green-600 dark:text-green-400">
-                  {t('settings.update.upToDate')}
-                </p>
-              )}
-              {updateStatus === 'available' && (
-                <p className="text-sm text-blue-600 dark:text-blue-400">
-                  {t('settings.update.available').replace('{version}', updateVersion)}
-                </p>
-              )}
-              {updateStatus === 'downloading' && (
+              {/* Status message — priority: autoDownloadStatus > isChecking/manualCheckStatus */}
+              {updateState.autoDownloadStatus === 'downloading' && (
                 <div className="space-y-2">
                   <p className="text-sm text-muted-foreground">
-                    {t('settings.update.downloading').replace('{percent}', String(updatePercent))}
+                    {t('settings.update.downloading').replace('{percent}', String(updateState.downloadPercent))}
                   </p>
                   <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
                     <div
                       className="h-full rounded-full bg-primary transition-all duration-300"
-                      style={{ width: `${updatePercent}%` }}
+                      style={{ width: `${updateState.downloadPercent}%` }}
                     />
                   </div>
                 </div>
               )}
-              {updateStatus === 'ready' && (
+              {updateState.autoDownloadStatus === 'ready' && (
                 <p className="text-sm text-green-600 dark:text-green-400">
                   {t('settings.update.readyToInstall')}
                 </p>
               )}
-              {updateStatus === 'error' && (
+              {updateState.autoDownloadStatus === 'error' && (
                 <p className="text-sm text-destructive">
-                  {updateError || t('settings.update.error')}
+                  {updateState.downloadError || t('settings.update.error')}
                 </p>
               )}
-
-              {/* Manual fallback hint when auto-update not supported */}
-              {!updateSupported && updateStatus !== 'idle' && (
-                <p className="text-sm text-muted-foreground">
-                  {t('settings.update.manualDownloadHint')}
-                </p>
+              {updateState.autoDownloadStatus === 'idle' && (
+                <>
+                  {updateState.manualCheckStatus === 'up-to-date' && (
+                    <p className="text-sm text-green-600 dark:text-green-400">
+                      {t('settings.update.upToDate')}
+                    </p>
+                  )}
+                  {updateState.manualCheckStatus === 'available' && (
+                    <p className="text-sm text-blue-600 dark:text-blue-400">
+                      {t('settings.update.available').replace(
+                        '{version}',
+                        updateState.latestRelease?.version ?? ''
+                      )}
+                    </p>
+                  )}
+                  {updateState.manualCheckStatus === 'error' && (
+                    <p className="text-sm text-destructive">
+                      {updateState.error || t('settings.update.error')}
+                    </p>
+                  )}
+                </>
               )}
 
               {/* Action buttons */}
               <div className="flex items-center gap-2 pt-1">
-                {(updateStatus === 'idle' || updateStatus === 'up-to-date' || updateStatus === 'error') && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleCheckForUpdate}
-                    disabled={updateStatus === 'checking'}
-                  >
-                    <RefreshCw size={14} className={cn('mr-1.5', updateStatus === 'checking' && 'animate-spin')} />
-                    {updateStatus === 'checking' ? t('settings.update.checking') : t('settings.update.checkForUpdates')}
-                  </Button>
-                )}
-                {updateStatus === 'checking' && (
+                {/* Checking spinner — shown when isChecking OR manualCheckStatus=checking, but no active download */}
+                {updateState.autoDownloadStatus === 'idle' &&
+                  (updateState.isChecking || updateState.manualCheckStatus === 'checking') ? (
                   <Button variant="outline" size="sm" disabled>
                     <RefreshCw size={14} className="mr-1.5 animate-spin" />
                     {t('settings.update.checking')}
                   </Button>
-                )}
-                {updateStatus === 'available' && updateSupported && (
-                  <Button variant="default" size="sm" onClick={handleDownloadUpdate}>
-                    <Download size={14} className="mr-1.5" />
-                    {t('settings.update.download')}
+                ) : updateState.autoDownloadStatus === 'idle' ? (
+                  /* Check button — shown in all idle states when not checking */
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void checkNow()}
+                  >
+                    <RefreshCw size={14} className="mr-1.5" />
+                    {t('settings.update.checkForUpdates')}
                   </Button>
-                )}
-                {updateStatus === 'ready' && (
-                  <Button variant="default" size="sm" onClick={handleInstallUpdate}>
+                ) : null}
+
+                {/* Install button — shown when download is complete */}
+                {updateState.autoDownloadStatus === 'ready' && (
+                  <Button variant="default" size="sm" onClick={installUpdate}>
                     <RotateCcw size={14} className="mr-1.5" />
                     {t('settings.update.restartNow')}
                   </Button>
                 )}
-                {/* Manual fallback link — shown when unsupported, on error, or when update is available but unsupported */}
-                {((updateStatus === 'error') || (updateStatus === 'available' && !updateSupported)) && (
-                  <Button variant="ghost" size="sm" onClick={handleOpenReleases}>
+
+                {/* Open releases — shown on download error */}
+                {updateState.autoDownloadStatus === 'error' && (
+                  <Button variant="ghost" size="sm" onClick={openReleasePage}>
+                    <ExternalLink size={14} className="mr-1.5" />
+                    {t('settings.update.manualDownload')}
+                  </Button>
+                )}
+
+                {/* Open releases — shown when update found on unsupported platform (no auto-download) */}
+                {updateState.autoDownloadStatus === 'idle' &&
+                  updateState.manualCheckStatus === 'available' && (
+                  <Button variant="ghost" size="sm" onClick={openReleasePage}>
                     <ExternalLink size={14} className="mr-1.5" />
                     {t('settings.update.manualDownload')}
                   </Button>
