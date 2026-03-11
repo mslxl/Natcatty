@@ -160,20 +160,13 @@ export function useUpdateCheck(): UseUpdateCheckResult {
   useEffect(() => {
     const bridge = netcattyBridge.get();
 
-    // When electron-updater confirms no update is available, cancel the
-    // pending startup GitHub API check to avoid a redundant network request,
-    // and record the successful check time so the throttle works correctly.
+    // When electron-updater confirms no update in its feed, record the check
+    // time but do NOT cancel the startup GitHub API fallback — the GitHub
+    // release may exist even when updater-feed assets aren't published yet.
+    // The fallback will surface the manual download link in that case.
     const cleanupNotAvailable = bridge?.onUpdateNotAvailable?.(() => {
-      if (startupCheckTimeoutRef.current) {
-        clearTimeout(startupCheckTimeoutRef.current);
-        startupCheckTimeoutRef.current = null;
-      }
       const now = Date.now();
       localStorageAdapter.writeNumber(STORAGE_KEY_UPDATE_LAST_CHECK, now);
-      // Only record the check time — don't clear hasUpdate or manualCheckStatus.
-      // The GitHub release may exist even when electron-updater's feed says
-      // "not available" (e.g. assets not yet published for this platform).
-      // The GitHub-based fallback with manual download link must remain visible.
       setUpdateState((prev) => ({ ...prev, lastCheckedAt: now }));
     });
 
@@ -565,8 +558,14 @@ export function useUpdateCheck(): UseUpdateCheckResult {
         const snapshot = await netcattyBridge.get()?.getUpdateStatus?.();
         if (snapshot?.isChecking) {
           debugLog('Main process check still in flight — rescheduling fallback');
-          startupCheckTimeoutRef.current = setTimeout(() => {
+          startupCheckTimeoutRef.current = setTimeout(async () => {
             if (autoDownloadStatusRef.current !== 'idle') return;
+            // Re-check if the main process check is still running to avoid
+            // duplicate notifications on very slow networks.
+            try {
+              const snap = await netcattyBridge.get()?.getUpdateStatus?.();
+              if (snap?.isChecking || (snap?.status && snap.status !== 'idle')) return;
+            } catch { /* fall through */ }
             debugLog('=== Rescheduled fallback check triggered ===');
             void performCheck(updateState.currentVersion);
           }, 5000);
