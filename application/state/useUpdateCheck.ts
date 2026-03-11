@@ -539,12 +539,23 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     hasCheckedOnStartupRef.current = true;
     debugLog('Starting delayed update check for version:', updateState.currentVersion);
 
-    startupCheckTimeoutRef.current = setTimeout(() => {
+    startupCheckTimeoutRef.current = setTimeout(async () => {
       // If electron-updater's auto-check already started a download, skip the
       // redundant GitHub API check to avoid duplicate toast notifications.
       if (autoDownloadStatusRef.current !== 'idle') {
         debugLog('Skipping startup check — auto-download already active');
         return;
+      }
+      // Also skip if the main process is still running its own check
+      // (slow network where 8s wasn't enough for the result to arrive).
+      try {
+        const snapshot = await netcattyBridge.get()?.getUpdateStatus?.();
+        if (snapshot?.isChecking) {
+          debugLog('Skipping startup check — main process check still in flight');
+          return;
+        }
+      } catch {
+        // Bridge unavailable — fall through to GitHub check
       }
       debugLog('=== Delayed check triggered ===');
       void performCheck(updateState.currentVersion);

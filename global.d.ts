@@ -622,7 +622,7 @@ declare global {
     }>;
     downloadUpdate?(): Promise<{ success: boolean; error?: string }>;
     installUpdate?(): void;
-    getUpdateStatus?(): Promise<{ status: 'idle' | 'downloading' | 'ready' | 'error'; percent: number; error: string | null; version: string | null }>;
+    getUpdateStatus?(): Promise<{ status: 'idle' | 'downloading' | 'ready' | 'error'; percent: number; error: string | null; version: string | null; isChecking?: boolean }>;
 
     onUpdateDownloadProgress?(cb: (progress: {
       percent: number;

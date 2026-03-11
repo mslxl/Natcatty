@@ -38,12 +38,15 @@ let _listenersRegistered = false;
 /** Track whether a download is in progress to distinguish download errors from check errors */
 let _isDownloading = false;
 
+/** Track whether a checkForUpdates call is in flight (set before call, cleared on result event) */
+let _isChecking = false;
+
 /**
  * Snapshot of the last known update status so newly opened windows can hydrate
  * without waiting for the next IPC event.
- * @type {{ status: 'idle' | 'downloading' | 'ready' | 'error', percent: number, error: string | null, version: string | null }}
+ * @type {{ status: 'idle' | 'downloading' | 'ready' | 'error', percent: number, error: string | null, version: string | null, isChecking: boolean }}
  */
-let _lastStatus = { status: 'idle', percent: 0, error: null, version: null };
+let _lastStatus = { status: 'idle', percent: 0, error: null, version: null, isChecking: false };
 function getAutoUpdater() {
   if (_autoUpdater) return _autoUpdater;
   try {
@@ -72,16 +75,18 @@ function setupGlobalListeners() {
   _listenersRegistered = true;
 
   updater.on("update-not-available", () => {
+    _isChecking = false;
     // Reset stale status so late-opening windows don't hydrate from a
     // previous 'error' or 'ready' snapshot after a "no update" check.
-    _lastStatus = { status: 'idle', percent: 0, error: null, version: null };
+    _lastStatus = { status: 'idle', percent: 0, error: null, version: null, isChecking: false };
     broadcastToAllWindows("netcatty:update:update-not-available", {});
   });
 
   updater.on("update-available", (info) => {
+    _isChecking = false;
     // autoDownload=true means the download begins immediately after this event
     _isDownloading = true;
-    _lastStatus = { status: 'downloading', percent: 0, error: null, version: info.version || null };
+    _lastStatus = { status: 'downloading', percent: 0, error: null, version: info.version || null, isChecking: false };
     broadcastToAllWindows("netcatty:update:update-available", {
       version: info.version || "",
       releaseNotes: typeof info.releaseNotes === "string" ? info.releaseNotes : "",
@@ -106,9 +111,11 @@ function setupGlobalListeners() {
   });
 
   updater.on("error", (err) => {
+    _isChecking = false;
     // Only broadcast download-phase errors; check-phase errors (e.g. network failures
     // during checkForUpdates) are not download failures and must not set autoDownloadStatus.
     if (!_isDownloading) {
+      _lastStatus = { ..._lastStatus, isChecking: false };
       console.warn("[AutoUpdate] Check-phase error (not broadcast to renderer):", err?.message || err);
       return;
     }
@@ -139,6 +146,8 @@ function startAutoCheck(delayMs = 5000) {
   }
   _autoCheckTimer = setTimeout(async () => {
     _autoCheckTimer = null;
+    _isChecking = true;
+    _lastStatus = { ..._lastStatus, isChecking: true };
     try {
       console.log("[AutoUpdate] Starting automatic update check...");
       await getAutoUpdater()?.checkForUpdates();
@@ -214,7 +223,16 @@ function registerHandlers(ipcMain) {
       };
     }
 
+    // If a check is already in flight (e.g. from startAutoCheck), don't
+    // start a concurrent one — electron-updater rejects it and surfaces a
+    // confusing error.  Return a sentinel so the renderer knows to wait.
+    if (_isChecking) {
+      return { available: false, supported: true, checking: true };
+    }
+
     try {
+      _isChecking = true;
+      _lastStatus = { ..._lastStatus, isChecking: true };
       const result = await updater.checkForUpdates();
       if (!result || !result.updateInfo) {
         return { available: false, supported: true };
