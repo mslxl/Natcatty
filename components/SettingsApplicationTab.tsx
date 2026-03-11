@@ -4,7 +4,7 @@ import AppLogo from "./AppLogo";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import { useApplicationBackend } from "../application/state/useApplicationBackend";
-import { useUpdateCheck } from "../application/state/useUpdateCheck";
+import type { UpdateState, UseUpdateCheckResult } from "../application/state/useUpdateCheck";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { SettingsTabContent } from "./settings/settings-ui";
 import { toast } from "./ui/toast";
@@ -63,10 +63,15 @@ const ActionRow: React.FC<{
   </button>
 );
 
-export default function SettingsApplicationTab() {
+interface SettingsApplicationTabProps {
+  updateState: UpdateState;
+  checkNow: UseUpdateCheckResult['checkNow'];
+  openReleasePage: UseUpdateCheckResult['openReleasePage'];
+}
+
+export default function SettingsApplicationTab({ updateState, checkNow, openReleasePage }: SettingsApplicationTabProps) {
   const { t } = useI18n();
   const { openExternal, getApplicationInfo } = useApplicationBackend();
-  const { updateState, checkNow, openReleasePage } = useUpdateCheck();
   const [appInfo, setAppInfo] = useState<AppInfo>({ name: "Netcatty", version: "" });
   const [lastCheckResult, setLastCheckResult] = useState<'none' | 'available' | 'upToDate'>('none');
   const [hasAutoChecked, setHasAutoChecked] = useState(false);

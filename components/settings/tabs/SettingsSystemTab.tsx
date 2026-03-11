@@ -304,7 +304,7 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                       {t('settings.update.upToDate')}
                     </p>
                   )}
-                  {updateState.manualCheckStatus === 'available' && (
+                  {(updateState.manualCheckStatus === 'available' || (updateState.manualCheckStatus === 'idle' && updateState.hasUpdate)) && (
                     <p className="text-sm text-blue-600 dark:text-blue-400">
                       {t('settings.update.available').replace(
                         '{version}',
@@ -359,7 +359,7 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
 
                 {/* Open releases — shown when update found on unsupported platform (no auto-download) */}
                 {updateState.autoDownloadStatus === 'idle' &&
-                  updateState.manualCheckStatus === 'available' && (
+                  (updateState.manualCheckStatus === 'available' || (updateState.manualCheckStatus === 'idle' && updateState.hasUpdate)) && (
                   <Button variant="ghost" size="sm" onClick={openReleasePage}>
                     <ExternalLink size={14} className="mr-1.5" />
                     {t('settings.update.manualDownload')}

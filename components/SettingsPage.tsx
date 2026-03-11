@@ -167,7 +167,13 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                 </div>
 
                 <div className="flex-1 h-full flex flex-col min-h-0 bg-muted/10">
-                    {mountedTabs.has("application") && <SettingsApplicationTab />}
+                    {mountedTabs.has("application") && (
+                        <SettingsApplicationTab
+                            updateState={updateState}
+                            checkNow={checkNow}
+                            openReleasePage={openReleasePage}
+                        />
+                    )}
 
                     {mountedTabs.has("appearance") && (
                         <SettingsAppearanceTab

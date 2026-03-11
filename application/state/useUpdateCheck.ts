@@ -296,14 +296,20 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     }
 
     // Immediately reflect 'checking' in the UI; reset download error so the user can retry
-    setUpdateState((prev) => ({
-      ...prev,
-      manualCheckStatus: 'checking',
-      error: null,
-      // P2: reset download error state so auto-download can retry on next available update
-      autoDownloadStatus: prev.autoDownloadStatus === 'error' ? 'idle' : prev.autoDownloadStatus,
-      downloadError: prev.autoDownloadStatus === 'error' ? null : prev.downloadError,
-    }));
+    setUpdateState((prev) => {
+      // Eagerly sync the ref so the checkForUpdate gate below reads the updated value
+      if (prev.autoDownloadStatus === 'error') {
+        autoDownloadStatusRef.current = 'idle';
+      }
+      return {
+        ...prev,
+        manualCheckStatus: 'checking',
+        error: null,
+        // P2: reset download error state so auto-download can retry on next available update
+        autoDownloadStatus: prev.autoDownloadStatus === 'error' ? 'idle' : prev.autoDownloadStatus,
+        downloadError: prev.autoDownloadStatus === 'error' ? null : prev.downloadError,
+      };
+    });
 
     // Skip check for dev/invalid builds (demo mode overrides to '0.0.1' inside performCheck)
     const effectiveVersion = IS_UPDATE_DEMO_MODE ? '0.0.1' : currentVersionRef.current;
