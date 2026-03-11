@@ -69,6 +69,13 @@ export function useUpdateCheck(): UseUpdateCheckResult {
   const hasCheckedOnStartupRef = useRef(false);
   const isCheckingRef = useRef(false);
   const startupCheckTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track current version in a ref to avoid stale closure in checkNow
+  const currentVersionRef = useRef(updateState.currentVersion);
+
+  // Keep currentVersionRef in sync so checkNow always reads the latest version
+  useEffect(() => {
+    currentVersionRef.current = updateState.currentVersion;
+  }, [updateState.currentVersion]);
 
   // Get current app version
   useEffect(() => {
@@ -246,10 +253,22 @@ export function useUpdateCheck(): UseUpdateCheckResult {
       const bridge = netcattyBridge.get();
       const result = await bridge?.checkForUpdate?.();
 
+      // Bridge unavailable (no Electron context)
+      if (!result) {
+        setUpdateState((prev) => ({
+          ...prev,
+          isChecking: false,
+          manualCheckStatus: 'error',
+          error: 'Update check unavailable',
+        }));
+        return null;
+      }
+
       // Platform does not support electron-updater (Linux deb/rpm/snap) →
       // fall back to GitHub API for version awareness only (no auto-download)
       if (result?.supported === false) {
-        const effectiveVersion = IS_UPDATE_DEMO_MODE ? '0.0.1' : updateState.currentVersion;
+        // Read version from ref to avoid stale closure
+        const effectiveVersion = IS_UPDATE_DEMO_MODE ? '0.0.1' : currentVersionRef.current;
         if (!effectiveVersion || effectiveVersion === '0.0.0') {
           setUpdateState((prev) => ({
             ...prev,
@@ -258,9 +277,13 @@ export function useUpdateCheck(): UseUpdateCheckResult {
           }));
           return null;
         }
+        // Temporarily release the ref so performCheck can use its own guard
+        isCheckingRef.current = false;
         const githubResult = await performCheck(effectiveVersion);
         // performCheck already updates the state (hasUpdate, latestRelease, etc.)
-        // We only need to set manualCheckStatus from the result
+        // We only need to set manualCheckStatus from the result.
+        // isCheckingRef is now false (performCheck's finally cleared it), so finally
+        // block below is harmless.
         setUpdateState((prev) => ({
           ...prev,
           isChecking: false,
@@ -323,7 +346,7 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     } finally {
       isCheckingRef.current = false;
     }
-  }, [updateState.currentVersion, performCheck]);
+  }, [performCheck]);
 
   const dismissUpdate = useCallback(() => {
     if (updateState.latestRelease?.version) {
