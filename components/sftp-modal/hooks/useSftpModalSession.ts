@@ -53,6 +53,7 @@ interface UseSftpModalSessionParams {
 interface UseSftpModalSessionResult {
   currentPath: string;
   setCurrentPath: (path: string) => void;
+  currentPathRef: React.MutableRefObject<string>;
   files: RemoteFile[];
   setFiles: (files: RemoteFile[]) => void;
   loading: boolean;
@@ -428,6 +429,7 @@ export const useSftpModalSession = ({
   return {
     currentPath,
     setCurrentPath,
+    currentPathRef,
     files,
     setFiles,
     loading,

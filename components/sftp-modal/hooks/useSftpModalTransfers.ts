@@ -35,6 +35,7 @@ type UploadTask = TransferTask;
 
 interface UseSftpModalTransfersParams {
   currentPath: string;
+  currentPathRef: React.MutableRefObject<string>;
   isLocalSession: boolean;
   joinPath: (base: string, name: string) => string;
   ensureSftp: () => Promise<string>;
@@ -99,6 +100,7 @@ interface UseSftpModalTransfersResult {
 
 export const useSftpModalTransfers = ({
   currentPath,
+  currentPathRef,
   isLocalSession,
   joinPath,
   ensureSftp,
@@ -214,8 +216,16 @@ export const useSftpModalTransfers = ({
     };
   }, [writeLocalFile, mkdirLocal, mkdirSftp, writeSftpBinary, writeSftpBinaryWithProgress, cancelSftpUpload, startStreamTransfer, cancelTransfer]);
 
+  const refreshTargetPathIfCurrent = useCallback(
+    async (targetPath: string) => {
+      if (currentPathRef.current !== targetPath) return;
+      await loadFiles(targetPath, { force: true });
+    },
+    [currentPathRef, loadFiles],
+  );
+
   // Create upload callbacks
-  const createUploadCallbacks = useCallback((): UploadCallbacks => {
+  const createUploadCallbacks = useCallback((targetPath: string): UploadCallbacks => {
     return {
       onScanningStart: (taskId: string) => {
         const scanningTask: UploadTask = {
@@ -247,7 +257,7 @@ export const useSftpModalTransfers = ({
           startTime: Date.now(),
           isDirectory: task.isDirectory,
           direction: "upload",
-          targetPath: currentPath,
+          targetPath,
         };
         setUploadTasks(prev => [...prev, uploadTask]);
       },
@@ -345,16 +355,18 @@ export const useSftpModalTransfers = ({
         );
       },
     };
-  }, [t, currentPath]);
+  }, [t]);
 
   // Helper function to perform upload with compression setting from user preference
   const performUpload = useCallback(async (
     files: FileList | File[],
-    useCompressed: boolean
+    useCompressed: boolean,
+    targetPathOverride?: string,
   ): Promise<void> => {
     if (files.length === 0) return;
 
     setUploading(true);
+    const targetPath = targetPathOverride ?? currentPathRef.current;
 
     // Get SFTP ID for remote sessions
     let sftpId: string | null = null;
@@ -367,13 +379,13 @@ export const useSftpModalTransfers = ({
     const controller = new UploadController();
     uploadControllerRef.current = controller;
 
-    const callbacks = createUploadCallbacks();
+    const callbacks = createUploadCallbacks(targetPath);
 
     try {
       await uploadFromFileList(
         files,
         {
-          targetPath: currentPath,
+          targetPath,
           sftpId,
           isLocal: isLocalSession,
           bridge: createUploadBridge,
@@ -384,7 +396,7 @@ export const useSftpModalTransfers = ({
         controller
       );
 
-      await loadFiles(currentPath, { force: true });
+      await refreshTargetPathIfCurrent(targetPath);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : t("sftp.error.uploadFailed"),
@@ -396,7 +408,7 @@ export const useSftpModalTransfers = ({
       uploadControllerRef.current = null;
       cachedSftpIdRef.current = null;
     }
-  }, [currentPath, createUploadBridge, createUploadCallbacks, ensureSftp, isLocalSession, joinPath, loadFiles, t]);
+  }, [createUploadBridge, createUploadCallbacks, currentPathRef, ensureSftp, isLocalSession, joinPath, refreshTargetPathIfCurrent, t]);
 
   const handleDownload = useCallback(
     async (file: RemoteFile) => {
@@ -820,6 +832,7 @@ export const useSftpModalTransfers = ({
   const handleUploadFromDrop = useCallback(
     async (dataTransfer: DataTransfer) => {
       setUploading(true);
+      const targetPath = currentPathRef.current;
 
       // Get SFTP ID for remote sessions
       let sftpId: string | null = null;
@@ -832,13 +845,13 @@ export const useSftpModalTransfers = ({
       const controller = new UploadController();
       uploadControllerRef.current = controller;
 
-      const callbacks = createUploadCallbacks();
+      const callbacks = createUploadCallbacks(targetPath);
 
       try {
         await uploadFromDataTransfer(
           dataTransfer,
           {
-            targetPath: currentPath,
+            targetPath,
             sftpId,
             isLocal: isLocalSession,
             bridge: createUploadBridge,
@@ -849,7 +862,7 @@ export const useSftpModalTransfers = ({
           controller
         );
 
-        await loadFiles(currentPath, { force: true });
+        await refreshTargetPathIfCurrent(targetPath);
       } catch (error) {
         toast.error(
           error instanceof Error ? error.message : t("sftp.error.uploadFailed"),
@@ -862,7 +875,7 @@ export const useSftpModalTransfers = ({
         cachedSftpIdRef.current = null;
       }
     },
-    [currentPath, createUploadBridge, createUploadCallbacks, ensureSftp, isLocalSession, joinPath, loadFiles, t, useCompressedUpload],
+    [createUploadBridge, createUploadCallbacks, currentPathRef, ensureSftp, isLocalSession, joinPath, refreshTargetPathIfCurrent, t, useCompressedUpload],
   );
 
   // Handle upload from DropEntry array (used for drag-and-drop to terminal)
@@ -871,6 +884,7 @@ export const useSftpModalTransfers = ({
       if (entries.length === 0) return;
 
       setUploading(true);
+      const targetPath = currentPathRef.current;
 
       // Get SFTP ID for remote sessions
       let sftpId: string | null = null;
@@ -883,13 +897,13 @@ export const useSftpModalTransfers = ({
       const controller = new UploadController();
       uploadControllerRef.current = controller;
 
-      const callbacks = createUploadCallbacks();
+      const callbacks = createUploadCallbacks(targetPath);
 
       try {
         await uploadEntriesDirect(
           entries,
           {
-            targetPath: currentPath,
+            targetPath,
             sftpId,
             isLocal: isLocalSession,
             bridge: createUploadBridge,
@@ -900,7 +914,7 @@ export const useSftpModalTransfers = ({
           controller
         );
 
-        await loadFiles(currentPath, { force: true });
+        await refreshTargetPathIfCurrent(targetPath);
       } catch (error) {
         toast.error(
           error instanceof Error ? error.message : t("sftp.error.uploadFailed"),
@@ -913,7 +927,7 @@ export const useSftpModalTransfers = ({
         cachedSftpIdRef.current = null;
       }
     },
-    [currentPath, createUploadBridge, createUploadCallbacks, ensureSftp, isLocalSession, joinPath, loadFiles, t, useCompressedUpload],
+    [createUploadBridge, createUploadCallbacks, currentPathRef, ensureSftp, isLocalSession, joinPath, refreshTargetPathIfCurrent, t, useCompressedUpload],
   );
 
   // Handle upload from File array (used by file input after copying files)

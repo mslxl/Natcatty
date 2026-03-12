@@ -205,6 +205,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
   const {
     currentPath,
     setCurrentPath,
+    currentPathRef,
     files,
     loading,
     setLoading,
@@ -385,6 +386,7 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     dismissTask,
   } = useSftpModalTransfers({
     currentPath,
+    currentPathRef,
     isLocalSession,
     joinPath: joinPathForSession,
     ensureSftp,
@@ -476,8 +478,8 @@ const SFTPModal: React.FC<SFTPModalProps> = ({
     initialUploadTriggeredRef.current = true;
 
     // Trigger upload with full DropEntry data (preserves directory structure)
-    handleUploadEntries(initialEntriesToUpload);
-  }, [initialEntriesToUpload, open, loading, handleUploadEntries]);
+    void handleUploadEntries(initialEntriesToUpload);
+  }, [handleUploadEntries, initialEntriesToUpload, loading, open]);
 
   // Display files with parent entry (like SftpView)
   const displayFiles = useMemo(() => {
