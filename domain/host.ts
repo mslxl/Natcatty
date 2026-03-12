@@ -13,6 +13,7 @@ export const normalizeDistroId = (value?: string) => {
   if (v.includes('amzn') || v.includes('amazon') || v.includes('aws')) return 'amazon';
   if (v.includes('opensuse') || v.includes('suse') || v.includes('sles')) return 'opensuse';
   if (v.includes('red hat') || v.includes('redhat') || v.includes('rhel')) return 'redhat';
+  if (v.includes('almalinux')) return 'almalinux';
   if (v.includes('oracle')) return 'oracle';
   if (v.includes('kali')) return 'kali';
   return '';

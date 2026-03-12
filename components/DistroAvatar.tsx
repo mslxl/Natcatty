@@ -17,6 +17,7 @@ export const DISTRO_LOGOS: Record<string, string> = {
   redhat: "/distro/redhat.svg",
   oracle: "/distro/oracle.svg",
   kali: "/distro/kali.svg",
+  almalinux: "/distro/almalinux.svg",
 };
 
 export const DISTRO_COLORS: Record<string, string> = {
@@ -32,6 +33,7 @@ export const DISTRO_COLORS: Record<string, string> = {
   redhat: "bg-[#EE0000]",
   oracle: "bg-[#C74634]",
   kali: "bg-[#0F6DB3]",
+  almalinux: "bg-[#173B66]",
   default: "bg-slate-600",
 };
 
