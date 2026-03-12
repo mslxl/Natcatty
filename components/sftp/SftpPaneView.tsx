@@ -12,7 +12,6 @@ import {
   useSftpDrag,
   useSftpHosts,
   useSftpPaneCallbacks,
-  useSftpShowHiddenFiles,
   useSftpUpdateHosts,
 } from "./index";
 import type { SftpPane } from "../../application/state/sftp/types";
@@ -58,6 +57,7 @@ interface SftpPaneViewProps {
   pane: SftpPane;
   showHeader?: boolean;
   showEmptyHeader?: boolean;
+  onToggleShowHiddenFiles?: () => void;
 }
 
 const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
@@ -65,13 +65,13 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   pane,
   showHeader = true,
   showEmptyHeader = true,
+  onToggleShowHiddenFiles,
 }) => {
   const isActive = true;
 
   const callbacks = useSftpPaneCallbacks(side);
   const { draggedFiles, onDragStart, onDragEnd } = useSftpDrag();
   const hosts = useSftpHosts();
-  const showHiddenFiles = useSftpShowHiddenFiles();
 
   const { t } = useI18n();
   const [, startTransition] = useTransition();
@@ -118,7 +118,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     files: pane.files,
     filter: pane.filter,
     connection: pane.connection,
-    showHiddenFiles,
+    showHiddenFiles: pane.showHiddenFiles,
     sortField,
     sortOrder,
   });
@@ -333,6 +333,8 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
         onToggleBookmark={toggleBookmark}
         onNavigateToBookmark={callbacks.onNavigateTo}
         onDeleteBookmark={deleteBookmark}
+        showHiddenFiles={pane.showHiddenFiles}
+        onToggleShowHiddenFiles={onToggleShowHiddenFiles}
       />
 
       <SftpPaneFileList

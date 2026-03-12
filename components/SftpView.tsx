@@ -81,7 +81,8 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities, updat
   const sftpOptions = useMemo(() => ({
     ...fileWatchHandlers,
     useCompressedUpload: sftpUseCompressedUpload,
-  }), [fileWatchHandlers, sftpUseCompressedUpload]);
+    defaultShowHiddenFiles: sftpShowHiddenFiles,
+  }), [fileWatchHandlers, sftpUseCompressedUpload, sftpShowHiddenFiles]);
 
   const sftp = useSftpState(hosts, keys, identities, sftpOptions);
 
@@ -107,7 +108,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities, updat
     hotkeyScheme,
     sftpRef,
     isActive,
-    showHiddenFiles: sftpShowHiddenFiles,
   });
 
   // Subscribe to focused side for visual indicator
@@ -116,6 +116,14 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities, updat
   // Handle pane focus when clicking on a pane container
   const handlePaneFocus = useCallback((side: SftpFocusedSide) => {
     sftpFocusStore.setFocusedSide(side);
+  }, []);
+
+  const handleToggleHiddenFiles = useCallback((side: "left" | "right", paneId: string) => {
+    const sideTabs = side === "left" ? sftpRef.current.leftTabs : sftpRef.current.rightTabs;
+    const pane = sideTabs.tabs.find((tab) => tab.id === paneId);
+    if (!pane) return;
+
+    sftpRef.current.setShowHiddenFiles(side, paneId, !pane.showHiddenFiles);
   }, []);
 
   // Sync activeTabId to external store (allows child components to subscribe without parent re-render)
@@ -225,7 +233,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities, updat
       dragCallbacks={dragCallbacks}
       leftCallbacks={leftCallbacks}
       rightCallbacks={rightCallbacks}
-      showHiddenFiles={sftpShowHiddenFiles}
     >
       <div
         className={cn(
@@ -277,6 +284,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities, updat
                     pane={pane}
                     showHeader
                     showEmptyHeader={false}
+                    onToggleShowHiddenFiles={() => handleToggleHiddenFiles("left", pane.id)}
                   />
                 </SftpPaneWrapper>
               ))}
@@ -333,6 +341,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({ hosts, keys, identities, updat
                     pane={pane}
                     showHeader
                     showEmptyHeader={false}
+                    onToggleShowHiddenFiles={() => handleToggleHiddenFiles("right", pane.id)}
                   />
                 </SftpPaneWrapper>
               ))}
