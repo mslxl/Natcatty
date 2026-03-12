@@ -88,7 +88,7 @@ interface UseSftpModalTransfersResult {
   handleDownload: (file: RemoteFile) => Promise<void>;
   handleUploadMultiple: (fileList: FileList) => Promise<void>;
   handleUploadFromDrop: (dataTransfer: DataTransfer) => Promise<void>;
-  handleUploadEntries: (entries: DropEntry[], targetPathOverride?: string) => Promise<void>;
+  handleUploadEntries: (entries: DropEntry[]) => Promise<void>;
   handleFileSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
   handleFolderSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
   handleDrag: (e: React.DragEvent) => void;
@@ -880,11 +880,11 @@ export const useSftpModalTransfers = ({
 
   // Handle upload from DropEntry array (used for drag-and-drop to terminal)
   const handleUploadEntries = useCallback(
-    async (entries: DropEntry[], targetPathOverride?: string) => {
+    async (entries: DropEntry[]) => {
       if (entries.length === 0) return;
 
       setUploading(true);
-      const targetPath = targetPathOverride ?? currentPathRef.current;
+      const targetPath = currentPathRef.current;
 
       // Get SFTP ID for remote sessions
       let sftpId: string | null = null;
