@@ -147,6 +147,13 @@ export class WebDAVAdapter {
   }
 
   private createClient(config: WebDAVConfig): WebDAVClient {
+    const extraOpts: Record<string, unknown> = {};
+    if (config.allowInsecure && typeof globalThis.process !== 'undefined') {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const https = require('https');
+      extraOpts.httpsAgent = new https.Agent({ rejectUnauthorized: false });
+    }
+
     if (config.authType === 'token') {
       return createClient(config.endpoint, {
         authType: AuthType.Token,
@@ -154,6 +161,7 @@ export class WebDAVAdapter {
           access_token: config.token || '',
           token_type: 'Bearer',
         },
+        ...extraOpts,
       });
     }
 
@@ -162,6 +170,7 @@ export class WebDAVAdapter {
         authType: AuthType.Digest,
         username: config.username || '',
         password: config.password || '',
+        ...extraOpts,
       });
     }
 
@@ -169,6 +178,7 @@ export class WebDAVAdapter {
       authType: AuthType.Password,
       username: config.username || '',
       password: config.password || '',
+      ...extraOpts,
     });
   }
 

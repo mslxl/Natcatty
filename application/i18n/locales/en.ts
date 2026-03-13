@@ -1125,6 +1125,7 @@ const en: Messages = {
   'cloudSync.webdav.password': 'Password',
   'cloudSync.webdav.token': 'Token',
   'cloudSync.webdav.showSecret': 'Show secret',
+  'cloudSync.webdav.allowInsecure': 'Allow insecure connection (ignore certificate errors)',
   'cloudSync.webdav.validation.endpoint': 'Enter a valid WebDAV endpoint.',
   'cloudSync.webdav.validation.credentials': 'Username and password are required.',
   'cloudSync.webdav.validation.token': 'Token is required.',
