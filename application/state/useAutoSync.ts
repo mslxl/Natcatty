@@ -18,6 +18,7 @@ import {
 import { isProviderReadyForSync, type CloudProvider, type SyncPayload } from '../../domain/sync';
 import { STORAGE_KEY_PORT_FORWARDING } from '../../infrastructure/config/storageKeys';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
+import { getEffectiveKnownHosts } from '../../infrastructure/syncHelpers';
 import { toast } from '../../components/ui/toast';
 
 interface AutoSyncConfig {
@@ -69,6 +70,8 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       }
     }
 
+    const effectiveKnownHosts = getEffectiveKnownHosts(config.knownHosts);
+
     return {
       hosts: config.hosts,
       keys: config.keys,
@@ -77,7 +80,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       customGroups: config.customGroups,
       snippetPackages: config.snippetPackages,
       portForwardingRules: effectivePFRules,
-      knownHosts: config.knownHosts,
+      knownHosts: effectiveKnownHosts,
     };
   }, [
     config.hosts,
@@ -89,7 +92,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     config.portForwardingRules,
     config.knownHosts,
   ]);
-  
+
   // Build sync payload
   const buildPayload = useCallback((): SyncPayload => {
     return {

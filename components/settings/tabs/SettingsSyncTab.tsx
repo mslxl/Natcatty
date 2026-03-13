@@ -5,6 +5,7 @@ import { buildSyncPayload, applySyncPayload } from "../../../domain/syncPayload"
 import type { SyncableVaultData } from "../../../domain/syncPayload";
 import { STORAGE_KEY_PORT_FORWARDING } from "../../../infrastructure/config/storageKeys";
 import { localStorageAdapter } from "../../../infrastructure/persistence/localStorageAdapter";
+import { getEffectiveKnownHosts } from "../../../infrastructure/syncHelpers";
 import { CloudSyncSettings } from "../../CloudSyncSettings";
 import { SettingsTabContent } from "../settings-ui";
 
@@ -44,7 +45,10 @@ export default function SettingsSyncTab(props: {
         }));
       }
     }
-    return buildSyncPayload(vault, effectiveRules);
+
+    const effectiveKnownHosts = getEffectiveKnownHosts(vault.knownHosts);
+
+    return buildSyncPayload({ ...vault, knownHosts: effectiveKnownHosts }, effectiveRules);
   }, [vault, portForwardingRules]);
 
   const onApplyPayload = useCallback(
