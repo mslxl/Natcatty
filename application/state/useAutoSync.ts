@@ -18,6 +18,7 @@ import {
 import { isProviderReadyForSync, type CloudProvider, type SyncPayload } from '../../domain/sync';
 import { STORAGE_KEY_PORT_FORWARDING } from '../../infrastructure/config/storageKeys';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
+import { getEffectiveKnownHosts } from '../../infrastructure/syncHelpers';
 import { toast } from '../../components/ui/toast';
 
 interface AutoSyncConfig {
@@ -72,6 +73,9 @@ export const useAutoSync = (config: AutoSyncConfig) => {
         }));
       }
     }
+
+    const effectiveKnownHosts = getEffectiveKnownHosts(config.knownHosts);
+
     return {
       hosts: config.hosts,
       keys: config.keys,
@@ -80,7 +84,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       customGroups: config.customGroups,
       snippetPackages: config.snippetPackages,
       portForwardingRules: effectivePFRules,
-      knownHosts: config.knownHosts,
+      knownHosts: effectiveKnownHosts,
       syncedAt: Date.now(),
     };
   }, [config.hosts, config.keys, config.identities, config.snippets, config.customGroups, config.snippetPackages, config.portForwardingRules, config.knownHosts]);
@@ -102,6 +106,9 @@ export const useAutoSync = (config: AutoSyncConfig) => {
         }));
       }
     }
+
+    const effectiveKnownHosts = getEffectiveKnownHosts(config.knownHosts);
+
     const data = {
       hosts: config.hosts,
       keys: config.keys,
@@ -110,7 +117,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       customGroups: config.customGroups,
       snippetPackages: config.snippetPackages,
       portForwardingRules: effectivePFRules,
-      knownHosts: config.knownHosts,
+      knownHosts: effectiveKnownHosts,
     };
     return JSON.stringify(data);
   }, [config.hosts, config.keys, config.identities, config.snippets, config.customGroups, config.snippetPackages, config.portForwardingRules, config.knownHosts]);
