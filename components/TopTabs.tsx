@@ -1,11 +1,13 @@
-import { Bell, Copy, FileText, Folder, LayoutGrid, Minus, Moon, MoreHorizontal, Plus, Shield, Square, Sun, TerminalSquare, X } from 'lucide-react';
+import { Bell, Copy, FileText, Folder, LayoutGrid, Minus, Moon, MoreHorizontal, Plus, Server, Shield, Square, Sun, TerminalSquare, Usb, X } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { activeTabStore, useActiveTabId } from '../application/state/activeTabStore';
 import { LogView } from '../application/state/useSessionState';
 import { useWindowControls } from '../application/state/useWindowControls';
 import { useI18n } from '../application/i18n/I18nProvider';
+import { normalizeDistroId } from '../domain/host';
 import { cn } from '../lib/utils';
-import { TerminalSession, Workspace } from '../types';
+import { Host, TerminalSession, Workspace } from '../types';
+import { DISTRO_LOGOS, DISTRO_COLORS } from './DistroAvatar';
 import { Button } from './ui/button';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from './ui/context-menu';
 import { SyncStatusButton } from './SyncStatusButton';
@@ -16,6 +18,7 @@ const dragRegionNoSelect = { WebkitAppRegion: 'drag', userSelect: 'none' } as Re
 
 interface TopTabsProps {
   theme: 'dark' | 'light';
+  hosts: Host[];
   sessions: TerminalSession[];
   orphanSessions: TerminalSession[];
   workspaces: Workspace[];
@@ -37,6 +40,82 @@ interface TopTabsProps {
   onEndSessionDrag: () => void;
   onReorderTabs: (draggedId: string, targetId: string, position: 'before' | 'after') => void;
 }
+
+// Detect local OS for local terminal tab icons
+const localOsId = (() => {
+  if (typeof navigator === 'undefined') return 'linux';
+  const ua = navigator.userAgent;
+  if (/Mac/i.test(ua)) return 'macos';
+  if (/Win/i.test(ua)) return 'windows';
+  return 'linux';
+})();
+
+// Lightweight OS/distro icon for session tabs — matches DistroAvatar "sm" style
+const SessionTabIcon: React.FC<{ host: Host | undefined; isActive: boolean; protocol?: string }> = memo(({ host, isActive, protocol }) => {
+  const boxBase = "shrink-0 h-4 w-4 rounded flex items-center justify-center";
+  const iconSize = "h-2.5 w-2.5";
+  const fallbackIcon = cn(iconSize, isActive ? "text-accent" : "text-muted-foreground");
+
+  // Serial protocol → USB icon
+  if (protocol === 'serial' || host?.protocol === 'serial') {
+    return (
+      <div className={cn(boxBase, "bg-amber-500/15 text-amber-500")}>
+        <Usb className={iconSize} />
+      </div>
+    );
+  }
+
+  // Local protocol → OS-specific icon (protocol may be undefined for local sessions)
+  if (protocol === 'local' || host?.protocol === 'local' || (!protocol && !host)) {
+    const logo = DISTRO_LOGOS[localOsId];
+    const bg = DISTRO_COLORS[localOsId] || DISTRO_COLORS.default;
+    if (logo) {
+      return (
+        <div className={cn(boxBase, bg)}>
+          <img
+            src={logo}
+            alt={localOsId}
+            className={cn(iconSize, "object-contain invert brightness-0")}
+          />
+        </div>
+      );
+    }
+    return (
+      <div className={cn(boxBase, "bg-primary/15 text-primary")}>
+        <TerminalSquare className={iconSize} />
+      </div>
+    );
+  }
+
+  // Try distro logo with brand background color
+  if (host) {
+    const distro = normalizeDistroId(host.distro) || (host.distro || '').toLowerCase();
+    const logo = DISTRO_LOGOS[distro];
+    if (logo) {
+      const bg = DISTRO_COLORS[distro] || DISTRO_COLORS.default;
+      return (
+        <div className={cn(boxBase, bg)}>
+          <img
+            src={logo}
+            alt={host.distro || host.os}
+            className={cn(iconSize, "object-contain invert brightness-0")}
+          />
+        </div>
+      );
+    }
+  }
+
+  // Fallback: generic server icon for remote, terminal for unknown
+  if (host && host.protocol !== 'local') {
+    return (
+      <div className={cn(boxBase, "bg-primary/15 text-primary")}>
+        <Server className={iconSize} />
+      </div>
+    );
+  }
+  return <TerminalSquare className={fallbackIcon} />;
+});
+SessionTabIcon.displayName = 'SessionTabIcon';
 
 const sessionStatusDot = (status: TerminalSession['status']) => {
   const tone = status === 'connected'
@@ -78,17 +157,17 @@ const WindowControls: React.FC = memo(() => {
   };
 
   return (
-    <div className="flex items-center app-drag">
+    <div className="flex items-center app-drag h-full">
       <button
         onClick={handleMinimize}
-        className="h-8 w-10 flex items-center justify-center text-muted-foreground hover:bg-foreground/10 hover:text-foreground transition-all duration-150 app-no-drag"
+        className="h-full w-10 flex items-center justify-center text-muted-foreground hover:bg-foreground/10 hover:text-foreground transition-all duration-150 app-no-drag"
         title="Minimize"
       >
         <Minus size={16} />
       </button>
       <button
         onClick={handleMaximize}
-        className="h-8 w-10 flex items-center justify-center text-muted-foreground hover:bg-foreground/10 hover:text-foreground transition-all duration-150 app-no-drag"
+        className="h-full w-10 flex items-center justify-center text-muted-foreground hover:bg-foreground/10 hover:text-foreground transition-all duration-150 app-no-drag"
         title={isMaximized ? "Restore" : "Maximize"}
       >
         {isMaximized ? (
@@ -101,7 +180,7 @@ const WindowControls: React.FC = memo(() => {
       </button>
       <button
         onClick={handleClose}
-        className="h-8 w-10 flex items-center justify-center text-muted-foreground hover:bg-red-500 hover:text-white transition-all duration-150 app-no-drag"
+        className="h-full w-10 flex items-center justify-center text-muted-foreground hover:bg-red-500 hover:text-white transition-all duration-150 app-no-drag"
         title="Close"
       >
         <X size={16} />
@@ -113,6 +192,7 @@ WindowControls.displayName = 'WindowControls';
 
 const TopTabsInner: React.FC<TopTabsProps> = ({
   theme,
+  hosts,
   sessions,
   orphanSessions,
   workspaces,
@@ -234,6 +314,12 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
     for (const lv of logViews) map.set(lv.id, lv);
     return map;
   }, [logViews]);
+
+  const hostMap = useMemo(() => {
+    const map = new Map<string, Host>();
+    for (const h of hosts) map.set(h.id, h);
+    return map;
+  }, [hosts]);
 
   // Pre-compute session counts per workspace for O(1) access
   const workspacePaneCounts = useMemo(() => {
@@ -376,26 +462,29 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
                 onDragLeave={handleTabDragLeave}
                 onDrop={(e) => handleTabDrop(e, session.id)}
                 className={cn(
-                  "relative h-6 pl-3 pr-2 min-w-[140px] max-w-[240px] rounded-md border text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0",
-                  "transition-all duration-200 ease-out",
-                  activeTabId === session.id ? "bg-accent/20 text-foreground" : "border-border/60 text-muted-foreground hover:border-accent/40 hover:text-foreground",
+                  "relative h-7 pl-3 pr-2 min-w-[140px] max-w-[240px] rounded-none text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0",
+                  "transition-all duration-150",
+                  activeTabId === session.id
+                    ? "bg-background text-foreground"
+                    : "text-muted-foreground hover:bg-background/40 hover:text-foreground",
                   isBeingDragged && isDraggingForReorder ? "opacity-40 scale-95" : ""
                 )}
-                style={{
-                  ...shiftStyle,
-                  ...(activeTabId === session.id ? { borderColor: 'hsl(var(--accent))' } : {})
-                }}
+                style={shiftStyle}
               >
+                {/* Active tab top accent line */}
+                {activeTabId === session.id && (
+                  <div className="absolute top-0 left-0 right-0 h-[2px] bg-accent" />
+                )}
                 {/* Drop indicator line - before */}
                 {showDropIndicatorBefore && isDraggingForReorder && (
-                  <div className="absolute -left-1.5 top-1 bottom-1 w-0.5 bg-primary rounded-full shadow-[0_0_8px_2px] shadow-primary/50 animate-pulse" />
+                  <div className="absolute -left-0.5 top-1 bottom-1 w-0.5 bg-primary rounded-full shadow-[0_0_8px_2px] shadow-primary/50 animate-pulse" />
                 )}
                 {/* Drop indicator line - after */}
                 {showDropIndicatorAfter && isDraggingForReorder && (
-                  <div className="absolute -right-1.5 top-1 bottom-1 w-0.5 bg-primary rounded-full shadow-[0_0_8px_2px] shadow-primary/50 animate-pulse" />
+                  <div className="absolute -right-0.5 top-1 bottom-1 w-0.5 bg-primary rounded-full shadow-[0_0_8px_2px] shadow-primary/50 animate-pulse" />
                 )}
                 <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <TerminalSquare size={14} className={cn("shrink-0", activeTabId === session.id ? "text-accent" : "text-muted-foreground")} />
+                  <SessionTabIcon host={hostMap.get(session.hostId)} isActive={activeTabId === session.id} protocol={session.protocol} />
                   <span className="truncate">{session.hostLabel}</span>
                   <div className="flex-shrink-0">{sessionStatusDot(session.status)}</div>
                 </div>
@@ -445,23 +534,26 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
                 onDragLeave={handleTabDragLeave}
                 onDrop={(e) => handleTabDrop(e, workspace.id)}
                 className={cn(
-                  "relative h-6 pl-3 pr-2 min-w-[150px] max-w-[260px] rounded-md border text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0",
-                  "transition-all duration-200 ease-out",
-                  isActive ? "bg-accent/20 text-foreground" : "border-border/60 text-muted-foreground hover:border-accent/40 hover:text-foreground",
+                  "relative h-7 pl-3 pr-2 min-w-[150px] max-w-[260px] rounded-none text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0",
+                  "transition-all duration-150",
+                  isActive
+                    ? "bg-background text-foreground"
+                    : "text-muted-foreground hover:bg-background/40 hover:text-foreground",
                   isBeingDragged && isDraggingForReorder ? "opacity-40 scale-95" : ""
                 )}
-                style={{
-                  ...shiftStyle,
-                  ...(isActive ? { borderColor: 'hsl(var(--accent))' } : {})
-                }}
+                style={shiftStyle}
               >
+                {/* Active tab top accent line */}
+                {isActive && (
+                  <div className="absolute top-0 left-0 right-0 h-[2px] bg-accent" />
+                )}
                 {/* Drop indicator line - before */}
                 {showDropIndicatorBefore && isDraggingForReorder && (
-                  <div className="absolute -left-1.5 top-1 bottom-1 w-0.5 bg-primary rounded-full shadow-[0_0_8px_2px] shadow-primary/50 animate-pulse" />
+                  <div className="absolute -left-0.5 top-1 bottom-1 w-0.5 bg-primary rounded-full shadow-[0_0_8px_2px] shadow-primary/50 animate-pulse" />
                 )}
                 {/* Drop indicator line - after */}
                 {showDropIndicatorAfter && isDraggingForReorder && (
-                  <div className="absolute -right-1.5 top-1 bottom-1 w-0.5 bg-primary rounded-full shadow-[0_0_8px_2px] shadow-primary/50 animate-pulse" />
+                  <div className="absolute -right-0.5 top-1 bottom-1 w-0.5 bg-primary rounded-full shadow-[0_0_8px_2px] shadow-primary/50 animate-pulse" />
                 )}
                 <div className="flex items-center gap-2 truncate">
                   <LayoutGrid size={14} className={cn("shrink-0", isActive ? "text-primary" : "text-muted-foreground")} />
@@ -495,12 +587,17 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             data-tab-id={logView.id}
             onClick={() => onSelectTab(logView.id)}
             className={cn(
-              "relative h-6 pl-3 pr-2 min-w-[140px] max-w-[240px] rounded-md border text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0",
-              "transition-all duration-200 ease-out",
-              isActive ? "bg-accent/20 text-foreground" : "border-border/60 text-muted-foreground hover:border-accent/40 hover:text-foreground"
+              "relative h-7 pl-3 pr-2 min-w-[140px] max-w-[240px] rounded-none text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0",
+              "transition-colors duration-150",
+              isActive
+                ? "bg-background text-foreground"
+                : "text-muted-foreground hover:bg-background/40 hover:text-foreground"
             )}
-            style={isActive ? { borderColor: 'hsl(var(--accent))' } : {}}
           >
+            {/* Active tab top accent line */}
+            {isActive && (
+              <div className="absolute top-0 left-0 right-0 h-[2px] bg-accent" />
+            )}
             <div className="flex items-center gap-2 min-w-0 flex-1">
               <FileText size={14} className={cn("shrink-0", isActive ? "text-accent" : "text-muted-foreground")} />
               <span className="truncate">
@@ -536,36 +633,41 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
 
   return (
     <div
-      className="relative w-full bg-secondary border-b border-border/60 app-drag"
+      className="relative w-full bg-secondary app-drag"
       style={dragRegionNoSelect}
       onDoubleClick={handleTitleBarDoubleClick}
     >
       {/* Always-on drag stripe so the window can be moved even when tabs fill the bar */}
       <div className="absolute inset-x-0 top-0 h-1 app-drag pointer-events-auto z-10" style={dragRegionStyle} aria-hidden />
       <div
-        className="h-8 flex items-center gap-2 app-drag"
+        className="h-9 flex items-end gap-0 app-drag"
         style={{ ...dragRegionStyle, paddingLeft: isMacClient && !isWindowFullscreen ? 76 : 12, paddingRight: isMacClient ? 12 : 0 }}
       >
         {/* Fixed left tabs: Vaults and SFTP */}
-        <div className="flex items-center gap-2 flex-shrink-0 app-drag">
+        <div className="flex items-end gap-0 flex-shrink-0 app-drag">
           <div
             onClick={() => onSelectTab('vault')}
             className={cn(
-              "h-6 px-3 rounded-md border text-xs font-semibold cursor-pointer flex items-center gap-2 app-no-drag",
-              isVaultActive ? "bg-accent/20 text-foreground" : "border-border/60 text-muted-foreground hover:border-accent/40 hover:text-foreground"
+              "relative h-7 px-3 rounded text-xs font-semibold cursor-pointer flex items-center gap-2 app-no-drag",
+              "transition-colors duration-150",
+              isVaultActive
+                ? "bg-foreground/10 text-foreground"
+                : "text-muted-foreground hover:bg-background/40 hover:text-foreground"
             )}
-            style={isVaultActive ? { borderColor: 'hsl(var(--accent))' } : undefined}
           >
             <Shield size={14} /> Vaults
           </div>
           <div
             onClick={() => onSelectTab('sftp')}
             className={cn(
-              "h-6 px-3 rounded-md border text-xs font-semibold cursor-pointer flex items-center gap-2 app-no-drag",
-              isSftpActive ? "bg-accent/20 text-foreground" : "border-border/60 text-muted-foreground hover:border-accent/40 hover:text-foreground"
+              "relative h-7 px-3 rounded-none text-xs font-semibold cursor-pointer flex items-center gap-2 app-no-drag",
+              "transition-colors duration-150",
+              isSftpActive
+                ? "bg-background text-foreground"
+                : "text-muted-foreground hover:bg-background/40 hover:text-foreground"
             )}
-            style={isSftpActive ? { borderColor: 'hsl(var(--accent))' } : undefined}
           >
+            {isSftpActive && <div className="absolute top-0 left-0 right-0 h-[2px] bg-accent" />}
             <Folder size={14} /> SFTP
           </div>
         </div>
@@ -594,7 +696,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
           {/* Scrollable container */}
           <div
             ref={tabsContainerRef}
-            className="flex items-center gap-2 overflow-x-auto scrollbar-none app-drag max-w-full"
+            className="flex items-end gap-0 overflow-x-auto scrollbar-none app-drag max-w-full"
             style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
           >
             {renderOrderedTabs()}
@@ -603,7 +705,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-6 w-6 flex-shrink-0 app-no-drag"
+                className="h-7 w-7 flex-shrink-0 app-no-drag mb-0 rounded-none"
                 onClick={onOpenQuickSwitcher}
                 title="Open quick switcher"
               >
@@ -611,7 +713,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
               </Button>
             )}
             {/* Draggable spacer - fixed width handle at the end */}
-            <div className="min-w-[20px] h-6 app-drag flex-shrink-0" style={dragRegionStyle} />
+            <div className="min-w-[20px] h-7 app-drag flex-shrink-0" style={dragRegionStyle} />
           </div>
 
           {/* Right fade mask */}
@@ -628,7 +730,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
           <Button
             variant="ghost"
             size="icon"
-            className="h-6 w-6 flex-shrink-0 app-no-drag"
+            className="h-7 w-7 flex-shrink-0 app-no-drag self-end rounded-none"
             onClick={onOpenQuickSwitcher}
             title="More tabs"
           >
@@ -637,7 +739,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
         )}
 
         {/* Fixed right controls */}
-        <div className="flex-shrink-0 flex items-center gap-2 app-drag" style={dragRegionStyle}>
+        <div className="flex-shrink-0 flex items-center gap-2 app-drag self-center" style={dragRegionStyle}>
           <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground app-no-drag">
             <Bell size={16} />
           </Button>
@@ -653,9 +755,9 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
           </Button>
         </div>
         {/* Custom window controls for Windows/Linux */}
-        {!isMacClient && <WindowControls />}
+        {!isMacClient && <div className="self-stretch flex items-stretch"><WindowControls /></div>}
         {/* Small drag shim to the right edge (macOS only – on Windows the close button should touch the edge) */}
-        {isMacClient && <div className="w-2 h-8 app-drag flex-shrink-0" />}
+        {isMacClient && <div className="w-2 h-9 app-drag flex-shrink-0" />}
       </div>
     </div>
   );
@@ -665,6 +767,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
 const topTabsAreEqual = (prev: TopTabsProps, next: TopTabsProps): boolean => {
   return (
     prev.theme === next.theme &&
+    prev.hosts === next.hosts &&
     prev.sessions === next.sessions &&
     prev.orphanSessions === next.orphanSessions &&
     prev.workspaces === next.workspaces &&

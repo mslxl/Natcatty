@@ -1201,6 +1201,7 @@ function App({ settings }: { settings: SettingsState }) {
     <div className="flex flex-col h-screen text-foreground font-sans netcatty-shell" onContextMenu={handleRootContextMenu}>
       <TopTabs
         theme={resolvedTheme}
+        hosts={hosts}
         sessions={sessions}
         orphanSessions={orphanSessions}
         workspaces={workspaces}
