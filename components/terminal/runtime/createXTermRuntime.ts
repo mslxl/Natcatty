@@ -590,7 +590,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
   // Register OSC 7 handler using xterm.js parser
   // OSC 7 is the standard way for shells to report the current working directory
-  term.parser.registerOscHandler(7, (data) => {
+  const osc7Disposable = term.parser.registerOscHandler(7, (data) => {
     try {
       // data is the content after "7;" - typically "file://hostname/path"
       if (data.startsWith('file://')) {
@@ -638,6 +638,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     dispose: () => {
       cleanupMiddleClick?.();
       keywordHighlighter.dispose();
+      osc7Disposable.dispose();
       try {
         term.dispose();
       } catch (err) {

@@ -30,14 +30,12 @@ export const useSftpPaneVirtualList = ({
     if (!container || !isActive) return;
     const update = () => setViewportHeight(container.clientHeight);
     update();
-    const raf1 = window.requestAnimationFrame(update);
-    const raf2 = window.requestAnimationFrame(update);
+    const raf = window.requestAnimationFrame(update);
     const resizeObserver = new ResizeObserver(update);
     resizeObserver.observe(container);
     return () => {
       resizeObserver.disconnect();
-      window.cancelAnimationFrame(raf1);
-      window.cancelAnimationFrame(raf2);
+      window.cancelAnimationFrame(raf);
     };
   }, [isActive, sortedDisplayFiles.length]);
 

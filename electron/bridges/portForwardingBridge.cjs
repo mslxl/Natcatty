@@ -104,7 +104,7 @@ async function startPortForward(event, payload) {
     // can reject if the tunnel was killed during SSH handshake.
     let settled = false;
 
-    conn.on('ready', () => {
+    conn.once('ready', () => {
       console.log(`[PortForward] SSH connection ready for tunnel ${tunnelId}`);
 
       if (type === 'local') {
@@ -297,7 +297,7 @@ async function startPortForward(event, payload) {
       }
     });
 
-    conn.on('error', (err) => {
+    conn.once('error', (err) => {
       console.error(`[PortForward] SSH error:`, err.message);
       sendStatus('error', err.message);
       portForwardingTunnels.delete(tunnelId);
@@ -305,7 +305,7 @@ async function startPortForward(event, payload) {
       reject(err);
     });
 
-    conn.on('close', () => {
+    conn.once('close', () => {
       console.log(`[PortForward] SSH connection closed for tunnel ${tunnelId}`);
       const tunnel = portForwardingTunnels.get(tunnelId);
       // Capture the cancelled flag BEFORE cleanup deletes the entry.

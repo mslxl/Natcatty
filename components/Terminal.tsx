@@ -930,7 +930,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       }
     };
 
-    term.onSelectionChange(onSelectionChange);
+    const disposable = term.onSelectionChange(onSelectionChange);
+    return () => disposable.dispose();
   }, [terminalSettings?.copyOnSelect]);
 
   // Track whether the terminal application has enabled mouse tracking
