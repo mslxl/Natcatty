@@ -905,7 +905,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
             username: webdavAuthType === 'token' ? undefined : webdavUsername.trim(),
             password: webdavAuthType === 'token' ? undefined : webdavPassword,
             token: webdavAuthType === 'token' ? webdavToken.trim() : undefined,
-            allowInsecure: webdavAllowInsecure || undefined,
+            allowInsecure: webdavAllowInsecure ? true : undefined,
         };
 
         setIsSavingWebdav(true);
