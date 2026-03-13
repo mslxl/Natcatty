@@ -22,6 +22,7 @@ const zhCN: Messages = {
   'common.use': '使用',
   'common.left': '左侧',
   'common.right': '右侧',
+  'common.more': '更多',
   'common.selectAHost': '选择主机',
   'sort.az': 'A-z',
   'sort.za': 'Z-a',
