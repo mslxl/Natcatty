@@ -2,7 +2,7 @@
  * Terminal Connection Dialog
  * Full connection overlay with host info, progress indicator, and auth/progress content
  */
-import { User } from 'lucide-react';
+import { Loader2, TerminalSquare, User } from 'lucide-react';
 import React from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { cn } from '../../lib/utils';
@@ -154,7 +154,11 @@ export const TerminalConnectionDialog: React.FC<TerminalConnectionDialogProps> =
                             "h-8 w-8 rounded-full flex items-center justify-center flex-shrink-0",
                             hasError ? "bg-destructive/20 text-destructive" : "bg-muted text-muted-foreground"
                         )}>
-                            {'>_'}
+                            {isConnecting ? (
+                                <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                                <TerminalSquare size={14} />
+                            )}
                         </div>
                     </div>
                 </div>
