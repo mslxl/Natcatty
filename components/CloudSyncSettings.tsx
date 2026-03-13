@@ -731,6 +731,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
     const [webdavPassword, setWebdavPassword] = useState('');
     const [webdavToken, setWebdavToken] = useState('');
     const [showWebdavSecret, setShowWebdavSecret] = useState(false);
+    const [webdavAllowInsecure, setWebdavAllowInsecure] = useState(false);
     const [webdavError, setWebdavError] = useState<string | null>(null);
     const [webdavErrorDetail, setWebdavErrorDetail] = useState<string | null>(null);
     const [isSavingWebdav, setIsSavingWebdav] = useState(false);
@@ -853,6 +854,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
         setWebdavUsername(config?.username || '');
         setWebdavPassword(config?.password || '');
         setWebdavToken(config?.token || '');
+        setWebdavAllowInsecure(config?.allowInsecure || false);
         setShowWebdavSecret(false);
         setWebdavError(null);
         setWebdavErrorDetail(null);
@@ -903,6 +905,7 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
             username: webdavAuthType === 'token' ? undefined : webdavUsername.trim(),
             password: webdavAuthType === 'token' ? undefined : webdavPassword,
             token: webdavAuthType === 'token' ? webdavToken.trim() : undefined,
+            allowInsecure: webdavAllowInsecure || undefined,
         };
 
         setIsSavingWebdav(true);
@@ -1335,6 +1338,16 @@ export const SyncDashboard: React.FC<SyncDashboardProps> = ({
                                 className="accent-primary"
                             />
                             {t('cloudSync.webdav.showSecret')}
+                        </label>
+
+                        <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
+                            <input
+                                type="checkbox"
+                                checked={webdavAllowInsecure}
+                                onChange={(e) => setWebdavAllowInsecure(e.target.checked)}
+                                className="accent-primary"
+                            />
+                            {t('cloudSync.webdav.allowInsecure')}
                         </label>
 
                         {webdavError && (

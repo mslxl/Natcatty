@@ -806,6 +806,7 @@ const zhCN: Messages = {
   'cloudSync.webdav.password': '密码',
   'cloudSync.webdav.token': 'Token',
   'cloudSync.webdav.showSecret': '显示密钥',
+  'cloudSync.webdav.allowInsecure': '允许不安全的连接（忽略证书错误）',
   'cloudSync.webdav.validation.endpoint': '请输入有效的 WebDAV 端点。',
   'cloudSync.webdav.validation.credentials': '请输入用户名和密码。',
   'cloudSync.webdav.validation.token': '请输入 Token。',

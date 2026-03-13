@@ -1,4 +1,5 @@
 const { createClient, AuthType } = require("webdav");
+const https = require("https");
 const {
   S3Client,
   HeadObjectCommand,
@@ -50,6 +51,10 @@ const buildError = (message, details) => {
 const buildWebdavClient = (config) => {
   if (!config) throw new Error("Missing WebDAV config");
   const endpoint = normalizeEndpoint(config.endpoint);
+  const extraOpts = {};
+  if (config.allowInsecure) {
+    extraOpts.httpsAgent = new https.Agent({ rejectUnauthorized: false });
+  }
   if (config.authType === "token") {
     return createClient(endpoint, {
       authType: AuthType.Token,
@@ -57,6 +62,7 @@ const buildWebdavClient = (config) => {
         access_token: config.token || "",
         token_type: "Bearer",
       },
+      ...extraOpts,
     });
   }
   if (config.authType === "digest") {
@@ -64,12 +70,14 @@ const buildWebdavClient = (config) => {
       authType: AuthType.Digest,
       username: config.username || "",
       password: config.password || "",
+      ...extraOpts,
     });
   }
   return createClient(endpoint, {
     authType: AuthType.Password,
     username: config.username || "",
     password: config.password || "",
+    ...extraOpts,
   });
 };
 

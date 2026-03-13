@@ -52,6 +52,7 @@ export interface WebDAVConfig {
   username?: string;
   password?: string;
   token?: string;
+  allowInsecure?: boolean;
 }
 
 export interface S3Config {
