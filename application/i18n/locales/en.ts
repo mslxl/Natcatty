@@ -34,6 +34,7 @@ const en: Messages = {
   'common.advanced': 'Advanced',
   'common.left': 'Left',
   'common.right': 'Right',
+  'common.more': 'More',
   'common.selectAHost': 'Select a host',
   'common.selectAHostPlaceholder': 'Select a host...',
   'sort.az': 'A-z',

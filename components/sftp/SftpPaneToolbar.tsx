@@ -5,6 +5,7 @@ import { Input } from "../ui/input";
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Dropdown, DropdownContent, DropdownTrigger } from "../ui/dropdown";
 import { cn } from "../../lib/utils";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { SftpBreadcrumb } from "./index";
 import type { SftpFilenameEncoding } from "../../types";
 import type { SftpPane } from "../../application/state/sftp/types";
@@ -138,25 +139,33 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = ({
   const pinnedButtons = (
     <>
       {onGoToTerminalCwd && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          onClick={onGoToTerminalCwd}
-          title={t("sftp.goToTerminalCwd")}
-        >
-          <TerminalSquare size={14} />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={onGoToTerminalCwd}
+            >
+              <TerminalSquare size={14} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t("sftp.goToTerminalCwd")}</TooltipContent>
+        </Tooltip>
       )}
-      <Button
-        variant={showFilterBar || pane.filter ? "secondary" : "ghost"}
-        size="icon"
-        className={cn("h-6 w-6", pane.filter && "text-primary")}
-        onClick={handleToggleFilter}
-        title={t("sftp.filter")}
-      >
-        <Search size={14} />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant={showFilterBar || pane.filter ? "secondary" : "ghost"}
+            size="icon"
+            className={cn("h-6 w-6", pane.filter && "text-primary")}
+            onClick={handleToggleFilter}
+          >
+            <Search size={14} />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{t("sftp.filter")}</TooltipContent>
+      </Tooltip>
     </>
   );
 
@@ -165,16 +174,20 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = ({
     <>
       {isRemote && (
         <Popover>
-          <PopoverTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6"
-              title={t("sftp.encoding.label")}
-            >
-              <Languages size={14} />
-            </Button>
-          </PopoverTrigger>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                >
+                  <Languages size={14} />
+                </Button>
+              </PopoverTrigger>
+            </TooltipTrigger>
+            <TooltipContent>{t("sftp.encoding.label")}</TooltipContent>
+          </Tooltip>
           <PopoverContent className="w-36 p-1" align="end">
             {(["auto", "utf-8", "gb18030"] as const).map((encoding) => (
               <PopoverClose asChild key={encoding}>
@@ -199,47 +212,63 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = ({
           </PopoverContent>
         </Popover>
       )}
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-6 w-6"
-        onClick={handleNewFolder}
-        title={t("sftp.newFolder")}
-      >
-        <FolderPlus size={14} />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-6 w-6"
-        onClick={handleNewFile}
-        title={t("sftp.newFile")}
-      >
-        <FilePlus size={14} />
-      </Button>
-      <Button
-        variant={showHiddenFiles ? "secondary" : "ghost"}
-        size="icon"
-        className={cn("h-6 w-6", showHiddenFiles && "text-primary")}
-        onClick={onToggleShowHiddenFiles}
-        title={t("settings.sftp.showHiddenFiles")}
-      >
-        {showHiddenFiles ? <EyeOff size={14} /> : <Eye size={14} />}
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-6 w-6"
-        onClick={onRefresh}
-        title={t("common.refresh")}
-      >
-        <RefreshCw
-          size={14}
-          className={
-            pane.loading || pane.reconnecting ? "animate-spin" : ""
-          }
-        />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            onClick={handleNewFolder}
+          >
+            <FolderPlus size={14} />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{t("sftp.newFolder")}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            onClick={handleNewFile}
+          >
+            <FilePlus size={14} />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{t("sftp.newFile")}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant={showHiddenFiles ? "secondary" : "ghost"}
+            size="icon"
+            className={cn("h-6 w-6", showHiddenFiles && "text-primary")}
+            onClick={onToggleShowHiddenFiles}
+          >
+            {showHiddenFiles ? <EyeOff size={14} /> : <Eye size={14} />}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{t("settings.sftp.showHiddenFiles")}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            onClick={onRefresh}
+          >
+            <RefreshCw
+              size={14}
+              className={
+                pane.loading || pane.reconnecting ? "animate-spin" : ""
+              }
+            />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{t("common.refresh")}</TooltipContent>
+      </Tooltip>
     </>
   );
 
@@ -316,7 +345,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = ({
   );
 
   return (
-    <>
+    <TooltipProvider delayDuration={500} skipDelayDuration={100} disableHoverableContent>
       {/* Toolbar - always visible when connected */}
       <div ref={outerRef} className="h-7 px-2 flex items-center gap-1 border-b border-border/40 bg-secondary/20">
         {/* Editable Breadcrumb with autocomplete */}
@@ -389,13 +418,14 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = ({
 
         {/* Bookmark button with dropdown */}
         <Popover>
-            <PopoverTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className={cn("h-5 w-5 shrink-0", isCurrentPathBookmarked && "text-yellow-500")}
-                title={isCurrentPathBookmarked ? t("sftp.bookmark.remove") : t("sftp.bookmark.add")}
-                onClick={(e) => {
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className={cn("h-5 w-5 shrink-0", isCurrentPathBookmarked && "text-yellow-500")}
+                    onClick={(e) => {
                   // If not bookmarked, toggle directly instead of opening popover
                   if (!isCurrentPathBookmarked && bookmarks.length === 0) {
                     e.preventDefault();
@@ -405,7 +435,10 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = ({
               >
                 <Bookmark size={12} fill={isCurrentPathBookmarked ? "currentColor" : "none"} />
               </Button>
-            </PopoverTrigger>
+                </PopoverTrigger>
+              </TooltipTrigger>
+              <TooltipContent>{isCurrentPathBookmarked ? t("sftp.bookmark.remove") : t("sftp.bookmark.add")}</TooltipContent>
+            </Tooltip>
             <PopoverContent className="w-64 p-0" align="start">
               <div className="p-2 border-b border-border/40">
                 <Button
@@ -462,16 +495,20 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = ({
             <>
               {pinnedButtons}
               <Dropdown>
-                <DropdownTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6"
-                    title="More"
-                  >
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <DropdownTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
+                      >
                     <MoreHorizontal size={14} />
                   </Button>
-                </DropdownTrigger>
+                    </DropdownTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent>{t("common.more")}</TooltipContent>
+                </Tooltip>
                 <DropdownContent align="end">
                   {overflowMenuItems}
                 </DropdownContent>
@@ -521,20 +558,24 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = ({
               </button>
             )}
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6 shrink-0"
-            onClick={() => {
-              startTransition(() => onSetFilter(""));
-              setShowFilterBar(false);
-            }}
-            title={t("common.close")}
-          >
-            <X size={14} />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 shrink-0"
+                onClick={() => {
+                  startTransition(() => onSetFilter(""));
+                  setShowFilterBar(false);
+                }}
+              >
+                <X size={14} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("common.close")}</TooltipContent>
+          </Tooltip>
         </div>
       )}
-    </>
+    </TooltipProvider>
   );
 };

@@ -8,6 +8,7 @@ import { useI18n } from '../../application/i18n/I18nProvider';
 import { Host } from '../../types';
 import { Button } from '../ui/button';
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '../ui/popover';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
 import { cn } from '../../lib/utils';
 import HostKeywordHighlightPopover from './HostKeywordHighlightPopover';
 
@@ -57,34 +58,44 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
     const hidesSftp = isLocalTerminal || isSerialTerminal;
 
     return (
-        <>
+        <TooltipProvider delayDuration={500} skipDelayDuration={100} disableHoverableContent>
             {!hidesSftp && (
-                <Button
-                    variant="secondary"
-                    size="icon"
-                    className={buttonBase}
-                    disabled={status !== 'connected'}
-                    title={status === 'connected' ? t("terminal.toolbar.openSftp") : t("terminal.toolbar.availableAfterConnect")}
-                    aria-label={t("terminal.toolbar.openSftp")}
-                    onClick={onOpenSFTP}
-                >
-                    <FolderInput size={12} />
-                </Button>
-            )}
-
-            {isSSHSession && onSetTerminalEncoding && (
-                <Popover>
-                    <PopoverTrigger asChild>
+                <Tooltip>
+                    <TooltipTrigger asChild>
                         <Button
                             variant="secondary"
                             size="icon"
                             className={buttonBase}
-                            title={t("terminal.toolbar.encoding")}
-                            aria-label={t("terminal.toolbar.encoding")}
+                            disabled={status !== 'connected'}
+                            aria-label={t("terminal.toolbar.openSftp")}
+                            onClick={onOpenSFTP}
                         >
-                            <Languages size={12} />
+                            <FolderInput size={12} />
                         </Button>
-                    </PopoverTrigger>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                        {status === 'connected' ? t("terminal.toolbar.openSftp") : t("terminal.toolbar.availableAfterConnect")}
+                    </TooltipContent>
+                </Tooltip>
+            )}
+
+            {isSSHSession && onSetTerminalEncoding && (
+                <Popover>
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <PopoverTrigger asChild>
+                                <Button
+                                    variant="secondary"
+                                    size="icon"
+                                    className={buttonBase}
+                                    aria-label={t("terminal.toolbar.encoding")}
+                                >
+                                    <Languages size={12} />
+                                </Button>
+                            </PopoverTrigger>
+                        </TooltipTrigger>
+                        <TooltipContent>{t("terminal.toolbar.encoding")}</TooltipContent>
+                    </Tooltip>
                     <PopoverContent className="w-36 p-1" align="start">
                         {(["utf-8", "gb18030"] as const).map((enc) => (
                             <PopoverClose asChild key={enc}>
@@ -110,27 +121,35 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                 </Popover>
             )}
 
-            <Button
-                variant="secondary"
-                size="icon"
-                className={buttonBase}
-                title={t("terminal.toolbar.scripts")}
-                aria-label={t("terminal.toolbar.scripts")}
-                onClick={onOpenScripts}
-            >
-                <Zap size={12} />
-            </Button>
+            <Tooltip>
+                <TooltipTrigger asChild>
+                    <Button
+                        variant="secondary"
+                        size="icon"
+                        className={buttonBase}
+                        aria-label={t("terminal.toolbar.scripts")}
+                        onClick={onOpenScripts}
+                    >
+                        <Zap size={12} />
+                    </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t("terminal.toolbar.scripts")}</TooltipContent>
+            </Tooltip>
 
-            <Button
-                variant="secondary"
-                size="icon"
-                className={buttonBase}
-                title={t("terminal.toolbar.terminalSettings")}
-                aria-label={t("terminal.toolbar.terminalSettings")}
-                onClick={onOpenTheme}
-            >
-                <Palette size={12} />
-            </Button>
+            <Tooltip>
+                <TooltipTrigger asChild>
+                    <Button
+                        variant="secondary"
+                        size="icon"
+                        className={buttonBase}
+                        aria-label={t("terminal.toolbar.terminalSettings")}
+                        onClick={onOpenTheme}
+                    >
+                        <Palette size={12} />
+                    </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t("terminal.toolbar.terminalSettings")}</TooltipContent>
+            </Tooltip>
 
             <HostKeywordHighlightPopover
                 host={host}
@@ -140,45 +159,57 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                 buttonClassName={buttonBase}
             />
 
-            <Button
-                variant="secondary"
-                size="icon"
-                className={buttonBase}
-                title={t("terminal.toolbar.composeBar")}
-                aria-label={t("terminal.toolbar.composeBar")}
-                aria-pressed={isComposeBarOpen}
-                onClick={onToggleComposeBar}
-            >
-                <TextCursorInput size={12} />
-            </Button>
+            <Tooltip>
+                <TooltipTrigger asChild>
+                    <Button
+                        variant="secondary"
+                        size="icon"
+                        className={buttonBase}
+                        aria-label={t("terminal.toolbar.composeBar")}
+                        aria-pressed={isComposeBarOpen}
+                        onClick={onToggleComposeBar}
+                    >
+                        <TextCursorInput size={12} />
+                    </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t("terminal.toolbar.composeBar")}</TooltipContent>
+            </Tooltip>
 
-            <Button
-                variant="secondary"
-                size="icon"
-                className={buttonBase}
-                title={t("terminal.toolbar.searchTerminal")}
-                aria-label={t("terminal.toolbar.searchTerminal")}
-                aria-pressed={isSearchOpen}
-                onClick={onToggleSearch}
-            >
-                <Search size={12} />
-            </Button>
+            <Tooltip>
+                <TooltipTrigger asChild>
+                    <Button
+                        variant="secondary"
+                        size="icon"
+                        className={buttonBase}
+                        aria-label={t("terminal.toolbar.searchTerminal")}
+                        aria-pressed={isSearchOpen}
+                        onClick={onToggleSearch}
+                    >
+                        <Search size={12} />
+                    </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t("terminal.toolbar.searchTerminal")}</TooltipContent>
+            </Tooltip>
 
             {showClose && onClose && (
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 text-[color:var(--terminal-toolbar-fg)] hover:bg-transparent"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        onClose();
-                    }}
-                    title={t("terminal.toolbar.closeSession")}
-                >
-                    <X size={11} />
-                </Button>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-[color:var(--terminal-toolbar-fg)] hover:bg-transparent"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onClose();
+                            }}
+                        >
+                            <X size={11} />
+                        </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>{t("terminal.toolbar.closeSession")}</TooltipContent>
+                </Tooltip>
             )}
-        </>
+        </TooltipProvider>
     );
 };
 
