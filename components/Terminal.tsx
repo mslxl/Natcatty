@@ -119,9 +119,6 @@ interface TerminalProps {
   sessionId: string;
   startupCommand?: string;
   serialConfig?: SerialConfig;
-  onUpdateTerminalThemeId?: (themeId: string) => void;
-  onUpdateTerminalFontFamilyId?: (fontFamilyId: string) => void;
-  onUpdateTerminalFontSize?: (fontSize: number) => void;
   hotkeyScheme?: "disabled" | "mac" | "pc";
   keyBindings?: KeyBinding[];
   onHotkeyAction?: (action: string, event: KeyboardEvent) => void;
@@ -188,9 +185,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   sessionId,
   startupCommand,
   serialConfig,
-  onUpdateTerminalThemeId,
-  onUpdateTerminalFontFamilyId,
-  onUpdateTerminalFontSize,
   hotkeyScheme = "disabled",
   keyBindings = [],
   onHotkeyAction,
@@ -1034,17 +1028,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     disableBracketedPasteRef,
     scrollOnPasteRef,
   });
-
-  const handleSnippetClick = (cmd: string) => {
-    if (sessionRef.current) {
-      const payload = `${cmd}\r`;
-      terminalBackend.writeToSession(sessionRef.current, payload);
-      scrollToBottomAfterProgrammaticInput(payload);
-      termRef.current?.focus();
-      return;
-    }
-    termRef.current?.writeln("\r\n[No active SSH session]");
-  };
 
   const handleSetTerminalEncoding = (encoding: 'utf-8' | 'gb18030') => {
     setTerminalEncoding(encoding);

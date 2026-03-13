@@ -149,7 +149,6 @@ export class WebDAVAdapter {
   private createClient(config: WebDAVConfig): WebDAVClient {
     const extraOpts: Record<string, unknown> = {};
     if (config.allowInsecure && typeof globalThis.process !== 'undefined') {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const https = require('https');
       extraOpts.httpsAgent = new https.Agent({ rejectUnauthorized: false });
     }

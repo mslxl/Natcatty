@@ -1,4 +1,4 @@
-import { Circle, FolderTree, LayoutGrid, Palette, Server, X, Zap } from 'lucide-react';
+import { Circle, FolderTree, LayoutGrid, PanelLeft, PanelRight, Palette, Server, X, Zap } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useActiveTabId } from '../application/state/activeTabStore';
 import { useTerminalBackend } from '../application/state/useTerminalBackend';
@@ -6,6 +6,7 @@ import { collectSessionIds } from '../domain/workspace';
 import { SplitDirection } from '../domain/workspace';
 import { KeyBinding, TerminalSettings } from '../domain/models';
 import { cn } from '../lib/utils';
+import { useStoredString } from '../application/state/useStoredString';
 import { buildCacheKey } from '../application/state/sftp/sharedRemoteHostCache';
 import type { DropEntry } from '../lib/sftpFileUtils';
 import { Host, Identity, KnownHost, SSHKey, Snippet, TerminalSession, TerminalTheme, Workspace, WorkspaceNode } from '../types';
@@ -241,6 +242,11 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   // Maps tab IDs to the active sub-panel type (sftp/scripts/theme), absent = closed
   const [sidePanelOpenTabs, setSidePanelOpenTabs] = useState<Map<string, SidePanelTab>>(new Map());
   const [sidePanelWidth, setSidePanelWidth] = useState(320);
+  const [sidePanelPosition, setSidePanelPosition] = useStoredString<'left' | 'right'>(
+    'netcatty_side_panel_position',
+    'left',
+    (v): v is 'left' | 'right' => v === 'left' || v === 'right',
+  );
   const sftpResizingRef = useRef(false);
   const sidePanelOpenTabsRef = useRef(sidePanelOpenTabs);
   sidePanelOpenTabsRef.current = sidePanelOpenTabs;
@@ -368,7 +374,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     const startWidth = sidePanelWidth;
 
     const onMouseMove = (ev: MouseEvent) => {
-      const newWidth = Math.max(200, Math.min(600, startWidth + (ev.clientX - startX)));
+      const delta = ev.clientX - startX;
+      const newWidth = Math.max(200, Math.min(600, startWidth + (sidePanelPosition === 'left' ? delta : -delta)));
       setSidePanelWidth(newWidth);
     };
     const onMouseUp = () => {
@@ -378,7 +385,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     };
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
-  }, [sidePanelWidth]);
+  }, [sidePanelWidth, sidePanelPosition]);
 
   // Pre-compute host lookup map for O(1) access
   const hostMap = useMemo(() => {
@@ -1084,7 +1091,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       className="absolute inset-0 bg-background flex flex-col"
       style={{ display: isTerminalLayerVisible ? 'flex' : 'none', zIndex: isTerminalLayerVisible ? 10 : 0 }}
     >
-      <div className="flex-1 flex min-h-0 relative">
+      <div className={cn("flex-1 flex min-h-0 relative", sidePanelPosition === 'right' && "flex-row-reverse")}>
         {/* Side panel with tab header + content (SFTP / Scripts / Theme) */}
         {(isSidePanelOpenForCurrentTab || mountedSftpTabIds.length > 0) && (
           <>
@@ -1096,7 +1103,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
             >
               {isSidePanelOpenForCurrentTab && (
                 <div
-                  className="absolute right-[-3px] top-0 h-full w-2 cursor-ew-resize z-30"
+                  className={cn(
+                    "absolute top-0 h-full w-2 cursor-ew-resize z-30",
+                    sidePanelPosition === 'left' ? "right-[-3px]" : "left-[-3px]",
+                  )}
                   onMouseDown={handleSidePanelResizeStart}
                 />
               )}
@@ -1154,6 +1164,18 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                       <Palette size={14} />
                     </Button>
                     <div className="flex-1" />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={cn(
+                        "h-6 w-6 rounded-md p-0 text-muted-foreground",
+                        "hover:bg-transparent hover:text-foreground",
+                      )}
+                      onClick={() => setSidePanelPosition(p => p === 'left' ? 'right' : 'left')}
+                      title={sidePanelPosition === 'left' ? 'Move panel to right' : 'Move panel to left'}
+                    >
+                      {sidePanelPosition === 'left' ? <PanelRight size={14} /> : <PanelLeft size={14} />}
+                    </Button>
                     <Button
                       variant="ghost"
                       size="icon"
@@ -1351,9 +1373,6 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                   sessionId={session.id}
                   startupCommand={session.startupCommand}
                   serialConfig={session.serialConfig}
-                  onUpdateTerminalThemeId={onUpdateTerminalThemeId}
-                  onUpdateTerminalFontFamilyId={onUpdateTerminalFontFamilyId}
-                  onUpdateTerminalFontSize={onUpdateTerminalFontSize}
                   hotkeyScheme={hotkeyScheme}
                   keyBindings={keyBindings}
                   onHotkeyAction={onHotkeyAction}
