@@ -29,8 +29,9 @@ export const XTERM_PERFORMANCE_CONFIG = {
     // Disabling it improves performance by 15-20%
     allowTransparency: false,
 
-    // Custom glyphs require additional memory and processing
-    customGlyphs: false,
+    // Custom glyphs: xterm.js draws box/block characters on canvas
+    // instead of using font glyphs, eliminating gaps between cells
+    customGlyphs: true,
 
     // Font rendering settings
     letterSpacing: 0,
