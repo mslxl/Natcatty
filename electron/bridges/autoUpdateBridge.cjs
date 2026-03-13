@@ -302,6 +302,18 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:update:install", () => {
     const updater = getAutoUpdater();
     if (!updater) return;
+
+    // On macOS, the system tray keeps the app process alive even after all
+    // windows are closed, which prevents quitAndInstall from completing.
+    // Destroy the tray (and its panel window) before quitting so the app
+    // can exit cleanly and the installer can proceed.
+    try {
+      const globalShortcutBridge = require("./globalShortcutBridge.cjs");
+      globalShortcutBridge.cleanup();
+    } catch {
+      // ignore — bridge may not be available
+    }
+
     updater.quitAndInstall(false, true);
   });
 
