@@ -518,7 +518,7 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
 
       // Connect this hop
       await new Promise((resolve, reject) => {
-        conn.on('ready', () => {
+        conn.once('ready', () => {
           console.log(`[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}: ${hopLabel} connected`);
           resolve();
         });
@@ -531,7 +531,7 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
           console.error(`[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}: ${hopLabel} error:`, err.message);
           reject(err);
         });
-        conn.on('timeout', () => {
+        conn.once('timeout', () => {
           console.error(`[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}: ${hopLabel} timeout`);
           reject(new Error(`Connection timeout to ${hopLabel}`));
         });

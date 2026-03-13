@@ -135,12 +135,19 @@ const WindowControls: React.FC = memo(() => {
     // Check initial maximized state
     fetchIsMaximized().then(v => setIsMaximized(!!v));
 
-    // Listen for window resize to update maximized state
+    // Listen for window resize to update maximized state (debounced to avoid IPC storm)
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
     const handleResize = () => {
-      fetchIsMaximized().then(v => setIsMaximized(!!v));
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        fetchIsMaximized().then(v => setIsMaximized(!!v));
+      }, 200);
     };
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (resizeTimer) clearTimeout(resizeTimer);
+    };
   }, [fetchIsMaximized]);
 
   const handleMinimize = () => {

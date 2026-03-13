@@ -416,17 +416,17 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
 
       // Connect this hop
       await new Promise((resolve, reject) => {
-        conn.on('ready', () => {
+        conn.once('ready', () => {
           console.log(`[Chain] Hop ${i + 1}/${totalHops}: ${hopLabel} connected`);
           sendProgress(i + 1, totalHops + 1, hopLabel, 'connected');
           resolve();
         });
-        conn.on('error', (err) => {
+        conn.once('error', (err) => {
           console.error(`[Chain] Hop ${i + 1}/${totalHops}: ${hopLabel} error:`, err.message);
           sendProgress(i + 1, totalHops + 1, hopLabel, 'error');
           reject(err);
         });
-        conn.on('timeout', () => {
+        conn.once('timeout', () => {
           console.error(`[Chain] Hop ${i + 1}/${totalHops}: ${hopLabel} timeout`);
           reject(new Error(`Connection timeout to ${hopLabel}`));
         });
@@ -920,7 +920,7 @@ async function startSSHSession(event, options) {
 
     return new Promise((resolve, reject) => {
       const logPrefix = hasJumpHosts ? '[Chain]' : '[SSH]';
-      conn.on("ready", () => {
+      conn.once("ready", () => {
         console.log(`${logPrefix} ${options.hostname} ready`);
 
         // Cache the successful auth method
@@ -1063,28 +1063,34 @@ async function startSSHSession(event, options) {
 
         safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: err.message });
         sessions.delete(sessionId);
+        sessionEncodings.delete(sessionId);
+        sessionDecoders.delete(sessionId);
         for (const c of chainConnections) {
           try { c.end(); } catch { }
         }
         reject(err);
       });
 
-      conn.on("timeout", () => {
+      conn.once("timeout", () => {
         console.error(`${logPrefix} ${options.hostname} connection timeout`);
         const err = new Error(`Connection timeout to ${options.hostname}`);
         const contents = event.sender;
         safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: err.message });
         sessions.delete(sessionId);
+        sessionEncodings.delete(sessionId);
+        sessionDecoders.delete(sessionId);
         for (const c of chainConnections) {
           try { c.end(); } catch { }
         }
         reject(err);
       });
 
-      conn.on("close", () => {
+      conn.once("close", () => {
         const contents = event.sender;
         safeSend(contents, "netcatty:exit", { sessionId, exitCode: 0 });
         sessions.delete(sessionId);
+        sessionEncodings.delete(sessionId);
+        sessionDecoders.delete(sessionId);
         for (const c of chainConnections) {
           try { c.end(); } catch { }
         }
@@ -1203,7 +1209,7 @@ async function execCommand(event, payload) {
     }, timeoutMs);
 
     conn
-      .on("ready", () => {
+      .once("ready", () => {
         conn.exec(payload.command, (err, stream) => {
           if (err) {
             clearTimeout(timer);
@@ -1227,13 +1233,13 @@ async function execCommand(event, payload) {
             });
         });
       })
-      .on("error", (err) => {
+      .once("error", (err) => {
         if (settled) return;
         clearTimeout(timer);
         settled = true;
         reject(err);
       })
-      .on("end", () => {
+      .once("end", () => {
         if (settled) return;
         clearTimeout(timer);
         settled = true;
