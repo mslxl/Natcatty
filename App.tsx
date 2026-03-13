@@ -439,7 +439,7 @@ function App({ settings }: { settings: SettingsState }) {
         return;
       }
 
-      const keysForPf = keys.map((k) => ({ id: k.id, privateKey: k.privateKey }));
+      const keysForPf = keys.map((k) => ({ id: k.id, privateKey: k.privateKey, passphrase: k.passphrase }));
       if (start) {
         void startTunnel(rule, host, keysForPf, (status, error) => {
           if (status === "error" && error) toast.error(error);
