@@ -370,7 +370,7 @@ function App({ settings }: { settings: SettingsState }) {
 
   // Memoize keys for port forwarding to prevent unnecessary re-renders
   const portForwardingKeys = useMemo(
-    () => keys.map((k) => ({ id: k.id, privateKey: k.privateKey })),
+    () => keys.map((k) => ({ id: k.id, privateKey: k.privateKey, passphrase: k.passphrase, })),
     [keys]
   );
 

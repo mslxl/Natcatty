@@ -63,7 +63,7 @@ export interface UsePortForwardingStateResult {
   startTunnel: (
     rule: PortForwardingRule,
     host: Host,
-    keys: { id: string; privateKey: string }[],
+    keys: { id: string; privateKey: string; passphrase: string }[],
     onStatusChange?: (status: PortForwardingRule["status"], error?: string) => void,
     enableReconnect?: boolean,
   ) => Promise<{ success: boolean; error?: string }>;
@@ -377,7 +377,7 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
     async (
       rule: PortForwardingRule,
       host: Host,
-      keys: { id: string; privateKey: string }[],
+      keys: { id: string; privateKey: string; passphrase: string }[],
       onStatusChange?: (
         status: PortForwardingRule["status"],
         error?: string,

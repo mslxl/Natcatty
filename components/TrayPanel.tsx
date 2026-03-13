@@ -152,7 +152,7 @@ const TrayPanelContent: React.FC = () => {
   }, [onTrayPanelRefresh]);
 
   const keysForPf = useMemo(
-    () => keys.map((k) => ({ id: k.id, privateKey: k.privateKey })),
+    () => keys.map((k) => ({ id: k.id, privateKey: k.privateKey, passphrase: k.passphrase })),
     [keys],
   );
 

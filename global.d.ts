@@ -109,6 +109,7 @@ declare global {
     username: string;
     password?: string;
     privateKey?: string;
+    passphrase?: string;
   }
 
   interface PortForwardResult {
