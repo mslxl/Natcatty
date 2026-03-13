@@ -357,7 +357,7 @@ export const reconcileWithBackend = async (): Promise<{
 export const startPortForward = async (
   rule: PortForwardingRule,
   host: Host,
-  keys: { id: string; privateKey: string }[],
+  keys: { id: string; privateKey: string; passphrase: string }[],
   onStatusChange: (status: PortForwardingRule['status'], error?: string) => void,
   enableReconnect = false
 ): Promise<{ success: boolean; error?: string }> => {
@@ -376,12 +376,14 @@ export const startPortForward = async (
     // Generate a unique tunnel ID
     const tunnelId = `pf-${rule.id}-${Date.now()}`;
     
-    // Get the private key if using key auth
+    // Get the private key and passphrase if using key auth
     let privateKey: string | undefined;
+    let passphrase: string | undefined;
     if (host.identityFileId) {
       const key = keys.find(k => k.id === host.identityFileId);
       if (key) {
         privateKey = key.privateKey;
+        passphrase = key.passphrase;
       }
     }
     
@@ -429,6 +431,7 @@ export const startPortForward = async (
       username: host.username,
       password: host.password,
       privateKey,
+      passphrase,
     });
     
     if (!result.success) {

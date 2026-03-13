@@ -17,7 +17,7 @@ import { logger } from "../../lib/logger";
 
 export interface UsePortForwardingAutoStartOptions {
   hosts: Host[];
-  keys: { id: string; privateKey: string }[];
+  keys: { id: string; privateKey: string; passphrase: string }[];
 }
 
 /**
@@ -30,7 +30,7 @@ export const usePortForwardingAutoStart = ({
 }: UsePortForwardingAutoStartOptions): void => {
   const autoStartExecutedRef = useRef(false);
   const hostsRef = useRef<Host[]>(hosts);
-  const keysRef = useRef<{ id: string; privateKey: string }[]>(keys);
+  const keysRef = useRef<{ id: string; privateKey: string; passphrase: string }[]>(keys);
 
   // Keep refs in sync
   useEffect(() => {
