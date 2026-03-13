@@ -39,7 +39,7 @@ import { useAvailableFonts } from './fontStore';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 
-const DEFAULT_THEME: 'light' | 'dark' | 'system' = 'system';
+const DEFAULT_THEME: 'light' | 'dark' | 'system' = 'dark';
 
 /** Resolve the current OS color scheme preference. */
 const getSystemPreference = (): 'light' | 'dark' =>
