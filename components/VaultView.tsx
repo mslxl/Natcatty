@@ -715,6 +715,26 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     return root;
   }, [hosts, customGroups]);
 
+  // Generate all possible group paths from the tree (including all intermediate nodes)
+  const allGroupPaths = useMemo(() => {
+    const paths = new Set<string>();
+
+    const traverse = (nodes: Record<string, GroupNode>) => {
+      Object.values(nodes).forEach((node) => {
+        if (node.path) {
+          paths.add(node.path);
+        }
+        if (node.children) {
+          traverse(node.children);
+        }
+      });
+    };
+
+    // Traverse the tree
+    traverse(buildGroupTree);
+
+    return Array.from(paths).sort();
+  }, [buildGroupTree]);
 
   const findGroupNode = (path: string | null): GroupNode | null => {
     if (!path)
@@ -2281,12 +2301,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           initialData={editingHost}
           availableKeys={keys}
           identities={identities}
-          groups={Array.from(
-            new Set([
-              ...customGroups,
-              ...hosts.map((h) => h.group || "General"),
-            ]),
-          )}
+          groups={allGroupPaths}
           managedSources={managedSources}
           allTags={allTags}
           allHosts={hosts}
@@ -2321,12 +2336,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
         <SerialHostDetailsPanel
           initialData={editingHost}
           allTags={allTags}
-          groups={Array.from(
-            new Set([
-              ...customGroups,
-              ...hosts.map((h) => h.group || "General"),
-            ]),
-          )}
+          groups={allGroupPaths}
           onSave={(host) => {
             onUpdateHosts(
               hosts.map((h) => (h.id === host.id ? host : h)),
