@@ -27,6 +27,7 @@ import {
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useApplicationBackend } from "../application/state/useApplicationBackend";
+import { useSettingsState } from "../application/state/useSettingsState";
 import { customThemeStore } from "../application/state/customThemeStore";
 import { MIN_FONT_SIZE, MAX_FONT_SIZE } from "../infrastructure/config/fonts";
 import { cn } from "../lib/utils";
@@ -99,6 +100,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
 }) => {
   const { t } = useI18n();
   const { checkSshAgent } = useApplicationBackend();
+  const { terminalThemeId, terminalFontSize } = useSettingsState();
   const [form, setForm] = useState<Host>(
     () =>
       initialData ||
@@ -113,7 +115,8 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
         os: "linux",
         authMethod: "password",
         charset: "UTF-8",
-        theme: "Flexoki Dark",
+        theme: terminalThemeId,
+        fontSize: terminalFontSize,
         createdAt: Date.now(),
         group: defaultGroup || undefined, // Pre-fill with current navigation group
       } as Host),
