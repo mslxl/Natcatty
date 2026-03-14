@@ -22,6 +22,22 @@ const sessionMetadata = new Map();
 // Command safety checking (reuse from aiBridge)
 let commandBlocklist = [];
 
+// Track active PTY executions for cancellation
+const activePtyExecs = new Map(); // marker → { ptyStream, cleanup }
+
+function cancelAllPtyExecs() {
+  for (const [marker, entry] of activePtyExecs) {
+    try {
+      entry.cleanup();
+      // Send Ctrl+C to kill the running command
+      if (entry.ptyStream && typeof entry.ptyStream.write === "function") {
+        entry.ptyStream.write("\x03");
+      }
+    } catch { /* ignore */ }
+  }
+  activePtyExecs.clear();
+}
+
 function init(deps) {
   sessions = deps.sessions;
   sftpClients = deps.sftpClients;
@@ -254,7 +270,7 @@ function execViaPty(ptyStream, command) {
     let foundStart = false;
     let timeoutId = null;
 
-    const MAX_TIMEOUT = 60000; // 60s max
+    const MAX_TIMEOUT = 300000; // 5 min max (docker pull, pip install, etc.)
 
     const onData = (data) => {
       const text = data.toString();
@@ -299,6 +315,7 @@ function execViaPty(ptyStream, command) {
     function finish(stdout, exitCode) {
       clearTimeout(timeoutId);
       ptyStream.removeListener("data", onData);
+      activePtyExecs.delete(marker);
 
       const cleaned = stripAnsi(stdout || "").trim();
       resolve({
@@ -311,23 +328,27 @@ function execViaPty(ptyStream, command) {
 
     timeoutId = setTimeout(() => {
       ptyStream.removeListener("data", onData);
+      activePtyExecs.delete(marker);
+      // Send Ctrl+C to kill the timed-out command
+      if (typeof ptyStream.write === "function") ptyStream.write("\x03");
       const cleaned = stripAnsi(output).trim();
-      resolve({ ok: false, stdout: cleaned, stderr: "", exitCode: -1, error: "Command timed out" });
+      resolve({ ok: false, stdout: cleaned, stderr: "", exitCode: -1, error: "Command timed out (5min)" });
     }, MAX_TIMEOUT);
 
     ptyStream.on("data", onData);
 
-    // Markers are printed, captured by onData, then erased from terminal display.
-    // \033[1A = cursor up 1 line, \033[2K = clear entire line.
-    // Two "up+clear" sequences erase both the echoed command and the marker output.
-    const u = "\\033[1A\\033[2K";
-    // Disable pagers to prevent commands like `systemctl status`, `git log`,
-    // `man` etc. from blocking the terminal waiting for user input.
+    // Register for cancellation
+    activePtyExecs.set(marker, {
+      ptyStream,
+      cleanup: () => { clearTimeout(timeoutId); ptyStream.removeListener("data", onData); },
+    });
+
+    // Markers are filtered from terminal display by preload.cjs (MCP_MARKER_RE).
+    // Start marker + command are on the SAME line to avoid an extra shell prompt.
     const noPager = "PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= ";
     ptyStream.write(
-      ` printf '${marker}_S\\n${u}${u}'\n` +
-      `${noPager}${command}\n` +
-      ` __nc=$?;printf '${marker}_E:'$__nc'\\n${u}${u}';(exit $__nc)\n`
+      `printf '${marker}_S\\n';${noPager}${command}\n` +
+      `__nc=$?;printf '${marker}_E:'$__nc'\\n';(exit $__nc)\n`
     );
   });
 }
@@ -637,5 +658,6 @@ module.exports = {
   updateSessionMetadata,
   getOrCreateHost,
   buildMcpServerConfig,
+  cancelAllPtyExecs,
   cleanup,
 };

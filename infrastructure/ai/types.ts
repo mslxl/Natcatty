@@ -22,10 +22,17 @@ export interface ModelInfo {
 }
 
 // Chat types
+export interface ChatMessageImage {
+  base64Data: string;
+  mediaType: string;
+  filename?: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
+  images?: ChatMessageImage[];
   thinking?: string;
   thinkingDurationMs?: number;
   toolCalls?: ToolCall[];

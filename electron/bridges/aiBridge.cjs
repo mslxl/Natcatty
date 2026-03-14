@@ -1229,7 +1229,7 @@ function registerHandlers(ipcMain) {
 
   // ── ACP (Agent Client Protocol) streaming ──
 
-  ipcMain.handle("netcatty:ai:acp:stream", async (event, { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey, model }) => {
+  ipcMain.handle("netcatty:ai:acp:stream", async (event, { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey, model, images }) => {
     console.log("[ACP] stream handler called:", { requestId, chatSessionId, acpCommand, prompt: prompt?.slice(0, 50) });
     try {
       const { createACPProvider } = require("@mcpc-tech/acp-ai-provider");
@@ -1343,11 +1343,39 @@ function registerHandlers(ipcMain) {
         `Call get_environment first to discover available hosts and their session IDs. ` +
         `Do NOT use local shell execution.]\n\n${prompt}`;
 
-      console.log("[ACP] Starting streamText...");
+      // Build message content: text + optional images (same as 1code)
+      function buildMessageContent(text, imgs) {
+        const content = [{ type: "text", text }];
+        if (Array.isArray(imgs)) {
+          for (const img of imgs) {
+            if (!img.base64Data || !img.mediaType) continue;
+            content.push({
+              type: "file",
+              mediaType: img.mediaType,
+              data: img.base64Data,
+              ...(img.filename ? { filename: img.filename } : {}),
+            });
+          }
+        }
+        return content;
+      }
+
+      if (Array.isArray(images) && images.length > 0) {
+        console.log("[ACP] Images attached:", images.map(img => ({
+          mediaType: img.mediaType,
+          filename: img.filename,
+          dataLen: img.base64Data?.length || 0,
+          dataPrefix: img.base64Data?.slice(0, 30),
+        })));
+      }
+      console.log("[ACP] Starting streamText...", images?.length ? `with ${images.length} image(s)` : "");
       const result = streamText({
         model: providerEntry.provider.languageModel(model || undefined),
+        messages: [{
+          role: "user",
+          content: buildMessageContent(contextualPrompt, images),
+        }],
         tools: providerEntry.provider.tools,
-        prompt: contextualPrompt,
         stopWhen: stepCountIs(50),
         abortSignal: abortController.signal,
       });
@@ -1416,6 +1444,8 @@ function registerHandlers(ipcMain) {
   });
 
   ipcMain.handle("netcatty:ai:acp:cancel", async (_event, { requestId }) => {
+    // Cancel any active PTY executions (send Ctrl+C)
+    mcpServerBridge.cancelAllPtyExecs();
     const controller = acpActiveStreams.get(requestId);
     if (controller) {
       controller.abort();

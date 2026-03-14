@@ -11,10 +11,11 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { streamText, stepCountIs } from 'ai';
 import { cn } from '../lib/utils';
 import { useWindowControls } from '../application/state/useWindowControls';
+import { useImageUpload } from '../application/state/useImageUpload';
 import type {
   AIPermissionMode,
   AISession,
@@ -134,7 +135,17 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   const [currentAgentId, setCurrentAgentId] = useState(defaultAgentId);
   const [selectedAgentModel, setSelectedAgentModel] = useState<string | undefined>(undefined);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const { images, addImages, removeImage, clearImages } = useImageUpload();
   const { openSettingsWindow } = useWindowControls();
+
+  // Reset active session when switching terminal/workspace
+  const prevScopeTargetIdRef = useRef(scopeTargetId);
+  useEffect(() => {
+    if (scopeTargetId !== prevScopeTargetIdRef.current) {
+      prevScopeTargetIdRef.current = scopeTargetId;
+      setActiveSessionId(null);
+    }
+  }, [scopeTargetId, setActiveSessionId]);
 
   // Agent discovery
   const {
@@ -242,15 +253,20 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       setActiveSessionId(sessionId);
     }
 
-    // Add user message
+    // Capture images before clearing
+    const attachedImages = images.map(img => ({ base64Data: img.base64Data, mediaType: img.mediaType, filename: img.filename }));
+
+    // Add user message (with images if any)
     const userMessage: ChatMessage = {
       id: generateId(),
       role: 'user',
       content: trimmed,
+      ...(attachedImages.length > 0 ? { images: attachedImages } : {}),
       timestamp: Date.now(),
     };
     addMessageToSession(sessionId, userMessage);
     setInputValue('');
+    clearImages();
     setIsStreaming(true);
 
     // Create assistant message placeholder for streaming
@@ -498,6 +514,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
             abortController.signal,
             agentApiKey,
             selectedAgentModel,
+            attachedImages.length > 0 ? attachedImages : undefined,
           );
         } catch (err) {
           if (!abortController.signal.aborted) {
@@ -687,6 +704,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     updateLastMessage,
     updateSessionTitle,
     selectedAgentModel,
+    images,
+    clearImages,
   ]);
 
   const handleStop = useCallback(() => {
@@ -849,6 +868,10 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
             modelPresets={agentModelPresets}
             selectedModelId={selectedAgentModel}
             onModelSelect={setSelectedAgentModel}
+            images={images}
+            onAddImages={addImages}
+            onRemoveImage={removeImage}
+            hosts={terminalSessions.map(s => ({ sessionId: s.sessionId, hostname: s.hostname, label: s.label, connected: s.connected }))}
           />
         </>
       )}

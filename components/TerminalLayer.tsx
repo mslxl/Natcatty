@@ -851,6 +851,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     handleSwitchSidePanelTab('ai');
   }, [handleSwitchSidePanelTab]);
 
+  // Listen for global AI panel toggle (from TopTabs button)
+  useEffect(() => {
+    const handler = () => handleOpenAI();
+    window.addEventListener('netcatty:toggle-ai-panel', handler);
+    return () => window.removeEventListener('netcatty:toggle-ai-panel', handler);
+  }, [handleOpenAI]);
+
   // Execute snippet on the focused terminal session
   const handleSnippetClickForFocusedSession = useCallback((command: string) => {
     const sessionId = activeWorkspace?.focusedSessionId ?? activeSession?.id;

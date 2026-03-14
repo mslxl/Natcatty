@@ -1,4 +1,4 @@
-import { Bell, Copy, FileText, Folder, LayoutGrid, Minus, Moon, MoreHorizontal, Plus, Server, Shield, Square, Sun, TerminalSquare, Usb, X } from 'lucide-react';
+import { Bell, Copy, FileText, Folder, LayoutGrid, Minus, Moon, MoreHorizontal, Plus, Server, Shield, Sparkles, Square, Sun, TerminalSquare, Usb, X } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { activeTabStore, useActiveTabId } from '../application/state/activeTabStore';
 import { LogView } from '../application/state/useSessionState';
@@ -747,6 +747,15 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
 
         {/* Fixed right controls */}
         <div className="flex-shrink-0 flex items-center gap-2 app-drag self-center" style={dragRegionStyle}>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 text-muted-foreground hover:text-foreground app-no-drag"
+            title="AI Assistant"
+            onClick={() => window.dispatchEvent(new CustomEvent('netcatty:toggle-ai-panel'))}
+          >
+            <Sparkles size={16} />
+          </Button>
           <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground app-no-drag">
             <Bell size={16} />
           </Button>

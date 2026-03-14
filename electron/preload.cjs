@@ -27,12 +27,33 @@ function cleanupTransferListeners(transferId) {
   transferCancelledListeners.delete(transferId);
 }
 
+// Filter MCP marker artifacts from terminal output:
+// 1. Marker output lines (standalone): __NCMCP_xxx_S or __NCMCP_xxx_E:0
+// 2. End marker command echo: __nc=$?;printf '__NCMCP_...'
+// 3. Start marker printf prefix in echoed command: printf '__NCMCP_...\n';
+// We keep the actual command part visible.
+function filterMcpMarkers(data) {
+  return data
+    // Remove standalone marker output lines (printf output)
+    .replace(/^__NCMCP_[^\r\n]*[\r\n]*/gm, "")
+    // Remove end marker command echo lines
+    .replace(/[^\r\n]*__nc=\$\?;printf '[^\r\n]*__NCMCP_[^\r\n]*[\r\n]*/g, "")
+    // Remove start marker printf prefix from combined command lines
+    .replace(/printf '__NCMCP_[^']*\\n';/g, "");
+}
+
 ipcRenderer.on("netcatty:data", (_event, payload) => {
   const set = dataListeners.get(payload.sessionId);
   if (!set) return;
+  // Filter MCP marker artifacts before they reach xterm.js
+  let data = payload.data;
+  if (data.includes("__NCMCP_")) {
+    data = filterMcpMarkers(data);
+    if (!data) return;
+  }
   set.forEach((cb) => {
     try {
-      cb(payload.data);
+      cb(data);
     } catch (err) {
       console.error("Data callback failed", err);
     }
@@ -1046,8 +1067,8 @@ const api = {
     return () => ipcRenderer.removeListener("netcatty:ai:claude:error", handler);
   },
   // ACP streaming
-  aiAcpStream: async (requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey, model) => {
-    return ipcRenderer.invoke("netcatty:ai:acp:stream", { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey, model });
+  aiAcpStream: async (requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey, model, images) => {
+    return ipcRenderer.invoke("netcatty:ai:acp:stream", { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey, model, images });
   },
   aiAcpCancel: async (requestId) => {
     return ipcRenderer.invoke("netcatty:ai:acp:cancel", { requestId });

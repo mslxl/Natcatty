@@ -6,10 +6,11 @@
  * and a bottom toolbar with muted controls + subtle send button.
  */
 
-import { Check, ChevronDown, ChevronRight, Cpu, Expand, Plus } from 'lucide-react';
+import { AtSign, Check, ChevronDown, ChevronRight, Cpu, Expand, FileText, FolderOpen, ImageIcon, Plus, X } from 'lucide-react';
 import React, { useCallback, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { FormEvent } from 'react';
+import type { UploadedImage } from '../../application/state/useImageUpload';
 import {
   PromptInput,
   PromptInputButton,
@@ -39,6 +40,14 @@ interface ChatInputProps {
   selectedModelId?: string;
   /** Callback when user selects a model */
   onModelSelect?: (modelId: string) => void;
+  /** Attached images */
+  images?: UploadedImage[];
+  /** Callback to add images (paste/drop) */
+  onAddImages?: (files: File[]) => void;
+  /** Callback to remove an image */
+  onRemoveImage?: (id: string) => void;
+  /** Available hosts for @ mention */
+  hosts?: Array<{ sessionId: string; hostname: string; label: string; connected: boolean }>;
 }
 
 const ChatInput: React.FC<ChatInputProps> = ({
@@ -55,12 +64,74 @@ const ChatInput: React.FC<ChatInputProps> = ({
   modelPresets = [],
   selectedModelId,
   onModelSelect,
+  images = [],
+  onAddImages,
+  onRemoveImage,
+  hosts = [],
 }) => {
   const [expanded, setExpanded] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [pickerPos, setPickerPos] = useState<{ left: number; bottom: number } | null>(null);
   const [hoveredModelId, setHoveredModelId] = useState<string | null>(null);
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const [attachMenuPos, setAttachMenuPos] = useState<{ left: number; bottom: number } | null>(null);
+  const [showHostSubmenu, setShowHostSubmenu] = useState(false);
+  const [showAtMention, setShowAtMention] = useState(false);
+  const [atMentionPos, setAtMentionPos] = useState<{ left: number; bottom: number } | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modelBtnRef = useRef<HTMLButtonElement>(null);
+  const attachBtnRef = useRef<HTMLButtonElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleInputChange = useCallback((newValue: string) => {
+    onChange(newValue);
+    // Detect if user just typed @
+    if (
+      hosts.length > 0 &&
+      newValue.length > value.length &&
+      newValue.endsWith('@')
+    ) {
+      // Position the popover near the textarea
+      const el = textareaRef.current;
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        setAtMentionPos({ left: rect.left + 12, bottom: window.innerHeight - rect.top + 4 });
+      }
+      setShowAtMention(true);
+    } else if (showAtMention && !newValue.includes('@')) {
+      setShowAtMention(false);
+    }
+  }, [onChange, value, hosts.length, showAtMention]);
+
+  const handleSelectAtMention = useCallback((host: { label: string; hostname: string }) => {
+    // Replace the trailing @ with @hostname
+    const name = host.label || host.hostname;
+    const lastAt = value.lastIndexOf('@');
+    const newValue = lastAt >= 0
+      ? value.slice(0, lastAt) + `@${name} `
+      : value + `@${name} `;
+    onChange(newValue);
+    setShowAtMention(false);
+  }, [value, onChange]);
+
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const files = Array.from(e.clipboardData.items)
+      .filter((item) => item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter(Boolean) as File[];
+    if (files.length > 0) {
+      e.preventDefault();
+      onAddImages?.(files);
+    }
+  }, [onAddImages]);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'));
+    if (files.length > 0) {
+      onAddImages?.(files);
+    }
+  }, [onAddImages]);
 
   const defaultPlaceholder = agentName
     ? `Message ${agentName} — @ to include context, / for commands`
@@ -93,11 +164,48 @@ const ChatInput: React.FC<ChatInputProps> = ({
   return (
     <div className="shrink-0 px-4 pb-4">
       <PromptInput onSubmit={handleSubmit}>
+        {/* Image attachment chips */}
+        {images.length > 0 && (
+          <div className="flex gap-1.5 px-3 pt-2 pb-0.5 flex-wrap">
+            {images.map((img) => (
+              <div
+                key={img.id}
+                className="inline-flex items-center gap-1 h-6 pl-1.5 pr-1 rounded-md bg-muted/30 border border-border/30 text-[11px] text-foreground/70 group"
+              >
+                <ImageIcon size={11} className="text-muted-foreground/60 shrink-0" />
+                <span className="truncate max-w-[80px]">{img.filename}</span>
+                <button
+                  type="button"
+                  onClick={() => onRemoveImage?.(img.id)}
+                  className="h-3.5 w-3.5 rounded-sm flex items-center justify-center opacity-50 hover:opacity-100 hover:bg-muted/50 transition-opacity cursor-pointer"
+                >
+                  <X size={8} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            if (e.target.files?.length) {
+              onAddImages?.(Array.from(e.target.files));
+              e.target.value = '';
+            }
+          }}
+        />
+
         {/* Textarea with expand toggle */}
-        <div className="relative">
+        <div className="relative" onPaste={handlePaste} onDrop={handleDrop} onDragOver={(e) => e.preventDefault()}>
           <PromptInputTextarea
+            ref={textareaRef}
             value={value}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(e) => handleInputChange(e.target.value)}
             placeholder={placeholder || defaultPlaceholder}
             disabled={disabled || isStreaming}
             className={expanded ? 'max-h-[220px]' : undefined}
@@ -112,12 +220,117 @@ const ChatInput: React.FC<ChatInputProps> = ({
           </button>
         </div>
 
+        {/* @ mention popover */}
+        {showAtMention && hosts.length > 0 && atMentionPos && createPortal(
+          <>
+            <div className="fixed inset-0 z-[999]" onClick={() => setShowAtMention(false)} />
+            <div
+              className="fixed z-[1000] min-w-[160px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
+              style={{ left: atMentionPos.left, bottom: atMentionPos.bottom }}
+            >
+              <div className="px-3 py-1 text-[10px] text-muted-foreground/40 tracking-wide">Hosts</div>
+              {hosts.map(host => (
+                <button
+                  key={host.sessionId}
+                  type="button"
+                  onClick={() => handleSelectAtMention(host)}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${host.connected ? 'bg-green-500' : 'bg-muted-foreground/30'}`} />
+                  <span className="text-foreground/85 truncate">{host.label || host.hostname}</span>
+                  {host.label && host.hostname !== host.label && (
+                    <span className="text-[10px] text-muted-foreground/40">{host.hostname}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </>,
+          document.body,
+        )}
+
         {/* Footer toolbar */}
         <PromptInputFooter className="gap-1.5 border-t-0 bg-transparent px-3 pb-2 pt-0">
           <PromptInputTools className="gap-1 flex-wrap">
-            <PromptInputButton tooltip="Attach context" className={iconButtonClassName}>
+            <button
+              ref={attachBtnRef}
+              type="button"
+              onClick={() => {
+                if (!showAttachMenu) {
+                  const rect = attachBtnRef.current?.getBoundingClientRect();
+                  if (rect) setAttachMenuPos({ left: rect.left, bottom: window.innerHeight - rect.top + 6 });
+                }
+                setShowAttachMenu(v => !v);
+              }}
+              className={iconButtonClassName}
+              title="Attach"
+            >
               <Plus size={13} />
-            </PromptInputButton>
+            </button>
+            {showAttachMenu && attachMenuPos && createPortal(
+              <>
+                <div className="fixed inset-0 z-[999]" onClick={() => setShowAttachMenu(false)} />
+                <div
+                  className="fixed z-[1000] min-w-[170px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
+                  style={{ left: attachMenuPos.left, bottom: attachMenuPos.bottom }}
+                >
+                  <div className="px-3 py-1 text-[10px] text-muted-foreground/40 tracking-wide">Context</div>
+                  <button
+                    type="button"
+                    onClick={() => { fileInputRef.current?.setAttribute('accept', '*/*'); fileInputRef.current?.click(); setShowAttachMenu(false); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    <FileText size={13} className="text-muted-foreground/60" />
+                    <span className="text-foreground/85">Files</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { fileInputRef.current?.setAttribute('accept', 'image/*'); fileInputRef.current?.click(); setShowAttachMenu(false); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    <ImageIcon size={13} className="text-muted-foreground/60" />
+                    <span className="text-foreground/85">Image</span>
+                  </button>
+                  <div
+                    className="relative"
+                    onMouseEnter={() => setShowHostSubmenu(true)}
+                    onMouseLeave={() => setShowHostSubmenu(false)}
+                  >
+                    <button
+                      type="button"
+                      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
+                    >
+                      <AtSign size={13} className="text-muted-foreground/60" />
+                      <span className="flex-1 text-foreground/85">Mention Host</span>
+                      {hosts.length > 0 && <ChevronRight size={10} className="text-muted-foreground/50" />}
+                    </button>
+                    {showHostSubmenu && hosts.length > 0 && (
+                      <div className="absolute left-full top-0 ml-1 min-w-[160px] rounded-lg border border-border/50 bg-popover shadow-lg py-1 z-[1001]">
+                        {hosts.map(host => (
+                          <button
+                            key={host.sessionId}
+                            type="button"
+                            onClick={() => {
+                              const mention = `@${host.label || host.hostname} `;
+                              onChange(value + mention);
+                              setShowAttachMenu(false);
+                              setShowHostSubmenu(false);
+                            }}
+                            className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
+                          >
+                            <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${host.connected ? 'bg-green-500' : 'bg-muted-foreground/30'}`} />
+                            <span className="text-foreground/85 truncate">{host.label || host.hostname}</span>
+                            {host.label && host.hostname !== host.label && (
+                              <span className="text-[10px] text-muted-foreground/40">{host.hostname}</span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>,
+              document.body,
+            )}
             <button
               ref={modelBtnRef}
               type="button"

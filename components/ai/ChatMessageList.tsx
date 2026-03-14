@@ -68,6 +68,20 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
                   />
                 )}
 
+                {/* User images */}
+                {isUser && message.images && message.images.length > 0 && (
+                  <div className="flex gap-1.5 flex-wrap mb-1">
+                    {message.images.map((img, i) => (
+                      <img
+                        key={i}
+                        src={`data:${img.mediaType};base64,${img.base64Data}`}
+                        alt={img.filename || 'image'}
+                        className="max-h-[120px] max-w-[200px] rounded-md object-contain border border-border/20"
+                      />
+                    ))}
+                  </div>
+                )}
+
                 {message.content && (
                   isUser
                     ? <div className="whitespace-pre-wrap break-words text-[13px]">{message.content}</div>
@@ -82,7 +96,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
                     key={tc.id}
                     name={tc.name}
                     args={tc.arguments}
-                    isLoading={message.executionStatus === 'running'}
+                    isLoading={isThisStreaming && message.executionStatus === 'running'}
                   />
                 ))}
               </MessageContent>

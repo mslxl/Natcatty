@@ -28,6 +28,7 @@ interface AcpBridge {
     cwd?: string,
     apiKey?: string,
     model?: string,
+    images?: ImageAttachment[],
   ): Promise<{ ok: boolean; error?: string }>;
   aiAcpCancel(requestId: string): Promise<{ ok: boolean }>;
   onAiAcpEvent(requestId: string, cb: (event: StreamEvent) => void): () => void;
@@ -45,6 +46,12 @@ interface StreamEvent {
  * Sends the prompt to the main process which runs streamText() with the ACP provider.
  * Stream events are forwarded back via IPC.
  */
+export interface ImageAttachment {
+  base64Data: string;
+  mediaType: string;
+  filename?: string;
+}
+
 export async function runAcpAgentTurn(
   bridge: Record<string, (...args: unknown[]) => unknown>,
   requestId: string,
@@ -55,6 +62,7 @@ export async function runAcpAgentTurn(
   signal?: AbortSignal,
   apiKey?: string,
   model?: string,
+  images?: ImageAttachment[],
 ): Promise<void> {
   const acpBridge = bridge as unknown as AcpBridge;
 
@@ -108,6 +116,7 @@ export async function runAcpAgentTurn(
     undefined, // cwd
     apiKey,
     model,
+    images?.length ? images : undefined,
   ).catch((err: Error) => {
     callbacks.onError(err.message);
   });
