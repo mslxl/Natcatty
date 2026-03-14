@@ -32,7 +32,6 @@ import { createCattyTools } from '../infrastructure/ai/sdk/tools';
 import { exportAsMarkdown, exportAsJSON, exportAsPlainText, getExportFilename } from '../infrastructure/ai/conversationExport';
 import { runExternalAgentTurn } from '../infrastructure/ai/externalAgentAdapter';
 import { runAcpAgentTurn } from '../infrastructure/ai/acpAgentAdapter';
-import { runClaudeAgentTurn } from '../infrastructure/ai/claudeAgentAdapter';
 import { useAgentDiscovery } from '../application/state/useAgentDiscovery';
 import { Button } from './ui/button';
 import { ScrollArea } from './ui/scroll-area';
@@ -307,108 +306,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
 
       console.log('[AIChatPanel] bridge available:', !!bridge, 'sdkType:', agentConfig.sdkType, 'acpCommand:', agentConfig.acpCommand);
 
-      // Use Claude Agent SDK if the agent specifies it
-      if (agentConfig.sdkType === 'claude-agent-sdk' && bridge) {
-        const requestId = `claude_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-        console.log('[AIChatPanel] → Claude Agent SDK path, requestId:', requestId);
-
-        let claudeNeedsNewAssistantMsg = false;
-
-        const maybeCreateClaudeAssistantMsg = () => {
-          if (claudeNeedsNewAssistantMsg) {
-            claudeNeedsNewAssistantMsg = false;
-            addMessageToSession(sessionId!, {
-              id: generateId(),
-              role: 'assistant',
-              content: '',
-              timestamp: Date.now(),
-              model: agentConfig?.name || 'external',
-            });
-          }
-        };
-
-        try {
-          await runClaudeAgentTurn(
-            bridge,
-            requestId,
-            sessionId!,
-            agentConfig,
-            trimmed,
-            {
-              onTextDelta: (text: string) => {
-                maybeCreateClaudeAssistantMsg();
-                updateLastMessage(sessionId!, msg => ({
-                  ...msg,
-                  content: msg.content + text,
-                  thinkingDurationMs: msg.thinking && !msg.thinkingDurationMs
-                    ? Date.now() - msg.timestamp
-                    : msg.thinkingDurationMs,
-                }));
-              },
-              onThinkingDelta: (text: string) => {
-                maybeCreateClaudeAssistantMsg();
-                updateLastMessage(sessionId!, msg => ({
-                  ...msg,
-                  thinking: (msg.thinking || '') + text,
-                }));
-              },
-              onThinkingDone: () => {
-                updateLastMessage(sessionId!, msg => ({
-                  ...msg,
-                  thinkingDurationMs: msg.thinkingDurationMs || (Date.now() - msg.timestamp),
-                }));
-              },
-              onToolCall: (toolName: string, args: Record<string, unknown>) => {
-                maybeCreateClaudeAssistantMsg();
-                updateLastMessage(sessionId!, msg => ({
-                  ...msg,
-                  toolCalls: [...(msg.toolCalls || []), {
-                    id: `tc_${Date.now()}`,
-                    name: toolName,
-                    arguments: args,
-                  }],
-                  executionStatus: 'running',
-                }));
-              },
-              onToolResult: (toolCallId: string, result: string) => {
-                updateLastMessage(sessionId!, msg => {
-                  if (msg.role === 'assistant' && msg.executionStatus === 'running') {
-                    return { ...msg, executionStatus: 'completed' };
-                  }
-                  return msg;
-                });
-                addMessageToSession(sessionId!, {
-                  id: generateId(),
-                  role: 'tool',
-                  content: '',
-                  toolResults: [{ toolCallId, content: result, isError: false }],
-                  timestamp: Date.now(),
-                  executionStatus: 'completed',
-                });
-                claudeNeedsNewAssistantMsg = true;
-              },
-              onError: (error: string) => {
-                maybeCreateClaudeAssistantMsg();
-                updateLastMessage(sessionId!, msg => ({
-                  ...msg,
-                  content: msg.content + '\n\n**Error:** ' + error,
-                  executionStatus: 'failed',
-                }));
-              },
-              onDone: () => {},
-            },
-            abortController.signal,
-            selectedAgentModel,
-          );
-        } catch (err) {
-          if (!abortController.signal.aborted) {
-            updateLastMessage(sessionId!, msg => ({
-              ...msg,
-              content: msg.content + '\n\n**Error:** ' + (err instanceof Error ? err.message : String(err)),
-            }));
-          }
-        }
-      } else if (agentConfig.acpCommand && bridge) {
+      if (agentConfig.acpCommand && bridge) {
         // Use ACP protocol if the agent supports it
         const requestId = `acp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         console.log('[AIChatPanel] → ACP path, requestId:', requestId, 'acpCommand:', agentConfig.acpCommand);
