@@ -19,6 +19,9 @@ let tcpPort = null;
 // Session metadata registered by renderer (sessionId → { hostname, label, os, username })
 const sessionMetadata = new Map();
 
+// Track which session IDs are in the current scope (set by updateSessionMetadata)
+let currentScopedSessionIds = [];
+
 // Command safety checking (reuse from aiBridge)
 let commandBlocklist = [];
 
@@ -65,6 +68,12 @@ function updateSessionMetadata(sessionList) {
       connected: s.connected !== false,
     });
   }
+  // Track scoped session IDs for use by buildMcpServerConfig
+  currentScopedSessionIds = sessionList.map(s => s.sessionId);
+}
+
+function getCurrentScopedSessionIds() {
+  return currentScopedSessionIds;
 }
 
 function checkCommandSafety(command) {
@@ -185,9 +194,14 @@ async function dispatch(method, params) {
 function handleGetContext(params) {
   if (!sessions) return { hosts: [], instructions: "No sessions available." };
 
+  // Use explicit scope if provided, otherwise fall back to sessionMetadata keys
+  // (which are set by the frontend's scoped aiMcpUpdateSessions call).
+  // This ensures agents only see sessions in their workspace/terminal scope.
   const scopedIds = params?.scopedSessionIds
     ? new Set(params.scopedSessionIds)
-    : null;
+    : sessionMetadata.size > 0
+      ? new Set(sessionMetadata.keys())
+      : null;
 
   const hosts = [];
   for (const [sessionId, session] of sessions.entries()) {
@@ -620,6 +634,11 @@ function toUnpackedAsarPath(filePath) {
 }
 
 function buildMcpServerConfig(port, scopedSessionIds) {
+  // Use provided scoped IDs, or fall back to the current scope from updateSessionMetadata
+  const effectiveIds = (scopedSessionIds && scopedSessionIds.length > 0)
+    ? scopedSessionIds
+    : currentScopedSessionIds;
+
   const runtimePath = toUnpackedAsarPath(
     path.join(__dirname, "..", "mcp", "netcatty-mcp-server.cjs"),
   );
@@ -628,8 +647,8 @@ function buildMcpServerConfig(port, scopedSessionIds) {
     { name: "NETCATTY_MCP_PORT", value: String(port) },
   ];
 
-  if (scopedSessionIds && scopedSessionIds.length > 0) {
-    env.push({ name: "NETCATTY_MCP_SESSION_IDS", value: scopedSessionIds.join(",") });
+  if (effectiveIds && effectiveIds.length > 0) {
+    env.push({ name: "NETCATTY_MCP_SESSION_IDS", value: effectiveIds.join(",") });
   }
 
   return {
