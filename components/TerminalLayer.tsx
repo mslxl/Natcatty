@@ -916,31 +916,22 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   // AI Chat state
   const aiState = useAIState();
 
-  // Clean up AI sessions when terminal sessions or workspaces are removed
-  const prevSessionIdsRef = useRef(new Set(sessions.map(s => s.id)));
-  const prevWorkspaceIdsRef = useRef(new Set(workspaces.map(w => w.id)));
+  // On mount: clean up orphaned AI sessions after a short delay
+  // (allows sessions/workspaces to fully initialize)
+  const hasCleanedUpRef = useRef(false);
   useEffect(() => {
-    const currentSessionIds = new Set(sessions.map(s => s.id));
-    const currentWorkspaceIds = new Set(workspaces.map(w => w.id));
-    // Detect removed terminal sessions
-    for (const id of prevSessionIdsRef.current) {
-      if (!currentSessionIds.has(id)) {
-        aiState.deleteSessionsByTarget('terminal', id);
-      }
-    }
-    // Detect removed workspaces
-    for (const id of prevWorkspaceIdsRef.current) {
-      if (!currentWorkspaceIds.has(id)) {
-        aiState.deleteSessionsByTarget('workspace', id);
-      }
-    }
-    prevSessionIdsRef.current = currentSessionIds;
-    prevWorkspaceIdsRef.current = currentWorkspaceIds;
-  }, [sessions, workspaces, aiState.deleteSessionsByTarget]);
+    if (hasCleanedUpRef.current) return;
+    if (sessions.length === 0 && workspaces.length === 0) return;
+    hasCleanedUpRef.current = true;
+    const activeIds = new Set<string>();
+    for (const s of sessions) activeIds.add(s.id);
+    for (const w of workspaces) activeIds.add(w.id);
+    aiState.cleanupOrphanedSessions(activeIds);
+  }, [sessions, workspaces, aiState.cleanupOrphanedSessions]);
 
   // Build terminal session context for the AI chat panel
   const aiTerminalSessions = useMemo(() => {
-    const sessionIds = activeWorkspace
+    const sessionIds = activeWorkspace?.tree
       ? collectSessionIds(activeWorkspace.tree)
       : activeSession ? [activeSession.id] : [];
 
@@ -1338,7 +1329,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                         commandBlocklist={aiState.commandBlocklist}
                         scopeType={activeWorkspace ? 'workspace' : 'terminal'}
                         scopeTargetId={activeWorkspace?.id ?? activeSession?.id}
-                        scopeHostIds={activeWorkspace
+                        scopeHostIds={activeWorkspace?.tree
                           ? collectSessionIds(activeWorkspace.tree).map(sid => {
                               const s = sessions.find(s => s.id === sid);
                               return s?.hostId;

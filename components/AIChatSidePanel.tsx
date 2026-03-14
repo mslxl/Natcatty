@@ -24,6 +24,7 @@ import type {
   ExternalAgentConfig,
   ProviderConfig,
 } from '../infrastructure/ai/types';
+import { getAgentModelPresets } from '../infrastructure/ai/types';
 import { buildSystemPrompt } from '../infrastructure/ai/cattyAgent/systemPrompt';
 import { createModelFromConfig } from '../infrastructure/ai/sdk/providers';
 import { createCattyTools } from '../infrastructure/ai/sdk/tools';
@@ -131,6 +132,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   const [isStreaming, setIsStreaming] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [currentAgentId, setCurrentAgentId] = useState(defaultAgentId);
+  const [selectedAgentModel, setSelectedAgentModel] = useState<string | undefined>(undefined);
   const abortControllerRef = useRef<AbortController | null>(null);
   const { openSettingsWindow } = useWindowControls();
 
@@ -166,6 +168,16 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
 
   const providerDisplayName = activeProvider?.name ?? '';
   const modelDisplayName = activeModelId || activeProvider?.defaultModel || '';
+
+  // Agent model presets for the current external agent
+  const currentAgentConfig = useMemo(
+    () => currentAgentId !== 'catty' ? externalAgents.find(a => a.id === currentAgentId) : undefined,
+    [currentAgentId, externalAgents],
+  );
+  const agentModelPresets = useMemo(
+    () => getAgentModelPresets(currentAgentConfig?.command),
+    [currentAgentConfig?.command],
+  );
 
   // Filtered sessions for history (matching current scope type)
   const historySessions = useMemo(
@@ -284,6 +296,21 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         const requestId = `claude_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         console.log('[AIChatPanel] → Claude Agent SDK path, requestId:', requestId);
 
+        let claudeNeedsNewAssistantMsg = false;
+
+        const maybeCreateClaudeAssistantMsg = () => {
+          if (claudeNeedsNewAssistantMsg) {
+            claudeNeedsNewAssistantMsg = false;
+            addMessageToSession(sessionId!, {
+              id: generateId(),
+              role: 'assistant',
+              content: '',
+              timestamp: Date.now(),
+              model: agentConfig?.name || 'external',
+            });
+          }
+        };
+
         try {
           await runClaudeAgentTurn(
             bridge,
@@ -293,6 +320,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
             trimmed,
             {
               onTextDelta: (text: string) => {
+                maybeCreateClaudeAssistantMsg();
                 updateLastMessage(sessionId!, msg => ({
                   ...msg,
                   content: msg.content + text,
@@ -302,6 +330,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
                 }));
               },
               onThinkingDelta: (text: string) => {
+                maybeCreateClaudeAssistantMsg();
                 updateLastMessage(sessionId!, msg => ({
                   ...msg,
                   thinking: (msg.thinking || '') + text,
@@ -314,6 +343,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
                 }));
               },
               onToolCall: (toolName: string, args: Record<string, unknown>) => {
+                maybeCreateClaudeAssistantMsg();
                 updateLastMessage(sessionId!, msg => ({
                   ...msg,
                   toolCalls: [...(msg.toolCalls || []), {
@@ -325,6 +355,12 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
                 }));
               },
               onToolResult: (toolCallId: string, result: string) => {
+                updateLastMessage(sessionId!, msg => {
+                  if (msg.role === 'assistant' && msg.executionStatus === 'running') {
+                    return { ...msg, executionStatus: 'completed' };
+                  }
+                  return msg;
+                });
                 addMessageToSession(sessionId!, {
                   id: generateId(),
                   role: 'tool',
@@ -333,8 +369,10 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
                   timestamp: Date.now(),
                   executionStatus: 'completed',
                 });
+                claudeNeedsNewAssistantMsg = true;
               },
               onError: (error: string) => {
+                maybeCreateClaudeAssistantMsg();
                 updateLastMessage(sessionId!, msg => ({
                   ...msg,
                   content: msg.content + '\n\n**Error:** ' + error,
@@ -344,6 +382,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
               onDone: () => {},
             },
             abortController.signal,
+            selectedAgentModel,
           );
         } catch (err) {
           if (!abortController.signal.aborted) {
@@ -358,11 +397,33 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         const requestId = `acp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         console.log('[AIChatPanel] → ACP path, requestId:', requestId, 'acpCommand:', agentConfig.acpCommand);
 
+        // Push terminal session metadata to MCP bridge before streaming
+        const mcpBridge = bridge as unknown as { aiMcpUpdateSessions?: (sessions: typeof terminalSessions) => Promise<unknown> };
+        if (mcpBridge.aiMcpUpdateSessions && terminalSessions.length > 0) {
+          await mcpBridge.aiMcpUpdateSessions(terminalSessions);
+        }
+
         // Try to find an API key from configured providers for this agent
         const openaiProvider = providers.find(p => p.providerId === 'openai' && p.enabled && p.apiKey);
         const agentApiKey = openaiProvider?.apiKey;
 
         try {
+          // Mutable flag: set after tool-result, cleared when new assistant msg is created
+          let needsNewAssistantMsg = false;
+
+          const maybeCreateAssistantMsg = () => {
+            if (needsNewAssistantMsg) {
+              needsNewAssistantMsg = false;
+              addMessageToSession(sessionId!, {
+                id: generateId(),
+                role: 'assistant',
+                content: '',
+                timestamp: Date.now(),
+                model: agentConfig?.name || 'external',
+              });
+            }
+          };
+
           await runAcpAgentTurn(
             bridge,
             requestId,
@@ -371,16 +432,17 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
             trimmed,
             {
               onTextDelta: (text: string) => {
+                maybeCreateAssistantMsg();
                 updateLastMessage(sessionId!, msg => ({
                   ...msg,
                   content: msg.content + text,
-                  // Record thinking duration when first text arrives
                   thinkingDurationMs: msg.thinking && !msg.thinkingDurationMs
                     ? Date.now() - msg.timestamp
                     : msg.thinkingDurationMs,
                 }));
               },
               onThinkingDelta: (text: string) => {
+                maybeCreateAssistantMsg();
                 updateLastMessage(sessionId!, msg => ({
                   ...msg,
                   thinking: (msg.thinking || '') + text,
@@ -393,6 +455,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
                 }));
               },
               onToolCall: (toolName: string, args: Record<string, unknown>) => {
+                maybeCreateAssistantMsg();
                 updateLastMessage(sessionId!, msg => ({
                   ...msg,
                   toolCalls: [...(msg.toolCalls || []), {
@@ -404,6 +467,13 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
                 }));
               },
               onToolResult: (toolCallId: string, result: string) => {
+                // Mark previous assistant message's tool calls as completed
+                updateLastMessage(sessionId!, msg => {
+                  if (msg.role === 'assistant' && msg.executionStatus === 'running') {
+                    return { ...msg, executionStatus: 'completed' };
+                  }
+                  return msg;
+                });
                 addMessageToSession(sessionId!, {
                   id: generateId(),
                   role: 'tool',
@@ -412,8 +482,11 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
                   timestamp: Date.now(),
                   executionStatus: 'completed',
                 });
+                // Next text/thinking/toolCall should go into a new assistant message
+                needsNewAssistantMsg = true;
               },
               onError: (error: string) => {
+                maybeCreateAssistantMsg();
                 updateLastMessage(sessionId!, msg => ({
                   ...msg,
                   content: msg.content + '\n\n**Error:** ' + error,
@@ -424,6 +497,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
             },
             abortController.signal,
             agentApiKey,
+            selectedAgentModel,
           );
         } catch (err) {
           if (!abortController.signal.aborted) {
@@ -612,6 +686,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     addMessageToSession,
     updateLastMessage,
     updateSessionTitle,
+    selectedAgentModel,
   ]);
 
   const handleStop = useCallback(() => {
@@ -770,8 +845,10 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
             isStreaming={isStreaming}
             providerName={providerDisplayName}
             modelName={modelDisplayName}
-            permissionMode={globalPermissionMode}
             agentName={currentAgentId === 'catty' ? 'Catty Agent' : externalAgents.find(a => a.id === currentAgentId)?.name}
+            modelPresets={agentModelPresets}
+            selectedModelId={selectedAgentModel}
+            onModelSelect={setSelectedAgentModel}
           />
         </>
       )}

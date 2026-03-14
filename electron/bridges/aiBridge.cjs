@@ -13,6 +13,8 @@ const { createHash } = require("node:crypto");
 const { existsSync } = require("node:fs");
 const path = require("node:path");
 
+const mcpServerBridge = require("./mcpServerBridge.cjs");
+
 let sessions = null;
 let sftpClients = null;
 let electronModule = null;
@@ -347,6 +349,7 @@ function init(deps) {
   sessions = deps.sessions;
   sftpClients = deps.sftpClients;
   electronModule = deps.electronModule;
+  mcpServerBridge.init({ sessions, sftpClients });
 }
 
 /**
@@ -966,7 +969,7 @@ function registerHandlers(ipcMain) {
         path: resolvedPath,
         version,
         available: true,
-        sdkType: agent.command === "claude" ? "claude-agent-sdk" : undefined,
+        sdkType: undefined, // Use ACP for all agents (including Claude Code)
       });
       seenPaths.add(resolvedPath);
     }
@@ -1217,9 +1220,16 @@ function registerHandlers(ipcMain) {
     }
   });
 
+  // ── MCP Server session metadata ──
+
+  ipcMain.handle("netcatty:ai:mcp:update-sessions", async (_event, { sessions: sessionList }) => {
+    mcpServerBridge.updateSessionMetadata(sessionList || []);
+    return { ok: true };
+  });
+
   // ── ACP (Agent Client Protocol) streaming ──
 
-  ipcMain.handle("netcatty:ai:acp:stream", async (event, { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey }) => {
+  ipcMain.handle("netcatty:ai:acp:stream", async (event, { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey, model }) => {
     console.log("[ACP] stream handler called:", { requestId, chatSessionId, acpCommand, prompt: prompt?.slice(0, 50) });
     try {
       const { createACPProvider } = require("@mcpc-tech/acp-ai-provider");
@@ -1258,6 +1268,20 @@ function registerHandlers(ipcMain) {
       const mcpSnapshot = isCodexAgent
         ? await resolveCodexMcpSnapshot(sessionCwd)
         : { mcpServers: [], fingerprint: getCodexMcpFingerprint([]) };
+
+      // Inject Netcatty MCP server for remote host access
+      try {
+        const mcpPort = await mcpServerBridge.getOrCreateHost();
+        // Parse scoped session IDs from the chatSessionId context if available
+        const netcattyMcpConfig = mcpServerBridge.buildMcpServerConfig(mcpPort);
+        mcpSnapshot.mcpServers.push(netcattyMcpConfig);
+        console.log("[ACP] Injected netcatty-remote-hosts MCP server on port", mcpPort);
+      } catch (err) {
+        console.warn("[ACP] Failed to inject Netcatty MCP server:", err?.message || err);
+      }
+
+      // Recalculate fingerprint after injection
+      mcpSnapshot.fingerprint = getCodexMcpFingerprint(mcpSnapshot.mcpServers);
       console.log("[ACP] MCP snapshot:", { count: mcpSnapshot.mcpServers.length, fingerprint: mcpSnapshot.fingerprint?.slice(0, 12) });
 
       let providerEntry = acpProviders.get(chatSessionId);
@@ -1311,11 +1335,19 @@ function registerHandlers(ipcMain) {
       const abortController = new AbortController();
       acpActiveStreams.set(requestId, abortController);
 
+      // Prepend context hint so the agent uses MCP tools for remote hosts
+      const contextualPrompt =
+        `[Context: You are inside Netcatty, a multi-host SSH terminal manager. ` +
+        `The user is managing REMOTE servers, not the local machine. ` +
+        `Use the "netcatty-remote-hosts" MCP tools to operate on the remote hosts. ` +
+        `Call get_environment first to discover available hosts and their session IDs. ` +
+        `Do NOT use local shell execution.]\n\n${prompt}`;
+
       console.log("[ACP] Starting streamText...");
       const result = streamText({
-        model: providerEntry.provider.languageModel(),
+        model: providerEntry.provider.languageModel(model || undefined),
         tools: providerEntry.provider.tools,
-        prompt,
+        prompt: contextualPrompt,
         stopWhen: stepCountIs(50),
         abortSignal: abortController.signal,
       });
@@ -1416,9 +1448,10 @@ function registerHandlers(ipcMain) {
       // Build filtered env (strip sensitive keys, preserve shell PATH)
       const claudeEnv = buildClaudeEnv(shellEnv);
 
-      // Session isolation: each chat session gets its own CLAUDE_CONFIG_DIR
-      const configDir = ensureClaudeConfigDir(chatSessionId);
-      claudeEnv.CLAUDE_CONFIG_DIR = configDir;
+      // NOTE: Do NOT set CLAUDE_CONFIG_DIR here. The Claude Agent SDK needs access
+      // to the default ~/.claude/ directory and the user's Keychain credentials.
+      // Session isolation via CLAUDE_CONFIG_DIR would break auth since credentials
+      // are stored in macOS Keychain tied to the default config path.
 
       const abortController = new AbortController();
       claudeActiveStreams.set(requestId, abortController);
@@ -1426,47 +1459,55 @@ function registerHandlers(ipcMain) {
       // Session resume: use stored SDK session ID if available
       const existingSessionId = claudeSessionIds.get(chatSessionId) || null;
 
-      // Resolve MCP servers from codex CLI (shared infrastructure)
+      // Resolve MCP servers: codex MCP list + netcatty remote hosts
       let mcpServers = undefined;
       try {
-        const snapshot = await resolveCodexMcpSnapshot();
-        if (snapshot.mcpServers && snapshot.mcpServers.length > 0) {
-          // Convert from codex format to Claude SDK format
-          const mcpObj = {};
-          for (const srv of snapshot.mcpServers) {
+        const mcpObj = {};
+
+        // 1. From codex CLI (if available)
+        try {
+          const snapshot = await resolveCodexMcpSnapshot();
+          for (const srv of snapshot.mcpServers || []) {
             if (srv.type === "stdio") {
               const envObj = {};
               if (Array.isArray(srv.env)) {
-                for (const { name, value } of srv.env) {
-                  envObj[name] = value;
-                }
+                for (const { name, value } of srv.env) envObj[name] = value;
               }
-              mcpObj[srv.name] = {
-                command: srv.command,
-                args: srv.args || [],
-                env: envObj,
-              };
+              mcpObj[srv.name] = { command: srv.command, args: srv.args || [], env: envObj };
             } else if (srv.type === "http") {
               const headerObj = {};
               if (Array.isArray(srv.headers)) {
-                for (const { name, value } of srv.headers) {
-                  headerObj[name] = value;
-                }
+                for (const { name, value } of srv.headers) headerObj[name] = value;
               }
-              mcpObj[srv.name] = {
-                url: srv.url,
-                headers: headerObj,
-              };
+              mcpObj[srv.name] = { url: srv.url, headers: headerObj };
             }
           }
-          if (Object.keys(mcpObj).length > 0) {
-            mcpServers = mcpObj;
+        } catch {
+          // codex MCP not available — that's fine
+        }
+
+        // 2. Inject netcatty-remote-hosts MCP server
+        try {
+          const mcpPort = await mcpServerBridge.getOrCreateHost();
+          const cfg = mcpServerBridge.buildMcpServerConfig(mcpPort);
+          const envObj = {};
+          if (Array.isArray(cfg.env)) {
+            for (const { name, value } of cfg.env) envObj[name] = value;
           }
+          mcpObj[cfg.name] = { command: cfg.command, args: cfg.args || [], env: envObj };
+          console.log("[Claude SDK] Injected netcatty-remote-hosts MCP server");
+        } catch (err) {
+          console.warn("[Claude SDK] Failed to inject Netcatty MCP:", err?.message);
+        }
+
+        if (Object.keys(mcpObj).length > 0) {
+          mcpServers = mcpObj;
         }
       } catch (err) {
         console.warn("[Claude SDK] Failed to resolve MCP servers:", err?.message);
       }
 
+      // Claude SDK discovers MCP tools via protocol — no need for prompt prefix.
       const queryOptions = {
         prompt,
         options: {

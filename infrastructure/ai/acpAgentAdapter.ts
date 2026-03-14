@@ -27,6 +27,7 @@ interface AcpBridge {
     prompt: string,
     cwd?: string,
     apiKey?: string,
+    model?: string,
   ): Promise<{ ok: boolean; error?: string }>;
   aiAcpCancel(requestId: string): Promise<{ ok: boolean }>;
   onAiAcpEvent(requestId: string, cb: (event: StreamEvent) => void): () => void;
@@ -53,6 +54,7 @@ export async function runAcpAgentTurn(
   callbacks: AcpAgentCallbacks,
   signal?: AbortSignal,
   apiKey?: string,
+  model?: string,
 ): Promise<void> {
   const acpBridge = bridge as unknown as AcpBridge;
 
@@ -105,6 +107,7 @@ export async function runAcpAgentTurn(
     prompt,
     undefined, // cwd
     apiKey,
+    model,
   ).catch((err: Error) => {
     callbacks.onError(err.message);
   });

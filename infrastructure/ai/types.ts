@@ -193,3 +193,40 @@ export const PROVIDER_PRESETS: Record<AIProviderId, { name: string; defaultBaseU
   openrouter: { name: 'OpenRouter', defaultBaseURL: 'https://openrouter.ai/api/v1', modelsEndpoint: '/models' },
   custom: { name: 'Custom', defaultBaseURL: '' },
 };
+
+// Agent model presets (hardcoded, same as 1code)
+export interface AgentModelPreset {
+  id: string;
+  name: string;
+  description?: string;
+  /** Codex thinking levels (model ID sent as `id/thinking`) */
+  thinkingLevels?: string[];
+}
+
+export const CLAUDE_MODEL_PRESETS: AgentModelPreset[] = [
+  { id: 'opus', name: 'Opus 4.6', description: 'Most powerful' },
+  { id: 'sonnet', name: 'Sonnet 4.6', description: 'Fast & capable' },
+  { id: 'haiku', name: 'Haiku 4.5', description: 'Fastest' },
+];
+
+export const CODEX_MODEL_PRESETS: AgentModelPreset[] = [
+  { id: 'gpt-5.4', name: 'GPT 5.4', description: 'Latest', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
+  { id: 'gpt-5.3-codex', name: 'Codex 5.3', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
+  { id: 'gpt-5.2-codex', name: 'Codex 5.2', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
+  { id: 'gpt-5.1-codex-max', name: 'Codex 5.1 Max', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
+  { id: 'gpt-5.1-codex-mini', name: 'Codex 5.1 Mini', description: 'Fast', thinkingLevels: ['medium', 'high'] },
+  { id: 'o3', name: 'o3', description: 'Reasoning' },
+  { id: 'o4-mini', name: 'o4-mini', description: 'Fast reasoning' },
+];
+
+export function getAgentModelPresets(agentCommand?: string): AgentModelPreset[] {
+  if (!agentCommand) return [];
+  if (agentCommand === 'claude' || agentCommand.includes('claude')) return CLAUDE_MODEL_PRESETS;
+  if (agentCommand === 'codex' || agentCommand.includes('codex')) return CODEX_MODEL_PRESETS;
+  return [];
+}
+
+export function formatThinkingLabel(level: string): string {
+  if (level === 'xhigh') return 'Extra High';
+  return level.charAt(0).toUpperCase() + level.slice(1);
+}

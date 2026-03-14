@@ -219,6 +219,22 @@ export function useAIState() {
     });
   }, [persistSessions]);
 
+  const cleanupOrphanedSessions = useCallback((activeTargetIds: Set<string>) => {
+    setSessionsRaw(prev => {
+      const next = prev.filter(s => {
+        // Keep sessions without a targetId (global scope)
+        if (!s.scope.targetId) return true;
+        // Keep sessions whose target still exists
+        return activeTargetIds.has(s.scope.targetId);
+      });
+      if (next.length !== prev.length) {
+        console.log(`[AI] Cleaned up ${prev.length - next.length} orphaned AI sessions`);
+        persistSessions(next);
+      }
+      return next;
+    });
+  }, [persistSessions]);
+
   // ── Provider CRUD helpers ──
   const addProvider = useCallback((provider: ProviderConfig) => {
     setProviders(prev => [...prev, provider]);
@@ -290,5 +306,6 @@ export function useAIState() {
     addMessageToSession,
     updateLastMessage,
     clearSessionMessages,
+    cleanupOrphanedSessions,
   };
 }

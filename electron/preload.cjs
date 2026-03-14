@@ -1013,6 +1013,10 @@ const api = {
   aiKillAgent: async (agentId) => {
     return ipcRenderer.invoke("netcatty:ai:agent:kill", { agentId });
   },
+  // MCP Server session metadata
+  aiMcpUpdateSessions: async (sessions) => {
+    return ipcRenderer.invoke("netcatty:ai:mcp:update-sessions", { sessions });
+  },
   // Claude Agent SDK streaming
   aiClaudeStream: async (requestId, chatSessionId, prompt, model) => {
     return ipcRenderer.invoke("netcatty:ai:claude:stream", { requestId, chatSessionId, prompt, model });
@@ -1042,8 +1046,8 @@ const api = {
     return () => ipcRenderer.removeListener("netcatty:ai:claude:error", handler);
   },
   // ACP streaming
-  aiAcpStream: async (requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey) => {
-    return ipcRenderer.invoke("netcatty:ai:acp:stream", { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey });
+  aiAcpStream: async (requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey, model) => {
+    return ipcRenderer.invoke("netcatty:ai:acp:stream", { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey, model });
   },
   aiAcpCancel: async (requestId) => {
     return ipcRenderer.invoke("netcatty:ai:acp:cancel", { requestId });

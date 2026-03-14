@@ -23,7 +23,10 @@ module.exports = {
         'node_modules/cpu-features/**/*',
         'node_modules/@zed-industries/codex-acp/**/*',
         'node_modules/@zed-industries/codex-acp-*/**/*',
-        'node_modules/@anthropic-ai/claude-agent-sdk/**/*'
+        'node_modules/@anthropic-ai/claude-agent-sdk/**/*',
+        'node_modules/@modelcontextprotocol/sdk/**/*',
+        'node_modules/zod/**/*',
+        'electron/mcp/**/*'
     ],
     mac: {
         target: [
