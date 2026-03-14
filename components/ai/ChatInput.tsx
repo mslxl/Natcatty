@@ -6,7 +6,7 @@
  * and a bottom toolbar with muted controls + subtle send button.
  */
 
-import { Cpu, Expand, Plus, Shield, Sparkles } from 'lucide-react';
+import { Cpu, Expand, Plus, Shield } from 'lucide-react';
 import React, { useCallback, useState } from 'react';
 import type { FormEvent } from 'react';
 import {
@@ -102,10 +102,6 @@ const ChatInput: React.FC<ChatInputProps> = ({
             <PromptInputButton tooltip="Attach context" className={iconButtonClassName}>
               <Plus size={13} />
             </PromptInputButton>
-            <div className={chipClassName}>
-              <Sparkles size={11} className="text-primary" />
-              <span className="truncate max-w-[92px]">{agentName || 'Catty Agent'}</span>
-            </div>
             <div className={chipClassName}>
               <Cpu size={11} className="text-muted-foreground/64" />
               <span className="truncate max-w-[82px]">{modelLabel}</span>

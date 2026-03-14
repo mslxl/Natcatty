@@ -124,6 +124,8 @@ export interface ExternalAgentConfig {
   /** ACP command (e.g. 'codex-acp', 'claude-code-acp', 'gemini --experimental-acp') */
   acpCommand?: string;
   acpArgs?: string[];
+  /** Which SDK to use for streaming ('acp' or 'claude-agent-sdk') */
+  sdkType?: 'acp' | 'claude-agent-sdk';
 }
 
 // Discovered agent from system PATH
@@ -139,6 +141,8 @@ export interface DiscoveredAgent {
   /** ACP command if agent supports ACP protocol */
   acpCommand?: string;
   acpArgs?: string[];
+  /** Which SDK to use for streaming ('acp' or 'claude-agent-sdk') */
+  sdkType?: 'acp' | 'claude-agent-sdk';
 }
 
 // AI Settings (stored in localStorage)

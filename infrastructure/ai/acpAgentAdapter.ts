@@ -127,7 +127,7 @@ function cleanup(fns: (() => void)[]) {
 function handleStreamEvent(event: StreamEvent, callbacks: AcpAgentCallbacks) {
   switch (event.type) {
     case 'text-delta': {
-      const text = (event.delta as string) || '';
+      const text = (event.textDelta as string) || (event.delta as string) || '';
       if (text) callbacks.onTextDelta(text);
       break;
     }

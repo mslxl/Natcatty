@@ -57,9 +57,10 @@ export function useAgentDiscovery(
         const newArgs = JSON.stringify(match.args);
         const acpChanged = ea.acpCommand !== match.acpCommand
           || JSON.stringify(ea.acpArgs || []) !== JSON.stringify(match.acpArgs || []);
-        if (currentArgs !== newArgs || acpChanged) {
+        const sdkTypeChanged = ea.sdkType !== match.sdkType;
+        if (currentArgs !== newArgs || acpChanged || sdkTypeChanged) {
           changed = true;
-          return { ...ea, args: match.args, acpCommand: match.acpCommand, acpArgs: match.acpArgs };
+          return { ...ea, args: match.args, acpCommand: match.acpCommand, acpArgs: match.acpArgs, sdkType: match.sdkType };
         }
         return ea;
       });
@@ -86,6 +87,7 @@ export function useAgentDiscovery(
         enabled: true,
         acpCommand: agent.acpCommand,
         acpArgs: agent.acpArgs,
+        sdkType: agent.sdkType,
       };
     },
     [],

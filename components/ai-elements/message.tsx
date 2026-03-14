@@ -26,7 +26,7 @@ export const MessageContent = ({ children, className, ...props }: MessageContent
   <div
     className={cn(
       'flex w-fit min-w-0 max-w-full flex-col gap-1.5 overflow-hidden text-[13px] leading-relaxed',
-      'group-[.is-user]:ml-auto group-[.is-user]:rounded-2xl group-[.is-user]:border group-[.is-user]:border-border/50 group-[.is-user]:px-4 group-[.is-user]:py-2.5',
+      'group-[.is-user]:ml-auto group-[.is-user]:rounded-lg group-[.is-user]:border group-[.is-user]:border-border/50 group-[.is-user]:bg-muted/50 group-[.is-user]:px-4 group-[.is-user]:py-2.5',
       'group-[.is-assistant]:w-full group-[.is-assistant]:text-foreground/90',
       className,
     )}
@@ -60,9 +60,9 @@ export const MessageResponse = memo(
       className={cn(
         'size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0',
         // Style the rendered markdown
-        '[&_pre]:rounded-md [&_pre]:bg-muted/40 [&_pre]:border [&_pre]:border-border/30 [&_pre]:p-3 [&_pre]:text-[12px] [&_pre]:overflow-x-auto',
+        // Code: base styles (code-block overrides are in index.css)
         '[&_code]:text-[12px] [&_code]:font-mono',
-        '[&_p_code]:px-1 [&_p_code]:py-0.5 [&_p_code]:rounded [&_p_code]:bg-muted/40',
+        '[&_p_code]:px-[0.4em] [&_p_code]:py-[0.15em] [&_p_code]:rounded [&_p_code]:bg-foreground/[0.06] [&_p_code]:text-[85%]',
         '[&_p]:my-1.5',
         '[&_ul]:my-1.5 [&_ul]:pl-4 [&_ul]:list-disc',
         '[&_ol]:my-1.5 [&_ol]:pl-4 [&_ol]:list-decimal',

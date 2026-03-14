@@ -859,11 +859,14 @@ async function createWindow(electronModule, options) {
   // Register window control handlers
   registerWindowHandlers(electronModule.ipcMain, nativeTheme);
 
+  // Register IPC handlers BEFORE loading any URL so the renderer never
+  // calls a handler that hasn't been registered yet.
+  onRegisterBridge?.(win);
+
   if (isDev) {
     try {
       await win.loadURL(getDevRendererBaseUrl(devServerUrl));
       win.webContents.openDevTools({ mode: "detach" });
-      onRegisterBridge?.(win);
       return win;
     } catch (e) {
       console.warn("Dev server not reachable, falling back to bundled dist.", e);
@@ -872,8 +875,6 @@ async function createWindow(electronModule, options) {
 
   // Production mode - load via custom protocol.
   await win.loadURL("app://netcatty/index.html");
-
-  onRegisterBridge?.(win);
   return win;
 }
 

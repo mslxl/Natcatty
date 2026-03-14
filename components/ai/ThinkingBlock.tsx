@@ -73,7 +73,7 @@ const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
   const preview = content.length > 60 ? content.slice(0, 60) + '…' : content;
 
   return (
-    <div className="my-1">
+    <div className="mb-0.5">
       {/* Header */}
       <button
         onClick={toggle}
@@ -84,7 +84,7 @@ const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
           className={cn(
             'shrink-0 text-muted-foreground/50 transition-transform duration-200',
             isExpanded && 'rotate-90',
-            !isExpanded && 'opacity-0 group-hover:opacity-100',
+            !isExpanded && 'opacity-50',
           )}
         />
         <span className="text-[12px] font-medium text-muted-foreground/70 whitespace-nowrap shrink-0">
@@ -108,7 +108,7 @@ const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
 
       {/* Content */}
       {isExpanded && content && (
-        <div className="relative mt-0.5">
+        <div className="relative">
           {/* Top gradient fade */}
           {isStreaming && (
             <div className="absolute inset-x-0 top-0 h-4 bg-gradient-to-b from-background to-transparent z-10 pointer-events-none" />

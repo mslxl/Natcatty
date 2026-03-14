@@ -56,8 +56,8 @@ const AgentMenuRow: React.FC<{
     <button
       onClick={onClick}
       className={cn(
-        'flex h-10 w-full items-center gap-3 rounded-md px-4 text-left text-[13px] text-foreground/86 transition-colors cursor-pointer hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/30',
-        isActive && 'bg-white/[0.06]',
+        'flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] text-foreground/86 transition-colors cursor-pointer hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/30',
+        isActive && 'bg-muted',
       )}
     >
       <AgentIconBadge agent={agent} size="xs" variant="plain" className="opacity-78" />
@@ -182,7 +182,7 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
       <DropdownTrigger asChild>
         <button
           type="button"
-          className="group flex h-8 min-w-0 max-w-[170px] items-center gap-2 rounded-md px-2 text-left transition-colors hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/28"
+          className="group flex h-8 min-w-0 max-w-[170px] items-center gap-2 rounded-md px-2 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/28"
         >
           <AgentIconBadge
             agent={currentAgent}
@@ -206,7 +206,7 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
       <DropdownContent
         align="start"
         sideOffset={6}
-        className="w-[288px] rounded-2xl border border-border/50 bg-[#171717]/98 p-0 text-foreground shadow-[0_22px_56px_rgba(0,0,0,0.54)] supports-[backdrop-filter]:bg-[#171717]/94 supports-[backdrop-filter]:backdrop-blur-xl"
+        className="w-[288px] rounded-2xl border border-border/50 bg-popover p-0 text-foreground shadow-lg supports-[backdrop-filter]:backdrop-blur-xl"
       >
         {BUILTIN_AGENTS.map((agent) => (
           <AgentMenuRow
@@ -265,7 +265,7 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
         <div className="mx-0 my-1 border-t border-border/50" />
         <button
           onClick={handleManageAgents}
-          className="flex h-10 w-full items-center gap-3 rounded-md px-4 text-left text-[13px] text-foreground/82 transition-colors cursor-pointer hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/30"
+          className="flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] text-foreground/82 transition-colors cursor-pointer hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/30"
         >
           <AgentIconBadge agent="add-more" size="xs" variant="plain" className="opacity-72" />
           <span className="min-w-0 flex-1 truncate">Add More Agents</span>

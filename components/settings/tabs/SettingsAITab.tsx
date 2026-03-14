@@ -7,9 +7,13 @@ import {
   ChevronDown,
   Eye,
   EyeOff,
+  ExternalLink,
   Globe,
+  LogIn,
+  LogOut,
   Pencil,
   Plus,
+  RefreshCw,
   ScanSearch,
   Shield,
   Trash2,
@@ -19,10 +23,12 @@ import React, { useCallback, useEffect, useState } from "react";
 import type {
   AIPermissionMode,
   AIProviderId,
+  DiscoveredAgent,
   ExternalAgentConfig,
   ProviderConfig,
 } from "../../../infrastructure/ai/types";
 import { PROVIDER_PRESETS } from "../../../infrastructure/ai/types";
+import { useAgentDiscovery } from "../../../application/state/useAgentDiscovery";
 import { encryptField, decryptField } from "../../../infrastructure/persistence/secureFieldAdapter";
 import { TabsContent } from "../../ui/tabs";
 import { Button } from "../../ui/button";
@@ -52,6 +58,51 @@ interface SettingsAITabProps {
   setCommandTimeout: (value: number) => void;
   maxIterations: number;
   setMaxIterations: (value: number) => void;
+}
+
+type CodexIntegrationState =
+  | "connected_chatgpt"
+  | "connected_api_key"
+  | "not_logged_in"
+  | "unknown";
+
+interface CodexIntegrationStatus {
+  state: CodexIntegrationState;
+  isConnected: boolean;
+  rawOutput: string;
+  exitCode: number | null;
+}
+
+type CodexLoginState = "running" | "success" | "error" | "cancelled";
+
+interface CodexLoginSession {
+  sessionId: string;
+  state: CodexLoginState;
+  url: string | null;
+  output: string;
+  error: string | null;
+  exitCode: number | null;
+}
+
+interface NetcattyAiBridge {
+  aiCodexGetIntegration?: () => Promise<CodexIntegrationStatus>;
+  aiCodexStartLogin?: () => Promise<{ ok: boolean; session?: CodexLoginSession; error?: string }>;
+  aiCodexGetLoginSession?: (sessionId: string) => Promise<{ ok: boolean; session?: CodexLoginSession; error?: string }>;
+  aiCodexCancelLogin?: (sessionId: string) => Promise<{ ok: boolean; found?: boolean; session?: CodexLoginSession; error?: string }>;
+  aiCodexLogout?: () => Promise<{ ok: boolean; state?: CodexIntegrationState; isConnected?: boolean; rawOutput?: string; logoutOutput?: string; error?: string }>;
+  openExternal?: (url: string) => Promise<void>;
+}
+
+function getBridge(): NetcattyAiBridge | undefined {
+  return (window as unknown as { netcatty?: NetcattyAiBridge }).netcatty;
+}
+
+function normalizeCodexBridgeError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("No handler registered for 'netcatty:ai:codex:")) {
+    return "Codex main-process handlers are not loaded yet. Fully restart Netcatty, or restart the Electron dev process, then try again.";
+  }
+  return message;
 }
 
 // ---------------------------------------------------------------------------
@@ -409,6 +460,143 @@ const ExternalAgentCard: React.FC<{
   </div>
 );
 
+const DetectedAgentCard: React.FC<{
+  agent: DiscoveredAgent;
+  onAdd: () => void;
+}> = ({ agent, onAdd }) => (
+  <div className="flex items-center gap-3 py-2.5 px-3 rounded-lg border border-border/60 bg-muted/20">
+    <div className="w-7 h-7 rounded-md bg-muted flex items-center justify-center shrink-0">
+      <Bot size={14} className="text-muted-foreground" />
+    </div>
+    <div className="flex-1 min-w-0">
+      <div className="text-sm font-medium truncate">{agent.name}</div>
+      <div className="text-xs text-muted-foreground font-mono truncate mt-0.5">
+        {agent.version || agent.path}
+      </div>
+    </div>
+    <Button variant="outline" size="sm" onClick={onAdd} className="gap-1.5">
+      <Plus size={14} />
+      Add
+    </Button>
+  </div>
+);
+
+const CodexConnectionCard: React.FC<{
+  integration: CodexIntegrationStatus | null;
+  loginSession: CodexLoginSession | null;
+  isLoading: boolean;
+  hasOpenAiProviderKey: boolean;
+  error: string | null;
+  onRefresh: () => void;
+  onConnect: () => void;
+  onCancel: () => void;
+  onOpenUrl: () => void;
+  onLogout: () => void;
+}> = ({
+  integration,
+  loginSession,
+  isLoading,
+  hasOpenAiProviderKey,
+  error,
+  onRefresh,
+  onConnect,
+  onCancel,
+  onOpenUrl,
+  onLogout,
+}) => {
+  const status = loginSession?.state === "running"
+    ? "Awaiting login"
+    : integration?.state === "connected_chatgpt"
+      ? "Connected via ChatGPT"
+      : integration?.state === "connected_api_key"
+        ? "Connected via API key"
+        : integration?.state === "not_logged_in"
+          ? "Not connected"
+          : "Status unknown";
+
+  const statusClassName = loginSession?.state === "running"
+    ? "text-amber-500"
+    : integration?.isConnected
+      ? "text-emerald-500"
+      : "text-muted-foreground";
+
+  const outputText = loginSession?.error
+    ? loginSession.error
+    : loginSession?.output?.trim()
+      ? loginSession.output.trim()
+      : integration?.rawOutput?.trim()
+        ? integration.rawOutput.trim()
+        : "";
+
+  return (
+    <div className="rounded-lg border border-border/60 bg-muted/20 p-4 space-y-3">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <ProviderIconBadge providerId="openai" size="sm" />
+            <span className="text-sm font-medium">Codex CLI</span>
+          </div>
+          <p className="text-xs text-muted-foreground mt-2 leading-5">
+            Bundled <span className="font-mono">codex</span> + <span className="font-mono">codex-acp</span> for ACP protocol streaming.
+            Login with ChatGPT subscription here, or configure an OpenAI provider API key (passed as <span className="font-mono">CODEX_API_KEY</span>).
+          </p>
+        </div>
+        <div className={cn("text-xs font-medium shrink-0", statusClassName)}>
+          {status}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        {loginSession?.state === "running" ? (
+          <>
+            <Button variant="default" size="sm" onClick={onOpenUrl} disabled={!loginSession.url}>
+              <ExternalLink size={14} className="mr-1.5" />
+              Open Login
+            </Button>
+            <Button variant="outline" size="sm" onClick={onCancel}>
+              <X size={14} className="mr-1.5" />
+              Cancel
+            </Button>
+          </>
+        ) : integration?.isConnected ? (
+          <Button variant="outline" size="sm" onClick={onLogout}>
+            <LogOut size={14} className="mr-1.5" />
+            Logout
+          </Button>
+        ) : (
+          <Button variant="default" size="sm" onClick={onConnect}>
+            <LogIn size={14} className="mr-1.5" />
+            Connect ChatGPT
+          </Button>
+        )}
+
+        <Button variant="outline" size="sm" onClick={onRefresh} disabled={isLoading}>
+          <RefreshCw size={14} className={cn("mr-1.5", isLoading && "animate-spin")} />
+          Refresh Status
+        </Button>
+      </div>
+
+      {hasOpenAiProviderKey && (
+        <p className="text-xs text-emerald-500">
+          Enabled OpenAI provider API key detected. Codex ACP can also authenticate without ChatGPT login.
+        </p>
+      )}
+
+      {error && (
+        <p className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
+
+      {outputText && (
+        <pre className="rounded-md border border-border/60 bg-background px-3 py-2 text-[11px] leading-5 text-muted-foreground whitespace-pre-wrap max-h-40 overflow-auto">
+          {outputText}
+        </pre>
+      )}
+    </div>
+  );
+};
+
 // ---------------------------------------------------------------------------
 // Add Agent Form
 // ---------------------------------------------------------------------------
@@ -503,7 +691,17 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
 }) => {
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
   const [showAddAgent, setShowAddAgent] = useState(false);
-  const [isScanning, setIsScanning] = useState(false);
+  const [codexIntegration, setCodexIntegration] = useState<CodexIntegrationStatus | null>(null);
+  const [codexLoginSession, setCodexLoginSession] = useState<CodexLoginSession | null>(null);
+  const [isCodexLoading, setIsCodexLoading] = useState(false);
+  const [codexError, setCodexError] = useState<string | null>(null);
+
+  const {
+    unconfiguredAgents,
+    isDiscovering,
+    rediscover,
+    enableAgent,
+  } = useAgentDiscovery(externalAgents, setExternalAgents);
 
   // Add a new provider from preset
   const handleAddProvider = useCallback(
@@ -553,15 +751,63 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
       .map((a) => ({ value: a.id, label: a.name })),
   ];
 
-  // Scan for external agents on PATH
-  const handleScanAgents = useCallback(async () => {
-    setIsScanning(true);
-    // Simulated scan - in production this would use the bridge to scan PATH
-    // For now just set a timeout to show the scanning state
-    setTimeout(() => {
-      setIsScanning(false);
-    }, 1500);
+  const hasOpenAiProviderKey = providers.some(
+    (provider) => provider.providerId === "openai" && provider.enabled && !!provider.apiKey,
+  );
+
+  const refreshCodexIntegration = useCallback(async () => {
+    const bridge = getBridge();
+    if (!bridge?.aiCodexGetIntegration) return;
+
+    setIsCodexLoading(true);
+    setCodexError(null);
+    try {
+      const integration = await bridge.aiCodexGetIntegration();
+      setCodexIntegration(integration);
+    } catch (err) {
+      setCodexError(normalizeCodexBridgeError(err));
+    } finally {
+      setIsCodexLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void refreshCodexIntegration();
+  }, [refreshCodexIntegration]);
+
+  useEffect(() => {
+    if (!codexLoginSession || codexLoginSession.state !== "running") {
+      return;
+    }
+
+    const bridge = getBridge();
+    if (!bridge?.aiCodexGetLoginSession) {
+      return;
+    }
+
+    let cancelled = false;
+    const intervalId = window.setInterval(() => {
+      void bridge.aiCodexGetLoginSession?.(codexLoginSession.sessionId).then((result) => {
+        if (cancelled || !result?.ok || !result.session) return;
+
+        setCodexLoginSession(result.session);
+        if (result.session.state !== "running") {
+          if (result.session.state === "success") {
+            void refreshCodexIntegration();
+          }
+        }
+      }).catch((err) => {
+        if (!cancelled) {
+          setCodexError(normalizeCodexBridgeError(err));
+        }
+      });
+    }, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [codexLoginSession, refreshCodexIntegration]);
 
   // Add external agent
   const handleAddAgent = useCallback(
@@ -571,6 +817,11 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     },
     [setExternalAgents],
   );
+
+  const handleAddDiscoveredAgent = useCallback((agent: DiscoveredAgent) => {
+    const config = enableAgent(agent);
+    setExternalAgents((prev) => [...prev, config]);
+  }, [enableAgent, setExternalAgents]);
 
   // Remove external agent
   const handleRemoveAgent = useCallback(
@@ -592,6 +843,67 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     },
     [setExternalAgents],
   );
+
+  const handleStartCodexLogin = useCallback(async () => {
+    const bridge = getBridge();
+    if (!bridge?.aiCodexStartLogin) return;
+
+    setCodexError(null);
+    setIsCodexLoading(true);
+    try {
+      const result = await bridge.aiCodexStartLogin();
+      if (!result.ok || !result.session) {
+        throw new Error(result.error || "Failed to start Codex login");
+      }
+      setCodexLoginSession(result.session);
+    } catch (err) {
+      setCodexError(normalizeCodexBridgeError(err));
+    } finally {
+      setIsCodexLoading(false);
+    }
+  }, []);
+
+  const handleCancelCodexLogin = useCallback(async () => {
+    const bridge = getBridge();
+    if (!bridge?.aiCodexCancelLogin || !codexLoginSession) return;
+
+    setCodexError(null);
+    try {
+      const result = await bridge.aiCodexCancelLogin(codexLoginSession.sessionId);
+      if (result.session) {
+        setCodexLoginSession(result.session);
+      }
+    } catch (err) {
+      setCodexError(normalizeCodexBridgeError(err));
+    }
+  }, [codexLoginSession]);
+
+  const handleOpenCodexLoginUrl = useCallback(() => {
+    const bridge = getBridge();
+    const url = codexLoginSession?.url;
+    if (!bridge?.openExternal || !url) return;
+    void bridge.openExternal(url);
+  }, [codexLoginSession]);
+
+  const handleCodexLogout = useCallback(async () => {
+    const bridge = getBridge();
+    if (!bridge?.aiCodexLogout) return;
+
+    setCodexError(null);
+    setIsCodexLoading(true);
+    try {
+      const result = await bridge.aiCodexLogout();
+      if (!result.ok) {
+        throw new Error(result.error || "Failed to log out from Codex");
+      }
+      setCodexLoginSession(null);
+      await refreshCodexIntegration();
+    } catch (err) {
+      setCodexError(normalizeCodexBridgeError(err));
+    } finally {
+      setIsCodexLoading(false);
+    }
+  }, [refreshCodexIntegration]);
 
   return (
     <TabsContent
@@ -686,6 +998,27 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
             </div>
           </div>
 
+          {/* ── Codex Section ── */}
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <ProviderIconBadge providerId="openai" size="sm" />
+              <h3 className="text-base font-medium">Codex</h3>
+            </div>
+
+            <CodexConnectionCard
+              integration={codexIntegration}
+              loginSession={codexLoginSession}
+              isLoading={isCodexLoading}
+              hasOpenAiProviderKey={hasOpenAiProviderKey}
+              error={codexError}
+              onRefresh={() => void refreshCodexIntegration()}
+              onConnect={() => void handleStartCodexLogin()}
+              onCancel={() => void handleCancelCodexLogin()}
+              onOpenUrl={handleOpenCodexLoginUrl}
+              onLogout={() => void handleCodexLogout()}
+            />
+          </div>
+
           {/* ── External Agents Section ── */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -697,12 +1030,12 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => void handleScanAgents()}
-                  disabled={isScanning}
+                  onClick={() => void rediscover()}
+                  disabled={isDiscovering}
                   className="gap-1.5"
                 >
-                  <ScanSearch size={14} className={isScanning ? "animate-spin" : ""} />
-                  {isScanning ? "Scanning..." : "Scan for Agents"}
+                  <ScanSearch size={14} className={isDiscovering ? "animate-spin" : ""} />
+                  {isDiscovering ? "Scanning..." : "Scan for Agents"}
                 </Button>
                 <Button
                   variant="outline"
@@ -723,7 +1056,22 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               />
             )}
 
-            {externalAgents.length === 0 && !showAddAgent ? (
+            {unconfiguredAgents.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Detected on this machine
+                </div>
+                {unconfiguredAgents.map((agent) => (
+                  <DetectedAgentCard
+                    key={`${agent.command}:${agent.path}`}
+                    agent={agent}
+                    onAdd={() => handleAddDiscoveredAgent(agent)}
+                  />
+                ))}
+              </div>
+            )}
+
+            {externalAgents.length === 0 && unconfiguredAgents.length === 0 && !showAddAgent ? (
               <div className="rounded-lg border border-dashed border-border/60 p-6 text-center">
                 <ScanSearch size={24} className="mx-auto text-muted-foreground mb-2" />
                 <p className="text-sm text-muted-foreground">

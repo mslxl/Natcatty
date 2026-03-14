@@ -39,7 +39,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
 
   return (
     <Conversation className="flex-1">
-      <ConversationContent className="gap-2 px-4 py-3">
+      <ConversationContent className="gap-1.5 px-4 py-2">
         {visibleMessages.map((message) => {
           if (message.role === 'tool') {
             return message.toolResults?.map((tr) => (

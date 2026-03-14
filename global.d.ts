@@ -612,6 +612,97 @@ declare global {
     credentialsEncrypt?(plaintext: string): Promise<string>;
     credentialsDecrypt?(value: string): Promise<string>;
 
+    // AI / external agents
+    aiChatStream?(requestId: string, url: string, headers?: Record<string, string>, body?: string): Promise<{ ok: boolean; error?: string }>;
+    aiChatCancel?(requestId: string): Promise<boolean>;
+    aiFetch?(url: string, method?: string, headers?: Record<string, string>, body?: string): Promise<{ ok: boolean; status: number; data: string; error?: string }>;
+    aiExec?(sessionId: string, command: string): Promise<{ ok: boolean; stdout?: string; stderr?: string; exitCode?: number | null; error?: string }>;
+    aiTerminalWrite?(sessionId: string, data: string): Promise<{ ok: boolean; error?: string }>;
+    aiDiscoverAgents?(): Promise<Array<{
+      command: string;
+      name: string;
+      icon: string;
+      description: string;
+      args: string[];
+      path: string;
+      version: string;
+      available: boolean;
+      acpCommand?: string;
+      acpArgs?: string[];
+      sdkType?: 'acp' | 'claude-agent-sdk';
+    }>>;
+    aiCodexGetIntegration?(): Promise<{
+      state: 'connected_chatgpt' | 'connected_api_key' | 'not_logged_in' | 'unknown';
+      isConnected: boolean;
+      rawOutput: string;
+      exitCode: number | null;
+    }>;
+    aiCodexStartLogin?(): Promise<{
+      ok: boolean;
+      session?: {
+        sessionId: string;
+        state: 'running' | 'success' | 'error' | 'cancelled';
+        url: string | null;
+        output: string;
+        error: string | null;
+        exitCode: number | null;
+      };
+      error?: string;
+    }>;
+    aiCodexGetLoginSession?(sessionId: string): Promise<{
+      ok: boolean;
+      session?: {
+        sessionId: string;
+        state: 'running' | 'success' | 'error' | 'cancelled';
+        url: string | null;
+        output: string;
+        error: string | null;
+        exitCode: number | null;
+      };
+      error?: string;
+    }>;
+    aiCodexCancelLogin?(sessionId: string): Promise<{
+      ok: boolean;
+      found?: boolean;
+      session?: {
+        sessionId: string;
+        state: 'running' | 'success' | 'error' | 'cancelled';
+        url: string | null;
+        output: string;
+        error: string | null;
+        exitCode: number | null;
+      };
+      error?: string;
+    }>;
+    aiCodexLogout?(): Promise<{
+      ok: boolean;
+      state?: 'connected_chatgpt' | 'connected_api_key' | 'not_logged_in' | 'unknown';
+      isConnected?: boolean;
+      rawOutput?: string;
+      logoutOutput?: string;
+      error?: string;
+    }>;
+    aiSpawnAgent?(agentId: string, command: string, args?: string[], env?: Record<string, string>, options?: { closeStdin?: boolean }): Promise<{ ok: boolean; pid?: number; error?: string }>;
+    aiWriteToAgent?(agentId: string, data: string): Promise<{ ok: boolean; error?: string }>;
+    aiCloseAgentStdin?(agentId: string): Promise<{ ok: boolean; error?: string }>;
+    aiKillAgent?(agentId: string): Promise<{ ok: boolean; error?: string }>;
+    aiClaudeStream?(requestId: string, chatSessionId: string, prompt: string, model?: string): Promise<{ ok: boolean; error?: string }>;
+    aiClaudeCancel?(requestId: string): Promise<{ ok: boolean; error?: string }>;
+    onAiClaudeEvent?(requestId: string, cb: (event: Record<string, unknown>) => void): () => void;
+    onAiClaudeDone?(requestId: string, cb: () => void): () => void;
+    onAiClaudeError?(requestId: string, cb: (error: string) => void): () => void;
+    aiAcpStream?(requestId: string, chatSessionId: string, acpCommand: string, acpArgs: string[], prompt: string, cwd?: string, apiKey?: string): Promise<{ ok: boolean; error?: string }>;
+    aiAcpCancel?(requestId: string): Promise<{ ok: boolean; error?: string }>;
+    aiAcpCleanup?(chatSessionId: string): Promise<{ ok: boolean }>;
+    onAiAcpEvent?(requestId: string, cb: (event: Record<string, unknown>) => void): () => void;
+    onAiAcpDone?(requestId: string, cb: () => void): () => void;
+    onAiAcpError?(requestId: string, cb: (error: string) => void): () => void;
+    onAiStreamData?(requestId: string, cb: (data: string) => void): () => void;
+    onAiStreamEnd?(requestId: string, cb: () => void): () => void;
+    onAiAgentStdout?(agentId: string, cb: (data: string) => void): () => void;
+    onAiAgentStderr?(agentId: string, cb: (data: string) => void): () => void;
+    onAiAgentExit?(agentId: string, cb: (code: number | null) => void): () => void;
+
     // Auto-update
     checkForUpdate?(): Promise<{
       available: boolean;

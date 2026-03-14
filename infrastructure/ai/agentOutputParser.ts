@@ -92,7 +92,6 @@ function parseItemEvent(
     const command = item.command as string || '';
     const output = item.aggregated_output as string || '';
     const exitCode = item.exit_code as number | null;
-    const status = item.status as string;
 
     if (eventType === 'item.started' && command) {
       segments.push({ type: 'command', content: command });

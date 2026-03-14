@@ -33,62 +33,62 @@ const AGENT_ICON_VISUALS: Record<AgentIconKey, AgentIconVisual> = {
   catty: {
     src: '/ai/agents/sparkles.svg',
     badgeClassName: 'border-white/8 bg-white/[0.04]',
-    imageClassName: 'object-contain brightness-0 invert opacity-90',
+    imageClassName: 'object-contain dark:brightness-0 dark:invert opacity-90',
   },
   openai: {
     src: '/ai/providers/openai.svg',
     badgeClassName: 'border-emerald-500/22 bg-emerald-500/12',
-    imageClassName: 'object-contain brightness-0 invert',
+    imageClassName: 'object-contain dark:brightness-0 dark:invert',
   },
   claude: {
     src: '/ai/agents/claude.svg',
     badgeClassName: 'border-orange-500/22 bg-orange-500/12',
-    imageClassName: 'object-contain brightness-0 invert',
+    imageClassName: 'object-contain dark:brightness-0 dark:invert',
   },
   anthropic: {
     src: '/ai/providers/anthropic.svg',
     badgeClassName: 'border-orange-500/22 bg-orange-500/12',
-    imageClassName: 'object-contain brightness-0 invert',
+    imageClassName: 'object-contain dark:brightness-0 dark:invert',
   },
   gemini: {
     src: '/ai/agents/gemini.svg',
     badgeClassName: 'border-sky-500/22 bg-sky-500/12',
-    imageClassName: 'object-contain brightness-0 invert',
+    imageClassName: 'object-contain dark:brightness-0 dark:invert',
   },
   google: {
     src: '/ai/providers/google.svg',
     badgeClassName: 'border-sky-500/22 bg-sky-500/12',
-    imageClassName: 'object-contain brightness-0 invert',
+    imageClassName: 'object-contain dark:brightness-0 dark:invert',
   },
   ollama: {
     src: '/ai/providers/ollama.svg',
     badgeClassName: 'border-violet-500/22 bg-violet-500/12',
-    imageClassName: 'object-contain brightness-0 invert',
+    imageClassName: 'object-contain dark:brightness-0 dark:invert',
   },
   openrouter: {
     src: '/ai/providers/openrouter.svg',
     badgeClassName: 'border-fuchsia-500/22 bg-fuchsia-500/12',
-    imageClassName: 'object-contain brightness-0 invert',
+    imageClassName: 'object-contain dark:brightness-0 dark:invert',
   },
   zed: {
     src: '/ai/agents/zed.svg',
     badgeClassName: 'border-cyan-500/22 bg-cyan-500/12',
-    imageClassName: 'object-contain brightness-0 invert',
+    imageClassName: 'object-contain dark:brightness-0 dark:invert',
   },
   atom: {
     src: '/ai/agents/atom.svg',
     badgeClassName: 'border-amber-500/18 bg-amber-500/10',
-    imageClassName: 'object-contain brightness-0 invert opacity-90',
+    imageClassName: 'object-contain dark:brightness-0 dark:invert opacity-90',
   },
   terminal: {
     src: '/ai/agents/terminal.svg',
     badgeClassName: 'border-white/8 bg-white/[0.04]',
-    imageClassName: 'object-contain brightness-0 invert opacity-90',
+    imageClassName: 'object-contain dark:brightness-0 dark:invert opacity-90',
   },
   plus: {
     src: '/ai/agents/plus.svg',
     badgeClassName: 'border-white/8 bg-white/[0.04]',
-    imageClassName: 'object-contain brightness-0 invert opacity-85',
+    imageClassName: 'object-contain dark:brightness-0 dark:invert opacity-85',
   },
 };
 

@@ -20,7 +20,10 @@ module.exports = {
     asarUnpack: [
         'node_modules/node-pty/**/*',
         'node_modules/ssh2/**/*',
-        'node_modules/cpu-features/**/*'
+        'node_modules/cpu-features/**/*',
+        'node_modules/@zed-industries/codex-acp/**/*',
+        'node_modules/@zed-industries/codex-acp-*/**/*',
+        'node_modules/@anthropic-ai/claude-agent-sdk/**/*'
     ],
     mac: {
         target: [
