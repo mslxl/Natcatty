@@ -20,7 +20,7 @@ type AgentIconKey =
   | 'openrouter'
   | 'zed'
   | 'atom'
-  | 'terminal'
+| 'terminal'
   | 'plus';
 
 type AgentIconVisual = {

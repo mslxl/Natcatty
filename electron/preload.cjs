@@ -986,14 +986,48 @@ const api = {
   aiDiscoverAgents: async () => {
     return ipcRenderer.invoke("netcatty:ai:agents:discover");
   },
-  aiSpawnAgent: async (agentId, command, args, env) => {
-    return ipcRenderer.invoke("netcatty:ai:agent:spawn", { agentId, command, args, env });
+  aiSpawnAgent: async (agentId, command, args, env, options) => {
+    return ipcRenderer.invoke("netcatty:ai:agent:spawn", { agentId, command, args, env, closeStdin: options?.closeStdin });
   },
   aiWriteToAgent: async (agentId, data) => {
     return ipcRenderer.invoke("netcatty:ai:agent:write", { agentId, data });
   },
+  aiCloseAgentStdin: async (agentId) => {
+    return ipcRenderer.invoke("netcatty:ai:agent:close-stdin", { agentId });
+  },
   aiKillAgent: async (agentId) => {
     return ipcRenderer.invoke("netcatty:ai:agent:kill", { agentId });
+  },
+  // ACP streaming
+  aiAcpStream: async (requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey) => {
+    return ipcRenderer.invoke("netcatty:ai:acp:stream", { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey });
+  },
+  aiAcpCancel: async (requestId) => {
+    return ipcRenderer.invoke("netcatty:ai:acp:cancel", { requestId });
+  },
+  aiAcpCleanup: async (chatSessionId) => {
+    return ipcRenderer.invoke("netcatty:ai:acp:cleanup", { chatSessionId });
+  },
+  onAiAcpEvent: (requestId, cb) => {
+    const handler = (_event, payload) => {
+      if (payload.requestId === requestId) cb(payload.event);
+    };
+    ipcRenderer.on("netcatty:ai:acp:event", handler);
+    return () => ipcRenderer.removeListener("netcatty:ai:acp:event", handler);
+  },
+  onAiAcpDone: (requestId, cb) => {
+    const handler = (_event, payload) => {
+      if (payload.requestId === requestId) cb();
+    };
+    ipcRenderer.on("netcatty:ai:acp:done", handler);
+    return () => ipcRenderer.removeListener("netcatty:ai:acp:done", handler);
+  },
+  onAiAcpError: (requestId, cb) => {
+    const handler = (_event, payload) => {
+      if (payload.requestId === requestId) cb(payload.error);
+    };
+    ipcRenderer.on("netcatty:ai:acp:error", handler);
+    return () => ipcRenderer.removeListener("netcatty:ai:acp:error", handler);
   },
   onAiStreamData: (requestId, cb) => {
     const handler = (_event, payload) => {

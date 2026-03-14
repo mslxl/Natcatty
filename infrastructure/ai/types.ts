@@ -26,6 +26,8 @@ export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
+  thinking?: string;
+  thinkingDurationMs?: number;
   toolCalls?: ToolCall[];
   toolResults?: ToolResult[];
   timestamp: number;
@@ -119,6 +121,24 @@ export interface ExternalAgentConfig {
   env?: Record<string, string>;
   icon?: string;
   enabled: boolean;
+  /** ACP command (e.g. 'codex-acp', 'claude-code-acp', 'gemini --experimental-acp') */
+  acpCommand?: string;
+  acpArgs?: string[];
+}
+
+// Discovered agent from system PATH
+export interface DiscoveredAgent {
+  command: string;
+  name: string;
+  icon: string;
+  description: string;
+  args: string[];
+  path: string;
+  version: string;
+  available: boolean;
+  /** ACP command if agent supports ACP protocol */
+  acpCommand?: string;
+  acpArgs?: string[];
 }
 
 // AI Settings (stored in localStorage)

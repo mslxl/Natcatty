@@ -20,6 +20,7 @@ import type {
   AISession,
   AISessionScope,
   ChatMessage,
+  DiscoveredAgent,
   ExternalAgentConfig,
   ProviderConfig,
 } from '../infrastructure/ai/types';
@@ -28,6 +29,8 @@ import { createModelFromConfig } from '../infrastructure/ai/sdk/providers';
 import { createCattyTools } from '../infrastructure/ai/sdk/tools';
 import { exportAsMarkdown, exportAsJSON, exportAsPlainText, getExportFilename } from '../infrastructure/ai/conversationExport';
 import { runExternalAgentTurn } from '../infrastructure/ai/externalAgentAdapter';
+import { runAcpAgentTurn } from '../infrastructure/ai/acpAgentAdapter';
+import { useAgentDiscovery } from '../application/state/useAgentDiscovery';
 import { Button } from './ui/button';
 import { ScrollArea } from './ui/scroll-area';
 import AgentSelector from './ai/AgentSelector';
@@ -60,6 +63,7 @@ interface AIChatSidePanelProps {
   // Agent info
   defaultAgentId: string;
   externalAgents: ExternalAgentConfig[];
+  setExternalAgents?: (value: ExternalAgentConfig[] | ((prev: ExternalAgentConfig[]) => ExternalAgentConfig[])) => void;
 
   // Permission
   globalPermissionMode: AIPermissionMode;
@@ -112,6 +116,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   activeModelId,
   defaultAgentId,
   externalAgents,
+  setExternalAgents,
   globalPermissionMode,
   commandBlocklist,
   scopeType,
@@ -127,6 +132,22 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   const [currentAgentId, setCurrentAgentId] = useState(defaultAgentId);
   const abortControllerRef = useRef<AbortController | null>(null);
   const { openSettingsWindow } = useWindowControls();
+
+  // Agent discovery
+  const {
+    discoveredAgents,
+    isDiscovering,
+    rediscover,
+    enableAgent,
+  } = useAgentDiscovery(externalAgents, setExternalAgents);
+
+  const handleEnableDiscoveredAgent = useCallback(
+    (agent: DiscoveredAgent) => {
+      const config = enableAgent(agent);
+      setExternalAgents?.((prev) => [...prev, config]);
+    },
+    [enableAgent, setExternalAgents],
+  );
 
   // Active session
   const activeSession = useMemo(
@@ -184,7 +205,11 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   const handleSend = useCallback(async () => {
     const trimmed = inputValue.trim();
     if (!trimmed || isStreaming) return;
-    if (!activeProvider) return;
+
+    const isExternalAgent = currentAgentId !== 'catty';
+
+    // For built-in agent, we need a provider configured
+    if (!isExternalAgent && !activeProvider) return;
 
     // Create session if needed
     let sessionId = activeSessionId;
@@ -211,13 +236,16 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     setIsStreaming(true);
 
     // Create assistant message placeholder for streaming
+    const agentConfig = isExternalAgent
+      ? externalAgents.find(a => a.id === currentAgentId)
+      : undefined;
     addMessageToSession(sessionId, {
       id: generateId(),
       role: 'assistant',
       content: '',
       timestamp: Date.now(),
-      model: activeModelId || activeProvider.defaultModel || '',
-      providerId: activeProvider.providerId,
+      model: isExternalAgent ? (agentConfig?.name || 'external') : (activeModelId || activeProvider?.defaultModel || ''),
+      providerId: isExternalAgent ? undefined : activeProvider?.providerId,
     });
 
     // Abort controller for cancellation
@@ -227,11 +255,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     // Get current session for context
     const currentSession = sessions.find((s) => s.id === sessionId);
 
-    // Check if using an external agent
-    const isExternalAgent = currentAgentId !== 'catty';
-
     if (isExternalAgent) {
-      const agentConfig = externalAgents.find(a => a.id === currentAgentId);
       if (!agentConfig) {
         updateLastMessage(sessionId, msg => ({
           ...msg,
@@ -242,44 +266,129 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         return;
       }
 
-      try {
-        await runExternalAgentTurn(
-          agentConfig,
-          trimmed,
-          {
-            onTextDelta: (text: string) => {
-              updateLastMessage(sessionId!, msg => ({ ...msg, content: msg.content + text }));
+      const bridge = (window as unknown as { netcatty?: Record<string, unknown> }).netcatty as
+        Record<string, (...args: unknown[]) => unknown> | undefined;
+
+      // Use ACP protocol if the agent supports it
+      if (agentConfig.acpCommand && bridge) {
+        const requestId = `acp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+        // Try to find an API key from configured providers for this agent
+        const openaiProvider = providers.find(p => p.providerId === 'openai' && p.enabled && p.apiKey);
+        const agentApiKey = openaiProvider?.apiKey;
+
+        try {
+          await runAcpAgentTurn(
+            bridge,
+            requestId,
+            sessionId!,
+            agentConfig,
+            trimmed,
+            {
+              onTextDelta: (text: string) => {
+                updateLastMessage(sessionId!, msg => ({
+                  ...msg,
+                  content: msg.content + text,
+                  // Record thinking duration when first text arrives
+                  thinkingDurationMs: msg.thinking && !msg.thinkingDurationMs
+                    ? Date.now() - msg.timestamp
+                    : msg.thinkingDurationMs,
+                }));
+              },
+              onThinkingDelta: (text: string) => {
+                updateLastMessage(sessionId!, msg => ({
+                  ...msg,
+                  thinking: (msg.thinking || '') + text,
+                }));
+              },
+              onThinkingDone: () => {
+                updateLastMessage(sessionId!, msg => ({
+                  ...msg,
+                  thinkingDurationMs: msg.thinkingDurationMs || (Date.now() - msg.timestamp),
+                }));
+              },
+              onToolCall: (toolName: string, args: Record<string, unknown>) => {
+                updateLastMessage(sessionId!, msg => ({
+                  ...msg,
+                  toolCalls: [...(msg.toolCalls || []), {
+                    id: `tc_${Date.now()}`,
+                    name: toolName,
+                    arguments: args,
+                  }],
+                  executionStatus: 'running',
+                }));
+              },
+              onToolResult: (toolCallId: string, result: string) => {
+                addMessageToSession(sessionId!, {
+                  id: generateId(),
+                  role: 'tool',
+                  content: '',
+                  toolResults: [{ toolCallId, content: result, isError: false }],
+                  timestamp: Date.now(),
+                  executionStatus: 'completed',
+                });
+              },
+              onError: (error: string) => {
+                updateLastMessage(sessionId!, msg => ({
+                  ...msg,
+                  content: msg.content + '\n\n**Error:** ' + error,
+                  executionStatus: 'failed',
+                }));
+              },
+              onDone: () => {},
             },
-            onError: (error: string) => {
-              updateLastMessage(sessionId!, msg => ({
-                ...msg,
-                content: msg.content + '\n\n**Error:** ' + error,
-                executionStatus: 'failed',
-              }));
+            abortController.signal,
+            agentApiKey,
+          );
+        } catch (err) {
+          if (!abortController.signal.aborted) {
+            updateLastMessage(sessionId!, msg => ({
+              ...msg,
+              content: msg.content + '\n\n**Error:** ' + (err instanceof Error ? err.message : String(err)),
+            }));
+          }
+        }
+      } else {
+        // Fallback: spawn as raw process
+        try {
+          await runExternalAgentTurn(
+            agentConfig,
+            trimmed,
+            {
+              onTextDelta: (text: string) => {
+                updateLastMessage(sessionId!, msg => ({ ...msg, content: msg.content + text }));
+              },
+              onError: (error: string) => {
+                updateLastMessage(sessionId!, msg => ({
+                  ...msg,
+                  content: msg.content + '\n\n**Error:** ' + error,
+                  executionStatus: 'failed',
+                }));
+              },
+              onDone: () => {},
             },
-            onDone: () => {},
-          },
-          (window as unknown as Record<string, unknown>).netcatty as Parameters<typeof runExternalAgentTurn>[3],
-          abortController.signal,
-        );
-      } catch (err) {
-        if (!abortController.signal.aborted) {
-          updateLastMessage(sessionId!, msg => ({
-            ...msg,
-            content: msg.content + '\n\n**Error:** ' + (err instanceof Error ? err.message : String(err)),
-          }));
+            bridge as Parameters<typeof runExternalAgentTurn>[3],
+            abortController.signal,
+          );
+        } catch (err) {
+          if (!abortController.signal.aborted) {
+            updateLastMessage(sessionId!, msg => ({
+              ...msg,
+              content: msg.content + '\n\n**Error:** ' + (err instanceof Error ? err.message : String(err)),
+            }));
+          }
         }
-      } finally {
-        setIsStreaming(false);
-        abortControllerRef.current = null;
-        if (
-          currentSession &&
-          (!currentSession.title || currentSession.title === 'New Chat')
-        ) {
-          const title =
-            trimmed.length > 50 ? trimmed.slice(0, 50) + '...' : trimmed;
-          updateSessionTitle(sessionId!, title);
-        }
+      }
+
+      setIsStreaming(false);
+      abortControllerRef.current = null;
+      if (
+        currentSession &&
+        (!currentSession.title || currentSession.title === 'New Chat')
+      ) {
+        const title =
+          trimmed.length > 50 ? trimmed.slice(0, 50) + '...' : trimmed;
+        updateSessionTitle(sessionId!, title);
       }
       return;
     }
@@ -481,7 +590,11 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         <AgentSelector
           currentAgentId={currentAgentId}
           externalAgents={externalAgents}
+          discoveredAgents={discoveredAgents}
+          isDiscovering={isDiscovering}
           onSelectAgent={handleAgentChange}
+          onEnableDiscoveredAgent={handleEnableDiscoveredAgent}
+          onRediscover={rediscover}
           onManageAgents={handleOpenSettings}
         />
         <div className="flex items-center gap-0.5">

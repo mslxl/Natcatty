@@ -1311,6 +1311,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                         activeModelId={aiState.activeModelId}
                         defaultAgentId={aiState.defaultAgentId}
                         externalAgents={aiState.externalAgents}
+                        setExternalAgents={aiState.setExternalAgents}
                         globalPermissionMode={aiState.globalPermissionMode}
                         commandBlocklist={aiState.commandBlocklist}
                         scopeType={activeWorkspace ? 'workspace' : 'terminal'}
