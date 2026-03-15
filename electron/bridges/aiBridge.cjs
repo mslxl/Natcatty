@@ -1378,18 +1378,21 @@ function registerHandlers(ipcMain) {
         : { mcpServers: [], fingerprint: getCodexMcpFingerprint([]) };
 
       // Inject Netcatty MCP server for remote host access
+      // Note: chatSessionId is excluded from the config used for fingerprint calculation
+      // so that switching between sessions in the same workspace doesn't invalidate providers.
       try {
         const mcpPort = await mcpServerBridge.getOrCreateHost();
         const scopedIds = mcpServerBridge.getCurrentScopedSessionIds();
         console.log("[ACP] Building MCP config with scoped IDs:", scopedIds, "chatSessionId:", chatSessionId);
-        const netcattyMcpConfig = mcpServerBridge.buildMcpServerConfig(mcpPort, scopedIds, chatSessionId);
+        // Build config WITHOUT chatSessionId for fingerprint stability
+        const netcattyMcpConfig = mcpServerBridge.buildMcpServerConfig(mcpPort, scopedIds);
         mcpSnapshot.mcpServers.push(netcattyMcpConfig);
         console.log("[ACP] Injected netcatty-remote-hosts MCP server on port", mcpPort);
       } catch (err) {
         console.warn("[ACP] Failed to inject Netcatty MCP server:", err?.message || err);
       }
 
-      // Recalculate fingerprint after injection
+      // Recalculate fingerprint after injection (does NOT include chatSessionId)
       mcpSnapshot.fingerprint = getCodexMcpFingerprint(mcpSnapshot.mcpServers);
       console.log("[ACP] MCP snapshot:", { count: mcpSnapshot.mcpServers.length, fingerprint: mcpSnapshot.fingerprint?.slice(0, 12) });
 

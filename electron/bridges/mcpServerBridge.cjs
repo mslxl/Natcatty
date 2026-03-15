@@ -213,22 +213,14 @@ async function dispatch(method, params) {
 function handleGetContext(params) {
   if (!sessions) return { hosts: [], instructions: "No sessions available." };
 
-  // Scope resolution priority:
-  // 1. Explicit scopedSessionIds from MCP server env var (per-process, set at spawn)
-  // 2. Per-chatSession scope from scopedMetadata (if chatSessionId provided)
-  // 3. No filtering — return all SSH sessions as fallback
-  let scopedIds = null;
-  if (params?.scopedSessionIds && params.scopedSessionIds.length > 0) {
-    scopedIds = new Set(params.scopedSessionIds);
-  } else if (params?.chatSessionId && scopedMetadata.has(params.chatSessionId)) {
-    const ids = scopedMetadata.get(params.chatSessionId).sessionIds;
-    if (ids.length > 0) scopedIds = new Set(ids);
-  }
+  // Scope resolution: use explicit scopedSessionIds from MCP server env var (per-process, set at spawn)
+  const scopedIds = (params?.scopedSessionIds && params.scopedSessionIds.length > 0)
+    ? new Set(params.scopedSessionIds)
+    : null;
 
   console.log("[MCP] handleGetContext scope:", {
     paramIds: params?.scopedSessionIds || "null",
-    chatSessionId: params?.chatSessionId || "null",
-    effectiveScopeSize: scopedIds ? scopedIds.size : "all (fallback)",
+    effectiveScopeSize: scopedIds ? scopedIds.size : "all (no scope)",
     totalSessions: sessions.size,
   });
 
@@ -662,7 +654,7 @@ function toUnpackedAsarPath(filePath) {
   return filePath;
 }
 
-function buildMcpServerConfig(port, scopedSessionIds, chatSessionId) {
+function buildMcpServerConfig(port, scopedSessionIds) {
   // Use provided scoped IDs, or fall back to the current scope from updateSessionMetadata
   const effectiveIds = (scopedSessionIds && scopedSessionIds.length > 0)
     ? scopedSessionIds
@@ -678,11 +670,6 @@ function buildMcpServerConfig(port, scopedSessionIds, chatSessionId) {
 
   if (effectiveIds && effectiveIds.length > 0) {
     env.push({ name: "NETCATTY_MCP_SESSION_IDS", value: effectiveIds.join(",") });
-  }
-
-  // Pass chatSessionId for per-scope metadata lookup fallback
-  if (chatSessionId) {
-    env.push({ name: "NETCATTY_MCP_CHAT_SESSION_ID", value: chatSessionId });
   }
 
   return {
