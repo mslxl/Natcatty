@@ -124,7 +124,25 @@ async function findAllDefaultPrivateKeys(options = {}) {
 }
 
 /**
- * Check if Windows SSH Agent service is running
+ * Check if a Windows named pipe exists (non-blocking).
+ * Works for OpenSSH Agent, Bitwarden SSH Agent, 1Password, etc.
+ */
+function windowsPipeExists(pipePath) {
+  try {
+    fs.statSync(pipePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const WIN_SSH_AGENT_PIPE = "\\\\.\\pipe\\openssh-ssh-agent";
+
+/**
+ * Check if an SSH agent is available on Windows.
+ * Instead of checking the OpenSSH Authentication Agent *service*, we probe
+ * the well-known named pipe directly. This supports any agent that provides
+ * the pipe — Bitwarden, 1Password, gpg-agent, etc.
  * @returns {Promise<boolean>}
  */
 function checkWindowsSshAgentRunning() {
@@ -133,13 +151,7 @@ function checkWindowsSshAgentRunning() {
       resolve(true);
       return;
     }
-    exec("sc query ssh-agent", (err, stdout) => {
-      if (err) {
-        resolve(false);
-        return;
-      }
-      resolve(stdout.includes("RUNNING"));
-    });
+    resolve(windowsPipeExists(WIN_SSH_AGENT_PIPE));
   });
 }
 

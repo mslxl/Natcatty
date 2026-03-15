@@ -140,8 +140,12 @@ async function findAllDefaultPrivateKeys() {
   return keys;
 }
 
+const WIN_SSH_AGENT_PIPE = "\\\\.\\pipe\\openssh-ssh-agent";
+
 /**
- * Check if Windows SSH Agent service is running
+ * Check if an SSH agent is available on Windows by probing the well-known
+ * named pipe. This detects any agent that provides the pipe — OpenSSH Agent
+ * service, Bitwarden, 1Password, gpg-agent, etc.
  * @returns {Promise<{ running: boolean, startupType: string | null, error: string | null }>}
  */
 function checkWindowsSshAgent() {
@@ -150,18 +154,17 @@ function checkWindowsSshAgent() {
       resolve({ running: true, startupType: null, error: null });
       return;
     }
-    exec("sc query ssh-agent", (err, stdout) => {
-      if (err) {
-        resolve({ running: false, startupType: null, error: "SSH Agent service not found" });
-        return;
-      }
-      const running = stdout.includes("RUNNING");
-      const stopped = stdout.includes("STOPPED");
-      resolve({
-        running,
-        startupType: stopped ? "stopped" : (running ? "running" : "unknown"),
-        error: null,
-      });
+    let pipeExists = false;
+    try {
+      fs.statSync(WIN_SSH_AGENT_PIPE);
+      pipeExists = true;
+    } catch {
+      // pipe not found
+    }
+    resolve({
+      running: pipeExists,
+      startupType: pipeExists ? "running" : "stopped",
+      error: pipeExists ? null : "SSH Agent pipe not found",
     });
   });
 }
@@ -170,7 +173,7 @@ async function getAvailableAgentSocket() {
   if (process.platform === "win32") {
     const agentStatus = await checkWindowsSshAgent();
     log("Windows SSH Agent check", agentStatus);
-    return agentStatus.running ? "\\\\.\\pipe\\openssh-ssh-agent" : null;
+    return agentStatus.running ? WIN_SSH_AGENT_PIPE : null;
   }
 
   return getSshAgentSocket();
