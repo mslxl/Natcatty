@@ -6,7 +6,7 @@
  */
 
 import { ShieldAlert } from 'lucide-react';
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { cn } from '../../lib/utils';
 import { Badge } from '../ui/badge';
@@ -50,8 +50,7 @@ const PermissionDialog: React.FC<PermissionDialogProps> = ({
 
   // Keyboard shortcuts: Enter to approve, Escape to reject
   const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (!open) return;
+    (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' && !isDenied) {
         e.preventDefault();
         onApprove();
@@ -60,13 +59,8 @@ const PermissionDialog: React.FC<PermissionDialogProps> = ({
         onReject();
       }
     },
-    [open, isDenied, onApprove, onReject],
+    [isDenied, onApprove, onReject],
   );
-
-  useEffect(() => {
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleKeyDown]);
 
   // Format arguments as readable code block content
   let formattedArgs = '';
@@ -105,7 +99,7 @@ const PermissionDialog: React.FC<PermissionDialogProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onDismiss()}>
-      <DialogContent hideCloseButton>
+      <DialogContent hideCloseButton onKeyDown={handleKeyDown}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ShieldAlert

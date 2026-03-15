@@ -87,7 +87,7 @@ function execViaPty(ptyStream, command, options) {
         cleaned = cleaned.replace(/__NCMCP_[^\r\n]*[\r\n]*/g, "").trim();
       }
       resolve({
-        ok: exitCode === 0 || exitCode === null,
+        ok: exitCode === 0,
         stdout: cleaned,
         stderr: "",
         exitCode: exitCode ?? 0,

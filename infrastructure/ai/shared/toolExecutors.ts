@@ -165,7 +165,11 @@ export async function executeSftpReadFile(
     return { ok: true, data: { content: result.stdout || '(empty file)' } };
   }
 
-  const content = await bridge.readSftp(session.sftpId, path);
+  let content = await bridge.readSftp(session.sftpId, path);
+  const maxBytes = Math.max(1, Math.min(10 * 1024 * 1024, Number(args.maxBytes) || 10000));
+  if (content && content.length > maxBytes) {
+    content = content.slice(0, maxBytes);
+  }
   return { ok: true, data: { content: content || '(empty file)' } };
 }
 

@@ -487,13 +487,18 @@ function registerHandlers(ipcMain) {
 
       let stdout = "";
       let stderr = "";
+      const MAX_BUFFER = 10 * 1024 * 1024; // 10MB
 
       child.stdout.on("data", (chunk) => {
-        stdout += chunk.toString("utf8");
+        if (stdout.length < MAX_BUFFER) {
+          stdout += chunk.toString("utf8");
+        }
       });
 
       child.stderr.on("data", (chunk) => {
-        stderr += chunk.toString("utf8");
+        if (stderr.length < MAX_BUFFER) {
+          stderr += chunk.toString("utf8");
+        }
       });
 
       child.once("error", (error) => {
@@ -1026,7 +1031,8 @@ function registerHandlers(ipcMain) {
       const SAFE_ENV_KEYS = new Set([
         "PATH", "HOME", "USER", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
         "TERM", "TMPDIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
-        "NODE_PATH", "CODEX_API_KEY", // explicitly added when needed
+        // NODE_PATH omitted: can redirect module resolution (code injection vector)
+        // CODEX_API_KEY omitted: injected separately at spawn site for Codex only
       ]);
       const safeEnv = {};
       for (const [k, v] of Object.entries(shellEnv)) {
@@ -1076,7 +1082,10 @@ function registerHandlers(ipcMain) {
   });
 
   // Send data to agent's stdin
-  ipcMain.handle("netcatty:ai:agent:write", async (_event, { agentId, data }) => {
+  ipcMain.handle("netcatty:ai:agent:write", async (event, { agentId, data }) => {
+    if (!validateSender(event)) {
+      return { ok: false, error: "Unauthorized IPC sender" };
+    }
     const proc = agentProcesses.get(agentId);
     if (!proc) return { ok: false, error: "Agent not found" };
     try {
@@ -1091,7 +1100,10 @@ function registerHandlers(ipcMain) {
   });
 
   // Close agent's stdin (signal EOF)
-  ipcMain.handle("netcatty:ai:agent:close-stdin", async (_event, { agentId }) => {
+  ipcMain.handle("netcatty:ai:agent:close-stdin", async (event, { agentId }) => {
+    if (!validateSender(event)) {
+      return { ok: false, error: "Unauthorized IPC sender" };
+    }
     const proc = agentProcesses.get(agentId);
     if (!proc) return { ok: false, error: "Agent not found" };
     try {
@@ -1299,7 +1311,7 @@ function registerHandlers(ipcMain) {
       });
       const reader = result.fullStream.getReader();
       let hasContent = false;
-      // Stall detection: if no chunk for 15s, send a status event
+      // Stall detection: if no chunk for 3s, send a status event
       let stallTimer = null;
       const STALL_TIMEOUT_MS = 3000;
       function resetStallTimer() {
@@ -1395,7 +1407,10 @@ function registerHandlers(ipcMain) {
 
 
   // Kill an agent process — waits for exit or force-kills after timeout
-  ipcMain.handle("netcatty:ai:agent:kill", async (_event, { agentId }) => {
+  ipcMain.handle("netcatty:ai:agent:kill", async (event, { agentId }) => {
+    if (!validateSender(event)) {
+      return { ok: false, error: "Unauthorized IPC sender" };
+    }
     const proc = agentProcesses.get(agentId);
     if (!proc) return { ok: false, error: "Agent not found" };
     try {

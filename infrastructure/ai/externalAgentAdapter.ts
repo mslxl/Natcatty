@@ -148,7 +148,9 @@ export async function runExternalAgentTurn(
   });
   cleanupFns.push(unsubStderr);
 
+  let resolveExit: (code: number | null) => void;
   const exitPromise = new Promise<number | null>((resolve) => {
+    resolveExit = resolve;
     const unsubExit = bridge.onAiAgentExit(agentId, (code) => {
       resolve(code);
     });
@@ -164,6 +166,7 @@ export async function runExternalAgentTurn(
     const onAbort = () => {
       bridge.aiKillAgent(agentId).catch(() => {});
       callbacks.onError('Cancelled');
+      resolveExit(null);
       finish();
     };
     signal.addEventListener('abort', onAbort, { once: true });
@@ -202,6 +205,7 @@ export async function runExternalAgentTurn(
     if (!done) {
       bridge.aiKillAgent(agentId).catch(() => {});
       callbacks.onError('Agent timeout (5 minutes)');
+      resolveExit(null);
       finish();
     }
   }, 300000);

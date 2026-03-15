@@ -41,6 +41,8 @@ let fallbackScopedSessionIds = [];
 
 // Command safety checking (reuse from aiBridge)
 let commandBlocklist = [];
+// Cached compiled RegExp objects for commandBlocklist (rebuilt when blocklist changes)
+let compiledBlocklist = [];
 
 // Command timeout in milliseconds (default 60s, synced from user settings)
 let commandTimeoutMs = 60000;
@@ -77,6 +79,15 @@ function init(deps) {
 
 function setCommandBlocklist(list) {
   commandBlocklist = list || [];
+  // Recompile cached regexes when blocklist changes
+  compiledBlocklist = [];
+  for (const pattern of commandBlocklist) {
+    try {
+      compiledBlocklist.push(new RegExp(pattern, "i"));
+    } catch {
+      compiledBlocklist.push(null); // placeholder for invalid patterns
+    }
+  }
 }
 
 function setCommandTimeout(seconds) {
@@ -183,13 +194,10 @@ async function limitConcurrency(tasks, limit) {
 }
 
 function checkCommandSafety(command) {
-  for (const pattern of commandBlocklist) {
-    try {
-      if (new RegExp(pattern, "i").test(command)) {
-        return { blocked: true, matchedPattern: pattern };
-      }
-    } catch {
-      // ignore invalid patterns
+  for (let i = 0; i < compiledBlocklist.length; i++) {
+    const re = compiledBlocklist[i];
+    if (re && re.test(command)) {
+      return { blocked: true, matchedPattern: commandBlocklist[i] };
     }
   }
   return { blocked: false };
@@ -221,11 +229,18 @@ function getOrCreateHost() {
   });
 }
 
+const MAX_TCP_BUFFER = 10 * 1024 * 1024; // 10MB
+
 function handleConnection(socket) {
   let buffer = "";
   socket.setEncoding("utf-8");
 
   socket.on("data", (chunk) => {
+    if (buffer.length + chunk.length > MAX_TCP_BUFFER) {
+      console.error("[MCP Bridge] TCP buffer exceeded max size, dropping connection");
+      socket.destroy();
+      return;
+    }
     buffer += chunk;
     let newlineIdx;
     while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
@@ -591,6 +606,12 @@ async function handleSftpMkdir(params) {
 
 // ── Handler: sftpRemove ──
 
+// Critical paths that must never be removed (module-level constant)
+const CRITICAL_PATHS = new Set([
+  "/", "/root", "/home", "/etc", "/var", "/usr", "/boot",
+  "/bin", "/sbin", "/lib", "/lib64", "/dev", "/proc", "/sys", "/tmp", "/opt",
+]);
+
 async function handleSftpRemove(params) {
   const { sessionId, path: targetPath } = params;
   if (!sessionId || !targetPath) throw new Error("sessionId and path are required");
@@ -598,10 +619,6 @@ async function handleSftpRemove(params) {
   // Guard against deleting root or critical system directories
   // Normalize to resolve "..", "//", and trailing slashes before checking
   const normalizedPath = path.posix.normalize(targetPath).replace(/\/+$/, "") || "/";
-  const CRITICAL_PATHS = new Set([
-    "/", "/root", "/home", "/etc", "/var", "/usr", "/boot",
-    "/bin", "/sbin", "/lib", "/lib64", "/dev", "/proc", "/sys", "/tmp", "/opt",
-  ]);
   if (CRITICAL_PATHS.has(normalizedPath) || /^\/[^/]+$/.test(normalizedPath)) {
     return { ok: false, error: `Refusing to remove critical or root-level path: ${targetPath}` };
   }

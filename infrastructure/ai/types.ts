@@ -192,6 +192,7 @@ export const DEFAULT_COMMAND_BLOCKLIST = [
   'base64.*\\|.*(?:ba)?sh',                    // base64 decode piped to shell
   '\\beval\\b',                                // eval usage
   '\\$\\(',                                    // command substitution abuse
+  '`.+`',                                     // backtick command substitution
 ];
 
 export const DEFAULT_AI_SETTINGS: AISettings = {

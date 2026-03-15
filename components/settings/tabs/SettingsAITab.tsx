@@ -334,6 +334,8 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     const bridge = getBridge();
     const url = codexLoginSession?.url;
     if (!bridge?.openExternal || !url) return;
+    // Only allow https:// URLs to prevent opening arbitrary protocols
+    if (!url.startsWith("https://")) return;
     void bridge.openExternal(url);
   }, [codexLoginSession]);
 

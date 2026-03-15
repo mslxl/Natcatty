@@ -56,14 +56,20 @@ const DEFAULT_COMMAND_BLOCKLIST = [
   '\\bwget\\s+.*\\|\\s*\\bsudo\\s+\\bbash\\b',
 ];
 
+// Pre-compile blocklist regexes once at module load time
+const compiledBlocklist = DEFAULT_COMMAND_BLOCKLIST.map(pattern => {
+  try {
+    return new RegExp(pattern, "i");
+  } catch {
+    return null; // placeholder for invalid patterns
+  }
+});
+
 function checkCommandSafety(command) {
-  for (const pattern of DEFAULT_COMMAND_BLOCKLIST) {
-    try {
-      if (new RegExp(pattern, "i").test(command)) {
-        return { blocked: true, matchedPattern: pattern };
-      }
-    } catch {
-      // Skip invalid patterns
+  for (let i = 0; i < compiledBlocklist.length; i++) {
+    const re = compiledBlocklist[i];
+    if (re && re.test(command)) {
+      return { blocked: true, matchedPattern: DEFAULT_COMMAND_BLOCKLIST[i] };
     }
   }
   return { blocked: false };

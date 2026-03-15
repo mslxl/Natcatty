@@ -377,10 +377,10 @@ export function useAIState() {
         }
         return { ...s, messages: msgs, updatedAt: Date.now() };
       });
-      persistSessions(next);
+      debouncedPersistSessions();
       return next;
     });
-  }, [persistSessions]);
+  }, [debouncedPersistSessions]);
 
   const updateLastMessage = useCallback((sessionId: string, updater: (msg: ChatMessage) => ChatMessage) => {
     setSessionsRaw(prev => {
