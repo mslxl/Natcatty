@@ -35,7 +35,6 @@
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@fontsource/space-grotesk": "^5.2.10",
     "@google/genai": "1.33.0",
-    "@anthropic-ai/claude-agent-sdk": "0.2.76",
     "@mcpc-tech/acp-ai-provider": "0.2.8",
     "@monaco-editor/react": "^4.7.0",
     "@radix-ui/react-collapsible": "1.1.12",

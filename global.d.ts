@@ -629,7 +629,6 @@ declare global {
       available: boolean;
       acpCommand?: string;
       acpArgs?: string[];
-      sdkType?: 'acp' | 'claude-agent-sdk';
     }>>;
     aiCodexGetIntegration?(): Promise<{
       state: 'connected_chatgpt' | 'connected_api_key' | 'not_logged_in' | 'unknown';
@@ -687,11 +686,6 @@ declare global {
     aiWriteToAgent?(agentId: string, data: string): Promise<{ ok: boolean; error?: string }>;
     aiCloseAgentStdin?(agentId: string): Promise<{ ok: boolean; error?: string }>;
     aiKillAgent?(agentId: string): Promise<{ ok: boolean; error?: string }>;
-    aiClaudeStream?(requestId: string, chatSessionId: string, prompt: string, model?: string): Promise<{ ok: boolean; error?: string }>;
-    aiClaudeCancel?(requestId: string): Promise<{ ok: boolean; error?: string }>;
-    onAiClaudeEvent?(requestId: string, cb: (event: Record<string, unknown>) => void): () => void;
-    onAiClaudeDone?(requestId: string, cb: () => void): () => void;
-    onAiClaudeError?(requestId: string, cb: (error: string) => void): () => void;
     aiAcpStream?(requestId: string, chatSessionId: string, acpCommand: string, acpArgs: string[], prompt: string, cwd?: string, apiKey?: string): Promise<{ ok: boolean; error?: string }>;
     aiAcpCancel?(requestId: string): Promise<{ ok: boolean; error?: string }>;
     aiAcpCleanup?(chatSessionId: string): Promise<{ ok: boolean }>;

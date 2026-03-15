@@ -1053,34 +1053,6 @@ const api = {
   aiMcpSetPermissionMode: async (mode) => {
     return ipcRenderer.invoke("netcatty:ai:mcp:set-permission-mode", { mode });
   },
-  // Claude Agent SDK streaming
-  aiClaudeStream: async (requestId, chatSessionId, prompt, model) => {
-    return ipcRenderer.invoke("netcatty:ai:claude:stream", { requestId, chatSessionId, prompt, model });
-  },
-  aiClaudeCancel: async (requestId) => {
-    return ipcRenderer.invoke("netcatty:ai:claude:cancel", { requestId });
-  },
-  onAiClaudeEvent: (requestId, cb) => {
-    const handler = (_event, payload) => {
-      if (payload.requestId === requestId) cb(payload.event);
-    };
-    ipcRenderer.on("netcatty:ai:claude:event", handler);
-    return () => ipcRenderer.removeListener("netcatty:ai:claude:event", handler);
-  },
-  onAiClaudeDone: (requestId, cb) => {
-    const handler = (_event, payload) => {
-      if (payload.requestId === requestId) cb();
-    };
-    ipcRenderer.on("netcatty:ai:claude:done", handler);
-    return () => ipcRenderer.removeListener("netcatty:ai:claude:done", handler);
-  },
-  onAiClaudeError: (requestId, cb) => {
-    const handler = (_event, payload) => {
-      if (payload.requestId === requestId) cb(payload.error);
-    };
-    ipcRenderer.on("netcatty:ai:claude:error", handler);
-    return () => ipcRenderer.removeListener("netcatty:ai:claude:error", handler);
-  },
   // ACP streaming
   aiAcpStream: async (requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey, model, images) => {
     return ipcRenderer.invoke("netcatty:ai:acp:stream", { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey, model, images });
