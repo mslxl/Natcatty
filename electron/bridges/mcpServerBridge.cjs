@@ -29,6 +29,15 @@ let currentScopedSessionIds = [];
 // Command safety checking (reuse from aiBridge)
 let commandBlocklist = [];
 
+// Command timeout in milliseconds (default 60s, synced from user settings)
+let commandTimeoutMs = 60000;
+
+// Max iterations for AI agent loops (default 20, synced from user settings)
+let maxIterations = 20;
+
+// Permission mode: 'observer' | 'confirm' | 'autonomous' (synced from user settings)
+let permissionMode = "confirm";
+
 // Track active PTY executions for cancellation
 const activePtyExecs = new Map(); // marker → { ptyStream, cleanup }
 
@@ -55,6 +64,32 @@ function init(deps) {
 
 function setCommandBlocklist(list) {
   commandBlocklist = list || [];
+}
+
+function setCommandTimeout(seconds) {
+  commandTimeoutMs = Math.max(1, Math.min(3600, seconds || 60)) * 1000;
+}
+
+function getCommandTimeoutMs() {
+  return commandTimeoutMs;
+}
+
+function setMaxIterations(value) {
+  maxIterations = Math.max(1, Math.min(100, value || 20));
+}
+
+function getMaxIterations() {
+  return maxIterations;
+}
+
+function setPermissionMode(mode) {
+  if (mode === "observer" || mode === "confirm" || mode === "autonomous") {
+    permissionMode = mode;
+  }
+}
+
+function getPermissionMode() {
+  return permissionMode;
 }
 
 /**
@@ -179,7 +214,23 @@ async function handleMessage(socket, line) {
 
 // ── RPC Dispatch ──
 
+// Methods that modify remote state — blocked in observer mode
+const WRITE_METHODS = new Set([
+  "netcatty/exec",
+  "netcatty/terminalWrite",
+  "netcatty/sftpWrite",
+  "netcatty/sftpMkdir",
+  "netcatty/sftpRemove",
+  "netcatty/sftpRename",
+  "netcatty/multiExec",
+]);
+
 async function dispatch(method, params) {
+  // Observer mode: block all write operations
+  if (permissionMode === "observer" && WRITE_METHODS.has(method)) {
+    return { ok: false, error: `Operation denied: permission mode is "observer" (read-only). Change to "confirm" or "autonomous" in Settings → AI → Safety to allow this action.` };
+  }
+
   switch (method) {
     case "netcatty/getContext":
       return handleGetContext(params);
@@ -305,8 +356,6 @@ function execViaPty(ptyStream, command) {
     let foundStart = false;
     let timeoutId = null;
 
-    const MAX_TIMEOUT = 300000; // 5 min max (docker pull, pip install, etc.)
-
     const onData = (data) => {
       const text = data.toString();
 
@@ -367,8 +416,9 @@ function execViaPty(ptyStream, command) {
       // Send Ctrl+C to kill the timed-out command
       if (typeof ptyStream.write === "function") ptyStream.write("\x03");
       const cleaned = stripAnsi(output).trim();
-      resolve({ ok: false, stdout: cleaned, stderr: "", exitCode: -1, error: "Command timed out (5min)" });
-    }, MAX_TIMEOUT);
+      const timeoutSec = Math.round(commandTimeoutMs / 1000);
+      resolve({ ok: false, stdout: cleaned, stderr: "", exitCode: -1, error: `Command timed out (${timeoutSec}s)` });
+    }, commandTimeoutMs);
 
     ptyStream.on("data", onData);
 
@@ -400,9 +450,20 @@ function execViaChannel(sshClient, command) {
       }
       let stdout = "";
       let stderr = "";
+      let finished = false;
+      const timeoutId = setTimeout(() => {
+        if (finished) return;
+        finished = true;
+        try { execStream.close(); } catch { /* ignore */ }
+        const timeoutSec = Math.round(commandTimeoutMs / 1000);
+        resolve({ ok: false, stdout, stderr, exitCode: -1, error: `Command timed out (${timeoutSec}s)` });
+      }, commandTimeoutMs);
       execStream.on("data", (data) => { stdout += data.toString(); });
       execStream.stderr.on("data", (data) => { stderr += data.toString(); });
       execStream.on("close", (code) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timeoutId);
         resolve({ ok: code === 0, stdout, stderr, exitCode: code });
       });
     });
@@ -702,6 +763,12 @@ function cleanup() {
 module.exports = {
   init,
   setCommandBlocklist,
+  setCommandTimeout,
+  getCommandTimeoutMs,
+  setMaxIterations,
+  getMaxIterations,
+  setPermissionMode,
+  getPermissionMode,
   updateSessionMetadata,
   getCurrentScopedSessionIds,
   getOrCreateHost,

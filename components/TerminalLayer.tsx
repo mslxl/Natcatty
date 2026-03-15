@@ -1353,6 +1353,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                         setAgentModel={aiState.setAgentModel}
                         globalPermissionMode={aiState.globalPermissionMode}
                         commandBlocklist={aiState.commandBlocklist}
+                        maxIterations={aiState.maxIterations}
                         scopeType={activeWorkspace ? 'workspace' : 'terminal'}
                         scopeTargetId={activeWorkspace?.id ?? activeSession?.id}
                         scopeHostIds={activeWorkspace?.root

@@ -8,6 +8,7 @@
 
 import { AtSign, Check, ChevronDown, ChevronRight, Cpu, Expand, FileText, ImageIcon, Plus, X } from 'lucide-react';
 import React, { useCallback, useRef, useState } from 'react';
+import { useI18n } from '../../application/i18n/I18nProvider';
 import { createPortal } from 'react-dom';
 import type { FormEvent } from 'react';
 import type { UploadedImage } from '../../application/state/useImageUpload';
@@ -68,6 +69,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
   onRemoveImage,
   hosts = [],
 }) => {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [pickerPos, setPickerPos] = useState<{ left: number; bottom: number } | null>(null);
@@ -133,8 +135,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
   }, [onAddImages]);
 
   const defaultPlaceholder = agentName
-    ? `Message ${agentName} — @ to include context, / for commands`
-    : 'Message Catty Agent...';
+    ? t('ai.chat.placeholder').replace('{agent}', agentName)
+    : t('ai.chat.placeholderDefault');
 
   const handleSubmit = useCallback(
     (_text: string, _event: FormEvent<HTMLFormElement>) => {
@@ -153,7 +155,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const selectedPreset = modelPresets.find(m => m.id === selectedBaseModelId);
   const modelLabel = selectedPreset
     ? selectedPreset.name + (selectedThinking ? ` / ${formatThinkingLabel(selectedThinking)}` : '')
-    : modelName || providerName || 'No model';
+    : modelName || providerName || t('ai.chat.noModel');
   const hasModelPicker = modelPresets.length > 0 && onModelSelect;
   const chipClassName =
     'inline-flex h-6 items-center gap-1 rounded-full px-1.5 text-[10.5px] text-foreground/72';

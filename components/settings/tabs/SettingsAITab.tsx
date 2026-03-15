@@ -25,9 +25,10 @@ import type {
   ExternalAgentConfig,
   ProviderConfig,
 } from "../../../infrastructure/ai/types";
-import { PROVIDER_PRESETS } from "../../../infrastructure/ai/types";
+import { PROVIDER_PRESETS, DEFAULT_COMMAND_BLOCKLIST } from "../../../infrastructure/ai/types";
 import { useAgentDiscovery } from "../../../application/state/useAgentDiscovery";
 import { encryptField, decryptField } from "../../../infrastructure/persistence/secureFieldAdapter";
+import { useI18n } from "../../../application/i18n/I18nProvider";
 import { TabsContent } from "../../ui/tabs";
 import { Button } from "../../ui/button";
 import { Toggle, Select, SettingRow } from "../settings-ui";
@@ -53,6 +54,8 @@ interface SettingsAITabProps {
   setExternalAgents: (value: ExternalAgentConfig[] | ((prev: ExternalAgentConfig[]) => ExternalAgentConfig[])) => void;
   defaultAgentId: string;
   setDefaultAgentId: (id: string) => void;
+  commandBlocklist: string[];
+  setCommandBlocklist: (value: string[]) => void;
   commandTimeout: number;
   setCommandTimeout: (value: number) => void;
   maxIterations: number;
@@ -184,6 +187,7 @@ const ProviderIconBadge: React.FC<{
 // ---------------------------------------------------------------------------
 
 interface ProviderFormState {
+  name: string;
   apiKey: string;
   baseURL: string;
   defaultModel: string;
@@ -211,16 +215,24 @@ const ModelSelector: React.FC<{
   value: string;
   onChange: (value: string) => void;
   baseURL: string;
-  modelsEndpoint: string;
-}> = ({ value, onChange, baseURL, modelsEndpoint }) => {
+  modelsEndpoint?: string;
+  placeholder?: string;
+  apiKey?: string;
+  providerId?: AIProviderId;
+}> = ({ value, onChange, baseURL, modelsEndpoint, placeholder, apiKey, providerId }) => {
+  const { t } = useI18n();
   const [models, setModels] = useState<FetchedModel[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const [hasFetched, setHasFetched] = useState(false);
 
+  // Ollama runs locally without auth; all other providers need an API key to list models
+  const needsApiKey = providerId !== "ollama";
+  const canFetch = !!modelsEndpoint && (!needsApiKey || !!apiKey);
+
   const fetchModels = useCallback(async () => {
+    if (!modelsEndpoint) return;
     const bridge = getFetchBridge();
     if (!bridge?.aiFetch) return;
 
@@ -228,7 +240,16 @@ const ModelSelector: React.FC<{
     setError(null);
     try {
       const url = `${baseURL.replace(/\/+$/, "")}${modelsEndpoint}`;
-      const result = await bridge.aiFetch(url, "GET");
+      const headers: Record<string, string> = {};
+      if (apiKey) {
+        if (providerId === "anthropic") {
+          headers["x-api-key"] = apiKey;
+          headers["anthropic-version"] = "2023-06-01";
+        } else {
+          headers["Authorization"] = `Bearer ${apiKey}`;
+        }
+      }
+      const result = await bridge.aiFetch(url, "GET", headers);
       if (!result.ok) {
         setError(`Failed to fetch models (${result.error || "unknown error"})`);
         return;
@@ -238,7 +259,6 @@ const ModelSelector: React.FC<{
         id: m.id,
         name: m.name,
       }));
-      // Sort by name/id
       list.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
       setModels(list);
       setHasFetched(true);
@@ -247,112 +267,111 @@ const ModelSelector: React.FC<{
     } finally {
       setIsLoading(false);
     }
-  }, [baseURL, modelsEndpoint]);
+  }, [baseURL, modelsEndpoint, apiKey, providerId]);
 
-  // Fetch on first open
+  // Auto-fetch when dropdown first opens
   useEffect(() => {
-    if (isOpen && !hasFetched && !isLoading) {
+    if (isOpen && canFetch && !hasFetched && !isLoading) {
       void fetchModels();
     }
-  }, [isOpen, hasFetched, isLoading, fetchModels]);
+  }, [isOpen, canFetch, hasFetched, isLoading, fetchModels]);
 
-  const filtered = useMemo(() => {
-    if (!search.trim()) return models;
-    const q = search.toLowerCase();
+  // Filter models by current input value (inline autocomplete)
+  const suggestions = useMemo(() => {
+    if (!hasFetched || models.length === 0) return [];
+    if (!value.trim()) return models;
+    const q = value.toLowerCase();
     return models.filter((m) =>
       m.id.toLowerCase().includes(q) || (m.name && m.name.toLowerCase().includes(q)),
     );
-  }, [models, search]);
+  }, [models, value, hasFetched]);
+
+  const showSuggestions = isOpen && canFetch;
 
   return (
     <div className="relative">
-      {/* Input with dropdown toggle */}
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
           <input
             type="text"
             value={value}
-            onChange={(e) => onChange(e.target.value)}
-            onFocus={() => setIsOpen(true)}
-            placeholder="Search or type model ID..."
-            className="w-full h-8 rounded-md border border-input bg-background px-3 pr-8 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            onChange={(e) => {
+              onChange(e.target.value);
+              if (canFetch && hasFetched && !isOpen) setIsOpen(true);
+            }}
+            onFocus={() => { if (canFetch) setIsOpen(true); }}
+            onBlur={() => { setTimeout(() => setIsOpen(false), 150); }}
+            placeholder={placeholder ?? (canFetch ? t('ai.providers.searchModel') : t('ai.providers.defaultModel.placeholder'))}
+            className={cn(
+              "w-full h-8 rounded-md border border-input bg-background px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+              canFetch && "pr-8",
+            )}
           />
-          <button
-            type="button"
-            onClick={() => setIsOpen(!isOpen)}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-          >
-            <ChevronDown size={14} className={cn("transition-transform", isOpen && "rotate-180")} />
-          </button>
+          {canFetch && (
+            <button
+              type="button"
+              onMouseDown={(e) => { e.preventDefault(); setIsOpen(!isOpen); }}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <ChevronDown size={14} className={cn("transition-transform", isOpen && "rotate-180")} />
+            </button>
+          )}
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => { setHasFetched(false); void fetchModels(); }}
-          disabled={isLoading}
-          className="shrink-0 px-2"
-          title="Refresh models"
-        >
-          <RefreshCw size={14} className={isLoading ? "animate-spin" : ""} />
-        </Button>
+        {canFetch && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => { setHasFetched(false); void fetchModels(); }}
+            disabled={isLoading}
+            className="shrink-0 px-2"
+            title={t('ai.providers.refreshModels')}
+          >
+            <RefreshCw size={14} className={isLoading ? "animate-spin" : ""} />
+          </Button>
+        )}
       </div>
 
-      {/* Dropdown */}
-      {isOpen && (
-        <>
-          <div className="fixed inset-0 z-[100]" onClick={() => setIsOpen(false)} />
-          <div className="absolute top-full left-0 right-0 mt-1 z-[101] rounded-md border border-border bg-popover shadow-md">
-            {/* Search within dropdown */}
-            <div className="p-2 border-b border-border/60">
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Filter models..."
-                autoFocus
-                className="w-full h-7 rounded border border-input bg-background px-2 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              />
-            </div>
-
-            <div className="max-h-60 overflow-y-auto">
-              {isLoading ? (
-                <div className="px-3 py-4 text-center text-xs text-muted-foreground">
-                  <RefreshCw size={14} className="animate-spin inline mr-1.5" />
-                  Loading models...
-                </div>
-              ) : error ? (
-                <div className="px-3 py-4 text-center text-xs text-destructive">{error}</div>
-              ) : filtered.length === 0 ? (
-                <div className="px-3 py-4 text-center text-xs text-muted-foreground">
-                  {hasFetched ? "No matching models" : "Click to load models"}
-                </div>
-              ) : (
-                filtered.slice(0, 100).map((m) => (
-                  <button
-                    key={m.id}
-                    onClick={() => {
-                      onChange(m.id);
-                      setIsOpen(false);
-                      setSearch("");
-                    }}
-                    className={cn(
-                      "w-full text-left px-3 py-1.5 text-xs hover:bg-accent transition-colors flex items-center justify-between gap-2",
-                      m.id === value && "bg-accent",
-                    )}
-                  >
-                    <span className="font-mono truncate">{m.id}</span>
-                    {m.id === value && <Check size={12} className="text-primary shrink-0" />}
-                  </button>
-                ))
-              )}
-              {filtered.length > 100 && (
-                <div className="px-3 py-2 text-center text-[10px] text-muted-foreground border-t border-border/40">
-                  Showing first 100 of {filtered.length} models. Type to filter.
-                </div>
-              )}
-            </div>
+      {/* Suggestions dropdown */}
+      {showSuggestions && (
+        <div className="absolute top-full left-0 right-0 mt-1 z-[101] rounded-md border border-border bg-popover shadow-md">
+          <div className="max-h-60 overflow-y-auto">
+            {isLoading ? (
+              <div className="px-3 py-3 text-center text-xs text-muted-foreground">
+                <RefreshCw size={14} className="animate-spin inline mr-1.5" />
+                {t('ai.providers.loadingModels')}
+              </div>
+            ) : error ? (
+              <div className="px-3 py-3 text-center text-xs text-destructive">{error}</div>
+            ) : suggestions.length === 0 ? (
+              <div className="px-3 py-3 text-center text-xs text-muted-foreground">
+                {hasFetched ? t('ai.providers.noMatchingModels') : t('ai.providers.clickToLoadModels')}
+              </div>
+            ) : (
+              suggestions.slice(0, 100).map((m) => (
+                <button
+                  key={m.id}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    onChange(m.id);
+                    setIsOpen(false);
+                  }}
+                  className={cn(
+                    "w-full text-left px-3 py-1.5 text-xs hover:bg-accent transition-colors flex items-center justify-between gap-2",
+                    m.id === value && "bg-accent",
+                  )}
+                >
+                  <span className="font-mono truncate">{m.id}</span>
+                  {m.id === value && <Check size={12} className="text-primary shrink-0" />}
+                </button>
+              ))
+            )}
+            {suggestions.length > 100 && (
+              <div className="px-3 py-2 text-center text-[10px] text-muted-foreground border-t border-border/40">
+                {t('ai.providers.showingModels').replace('{count}', String(suggestions.length))}
+              </div>
+            )}
           </div>
-        </>
+        </div>
       )}
     </div>
   );
@@ -363,16 +382,18 @@ const ProviderConfigForm: React.FC<{
   onSave: (updates: Partial<ProviderConfig>) => void;
   onCancel: () => void;
 }> = ({ provider, onSave, onCancel }) => {
+  const { t } = useI18n();
   const [form, setForm] = useState<ProviderFormState>({
+    name: provider.name ?? PROVIDER_PRESETS[provider.providerId]?.name ?? "",
     apiKey: "",
     baseURL: provider.baseURL ?? PROVIDER_PRESETS[provider.providerId]?.defaultBaseURL ?? "",
     defaultModel: provider.defaultModel ?? "",
   });
+  const isCustom = provider.providerId === "custom";
   const [showApiKey, setShowApiKey] = useState(false);
   const [isDecrypting, setIsDecrypting] = useState(false);
 
   const preset = PROVIDER_PRESETS[provider.providerId];
-  const hasModelsEndpoint = !!preset?.modelsEndpoint;
 
   // Decrypt and load existing API key on mount
   useEffect(() => {
@@ -394,6 +415,7 @@ const ProviderConfigForm: React.FC<{
     const updates: Partial<ProviderConfig> = {
       baseURL: form.baseURL || undefined,
       defaultModel: form.defaultModel || undefined,
+      ...(isCustom && form.name.trim() ? { name: form.name.trim() } : {}),
     };
 
     // Encrypt API key before saving
@@ -408,16 +430,29 @@ const ProviderConfigForm: React.FC<{
 
   return (
     <div className="mt-3 space-y-3 border-t border-border/40 pt-3">
+      {/* Name (custom providers only) */}
+      {isCustom && (
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-muted-foreground">{t('ai.providers.name')}</label>
+          <input
+            type="text"
+            value={form.name}
+            onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+            placeholder={t('ai.providers.name.placeholder')}
+            className="w-full h-8 rounded-md border border-input bg-background px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
+        </div>
+      )}
       {/* API Key */}
       <div className="space-y-1.5">
-        <label className="text-xs font-medium text-muted-foreground">API Key</label>
+        <label className="text-xs font-medium text-muted-foreground">{t('ai.providers.apiKey')}</label>
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <input
               type={showApiKey ? "text" : "password"}
               value={isDecrypting ? "" : form.apiKey}
               onChange={(e) => setForm((prev) => ({ ...prev, apiKey: e.target.value }))}
-              placeholder={isDecrypting ? "Decrypting..." : "Enter API key"}
+              placeholder={isDecrypting ? t('ai.providers.apiKey.decrypting') : t('ai.providers.apiKey.placeholder')}
               disabled={isDecrypting}
               className="w-full h-8 rounded-md border border-input bg-background px-3 pr-9 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
             />
@@ -434,7 +469,7 @@ const ProviderConfigForm: React.FC<{
 
       {/* Base URL */}
       <div className="space-y-1.5">
-        <label className="text-xs font-medium text-muted-foreground">Base URL</label>
+        <label className="text-xs font-medium text-muted-foreground">{t('ai.providers.baseUrl')}</label>
         <input
           type="text"
           value={form.baseURL}
@@ -446,33 +481,25 @@ const ProviderConfigForm: React.FC<{
 
       {/* Default Model */}
       <div className="space-y-1.5">
-        <label className="text-xs font-medium text-muted-foreground">Default Model</label>
-        {hasModelsEndpoint ? (
-          <ModelSelector
-            value={form.defaultModel}
-            onChange={(val) => setForm((prev) => ({ ...prev, defaultModel: val }))}
-            baseURL={form.baseURL || preset.defaultBaseURL}
-            modelsEndpoint={preset.modelsEndpoint!}
-          />
-        ) : (
-          <input
-            type="text"
-            value={form.defaultModel}
-            onChange={(e) => setForm((prev) => ({ ...prev, defaultModel: e.target.value }))}
-            placeholder="e.g. gpt-4o, claude-sonnet-4-20250514"
-            className="w-full h-8 rounded-md border border-input bg-background px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          />
-        )}
+        <label className="text-xs font-medium text-muted-foreground">{t('ai.providers.defaultModel')}</label>
+        <ModelSelector
+          value={form.defaultModel}
+          onChange={(val) => setForm((prev) => ({ ...prev, defaultModel: val }))}
+          baseURL={form.baseURL || preset?.defaultBaseURL || ""}
+          modelsEndpoint={preset?.modelsEndpoint}
+          apiKey={form.apiKey}
+          providerId={provider.providerId}
+        />
       </div>
 
       {/* Actions */}
       <div className="flex items-center gap-2 pt-1">
         <Button variant="default" size="sm" onClick={() => void handleSave()}>
           <Check size={14} className="mr-1.5" />
-          Save
+          {t('common.save')}
         </Button>
         <Button variant="ghost" size="sm" onClick={onCancel}>
-          Cancel
+          {t('common.cancel')}
         </Button>
       </div>
     </div>
@@ -493,6 +520,7 @@ const ProviderCard: React.FC<{
   isEditing: boolean;
   onCancelEdit: () => void;
 }> = ({ provider, isActive, onToggleEnabled, onEdit, onRemove, onUpdate, isEditing, onCancelEdit }) => {
+  const { t } = useI18n();
   const hasApiKey = !!provider.apiKey;
 
   return (
@@ -512,7 +540,7 @@ const ProviderCard: React.FC<{
             <span className="text-sm font-medium truncate">{provider.name}</span>
             {isActive && (
               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/20 text-primary font-medium">
-                Active
+                {t('ai.providers.active')}
               </span>
             )}
           </div>
@@ -523,7 +551,7 @@ const ProviderCard: React.FC<{
                 hasApiKey ? "text-emerald-500" : "text-muted-foreground",
               )}
             >
-              {hasApiKey ? "API key configured" : "No API key"}
+              {hasApiKey ? t('ai.providers.apiKeyConfigured') : t('ai.providers.noApiKey')}
             </span>
             {provider.defaultModel && (
               <>
@@ -539,14 +567,14 @@ const ProviderCard: React.FC<{
           <button
             onClick={onEdit}
             className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-            title="Configure"
+            title={t('ai.providers.configure')}
           >
             <Pencil size={14} />
           </button>
           <button
             onClick={onRemove}
             className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-            title="Remove"
+            title={t('ai.providers.remove')}
           >
             <Trash2 size={14} />
           </button>
@@ -576,6 +604,7 @@ const ProviderCard: React.FC<{
 const AddProviderDropdown: React.FC<{
   onAdd: (providerId: AIProviderId) => void;
 }> = ({ onAdd }) => {
+  const { t } = useI18n();
   const [isOpen, setIsOpen] = useState(false);
 
   const providerIds = Object.keys(PROVIDER_PRESETS) as AIProviderId[];
@@ -589,7 +618,7 @@ const AddProviderDropdown: React.FC<{
         className="gap-1.5"
       >
         <Plus size={14} />
-        Add Provider
+        {t('ai.providers.add')}
         <ChevronDown size={12} className={cn("transition-transform", isOpen && "rotate-180")} />
       </Button>
 
@@ -656,21 +685,22 @@ const CodexConnectionCard: React.FC<{
   onOpenUrl,
   onLogout,
 }) => {
+  const { t } = useI18n();
   const found = pathInfo?.available;
 
   const status = isResolvingPath
-    ? "Detecting..."
+    ? t('ai.codex.detecting')
     : !found
-      ? "Not found"
+      ? t('ai.codex.notFound')
       : loginSession?.state === "running"
-        ? "Awaiting login"
+        ? t('ai.codex.awaitingLogin')
         : integration?.state === "connected_chatgpt"
-          ? "Connected via ChatGPT"
+          ? t('ai.codex.connectedChatGPT')
           : integration?.state === "connected_api_key"
-            ? "Connected via API key"
+            ? t('ai.codex.connectedApiKey')
             : integration?.state === "not_logged_in"
-              ? "Not connected"
-              : "Status unknown";
+              ? t('ai.codex.notConnected')
+              : t('ai.codex.statusUnknown');
 
   const statusClassName = isResolvingPath
     ? "text-muted-foreground"
@@ -696,11 +726,10 @@ const CodexConnectionCard: React.FC<{
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <ProviderIconBadge providerId="openai" size="sm" />
-            <span className="text-sm font-medium">Codex CLI</span>
+            <span className="text-sm font-medium">{t('ai.codex.title')}</span>
           </div>
           <p className="text-xs text-muted-foreground mt-2 leading-5">
-            Bundled <span className="font-mono">codex</span> + <span className="font-mono">codex-acp</span> for ACP protocol streaming.
-            Login with ChatGPT subscription here, or configure an OpenAI provider API key (passed as <span className="font-mono">CODEX_API_KEY</span>).
+            {t('ai.codex.description')}
           </p>
         </div>
         <div className={cn("text-xs font-medium shrink-0", statusClassName)}>
@@ -711,7 +740,7 @@ const CodexConnectionCard: React.FC<{
       {/* Path detection info */}
       {found ? (
         <div className="flex items-center gap-2 text-xs">
-          <span className="text-muted-foreground">Path:</span>
+          <span className="text-muted-foreground">{t('ai.codex.path')}</span>
           <span className="font-mono text-foreground truncate">{pathInfo.path}</span>
           {pathInfo.version && (
             <>
@@ -723,19 +752,19 @@ const CodexConnectionCard: React.FC<{
       ) : !isResolvingPath ? (
         <div className="space-y-2">
           <p className="text-xs text-amber-500">
-            Could not find <span className="font-mono">codex</span> in PATH. Install it or specify the executable path below.
+            {t('ai.codex.notFoundHint')}
           </p>
           <div className="flex items-center gap-2">
             <input
               type="text"
               value={customPath}
               onChange={(e) => onCustomPathChange(e.target.value)}
-              placeholder="e.g. /usr/local/bin/codex"
+              placeholder={t('ai.codex.customPathPlaceholder')}
               className="flex-1 h-8 rounded-md border border-input bg-background px-3 text-sm font-mono placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             />
             <Button variant="outline" size="sm" onClick={onRecheckPath} disabled={!customPath.trim()}>
               <RefreshCw size={14} className="mr-1.5" />
-              Check
+              {t('ai.codex.check')}
             </Button>
           </div>
         </div>
@@ -749,34 +778,34 @@ const CodexConnectionCard: React.FC<{
               <>
                 <Button variant="default" size="sm" onClick={onOpenUrl} disabled={!loginSession.url}>
                   <ExternalLink size={14} className="mr-1.5" />
-                  Open Login
+                  {t('ai.codex.openLogin')}
                 </Button>
                 <Button variant="outline" size="sm" onClick={onCancel}>
                   <X size={14} className="mr-1.5" />
-                  Cancel
+                  {t('common.cancel')}
                 </Button>
               </>
             ) : integration?.isConnected ? (
               <Button variant="outline" size="sm" onClick={onLogout}>
                 <LogOut size={14} className="mr-1.5" />
-                Logout
+                {t('ai.codex.logout')}
               </Button>
             ) : (
               <Button variant="default" size="sm" onClick={onConnect}>
                 <LogIn size={14} className="mr-1.5" />
-                Connect ChatGPT
+                {t('ai.codex.connectChatGPT')}
               </Button>
             )}
 
             <Button variant="outline" size="sm" onClick={onRefresh} disabled={isLoading}>
               <RefreshCw size={14} className={cn("mr-1.5", isLoading && "animate-spin")} />
-              Refresh Status
+              {t('ai.codex.refreshStatus')}
             </Button>
           </div>
 
           {hasOpenAiProviderKey && (
             <p className="text-xs text-emerald-500">
-              Enabled OpenAI provider API key detected. Codex ACP can also authenticate without ChatGPT login.
+              {t('ai.codex.apiKeyHint')}
             </p>
           )}
         </>
@@ -814,13 +843,14 @@ const ClaudeCodeCard: React.FC<{
   onCustomPathChange,
   onRecheckPath,
 }) => {
+  const { t } = useI18n();
   const found = pathInfo?.available;
 
   const statusText = isResolvingPath
-    ? "Detecting..."
+    ? t('ai.claude.detecting')
     : found
-      ? "Detected"
-      : "Not found";
+      ? t('ai.claude.detected')
+      : t('ai.claude.notFound');
 
   const statusClassName = isResolvingPath
     ? "text-muted-foreground"
@@ -834,10 +864,10 @@ const ClaudeCodeCard: React.FC<{
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <ProviderIconBadge providerId="claude" size="sm" />
-            <span className="text-sm font-medium">Claude Code</span>
+            <span className="text-sm font-medium">{t('ai.claude.title')}</span>
           </div>
           <p className="text-xs text-muted-foreground mt-2 leading-5">
-            Anthropic's agentic coding assistant. Uses <span className="font-mono">claude-code-acp</span> for ACP protocol streaming.
+            {t('ai.claude.description')}
           </p>
         </div>
         <div className={cn("text-xs font-medium shrink-0", statusClassName)}>
@@ -848,7 +878,7 @@ const ClaudeCodeCard: React.FC<{
       {/* Path detection info */}
       {found ? (
         <div className="flex items-center gap-2 text-xs">
-          <span className="text-muted-foreground">Path:</span>
+          <span className="text-muted-foreground">{t('ai.claude.path')}</span>
           <span className="font-mono text-foreground truncate">{pathInfo.path}</span>
           {pathInfo.version && (
             <>
@@ -860,19 +890,19 @@ const ClaudeCodeCard: React.FC<{
       ) : !isResolvingPath ? (
         <div className="space-y-2">
           <p className="text-xs text-amber-500">
-            Could not find <span className="font-mono">claude</span> in PATH. Install it or specify the executable path below.
+            {t('ai.claude.notFoundHint')}
           </p>
           <div className="flex items-center gap-2">
             <input
               type="text"
               value={customPath}
               onChange={(e) => onCustomPathChange(e.target.value)}
-              placeholder="e.g. /usr/local/bin/claude"
+              placeholder={t('ai.claude.customPathPlaceholder')}
               className="flex-1 h-8 rounded-md border border-input bg-background px-3 text-sm font-mono placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             />
             <Button variant="outline" size="sm" onClick={onRecheckPath} disabled={!customPath.trim()}>
               <RefreshCw size={14} className="mr-1.5" />
-              Check
+              {t('ai.claude.check')}
             </Button>
           </div>
         </div>
@@ -900,11 +930,14 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   setExternalAgents,
   defaultAgentId,
   setDefaultAgentId,
+  commandBlocklist,
+  setCommandBlocklist,
   commandTimeout,
   setCommandTimeout,
   maxIterations,
   setMaxIterations,
 }) => {
+  const { t } = useI18n();
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
   const [codexIntegration, setCodexIntegration] = useState<CodexIntegrationStatus | null>(null);
   const [codexLoginSession, setCodexLoginSession] = useState<CodexLoginSession | null>(null);
@@ -1017,7 +1050,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         providerId,
         name: preset.name,
         baseURL: preset.defaultBaseURL,
-        enabled: true,
+        enabled: false,
       });
       // Auto-open config form
       setEditingProviderId(id);
@@ -1038,14 +1071,14 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
 
   // Permission mode options
   const permissionModeOptions = [
-    { value: "observer", label: "Observer - Read only, no actions" },
-    { value: "confirm", label: "Confirm - Ask before actions" },
-    { value: "autonomous", label: "Autonomous - Execute freely" },
+    { value: "observer", label: t('ai.safety.permissionMode.observer') },
+    { value: "confirm", label: t('ai.safety.permissionMode.confirm') },
+    { value: "autonomous", label: t('ai.safety.permissionMode.autonomous') },
   ];
 
   // Agent options for default agent
   const agentOptions = useMemo(() => [
-    { value: "catty", label: "Catty (Built-in)", icon: <AgentIconBadge agent={{ id: "catty", type: "builtin" }} size="xs" variant="plain" /> },
+    { value: "catty", label: t('ai.defaultAgent.catty'), icon: <AgentIconBadge agent={{ id: "catty", type: "builtin" }} size="xs" variant="plain" /> },
     ...externalAgents
       .filter((a) => a.enabled)
       .map((a) => ({ value: a.id, label: a.name, icon: <AgentIconBadge agent={a} size="xs" variant="plain" /> })),
@@ -1179,9 +1212,9 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         <div className="max-w-2xl space-y-8">
           {/* Header */}
           <div>
-            <h2 className="text-xl font-semibold">AI</h2>
+            <h2 className="text-xl font-semibold">{t('ai.title')}</h2>
             <p className="text-sm text-muted-foreground mt-1">
-              Configure AI providers, agents, and safety settings
+              {t('ai.description')}
             </p>
           </div>
 
@@ -1190,7 +1223,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Globe size={18} className="text-muted-foreground" />
-                <h3 className="text-base font-medium">Providers</h3>
+                <h3 className="text-base font-medium">{t('ai.providers')}</h3>
               </div>
               <AddProviderDropdown onAdd={handleAddProvider} />
             </div>
@@ -1199,7 +1232,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               <div className="rounded-lg border border-dashed border-border/60 p-6 text-center">
                 <Bot size={24} className="mx-auto text-muted-foreground mb-2" />
                 <p className="text-sm text-muted-foreground">
-                  No providers configured. Add a provider to get started.
+                  {t('ai.providers.empty')}
                 </p>
               </div>
             ) : (
@@ -1211,17 +1244,20 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
                     isActive={provider.id === activeProviderId}
                     onToggleEnabled={(enabled) => {
                       if (enabled) {
-                        // Activate this provider, deactivate others
+                        // Activate this provider, deactivate all others
                         setActiveProviderId(provider.id);
                         if (provider.defaultModel) {
                           setActiveModelId(provider.defaultModel);
                         }
-                        // Ensure it's enabled
-                        if (!provider.enabled) {
-                          updateProvider(provider.id, { enabled: true });
+                        for (const p of providers) {
+                          if (p.id === provider.id) {
+                            if (!p.enabled) updateProvider(p.id, { enabled: true });
+                          } else {
+                            if (p.enabled) updateProvider(p.id, { enabled: false });
+                          }
                         }
                       } else {
-                        // Deactivate: clear active provider if this was it
+                        // Deactivate this provider
                         if (activeProviderId === provider.id) {
                           setActiveProviderId("");
                           setActiveModelId("");
@@ -1254,7 +1290,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
           <div className="space-y-4">
             <div className="flex items-center gap-2">
               <ProviderIconBadge providerId="openai" size="sm" />
-              <h3 className="text-base font-medium">Codex</h3>
+              <h3 className="text-base font-medium">{t('ai.codex')}</h3>
             </div>
 
             <CodexConnectionCard
@@ -1280,7 +1316,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
           <div className="space-y-4">
             <div className="flex items-center gap-2">
               <ProviderIconBadge providerId="claude" size="sm" />
-              <h3 className="text-base font-medium">Claude Code</h3>
+              <h3 className="text-base font-medium">{t('ai.claude.title')}</h3>
             </div>
 
             <ClaudeCodeCard
@@ -1297,13 +1333,13 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
             <div className="space-y-4">
               <div className="flex items-center gap-2">
                 <Bot size={18} className="text-muted-foreground" />
-                <h3 className="text-base font-medium">Default Agent</h3>
+                <h3 className="text-base font-medium">{t('ai.defaultAgent')}</h3>
               </div>
 
               <div className="bg-muted/30 rounded-lg p-4">
                 <SettingRow
-                  label="Default Agent"
-                  description="Agent to use when starting a new AI session"
+                  label={t('ai.defaultAgent')}
+                  description={t('ai.defaultAgent.description')}
                 >
                   <Select
                     value={defaultAgentId}
@@ -1320,13 +1356,13 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
           <div className="space-y-4">
             <div className="flex items-center gap-2">
               <Shield size={18} className="text-muted-foreground" />
-              <h3 className="text-base font-medium">Safety</h3>
+              <h3 className="text-base font-medium">{t('ai.safety.title')}</h3>
             </div>
 
             <div className="bg-muted/30 rounded-lg p-4 space-y-1">
               <SettingRow
-                label="Permission Mode"
-                description="Controls how the AI interacts with your terminals"
+                label={t('ai.safety.permissionMode')}
+                description={t('ai.safety.permissionMode.description')}
               >
                 <Select
                   value={globalPermissionMode}
@@ -1337,8 +1373,8 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               </SettingRow>
 
               <SettingRow
-                label="Command Timeout"
-                description="Maximum seconds a command can run before being terminated"
+                label={t('ai.safety.commandTimeout')}
+                description={t('ai.safety.commandTimeout.description')}
               >
                 <div className="flex items-center gap-2">
                   <input
@@ -1352,13 +1388,13 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
                     max={3600}
                     className="w-20 h-9 rounded-md border border-input bg-background px-3 text-sm text-right focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   />
-                  <span className="text-xs text-muted-foreground">sec</span>
+                  <span className="text-xs text-muted-foreground">{t('ai.safety.commandTimeout.unit')}</span>
                 </div>
               </SettingRow>
 
               <SettingRow
-                label="Max Iterations"
-                description="Maximum number of AI tool-use loops to prevent runaway execution"
+                label={t('ai.safety.maxIterations')}
+                description={t('ai.safety.maxIterations.description')}
               >
                 <input
                   type="number"
@@ -1374,8 +1410,65 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               </SettingRow>
             </div>
 
+            {/* ── Command Blocklist ── */}
+            <div className="bg-muted/30 rounded-lg p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">{t('ai.safety.blocklist')}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t('ai.safety.blocklist.description')}
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-xs"
+                  onClick={() => setCommandBlocklist([...DEFAULT_COMMAND_BLOCKLIST])}
+                >
+                  {t('ai.safety.blocklist.reset')}
+                </Button>
+              </div>
+
+              <div className="space-y-1.5">
+                {commandBlocklist.map((pattern, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={pattern}
+                      onChange={(e) => {
+                        const next = [...commandBlocklist];
+                        next[idx] = e.target.value;
+                        setCommandBlocklist(next);
+                      }}
+                      className="flex-1 h-8 rounded-md border border-input bg-background px-3 text-xs font-mono focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      placeholder={t('ai.safety.blocklist.placeholder')}
+                    />
+                    <button
+                      onClick={() => {
+                        const next = commandBlocklist.filter((_, i) => i !== idx);
+                        setCommandBlocklist(next);
+                      }}
+                      className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs"
+                onClick={() => setCommandBlocklist([...commandBlocklist, ''])}
+              >
+                <Plus size={14} className="mr-1" />
+                {t('ai.safety.blocklist.add')}
+              </Button>
+            </div>
+
             <p className="text-xs text-muted-foreground">
-              Safety settings apply globally. Per-host overrides can be configured in the connection settings.
+              {t('ai.safety.note')}
             </p>
           </div>
         </div>

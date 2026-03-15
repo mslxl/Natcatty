@@ -1,7 +1,8 @@
 import { tool } from 'ai';
 import { z } from 'zod';
 import type { NetcattyBridge, ExecutorContext } from '../cattyAgent/executor';
-import { checkCommandSafety } from '../cattyAgent/safety';
+import { checkCommandSafety, checkToolPermission } from '../cattyAgent/safety';
+import type { AIPermissionMode } from '../types';
 
 /**
  * Create Catty Agent tools using the Vercel AI SDK `tool()` helper with zod schemas.
@@ -12,11 +13,13 @@ import { checkCommandSafety } from '../cattyAgent/safety';
  * @param bridge  - The Electron IPC bridge for executing operations
  * @param context - Workspace/session context available to the agent
  * @param commandBlocklist - Optional command blocklist patterns for safety checks
+ * @param permissionMode - Permission mode for tool execution gating
  */
 export function createCattyTools(
   bridge: NetcattyBridge,
   context: ExecutorContext,
   commandBlocklist?: string[],
+  permissionMode: AIPermissionMode = 'confirm',
 ) {
   return {
     terminal_execute: tool({
@@ -28,12 +31,13 @@ export function createCattyTools(
         command: z.string().describe('The shell command to execute on the remote host.'),
       }),
       execute: async ({ sessionId, command }) => {
-        // Safety check
-        const safety = checkCommandSafety(command, commandBlocklist);
-        if (safety.blocked) {
-          return {
-            error: `Command blocked by safety policy. Matched pattern: ${safety.matchedPattern}`,
-          };
+        // Permission check
+        const permission = checkToolPermission('terminal_execute', { command }, {
+          permissionMode,
+          commandBlocklist,
+        });
+        if (permission === 'deny') {
+          return { error: `Operation denied by permission mode "${permissionMode}".` };
         }
 
         const result = await bridge.aiExec(sessionId, command);
@@ -85,6 +89,11 @@ export function createCattyTools(
           ),
       }),
       execute: async ({ sessionId, input }) => {
+        const permission = checkToolPermission('terminal_send_input', { input }, { permissionMode });
+        if (permission === 'deny') {
+          return { error: `Operation denied by permission mode "${permissionMode}".` };
+        }
+
         const result = await bridge.aiTerminalWrite(sessionId, input);
         if (!result.ok) {
           return { error: result.error || 'Failed to send input' };
@@ -154,6 +163,11 @@ export function createCattyTools(
         content: z.string().describe('The text content to write to the file.'),
       }),
       execute: async ({ sessionId, path, content }) => {
+        const permission = checkToolPermission('sftp_write_file', { path, content }, { permissionMode });
+        if (permission === 'deny') {
+          return { error: `Operation denied by permission mode "${permissionMode}".` };
+        }
+
         const session = context.sessions.find((s) => s.sessionId === sessionId);
         if (!session?.sftpId) {
           // Fallback: use terminal exec with heredoc
@@ -237,12 +251,13 @@ export function createCattyTools(
           ),
       }),
       execute: async ({ sessionIds, command, mode, stopOnError }) => {
-        // Safety check
-        const safety = checkCommandSafety(command, commandBlocklist);
-        if (safety.blocked) {
-          return {
-            error: `Command blocked by safety policy. Matched pattern: ${safety.matchedPattern}`,
-          };
+        // Permission check
+        const permission = checkToolPermission('multi_host_execute', { command }, {
+          permissionMode,
+          commandBlocklist,
+        });
+        if (permission === 'deny') {
+          return { error: `Operation denied by permission mode "${permissionMode}".` };
         }
 
         const results: Record<string, { ok: boolean; output: string }> = {};

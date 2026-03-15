@@ -7,6 +7,7 @@
  */
 
 import React from 'react';
+import { useI18n } from '../../application/i18n/I18nProvider';
 import type { ChatMessage } from '../../infrastructure/ai/types';
 import {
   Conversation,
@@ -23,13 +24,14 @@ interface ChatMessageListProps {
 }
 
 const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming }) => {
+  const { t } = useI18n();
   const visibleMessages = messages.filter(m => m.role !== 'system');
 
   if (visibleMessages.length === 0 && !isStreaming) {
     return (
       <div className="flex-1 flex items-center justify-center px-6">
         <p className="text-[13px] text-muted-foreground/40 text-center">
-          Ask about your servers, run commands, or get help with configurations.
+          {t('ai.chat.emptyHint')}
         </p>
       </div>
     );

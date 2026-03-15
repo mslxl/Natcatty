@@ -468,7 +468,8 @@ function execViaPtyForCatty(ptyStream, command) {
     let foundStart = false;
     let timeoutId = null;
 
-    const MAX_TIMEOUT = 300000; // 5 min
+    // Use MCP server bridge's timeout (synced from user settings)
+    const timeoutMs = mcpServerBridge.getCommandTimeoutMs ? mcpServerBridge.getCommandTimeoutMs() : 60000;
 
     const onData = (data) => {
       const text = data.toString();
@@ -522,8 +523,9 @@ function execViaPtyForCatty(ptyStream, command) {
       ptyStream.removeListener("data", onData);
       if (typeof ptyStream.write === "function") ptyStream.write("\x03");
       const cleaned = stripAnsi(output).trim();
-      resolve({ ok: false, stdout: cleaned, stderr: "", exitCode: -1, error: "Command timed out (5min)" });
-    }, MAX_TIMEOUT);
+      const timeoutSec = Math.round(timeoutMs / 1000);
+      resolve({ ok: false, stdout: cleaned, stderr: "", exitCode: -1, error: `Command timed out (${timeoutSec}s)` });
+    }, timeoutMs);
 
     ptyStream.on("data", onData);
 
@@ -612,6 +614,7 @@ function registerHandlers(ipcMain) {
       // Fallback: SSH exec channel (invisible to terminal)
       const sshClient = session.sshClient || session.conn;
       if (sshClient && typeof sshClient.exec === "function") {
+        const channelTimeoutMs = mcpServerBridge.getCommandTimeoutMs ? mcpServerBridge.getCommandTimeoutMs() : 60000;
         return new Promise((resolve) => {
           sshClient.exec(command, (err, stream) => {
             if (err) {
@@ -620,9 +623,20 @@ function registerHandlers(ipcMain) {
             }
             let stdout = "";
             let stderr = "";
+            let finished = false;
+            const tid = setTimeout(() => {
+              if (finished) return;
+              finished = true;
+              try { stream.close(); } catch { /* ignore */ }
+              const timeoutSec = Math.round(channelTimeoutMs / 1000);
+              resolve({ ok: false, stdout, stderr, exitCode: -1, error: `Command timed out (${timeoutSec}s)` });
+            }, channelTimeoutMs);
             stream.on("data", (data) => { stdout += data.toString(); });
             stream.stderr.on("data", (data) => { stderr += data.toString(); });
             stream.on("close", (code) => {
+              if (finished) return;
+              finished = true;
+              clearTimeout(tid);
               resolve({ ok: code === 0, stdout, stderr, exitCode: code });
             });
           });
@@ -1335,6 +1349,26 @@ function registerHandlers(ipcMain) {
     return { ok: true };
   });
 
+  ipcMain.handle("netcatty:ai:mcp:set-command-blocklist", async (_event, { blocklist }) => {
+    mcpServerBridge.setCommandBlocklist(blocklist || []);
+    return { ok: true };
+  });
+
+  ipcMain.handle("netcatty:ai:mcp:set-command-timeout", async (_event, { timeout }) => {
+    mcpServerBridge.setCommandTimeout(timeout || 60);
+    return { ok: true };
+  });
+
+  ipcMain.handle("netcatty:ai:mcp:set-max-iterations", async (_event, { maxIterations }) => {
+    mcpServerBridge.setMaxIterations(maxIterations || 20);
+    return { ok: true };
+  });
+
+  ipcMain.handle("netcatty:ai:mcp:set-permission-mode", async (_event, { mode }) => {
+    mcpServerBridge.setPermissionMode(mode || "confirm");
+    return { ok: true };
+  });
+
   // ── ACP (Agent Client Protocol) streaming ──
 
   ipcMain.handle("netcatty:ai:acp:stream", async (event, { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey, model, images }) => {
@@ -1488,7 +1522,7 @@ function registerHandlers(ipcMain) {
           content: buildMessageContent(contextualPrompt, images),
         }],
         tools: providerEntry.provider.tools,
-        stopWhen: stepCountIs(50),
+        stopWhen: stepCountIs(mcpServerBridge.getMaxIterations ? mcpServerBridge.getMaxIterations() : 20),
         abortSignal: abortController.signal,
       });
       console.log("[ACP] streamText created, reading fullStream via getReader...");

@@ -14,6 +14,7 @@ import {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { streamText, stepCountIs } from 'ai';
 import { cn } from '../lib/utils';
+import { useI18n } from '../application/i18n/I18nProvider';
 import { useWindowControls } from '../application/state/useWindowControls';
 import { useImageUpload } from '../application/state/useImageUpload';
 import type {
@@ -69,9 +70,10 @@ interface AIChatSidePanelProps {
   agentModelMap: Record<string, string>;
   setAgentModel: (agentId: string, modelId: string) => void;
 
-  // Permission
+  // Safety
   globalPermissionMode: AIPermissionMode;
   commandBlocklist?: string[];
+  maxIterations?: number;
 
   // Context
   scopeType: 'terminal' | 'workspace';
@@ -125,6 +127,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   setAgentModel,
   globalPermissionMode,
   commandBlocklist,
+  maxIterations = 20,
   scopeType,
   scopeTargetId,
   scopeHostIds,
@@ -132,6 +135,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   terminalSessions = [],
   isVisible = true,
 }) => {
+  const { t } = useI18n();
   // ── Per-scope state ──
   // Derive scope key for per-scope isolation
   const scopeKey = `${scopeType}:${scopeTargetId ?? ''}`;
@@ -294,7 +298,21 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
 
     // For built-in agent, we need a provider configured
     if (!isExternalAgent && !activeProvider) {
-      console.warn('[AIChatPanel] No active provider configured for built-in agent, aborting');
+      // Create a session so the user message and error are visible in the chat
+      let errSessionId = activeSessionId;
+      if (!errSessionId) {
+        const scope: AISessionScope = { type: scopeType, targetId: scopeTargetId, hostIds: scopeHostIds };
+        const session = createSession(scope, currentAgentId);
+        errSessionId = session.id;
+        setActiveSessionId(errSessionId);
+      }
+      addMessageToSession(errSessionId, {
+        id: generateId(), role: 'user', content: trimmed, timestamp: Date.now(),
+      });
+      addMessageToSession(errSessionId, {
+        id: generateId(), role: 'assistant', content: t('ai.chat.noProvider'), timestamp: Date.now(),
+      });
+      setInputValue('');
       return;
     }
 
@@ -533,7 +551,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       sessions: terminalSessions,
       workspaceId: scopeTargetId,
       workspaceName: scopeLabel,
-    }, commandBlocklist);
+    }, commandBlocklist, globalPermissionMode);
 
     const systemPrompt = buildSystemPrompt({
       scopeType,
@@ -599,7 +617,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         messages: sdkMessages,
         system: systemPrompt,
         tools,
-        stopWhen: stepCountIs(20),
+        stopWhen: stepCountIs(maxIterations),
         abortSignal: abortController.signal,
       });
 
@@ -749,6 +767,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     activeModelId,
     globalPermissionMode,
     commandBlocklist,
+    maxIterations,
     providers,
     sessions,
     externalAgents,
@@ -763,6 +782,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     images,
     clearImages,
     setInputValue,
+    t,
   ]);
 
   const handleStop = useCallback(() => {
@@ -887,12 +907,12 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           {messages.length === 0 && historySessions.length > 0 && (
             <div className="shrink-0 px-4 pb-1">
               <div className="flex items-baseline justify-between mb-2">
-                <span className="text-[11px] text-muted-foreground/30 tracking-wide">Recent</span>
+                <span className="text-[11px] text-muted-foreground/30 tracking-wide">{t('ai.chat.recent')}</span>
                 <button
                   onClick={() => setShowHistory(true)}
                   className="text-[11px] text-muted-foreground/30 hover:text-muted-foreground/50 transition-colors cursor-pointer"
                 >
-                  View All
+                  {t('ai.chat.viewAll')}
                 </button>
               </div>
               {historySessions.slice(0, 3).map((session) => (
@@ -902,10 +922,10 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
                   className="w-full flex items-baseline justify-between py-1.5 text-left hover:text-foreground transition-colors cursor-pointer"
                 >
                   <span className="text-[13px] text-foreground/60 truncate pr-4">
-                    {session.title || 'Untitled'}
+                    {session.title || t('ai.chat.untitled')}
                   </span>
                   <span className="text-[11px] text-muted-foreground/25 shrink-0">
-                    {formatRelativeTime(new Date(session.updatedAt))}
+                    {formatRelativeTime(new Date(session.updatedAt), t)}
                   </span>
                 </button>
               ))}
@@ -955,10 +975,11 @@ const SessionHistoryDrawer: React.FC<SessionHistoryDrawerProps> = ({
   onDelete,
   onClose,
 }) => {
+  const { t } = useI18n();
   return (
     <div className="flex-1 flex flex-col min-h-0">
       <div className="px-4 py-2.5 flex items-center justify-between shrink-0 border-b border-border/30">
-        <span className="text-[13px] font-medium text-foreground/80">All Sessions</span>
+        <span className="text-[13px] font-medium text-foreground/80">{t('ai.chat.allSessions')}</span>
         <button
           onClick={onClose}
           className="text-[12px] text-muted-foreground/60 hover:text-muted-foreground transition-colors cursor-pointer"
@@ -971,14 +992,14 @@ const SessionHistoryDrawer: React.FC<SessionHistoryDrawerProps> = ({
           {sessions.length === 0 ? (
             <div className="py-12 text-center">
               <p className="text-[13px] text-muted-foreground/40">
-                No previous sessions
+                {t('ai.chat.noSessions')}
               </p>
             </div>
           ) : (
             sessions.map((session) => {
               const isActive = session.id === activeSessionId;
               const time = new Date(session.updatedAt);
-              const timeStr = formatRelativeTime(time);
+              const timeStr = formatRelativeTime(time, t);
 
               return (
                 <button
@@ -990,7 +1011,7 @@ const SessionHistoryDrawer: React.FC<SessionHistoryDrawerProps> = ({
                   )}
                 >
                   <span className="text-[13px] truncate pr-3 flex-1 min-w-0">
-                    {session.title || 'Untitled'}
+                    {session.title || t('ai.chat.untitled')}
                   </span>
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="text-[12px] text-muted-foreground/50">
@@ -1018,17 +1039,17 @@ const SessionHistoryDrawer: React.FC<SessionHistoryDrawerProps> = ({
 // Helpers
 // -------------------------------------------------------------------
 
-function formatRelativeTime(date: Date): string {
+function formatRelativeTime(date: Date, t: (key: string) => string): string {
   const now = Date.now();
   const diff = now - date.getTime();
   const minutes = Math.floor(diff / 60_000);
   const hours = Math.floor(diff / 3_600_000);
   const days = Math.floor(diff / 86_400_000);
 
-  if (minutes < 1) return 'Just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days < 7) return `${days}d ago`;
+  if (minutes < 1) return t('ai.chat.justNow');
+  if (minutes < 60) return t('ai.chat.minutesAgo').replace('{n}', String(minutes));
+  if (hours < 24) return t('ai.chat.hoursAgo').replace('{n}', String(hours));
+  if (days < 7) return t('ai.chat.daysAgo').replace('{n}', String(days));
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 

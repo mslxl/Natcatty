@@ -112,6 +112,9 @@ export function useAIState() {
   const setGlobalPermissionMode = useCallback((mode: AIPermissionMode) => {
     setGlobalPermissionModeRaw(mode);
     localStorageAdapter.writeString(STORAGE_KEY_AI_PERMISSION_MODE, mode);
+    // Sync to MCP Server bridge (observer mode blocks write operations)
+    const bridge = (window as unknown as { netcatty?: Record<string, (...args: unknown[]) => unknown> }).netcatty;
+    bridge?.aiMcpSetPermissionMode?.(mode);
   }, []);
 
   const setHostPermissions = useCallback((value: HostAIPermission[] | ((prev: HostAIPermission[]) => HostAIPermission[])) => {
@@ -138,16 +141,25 @@ export function useAIState() {
   const setCommandBlocklist = useCallback((value: string[]) => {
     setCommandBlocklistRaw(value);
     localStorageAdapter.write(STORAGE_KEY_AI_COMMAND_BLOCKLIST, value);
+    // Sync to MCP Server bridge so ACP agents also respect the blocklist
+    const bridge = (window as unknown as { netcatty?: Record<string, (...args: unknown[]) => unknown> }).netcatty;
+    bridge?.aiMcpSetCommandBlocklist?.(value);
   }, []);
 
   const setCommandTimeout = useCallback((value: number) => {
     setCommandTimeoutRaw(value);
     localStorageAdapter.writeNumber(STORAGE_KEY_AI_COMMAND_TIMEOUT, value);
+    // Sync to MCP Server bridge
+    const bridge = (window as unknown as { netcatty?: Record<string, (...args: unknown[]) => unknown> }).netcatty;
+    bridge?.aiMcpSetCommandTimeout?.(value);
   }, []);
 
   const setMaxIterations = useCallback((value: number) => {
     setMaxIterationsRaw(value);
     localStorageAdapter.writeNumber(STORAGE_KEY_AI_MAX_ITERATIONS, value);
+    // Sync to MCP Server bridge (used by ACP agent path)
+    const bridge = (window as unknown as { netcatty?: Record<string, (...args: unknown[]) => unknown> }).netcatty;
+    bridge?.aiMcpSetMaxIterations?.(value);
   }, []);
 
   // ── Cross-window sync via storage events ──
@@ -168,6 +180,8 @@ export function useAIState() {
           const mode = localStorageAdapter.readString(STORAGE_KEY_AI_PERMISSION_MODE);
           if (mode === 'observer' || mode === 'confirm' || mode === 'autonomous') {
             setGlobalPermissionModeRaw(mode);
+            const b4 = (window as unknown as { netcatty?: Record<string, (...args: unknown[]) => unknown> }).netcatty;
+            b4?.aiMcpSetPermissionMode?.(mode);
           }
           break;
         }
@@ -177,16 +191,44 @@ export function useAIState() {
         case STORAGE_KEY_AI_DEFAULT_AGENT:
           setDefaultAgentIdRaw(localStorageAdapter.readString(STORAGE_KEY_AI_DEFAULT_AGENT) ?? 'catty');
           break;
-        case STORAGE_KEY_AI_COMMAND_TIMEOUT:
-          setCommandTimeoutRaw(localStorageAdapter.readNumber(STORAGE_KEY_AI_COMMAND_TIMEOUT) ?? 60);
+        case STORAGE_KEY_AI_COMMAND_BLOCKLIST: {
+          const list = localStorageAdapter.read<string[]>(STORAGE_KEY_AI_COMMAND_BLOCKLIST) ?? [...DEFAULT_COMMAND_BLOCKLIST];
+          setCommandBlocklistRaw(list);
+          const b = (window as unknown as { netcatty?: Record<string, (...args: unknown[]) => unknown> }).netcatty;
+          b?.aiMcpSetCommandBlocklist?.(list);
           break;
-        case STORAGE_KEY_AI_MAX_ITERATIONS:
-          setMaxIterationsRaw(localStorageAdapter.readNumber(STORAGE_KEY_AI_MAX_ITERATIONS) ?? 20);
+        }
+        case STORAGE_KEY_AI_COMMAND_TIMEOUT: {
+          const timeout = localStorageAdapter.readNumber(STORAGE_KEY_AI_COMMAND_TIMEOUT) ?? 60;
+          setCommandTimeoutRaw(timeout);
+          const b2 = (window as unknown as { netcatty?: Record<string, (...args: unknown[]) => unknown> }).netcatty;
+          b2?.aiMcpSetCommandTimeout?.(timeout);
           break;
+        }
+        case STORAGE_KEY_AI_MAX_ITERATIONS: {
+          const iters = localStorageAdapter.readNumber(STORAGE_KEY_AI_MAX_ITERATIONS) ?? 20;
+          setMaxIterationsRaw(iters);
+          const b3 = (window as unknown as { netcatty?: Record<string, (...args: unknown[]) => unknown> }).netcatty;
+          b3?.aiMcpSetMaxIterations?.(iters);
+          break;
+        }
       }
     };
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
+  }, []);
+
+  // ── Sync initial safety settings to MCP Server on mount ──
+  useEffect(() => {
+    const bridge = (window as unknown as { netcatty?: Record<string, (...args: unknown[]) => unknown> }).netcatty;
+    const initialBlocklist = localStorageAdapter.read<string[]>(STORAGE_KEY_AI_COMMAND_BLOCKLIST) ?? [...DEFAULT_COMMAND_BLOCKLIST];
+    bridge?.aiMcpSetCommandBlocklist?.(initialBlocklist);
+    const initialTimeout = localStorageAdapter.readNumber(STORAGE_KEY_AI_COMMAND_TIMEOUT) ?? 60;
+    bridge?.aiMcpSetCommandTimeout?.(initialTimeout);
+    const initialMaxIter = localStorageAdapter.readNumber(STORAGE_KEY_AI_MAX_ITERATIONS) ?? 20;
+    bridge?.aiMcpSetMaxIterations?.(initialMaxIter);
+    const initialPermMode = localStorageAdapter.readString(STORAGE_KEY_AI_PERMISSION_MODE) ?? 'confirm';
+    bridge?.aiMcpSetPermissionMode?.(initialPermMode);
   }, []);
 
   // ── Session CRUD ──

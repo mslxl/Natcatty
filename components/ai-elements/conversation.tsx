@@ -33,8 +33,8 @@ export interface ConversationEmptyStateProps extends HTMLAttributes<HTMLDivEleme
 
 export const ConversationEmptyState = ({
   className,
-  title = 'Start a conversation',
-  description = 'Ask about your servers, run commands, or get help with configurations.',
+  title,
+  description,
   icon,
   children,
   ...props

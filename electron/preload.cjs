@@ -1041,6 +1041,18 @@ const api = {
   aiMcpUpdateSessions: async (sessions, chatSessionId) => {
     return ipcRenderer.invoke("netcatty:ai:mcp:update-sessions", { sessions, chatSessionId });
   },
+  aiMcpSetCommandBlocklist: async (blocklist) => {
+    return ipcRenderer.invoke("netcatty:ai:mcp:set-command-blocklist", { blocklist });
+  },
+  aiMcpSetCommandTimeout: async (timeout) => {
+    return ipcRenderer.invoke("netcatty:ai:mcp:set-command-timeout", { timeout });
+  },
+  aiMcpSetMaxIterations: async (maxIterations) => {
+    return ipcRenderer.invoke("netcatty:ai:mcp:set-max-iterations", { maxIterations });
+  },
+  aiMcpSetPermissionMode: async (mode) => {
+    return ipcRenderer.invoke("netcatty:ai:mcp:set-permission-mode", { mode });
+  },
   // Claude Agent SDK streaming
   aiClaudeStream: async (requestId, chatSessionId, prompt, model) => {
     return ipcRenderer.invoke("netcatty:ai:claude:stream", { requestId, chatSessionId, prompt, model });
