@@ -8,6 +8,7 @@
 
 import { ChevronRight } from 'lucide-react';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useI18n } from '../../application/i18n/I18nProvider';
 import { cn } from '../../lib/utils';
 
 interface ThinkingBlockProps {
@@ -29,6 +30,7 @@ const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
   isStreaming,
   durationMs,
 }) => {
+  const { t } = useI18n();
   const [isExpanded, setIsExpanded] = useState(isStreaming);
   const [elapsed, setElapsed] = useState(0);
   const wasStreamingRef = useRef(false);
@@ -89,9 +91,11 @@ const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
         />
         <span className="text-[12px] font-medium text-muted-foreground/70 whitespace-nowrap shrink-0">
           {isStreaming ? (
-            <span className="thinking-shimmer">Thinking</span>
+            <span className="thinking-shimmer">{t('ai.chat.thinking')}</span>
           ) : (
-            `Thought${displayDuration > 0 ? ` for ${formatDuration(displayDuration)}` : ''}`
+            displayDuration > 0
+              ? t('ai.chat.thoughtFor', { duration: formatDuration(displayDuration) })
+              : t('ai.chat.thought')
           )}
         </span>
         {isStreaming && elapsed > 0 && (

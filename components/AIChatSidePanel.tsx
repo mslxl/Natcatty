@@ -210,6 +210,14 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     }
   }, [terminalSessions, scopeKey, activeSessionId]);
 
+  // Abort all active streams on unmount
+  useEffect(() => {
+    return () => {
+      abortControllersRef.current.forEach(c => c.abort());
+      abortControllersRef.current.clear();
+    };
+  }, []);
+
   // Agent discovery
   const {
     discoveredAgents,
@@ -320,6 +328,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       toolArgs: Record<string, unknown>;
     } | null = null;
 
+    try {
     while (true) {
       const { done, value: chunk } = await reader.read();
       if (done) break;
@@ -441,6 +450,9 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           break;
       }
     }
+    } finally {
+      reader.releaseLock();
+    }
     return pendingApprovalInfo;
   }, [maxIterations, addMessageToSession, updateLastMessage]);
 
@@ -472,295 +484,199 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     void openSettingsWindow();
   }, [openSettingsWindow]);
 
-  const handleSend = useCallback(async () => {
-    const trimmed = inputValue.trim();
-    // Capture scope key and session ID at send time so async callbacks use the correct references
-    const sendScopeKey = scopeKey;
-    if (!trimmed || isStreaming) return;
+  // -------------------------------------------------------------------
+  // Shared helpers for handleSend sub-flows
+  // -------------------------------------------------------------------
 
-    const isExternalAgent = currentAgentId !== 'catty';
-
-    // For built-in agent, we need a provider configured
-    if (!isExternalAgent && !activeProvider) {
-      // Create a session so the user message and error are visible in the chat
-      let errSessionId = activeSessionId;
-      if (!errSessionId) {
-        const scope: AISessionScope = { type: scopeType, targetId: scopeTargetId, hostIds: scopeHostIds };
-        const session = createSession(scope, currentAgentId);
-        errSessionId = session.id;
-        setActiveSessionId(errSessionId);
-      }
-      addMessageToSession(errSessionId, {
-        id: generateId(), role: 'user', content: trimmed, timestamp: Date.now(),
-      });
-      addMessageToSession(errSessionId, {
-        id: generateId(), role: 'assistant', content: t('ai.chat.noProvider'), timestamp: Date.now(),
-      });
-      setInputValue('');
-      return;
-    }
-
-    // Create session if needed
-    let sessionId = activeSessionId;
-    if (!sessionId) {
-      const scope: AISessionScope = {
-        type: scopeType,
-        targetId: scopeTargetId,
-        hostIds: scopeHostIds,
-      };
-      const session = createSession(scope, currentAgentId);
-      sessionId = session.id;
-      setActiveSessionId(sessionId);
-    }
-
-    // Capture images before clearing
-    const attachedImages = images.map(img => ({ base64Data: img.base64Data, mediaType: img.mediaType, filename: img.filename }));
-
-    // Add user message (with images if any)
-    const userMessage: ChatMessage = {
-      id: generateId(),
-      role: 'user',
-      content: trimmed,
-      ...(attachedImages.length > 0 ? { images: attachedImages } : {}),
-      timestamp: Date.now(),
-    };
-    addMessageToSession(sessionId, userMessage);
-    setInputValue('');
-    clearImages();
-    setStreamingForScope(sessionId!, true);
-
-    // Create assistant message placeholder for streaming
-    const agentConfig = isExternalAgent
-      ? externalAgents.find(a => a.id === currentAgentId)
-      : undefined;
+  /** Report a streaming error to the chat (shared by all agent paths). */
+  const reportStreamError = useCallback((
+    sessionId: string,
+    abortSignal: AbortSignal,
+    err: unknown,
+  ) => {
+    if (abortSignal.aborted) return;
+    const errorStr = err instanceof Error ? err.message : String(err);
+    updateLastMessage(sessionId, msg => ({
+      ...msg,
+      executionStatus: msg.executionStatus === 'running' ? 'failed' : msg.executionStatus,
+    }));
     addMessageToSession(sessionId, {
       id: generateId(),
       role: 'assistant',
       content: '',
+      errorInfo: classifyError(errorStr),
       timestamp: Date.now(),
-      model: isExternalAgent ? (agentConfig?.name || 'external') : (activeModelId || activeProvider?.defaultModel || ''),
-      providerId: isExternalAgent ? undefined : activeProvider?.providerId,
     });
+  }, [updateLastMessage, addMessageToSession]);
 
-    // Abort controller for cancellation (per-scope)
-    const abortController = new AbortController();
-    abortControllersRef.current.set(sessionId!, abortController);
+  /** Ref to always access latest sessions (avoids stale closure in autoTitleSession). */
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
 
-    // Get current session for context
-    const currentSession = sessions.find((s) => s.id === sessionId);
+  /** Refs to avoid re-creating handleSend on every keystroke / image change. */
+  const inputValueRef = useRef(inputValue);
+  inputValueRef.current = inputValue;
+  const imagesRef = useRef(images);
+  imagesRef.current = images;
 
-    if (isExternalAgent) {
-      if (!agentConfig) {
-        updateLastMessage(sessionId, msg => ({
-          ...msg,
-          content: 'External agent not found. Please check settings.',
-          executionStatus: 'failed',
-        }));
-        setStreamingForScope(sessionId!, false);
-        return;
-      }
-
-      const bridge = (window as unknown as { netcatty?: Record<string, unknown> }).netcatty as
-        Record<string, (...args: unknown[]) => unknown> | undefined;
-
-      if (agentConfig.acpCommand && bridge) {
-        // Use ACP protocol if the agent supports it
-        const requestId = `acp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-
-        // Push terminal session metadata to MCP bridge before streaming (with chatSessionId for per-scope isolation)
-        const mcpBridge = bridge as unknown as { aiMcpUpdateSessions?: (sessions: typeof terminalSessions, chatSessionId?: string) => Promise<unknown> };
-        if (mcpBridge.aiMcpUpdateSessions) {
-          await mcpBridge.aiMcpUpdateSessions(terminalSessions, sessionId!);
-        }
-
-        // Try to find an API key from configured providers for this agent
-        const openaiProvider = providers.find(p => p.providerId === 'openai' && p.enabled && p.apiKey);
-        const agentApiKey = openaiProvider?.apiKey;
-
-        try {
-          // Mutable flag: set after tool-result, cleared when new assistant msg is created
-          let needsNewAssistantMsg = false;
-
-          const maybeCreateAssistantMsg = () => {
-            if (needsNewAssistantMsg) {
-              needsNewAssistantMsg = false;
-              addMessageToSession(sessionId!, {
-                id: generateId(),
-                role: 'assistant',
-                content: '',
-                timestamp: Date.now(),
-                model: agentConfig?.name || 'external',
-              });
-            }
-          };
-
-          await runAcpAgentTurn(
-            bridge,
-            requestId,
-            sessionId!,
-            agentConfig,
-            trimmed,
-            {
-              onTextDelta: (text: string) => {
-                maybeCreateAssistantMsg();
-                updateLastMessage(sessionId!, msg => ({
-                  ...msg,
-                  content: msg.content + text,
-                  statusText: undefined,
-                  thinkingDurationMs: msg.thinking && !msg.thinkingDurationMs
-                    ? Date.now() - msg.timestamp
-                    : msg.thinkingDurationMs,
-                }));
-              },
-              onThinkingDelta: (text: string) => {
-                maybeCreateAssistantMsg();
-                updateLastMessage(sessionId!, msg => ({
-                  ...msg,
-                  thinking: (msg.thinking || '') + text,
-                }));
-              },
-              onThinkingDone: () => {
-                updateLastMessage(sessionId!, msg => ({
-                  ...msg,
-                  thinkingDurationMs: msg.thinkingDurationMs || (Date.now() - msg.timestamp),
-                }));
-              },
-              onToolCall: (toolName: string, args: Record<string, unknown>) => {
-                maybeCreateAssistantMsg();
-                updateLastMessage(sessionId!, msg => ({
-                  ...msg,
-                  toolCalls: [...(msg.toolCalls || []), {
-                    id: `tc_${Date.now()}`,
-                    name: toolName,
-                    arguments: args,
-                  }],
-                  executionStatus: 'running',
-                }));
-              },
-              onToolResult: (toolCallId: string, result: string) => {
-                // Mark previous assistant message's tool calls as completed
-                updateLastMessage(sessionId!, msg => {
-                  if (msg.role === 'assistant' && msg.executionStatus === 'running') {
-                    return { ...msg, executionStatus: 'completed' };
-                  }
-                  return msg;
-                });
-                addMessageToSession(sessionId!, {
-                  id: generateId(),
-                  role: 'tool',
-                  content: '',
-                  toolResults: [{ toolCallId, content: result, isError: false }],
-                  timestamp: Date.now(),
-                  executionStatus: 'completed',
-                });
-                // Next text/thinking/toolCall should go into a new assistant message
-                needsNewAssistantMsg = true;
-              },
-              onStatus: (message: string) => {
-                maybeCreateAssistantMsg();
-                updateLastMessage(sessionId!, msg => ({
-                  ...msg,
-                  statusText: message,
-                }));
-              },
-              onError: (error: string) => {
-                updateLastMessage(sessionId!, msg => ({
-                  ...msg,
-                  executionStatus: msg.executionStatus === 'running' ? 'failed' : msg.executionStatus,
-                }));
-                addMessageToSession(sessionId!, {
-                  id: generateId(),
-                  role: 'assistant',
-                  content: '',
-                  errorInfo: classifyError(error),
-                  timestamp: Date.now(),
-                });
-                setStreamingForScope(sessionId!, false);
-              },
-              onDone: () => {},
-            },
-            abortController.signal,
-            agentApiKey,
-            selectedAgentModel,
-            attachedImages.length > 0 ? attachedImages : undefined,
-          );
-        } catch (err) {
-          if (!abortController.signal.aborted) {
-            const errorStr = err instanceof Error ? err.message : String(err);
-            updateLastMessage(sessionId!, msg => ({
-              ...msg,
-              executionStatus: msg.executionStatus === 'running' ? 'failed' : msg.executionStatus,
-            }));
-            addMessageToSession(sessionId!, {
-              id: generateId(),
-              role: 'assistant',
-              content: '',
-              errorInfo: classifyError(errorStr),
-              timestamp: Date.now(),
-            });
-          }
-        }
-      } else {
-        // Fallback: spawn as raw process
-        try {
-          await runExternalAgentTurn(
-            agentConfig,
-            trimmed,
-            {
-              onTextDelta: (text: string) => {
-                updateLastMessage(sessionId!, msg => ({ ...msg, content: msg.content + text }));
-              },
-              onError: (error: string) => {
-                updateLastMessage(sessionId!, msg => ({
-                  ...msg,
-                  executionStatus: msg.executionStatus === 'running' ? 'failed' : msg.executionStatus,
-                }));
-                addMessageToSession(sessionId!, {
-                  id: generateId(),
-                  role: 'assistant',
-                  content: '',
-                  errorInfo: classifyError(error),
-                  timestamp: Date.now(),
-                });
-                setStreamingForScope(sessionId!, false);
-              },
-              onDone: () => {},
-            },
-            bridge as Parameters<typeof runExternalAgentTurn>[3],
-            abortController.signal,
-          );
-        } catch (err) {
-          if (!abortController.signal.aborted) {
-            const errorStr = err instanceof Error ? err.message : String(err);
-            updateLastMessage(sessionId!, msg => ({
-              ...msg,
-              executionStatus: msg.executionStatus === 'running' ? 'failed' : msg.executionStatus,
-            }));
-            addMessageToSession(sessionId!, {
-              id: generateId(),
-              role: 'assistant',
-              content: '',
-              errorInfo: classifyError(errorStr),
-              timestamp: Date.now(),
-            });
-          }
-        }
-      }
-
-      setStreamingForScope(sessionId!, false);
-      abortControllersRef.current.delete(sessionId!);
-      if (
-        currentSession &&
-        (!currentSession.title || currentSession.title === 'New Chat')
-      ) {
-        const title =
-          trimmed.length > 50 ? trimmed.slice(0, 50) + '...' : trimmed;
-        updateSessionTitle(sessionId!, title);
-      }
-      return;
+  /** Auto-title a session from the first user message if untitled. */
+  const autoTitleSession = useCallback((sessionId: string, text: string) => {
+    const s = sessionsRef.current.find(x => x.id === sessionId);
+    if (s && (!s.title || s.title === 'New Chat')) {
+      updateSessionTitle(sessionId, text.length > 50 ? text.slice(0, 50) + '...' : text);
     }
+  }, [updateSessionTitle]);
 
-    // --- Catty Agent: Vercel AI SDK streamText ---
+  /** Ensure a session exists for the current scope and return its ID. */
+  const ensureSession = useCallback((): string => {
+    if (activeSessionId) return activeSessionId;
+    const scope: AISessionScope = { type: scopeType, targetId: scopeTargetId, hostIds: scopeHostIds };
+    const session = createSession(scope, currentAgentId);
+    setActiveSessionId(session.id);
+    return session.id;
+  }, [activeSessionId, scopeType, scopeTargetId, scopeHostIds, currentAgentId, createSession, setActiveSessionId]);
+
+  /** Get the netcatty bridge from the window. */
+  const getBridge = useCallback(() =>
+    (window as unknown as { netcatty?: Record<string, unknown> }).netcatty as
+      Record<string, (...args: unknown[]) => unknown> | undefined,
+  []);
+
+  // -------------------------------------------------------------------
+  // External agent sub-flow (ACP or raw process)
+  // -------------------------------------------------------------------
+
+  const sendToExternalAgent = useCallback(async (
+    sessionId: string,
+    trimmed: string,
+    agentConfig: ExternalAgentConfig,
+    abortController: AbortController,
+    attachedImages: Array<{ base64Data: string; mediaType: string; filename?: string }>,
+  ) => {
+    const bridge = getBridge();
+
+    if (agentConfig.acpCommand && bridge) {
+      const requestId = `acp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+      // Push terminal session metadata to MCP bridge
+      const mcpBridge = bridge as unknown as { aiMcpUpdateSessions?: (sessions: typeof terminalSessions, chatSessionId?: string) => Promise<unknown> };
+      if (mcpBridge.aiMcpUpdateSessions) {
+        await mcpBridge.aiMcpUpdateSessions(terminalSessions, sessionId);
+      }
+
+      const openaiProvider = providers.find(p => p.providerId === 'openai' && p.enabled && p.apiKey);
+      const agentApiKey = openaiProvider?.apiKey;
+
+      // Mutable flag: set after tool-result, cleared when new assistant msg is created
+      let needsNewAssistantMsg = false;
+      const maybeCreateAssistantMsg = () => {
+        if (needsNewAssistantMsg) {
+          needsNewAssistantMsg = false;
+          addMessageToSession(sessionId, {
+            id: generateId(), role: 'assistant', content: '', timestamp: Date.now(),
+            model: agentConfig.name || 'external',
+          });
+        }
+      };
+
+      await runAcpAgentTurn(
+        bridge,
+        requestId,
+        sessionId,
+        agentConfig,
+        trimmed,
+        {
+          onTextDelta: (text: string) => {
+            maybeCreateAssistantMsg();
+            updateLastMessage(sessionId, msg => ({
+              ...msg,
+              content: msg.content + text,
+              statusText: undefined,
+              thinkingDurationMs: msg.thinking && !msg.thinkingDurationMs
+                ? Date.now() - msg.timestamp : msg.thinkingDurationMs,
+            }));
+          },
+          onThinkingDelta: (text: string) => {
+            maybeCreateAssistantMsg();
+            updateLastMessage(sessionId, msg => ({
+              ...msg, thinking: (msg.thinking || '') + text,
+            }));
+          },
+          onThinkingDone: () => {
+            updateLastMessage(sessionId, msg => ({
+              ...msg, thinkingDurationMs: msg.thinkingDurationMs || (Date.now() - msg.timestamp),
+            }));
+          },
+          onToolCall: (toolName: string, args: Record<string, unknown>) => {
+            maybeCreateAssistantMsg();
+            updateLastMessage(sessionId, msg => ({
+              ...msg,
+              toolCalls: [...(msg.toolCalls || []), { id: `tc_${Date.now()}`, name: toolName, arguments: args }],
+              executionStatus: 'running',
+            }));
+          },
+          onToolResult: (toolCallId: string, result: string) => {
+            updateLastMessage(sessionId, msg =>
+              msg.role === 'assistant' && msg.executionStatus === 'running'
+                ? { ...msg, executionStatus: 'completed' } : msg,
+            );
+            addMessageToSession(sessionId, {
+              id: generateId(), role: 'tool', content: '',
+              toolResults: [{ toolCallId, content: result, isError: false }],
+              timestamp: Date.now(), executionStatus: 'completed',
+            });
+            needsNewAssistantMsg = true;
+          },
+          onStatus: (message: string) => {
+            maybeCreateAssistantMsg();
+            updateLastMessage(sessionId, msg => ({ ...msg, statusText: message }));
+          },
+          onError: (error: string) => {
+            reportStreamError(sessionId, abortController.signal, error);
+            setStreamingForScope(sessionId, false);
+          },
+          onDone: () => {},
+        },
+        abortController.signal,
+        agentApiKey,
+        selectedAgentModel,
+        attachedImages.length > 0 ? attachedImages : undefined,
+      );
+    } else {
+      // Fallback: spawn as raw process
+      await runExternalAgentTurn(
+        agentConfig,
+        trimmed,
+        {
+          onTextDelta: (text: string) => {
+            updateLastMessage(sessionId, msg => ({ ...msg, content: msg.content + text }));
+          },
+          onError: (error: string) => {
+            reportStreamError(sessionId, abortController.signal, error);
+            setStreamingForScope(sessionId, false);
+          },
+          onDone: () => {},
+        },
+        bridge as Parameters<typeof runExternalAgentTurn>[3],
+        abortController.signal,
+      );
+    }
+  }, [
+    getBridge, terminalSessions, providers, selectedAgentModel,
+    addMessageToSession, updateLastMessage, setStreamingForScope, reportStreamError,
+  ]);
+
+  // -------------------------------------------------------------------
+  // Catty Agent sub-flow (Vercel AI SDK streamText)
+  // -------------------------------------------------------------------
+
+  const sendToCattyAgent = useCallback(async (
+    sessionId: string,
+    sendScopeKey: string,
+    trimmed: string,
+    abortController: AbortController,
+    currentSession: AISession | undefined,
+  ) => {
     const bridge = (window as unknown as { netcatty?: Record<string, unknown> }).netcatty;
     const tools = createCattyTools(bridge, {
       sessions: terminalSessions,
@@ -769,26 +685,35 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     }, commandBlocklist, globalPermissionMode);
 
     const systemPrompt = buildSystemPrompt({
-      scopeType,
-      scopeLabel,
+      scopeType, scopeLabel,
       hosts: terminalSessions.map(s => ({
-        sessionId: s.sessionId,
-        hostname: s.hostname,
-        label: s.label,
-        os: s.os,
-        username: s.username,
-        connected: s.connected,
+        sessionId: s.sessionId, hostname: s.hostname, label: s.label,
+        os: s.os, username: s.username, connected: s.connected,
       })),
       permissionMode: globalPermissionMode,
     });
+
+    // Guard: activeProvider must exist for Catty agent path
+    if (!activeProvider) {
+      reportStreamError(sessionId, abortController.signal, 'No AI provider configured. Please configure a provider in Settings → AI.');
+      return;
+    }
 
     // Decrypt API key before passing to SDK
     let decryptedApiKey = activeProvider.apiKey;
     if (decryptedApiKey && bridge?.credentialsDecrypt) {
       try {
-        decryptedApiKey = await (bridge as { credentialsDecrypt: (v: string) => Promise<string> }).credentialsDecrypt(decryptedApiKey) ?? decryptedApiKey;
+        const decrypted = await (bridge as { credentialsDecrypt: (v: string) => Promise<string> }).credentialsDecrypt(decryptedApiKey);
+        if (decrypted) {
+          decryptedApiKey = decrypted;
+        } else {
+          reportStreamError(sessionId, abortController.signal, 'API key decryption returned empty result. Please re-enter the API key in Settings → AI.');
+          return;
+        }
       } catch (e) {
         console.error('[Catty] API key decryption failed:', e);
+        reportStreamError(sessionId, abortController.signal, `API key decryption failed: ${e instanceof Error ? e.message : String(e)}`);
+        return;
       }
     }
 
@@ -799,100 +724,108 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     });
 
     try {
-      // Build message array for the SDK
       const sdkMessages: Array<Record<string, unknown>> = [];
       for (const m of (currentSession?.messages ?? [])) {
-        if (m.role === 'user') {
-          sdkMessages.push({ role: 'user', content: m.content });
-        } else if (m.role === 'assistant' && m.content) {
-          sdkMessages.push({ role: 'assistant', content: m.content });
-        }
+        if (m.role === 'user') sdkMessages.push({ role: 'user', content: m.content });
+        else if (m.role === 'assistant' && m.content) sdkMessages.push({ role: 'assistant', content: m.content });
       }
       sdkMessages.push({ role: 'user', content: trimmed });
 
-      const approvalInfo = await processCattyStream(sessionId!, model, systemPrompt, tools, sdkMessages, abortController.signal);
+      const approvalInfo = await processCattyStream(sessionId, model, systemPrompt, tools, sdkMessages, abortController.signal);
 
       if (approvalInfo) {
-        // Stream ended with a pending approval — store the context needed
-        // to resume once the user approves/rejects via the inline card.
-        // The approval card is already rendered. We save the SDK messages
-        // and approval metadata so handleApprovalResponse can resume.
         pendingApprovalContextRef.current = {
-          sessionId: sessionId!,
-          scopeKey: sendScopeKey,
-          sdkMessages,
-          approvalInfo,
-          model,
-          systemPrompt,
-          tools,
+          sessionId, scopeKey: sendScopeKey, sdkMessages, approvalInfo, model, systemPrompt, tools,
         };
-        // Keep streaming flag on — the flow is waiting for user input
-        // (streaming will be cleared when user approves/rejects)
-        return;
+        return; // Keep streaming flag — waiting for user approval
       }
     } catch (err) {
       console.error('[Catty] streamText error:', err);
-      if (!abortController.signal.aborted) {
-        const errorStr = err instanceof Error ? err.message : String(err);
-        updateLastMessage(sessionId!, msg => ({
-          ...msg,
-          executionStatus: msg.executionStatus === 'running' ? 'failed' : msg.executionStatus,
-        }));
-        addMessageToSession(sessionId!, {
-          id: generateId(),
-          role: 'assistant',
-          content: '',
-          errorInfo: classifyError(errorStr),
-          timestamp: Date.now(),
-        });
-      }
+      reportStreamError(sessionId, abortController.signal, err);
     } finally {
-      // Only clean up if there is no pending approval waiting for user action
       if (!pendingApprovalContextRef.current || pendingApprovalContextRef.current.sessionId !== sessionId) {
-        setStreamingForScope(sessionId!, false);
-        abortControllersRef.current.delete(sessionId!);
+        setStreamingForScope(sessionId, false);
+        abortControllersRef.current.delete(sessionId);
       }
-      const finalSession = sessions.find(s => s.id === sessionId);
-      if (
-        finalSession &&
-        (!finalSession.title || finalSession.title === 'New Chat')
-      ) {
-        const title =
-          trimmed.length > 50 ? trimmed.slice(0, 50) + '...' : trimmed;
-        updateSessionTitle(sessionId!, title);
-      }
+      autoTitleSession(sessionId, trimmed);
     }
   }, [
-    inputValue,
-    isStreaming,
-    activeProvider,
-    activeSessionId,
-    scopeKey,
-    scopeType,
-    scopeTargetId,
-    scopeHostIds,
-    scopeLabel,
-    currentAgentId,
-    activeModelId,
-    globalPermissionMode,
-    commandBlocklist,
-    maxIterations,
-    providers,
-    sessions,
-    externalAgents,
-    terminalSessions,
-    createSession,
-    setActiveSessionId,
-    setStreamingForScope,
-    addMessageToSession,
-    updateLastMessage,
-    updateSessionTitle,
-    selectedAgentModel,
-    images,
-    clearImages,
-    setInputValue,
-    processCattyStream,
-    t,
+    activeProvider, activeModelId, scopeType, scopeTargetId, scopeLabel,
+    globalPermissionMode, commandBlocklist, terminalSessions,
+    processCattyStream, reportStreamError, setStreamingForScope, autoTitleSession,
+  ]);
+
+  // -------------------------------------------------------------------
+  // Main send handler (thin orchestrator)
+  // -------------------------------------------------------------------
+
+  const handleSend = useCallback(async () => {
+    const trimmed = inputValueRef.current.trim();
+    const sendScopeKey = scopeKey;
+    if (!trimmed || isStreaming) return;
+
+    const isExternalAgent = currentAgentId !== 'catty';
+
+    // No provider configured for built-in agent
+    if (!isExternalAgent && !activeProvider) {
+      const errSessionId = ensureSession();
+      addMessageToSession(errSessionId, { id: generateId(), role: 'user', content: trimmed, timestamp: Date.now() });
+      addMessageToSession(errSessionId, { id: generateId(), role: 'assistant', content: t('ai.chat.noProvider'), timestamp: Date.now() });
+      setInputValue('');
+      return;
+    }
+
+    // Ensure session exists
+    const sessionId = ensureSession();
+
+    // Capture images before clearing
+    const attachedImages = imagesRef.current.map(img => ({ base64Data: img.base64Data, mediaType: img.mediaType, filename: img.filename }));
+
+    // Add user message
+    addMessageToSession(sessionId, {
+      id: generateId(), role: 'user', content: trimmed,
+      ...(attachedImages.length > 0 ? { images: attachedImages } : {}),
+      timestamp: Date.now(),
+    });
+    setInputValue('');
+    clearImages();
+    setStreamingForScope(sessionId, true);
+
+    // Create assistant message placeholder
+    const agentConfig = isExternalAgent ? externalAgents.find(a => a.id === currentAgentId) : undefined;
+    addMessageToSession(sessionId, {
+      id: generateId(), role: 'assistant', content: '', timestamp: Date.now(),
+      model: isExternalAgent ? (agentConfig?.name || 'external') : (activeModelId || activeProvider?.defaultModel || ''),
+      providerId: isExternalAgent ? undefined : activeProvider?.providerId,
+    });
+
+    const abortController = new AbortController();
+    abortControllersRef.current.set(sessionId, abortController);
+    const currentSession = sessions.find(s => s.id === sessionId);
+
+    if (isExternalAgent) {
+      if (!agentConfig) {
+        updateLastMessage(sessionId, msg => ({ ...msg, content: 'External agent not found. Please check settings.', executionStatus: 'failed' }));
+        setStreamingForScope(sessionId, false);
+        return;
+      }
+      try {
+        await sendToExternalAgent(sessionId, trimmed, agentConfig, abortController, attachedImages);
+      } catch (err) {
+        reportStreamError(sessionId, abortController.signal, err);
+      }
+      setStreamingForScope(sessionId, false);
+      abortControllersRef.current.delete(sessionId);
+      autoTitleSession(sessionId, trimmed);
+    } else {
+      await sendToCattyAgent(sessionId, sendScopeKey, trimmed, abortController, currentSession ?? undefined);
+    }
+  }, [
+    isStreaming, activeProvider, scopeKey, currentAgentId,
+    activeModelId, sessions, externalAgents,
+    ensureSession, addMessageToSession, updateLastMessage,
+    setStreamingForScope, setInputValue, clearImages,
+    sendToExternalAgent, sendToCattyAgent, reportStreamError, autoTitleSession, t,
   ]);
 
   const handleStop = useCallback(() => {
@@ -983,9 +916,25 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     abortControllersRef.current.set(sid, abortController);
 
     try {
-      const { model, systemPrompt, tools } = ctx;
+      // Rebuild tools and system prompt with the latest permission mode to prevent
+      // stale closure issues (e.g. user changed permission mode during approval wait)
+      const bridge = (window as unknown as { netcatty?: Record<string, unknown> }).netcatty;
+      const freshTools = createCattyTools(bridge, {
+        sessions: terminalSessions,
+        workspaceId: scopeTargetId,
+        workspaceName: scopeLabel,
+      }, commandBlocklist, globalPermissionMode);
+      const freshSystemPrompt = buildSystemPrompt({
+        scopeType, scopeLabel,
+        hosts: terminalSessions.map(s => ({
+          sessionId: s.sessionId, hostname: s.hostname, label: s.label,
+          os: s.os, username: s.username, connected: s.connected,
+        })),
+        permissionMode: globalPermissionMode,
+      });
+      const { model } = ctx;
 
-      const newApprovalInfo = await processCattyStream(sid, model, systemPrompt, tools, resumeMessages, abortController.signal);
+      const newApprovalInfo = await processCattyStream(sid, model, freshSystemPrompt, freshTools, resumeMessages, abortController.signal);
 
       if (newApprovalInfo) {
         // Another approval needed — save context for the next round
@@ -995,8 +944,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           sdkMessages: resumeMessages,
           approvalInfo: newApprovalInfo,
           model,
-          systemPrompt,
-          tools,
+          systemPrompt: freshSystemPrompt,
+          tools: freshTools,
         };
         return;
       }
@@ -1022,7 +971,11 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         abortControllersRef.current.delete(sid);
       }
     }
-  }, [processCattyStream, addMessageToSession, updateLastMessage, setStreamingForScope, t]);
+  }, [
+    processCattyStream, addMessageToSession, updateLastMessage, setStreamingForScope, t,
+    terminalSessions, scopeType, scopeTargetId, scopeLabel,
+    globalPermissionMode, commandBlocklist,
+  ]);
 
   const handleSelectSession = useCallback(
     (sessionId: string) => {

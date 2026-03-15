@@ -240,8 +240,9 @@ export const CODEX_MODEL_PRESETS: AgentModelPreset[] = [
 
 export function getAgentModelPresets(agentCommand?: string): AgentModelPreset[] {
   if (!agentCommand) return [];
-  if (agentCommand === 'claude' || agentCommand.includes('claude')) return CLAUDE_MODEL_PRESETS;
-  if (agentCommand === 'codex' || agentCommand.includes('codex')) return CODEX_MODEL_PRESETS;
+  const basename = agentCommand.split('/').pop()?.toLowerCase() ?? '';
+  if (basename.startsWith('claude')) return CLAUDE_MODEL_PRESETS;
+  if (basename.startsWith('codex')) return CODEX_MODEL_PRESETS;
   return [];
 }
 

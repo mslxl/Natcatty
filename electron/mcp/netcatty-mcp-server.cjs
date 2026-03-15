@@ -27,10 +27,15 @@ if (!NETCATTY_MCP_TOKEN) {
   process.exit(1);
 }
 
-// Scoped session IDs (optional, comma-separated)
-const SCOPED_SESSION_IDS = process.env.NETCATTY_MCP_SESSION_IDS
+// Scoped session IDs (comma-separated). When set (even if empty), only listed
+// sessions are accessible. When unset, scope enforcement falls back to the
+// TCP bridge's own scoping (which also defaults to no-access when empty).
+const SCOPED_SESSION_IDS = process.env.NETCATTY_MCP_SESSION_IDS != null
   ? process.env.NETCATTY_MCP_SESSION_IDS.split(",").map(s => s.trim()).filter(Boolean)
   : null;
+
+// Chat session ID for per-scope metadata isolation
+const CHAT_SESSION_ID = process.env.NETCATTY_MCP_CHAT_SESSION_ID || null;
 
 let tcpSocket = null;
 let pendingRequests = new Map(); // id -> { resolve, reject }
@@ -44,8 +49,14 @@ function connectTcp() {
       resolve();
     });
     sock.setEncoding("utf-8");
+    const MAX_BUFFER_SIZE = 10 * 1024 * 1024; // 10 MB
     sock.on("data", (chunk) => {
       tcpBuffer += chunk;
+      if (tcpBuffer.length > MAX_BUFFER_SIZE) {
+        process.stderr.write(`[netcatty-mcp] TCP buffer exceeded ${MAX_BUFFER_SIZE} bytes, clearing buffer\n`);
+        tcpBuffer = "";
+        return;
+      }
       let newlineIdx;
       while ((newlineIdx = tcpBuffer.indexOf("\n")) !== -1) {
         const line = tcpBuffer.slice(0, newlineIdx);
@@ -76,6 +87,11 @@ function connectTcp() {
       pendingRequests.clear();
     });
     sock.on("close", () => {
+      // Reject all pending requests on clean close
+      for (const { reject: rej } of pendingRequests.values()) {
+        rej(new Error("TCP connection closed"));
+      }
+      pendingRequests.clear();
       tcpSocket = null;
     });
   });
@@ -100,8 +116,8 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
-// Scope params shared by all tool calls
-const scopeParams = { scopedSessionIds: SCOPED_SESSION_IDS };
+// Scope params shared by all tool calls (includes chatSessionId for metadata isolation)
+const scopeParams = { scopedSessionIds: SCOPED_SESSION_IDS, chatSessionId: CHAT_SESSION_ID };
 
 // Resource: environment context
 server.resource(

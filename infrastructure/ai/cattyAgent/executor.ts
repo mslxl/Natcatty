@@ -1,4 +1,5 @@
-import type { ToolCall, ToolResult } from '../types';
+import type { ToolCall, ToolResult, AIPermissionMode } from '../types';
+import { checkCommandSafety } from './safety';
 import { shellQuote } from '../shellQuote';
 
 /**
@@ -63,6 +64,8 @@ export interface ExecutorContext {
 export function createToolExecutor(
   bridge: NetcattyBridge | undefined,
   context: ExecutorContext,
+  commandBlocklist?: string[],
+  permissionMode: AIPermissionMode = 'confirm',
 ): (toolCall: ToolCall) => Promise<ToolResult> {
   return async (toolCall: ToolCall): Promise<ToolResult> => {
     if (!bridge) {
@@ -84,6 +87,21 @@ export function createToolExecutor(
             return {
               toolCallId: toolCall.id,
               content: 'Missing sessionId or command',
+              isError: true,
+            };
+          }
+          if (permissionMode === 'observer') {
+            return {
+              toolCallId: toolCall.id,
+              content: 'Observer mode: command execution is disabled. Switch to Confirm or Auto mode to execute commands.',
+              isError: true,
+            };
+          }
+          const safety = checkCommandSafety(command, commandBlocklist);
+          if (safety.blocked) {
+            return {
+              toolCallId: toolCall.id,
+              content: `Command blocked by safety policy. Matched pattern: ${safety.matchedPattern}`,
               isError: true,
             };
           }
@@ -203,15 +221,22 @@ export function createToolExecutor(
               isError: true,
             };
           }
+          if (permissionMode === 'observer') {
+            return {
+              toolCallId: toolCall.id,
+              content: 'Observer mode: file writing is disabled. Switch to Confirm or Auto mode.',
+              isError: true,
+            };
+          }
           const session = context.sessions.find(
             (s) => s.sessionId === sessionId,
           );
           if (!session?.sftpId) {
-            // Fallback: use terminal exec with heredoc (random delimiter to avoid collision)
-            const delim = `CATTY_EOF_${Math.random().toString(36).slice(2, 8)}`;
+            // Fallback: use base64 encoding to avoid heredoc delimiter collision
+            const b64 = btoa(unescape(encodeURIComponent(content)));
             const result = await bridge.aiExec(
               sessionId,
-              `cat > ${shellQuote(path)} << '${delim}'\n${content}\n${delim}`,
+              `echo ${shellQuote(b64)} | base64 -d > ${shellQuote(path)}`,
             );
             return {
               toolCallId: toolCall.id,
@@ -275,6 +300,21 @@ export function createToolExecutor(
             return {
               toolCallId: toolCall.id,
               content: 'Missing sessionIds or command',
+              isError: true,
+            };
+          }
+          if (permissionMode === 'observer') {
+            return {
+              toolCallId: toolCall.id,
+              content: 'Observer mode: command execution is disabled. Switch to Confirm or Auto mode.',
+              isError: true,
+            };
+          }
+          const multiSafety = checkCommandSafety(command, commandBlocklist);
+          if (multiSafety.blocked) {
+            return {
+              toolCallId: toolCall.id,
+              content: `Command blocked by safety policy. Matched pattern: ${multiSafety.matchedPattern}`,
               isError: true,
             };
           }

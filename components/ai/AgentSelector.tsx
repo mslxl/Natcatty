@@ -222,7 +222,7 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
         {enabledExternalAgents.length > 0 && (
           <>
             <div className="mx-0 my-1 border-t border-border/50" />
-            <SectionLabel>Agents</SectionLabel>
+            <SectionLabel>{t('ai.chat.agents')}</SectionLabel>
             {enabledExternalAgents.map((agent) => (
               <AgentMenuRow
                 key={agent.id}
@@ -245,14 +245,14 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
                     onClick={onRediscover}
                     disabled={isDiscovering}
                     className="text-[10px] text-muted-foreground/40 hover:text-muted-foreground/70 transition-colors cursor-pointer disabled:opacity-50"
-                    title="Re-scan"
+                    title={t('ai.chat.rescan')}
                   >
                     <RefreshCw size={10} className={cn(isDiscovering && 'animate-spin')} />
                   </button>
                 )
               }
             >
-              Detected on this machine
+              {t('ai.chat.detectedOnMachine')}
             </SectionLabel>
             {unconfiguredDiscovered.map((agent) => (
               <DiscoveredAgentRow

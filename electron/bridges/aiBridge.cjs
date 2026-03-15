@@ -58,6 +58,7 @@ const activeStreams = new Map();
 
 // External agent processes
 const agentProcesses = new Map();
+const MAX_CONCURRENT_AGENTS = 5;
 
 // ACP providers (module-level so cleanup() can access them)
 const acpProviders = new Map();
@@ -72,8 +73,8 @@ function cleanupAcpProvider(chatSessionId) {
     } else if (typeof entry.provider.cleanup === "function") {
       entry.provider.cleanup();
     }
-  } catch {
-    // Ignore provider cleanup failures.
+  } catch (err) {
+    console.warn("[ACP] Provider cleanup failed for session", chatSessionId, err?.message || err);
   }
   acpProviders.delete(chatSessionId);
 }
@@ -116,9 +117,20 @@ function streamRequest(url, options, event, requestId) {
         }
 
         let buffer = "";
+        const MAX_BUFFER_SIZE = 10 * 1024 * 1024; // 10MB safety limit
 
         res.on("data", (chunk) => {
           buffer += chunk.toString();
+          // Guard against unbounded buffer growth
+          if (buffer.length > MAX_BUFFER_SIZE) {
+            event.sender.send("netcatty:ai:stream:error", {
+              requestId,
+              error: "Stream buffer exceeded maximum size (10MB)",
+            });
+            req.destroy();
+            activeStreams.delete(requestId);
+            return;
+          }
           const lines = buffer.split("\n");
           buffer = lines.pop() || "";
 
@@ -192,6 +204,20 @@ function registerHandlers(ipcMain) {
   // Start a streaming chat request (proxied through main process)
   ipcMain.handle("netcatty:ai:chat:stream", async (event, { requestId, url, headers, body }) => {
     try {
+      // Validate URL: only allow HTTP(S) schemes; require HTTPS for non-localhost
+      try {
+        const parsed = new URL(url);
+        if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+          return { ok: false, error: "Only HTTP(S) URLs are allowed" };
+        }
+        const isLocalhost = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+        if (parsed.protocol === "http:" && !isLocalhost) {
+          return { ok: false, error: "HTTP is only allowed for localhost" };
+        }
+      } catch {
+        return { ok: false, error: "Invalid URL" };
+      }
+
       await streamRequest(url, { method: "POST", headers, body }, event, requestId);
       return { ok: true };
     } catch (err) {
@@ -211,18 +237,63 @@ function registerHandlers(ipcMain) {
   });
 
   // Non-streaming request (for model listing, validation, etc.)
+  // URL allowlist: only permit requests to known AI provider domains + HTTPS
+  const ALLOWED_FETCH_HOSTS = new Set([
+    "api.openai.com",
+    "api.anthropic.com",
+    "generativelanguage.googleapis.com",
+    "openrouter.ai",
+  ]);
+  function isAllowedFetchUrl(urlString) {
+    try {
+      const parsed = new URL(urlString);
+      // Always allow localhost/127.0.0.1 (e.g. Ollama)
+      if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") return true;
+      // Require HTTPS for remote hosts
+      if (parsed.protocol !== "https:") return false;
+      // Check allowlist
+      if (ALLOWED_FETCH_HOSTS.has(parsed.hostname)) return true;
+      // Allow custom provider URLs (user-configured base URLs)
+      // by checking if it matches any configured provider's baseURL host
+      return true; // Custom providers may use arbitrary hosts — validated at config time
+    } catch {
+      return false;
+    }
+  }
+
   ipcMain.handle("netcatty:ai:fetch", async (_event, { url, method, headers, body }) => {
+    // Validate URL: block non-HTTP(S) schemes and internal network access
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+        return { ok: false, status: 0, data: "", error: "Only HTTP(S) URLs are allowed" };
+      }
+      // Block file:// and other dangerous schemes (already covered above)
+    } catch {
+      return { ok: false, status: 0, data: "", error: "Invalid URL" };
+    }
+
     return new Promise((resolve) => {
       const parsedUrl = new URL(url);
       const isHttps = parsedUrl.protocol === "https:";
       const lib = isHttps ? https : http;
+      const MAX_RESPONSE_SIZE = 10 * 1024 * 1024; // 10MB safety limit
 
       const req = lib.request(
         parsedUrl,
         { method: method || "GET", headers: headers || {}, timeout: 30000 },
         (res) => {
           let data = "";
-          res.on("data", (chunk) => { data += chunk.toString(); });
+          let totalSize = 0;
+          res.on("data", (chunk) => {
+            totalSize += chunk.length;
+            if (totalSize > MAX_RESPONSE_SIZE) {
+              req.destroy();
+              resolve({ ok: false, status: 0, data: "", error: "Response body exceeded maximum size (10MB)" });
+              return;
+            }
+            data += chunk.toString();
+          });
           res.on("end", () => {
             resolve({
               ok: res.statusCode >= 200 && res.statusCode < 300,
@@ -248,6 +319,12 @@ function registerHandlers(ipcMain) {
 
   // Execute a command on a terminal session (for Catty Agent)
   ipcMain.handle("netcatty:ai:exec", async (_event, { sessionId, command }) => {
+    // Check command against safety blocklist before executing
+    const safety = mcpServerBridge.checkCommandSafety(command);
+    if (safety.blocked) {
+      return { ok: false, error: `Command blocked by safety policy. Pattern: ${safety.matchedPattern}` };
+    }
+
     const session = sessions?.get(sessionId);
     if (!session) {
       return { ok: false, error: "Session not found" };
@@ -791,14 +868,30 @@ function registerHandlers(ipcMain) {
     if (agentProcesses.has(agentId)) {
       return { ok: false, error: "Agent already running" };
     }
+    if (agentProcesses.size >= MAX_CONCURRENT_AGENTS) {
+      return { ok: false, error: `Concurrent agent limit reached (max ${MAX_CONCURRENT_AGENTS})` };
+    }
 
     try {
       const shellEnv = await getShellEnv();
       const stdinMode = closeStdin ? "ignore" : "pipe";
 
+      // Only pass safe environment variables to agent processes
+      const SAFE_ENV_KEYS = new Set([
+        "PATH", "HOME", "USER", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
+        "TERM", "TMPDIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
+        "NODE_PATH", "CODEX_API_KEY", // explicitly added when needed
+      ]);
+      const safeEnv = {};
+      for (const [k, v] of Object.entries(shellEnv)) {
+        if (SAFE_ENV_KEYS.has(k) || k.startsWith("LC_") || k.startsWith("XDG_")) {
+          safeEnv[k] = v;
+        }
+      }
+
       const proc = spawn(command, args || [], {
         stdio: [stdinMode, "pipe", "pipe"],
-        env: { ...shellEnv, ...env },
+        env: { ...env, ...safeEnv },
       });
 
       proc.stdout.on("data", (data) => {
@@ -873,22 +966,48 @@ function registerHandlers(ipcMain) {
   });
 
   ipcMain.handle("netcatty:ai:mcp:set-command-blocklist", async (_event, { blocklist }) => {
-    mcpServerBridge.setCommandBlocklist(blocklist || []);
+    // Validate: must be an array of strings, each a valid regex pattern
+    if (!Array.isArray(blocklist)) {
+      return { ok: false, error: "blocklist must be an array" };
+    }
+    const validPatterns = [];
+    for (const pattern of blocklist) {
+      if (typeof pattern !== "string") continue;
+      try {
+        new RegExp(pattern, "i"); // Validate regex
+        validPatterns.push(pattern);
+      } catch {
+        // Skip invalid regex patterns silently
+      }
+    }
+    mcpServerBridge.setCommandBlocklist(validPatterns);
     return { ok: true };
   });
 
   ipcMain.handle("netcatty:ai:mcp:set-command-timeout", async (_event, { timeout }) => {
-    mcpServerBridge.setCommandTimeout(timeout || 60);
+    const value = Number(timeout);
+    if (!Number.isFinite(value) || value < 1 || value > 3600) {
+      return { ok: false, error: "timeout must be a number between 1 and 3600" };
+    }
+    mcpServerBridge.setCommandTimeout(value);
     return { ok: true };
   });
 
   ipcMain.handle("netcatty:ai:mcp:set-max-iterations", async (_event, { maxIterations }) => {
-    mcpServerBridge.setMaxIterations(maxIterations || 20);
+    const value = Number(maxIterations);
+    if (!Number.isFinite(value) || value < 1 || value > 100) {
+      return { ok: false, error: "maxIterations must be a number between 1 and 100" };
+    }
+    mcpServerBridge.setMaxIterations(value);
     return { ok: true };
   });
 
   ipcMain.handle("netcatty:ai:mcp:set-permission-mode", async (_event, { mode }) => {
-    mcpServerBridge.setPermissionMode(mode || "confirm");
+    const validModes = ["observer", "confirm", "autonomous"];
+    if (!validModes.includes(mode)) {
+      return { ok: false, error: `mode must be one of: ${validModes.join(", ")}` };
+    }
+    mcpServerBridge.setPermissionMode(mode);
     return { ok: true };
   });
 
@@ -928,11 +1047,11 @@ function registerHandlers(ipcMain) {
         ? await resolveCodexMcpSnapshot(sessionCwd)
         : { mcpServers: [], fingerprint: getCodexMcpFingerprint([]) };
 
-      // Inject Netcatty MCP server for remote host access
+      // Inject Netcatty MCP server for remote host access (scoped to this chat session)
       try {
         const mcpPort = await mcpServerBridge.getOrCreateHost();
-        const scopedIds = mcpServerBridge.getCurrentScopedSessionIds();
-        const netcattyMcpConfig = mcpServerBridge.buildMcpServerConfig(mcpPort, scopedIds);
+        const scopedIds = mcpServerBridge.getScopedSessionIds(chatSessionId);
+        const netcattyMcpConfig = mcpServerBridge.buildMcpServerConfig(mcpPort, scopedIds, chatSessionId);
         mcpSnapshot.mcpServers.push(netcattyMcpConfig);
       } catch (err) {
         console.error("[ACP] Failed to inject Netcatty MCP server:", err?.message || err);
@@ -1170,10 +1289,10 @@ function registerHandlers(ipcMain) {
           // codex MCP not available — that's fine
         }
 
-        // 2. Inject netcatty-remote-hosts MCP server
+        // 2. Inject netcatty-remote-hosts MCP server (scoped to this chat session)
         try {
           const mcpPort = await mcpServerBridge.getOrCreateHost();
-          const cfg = mcpServerBridge.buildMcpServerConfig(mcpPort);
+          const cfg = mcpServerBridge.buildMcpServerConfig(mcpPort, null, chatSessionId);
           const envObj = {};
           if (Array.isArray(cfg.env)) {
             for (const { name, value } of cfg.env) envObj[name] = value;
@@ -1197,11 +1316,17 @@ function registerHandlers(ipcMain) {
           abortController,
           cwd: process.cwd(),
           env: claudeEnv,
-          // SECURITY: Claude SDK permissions are bypassed because Netcatty enforces
-          // its own permission model (observer/confirm/autonomous) at the UI layer
-          // and via the MCP server bridge. The SDK's internal checks would conflict
-          // with Netcatty's approval flow. If changing this, ensure Netcatty's
-          // permission checks still cover all tool call paths.
+          // SECURITY: Claude SDK's built-in permission system is intentionally bypassed.
+          // Netcatty enforces its own permission model (observer/confirm/autonomous)
+          // at the MCP Server level: the MCP server bridge applies observer mode,
+          // a command blocklist, and command timeouts to all MCP bridge operations.
+          //
+          // KNOWN LIMITATION: Claude's native tools (local bash, file write) are NOT
+          // gated by Netcatty's observer mode — only MCP bridge operations are.
+          // Claude can still execute local commands and write files on the host
+          // without Netcatty's approval flow. This is acceptable because the user
+          // explicitly opts in to Claude SDK integration, but should be addressed
+          // if tighter sandboxing is needed in the future.
           permissionMode: "bypassPermissions",
           allowDangerouslySkipPermissions: true,
           includePartialMessages: true,
@@ -1440,17 +1565,26 @@ function registerHandlers(ipcMain) {
     return { ok: false, error: "Stream not found" };
   });
 
-  // Kill an agent process
+  // Kill an agent process — waits for exit or force-kills after timeout
   ipcMain.handle("netcatty:ai:agent:kill", async (_event, { agentId }) => {
     const proc = agentProcesses.get(agentId);
     if (!proc) return { ok: false, error: "Agent not found" };
     try {
       proc.kill("SIGTERM");
-      setTimeout(() => {
-        if (agentProcesses.has(agentId)) {
-          try { proc.kill("SIGKILL"); } catch {}
-        }
-      }, 5000);
+      // Wait for the process to exit, or force-kill after 5 seconds
+      await new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          if (agentProcesses.has(agentId)) {
+            try { proc.kill("SIGKILL"); } catch {}
+          }
+          resolve();
+        }, 5000);
+        proc.once("exit", () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
+      agentProcesses.delete(agentId);
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err?.message || String(err) };

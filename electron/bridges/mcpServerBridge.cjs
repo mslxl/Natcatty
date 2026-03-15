@@ -32,15 +32,12 @@ function shellQuote(s) {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
-// Session metadata registered by renderer (sessionId → { hostname, label, os, username })
-// Global metadata (union of all scopes) for fallback
-const sessionMetadata = new Map();
-
-// Per-scope metadata: chatSessionId → { sessionIds: string[], metadata: Map }
+// Per-scope metadata: chatSessionId → { sessionIds: string[], metadata: Map<sessionId, meta> }
+// Each chat session only sees the hosts registered for its scope.
 const scopedMetadata = new Map();
 
-// Track which session IDs are in the current scope (set by updateSessionMetadata)
-let currentScopedSessionIds = [];
+// Fallback: last-registered scope (used when no chatSessionId is provided)
+let fallbackScopedSessionIds = [];
 
 // Command safety checking (reuse from aiBridge)
 let commandBlocklist = [];
@@ -110,13 +107,16 @@ function getPermissionMode() {
 
 /**
  * Register metadata for terminal sessions (called from renderer via IPC).
+ * Metadata is stored per-scope (chatSessionId) so different AI chat sessions
+ * only see their own hosts.
  * @param {Array<{sessionId, hostname, label, os, username, connected}>} sessionList
  * @param {string} [chatSessionId] - AI chat session ID for per-scope isolation
  */
 function updateSessionMetadata(sessionList, chatSessionId) {
-  // Update global metadata (additive — do NOT clear, multiple scopes coexist)
+  const ids = sessionList.map(s => s.sessionId);
+  const metaMap = new Map();
   for (const s of sessionList) {
-    sessionMetadata.set(s.sessionId, {
+    metaMap.set(s.sessionId, {
       hostname: s.hostname || "",
       label: s.label || "",
       os: s.os || "",
@@ -124,20 +124,44 @@ function updateSessionMetadata(sessionList, chatSessionId) {
       connected: s.connected !== false,
     });
   }
-  // Track scoped session IDs for use by buildMcpServerConfig
-  currentScopedSessionIds = sessionList.map(s => s.sessionId);
 
-  // Store per-scope metadata if chatSessionId provided
+  // Store per-scope metadata when chatSessionId is provided
   if (chatSessionId) {
-    scopedMetadata.set(chatSessionId, {
-      sessionIds: currentScopedSessionIds.slice(),
-    });
+    scopedMetadata.set(chatSessionId, { sessionIds: ids, metadata: metaMap });
+  } else {
+    // Only update fallback when no chatSessionId — prevents scoped updates from
+    // leaking all sessions to unscoped agents
+    fallbackScopedSessionIds = ids.slice();
   }
-
 }
 
-function getCurrentScopedSessionIds() {
-  return currentScopedSessionIds;
+/**
+ * Get scoped session IDs. If chatSessionId is provided, returns IDs for that
+ * specific scope; otherwise returns the last-registered fallback.
+ */
+function getScopedSessionIds(chatSessionId) {
+  if (chatSessionId) {
+    const scoped = scopedMetadata.get(chatSessionId);
+    if (scoped) return scoped.sessionIds;
+  }
+  return fallbackScopedSessionIds;
+}
+
+/**
+ * Look up metadata for a sessionId, scoped to a specific chat session.
+ * Falls back to session object properties if no scoped metadata is found.
+ */
+function getSessionMeta(sessionId, chatSessionId) {
+  // Try scoped metadata first
+  if (chatSessionId) {
+    const scoped = scopedMetadata.get(chatSessionId);
+    if (scoped?.metadata?.has(sessionId)) return scoped.metadata.get(sessionId);
+  }
+  // Fallback: check all scopes for this sessionId (backwards compat)
+  for (const [, scope] of scopedMetadata) {
+    if (scope.metadata?.has(sessionId)) return scope.metadata.get(sessionId);
+  }
+  return null;
 }
 
 function checkCommandSafety(command) {
@@ -169,7 +193,6 @@ function getOrCreateHost() {
     server.listen(0, "127.0.0.1", () => {
       tcpPort = server.address().port;
       tcpServer = server;
-      console.log(`[MCP Bridge] TCP server listening on 127.0.0.1:${tcpPort}`);
       resolve(tcpPort);
     });
 
@@ -261,10 +284,36 @@ const WRITE_METHODS = new Set([
   "netcatty/multiExec",
 ]);
 
+/**
+ * Validate that a sessionId is allowed in the current scope.
+ * Checks both process-level SCOPED_SESSION_IDS and per-chatSession scoped metadata.
+ */
+function validateSessionScope(sessionId, chatSessionId) {
+  if (!sessionId) return null; // will fail at handler level
+  const scopedIds = getScopedSessionIds(chatSessionId);
+  if (scopedIds && scopedIds.length > 0 && !scopedIds.includes(sessionId)) {
+    return `Session "${sessionId}" is not in the current scope.`;
+  }
+  return null;
+}
+
 async function dispatch(method, params) {
   // Observer mode: block all write operations
   if (permissionMode === "observer" && WRITE_METHODS.has(method)) {
     return { ok: false, error: `Operation denied: permission mode is "observer" (read-only). Change to "confirm" or "autonomous" in Settings → AI → Safety to allow this action.` };
+  }
+
+  // Scope validation for session-targeted operations
+  if (method !== "netcatty/getContext" && params?.sessionId) {
+    const scopeErr = validateSessionScope(params.sessionId, params?.chatSessionId);
+    if (scopeErr) return { ok: false, error: scopeErr };
+  }
+  // For multi-exec, validate all session IDs
+  if (method === "netcatty/multiExec" && Array.isArray(params?.sessionIds)) {
+    for (const sid of params.sessionIds) {
+      const scopeErr = validateSessionScope(sid, params?.chatSessionId);
+      if (scopeErr) return { ok: false, error: scopeErr };
+    }
   }
 
   switch (method) {
@@ -300,19 +349,35 @@ async function dispatch(method, params) {
 function handleGetContext(params) {
   if (!sessions) return { hosts: [], instructions: "No sessions available." };
 
-  // Scope resolution: use explicit scopedSessionIds from MCP server env var (per-process, set at spawn)
-  const scopedIds = (params?.scopedSessionIds && params.scopedSessionIds.length > 0)
+  // Scope resolution: use explicit scopedSessionIds from MCP server env var (per-process, set at spawn).
+  // If scopedSessionIds is provided but empty, that means "no access" (not "all access").
+  // Only fall back to unscoped (show all) when scopedSessionIds is not provided at all.
+  const hasScopeParam = params?.scopedSessionIds != null;
+  const scopedIds = hasScopeParam
     ? new Set(params.scopedSessionIds)
     : null;
 
+  // chatSessionId may be passed via env for per-scope metadata lookup
+  const chatSessionId = params?.chatSessionId || null;
+
   const hosts = [];
+  // When scope param is provided (even if empty Set), enforce it strictly
+  if (hasScopeParam && scopedIds.size === 0) {
+    return {
+      environment: "netcatty-terminal",
+      description: "No hosts are available in the current scope.",
+      hosts: [],
+      hostCount: 0,
+    };
+  }
   for (const [sessionId, session] of sessions.entries()) {
     if (scopedIds && !scopedIds.has(sessionId)) continue;
     // Only include SSH sessions (skip local terminal sessions)
     const sshClient = session.conn || session.sshClient;
     if (!sshClient || typeof sshClient.exec !== "function") continue;
 
-    const meta = sessionMetadata.get(sessionId) || {};
+    // Look up metadata scoped to this chat session
+    const meta = getSessionMeta(sessionId, chatSessionId) || {};
     hosts.push({
       sessionId,
       hostname: meta.hostname || session.hostname || "",
@@ -373,6 +438,12 @@ function handleTerminalWrite(params) {
   const { sessionId, input } = params;
   if (!sessionId || input == null) throw new Error("sessionId and input are required");
 
+  // Validate input against command blocklist
+  const safety = checkCommandSafety(input);
+  if (safety.blocked) {
+    return { ok: false, error: `Input blocked by safety policy. Pattern: ${safety.matchedPattern}` };
+  }
+
   const session = sessions?.get(sessionId);
   if (!session) return { ok: false, error: "Session not found" };
 
@@ -426,25 +497,27 @@ async function handleSftpList(params) {
         })),
       };
     } catch (err) {
-      return { error: err.message };
+      return { ok: false, error: err.message };
     }
   }
 
   // Fallback: use SSH exec
   const result = await handleExec({ sessionId, command: `ls -la ${shellQuote(dirPath)}` });
-  if (!result.ok) return { error: result.error };
+  if (!result.ok) return { ok: false, error: result.error };
   return { output: result.stdout || "(empty directory)" };
 }
 
 // ── Handler: sftpRead ──
 
 async function handleSftpRead(params) {
-  const { sessionId, path: filePath, maxBytes = 10000 } = params;
+  const { sessionId, path: filePath } = params;
+  // Clamp maxBytes to a safe upper bound (10MB)
+  const maxBytes = Math.max(1, Math.min(Number(params.maxBytes) || 10000, 10 * 1024 * 1024));
   if (!sessionId || !filePath) throw new Error("sessionId and path are required");
 
   // Fallback to SSH exec (more reliable across SFTP client states)
   const result = await handleExec({ sessionId, command: `head -c ${maxBytes} ${shellQuote(filePath)}` });
-  if (!result.ok) return { error: result.error };
+  if (!result.ok) return { ok: false, error: result.error };
   return { content: result.stdout || "(empty file)" };
 }
 
@@ -464,10 +537,10 @@ async function handleSftpWrite(params) {
     }
   }
 
-  // Random delimiter to avoid collision with file content
-  const delim = `NETCATTY_EOF_${Math.random().toString(36).slice(2, 8)}`;
-  const result = await handleExec({ sessionId, command: `cat > ${shellQuote(filePath)} << '${delim}'\n${content}\n${delim}` });
-  if (!result.ok) return { error: result.error };
+  // Use base64 encoding to avoid heredoc delimiter collision issues
+  const b64 = Buffer.from(content, "utf-8").toString("base64");
+  const result = await handleExec({ sessionId, command: `echo ${shellQuote(b64)} | base64 -d > ${shellQuote(filePath)}` });
+  if (!result.ok) return { ok: false, error: result.error };
   return { written: filePath };
 }
 
@@ -488,7 +561,7 @@ async function handleSftpMkdir(params) {
   }
 
   const result = await handleExec({ sessionId, command: `mkdir -p ${shellQuote(dirPath)}` });
-  if (!result.ok) return { error: result.error };
+  if (!result.ok) return { ok: false, error: result.error };
   return { created: dirPath };
 }
 
@@ -498,9 +571,20 @@ async function handleSftpRemove(params) {
   const { sessionId, path: targetPath } = params;
   if (!sessionId || !targetPath) throw new Error("sessionId and path are required");
 
-  // Use SSH exec with rm -rf for reliability (handles both files and dirs)
-  const result = await handleExec({ sessionId, command: `rm -rf ${shellQuote(targetPath)}` });
-  if (!result.ok) return { error: result.error };
+  // Guard against deleting root or critical system directories
+  // Normalize to resolve "..", "//", and trailing slashes before checking
+  const normalizedPath = path.posix.normalize(targetPath).replace(/\/+$/, "") || "/";
+  const CRITICAL_PATHS = new Set([
+    "/", "/root", "/home", "/etc", "/var", "/usr", "/boot",
+    "/bin", "/sbin", "/lib", "/lib64", "/dev", "/proc", "/sys", "/tmp", "/opt",
+  ]);
+  if (CRITICAL_PATHS.has(normalizedPath) || /^\/[^/]+$/.test(normalizedPath)) {
+    return { ok: false, error: `Refusing to remove critical or root-level path: ${targetPath}` };
+  }
+
+  // Use rm -r (without -f) so permission errors surface instead of being silently ignored
+  const result = await handleExec({ sessionId, command: `rm -r ${shellQuote(targetPath)}` });
+  if (!result.ok) return { ok: false, error: result.error };
   return { removed: targetPath };
 }
 
@@ -521,7 +605,7 @@ async function handleSftpRename(params) {
   }
 
   const result = await handleExec({ sessionId, command: `mv ${shellQuote(oldPath)} ${shellQuote(newPath)}` });
-  if (!result.ok) return { error: result.error };
+  if (!result.ok) return { ok: false, error: result.error };
   return { renamed: `${oldPath} → ${newPath}` };
 }
 
@@ -549,7 +633,7 @@ async function handleSftpStat(params) {
 
   // Fallback: use stat command
   const result = await handleExec({ sessionId, command: `stat -c '{"size":%s,"mode":"%a","mtime":%Y,"type":"%F"}' ${shellQuote(targetPath)}` });
-  if (!result.ok) return { error: result.error };
+  if (!result.ok) return { ok: false, error: result.error };
   try {
     const parsed = JSON.parse(result.stdout.trim());
     return {
@@ -560,7 +644,7 @@ async function handleSftpStat(params) {
       permissions: parsed.mode,
     };
   } catch {
-    return { error: "Failed to parse stat output" };
+    return { ok: false, error: "Failed to parse stat output" };
   }
 }
 
@@ -572,7 +656,7 @@ async function handleMultiExec(params) {
 
   const safety = checkCommandSafety(command);
   if (safety.blocked) {
-    return { error: `Command blocked by safety policy. Pattern: ${safety.matchedPattern}` };
+    return { ok: false, error: `Command blocked by safety policy. Pattern: ${safety.matchedPattern}` };
   }
 
   const results = {};
@@ -605,11 +689,11 @@ async function handleMultiExec(params) {
 
 // ── MCP Server Config Builder ──
 
-function buildMcpServerConfig(port, scopedSessionIds) {
-  // Use provided scoped IDs, or fall back to the current scope from updateSessionMetadata
+function buildMcpServerConfig(port, scopedSessionIds, chatSessionId) {
+  // Use provided scoped IDs, or resolve from chatSessionId, or fall back
   const effectiveIds = (scopedSessionIds && scopedSessionIds.length > 0)
     ? scopedSessionIds
-    : currentScopedSessionIds;
+    : getScopedSessionIds(chatSessionId);
 
   const runtimePath = toUnpackedAsarPath(
     path.join(__dirname, "..", "mcp", "netcatty-mcp-server.cjs"),
@@ -625,6 +709,11 @@ function buildMcpServerConfig(port, scopedSessionIds) {
 
   if (effectiveIds && effectiveIds.length > 0) {
     env.push({ name: "NETCATTY_MCP_SESSION_IDS", value: effectiveIds.join(",") });
+  }
+
+  // Pass chatSessionId so MCP server can scope getContext responses
+  if (chatSessionId) {
+    env.push({ name: "NETCATTY_MCP_CHAT_SESSION_ID", value: chatSessionId });
   }
 
   return {
@@ -649,7 +738,6 @@ function cleanup() {
     tcpServer.close();
     tcpServer = null;
     tcpPort = null;
-    console.log("[MCP Bridge] TCP server closed");
   }
   scopedMetadata.clear();
 }
@@ -663,8 +751,9 @@ module.exports = {
   getMaxIterations,
   setPermissionMode,
   getPermissionMode,
+  checkCommandSafety,
   updateSessionMetadata,
-  getCurrentScopedSessionIds,
+  getScopedSessionIds,
   getOrCreateHost,
   buildMcpServerConfig,
   cancelAllPtyExecs,

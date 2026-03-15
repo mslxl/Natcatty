@@ -77,16 +77,25 @@ const ChatInput: React.FC<ChatInputProps> = ({
 }) => {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
-  const [showModelPicker, setShowModelPicker] = useState(false);
-  const [pickerPos, setPickerPos] = useState<{ left: number; bottom: number } | null>(null);
+  // Consolidate menu state into a single discriminated union to prevent multiple menus open simultaneously
+  type ActiveMenu = 'model' | 'attach' | 'atMention' | 'perm' | null;
+  const [activeMenu, setActiveMenu] = useState<ActiveMenu>(null);
+  const [menuPos, setMenuPos] = useState<{ left: number; bottom: number } | null>(null);
   const [hoveredModelId, setHoveredModelId] = useState<string | null>(null);
-  const [showAttachMenu, setShowAttachMenu] = useState(false);
-  const [attachMenuPos, setAttachMenuPos] = useState<{ left: number; bottom: number } | null>(null);
   const [showHostSubmenu, setShowHostSubmenu] = useState(false);
-  const [showAtMention, setShowAtMention] = useState(false);
-  const [atMentionPos, setAtMentionPos] = useState<{ left: number; bottom: number } | null>(null);
-  const [showPermPicker, setShowPermPicker] = useState(false);
-  const [permPickerPos, setPermPickerPos] = useState<{ left: number; bottom: number } | null>(null);
+
+  // Derived booleans for readability
+  const showModelPicker = activeMenu === 'model';
+  const showAttachMenu = activeMenu === 'attach';
+  const showAtMention = activeMenu === 'atMention';
+  const showPermPicker = activeMenu === 'perm';
+
+  const closeAllMenus = useCallback(() => {
+    setActiveMenu(null);
+    setMenuPos(null);
+    setHoveredModelId(null);
+    setShowHostSubmenu(false);
+  }, []);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modelBtnRef = useRef<HTMLButtonElement>(null);
   const permBtnRef = useRef<HTMLButtonElement>(null);
@@ -105,11 +114,11 @@ const ChatInput: React.FC<ChatInputProps> = ({
       const el = textareaRef.current;
       if (el) {
         const rect = el.getBoundingClientRect();
-        setAtMentionPos({ left: rect.left + 12, bottom: window.innerHeight - rect.top + 4 });
+        setMenuPos({ left: rect.left + 12, bottom: window.innerHeight - rect.top + 4 });
       }
-      setShowAtMention(true);
+      setActiveMenu('atMention');
     } else if (showAtMention && !newValue.includes('@')) {
-      setShowAtMention(false);
+      setActiveMenu(null);
     }
   }, [onChange, value, hosts.length, showAtMention]);
 
@@ -121,8 +130,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
       ? value.slice(0, lastAt) + `@${name} `
       : value + `@${name} `;
     onChange(newValue);
-    setShowAtMention(false);
-  }, [value, onChange]);
+    closeAllMenus();
+  }, [value, onChange, closeAllMenus]);
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const files = Array.from(e.clipboardData.items)
@@ -231,12 +240,12 @@ const ChatInput: React.FC<ChatInputProps> = ({
         </div>
 
         {/* @ mention popover */}
-        {showAtMention && hosts.length > 0 && atMentionPos && createPortal(
+        {showAtMention && hosts.length > 0 && menuPos && createPortal(
           <>
-            <div className="fixed inset-0 z-[999]" onClick={() => setShowAtMention(false)} />
+            <div className="fixed inset-0 z-[999]" onClick={closeAllMenus} />
             <div
               className="fixed z-[1000] min-w-[160px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
-              style={{ left: atMentionPos.left, bottom: atMentionPos.bottom }}
+              style={{ left: menuPos.left, bottom: menuPos.bottom }}
             >
               <div className="px-3 py-1 text-[10px] text-muted-foreground/40 tracking-wide">Hosts</div>
               {hosts.map(host => (
@@ -267,26 +276,28 @@ const ChatInput: React.FC<ChatInputProps> = ({
               onClick={() => {
                 if (!showAttachMenu) {
                   const rect = attachBtnRef.current?.getBoundingClientRect();
-                  if (rect) setAttachMenuPos({ left: rect.left, bottom: window.innerHeight - rect.top + 6 });
+                  if (rect) setMenuPos({ left: rect.left, bottom: window.innerHeight - rect.top + 6 });
+                  setActiveMenu('attach');
+                } else {
+                  closeAllMenus();
                 }
-                setShowAttachMenu(v => !v);
               }}
               className={iconButtonClassName}
               title="Attach"
             >
               <Plus size={13} />
             </button>
-            {showAttachMenu && attachMenuPos && createPortal(
+            {showAttachMenu && menuPos && createPortal(
               <>
-                <div className="fixed inset-0 z-[999]" onClick={() => setShowAttachMenu(false)} />
+                <div className="fixed inset-0 z-[999]" onClick={closeAllMenus} />
                 <div
                   className="fixed z-[1000] min-w-[170px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
-                  style={{ left: attachMenuPos.left, bottom: attachMenuPos.bottom }}
+                  style={{ left: menuPos.left, bottom: menuPos.bottom }}
                 >
                   <div className="px-3 py-1 text-[10px] text-muted-foreground/40 tracking-wide">Context</div>
                   <button
                     type="button"
-                    onClick={() => { fileInputRef.current?.setAttribute('accept', '*/*'); fileInputRef.current?.click(); setShowAttachMenu(false); }}
+                    onClick={() => { fileInputRef.current?.setAttribute('accept', '*/*'); fileInputRef.current?.click(); closeAllMenus(); }}
                     className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
                   >
                     <FileText size={13} className="text-muted-foreground/60" />
@@ -294,7 +305,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => { fileInputRef.current?.setAttribute('accept', 'image/*'); fileInputRef.current?.click(); setShowAttachMenu(false); }}
+                    onClick={() => { fileInputRef.current?.setAttribute('accept', 'image/*'); fileInputRef.current?.click(); closeAllMenus(); }}
                     className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
                   >
                     <ImageIcon size={13} className="text-muted-foreground/60" />
@@ -322,8 +333,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                             onClick={() => {
                               const mention = `@${host.label || host.hostname} `;
                               onChange(value + mention);
-                              setShowAttachMenu(false);
-                              setShowHostSubmenu(false);
+                              closeAllMenus();
                             }}
                             className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
                           >
@@ -348,9 +358,11 @@ const ChatInput: React.FC<ChatInputProps> = ({
                 if (!hasModelPicker) return;
                 if (!showModelPicker) {
                   const rect = modelBtnRef.current?.getBoundingClientRect();
-                  if (rect) setPickerPos({ left: rect.left, bottom: window.innerHeight - rect.top + 6 });
+                  if (rect) setMenuPos({ left: rect.left, bottom: window.innerHeight - rect.top + 6 });
+                  setActiveMenu('model');
+                } else {
+                  closeAllMenus();
                 }
-                setShowModelPicker(v => !v);
               }}
               className={`${chipClassName} ${hasModelPicker ? 'cursor-pointer hover:bg-muted/24 transition-colors' : ''}`}
             >
@@ -358,12 +370,12 @@ const ChatInput: React.FC<ChatInputProps> = ({
               <span className="truncate max-w-[82px]">{modelLabel}</span>
               {hasModelPicker && <ChevronDown size={9} className="text-muted-foreground/50" />}
             </button>
-            {showModelPicker && hasModelPicker && pickerPos && createPortal(
+            {showModelPicker && hasModelPicker && menuPos && createPortal(
               <>
-                <div className="fixed inset-0 z-[999]" onClick={() => { setShowModelPicker(false); setHoveredModelId(null); }} />
+                <div className="fixed inset-0 z-[999]" onClick={closeAllMenus} />
                 <div
                   className="fixed z-[1000] min-w-[160px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
-                  style={{ left: pickerPos.left, bottom: pickerPos.bottom }}
+                  style={{ left: menuPos.left, bottom: menuPos.bottom }}
                   onMouseLeave={() => setHoveredModelId(null)}
                 >
                   {modelPresets.map(preset => {
@@ -376,8 +388,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                           onClick={() => {
                             if (!hasThinking) {
                               onModelSelect?.(preset.id);
-                              setShowModelPicker(false);
-                              setHoveredModelId(null);
+                              closeAllMenus();
                             }
                           }}
                           className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
@@ -399,8 +410,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                                   type="button"
                                   onClick={() => {
                                     onModelSelect?.(fullId);
-                                    setShowModelPicker(false);
-                                    setHoveredModelId(null);
+                                    closeAllMenus();
                                   }}
                                   className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
                                 >
@@ -427,9 +437,11 @@ const ChatInput: React.FC<ChatInputProps> = ({
                   onClick={() => {
                     if (!showPermPicker) {
                       const rect = permBtnRef.current?.getBoundingClientRect();
-                      if (rect) setPermPickerPos({ left: rect.left, bottom: window.innerHeight - rect.top + 6 });
+                      if (rect) setMenuPos({ left: rect.left, bottom: window.innerHeight - rect.top + 6 });
+                      setActiveMenu('perm');
+                    } else {
+                      closeAllMenus();
                     }
-                    setShowPermPicker(v => !v);
                   }}
                   className={`${chipClassName} cursor-pointer hover:bg-muted/24 transition-colors`}
                   title={t('ai.safety.permissionMode')}
@@ -444,12 +456,12 @@ const ChatInput: React.FC<ChatInputProps> = ({
                   </span>
                   <ChevronDown size={9} className="text-muted-foreground/50" />
                 </button>
-                {showPermPicker && permPickerPos && createPortal(
+                {showPermPicker && menuPos && createPortal(
                   <>
-                    <div className="fixed inset-0 z-[999]" onClick={() => setShowPermPicker(false)} />
+                    <div className="fixed inset-0 z-[999]" onClick={closeAllMenus} />
                     <div
                       className="fixed z-[1000] min-w-[180px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
-                      style={{ left: permPickerPos.left, bottom: permPickerPos.bottom }}
+                      style={{ left: menuPos.left, bottom: menuPos.bottom }}
                     >
                       {([
                         { mode: 'autonomous' as const, icon: Zap, color: 'text-green-400/70', label: t('ai.chat.permAuto'), desc: t('ai.chat.permAutoDesc') },
@@ -461,7 +473,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                           type="button"
                           onClick={() => {
                             onPermissionModeChange(mode);
-                            setShowPermPicker(false);
+                            closeAllMenus();
                           }}
                           className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer"
                         >

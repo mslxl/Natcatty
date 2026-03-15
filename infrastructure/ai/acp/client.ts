@@ -16,6 +16,34 @@ import type { ExternalAgentConfig } from '../types';
 
 type EventHandler<T = unknown> = (params: T) => void;
 
+// ── Lightweight runtime type guards ──
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function isPermissionRequestParams(v: unknown): v is PermissionRequestParams {
+  if (!isRecord(v)) return false;
+  if (typeof v.sessionId !== 'string') return false;
+  if (!isRecord(v.toolCall)) return false;
+  if (typeof v.toolCall.name !== 'string') return false;
+  return true;
+}
+
+function isSessionUpdateParams(v: unknown): v is SessionUpdateParams {
+  if (!isRecord(v)) return false;
+  if (typeof v.sessionId !== 'string') return false;
+  if (typeof v.type !== 'string') return false;
+  return true;
+}
+
+function isJsonRpcError(v: unknown): v is { code: number; message: string } {
+  if (!isRecord(v)) return false;
+  if (typeof v.code !== 'number') return false;
+  if (typeof v.message !== 'string') return false;
+  return true;
+}
+
 /**
  * Bridge interface to the Electron main process for agent management
  */
@@ -174,6 +202,10 @@ export class ACPClient {
     }
     this.cleanupFns = [];
     await this.bridge.aiKillAgent(this.agentId);
+    // Reject all pending requests before clearing
+    for (const [, pending] of this.pendingRequests) {
+      pending.reject(new Error('Agent disconnected'));
+    }
     this.pendingRequests.clear();
   }
 
@@ -190,21 +222,31 @@ export class ACPClient {
     };
 
     return new Promise<T>((resolve, reject) => {
-      this.pendingRequests.set(id, {
-        resolve: resolve as (result: unknown) => void,
-        reject,
-      });
-
-      const line = JSON.stringify(request) + '\n';
-      this.bridge.aiWriteToAgent(this.agentId, line).catch(reject);
-
-      // Timeout after 30 seconds
-      setTimeout(() => {
+      // Track timeout so we can clear it when the request resolves
+      const timeoutId = setTimeout(() => {
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id);
           reject(new Error(`Request timeout: ${method}`));
         }
       }, 30000);
+
+      this.pendingRequests.set(id, {
+        resolve: (result: unknown) => {
+          clearTimeout(timeoutId);
+          (resolve as (result: unknown) => void)(result);
+        },
+        reject: (error: Error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        },
+      });
+
+      const line = JSON.stringify(request) + '\n';
+      this.bridge.aiWriteToAgent(this.agentId, line).catch((err) => {
+        clearTimeout(timeoutId);
+        this.pendingRequests.delete(id);
+        reject(err);
+      });
     });
   }
 
@@ -226,8 +268,19 @@ export class ACPClient {
     this.bridge.aiWriteToAgent(this.agentId, line).catch(() => { /* best-effort */ });
   }
 
+  /** Max NDJSON buffer size (10 MB) to prevent unbounded memory growth */
+  private static readonly MAX_BUFFER_SIZE = 10 * 1024 * 1024;
+
   private handleStdoutData(data: string): void {
     this.buffer += data;
+
+    // Guard against unbounded buffer growth
+    if (this.buffer.length > ACPClient.MAX_BUFFER_SIZE) {
+      console.warn(`[ACP] NDJSON buffer exceeded ${ACPClient.MAX_BUFFER_SIZE} bytes, clearing buffer`);
+      this.buffer = '';
+      return;
+    }
+
     const lines = this.buffer.split('\n');
     this.buffer = lines.pop() || ''; // Keep incomplete line in buffer
 
@@ -252,7 +305,10 @@ export class ACPClient {
       if (pending) {
         this.pendingRequests.delete(response.id);
         if (response.error) {
-          pending.reject(new Error(response.error.message));
+          const errMsg = isJsonRpcError(response.error)
+            ? response.error.message
+            : JSON.stringify(response.error);
+          pending.reject(new Error(errMsg));
         } else {
           pending.resolve(response.result);
         }
@@ -277,9 +333,12 @@ export class ACPClient {
   private handleAgentRequest(request: JsonRpcRequest): void {
     switch (request.method) {
       case ACP_METHODS.REQUEST_PERMISSION: {
-        const permParams = request.params as unknown as PermissionRequestParams;
+        if (!isPermissionRequestParams(request.params)) {
+          this.sendErrorResponse(request.id, -32602, 'Invalid permission request params');
+          break;
+        }
         this.onPermissionRequest?.({
-          ...permParams,
+          ...request.params,
           // Attach the request ID so the handler can respond via respondPermission()
           _requestId: request.id,
         } as PermissionRequestParams & { _requestId: number | string });
@@ -312,7 +371,9 @@ export class ACPClient {
   private handleAgentNotification(notification: JsonRpcNotification): void {
     switch (notification.method) {
       case ACP_METHODS.SESSION_UPDATE:
-        this.onSessionUpdate?.(notification.params as unknown as SessionUpdateParams);
+        if (isSessionUpdateParams(notification.params)) {
+          this.onSessionUpdate?.(notification.params);
+        }
         break;
       case ACP_METHODS.TERMINAL_OUTPUT:
         // Surface terminal output as a session update with tool_result type

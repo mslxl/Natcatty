@@ -7,6 +7,7 @@
 
 import { ShieldAlert } from 'lucide-react';
 import React, { useCallback, useEffect } from 'react';
+import { useI18n } from '../../application/i18n/I18nProvider';
 import { cn } from '../../lib/utils';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
@@ -44,6 +45,7 @@ const PermissionDialog: React.FC<PermissionDialogProps> = ({
   onReject,
   onDismiss,
 }) => {
+  const { t } = useI18n();
   const isDenied = recommendation === 'deny';
 
   // Keyboard shortcuts: Enter to approve, Escape to reject
@@ -67,9 +69,14 @@ const PermissionDialog: React.FC<PermissionDialogProps> = ({
   }, [handleKeyDown]);
 
   // Format arguments as readable code block content
-  const formattedArgs = toolCall
-    ? JSON.stringify(toolCall.arguments, null, 2)
-    : '';
+  let formattedArgs = '';
+  if (toolCall) {
+    try {
+      formattedArgs = JSON.stringify(toolCall.arguments, null, 2);
+    } catch {
+      formattedArgs = String(toolCall.arguments);
+    }
+  }
 
   // Extract host/session info from arguments if present
   const sessionId =
@@ -82,17 +89,17 @@ const PermissionDialog: React.FC<PermissionDialogProps> = ({
       case 'allow':
         return (
           <Badge className="bg-green-600/20 text-green-400 border-green-600/30">
-            Allow
+            {t('ai.chat.recommendAllow')}
           </Badge>
         );
       case 'confirm':
         return (
           <Badge className="bg-yellow-600/20 text-yellow-400 border-yellow-600/30">
-            Confirm
+            {t('ai.chat.recommendConfirm')}
           </Badge>
         );
       case 'deny':
-        return <Badge variant="destructive">Deny</Badge>;
+        return <Badge variant="destructive">{t('ai.chat.recommendDeny')}</Badge>;
     }
   };
 
@@ -107,11 +114,10 @@ const PermissionDialog: React.FC<PermissionDialogProps> = ({
                 isDenied ? 'text-destructive' : 'text-yellow-500',
               )}
             />
-            Permission Required
+            {t('ai.chat.permissionRequired')}
           </DialogTitle>
           <DialogDescription>
-            The AI agent wants to execute a tool call that requires your
-            approval.
+            {t('ai.chat.permissionDescription')}
           </DialogDescription>
         </DialogHeader>
 
@@ -120,7 +126,7 @@ const PermissionDialog: React.FC<PermissionDialogProps> = ({
             {/* Tool name and recommendation */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">Tool:</span>
+                <span className="text-sm text-muted-foreground">{t('ai.chat.toolLabel')}:</span>
                 <code className="text-sm font-mono bg-muted px-1.5 py-0.5 rounded">
                   {toolCall.name}
                 </code>
@@ -131,7 +137,7 @@ const PermissionDialog: React.FC<PermissionDialogProps> = ({
             {/* Target session(s) */}
             {(sessionId || sessionIds) && (
               <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">Target:</span>
+                <span className="text-sm text-muted-foreground">{t('ai.chat.targetLabel')}:</span>
                 {sessionId && (
                   <code className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">
                     {sessionId}
@@ -163,8 +169,7 @@ const PermissionDialog: React.FC<PermissionDialogProps> = ({
             {isDenied && (
               <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3">
                 <p className="text-sm text-destructive">
-                  This command is blocked by your security policy and cannot be
-                  executed.
+                  {t('ai.chat.commandBlocked')}
                 </p>
               </div>
             )}
@@ -174,7 +179,7 @@ const PermissionDialog: React.FC<PermissionDialogProps> = ({
         <DialogFooter>
           {isDenied ? (
             <Button variant="destructive" onClick={onReject} className="w-full">
-              Reject
+              {t('ai.chat.reject')}
             </Button>
           ) : (
             <>
@@ -183,9 +188,9 @@ const PermissionDialog: React.FC<PermissionDialogProps> = ({
                 onClick={onReject}
                 className="border-destructive/30 text-destructive hover:bg-destructive/10"
               >
-                Reject
+                {t('ai.chat.reject')}
               </Button>
-              <Button onClick={onApprove}>Approve</Button>
+              <Button onClick={onApprove}>{t('ai.chat.approve')}</Button>
             </>
           )}
         </DialogFooter>

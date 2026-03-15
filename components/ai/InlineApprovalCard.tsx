@@ -30,35 +30,39 @@ const InlineApprovalCard: React.FC<InlineApprovalCardProps> = ({
   const cardRef = useRef<HTMLDivElement>(null);
   const isPending = status === 'pending';
 
-  // Keyboard shortcuts when pending
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (!isPending) return;
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        onApprove();
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        onReject();
-      }
-    },
-    [isPending, onApprove, onReject],
-  );
+  // Use refs to always access the latest callbacks without re-registering the listener
+  const onApproveRef = useRef(onApprove);
+  const onRejectRef = useRef(onReject);
+  onApproveRef.current = onApprove;
+  onRejectRef.current = onReject;
 
-  useEffect(() => {
+  // Keyboard shortcuts: handled via local onKeyDown on the focusable card element
+  // to avoid conflicts when multiple InlineApprovalCard instances exist simultaneously.
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (!isPending) return;
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleKeyDown, isPending]);
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      onApproveRef.current();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      onRejectRef.current();
+    }
+  }, [isPending]);
 
-  // Auto-scroll into view when mounted as pending
+  // Auto-focus and auto-scroll into view when mounted as pending
   useEffect(() => {
     if (isPending && cardRef.current) {
+      cardRef.current.focus();
       cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }
   }, [isPending]);
 
-  const formattedArgs = JSON.stringify(toolArgs, null, 2);
+  let formattedArgs: string;
+  try {
+    formattedArgs = JSON.stringify(toolArgs, null, 2);
+  } catch {
+    formattedArgs = String(toolArgs);
+  }
 
   // Extract target session info if present
   const sessionId = toolArgs?.sessionId as string | undefined;
@@ -66,7 +70,9 @@ const InlineApprovalCard: React.FC<InlineApprovalCardProps> = ({
   return (
     <div
       ref={cardRef}
-      className={`rounded-md border overflow-hidden text-[12px] mt-1.5 ${
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+      className={`rounded-md border overflow-hidden text-[12px] mt-1.5 outline-none ${
         isPending
           ? 'border-yellow-500/30 bg-yellow-500/[0.04]'
           : status === 'approved'
@@ -105,7 +111,7 @@ const InlineApprovalCard: React.FC<InlineApprovalCardProps> = ({
       {/* Tool info */}
       <div className="px-3 pb-2 space-y-1.5">
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-muted-foreground/40 uppercase tracking-wider">Tool</span>
+          <span className="text-[10px] text-muted-foreground/40 uppercase tracking-wider">{t('ai.chat.toolLabel')}</span>
           <code className="text-[11px] font-mono text-muted-foreground/70 bg-muted/30 px-1.5 py-0.5 rounded">
             {toolName}
           </code>
@@ -113,7 +119,7 @@ const InlineApprovalCard: React.FC<InlineApprovalCardProps> = ({
 
         {sessionId && (
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-muted-foreground/40 uppercase tracking-wider">Target</span>
+            <span className="text-[10px] text-muted-foreground/40 uppercase tracking-wider">{t('ai.chat.targetLabel')}</span>
             <code className="text-[11px] font-mono text-muted-foreground/50 bg-muted/30 px-1.5 py-0.5 rounded">
               {sessionId}
             </code>
@@ -141,7 +147,7 @@ const InlineApprovalCard: React.FC<InlineApprovalCardProps> = ({
                 onClick={onReject}
               >
                 <X size={11} className="mr-0.5" />
-                Reject
+                {t('ai.chat.reject')}
               </Button>
               <Button
                 size="sm"
@@ -149,7 +155,7 @@ const InlineApprovalCard: React.FC<InlineApprovalCardProps> = ({
                 onClick={onApprove}
               >
                 <Check size={11} className="mr-0.5" />
-                Approve
+                {t('ai.chat.approve')}
               </Button>
             </div>
           </div>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import {
   STORAGE_KEY_AI_PROVIDERS,
@@ -269,6 +269,26 @@ export function useAIState() {
     localStorageAdapter.write(STORAGE_KEY_AI_SESSIONS, pruneSessionsForStorage(next));
   }, []);
 
+  // Debounced version of persistSessions for high-frequency updates (e.g. streaming)
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const debouncedPersistSessions = useCallback((sessionsToSave: AISession[]) => {
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(() => {
+      localStorageAdapter.write(STORAGE_KEY_AI_SESSIONS, pruneSessionsForStorage(sessionsToSave));
+      persistTimerRef.current = null;
+    }, 500);
+  }, []);
+
+  // Flush pending debounced writes on unmount
+  useEffect(() => {
+    return () => {
+      if (persistTimerRef.current) {
+        clearTimeout(persistTimerRef.current);
+      }
+    };
+  }, []);
+
   const createSession = useCallback((scope: AISessionScope, agentId?: string): AISession => {
     const now = Date.now();
     const session: AISession = {
@@ -291,6 +311,10 @@ export function useAIState() {
   }, [defaultAgentId, persistSessions, setActiveSessionId]);
 
   const deleteSession = useCallback((sessionId: string, scopeKey?: string) => {
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
     setSessionsRaw(prev => {
       const next = prev.filter(s => s.id !== sessionId);
       persistSessions(next);
@@ -305,6 +329,10 @@ export function useAIState() {
   }, [persistSessions]);
 
   const deleteSessionsByTarget = useCallback((scopeType: 'terminal' | 'workspace', targetId: string) => {
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
     setSessionsRaw(prev => {
       const next = prev.filter(s => {
         return !(s.scope.type === scopeType && s.scope.targetId === targetId);
@@ -327,11 +355,21 @@ export function useAIState() {
     });
   }, [persistSessions]);
 
+  // Maximum messages per session to prevent unbounded memory growth
+  const MAX_MESSAGES_PER_SESSION = 500;
+
   const addMessageToSession = useCallback((sessionId: string, message: ChatMessage) => {
     setSessionsRaw(prev => {
       const next = prev.map(s => {
         if (s.id !== sessionId) return s;
-        return { ...s, messages: [...s.messages, message], updatedAt: Date.now() };
+        let msgs = [...s.messages, message];
+        // Trim oldest messages if exceeding limit (keep system messages)
+        if (msgs.length > MAX_MESSAGES_PER_SESSION) {
+          const systemMsgs = msgs.filter(m => m.role === 'system');
+          const nonSystemMsgs = msgs.filter(m => m.role !== 'system');
+          msgs = [...systemMsgs, ...nonSystemMsgs.slice(-MAX_MESSAGES_PER_SESSION + systemMsgs.length)];
+        }
+        return { ...s, messages: msgs, updatedAt: Date.now() };
       });
       persistSessions(next);
       return next;
@@ -346,12 +384,16 @@ export function useAIState() {
         msgs[msgs.length - 1] = updater(msgs[msgs.length - 1]);
         return { ...s, messages: msgs, updatedAt: Date.now() };
       });
-      persistSessions(next);
+      debouncedPersistSessions(next);
       return next;
     });
-  }, [persistSessions]);
+  }, [debouncedPersistSessions]);
 
   const clearSessionMessages = useCallback((sessionId: string) => {
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
     setSessionsRaw(prev => {
       const next = prev.map(s => s.id === sessionId ? { ...s, messages: [], updatedAt: Date.now() } : s);
       persistSessions(next);

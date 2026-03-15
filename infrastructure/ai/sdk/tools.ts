@@ -27,6 +27,19 @@ export function createCattyTools(
    */
   const isObserver = permissionMode === 'observer';
   const writeToolNeedsApproval = permissionMode === 'confirm';
+
+  /** Validate that the given sessionId belongs to the current scope (computed lazily each call). */
+  function getValidSessionIds(): Set<string> {
+    return new Set(context.sessions.map(s => s.sessionId));
+  }
+  function validateSessionScope(sessionId: string): string | null {
+    const validSessionIds = getValidSessionIds();
+    if (!validSessionIds.has(sessionId)) {
+      return `Session "${sessionId}" is not in the current scope. Available sessions: ${[...validSessionIds].join(', ')}`;
+    }
+    return null;
+  }
+
   return {
     terminal_execute: tool({
       description:
@@ -38,6 +51,8 @@ export function createCattyTools(
       }),
       needsApproval: writeToolNeedsApproval,
       execute: async ({ sessionId, command }) => {
+        const scopeErr = validateSessionScope(sessionId);
+        if (scopeErr) return { error: scopeErr };
         if (isObserver) {
           return { error: 'Observer mode: command execution is disabled. Switch to Confirm or Auto mode to execute commands.' };
         }
@@ -74,6 +89,8 @@ export function createCattyTools(
       }),
       needsApproval: writeToolNeedsApproval,
       execute: async ({ sessionId, input }) => {
+        const scopeErr = validateSessionScope(sessionId);
+        if (scopeErr) return { error: scopeErr };
         if (isObserver) {
           return { error: 'Observer mode: terminal input is disabled. Switch to Confirm or Auto mode.' };
         }
@@ -94,6 +111,8 @@ export function createCattyTools(
         path: z.string().describe('The absolute path of the remote directory to list.'),
       }),
       execute: async ({ sessionId, path }) => {
+        const scopeErr = validateSessionScope(sessionId);
+        if (scopeErr) return { error: scopeErr };
         const session = context.sessions.find((s) => s.sessionId === sessionId);
         if (!session?.sftpId) {
           // Fallback: use terminal exec with ls
@@ -122,6 +141,8 @@ export function createCattyTools(
           .describe('Maximum number of bytes to read from the file. Defaults to 10000.'),
       }),
       execute: async ({ sessionId, path, maxBytes }) => {
+        const scopeErr = validateSessionScope(sessionId);
+        if (scopeErr) return { error: scopeErr };
         const session = context.sessions.find((s) => s.sessionId === sessionId);
         if (!session?.sftpId) {
           // Fallback: use terminal exec
@@ -147,16 +168,20 @@ export function createCattyTools(
       }),
       needsApproval: writeToolNeedsApproval,
       execute: async ({ sessionId, path, content }) => {
+        const scopeErr = validateSessionScope(sessionId);
+        if (scopeErr) return { error: scopeErr };
         if (isObserver) {
           return { error: 'Observer mode: file writing is disabled. Switch to Confirm or Auto mode.' };
         }
         const session = context.sessions.find((s) => s.sessionId === sessionId);
         if (!session?.sftpId) {
-          // Fallback: use terminal exec with heredoc (random delimiter to avoid collision)
-          const delim = `CATTY_EOF_${Math.random().toString(36).slice(2, 8)}`;
+          // Fallback: use base64 encoding to avoid heredoc injection
+          const b64 = typeof btoa === 'function'
+            ? btoa(unescape(encodeURIComponent(content)))
+            : Buffer.from(content, 'utf-8').toString('base64');
           const result = await bridge.aiExec(
             sessionId,
-            `cat > ${shellQuote(path)} << '${delim}'\n${content}\n${delim}`,
+            `echo ${shellQuote(b64)} | base64 -d > ${shellQuote(path)}`,
           );
           if (!result.ok) {
             return { error: result.error || 'Failed to write file' };
@@ -234,6 +259,12 @@ export function createCattyTools(
       }),
       needsApproval: writeToolNeedsApproval,
       execute: async ({ sessionIds, command, mode, stopOnError }) => {
+        // Validate all session IDs belong to current scope
+        const currentValidIds = getValidSessionIds();
+        const outOfScope = sessionIds.filter(sid => !currentValidIds.has(sid));
+        if (outOfScope.length > 0) {
+          return { error: `Sessions not in current scope: ${outOfScope.join(', ')}. Available sessions: ${[...currentValidIds].join(', ')}` };
+        }
         if (isObserver) {
           return { error: 'Observer mode: command execution is disabled. Switch to Confirm or Auto mode.' };
         }

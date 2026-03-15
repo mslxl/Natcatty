@@ -79,7 +79,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
                   <div className="flex gap-1.5 flex-wrap mb-1">
                     {message.images.map((img, i) => (
                       <img
-                        key={i}
+                        key={img.filename ? `${img.filename}-${i}` : `img-${message.id}-${i}`}
                         src={`data:${img.mediaType};base64,${img.base64Data}`}
                         alt={img.filename || 'image'}
                         className="max-h-[120px] max-w-[200px] rounded-md object-contain border border-border/20"
