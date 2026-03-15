@@ -69,7 +69,12 @@ export function useAIState() {
   const [sessions, setSessionsRaw] = useState<AISession[]>(() =>
     localStorageAdapter.read<AISession[]>(STORAGE_KEY_AI_SESSIONS) ?? []
   );
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  // Per-scope active session: keyed by `${scopeType}:${scopeTargetId}`
+  const [activeSessionIdMap, setActiveSessionIdMapRaw] = useState<Record<string, string | null>>({});
+
+  const setActiveSessionId = useCallback((scopeKey: string, id: string | null) => {
+    setActiveSessionIdMapRaw(prev => ({ ...prev, [scopeKey]: id }));
+  }, []);
 
   // ── Persist helpers ──
   const setProviders = useCallback((value: ProviderConfig[] | ((prev: ProviderConfig[]) => ProviderConfig[])) => {
@@ -191,31 +196,38 @@ export function useAIState() {
       persistSessions(next);
       return next;
     });
-    setActiveSessionId(session.id);
+    const scopeKey = `${scope.type}:${scope.targetId ?? ''}`;
+    setActiveSessionId(scopeKey, session.id);
     return session;
-  }, [defaultAgentId, persistSessions]);
+  }, [defaultAgentId, persistSessions, setActiveSessionId]);
 
-  const deleteSession = useCallback((sessionId: string) => {
+  const deleteSession = useCallback((sessionId: string, scopeKey?: string) => {
     setSessionsRaw(prev => {
       const next = prev.filter(s => s.id !== sessionId);
       persistSessions(next);
       return next;
     });
-    setActiveSessionId(prev => prev === sessionId ? null : prev);
+    if (scopeKey) {
+      setActiveSessionIdMapRaw(prev => {
+        if (prev[scopeKey] === sessionId) return { ...prev, [scopeKey]: null };
+        return prev;
+      });
+    }
   }, [persistSessions]);
 
   const deleteSessionsByTarget = useCallback((scopeType: 'terminal' | 'workspace', targetId: string) => {
-    const deletedIds = new Set<string>();
     setSessionsRaw(prev => {
       const next = prev.filter(s => {
-        const match = s.scope.type === scopeType && s.scope.targetId === targetId;
-        if (match) deletedIds.add(s.id);
-        return !match;
+        return !(s.scope.type === scopeType && s.scope.targetId === targetId);
       });
       persistSessions(next);
       return next;
     });
-    setActiveSessionId(prev => (prev && deletedIds.has(prev)) ? null : prev);
+    const scopeKey = `${scopeType}:${targetId}`;
+    setActiveSessionIdMapRaw(prev => {
+      if (prev[scopeKey] != null) return { ...prev, [scopeKey]: null };
+      return prev;
+    });
   }, [persistSessions]);
 
   const updateSessionTitle = useCallback((sessionId: string, title: string) => {
@@ -297,7 +309,6 @@ export function useAIState() {
   }, [setProviders]);
 
   // ── Computed ──
-  const activeSession = sessions.find(s => s.id === activeSessionId) ?? null;
   const activeProvider = providers.find(p => p.id === activeProviderId) ?? null;
 
   return {
@@ -333,11 +344,10 @@ export function useAIState() {
     maxIterations,
     setMaxIterations,
 
-    // Sessions
+    // Sessions (per-scope active session)
     sessions,
-    activeSessionId,
+    activeSessionIdMap,
     setActiveSessionId,
-    activeSession,
     createSession,
     deleteSession,
     deleteSessionsByTarget,

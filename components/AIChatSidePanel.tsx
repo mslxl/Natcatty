@@ -45,12 +45,12 @@ import ConversationExport from './ai/ConversationExport';
 // -------------------------------------------------------------------
 
 interface AIChatSidePanelProps {
-  // Session state
+  // Session state (per-scope)
   sessions: AISession[];
-  activeSessionId: string | null;
-  setActiveSessionId: (id: string | null) => void;
+  activeSessionIdMap: Record<string, string | null>;
+  setActiveSessionId: (scopeKey: string, id: string | null) => void;
   createSession: (scope: AISessionScope, agentId?: string) => AISession;
-  deleteSession: (sessionId: string) => void;
+  deleteSession: (sessionId: string, scopeKey?: string) => void;
   updateSessionTitle: (sessionId: string, title: string) => void;
   addMessageToSession: (sessionId: string, message: ChatMessage) => void;
   updateLastMessage: (
@@ -106,8 +106,8 @@ function generateId(): string {
 
 const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   sessions,
-  activeSessionId,
-  setActiveSessionId,
+  activeSessionIdMap,
+  setActiveSessionId: setActiveSessionIdForScope,
   createSession,
   deleteSession,
   updateSessionTitle,
@@ -128,23 +128,52 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   terminalSessions = [],
   isVisible = true,
 }) => {
-  const [inputValue, setInputValue] = useState('');
-  const [isStreaming, setIsStreaming] = useState(false);
+  // ── Per-scope state ──
+  // Derive scope key for per-scope isolation
+  const scopeKey = `${scopeType}:${scopeTargetId ?? ''}`;
+
+  // Per-scope input values
+  const [inputValueMap, setInputValueMap] = useState<Record<string, string>>({});
+  const inputValue = inputValueMap[scopeKey] ?? '';
+  const setInputValue = useCallback((val: string) => {
+    setInputValueMap(prev => ({ ...prev, [scopeKey]: val }));
+  }, [scopeKey]);
+
+  // Per-scope streaming state
+  const [streamingScopes, setStreamingScopes] = useState<Set<string>>(new Set());
+  const isStreaming = streamingScopes.has(scopeKey);
+  const setStreamingForScope = useCallback((key: string, val: boolean) => {
+    setStreamingScopes(prev => {
+      const next = new Set(prev);
+      if (val) next.add(key); else next.delete(key);
+      return next;
+    });
+  }, []);
+
   const [showHistory, setShowHistory] = useState(false);
   const [currentAgentId, setCurrentAgentId] = useState(defaultAgentId);
   const [selectedAgentModel, setSelectedAgentModel] = useState<string | undefined>(undefined);
-  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Per-scope abort controllers
+  const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
+
   const { images, addImages, removeImage, clearImages } = useImageUpload();
   const { openSettingsWindow } = useWindowControls();
 
-  // Reset active session when switching terminal/workspace
-  const prevScopeTargetIdRef = useRef(scopeTargetId);
+  // Per-scope active session ID
+  const activeSessionId = activeSessionIdMap[scopeKey] ?? null;
+  const setActiveSessionId = useCallback((id: string | null) => {
+    setActiveSessionIdForScope(scopeKey, id);
+  }, [scopeKey, setActiveSessionIdForScope]);
+
+  // Proactively sync terminal session metadata to main process whenever scope or sessions change
   useEffect(() => {
-    if (scopeTargetId !== prevScopeTargetIdRef.current) {
-      prevScopeTargetIdRef.current = scopeTargetId;
-      setActiveSessionId(null);
+    const bridge = (window as unknown as { netcatty?: { aiMcpUpdateSessions?: (sessions: typeof terminalSessions, chatSessionId?: string) => Promise<unknown> } }).netcatty;
+    if (bridge?.aiMcpUpdateSessions && terminalSessions.length > 0) {
+      console.log('[AIChatPanel] Syncing terminalSessions to MCP:', scopeKey, terminalSessions.length, terminalSessions.map(s => s.sessionId));
+      void bridge.aiMcpUpdateSessions(terminalSessions, activeSessionId ?? undefined);
     }
-  }, [scopeTargetId, setActiveSessionId]);
+  }, [terminalSessions, scopeKey, activeSessionId]);
 
   // Agent discovery
   const {
@@ -162,7 +191,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     [enableAgent, setExternalAgents],
   );
 
-  // Active session
+  // Active session (scoped)
   const activeSession = useMemo(
     () => sessions.find((s) => s.id === activeSessionId) ?? null,
     [sessions, activeSessionId],
@@ -227,7 +256,9 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
 
   const handleSend = useCallback(async () => {
     const trimmed = inputValue.trim();
-    console.log('[AIChatPanel] handleSend called, trimmed:', JSON.stringify(trimmed?.slice(0, 50)), 'isStreaming:', isStreaming, 'currentAgentId:', currentAgentId);
+    // Capture scope key at send time so async callbacks use the correct scope
+    const sendScopeKey = scopeKey;
+    console.log('[AIChatPanel] handleSend called, trimmed:', JSON.stringify(trimmed?.slice(0, 50)), 'isStreaming:', isStreaming, 'currentAgentId:', currentAgentId, 'scopeKey:', sendScopeKey);
     if (!trimmed || isStreaming) return;
 
     const isExternalAgent = currentAgentId !== 'catty';
@@ -266,7 +297,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     addMessageToSession(sessionId, userMessage);
     setInputValue('');
     clearImages();
-    setIsStreaming(true);
+    setStreamingForScope(sendScopeKey, true);
 
     // Create assistant message placeholder for streaming
     const agentConfig = isExternalAgent
@@ -281,9 +312,9 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       providerId: isExternalAgent ? undefined : activeProvider?.providerId,
     });
 
-    // Abort controller for cancellation
+    // Abort controller for cancellation (per-scope)
     const abortController = new AbortController();
-    abortControllerRef.current = abortController;
+    abortControllersRef.current.set(sendScopeKey, abortController);
 
     // Get current session for context
     const currentSession = sessions.find((s) => s.id === sessionId);
@@ -297,7 +328,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           content: 'External agent not found. Please check settings.',
           executionStatus: 'failed',
         }));
-        setIsStreaming(false);
+        setStreamingForScope(sendScopeKey, false);
         return;
       }
 
@@ -311,10 +342,11 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         const requestId = `acp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         console.log('[AIChatPanel] → ACP path, requestId:', requestId, 'acpCommand:', agentConfig.acpCommand);
 
-        // Push terminal session metadata to MCP bridge before streaming
-        const mcpBridge = bridge as unknown as { aiMcpUpdateSessions?: (sessions: typeof terminalSessions) => Promise<unknown> };
-        if (mcpBridge.aiMcpUpdateSessions && terminalSessions.length > 0) {
-          await mcpBridge.aiMcpUpdateSessions(terminalSessions);
+        // Push terminal session metadata to MCP bridge before streaming (with chatSessionId for per-scope isolation)
+        const mcpBridge = bridge as unknown as { aiMcpUpdateSessions?: (sessions: typeof terminalSessions, chatSessionId?: string) => Promise<unknown> };
+        console.log('[AIChatPanel] terminalSessions for MCP update:', terminalSessions.length, terminalSessions.map(s => s.sessionId));
+        if (mcpBridge.aiMcpUpdateSessions) {
+          await mcpBridge.aiMcpUpdateSessions(terminalSessions, sessionId!);
         }
 
         // Try to find an API key from configured providers for this agent
@@ -454,8 +486,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         }
       }
 
-      setIsStreaming(false);
-      abortControllerRef.current = null;
+      setStreamingForScope(sendScopeKey, false);
+      abortControllersRef.current.delete(sendScopeKey);
       if (
         currentSession &&
         (!currentSession.title || currentSession.title === 'New Chat')
@@ -662,8 +694,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         }));
       }
     } finally {
-      setIsStreaming(false);
-      abortControllerRef.current = null;
+      setStreamingForScope(sendScopeKey, false);
+      abortControllersRef.current.delete(sendScopeKey);
       // Auto-title the session from first user message
       const finalSession = sessions.find(s => s.id === sessionId);
       if (
@@ -680,6 +712,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     isStreaming,
     activeProvider,
     activeSessionId,
+    scopeKey,
     scopeType,
     scopeTargetId,
     scopeHostIds,
@@ -694,6 +727,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     terminalSessions,
     createSession,
     setActiveSessionId,
+    setStreamingForScope,
     addMessageToSession,
     updateLastMessage,
     updateSessionTitle,
@@ -703,9 +737,11 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   ]);
 
   const handleStop = useCallback(() => {
-    abortControllerRef.current?.abort();
-    setIsStreaming(false);
-  }, []);
+    const controller = abortControllersRef.current.get(scopeKey);
+    controller?.abort();
+    abortControllersRef.current.delete(scopeKey);
+    setStreamingForScope(scopeKey, false);
+  }, [scopeKey, setStreamingForScope]);
 
   const handleSelectSession = useCallback(
     (sessionId: string) => {
@@ -725,12 +761,10 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       e.stopPropagation();
       const bridge = (window as unknown as { netcatty?: { aiAcpCleanup?: (chatSessionId: string) => Promise<{ ok: boolean }> } }).netcatty;
       void bridge?.aiAcpCleanup?.(sessionId).catch(() => {});
-      deleteSession(sessionId);
-      if (activeSessionId === sessionId) {
-        setActiveSessionId(null);
-      }
+      deleteSession(sessionId, scopeKey);
+      // Active session clearing is handled by deleteSession with scopeKey
     },
-    [deleteSession, activeSessionId, setActiveSessionId],
+    [deleteSession, scopeKey],
   );
 
   const handleAgentChange = useCallback((agentId: string) => {

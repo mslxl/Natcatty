@@ -17,7 +17,11 @@ let tcpServer = null;
 let tcpPort = null;
 
 // Session metadata registered by renderer (sessionId → { hostname, label, os, username })
+// Global metadata (union of all scopes) for fallback
 const sessionMetadata = new Map();
+
+// Per-scope metadata: chatSessionId → { sessionIds: string[], metadata: Map }
+const scopedMetadata = new Map();
 
 // Track which session IDs are in the current scope (set by updateSessionMetadata)
 let currentScopedSessionIds = [];
@@ -56,9 +60,10 @@ function setCommandBlocklist(list) {
 /**
  * Register metadata for terminal sessions (called from renderer via IPC).
  * @param {Array<{sessionId, hostname, label, os, username, connected}>} sessionList
+ * @param {string} [chatSessionId] - AI chat session ID for per-scope isolation
  */
-function updateSessionMetadata(sessionList) {
-  sessionMetadata.clear();
+function updateSessionMetadata(sessionList, chatSessionId) {
+  // Update global metadata (additive — do NOT clear, multiple scopes coexist)
   for (const s of sessionList) {
     sessionMetadata.set(s.sessionId, {
       hostname: s.hostname || "",
@@ -70,6 +75,20 @@ function updateSessionMetadata(sessionList) {
   }
   // Track scoped session IDs for use by buildMcpServerConfig
   currentScopedSessionIds = sessionList.map(s => s.sessionId);
+
+  // Store per-scope metadata if chatSessionId provided
+  if (chatSessionId) {
+    scopedMetadata.set(chatSessionId, {
+      sessionIds: currentScopedSessionIds.slice(),
+    });
+  }
+
+  console.log("[MCP] updateSessionMetadata:", {
+    chatSessionId: chatSessionId || "global",
+    count: sessionList.length,
+    ids: currentScopedSessionIds,
+    hostnames: sessionList.map(s => s.hostname),
+  });
 }
 
 function getCurrentScopedSessionIds() {
@@ -194,14 +213,24 @@ async function dispatch(method, params) {
 function handleGetContext(params) {
   if (!sessions) return { hosts: [], instructions: "No sessions available." };
 
-  // Use explicit scope if provided, otherwise fall back to sessionMetadata keys
-  // (which are set by the frontend's scoped aiMcpUpdateSessions call).
-  // This ensures agents only see sessions in their workspace/terminal scope.
-  const scopedIds = params?.scopedSessionIds
-    ? new Set(params.scopedSessionIds)
-    : sessionMetadata.size > 0
-      ? new Set(sessionMetadata.keys())
-      : null;
+  // Scope resolution priority:
+  // 1. Explicit scopedSessionIds from MCP server env var (per-process, set at spawn)
+  // 2. Per-chatSession scope from scopedMetadata (if chatSessionId provided)
+  // 3. No filtering — return all SSH sessions as fallback
+  let scopedIds = null;
+  if (params?.scopedSessionIds && params.scopedSessionIds.length > 0) {
+    scopedIds = new Set(params.scopedSessionIds);
+  } else if (params?.chatSessionId && scopedMetadata.has(params.chatSessionId)) {
+    const ids = scopedMetadata.get(params.chatSessionId).sessionIds;
+    if (ids.length > 0) scopedIds = new Set(ids);
+  }
+
+  console.log("[MCP] handleGetContext scope:", {
+    paramIds: params?.scopedSessionIds || "null",
+    chatSessionId: params?.chatSessionId || "null",
+    effectiveScopeSize: scopedIds ? scopedIds.size : "all (fallback)",
+    totalSessions: sessions.size,
+  });
 
   const hosts = [];
   for (const [sessionId, session] of sessions.entries()) {
@@ -213,10 +242,10 @@ function handleGetContext(params) {
     const meta = sessionMetadata.get(sessionId) || {};
     hosts.push({
       sessionId,
-      hostname: meta.hostname || "",
-      label: meta.label || "",
+      hostname: meta.hostname || session.hostname || "",
+      label: meta.label || session.label || "",
       os: meta.os || "",
-      username: meta.username || "",
+      username: meta.username || session.username || "",
       connected: meta.connected !== undefined ? meta.connected : !!(session.sshClient || session.conn),
     });
   }
@@ -633,7 +662,7 @@ function toUnpackedAsarPath(filePath) {
   return filePath;
 }
 
-function buildMcpServerConfig(port, scopedSessionIds) {
+function buildMcpServerConfig(port, scopedSessionIds, chatSessionId) {
   // Use provided scoped IDs, or fall back to the current scope from updateSessionMetadata
   const effectiveIds = (scopedSessionIds && scopedSessionIds.length > 0)
     ? scopedSessionIds
@@ -651,6 +680,11 @@ function buildMcpServerConfig(port, scopedSessionIds) {
     env.push({ name: "NETCATTY_MCP_SESSION_IDS", value: effectiveIds.join(",") });
   }
 
+  // Pass chatSessionId for per-scope metadata lookup fallback
+  if (chatSessionId) {
+    env.push({ name: "NETCATTY_MCP_CHAT_SESSION_ID", value: chatSessionId });
+  }
+
   return {
     name: "netcatty-remote-hosts",
     type: "stdio",
@@ -662,6 +696,12 @@ function buildMcpServerConfig(port, scopedSessionIds) {
 
 // ── Cleanup ──
 
+function cleanupScopedMetadata(chatSessionId) {
+  if (chatSessionId) {
+    scopedMetadata.delete(chatSessionId);
+  }
+}
+
 function cleanup() {
   if (tcpServer) {
     tcpServer.close();
@@ -669,14 +709,17 @@ function cleanup() {
     tcpPort = null;
     console.log("[MCP Bridge] TCP server closed");
   }
+  scopedMetadata.clear();
 }
 
 module.exports = {
   init,
   setCommandBlocklist,
   updateSessionMetadata,
+  getCurrentScopedSessionIds,
   getOrCreateHost,
   buildMcpServerConfig,
   cancelAllPtyExecs,
+  cleanupScopedMetadata,
   cleanup,
 };

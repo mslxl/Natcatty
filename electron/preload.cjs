@@ -1038,8 +1038,8 @@ const api = {
     return ipcRenderer.invoke("netcatty:ai:agent:kill", { agentId });
   },
   // MCP Server session metadata
-  aiMcpUpdateSessions: async (sessions) => {
-    return ipcRenderer.invoke("netcatty:ai:mcp:update-sessions", { sessions });
+  aiMcpUpdateSessions: async (sessions, chatSessionId) => {
+    return ipcRenderer.invoke("netcatty:ai:mcp:update-sessions", { sessions, chatSessionId });
   },
   // Claude Agent SDK streaming
   aiClaudeStream: async (requestId, chatSessionId, prompt, model) => {

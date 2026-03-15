@@ -939,11 +939,11 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
   // Build terminal session context for the AI chat panel
   const aiTerminalSessions = useMemo(() => {
-    const sessionIds = activeWorkspace?.tree
-      ? collectSessionIds(activeWorkspace.tree)
+    const sessionIds = activeWorkspace?.root
+      ? collectSessionIds(activeWorkspace.root)
       : activeSession ? [activeSession.id] : [];
 
-    return sessionIds.map(sid => {
+    const result = sessionIds.map(sid => {
       const s = sessions.find(s => s.id === sid);
       const host = s?.hostId ? hosts.find(h => h.id === s.hostId) : undefined;
       return {
@@ -956,6 +956,17 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         connected: s?.status === 'connected',
       };
     });
+    console.warn('[TerminalLayer] aiTerminalSessions:', JSON.stringify({
+      activeTabId,
+      activeWorkspaceId: activeWorkspace?.id,
+      activeSessionId: activeSession?.id,
+      workspaceCount: workspaces.length,
+      workspaceIds: workspaces.map(w => w.id),
+      sessionCount: sessions.length,
+      sessionIds,
+      resultCount: result.length,
+    }));
+    return result;
   }, [sessions, hosts, activeWorkspace, activeSession]);
 
   // Subscribe to custom theme changes so editing triggers re-render
@@ -1320,7 +1331,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                     <div className="absolute inset-0 z-10">
                       <AIChatSidePanel
                         sessions={aiState.sessions}
-                        activeSessionId={aiState.activeSessionId}
+                        activeSessionIdMap={aiState.activeSessionIdMap}
                         setActiveSessionId={aiState.setActiveSessionId}
                         createSession={aiState.createSession}
                         deleteSession={aiState.deleteSession}
@@ -1337,8 +1348,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                         commandBlocklist={aiState.commandBlocklist}
                         scopeType={activeWorkspace ? 'workspace' : 'terminal'}
                         scopeTargetId={activeWorkspace?.id ?? activeSession?.id}
-                        scopeHostIds={activeWorkspace?.tree
-                          ? collectSessionIds(activeWorkspace.tree).map(sid => {
+                        scopeHostIds={activeWorkspace?.root
+                          ? collectSessionIds(activeWorkspace.root).map(sid => {
                               const s = sessions.find(s => s.id === sid);
                               return s?.hostId;
                             }).filter((id): id is string => !!id)

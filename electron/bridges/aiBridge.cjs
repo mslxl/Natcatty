@@ -1330,8 +1330,8 @@ function registerHandlers(ipcMain) {
 
   // ── MCP Server session metadata ──
 
-  ipcMain.handle("netcatty:ai:mcp:update-sessions", async (_event, { sessions: sessionList }) => {
-    mcpServerBridge.updateSessionMetadata(sessionList || []);
+  ipcMain.handle("netcatty:ai:mcp:update-sessions", async (_event, { sessions: sessionList, chatSessionId }) => {
+    mcpServerBridge.updateSessionMetadata(sessionList || [], chatSessionId);
     return { ok: true };
   });
 
@@ -1380,8 +1380,9 @@ function registerHandlers(ipcMain) {
       // Inject Netcatty MCP server for remote host access
       try {
         const mcpPort = await mcpServerBridge.getOrCreateHost();
-        // Parse scoped session IDs from the chatSessionId context if available
-        const netcattyMcpConfig = mcpServerBridge.buildMcpServerConfig(mcpPort);
+        const scopedIds = mcpServerBridge.getCurrentScopedSessionIds();
+        console.log("[ACP] Building MCP config with scoped IDs:", scopedIds, "chatSessionId:", chatSessionId);
+        const netcattyMcpConfig = mcpServerBridge.buildMcpServerConfig(mcpPort, scopedIds, chatSessionId);
         mcpSnapshot.mcpServers.push(netcattyMcpConfig);
         console.log("[ACP] Injected netcatty-remote-hosts MCP server on port", mcpPort);
       } catch (err) {
@@ -1566,6 +1567,7 @@ function registerHandlers(ipcMain) {
   // Cleanup a specific ACP session (when chat session is deleted)
   ipcMain.handle("netcatty:ai:acp:cleanup", async (_event, { chatSessionId }) => {
     cleanupAcpProvider(chatSessionId);
+    mcpServerBridge.cleanupScopedMetadata(chatSessionId);
     return { ok: true };
   });
 
