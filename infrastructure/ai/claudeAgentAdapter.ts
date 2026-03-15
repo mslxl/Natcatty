@@ -5,8 +5,6 @@
  * The main process runs `query()` and forwards SDK events to the renderer.
  */
 
-import type { ExternalAgentConfig } from './types';
-
 export interface ClaudeAgentCallbacks {
   onTextDelta: (text: string) => void;
   onThinkingDelta: (text: string) => void;
@@ -17,7 +15,7 @@ export interface ClaudeAgentCallbacks {
   onDone: () => void;
 }
 
-interface ClaudeBridge {
+export interface ClaudeBridge {
   aiClaudeStream(
     requestId: string,
     chatSessionId: string,
@@ -41,16 +39,15 @@ interface ClaudeSDKEvent {
  * SDK events are forwarded back via IPC.
  */
 export async function runClaudeAgentTurn(
-  bridge: Record<string, (...args: unknown[]) => unknown>,
+  bridge: ClaudeBridge,
   requestId: string,
   chatSessionId: string,
-  _config: ExternalAgentConfig,
   prompt: string,
   callbacks: ClaudeAgentCallbacks,
   signal?: AbortSignal,
   model?: string,
 ): Promise<void> {
-  const claudeBridge = bridge as unknown as ClaudeBridge;
+  const claudeBridge = bridge;
 
   const cleanupFns: (() => void)[] = [];
 

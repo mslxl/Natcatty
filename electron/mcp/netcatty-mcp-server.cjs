@@ -20,6 +20,13 @@ if (!NETCATTY_MCP_PORT) {
   process.exit(1);
 }
 
+// Auth token for TCP bridge authentication
+const NETCATTY_MCP_TOKEN = process.env.NETCATTY_MCP_TOKEN || "";
+if (!NETCATTY_MCP_TOKEN) {
+  process.stderr.write("[netcatty-mcp] NETCATTY_MCP_TOKEN not set\n");
+  process.exit(1);
+}
+
 // Scoped session IDs (optional, comma-separated)
 const SCOPED_SESSION_IDS = process.env.NETCATTY_MCP_SESSION_IDS
   ? process.env.NETCATTY_MCP_SESSION_IDS.split(",").map(s => s.trim()).filter(Boolean)
@@ -309,6 +316,14 @@ server.tool(
 
 async function main() {
   await connectTcp();
+
+  // Authenticate with the TCP bridge before accepting any tool calls
+  const authResult = await rpcCall("auth/verify", { token: NETCATTY_MCP_TOKEN });
+  if (!authResult?.ok) {
+    throw new Error("TCP bridge authentication failed");
+  }
+  process.stderr.write("[netcatty-mcp] Authenticated with TCP bridge\n");
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

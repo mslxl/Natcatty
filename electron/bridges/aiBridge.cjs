@@ -9,11 +9,45 @@ const https = require("node:https");
 const http = require("node:http");
 const { URL } = require("node:url");
 const { spawn, execSync } = require("node:child_process");
-const { createHash } = require("node:crypto");
 const { existsSync } = require("node:fs");
 const path = require("node:path");
 
 const mcpServerBridge = require("./mcpServerBridge.cjs");
+
+// ── Extracted modules ──
+const {
+  stripAnsi,
+  resolveCliFromPath,
+  getShellEnv,
+  serializeStreamChunk,
+} = require("./ai/shellUtils.cjs");
+
+const {
+  codexLoginSessions,
+  resolveCodexAcpBinaryPath,
+  appendCodexLoginOutput,
+  toCodexLoginSessionResponse,
+  getActiveCodexLoginSession,
+  normalizeCodexIntegrationState,
+  extractCodexError,
+  isCodexAuthError,
+  getCodexAuthFingerprint,
+  getCodexMcpFingerprint,
+  invalidateCodexValidationCache,
+  getCodexValidationCache,
+  setCodexValidationCache,
+} = require("./ai/codexHelpers.cjs");
+
+const {
+  claudeSessionIds,
+  claudeActiveStreams,
+  buildClaudeEnv,
+  getCachedClaudeQuery,
+  setCachedClaudeQuery,
+  clearClaudeState,
+} = require("./ai/claudeHelpers.cjs");
+
+const { execViaPty } = require("./ai/ptyExec.cjs");
 
 let sessions = null;
 let sftpClients = null;
@@ -29,303 +63,6 @@ const agentProcesses = new Map();
 const acpProviders = new Map();
 const acpActiveStreams = new Map();
 
-// Claude Agent SDK active streams
-const claudeActiveStreams = new Map();
-
-// Claude session IDs (chatSessionId → SDK sessionId for resume)
-const claudeSessionIds = new Map();
-
-// Claude SDK query function cache (avoid re-importing on every message)
-let cachedClaudeQuery = null;
-
-// Keys to strip from env before passing to Claude SDK (prevent interference)
-const CLAUDE_STRIPPED_ENV_KEYS = [
-  "OPENAI_API_KEY",
-  "CLAUDE_CODE_USE_BEDROCK",
-  "CLAUDE_CODE_USE_VERTEX",
-];
-
-// Claude config dir base path for session isolation
-let claudeConfigDirBase = null;
-
-function getClaudeConfigDirBase() {
-  if (claudeConfigDirBase) return claudeConfigDirBase;
-  const home = process.env.HOME || require("node:os").homedir();
-  claudeConfigDirBase = path.join(home, ".netcatty", "claude-sessions");
-  return claudeConfigDirBase;
-}
-
-function ensureClaudeConfigDir(chatSessionId) {
-  const dirBase = getClaudeConfigDirBase();
-  const sessionDir = path.join(dirBase, chatSessionId);
-  const { mkdirSync, existsSync: fsExistsSync, symlinkSync, readdirSync } = require("node:fs");
-  mkdirSync(sessionDir, { recursive: true });
-
-  // Symlink skills/commands/agents from ~/.claude/ if they exist
-  const home = process.env.HOME || require("node:os").homedir();
-  const claudeDir = path.join(home, ".claude");
-  const symlinkTargets = ["skills", "commands", "agents", "plugins"];
-  for (const target of symlinkTargets) {
-    const src = path.join(claudeDir, target);
-    const dest = path.join(sessionDir, target);
-    if (fsExistsSync(src) && !fsExistsSync(dest)) {
-      try {
-        symlinkSync(src, dest, "dir");
-      } catch {
-        // Ignore symlink failures (e.g., already exists, permissions)
-      }
-    }
-  }
-
-  return sessionDir;
-}
-
-function buildClaudeEnv(shellEnv) {
-  const env = { ...shellEnv };
-
-  // Overlay process.env but preserve shell PATH (Electron's PATH is minimal)
-  const shellPath = env.PATH;
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined) {
-      env[key] = value;
-    }
-  }
-  if (shellPath) {
-    env.PATH = shellPath;
-  }
-
-  // Strip sensitive keys (prevent interference from unrelated providers)
-  for (const key of CLAUDE_STRIPPED_ENV_KEYS) {
-    delete env[key];
-  }
-
-  // Ensure critical vars
-  const os = require("node:os");
-  if (!env.HOME) env.HOME = os.homedir();
-  if (!env.USER) env.USER = os.userInfo().username;
-  if (!env.TERM) env.TERM = "xterm-256color";
-  if (!env.SHELL) env.SHELL = process.env.SHELL || "/bin/zsh";
-
-  // Mark as SDK entry
-  env.CLAUDE_CODE_ENTRYPOINT = "sdk-ts";
-
-  return env;
-}
-const codexLoginSessions = new Map();
-let codexChatGptValidationCache = null;
-
-const URL_CANDIDATE_REGEX = /https?:\/\/[^\s]+/g;
-const ANSI_ESCAPE_REGEX = /\u001B\[[0-?]*[ -/]*[@-~]/g;
-const ANSI_OSC_REGEX = /\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g;
-const CODEX_AUTH_HINTS = [
-  "not logged in",
-  "authentication required",
-  "auth required",
-  "login required",
-  "missing credentials",
-  "no credentials",
-  "unauthorized",
-  "forbidden",
-  "codex login",
-  "401",
-  "403",
-  "invalid_grant",
-  "invalid_token",
-  "credentials",
-];
-
-function getCodexPackageName() {
-  const key = `${process.platform}-${process.arch}`;
-  switch (key) {
-    case "darwin-arm64":
-      return "@zed-industries/codex-acp-darwin-arm64";
-    case "darwin-x64":
-      return "@zed-industries/codex-acp-darwin-x64";
-    case "linux-arm64":
-      return "@zed-industries/codex-acp-linux-arm64";
-    case "linux-x64":
-      return "@zed-industries/codex-acp-linux-x64";
-    case "win32-arm64":
-      return "@zed-industries/codex-acp-win32-arm64";
-    case "win32-x64":
-      return "@zed-industries/codex-acp-win32-x64";
-    default:
-      return null;
-  }
-}
-
-function toUnpackedAsarPath(filePath) {
-  const unpackedPath = filePath.replace(/app\.asar([\\/])/, "app.asar.unpacked$1");
-  if (unpackedPath !== filePath && existsSync(unpackedPath)) {
-    return unpackedPath;
-  }
-  return filePath;
-}
-
-function resolveCodexAcpBinaryPath(shellEnv) {
-  const binaryName = process.platform === "win32" ? "codex-acp.exe" : "codex-acp";
-  const isPackaged = electronModule?.app?.isPackaged;
-
-  // Dev mode: prefer system PATH (stays in sync with user's codex installation)
-  if (!isPackaged && shellEnv) {
-    try {
-      const whichCmd = process.platform === "win32" ? "where" : "which";
-      const systemPath = execSync(`${whichCmd} ${binaryName}`, {
-        encoding: "utf8",
-        timeout: 3000,
-        stdio: ["pipe", "pipe", "pipe"],
-        env: shellEnv,
-      }).trim().split("\n")[0].trim();
-      if (systemPath && existsSync(systemPath)) {
-        return systemPath;
-      }
-    } catch {
-      // Not on PATH
-    }
-  }
-
-  // Packaged build (or dev fallback): use npm-bundled binary
-  try {
-    const pkgName = getCodexPackageName();
-    if (!pkgName) return binaryName;
-
-    const pkgRoot = path.dirname(require.resolve("@zed-industries/codex-acp/package.json"));
-    const resolved = require.resolve(`${pkgName}/bin/${binaryName}`, { paths: [pkgRoot] });
-    return toUnpackedAsarPath(resolved);
-  } catch {
-    return binaryName;
-  }
-}
-
-// Resolve CLI binaries from system PATH using shell env
-function resolveCliFromPath(command, shellEnv) {
-  if (shellEnv) {
-    try {
-      const whichCmd = process.platform === "win32" ? "where" : "which";
-      const resolved = execSync(`${whichCmd} ${command}`, {
-        encoding: "utf8",
-        timeout: 3000,
-        stdio: ["pipe", "pipe", "pipe"],
-        env: shellEnv,
-      }).trim().split("\n")[0].trim();
-      if (resolved && existsSync(resolved)) return resolved;
-    } catch {
-      // Not found on PATH
-    }
-  }
-  return null;
-}
-
-function stripAnsi(input) {
-  return String(input || "").replace(ANSI_OSC_REGEX, "").replace(ANSI_ESCAPE_REGEX, "");
-}
-
-function isLocalhostHostname(hostname) {
-  const normalized = String(hostname || "").trim().toLowerCase();
-  return (
-    normalized === "localhost" ||
-    normalized === "127.0.0.1" ||
-    normalized === "::1" ||
-    normalized === "[::1]" ||
-    normalized.endsWith(".localhost")
-  );
-}
-
-function extractFirstNonLocalhostUrl(output) {
-  const matches = stripAnsi(output).match(URL_CANDIDATE_REGEX);
-  if (!matches) return null;
-
-  for (const match of matches) {
-    try {
-      const parsedUrl = new URL(match.trim().replace(/[),.;!?]+$/, ""));
-      if (!isLocalhostHostname(parsedUrl.hostname)) {
-        return parsedUrl.toString();
-      }
-    } catch {
-      // Ignore invalid URL candidates.
-    }
-  }
-
-  return null;
-}
-
-function appendCodexLoginOutput(session, chunk) {
-  const cleanChunk = stripAnsi(chunk);
-  if (!cleanChunk) return;
-
-  session.output += cleanChunk;
-  if (!session.url) {
-    session.url = extractFirstNonLocalhostUrl(session.output);
-  }
-}
-
-function toCodexLoginSessionResponse(session) {
-  return {
-    sessionId: session.id,
-    state: session.state,
-    url: session.url,
-    output: session.output,
-    error: session.error,
-    exitCode: session.exitCode,
-  };
-}
-
-function getActiveCodexLoginSession() {
-  for (const session of codexLoginSessions.values()) {
-    if (session.state === "running" && session.process && !session.process.killed) {
-      return session;
-    }
-  }
-  return null;
-}
-
-function normalizeCodexIntegrationState(rawOutput) {
-  const normalizedOutput = String(rawOutput || "").toLowerCase();
-
-  if (normalizedOutput.includes("logged in using chatgpt")) {
-    return "connected_chatgpt";
-  }
-  if (
-    normalizedOutput.includes("logged in using an api key") ||
-    normalizedOutput.includes("logged in using api key")
-  ) {
-    return "connected_api_key";
-  }
-  if (normalizedOutput.includes("not logged in")) {
-    return "not_logged_in";
-  }
-  return "unknown";
-}
-
-function extractCodexError(error) {
-  const message =
-    error?.data?.message ||
-    error?.errorText ||
-    error?.message ||
-    error?.error ||
-    String(error);
-  const code = error?.data?.code || error?.code;
-  return {
-    message: typeof message === "string" ? message : String(message),
-    code: typeof code === "string" ? code : undefined,
-  };
-}
-
-function isCodexAuthError(params) {
-  const searchableText = `${params?.code || ""} ${params?.message || ""}`.toLowerCase();
-  return CODEX_AUTH_HINTS.some((hint) => searchableText.includes(hint));
-}
-
-function getCodexAuthFingerprint(apiKey) {
-  const normalized = String(apiKey || "").trim();
-  if (!normalized) return null;
-  return createHash("sha256").update(normalized).digest("hex");
-}
-
-function getCodexMcpFingerprint(mcpServers) {
-  return createHash("sha256").update(JSON.stringify(mcpServers || [])).digest("hex");
-}
-
 function cleanupAcpProvider(chatSessionId) {
   const entry = acpProviders.get(chatSessionId);
   if (!entry) return;
@@ -339,10 +76,6 @@ function cleanupAcpProvider(chatSessionId) {
     // Ignore provider cleanup failures.
   }
   acpProviders.delete(chatSessionId);
-}
-
-function invalidateCodexValidationCache() {
-  codexChatGptValidationCache = null;
 }
 
 function init(deps) {
@@ -455,88 +188,6 @@ function streamRequest(url, options, event, requestId) {
   });
 }
 
-/**
- * Execute command through the terminal PTY stream (visible in terminal).
- * Uses unique markers to detect when the command finishes and capture output.
- * Same approach as MCP server's execViaPty.
- */
-function execViaPtyForCatty(ptyStream, command) {
-  const marker = `__NCMCP_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}__`;
-
-  return new Promise((resolve) => {
-    let output = "";
-    let foundStart = false;
-    let timeoutId = null;
-
-    // Use MCP server bridge's timeout (synced from user settings)
-    const timeoutMs = mcpServerBridge.getCommandTimeoutMs ? mcpServerBridge.getCommandTimeoutMs() : 60000;
-
-    const onData = (data) => {
-      const text = data.toString();
-
-      if (!foundStart) {
-        const startIdx = text.indexOf(marker + "_S");
-        if (startIdx !== -1) {
-          foundStart = true;
-          const afterMarker = text.slice(startIdx);
-          const nlIdx = afterMarker.indexOf("\n");
-          if (nlIdx !== -1) {
-            output += afterMarker.slice(nlIdx + 1);
-          }
-        }
-        if (foundStart) checkEnd();
-        return;
-      }
-
-      output += text;
-      checkEnd();
-    };
-
-    function checkEnd() {
-      const endPattern = marker + "_E:";
-      const endIdx = output.indexOf(endPattern);
-      if (endIdx === -1) return;
-
-      const afterEnd = output.slice(endIdx + endPattern.length);
-      const codeMatch = afterEnd.match(/^(\d+)/);
-      const exitCode = codeMatch ? parseInt(codeMatch[1], 10) : null;
-
-      const stdout = output.slice(0, endIdx);
-      finish(stdout, exitCode);
-    }
-
-    function finish(stdout, exitCode) {
-      clearTimeout(timeoutId);
-      ptyStream.removeListener("data", onData);
-      // Strip ANSI codes and any leaked MCP markers
-      let cleaned = stripAnsi(stdout || "").trim();
-      cleaned = cleaned.replace(/__NCMCP_[^\r\n]*[\r\n]*/g, "").trim();
-      resolve({
-        ok: exitCode === 0 || exitCode === null,
-        stdout: cleaned,
-        stderr: "",
-        exitCode: exitCode ?? 0,
-      });
-    }
-
-    timeoutId = setTimeout(() => {
-      ptyStream.removeListener("data", onData);
-      if (typeof ptyStream.write === "function") ptyStream.write("\x03");
-      const cleaned = stripAnsi(output).trim();
-      const timeoutSec = Math.round(timeoutMs / 1000);
-      resolve({ ok: false, stdout: cleaned, stderr: "", exitCode: -1, error: `Command timed out (${timeoutSec}s)` });
-    }, timeoutMs);
-
-    ptyStream.on("data", onData);
-
-    const noPager = "PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= ";
-    ptyStream.write(
-      `printf '${marker}_S\\n';${noPager}${command}\n` +
-      `__nc=$?;printf '${marker}_E:'$__nc'\\n';(exit $__nc)\n`
-    );
-  });
-}
-
 function registerHandlers(ipcMain) {
   // Start a streaming chat request (proxied through main process)
   ipcMain.handle("netcatty:ai:chat:stream", async (event, { requestId, url, headers, body }) => {
@@ -596,8 +247,6 @@ function registerHandlers(ipcMain) {
   });
 
   // Execute a command on a terminal session (for Catty Agent)
-  // Uses PTY-based execution so commands are visible in the terminal,
-  // matching the MCP server approach with start/end markers.
   ipcMain.handle("netcatty:ai:exec", async (_event, { sessionId, command }) => {
     const session = sessions?.get(sessionId);
     if (!session) {
@@ -605,42 +254,19 @@ function registerHandlers(ipcMain) {
     }
 
     try {
-      // Prefer PTY stream (visible in terminal) — same approach as MCP server
+      // Prefer PTY stream (visible in terminal)
       const ptyStream = session.stream || session.pty;
       if (ptyStream && typeof ptyStream.write === "function") {
-        return execViaPtyForCatty(ptyStream, command);
+        const timeoutMs = mcpServerBridge.getCommandTimeoutMs ? mcpServerBridge.getCommandTimeoutMs() : 60000;
+        return execViaPty(ptyStream, command, { stripMarkers: true, timeoutMs });
       }
 
       // Fallback: SSH exec channel (invisible to terminal)
       const sshClient = session.sshClient || session.conn;
       if (sshClient && typeof sshClient.exec === "function") {
+        const { execViaChannel } = require("./ai/ptyExec.cjs");
         const channelTimeoutMs = mcpServerBridge.getCommandTimeoutMs ? mcpServerBridge.getCommandTimeoutMs() : 60000;
-        return new Promise((resolve) => {
-          sshClient.exec(command, (err, stream) => {
-            if (err) {
-              resolve({ ok: false, error: err.message });
-              return;
-            }
-            let stdout = "";
-            let stderr = "";
-            let finished = false;
-            const tid = setTimeout(() => {
-              if (finished) return;
-              finished = true;
-              try { stream.close(); } catch { /* ignore */ }
-              const timeoutSec = Math.round(channelTimeoutMs / 1000);
-              resolve({ ok: false, stdout, stderr, exitCode: -1, error: `Command timed out (${timeoutSec}s)` });
-            }, channelTimeoutMs);
-            stream.on("data", (data) => { stdout += data.toString(); });
-            stream.stderr.on("data", (data) => { stderr += data.toString(); });
-            stream.on("close", (code) => {
-              if (finished) return;
-              finished = true;
-              clearTimeout(tid);
-              resolve({ ok: code === 0, stdout, stderr, exitCode: code });
-            });
-          });
-        });
+        return execViaChannel(sshClient, command, { timeoutMs: channelTimeoutMs });
       }
 
       return { ok: false, error: "No terminal stream or SSH client available for this session" };
@@ -669,105 +295,6 @@ function registerHandlers(ipcMain) {
       return { ok: false, error: err?.message || String(err) };
     }
   });
-
-  // Resolve user's real shell environment (Electron GUI apps have a minimal PATH).
-  // Cache the result so we only do this once.
-  let _cachedShellEnv = null;
-  async function getShellEnv() {
-    if (_cachedShellEnv) return _cachedShellEnv;
-
-    const home = process.env.HOME || "";
-    // Extra paths to always include
-    const extraPaths = [
-      `${home}/.local/bin`,
-      `${home}/.npm-global/bin`,
-      "/usr/local/bin",
-      "/opt/homebrew/bin",
-    ];
-
-    if (process.platform === "win32") {
-      _cachedShellEnv = {
-        ...process.env,
-        PATH: [...extraPaths, process.env.PATH || ""].join(path.delimiter),
-      };
-      return _cachedShellEnv;
-    }
-
-    // On macOS/Linux, spawn a login shell to capture the real environment.
-    try {
-      const { execSync } = require("node:child_process");
-      const shell = process.env.SHELL || "/bin/zsh";
-      const envOutput = execSync(`${shell} -ilc 'env'`, {
-        encoding: "utf8",
-        timeout: 10000,
-        stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, HOME: home },
-      });
-      const envMap = {};
-      for (const line of envOutput.split("\n")) {
-        const idx = line.indexOf("=");
-        if (idx > 0) {
-          envMap[line.slice(0, idx)] = line.slice(idx + 1);
-        }
-      }
-      // Merge: login-shell env as base, then process.env overrides, then extra paths
-      const shellPath = envMap.PATH || "";
-      _cachedShellEnv = {
-        ...envMap,
-        ...process.env,
-        PATH: [...extraPaths, shellPath, process.env.PATH || ""].join(path.delimiter),
-      };
-    } catch {
-      // Fallback if login shell fails
-      _cachedShellEnv = {
-        ...process.env,
-        PATH: [...extraPaths, process.env.PATH || ""].join(path.delimiter),
-      };
-    }
-    return _cachedShellEnv;
-  }
-
-  // AI SDK fullStream chunks use getters/non-enumerable properties that
-  // JSON.parse(JSON.stringify()) silently drops.  Manually read the fields
-  // the renderer actually needs so IPC serialization works reliably.
-  function serializeStreamChunk(chunk) {
-    if (!chunk || !chunk.type) return null;
-    switch (chunk.type) {
-      case "text-delta":
-        return { type: "text-delta", textDelta: chunk.text ?? chunk.textDelta ?? "" };
-      case "reasoning-delta":
-        return { type: "reasoning-delta", delta: chunk.text ?? chunk.delta ?? "" };
-      case "reasoning-start":
-        return { type: "reasoning-start", id: chunk.id ?? undefined };
-      case "reasoning-end":
-        return { type: "reasoning-end", id: chunk.id ?? undefined };
-      case "tool-call":
-        return {
-          type: "tool-call",
-          toolCallId: chunk.toolCallId,
-          toolName: chunk.toolName,
-          args: chunk.args,
-        };
-      case "tool-result":
-        return {
-          type: "tool-result",
-          toolCallId: chunk.toolCallId,
-          toolName: chunk.toolName,
-          result: chunk.result,
-          output: chunk.output,
-        };
-      case "error":
-        return { type: "error", error: chunk.error };
-      default:
-        // For non-content events (start, finish, step-start, etc.) use a
-        // plain-object snapshot so IPC can serialise them.
-        try {
-          return JSON.parse(JSON.stringify(chunk));
-        } catch {
-          return { type: chunk.type };
-        }
-    }
-  }
 
   async function runCommand(command, args, options) {
     return await new Promise((resolve, reject) => {
@@ -805,7 +332,7 @@ function registerHandlers(ipcMain) {
 
   async function runCodexCli(args, options) {
     const shellEnv = await getShellEnv();
-    const codexCliPath = resolveCliFromPath("codex", await getShellEnv()) || "codex";
+    const codexCliPath = resolveCliFromPath("codex", shellEnv) || "codex";
     return await runCommand(codexCliPath, args, {
       cwd: options?.cwd?.trim() || undefined,
       env: shellEnv,
@@ -828,17 +355,15 @@ function registerHandlers(ipcMain) {
   async function validateCodexChatGptAuth(options) {
     const maxAgeMs = options?.maxAgeMs ?? 30000;
     const now = Date.now();
-    if (
-      codexChatGptValidationCache &&
-      now - codexChatGptValidationCache.checkedAt < maxAgeMs
-    ) {
-      return codexChatGptValidationCache;
+    const cached = getCodexValidationCache();
+    if (cached && now - cached.checkedAt < maxAgeMs) {
+      return cached;
     }
 
     const { createACPProvider } = require("@mcpc-tech/acp-ai-provider");
     const shellEnv = await getShellEnv();
     const provider = createACPProvider({
-      command: resolveCodexAcpBinaryPath(shellEnv),
+      command: resolveCodexAcpBinaryPath(shellEnv, electronModule),
       env: shellEnv,
       session: {
         cwd: process.cwd(),
@@ -850,7 +375,7 @@ function registerHandlers(ipcMain) {
     try {
       await provider.initSession();
       const result = { ok: true, checkedAt: now, error: null };
-      codexChatGptValidationCache = result;
+      setCodexValidationCache(result);
       return result;
     } catch (error) {
       const normalized = extractCodexError(error);
@@ -860,7 +385,7 @@ function registerHandlers(ipcMain) {
         error: normalized.message,
         code: normalized.code,
       };
-      codexChatGptValidationCache = result;
+      setCodexValidationCache(result);
       return result;
     } finally {
       try {
@@ -993,7 +518,7 @@ function registerHandlers(ipcMain) {
         fingerprint: getCodexMcpFingerprint(mcpServers),
       };
     } catch (err) {
-      console.warn("[Codex] Failed to resolve MCP servers:", err?.message || err);
+      console.error("[Codex] Failed to resolve MCP servers:", err?.message || err);
       return empty;
     }
   }
@@ -1028,21 +553,19 @@ function registerHandlers(ipcMain) {
     for (const agent of knownAgents) {
       let resolvedPath = null;
 
-      if (!resolvedPath) {
-        try {
-          const whichCmd = process.platform === "win32" ? "where" : "which";
-          const result = execSync(`${whichCmd} ${agent.command}`, {
-            encoding: "utf8",
-            timeout: 5000,
-            stdio: ["pipe", "pipe", "pipe"],
-            env: shellEnv,
-          }).trim();
-          if (result) {
-            resolvedPath = result.split("\n")[0].trim();
-          }
-        } catch {
-          resolvedPath = null;
+      try {
+        const whichCmd = process.platform === "win32" ? "where" : "which";
+        const result = execSync(`${whichCmd} ${agent.command}`, {
+          encoding: "utf8",
+          timeout: 5000,
+          stdio: ["pipe", "pipe", "pipe"],
+          env: shellEnv,
+        }).trim();
+        if (result) {
+          resolvedPath = result.split("\n")[0].trim();
         }
+      } catch {
+        resolvedPath = null;
       }
 
       if (!resolvedPath || seenPaths.has(resolvedPath)) {
@@ -1157,7 +680,7 @@ function registerHandlers(ipcMain) {
 
     try {
       const shellEnv = await getShellEnv();
-      const codexCliPath = resolveCliFromPath("codex", await getShellEnv()) || "codex";
+      const codexCliPath = resolveCliFromPath("codex", shellEnv) || "codex";
       const sessionId = `codex_login_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const child = spawn(codexCliPath, ["login"], {
         stdio: ["ignore", "pipe", "pipe"],
@@ -1372,7 +895,6 @@ function registerHandlers(ipcMain) {
   // ── ACP (Agent Client Protocol) streaming ──
 
   ipcMain.handle("netcatty:ai:acp:stream", async (event, { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey, model, images }) => {
-    console.log("[ACP] stream handler called:", { requestId, chatSessionId, acpCommand, prompt: prompt?.slice(0, 50) });
     try {
       const { createACPProvider } = require("@mcpc-tech/acp-ai-provider");
       const { streamText, stepCountIs } = require("ai");
@@ -1381,12 +903,8 @@ function registerHandlers(ipcMain) {
       const sessionCwd = cwd || process.cwd();
       const isCodexAgent = acpCommand === "codex-acp";
 
-      console.log("[ACP] isCodexAgent:", isCodexAgent, "apiKey:", apiKey ? "set" : "none");
-
       if (isCodexAgent && !apiKey) {
-        console.log("[ACP] Validating ChatGPT auth...");
         const validation = await validateCodexChatGptAuth({ maxAgeMs: 10000 });
-        console.log("[ACP] Auth validation result:", { ok: validation.ok, error: validation.error });
         if (!validation.ok) {
           if (isCodexAuthError(validation)) {
             try {
@@ -1406,29 +924,22 @@ function registerHandlers(ipcMain) {
       }
 
       const authFingerprint = isCodexAgent ? getCodexAuthFingerprint(apiKey) : null;
-      console.log("[ACP] Resolving MCP snapshot...");
       const mcpSnapshot = isCodexAgent
         ? await resolveCodexMcpSnapshot(sessionCwd)
         : { mcpServers: [], fingerprint: getCodexMcpFingerprint([]) };
 
       // Inject Netcatty MCP server for remote host access
-      // Note: chatSessionId is excluded from the config used for fingerprint calculation
-      // so that switching between sessions in the same workspace doesn't invalidate providers.
       try {
         const mcpPort = await mcpServerBridge.getOrCreateHost();
         const scopedIds = mcpServerBridge.getCurrentScopedSessionIds();
-        console.log("[ACP] Building MCP config with scoped IDs:", scopedIds, "chatSessionId:", chatSessionId);
-        // Build config WITHOUT chatSessionId for fingerprint stability
         const netcattyMcpConfig = mcpServerBridge.buildMcpServerConfig(mcpPort, scopedIds);
         mcpSnapshot.mcpServers.push(netcattyMcpConfig);
-        console.log("[ACP] Injected netcatty-remote-hosts MCP server on port", mcpPort);
       } catch (err) {
-        console.warn("[ACP] Failed to inject Netcatty MCP server:", err?.message || err);
+        console.error("[ACP] Failed to inject Netcatty MCP server:", err?.message || err);
       }
 
-      // Recalculate fingerprint after injection (does NOT include chatSessionId)
+      // Recalculate fingerprint after injection
       mcpSnapshot.fingerprint = getCodexMcpFingerprint(mcpSnapshot.mcpServers);
-      console.log("[ACP] MCP snapshot:", { count: mcpSnapshot.mcpServers.length, fingerprint: mcpSnapshot.fingerprint?.slice(0, 12) });
 
       let providerEntry = acpProviders.get(chatSessionId);
       const shouldReuseProvider = Boolean(
@@ -1439,8 +950,6 @@ function registerHandlers(ipcMain) {
         providerEntry.mcpFingerprint === mcpSnapshot.fingerprint,
       );
 
-      console.log("[ACP] shouldReuseProvider:", shouldReuseProvider);
-
       if (!shouldReuseProvider) {
         cleanupAcpProvider(chatSessionId);
 
@@ -1450,10 +959,9 @@ function registerHandlers(ipcMain) {
         }
 
         const resolvedCommand = isCodexAgent
-          ? resolveCodexAcpBinaryPath(shellEnv)
+          ? resolveCodexAcpBinaryPath(shellEnv, electronModule)
           : acpCommand;
 
-        console.log("[ACP] Creating new provider:", { resolvedCommand, cwd: sessionCwd, authMethodId: apiKey ? "codex-api-key" : "chatgpt" });
         const provider = createACPProvider({
           command: resolvedCommand,
           args: acpArgs || [],
@@ -1489,7 +997,7 @@ function registerHandlers(ipcMain) {
         `Call get_environment first to discover available hosts and their session IDs. ` +
         `Do NOT use local shell execution.]\n\n${prompt}`;
 
-      // Build message content: text + optional images (same as 1code)
+      // Build message content: text + optional images
       function buildMessageContent(text, imgs) {
         const content = [{ type: "text", text }];
         if (Array.isArray(imgs)) {
@@ -1506,15 +1014,6 @@ function registerHandlers(ipcMain) {
         return content;
       }
 
-      if (Array.isArray(images) && images.length > 0) {
-        console.log("[ACP] Images attached:", images.map(img => ({
-          mediaType: img.mediaType,
-          filename: img.filename,
-          dataLen: img.base64Data?.length || 0,
-          dataPrefix: img.base64Data?.slice(0, 30),
-        })));
-      }
-      console.log("[ACP] Starting streamText...", images?.length ? `with ${images.length} image(s)` : "");
       const result = streamText({
         model: providerEntry.provider.languageModel(model || undefined),
         messages: [{
@@ -1525,10 +1024,6 @@ function registerHandlers(ipcMain) {
         stopWhen: stepCountIs(mcpServerBridge.getMaxIterations ? mcpServerBridge.getMaxIterations() : 20),
         abortSignal: abortController.signal,
       });
-      console.log("[ACP] streamText created, reading fullStream via getReader...");
-
-      // Use getReader() instead of for-await — avoids Electron/Node ReadableStream
-      // async iteration issues where for-await silently hangs.
       const reader = result.fullStream.getReader();
       let hasContent = false;
       try {
@@ -1547,7 +1042,7 @@ function registerHandlers(ipcMain) {
               event: serialized,
             });
           } catch (serErr) {
-            console.warn("[ACP stream] Failed to serialize chunk:", chunk?.type, serErr?.message);
+            console.error("[ACP stream] Failed to serialize chunk:", chunk?.type, serErr?.message);
           }
         }
       } finally {
@@ -1569,16 +1064,16 @@ function registerHandlers(ipcMain) {
       console.error("[ACP] Handler caught error:", err?.message || err, err?.stack?.split("\n").slice(0, 3).join("\n"));
       const normalized = extractCodexError(err);
       const errMsg = normalized.message;
-      const isAuthError = isCodexAuthError(normalized);
+      const isAuthErr = isCodexAuthError(normalized);
 
-      if (isAuthError) {
+      if (isAuthErr) {
         console.error("[ACP] Auth error — user needs to re-login:", errMsg);
         cleanupAcpProvider(chatSessionId);
       }
 
       event.sender.send("netcatty:ai:acp:error", {
         requestId,
-        error: isAuthError
+        error: isAuthErr
           ? `Authentication failed. Connect Codex in Settings -> AI, or configure an enabled OpenAI provider API key.\n\nDetails: ${errMsg}`
           : errMsg,
       });
@@ -1613,22 +1108,17 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:ai:claude:stream", async (event, { requestId, chatSessionId, prompt, model }) => {
     try {
       // Cache the dynamic import (ESM module)
-      if (!cachedClaudeQuery) {
+      if (!getCachedClaudeQuery()) {
         const sdk = await import("@anthropic-ai/claude-agent-sdk");
-        cachedClaudeQuery = sdk.query;
+        setCachedClaudeQuery(sdk.query);
       }
-      const claudeQuery = cachedClaudeQuery;
+      const claudeQuery = getCachedClaudeQuery();
 
       const shellEnv = await getShellEnv();
       const claudeCliPath = resolveCliFromPath("claude", shellEnv);
 
       // Build filtered env (strip sensitive keys, preserve shell PATH)
       const claudeEnv = buildClaudeEnv(shellEnv);
-
-      // NOTE: Do NOT set CLAUDE_CONFIG_DIR here. The Claude Agent SDK needs access
-      // to the default ~/.claude/ directory and the user's Keychain credentials.
-      // Session isolation via CLAUDE_CONFIG_DIR would break auth since credentials
-      // are stored in macOS Keychain tied to the default config path.
 
       const abortController = new AbortController();
       claudeActiveStreams.set(requestId, abortController);
@@ -1672,16 +1162,15 @@ function registerHandlers(ipcMain) {
             for (const { name, value } of cfg.env) envObj[name] = value;
           }
           mcpObj[cfg.name] = { command: cfg.command, args: cfg.args || [], env: envObj };
-          console.log("[Claude SDK] Injected netcatty-remote-hosts MCP server");
         } catch (err) {
-          console.warn("[Claude SDK] Failed to inject Netcatty MCP:", err?.message);
+          console.error("[Claude SDK] Failed to inject Netcatty MCP:", err?.message);
         }
 
         if (Object.keys(mcpObj).length > 0) {
           mcpServers = mcpObj;
         }
       } catch (err) {
-        console.warn("[Claude SDK] Failed to resolve MCP servers:", err?.message);
+        console.error("[Claude SDK] Failed to resolve MCP servers:", err?.message);
       }
 
       // Claude SDK discovers MCP tools via protocol — no need for prompt prefix.
@@ -1691,6 +1180,11 @@ function registerHandlers(ipcMain) {
           abortController,
           cwd: process.cwd(),
           env: claudeEnv,
+          // SECURITY: Claude SDK permissions are bypassed because Netcatty enforces
+          // its own permission model (observer/confirm/autonomous) at the UI layer
+          // and via the MCP server bridge. The SDK's internal checks would conflict
+          // with Netcatty's approval flow. If changing this, ensure Netcatty's
+          // permission checks still cover all tool call paths.
           permissionMode: "bypassPermissions",
           allowDangerouslySkipPermissions: true,
           includePartialMessages: true,
@@ -1860,7 +1354,7 @@ function registerHandlers(ipcMain) {
                 ) {
                   policyRetryCount++;
                   policyRetryNeeded = true;
-                  console.log(`[Claude SDK] Policy violation - retry ${policyRetryCount}/${MAX_POLICY_RETRIES}`);
+                  // Policy violation - retry silently
                   break;
                 }
 
@@ -1883,14 +1377,14 @@ function registerHandlers(ipcMain) {
                 }
               }
             } catch (serErr) {
-              console.warn("[Claude SDK] Failed to process message:", msg?.type, serErr?.message);
+              console.error("[Claude SDK] Failed to process message:", msg?.type, serErr?.message);
             }
           }
         } catch (streamErr) {
           // Check for session expiration
           const errMsg = String(streamErr?.message || streamErr);
           if (errMsg.includes("No conversation found with session ID")) {
-            console.warn("[Claude SDK] Session expired, clearing cached session ID");
+            console.error("[Claude SDK] Session expired, clearing cached session ID");
             claudeSessionIds.delete(chatSessionId);
           }
           throw streamErr;
@@ -1973,9 +1467,7 @@ function cleanup() {
   for (const [id, controller] of claudeActiveStreams) {
     try { controller.abort(); } catch {}
   }
-  claudeActiveStreams.clear();
-  claudeSessionIds.clear();
-  cachedClaudeQuery = null;
+  clearClaudeState();
 
   // Cleanup ACP providers (kills codex-acp child processes)
   for (const [id] of acpProviders) {

@@ -8,13 +8,29 @@
 "use strict";
 
 const net = require("node:net");
+const crypto = require("node:crypto");
 const path = require("node:path");
 const { existsSync } = require("node:fs");
+
+const { toUnpackedAsarPath } = require("./ai/shellUtils.cjs");
+const { execViaPty, execViaChannel } = require("./ai/ptyExec.cjs");
 
 let sessions = null;   // Map<sessionId, { sshClient, stream, pty, conn, ... }>
 let sftpClients = null; // Map<sftpId, SFTPWrapper>
 let tcpServer = null;
 let tcpPort = null;
+let authToken = null;  // Random token generated when TCP server starts
+
+// Track which sockets have completed authentication
+const authenticatedSockets = new WeakSet();
+
+/**
+ * Safely quote a string for use in a POSIX shell command.
+ * Wraps the value in single quotes and escapes any embedded single quotes.
+ */
+function shellQuote(s) {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
 
 // Session metadata registered by renderer (sessionId → { hostname, label, os, username })
 // Global metadata (union of all scopes) for fallback
@@ -118,12 +134,6 @@ function updateSessionMetadata(sessionList, chatSessionId) {
     });
   }
 
-  console.log("[MCP] updateSessionMetadata:", {
-    chatSessionId: chatSessionId || "global",
-    count: sessionList.length,
-    ids: currentScopedSessionIds,
-    hostnames: sessionList.map(s => s.hostname),
-  });
 }
 
 function getCurrentScopedSessionIds() {
@@ -133,7 +143,7 @@ function getCurrentScopedSessionIds() {
 function checkCommandSafety(command) {
   for (const pattern of commandBlocklist) {
     try {
-      if (new RegExp(pattern).test(command)) {
+      if (new RegExp(pattern, "i").test(command)) {
         return { blocked: true, matchedPattern: pattern };
       }
     } catch {
@@ -147,6 +157,9 @@ function checkCommandSafety(command) {
 
 function getOrCreateHost() {
   if (tcpServer && tcpPort) return Promise.resolve(tcpPort);
+
+  // Generate a random auth token for this server instance
+  authToken = crypto.randomBytes(32).toString("hex");
 
   return new Promise((resolve, reject) => {
     const server = net.createServer((socket) => {
@@ -197,6 +210,29 @@ async function handleMessage(socket, line) {
 
   const { id, method, params } = msg;
   if (id == null || !method) return;
+
+  // ── Authentication gate ──
+  // The first message from any connection MUST be auth/verify with the correct token.
+  // All other methods are rejected until the socket is authenticated.
+  if (!authenticatedSockets.has(socket)) {
+    if (method === "auth/verify" && params?.token === authToken) {
+      authenticatedSockets.add(socket);
+      const response = JSON.stringify({ jsonrpc: "2.0", id, result: { ok: true } }) + "\n";
+      if (!socket.destroyed) socket.write(response);
+      return;
+    }
+    // Wrong token or wrong method — reject and close
+    const response = JSON.stringify({
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32001, message: "Authentication required. Send auth/verify with valid token first." },
+    }) + "\n";
+    if (!socket.destroyed) {
+      socket.write(response);
+      socket.destroy();
+    }
+    return;
+  }
 
   try {
     const result = await dispatch(method, params || {});
@@ -269,12 +305,6 @@ function handleGetContext(params) {
     ? new Set(params.scopedSessionIds)
     : null;
 
-  console.log("[MCP] handleGetContext scope:", {
-    paramIds: params?.scopedSessionIds || "null",
-    effectiveScopeSize: scopedIds ? scopedIds.size : "all (no scope)",
-    totalSessions: sessions.size,
-  });
-
   const hosts = [];
   for (const [sessionId, session] of sessions.entries()) {
     if (scopedIds && !scopedIds.has(sessionId)) continue;
@@ -304,15 +334,6 @@ function handleGetContext(params) {
   };
 }
 
-// ── ANSI escape code stripping ──
-
-function stripAnsi(str) {
-  // eslint-disable-next-line no-control-regex
-  return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
-    .replace(/\x1b\][^\x07]*\x07/g, "")   // OSC sequences
-    .replace(/\r/g, "");
-}
-
 // ── Handler: exec ──
 
 function handleExec(params) {
@@ -336,137 +357,13 @@ function handleExec(params) {
 
   // If no PTY stream, fall back to exec channel (invisible to terminal)
   if (!ptyStream || typeof ptyStream.write !== "function") {
-    return execViaChannel(sshClient, command);
+    return execViaChannel(sshClient, command, { timeoutMs: commandTimeoutMs });
   }
 
   // Execute via PTY stream so user sees the command in the terminal
-  return execViaPty(ptyStream, command);
-}
-
-/**
- * Execute command through the terminal PTY stream.
- * The user sees the command typed and output in their terminal.
- * Uses a unique marker to detect when the command finishes and capture the exit code.
- */
-function execViaPty(ptyStream, command) {
-  const marker = `__NCMCP_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}__`;
-
-  return new Promise((resolve) => {
-    let output = "";
-    let foundStart = false;
-    let timeoutId = null;
-
-    const onData = (data) => {
-      const text = data.toString();
-
-      if (!foundStart) {
-        const startIdx = text.indexOf(marker + "_S");
-        if (startIdx !== -1) {
-          foundStart = true;
-          // Capture everything after the start marker line
-          const afterMarker = text.slice(startIdx);
-          const nlIdx = afterMarker.indexOf("\n");
-          if (nlIdx !== -1) {
-            output += afterMarker.slice(nlIdx + 1);
-          }
-        }
-        // Check if end marker is already in this chunk
-        if (foundStart) {
-          checkEnd();
-        }
-        return;
-      }
-
-      output += text;
-      checkEnd();
-    };
-
-    function checkEnd() {
-      const endPattern = marker + "_E:";
-      const endIdx = output.indexOf(endPattern);
-      if (endIdx === -1) return;
-
-      // Extract exit code
-      const afterEnd = output.slice(endIdx + endPattern.length);
-      const codeMatch = afterEnd.match(/^(\d+)/);
-      const exitCode = codeMatch ? parseInt(codeMatch[1], 10) : null;
-
-      // Output is everything before the end marker
-      const stdout = output.slice(0, endIdx);
-      finish(stdout, exitCode);
-    }
-
-    function finish(stdout, exitCode) {
-      clearTimeout(timeoutId);
-      ptyStream.removeListener("data", onData);
-      activePtyExecs.delete(marker);
-
-      const cleaned = stripAnsi(stdout || "").trim();
-      resolve({
-        ok: exitCode === 0 || exitCode === null,
-        stdout: cleaned,
-        stderr: "",
-        exitCode: exitCode ?? 0,
-      });
-    }
-
-    timeoutId = setTimeout(() => {
-      ptyStream.removeListener("data", onData);
-      activePtyExecs.delete(marker);
-      // Send Ctrl+C to kill the timed-out command
-      if (typeof ptyStream.write === "function") ptyStream.write("\x03");
-      const cleaned = stripAnsi(output).trim();
-      const timeoutSec = Math.round(commandTimeoutMs / 1000);
-      resolve({ ok: false, stdout: cleaned, stderr: "", exitCode: -1, error: `Command timed out (${timeoutSec}s)` });
-    }, commandTimeoutMs);
-
-    ptyStream.on("data", onData);
-
-    // Register for cancellation
-    activePtyExecs.set(marker, {
-      ptyStream,
-      cleanup: () => { clearTimeout(timeoutId); ptyStream.removeListener("data", onData); },
-    });
-
-    // Markers are filtered from terminal display by preload.cjs (MCP_MARKER_RE).
-    // Start marker + command are on the SAME line to avoid an extra shell prompt.
-    const noPager = "PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= ";
-    ptyStream.write(
-      `printf '${marker}_S\\n';${noPager}${command}\n` +
-      `__nc=$?;printf '${marker}_E:'$__nc'\\n';(exit $__nc)\n`
-    );
-  });
-}
-
-/**
- * Fallback: execute via a separate SSH exec channel (invisible to terminal).
- */
-function execViaChannel(sshClient, command) {
-  return new Promise((resolve) => {
-    sshClient.exec(command, (err, execStream) => {
-      if (err) {
-        resolve({ ok: false, error: err.message });
-        return;
-      }
-      let stdout = "";
-      let stderr = "";
-      let finished = false;
-      const timeoutId = setTimeout(() => {
-        if (finished) return;
-        finished = true;
-        try { execStream.close(); } catch { /* ignore */ }
-        const timeoutSec = Math.round(commandTimeoutMs / 1000);
-        resolve({ ok: false, stdout, stderr, exitCode: -1, error: `Command timed out (${timeoutSec}s)` });
-      }, commandTimeoutMs);
-      execStream.on("data", (data) => { stdout += data.toString(); });
-      execStream.stderr.on("data", (data) => { stderr += data.toString(); });
-      execStream.on("close", (code) => {
-        if (finished) return;
-        finished = true;
-        clearTimeout(timeoutId);
-        resolve({ ok: code === 0, stdout, stderr, exitCode: code });
-      });
-    });
+  return execViaPty(ptyStream, command, {
+    trackForCancellation: activePtyExecs,
+    timeoutMs: commandTimeoutMs,
   });
 }
 
@@ -534,7 +431,7 @@ async function handleSftpList(params) {
   }
 
   // Fallback: use SSH exec
-  const result = await handleExec({ sessionId, command: `ls -la ${dirPath}` });
+  const result = await handleExec({ sessionId, command: `ls -la ${shellQuote(dirPath)}` });
   if (!result.ok) return { error: result.error };
   return { output: result.stdout || "(empty directory)" };
 }
@@ -546,7 +443,7 @@ async function handleSftpRead(params) {
   if (!sessionId || !filePath) throw new Error("sessionId and path are required");
 
   // Fallback to SSH exec (more reliable across SFTP client states)
-  const result = await handleExec({ sessionId, command: `head -c ${maxBytes} ${JSON.stringify(filePath)}` });
+  const result = await handleExec({ sessionId, command: `head -c ${maxBytes} ${shellQuote(filePath)}` });
   if (!result.ok) return { error: result.error };
   return { content: result.stdout || "(empty file)" };
 }
@@ -567,8 +464,7 @@ async function handleSftpWrite(params) {
     }
   }
 
-  const escaped = content.replace(/'/g, "'\\''");
-  const result = await handleExec({ sessionId, command: `cat > ${JSON.stringify(filePath)} << 'NETCATTY_EOF'\n${escaped}\nNETCATTY_EOF` });
+  const result = await handleExec({ sessionId, command: `cat > ${shellQuote(filePath)} << 'NETCATTY_EOF'\n${content.replace(/^NETCATTY_EOF$/gm, 'NETCATTY_EO\\F')}\nNETCATTY_EOF` });
   if (!result.ok) return { error: result.error };
   return { written: filePath };
 }
@@ -589,7 +485,7 @@ async function handleSftpMkdir(params) {
     }
   }
 
-  const result = await handleExec({ sessionId, command: `mkdir -p ${JSON.stringify(dirPath)}` });
+  const result = await handleExec({ sessionId, command: `mkdir -p ${shellQuote(dirPath)}` });
   if (!result.ok) return { error: result.error };
   return { created: dirPath };
 }
@@ -601,7 +497,7 @@ async function handleSftpRemove(params) {
   if (!sessionId || !targetPath) throw new Error("sessionId and path are required");
 
   // Use SSH exec with rm -rf for reliability (handles both files and dirs)
-  const result = await handleExec({ sessionId, command: `rm -rf ${JSON.stringify(targetPath)}` });
+  const result = await handleExec({ sessionId, command: `rm -rf ${shellQuote(targetPath)}` });
   if (!result.ok) return { error: result.error };
   return { removed: targetPath };
 }
@@ -622,7 +518,7 @@ async function handleSftpRename(params) {
     }
   }
 
-  const result = await handleExec({ sessionId, command: `mv ${JSON.stringify(oldPath)} ${JSON.stringify(newPath)}` });
+  const result = await handleExec({ sessionId, command: `mv ${shellQuote(oldPath)} ${shellQuote(newPath)}` });
   if (!result.ok) return { error: result.error };
   return { renamed: `${oldPath} → ${newPath}` };
 }
@@ -650,7 +546,7 @@ async function handleSftpStat(params) {
   }
 
   // Fallback: use stat command
-  const result = await handleExec({ sessionId, command: `stat -c '{"size":%s,"mode":"%a","mtime":%Y,"type":"%F"}' ${JSON.stringify(targetPath)}` });
+  const result = await handleExec({ sessionId, command: `stat -c '{"size":%s,"mode":"%a","mtime":%Y,"type":"%F"}' ${shellQuote(targetPath)}` });
   if (!result.ok) return { error: result.error };
   try {
     const parsed = JSON.parse(result.stdout.trim());
@@ -707,14 +603,6 @@ async function handleMultiExec(params) {
 
 // ── MCP Server Config Builder ──
 
-function toUnpackedAsarPath(filePath) {
-  const unpackedPath = filePath.replace(/app\.asar([\\/])/, "app.asar.unpacked$1");
-  if (unpackedPath !== filePath && existsSync(unpackedPath)) {
-    return unpackedPath;
-  }
-  return filePath;
-}
-
 function buildMcpServerConfig(port, scopedSessionIds) {
   // Use provided scoped IDs, or fall back to the current scope from updateSessionMetadata
   const effectiveIds = (scopedSessionIds && scopedSessionIds.length > 0)
@@ -728,6 +616,10 @@ function buildMcpServerConfig(port, scopedSessionIds) {
   const env = [
     { name: "NETCATTY_MCP_PORT", value: String(port) },
   ];
+
+  if (authToken) {
+    env.push({ name: "NETCATTY_MCP_TOKEN", value: authToken });
+  }
 
   if (effectiveIds && effectiveIds.length > 0) {
     env.push({ name: "NETCATTY_MCP_SESSION_IDS", value: effectiveIds.join(",") });

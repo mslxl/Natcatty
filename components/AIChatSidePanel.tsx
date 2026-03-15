@@ -205,7 +205,6 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   useEffect(() => {
     const bridge = (window as unknown as { netcatty?: { aiMcpUpdateSessions?: (sessions: typeof terminalSessions, chatSessionId?: string) => Promise<unknown> } }).netcatty;
     if (bridge?.aiMcpUpdateSessions && terminalSessions.length > 0) {
-      console.log('[AIChatPanel] Syncing terminalSessions to MCP:', scopeKey, terminalSessions.length, terminalSessions.map(s => s.sessionId));
       void bridge.aiMcpUpdateSessions(terminalSessions, activeSessionId ?? undefined);
     }
   }, [terminalSessions, scopeKey, activeSessionId]);
@@ -277,6 +276,161 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   );
 
   // -------------------------------------------------------------------
+  // Shared Catty stream processor
+  // -------------------------------------------------------------------
+  // Processes a Vercel AI SDK streamText response, dispatching chunks to
+  // the chat message list.  Returns approval info when the stream ends
+  // with a tool-approval-request, or null if it completed normally.
+  const processCattyStream = useCallback(async (
+    streamSessionId: string,
+    model: ReturnType<typeof createModelFromConfig>,
+    systemPrompt: string,
+    tools: ReturnType<typeof createCattyTools>,
+    sdkMessages: Array<Record<string, unknown>>,
+    signal: AbortSignal,
+  ): Promise<{
+    approvalId: string;
+    toolCallId: string;
+    toolName: string;
+    toolArgs: Record<string, unknown>;
+  } | null> => {
+    const result = streamText({
+      model,
+      messages: sdkMessages,
+      system: systemPrompt,
+      tools,
+      stopWhen: stepCountIs(maxIterations),
+      abortSignal: signal,
+    });
+
+    let lastAddedRole: 'assistant' | 'tool' = 'assistant';
+    const reader = result.fullStream.getReader();
+    let pendingApprovalInfo: {
+      approvalId: string;
+      toolCallId: string;
+      toolName: string;
+      toolArgs: Record<string, unknown>;
+    } | null = null;
+
+    while (true) {
+      const { done, value: chunk } = await reader.read();
+      if (done) break;
+      switch (chunk.type) {
+        case 'text':
+        case 'text-delta': {
+          const text = (chunk as unknown as { text?: string; textDelta?: string }).text
+            ?? (chunk as unknown as { textDelta?: string }).textDelta;
+          if (text) {
+            if (lastAddedRole === 'tool') {
+              addMessageToSession(streamSessionId, {
+                id: generateId(),
+                role: 'assistant',
+                content: '',
+                timestamp: Date.now(),
+              });
+              lastAddedRole = 'assistant';
+            }
+            updateLastMessage(streamSessionId, msg => ({
+              ...msg,
+              content: msg.content + text,
+            }));
+          }
+          break;
+        }
+        case 'reasoning':
+        case 'reasoning-start':
+        case 'reasoning-delta': {
+          const rText = (chunk as unknown as { text?: string }).text;
+          if (rText) {
+            if (lastAddedRole === 'tool') {
+              addMessageToSession(streamSessionId, {
+                id: generateId(),
+                role: 'assistant',
+                content: '',
+                timestamp: Date.now(),
+              });
+              lastAddedRole = 'assistant';
+            }
+            updateLastMessage(streamSessionId, msg => ({
+              ...msg,
+              thinking: (msg.thinking || '') + rText,
+            }));
+          }
+          break;
+        }
+        case 'reasoning-end':
+        case 'text-start':
+        case 'text-end':
+        case 'start':
+        case 'finish':
+        case 'start-step':
+        case 'finish-step':
+          break;
+        case 'tool-call':
+          updateLastMessage(streamSessionId, msg => ({
+            ...msg,
+            toolCalls: [...(msg.toolCalls || []), {
+              id: chunk.toolCallId,
+              name: chunk.toolName,
+              arguments: (chunk as unknown as { input?: unknown; args?: unknown }).input ?? (chunk as unknown as { args?: unknown }).args,
+            }],
+            executionStatus: 'running',
+          }));
+          break;
+        case 'tool-result': {
+          const toolOutput = (chunk as unknown as { output?: unknown; result?: unknown }).output ?? (chunk as unknown as { result?: unknown }).result;
+          addMessageToSession(streamSessionId, {
+            id: generateId(),
+            role: 'tool',
+            content: '',
+            toolResults: [{
+              toolCallId: chunk.toolCallId,
+              content: typeof toolOutput === 'string'
+                ? toolOutput
+                : JSON.stringify(toolOutput),
+              isError: false,
+            }],
+            timestamp: Date.now(),
+            executionStatus: 'completed',
+          });
+          lastAddedRole = 'tool';
+          break;
+        }
+        case 'tool-approval-request': {
+          const approvalChunk = chunk as unknown as {
+            approvalId: string;
+            toolCall: { toolCallId: string; toolName: string; args?: Record<string, unknown>; input?: Record<string, unknown> };
+          };
+          pendingApprovalInfo = {
+            approvalId: approvalChunk.approvalId,
+            toolCallId: approvalChunk.toolCall.toolCallId,
+            toolName: approvalChunk.toolCall.toolName,
+            toolArgs: approvalChunk.toolCall.args ?? approvalChunk.toolCall.input ?? {},
+          };
+          updateLastMessage(streamSessionId, msg => ({
+            ...msg,
+            pendingApproval: {
+              ...pendingApprovalInfo!,
+              status: 'pending' as const,
+            },
+          }));
+          break;
+        }
+        case 'error':
+          updateLastMessage(streamSessionId, msg => ({
+            ...msg,
+            content: msg.content + '\n\n**Error:** ' + String(chunk.error),
+            executionStatus: 'failed',
+          }));
+          break;
+        default:
+          break;
+      }
+    }
+    return pendingApprovalInfo;
+  }, [maxIterations, addMessageToSession, updateLastMessage]);
+
+  // -------------------------------------------------------------------
   // Handlers
   // -------------------------------------------------------------------
 
@@ -308,11 +462,9 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     const trimmed = inputValue.trim();
     // Capture scope key at send time so async callbacks use the correct scope
     const sendScopeKey = scopeKey;
-    console.log('[AIChatPanel] handleSend called, trimmed:', JSON.stringify(trimmed?.slice(0, 50)), 'isStreaming:', isStreaming, 'currentAgentId:', currentAgentId, 'scopeKey:', sendScopeKey);
     if (!trimmed || isStreaming) return;
 
     const isExternalAgent = currentAgentId !== 'catty';
-    console.log('[AIChatPanel] isExternalAgent:', isExternalAgent, 'activeProvider:', activeProvider?.id);
 
     // For built-in agent, we need a provider configured
     if (!isExternalAgent && !activeProvider) {
@@ -383,8 +535,6 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     // Get current session for context
     const currentSession = sessions.find((s) => s.id === sessionId);
 
-    console.log('[AIChatPanel] agentConfig:', agentConfig ? { id: agentConfig.id, name: agentConfig.name, sdkType: agentConfig.sdkType, acpCommand: agentConfig.acpCommand } : 'catty');
-
     if (isExternalAgent) {
       if (!agentConfig) {
         updateLastMessage(sessionId, msg => ({
@@ -399,16 +549,12 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       const bridge = (window as unknown as { netcatty?: Record<string, unknown> }).netcatty as
         Record<string, (...args: unknown[]) => unknown> | undefined;
 
-      console.log('[AIChatPanel] bridge available:', !!bridge, 'sdkType:', agentConfig.sdkType, 'acpCommand:', agentConfig.acpCommand);
-
       if (agentConfig.acpCommand && bridge) {
         // Use ACP protocol if the agent supports it
         const requestId = `acp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-        console.log('[AIChatPanel] → ACP path, requestId:', requestId, 'acpCommand:', agentConfig.acpCommand);
 
         // Push terminal session metadata to MCP bridge before streaming (with chatSessionId for per-scope isolation)
         const mcpBridge = bridge as unknown as { aiMcpUpdateSessions?: (sessions: typeof terminalSessions, chatSessionId?: string) => Promise<unknown> };
-        console.log('[AIChatPanel] terminalSessions for MCP update:', terminalSessions.length, terminalSessions.map(s => s.sessionId));
         if (mcpBridge.aiMcpUpdateSessions) {
           await mcpBridge.aiMcpUpdateSessions(terminalSessions, sessionId!);
         }
@@ -591,188 +737,15 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       try {
         decryptedApiKey = await (bridge as { credentialsDecrypt: (v: string) => Promise<string> }).credentialsDecrypt(decryptedApiKey) ?? decryptedApiKey;
       } catch (e) {
-        console.warn('[Catty] API key decryption failed:', e);
+        console.error('[Catty] API key decryption failed:', e);
       }
     }
-
-    console.log('[Catty] Creating model:', {
-      providerId: activeProvider.providerId,
-      baseURL: activeProvider.baseURL,
-      hasApiKey: !!decryptedApiKey,
-      model: activeModelId || activeProvider.defaultModel || '',
-    });
 
     const model = createModelFromConfig({
       ...activeProvider,
       apiKey: decryptedApiKey,
       defaultModel: activeModelId || activeProvider.defaultModel || '',
     });
-
-    // --- Reusable stream processor ---
-    // Returns approval info if the stream ended with a tool-approval-request,
-    // or null if the stream completed normally.
-    const processStream = async (
-      sdkMessages: Array<Record<string, unknown>>,
-      signal: AbortSignal,
-    ): Promise<{
-      approvalId: string;
-      toolCallId: string;
-      toolName: string;
-      toolArgs: Record<string, unknown>;
-    } | null> => {
-      console.log('[Catty] streamText request:', {
-        modelId: model.modelId,
-        messageCount: sdkMessages.length,
-        hasTools: Object.keys(tools).length,
-        systemPromptLength: systemPrompt.length,
-      });
-
-      const result = streamText({
-        model,
-        messages: sdkMessages,
-        system: systemPrompt,
-        tools,
-        stopWhen: stepCountIs(maxIterations),
-        abortSignal: signal,
-      });
-
-      let chunkIndex = 0;
-      let lastAddedRole: 'assistant' | 'tool' = 'assistant';
-      const reader = result.fullStream.getReader();
-      let pendingApprovalInfo: {
-        approvalId: string;
-        toolCallId: string;
-        toolName: string;
-        toolArgs: Record<string, unknown>;
-      } | null = null;
-
-      while (true) {
-        const { done, value: chunk } = await reader.read();
-        if (done) break;
-        if (chunkIndex < 10) {
-          console.log(`[Catty] chunk[${chunkIndex}]:`, JSON.stringify(chunk).slice(0, 200));
-        }
-        chunkIndex++;
-        switch (chunk.type) {
-          case 'text':
-          case 'text-delta': {
-            const text = (chunk as unknown as { text?: string; textDelta?: string }).text
-              ?? (chunk as unknown as { textDelta?: string }).textDelta;
-            if (text) {
-              if (lastAddedRole === 'tool') {
-                addMessageToSession(sessionId!, {
-                  id: generateId(),
-                  role: 'assistant',
-                  content: '',
-                  timestamp: Date.now(),
-                });
-                lastAddedRole = 'assistant';
-              }
-              updateLastMessage(sessionId!, msg => ({
-                ...msg,
-                content: msg.content + text,
-              }));
-            }
-            break;
-          }
-          case 'reasoning':
-          case 'reasoning-start':
-          case 'reasoning-delta': {
-            const rText = (chunk as unknown as { text?: string }).text;
-            if (rText) {
-              if (lastAddedRole === 'tool') {
-                addMessageToSession(sessionId!, {
-                  id: generateId(),
-                  role: 'assistant',
-                  content: '',
-                  timestamp: Date.now(),
-                });
-                lastAddedRole = 'assistant';
-              }
-              updateLastMessage(sessionId!, msg => ({
-                ...msg,
-                thinking: (msg.thinking || '') + rText,
-              }));
-            }
-            break;
-          }
-          case 'reasoning-end':
-          case 'text-start':
-          case 'text-end':
-          case 'start':
-          case 'finish':
-          case 'start-step':
-          case 'finish-step':
-            break;
-          case 'tool-call':
-            console.log(`[Catty] tool-call: ${chunk.toolName}`);
-            updateLastMessage(sessionId!, msg => ({
-              ...msg,
-              toolCalls: [...(msg.toolCalls || []), {
-                id: chunk.toolCallId,
-                name: chunk.toolName,
-                arguments: (chunk as unknown as { input?: unknown; args?: unknown }).input ?? (chunk as unknown as { args?: unknown }).args,
-              }],
-              executionStatus: 'running',
-            }));
-            break;
-          case 'tool-result': {
-            const toolOutput = (chunk as unknown as { output?: unknown; result?: unknown }).output ?? (chunk as unknown as { result?: unknown }).result;
-            console.log(`[Catty] tool-result: ${chunk.toolCallId}`);
-            addMessageToSession(sessionId!, {
-              id: generateId(),
-              role: 'tool',
-              content: '',
-              toolResults: [{
-                toolCallId: chunk.toolCallId,
-                content: typeof toolOutput === 'string'
-                  ? toolOutput
-                  : JSON.stringify(toolOutput),
-                isError: false,
-              }],
-              timestamp: Date.now(),
-              executionStatus: 'completed',
-            });
-            lastAddedRole = 'tool';
-            break;
-          }
-          case 'tool-approval-request': {
-            const approvalChunk = chunk as unknown as {
-              approvalId: string;
-              toolCall: { toolCallId: string; toolName: string; args?: Record<string, unknown>; input?: Record<string, unknown> };
-            };
-            console.log(`[Catty] tool-approval-request: ${approvalChunk.toolCall.toolName}`, approvalChunk.approvalId, 'toolCallId:', approvalChunk.toolCall.toolCallId);
-
-            // Save approval info to the current assistant message (inline card)
-            pendingApprovalInfo = {
-              approvalId: approvalChunk.approvalId,
-              toolCallId: approvalChunk.toolCall.toolCallId,
-              toolName: approvalChunk.toolCall.toolName,
-              toolArgs: approvalChunk.toolCall.args ?? approvalChunk.toolCall.input ?? {},
-            };
-            updateLastMessage(sessionId!, msg => ({
-              ...msg,
-              pendingApproval: {
-                ...pendingApprovalInfo!,
-                status: 'pending' as const,
-              },
-            }));
-            break;
-          }
-          case 'error':
-            updateLastMessage(sessionId!, msg => ({
-              ...msg,
-              content: msg.content + '\n\n**Error:** ' + String(chunk.error),
-              executionStatus: 'failed',
-            }));
-            break;
-          default:
-            break;
-        }
-      }
-      console.log(`[Catty] stream finished, total chunks: ${chunkIndex}`);
-      return pendingApprovalInfo;
-    };
 
     try {
       // Build message array for the SDK
@@ -786,7 +759,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       }
       sdkMessages.push({ role: 'user', content: trimmed });
 
-      const approvalInfo = await processStream(sdkMessages, abortController.signal);
+      const approvalInfo = await processCattyStream(sessionId!, model, systemPrompt, tools, sdkMessages, abortController.signal);
 
       if (approvalInfo) {
         // Stream ended with a pending approval — store the context needed
@@ -859,6 +832,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     images,
     clearImages,
     setInputValue,
+    processCattyStream,
     t,
   ]);
 
@@ -949,151 +923,9 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     abortControllersRef.current.set(sk, abortController);
 
     try {
-      // Re-create model/tools/systemPrompt from the saved context
       const { model, systemPrompt, tools } = ctx;
 
-      // Reuse processStream — we need to define it outside handleSend.
-      // Since processStream is defined inside handleSend, we duplicate the
-      // streamText call here. This is acceptable since the logic is the same.
-      console.log('[Catty] Resuming after approval, messages:', resumeMessages.length);
-
-      const result = streamText({
-        model,
-        messages: resumeMessages,
-        system: systemPrompt,
-        tools,
-        stopWhen: stepCountIs(maxIterations),
-        abortSignal: abortController.signal,
-      });
-
-      let chunkIndex = 0;
-      let lastAddedRole: 'assistant' | 'tool' = 'assistant';
-      const reader = result.fullStream.getReader();
-      let newApprovalInfo: typeof approvalInfo | null = null;
-
-      while (true) {
-        const { done, value: chunk } = await reader.read();
-        if (done) break;
-        if (chunkIndex < 10) {
-          console.log(`[Catty resume] chunk[${chunkIndex}]:`, JSON.stringify(chunk).slice(0, 200));
-        }
-        chunkIndex++;
-        switch (chunk.type) {
-          case 'text':
-          case 'text-delta': {
-            const text = (chunk as unknown as { text?: string; textDelta?: string }).text
-              ?? (chunk as unknown as { textDelta?: string }).textDelta;
-            if (text) {
-              if (lastAddedRole === 'tool') {
-                addMessageToSession(sid, {
-                  id: generateId(),
-                  role: 'assistant',
-                  content: '',
-                  timestamp: Date.now(),
-                });
-                lastAddedRole = 'assistant';
-              }
-              updateLastMessage(sid, msg => ({
-                ...msg,
-                content: msg.content + text,
-              }));
-            }
-            break;
-          }
-          case 'reasoning':
-          case 'reasoning-start':
-          case 'reasoning-delta': {
-            const rText = (chunk as unknown as { text?: string }).text;
-            if (rText) {
-              if (lastAddedRole === 'tool') {
-                addMessageToSession(sid, {
-                  id: generateId(),
-                  role: 'assistant',
-                  content: '',
-                  timestamp: Date.now(),
-                });
-                lastAddedRole = 'assistant';
-              }
-              updateLastMessage(sid, msg => ({
-                ...msg,
-                thinking: (msg.thinking || '') + rText,
-              }));
-            }
-            break;
-          }
-          case 'reasoning-end':
-          case 'text-start':
-          case 'text-end':
-          case 'start':
-          case 'finish':
-          case 'start-step':
-          case 'finish-step':
-            break;
-          case 'tool-call':
-            console.log(`[Catty resume] tool-call: ${chunk.toolName}`);
-            updateLastMessage(sid, msg => ({
-              ...msg,
-              toolCalls: [...(msg.toolCalls || []), {
-                id: chunk.toolCallId,
-                name: chunk.toolName,
-                arguments: (chunk as unknown as { input?: unknown; args?: unknown }).input ?? (chunk as unknown as { args?: unknown }).args,
-              }],
-              executionStatus: 'running',
-            }));
-            break;
-          case 'tool-result': {
-            const toolOutput = (chunk as unknown as { output?: unknown; result?: unknown }).output ?? (chunk as unknown as { result?: unknown }).result;
-            console.log(`[Catty resume] tool-result: ${chunk.toolCallId}`);
-            addMessageToSession(sid, {
-              id: generateId(),
-              role: 'tool',
-              content: '',
-              toolResults: [{
-                toolCallId: chunk.toolCallId,
-                content: typeof toolOutput === 'string'
-                  ? toolOutput
-                  : JSON.stringify(toolOutput),
-                isError: false,
-              }],
-              timestamp: Date.now(),
-              executionStatus: 'completed',
-            });
-            lastAddedRole = 'tool';
-            break;
-          }
-          case 'tool-approval-request': {
-            const approvalChunk = chunk as unknown as {
-              approvalId: string;
-              toolCall: { toolCallId: string; toolName: string; args?: Record<string, unknown>; input?: Record<string, unknown> };
-            };
-            console.log(`[Catty resume] tool-approval-request: ${approvalChunk.toolCall.toolName}`, approvalChunk.approvalId, 'toolCallId:', approvalChunk.toolCall.toolCallId);
-            newApprovalInfo = {
-              approvalId: approvalChunk.approvalId,
-              toolCallId: approvalChunk.toolCall.toolCallId,
-              toolName: approvalChunk.toolCall.toolName,
-              toolArgs: approvalChunk.toolCall.args ?? approvalChunk.toolCall.input ?? {},
-            };
-            updateLastMessage(sid, msg => ({
-              ...msg,
-              pendingApproval: {
-                ...newApprovalInfo!,
-                status: 'pending' as const,
-              },
-            }));
-            break;
-          }
-          case 'error':
-            updateLastMessage(sid, msg => ({
-              ...msg,
-              content: msg.content + '\n\n**Error:** ' + String(chunk.error),
-              executionStatus: 'failed',
-            }));
-            break;
-          default:
-            break;
-        }
-      }
-      console.log(`[Catty resume] stream finished, total chunks: ${chunkIndex}`);
+      const newApprovalInfo = await processCattyStream(sid, model, systemPrompt, tools, resumeMessages, abortController.signal);
 
       if (newApprovalInfo) {
         // Another approval needed — save context for the next round
@@ -1122,7 +954,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         abortControllersRef.current.delete(sk);
       }
     }
-  }, [maxIterations, addMessageToSession, updateLastMessage, setStreamingForScope, t]);
+  }, [processCattyStream, addMessageToSession, setStreamingForScope, t]);
 
   const handleSelectSession = useCallback(
     (sessionId: string) => {

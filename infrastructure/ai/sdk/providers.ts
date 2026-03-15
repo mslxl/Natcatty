@@ -242,5 +242,10 @@ export function createModelFromConfig(config: ProviderConfig) {
         baseURL: config.baseURL,
         fetch: customFetch,
       }).chat(modelId);
+
+    default: {
+      const _exhaustive: never = config.providerId;
+      throw new Error(`Unsupported provider: ${_exhaustive}`);
+    }
   }
 }

@@ -3,15 +3,7 @@ import { z } from 'zod';
 import type { NetcattyBridge, ExecutorContext } from '../cattyAgent/executor';
 import { checkCommandSafety } from '../cattyAgent/safety';
 import type { AIPermissionMode } from '../types';
-
-/** Read-only tools that never need approval */
-const READ_ONLY_TOOLS = new Set([
-  'terminal_read_output',
-  'workspace_get_info',
-  'workspace_get_session_info',
-  'sftp_list_directory',
-  'sftp_read_file',
-]);
+import { shellQuote } from '../shellQuote';
 
 /**
  * Create Catty Agent tools using the Vercel AI SDK `tool()` helper with zod schemas.
@@ -66,28 +58,6 @@ export function createCattyTools(
       },
     }),
 
-    terminal_read_output: tool({
-      description:
-        'Read recent terminal output from a session. Returns the last N lines ' +
-        'of the terminal buffer, useful for reviewing command results or monitoring output.',
-      inputSchema: z.object({
-        sessionId: z.string().describe('The terminal session ID to read output from.'),
-        lines: z
-          .number()
-          .optional()
-          .default(50)
-          .describe('Number of lines to read from the terminal buffer. Defaults to 50.'),
-      }),
-      execute: async ({ sessionId: _sessionId }) => {
-        // Direct xterm buffer reading is not yet available via IPC.
-        return {
-          note:
-            'Direct terminal buffer reading is not yet supported. ' +
-            'Use terminal_execute to run commands and capture their output.',
-        };
-      },
-    }),
-
     terminal_send_input: tool({
       description:
         'Send raw input to a terminal session. Use this for interactive programs that ' +
@@ -127,7 +97,7 @@ export function createCattyTools(
         const session = context.sessions.find((s) => s.sessionId === sessionId);
         if (!session?.sftpId) {
           // Fallback: use terminal exec with ls
-          const result = await bridge.aiExec(sessionId, `ls -la ${path}`);
+          const result = await bridge.aiExec(sessionId, `ls -la ${shellQuote(path)}`);
           if (!result.ok) {
             return { error: result.error || 'Failed to list directory' };
           }
@@ -155,7 +125,7 @@ export function createCattyTools(
         const session = context.sessions.find((s) => s.sessionId === sessionId);
         if (!session?.sftpId) {
           // Fallback: use terminal exec
-          const result = await bridge.aiExec(sessionId, `head -c ${maxBytes} ${path}`);
+          const result = await bridge.aiExec(sessionId, `head -c ${maxBytes} ${shellQuote(path)}`);
           if (!result.ok) {
             return { error: result.error || 'Failed to read file' };
           }
@@ -183,10 +153,9 @@ export function createCattyTools(
         const session = context.sessions.find((s) => s.sessionId === sessionId);
         if (!session?.sftpId) {
           // Fallback: use terminal exec with heredoc
-          const escaped = content.replace(/'/g, "'\\''");
           const result = await bridge.aiExec(
             sessionId,
-            `cat > ${path} << 'CATTY_EOF'\n${escaped}\nCATTY_EOF`,
+            `cat > ${shellQuote(path)} << 'CATTY_EOF'\n${content.replace(/^CATTY_EOF$/gm, 'CATTY_EO\\F')}\nCATTY_EOF`,
           );
           if (!result.ok) {
             return { error: result.error || 'Failed to write file' };

@@ -1,4 +1,5 @@
 import type { ToolCall, ToolResult } from '../types';
+import { shellQuote } from '../shellQuote';
 
 /**
  * Bridge interface for Catty Agent to interact with the Electron main process.
@@ -107,25 +108,6 @@ export function createToolExecutor(
           };
         }
 
-        case 'terminal_read_output': {
-          const sessionId = String(args.sessionId || '');
-          if (!sessionId) {
-            return {
-              toolCallId: toolCall.id,
-              content: 'Missing sessionId',
-              isError: true,
-            };
-          }
-          // Direct xterm buffer reading is not yet available via IPC.
-          // Fallback: inform the LLM to use terminal_execute instead.
-          return {
-            toolCallId: toolCall.id,
-            content:
-              'Note: Direct terminal buffer reading is not yet supported. ' +
-              'Use terminal_execute to run commands and capture their output.',
-          };
-        }
-
         case 'terminal_send_input': {
           const sessionId = String(args.sessionId || '');
           const input = String(args.input || '');
@@ -159,7 +141,7 @@ export function createToolExecutor(
           );
           if (!session?.sftpId) {
             // Fallback: use terminal exec with ls
-            const result = await bridge.aiExec(sessionId, `ls -la ${path}`);
+            const result = await bridge.aiExec(sessionId, `ls -la ${shellQuote(path)}`);
             return {
               toolCallId: toolCall.id,
               content: result.ok
@@ -193,7 +175,7 @@ export function createToolExecutor(
             const maxBytes = Number(args.maxBytes) || 10000;
             const result = await bridge.aiExec(
               sessionId,
-              `head -c ${maxBytes} ${path}`,
+              `head -c ${maxBytes} ${shellQuote(path)}`,
             );
             return {
               toolCallId: toolCall.id,
@@ -226,10 +208,9 @@ export function createToolExecutor(
           );
           if (!session?.sftpId) {
             // Fallback: use terminal exec with heredoc
-            const escaped = content.replace(/'/g, "'\\''");
             const result = await bridge.aiExec(
               sessionId,
-              `cat > ${path} << 'CATTY_EOF'\n${escaped}\nCATTY_EOF`,
+              `cat > ${shellQuote(path)} << 'CATTY_EOF'\n${content.replace(/^CATTY_EOF$/gm, 'CATTY_EO\\F')}\nCATTY_EOF`,
             );
             return {
               toolCallId: toolCall.id,

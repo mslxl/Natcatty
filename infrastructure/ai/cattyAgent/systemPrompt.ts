@@ -98,7 +98,6 @@ function buildPermissionRules(
     case 'observer':
       return [
         'You are in **observer** mode. You may only perform read-only operations:',
-        '- Reading terminal output (`terminal_read_output`)',
         '- Listing directories (`sftp_list_directory`)',
         '- Reading files (`sftp_read_file`)',
         '- Getting workspace and session info (`workspace_get_info`, `workspace_get_session_info`)',

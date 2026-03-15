@@ -25,6 +25,37 @@ import type {
 } from '../../infrastructure/ai/types';
 import { DEFAULT_COMMAND_BLOCKLIST } from '../../infrastructure/ai/types';
 
+/** Typed accessor for the Electron IPC bridge exposed on `window.netcatty`. */
+function getAIBridge() {
+  return (window as unknown as { netcatty?: Record<string, (...args: unknown[]) => unknown> }).netcatty;
+}
+
+
+/** Maximum number of sessions to keep in localStorage. */
+const MAX_STORED_SESSIONS = 50;
+/** Maximum number of messages per session when persisting to localStorage. */
+const MAX_SESSION_MESSAGES = 200;
+
+/**
+ * Prune sessions before writing to localStorage to prevent hitting the
+ * ~5-10 MB storage quota. Only affects what is persisted — the in-memory
+ * state retains all messages until the session is reloaded.
+ *
+ * - Keeps only the MAX_STORED_SESSIONS most-recently-updated sessions.
+ * - Trims each session's messages to the last MAX_SESSION_MESSAGES.
+ */
+function pruneSessionsForStorage(sessions: AISession[]): AISession[] {
+  // Sort by updatedAt descending so we keep the newest
+  const sorted = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt);
+  const limited = sorted.slice(0, MAX_STORED_SESSIONS);
+  return limited.map(s => {
+    if (s.messages.length > MAX_SESSION_MESSAGES) {
+      return { ...s, messages: s.messages.slice(-MAX_SESSION_MESSAGES) };
+    }
+    return s;
+  });
+}
+
 export function useAIState() {
   // ── Provider Config ──
   const [providers, setProvidersRaw] = useState<ProviderConfig[]>(() =>
@@ -113,7 +144,7 @@ export function useAIState() {
     setGlobalPermissionModeRaw(mode);
     localStorageAdapter.writeString(STORAGE_KEY_AI_PERMISSION_MODE, mode);
     // Sync to MCP Server bridge (observer mode blocks write operations)
-    const bridge = (window as unknown as { netcatty?: Record<string, (...args: unknown[]) => unknown> }).netcatty;
+    const bridge = getAIBridge();
     bridge?.aiMcpSetPermissionMode?.(mode);
   }, []);
 
@@ -142,7 +173,7 @@ export function useAIState() {
     setCommandBlocklistRaw(value);
     localStorageAdapter.write(STORAGE_KEY_AI_COMMAND_BLOCKLIST, value);
     // Sync to MCP Server bridge so ACP agents also respect the blocklist
-    const bridge = (window as unknown as { netcatty?: Record<string, (...args: unknown[]) => unknown> }).netcatty;
+    const bridge = getAIBridge();
     bridge?.aiMcpSetCommandBlocklist?.(value);
   }, []);
 
@@ -150,7 +181,7 @@ export function useAIState() {
     setCommandTimeoutRaw(value);
     localStorageAdapter.writeNumber(STORAGE_KEY_AI_COMMAND_TIMEOUT, value);
     // Sync to MCP Server bridge
-    const bridge = (window as unknown as { netcatty?: Record<string, (...args: unknown[]) => unknown> }).netcatty;
+    const bridge = getAIBridge();
     bridge?.aiMcpSetCommandTimeout?.(value);
   }, []);
 
@@ -158,7 +189,7 @@ export function useAIState() {
     setMaxIterationsRaw(value);
     localStorageAdapter.writeNumber(STORAGE_KEY_AI_MAX_ITERATIONS, value);
     // Sync to MCP Server bridge (used by ACP agent path)
-    const bridge = (window as unknown as { netcatty?: Record<string, (...args: unknown[]) => unknown> }).netcatty;
+    const bridge = getAIBridge();
     bridge?.aiMcpSetMaxIterations?.(value);
   }, []);
 
@@ -180,8 +211,7 @@ export function useAIState() {
           const mode = localStorageAdapter.readString(STORAGE_KEY_AI_PERMISSION_MODE);
           if (mode === 'observer' || mode === 'confirm' || mode === 'autonomous') {
             setGlobalPermissionModeRaw(mode);
-            const b4 = (window as unknown as { netcatty?: Record<string, (...args: unknown[]) => unknown> }).netcatty;
-            b4?.aiMcpSetPermissionMode?.(mode);
+            getAIBridge()?.aiMcpSetPermissionMode?.(mode);
           }
           break;
         }
@@ -194,22 +224,19 @@ export function useAIState() {
         case STORAGE_KEY_AI_COMMAND_BLOCKLIST: {
           const list = localStorageAdapter.read<string[]>(STORAGE_KEY_AI_COMMAND_BLOCKLIST) ?? [...DEFAULT_COMMAND_BLOCKLIST];
           setCommandBlocklistRaw(list);
-          const b = (window as unknown as { netcatty?: Record<string, (...args: unknown[]) => unknown> }).netcatty;
-          b?.aiMcpSetCommandBlocklist?.(list);
+          getAIBridge()?.aiMcpSetCommandBlocklist?.(list);
           break;
         }
         case STORAGE_KEY_AI_COMMAND_TIMEOUT: {
           const timeout = localStorageAdapter.readNumber(STORAGE_KEY_AI_COMMAND_TIMEOUT) ?? 60;
           setCommandTimeoutRaw(timeout);
-          const b2 = (window as unknown as { netcatty?: Record<string, (...args: unknown[]) => unknown> }).netcatty;
-          b2?.aiMcpSetCommandTimeout?.(timeout);
+          getAIBridge()?.aiMcpSetCommandTimeout?.(timeout);
           break;
         }
         case STORAGE_KEY_AI_MAX_ITERATIONS: {
           const iters = localStorageAdapter.readNumber(STORAGE_KEY_AI_MAX_ITERATIONS) ?? 20;
           setMaxIterationsRaw(iters);
-          const b3 = (window as unknown as { netcatty?: Record<string, (...args: unknown[]) => unknown> }).netcatty;
-          b3?.aiMcpSetMaxIterations?.(iters);
+          getAIBridge()?.aiMcpSetMaxIterations?.(iters);
           break;
         }
         case STORAGE_KEY_AI_HOST_PERMISSIONS:
@@ -226,7 +253,7 @@ export function useAIState() {
 
   // ── Sync initial safety settings to MCP Server on mount ──
   useEffect(() => {
-    const bridge = (window as unknown as { netcatty?: Record<string, (...args: unknown[]) => unknown> }).netcatty;
+    const bridge = getAIBridge();
     const initialBlocklist = localStorageAdapter.read<string[]>(STORAGE_KEY_AI_COMMAND_BLOCKLIST) ?? [...DEFAULT_COMMAND_BLOCKLIST];
     bridge?.aiMcpSetCommandBlocklist?.(initialBlocklist);
     const initialTimeout = localStorageAdapter.readNumber(STORAGE_KEY_AI_COMMAND_TIMEOUT) ?? 60;
@@ -239,7 +266,7 @@ export function useAIState() {
 
   // ── Session CRUD ──
   const persistSessions = useCallback((next: AISession[]) => {
-    localStorageAdapter.write(STORAGE_KEY_AI_SESSIONS, next);
+    localStorageAdapter.write(STORAGE_KEY_AI_SESSIONS, pruneSessionsForStorage(next));
   }, []);
 
   const createSession = useCallback((scope: AISessionScope, agentId?: string): AISession => {
@@ -341,7 +368,6 @@ export function useAIState() {
         return activeTargetIds.has(s.scope.targetId);
       });
       if (next.length !== prev.length) {
-        console.log(`[AI] Cleaned up ${prev.length - next.length} orphaned AI sessions`);
         persistSessions(next);
       }
       return next;

@@ -165,7 +165,6 @@ export interface AISettings {
   activeProviderId: string;
   activeModelId: string;
   globalPermissionMode: AIPermissionMode;
-  hostPermissions: HostAIPermission[];
   externalAgents: ExternalAgentConfig[];
   defaultAgentId: string;
   commandBlocklist: string[];    // global command blocklist patterns
@@ -190,7 +189,6 @@ export const DEFAULT_AI_SETTINGS: AISettings = {
   activeProviderId: '',
   activeModelId: '',
   globalPermissionMode: 'confirm',
-  hostPermissions: [],
   externalAgents: [],
   defaultAgentId: 'catty',
   commandBlocklist: [...DEFAULT_COMMAND_BLOCKLIST],
