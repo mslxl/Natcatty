@@ -1018,8 +1018,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       }
     } finally {
       if (!pendingApprovalContextRef.current || pendingApprovalContextRef.current.sessionId !== sid) {
-        setStreamingForScope(sk, false);
-        abortControllersRef.current.delete(sk);
+        setStreamingForScope(sid, false);
+        abortControllersRef.current.delete(sid);
       }
     }
   }, [processCattyStream, addMessageToSession, updateLastMessage, setStreamingForScope, t]);
