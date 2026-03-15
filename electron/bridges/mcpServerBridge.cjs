@@ -464,7 +464,9 @@ async function handleSftpWrite(params) {
     }
   }
 
-  const result = await handleExec({ sessionId, command: `cat > ${shellQuote(filePath)} << 'NETCATTY_EOF'\n${content.replace(/^NETCATTY_EOF$/gm, 'NETCATTY_EO\\F')}\nNETCATTY_EOF` });
+  // Random delimiter to avoid collision with file content
+  const delim = `NETCATTY_EOF_${Math.random().toString(36).slice(2, 8)}`;
+  const result = await handleExec({ sessionId, command: `cat > ${shellQuote(filePath)} << '${delim}'\n${content}\n${delim}` });
   if (!result.ok) return { error: result.error };
   return { written: filePath };
 }

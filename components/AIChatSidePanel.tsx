@@ -1006,7 +1006,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         abortControllersRef.current.delete(sk);
       }
     }
-  }, [processCattyStream, addMessageToSession, setStreamingForScope, t]);
+  }, [processCattyStream, addMessageToSession, updateLastMessage, setStreamingForScope, t]);
 
   const handleSelectSession = useCallback(
     (sessionId: string) => {

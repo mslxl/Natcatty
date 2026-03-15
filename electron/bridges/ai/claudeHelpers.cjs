@@ -38,31 +38,6 @@ function getClaudeConfigDirBase() {
   return claudeConfigDirBase;
 }
 
-function ensureClaudeConfigDir(chatSessionId) {
-  const dirBase = getClaudeConfigDirBase();
-  const sessionDir = path.join(dirBase, chatSessionId);
-  const { mkdirSync, existsSync: fsExistsSync, symlinkSync } = require("node:fs");
-  mkdirSync(sessionDir, { recursive: true });
-
-  // Symlink skills/commands/agents from ~/.claude/ if they exist
-  const home = process.env.HOME || require("node:os").homedir();
-  const claudeDir = path.join(home, ".claude");
-  const symlinkTargets = ["skills", "commands", "agents", "plugins"];
-  for (const target of symlinkTargets) {
-    const src = path.join(claudeDir, target);
-    const dest = path.join(sessionDir, target);
-    if (fsExistsSync(src) && !fsExistsSync(dest)) {
-      try {
-        symlinkSync(src, dest, "dir");
-      } catch {
-        // Ignore symlink failures (e.g., already exists, permissions)
-      }
-    }
-  }
-
-  return sessionDir;
-}
-
 // ── Environment building ──
 
 function buildClaudeEnv(shellEnv) {
@@ -120,7 +95,6 @@ module.exports = {
   claudeSessionIds,
   claudeActiveStreams,
   getClaudeConfigDirBase,
-  ensureClaudeConfigDir,
   buildClaudeEnv,
   getCachedClaudeQuery,
   setCachedClaudeQuery,

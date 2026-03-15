@@ -152,10 +152,11 @@ export function createCattyTools(
         }
         const session = context.sessions.find((s) => s.sessionId === sessionId);
         if (!session?.sftpId) {
-          // Fallback: use terminal exec with heredoc
+          // Fallback: use terminal exec with heredoc (random delimiter to avoid collision)
+          const delim = `CATTY_EOF_${Math.random().toString(36).slice(2, 8)}`;
           const result = await bridge.aiExec(
             sessionId,
-            `cat > ${shellQuote(path)} << 'CATTY_EOF'\n${content.replace(/^CATTY_EOF$/gm, 'CATTY_EO\\F')}\nCATTY_EOF`,
+            `cat > ${shellQuote(path)} << '${delim}'\n${content}\n${delim}`,
           );
           if (!result.ok) {
             return { error: result.error || 'Failed to write file' };

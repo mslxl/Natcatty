@@ -207,10 +207,11 @@ export function createToolExecutor(
             (s) => s.sessionId === sessionId,
           );
           if (!session?.sftpId) {
-            // Fallback: use terminal exec with heredoc
+            // Fallback: use terminal exec with heredoc (random delimiter to avoid collision)
+            const delim = `CATTY_EOF_${Math.random().toString(36).slice(2, 8)}`;
             const result = await bridge.aiExec(
               sessionId,
-              `cat > ${shellQuote(path)} << 'CATTY_EOF'\n${content.replace(/^CATTY_EOF$/gm, 'CATTY_EO\\F')}\nCATTY_EOF`,
+              `cat > ${shellQuote(path)} << '${delim}'\n${content}\n${delim}`,
             );
             return {
               toolCallId: toolCall.id,
