@@ -84,13 +84,14 @@ jobs:
             release/*.blockmap
           if-no-files-found: ignore
 
-  # Linux x64 — builds directly on ubuntu-latest (no container).
-  # v1.0.39 used a debian:bullseye container which broke native module
-  # packaging (node-pty .node file missing from asar.unpacked). Reverted
-  # to the v1.0.38 approach. See #264.
+  # Linux x64 — pin to ubuntu-22.04 for broader glibc compatibility.
+  # ubuntu-latest (24.04) links native modules against glibc 2.39 which
+  # can cause dlopen failures on some distros. 22.04 uses glibc 2.35,
+  # compatible with most current Linux distributions including Arch.
+  # See #264.
   build-linux-x64:
     name: build-linux-x64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     env:
       VITE_SYNC_GITHUB_CLIENT_ID: ${{ secrets.VITE_SYNC_GITHUB_CLIENT_ID }}
       VITE_SYNC_GOOGLE_CLIENT_ID: ${{ secrets.VITE_SYNC_GOOGLE_CLIENT_ID }}
