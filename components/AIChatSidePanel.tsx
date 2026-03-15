@@ -150,11 +150,10 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     setInputValueMap(prev => ({ ...prev, [scopeKey]: val }));
   }, [scopeKey]);
 
-  // Per-scope streaming state
-  const [streamingScopes, setStreamingScopes] = useState<Set<string>>(new Set());
-  const isStreaming = streamingScopes.has(scopeKey);
+  // Per-session streaming state (keyed by sessionId)
+  const [streamingSessions, setStreamingSessions] = useState<Set<string>>(new Set());
   const setStreamingForScope = useCallback((key: string, val: boolean) => {
-    setStreamingScopes(prev => {
+    setStreamingSessions(prev => {
       const next = new Set(prev);
       if (val) next.add(key); else next.delete(key);
       return next;
@@ -188,6 +187,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
 
   // Per-scope active session ID
   const activeSessionId = activeSessionIdMap[scopeKey] ?? null;
+  const isStreaming = activeSessionId ? streamingSessions.has(activeSessionId) : false;
   const setActiveSessionId = useCallback((id: string | null) => {
     setActiveSessionIdForScope(scopeKey, id);
   }, [scopeKey, setActiveSessionIdForScope]);
@@ -474,7 +474,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
 
   const handleSend = useCallback(async () => {
     const trimmed = inputValue.trim();
-    // Capture scope key at send time so async callbacks use the correct scope
+    // Capture scope key and session ID at send time so async callbacks use the correct references
     const sendScopeKey = scopeKey;
     if (!trimmed || isStreaming) return;
 
@@ -527,7 +527,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     addMessageToSession(sessionId, userMessage);
     setInputValue('');
     clearImages();
-    setStreamingForScope(sendScopeKey, true);
+    setStreamingForScope(sessionId!, true);
 
     // Create assistant message placeholder for streaming
     const agentConfig = isExternalAgent
@@ -544,7 +544,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
 
     // Abort controller for cancellation (per-scope)
     const abortController = new AbortController();
-    abortControllersRef.current.set(sendScopeKey, abortController);
+    abortControllersRef.current.set(sessionId!, abortController);
 
     // Get current session for context
     const currentSession = sessions.find((s) => s.id === sessionId);
@@ -556,7 +556,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           content: 'External agent not found. Please check settings.',
           executionStatus: 'failed',
         }));
-        setStreamingForScope(sendScopeKey, false);
+        setStreamingForScope(sessionId!, false);
         return;
       }
 
@@ -675,7 +675,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
                   errorInfo: classifyError(error),
                   timestamp: Date.now(),
                 });
-                setStreamingForScope(sendScopeKey, false);
+                setStreamingForScope(sessionId!, false);
               },
               onDone: () => {},
             },
@@ -722,7 +722,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
                   errorInfo: classifyError(error),
                   timestamp: Date.now(),
                 });
-                setStreamingForScope(sendScopeKey, false);
+                setStreamingForScope(sessionId!, false);
               },
               onDone: () => {},
             },
@@ -747,8 +747,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         }
       }
 
-      setStreamingForScope(sendScopeKey, false);
-      abortControllersRef.current.delete(sendScopeKey);
+      setStreamingForScope(sessionId!, false);
+      abortControllersRef.current.delete(sessionId!);
       if (
         currentSession &&
         (!currentSession.title || currentSession.title === 'New Chat')
@@ -849,8 +849,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     } finally {
       // Only clean up if there is no pending approval waiting for user action
       if (!pendingApprovalContextRef.current || pendingApprovalContextRef.current.sessionId !== sessionId) {
-        setStreamingForScope(sendScopeKey, false);
-        abortControllersRef.current.delete(sendScopeKey);
+        setStreamingForScope(sessionId!, false);
+        abortControllersRef.current.delete(sessionId!);
       }
       const finalSession = sessions.find(s => s.id === sessionId);
       if (
@@ -896,15 +896,16 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   ]);
 
   const handleStop = useCallback(() => {
-    const controller = abortControllersRef.current.get(scopeKey);
+    if (!activeSessionId) return;
+    const controller = abortControllersRef.current.get(activeSessionId);
     controller?.abort();
-    abortControllersRef.current.delete(scopeKey);
-    setStreamingForScope(scopeKey, false);
+    abortControllersRef.current.delete(activeSessionId);
+    setStreamingForScope(activeSessionId, false);
     // Also clear any pending approval
-    if (pendingApprovalContextRef.current?.scopeKey === scopeKey) {
+    if (pendingApprovalContextRef.current?.sessionId === activeSessionId) {
       pendingApprovalContextRef.current = null;
     }
-  }, [scopeKey, setStreamingForScope]);
+  }, [activeSessionId, setStreamingForScope]);
 
   // Handle inline approval response (approve/reject from InlineApprovalCard)
   const handleApprovalResponse = useCallback(async (messageId: string, approved: boolean) => {
@@ -932,8 +933,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         content: msg.content + (msg.content ? '\n\n' : '') + t('ai.chat.toolDenied'),
         executionStatus: 'completed',
       }));
-      setStreamingForScope(sk, false);
-      abortControllersRef.current.delete(sk);
+      setStreamingForScope(sid, false);
+      abortControllersRef.current.delete(sid);
       return;
     }
 
@@ -979,7 +980,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     });
 
     const abortController = new AbortController();
-    abortControllersRef.current.set(sk, abortController);
+    abortControllersRef.current.set(sid, abortController);
 
     try {
       const { model, systemPrompt, tools } = ctx;
