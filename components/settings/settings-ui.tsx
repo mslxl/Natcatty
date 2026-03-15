@@ -34,7 +34,7 @@ export const Toggle: React.FC<ToggleProps> = ({ checked, onChange, disabled }) =
 
 interface SelectProps {
   value: string;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; icon?: React.ReactNode }[];
   onChange: (value: string) => void;
   className?: string;
   disabled?: boolean;
@@ -59,7 +59,10 @@ export const Select: React.FC<SelectProps> = ({
         )}
       >
         <SelectPrimitive.Value placeholder={placeholder}>
-          {selectedOption?.label}
+          <span className="flex items-center gap-2">
+            {selectedOption?.icon}
+            {selectedOption?.label}
+          </span>
         </SelectPrimitive.Value>
         <SelectPrimitive.Icon asChild>
           <ChevronDown className="ml-2 h-4 w-4 opacity-50" />
@@ -86,7 +89,12 @@ export const Select: React.FC<SelectProps> = ({
                     <Check className="h-4 w-4" />
                   </SelectPrimitive.ItemIndicator>
                 </span>
-                <SelectPrimitive.ItemText>{opt.label}</SelectPrimitive.ItemText>
+                <SelectPrimitive.ItemText>
+                  <span className="flex items-center gap-2">
+                    {opt.icon}
+                    {opt.label}
+                  </span>
+                </SelectPrimitive.ItemText>
               </SelectPrimitive.Item>
             ))}
           </SelectPrimitive.Viewport>

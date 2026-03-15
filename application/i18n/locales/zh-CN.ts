@@ -1493,6 +1493,9 @@ const zhCN: Messages = {
 
   // Text Editor
   'sftp.editor.wordWrap': '自动换行',
+
+  // AI
+  'ai.agentSettings': 'Agent 设置',
 };
 
 export default zhCN;

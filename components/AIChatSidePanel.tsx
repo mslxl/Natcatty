@@ -166,6 +166,16 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     setActiveSessionIdForScope(scopeKey, id);
   }, [scopeKey, setActiveSessionIdForScope]);
 
+  // Restore agent selector from active session when scope changes
+  useEffect(() => {
+    if (activeSessionId) {
+      const session = sessions.find((s) => s.id === activeSessionId);
+      if (session) {
+        setCurrentAgentId(session.agentId);
+      }
+    }
+  }, [scopeKey, activeSessionId, sessions]);
+
   // Proactively sync terminal session metadata to main process whenever scope or sessions change
   useEffect(() => {
     const bridge = (window as unknown as { netcatty?: { aiMcpUpdateSessions?: (sessions: typeof terminalSessions, chatSessionId?: string) => Promise<unknown> } }).netcatty;
@@ -248,6 +258,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     currentAgentId,
     createSession,
     setActiveSessionId,
+    setInputValue,
   ]);
 
   const handleOpenSettings = useCallback(() => {
@@ -734,6 +745,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     selectedAgentModel,
     images,
     clearImages,
+    setInputValue,
   ]);
 
   const handleStop = useCallback(() => {

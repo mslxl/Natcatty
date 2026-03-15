@@ -244,7 +244,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   // Maps tab IDs to the active sub-panel type (sftp/scripts/theme), absent = closed
   const [sidePanelOpenTabs, setSidePanelOpenTabs] = useState<Map<string, SidePanelTab>>(new Map());
   const [sidePanelWidth, setSidePanelWidth] = useState(() => {
-    const stored = localStorage.getItem('netcatty_side_panel_width');
+    const stored = window.localStorage.getItem('netcatty_side_panel_width');
     return stored ? Math.max(280, Math.min(800, Number(stored))) : 420;
   });
   const [sidePanelPosition, setSidePanelPosition] = useStoredString<'left' | 'right'>(
@@ -386,7 +386,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     };
     const onMouseUp = () => {
       sftpResizingRef.current = false;
-      localStorage.setItem('netcatty_side_panel_width', String(lastWidth));
+      window.localStorage.setItem('netcatty_side_panel_width', String(lastWidth));
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
@@ -972,7 +972,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       resultCount: result.length,
     }));
     return result;
-  }, [sessions, hosts, activeWorkspace, activeSession]);
+  }, [sessions, hosts, activeWorkspace, activeSession, activeTabId, workspaces]);
 
   // Subscribe to custom theme changes so editing triggers re-render
   const customThemes = useCustomThemes();

@@ -32,6 +32,7 @@ import { TabsContent } from "../../ui/tabs";
 import { Button } from "../../ui/button";
 import { Toggle, Select, SettingRow } from "../settings-ui";
 import { cn } from "../../../lib/utils";
+import { AgentIconBadge } from "../../ai/AgentIconBadge";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -1044,10 +1045,10 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
 
   // Agent options for default agent
   const agentOptions = useMemo(() => [
-    { value: "catty", label: "Catty (Built-in)" },
+    { value: "catty", label: "Catty (Built-in)", icon: <AgentIconBadge agent={{ id: "catty", type: "builtin" }} size="xs" variant="plain" /> },
     ...externalAgents
       .filter((a) => a.enabled)
-      .map((a) => ({ value: a.id, label: a.name })),
+      .map((a) => ({ value: a.id, label: a.name, icon: <AgentIconBadge agent={a} size="xs" variant="plain" /> })),
   ], [externalAgents]);
 
   const hasOpenAiProviderKey = providers.some(

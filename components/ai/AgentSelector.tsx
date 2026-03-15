@@ -5,9 +5,10 @@
  * discovered, and external agents.
  */
 
-import { ChevronDown, RefreshCw, Plus } from 'lucide-react';
+import { ChevronDown, RefreshCw, Plus, Settings } from 'lucide-react';
 import React, { useCallback, useMemo, useState } from 'react';
 import { cn } from '../../lib/utils';
+import { useI18n } from '../../application/i18n/I18nProvider';
 import type { AgentInfo, ExternalAgentConfig, DiscoveredAgent } from '../../infrastructure/ai/types';
 import AgentIconBadge from './AgentIconBadge';
 import {
@@ -114,6 +115,7 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
   onRediscover,
   onManageAgents,
 }) => {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
 
   const enabledExternalAgents = useMemo(
@@ -267,8 +269,8 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
           onClick={handleManageAgents}
           className="flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] text-foreground/82 transition-colors cursor-pointer hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/30"
         >
-          <AgentIconBadge agent="add-more" size="xs" variant="plain" className="opacity-72" />
-          <span className="min-w-0 flex-1 truncate">Add More Agents</span>
+          <Settings size={16} className="opacity-72 shrink-0" />
+          <span className="min-w-0 flex-1 truncate">{t('ai.agentSettings')}</span>
         </button>
       </DropdownContent>
     </Dropdown>

@@ -1478,6 +1478,9 @@ const en: Messages = {
 
   // Text Editor
   'sftp.editor.wordWrap': 'Word Wrap',
+
+  // AI
+  'ai.agentSettings': 'Agent Settings',
 };
 
 export default en;
