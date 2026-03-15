@@ -72,6 +72,7 @@ interface AIChatSidePanelProps {
 
   // Safety
   globalPermissionMode: AIPermissionMode;
+  setGlobalPermissionMode?: (mode: AIPermissionMode) => void;
   commandBlocklist?: string[];
   maxIterations?: number;
 
@@ -126,6 +127,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   agentModelMap,
   setAgentModel,
   globalPermissionMode,
+  setGlobalPermissionMode,
   commandBlocklist,
   maxIterations = 20,
   scopeType,
@@ -1284,6 +1286,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
             onAddImages={addImages}
             onRemoveImage={removeImage}
             hosts={terminalSessions.map(s => ({ sessionId: s.sessionId, hostname: s.hostname, label: s.label, connected: s.connected }))}
+            permissionMode={currentAgentId === 'catty' ? globalPermissionMode : undefined}
+            onPermissionModeChange={currentAgentId === 'catty' ? setGlobalPermissionMode : undefined}
           />
         </>
       )}

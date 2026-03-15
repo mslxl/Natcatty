@@ -6,7 +6,7 @@
  * and a bottom toolbar with muted controls + subtle send button.
  */
 
-import { AtSign, Check, ChevronDown, ChevronRight, Cpu, Expand, FileText, ImageIcon, Plus, X } from 'lucide-react';
+import { AtSign, Check, ChevronDown, ChevronRight, Cpu, Expand, Eye, FileText, ImageIcon, Plus, Shield, ShieldCheck, X, Zap } from 'lucide-react';
 import React, { useCallback, useRef, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { createPortal } from 'react-dom';
@@ -21,7 +21,7 @@ import {
 } from '../ai-elements/prompt-input';
 import type { PromptInputStatus } from '../ai-elements/prompt-input';
 import { formatThinkingLabel } from '../../infrastructure/ai/types';
-import type { AgentModelPreset } from '../../infrastructure/ai/types';
+import type { AgentModelPreset, AIPermissionMode } from '../../infrastructure/ai/types';
 
 interface ChatInputProps {
   value: string;
@@ -48,6 +48,10 @@ interface ChatInputProps {
   onRemoveImage?: (id: string) => void;
   /** Available hosts for @ mention */
   hosts?: Array<{ sessionId: string; hostname: string; label: string; connected: boolean }>;
+  /** Permission mode (only shown for Catty Agent) */
+  permissionMode?: AIPermissionMode;
+  /** Callback when user changes permission mode */
+  onPermissionModeChange?: (mode: AIPermissionMode) => void;
 }
 
 const ChatInput: React.FC<ChatInputProps> = ({
@@ -68,6 +72,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
   onAddImages,
   onRemoveImage,
   hosts = [],
+  permissionMode,
+  onPermissionModeChange,
 }) => {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
@@ -79,8 +85,11 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const [showHostSubmenu, setShowHostSubmenu] = useState(false);
   const [showAtMention, setShowAtMention] = useState(false);
   const [atMentionPos, setAtMentionPos] = useState<{ left: number; bottom: number } | null>(null);
+  const [showPermPicker, setShowPermPicker] = useState(false);
+  const [permPickerPos, setPermPickerPos] = useState<{ left: number; bottom: number } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modelBtnRef = useRef<HTMLButtonElement>(null);
+  const permBtnRef = useRef<HTMLButtonElement>(null);
   const attachBtnRef = useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -408,6 +417,70 @@ const ChatInput: React.FC<ChatInputProps> = ({
                 </div>
               </>,
               document.body,
+            )}
+            {/* Permission mode chip — only for Catty Agent */}
+            {permissionMode && onPermissionModeChange && (
+              <>
+                <button
+                  ref={permBtnRef}
+                  type="button"
+                  onClick={() => {
+                    if (!showPermPicker) {
+                      const rect = permBtnRef.current?.getBoundingClientRect();
+                      if (rect) setPermPickerPos({ left: rect.left, bottom: window.innerHeight - rect.top + 6 });
+                    }
+                    setShowPermPicker(v => !v);
+                  }}
+                  className={`${chipClassName} cursor-pointer hover:bg-muted/24 transition-colors`}
+                  title={t('ai.safety.permissionMode')}
+                >
+                  {permissionMode === 'observer' && <Eye size={11} className="text-blue-400/70" />}
+                  {permissionMode === 'confirm' && <ShieldCheck size={11} className="text-yellow-400/70" />}
+                  {permissionMode === 'autonomous' && <Zap size={11} className="text-green-400/70" />}
+                  <span className="truncate max-w-[72px]">
+                    {permissionMode === 'observer' && t('ai.chat.permObserver')}
+                    {permissionMode === 'confirm' && t('ai.chat.permConfirm')}
+                    {permissionMode === 'autonomous' && t('ai.chat.permAuto')}
+                  </span>
+                  <ChevronDown size={9} className="text-muted-foreground/50" />
+                </button>
+                {showPermPicker && permPickerPos && createPortal(
+                  <>
+                    <div className="fixed inset-0 z-[999]" onClick={() => setShowPermPicker(false)} />
+                    <div
+                      className="fixed z-[1000] min-w-[180px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
+                      style={{ left: permPickerPos.left, bottom: permPickerPos.bottom }}
+                    >
+                      {([
+                        { mode: 'autonomous' as const, icon: Zap, color: 'text-green-400/70', label: t('ai.chat.permAuto'), desc: t('ai.chat.permAutoDesc') },
+                        { mode: 'confirm' as const, icon: ShieldCheck, color: 'text-yellow-400/70', label: t('ai.chat.permConfirm'), desc: t('ai.chat.permConfirmDesc') },
+                        { mode: 'observer' as const, icon: Eye, color: 'text-blue-400/70', label: t('ai.chat.permObserver'), desc: t('ai.chat.permObserverDesc') },
+                      ]).map(({ mode, icon: Icon, color, label, desc }) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => {
+                            onPermissionModeChange(mode);
+                            setShowPermPicker(false);
+                          }}
+                          className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer"
+                        >
+                          {permissionMode === mode
+                            ? <Check size={11} className="text-primary shrink-0" />
+                            : <span className="w-[11px] shrink-0" />
+                          }
+                          <Icon size={12} className={`${color} shrink-0`} />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-foreground/85">{label}</div>
+                            <div className="text-[10px] text-muted-foreground/40 leading-tight">{desc}</div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </>,
+                  document.body,
+                )}
+              </>
             )}
           </PromptInputTools>
 
