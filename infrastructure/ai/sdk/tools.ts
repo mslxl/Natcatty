@@ -29,10 +29,11 @@ export function createCattyTools(
 ) {
   /**
    * Determines if a tool needs user approval before execution.
-   * - observer: all write tools are blocked at MCP Server level, no approval needed here
-   * - confirm: write tools need approval via PermissionDialog
+   * - observer: write tools are blocked (return error)
+   * - confirm: write tools need approval via inline approval card
    * - autonomous: no approval needed
    */
+  const isObserver = permissionMode === 'observer';
   const writeToolNeedsApproval = permissionMode === 'confirm';
   return {
     terminal_execute: tool({
@@ -45,7 +46,9 @@ export function createCattyTools(
       }),
       needsApproval: writeToolNeedsApproval,
       execute: async ({ sessionId, command }) => {
-        // Blocklist check (observer mode is blocked at MCP Server level)
+        if (isObserver) {
+          return { error: 'Observer mode: command execution is disabled. Switch to Confirm or Auto mode to execute commands.' };
+        }
         const safety = checkCommandSafety(command, commandBlocklist);
         if (safety.blocked) {
           return { error: `Command blocked by safety policy. Matched pattern: ${safety.matchedPattern}` };
@@ -101,6 +104,9 @@ export function createCattyTools(
       }),
       needsApproval: writeToolNeedsApproval,
       execute: async ({ sessionId, input }) => {
+        if (isObserver) {
+          return { error: 'Observer mode: terminal input is disabled. Switch to Confirm or Auto mode.' };
+        }
         const result = await bridge.aiTerminalWrite(sessionId, input);
         if (!result.ok) {
           return { error: result.error || 'Failed to send input' };
@@ -171,6 +177,9 @@ export function createCattyTools(
       }),
       needsApproval: writeToolNeedsApproval,
       execute: async ({ sessionId, path, content }) => {
+        if (isObserver) {
+          return { error: 'Observer mode: file writing is disabled. Switch to Confirm or Auto mode.' };
+        }
         const session = context.sessions.find((s) => s.sessionId === sessionId);
         if (!session?.sftpId) {
           // Fallback: use terminal exec with heredoc
@@ -255,7 +264,9 @@ export function createCattyTools(
       }),
       needsApproval: writeToolNeedsApproval,
       execute: async ({ sessionIds, command, mode, stopOnError }) => {
-        // Blocklist check
+        if (isObserver) {
+          return { error: 'Observer mode: command execution is disabled. Switch to Confirm or Auto mode.' };
+        }
         const safety = checkCommandSafety(command, commandBlocklist);
         if (safety.blocked) {
           return { error: `Command blocked by safety policy. Matched pattern: ${safety.matchedPattern}` };
