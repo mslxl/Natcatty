@@ -655,6 +655,13 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
                 // Next text/thinking/toolCall should go into a new assistant message
                 needsNewAssistantMsg = true;
               },
+              onStatus: (message: string) => {
+                maybeCreateAssistantMsg();
+                updateLastMessage(sessionId!, msg => ({
+                  ...msg,
+                  content: msg.content + (msg.content ? '\n' : '') + `*${message}*`,
+                }));
+              },
               onError: (error: string) => {
                 updateLastMessage(sessionId!, msg => ({
                   ...msg,

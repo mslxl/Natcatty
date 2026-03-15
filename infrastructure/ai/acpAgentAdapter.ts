@@ -14,6 +14,7 @@ export interface AcpAgentCallbacks {
   onThinkingDone: () => void;
   onToolCall: (toolName: string, args: Record<string, unknown>) => void;
   onToolResult: (toolCallId: string, result: string) => void;
+  onStatus?: (message: string) => void;
   onError: (error: string) => void;
   onDone: () => void;
 }
@@ -169,6 +170,11 @@ function handleStreamEvent(event: StreamEvent, callbacks: AcpAgentCallbacks) {
         ? output
         : JSON.stringify(output);
       callbacks.onToolResult(toolCallId, result);
+      break;
+    }
+    case 'status': {
+      const msg = (event.message as string) || '';
+      if (msg) callbacks.onStatus?.(msg);
       break;
     }
     case 'error': {

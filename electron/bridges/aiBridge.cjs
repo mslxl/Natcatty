@@ -1026,10 +1026,26 @@ function registerHandlers(ipcMain) {
       });
       const reader = result.fullStream.getReader();
       let hasContent = false;
+      // Stall detection: if no chunk for 15s, send a status event
+      let stallTimer = null;
+      const STALL_TIMEOUT_MS = 15000;
+      function resetStallTimer() {
+        if (stallTimer) clearTimeout(stallTimer);
+        stallTimer = setTimeout(() => {
+          if (!abortController.signal.aborted) {
+            event.sender.send("netcatty:ai:acp:event", {
+              requestId,
+              event: { type: "status", message: "Waiting for response from agent..." },
+            });
+          }
+        }, STALL_TIMEOUT_MS);
+      }
+      resetStallTimer();
       try {
         while (true) {
           const { done, value: chunk } = await reader.read();
           if (done || abortController.signal.aborted) break;
+          resetStallTimer();
           try {
             const serialized = serializeStreamChunk(chunk);
             if (!serialized || !serialized.type) continue;
@@ -1046,6 +1062,7 @@ function registerHandlers(ipcMain) {
           }
         }
       } finally {
+        if (stallTimer) clearTimeout(stallTimer);
         reader.releaseLock();
       }
 
