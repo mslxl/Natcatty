@@ -934,7 +934,9 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const hasCleanedUpRef = useRef(false);
   useEffect(() => {
     if (hasCleanedUpRef.current) return;
-    if (sessions.length === 0 && workspaces.length === 0) return;
+    // Guard: wait until both sessions AND workspaces have loaded to avoid
+    // racing with partial state (e.g. sessions loaded but workspaces not yet).
+    if (sessions.length === 0 || workspaces.length === 0) return;
     hasCleanedUpRef.current = true;
     const activeIds = new Set<string>();
     for (const s of sessions) activeIds.add(s.id);
@@ -961,16 +963,6 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         connected: s?.status === 'connected',
       };
     });
-    console.warn('[TerminalLayer] aiTerminalSessions:', JSON.stringify({
-      activeTabId,
-      activeWorkspaceId: activeWorkspace?.id,
-      activeSessionId: activeSession?.id,
-      workspaceCount: workspaces.length,
-      workspaceIds: workspaces.map(w => w.id),
-      sessionCount: sessions.length,
-      sessionIds,
-      resultCount: result.length,
-    }));
     return result;
   }, [sessions, hosts, activeWorkspace, activeSession, activeTabId, workspaces]);
 

@@ -71,6 +71,15 @@ function cleanupAcpProvider(chatSessionId) {
   acpProviders.delete(chatSessionId);
 }
 
+/**
+ * Safely send an IPC message to a renderer, guarding against destroyed senders.
+ */
+function safeSend(sender, channel, ...args) {
+  if (sender && !sender.isDestroyed()) {
+    sender.send(channel, ...args);
+  }
+}
+
 function init(deps) {
   sessions = deps.sessions;
   sftpClients = deps.sftpClients;
@@ -99,7 +108,7 @@ function streamRequest(url, options, event, requestId) {
           let errorBody = "";
           res.on("data", (chunk) => { errorBody += chunk.toString(); });
           res.on("end", () => {
-            event.sender.send("netcatty:ai:stream:error", {
+            safeSend(event.sender, "netcatty:ai:stream:error", {
               requestId,
               error: `HTTP ${res.statusCode}: ${errorBody}`,
             });
@@ -115,7 +124,7 @@ function streamRequest(url, options, event, requestId) {
           buffer += chunk.toString();
           // Guard against unbounded buffer growth
           if (buffer.length > MAX_BUFFER_SIZE) {
-            event.sender.send("netcatty:ai:stream:error", {
+            safeSend(event.sender, "netcatty:ai:stream:error", {
               requestId,
               error: "Stream buffer exceeded maximum size (10MB)",
             });
@@ -132,7 +141,7 @@ function streamRequest(url, options, event, requestId) {
 
             // Forward raw SSE data line to renderer
             if (trimmed.startsWith("data: ")) {
-              event.sender.send("netcatty:ai:stream:data", {
+              safeSend(event.sender, "netcatty:ai:stream:data", {
                 requestId,
                 data: trimmed.slice(6),
               });
@@ -143,18 +152,18 @@ function streamRequest(url, options, event, requestId) {
         res.on("end", () => {
           // Flush any remaining buffer
           if (buffer.trim().startsWith("data: ")) {
-            event.sender.send("netcatty:ai:stream:data", {
+            safeSend(event.sender, "netcatty:ai:stream:data", {
               requestId,
               data: buffer.trim().slice(6),
             });
           }
-          event.sender.send("netcatty:ai:stream:end", { requestId });
+          safeSend(event.sender, "netcatty:ai:stream:end", { requestId });
           activeStreams.delete(requestId);
           resolve();
         });
 
         res.on("error", (err) => {
-          event.sender.send("netcatty:ai:stream:error", {
+          safeSend(event.sender, "netcatty:ai:stream:error", {
             requestId,
             error: err.message,
           });
@@ -165,7 +174,7 @@ function streamRequest(url, options, event, requestId) {
     );
 
     req.on("error", (err) => {
-      event.sender.send("netcatty:ai:stream:error", {
+      safeSend(event.sender, "netcatty:ai:stream:error", {
         requestId,
         error: err.message,
       });
@@ -175,7 +184,7 @@ function streamRequest(url, options, event, requestId) {
 
     req.on("timeout", () => {
       req.destroy();
-      event.sender.send("netcatty:ai:stream:error", {
+      safeSend(event.sender, "netcatty:ai:stream:error", {
         requestId,
         error: "Request timeout",
       });
@@ -236,24 +245,26 @@ function registerHandlers(ipcMain) {
     "generativelanguage.googleapis.com",
     "openrouter.ai",
   ]);
-  function isAllowedFetchUrl(urlString) {
+  function isAllowedFetchUrl(urlString, allowedHosts) {
     try {
       const parsed = new URL(urlString);
       // Always allow localhost/127.0.0.1 (e.g. Ollama)
       if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") return true;
       // Require HTTPS for remote hosts
       if (parsed.protocol !== "https:") return false;
-      // Check allowlist
+      // Check known provider allowlist
       if (ALLOWED_FETCH_HOSTS.has(parsed.hostname)) return true;
-      // Allow custom provider URLs (user-configured base URLs)
-      // by checking if it matches any configured provider's baseURL host
-      return true; // Custom providers may use arbitrary hosts — validated at config time
+      // For custom providers, validate against caller-supplied allowed hosts
+      if (Array.isArray(allowedHosts) && allowedHosts.length > 0) {
+        return allowedHosts.includes(parsed.hostname);
+      }
+      return false;
     } catch {
       return false;
     }
   }
 
-  ipcMain.handle("netcatty:ai:fetch", async (_event, { url, method, headers, body }) => {
+  ipcMain.handle("netcatty:ai:fetch", async (_event, { url, method, headers, body, allowedHosts }) => {
     // Validate URL: block non-HTTP(S) schemes and internal network access
     try {
       const parsed = new URL(url);
@@ -263,6 +274,11 @@ function registerHandlers(ipcMain) {
       // Block file:// and other dangerous schemes (already covered above)
     } catch {
       return { ok: false, status: 0, data: "", error: "Invalid URL" };
+    }
+
+    // Check URL against allowed hosts (known providers + custom allowedHosts)
+    if (!isAllowedFetchUrl(url, allowedHosts)) {
+      return { ok: false, status: 0, data: "", error: "URL host is not in the allowed list" };
     }
 
     return new Promise((resolve) => {
@@ -867,6 +883,24 @@ function registerHandlers(ipcMain) {
       const shellEnv = await getShellEnv();
       const stdinMode = closeStdin ? "ignore" : "pipe";
 
+      // Blocklist of dangerous environment variable names that could be used for code injection
+      const DANGEROUS_ENV_KEYS = new Set([
+        "LD_PRELOAD", "LD_LIBRARY_PATH",
+        "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
+        "NODE_OPTIONS", "ELECTRON_RUN_AS_NODE",
+        "PYTHONPATH", "RUBYLIB", "PERL5LIB",
+      ]);
+
+      // Filter dangerous keys from user-provided env before merging
+      const filteredUserEnv = {};
+      if (env && typeof env === "object") {
+        for (const [k, v] of Object.entries(env)) {
+          if (!DANGEROUS_ENV_KEYS.has(k)) {
+            filteredUserEnv[k] = v;
+          }
+        }
+      }
+
       // Only pass safe environment variables to agent processes
       const SAFE_ENV_KEYS = new Set([
         "PATH", "HOME", "USER", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
@@ -882,18 +916,18 @@ function registerHandlers(ipcMain) {
 
       const proc = spawn(command, args || [], {
         stdio: [stdinMode, "pipe", "pipe"],
-        env: { ...env, ...safeEnv },
+        env: { ...filteredUserEnv, ...safeEnv },
       });
 
       proc.stdout.on("data", (data) => {
-        event.sender.send("netcatty:ai:agent:stdout", {
+        safeSend(event.sender, "netcatty:ai:agent:stdout", {
           agentId,
           data: data.toString(),
         });
       });
 
       proc.stderr.on("data", (data) => {
-        event.sender.send("netcatty:ai:agent:stderr", {
+        safeSend(event.sender, "netcatty:ai:agent:stderr", {
           agentId,
           data: data.toString(),
         });
@@ -901,12 +935,12 @@ function registerHandlers(ipcMain) {
 
       proc.on("exit", (code) => {
         agentProcesses.delete(agentId);
-        event.sender.send("netcatty:ai:agent:exit", { agentId, code });
+        safeSend(event.sender, "netcatty:ai:agent:exit", { agentId, code });
       });
 
       proc.on("error", (err) => {
         agentProcesses.delete(agentId);
-        event.sender.send("netcatty:ai:agent:error", {
+        safeSend(event.sender, "netcatty:ai:agent:error", {
           agentId,
           error: err.message,
         });
@@ -1025,7 +1059,7 @@ function registerHandlers(ipcMain) {
             invalidateCodexValidationCache();
           }
 
-          event.sender.send("netcatty:ai:acp:error", {
+          safeSend(event.sender, "netcatty:ai:acp:error", {
             requestId,
             error: `Codex ChatGPT login is stale or invalid. Reconnect Codex in Settings -> AI.\n\nDetails: ${validation.error || "Unknown authentication error"}`,
           });
@@ -1143,7 +1177,7 @@ function registerHandlers(ipcMain) {
         if (stallTimer) clearTimeout(stallTimer);
         stallTimer = setTimeout(() => {
           if (!abortController.signal.aborted) {
-            event.sender.send("netcatty:ai:acp:event", {
+            safeSend(event.sender, "netcatty:ai:acp:event", {
               requestId,
               event: { type: "status", message: "Waiting for response from agent..." },
             });
@@ -1163,7 +1197,7 @@ function registerHandlers(ipcMain) {
             if (serialized.type === "text-delta" || serialized.type === "reasoning-delta" || serialized.type === "tool-call") {
               hasContent = true;
             }
-            event.sender.send("netcatty:ai:acp:event", {
+            safeSend(event.sender, "netcatty:ai:acp:event", {
               requestId,
               event: serialized,
             });
@@ -1178,14 +1212,14 @@ function registerHandlers(ipcMain) {
 
       // If stream completed with zero content, likely an auth or connection issue
       if (!hasContent && !abortController.signal.aborted) {
-        event.sender.send("netcatty:ai:acp:error", {
+        safeSend(event.sender, "netcatty:ai:acp:error", {
           requestId,
           error: isCodexAgent
             ? "Codex returned an empty response. Connect Codex in Settings -> AI, or configure an enabled OpenAI provider API key."
             : "Agent returned an empty response.",
         });
       } else {
-        event.sender.send("netcatty:ai:acp:done", { requestId });
+        safeSend(event.sender, "netcatty:ai:acp:done", { requestId });
       }
     } catch (err) {
       console.error("[ACP] Handler caught error:", err?.message || err, err?.stack?.split("\n").slice(0, 3).join("\n"));
@@ -1198,7 +1232,7 @@ function registerHandlers(ipcMain) {
         cleanupAcpProvider(chatSessionId);
       }
 
-      event.sender.send("netcatty:ai:acp:error", {
+      safeSend(event.sender, "netcatty:ai:acp:error", {
         requestId,
         error: isAuthErr
           ? `Authentication failed. Connect Codex in Settings -> AI, or configure an enabled OpenAI provider API key.\n\nDetails: ${errMsg}`

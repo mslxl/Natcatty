@@ -48,14 +48,18 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
       <ConversationContent className="gap-1.5 px-4 py-2">
         {visibleMessages.map((message) => {
           if (message.role === 'tool') {
-            return message.toolResults?.map((tr) => (
-              <ToolCall
-                key={tr.toolCallId}
-                name={tr.toolCallId}
-                result={tr.content}
-                isError={tr.isError}
-              />
-            ));
+            return (
+              <React.Fragment key={message.id}>
+                {message.toolResults?.map((tr) => (
+                  <ToolCall
+                    key={tr.toolCallId}
+                    name={tr.toolCallId}
+                    result={tr.content}
+                    isError={tr.isError}
+                  />
+                ))}
+              </React.Fragment>
+            );
           }
 
           const isUser = message.role === 'user';

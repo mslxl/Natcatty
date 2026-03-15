@@ -164,6 +164,24 @@ function getSessionMeta(sessionId, chatSessionId) {
   return null;
 }
 
+/**
+ * Run an array of async task factories with a concurrency limit.
+ */
+async function limitConcurrency(tasks, limit) {
+  const results = [];
+  const executing = new Set();
+  for (let i = 0; i < tasks.length; i++) {
+    const task = tasks[i];
+    const p = task().then(r => { results[i] = r; }).finally(() => executing.delete(p));
+    executing.add(p);
+    if (executing.size >= limit) {
+      await Promise.race(executing);
+    }
+  }
+  await Promise.all(executing);
+  return results;
+}
+
 function checkCommandSafety(command) {
   for (const pattern of commandBlocklist) {
     try {
@@ -671,15 +689,16 @@ async function handleMultiExec(params) {
       if (!result.ok && stopOnError) break;
     }
   } else {
-    const promises = sessionIds.map(async (sid) => {
-      const result = await handleExec({ sessionId: sid, command });
-      return {
+    // Parallel execution with concurrency limit
+    const tasks = sessionIds.map((sid) => () => {
+      return handleExec({ sessionId: sid, command }).then(result => ({
         sid,
         ok: result.ok,
         output: result.ok ? (result.stdout || "(no output)") : `Error: ${result.error || result.stderr || "Failed"}`,
-      };
+      }));
     });
-    for (const r of await Promise.all(promises)) {
+    const resolved = await limitConcurrency(tasks, 10);
+    for (const r of resolved) {
       results[r.sid] = { ok: r.ok, output: r.output };
     }
   }

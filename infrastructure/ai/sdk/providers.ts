@@ -27,6 +27,7 @@ interface BridgeAPI {
   onAiStreamData(requestId: string, cb: (data: string) => void): () => void;
   onAiStreamEnd(requestId: string, cb: () => void): () => void;
   onAiStreamError(requestId: string, cb: (error: string) => void): () => void;
+  aiChatCancel(requestId: string): Promise<boolean>;
 }
 
 function getBridge(): BridgeAPI | null {
@@ -149,7 +150,7 @@ export function createBridgeFetchForSDK(): typeof globalThis.fetch {
               'abort',
               () => {
                 // Send cancel signal
-                bridge.aiChatStream(requestId, '', {}, '').catch(() => {});
+                bridge.aiChatCancel(requestId).catch(() => {});
                 controller.error(new DOMException('Aborted', 'AbortError'));
                 cleanup();
               },

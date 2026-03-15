@@ -216,12 +216,18 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   // Remove provider with confirmation
   const handleRemoveProvider = useCallback(
     (id: string) => {
+      const provider = providers.find((p) => p.id === id);
+      const name = provider?.name || id;
+      const ok = window.confirm(
+        t('confirm.removeProvider', { name }),
+      );
+      if (!ok) return;
       removeProvider(id);
       if (editingProviderId === id) {
         setEditingProviderId(null);
       }
     },
-    [removeProvider, editingProviderId],
+    [removeProvider, editingProviderId, providers, t],
   );
 
   // Agent options for default agent

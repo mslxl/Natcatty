@@ -50,6 +50,7 @@ const en: Messages = {
   // Dialogs / prompts
   'confirm.deleteHost': 'Delete Host "{name}"?',
   'confirm.deleteIdentity': 'Delete Identity "{name}"?',
+  'confirm.removeProvider': 'Remove provider "{name}"?',
   'dialog.createWorkspace.title': 'Create Workspace',
   'dialog.renameWorkspace.title': 'Rename workspace',
   'dialog.renameSession.title': 'Rename session',

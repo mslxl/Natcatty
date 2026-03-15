@@ -6,6 +6,23 @@ import type { AIPermissionMode } from '../types';
 import { shellQuote } from '../shellQuote';
 
 /**
+ * Run an array of async task factories with a concurrency limit.
+ */
+async function limitConcurrency<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
+  const results: T[] = [];
+  const executing = new Set<Promise<void>>();
+  for (const [i, task] of tasks.entries()) {
+    const p: Promise<void> = task().then(r => { results[i] = r; }).finally(() => executing.delete(p));
+    executing.add(p);
+    if (executing.size >= limit) {
+      await Promise.race(executing);
+    }
+  }
+  await Promise.all(executing);
+  return results;
+}
+
+/**
  * Create Catty Agent tools using the Vercel AI SDK `tool()` helper with zod schemas.
  *
  * @param bridge  - The Electron IPC bridge for executing operations
@@ -93,6 +110,10 @@ export function createCattyTools(
         if (scopeErr) return { error: scopeErr };
         if (isObserver) {
           return { error: 'Observer mode: terminal input is disabled. Switch to Confirm or Auto mode.' };
+        }
+        const safety = checkCommandSafety(input, commandBlocklist);
+        if (safety.blocked) {
+          return { error: `Input blocked by safety policy. Matched pattern: ${safety.matchedPattern}` };
         }
         const result = await bridge.aiTerminalWrite(sessionId, input);
         if (!result.ok) {
@@ -289,20 +310,19 @@ export function createCattyTools(
             if (!result.ok && stopOnError) break;
           }
         } else {
-          // Parallel execution
-          const promises = sessionIds.map(async (sid) => {
+          // Parallel execution with concurrency limit
+          const tasks = sessionIds.map((sid) => () => {
             const session = context.sessions.find((s) => s.sessionId === sid);
             const label = session?.label || sid;
-            const result = await bridge.aiExec(sid, command);
-            return {
+            return bridge.aiExec(sid, command).then(result => ({
               label,
               ok: result.ok,
               output: result.ok
                 ? result.stdout || '(no output)'
                 : `Error: ${result.error || result.stderr || 'Failed'}`,
-            };
+            }));
           });
-          const resolved = await Promise.all(promises);
+          const resolved = await limitConcurrency(tasks, 10);
           for (const r of resolved) {
             results[r.label] = { ok: r.ok, output: r.output };
           }

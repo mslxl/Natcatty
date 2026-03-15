@@ -101,6 +101,11 @@ export function useAIState() {
   const [sessions, setSessionsRaw] = useState<AISession[]>(() =>
     localStorageAdapter.read<AISession[]>(STORAGE_KEY_AI_SESSIONS) ?? []
   );
+  // Ref that always holds the latest sessions for use inside debounced callbacks
+  const sessionsRef = useRef(sessions);
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
   // Per-scope active session: keyed by `${scopeType}:${scopeTargetId}`
   const [activeSessionIdMap, setActiveSessionIdMapRaw] = useState<Record<string, string | null>>({});
 
@@ -272,10 +277,10 @@ export function useAIState() {
   // Debounced version of persistSessions for high-frequency updates (e.g. streaming)
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const debouncedPersistSessions = useCallback((sessionsToSave: AISession[]) => {
+  const debouncedPersistSessions = useCallback(() => {
     if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
     persistTimerRef.current = setTimeout(() => {
-      localStorageAdapter.write(STORAGE_KEY_AI_SESSIONS, pruneSessionsForStorage(sessionsToSave));
+      localStorageAdapter.write(STORAGE_KEY_AI_SESSIONS, pruneSessionsForStorage(sessionsRef.current));
       persistTimerRef.current = null;
     }, 500);
   }, []);
@@ -384,7 +389,7 @@ export function useAIState() {
         msgs[msgs.length - 1] = updater(msgs[msgs.length - 1]);
         return { ...s, messages: msgs, updatedAt: Date.now() };
       });
-      debouncedPersistSessions(next);
+      debouncedPersistSessions();
       return next;
     });
   }, [debouncedPersistSessions]);

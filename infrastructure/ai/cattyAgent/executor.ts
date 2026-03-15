@@ -3,6 +3,23 @@ import { checkCommandSafety } from './safety';
 import { shellQuote } from '../shellQuote';
 
 /**
+ * Run an array of async task factories with a concurrency limit.
+ */
+async function limitConcurrency<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
+  const results: T[] = [];
+  const executing = new Set<Promise<void>>();
+  for (const [i, task] of tasks.entries()) {
+    const p: Promise<void> = task().then(r => { results[i] = r; }).finally(() => executing.delete(p));
+    executing.add(p);
+    if (executing.size >= limit) {
+      await Promise.race(executing);
+    }
+  }
+  await Promise.all(executing);
+  return results;
+}
+
+/**
  * Bridge interface for Catty Agent to interact with the Electron main process.
  * This mirrors the AI-related subset of window.netcatty from electron/preload.cjs.
  */
@@ -67,6 +84,15 @@ export function createToolExecutor(
   commandBlocklist?: string[],
   permissionMode: AIPermissionMode = 'confirm',
 ): (toolCall: ToolCall) => Promise<ToolResult> {
+  /** Validate that the given sessionId belongs to the current scope. */
+  function validateSessionScope(sessionId: string): string | null {
+    const validSessionIds = new Set(context.sessions.map(s => s.sessionId));
+    if (!validSessionIds.has(sessionId)) {
+      return `Session "${sessionId}" is not in the current scope. Available sessions: ${[...validSessionIds].join(', ')}`;
+    }
+    return null;
+  }
+
   return async (toolCall: ToolCall): Promise<ToolResult> => {
     if (!bridge) {
       return {
@@ -87,6 +113,14 @@ export function createToolExecutor(
             return {
               toolCallId: toolCall.id,
               content: 'Missing sessionId or command',
+              isError: true,
+            };
+          }
+          const execScopeErr = validateSessionScope(sessionId);
+          if (execScopeErr) {
+            return {
+              toolCallId: toolCall.id,
+              content: execScopeErr,
               isError: true,
             };
           }
@@ -136,6 +170,29 @@ export function createToolExecutor(
               isError: true,
             };
           }
+          const inputScopeErr = validateSessionScope(sessionId);
+          if (inputScopeErr) {
+            return {
+              toolCallId: toolCall.id,
+              content: inputScopeErr,
+              isError: true,
+            };
+          }
+          if (permissionMode === 'observer') {
+            return {
+              toolCallId: toolCall.id,
+              content: 'Observer mode: terminal input is disabled. Switch to Confirm or Auto mode.',
+              isError: true,
+            };
+          }
+          const inputSafety = checkCommandSafety(input, commandBlocklist);
+          if (inputSafety.blocked) {
+            return {
+              toolCallId: toolCall.id,
+              content: `Input blocked by safety policy. Matched pattern: ${inputSafety.matchedPattern}`,
+              isError: true,
+            };
+          }
           const result = await bridge.aiTerminalWrite(sessionId, input);
           if (!result.ok) {
             return {
@@ -153,6 +210,14 @@ export function createToolExecutor(
         case 'sftp_list_directory': {
           const sessionId = String(args.sessionId || '');
           const path = String(args.path || '/');
+          const sftpListScopeErr = validateSessionScope(sessionId);
+          if (sftpListScopeErr) {
+            return {
+              toolCallId: toolCall.id,
+              content: sftpListScopeErr,
+              isError: true,
+            };
+          }
           // Find the SFTP connection for this session
           const session = context.sessions.find(
             (s) => s.sessionId === sessionId,
@@ -182,6 +247,14 @@ export function createToolExecutor(
             return {
               toolCallId: toolCall.id,
               content: 'Missing sessionId or path',
+              isError: true,
+            };
+          }
+          const sftpReadScopeErr = validateSessionScope(sessionId);
+          if (sftpReadScopeErr) {
+            return {
+              toolCallId: toolCall.id,
+              content: sftpReadScopeErr,
               isError: true,
             };
           }
@@ -218,6 +291,14 @@ export function createToolExecutor(
             return {
               toolCallId: toolCall.id,
               content: 'Missing sessionId or path',
+              isError: true,
+            };
+          }
+          const sftpWriteScopeErr = validateSessionScope(sessionId);
+          if (sftpWriteScopeErr) {
+            return {
+              toolCallId: toolCall.id,
+              content: sftpWriteScopeErr,
               isError: true,
             };
           }
@@ -303,6 +384,16 @@ export function createToolExecutor(
               isError: true,
             };
           }
+          // Validate all session IDs belong to current scope
+          const validIds = new Set(context.sessions.map(s => s.sessionId));
+          const outOfScope = sessionIds.filter(sid => !validIds.has(sid));
+          if (outOfScope.length > 0) {
+            return {
+              toolCallId: toolCall.id,
+              content: `Sessions not in current scope: ${outOfScope.join(', ')}. Available sessions: ${[...validIds].join(', ')}`,
+              isError: true,
+            };
+          }
           if (permissionMode === 'observer') {
             return {
               toolCallId: toolCall.id,
@@ -337,22 +428,21 @@ export function createToolExecutor(
               if (!result.ok && stopOnError) break;
             }
           } else {
-            // Parallel execution
-            const promises = sessionIds.map(async (sid) => {
+            // Parallel execution with concurrency limit
+            const tasks = sessionIds.map((sid) => () => {
               const session = context.sessions.find(
                 (s) => s.sessionId === sid,
               );
               const label = session?.label || sid;
-              const result = await bridge.aiExec(sid, command);
-              return {
+              return bridge.aiExec(sid, command).then(result => ({
                 label,
                 ok: result.ok,
                 output: result.ok
                   ? result.stdout || '(no output)'
                   : `Error: ${result.error || result.stderr || 'Failed'}`,
-              };
+              }));
             });
-            const resolved = await Promise.all(promises);
+            const resolved = await limitConcurrency(tasks, 10);
             for (const r of resolved) {
               results[r.label] = { ok: r.ok, output: r.output };
             }

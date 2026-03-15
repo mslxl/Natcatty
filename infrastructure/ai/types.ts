@@ -176,15 +176,18 @@ export interface AISettings {
 }
 
 export const DEFAULT_COMMAND_BLOCKLIST = [
-  'rm\\s+-rf\\s+/',
-  'mkfs\\.',
-  'dd\\s+if=.*\\s+of=/dev/',
-  '(shutdown|reboot|poweroff|halt)\\b',
+  // rm with recursive+force in any order/form targeting root
+  '\\brm\\s+(-[a-zA-Z]*r[a-zA-Z]*\\s+(-[a-zA-Z]*f[a-zA-Z]*\\s+)?|-[a-zA-Z]*f[a-zA-Z]*\\s+(-[a-zA-Z]*r[a-zA-Z]*\\s+)?|--recursive\\s+|--force\\s+){1,}/',
+  '\\bmkfs\\.',
+  '\\bdd\\s+if=.*\\s+of=/dev/',
+  '\\b(shutdown|reboot|poweroff|halt)\\b',
   ':\\(\\)\\{\\s*:\\|:\\&\\s*\\};:',  // fork bomb
   '>\\s*/dev/sd',
-  'chmod\\s+-R\\s+777\\s+/',
-  'mv\\s+/\\s',
+  '\\bchmod\\s+(-[a-zA-Z]*R[a-zA-Z]*|--recursive)\\s+777\\s+/',
+  '\\bmv\\s+/\\s',
   ':\\s*>\\s*/etc/',
+  '\\bcurl\\s+.*\\|\\s*\\bsudo\\s+\\bbash\\b',  // piped install with sudo
+  '\\bwget\\s+.*\\|\\s*\\bsudo\\s+\\bbash\\b',
 ];
 
 export const DEFAULT_AI_SETTINGS: AISettings = {

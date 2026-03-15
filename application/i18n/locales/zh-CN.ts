@@ -37,6 +37,7 @@ const zhCN: Messages = {
   // Dialogs / prompts
   'confirm.deleteHost': '删除主机 "{name}"？',
   'confirm.deleteIdentity': '删除身份 "{name}"？',
+  'confirm.removeProvider': '移除提供商 "{name}"？',
   'dialog.renameWorkspace.title': '重命名工作区',
   'dialog.renameSession.title': '重命名会话',
   'field.name': '名称',
