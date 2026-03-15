@@ -57,7 +57,7 @@ export const ProviderConfigForm: React.FC<{
     }
 
     onSave(updates);
-  }, [form, onSave]);
+  }, [form, onSave, isCustom]);
 
   return (
     <div className="mt-3 space-y-3 border-t border-border/40 pt-3">

@@ -212,9 +212,10 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
 
   // Abort all active streams on unmount
   useEffect(() => {
+    const controllers = abortControllersRef.current;
     return () => {
-      abortControllersRef.current.forEach(c => c.abort());
-      abortControllersRef.current.clear();
+      controllers.forEach(c => c.abort());
+      controllers.clear();
     };
   }, []);
 

@@ -964,7 +964,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       };
     });
     return result;
-  }, [sessions, hosts, activeWorkspace, activeSession, activeTabId, workspaces]);
+  }, [sessions, hosts, activeWorkspace, activeSession]);
 
   // Subscribe to custom theme changes so editing triggers re-render
   const customThemes = useCustomThemes();

@@ -6,7 +6,7 @@
  * and a bottom toolbar with muted controls + subtle send button.
  */
 
-import { AtSign, Check, ChevronDown, ChevronRight, Cpu, Expand, Eye, FileText, ImageIcon, Plus, Shield, ShieldCheck, X, Zap } from 'lucide-react';
+import { AtSign, Check, ChevronDown, ChevronRight, Cpu, Expand, Eye, FileText, ImageIcon, Plus, ShieldCheck, X, Zap } from 'lucide-react';
 import React, { useCallback, useRef, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { createPortal } from 'react-dom';

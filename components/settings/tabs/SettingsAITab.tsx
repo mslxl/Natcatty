@@ -236,7 +236,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     ...externalAgents
       .filter((a) => a.enabled)
       .map((a) => ({ value: a.id, label: a.name, icon: <AgentIconBadge agent={a} size="xs" variant="plain" /> })),
-  ], [externalAgents]);
+  ], [externalAgents, t]);
 
   const hasOpenAiProviderKey = providers.some(
     (provider) => provider.providerId === "openai" && provider.enabled && !!provider.apiKey,
