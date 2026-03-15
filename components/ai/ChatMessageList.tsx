@@ -159,4 +159,38 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
   );
 };
 
-export default React.memo(ChatMessageList);
+function areMessagesEqual(prev: ChatMessageListProps, next: ChatMessageListProps): boolean {
+  if (prev.isStreaming !== next.isStreaming) return false;
+  if (prev.onApprove !== next.onApprove) return false;
+  if (prev.onReject !== next.onReject) return false;
+  if (prev.messages.length !== next.messages.length) return false;
+  if (prev.messages === next.messages) return true;
+
+  // Shallow-compare each message by reference
+  for (let i = 0; i < prev.messages.length; i++) {
+    if (prev.messages[i] !== next.messages[i]) {
+      // For the last message during streaming, compare by content to avoid
+      // re-renders when only the array reference changed but content is the same
+      const p = prev.messages[i];
+      const n = next.messages[i];
+      if (
+        p.id !== n.id ||
+        p.content !== n.content ||
+        p.thinking !== n.thinking ||
+        p.role !== n.role ||
+        p.statusText !== n.statusText ||
+        p.executionStatus !== n.executionStatus ||
+        p.pendingApproval !== n.pendingApproval ||
+        p.errorInfo !== n.errorInfo ||
+        p.toolCalls !== n.toolCalls ||
+        p.toolResults !== n.toolResults
+      ) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+export default React.memo(ChatMessageList, areMessagesEqual);

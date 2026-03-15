@@ -342,15 +342,16 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
               addMessageToSession(streamSessionId, {
                 id: generateId(),
                 role: 'assistant',
-                content: '',
+                content: text,
                 timestamp: Date.now(),
               });
               lastAddedRole = 'assistant';
+            } else {
+              updateLastMessage(streamSessionId, msg => ({
+                ...msg,
+                content: msg.content + text,
+              }));
             }
-            updateLastMessage(streamSessionId, msg => ({
-              ...msg,
-              content: msg.content + text,
-            }));
           }
           break;
         }
@@ -364,14 +365,16 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
                 id: generateId(),
                 role: 'assistant',
                 content: '',
+                thinking: rText,
                 timestamp: Date.now(),
               });
               lastAddedRole = 'assistant';
+            } else {
+              updateLastMessage(streamSessionId, msg => ({
+                ...msg,
+                thinking: (msg.thinking || '') + rText,
+              }));
             }
-            updateLastMessage(streamSessionId, msg => ({
-              ...msg,
-              thinking: (msg.thinking || '') + rText,
-            }));
           }
           break;
         }
@@ -395,6 +398,11 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           }));
           break;
         case 'tool-result': {
+          // Mark the assistant message's tool execution as completed (mirrors external agent path)
+          updateLastMessage(streamSessionId, msg =>
+            msg.role === 'assistant' && msg.executionStatus === 'running'
+              ? { ...msg, executionStatus: 'completed' } : msg,
+          );
           const toolOutput = (chunk as unknown as { output?: unknown; result?: unknown }).output ?? (chunk as unknown as { result?: unknown }).result;
           addMessageToSession(streamSessionId, {
             id: generateId(),
@@ -801,7 +809,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
 
     const abortController = new AbortController();
     abortControllersRef.current.set(sessionId, abortController);
-    const currentSession = sessions.find(s => s.id === sessionId);
+    const currentSession = sessionsRef.current.find(s => s.id === sessionId);
 
     if (isExternalAgent) {
       if (!agentConfig) {
@@ -822,7 +830,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     }
   }, [
     isStreaming, activeProvider, scopeKey, currentAgentId,
-    activeModelId, sessions, externalAgents,
+    activeModelId, externalAgents,
     ensureSession, addMessageToSession, updateLastMessage,
     setStreamingForScope, setInputValue, clearImages,
     sendToExternalAgent, sendToCattyAgent, reportStreamError, autoTitleSession, t,

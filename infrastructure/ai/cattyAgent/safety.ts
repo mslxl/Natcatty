@@ -28,7 +28,7 @@ export function detectDoomLoop(
   recentToolCalls: Array<{ name: string; arguments: Record<string, unknown> }>,
   maxRepeats: number = 3,
 ): boolean {
-  if (recentToolCalls.length < maxRepeats * 2) return false;
+  if (recentToolCalls.length < maxRepeats) return false;
 
   // Check if the last N tool calls are identical
   const lastN = recentToolCalls.slice(-maxRepeats);

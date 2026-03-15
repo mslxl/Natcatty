@@ -37,6 +37,51 @@ const SCOPED_SESSION_IDS = process.env.NETCATTY_MCP_SESSION_IDS != null
 // Chat session ID for per-scope metadata isolation
 const CHAT_SESSION_ID = process.env.NETCATTY_MCP_CHAT_SESSION_ID || null;
 
+// Permission mode: 'observer' | 'confirm' | 'autonomous' (defense-in-depth, TCP bridge also checks)
+const PERMISSION_MODE = process.env.NETCATTY_MCP_PERMISSION_MODE || "confirm";
+
+// Default command blocklist (defense-in-depth, TCP bridge also checks)
+const DEFAULT_COMMAND_BLOCKLIST = [
+  '\\brm\\s+(-[a-zA-Z]*r[a-zA-Z]*\\s+(-[a-zA-Z]*f[a-zA-Z]*\\s+)?|-[a-zA-Z]*f[a-zA-Z]*\\s+(-[a-zA-Z]*r[a-zA-Z]*\\s+)?|--recursive\\s+|--force\\s+){1,}',
+  '\\bmkfs\\.',
+  '\\bdd\\s+if=.*\\s+of=/dev/',
+  '\\b(shutdown|reboot|poweroff|halt)\\b',
+  ':\\(\\)\\{\\s*:\\|:\\&\\s*\\};:',
+  '>\\s*/dev/sd',
+  '\\bchmod\\s+(-[a-zA-Z]*R[a-zA-Z]*|--recursive)\\s+777\\s+/',
+  '\\bmv\\s+/\\s',
+  ':\\s*>\\s*/etc/',
+  '\\bcurl\\s+.*\\|\\s*\\bsudo\\s+\\bbash\\b',
+  '\\bwget\\s+.*\\|\\s*\\bsudo\\s+\\bbash\\b',
+];
+
+function checkCommandSafety(command) {
+  for (const pattern of DEFAULT_COMMAND_BLOCKLIST) {
+    try {
+      if (new RegExp(pattern, "i").test(command)) {
+        return { blocked: true, matchedPattern: pattern };
+      }
+    } catch {
+      // Skip invalid patterns
+    }
+  }
+  return { blocked: false };
+}
+
+/** Guard for write tools: blocks in observer mode, checks command safety for commands. */
+function guardWriteOperation(command) {
+  if (PERMISSION_MODE === "observer") {
+    return 'Operation denied: permission mode is "observer" (read-only). Change to "confirm" or "autonomous" in Settings → AI → Safety to allow this action.';
+  }
+  if (command) {
+    const safety = checkCommandSafety(command);
+    if (safety.blocked) {
+      return `Command blocked by safety policy. Pattern: ${safety.matchedPattern}`;
+    }
+  }
+  return null;
+}
+
 let tcpSocket = null;
 let pendingRequests = new Map(); // id -> { resolve, reject }
 let nextRpcId = 1;
@@ -158,6 +203,10 @@ server.tool(
     command: z.string().describe("The shell command to execute on the remote host."),
   },
   async ({ sessionId, command }) => {
+    const guardErr = guardWriteOperation(command);
+    if (guardErr) {
+      return { content: [{ type: "text", text: `Error: ${guardErr}` }], isError: true };
+    }
     const result = await rpcCall("netcatty/exec", { sessionId, command });
     if (!result.ok) {
       return { content: [{ type: "text", text: `Error: ${result.error || "Command failed"}` }], isError: true };
@@ -179,6 +228,10 @@ server.tool(
     input: z.string().describe("The raw input string. Use escape sequences for special keys (e.g. \\x03 for ctrl+c, \\n for enter)."),
   },
   async ({ sessionId, input }) => {
+    const guardErr = guardWriteOperation(input);
+    if (guardErr) {
+      return { content: [{ type: "text", text: `Error: ${guardErr}` }], isError: true };
+    }
     const result = await rpcCall("netcatty/terminalWrite", { sessionId, input });
     if (!result.ok) {
       return { content: [{ type: "text", text: `Error: ${result.error}` }], isError: true };
@@ -232,6 +285,10 @@ server.tool(
     content: z.string().describe("The text content to write to the file."),
   },
   async ({ sessionId, path, content }) => {
+    const guardErr = guardWriteOperation();
+    if (guardErr) {
+      return { content: [{ type: "text", text: `Error: ${guardErr}` }], isError: true };
+    }
     const result = await rpcCall("netcatty/sftpWrite", { sessionId, path, content });
     if (result.error) {
       return { content: [{ type: "text", text: `Error: ${result.error}` }], isError: true };
@@ -249,6 +306,10 @@ server.tool(
     path: z.string().describe("The absolute path of the directory to create."),
   },
   async ({ sessionId, path }) => {
+    const guardErr = guardWriteOperation();
+    if (guardErr) {
+      return { content: [{ type: "text", text: `Error: ${guardErr}` }], isError: true };
+    }
     const result = await rpcCall("netcatty/sftpMkdir", { sessionId, path });
     if (result.error) {
       return { content: [{ type: "text", text: `Error: ${result.error}` }], isError: true };
@@ -266,6 +327,10 @@ server.tool(
     path: z.string().describe("The absolute path of the file or directory to delete."),
   },
   async ({ sessionId, path }) => {
+    const guardErr = guardWriteOperation();
+    if (guardErr) {
+      return { content: [{ type: "text", text: `Error: ${guardErr}` }], isError: true };
+    }
     const result = await rpcCall("netcatty/sftpRemove", { sessionId, path });
     if (result.error) {
       return { content: [{ type: "text", text: `Error: ${result.error}` }], isError: true };
@@ -284,6 +349,10 @@ server.tool(
     newPath: z.string().describe("The new absolute path."),
   },
   async ({ sessionId, oldPath, newPath }) => {
+    const guardErr = guardWriteOperation();
+    if (guardErr) {
+      return { content: [{ type: "text", text: `Error: ${guardErr}` }], isError: true };
+    }
     const result = await rpcCall("netcatty/sftpRename", { sessionId, oldPath, newPath });
     if (result.error) {
       return { content: [{ type: "text", text: `Error: ${result.error}` }], isError: true };
@@ -320,6 +389,10 @@ server.tool(
     stopOnError: z.boolean().optional().default(false).describe("In sequential mode, stop on first failure."),
   },
   async ({ sessionIds, command, mode, stopOnError }) => {
+    const guardErr = guardWriteOperation(command);
+    if (guardErr) {
+      return { content: [{ type: "text", text: `Error: ${guardErr}` }], isError: true };
+    }
     const result = await rpcCall("netcatty/multiExec", { sessionIds, command, mode, stopOnError });
     if (result.error) {
       return { content: [{ type: "text", text: `Error: ${result.error}` }], isError: true };

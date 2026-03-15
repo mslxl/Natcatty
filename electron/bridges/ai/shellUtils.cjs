@@ -57,6 +57,11 @@ function extractFirstNonLocalhostUrl(output) {
 // ── CLI / path helpers ──
 
 function resolveCliFromPath(command, shellEnv) {
+  // Validate command: only allow valid binary names (alphanumeric, hyphens, underscores, dots)
+  if (!command || !/^[a-zA-Z0-9._-]+$/.test(command)) {
+    return null;
+  }
+
   if (shellEnv) {
     try {
       const whichCmd = process.platform === "win32" ? "where" : "which";

@@ -735,6 +735,9 @@ function buildMcpServerConfig(port, scopedSessionIds, chatSessionId) {
     env.push({ name: "NETCATTY_MCP_CHAT_SESSION_ID", value: chatSessionId });
   }
 
+  // Pass permission mode so MCP server can enforce it locally (defense-in-depth)
+  env.push({ name: "NETCATTY_MCP_PERMISSION_MODE", value: permissionMode });
+
   return {
     name: "netcatty-remote-hosts",
     type: "stdio",

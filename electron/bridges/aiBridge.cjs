@@ -202,6 +202,28 @@ function streamRequest(url, options, event, requestId) {
 }
 
 function registerHandlers(ipcMain) {
+  // URL allowlist: only permit requests to known AI provider domains + HTTPS
+  const ALLOWED_FETCH_HOSTS = new Set([
+    "api.openai.com",
+    "api.anthropic.com",
+    "generativelanguage.googleapis.com",
+    "openrouter.ai",
+  ]);
+  function isAllowedFetchUrl(urlString) {
+    try {
+      const parsed = new URL(urlString);
+      // Always allow localhost/127.0.0.1 (e.g. Ollama)
+      if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") return true;
+      // Require HTTPS for remote hosts
+      if (parsed.protocol !== "https:") return false;
+      // Check known provider allowlist
+      if (ALLOWED_FETCH_HOSTS.has(parsed.hostname)) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
   // Start a streaming chat request (proxied through main process)
   ipcMain.handle("netcatty:ai:chat:stream", async (event, { requestId, url, headers, body }) => {
     try {
@@ -217,6 +239,11 @@ function registerHandlers(ipcMain) {
         }
       } catch {
         return { ok: false, error: "Invalid URL" };
+      }
+
+      // Check URL against allowed hosts (same as netcatty:ai:fetch)
+      if (!isAllowedFetchUrl(url)) {
+        return { ok: false, error: "URL host is not in the allowed list" };
       }
 
       await streamRequest(url, { method: "POST", headers, body }, event, requestId);
@@ -238,33 +265,7 @@ function registerHandlers(ipcMain) {
   });
 
   // Non-streaming request (for model listing, validation, etc.)
-  // URL allowlist: only permit requests to known AI provider domains + HTTPS
-  const ALLOWED_FETCH_HOSTS = new Set([
-    "api.openai.com",
-    "api.anthropic.com",
-    "generativelanguage.googleapis.com",
-    "openrouter.ai",
-  ]);
-  function isAllowedFetchUrl(urlString, allowedHosts) {
-    try {
-      const parsed = new URL(urlString);
-      // Always allow localhost/127.0.0.1 (e.g. Ollama)
-      if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") return true;
-      // Require HTTPS for remote hosts
-      if (parsed.protocol !== "https:") return false;
-      // Check known provider allowlist
-      if (ALLOWED_FETCH_HOSTS.has(parsed.hostname)) return true;
-      // For custom providers, validate against caller-supplied allowed hosts
-      if (Array.isArray(allowedHosts) && allowedHosts.length > 0) {
-        return allowedHosts.includes(parsed.hostname);
-      }
-      return false;
-    } catch {
-      return false;
-    }
-  }
-
-  ipcMain.handle("netcatty:ai:fetch", async (_event, { url, method, headers, body, allowedHosts }) => {
+  ipcMain.handle("netcatty:ai:fetch", async (_event, { url, method, headers, body }) => {
     // Validate URL: block non-HTTP(S) schemes and internal network access
     try {
       const parsed = new URL(url);
@@ -276,8 +277,8 @@ function registerHandlers(ipcMain) {
       return { ok: false, status: 0, data: "", error: "Invalid URL" };
     }
 
-    // Check URL against allowed hosts (known providers + custom allowedHosts)
-    if (!isAllowedFetchUrl(url, allowedHosts)) {
+    // Check URL against allowed hosts (server-side allowlist only)
+    if (!isAllowedFetchUrl(url)) {
       return { ok: false, status: 0, data: "", error: "URL host is not in the allowed list" };
     }
 
@@ -362,6 +363,12 @@ function registerHandlers(ipcMain) {
 
   // Write to terminal session (send input like a user typing)
   ipcMain.handle("netcatty:ai:terminal:write", async (_event, { sessionId, data }) => {
+    // Check input against safety blocklist before writing
+    const safety = mcpServerBridge.checkCommandSafety(data);
+    if (safety.blocked) {
+      return { ok: false, error: `Input blocked by safety policy. Pattern: ${safety.matchedPattern}` };
+    }
+
     const session = sessions?.get(sessionId);
     if (!session) {
       return { ok: false, error: "Session not found" };

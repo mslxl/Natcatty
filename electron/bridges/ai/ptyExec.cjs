@@ -36,6 +36,7 @@ function execViaPty(ptyStream, command, options) {
     let output = "";
     let foundStart = false;
     let timeoutId = null;
+    let finished = false;
 
     const onData = (data) => {
       const text = data.toString();
@@ -72,6 +73,8 @@ function execViaPty(ptyStream, command, options) {
     }
 
     function finish(stdout, exitCode) {
+      if (finished) return;
+      finished = true;
       clearTimeout(timeoutId);
       ptyStream.removeListener("data", onData);
       if (trackForCancellation) {
@@ -91,6 +94,8 @@ function execViaPty(ptyStream, command, options) {
     }
 
     timeoutId = setTimeout(() => {
+      if (finished) return;
+      finished = true;
       ptyStream.removeListener("data", onData);
       if (trackForCancellation) {
         trackForCancellation.delete(marker);

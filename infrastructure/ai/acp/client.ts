@@ -337,11 +337,15 @@ export class ACPClient {
           this.sendErrorResponse(request.id, -32602, 'Invalid permission request params');
           break;
         }
-        this.onPermissionRequest?.({
-          ...request.params,
-          // Attach the request ID so the handler can respond via respondPermission()
-          _requestId: request.id,
-        } as PermissionRequestParams & { _requestId: number | string });
+        if (this.onPermissionRequest) {
+          this.onPermissionRequest({
+            ...request.params,
+            // Attach the request ID so the handler can respond via respondPermission()
+            _requestId: request.id,
+          } as PermissionRequestParams & { _requestId: number | string });
+        } else {
+          this.sendErrorResponse(request.id, -32603, 'Permission request handler not configured');
+        }
         }
         break;
 
