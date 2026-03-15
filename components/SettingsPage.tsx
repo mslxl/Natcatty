@@ -2,7 +2,7 @@
  * Settings Page - Standalone settings window content
  * This component is rendered in a separate Electron window
  */
-import { AppWindow, Bot, Cloud, FileType, HardDrive, Keyboard, Palette, TerminalSquare, X } from "lucide-react";
+import { AppWindow, Cloud, FileType, HardDrive, Keyboard, Palette, Sparkles, TerminalSquare, X } from "lucide-react";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useSettingsState } from "../application/state/useSettingsState";
 import { usePortForwardingState } from "../application/state/usePortForwardingState";
@@ -181,7 +181,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                             value="ai"
                             className="w-full justify-start gap-2 px-3 py-2 text-sm data-[state=active]:bg-background hover:bg-background/60 rounded-md transition-colors"
                         >
-                            <Bot size={14} /> AI
+                            <Sparkles size={14} /> AI
                         </TabsTrigger>
                         <TabsTrigger
                             value="sync"
