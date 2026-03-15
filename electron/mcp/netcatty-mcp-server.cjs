@@ -229,7 +229,7 @@ server.tool(
 // Tool: terminal_send_input
 server.tool(
   "terminal_send_input",
-  "Send raw input to a terminal session on a remote host. Use for interactive programs: y/n prompts, passwords, ctrl+c (\\x03), ctrl+d (\\x04), or pressing enter (\\n).",
+  "Send raw input to a terminal session on a remote host. Use only for interactive programs that are already running: y/n prompts, passwords, ctrl+c (\\x03), ctrl+d (\\x04), or pressing enter (\\n). This tool does not return the updated terminal output. For normal commands, use terminal_execute.",
   {
     sessionId: z.string().describe("The terminal session ID to send input to."),
     input: z.string().describe("The raw input string. Use escape sequences for special keys (e.g. \\x03 for ctrl+c, \\n for enter)."),

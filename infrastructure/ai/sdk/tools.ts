@@ -57,7 +57,8 @@ export function createCattyTools(
       description:
         'Send raw input to a terminal session. Use this for interactive programs that ' +
         'require input such as y/n prompts, passwords, ctrl+c (\\x03), ctrl+d (\\x04), ' +
-        'or any other keyboard input.',
+        'or any other keyboard input. This tool only sends input; it does not return ' +
+        'the updated terminal output. For normal shell commands, use terminal_execute instead.',
       inputSchema: z.object({
         sessionId: z.string().describe('The terminal session ID to send input to.'),
         input: z

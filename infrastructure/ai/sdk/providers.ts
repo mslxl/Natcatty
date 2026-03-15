@@ -25,7 +25,7 @@ interface BridgeAPI {
     headers: Record<string, string>,
     body: string,
     providerId?: string,
-  ): Promise<{ ok: boolean; error?: string }>;
+  ): Promise<{ ok: boolean; statusCode?: number; statusText?: string; error?: string }>;
   onAiStreamData(requestId: string, cb: (data: string) => void): () => void;
   onAiStreamEnd(requestId: string, cb: () => void): () => void;
   onAiStreamError(requestId: string, cb: (error: string) => void): () => void;
@@ -123,64 +123,76 @@ export function createBridgeFetchForSDK(providerId?: string): typeof globalThis.
     if (isStreamingRequest(resolvedInit)) {
       const requestId = `sdk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
+      // Set up IPC event listeners BEFORE starting the stream to avoid
+      // missing early events.
+      const encoder = new TextEncoder();
+      let streamController: ReadableStreamDefaultController<Uint8Array>;
+      let cleanedUp = false;
+
+      const unsubData = bridge.onAiStreamData(requestId, (data: string) => {
+        // Re-wrap as SSE so the SDK can parse it
+        streamController?.enqueue(encoder.encode(`data: ${data}\n\n`));
+      });
+      const unsubEnd = bridge.onAiStreamEnd(requestId, () => {
+        try { streamController?.close(); } catch { /* already closed */ }
+        cleanup();
+      });
+      const unsubError = bridge.onAiStreamError(
+        requestId,
+        (error: string) => {
+          try { streamController?.error(new Error(error)); } catch { /* already errored */ }
+          cleanup();
+        },
+      );
+
+      const cleanup = () => {
+        if (cleanedUp) return;
+        cleanedUp = true;
+        unsubData();
+        unsubEnd();
+        unsubError();
+      };
+
+      // Handle abort
+      if (resolvedInit?.signal) {
+        resolvedInit.signal.addEventListener(
+          'abort',
+          () => {
+            bridge.aiChatCancel(requestId).catch(() => {});
+            try { streamController?.error(new DOMException('Aborted', 'AbortError')); } catch { /* already errored */ }
+            cleanup();
+          },
+          { once: true },
+        );
+      }
+
+      // Start the stream — resolves once HTTP response headers arrive,
+      // returning the real status code.
+      const result = await bridge.aiChatStream(
+        requestId,
+        url,
+        headers,
+        body || '',
+        providerId,
+      );
+
+      if (!result.ok) {
+        cleanup();
+        return new Response(result.error || 'Stream request failed', {
+          status: 502,
+          statusText: 'Bad Gateway',
+        });
+      }
+
       const stream = new ReadableStream<Uint8Array>({
-        async start(controller) {
-          const encoder = new TextEncoder();
-
-          const unsubData = bridge.onAiStreamData(requestId, (data: string) => {
-            // Re-wrap as SSE so the SDK can parse it
-            controller.enqueue(encoder.encode(`data: ${data}\n\n`));
-          });
-          const unsubEnd = bridge.onAiStreamEnd(requestId, () => {
-            controller.close();
-            cleanup();
-          });
-          const unsubError = bridge.onAiStreamError(
-            requestId,
-            (error: string) => {
-              controller.error(new Error(error));
-              cleanup();
-            },
-          );
-
-          const cleanup = () => {
-            unsubData();
-            unsubEnd();
-            unsubError();
-          };
-
-          // Handle abort
-          if (resolvedInit?.signal) {
-            resolvedInit.signal.addEventListener(
-              'abort',
-              () => {
-                // Send cancel signal
-                bridge.aiChatCancel(requestId).catch(() => {});
-                controller.error(new DOMException('Aborted', 'AbortError'));
-                cleanup();
-              },
-              { once: true },
-            );
-          }
-
-          // Start the stream
-          const result = await bridge.aiChatStream(
-            requestId,
-            url,
-            headers,
-            body || '',
-            providerId,
-          );
-          if (!result.ok) {
-            controller.error(new Error(result.error || 'Stream request failed'));
-            cleanup();
-          }
+        start(controller) {
+          streamController = controller;
         },
       });
 
       return new Response(stream, {
-        status: 200,
-        statusText: 'OK',
+        status: result.statusCode ?? 200,
+        statusText: result.statusText ?? 'OK',
         headers: { 'content-type': 'text/event-stream' },
       });
     }

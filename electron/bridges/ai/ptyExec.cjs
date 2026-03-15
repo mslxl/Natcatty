@@ -43,14 +43,24 @@ function execViaPty(ptyStream, command, options) {
       const text = data.toString();
 
       if (!foundStart) {
-        const startIdx = text.indexOf(marker + "_S");
-        if (startIdx !== -1) {
-          foundStart = true;
-          const afterMarker = text.slice(startIdx);
-          const nlIdx = afterMarker.indexOf("\n");
-          if (nlIdx !== -1) {
-            output += afterMarker.slice(nlIdx + 1);
+        // Look for the start marker at a line boundary (actual printf output),
+        // not inside the echo of the printf command argument.
+        const startMarker = marker + "_S";
+        let pos = 0;
+        while (pos < text.length) {
+          const idx = text.indexOf(startMarker, pos);
+          if (idx === -1) break;
+          // Accept if at start of text, or preceded by \n or \r (line boundary)
+          if (idx === 0 || text[idx - 1] === '\n' || text[idx - 1] === '\r') {
+            foundStart = true;
+            const afterMarker = text.slice(idx);
+            const nlIdx = afterMarker.indexOf("\n");
+            if (nlIdx !== -1) {
+              output += afterMarker.slice(nlIdx + 1);
+            }
+            break;
           }
+          pos = idx + 1;
         }
         if (foundStart) checkEnd();
         return;
@@ -61,16 +71,26 @@ function execViaPty(ptyStream, command, options) {
     };
 
     function checkEnd() {
+      // Look for the end marker at a line boundary (actual printf output),
+      // not inside the echo of the printf command argument.
       const endPattern = marker + "_E:";
-      const endIdx = output.indexOf(endPattern);
-      if (endIdx === -1) return;
+      let searchFrom = 0;
+      while (searchFrom < output.length) {
+        const endIdx = output.indexOf(endPattern, searchFrom);
+        if (endIdx === -1) return;
 
-      const afterEnd = output.slice(endIdx + endPattern.length);
-      const codeMatch = afterEnd.match(/^(\d+)/);
-      const exitCode = codeMatch ? parseInt(codeMatch[1], 10) : null;
+        // Accept if at start of output, or preceded by \n or \r (line boundary)
+        if (endIdx === 0 || output[endIdx - 1] === '\n' || output[endIdx - 1] === '\r') {
+          const afterEnd = output.slice(endIdx + endPattern.length);
+          const codeMatch = afterEnd.match(/^(\d+)/);
+          const exitCode = codeMatch ? parseInt(codeMatch[1], 10) : null;
 
-      const stdout = output.slice(0, endIdx);
-      finish(stdout, exitCode);
+          const stdout = output.slice(0, endIdx);
+          finish(stdout, exitCode);
+          return;
+        }
+        searchFrom = endIdx + 1;
+      }
     }
 
     function finish(stdout, exitCode) {
@@ -87,7 +107,7 @@ function execViaPty(ptyStream, command, options) {
         cleaned = cleaned.replace(/__NCMCP_[^\r\n]*[\r\n]*/g, "").trim();
       }
       resolve({
-        ok: exitCode === 0,
+        ok: exitCode === 0 || exitCode === null,
         stdout: cleaned,
         stderr: "",
         exitCode: exitCode ?? 0,

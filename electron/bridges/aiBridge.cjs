@@ -189,6 +189,12 @@ function validateSender(event) {
 /**
  * Make a streaming HTTP request and forward SSE events back to renderer
  */
+/**
+ * Start a streaming HTTP request. The returned promise resolves as soon as
+ * the HTTP response headers arrive (with { statusCode, statusText }) so the
+ * renderer can construct a Response with the real status. Data continues to
+ * flow via stream:data / stream:end / stream:error IPC events.
+ */
 function streamRequest(url, options, event, requestId) {
   return new Promise((resolve, reject) => {
     const parsedUrl = new URL(url);
@@ -204,7 +210,7 @@ function streamRequest(url, options, event, requestId) {
     // If already aborted (cancel arrived before we even got here), bail out.
     if (controller.signal.aborted) {
       activeStreams.delete(requestId);
-      resolve();
+      resolve({ statusCode: 0, statusText: "Aborted" });
       return;
     }
 
@@ -216,18 +222,27 @@ function streamRequest(url, options, event, requestId) {
         timeout: 120000, // 2 min connection timeout
       },
       (res) => {
-        if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+        const statusCode = res.statusCode || 0;
+        const statusText = res.statusMessage || "";
+
+        if (statusCode < 200 || statusCode >= 300) {
+          // Resolve immediately with error status so the renderer sees it
+          resolve({ statusCode, statusText });
+
           let errorBody = "";
           res.on("data", (chunk) => { errorBody += chunk.toString(); });
           res.on("end", () => {
             safeSend(event.sender, "netcatty:ai:stream:error", {
               requestId,
-              error: `HTTP ${res.statusCode}: ${errorBody}`,
+              error: `HTTP ${statusCode}: ${errorBody}`,
             });
-            resolve();
+            activeStreams.delete(requestId);
           });
           return;
         }
+
+        // Resolve with success status — data will flow via stream events
+        resolve({ statusCode, statusText });
 
         let buffer = "";
         const MAX_BUFFER_SIZE = 10 * 1024 * 1024; // 10MB safety limit
@@ -271,7 +286,6 @@ function streamRequest(url, options, event, requestId) {
           }
           safeSend(event.sender, "netcatty:ai:stream:end", { requestId });
           activeStreams.delete(requestId);
-          resolve();
         });
 
         res.on("error", (err) => {
@@ -280,7 +294,6 @@ function streamRequest(url, options, event, requestId) {
             error: err.message,
           });
           activeStreams.delete(requestId);
-          resolve();
         });
       }
     );
@@ -321,19 +334,50 @@ function registerHandlers(ipcMain) {
     if (!validateSender(event)) return { ok: false };
     if (Array.isArray(providers)) {
       providerConfigs = providers;
+      rebuildProviderFetchHosts();
     }
     return { ok: true };
   });
 
   // URL allowlist: only permit requests to known AI provider domains + HTTPS
-  const ALLOWED_FETCH_HOSTS = new Set([
+  const BUILTIN_FETCH_HOSTS = new Set([
     "api.openai.com",
     "api.anthropic.com",
     "generativelanguage.googleapis.com",
     "openrouter.ai",
   ]);
+  // Dynamically populated from configured provider baseURLs
+  const providerFetchHosts = new Set();
+
+  /**
+   * Rebuild the dynamic host allowlist from the current providerConfigs.
+   * Called whenever providers are synced from the renderer.
+   */
+  function rebuildProviderFetchHosts() {
+    providerFetchHosts.clear();
+    // Reset localhost ports to built-in defaults, then add provider-configured ones
+    ALLOWED_LOCALHOST_PORTS.clear();
+    for (const port of BUILTIN_LOCALHOST_PORTS) ALLOWED_LOCALHOST_PORTS.add(port);
+    for (const config of providerConfigs) {
+      if (!config.baseURL) continue;
+      try {
+        const parsed = new URL(config.baseURL);
+        const host = parsed.hostname;
+        // Skip localhost — handled separately via port allowlist
+        if (host === "localhost" || host === "127.0.0.1") {
+          const port = parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 80);
+          ALLOWED_LOCALHOST_PORTS.add(port);
+        } else {
+          providerFetchHosts.add(host);
+        }
+      } catch {
+        // Invalid URL in config — skip
+      }
+    }
+  }
+
   // Allowed localhost ports to prevent SSRF (Issue #9)
-  const ALLOWED_LOCALHOST_PORTS = new Set([
+  const BUILTIN_LOCALHOST_PORTS = [
     11434,  // Ollama default
     1234,   // LM Studio default
     3000,   // Common local dev
@@ -343,7 +387,8 @@ function registerHandlers(ipcMain) {
     8000,   // Common local dev
     8080,   // Common local dev
     8888,   // Common local dev
-  ]);
+  ];
+  const ALLOWED_LOCALHOST_PORTS = new Set(BUILTIN_LOCALHOST_PORTS);
   function isAllowedFetchUrl(urlString) {
     try {
       const parsed = new URL(urlString);
@@ -354,8 +399,9 @@ function registerHandlers(ipcMain) {
       }
       // Require HTTPS for remote hosts
       if (parsed.protocol !== "https:") return false;
-      // Check known provider allowlist
-      if (ALLOWED_FETCH_HOSTS.has(parsed.hostname)) return true;
+      // Check built-in + provider-configured host allowlist
+      if (BUILTIN_FETCH_HOSTS.has(parsed.hostname)) return true;
+      if (providerFetchHosts.has(parsed.hostname)) return true;
       return false;
     } catch {
       return false;
@@ -393,8 +439,8 @@ function registerHandlers(ipcMain) {
         return { ok: false, error: "URL host is not in the allowed list" };
       }
 
-      await streamRequest(resolvedUrl, { method: "POST", headers: resolvedHeaders, body }, event, requestId);
-      return { ok: true };
+      const { statusCode, statusText } = await streamRequest(resolvedUrl, { method: "POST", headers: resolvedHeaders, body }, event, requestId);
+      return { ok: true, statusCode, statusText };
     } catch (err) {
       return { ok: false, error: err?.message || String(err) };
     }
@@ -1369,6 +1415,8 @@ function registerHandlers(ipcMain) {
         `The user is managing REMOTE servers, not the local machine. ` +
         `Use the "netcatty-remote-hosts" MCP tools to operate on the remote hosts. ` +
         `Call get_environment first to discover available hosts and their session IDs. ` +
+        `For normal shell commands, use terminal_execute so you receive command output. ` +
+        `Use terminal_send_input only to respond to an interactive prompt that is already running; it does not read back the updated terminal output. ` +
         `Do NOT use local shell execution.]\n\n${prompt}`;
 
       // Build message content: text + optional images
