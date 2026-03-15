@@ -808,13 +808,23 @@ async function createWindow(electronModule, options) {
     closeSettingsWindow();
   });
 
+  const safeSend = (channel, ...args) => {
+    try {
+      if (!win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
+        win.webContents.send(channel, ...args);
+      }
+    } catch {
+      // Render frame disposed during HMR / reload – safe to ignore
+    }
+  };
+
   win.on("enter-full-screen", () => {
-    win.webContents?.send("netcatty:window:fullscreen-changed", true);
+    safeSend("netcatty:window:fullscreen-changed", true);
     scheduleSaveState();
   });
 
   win.on("leave-full-screen", () => {
-    win.webContents?.send("netcatty:window:fullscreen-changed", false);
+    safeSend("netcatty:window:fullscreen-changed", false);
     updateNormalBounds();
     scheduleSaveState();
   });
@@ -859,11 +869,14 @@ async function createWindow(electronModule, options) {
   // Register window control handlers
   registerWindowHandlers(electronModule.ipcMain, nativeTheme);
 
+  // Register IPC handlers BEFORE loading any URL so the renderer never
+  // calls a handler that hasn't been registered yet.
+  onRegisterBridge?.(win);
+
   if (isDev) {
     try {
       await win.loadURL(getDevRendererBaseUrl(devServerUrl));
       win.webContents.openDevTools({ mode: "detach" });
-      onRegisterBridge?.(win);
       return win;
     } catch (e) {
       console.warn("Dev server not reachable, falling back to bundled dist.", e);
@@ -872,8 +885,6 @@ async function createWindow(electronModule, options) {
 
   // Production mode - load via custom protocol.
   await win.loadURL("app://netcatty/index.html");
-
-  onRegisterBridge?.(win);
   return win;
 }
 
@@ -977,12 +988,22 @@ async function openSettingsWindow(electronModule, options) {
     }
   }
 
+  const safeSend = (channel, ...args) => {
+    try {
+      if (!win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
+        win.webContents.send(channel, ...args);
+      }
+    } catch {
+      // Render frame disposed during HMR / reload – safe to ignore
+    }
+  };
+
   win.on("enter-full-screen", () => {
-    win.webContents?.send("netcatty:window:fullscreen-changed", true);
+    safeSend("netcatty:window:fullscreen-changed", true);
   });
 
   win.on("leave-full-screen", () => {
-    win.webContents?.send("netcatty:window:fullscreen-changed", false);
+    safeSend("netcatty:window:fullscreen-changed", false);
   });
 
   // Ensure native background matches frontend background, even before first paint.

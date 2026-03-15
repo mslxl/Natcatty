@@ -1,4 +1,4 @@
-import { Circle, FolderTree, LayoutGrid, PanelLeft, PanelRight, Palette, Server, X, Zap } from 'lucide-react';
+import { Circle, FolderTree, LayoutGrid, MessageSquare, PanelLeft, PanelRight, Palette, Server, X, Zap } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useActiveTabId } from '../application/state/activeTabStore';
 import { useTerminalBackend } from '../application/state/useTerminalBackend';
@@ -15,13 +15,15 @@ import Terminal from './Terminal';
 import { SftpSidePanel } from './SftpSidePanel';
 import { ScriptsSidePanel } from './ScriptsSidePanel';
 import { ThemeSidePanel } from './terminal/ThemeSidePanel';
+import { AIChatSidePanel } from './AIChatSidePanel';
+import { useAIState } from '../application/state/useAIState';
 import { TerminalComposeBar } from './terminal/TerminalComposeBar';
 import { TERMINAL_THEMES } from '../infrastructure/config/terminalThemes';
 import { useCustomThemes } from '../application/state/customThemeStore';
 import { Button } from './ui/button';
 import { ScrollArea } from './ui/scroll-area';
 
-type SidePanelTab = 'sftp' | 'scripts' | 'theme';
+type SidePanelTab = 'sftp' | 'scripts' | 'theme' | 'ai';
 
 type WorkspaceRect = { x: number; y: number; w: number; h: number };
 
@@ -241,7 +243,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   // Side panel state - per-tab tracking of which sub-panel is active
   // Maps tab IDs to the active sub-panel type (sftp/scripts/theme), absent = closed
   const [sidePanelOpenTabs, setSidePanelOpenTabs] = useState<Map<string, SidePanelTab>>(new Map());
-  const [sidePanelWidth, setSidePanelWidth] = useState(320);
+  const [sidePanelWidth, setSidePanelWidth] = useState(() => {
+    const stored = window.localStorage.getItem('netcatty_side_panel_width');
+    return stored ? Math.max(280, Math.min(800, Number(stored))) : 420;
+  });
   const [sidePanelPosition, setSidePanelPosition] = useStoredString<'left' | 'right'>(
     'netcatty_side_panel_position',
     'left',
@@ -373,13 +378,15 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     const startX = e.clientX;
     const startWidth = sidePanelWidth;
 
+    let lastWidth = startWidth;
     const onMouseMove = (ev: MouseEvent) => {
       const delta = ev.clientX - startX;
-      const newWidth = Math.max(200, Math.min(600, startWidth + (sidePanelPosition === 'left' ? delta : -delta)));
-      setSidePanelWidth(newWidth);
+      lastWidth = Math.max(280, Math.min(800, startWidth + (sidePanelPosition === 'left' ? delta : -delta)));
+      setSidePanelWidth(lastWidth);
     };
     const onMouseUp = () => {
       sftpResizingRef.current = false;
+      window.localStorage.setItem('netcatty_side_panel_width', String(lastWidth));
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
@@ -844,6 +851,18 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     handleSwitchSidePanelTab('theme');
   }, [handleSwitchSidePanelTab]);
 
+  // Open AI chat side panel
+  const handleOpenAI = useCallback(() => {
+    handleSwitchSidePanelTab('ai');
+  }, [handleSwitchSidePanelTab]);
+
+  // Listen for global AI panel toggle (from TopTabs button)
+  useEffect(() => {
+    const handler = () => handleOpenAI();
+    window.addEventListener('netcatty:toggle-ai-panel', handler);
+    return () => window.removeEventListener('netcatty:toggle-ai-panel', handler);
+  }, [handleOpenAI]);
+
   // Execute snippet on the focused terminal session
   const handleSnippetClickForFocusedSession = useCallback((command: string) => {
     const sessionId = activeWorkspace?.focusedSessionId ?? activeSession?.id;
@@ -905,6 +924,47 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const focusedThemeId = focusedHost?.theme ?? terminalTheme.id;
   const focusedFontFamilyId = focusedHost?.fontFamily ?? terminalFontFamilyId;
   const focusedFontSize = focusedHost?.fontSize ?? fontSize;
+
+  // AI Chat state
+  const aiState = useAIState();
+  const { cleanupOrphanedSessions } = aiState;
+
+  // On mount: clean up orphaned AI sessions after a short delay
+  // (allows sessions/workspaces to fully initialize)
+  const hasCleanedUpRef = useRef(false);
+  useEffect(() => {
+    if (hasCleanedUpRef.current) return;
+    // Guard: wait until both sessions AND workspaces have loaded to avoid
+    // racing with partial state (e.g. sessions loaded but workspaces not yet).
+    if (sessions.length === 0 || workspaces.length === 0) return;
+    hasCleanedUpRef.current = true;
+    const activeIds = new Set<string>();
+    for (const s of sessions) activeIds.add(s.id);
+    for (const w of workspaces) activeIds.add(w.id);
+    cleanupOrphanedSessions(activeIds);
+  }, [sessions, workspaces, cleanupOrphanedSessions]);
+
+  // Build terminal session context for the AI chat panel
+  const aiTerminalSessions = useMemo(() => {
+    const sessionIds = activeWorkspace?.root
+      ? collectSessionIds(activeWorkspace.root)
+      : activeSession ? [activeSession.id] : [];
+
+    const result = sessionIds.map(sid => {
+      const s = sessions.find(s => s.id === sid);
+      const host = s?.hostId ? hosts.find(h => h.id === s.hostId) : undefined;
+      return {
+        sessionId: sid,
+        hostId: s?.hostId || '',
+        hostname: host?.hostname || '',
+        label: host?.label || s?.hostLabel || '',
+        os: host?.os,
+        username: host?.username,
+        connected: s?.status === 'connected',
+      };
+    });
+    return result;
+  }, [sessions, hosts, activeWorkspace, activeSession]);
 
   // Subscribe to custom theme changes so editing triggers re-render
   const customThemes = useCustomThemes();
@@ -1117,12 +1177,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                 )}
               >
                 {isSidePanelOpenForCurrentTab && (
-                  <div className="flex h-8 items-center px-1.5 py-0.5 flex-shrink-0 gap-0.5">
+                  <div className="flex h-9 items-center px-1.5 py-1 flex-shrink-0 gap-1">
                     <Button
                       variant="ghost"
                       size="icon"
                       className={cn(
-                        "h-6 w-6 rounded-md p-0",
+                        "h-7 w-7 rounded-md p-0",
                         activeSidePanelTab === 'sftp'
                           ? "text-foreground opacity-100"
                           : "text-muted-foreground opacity-70 hover:opacity-100",
@@ -1131,13 +1191,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                       onClick={handleToggleSftpFromBar}
                       title="SFTP"
                     >
-                      <FolderTree size={14} />
+                      <FolderTree size={15} />
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
                       className={cn(
-                        "h-6 w-6 rounded-md p-0",
+                        "h-7 w-7 rounded-md p-0",
                         activeSidePanelTab === 'scripts'
                           ? "text-foreground opacity-100"
                           : "text-muted-foreground opacity-70 hover:opacity-100",
@@ -1146,13 +1206,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                       onClick={handleOpenScripts}
                       title="Scripts"
                     >
-                      <Zap size={14} />
+                      <Zap size={15} />
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
                       className={cn(
-                        "h-6 w-6 rounded-md p-0",
+                        "h-7 w-7 rounded-md p-0",
                         activeSidePanelTab === 'theme'
                           ? "text-foreground opacity-100"
                           : "text-muted-foreground opacity-70 hover:opacity-100",
@@ -1161,32 +1221,47 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                       onClick={handleOpenTheme}
                       title="Theme"
                     >
-                      <Palette size={14} />
+                      <Palette size={15} />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={cn(
+                        "h-7 w-7 rounded-md p-0",
+                        activeSidePanelTab === 'ai'
+                          ? "text-foreground opacity-100"
+                          : "text-muted-foreground opacity-70 hover:opacity-100",
+                        "hover:bg-transparent",
+                      )}
+                      onClick={handleOpenAI}
+                      title="AI Chat"
+                    >
+                      <MessageSquare size={15} />
                     </Button>
                     <div className="flex-1" />
                     <Button
                       variant="ghost"
                       size="icon"
                       className={cn(
-                        "h-6 w-6 rounded-md p-0 text-muted-foreground",
+                        "h-7 w-7 rounded-md p-0 text-muted-foreground",
                         "hover:bg-transparent hover:text-foreground",
                       )}
                       onClick={() => setSidePanelPosition(p => p === 'left' ? 'right' : 'left')}
                       title={sidePanelPosition === 'left' ? 'Move panel to right' : 'Move panel to left'}
                     >
-                      {sidePanelPosition === 'left' ? <PanelRight size={14} /> : <PanelLeft size={14} />}
+                      {sidePanelPosition === 'left' ? <PanelRight size={15} /> : <PanelLeft size={15} />}
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
                       className={cn(
-                        "h-6 w-6 rounded-md p-0 text-muted-foreground",
+                        "h-7 w-7 rounded-md p-0 text-muted-foreground",
                         "hover:bg-transparent hover:text-foreground",
                       )}
                       onClick={handleCloseSidePanel}
                       title="Close panel"
                     >
-                      <X size={14} />
+                      <X size={15} />
                     </Button>
                   </div>
                 )}
@@ -1244,6 +1319,46 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                         onThemeChange={handleThemeChangeForFocusedSession}
                         onFontFamilyChange={handleFontFamilyChangeForFocusedSession}
                         onFontSizeChange={handleFontSizeChangeForFocusedSession}
+                      />
+                    </div>
+                  )}
+
+                  {/* AI Chat sub-panel */}
+                  {activeSidePanelTab === 'ai' && (
+                    <div className="absolute inset-0 z-10">
+                      <AIChatSidePanel
+                        sessions={aiState.sessions}
+                        activeSessionIdMap={aiState.activeSessionIdMap}
+                        setActiveSessionId={aiState.setActiveSessionId}
+                        createSession={aiState.createSession}
+                        deleteSession={aiState.deleteSession}
+                        updateSessionTitle={aiState.updateSessionTitle}
+                        addMessageToSession={aiState.addMessageToSession}
+                        updateLastMessage={aiState.updateLastMessage}
+                        updateMessageById={aiState.updateMessageById}
+                        providers={aiState.providers}
+                        activeProviderId={aiState.activeProviderId}
+                        activeModelId={aiState.activeModelId}
+                        defaultAgentId={aiState.defaultAgentId}
+                        externalAgents={aiState.externalAgents}
+                        setExternalAgents={aiState.setExternalAgents}
+                        agentModelMap={aiState.agentModelMap}
+                        setAgentModel={aiState.setAgentModel}
+                        globalPermissionMode={aiState.globalPermissionMode}
+                        setGlobalPermissionMode={aiState.setGlobalPermissionMode}
+                        commandBlocklist={aiState.commandBlocklist}
+                        maxIterations={aiState.maxIterations}
+                        scopeType={activeWorkspace ? 'workspace' : 'terminal'}
+                        scopeTargetId={activeWorkspace?.id ?? activeSession?.id}
+                        scopeHostIds={activeWorkspace?.root
+                          ? collectSessionIds(activeWorkspace.root).map(sid => {
+                              const s = sessions.find(s => s.id === sid);
+                              return s?.hostId;
+                            }).filter((id): id is string => !!id)
+                          : activeSession?.hostId ? [activeSession.hostId] : []
+                        }
+                        scopeLabel={activeWorkspace?.name ?? activeSession?.label ?? ''}
+                        terminalSessions={aiTerminalSessions}
                       />
                     </div>
                   )}

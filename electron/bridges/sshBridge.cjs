@@ -963,6 +963,10 @@ async function startSSHSession(event, options) {
               stream,
               chainConnections,
               webContentsId: event.sender.id,
+              // Store connection info for MCP host discovery
+              hostname: options.host || options.hostname || '',
+              username: options.username || '',
+              label: options.label || '',
             };
             sessions.set(sessionId, session);
 

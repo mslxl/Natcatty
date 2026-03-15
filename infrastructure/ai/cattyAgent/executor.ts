@@ -1,0 +1,216 @@
+import type { ToolCall, ToolResult, AIPermissionMode } from '../types';
+import {
+  executeTerminalExecute,
+  executeTerminalSendInput,
+  executeSftpListDirectory,
+  executeSftpReadFile,
+  executeSftpWriteFile,
+  executeWorkspaceGetInfo,
+  executeWorkspaceGetSessionInfo,
+  executeMultiHostExecute,
+  type ToolDeps,
+  type ToolExecResult,
+} from '../shared/toolExecutors';
+
+/**
+ * Bridge interface for Catty Agent to interact with the Electron main process.
+ * This mirrors the AI-related subset of window.netcatty from electron/preload.cjs.
+ */
+export interface NetcattyBridge {
+  aiExec(
+    sessionId: string,
+    command: string,
+  ): Promise<{
+    ok: boolean;
+    stdout?: string;
+    stderr?: string;
+    exitCode?: number;
+    error?: string;
+  }>;
+  aiTerminalWrite(
+    sessionId: string,
+    data: string,
+  ): Promise<{ ok: boolean; error?: string }>;
+  listSftp(
+    sftpId: string,
+    path: string,
+    encoding?: string,
+  ): Promise<unknown>;
+  readSftp(
+    sftpId: string,
+    path: string,
+    encoding?: string,
+  ): Promise<string>;
+  writeSftp(
+    sftpId: string,
+    path: string,
+    content: string,
+    encoding?: string,
+  ): Promise<void>;
+}
+
+// Workspace context provided to the executor
+export interface ExecutorContext {
+  // Available sessions in scope
+  sessions: Array<{
+    sessionId: string;
+    hostId: string;
+    hostname: string;
+    label: string;
+    os?: string;
+    username?: string;
+    connected: boolean;
+    sftpId?: string; // If SFTP is open for this session
+  }>;
+  // Workspace info
+  workspaceId?: string;
+  workspaceName?: string;
+}
+
+/** Convert a shared ToolExecResult into the executor's ToolResult format. */
+function toToolResult(toolCallId: string, r: ToolExecResult): ToolResult {
+  if (r.ok === false) {
+    return { toolCallId, content: r.error, isError: true };
+  }
+  // For terminal_execute, format as the legacy STDOUT/STDERR/exitCode text block
+  if (
+    typeof r.data === 'object' &&
+    r.data !== null &&
+    'stdout' in r.data &&
+    'stderr' in r.data &&
+    'exitCode' in r.data
+  ) {
+    const d = r.data as { stdout: string; stderr: string; exitCode: number };
+    const output = [
+      d.stdout ? `STDOUT:\n${d.stdout}` : '',
+      d.stderr ? `STDERR:\n${d.stderr}` : '',
+      `Exit code: ${d.exitCode === -1 ? 'unknown' : d.exitCode}`,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+    return { toolCallId, content: output || 'Command completed (no output)' };
+  }
+  // For terminal_send_input
+  if (typeof r.data === 'object' && r.data !== null && 'sent' in r.data) {
+    return { toolCallId, content: `Sent input to terminal: ${JSON.stringify((r.data as { sent: string }).sent)}` };
+  }
+  // For sftp_list_directory with output fallback
+  if (typeof r.data === 'object' && r.data !== null && 'output' in r.data && !('files' in r.data)) {
+    return { toolCallId, content: (r.data as { output: string }).output };
+  }
+  // For sftp_read_file
+  if (typeof r.data === 'object' && r.data !== null && 'content' in r.data) {
+    return { toolCallId, content: (r.data as { content: string }).content };
+  }
+  // For sftp_write_file
+  if (typeof r.data === 'object' && r.data !== null && 'written' in r.data) {
+    return { toolCallId, content: `File written: ${(r.data as { written: string }).written}` };
+  }
+  // Default: JSON-serialize the data
+  return { toolCallId, content: JSON.stringify(r.data, null, 2) };
+}
+
+/**
+ * Create a tool executor function for the Catty Agent.
+ * This bridges tool calls to the netcatty Electron IPC layer.
+ */
+export function createToolExecutor(
+  bridge: NetcattyBridge | undefined,
+  context: ExecutorContext,
+  commandBlocklist?: string[],
+  permissionMode: AIPermissionMode = 'confirm',
+): (toolCall: ToolCall) => Promise<ToolResult> {
+  return async (toolCall: ToolCall): Promise<ToolResult> => {
+    if (!bridge) {
+      return {
+        toolCallId: toolCall.id,
+        content: 'Netcatty bridge is not available',
+        isError: true,
+      };
+    }
+
+    const deps: ToolDeps = { bridge, context, commandBlocklist, permissionMode };
+    const args = toolCall.arguments;
+
+    try {
+      switch (toolCall.name) {
+        case 'terminal_execute': {
+          const r = await executeTerminalExecute(deps, {
+            sessionId: String(args.sessionId || ''),
+            command: String(args.command || ''),
+          });
+          return toToolResult(toolCall.id, r);
+        }
+
+        case 'terminal_send_input': {
+          const r = await executeTerminalSendInput(deps, {
+            sessionId: String(args.sessionId || ''),
+            input: String(args.input || ''),
+          });
+          return toToolResult(toolCall.id, r);
+        }
+
+        case 'sftp_list_directory': {
+          const r = await executeSftpListDirectory(deps, {
+            sessionId: String(args.sessionId || ''),
+            path: String(args.path || '/'),
+          });
+          return toToolResult(toolCall.id, r);
+        }
+
+        case 'sftp_read_file': {
+          const r = await executeSftpReadFile(deps, {
+            sessionId: String(args.sessionId || ''),
+            path: String(args.path || ''),
+            maxBytes: Number(args.maxBytes) || 10000,
+          });
+          return toToolResult(toolCall.id, r);
+        }
+
+        case 'sftp_write_file': {
+          const r = await executeSftpWriteFile(deps, {
+            sessionId: String(args.sessionId || ''),
+            path: String(args.path || ''),
+            content: String(args.content || ''),
+          });
+          return toToolResult(toolCall.id, r);
+        }
+
+        case 'workspace_get_info': {
+          const r = executeWorkspaceGetInfo(deps);
+          return toToolResult(toolCall.id, r);
+        }
+
+        case 'workspace_get_session_info': {
+          const r = executeWorkspaceGetSessionInfo(deps, {
+            sessionId: String(args.sessionId || ''),
+          });
+          return toToolResult(toolCall.id, r);
+        }
+
+        case 'multi_host_execute': {
+          const r = await executeMultiHostExecute(deps, {
+            sessionIds: (args.sessionIds as string[]) || [],
+            command: String(args.command || ''),
+            mode: String(args.mode || 'parallel'),
+            stopOnError: Boolean(args.stopOnError),
+          });
+          return toToolResult(toolCall.id, r);
+        }
+
+        default:
+          return {
+            toolCallId: toolCall.id,
+            content: `Unknown tool: ${toolCall.name}`,
+            isError: true,
+          };
+      }
+    } catch (err) {
+      return {
+        toolCallId: toolCall.id,
+        content: `Tool execution error: ${err instanceof Error ? err.message : String(err)}`,
+        isError: true,
+      };
+    }
+  };
+}

@@ -1,0 +1,88 @@
+import React from "react";
+import { RefreshCw } from "lucide-react";
+import { useI18n } from "../../../../application/i18n/I18nProvider";
+import { Button } from "../../../ui/button";
+import { cn } from "../../../../lib/utils";
+import type { AgentPathInfo } from "./types";
+import { ProviderIconBadge } from "./ProviderIconBadge";
+
+export const ClaudeCodeCard: React.FC<{
+  pathInfo: AgentPathInfo | null;
+  isResolvingPath: boolean;
+  customPath: string;
+  onCustomPathChange: (path: string) => void;
+  onRecheckPath: () => void;
+}> = ({
+  pathInfo,
+  isResolvingPath,
+  customPath,
+  onCustomPathChange,
+  onRecheckPath,
+}) => {
+  const { t } = useI18n();
+  const found = pathInfo?.available;
+
+  const statusText = isResolvingPath
+    ? t('ai.claude.detecting')
+    : found
+      ? t('ai.claude.detected')
+      : t('ai.claude.notFound');
+
+  const statusClassName = isResolvingPath
+    ? "text-muted-foreground"
+    : found
+      ? "text-emerald-500"
+      : "text-amber-500";
+
+  return (
+    <div className="rounded-lg border border-border/60 bg-muted/20 p-4 space-y-3">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <ProviderIconBadge providerId="claude" size="sm" />
+            <span className="text-sm font-medium">{t('ai.claude.title')}</span>
+          </div>
+          <p className="text-xs text-muted-foreground mt-2 leading-5">
+            {t('ai.claude.description')}
+          </p>
+        </div>
+        <div className={cn("text-xs font-medium shrink-0", statusClassName)}>
+          {statusText}
+        </div>
+      </div>
+
+      {/* Path detection info */}
+      {found ? (
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-muted-foreground">{t('ai.claude.path')}</span>
+          <span className="font-mono text-foreground truncate">{pathInfo.path}</span>
+          {pathInfo.version && (
+            <>
+              <span className="text-muted-foreground">|</span>
+              <span className="text-muted-foreground">{pathInfo.version}</span>
+            </>
+          )}
+        </div>
+      ) : !isResolvingPath ? (
+        <div className="space-y-2">
+          <p className="text-xs text-amber-500">
+            {t('ai.claude.notFoundHint')}
+          </p>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={customPath}
+              onChange={(e) => onCustomPathChange(e.target.value)}
+              placeholder={t('ai.claude.customPathPlaceholder')}
+              className="flex-1 h-8 rounded-md border border-input bg-background px-3 text-sm font-mono placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            />
+            <Button variant="outline" size="sm" onClick={onRecheckPath} disabled={!customPath.trim()}>
+              <RefreshCw size={14} className="mr-1.5" />
+              {t('ai.claude.check')}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+};

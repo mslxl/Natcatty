@@ -7,18 +7,40 @@ const safeParse = <T>(value: string | null): T | null => {
   }
 };
 
+/**
+ * Safely write to localStorage, catching QuotaExceededError.
+ * Returns true if the write succeeded, false if storage quota was exceeded.
+ */
+function safeSetItem(key: string, value: string): boolean {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (err) {
+    if (
+      err instanceof DOMException &&
+      (err.name === 'QuotaExceededError' || err.code === 22)
+    ) {
+      console.warn(
+        `[localStorageAdapter] QuotaExceededError writing key "${key}" (${value.length} chars). Data was not persisted.`,
+      );
+      return false;
+    }
+    throw err; // Re-throw unexpected errors
+  }
+}
+
 export const localStorageAdapter = {
   read<T>(key: string): T | null {
     return safeParse<T>(localStorage.getItem(key));
   },
-  write<T>(key: string, value: T) {
-    localStorage.setItem(key, JSON.stringify(value));
+  write<T>(key: string, value: T): boolean {
+    return safeSetItem(key, JSON.stringify(value));
   },
   readString(key: string): string | null {
     return localStorage.getItem(key);
   },
-  writeString(key: string, value: string) {
-    localStorage.setItem(key, value);
+  writeString(key: string, value: string): boolean {
+    return safeSetItem(key, value);
   },
   readBoolean(key: string): boolean | null {
     const value = localStorage.getItem(key);
@@ -27,8 +49,8 @@ export const localStorageAdapter = {
     if (value === "false") return false;
     return null;
   },
-  writeBoolean(key: string, value: boolean) {
-    localStorage.setItem(key, value ? "true" : "false");
+  writeBoolean(key: string, value: boolean): boolean {
+    return safeSetItem(key, value ? "true" : "false");
   },
   readNumber(key: string): number | null {
     const value = localStorage.getItem(key);
@@ -36,8 +58,8 @@ export const localStorageAdapter = {
     const num = parseInt(value, 10);
     return isNaN(num) ? null : num;
   },
-  writeNumber(key: string, value: number) {
-    localStorage.setItem(key, String(value));
+  writeNumber(key: string, value: number): boolean {
+    return safeSetItem(key, String(value));
   },
   remove(key: string) {
     localStorage.removeItem(key);

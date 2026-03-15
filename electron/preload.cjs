@@ -27,12 +27,33 @@ function cleanupTransferListeners(transferId) {
   transferCancelledListeners.delete(transferId);
 }
 
+// Filter MCP marker artifacts from terminal output:
+// 1. Marker output lines (standalone): __NCMCP_xxx_S or __NCMCP_xxx_E:0
+// 2. End marker command echo: __nc=$?;printf '__NCMCP_...'
+// 3. Start marker printf prefix in echoed command: printf '__NCMCP_...\n';
+// We keep the actual command part visible.
+function filterMcpMarkers(data) {
+  return data
+    // Remove standalone marker output lines (printf output)
+    .replace(/^__NCMCP_[^\r\n]*[\r\n]*/gm, "")
+    // Remove end marker command echo lines
+    .replace(/[^\r\n]*__nc=\$\?;printf '[^\r\n]*__NCMCP_[^\r\n]*[\r\n]*/g, "")
+    // Remove start marker printf prefix from combined command lines
+    .replace(/printf '__NCMCP_[^']*\\n';/g, "");
+}
+
 ipcRenderer.on("netcatty:data", (_event, payload) => {
   const set = dataListeners.get(payload.sessionId);
   if (!set) return;
+  // Filter MCP marker artifacts before they reach xterm.js
+  let data = payload.data;
+  if (data.includes("__NCMCP_")) {
+    data = filterMcpMarkers(data);
+    if (!data) return;
+  }
   set.forEach((cb) => {
     try {
-      cb(payload.data);
+      cb(data);
     } catch (err) {
       console.error("Data callback failed", err);
     }
@@ -965,6 +986,148 @@ const api = {
   onUpdateError: (cb) => {
     updateErrorListeners.add(cb);
     return () => updateErrorListeners.delete(cb);
+  },
+
+  // ── AI Bridge ──
+  aiSyncProviders: async (providers) => {
+    return ipcRenderer.invoke("netcatty:ai:sync-providers", { providers });
+  },
+  aiChatStream: async (requestId, url, headers, body, providerId) => {
+    return ipcRenderer.invoke("netcatty:ai:chat:stream", { requestId, url, headers, body, providerId });
+  },
+  aiChatCancel: async (requestId) => {
+    return ipcRenderer.invoke("netcatty:ai:chat:cancel", { requestId });
+  },
+  aiFetch: async (url, method, headers, body, providerId) => {
+    return ipcRenderer.invoke("netcatty:ai:fetch", { url, method, headers, body, providerId });
+  },
+  aiExec: async (sessionId, command) => {
+    return ipcRenderer.invoke("netcatty:ai:exec", { sessionId, command });
+  },
+  aiTerminalWrite: async (sessionId, data) => {
+    return ipcRenderer.invoke("netcatty:ai:terminal:write", { sessionId, data });
+  },
+  aiDiscoverAgents: async () => {
+    return ipcRenderer.invoke("netcatty:ai:agents:discover");
+  },
+  aiResolveCli: async (params) => {
+    return ipcRenderer.invoke("netcatty:ai:resolve-cli", params);
+  },
+  aiCodexGetIntegration: async () => {
+    return ipcRenderer.invoke("netcatty:ai:codex:get-integration");
+  },
+  aiCodexStartLogin: async () => {
+    return ipcRenderer.invoke("netcatty:ai:codex:start-login");
+  },
+  aiCodexGetLoginSession: async (sessionId) => {
+    return ipcRenderer.invoke("netcatty:ai:codex:get-login-session", { sessionId });
+  },
+  aiCodexCancelLogin: async (sessionId) => {
+    return ipcRenderer.invoke("netcatty:ai:codex:cancel-login", { sessionId });
+  },
+  aiCodexLogout: async () => {
+    return ipcRenderer.invoke("netcatty:ai:codex:logout");
+  },
+  aiSpawnAgent: async (agentId, command, args, env, options) => {
+    return ipcRenderer.invoke("netcatty:ai:agent:spawn", { agentId, command, args, env, closeStdin: options?.closeStdin });
+  },
+  aiWriteToAgent: async (agentId, data) => {
+    return ipcRenderer.invoke("netcatty:ai:agent:write", { agentId, data });
+  },
+  aiCloseAgentStdin: async (agentId) => {
+    return ipcRenderer.invoke("netcatty:ai:agent:close-stdin", { agentId });
+  },
+  aiKillAgent: async (agentId) => {
+    return ipcRenderer.invoke("netcatty:ai:agent:kill", { agentId });
+  },
+  // MCP Server session metadata
+  aiMcpUpdateSessions: async (sessions, chatSessionId) => {
+    return ipcRenderer.invoke("netcatty:ai:mcp:update-sessions", { sessions, chatSessionId });
+  },
+  aiMcpSetCommandBlocklist: async (blocklist) => {
+    return ipcRenderer.invoke("netcatty:ai:mcp:set-command-blocklist", { blocklist });
+  },
+  aiMcpSetCommandTimeout: async (timeout) => {
+    return ipcRenderer.invoke("netcatty:ai:mcp:set-command-timeout", { timeout });
+  },
+  aiMcpSetMaxIterations: async (maxIterations) => {
+    return ipcRenderer.invoke("netcatty:ai:mcp:set-max-iterations", { maxIterations });
+  },
+  aiMcpSetPermissionMode: async (mode) => {
+    return ipcRenderer.invoke("netcatty:ai:mcp:set-permission-mode", { mode });
+  },
+  // ACP streaming
+  aiAcpStream: async (requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, providerId, model, images) => {
+    return ipcRenderer.invoke("netcatty:ai:acp:stream", { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, providerId, model, images });
+  },
+  aiAcpCancel: async (requestId) => {
+    return ipcRenderer.invoke("netcatty:ai:acp:cancel", { requestId });
+  },
+  aiAcpCleanup: async (chatSessionId) => {
+    return ipcRenderer.invoke("netcatty:ai:acp:cleanup", { chatSessionId });
+  },
+  onAiAcpEvent: (requestId, cb) => {
+    const handler = (_event, payload) => {
+      if (payload.requestId === requestId) cb(payload.event);
+    };
+    ipcRenderer.on("netcatty:ai:acp:event", handler);
+    return () => ipcRenderer.removeListener("netcatty:ai:acp:event", handler);
+  },
+  onAiAcpDone: (requestId, cb) => {
+    const handler = (_event, payload) => {
+      if (payload.requestId === requestId) cb();
+    };
+    ipcRenderer.on("netcatty:ai:acp:done", handler);
+    return () => ipcRenderer.removeListener("netcatty:ai:acp:done", handler);
+  },
+  onAiAcpError: (requestId, cb) => {
+    const handler = (_event, payload) => {
+      if (payload.requestId === requestId) cb(payload.error);
+    };
+    ipcRenderer.on("netcatty:ai:acp:error", handler);
+    return () => ipcRenderer.removeListener("netcatty:ai:acp:error", handler);
+  },
+  onAiStreamData: (requestId, cb) => {
+    const handler = (_event, payload) => {
+      if (payload.requestId === requestId) cb(payload.data);
+    };
+    ipcRenderer.on("netcatty:ai:stream:data", handler);
+    return () => ipcRenderer.removeListener("netcatty:ai:stream:data", handler);
+  },
+  onAiStreamEnd: (requestId, cb) => {
+    const handler = (_event, payload) => {
+      if (payload.requestId === requestId) cb();
+    };
+    ipcRenderer.on("netcatty:ai:stream:end", handler);
+    return () => ipcRenderer.removeListener("netcatty:ai:stream:end", handler);
+  },
+  onAiStreamError: (requestId, cb) => {
+    const handler = (_event, payload) => {
+      if (payload.requestId === requestId) cb(payload.error);
+    };
+    ipcRenderer.on("netcatty:ai:stream:error", handler);
+    return () => ipcRenderer.removeListener("netcatty:ai:stream:error", handler);
+  },
+  onAiAgentStdout: (agentId, cb) => {
+    const handler = (_event, payload) => {
+      if (payload.agentId === agentId) cb(payload.data);
+    };
+    ipcRenderer.on("netcatty:ai:agent:stdout", handler);
+    return () => ipcRenderer.removeListener("netcatty:ai:agent:stdout", handler);
+  },
+  onAiAgentStderr: (agentId, cb) => {
+    const handler = (_event, payload) => {
+      if (payload.agentId === agentId) cb(payload.data);
+    };
+    ipcRenderer.on("netcatty:ai:agent:stderr", handler);
+    return () => ipcRenderer.removeListener("netcatty:ai:agent:stderr", handler);
+  },
+  onAiAgentExit: (agentId, cb) => {
+    const handler = (_event, payload) => {
+      if (payload.agentId === agentId) cb(payload.code);
+    };
+    ipcRenderer.on("netcatty:ai:agent:exit", handler);
+    return () => ipcRenderer.removeListener("netcatty:ai:agent:exit", handler);
   },
 };
 

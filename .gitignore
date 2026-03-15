@@ -35,8 +35,8 @@ coverage
 *.sln
 *.sw?
 
-# Claude Code local settings
-/.claude/settings.local.json
+# Claude Code
+/.claude/
 /CLAUDE.md
 
 # AI / Superpowers generated docs (local only)

@@ -34,13 +34,21 @@ export const Toggle: React.FC<ToggleProps> = ({ checked, onChange, disabled }) =
 
 interface SelectProps {
   value: string;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; icon?: React.ReactNode }[];
   onChange: (value: string) => void;
   className?: string;
   disabled?: boolean;
+  placeholder?: string;
 }
 
-export const Select: React.FC<SelectProps> = ({ value, options, onChange, className, disabled }) => {
+export const Select: React.FC<SelectProps> = ({
+  value,
+  options,
+  onChange,
+  className,
+  disabled,
+  placeholder,
+}) => {
   const selectedOption = options.find((opt) => opt.value === value);
   return (
     <SelectPrimitive.Root value={value} onValueChange={onChange} disabled={disabled}>
@@ -50,7 +58,12 @@ export const Select: React.FC<SelectProps> = ({ value, options, onChange, classN
           className,
         )}
       >
-        <SelectPrimitive.Value>{selectedOption?.label ?? value}</SelectPrimitive.Value>
+        <SelectPrimitive.Value placeholder={placeholder}>
+          <span className="flex items-center gap-2">
+            {selectedOption?.icon}
+            {selectedOption?.label}
+          </span>
+        </SelectPrimitive.Value>
         <SelectPrimitive.Icon asChild>
           <ChevronDown className="ml-2 h-4 w-4 opacity-50" />
         </SelectPrimitive.Icon>
@@ -76,7 +89,12 @@ export const Select: React.FC<SelectProps> = ({ value, options, onChange, classN
                     <Check className="h-4 w-4" />
                   </SelectPrimitive.ItemIndicator>
                 </span>
-                <SelectPrimitive.ItemText>{opt.label}</SelectPrimitive.ItemText>
+                <SelectPrimitive.ItemText>
+                  <span className="flex items-center gap-2">
+                    {opt.icon}
+                    {opt.label}
+                  </span>
+                </SelectPrimitive.ItemText>
               </SelectPrimitive.Item>
             ))}
           </SelectPrimitive.Viewport>
@@ -120,4 +138,3 @@ export const SettingsTabContent: React.FC<{
     </ScrollArea>
   </TabsContent>
 );
-

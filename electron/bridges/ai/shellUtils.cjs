@@ -1,0 +1,191 @@
+/**
+ * Shell utility functions shared across AI bridge modules.
+ *
+ * Provides ANSI stripping, URL extraction, CLI resolution, path helpers,
+ * stream chunk serialization, and cached shell environment resolution.
+ */
+"use strict";
+
+const { execFileSync } = require("node:child_process");
+const { existsSync } = require("node:fs");
+const path = require("node:path");
+
+// ── ANSI / URL regexes ──
+
+const ANSI_ESCAPE_REGEX = /\u001B\[[0-?]*[ -/]*[@-~]/g;
+const ANSI_OSC_REGEX = /\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g;
+const URL_CANDIDATE_REGEX = /https?:\/\/[^\s]+/g;
+
+// ── ANSI stripping ──
+
+function stripAnsi(input) {
+  return String(input || "").replace(ANSI_OSC_REGEX, "").replace(ANSI_ESCAPE_REGEX, "");
+}
+
+// ── URL helpers ──
+
+function isLocalhostHostname(hostname) {
+  const normalized = String(hostname || "").trim().toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized === "[::1]" ||
+    normalized.endsWith(".localhost")
+  );
+}
+
+function extractFirstNonLocalhostUrl(output) {
+  const { URL } = require("node:url");
+  const matches = stripAnsi(output).match(URL_CANDIDATE_REGEX);
+  if (!matches) return null;
+
+  for (const match of matches) {
+    try {
+      const parsedUrl = new URL(match.trim().replace(/[),.;!?]+$/, ""));
+      if (!isLocalhostHostname(parsedUrl.hostname)) {
+        return parsedUrl.toString();
+      }
+    } catch {
+      // Ignore invalid URL candidates.
+    }
+  }
+
+  return null;
+}
+
+// ── CLI / path helpers ──
+
+function resolveCliFromPath(command, shellEnv) {
+  // Validate command: only allow valid binary names (alphanumeric, hyphens, underscores, dots)
+  if (!command || !/^[a-zA-Z0-9._-]+$/.test(command)) {
+    return null;
+  }
+
+  if (shellEnv) {
+    try {
+      const whichCmd = process.platform === "win32" ? "where" : "which";
+      const resolved = execFileSync(whichCmd, [command], {
+        encoding: "utf8",
+        timeout: 3000,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: shellEnv,
+      }).trim().split("\n")[0].trim();
+      if (resolved && existsSync(resolved)) return resolved;
+    } catch {
+      // Not found on PATH
+    }
+  }
+  return null;
+}
+
+function toUnpackedAsarPath(filePath) {
+  const unpackedPath = filePath.replace(/app\.asar([\\/])/, "app.asar.unpacked$1");
+  if (unpackedPath !== filePath && existsSync(unpackedPath)) {
+    return unpackedPath;
+  }
+  return filePath;
+}
+
+// ── Shell environment (cached) ──
+
+let _cachedShellEnv = null;
+
+async function getShellEnv() {
+  if (_cachedShellEnv) return _cachedShellEnv;
+
+  const home = process.env.HOME || "";
+  const extraPaths = [
+    `${home}/.local/bin`,
+    `${home}/.npm-global/bin`,
+    "/usr/local/bin",
+    "/opt/homebrew/bin",
+  ];
+
+  if (process.platform === "win32") {
+    _cachedShellEnv = {
+      ...process.env,
+      PATH: [...extraPaths, process.env.PATH || ""].join(path.delimiter),
+    };
+    return _cachedShellEnv;
+  }
+
+  // On macOS/Linux, spawn a login shell to capture the real environment.
+  try {
+    const shell = process.env.SHELL || "/bin/zsh";
+    const envOutput = execFileSync(shell, ['-ilc', 'env'], {
+      encoding: "utf8",
+      timeout: 10000,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, HOME: home },
+    });
+    const envMap = {};
+    for (const line of envOutput.split("\n")) {
+      const idx = line.indexOf("=");
+      if (idx > 0) {
+        envMap[line.slice(0, idx)] = line.slice(idx + 1);
+      }
+    }
+    const shellPath = envMap.PATH || "";
+    _cachedShellEnv = {
+      ...envMap,
+      ...process.env,
+      PATH: [...extraPaths, shellPath, process.env.PATH || ""].join(path.delimiter),
+    };
+  } catch {
+    _cachedShellEnv = {
+      ...process.env,
+      PATH: [...extraPaths, process.env.PATH || ""].join(path.delimiter),
+    };
+  }
+  return _cachedShellEnv;
+}
+
+// ── Stream chunk serialization ──
+
+function serializeStreamChunk(chunk) {
+  if (!chunk || !chunk.type) return null;
+  switch (chunk.type) {
+    case "text-delta":
+      return { type: "text-delta", textDelta: chunk.text ?? chunk.textDelta ?? "" };
+    case "reasoning-delta":
+      return { type: "reasoning-delta", delta: chunk.text ?? chunk.delta ?? "" };
+    case "reasoning-start":
+      return { type: "reasoning-start", id: chunk.id ?? undefined };
+    case "reasoning-end":
+      return { type: "reasoning-end", id: chunk.id ?? undefined };
+    case "tool-call":
+      return {
+        type: "tool-call",
+        toolCallId: chunk.toolCallId,
+        toolName: chunk.toolName,
+        args: chunk.args,
+      };
+    case "tool-result":
+      return {
+        type: "tool-result",
+        toolCallId: chunk.toolCallId,
+        toolName: chunk.toolName,
+        result: chunk.result,
+        output: chunk.output,
+      };
+    case "error":
+      return { type: "error", error: chunk.error };
+    default:
+      try {
+        return JSON.parse(JSON.stringify(chunk));
+      } catch {
+        return { type: chunk.type };
+      }
+  }
+}
+
+module.exports = {
+  stripAnsi,
+  isLocalhostHostname,
+  extractFirstNonLocalhostUrl,
+  resolveCliFromPath,
+  toUnpackedAsarPath,
+  getShellEnv,
+  serializeStreamChunk,
+};

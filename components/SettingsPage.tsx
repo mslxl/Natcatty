@@ -2,13 +2,14 @@
  * Settings Page - Standalone settings window content
  * This component is rendered in a separate Electron window
  */
-import { AppWindow, Cloud, FileType, HardDrive, Keyboard, Palette, TerminalSquare, X } from "lucide-react";
+import { AppWindow, Cloud, FileType, HardDrive, Keyboard, Palette, Sparkles, TerminalSquare, X } from "lucide-react";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useSettingsState } from "../application/state/useSettingsState";
 import { usePortForwardingState } from "../application/state/usePortForwardingState";
 import { useVaultState } from "../application/state/useVaultState";
 import { useWindowControls } from "../application/state/useWindowControls";
 import { useUpdateCheck } from "../application/state/useUpdateCheck";
+import { useAIState } from "../application/state/useAIState";
 import { I18nProvider, useI18n } from "../application/i18n/I18nProvider";
 import SettingsApplicationTab from "./SettingsApplicationTab";
 import SettingsAppearanceTab from "./settings/tabs/SettingsAppearanceTab";
@@ -16,10 +17,33 @@ import SettingsFileAssociationsTab from "./settings/tabs/SettingsFileAssociation
 import SettingsShortcutsTab from "./settings/tabs/SettingsShortcutsTab";
 import SettingsTerminalTab from "./settings/tabs/SettingsTerminalTab";
 import SettingsSystemTab from "./settings/tabs/SettingsSystemTab";
+const SettingsAITab = React.lazy(() => import("./settings/tabs/SettingsAITab"));
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import type { TerminalFont } from "../infrastructure/config/fonts";
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+
+class AITabErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: 32, color: "#f87171", fontFamily: "monospace", whiteSpace: "pre-wrap" }}>
+          <h3 style={{ marginBottom: 8 }}>AI Settings Error</h3>
+          <div>{this.state.error.message}</div>
+          <div style={{ marginTop: 8, fontSize: 12, color: "#888" }}>{this.state.error.stack}</div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 type SettingsState = ReturnType<typeof useSettingsState> & {
     availableFonts: TerminalFont[];
@@ -74,6 +98,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
     const { t } = useI18n();
     const { notifyRendererReady, closeSettingsWindow } = useWindowControls();
     const { updateState, checkNow, installUpdate, openReleasePage } = useUpdateCheck();
+    const aiState = useAIState();
     const [activeTab, setActiveTab] = useState("application");
     const [mountedTabs, setMountedTabs] = useState(() => new Set(["application"]));
 
@@ -153,6 +178,12 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                             <FileType size={14} /> {t("settings.tab.sftpFileAssociations")}
                         </TabsTrigger>
                         <TabsTrigger
+                            value="ai"
+                            className="w-full justify-start gap-2 px-3 py-2 text-sm data-[state=active]:bg-background hover:bg-background/60 rounded-md transition-colors"
+                        >
+                            <Sparkles size={14} /> AI
+                        </TabsTrigger>
+                        <TabsTrigger
                             value="sync"
                             className="w-full justify-start gap-2 px-3 py-2 text-sm data-[state=active]:bg-background hover:bg-background/60 rounded-md transition-colors"
                         >
@@ -226,6 +257,35 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
 
                     {mountedTabs.has("file-associations") && (
                         <SettingsFileAssociationsTab />
+                    )}
+
+                    {mountedTabs.has("ai") && (
+                        <AITabErrorBoundary>
+                        <React.Suspense fallback={null}>
+                        <SettingsAITab
+                            providers={aiState.providers}
+                            addProvider={aiState.addProvider}
+                            updateProvider={aiState.updateProvider}
+                            removeProvider={aiState.removeProvider}
+                            activeProviderId={aiState.activeProviderId}
+                            setActiveProviderId={aiState.setActiveProviderId}
+                            activeModelId={aiState.activeModelId}
+                            setActiveModelId={aiState.setActiveModelId}
+                            globalPermissionMode={aiState.globalPermissionMode}
+                            setGlobalPermissionMode={aiState.setGlobalPermissionMode}
+                            externalAgents={aiState.externalAgents}
+                            setExternalAgents={aiState.setExternalAgents}
+                            defaultAgentId={aiState.defaultAgentId}
+                            setDefaultAgentId={aiState.setDefaultAgentId}
+                            commandBlocklist={aiState.commandBlocklist}
+                            setCommandBlocklist={aiState.setCommandBlocklist}
+                            commandTimeout={aiState.commandTimeout}
+                            setCommandTimeout={aiState.setCommandTimeout}
+                            maxIterations={aiState.maxIterations}
+                            setMaxIterations={aiState.setMaxIterations}
+                        />
+                        </React.Suspense>
+                        </AITabErrorBoundary>
                     )}
 
                     {mountedTabs.has("sync") && (
