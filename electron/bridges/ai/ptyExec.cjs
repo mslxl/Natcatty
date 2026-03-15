@@ -9,6 +9,7 @@
  */
 "use strict";
 
+const crypto = require("crypto");
 const { stripAnsi } = require("./shellUtils.cjs");
 
 /**
@@ -30,7 +31,7 @@ function execViaPty(ptyStream, command, options) {
     timeoutMs = 60000,
   } = options || {};
 
-  const marker = `__NCMCP_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}__`;
+  const marker = `__NCMCP_${Date.now().toString(36)}_${crypto.randomBytes(16).toString('hex')}__`;
 
   return new Promise((resolve) => {
     let output = "";
@@ -141,6 +142,10 @@ function execViaChannel(sshClient, command, options) {
     sshClient.exec(command, (err, execStream) => {
       if (err) {
         resolve({ ok: false, error: err.message });
+        return;
+      }
+      if (!execStream) {
+        resolve({ ok: false, output: 'Failed to create exec stream', exitCode: 1 });
         return;
       }
       let stdout = "";

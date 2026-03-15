@@ -4,23 +4,7 @@ import type { NetcattyBridge, ExecutorContext } from '../cattyAgent/executor';
 import { checkCommandSafety } from '../cattyAgent/safety';
 import type { AIPermissionMode } from '../types';
 import { shellQuote } from '../shellQuote';
-
-/**
- * Run an array of async task factories with a concurrency limit.
- */
-async function limitConcurrency<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
-  const results: T[] = [];
-  const executing = new Set<Promise<void>>();
-  for (const [i, task] of tasks.entries()) {
-    const p: Promise<void> = task().then(r => { results[i] = r; }).finally(() => executing.delete(p));
-    executing.add(p);
-    if (executing.size >= limit) {
-      await Promise.race(executing);
-    }
-  }
-  await Promise.all(executing);
-  return results;
-}
+import { limitConcurrency } from '../concurrency';
 
 /**
  * Create Catty Agent tools using the Vercel AI SDK `tool()` helper with zod schemas.
@@ -167,7 +151,8 @@ export function createCattyTools(
         const session = context.sessions.find((s) => s.sessionId === sessionId);
         if (!session?.sftpId) {
           // Fallback: use terminal exec
-          const result = await bridge.aiExec(sessionId, `head -c ${maxBytes} ${shellQuote(path)}`);
+          const clampedMaxBytes = Math.max(1, Math.min(10 * 1024 * 1024, maxBytes));
+          const result = await bridge.aiExec(sessionId, `head -c ${clampedMaxBytes} ${shellQuote(path)}`);
           if (!result.ok) {
             return { error: result.error || 'Failed to read file' };
           }

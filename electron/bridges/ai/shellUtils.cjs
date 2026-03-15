@@ -6,7 +6,7 @@
  */
 "use strict";
 
-const { execSync } = require("node:child_process");
+const { execFileSync } = require("node:child_process");
 const { existsSync } = require("node:fs");
 const path = require("node:path");
 
@@ -65,7 +65,7 @@ function resolveCliFromPath(command, shellEnv) {
   if (shellEnv) {
     try {
       const whichCmd = process.platform === "win32" ? "where" : "which";
-      const resolved = execSync(`${whichCmd} ${command}`, {
+      const resolved = execFileSync(whichCmd, [command], {
         encoding: "utf8",
         timeout: 3000,
         stdio: ["pipe", "pipe", "pipe"],
@@ -113,7 +113,7 @@ async function getShellEnv() {
   // On macOS/Linux, spawn a login shell to capture the real environment.
   try {
     const shell = process.env.SHELL || "/bin/zsh";
-    const envOutput = execSync(`${shell} -ilc 'env'`, {
+    const envOutput = execFileSync(shell, ['-ilc', 'env'], {
       encoding: "utf8",
       timeout: 10000,
       stdio: ["pipe", "pipe", "pipe"],

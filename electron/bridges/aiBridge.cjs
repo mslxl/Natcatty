@@ -96,6 +96,19 @@ function streamRequest(url, options, event, requestId) {
     const isHttps = parsedUrl.protocol === "https:";
     const lib = isHttps ? https : http;
 
+    // Store an AbortController before starting the request so that
+    // cancellation requests arriving before the http.request callback
+    // are not lost (fixes a race between request start and activeStreams.set).
+    const controller = new AbortController();
+    activeStreams.set(requestId, controller);
+
+    // If already aborted (cancel arrived before we even got here), bail out.
+    if (controller.signal.aborted) {
+      activeStreams.delete(requestId);
+      resolve();
+      return;
+    }
+
     const req = lib.request(
       parsedUrl,
       {
@@ -191,8 +204,10 @@ function streamRequest(url, options, event, requestId) {
       activeStreams.delete(requestId);
     });
 
-    // Store ref for cancellation
-    activeStreams.set(requestId, req);
+    // Wire up abort signal to destroy the request
+    controller.signal.addEventListener("abort", () => {
+      req.destroy();
+    }, { once: true });
 
     if (options.body) {
       req.write(options.body);
@@ -255,9 +270,9 @@ function registerHandlers(ipcMain) {
 
   // Cancel an active stream
   ipcMain.handle("netcatty:ai:chat:cancel", async (_event, { requestId }) => {
-    const req = activeStreams.get(requestId);
-    if (req) {
-      req.destroy();
+    const controller = activeStreams.get(requestId);
+    if (controller) {
+      controller.abort();
       activeStreams.delete(requestId);
       return true;
     }
@@ -1308,10 +1323,8 @@ function cleanup() {
   }
   agentProcesses.clear();
 
-  for (const [id, req] of activeStreams) {
-    try {
-      req.destroy();
-    } catch {}
+  for (const [id, controller] of activeStreams) {
+    try { controller.abort(); } catch {}
   }
   activeStreams.clear();
 

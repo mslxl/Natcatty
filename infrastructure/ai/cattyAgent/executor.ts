@@ -1,23 +1,7 @@
 import type { ToolCall, ToolResult, AIPermissionMode } from '../types';
 import { checkCommandSafety } from './safety';
 import { shellQuote } from '../shellQuote';
-
-/**
- * Run an array of async task factories with a concurrency limit.
- */
-async function limitConcurrency<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
-  const results: T[] = [];
-  const executing = new Set<Promise<void>>();
-  for (const [i, task] of tasks.entries()) {
-    const p: Promise<void> = task().then(r => { results[i] = r; }).finally(() => executing.delete(p));
-    executing.add(p);
-    if (executing.size >= limit) {
-      await Promise.race(executing);
-    }
-  }
-  await Promise.all(executing);
-  return results;
-}
+import { limitConcurrency } from '../concurrency';
 
 /**
  * Bridge interface for Catty Agent to interact with the Electron main process.
@@ -263,7 +247,7 @@ export function createToolExecutor(
           );
           if (!session?.sftpId) {
             // Fallback: use terminal exec
-            const maxBytes = Number(args.maxBytes) || 10000;
+            const maxBytes = Math.max(1, Math.min(10 * 1024 * 1024, Number(args.maxBytes) || 10000));
             const result = await bridge.aiExec(
               sessionId,
               `head -c ${maxBytes} ${shellQuote(path)}`,

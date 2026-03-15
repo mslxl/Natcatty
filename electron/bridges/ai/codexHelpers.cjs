@@ -6,7 +6,7 @@
  */
 "use strict";
 
-const { execSync } = require("node:child_process");
+const { execFileSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
 const { existsSync } = require("node:fs");
 const path = require("node:path");
@@ -65,7 +65,7 @@ function resolveCodexAcpBinaryPath(shellEnv, electronModule) {
   if (!isPackaged && shellEnv) {
     try {
       const whichCmd = process.platform === "win32" ? "where" : "which";
-      const systemPath = execSync(`${whichCmd} ${binaryName}`, {
+      const systemPath = execFileSync(whichCmd, [binaryName], {
         encoding: "utf8",
         timeout: 3000,
         stdio: ["pipe", "pipe", "pipe"],

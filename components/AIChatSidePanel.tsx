@@ -574,6 +574,9 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         await mcpBridge.aiMcpUpdateSessions(terminalSessions, sessionId);
       }
 
+      // TODO(security): agentApiKey is passed as plaintext over IPC to the main process via
+      // aiAcpStream. Ideally, pass only the provider ID and let the main process retrieve and
+      // decrypt the key itself, avoiding plaintext key transit across the IPC boundary.
       const openaiProvider = providers.find(p => p.providerId === 'openai' && p.enabled && p.apiKey);
       const agentApiKey = openaiProvider?.apiKey;
 
@@ -710,29 +713,27 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       return;
     }
 
-    // Decrypt API key before passing to SDK
-    let decryptedApiKey = activeProvider.apiKey;
-    if (decryptedApiKey && bridge?.credentialsDecrypt) {
-      try {
-        const decrypted = await (bridge as { credentialsDecrypt: (v: string) => Promise<string> }).credentialsDecrypt(decryptedApiKey);
-        if (decrypted) {
-          decryptedApiKey = decrypted;
-        } else {
-          reportStreamError(sessionId, abortController.signal, 'API key decryption returned empty result. Please re-enter the API key in Settings → AI.');
-          return;
-        }
-      } catch (e) {
-        console.error('[Catty] API key decryption failed:', e);
-        reportStreamError(sessionId, abortController.signal, `API key decryption failed: ${e instanceof Error ? e.message : String(e)}`);
+    // Decrypt API key and create model in a short-lived scope to minimize
+    // plaintext key exposure in memory
+    let model;
+    try {
+      const decryptedKey = activeProvider.apiKey && bridge?.credentialsDecrypt
+        ? await (bridge as { credentialsDecrypt: (v: string) => Promise<string> }).credentialsDecrypt(activeProvider.apiKey)
+        : activeProvider.apiKey;
+      if (activeProvider.apiKey && bridge?.credentialsDecrypt && !decryptedKey) {
+        reportStreamError(sessionId, abortController.signal, 'API key decryption returned empty result. Please re-enter the API key in Settings → AI.');
         return;
       }
+      model = createModelFromConfig({
+        ...activeProvider,
+        apiKey: decryptedKey,
+        defaultModel: activeModelId || activeProvider.defaultModel || '',
+      });
+    } catch (e) {
+      console.error('[Catty] API key decryption failed:', e);
+      reportStreamError(sessionId, abortController.signal, `API key decryption failed: ${e instanceof Error ? e.message : String(e)}`);
+      return;
     }
-
-    const model = createModelFromConfig({
-      ...activeProvider,
-      apiKey: decryptedApiKey,
-      defaultModel: activeModelId || activeProvider.defaultModel || '',
-    });
 
     try {
       const sdkMessages: Array<Record<string, unknown>> = [];
@@ -855,13 +856,13 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   const handleApprovalResponse = useCallback(async (messageId: string, approved: boolean) => {
     const ctx = pendingApprovalContextRef.current;
     if (!ctx) return;
+    // Destructure all needed values BEFORE clearing the ref to avoid race conditions
+    const { sessionId: sid, scopeKey: sk, sdkMessages, approvalInfo, model: ctxModel } = ctx;
     pendingApprovalContextRef.current = null;
-
-    const { sessionId: sid, scopeKey: sk, sdkMessages, approvalInfo } = ctx;
 
     // Update the message's pendingApproval status
     updateLastMessage(sid, msg => {
-      if (msg.id !== messageId && !msg.pendingApproval) return msg;
+      if (msg.id !== messageId) return msg;
       return {
         ...msg,
         pendingApproval: msg.pendingApproval
@@ -943,9 +944,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         })),
         permissionMode: globalPermissionMode,
       });
-      const { model } = ctx;
-
-      const newApprovalInfo = await processCattyStream(sid, model, freshSystemPrompt, freshTools, resumeMessages, abortController.signal);
+      const newApprovalInfo = await processCattyStream(sid, ctxModel, freshSystemPrompt, freshTools, resumeMessages, abortController.signal);
 
       if (newApprovalInfo) {
         // Another approval needed — save context for the next round
@@ -954,7 +953,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           scopeKey: sk,
           sdkMessages: resumeMessages,
           approvalInfo: newApprovalInfo,
-          model,
+          model: ctxModel,
           systemPrompt: freshSystemPrompt,
           tools: freshTools,
         };
@@ -1036,7 +1035,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }, [activeSession]);
 
   // -------------------------------------------------------------------

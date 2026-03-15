@@ -41,6 +41,7 @@ const CHAT_SESSION_ID = process.env.NETCATTY_MCP_CHAT_SESSION_ID || null;
 const PERMISSION_MODE = process.env.NETCATTY_MCP_PERMISSION_MODE || "confirm";
 
 // Default command blocklist (defense-in-depth, TCP bridge also checks)
+// NOTE: Keep in sync with DEFAULT_COMMAND_BLOCKLIST in infrastructure/ai/types.ts
 const DEFAULT_COMMAND_BLOCKLIST = [
   '\\brm\\s+(-[a-zA-Z]*r[a-zA-Z]*\\s+(-[a-zA-Z]*f[a-zA-Z]*\\s+)?|-[a-zA-Z]*f[a-zA-Z]*\\s+(-[a-zA-Z]*r[a-zA-Z]*\\s+)?|--recursive\\s+|--force\\s+){1,}',
   '\\bmkfs\\.',
@@ -267,7 +268,8 @@ server.tool(
     maxBytes: z.number().optional().default(10000).describe("Maximum bytes to read. Defaults to 10000."),
   },
   async ({ sessionId, path, maxBytes }) => {
-    const result = await rpcCall("netcatty/sftpRead", { sessionId, path, maxBytes });
+    const safeMaxBytes = Math.max(1, Math.min(10 * 1024 * 1024, Number(maxBytes) || 10000));
+    const result = await rpcCall("netcatty/sftpRead", { sessionId, path, maxBytes: safeMaxBytes });
     if (result.error) {
       return { content: [{ type: "text", text: `Error: ${result.error}` }], isError: true };
     }
@@ -285,7 +287,7 @@ server.tool(
     content: z.string().describe("The text content to write to the file."),
   },
   async ({ sessionId, path, content }) => {
-    const guardErr = guardWriteOperation();
+    const guardErr = guardWriteOperation(path);
     if (guardErr) {
       return { content: [{ type: "text", text: `Error: ${guardErr}` }], isError: true };
     }

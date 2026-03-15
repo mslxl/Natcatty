@@ -422,6 +422,9 @@ function handleGetContext(params) {
 function handleExec(params) {
   const { sessionId, command } = params;
   if (!sessionId || !command) throw new Error("sessionId and command are required");
+  if (typeof command !== 'string' || !command.trim()) {
+    return { ok: false, error: 'Invalid command', exitCode: 1 };
+  }
 
   const safety = checkCommandSafety(command);
   if (safety.blocked) {
@@ -529,6 +532,9 @@ async function handleSftpList(params) {
 
 async function handleSftpRead(params) {
   const { sessionId, path: filePath } = params;
+  if (params.maxBytes != null && (typeof params.maxBytes !== 'number' || params.maxBytes < 1 || params.maxBytes > 10 * 1024 * 1024)) {
+    return { ok: false, error: 'maxBytes must be a positive number between 1 and 10485760' };
+  }
   // Clamp maxBytes to a safe upper bound (10MB)
   const maxBytes = Math.max(1, Math.min(Number(params.maxBytes) || 10000, 10 * 1024 * 1024));
   if (!sessionId || !filePath) throw new Error("sessionId and path are required");
@@ -671,6 +677,12 @@ async function handleSftpStat(params) {
 async function handleMultiExec(params) {
   const { sessionIds, command, mode = "parallel", stopOnError = false } = params;
   if (!Array.isArray(sessionIds) || !command) throw new Error("sessionIds and command are required");
+  if (sessionIds.length > 50) {
+    return { ok: false, error: 'Too many session IDs: maximum is 50' };
+  }
+  if (typeof command !== 'string' || !command.trim()) {
+    return { ok: false, error: 'Invalid command' };
+  }
 
   const safety = checkCommandSafety(command);
   if (safety.blocked) {
