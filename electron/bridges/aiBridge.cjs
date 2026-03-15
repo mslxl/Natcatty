@@ -1028,7 +1028,7 @@ function registerHandlers(ipcMain) {
       let hasContent = false;
       // Stall detection: if no chunk for 15s, send a status event
       let stallTimer = null;
-      const STALL_TIMEOUT_MS = 15000;
+      const STALL_TIMEOUT_MS = 3000;
       function resetStallTimer() {
         if (stallTimer) clearTimeout(stallTimer);
         stallTimer = setTimeout(() => {

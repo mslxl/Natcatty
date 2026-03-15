@@ -606,6 +606,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
                 updateLastMessage(sessionId!, msg => ({
                   ...msg,
                   content: msg.content + text,
+                  statusText: undefined,
                   thinkingDurationMs: msg.thinking && !msg.thinkingDurationMs
                     ? Date.now() - msg.timestamp
                     : msg.thinkingDurationMs,
@@ -659,7 +660,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
                 maybeCreateAssistantMsg();
                 updateLastMessage(sessionId!, msg => ({
                   ...msg,
-                  content: msg.content + (msg.content ? '\n' : '') + `*${message}*`,
+                  statusText: message,
                 }));
               },
               onError: (error: string) => {

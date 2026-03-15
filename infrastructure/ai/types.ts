@@ -45,6 +45,8 @@ export interface ChatMessage {
     message: string;
     retryable: boolean;
   };
+  /** Transient status text shown with shimmer effect (e.g. "Waiting for response...") */
+  statusText?: string;
   executionStatus?: 'pending' | 'approved' | 'rejected' | 'running' | 'completed' | 'failed';
   pendingApproval?: {
     approvalId: string;

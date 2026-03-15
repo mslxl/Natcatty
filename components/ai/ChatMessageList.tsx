@@ -117,6 +117,13 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
                   />
                 )}
 
+                {/* Status text with shimmer */}
+                {message.statusText && (
+                  <div className="py-1">
+                    <span className="thinking-shimmer text-xs">{message.statusText}</span>
+                  </div>
+                )}
+
                 {/* Error info */}
                 {message.errorInfo && (
                   <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-destructive/10 border border-destructive/20 text-sm">
