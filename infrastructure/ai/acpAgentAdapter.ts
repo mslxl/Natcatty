@@ -27,7 +27,7 @@ interface AcpBridge {
     acpArgs: string[],
     prompt: string,
     cwd?: string,
-    apiKey?: string,
+    providerId?: string,
     model?: string,
     images?: ImageAttachment[],
   ): Promise<{ ok: boolean; error?: string }>;
@@ -61,7 +61,7 @@ export async function runAcpAgentTurn(
   prompt: string,
   callbacks: AcpAgentCallbacks,
   signal?: AbortSignal,
-  apiKey?: string,
+  providerId?: string,
   model?: string,
   images?: ImageAttachment[],
 ): Promise<void> {
@@ -115,7 +115,7 @@ export async function runAcpAgentTurn(
     config.acpArgs || [],
     prompt,
     undefined, // cwd
-    apiKey,
+    providerId,
     model,
     images?.length ? images : undefined,
   ).catch((err: Error) => {

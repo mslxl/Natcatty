@@ -79,6 +79,8 @@ const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
       {/* Header */}
       <button
         onClick={toggle}
+        aria-expanded={isExpanded}
+        aria-controls="thinking-block-content"
         className="group flex items-center gap-1.5 py-0.5 px-1 cursor-pointer text-left w-full rounded hover:bg-white/[0.03] transition-colors"
       >
         <ChevronRight
@@ -112,7 +114,7 @@ const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
 
       {/* Content */}
       {isExpanded && content && (
-        <div className="relative">
+        <div id="thinking-block-content" className="relative">
           {/* Top gradient fade */}
           {isStreaming && (
             <div className="absolute inset-x-0 top-0 h-4 bg-gradient-to-b from-background to-transparent z-10 pointer-events-none" />

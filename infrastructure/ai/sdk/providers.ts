@@ -12,6 +12,7 @@ interface BridgeAPI {
     method: string,
     headers: Record<string, string>,
     body?: string,
+    providerId?: string,
   ): Promise<{
     ok: boolean;
     status: number;
@@ -23,6 +24,7 @@ interface BridgeAPI {
     url: string,
     headers: Record<string, string>,
     body: string,
+    providerId?: string,
   ): Promise<{ ok: boolean; error?: string }>;
   onAiStreamData(requestId: string, cb: (data: string) => void): () => void;
   onAiStreamEnd(requestId: string, cb: () => void): () => void;
@@ -81,7 +83,10 @@ function extractHeaders(headers?: HeadersInit): Record<string, string> {
  *   `Response` with a `ReadableStream` body.
  * - Falls back to `globalThis.fetch` if the bridge is unavailable.
  */
-export function createBridgeFetchForSDK(): typeof globalThis.fetch {
+/** Placeholder API key used by the renderer; main process replaces it with the real key. */
+export const API_KEY_PLACEHOLDER = '__IPC_SECURED__';
+
+export function createBridgeFetchForSDK(providerId?: string): typeof globalThis.fetch {
   return async (
     input: string | URL | Request,
     init?: RequestInit,
@@ -164,6 +169,7 @@ export function createBridgeFetchForSDK(): typeof globalThis.fetch {
             url,
             headers,
             body || '',
+            providerId,
           );
           if (!result.ok) {
             controller.error(new Error(result.error || 'Stream request failed'));
@@ -180,7 +186,7 @@ export function createBridgeFetchForSDK(): typeof globalThis.fetch {
     }
 
     // Non-streaming path
-    const result = await bridge.aiFetch(url, method, headers, body);
+    const result = await bridge.aiFetch(url, method, headers, body, providerId);
 
     return new Response(result.data, {
       status: result.status,
@@ -192,30 +198,37 @@ export function createBridgeFetchForSDK(): typeof globalThis.fetch {
 
 /**
  * Create a Vercel AI SDK model instance from a ProviderConfig.
+ *
+ * API keys are NOT sent to the SDK in plaintext. Instead, a placeholder
+ * token is used so the SDK builds proper auth headers, and the main
+ * process replaces the placeholder with the real decrypted key before
+ * making the HTTP request.
  */
 export function createModelFromConfig(config: ProviderConfig) {
-  const customFetch = createBridgeFetchForSDK();
+  // Use placeholder API key — the main process will inject the real key
+  const safeApiKey = config.apiKey ? API_KEY_PLACEHOLDER : undefined;
+  const customFetch = createBridgeFetchForSDK(config.id);
   const modelId = config.defaultModel || '';
 
   switch (config.providerId) {
     case 'openai':
       // Use .chat() to force Chat Completions API (not Responses API)
       return createOpenAI({
-        apiKey: config.apiKey,
+        apiKey: safeApiKey,
         baseURL: config.baseURL,
         fetch: customFetch,
       }).chat(modelId);
 
     case 'anthropic':
       return createAnthropic({
-        apiKey: config.apiKey,
+        apiKey: safeApiKey,
         baseURL: config.baseURL,
         fetch: customFetch,
       })(modelId);
 
     case 'google':
       return createGoogleGenerativeAI({
-        apiKey: config.apiKey,
+        apiKey: safeApiKey,
         baseURL: config.baseURL,
         fetch: customFetch,
       })(modelId);
@@ -231,7 +244,7 @@ export function createModelFromConfig(config: ProviderConfig) {
     case 'openrouter':
       // OpenRouter uses OpenAI-compatible Chat Completions API
       return createOpenAI({
-        apiKey: config.apiKey,
+        apiKey: safeApiKey,
         baseURL: config.baseURL || 'https://openrouter.ai/api/v1',
         fetch: customFetch,
       }).chat(modelId);
@@ -239,7 +252,7 @@ export function createModelFromConfig(config: ProviderConfig) {
     case 'custom':
       // Custom providers use OpenAI-compatible Chat Completions API
       return createOpenAI({
-        apiKey: config.apiKey,
+        apiKey: safeApiKey,
         baseURL: config.baseURL,
         fetch: customFetch,
       }).chat(modelId);

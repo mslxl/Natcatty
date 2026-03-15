@@ -244,6 +244,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
           <>
             <div className="fixed inset-0 z-[999]" onClick={closeAllMenus} />
             <div
+              role="listbox"
+              aria-label="Mention host"
               className="fixed z-[1000] min-w-[160px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
               style={{ left: menuPos.left, bottom: menuPos.bottom }}
             >
@@ -252,6 +254,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                 <button
                   key={host.sessionId}
                   type="button"
+                  role="option"
                   onClick={() => handleSelectAtMention(host)}
                   className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
                 >
@@ -284,6 +287,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
               }}
               className={iconButtonClassName}
               title="Attach"
+              aria-label="Attach file"
+              aria-expanded={showAttachMenu}
             >
               <Plus size={13} />
             </button>
@@ -291,12 +296,14 @@ const ChatInput: React.FC<ChatInputProps> = ({
               <>
                 <div className="fixed inset-0 z-[999]" onClick={closeAllMenus} />
                 <div
+                  role="menu"
                   className="fixed z-[1000] min-w-[170px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
                   style={{ left: menuPos.left, bottom: menuPos.bottom }}
                 >
                   <div className="px-3 py-1 text-[10px] text-muted-foreground/40 tracking-wide">{t('ai.chat.menuContext')}</div>
                   <button
                     type="button"
+                    role="menuitem"
                     onClick={() => { fileInputRef.current?.setAttribute('accept', '*/*'); fileInputRef.current?.click(); closeAllMenus(); }}
                     className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
                   >
@@ -305,6 +312,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                   </button>
                   <button
                     type="button"
+                    role="menuitem"
                     onClick={() => { fileInputRef.current?.setAttribute('accept', 'image/*'); fileInputRef.current?.click(); closeAllMenus(); }}
                     className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
                   >
@@ -315,9 +323,14 @@ const ChatInput: React.FC<ChatInputProps> = ({
                     className="relative"
                     onMouseEnter={() => setShowHostSubmenu(true)}
                     onMouseLeave={() => setShowHostSubmenu(false)}
+                    onFocus={() => setShowHostSubmenu(true)}
+                    onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setShowHostSubmenu(false); }}
                   >
                     <button
                       type="button"
+                      role="menuitem"
+                      aria-label="Mention host"
+                      aria-expanded={showHostSubmenu && hosts.length > 0}
                       className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
                     >
                       <AtSign size={13} className="text-muted-foreground/60" />
@@ -325,11 +338,12 @@ const ChatInput: React.FC<ChatInputProps> = ({
                       {hosts.length > 0 && <ChevronRight size={10} className="text-muted-foreground/50" />}
                     </button>
                     {showHostSubmenu && hosts.length > 0 && (
-                      <div className="absolute left-full top-0 ml-1 min-w-[160px] rounded-lg border border-border/50 bg-popover shadow-lg py-1 z-[1001]">
+                      <div role="menu" className="absolute left-full top-0 ml-1 min-w-[160px] rounded-lg border border-border/50 bg-popover shadow-lg py-1 z-[1001]">
                         {hosts.map(host => (
                           <button
                             key={host.sessionId}
                             type="button"
+                            role="menuitem"
                             onClick={() => {
                               const mention = `@${host.label || host.hostname} `;
                               onChange(value + mention);
@@ -365,6 +379,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
                 }
               }}
               className={`${chipClassName} ${hasModelPicker ? 'cursor-pointer hover:bg-muted/24 transition-colors' : ''}`}
+              aria-label="Select model"
+              aria-expanded={showModelPicker}
             >
               <Cpu size={11} className="text-muted-foreground/64" />
               <span className="truncate max-w-[82px]">{modelLabel}</span>
@@ -374,6 +390,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
               <>
                 <div className="fixed inset-0 z-[999]" onClick={closeAllMenus} />
                 <div
+                  role="listbox"
+                  aria-label="Select model"
                   className="fixed z-[1000] min-w-[160px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
                   style={{ left: menuPos.left, bottom: menuPos.bottom }}
                   onMouseLeave={() => setHoveredModelId(null)}
@@ -382,9 +400,17 @@ const ChatInput: React.FC<ChatInputProps> = ({
                     const isSelected = preset.id === selectedBaseModelId;
                     const hasThinking = preset.thinkingLevels && preset.thinkingLevels.length > 0;
                     return (
-                      <div key={preset.id} className="relative" onMouseEnter={() => setHoveredModelId(hasThinking ? preset.id : null)}>
+                      <div
+                        key={preset.id}
+                        className="relative"
+                        onMouseEnter={() => setHoveredModelId(hasThinking ? preset.id : null)}
+                        onFocus={() => { if (hasThinking) setHoveredModelId(preset.id); }}
+                        onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setHoveredModelId(null); }}
+                      >
                         <button
                           type="button"
+                          role="option"
+                          aria-selected={isSelected}
                           onClick={() => {
                             if (!hasThinking) {
                               onModelSelect?.(preset.id);
@@ -400,7 +426,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                         </button>
                         {/* Thinking level sub-menu */}
                         {hasThinking && hoveredModelId === preset.id && (
-                          <div className="absolute left-full top-0 ml-1 min-w-[120px] rounded-lg border border-border/50 bg-popover shadow-lg py-1 z-[1001]">
+                          <div role="listbox" aria-label="Thinking level" className="absolute left-full top-0 ml-1 min-w-[120px] rounded-lg border border-border/50 bg-popover shadow-lg py-1 z-[1001]">
                             {preset.thinkingLevels!.map(level => {
                               const fullId = `${preset.id}/${level}`;
                               const isLevelSelected = selectedModelId === fullId;
@@ -408,9 +434,22 @@ const ChatInput: React.FC<ChatInputProps> = ({
                                 <button
                                   key={level}
                                   type="button"
+                                  role="option"
+                                  aria-selected={isLevelSelected}
+                                  tabIndex={0}
                                   onClick={() => {
                                     onModelSelect?.(fullId);
                                     closeAllMenus();
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      e.preventDefault();
+                                      onModelSelect?.(fullId);
+                                      closeAllMenus();
+                                    } else if (e.key === 'Escape') {
+                                      e.preventDefault();
+                                      closeAllMenus();
+                                    }
                                   }}
                                   className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
                                 >
@@ -445,6 +484,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
                   }}
                   className={`${chipClassName} cursor-pointer hover:bg-muted/24 transition-colors`}
                   title={t('ai.safety.permissionMode')}
+                  aria-label="Permission mode"
+                  aria-expanded={showPermPicker}
                 >
                   {permissionMode === 'observer' && <Eye size={11} className="text-blue-400/70" />}
                   {permissionMode === 'confirm' && <ShieldCheck size={11} className="text-yellow-400/70" />}
@@ -460,6 +501,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
                   <>
                     <div className="fixed inset-0 z-[999]" onClick={closeAllMenus} />
                     <div
+                      role="listbox"
+                      aria-label="Permission mode"
                       className="fixed z-[1000] min-w-[180px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
                       style={{ left: menuPos.left, bottom: menuPos.bottom }}
                     >
@@ -471,6 +514,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
                         <button
                           key={mode}
                           type="button"
+                          role="option"
+                          aria-selected={permissionMode === mode}
                           onClick={() => {
                             onPermissionModeChange(mode);
                             closeAllMenus();

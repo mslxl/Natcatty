@@ -1,6 +1,28 @@
 import { DEFAULT_COMMAND_BLOCKLIST } from '../types';
 
 /**
+ * Check if a regex pattern is safe from ReDoS attacks.
+ *
+ * Rejects patterns with nested quantifiers like `(a+)+`, `(a*)*`, `(a+)*`
+ * which can cause catastrophic backtracking / CPU exhaustion.
+ */
+function isSafeRegex(pattern: string): boolean {
+  // Detect nested quantifiers: a group containing a quantifier, followed by another quantifier.
+  // Matches patterns like (x+)+, (x*)+, (x+)*, (x{2,})+ etc.
+  const nestedQuantifier = /\([^)]*[+*}]\)[+*?{]/;
+  if (nestedQuantifier.test(pattern)) {
+    return false;
+  }
+  // Also catch overlapping alternations with quantifiers inside quantified groups
+  // e.g. (a|a)+  — not always dangerous but a common ReDoS vector
+  const overlappingAlt = /\([^)]*\|[^)]*\)[+*]{/;
+  if (overlappingAlt.test(pattern)) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * Pre-compiled RegExp cache for command blocklist patterns.
  *
  * The blocklist is a best-effort defense-in-depth measure. It is NOT a
@@ -11,6 +33,10 @@ import { DEFAULT_COMMAND_BLOCKLIST } from '../types';
 const compiledDefaultBlocklist: RegExp[] = DEFAULT_COMMAND_BLOCKLIST.flatMap(
   (pattern) => {
     try {
+      if (!isSafeRegex(pattern)) {
+        console.warn(`[Safety] Skipping default blocklist pattern with nested quantifiers (ReDoS risk): ${pattern}`);
+        return [];
+      }
       return [new RegExp(pattern, 'i')];
     } catch {
       return [];
@@ -24,6 +50,11 @@ const userPatternCache = new Map<string, RegExp | null>();
 function getCompiledPattern(pattern: string): RegExp | null {
   if (userPatternCache.has(pattern)) {
     return userPatternCache.get(pattern)!;
+  }
+  if (!isSafeRegex(pattern)) {
+    console.warn(`[Safety] Skipping user blocklist pattern with nested quantifiers (ReDoS risk): ${pattern}`);
+    userPatternCache.set(pattern, null);
+    return null;
   }
   try {
     const regex = new RegExp(pattern, 'i');

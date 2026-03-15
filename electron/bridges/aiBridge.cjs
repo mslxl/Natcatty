@@ -57,6 +57,71 @@ const MAX_CONCURRENT_AGENTS = 5;
 const acpProviders = new Map();
 const acpActiveStreams = new Map();
 
+// ── Provider registry (synced from renderer, keys stay encrypted) ──
+const ENC_PREFIX = "enc:v1:";
+let providerConfigs = [];
+
+/**
+ * Decrypt an API key using Electron's safeStorage.
+ * Handles both encrypted (enc:v1: prefix) and plaintext keys.
+ */
+function decryptApiKeyValue(encryptedKey) {
+  if (!encryptedKey || typeof encryptedKey !== "string") return encryptedKey || "";
+  if (!encryptedKey.startsWith(ENC_PREFIX)) return encryptedKey; // plaintext
+  const safeStorage = electronModule?.safeStorage;
+  if (!safeStorage?.isEncryptionAvailable?.()) return encryptedKey; // cannot decrypt
+  try {
+    const base64 = encryptedKey.slice(ENC_PREFIX.length);
+    const buf = Buffer.from(base64, "base64");
+    return safeStorage.decryptString(buf);
+  } catch (err) {
+    console.warn("[AI Bridge] API key decryption failed:", err?.message || err);
+    return "";
+  }
+}
+
+/**
+ * Look up a provider config by its id and decrypt its API key.
+ * Returns { provider, apiKey } or null if not found.
+ */
+function resolveProviderApiKey(providerId) {
+  if (!providerId) return null;
+  const config = providerConfigs.find(p => p.id === providerId);
+  if (!config) return null;
+  return {
+    provider: config,
+    apiKey: decryptApiKeyValue(config.apiKey),
+  };
+}
+
+/** Placeholder token used by the renderer to avoid sending real API keys over IPC. */
+const API_KEY_PLACEHOLDER = "__IPC_SECURED__";
+
+/**
+ * Replace the API key placeholder in HTTP headers and URL with the real decrypted key.
+ * Handles OpenAI (Authorization: Bearer), Anthropic (x-api-key), Google (?key=), etc.
+ */
+function injectApiKeyIntoRequest(url, headers, providerId) {
+  if (!providerId) return { url, headers };
+  const resolved = resolveProviderApiKey(providerId);
+  if (!resolved || !resolved.apiKey) return { url, headers };
+  const realKey = resolved.apiKey;
+
+  // Replace placeholder in all header values
+  const patchedHeaders = {};
+  for (const [k, v] of Object.entries(headers || {})) {
+    patchedHeaders[k] = typeof v === "string" ? v.replace(API_KEY_PLACEHOLDER, realKey) : v;
+  }
+
+  // Replace placeholder in URL query parameters (e.g. Google AI ?key=)
+  let patchedUrl = url;
+  if (typeof url === "string" && url.includes(API_KEY_PLACEHOLDER)) {
+    patchedUrl = url.replace(API_KEY_PLACEHOLDER, encodeURIComponent(realKey));
+  }
+
+  return { url: patchedUrl, headers: patchedHeaders };
+}
+
 function cleanupAcpProvider(chatSessionId) {
   const entry = acpProviders.get(chatSessionId);
   if (!entry) return;
@@ -251,6 +316,15 @@ function streamRequest(url, options, event, requestId) {
 }
 
 function registerHandlers(ipcMain) {
+  // ── Provider config sync (renderer → main, keys stay encrypted) ──
+  ipcMain.handle("netcatty:ai:sync-providers", async (event, { providers }) => {
+    if (!validateSender(event)) return { ok: false };
+    if (Array.isArray(providers)) {
+      providerConfigs = providers;
+    }
+    return { ok: true };
+  });
+
   // URL allowlist: only permit requests to known AI provider domains + HTTPS
   const ALLOWED_FETCH_HOSTS = new Set([
     "api.openai.com",
@@ -289,15 +363,20 @@ function registerHandlers(ipcMain) {
   }
 
   // Start a streaming chat request (proxied through main process)
-  ipcMain.handle("netcatty:ai:chat:stream", async (event, { requestId, url, headers, body }) => {
+  ipcMain.handle("netcatty:ai:chat:stream", async (event, { requestId, url, headers, body, providerId }) => {
     // Validate IPC sender (Issue #17)
     if (!validateSender(event)) {
       return { ok: false, error: "Unauthorized IPC sender" };
     }
     try {
+      // Inject real API key if providerId is given (replaces placeholder in headers/URL)
+      const patched = injectApiKeyIntoRequest(url, headers, providerId);
+      const resolvedUrl = patched.url;
+      const resolvedHeaders = patched.headers;
+
       // Validate URL: only allow HTTP(S) schemes; require HTTPS for non-localhost
       try {
-        const parsed = new URL(url);
+        const parsed = new URL(resolvedUrl);
         if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
           return { ok: false, error: "Only HTTP(S) URLs are allowed" };
         }
@@ -310,11 +389,11 @@ function registerHandlers(ipcMain) {
       }
 
       // Check URL against allowed hosts (same as netcatty:ai:fetch)
-      if (!isAllowedFetchUrl(url)) {
+      if (!isAllowedFetchUrl(resolvedUrl)) {
         return { ok: false, error: "URL host is not in the allowed list" };
       }
 
-      await streamRequest(url, { method: "POST", headers, body }, event, requestId);
+      await streamRequest(resolvedUrl, { method: "POST", headers: resolvedHeaders, body }, event, requestId);
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err?.message || String(err) };
@@ -333,14 +412,20 @@ function registerHandlers(ipcMain) {
   });
 
   // Non-streaming request (for model listing, validation, etc.)
-  ipcMain.handle("netcatty:ai:fetch", async (event, { url, method, headers, body }) => {
+  ipcMain.handle("netcatty:ai:fetch", async (event, { url, method, headers, body, providerId }) => {
     // Validate IPC sender (Issue #17)
     if (!validateSender(event)) {
       return { ok: false, status: 0, data: "", error: "Unauthorized IPC sender" };
     }
+
+    // Inject real API key if providerId is given (replaces placeholder in headers/URL)
+    const patched = injectApiKeyIntoRequest(url, headers, providerId);
+    const resolvedUrl = patched.url;
+    const resolvedHeaders = patched.headers;
+
     // Validate URL: block non-HTTP(S) schemes and internal network access
     try {
-      const parsed = new URL(url);
+      const parsed = new URL(resolvedUrl);
       if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
         return { ok: false, status: 0, data: "", error: "Only HTTP(S) URLs are allowed" };
       }
@@ -350,19 +435,19 @@ function registerHandlers(ipcMain) {
     }
 
     // Check URL against allowed hosts (server-side allowlist only)
-    if (!isAllowedFetchUrl(url)) {
+    if (!isAllowedFetchUrl(resolvedUrl)) {
       return { ok: false, status: 0, data: "", error: "URL host is not in the allowed list" };
     }
 
     return new Promise((resolve) => {
-      const parsedUrl = new URL(url);
+      const parsedUrl = new URL(resolvedUrl);
       const isHttps = parsedUrl.protocol === "https:";
       const lib = isHttps ? https : http;
       const MAX_RESPONSE_SIZE = 10 * 1024 * 1024; // 10MB safety limit
 
       const req = lib.request(
         parsedUrl,
-        { method: method || "GET", headers: headers || {}, timeout: 30000 },
+        { method: method || "GET", headers: resolvedHeaders || {}, timeout: 30000 },
         (res) => {
           let data = "";
           let totalSize = 0;
@@ -1171,7 +1256,7 @@ function registerHandlers(ipcMain) {
 
   // ── ACP (Agent Client Protocol) streaming ──
 
-  ipcMain.handle("netcatty:ai:acp:stream", async (event, { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey, model, images }) => {
+  ipcMain.handle("netcatty:ai:acp:stream", async (event, { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, providerId, model, images }) => {
     // Validate IPC sender (Issue #17)
     if (!validateSender(event)) {
       return { ok: false, error: "Unauthorized IPC sender" };
@@ -1183,6 +1268,10 @@ function registerHandlers(ipcMain) {
       const shellEnv = await getShellEnv();
       const sessionCwd = cwd || process.cwd();
       const isCodexAgent = acpCommand === "codex-acp";
+
+      // Resolve API key from providerId (decrypted in main process only)
+      const resolvedProvider = providerId ? resolveProviderApiKey(providerId) : null;
+      const apiKey = resolvedProvider?.apiKey || undefined;
 
       if (isCodexAgent && !apiKey) {
         const validation = await validateCodexChatGptAuth({ maxAgeMs: 10000 });

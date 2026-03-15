@@ -989,14 +989,17 @@ const api = {
   },
 
   // ── AI Bridge ──
-  aiChatStream: async (requestId, url, headers, body) => {
-    return ipcRenderer.invoke("netcatty:ai:chat:stream", { requestId, url, headers, body });
+  aiSyncProviders: async (providers) => {
+    return ipcRenderer.invoke("netcatty:ai:sync-providers", { providers });
+  },
+  aiChatStream: async (requestId, url, headers, body, providerId) => {
+    return ipcRenderer.invoke("netcatty:ai:chat:stream", { requestId, url, headers, body, providerId });
   },
   aiChatCancel: async (requestId) => {
     return ipcRenderer.invoke("netcatty:ai:chat:cancel", { requestId });
   },
-  aiFetch: async (url, method, headers, body) => {
-    return ipcRenderer.invoke("netcatty:ai:fetch", { url, method, headers, body });
+  aiFetch: async (url, method, headers, body, providerId) => {
+    return ipcRenderer.invoke("netcatty:ai:fetch", { url, method, headers, body, providerId });
   },
   aiExec: async (sessionId, command) => {
     return ipcRenderer.invoke("netcatty:ai:exec", { sessionId, command });
@@ -1054,8 +1057,8 @@ const api = {
     return ipcRenderer.invoke("netcatty:ai:mcp:set-permission-mode", { mode });
   },
   // ACP streaming
-  aiAcpStream: async (requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey, model, images) => {
-    return ipcRenderer.invoke("netcatty:ai:acp:stream", { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey, model, images });
+  aiAcpStream: async (requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, providerId, model, images) => {
+    return ipcRenderer.invoke("netcatty:ai:acp:stream", { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, providerId, model, images });
   },
   aiAcpCancel: async (requestId) => {
     return ipcRenderer.invoke("netcatty:ai:acp:cancel", { requestId });

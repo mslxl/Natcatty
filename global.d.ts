@@ -613,9 +613,10 @@ declare global {
     credentialsDecrypt?(value: string): Promise<string>;
 
     // AI / external agents
-    aiChatStream?(requestId: string, url: string, headers?: Record<string, string>, body?: string): Promise<{ ok: boolean; error?: string }>;
+    aiSyncProviders?(providers: Array<{ id: string; providerId: string; apiKey?: string; baseURL?: string; enabled: boolean }>): Promise<{ ok: boolean }>;
+    aiChatStream?(requestId: string, url: string, headers?: Record<string, string>, body?: string, providerId?: string): Promise<{ ok: boolean; error?: string }>;
     aiChatCancel?(requestId: string): Promise<boolean>;
-    aiFetch?(url: string, method?: string, headers?: Record<string, string>, body?: string): Promise<{ ok: boolean; status: number; data: string; error?: string }>;
+    aiFetch?(url: string, method?: string, headers?: Record<string, string>, body?: string, providerId?: string): Promise<{ ok: boolean; status: number; data: string; error?: string }>;
     aiExec?(sessionId: string, command: string): Promise<{ ok: boolean; stdout?: string; stderr?: string; exitCode?: number | null; error?: string }>;
     aiTerminalWrite?(sessionId: string, data: string): Promise<{ ok: boolean; error?: string }>;
     aiDiscoverAgents?(): Promise<Array<{
@@ -686,7 +687,7 @@ declare global {
     aiWriteToAgent?(agentId: string, data: string): Promise<{ ok: boolean; error?: string }>;
     aiCloseAgentStdin?(agentId: string): Promise<{ ok: boolean; error?: string }>;
     aiKillAgent?(agentId: string): Promise<{ ok: boolean; error?: string }>;
-    aiAcpStream?(requestId: string, chatSessionId: string, acpCommand: string, acpArgs: string[], prompt: string, cwd?: string, apiKey?: string): Promise<{ ok: boolean; error?: string }>;
+    aiAcpStream?(requestId: string, chatSessionId: string, acpCommand: string, acpArgs: string[], prompt: string, cwd?: string, providerId?: string): Promise<{ ok: boolean; error?: string }>;
     aiAcpCancel?(requestId: string): Promise<{ ok: boolean; error?: string }>;
     aiAcpCleanup?(chatSessionId: string): Promise<{ ok: boolean }>;
     onAiAcpEvent?(requestId: string, cb: (event: Record<string, unknown>) => void): () => void;

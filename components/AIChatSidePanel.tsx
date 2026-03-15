@@ -3,6 +3,11 @@
  *
  * Zed-style agent panel with agent selector, scoped chat sessions,
  * message list, input area, and session history drawer.
+ *
+ * Core logic is decomposed into focused hooks:
+ * - useAIChatStreaming: stream processing, abort management, agent sub-flows
+ * - useToolApproval: tool approval workflow, timeouts, resume logic
+ * - useConversationExport: export formats & object URL lifecycle
  */
 
 import {
@@ -12,7 +17,6 @@ import {
   X,
 } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { streamText, stepCountIs, type ModelMessage } from 'ai';
 import { cn } from '../lib/utils';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { useWindowControls } from '../application/state/useWindowControls';
@@ -27,14 +31,6 @@ import type {
   ProviderConfig,
 } from '../infrastructure/ai/types';
 import { getAgentModelPresets } from '../infrastructure/ai/types';
-import { buildSystemPrompt } from '../infrastructure/ai/cattyAgent/systemPrompt';
-import { createModelFromConfig } from '../infrastructure/ai/sdk/providers';
-import { createCattyTools } from '../infrastructure/ai/sdk/tools';
-import type { NetcattyBridge } from '../infrastructure/ai/cattyAgent/executor';
-import { exportAsMarkdown, exportAsJSON, exportAsPlainText, getExportFilename } from '../infrastructure/ai/conversationExport';
-import { runExternalAgentTurn } from '../infrastructure/ai/externalAgentAdapter';
-import { runAcpAgentTurn } from '../infrastructure/ai/acpAgentAdapter';
-import { classifyError } from '../infrastructure/ai/errorClassifier';
 import { useAgentDiscovery } from '../application/state/useAgentDiscovery';
 import { Button } from './ui/button';
 import { ScrollArea } from './ui/scroll-area';
@@ -42,82 +38,9 @@ import AgentSelector from './ai/AgentSelector';
 import ChatInput from './ai/ChatInput';
 import ChatMessageList from './ai/ChatMessageList';
 import ConversationExport from './ai/ConversationExport';
-
-// -------------------------------------------------------------------
-// Stream chunk type interfaces (Issue #13: replace unsafe casts)
-// -------------------------------------------------------------------
-
-/** Shape of a text/text-delta chunk from the Vercel AI SDK fullStream. */
-interface TextDeltaChunk {
-  type: 'text' | 'text-delta';
-  text?: string;
-  textDelta?: string;
-}
-
-/** Shape of a reasoning chunk from the Vercel AI SDK fullStream. */
-interface ReasoningChunk {
-  type: 'reasoning' | 'reasoning-start' | 'reasoning-delta';
-  text?: string;
-}
-
-/** Shape of a tool-call chunk from the Vercel AI SDK fullStream. */
-interface ToolCallChunk {
-  type: 'tool-call';
-  toolCallId: string;
-  toolName: string;
-  input?: unknown;
-  args?: unknown;
-}
-
-/** Shape of a tool-result chunk from the Vercel AI SDK fullStream. */
-interface ToolResultChunk {
-  type: 'tool-result';
-  toolCallId: string;
-  output?: unknown;
-  result?: unknown;
-}
-
-/** Shape of a tool-approval-request chunk from the Vercel AI SDK fullStream. */
-interface ToolApprovalRequestChunk {
-  type: 'tool-approval-request';
-  approvalId: string;
-  toolCall: {
-    toolCallId: string;
-    toolName: string;
-    args?: Record<string, unknown>;
-    input?: Record<string, unknown>;
-  };
-}
-
-/** Shape of an error chunk from the Vercel AI SDK fullStream. */
-interface ErrorChunk {
-  type: 'error';
-  error: unknown;
-}
-
-/** Union of all stream chunk shapes we handle. */
-type StreamChunk =
-  | TextDeltaChunk
-  | ReasoningChunk
-  | ToolCallChunk
-  | ToolResultChunk
-  | ToolApprovalRequestChunk
-  | ErrorChunk
-  | { type: 'reasoning-end' | 'text-start' | 'text-end' | 'start' | 'finish' | 'start-step' | 'finish-step' };
-
-/** Shape of the netcatty bridge exposed on `window` (panel-specific subset). */
-interface PanelBridge extends NetcattyBridge {
-  credentialsDecrypt?: (value: string) => Promise<string>;
-  aiMcpUpdateSessions?: (sessions: AIChatSidePanelProps['terminalSessions'], chatSessionId?: string) => Promise<unknown>;
-  aiAcpCleanup?: (chatSessionId: string) => Promise<{ ok: boolean }>;
-  [key: string]: ((...args: unknown[]) => unknown) | undefined;
-}
-
-/** Typed accessor for the netcatty bridge on the window object. */
-function getNetcattyBridge(): PanelBridge | undefined {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (window as any).netcatty as PanelBridge | undefined;
-}
+import { useAIChatStreaming, getNetcattyBridge } from './ai/hooks/useAIChatStreaming';
+import { useToolApproval } from './ai/hooks/useToolApproval';
+import { useConversationExport } from './ai/hooks/useConversationExport';
 
 // -------------------------------------------------------------------
 // Props
@@ -233,72 +156,46 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     setInputValueMap(prev => ({ ...prev, [scopeKey]: val }));
   }, [scopeKey]);
 
-  // Per-session streaming state (keyed by sessionId)
-  const [streamingSessions, setStreamingSessions] = useState<Set<string>>(new Set());
-  const setStreamingForScope = useCallback((key: string, val: boolean) => {
-    setStreamingSessions(prev => {
-      const next = new Set(prev);
-      if (val) next.add(key); else next.delete(key);
-      return next;
-    });
-  }, []);
-
   const [showHistory, setShowHistory] = useState(false);
   const [currentAgentId, setCurrentAgentId] = useState(defaultAgentId);
-
-  // Per-scope abort controllers
-  const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
-
-  // Pending approval context — stores SDK state needed to resume after user approves/rejects
-  const pendingApprovalContextRef = useRef<{
-    sessionId: string;
-    scopeKey: string;
-    sdkMessages: Array<ModelMessage>;
-    approvalInfo: {
-      approvalId: string;
-      toolCallId: string;
-      toolName: string;
-      toolArgs: Record<string, unknown>;
-    };
-    model: ReturnType<typeof createModelFromConfig>;
-    systemPrompt: string;
-    tools: ReturnType<typeof createCattyTools>;
-  } | null>(null);
-
-  // Timeout ID for auto-clearing stale pending approval (Issue #14)
-  const pendingApprovalTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  /** Set pending approval context with a 5-minute auto-clear timeout. */
-  const setPendingApproval = useCallback((ctx: typeof pendingApprovalContextRef.current) => {
-    // Clear any existing timeout
-    if (pendingApprovalTimeoutRef.current) {
-      clearTimeout(pendingApprovalTimeoutRef.current);
-      pendingApprovalTimeoutRef.current = null;
-    }
-    pendingApprovalContextRef.current = ctx;
-    if (ctx) {
-      pendingApprovalTimeoutRef.current = setTimeout(() => {
-        // Auto-clear after 5 minutes if user never responds
-        if (pendingApprovalContextRef.current?.sessionId === ctx.sessionId) {
-          pendingApprovalContextRef.current = null;
-          setStreamingForScope(ctx.sessionId, false);
-          abortControllersRef.current.get(ctx.sessionId)?.abort();
-          abortControllersRef.current.delete(ctx.sessionId);
-        }
-        pendingApprovalTimeoutRef.current = null;
-      }, 5 * 60 * 1000); // 5 minutes
-    }
-  }, [setStreamingForScope]);
-
-  // Ref to track active object URLs for cleanup on unmount (Issue #19)
-  const activeObjectUrlsRef = useRef<Set<string>>(new Set());
 
   const { images, addImages, removeImage, clearImages } = useImageUpload();
   const { openSettingsWindow } = useWindowControls();
 
+  // ── Streaming hook ──
+  const {
+    streamingSessionIds,
+    setStreamingForScope,
+    abortControllersRef,
+    processCattyStream,
+    sendToCattyAgent,
+    sendToExternalAgent,
+    reportStreamError,
+  } = useAIChatStreaming({
+    maxIterations,
+    addMessageToSession,
+    updateLastMessage,
+    updateMessageById,
+  });
+
+  // ── Tool approval hook ──
+  const {
+    pendingApprovalContextRef,
+    setPendingApproval,
+    handleApprovalResponse,
+  } = useToolApproval({
+    addMessageToSession,
+    updateLastMessage,
+    updateMessageById,
+    setStreamingForScope,
+    abortControllersRef,
+    processCattyStream,
+    t,
+  });
+
   // Per-scope active session ID
   const activeSessionId = activeSessionIdMap[scopeKey] ?? null;
-  const isStreaming = activeSessionId ? streamingSessions.has(activeSessionId) : false;
+  const isStreaming = activeSessionId ? streamingSessionIds.has(activeSessionId) : false;
   const setActiveSessionId = useCallback((id: string | null) => {
     setActiveSessionIdForScope(scopeKey, id);
   }, [scopeKey, setActiveSessionIdForScope]);
@@ -321,23 +218,25 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     }
   }, [terminalSessions, scopeKey, activeSessionId]);
 
+  // Sync provider configs to main process so it can decrypt API keys server-side.
+  // Keys stay encrypted in transit; main process decrypts only when making HTTP requests.
+  useEffect(() => {
+    const bridge = getNetcattyBridge();
+    if (bridge?.aiSyncProviders && providers.length > 0) {
+      void bridge.aiSyncProviders(providers);
+    }
+  }, [providers]);
+
   // Abort all active streams and clean up on unmount
   useEffect(() => {
     const controllers = abortControllersRef.current;
     return () => {
       controllers.forEach(c => c.abort());
       controllers.clear();
-      // Clear pending approval timeout (Issue #14)
-      if (pendingApprovalTimeoutRef.current) {
-        clearTimeout(pendingApprovalTimeoutRef.current);
-        pendingApprovalTimeoutRef.current = null;
-      }
-      pendingApprovalContextRef.current = null;
-      // Revoke any outstanding object URLs (Issue #19)
-      activeObjectUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
-      activeObjectUrlsRef.current.clear();
+      // Clear pending approval (clears timeout too via setPendingApproval)
+      setPendingApproval(null);
     };
-  }, []);
+  }, [abortControllersRef, setPendingApproval]);
 
   // Agent discovery
   const {
@@ -362,6 +261,9 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   );
 
   const messages = activeSession?.messages ?? [];
+
+  // ── Export hook ──
+  const { handleExport } = useConversationExport(activeSession);
 
   // Active provider info
   const activeProvider = useMemo(
@@ -413,193 +315,6 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   );
 
   // -------------------------------------------------------------------
-  // Shared Catty stream processor
-  // -------------------------------------------------------------------
-  // Processes a Vercel AI SDK streamText response, dispatching chunks to
-  // the chat message list.  Returns approval info when the stream ends
-  // with a tool-approval-request, or null if it completed normally.
-  const processCattyStream = useCallback(async (
-    streamSessionId: string,
-    model: ReturnType<typeof createModelFromConfig>,
-    systemPrompt: string,
-    tools: ReturnType<typeof createCattyTools>,
-    sdkMessages: Array<ModelMessage>,
-    signal: AbortSignal,
-    /** The message ID of the current assistant message to update via updateMessageById. */
-    currentAssistantMsgId: string,
-  ): Promise<{
-    approvalId: string;
-    toolCallId: string;
-    toolName: string;
-    toolArgs: Record<string, unknown>;
-  } | null> => {
-    const result = streamText({
-      model,
-      messages: sdkMessages,
-      system: systemPrompt,
-      tools,
-      stopWhen: stepCountIs(maxIterations),
-      abortSignal: signal,
-    });
-
-    // Track the current assistant message ID so updates target the correct message
-    let activeMsgId = currentAssistantMsgId;
-    let lastAddedRole: 'assistant' | 'tool' = 'assistant';
-    const reader = result.fullStream.getReader();
-    let pendingApprovalInfo: {
-      approvalId: string;
-      toolCallId: string;
-      toolName: string;
-      toolArgs: Record<string, unknown>;
-    } | null = null;
-
-    try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      // Use the StreamChunk union for type narrowing instead of unsafe casts
-      const chunk = value as StreamChunk;
-      switch (chunk.type) {
-        case 'text':
-        case 'text-delta': {
-          const typedChunk = chunk as TextDeltaChunk;
-          const text = typedChunk.text ?? typedChunk.textDelta;
-          if (text) {
-            if (lastAddedRole === 'tool') {
-              const newId = generateId();
-              addMessageToSession(streamSessionId, {
-                id: newId,
-                role: 'assistant',
-                content: text,
-                timestamp: Date.now(),
-              });
-              activeMsgId = newId;
-              lastAddedRole = 'assistant';
-            } else {
-              updateMessageById(streamSessionId, activeMsgId, msg => ({
-                ...msg,
-                content: msg.content + text,
-              }));
-            }
-          }
-          break;
-        }
-        case 'reasoning':
-        case 'reasoning-start':
-        case 'reasoning-delta': {
-          const typedChunk = chunk as ReasoningChunk;
-          const rText = typedChunk.text;
-          if (rText) {
-            if (lastAddedRole === 'tool') {
-              const newId = generateId();
-              addMessageToSession(streamSessionId, {
-                id: newId,
-                role: 'assistant',
-                content: '',
-                thinking: rText,
-                timestamp: Date.now(),
-              });
-              activeMsgId = newId;
-              lastAddedRole = 'assistant';
-            } else {
-              updateMessageById(streamSessionId, activeMsgId, msg => ({
-                ...msg,
-                thinking: (msg.thinking || '') + rText,
-              }));
-            }
-          }
-          break;
-        }
-        case 'reasoning-end':
-        case 'text-start':
-        case 'text-end':
-        case 'start':
-        case 'finish':
-        case 'start-step':
-        case 'finish-step':
-          break;
-        case 'tool-call': {
-          const typedChunk = chunk as ToolCallChunk;
-          updateMessageById(streamSessionId, activeMsgId, msg => ({
-            ...msg,
-            toolCalls: [...(msg.toolCalls || []), {
-              id: typedChunk.toolCallId,
-              name: typedChunk.toolName,
-              arguments: typedChunk.input ?? typedChunk.args,
-            }],
-            executionStatus: 'running',
-            statusText: undefined,
-          }));
-          break;
-        }
-        case 'tool-result': {
-          const typedChunk = chunk as ToolResultChunk;
-          // Mark the assistant message's tool execution as completed
-          updateMessageById(streamSessionId, activeMsgId, msg =>
-            msg.role === 'assistant' && msg.executionStatus === 'running'
-              ? { ...msg, executionStatus: 'completed', statusText: undefined } : msg,
-          );
-          const toolOutput = typedChunk.output ?? typedChunk.result;
-          addMessageToSession(streamSessionId, {
-            id: generateId(),
-            role: 'tool',
-            content: '',
-            toolResults: [{
-              toolCallId: typedChunk.toolCallId,
-              content: typeof toolOutput === 'string'
-                ? toolOutput
-                : JSON.stringify(toolOutput),
-              isError: false,
-            }],
-            timestamp: Date.now(),
-            executionStatus: 'completed',
-          });
-          lastAddedRole = 'tool';
-          break;
-        }
-        case 'tool-approval-request': {
-          const typedChunk = chunk as ToolApprovalRequestChunk;
-          pendingApprovalInfo = {
-            approvalId: typedChunk.approvalId,
-            toolCallId: typedChunk.toolCall.toolCallId,
-            toolName: typedChunk.toolCall.toolName,
-            toolArgs: typedChunk.toolCall.args ?? typedChunk.toolCall.input ?? {},
-          };
-          updateMessageById(streamSessionId, activeMsgId, msg => ({
-            ...msg,
-            pendingApproval: {
-              ...pendingApprovalInfo!,
-              status: 'pending' as const,
-            },
-          }));
-          break;
-        }
-        case 'error': {
-          const typedChunk = chunk as ErrorChunk;
-          updateMessageById(streamSessionId, activeMsgId, msg => ({
-            ...msg,
-            executionStatus: msg.executionStatus === 'running' ? 'failed' : msg.executionStatus,
-          }));
-          addMessageToSession(streamSessionId, {
-            id: generateId(),
-            role: 'assistant',
-            content: '',
-            errorInfo: classifyError(String(typedChunk.error)),
-            timestamp: Date.now(),
-          });
-          break;
-        }
-        default:
-          break;
-      }
-    }
-    } finally {
-      reader.releaseLock();
-    }
-    return pendingApprovalInfo;
-  }, [maxIterations, addMessageToSession, updateMessageById]);
-
-  // -------------------------------------------------------------------
   // Handlers
   // -------------------------------------------------------------------
 
@@ -631,27 +346,6 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   // Shared helpers for handleSend sub-flows
   // -------------------------------------------------------------------
 
-  /** Report a streaming error to the chat (shared by all agent paths). */
-  const reportStreamError = useCallback((
-    sessionId: string,
-    abortSignal: AbortSignal,
-    err: unknown,
-  ) => {
-    if (abortSignal.aborted) return;
-    const errorStr = err instanceof Error ? err.message : String(err);
-    updateLastMessage(sessionId, msg => ({
-      ...msg,
-      executionStatus: msg.executionStatus === 'running' ? 'failed' : msg.executionStatus,
-    }));
-    addMessageToSession(sessionId, {
-      id: generateId(),
-      role: 'assistant',
-      content: '',
-      errorInfo: classifyError(errorStr),
-      timestamp: Date.now(),
-    });
-  }, [updateLastMessage, addMessageToSession]);
-
   /** Ref to always access latest sessions (avoids stale closure in autoTitleSession). */
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
@@ -678,260 +372,6 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     setActiveSessionId(session.id);
     return session.id;
   }, [activeSessionId, scopeType, scopeTargetId, scopeHostIds, currentAgentId, createSession, setActiveSessionId]);
-
-  /** Get the netcatty bridge from the window. */
-  const getBridge = useCallback(() => getNetcattyBridge(), []);
-
-  // -------------------------------------------------------------------
-  // External agent sub-flow (ACP or raw process)
-  // -------------------------------------------------------------------
-
-  const sendToExternalAgent = useCallback(async (
-    sessionId: string,
-    trimmed: string,
-    agentConfig: ExternalAgentConfig,
-    abortController: AbortController,
-    attachedImages: Array<{ base64Data: string; mediaType: string; filename?: string }>,
-  ) => {
-    const bridge = getBridge();
-
-    if (agentConfig.acpCommand && bridge) {
-      const requestId = `acp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-
-      // Push terminal session metadata to MCP bridge
-      if (bridge?.aiMcpUpdateSessions) {
-        await bridge.aiMcpUpdateSessions(terminalSessions, sessionId);
-      }
-
-      // TODO(security): agentApiKey is passed as plaintext over IPC to the main process via
-      // aiAcpStream. Ideally, pass only the provider ID and let the main process retrieve and
-      // decrypt the key itself, avoiding plaintext key transit across the IPC boundary.
-      const openaiProvider = providers.find(p => p.providerId === 'openai' && p.enabled && p.apiKey);
-      const agentApiKey = openaiProvider?.apiKey;
-
-      // Mutable flag: set after tool-result, cleared when new assistant msg is created
-      let needsNewAssistantMsg = false;
-      const maybeCreateAssistantMsg = () => {
-        if (needsNewAssistantMsg) {
-          needsNewAssistantMsg = false;
-          addMessageToSession(sessionId, {
-            id: generateId(), role: 'assistant', content: '', timestamp: Date.now(),
-            model: agentConfig.name || 'external',
-          });
-        }
-      };
-
-      await runAcpAgentTurn(
-        bridge,
-        requestId,
-        sessionId,
-        agentConfig,
-        trimmed,
-        {
-          onTextDelta: (text: string) => {
-            maybeCreateAssistantMsg();
-            updateLastMessage(sessionId, msg => ({
-              ...msg,
-              content: msg.content + text,
-              statusText: undefined,
-              thinkingDurationMs: msg.thinking && !msg.thinkingDurationMs
-                ? Date.now() - msg.timestamp : msg.thinkingDurationMs,
-            }));
-          },
-          onThinkingDelta: (text: string) => {
-            maybeCreateAssistantMsg();
-            updateLastMessage(sessionId, msg => ({
-              ...msg, thinking: (msg.thinking || '') + text,
-            }));
-          },
-          onThinkingDone: () => {
-            updateLastMessage(sessionId, msg => ({
-              ...msg, thinkingDurationMs: msg.thinkingDurationMs || (Date.now() - msg.timestamp),
-            }));
-          },
-          onToolCall: (toolName: string, args: Record<string, unknown>) => {
-            maybeCreateAssistantMsg();
-            updateLastMessage(sessionId, msg => ({
-              ...msg,
-              toolCalls: [...(msg.toolCalls || []), { id: `tc_${Date.now()}`, name: toolName, arguments: args }],
-              executionStatus: 'running',
-              statusText: undefined,
-            }));
-          },
-          onToolResult: (toolCallId: string, result: string) => {
-            updateLastMessage(sessionId, msg =>
-              msg.role === 'assistant' && msg.executionStatus === 'running'
-                ? { ...msg, executionStatus: 'completed', statusText: undefined } : msg,
-            );
-            addMessageToSession(sessionId, {
-              id: generateId(), role: 'tool', content: '',
-              toolResults: [{ toolCallId, content: result, isError: false }],
-              timestamp: Date.now(), executionStatus: 'completed',
-            });
-            needsNewAssistantMsg = true;
-          },
-          onStatus: (message: string) => {
-            maybeCreateAssistantMsg();
-            updateLastMessage(sessionId, msg => ({ ...msg, statusText: message }));
-          },
-          onError: (error: string) => {
-            reportStreamError(sessionId, abortController.signal, error);
-            setStreamingForScope(sessionId, false);
-          },
-          onDone: () => {},
-        },
-        abortController.signal,
-        agentApiKey,
-        selectedAgentModel,
-        attachedImages.length > 0 ? attachedImages : undefined,
-      );
-    } else {
-      // Fallback: spawn as raw process
-      await runExternalAgentTurn(
-        agentConfig,
-        trimmed,
-        {
-          onTextDelta: (text: string) => {
-            updateLastMessage(sessionId, msg => ({ ...msg, content: msg.content + text }));
-          },
-          onError: (error: string) => {
-            reportStreamError(sessionId, abortController.signal, error);
-            setStreamingForScope(sessionId, false);
-          },
-          onDone: () => {},
-        },
-        bridge as Parameters<typeof runExternalAgentTurn>[3],
-        abortController.signal,
-      );
-    }
-  }, [
-    getBridge, terminalSessions, providers, selectedAgentModel,
-    addMessageToSession, updateLastMessage, setStreamingForScope, reportStreamError,
-  ]);
-
-  // -------------------------------------------------------------------
-  // Catty Agent sub-flow (Vercel AI SDK streamText)
-  // -------------------------------------------------------------------
-
-  const sendToCattyAgent = useCallback(async (
-    sessionId: string,
-    sendScopeKey: string,
-    trimmed: string,
-    abortController: AbortController,
-    currentSession: AISession | undefined,
-    assistantMsgId: string,
-  ) => {
-    const bridge = getNetcattyBridge();
-    const tools = createCattyTools(bridge, {
-      sessions: terminalSessions,
-      workspaceId: scopeTargetId,
-      workspaceName: scopeLabel,
-    }, commandBlocklist, globalPermissionMode);
-
-    const systemPrompt = buildSystemPrompt({
-      scopeType, scopeLabel,
-      hosts: terminalSessions.map(s => ({
-        sessionId: s.sessionId, hostname: s.hostname, label: s.label,
-        os: s.os, username: s.username, connected: s.connected,
-      })),
-      permissionMode: globalPermissionMode,
-    });
-
-    // Guard: activeProvider must exist for Catty agent path
-    if (!activeProvider) {
-      reportStreamError(sessionId, abortController.signal, 'No AI provider configured. Please configure a provider in Settings → AI.');
-      return;
-    }
-
-    // Decrypt API key and create model in a short-lived scope to minimize
-    // plaintext key exposure in memory
-    let model;
-    try {
-      const decryptedKey = activeProvider.apiKey && bridge?.credentialsDecrypt
-        ? await bridge.credentialsDecrypt(activeProvider.apiKey)
-        : activeProvider.apiKey;
-      if (activeProvider.apiKey && bridge?.credentialsDecrypt && !decryptedKey) {
-        reportStreamError(sessionId, abortController.signal, 'API key decryption returned empty result. Please re-enter the API key in Settings → AI.');
-        return;
-      }
-      model = createModelFromConfig({
-        ...activeProvider,
-        apiKey: decryptedKey,
-        defaultModel: activeModelId || activeProvider.defaultModel || '',
-      });
-    } catch (e) {
-      console.error('[Catty] API key decryption failed:', e);
-      reportStreamError(sessionId, abortController.signal, `API key decryption failed: ${e instanceof Error ? e.message : String(e)}`);
-      return;
-    }
-
-    try {
-      // Issue #5: Build SDK messages including tool-call and tool-result messages
-      // so the LLM maintains full conversation context
-      const sdkMessages: Array<ModelMessage> = [];
-      for (const m of (currentSession?.messages ?? [])) {
-        if (m.role === 'user') {
-          sdkMessages.push({ role: 'user', content: m.content });
-        } else if (m.role === 'assistant') {
-          if (m.toolCalls?.length) {
-            // Build assistant content parts: text + tool calls
-            const contentParts: Array<
-              { type: 'text'; text: string } |
-              { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown }
-            > = [];
-            if (m.content) {
-              contentParts.push({ type: 'text' as const, text: m.content });
-            }
-            for (const tc of m.toolCalls) {
-              contentParts.push({
-                type: 'tool-call' as const,
-                toolCallId: tc.id,
-                toolName: tc.name,
-                input: tc.arguments ?? {},
-              });
-            }
-            sdkMessages.push({ role: 'assistant', content: contentParts });
-          } else if (m.content) {
-            sdkMessages.push({ role: 'assistant', content: m.content });
-          }
-        } else if (m.role === 'tool' && m.toolResults?.length) {
-          // Map tool results to SDK tool message format
-          sdkMessages.push({
-            role: 'tool',
-            content: m.toolResults.map(tr => ({
-              type: 'tool-result' as const,
-              toolCallId: tr.toolCallId,
-              toolName: '',
-              output: { type: 'text' as const, value: tr.content },
-            })),
-          });
-        }
-      }
-      sdkMessages.push({ role: 'user', content: trimmed });
-
-      const approvalInfo = await processCattyStream(sessionId, model, systemPrompt, tools, sdkMessages, abortController.signal, assistantMsgId);
-
-      if (approvalInfo) {
-        setPendingApproval({
-          sessionId, scopeKey: sendScopeKey, sdkMessages, approvalInfo, model, systemPrompt, tools,
-        });
-        return; // Keep streaming flag — waiting for user approval
-      }
-    } catch (err) {
-      console.error('[Catty] streamText error:', err);
-      reportStreamError(sessionId, abortController.signal, err);
-    } finally {
-      if (!pendingApprovalContextRef.current || pendingApprovalContextRef.current.sessionId !== sessionId) {
-        setStreamingForScope(sessionId, false);
-        abortControllersRef.current.delete(sessionId);
-      }
-      autoTitleSession(sessionId, trimmed);
-    }
-  }, [
-    activeProvider, activeModelId, scopeType, scopeTargetId, scopeLabel,
-    globalPermissionMode, commandBlocklist, terminalSessions,
-    processCattyStream, reportStreamError, setStreamingForScope, autoTitleSession, setPendingApproval,
-  ]);
 
   // -------------------------------------------------------------------
   // Main send handler (thin orchestrator)
@@ -989,22 +429,41 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         return;
       }
       try {
-        await sendToExternalAgent(sessionId, trimmed, agentConfig, abortController, attachedImages);
+        await sendToExternalAgent(sessionId, trimmed, agentConfig, abortController, attachedImages, {
+          terminalSessions,
+          providers,
+          selectedAgentModel,
+        });
       } catch (err) {
         reportStreamError(sessionId, abortController.signal, err);
       }
+      // Clear any lingering statusText when the external agent stream finishes
+      updateLastMessage(sessionId, msg => msg.statusText ? { ...msg, statusText: '' } : msg);
       setStreamingForScope(sessionId, false);
       abortControllersRef.current.delete(sessionId);
       autoTitleSession(sessionId, trimmed);
     } else {
-      await sendToCattyAgent(sessionId, sendScopeKey, trimmed, abortController, currentSession ?? undefined, assistantMsgId);
+      await sendToCattyAgent(sessionId, sendScopeKey, trimmed, abortController, currentSession ?? undefined, assistantMsgId, {
+        activeProvider,
+        activeModelId,
+        scopeType,
+        scopeTargetId,
+        scopeLabel,
+        globalPermissionMode,
+        commandBlocklist,
+        terminalSessions,
+        setPendingApproval,
+        autoTitleSession,
+      });
     }
   }, [
     isStreaming, activeProvider, scopeKey, currentAgentId,
     activeModelId, externalAgents,
-    ensureSession, addMessageToSession, updateMessageById,
+    ensureSession, addMessageToSession, updateMessageById, updateLastMessage,
     setStreamingForScope, setInputValue, clearImages,
     sendToExternalAgent, sendToCattyAgent, reportStreamError, autoTitleSession, t,
+    abortControllersRef, terminalSessions, providers, selectedAgentModel,
+    scopeType, scopeTargetId, scopeLabel, globalPermissionMode, commandBlocklist, setPendingApproval,
   ]);
 
   const handleStop = useCallback(() => {
@@ -1013,145 +472,17 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     controller?.abort();
     abortControllersRef.current.delete(activeSessionId);
     setStreamingForScope(activeSessionId, false);
+    // Clear statusText on the last message so stale status indicators disappear
+    updateLastMessage(activeSessionId, msg => ({
+      ...msg,
+      statusText: '',
+      executionStatus: msg.executionStatus === 'running' ? 'completed' : msg.executionStatus,
+    }));
     // Also clear any pending approval (clears timeout too via setPendingApproval)
     if (pendingApprovalContextRef.current?.sessionId === activeSessionId) {
       setPendingApproval(null);
     }
-  }, [activeSessionId, setStreamingForScope, setPendingApproval]);
-
-  // Handle inline approval response (approve/reject from InlineApprovalCard)
-  const handleApprovalResponse = useCallback(async (messageId: string, approved: boolean) => {
-    const ctx = pendingApprovalContextRef.current;
-    if (!ctx) return;
-    // Destructure all needed values BEFORE clearing the ref to avoid race conditions
-    const { sessionId: sid, scopeKey: sk, sdkMessages, approvalInfo, model: ctxModel } = ctx;
-    // Clear pending approval (and its timeout) via setPendingApproval
-    setPendingApproval(null);
-
-    // Update the message's pendingApproval status using message ID
-    updateMessageById(sid, messageId, msg => ({
-      ...msg,
-      pendingApproval: msg.pendingApproval
-        ? { ...msg.pendingApproval, status: approved ? 'approved' as const : 'denied' as const }
-        : undefined,
-    }));
-
-    if (!approved) {
-      // User rejected — add denial text and stop
-      updateMessageById(sid, messageId, msg => ({
-        ...msg,
-        content: msg.content + (msg.content ? '\n\n' : '') + t('ai.chat.toolDenied'),
-        executionStatus: 'completed',
-      }));
-      setStreamingForScope(sid, false);
-      abortControllersRef.current.delete(sid);
-      return;
-    }
-
-    // User approved — construct SDK messages with approval response and resume
-    const resumeMessages: Array<Record<string, unknown>> = [
-      ...sdkMessages,
-      // The assistant message that contained the tool call + approval request
-      {
-        role: 'assistant',
-        content: [
-          {
-            type: 'tool-call',
-            toolCallId: approvalInfo.toolCallId,
-            toolName: approvalInfo.toolName,
-            input: approvalInfo.toolArgs,
-          },
-          {
-            type: 'tool-approval-request',
-            approvalId: approvalInfo.approvalId,
-            toolCallId: approvalInfo.toolCallId,
-          },
-        ],
-      },
-      // The user's approval response
-      {
-        role: 'tool',
-        content: [
-          {
-            type: 'tool-approval-response',
-            approvalId: approvalInfo.approvalId,
-            approved: true,
-          },
-        ],
-      },
-    ];
-
-    // Create a new assistant message placeholder for the continuation
-    const newAssistantMsgId = generateId();
-    addMessageToSession(sid, {
-      id: newAssistantMsgId,
-      role: 'assistant',
-      content: '',
-      timestamp: Date.now(),
-    });
-
-    const abortController = new AbortController();
-    abortControllersRef.current.set(sid, abortController);
-
-    try {
-      // Rebuild tools and system prompt with the latest permission mode to prevent
-      // stale closure issues (e.g. user changed permission mode during approval wait)
-      const bridge = getNetcattyBridge();
-      const freshTools = createCattyTools(bridge, {
-        sessions: terminalSessions,
-        workspaceId: scopeTargetId,
-        workspaceName: scopeLabel,
-      }, commandBlocklist, globalPermissionMode);
-      const freshSystemPrompt = buildSystemPrompt({
-        scopeType, scopeLabel,
-        hosts: terminalSessions.map(s => ({
-          sessionId: s.sessionId, hostname: s.hostname, label: s.label,
-          os: s.os, username: s.username, connected: s.connected,
-        })),
-        permissionMode: globalPermissionMode,
-      });
-      const newApprovalInfo = await processCattyStream(sid, ctxModel, freshSystemPrompt, freshTools, resumeMessages, abortController.signal, newAssistantMsgId);
-
-      if (newApprovalInfo) {
-        // Another approval needed — save context for the next round (with timeout)
-        setPendingApproval({
-          sessionId: sid,
-          scopeKey: sk,
-          sdkMessages: resumeMessages,
-          approvalInfo: newApprovalInfo,
-          model: ctxModel,
-          systemPrompt: freshSystemPrompt,
-          tools: freshTools,
-        });
-        return;
-      }
-    } catch (err) {
-      console.error('[Catty resume] streamText error:', err);
-      if (!abortController.signal.aborted) {
-        const errorStr = err instanceof Error ? err.message : String(err);
-        updateMessageById(sid, newAssistantMsgId, msg => ({
-          ...msg,
-          executionStatus: msg.executionStatus === 'running' ? 'failed' : msg.executionStatus,
-        }));
-        addMessageToSession(sid, {
-          id: generateId(),
-          role: 'assistant',
-          content: '',
-          errorInfo: classifyError(errorStr),
-          timestamp: Date.now(),
-        });
-      }
-    } finally {
-      if (!pendingApprovalContextRef.current || pendingApprovalContextRef.current.sessionId !== sid) {
-        setStreamingForScope(sid, false);
-        abortControllersRef.current.delete(sid);
-      }
-    }
-  }, [
-    processCattyStream, addMessageToSession, updateMessageById, setStreamingForScope, t,
-    terminalSessions, scopeType, scopeTargetId, scopeLabel,
-    globalPermissionMode, commandBlocklist, setPendingApproval,
-  ]);
+  }, [activeSessionId, setStreamingForScope, updateLastMessage, setPendingApproval, abortControllersRef, pendingApprovalContextRef]);
 
   const handleSelectSession = useCallback(
     (sessionId: string) => {
@@ -1179,38 +510,11 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
 
   const handleAgentChange = useCallback((agentId: string) => {
     setCurrentAgentId(agentId);
-    // Switching agent deactivates current session; a new one is created on next send
-    setActiveSessionId(null);
-  }, [setActiveSessionId]);
-
-  const handleExport = useCallback((format: 'md' | 'json' | 'txt') => {
-    if (!activeSession) return;
-    let content: string;
-    switch (format) {
-      case 'md': content = exportAsMarkdown(activeSession); break;
-      case 'json': content = exportAsJSON(activeSession); break;
-      case 'txt': content = exportAsPlainText(activeSession); break;
-    }
-    const filename = getExportFilename(activeSession, format);
-    // Create a download blob
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    // Track URL for cleanup on unmount (Issue #19)
-    activeObjectUrlsRef.current.add(url);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    // Revoke after a generous delay to ensure download completes, then remove from tracking set
-    const revokeTimeout = setTimeout(() => {
-      URL.revokeObjectURL(url);
-      activeObjectUrlsRef.current.delete(url);
-    }, 60_000); // 60 seconds to be safe for large files
-    // If component unmounts before timeout, cleanup effect will revoke it
-    void revokeTimeout; // suppress unused warning
-  }, [activeSession]);
+    // Preserve the current session in history and start a new one with the selected agent
+    const scope: AISessionScope = { type: scopeType, targetId: scopeTargetId, hostIds: scopeHostIds };
+    const session = createSession(scope, agentId);
+    setActiveSessionId(session.id);
+  }, [scopeType, scopeTargetId, scopeHostIds, createSession, setActiveSessionId]);
 
   // -------------------------------------------------------------------
   // Render
@@ -1273,8 +577,22 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           <ChatMessageList
             messages={messages}
             isStreaming={isStreaming}
-            onApprove={(messageId) => void handleApprovalResponse(messageId, true)}
-            onReject={(messageId) => void handleApprovalResponse(messageId, false)}
+            onApprove={(messageId) => void handleApprovalResponse(messageId, true, {
+              terminalSessions,
+              scopeType,
+              scopeTargetId,
+              scopeLabel,
+              globalPermissionMode,
+              commandBlocklist,
+            })}
+            onReject={(messageId) => void handleApprovalResponse(messageId, false, {
+              terminalSessions,
+              scopeType,
+              scopeTargetId,
+              scopeLabel,
+              globalPermissionMode,
+              commandBlocklist,
+            })}
           />
 
           {/* Recent sessions (Zed-style, shown when no messages) */}

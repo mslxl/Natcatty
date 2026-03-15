@@ -1608,6 +1608,7 @@ const zhCN: Messages = {
   'ai.chat.allSessions': '所有会话',
   'ai.chat.noSessions': '没有历史会话',
   'ai.chat.retryHint': '你可以重新发送消息来重试。',
+  'ai.chat.approvalTimeout': '工具审批已超时（5 分钟）。你可以重新发送消息来重试。',
   'ai.chat.menuHosts': '主机',
   'ai.chat.menuContext': '上下文',
   'ai.chat.menuFiles': '文件',

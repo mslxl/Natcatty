@@ -202,54 +202,89 @@ export function useAIState() {
   // When the settings window updates localStorage, the main window picks up changes.
   useEffect(() => {
     const handleStorage = (e: StorageEvent) => {
-      switch (e.key) {
-        case STORAGE_KEY_AI_PROVIDERS:
-          setProvidersRaw(localStorageAdapter.read<ProviderConfig[]>(STORAGE_KEY_AI_PROVIDERS) ?? []);
-          break;
-        case STORAGE_KEY_AI_ACTIVE_PROVIDER:
-          setActiveProviderIdRaw(localStorageAdapter.readString(STORAGE_KEY_AI_ACTIVE_PROVIDER) ?? '');
-          break;
-        case STORAGE_KEY_AI_ACTIVE_MODEL:
-          setActiveModelIdRaw(localStorageAdapter.readString(STORAGE_KEY_AI_ACTIVE_MODEL) ?? '');
-          break;
-        case STORAGE_KEY_AI_PERMISSION_MODE: {
-          const mode = localStorageAdapter.readString(STORAGE_KEY_AI_PERMISSION_MODE);
-          if (mode === 'observer' || mode === 'confirm' || mode === 'autonomous') {
-            setGlobalPermissionModeRaw(mode);
-            getAIBridge()?.aiMcpSetPermissionMode?.(mode);
+      try {
+        switch (e.key) {
+          case STORAGE_KEY_AI_PROVIDERS: {
+            const parsed = localStorageAdapter.read<ProviderConfig[]>(STORAGE_KEY_AI_PROVIDERS);
+            if (parsed != null && !Array.isArray(parsed)) {
+              console.warn('[useAIState] Cross-window sync: AI_PROVIDERS is not an array, skipping');
+              break;
+            }
+            setProvidersRaw(parsed ?? []);
+            break;
           }
-          break;
+          case STORAGE_KEY_AI_ACTIVE_PROVIDER:
+            setActiveProviderIdRaw(localStorageAdapter.readString(STORAGE_KEY_AI_ACTIVE_PROVIDER) ?? '');
+            break;
+          case STORAGE_KEY_AI_ACTIVE_MODEL:
+            setActiveModelIdRaw(localStorageAdapter.readString(STORAGE_KEY_AI_ACTIVE_MODEL) ?? '');
+            break;
+          case STORAGE_KEY_AI_PERMISSION_MODE: {
+            const mode = localStorageAdapter.readString(STORAGE_KEY_AI_PERMISSION_MODE);
+            if (mode === 'observer' || mode === 'confirm' || mode === 'autonomous') {
+              setGlobalPermissionModeRaw(mode);
+              getAIBridge()?.aiMcpSetPermissionMode?.(mode);
+            }
+            break;
+          }
+          case STORAGE_KEY_AI_EXTERNAL_AGENTS: {
+            const agents = localStorageAdapter.read<ExternalAgentConfig[]>(STORAGE_KEY_AI_EXTERNAL_AGENTS);
+            if (agents != null && !Array.isArray(agents)) {
+              console.warn('[useAIState] Cross-window sync: AI_EXTERNAL_AGENTS is not an array, skipping');
+              break;
+            }
+            setExternalAgentsRaw(agents ?? []);
+            break;
+          }
+          case STORAGE_KEY_AI_DEFAULT_AGENT:
+            setDefaultAgentIdRaw(localStorageAdapter.readString(STORAGE_KEY_AI_DEFAULT_AGENT) ?? 'catty');
+            break;
+          case STORAGE_KEY_AI_COMMAND_BLOCKLIST: {
+            const list = localStorageAdapter.read<string[]>(STORAGE_KEY_AI_COMMAND_BLOCKLIST);
+            if (list != null && !Array.isArray(list)) {
+              console.warn('[useAIState] Cross-window sync: AI_COMMAND_BLOCKLIST is not an array, skipping');
+              break;
+            }
+            const blocklist = list ?? [...DEFAULT_COMMAND_BLOCKLIST];
+            setCommandBlocklistRaw(blocklist);
+            getAIBridge()?.aiMcpSetCommandBlocklist?.(blocklist);
+            break;
+          }
+          case STORAGE_KEY_AI_COMMAND_TIMEOUT: {
+            const timeout = localStorageAdapter.readNumber(STORAGE_KEY_AI_COMMAND_TIMEOUT) ?? 60;
+            if (!Number.isFinite(timeout)) {
+              console.warn('[useAIState] Cross-window sync: AI_COMMAND_TIMEOUT is not a finite number, skipping');
+              break;
+            }
+            setCommandTimeoutRaw(timeout);
+            getAIBridge()?.aiMcpSetCommandTimeout?.(timeout);
+            break;
+          }
+          case STORAGE_KEY_AI_MAX_ITERATIONS: {
+            const iters = localStorageAdapter.readNumber(STORAGE_KEY_AI_MAX_ITERATIONS) ?? 20;
+            if (!Number.isFinite(iters)) {
+              console.warn('[useAIState] Cross-window sync: AI_MAX_ITERATIONS is not a finite number, skipping');
+              break;
+            }
+            setMaxIterationsRaw(iters);
+            getAIBridge()?.aiMcpSetMaxIterations?.(iters);
+            break;
+          }
+          case STORAGE_KEY_AI_HOST_PERMISSIONS: {
+            const perms = localStorageAdapter.read<HostAIPermission[]>(STORAGE_KEY_AI_HOST_PERMISSIONS);
+            if (perms != null && !Array.isArray(perms)) {
+              console.warn('[useAIState] Cross-window sync: AI_HOST_PERMISSIONS is not an array, skipping');
+              break;
+            }
+            setHostPermissionsRaw(perms ?? []);
+            break;
+          }
+          case STORAGE_KEY_AI_AGENT_MODEL_MAP:
+            setAgentModelMapRaw(localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_AI_AGENT_MODEL_MAP) ?? {});
+            break;
         }
-        case STORAGE_KEY_AI_EXTERNAL_AGENTS:
-          setExternalAgentsRaw(localStorageAdapter.read<ExternalAgentConfig[]>(STORAGE_KEY_AI_EXTERNAL_AGENTS) ?? []);
-          break;
-        case STORAGE_KEY_AI_DEFAULT_AGENT:
-          setDefaultAgentIdRaw(localStorageAdapter.readString(STORAGE_KEY_AI_DEFAULT_AGENT) ?? 'catty');
-          break;
-        case STORAGE_KEY_AI_COMMAND_BLOCKLIST: {
-          const list = localStorageAdapter.read<string[]>(STORAGE_KEY_AI_COMMAND_BLOCKLIST) ?? [...DEFAULT_COMMAND_BLOCKLIST];
-          setCommandBlocklistRaw(list);
-          getAIBridge()?.aiMcpSetCommandBlocklist?.(list);
-          break;
-        }
-        case STORAGE_KEY_AI_COMMAND_TIMEOUT: {
-          const timeout = localStorageAdapter.readNumber(STORAGE_KEY_AI_COMMAND_TIMEOUT) ?? 60;
-          setCommandTimeoutRaw(timeout);
-          getAIBridge()?.aiMcpSetCommandTimeout?.(timeout);
-          break;
-        }
-        case STORAGE_KEY_AI_MAX_ITERATIONS: {
-          const iters = localStorageAdapter.readNumber(STORAGE_KEY_AI_MAX_ITERATIONS) ?? 20;
-          setMaxIterationsRaw(iters);
-          getAIBridge()?.aiMcpSetMaxIterations?.(iters);
-          break;
-        }
-        case STORAGE_KEY_AI_HOST_PERMISSIONS:
-          setHostPermissionsRaw(localStorageAdapter.read<HostAIPermission[]>(STORAGE_KEY_AI_HOST_PERMISSIONS) ?? []);
-          break;
-        case STORAGE_KEY_AI_AGENT_MODEL_MAP:
-          setAgentModelMapRaw(localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_AI_AGENT_MODEL_MAP) ?? {});
-          break;
+      } catch (err) {
+        console.warn('[useAIState] Cross-window sync: failed to process storage event for key', e.key, err);
       }
     };
     window.addEventListener('storage', handleStorage);
@@ -276,10 +311,12 @@ export function useAIState() {
 
   // Debounced version of persistSessions for high-frequency updates (e.g. streaming)
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(true);
 
   const debouncedPersistSessions = useCallback(() => {
     if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
     persistTimerRef.current = setTimeout(() => {
+      if (!mountedRef.current) return; // Skip writes after unmount
       localStorageAdapter.write(STORAGE_KEY_AI_SESSIONS, pruneSessionsForStorage(sessionsRef.current));
       persistTimerRef.current = null;
     }, 500);
@@ -287,9 +324,12 @@ export function useAIState() {
 
   // Flush pending debounced writes on unmount
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       if (persistTimerRef.current) {
         clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = null;
         persistSessions(sessionsRef.current);
       }
     };
@@ -373,6 +413,8 @@ export function useAIState() {
         if (msgs.length > MAX_MESSAGES_PER_SESSION) {
           const systemMsgs = msgs.filter(m => m.role === 'system');
           const nonSystemMsgs = msgs.filter(m => m.role !== 'system');
+          const dropped = nonSystemMsgs.length - (MAX_MESSAGES_PER_SESSION - systemMsgs.length);
+          console.warn(`[useAIState] Session ${sessionId}: trimmed ${dropped} oldest non-system message(s) to stay within ${MAX_MESSAGES_PER_SESSION} limit`);
           msgs = [...systemMsgs, ...nonSystemMsgs.slice(-MAX_MESSAGES_PER_SESSION + systemMsgs.length)];
         }
         return { ...s, messages: msgs, updatedAt: Date.now() };

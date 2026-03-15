@@ -6,7 +6,7 @@
  */
 
 import { Check, ShieldAlert, X } from 'lucide-react';
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
@@ -28,7 +28,9 @@ const InlineApprovalCard: React.FC<InlineApprovalCardProps> = ({
 }) => {
   const { t } = useI18n();
   const cardRef = useRef<HTMLDivElement>(null);
+  const approveBtnRef = useRef<HTMLButtonElement>(null);
   const isPending = status === 'pending';
+  const [responded, setResponded] = useState(false);
 
   // Use refs to always access the latest callbacks without re-registering the listener
   const onApproveRef = useRef(onApprove);
@@ -36,24 +38,38 @@ const InlineApprovalCard: React.FC<InlineApprovalCardProps> = ({
   onApproveRef.current = onApprove;
   onRejectRef.current = onReject;
 
+  const isDisabled = !isPending || responded;
+
+  const handleApprove = useCallback(() => {
+    if (isDisabled) return;
+    setResponded(true);
+    onApproveRef.current();
+  }, [isDisabled]);
+
+  const handleReject = useCallback(() => {
+    if (isDisabled) return;
+    setResponded(true);
+    onRejectRef.current();
+  }, [isDisabled]);
+
   // Keyboard shortcuts: handled via local onKeyDown on the focusable card element
   // to avoid conflicts when multiple InlineApprovalCard instances exist simultaneously.
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (!isPending) return;
+    if (isDisabled) return;
     if (e.key === 'Enter') {
       e.preventDefault();
-      onApproveRef.current();
+      handleApprove();
     } else if (e.key === 'Escape') {
       e.preventDefault();
-      onRejectRef.current();
+      handleReject();
     }
-  }, [isPending]);
+  }, [isDisabled, handleApprove, handleReject]);
 
-  // Auto-focus and auto-scroll into view when mounted as pending
+  // Auto-focus approve button and auto-scroll into view when mounted as pending
   useEffect(() => {
     if (isPending && cardRef.current) {
-      cardRef.current.focus();
       cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      approveBtnRef.current?.focus();
     }
   }, [isPending]);
 
@@ -71,6 +87,8 @@ const InlineApprovalCard: React.FC<InlineApprovalCardProps> = ({
     <div
       ref={cardRef}
       tabIndex={0}
+      role="alertdialog"
+      aria-label="Tool execution approval required"
       onKeyDown={handleKeyDown}
       className={`rounded-md border overflow-hidden text-[12px] mt-1.5 outline-none ${
         isPending
@@ -143,16 +161,19 @@ const InlineApprovalCard: React.FC<InlineApprovalCardProps> = ({
               <Button
                 variant="outline"
                 size="sm"
-                className="h-6 px-2 text-[11px] border-red-500/20 text-red-400/80 hover:bg-red-500/10 hover:text-red-400"
-                onClick={onReject}
+                disabled={responded}
+                className={`h-6 px-2 text-[11px] border-red-500/20 text-red-400/80 hover:bg-red-500/10 hover:text-red-400 ${responded ? 'opacity-50 cursor-not-allowed' : ''}`}
+                onClick={handleReject}
               >
                 <X size={11} className="mr-0.5" />
                 {t('ai.chat.reject')}
               </Button>
               <Button
+                ref={approveBtnRef}
                 size="sm"
-                className="h-6 px-2.5 text-[11px] bg-green-600/80 hover:bg-green-600 text-white"
-                onClick={onApprove}
+                disabled={responded}
+                className={`h-6 px-2.5 text-[11px] bg-green-600/80 hover:bg-green-600 text-white ${responded ? 'opacity-50 cursor-not-allowed' : ''}`}
+                onClick={handleApprove}
               >
                 <Check size={11} className="mr-0.5" />
                 {t('ai.chat.approve')}

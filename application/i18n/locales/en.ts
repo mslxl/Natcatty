@@ -1593,6 +1593,7 @@ const en: Messages = {
   'ai.chat.allSessions': 'All Sessions',
   'ai.chat.noSessions': 'No previous sessions',
   'ai.chat.retryHint': 'You can retry by sending your message again.',
+  'ai.chat.approvalTimeout': 'Tool approval timed out after 5 minutes. You can retry by sending your message again.',
   'ai.chat.menuHosts': 'Hosts',
   'ai.chat.menuContext': 'Context',
   'ai.chat.menuFiles': 'Files',
