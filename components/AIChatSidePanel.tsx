@@ -33,6 +33,7 @@ import { createCattyTools } from '../infrastructure/ai/sdk/tools';
 import { exportAsMarkdown, exportAsJSON, exportAsPlainText, getExportFilename } from '../infrastructure/ai/conversationExport';
 import { runExternalAgentTurn } from '../infrastructure/ai/externalAgentAdapter';
 import { runAcpAgentTurn } from '../infrastructure/ai/acpAgentAdapter';
+import { classifyError } from '../infrastructure/ai/errorClassifier';
 import { useAgentDiscovery } from '../application/state/useAgentDiscovery';
 import { Button } from './ui/button';
 import { ScrollArea } from './ui/scroll-area';
@@ -419,9 +420,15 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         case 'error':
           updateLastMessage(streamSessionId, msg => ({
             ...msg,
-            content: msg.content + '\n\n**Error:** ' + String(chunk.error),
-            executionStatus: 'failed',
+            executionStatus: msg.executionStatus === 'running' ? 'failed' : msg.executionStatus,
           }));
+          addMessageToSession(streamSessionId, {
+            id: generateId(),
+            role: 'assistant',
+            content: '',
+            errorInfo: classifyError(String(chunk.error)),
+            timestamp: Date.now(),
+          });
           break;
         default:
           break;
@@ -642,12 +649,18 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
                 needsNewAssistantMsg = true;
               },
               onError: (error: string) => {
-                maybeCreateAssistantMsg();
                 updateLastMessage(sessionId!, msg => ({
                   ...msg,
-                  content: msg.content + '\n\n**Error:** ' + error,
-                  executionStatus: 'failed',
+                  executionStatus: msg.executionStatus === 'running' ? 'failed' : msg.executionStatus,
                 }));
+                addMessageToSession(sessionId!, {
+                  id: generateId(),
+                  role: 'assistant',
+                  content: '',
+                  errorInfo: classifyError(error),
+                  timestamp: Date.now(),
+                });
+                setStreamingForScope(sendScopeKey, false);
               },
               onDone: () => {},
             },
@@ -658,10 +671,18 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           );
         } catch (err) {
           if (!abortController.signal.aborted) {
+            const errorStr = err instanceof Error ? err.message : String(err);
             updateLastMessage(sessionId!, msg => ({
               ...msg,
-              content: msg.content + '\n\n**Error:** ' + (err instanceof Error ? err.message : String(err)),
+              executionStatus: msg.executionStatus === 'running' ? 'failed' : msg.executionStatus,
             }));
+            addMessageToSession(sessionId!, {
+              id: generateId(),
+              role: 'assistant',
+              content: '',
+              errorInfo: classifyError(errorStr),
+              timestamp: Date.now(),
+            });
           }
         }
       } else {
@@ -677,9 +698,16 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
               onError: (error: string) => {
                 updateLastMessage(sessionId!, msg => ({
                   ...msg,
-                  content: msg.content + '\n\n**Error:** ' + error,
-                  executionStatus: 'failed',
+                  executionStatus: msg.executionStatus === 'running' ? 'failed' : msg.executionStatus,
                 }));
+                addMessageToSession(sessionId!, {
+                  id: generateId(),
+                  role: 'assistant',
+                  content: '',
+                  errorInfo: classifyError(error),
+                  timestamp: Date.now(),
+                });
+                setStreamingForScope(sendScopeKey, false);
               },
               onDone: () => {},
             },
@@ -688,10 +716,18 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           );
         } catch (err) {
           if (!abortController.signal.aborted) {
+            const errorStr = err instanceof Error ? err.message : String(err);
             updateLastMessage(sessionId!, msg => ({
               ...msg,
-              content: msg.content + '\n\n**Error:** ' + (err instanceof Error ? err.message : String(err)),
+              executionStatus: msg.executionStatus === 'running' ? 'failed' : msg.executionStatus,
             }));
+            addMessageToSession(sessionId!, {
+              id: generateId(),
+              role: 'assistant',
+              content: '',
+              errorInfo: classifyError(errorStr),
+              timestamp: Date.now(),
+            });
           }
         }
       }
@@ -782,10 +818,18 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     } catch (err) {
       console.error('[Catty] streamText error:', err);
       if (!abortController.signal.aborted) {
+        const errorStr = err instanceof Error ? err.message : String(err);
         updateLastMessage(sessionId!, msg => ({
           ...msg,
-          content: msg.content + '\n\n**Error:** ' + (err instanceof Error ? err.message : String(err)),
+          executionStatus: msg.executionStatus === 'running' ? 'failed' : msg.executionStatus,
         }));
+        addMessageToSession(sessionId!, {
+          id: generateId(),
+          role: 'assistant',
+          content: '',
+          errorInfo: classifyError(errorStr),
+          timestamp: Date.now(),
+        });
       }
     } finally {
       // Only clean up if there is no pending approval waiting for user action
@@ -943,10 +987,18 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     } catch (err) {
       console.error('[Catty resume] streamText error:', err);
       if (!abortController.signal.aborted) {
+        const errorStr = err instanceof Error ? err.message : String(err);
         updateLastMessage(sid, msg => ({
           ...msg,
-          content: msg.content + '\n\n**Error:** ' + (err instanceof Error ? err.message : String(err)),
+          executionStatus: msg.executionStatus === 'running' ? 'failed' : msg.executionStatus,
         }));
+        addMessageToSession(sid, {
+          id: generateId(),
+          role: 'assistant',
+          content: '',
+          errorInfo: classifyError(errorStr),
+          timestamp: Date.now(),
+        });
       }
     } finally {
       if (!pendingApprovalContextRef.current || pendingApprovalContextRef.current.sessionId !== sid) {

@@ -40,6 +40,11 @@ export interface ChatMessage {
   timestamp: number;
   model?: string;
   providerId?: AIProviderId;
+  errorInfo?: {
+    type: 'network' | 'auth' | 'timeout' | 'provider' | 'agent' | 'unknown';
+    message: string;
+    retryable: boolean;
+  };
   executionStatus?: 'pending' | 'approved' | 'rejected' | 'running' | 'completed' | 'failed';
   pendingApproval?: {
     approvalId: string;

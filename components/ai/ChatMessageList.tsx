@@ -6,6 +6,7 @@
  * No avatars. Thinking blocks are collapsible.
  */
 
+import { AlertCircle } from 'lucide-react';
 import React from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import type { ChatMessage } from '../../infrastructure/ai/types';
@@ -114,6 +115,19 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
                     onApprove={() => onApprove?.(message.id)}
                     onReject={() => onReject?.(message.id)}
                   />
+                )}
+
+                {/* Error info */}
+                {message.errorInfo && (
+                  <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-destructive/10 border border-destructive/20 text-sm">
+                    <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-destructive font-medium">{message.errorInfo.message}</p>
+                      {message.errorInfo.retryable && (
+                        <p className="text-muted-foreground text-xs mt-1">You can retry by sending your message again.</p>
+                      )}
+                    </div>
+                  </div>
                 )}
               </MessageContent>
             </Message>
