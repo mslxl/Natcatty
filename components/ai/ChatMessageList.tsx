@@ -135,7 +135,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
                     <div className="flex-1 min-w-0">
                       <p className="text-destructive font-medium">{message.errorInfo.message}</p>
                       {message.errorInfo.retryable && (
-                        <p className="text-muted-foreground text-xs mt-1">You can retry by sending your message again.</p>
+                        <p className="text-muted-foreground text-xs mt-1">{t('ai.chat.retryHint')}</p>
                       )}
                     </div>
                   </div>

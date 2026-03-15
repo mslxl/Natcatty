@@ -1592,6 +1592,12 @@ const en: Messages = {
   'ai.chat.newChat': 'New Chat',
   'ai.chat.allSessions': 'All Sessions',
   'ai.chat.noSessions': 'No previous sessions',
+  'ai.chat.retryHint': 'You can retry by sending your message again.',
+  'ai.chat.menuHosts': 'Hosts',
+  'ai.chat.menuContext': 'Context',
+  'ai.chat.menuFiles': 'Files',
+  'ai.chat.menuImage': 'Image',
+  'ai.chat.menuMentionHost': 'Mention Host',
 
   // AI Error
   'ai.codex.bridgeError': 'Codex main-process handlers are not loaded yet. Fully restart Netcatty, or restart the Electron dev process, then try again.',

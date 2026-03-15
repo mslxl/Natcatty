@@ -346,8 +346,8 @@ export class ACPClient {
         } else {
           this.sendErrorResponse(request.id, -32603, 'Permission request handler not configured');
         }
-        }
         break;
+        }
 
       case ACP_METHODS.TERMINAL_CREATE:
       case ACP_METHODS.TERMINAL_WAIT_EXIT:

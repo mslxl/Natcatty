@@ -1,7 +1,16 @@
 import type { ToolCall, ToolResult, AIPermissionMode } from '../types';
-import { checkCommandSafety } from './safety';
-import { shellQuote } from '../shellQuote';
-import { limitConcurrency } from '../concurrency';
+import {
+  executeTerminalExecute,
+  executeTerminalSendInput,
+  executeSftpListDirectory,
+  executeSftpReadFile,
+  executeSftpWriteFile,
+  executeWorkspaceGetInfo,
+  executeWorkspaceGetSessionInfo,
+  executeMultiHostExecute,
+  type ToolDeps,
+  type ToolExecResult,
+} from '../shared/toolExecutors';
 
 /**
  * Bridge interface for Catty Agent to interact with the Electron main process.
@@ -58,6 +67,49 @@ export interface ExecutorContext {
   workspaceName?: string;
 }
 
+/** Convert a shared ToolExecResult into the executor's ToolResult format. */
+function toToolResult(toolCallId: string, r: ToolExecResult): ToolResult {
+  if (r.ok === false) {
+    return { toolCallId, content: r.error, isError: true };
+  }
+  // For terminal_execute, format as the legacy STDOUT/STDERR/exitCode text block
+  if (
+    typeof r.data === 'object' &&
+    r.data !== null &&
+    'stdout' in r.data &&
+    'stderr' in r.data &&
+    'exitCode' in r.data
+  ) {
+    const d = r.data as { stdout: string; stderr: string; exitCode: number };
+    const output = [
+      d.stdout ? `STDOUT:\n${d.stdout}` : '',
+      d.stderr ? `STDERR:\n${d.stderr}` : '',
+      `Exit code: ${d.exitCode === -1 ? 'unknown' : d.exitCode}`,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+    return { toolCallId, content: output || 'Command completed (no output)' };
+  }
+  // For terminal_send_input
+  if (typeof r.data === 'object' && r.data !== null && 'sent' in r.data) {
+    return { toolCallId, content: `Sent input to terminal: ${JSON.stringify((r.data as { sent: string }).sent)}` };
+  }
+  // For sftp_list_directory with output fallback
+  if (typeof r.data === 'object' && r.data !== null && 'output' in r.data && !('files' in r.data)) {
+    return { toolCallId, content: (r.data as { output: string }).output };
+  }
+  // For sftp_read_file
+  if (typeof r.data === 'object' && r.data !== null && 'content' in r.data) {
+    return { toolCallId, content: (r.data as { content: string }).content };
+  }
+  // For sftp_write_file
+  if (typeof r.data === 'object' && r.data !== null && 'written' in r.data) {
+    return { toolCallId, content: `File written: ${(r.data as { written: string }).written}` };
+  }
+  // Default: JSON-serialize the data
+  return { toolCallId, content: JSON.stringify(r.data, null, 2) };
+}
+
 /**
  * Create a tool executor function for the Catty Agent.
  * This bridges tool calls to the netcatty Electron IPC layer.
@@ -68,15 +120,6 @@ export function createToolExecutor(
   commandBlocklist?: string[],
   permissionMode: AIPermissionMode = 'confirm',
 ): (toolCall: ToolCall) => Promise<ToolResult> {
-  /** Validate that the given sessionId belongs to the current scope. */
-  function validateSessionScope(sessionId: string): string | null {
-    const validSessionIds = new Set(context.sessions.map(s => s.sessionId));
-    if (!validSessionIds.has(sessionId)) {
-      return `Session "${sessionId}" is not in the current scope. Available sessions: ${[...validSessionIds].join(', ')}`;
-    }
-    return null;
-  }
-
   return async (toolCall: ToolCall): Promise<ToolResult> => {
     if (!bridge) {
       return {
@@ -86,356 +129,73 @@ export function createToolExecutor(
       };
     }
 
+    const deps: ToolDeps = { bridge, context, commandBlocklist, permissionMode };
     const args = toolCall.arguments;
 
     try {
       switch (toolCall.name) {
         case 'terminal_execute': {
-          const sessionId = String(args.sessionId || '');
-          const command = String(args.command || '');
-          if (!sessionId || !command) {
-            return {
-              toolCallId: toolCall.id,
-              content: 'Missing sessionId or command',
-              isError: true,
-            };
-          }
-          const execScopeErr = validateSessionScope(sessionId);
-          if (execScopeErr) {
-            return {
-              toolCallId: toolCall.id,
-              content: execScopeErr,
-              isError: true,
-            };
-          }
-          if (permissionMode === 'observer') {
-            return {
-              toolCallId: toolCall.id,
-              content: 'Observer mode: command execution is disabled. Switch to Confirm or Auto mode to execute commands.',
-              isError: true,
-            };
-          }
-          const safety = checkCommandSafety(command, commandBlocklist);
-          if (safety.blocked) {
-            return {
-              toolCallId: toolCall.id,
-              content: `Command blocked by safety policy. Matched pattern: ${safety.matchedPattern}`,
-              isError: true,
-            };
-          }
-          const result = await bridge.aiExec(sessionId, command);
-          if (!result.ok) {
-            return {
-              toolCallId: toolCall.id,
-              content: `Error: ${result.error || 'Command failed'}`,
-              isError: true,
-            };
-          }
-          const output = [
-            result.stdout ? `STDOUT:\n${result.stdout}` : '',
-            result.stderr ? `STDERR:\n${result.stderr}` : '',
-            `Exit code: ${result.exitCode ?? 'unknown'}`,
-          ]
-            .filter(Boolean)
-            .join('\n\n');
-          return {
-            toolCallId: toolCall.id,
-            content: output || 'Command completed (no output)',
-          };
+          const r = await executeTerminalExecute(deps, {
+            sessionId: String(args.sessionId || ''),
+            command: String(args.command || ''),
+          });
+          return toToolResult(toolCall.id, r);
         }
 
         case 'terminal_send_input': {
-          const sessionId = String(args.sessionId || '');
-          const input = String(args.input || '');
-          if (!sessionId || !input) {
-            return {
-              toolCallId: toolCall.id,
-              content: 'Missing sessionId or input',
-              isError: true,
-            };
-          }
-          const inputScopeErr = validateSessionScope(sessionId);
-          if (inputScopeErr) {
-            return {
-              toolCallId: toolCall.id,
-              content: inputScopeErr,
-              isError: true,
-            };
-          }
-          if (permissionMode === 'observer') {
-            return {
-              toolCallId: toolCall.id,
-              content: 'Observer mode: terminal input is disabled. Switch to Confirm or Auto mode.',
-              isError: true,
-            };
-          }
-          const inputSafety = checkCommandSafety(input, commandBlocklist);
-          if (inputSafety.blocked) {
-            return {
-              toolCallId: toolCall.id,
-              content: `Input blocked by safety policy. Matched pattern: ${inputSafety.matchedPattern}`,
-              isError: true,
-            };
-          }
-          const result = await bridge.aiTerminalWrite(sessionId, input);
-          if (!result.ok) {
-            return {
-              toolCallId: toolCall.id,
-              content: `Error: ${result.error}`,
-              isError: true,
-            };
-          }
-          return {
-            toolCallId: toolCall.id,
-            content: `Sent input to terminal: ${JSON.stringify(input)}`,
-          };
+          const r = await executeTerminalSendInput(deps, {
+            sessionId: String(args.sessionId || ''),
+            input: String(args.input || ''),
+          });
+          return toToolResult(toolCall.id, r);
         }
 
         case 'sftp_list_directory': {
-          const sessionId = String(args.sessionId || '');
-          const path = String(args.path || '/');
-          const sftpListScopeErr = validateSessionScope(sessionId);
-          if (sftpListScopeErr) {
-            return {
-              toolCallId: toolCall.id,
-              content: sftpListScopeErr,
-              isError: true,
-            };
-          }
-          // Find the SFTP connection for this session
-          const session = context.sessions.find(
-            (s) => s.sessionId === sessionId,
-          );
-          if (!session?.sftpId) {
-            // Fallback: use terminal exec with ls
-            const result = await bridge.aiExec(sessionId, `ls -la ${shellQuote(path)}`);
-            return {
-              toolCallId: toolCall.id,
-              content: result.ok
-                ? result.stdout || '(empty directory)'
-                : `Error: ${result.error}`,
-              isError: !result.ok,
-            };
-          }
-          const files = await bridge.listSftp(session.sftpId, path);
-          return {
-            toolCallId: toolCall.id,
-            content: JSON.stringify(files, null, 2),
-          };
+          const r = await executeSftpListDirectory(deps, {
+            sessionId: String(args.sessionId || ''),
+            path: String(args.path || '/'),
+          });
+          return toToolResult(toolCall.id, r);
         }
 
         case 'sftp_read_file': {
-          const sessionId = String(args.sessionId || '');
-          const path = String(args.path || '');
-          if (!sessionId || !path) {
-            return {
-              toolCallId: toolCall.id,
-              content: 'Missing sessionId or path',
-              isError: true,
-            };
-          }
-          const sftpReadScopeErr = validateSessionScope(sessionId);
-          if (sftpReadScopeErr) {
-            return {
-              toolCallId: toolCall.id,
-              content: sftpReadScopeErr,
-              isError: true,
-            };
-          }
-          const session = context.sessions.find(
-            (s) => s.sessionId === sessionId,
-          );
-          if (!session?.sftpId) {
-            // Fallback: use terminal exec
-            const maxBytes = Math.max(1, Math.min(10 * 1024 * 1024, Number(args.maxBytes) || 10000));
-            const result = await bridge.aiExec(
-              sessionId,
-              `head -c ${maxBytes} ${shellQuote(path)}`,
-            );
-            return {
-              toolCallId: toolCall.id,
-              content: result.ok
-                ? result.stdout || '(empty file)'
-                : `Error: ${result.error}`,
-              isError: !result.ok,
-            };
-          }
-          const content = await bridge.readSftp(session.sftpId, path);
-          return {
-            toolCallId: toolCall.id,
-            content: content || '(empty file)',
-          };
+          const r = await executeSftpReadFile(deps, {
+            sessionId: String(args.sessionId || ''),
+            path: String(args.path || ''),
+            maxBytes: Number(args.maxBytes) || 10000,
+          });
+          return toToolResult(toolCall.id, r);
         }
 
         case 'sftp_write_file': {
-          const sessionId = String(args.sessionId || '');
-          const path = String(args.path || '');
-          const content = String(args.content || '');
-          if (!sessionId || !path) {
-            return {
-              toolCallId: toolCall.id,
-              content: 'Missing sessionId or path',
-              isError: true,
-            };
-          }
-          const sftpWriteScopeErr = validateSessionScope(sessionId);
-          if (sftpWriteScopeErr) {
-            return {
-              toolCallId: toolCall.id,
-              content: sftpWriteScopeErr,
-              isError: true,
-            };
-          }
-          if (permissionMode === 'observer') {
-            return {
-              toolCallId: toolCall.id,
-              content: 'Observer mode: file writing is disabled. Switch to Confirm or Auto mode.',
-              isError: true,
-            };
-          }
-          const session = context.sessions.find(
-            (s) => s.sessionId === sessionId,
-          );
-          if (!session?.sftpId) {
-            // Fallback: use base64 encoding to avoid heredoc delimiter collision
-            const b64 = btoa(unescape(encodeURIComponent(content)));
-            const result = await bridge.aiExec(
-              sessionId,
-              `echo ${shellQuote(b64)} | base64 -d > ${shellQuote(path)}`,
-            );
-            return {
-              toolCallId: toolCall.id,
-              content: result.ok
-                ? `File written: ${path}`
-                : `Error: ${result.error}`,
-              isError: !result.ok,
-            };
-          }
-          await bridge.writeSftp(session.sftpId, path, content);
-          return {
-            toolCallId: toolCall.id,
-            content: `File written: ${path}`,
-          };
+          const r = await executeSftpWriteFile(deps, {
+            sessionId: String(args.sessionId || ''),
+            path: String(args.path || ''),
+            content: String(args.content || ''),
+          });
+          return toToolResult(toolCall.id, r);
         }
 
         case 'workspace_get_info': {
-          const info = {
-            workspaceId: context.workspaceId || null,
-            workspaceName: context.workspaceName || null,
-            sessions: context.sessions.map((s) => ({
-              sessionId: s.sessionId,
-              hostname: s.hostname,
-              label: s.label,
-              os: s.os,
-              username: s.username,
-              connected: s.connected,
-            })),
-          };
-          return {
-            toolCallId: toolCall.id,
-            content: JSON.stringify(info, null, 2),
-          };
+          const r = executeWorkspaceGetInfo(deps);
+          return toToolResult(toolCall.id, r);
         }
 
         case 'workspace_get_session_info': {
-          const sessionId = String(args.sessionId || '');
-          const session = context.sessions.find(
-            (s) => s.sessionId === sessionId,
-          );
-          if (!session) {
-            return {
-              toolCallId: toolCall.id,
-              content: `Session not found: ${sessionId}`,
-              isError: true,
-            };
-          }
-          return {
-            toolCallId: toolCall.id,
-            content: JSON.stringify(session, null, 2),
-          };
+          const r = executeWorkspaceGetSessionInfo(deps, {
+            sessionId: String(args.sessionId || ''),
+          });
+          return toToolResult(toolCall.id, r);
         }
 
         case 'multi_host_execute': {
-          const sessionIds = (args.sessionIds as string[]) || [];
-          const command = String(args.command || '');
-          const mode = String(args.mode || 'parallel');
-          const stopOnError = Boolean(args.stopOnError);
-
-          if (sessionIds.length === 0 || !command) {
-            return {
-              toolCallId: toolCall.id,
-              content: 'Missing sessionIds or command',
-              isError: true,
-            };
-          }
-          // Validate all session IDs belong to current scope
-          const validIds = new Set(context.sessions.map(s => s.sessionId));
-          const outOfScope = sessionIds.filter(sid => !validIds.has(sid));
-          if (outOfScope.length > 0) {
-            return {
-              toolCallId: toolCall.id,
-              content: `Sessions not in current scope: ${outOfScope.join(', ')}. Available sessions: ${[...validIds].join(', ')}`,
-              isError: true,
-            };
-          }
-          if (permissionMode === 'observer') {
-            return {
-              toolCallId: toolCall.id,
-              content: 'Observer mode: command execution is disabled. Switch to Confirm or Auto mode.',
-              isError: true,
-            };
-          }
-          const multiSafety = checkCommandSafety(command, commandBlocklist);
-          if (multiSafety.blocked) {
-            return {
-              toolCallId: toolCall.id,
-              content: `Command blocked by safety policy. Matched pattern: ${multiSafety.matchedPattern}`,
-              isError: true,
-            };
-          }
-
-          const results: Record<string, { ok: boolean; output: string }> = {};
-
-          if (mode === 'sequential') {
-            for (const sid of sessionIds) {
-              const session = context.sessions.find(
-                (s) => s.sessionId === sid,
-              );
-              const label = session?.label || sid;
-              const result = await bridge.aiExec(sid, command);
-              results[label] = {
-                ok: result.ok,
-                output: result.ok
-                  ? result.stdout || '(no output)'
-                  : `Error: ${result.error || result.stderr || 'Failed'}`,
-              };
-              if (!result.ok && stopOnError) break;
-            }
-          } else {
-            // Parallel execution with concurrency limit
-            const tasks = sessionIds.map((sid) => () => {
-              const session = context.sessions.find(
-                (s) => s.sessionId === sid,
-              );
-              const label = session?.label || sid;
-              return bridge.aiExec(sid, command).then(result => ({
-                label,
-                ok: result.ok,
-                output: result.ok
-                  ? result.stdout || '(no output)'
-                  : `Error: ${result.error || result.stderr || 'Failed'}`,
-              }));
-            });
-            const resolved = await limitConcurrency(tasks, 10);
-            for (const r of resolved) {
-              results[r.label] = { ok: r.ok, output: r.output };
-            }
-          }
-
-          return {
-            toolCallId: toolCall.id,
-            content: JSON.stringify(results, null, 2),
-          };
+          const r = await executeMultiHostExecute(deps, {
+            sessionIds: (args.sessionIds as string[]) || [],
+            command: String(args.command || ''),
+            mode: String(args.mode || 'parallel'),
+            stopOnError: Boolean(args.stopOnError),
+          });
+          return toToolResult(toolCall.id, r);
         }
 
         default:

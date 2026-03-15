@@ -12,7 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { streamText, stepCountIs } from 'ai';
+import { streamText, stepCountIs, type ModelMessage } from 'ai';
 import { cn } from '../lib/utils';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { useWindowControls } from '../application/state/useWindowControls';
@@ -30,6 +30,7 @@ import { getAgentModelPresets } from '../infrastructure/ai/types';
 import { buildSystemPrompt } from '../infrastructure/ai/cattyAgent/systemPrompt';
 import { createModelFromConfig } from '../infrastructure/ai/sdk/providers';
 import { createCattyTools } from '../infrastructure/ai/sdk/tools';
+import type { NetcattyBridge } from '../infrastructure/ai/cattyAgent/executor';
 import { exportAsMarkdown, exportAsJSON, exportAsPlainText, getExportFilename } from '../infrastructure/ai/conversationExport';
 import { runExternalAgentTurn } from '../infrastructure/ai/externalAgentAdapter';
 import { runAcpAgentTurn } from '../infrastructure/ai/acpAgentAdapter';
@@ -41,6 +42,82 @@ import AgentSelector from './ai/AgentSelector';
 import ChatInput from './ai/ChatInput';
 import ChatMessageList from './ai/ChatMessageList';
 import ConversationExport from './ai/ConversationExport';
+
+// -------------------------------------------------------------------
+// Stream chunk type interfaces (Issue #13: replace unsafe casts)
+// -------------------------------------------------------------------
+
+/** Shape of a text/text-delta chunk from the Vercel AI SDK fullStream. */
+interface TextDeltaChunk {
+  type: 'text' | 'text-delta';
+  text?: string;
+  textDelta?: string;
+}
+
+/** Shape of a reasoning chunk from the Vercel AI SDK fullStream. */
+interface ReasoningChunk {
+  type: 'reasoning' | 'reasoning-start' | 'reasoning-delta';
+  text?: string;
+}
+
+/** Shape of a tool-call chunk from the Vercel AI SDK fullStream. */
+interface ToolCallChunk {
+  type: 'tool-call';
+  toolCallId: string;
+  toolName: string;
+  input?: unknown;
+  args?: unknown;
+}
+
+/** Shape of a tool-result chunk from the Vercel AI SDK fullStream. */
+interface ToolResultChunk {
+  type: 'tool-result';
+  toolCallId: string;
+  output?: unknown;
+  result?: unknown;
+}
+
+/** Shape of a tool-approval-request chunk from the Vercel AI SDK fullStream. */
+interface ToolApprovalRequestChunk {
+  type: 'tool-approval-request';
+  approvalId: string;
+  toolCall: {
+    toolCallId: string;
+    toolName: string;
+    args?: Record<string, unknown>;
+    input?: Record<string, unknown>;
+  };
+}
+
+/** Shape of an error chunk from the Vercel AI SDK fullStream. */
+interface ErrorChunk {
+  type: 'error';
+  error: unknown;
+}
+
+/** Union of all stream chunk shapes we handle. */
+type StreamChunk =
+  | TextDeltaChunk
+  | ReasoningChunk
+  | ToolCallChunk
+  | ToolResultChunk
+  | ToolApprovalRequestChunk
+  | ErrorChunk
+  | { type: 'reasoning-end' | 'text-start' | 'text-end' | 'start' | 'finish' | 'start-step' | 'finish-step' };
+
+/** Shape of the netcatty bridge exposed on `window` (panel-specific subset). */
+interface PanelBridge extends NetcattyBridge {
+  credentialsDecrypt?: (value: string) => Promise<string>;
+  aiMcpUpdateSessions?: (sessions: AIChatSidePanelProps['terminalSessions'], chatSessionId?: string) => Promise<unknown>;
+  aiAcpCleanup?: (chatSessionId: string) => Promise<{ ok: boolean }>;
+  [key: string]: ((...args: unknown[]) => unknown) | undefined;
+}
+
+/** Typed accessor for the netcatty bridge on the window object. */
+function getNetcattyBridge(): PanelBridge | undefined {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (window as any).netcatty as PanelBridge | undefined;
+}
 
 // -------------------------------------------------------------------
 // Props
@@ -57,6 +134,11 @@ interface AIChatSidePanelProps {
   addMessageToSession: (sessionId: string, message: ChatMessage) => void;
   updateLastMessage: (
     sessionId: string,
+    updater: (msg: ChatMessage) => ChatMessage,
+  ) => void;
+  updateMessageById: (
+    sessionId: string,
+    messageId: string,
     updater: (msg: ChatMessage) => ChatMessage,
   ) => void;
   // Provider config
@@ -119,6 +201,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   updateSessionTitle,
   addMessageToSession,
   updateLastMessage,
+  updateMessageById,
   providers,
   activeProviderId,
   activeModelId,
@@ -170,7 +253,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   const pendingApprovalContextRef = useRef<{
     sessionId: string;
     scopeKey: string;
-    sdkMessages: Array<Record<string, unknown>>;
+    sdkMessages: Array<ModelMessage>;
     approvalInfo: {
       approvalId: string;
       toolCallId: string;
@@ -181,6 +264,34 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     systemPrompt: string;
     tools: ReturnType<typeof createCattyTools>;
   } | null>(null);
+
+  // Timeout ID for auto-clearing stale pending approval (Issue #14)
+  const pendingApprovalTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Set pending approval context with a 5-minute auto-clear timeout. */
+  const setPendingApproval = useCallback((ctx: typeof pendingApprovalContextRef.current) => {
+    // Clear any existing timeout
+    if (pendingApprovalTimeoutRef.current) {
+      clearTimeout(pendingApprovalTimeoutRef.current);
+      pendingApprovalTimeoutRef.current = null;
+    }
+    pendingApprovalContextRef.current = ctx;
+    if (ctx) {
+      pendingApprovalTimeoutRef.current = setTimeout(() => {
+        // Auto-clear after 5 minutes if user never responds
+        if (pendingApprovalContextRef.current?.sessionId === ctx.sessionId) {
+          pendingApprovalContextRef.current = null;
+          setStreamingForScope(ctx.sessionId, false);
+          abortControllersRef.current.get(ctx.sessionId)?.abort();
+          abortControllersRef.current.delete(ctx.sessionId);
+        }
+        pendingApprovalTimeoutRef.current = null;
+      }, 5 * 60 * 1000); // 5 minutes
+    }
+  }, [setStreamingForScope]);
+
+  // Ref to track active object URLs for cleanup on unmount (Issue #19)
+  const activeObjectUrlsRef = useRef<Set<string>>(new Set());
 
   const { images, addImages, removeImage, clearImages } = useImageUpload();
   const { openSettingsWindow } = useWindowControls();
@@ -204,18 +315,27 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
 
   // Proactively sync terminal session metadata to main process whenever scope or sessions change
   useEffect(() => {
-    const bridge = (window as unknown as { netcatty?: { aiMcpUpdateSessions?: (sessions: typeof terminalSessions, chatSessionId?: string) => Promise<unknown> } }).netcatty;
+    const bridge = getNetcattyBridge();
     if (bridge?.aiMcpUpdateSessions && terminalSessions.length > 0) {
       void bridge.aiMcpUpdateSessions(terminalSessions, activeSessionId ?? undefined);
     }
   }, [terminalSessions, scopeKey, activeSessionId]);
 
-  // Abort all active streams on unmount
+  // Abort all active streams and clean up on unmount
   useEffect(() => {
     const controllers = abortControllersRef.current;
     return () => {
       controllers.forEach(c => c.abort());
       controllers.clear();
+      // Clear pending approval timeout (Issue #14)
+      if (pendingApprovalTimeoutRef.current) {
+        clearTimeout(pendingApprovalTimeoutRef.current);
+        pendingApprovalTimeoutRef.current = null;
+      }
+      pendingApprovalContextRef.current = null;
+      // Revoke any outstanding object URLs (Issue #19)
+      activeObjectUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
+      activeObjectUrlsRef.current.clear();
     };
   }, []);
 
@@ -303,8 +423,10 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     model: ReturnType<typeof createModelFromConfig>,
     systemPrompt: string,
     tools: ReturnType<typeof createCattyTools>,
-    sdkMessages: Array<Record<string, unknown>>,
+    sdkMessages: Array<ModelMessage>,
     signal: AbortSignal,
+    /** The message ID of the current assistant message to update via updateMessageById. */
+    currentAssistantMsgId: string,
   ): Promise<{
     approvalId: string;
     toolCallId: string;
@@ -320,6 +442,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       abortSignal: signal,
     });
 
+    // Track the current assistant message ID so updates target the correct message
+    let activeMsgId = currentAssistantMsgId;
     let lastAddedRole: 'assistant' | 'tool' = 'assistant';
     const reader = result.fullStream.getReader();
     let pendingApprovalInfo: {
@@ -331,24 +455,28 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
 
     try {
     while (true) {
-      const { done, value: chunk } = await reader.read();
+      const { done, value } = await reader.read();
       if (done) break;
+      // Use the StreamChunk union for type narrowing instead of unsafe casts
+      const chunk = value as StreamChunk;
       switch (chunk.type) {
         case 'text':
         case 'text-delta': {
-          const text = (chunk as unknown as { text?: string; textDelta?: string }).text
-            ?? (chunk as unknown as { textDelta?: string }).textDelta;
+          const typedChunk = chunk as TextDeltaChunk;
+          const text = typedChunk.text ?? typedChunk.textDelta;
           if (text) {
             if (lastAddedRole === 'tool') {
+              const newId = generateId();
               addMessageToSession(streamSessionId, {
-                id: generateId(),
+                id: newId,
                 role: 'assistant',
                 content: text,
                 timestamp: Date.now(),
               });
+              activeMsgId = newId;
               lastAddedRole = 'assistant';
             } else {
-              updateLastMessage(streamSessionId, msg => ({
+              updateMessageById(streamSessionId, activeMsgId, msg => ({
                 ...msg,
                 content: msg.content + text,
               }));
@@ -359,19 +487,22 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         case 'reasoning':
         case 'reasoning-start':
         case 'reasoning-delta': {
-          const rText = (chunk as unknown as { text?: string }).text;
+          const typedChunk = chunk as ReasoningChunk;
+          const rText = typedChunk.text;
           if (rText) {
             if (lastAddedRole === 'tool') {
+              const newId = generateId();
               addMessageToSession(streamSessionId, {
-                id: generateId(),
+                id: newId,
                 role: 'assistant',
                 content: '',
                 thinking: rText,
                 timestamp: Date.now(),
               });
+              activeMsgId = newId;
               lastAddedRole = 'assistant';
             } else {
-              updateLastMessage(streamSessionId, msg => ({
+              updateMessageById(streamSessionId, activeMsgId, msg => ({
                 ...msg,
                 thinking: (msg.thinking || '') + rText,
               }));
@@ -387,31 +518,34 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         case 'start-step':
         case 'finish-step':
           break;
-        case 'tool-call':
-          updateLastMessage(streamSessionId, msg => ({
+        case 'tool-call': {
+          const typedChunk = chunk as ToolCallChunk;
+          updateMessageById(streamSessionId, activeMsgId, msg => ({
             ...msg,
             toolCalls: [...(msg.toolCalls || []), {
-              id: chunk.toolCallId,
-              name: chunk.toolName,
-              arguments: (chunk as unknown as { input?: unknown; args?: unknown }).input ?? (chunk as unknown as { args?: unknown }).args,
+              id: typedChunk.toolCallId,
+              name: typedChunk.toolName,
+              arguments: typedChunk.input ?? typedChunk.args,
             }],
             executionStatus: 'running',
             statusText: undefined,
           }));
           break;
+        }
         case 'tool-result': {
-          // Mark the assistant message's tool execution as completed (mirrors external agent path)
-          updateLastMessage(streamSessionId, msg =>
+          const typedChunk = chunk as ToolResultChunk;
+          // Mark the assistant message's tool execution as completed
+          updateMessageById(streamSessionId, activeMsgId, msg =>
             msg.role === 'assistant' && msg.executionStatus === 'running'
               ? { ...msg, executionStatus: 'completed', statusText: undefined } : msg,
           );
-          const toolOutput = (chunk as unknown as { output?: unknown; result?: unknown }).output ?? (chunk as unknown as { result?: unknown }).result;
+          const toolOutput = typedChunk.output ?? typedChunk.result;
           addMessageToSession(streamSessionId, {
             id: generateId(),
             role: 'tool',
             content: '',
             toolResults: [{
-              toolCallId: chunk.toolCallId,
+              toolCallId: typedChunk.toolCallId,
               content: typeof toolOutput === 'string'
                 ? toolOutput
                 : JSON.stringify(toolOutput),
@@ -424,17 +558,14 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           break;
         }
         case 'tool-approval-request': {
-          const approvalChunk = chunk as unknown as {
-            approvalId: string;
-            toolCall: { toolCallId: string; toolName: string; args?: Record<string, unknown>; input?: Record<string, unknown> };
-          };
+          const typedChunk = chunk as ToolApprovalRequestChunk;
           pendingApprovalInfo = {
-            approvalId: approvalChunk.approvalId,
-            toolCallId: approvalChunk.toolCall.toolCallId,
-            toolName: approvalChunk.toolCall.toolName,
-            toolArgs: approvalChunk.toolCall.args ?? approvalChunk.toolCall.input ?? {},
+            approvalId: typedChunk.approvalId,
+            toolCallId: typedChunk.toolCall.toolCallId,
+            toolName: typedChunk.toolCall.toolName,
+            toolArgs: typedChunk.toolCall.args ?? typedChunk.toolCall.input ?? {},
           };
-          updateLastMessage(streamSessionId, msg => ({
+          updateMessageById(streamSessionId, activeMsgId, msg => ({
             ...msg,
             pendingApproval: {
               ...pendingApprovalInfo!,
@@ -443,8 +574,9 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           }));
           break;
         }
-        case 'error':
-          updateLastMessage(streamSessionId, msg => ({
+        case 'error': {
+          const typedChunk = chunk as ErrorChunk;
+          updateMessageById(streamSessionId, activeMsgId, msg => ({
             ...msg,
             executionStatus: msg.executionStatus === 'running' ? 'failed' : msg.executionStatus,
           }));
@@ -452,10 +584,11 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
             id: generateId(),
             role: 'assistant',
             content: '',
-            errorInfo: classifyError(String(chunk.error)),
+            errorInfo: classifyError(String(typedChunk.error)),
             timestamp: Date.now(),
           });
           break;
+        }
         default:
           break;
       }
@@ -464,7 +597,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       reader.releaseLock();
     }
     return pendingApprovalInfo;
-  }, [maxIterations, addMessageToSession, updateLastMessage]);
+  }, [maxIterations, addMessageToSession, updateMessageById]);
 
   // -------------------------------------------------------------------
   // Handlers
@@ -547,10 +680,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   }, [activeSessionId, scopeType, scopeTargetId, scopeHostIds, currentAgentId, createSession, setActiveSessionId]);
 
   /** Get the netcatty bridge from the window. */
-  const getBridge = useCallback(() =>
-    (window as unknown as { netcatty?: Record<string, unknown> }).netcatty as
-      Record<string, (...args: unknown[]) => unknown> | undefined,
-  []);
+  const getBridge = useCallback(() => getNetcattyBridge(), []);
 
   // -------------------------------------------------------------------
   // External agent sub-flow (ACP or raw process)
@@ -569,9 +699,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       const requestId = `acp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
       // Push terminal session metadata to MCP bridge
-      const mcpBridge = bridge as unknown as { aiMcpUpdateSessions?: (sessions: typeof terminalSessions, chatSessionId?: string) => Promise<unknown> };
-      if (mcpBridge.aiMcpUpdateSessions) {
-        await mcpBridge.aiMcpUpdateSessions(terminalSessions, sessionId);
+      if (bridge?.aiMcpUpdateSessions) {
+        await bridge.aiMcpUpdateSessions(terminalSessions, sessionId);
       }
 
       // TODO(security): agentApiKey is passed as plaintext over IPC to the main process via
@@ -690,8 +819,9 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     trimmed: string,
     abortController: AbortController,
     currentSession: AISession | undefined,
+    assistantMsgId: string,
   ) => {
-    const bridge = (window as unknown as { netcatty?: Record<string, unknown> }).netcatty;
+    const bridge = getNetcattyBridge();
     const tools = createCattyTools(bridge, {
       sessions: terminalSessions,
       workspaceId: scopeTargetId,
@@ -718,7 +848,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     let model;
     try {
       const decryptedKey = activeProvider.apiKey && bridge?.credentialsDecrypt
-        ? await (bridge as { credentialsDecrypt: (v: string) => Promise<string> }).credentialsDecrypt(activeProvider.apiKey)
+        ? await bridge.credentialsDecrypt(activeProvider.apiKey)
         : activeProvider.apiKey;
       if (activeProvider.apiKey && bridge?.credentialsDecrypt && !decryptedKey) {
         reportStreamError(sessionId, abortController.signal, 'API key decryption returned empty result. Please re-enter the API key in Settings → AI.');
@@ -736,19 +866,55 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     }
 
     try {
-      const sdkMessages: Array<Record<string, unknown>> = [];
+      // Issue #5: Build SDK messages including tool-call and tool-result messages
+      // so the LLM maintains full conversation context
+      const sdkMessages: Array<ModelMessage> = [];
       for (const m of (currentSession?.messages ?? [])) {
-        if (m.role === 'user') sdkMessages.push({ role: 'user', content: m.content });
-        else if (m.role === 'assistant' && m.content) sdkMessages.push({ role: 'assistant', content: m.content });
+        if (m.role === 'user') {
+          sdkMessages.push({ role: 'user', content: m.content });
+        } else if (m.role === 'assistant') {
+          if (m.toolCalls?.length) {
+            // Build assistant content parts: text + tool calls
+            const contentParts: Array<
+              { type: 'text'; text: string } |
+              { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown }
+            > = [];
+            if (m.content) {
+              contentParts.push({ type: 'text' as const, text: m.content });
+            }
+            for (const tc of m.toolCalls) {
+              contentParts.push({
+                type: 'tool-call' as const,
+                toolCallId: tc.id,
+                toolName: tc.name,
+                input: tc.arguments ?? {},
+              });
+            }
+            sdkMessages.push({ role: 'assistant', content: contentParts });
+          } else if (m.content) {
+            sdkMessages.push({ role: 'assistant', content: m.content });
+          }
+        } else if (m.role === 'tool' && m.toolResults?.length) {
+          // Map tool results to SDK tool message format
+          sdkMessages.push({
+            role: 'tool',
+            content: m.toolResults.map(tr => ({
+              type: 'tool-result' as const,
+              toolCallId: tr.toolCallId,
+              toolName: '',
+              output: { type: 'text' as const, value: tr.content },
+            })),
+          });
+        }
       }
       sdkMessages.push({ role: 'user', content: trimmed });
 
-      const approvalInfo = await processCattyStream(sessionId, model, systemPrompt, tools, sdkMessages, abortController.signal);
+      const approvalInfo = await processCattyStream(sessionId, model, systemPrompt, tools, sdkMessages, abortController.signal, assistantMsgId);
 
       if (approvalInfo) {
-        pendingApprovalContextRef.current = {
+        setPendingApproval({
           sessionId, scopeKey: sendScopeKey, sdkMessages, approvalInfo, model, systemPrompt, tools,
-        };
+        });
         return; // Keep streaming flag — waiting for user approval
       }
     } catch (err) {
@@ -764,7 +930,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   }, [
     activeProvider, activeModelId, scopeType, scopeTargetId, scopeLabel,
     globalPermissionMode, commandBlocklist, terminalSessions,
-    processCattyStream, reportStreamError, setStreamingForScope, autoTitleSession,
+    processCattyStream, reportStreamError, setStreamingForScope, autoTitleSession, setPendingApproval,
   ]);
 
   // -------------------------------------------------------------------
@@ -803,10 +969,11 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     clearImages();
     setStreamingForScope(sessionId, true);
 
-    // Create assistant message placeholder
+    // Create assistant message placeholder with a tracked ID
     const agentConfig = isExternalAgent ? externalAgents.find(a => a.id === currentAgentId) : undefined;
+    const assistantMsgId = generateId();
     addMessageToSession(sessionId, {
-      id: generateId(), role: 'assistant', content: '', timestamp: Date.now(),
+      id: assistantMsgId, role: 'assistant', content: '', timestamp: Date.now(),
       model: isExternalAgent ? (agentConfig?.name || 'external') : (activeModelId || activeProvider?.defaultModel || ''),
       providerId: isExternalAgent ? undefined : activeProvider?.providerId,
     });
@@ -817,7 +984,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
 
     if (isExternalAgent) {
       if (!agentConfig) {
-        updateLastMessage(sessionId, msg => ({ ...msg, content: 'External agent not found. Please check settings.', executionStatus: 'failed' }));
+        updateMessageById(sessionId, assistantMsgId, msg => ({ ...msg, content: 'External agent not found. Please check settings.', executionStatus: 'failed' }));
         setStreamingForScope(sessionId, false);
         return;
       }
@@ -830,12 +997,12 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       abortControllersRef.current.delete(sessionId);
       autoTitleSession(sessionId, trimmed);
     } else {
-      await sendToCattyAgent(sessionId, sendScopeKey, trimmed, abortController, currentSession ?? undefined);
+      await sendToCattyAgent(sessionId, sendScopeKey, trimmed, abortController, currentSession ?? undefined, assistantMsgId);
     }
   }, [
     isStreaming, activeProvider, scopeKey, currentAgentId,
     activeModelId, externalAgents,
-    ensureSession, addMessageToSession, updateLastMessage,
+    ensureSession, addMessageToSession, updateMessageById,
     setStreamingForScope, setInputValue, clearImages,
     sendToExternalAgent, sendToCattyAgent, reportStreamError, autoTitleSession, t,
   ]);
@@ -846,11 +1013,11 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     controller?.abort();
     abortControllersRef.current.delete(activeSessionId);
     setStreamingForScope(activeSessionId, false);
-    // Also clear any pending approval
+    // Also clear any pending approval (clears timeout too via setPendingApproval)
     if (pendingApprovalContextRef.current?.sessionId === activeSessionId) {
-      pendingApprovalContextRef.current = null;
+      setPendingApproval(null);
     }
-  }, [activeSessionId, setStreamingForScope]);
+  }, [activeSessionId, setStreamingForScope, setPendingApproval]);
 
   // Handle inline approval response (approve/reject from InlineApprovalCard)
   const handleApprovalResponse = useCallback(async (messageId: string, approved: boolean) => {
@@ -858,22 +1025,20 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     if (!ctx) return;
     // Destructure all needed values BEFORE clearing the ref to avoid race conditions
     const { sessionId: sid, scopeKey: sk, sdkMessages, approvalInfo, model: ctxModel } = ctx;
-    pendingApprovalContextRef.current = null;
+    // Clear pending approval (and its timeout) via setPendingApproval
+    setPendingApproval(null);
 
-    // Update the message's pendingApproval status
-    updateLastMessage(sid, msg => {
-      if (msg.id !== messageId) return msg;
-      return {
-        ...msg,
-        pendingApproval: msg.pendingApproval
-          ? { ...msg.pendingApproval, status: approved ? 'approved' as const : 'denied' as const }
-          : undefined,
-      };
-    });
+    // Update the message's pendingApproval status using message ID
+    updateMessageById(sid, messageId, msg => ({
+      ...msg,
+      pendingApproval: msg.pendingApproval
+        ? { ...msg.pendingApproval, status: approved ? 'approved' as const : 'denied' as const }
+        : undefined,
+    }));
 
     if (!approved) {
       // User rejected — add denial text and stop
-      updateLastMessage(sid, msg => ({
+      updateMessageById(sid, messageId, msg => ({
         ...msg,
         content: msg.content + (msg.content ? '\n\n' : '') + t('ai.chat.toolDenied'),
         executionStatus: 'completed',
@@ -917,8 +1082,9 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     ];
 
     // Create a new assistant message placeholder for the continuation
+    const newAssistantMsgId = generateId();
     addMessageToSession(sid, {
-      id: generateId(),
+      id: newAssistantMsgId,
       role: 'assistant',
       content: '',
       timestamp: Date.now(),
@@ -930,7 +1096,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     try {
       // Rebuild tools and system prompt with the latest permission mode to prevent
       // stale closure issues (e.g. user changed permission mode during approval wait)
-      const bridge = (window as unknown as { netcatty?: Record<string, unknown> }).netcatty;
+      const bridge = getNetcattyBridge();
       const freshTools = createCattyTools(bridge, {
         sessions: terminalSessions,
         workspaceId: scopeTargetId,
@@ -944,11 +1110,11 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         })),
         permissionMode: globalPermissionMode,
       });
-      const newApprovalInfo = await processCattyStream(sid, ctxModel, freshSystemPrompt, freshTools, resumeMessages, abortController.signal);
+      const newApprovalInfo = await processCattyStream(sid, ctxModel, freshSystemPrompt, freshTools, resumeMessages, abortController.signal, newAssistantMsgId);
 
       if (newApprovalInfo) {
-        // Another approval needed — save context for the next round
-        pendingApprovalContextRef.current = {
+        // Another approval needed — save context for the next round (with timeout)
+        setPendingApproval({
           sessionId: sid,
           scopeKey: sk,
           sdkMessages: resumeMessages,
@@ -956,14 +1122,14 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           model: ctxModel,
           systemPrompt: freshSystemPrompt,
           tools: freshTools,
-        };
+        });
         return;
       }
     } catch (err) {
       console.error('[Catty resume] streamText error:', err);
       if (!abortController.signal.aborted) {
         const errorStr = err instanceof Error ? err.message : String(err);
-        updateLastMessage(sid, msg => ({
+        updateMessageById(sid, newAssistantMsgId, msg => ({
           ...msg,
           executionStatus: msg.executionStatus === 'running' ? 'failed' : msg.executionStatus,
         }));
@@ -982,9 +1148,9 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       }
     }
   }, [
-    processCattyStream, addMessageToSession, updateLastMessage, setStreamingForScope, t,
+    processCattyStream, addMessageToSession, updateMessageById, setStreamingForScope, t,
     terminalSessions, scopeType, scopeTargetId, scopeLabel,
-    globalPermissionMode, commandBlocklist,
+    globalPermissionMode, commandBlocklist, setPendingApproval,
   ]);
 
   const handleSelectSession = useCallback(
@@ -1003,7 +1169,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   const handleDeleteSession = useCallback(
     (e: React.MouseEvent, sessionId: string) => {
       e.stopPropagation();
-      const bridge = (window as unknown as { netcatty?: { aiAcpCleanup?: (chatSessionId: string) => Promise<{ ok: boolean }> } }).netcatty;
+      const bridge = getNetcattyBridge();
       void bridge?.aiAcpCleanup?.(sessionId).catch(() => {});
       deleteSession(sessionId, scopeKey);
       // Active session clearing is handled by deleteSession with scopeKey
@@ -1029,13 +1195,21 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     // Create a download blob
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
+    // Track URL for cleanup on unmount (Issue #19)
+    activeObjectUrlsRef.current.add(url);
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    // Revoke after a generous delay to ensure download completes, then remove from tracking set
+    const revokeTimeout = setTimeout(() => {
+      URL.revokeObjectURL(url);
+      activeObjectUrlsRef.current.delete(url);
+    }, 60_000); // 60 seconds to be safe for large files
+    // If component unmounts before timeout, cleanup effect will revoke it
+    void revokeTimeout; // suppress unused warning
   }, [activeSession]);
 
   // -------------------------------------------------------------------

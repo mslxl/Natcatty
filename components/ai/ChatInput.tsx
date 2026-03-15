@@ -247,7 +247,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
               className="fixed z-[1000] min-w-[160px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
               style={{ left: menuPos.left, bottom: menuPos.bottom }}
             >
-              <div className="px-3 py-1 text-[10px] text-muted-foreground/40 tracking-wide">Hosts</div>
+              <div className="px-3 py-1 text-[10px] text-muted-foreground/40 tracking-wide">{t('ai.chat.menuHosts')}</div>
               {hosts.map(host => (
                 <button
                   key={host.sessionId}
@@ -294,14 +294,14 @@ const ChatInput: React.FC<ChatInputProps> = ({
                   className="fixed z-[1000] min-w-[170px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
                   style={{ left: menuPos.left, bottom: menuPos.bottom }}
                 >
-                  <div className="px-3 py-1 text-[10px] text-muted-foreground/40 tracking-wide">Context</div>
+                  <div className="px-3 py-1 text-[10px] text-muted-foreground/40 tracking-wide">{t('ai.chat.menuContext')}</div>
                   <button
                     type="button"
                     onClick={() => { fileInputRef.current?.setAttribute('accept', '*/*'); fileInputRef.current?.click(); closeAllMenus(); }}
                     className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
                   >
                     <FileText size={13} className="text-muted-foreground/60" />
-                    <span className="text-foreground/85">Files</span>
+                    <span className="text-foreground/85">{t('ai.chat.menuFiles')}</span>
                   </button>
                   <button
                     type="button"
@@ -309,7 +309,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                     className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
                   >
                     <ImageIcon size={13} className="text-muted-foreground/60" />
-                    <span className="text-foreground/85">Image</span>
+                    <span className="text-foreground/85">{t('ai.chat.menuImage')}</span>
                   </button>
                   <div
                     className="relative"
@@ -321,7 +321,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                       className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
                     >
                       <AtSign size={13} className="text-muted-foreground/60" />
-                      <span className="flex-1 text-foreground/85">Mention Host</span>
+                      <span className="flex-1 text-foreground/85">{t('ai.chat.menuMentionHost')}</span>
                       {hosts.length > 0 && <ChevronRight size={10} className="text-muted-foreground/50" />}
                     </button>
                     {showHostSubmenu && hosts.length > 0 && (

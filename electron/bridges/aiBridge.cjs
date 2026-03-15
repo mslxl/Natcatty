@@ -8,7 +8,7 @@
 const https = require("node:https");
 const http = require("node:http");
 const { URL } = require("node:url");
-const { spawn, execSync } = require("node:child_process");
+const { spawn, execFileSync } = require("node:child_process");
 const { existsSync } = require("node:fs");
 const path = require("node:path");
 
@@ -44,6 +44,7 @@ const { execViaPty } = require("./ai/ptyExec.cjs");
 let sessions = null;
 let sftpClients = null;
 let electronModule = null;
+let mainWebContentsId = null;
 
 // Active streaming requests (for cancellation)
 const activeStreams = new Map();
@@ -85,6 +86,39 @@ function init(deps) {
   sftpClients = deps.sftpClients;
   electronModule = deps.electronModule;
   mcpServerBridge.init({ sessions, sftpClients });
+
+  // Store main window webContents ID for IPC sender validation (Issue #17)
+  try {
+    const windowManager = require("./windowManager.cjs");
+    const mainWin = windowManager.getMainWindow?.();
+    if (mainWin && !mainWin.isDestroyed?.()) {
+      mainWebContentsId = mainWin.webContents?.id ?? null;
+    }
+  } catch {
+    // windowManager may not be available yet; will be set lazily
+  }
+}
+
+/**
+ * Validate that an IPC event sender is the main window's webContents.
+ * Returns true if valid, false otherwise.
+ */
+function validateSender(event) {
+  // Lazily resolve mainWebContentsId if not yet set
+  if (mainWebContentsId == null) {
+    try {
+      const windowManager = require("./windowManager.cjs");
+      const mainWin = windowManager.getMainWindow?.();
+      if (mainWin && !mainWin.isDestroyed?.()) {
+        mainWebContentsId = mainWin.webContents?.id ?? null;
+      }
+    } catch {
+      // Cannot resolve — reject for safety
+      return false;
+    }
+  }
+  if (mainWebContentsId == null) return false;
+  return event.sender?.id === mainWebContentsId;
 }
 
 /**
@@ -224,11 +258,26 @@ function registerHandlers(ipcMain) {
     "generativelanguage.googleapis.com",
     "openrouter.ai",
   ]);
+  // Allowed localhost ports to prevent SSRF (Issue #9)
+  const ALLOWED_LOCALHOST_PORTS = new Set([
+    11434,  // Ollama default
+    1234,   // LM Studio default
+    3000,   // Common local dev
+    3001,   // Common local dev
+    5000,   // Common local dev
+    5001,   // Common local dev
+    8000,   // Common local dev
+    8080,   // Common local dev
+    8888,   // Common local dev
+  ]);
   function isAllowedFetchUrl(urlString) {
     try {
       const parsed = new URL(urlString);
-      // Always allow localhost/127.0.0.1 (e.g. Ollama)
-      if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") return true;
+      // Allow localhost/127.0.0.1 only on known ports (e.g. Ollama)
+      if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") {
+        const port = parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 80);
+        return ALLOWED_LOCALHOST_PORTS.has(port);
+      }
       // Require HTTPS for remote hosts
       if (parsed.protocol !== "https:") return false;
       // Check known provider allowlist
@@ -241,6 +290,10 @@ function registerHandlers(ipcMain) {
 
   // Start a streaming chat request (proxied through main process)
   ipcMain.handle("netcatty:ai:chat:stream", async (event, { requestId, url, headers, body }) => {
+    // Validate IPC sender (Issue #17)
+    if (!validateSender(event)) {
+      return { ok: false, error: "Unauthorized IPC sender" };
+    }
     try {
       // Validate URL: only allow HTTP(S) schemes; require HTTPS for non-localhost
       try {
@@ -280,7 +333,11 @@ function registerHandlers(ipcMain) {
   });
 
   // Non-streaming request (for model listing, validation, etc.)
-  ipcMain.handle("netcatty:ai:fetch", async (_event, { url, method, headers, body }) => {
+  ipcMain.handle("netcatty:ai:fetch", async (event, { url, method, headers, body }) => {
+    // Validate IPC sender (Issue #17)
+    if (!validateSender(event)) {
+      return { ok: false, status: 0, data: "", error: "Unauthorized IPC sender" };
+    }
     // Validate URL: block non-HTTP(S) schemes and internal network access
     try {
       const parsed = new URL(url);
@@ -342,7 +399,15 @@ function registerHandlers(ipcMain) {
   });
 
   // Execute a command on a terminal session (for Catty Agent)
-  ipcMain.handle("netcatty:ai:exec", async (_event, { sessionId, command }) => {
+  ipcMain.handle("netcatty:ai:exec", async (event, { sessionId, command }) => {
+    // Validate IPC sender (Issue #17)
+    if (!validateSender(event)) {
+      return { ok: false, error: "Unauthorized IPC sender" };
+    }
+    // Block execution in observer mode (Issue #11)
+    if (mcpServerBridge.getPermissionMode() === "observer") {
+      return { ok: false, error: "Execution blocked: permission mode is 'observer'" };
+    }
     // Check command against safety blocklist before executing
     const safety = mcpServerBridge.checkCommandSafety(command);
     if (safety.blocked) {
@@ -377,7 +442,15 @@ function registerHandlers(ipcMain) {
   });
 
   // Write to terminal session (send input like a user typing)
-  ipcMain.handle("netcatty:ai:terminal:write", async (_event, { sessionId, data }) => {
+  ipcMain.handle("netcatty:ai:terminal:write", async (event, { sessionId, data }) => {
+    // Validate IPC sender (Issue #17)
+    if (!validateSender(event)) {
+      return { ok: false, error: "Unauthorized IPC sender" };
+    }
+    // Block writes in observer mode (Issue #11)
+    if (mcpServerBridge.getPermissionMode() === "observer") {
+      return { ok: false, error: "Terminal write blocked: permission mode is 'observer'" };
+    }
     // Check input against safety blocklist before writing
     const safety = mcpServerBridge.checkCommandSafety(data);
     if (safety.blocked) {
@@ -662,7 +735,7 @@ function registerHandlers(ipcMain) {
 
       try {
         const whichCmd = process.platform === "win32" ? "where" : "which";
-        const result = execSync(`${whichCmd} ${agent.command}`, {
+        const result = execFileSync(whichCmd, [agent.command], {
           encoding: "utf8",
           timeout: 5000,
           stdio: ["pipe", "pipe", "pipe"],
@@ -892,8 +965,29 @@ function registerHandlers(ipcMain) {
     }
   });
 
+  // Known agent command names (must match knownAgents in discover handler)
+  const ALLOWED_AGENT_COMMANDS = new Set([
+    "claude", "claude-code-acp",
+    "codex", "codex-acp",
+  ]);
+
   // Spawn an external agent process
   ipcMain.handle("netcatty:ai:agent:spawn", async (event, { agentId, command, args, env, closeStdin }) => {
+    // Validate IPC sender (Issue #17)
+    if (!validateSender(event)) {
+      return { ok: false, error: "Unauthorized IPC sender" };
+    }
+    // Validate command against known agent binaries (Issue #1)
+    if (typeof command !== "string" || !command.trim()) {
+      return { ok: false, error: "Invalid command" };
+    }
+    // Reject absolute/relative paths — only bare command names allowed
+    if (command.includes("/") || command.includes("\\")) {
+      return { ok: false, error: "Absolute or relative paths are not allowed. Use a known agent command name." };
+    }
+    if (!ALLOWED_AGENT_COMMANDS.has(command)) {
+      return { ok: false, error: `Unknown agent command: ${command}. Allowed: ${[...ALLOWED_AGENT_COMMANDS].join(", ")}` };
+    }
     if (agentProcesses.has(agentId)) {
       return { ok: false, error: "Agent already running" };
     }
@@ -911,13 +1005,18 @@ function registerHandlers(ipcMain) {
         "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
         "NODE_OPTIONS", "ELECTRON_RUN_AS_NODE",
         "PYTHONPATH", "RUBYLIB", "PERL5LIB",
+        "BASH_ENV", "ENV", "CDPATH", "PROMPT_COMMAND",
       ]);
+
+      // Also block BASH_FUNC_* prefix keys (Issue #16)
+      const isDangerousEnvKey = (k) =>
+        DANGEROUS_ENV_KEYS.has(k) || k.startsWith("BASH_FUNC_");
 
       // Filter dangerous keys from user-provided env before merging
       const filteredUserEnv = {};
       if (env && typeof env === "object") {
         for (const [k, v] of Object.entries(env)) {
-          if (!DANGEROUS_ENV_KEYS.has(k)) {
+          if (!isDangerousEnvKey(k)) {
             filteredUserEnv[k] = v;
           }
         }
@@ -1061,6 +1160,10 @@ function registerHandlers(ipcMain) {
   // ── ACP (Agent Client Protocol) streaming ──
 
   ipcMain.handle("netcatty:ai:acp:stream", async (event, { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, apiKey, model, images }) => {
+    // Validate IPC sender (Issue #17)
+    if (!validateSender(event)) {
+      return { ok: false, error: "Unauthorized IPC sender" };
+    }
     try {
       const { createACPProvider } = require("@mcpc-tech/acp-ai-provider");
       const { streamText, stepCountIs } = require("ai");
@@ -1107,13 +1210,16 @@ function registerHandlers(ipcMain) {
       // Recalculate fingerprint after injection
       mcpSnapshot.fingerprint = getCodexMcpFingerprint(mcpSnapshot.mcpServers);
 
+      const currentPermissionMode = mcpServerBridge.getPermissionMode();
+
       let providerEntry = acpProviders.get(chatSessionId);
       const shouldReuseProvider = Boolean(
         providerEntry &&
         providerEntry.acpCommand === acpCommand &&
         providerEntry.cwd === sessionCwd &&
         providerEntry.authFingerprint === authFingerprint &&
-        providerEntry.mcpFingerprint === mcpSnapshot.fingerprint,
+        providerEntry.mcpFingerprint === mcpSnapshot.fingerprint &&
+        providerEntry.permissionMode === currentPermissionMode,
       );
 
       if (!shouldReuseProvider) {
@@ -1148,6 +1254,7 @@ function registerHandlers(ipcMain) {
           cwd: sessionCwd,
           authFingerprint,
           mcpFingerprint: mcpSnapshot.fingerprint,
+          permissionMode: currentPermissionMode,
         };
         acpProviders.set(chatSessionId, providerEntry);
       }

@@ -188,6 +188,10 @@ export const DEFAULT_COMMAND_BLOCKLIST = [
   ':\\s*>\\s*/etc/',
   '\\bcurl\\s+.*\\|\\s*\\bsudo\\s+\\bbash\\b',  // piped install with sudo
   '\\bwget\\s+.*\\|\\s*\\bsudo\\s+\\bbash\\b',
+  // Common bypass techniques (defense-in-depth, not a security boundary)
+  'base64.*\\|.*(?:ba)?sh',                    // base64 decode piped to shell
+  '\\beval\\b',                                // eval usage
+  '\\$\\(',                                    // command substitution abuse
 ];
 
 export const DEFAULT_AI_SETTINGS: AISettings = {

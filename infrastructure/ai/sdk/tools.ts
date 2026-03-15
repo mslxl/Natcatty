@@ -1,10 +1,25 @@
 import { tool } from 'ai';
 import { z } from 'zod';
 import type { NetcattyBridge, ExecutorContext } from '../cattyAgent/executor';
-import { checkCommandSafety } from '../cattyAgent/safety';
 import type { AIPermissionMode } from '../types';
-import { shellQuote } from '../shellQuote';
-import { limitConcurrency } from '../concurrency';
+import {
+  executeTerminalExecute,
+  executeTerminalSendInput,
+  executeSftpListDirectory,
+  executeSftpReadFile,
+  executeSftpWriteFile,
+  executeWorkspaceGetInfo,
+  executeWorkspaceGetSessionInfo,
+  executeMultiHostExecute,
+  type ToolDeps,
+  type ToolExecResult,
+} from '../shared/toolExecutors';
+
+/** Unwrap a shared ToolExecResult into the shape expected by Vercel AI SDK tool results. */
+function unwrap<T>(r: ToolExecResult<T>): T | { error: string } {
+  if (r.ok === false) return { error: r.error };
+  return r.data;
+}
 
 /**
  * Create Catty Agent tools using the Vercel AI SDK `tool()` helper with zod schemas.
@@ -20,26 +35,8 @@ export function createCattyTools(
   commandBlocklist?: string[],
   permissionMode: AIPermissionMode = 'confirm',
 ) {
-  /**
-   * Determines if a tool needs user approval before execution.
-   * - observer: write tools are blocked (return error)
-   * - confirm: write tools need approval via inline approval card
-   * - autonomous: no approval needed
-   */
-  const isObserver = permissionMode === 'observer';
   const writeToolNeedsApproval = permissionMode === 'confirm';
-
-  /** Validate that the given sessionId belongs to the current scope (computed lazily each call). */
-  function getValidSessionIds(): Set<string> {
-    return new Set(context.sessions.map(s => s.sessionId));
-  }
-  function validateSessionScope(sessionId: string): string | null {
-    const validSessionIds = getValidSessionIds();
-    if (!validSessionIds.has(sessionId)) {
-      return `Session "${sessionId}" is not in the current scope. Available sessions: ${[...validSessionIds].join(', ')}`;
-    }
-    return null;
-  }
+  const deps: ToolDeps = { bridge, context, commandBlocklist, permissionMode };
 
   return {
     terminal_execute: tool({
@@ -52,25 +49,7 @@ export function createCattyTools(
       }),
       needsApproval: writeToolNeedsApproval,
       execute: async ({ sessionId, command }) => {
-        const scopeErr = validateSessionScope(sessionId);
-        if (scopeErr) return { error: scopeErr };
-        if (isObserver) {
-          return { error: 'Observer mode: command execution is disabled. Switch to Confirm or Auto mode to execute commands.' };
-        }
-        const safety = checkCommandSafety(command, commandBlocklist);
-        if (safety.blocked) {
-          return { error: `Command blocked by safety policy. Matched pattern: ${safety.matchedPattern}` };
-        }
-
-        const result = await bridge.aiExec(sessionId, command);
-        if (!result.ok) {
-          return { error: result.error || 'Command failed' };
-        }
-        return {
-          stdout: result.stdout || '',
-          stderr: result.stderr || '',
-          exitCode: result.exitCode ?? -1,
-        };
+        return unwrap(await executeTerminalExecute(deps, { sessionId, command }));
       },
     }),
 
@@ -90,20 +69,7 @@ export function createCattyTools(
       }),
       needsApproval: writeToolNeedsApproval,
       execute: async ({ sessionId, input }) => {
-        const scopeErr = validateSessionScope(sessionId);
-        if (scopeErr) return { error: scopeErr };
-        if (isObserver) {
-          return { error: 'Observer mode: terminal input is disabled. Switch to Confirm or Auto mode.' };
-        }
-        const safety = checkCommandSafety(input, commandBlocklist);
-        if (safety.blocked) {
-          return { error: `Input blocked by safety policy. Matched pattern: ${safety.matchedPattern}` };
-        }
-        const result = await bridge.aiTerminalWrite(sessionId, input);
-        if (!result.ok) {
-          return { error: result.error || 'Failed to send input' };
-        }
-        return { sent: input };
+        return unwrap(await executeTerminalSendInput(deps, { sessionId, input }));
       },
     }),
 
@@ -116,19 +82,7 @@ export function createCattyTools(
         path: z.string().describe('The absolute path of the remote directory to list.'),
       }),
       execute: async ({ sessionId, path }) => {
-        const scopeErr = validateSessionScope(sessionId);
-        if (scopeErr) return { error: scopeErr };
-        const session = context.sessions.find((s) => s.sessionId === sessionId);
-        if (!session?.sftpId) {
-          // Fallback: use terminal exec with ls
-          const result = await bridge.aiExec(sessionId, `ls -la ${shellQuote(path)}`);
-          if (!result.ok) {
-            return { error: result.error || 'Failed to list directory' };
-          }
-          return { output: result.stdout || '(empty directory)' };
-        }
-        const files = await bridge.listSftp(session.sftpId, path);
-        return { files };
+        return unwrap(await executeSftpListDirectory(deps, { sessionId, path }));
       },
     }),
 
@@ -146,20 +100,7 @@ export function createCattyTools(
           .describe('Maximum number of bytes to read from the file. Defaults to 10000.'),
       }),
       execute: async ({ sessionId, path, maxBytes }) => {
-        const scopeErr = validateSessionScope(sessionId);
-        if (scopeErr) return { error: scopeErr };
-        const session = context.sessions.find((s) => s.sessionId === sessionId);
-        if (!session?.sftpId) {
-          // Fallback: use terminal exec
-          const clampedMaxBytes = Math.max(1, Math.min(10 * 1024 * 1024, maxBytes));
-          const result = await bridge.aiExec(sessionId, `head -c ${clampedMaxBytes} ${shellQuote(path)}`);
-          if (!result.ok) {
-            return { error: result.error || 'Failed to read file' };
-          }
-          return { content: result.stdout || '(empty file)' };
-        }
-        const content = await bridge.readSftp(session.sftpId, path);
-        return { content: content || '(empty file)' };
+        return unwrap(await executeSftpReadFile(deps, { sessionId, path, maxBytes }));
       },
     }),
 
@@ -174,28 +115,7 @@ export function createCattyTools(
       }),
       needsApproval: writeToolNeedsApproval,
       execute: async ({ sessionId, path, content }) => {
-        const scopeErr = validateSessionScope(sessionId);
-        if (scopeErr) return { error: scopeErr };
-        if (isObserver) {
-          return { error: 'Observer mode: file writing is disabled. Switch to Confirm or Auto mode.' };
-        }
-        const session = context.sessions.find((s) => s.sessionId === sessionId);
-        if (!session?.sftpId) {
-          // Fallback: use base64 encoding to avoid heredoc injection
-          const b64 = typeof btoa === 'function'
-            ? btoa(unescape(encodeURIComponent(content)))
-            : Buffer.from(content, 'utf-8').toString('base64');
-          const result = await bridge.aiExec(
-            sessionId,
-            `echo ${shellQuote(b64)} | base64 -d > ${shellQuote(path)}`,
-          );
-          if (!result.ok) {
-            return { error: result.error || 'Failed to write file' };
-          }
-          return { written: path };
-        }
-        await bridge.writeSftp(session.sftpId, path, content);
-        return { written: path };
+        return unwrap(await executeSftpWriteFile(deps, { sessionId, path, content }));
       },
     }),
 
@@ -205,18 +125,7 @@ export function createCattyTools(
         'and their connection status. No parameters required.',
       inputSchema: z.object({}),
       execute: async () => {
-        return {
-          workspaceId: context.workspaceId || null,
-          workspaceName: context.workspaceName || null,
-          sessions: context.sessions.map((s) => ({
-            sessionId: s.sessionId,
-            hostname: s.hostname,
-            label: s.label,
-            os: s.os,
-            username: s.username,
-            connected: s.connected,
-          })),
-        };
+        return unwrap(executeWorkspaceGetInfo(deps));
       },
     }),
 
@@ -228,11 +137,7 @@ export function createCattyTools(
         sessionId: z.string().describe('The session ID to get information about.'),
       }),
       execute: async ({ sessionId }) => {
-        const session = context.sessions.find((s) => s.sessionId === sessionId);
-        if (!session) {
-          return { error: `Session not found: ${sessionId}` };
-        }
-        return { ...session };
+        return unwrap(executeWorkspaceGetSessionInfo(deps, { sessionId }));
       },
     }),
 
@@ -265,55 +170,7 @@ export function createCattyTools(
       }),
       needsApproval: writeToolNeedsApproval,
       execute: async ({ sessionIds, command, mode, stopOnError }) => {
-        // Validate all session IDs belong to current scope
-        const currentValidIds = getValidSessionIds();
-        const outOfScope = sessionIds.filter(sid => !currentValidIds.has(sid));
-        if (outOfScope.length > 0) {
-          return { error: `Sessions not in current scope: ${outOfScope.join(', ')}. Available sessions: ${[...currentValidIds].join(', ')}` };
-        }
-        if (isObserver) {
-          return { error: 'Observer mode: command execution is disabled. Switch to Confirm or Auto mode.' };
-        }
-        const safety = checkCommandSafety(command, commandBlocklist);
-        if (safety.blocked) {
-          return { error: `Command blocked by safety policy. Matched pattern: ${safety.matchedPattern}` };
-        }
-
-        const results: Record<string, { ok: boolean; output: string }> = {};
-
-        if (mode === 'sequential') {
-          for (const sid of sessionIds) {
-            const session = context.sessions.find((s) => s.sessionId === sid);
-            const label = session?.label || sid;
-            const result = await bridge.aiExec(sid, command);
-            results[label] = {
-              ok: result.ok,
-              output: result.ok
-                ? result.stdout || '(no output)'
-                : `Error: ${result.error || result.stderr || 'Failed'}`,
-            };
-            if (!result.ok && stopOnError) break;
-          }
-        } else {
-          // Parallel execution with concurrency limit
-          const tasks = sessionIds.map((sid) => () => {
-            const session = context.sessions.find((s) => s.sessionId === sid);
-            const label = session?.label || sid;
-            return bridge.aiExec(sid, command).then(result => ({
-              label,
-              ok: result.ok,
-              output: result.ok
-                ? result.stdout || '(no output)'
-                : `Error: ${result.error || result.stderr || 'Failed'}`,
-            }));
-          });
-          const resolved = await limitConcurrency(tasks, 10);
-          for (const r of resolved) {
-            results[r.label] = { ok: r.ok, output: r.output };
-          }
-        }
-
-        return { results };
+        return unwrap(await executeMultiHostExecute(deps, { sessionIds, command, mode, stopOnError }));
       },
     }),
   };

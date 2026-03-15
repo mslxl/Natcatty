@@ -290,9 +290,10 @@ export function useAIState() {
     return () => {
       if (persistTimerRef.current) {
         clearTimeout(persistTimerRef.current);
+        persistSessions(sessionsRef.current);
       }
     };
-  }, []);
+  }, [persistSessions]);
 
   const createSession = useCallback((scope: AISessionScope, agentId?: string): AISession => {
     const now = Date.now();
@@ -387,6 +388,21 @@ export function useAIState() {
         if (s.id !== sessionId || s.messages.length === 0) return s;
         const msgs = [...s.messages];
         msgs[msgs.length - 1] = updater(msgs[msgs.length - 1]);
+        return { ...s, messages: msgs, updatedAt: Date.now() };
+      });
+      debouncedPersistSessions();
+      return next;
+    });
+  }, [debouncedPersistSessions]);
+
+  const updateMessageById = useCallback((sessionId: string, messageId: string, updater: (msg: ChatMessage) => ChatMessage) => {
+    setSessionsRaw(prev => {
+      const next = prev.map(s => {
+        if (s.id !== sessionId) return s;
+        const idx = s.messages.findIndex(m => m.id === messageId);
+        if (idx === -1) return s;
+        const msgs = [...s.messages];
+        msgs[idx] = updater(msgs[idx]);
         return { ...s, messages: msgs, updatedAt: Date.now() };
       });
       debouncedPersistSessions();
@@ -493,6 +509,7 @@ export function useAIState() {
     updateSessionTitle,
     addMessageToSession,
     updateLastMessage,
+    updateMessageById,
     clearSessionMessages,
     cleanupOrphanedSessions,
   };

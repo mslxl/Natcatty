@@ -1335,6 +1335,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                         updateSessionTitle={aiState.updateSessionTitle}
                         addMessageToSession={aiState.addMessageToSession}
                         updateLastMessage={aiState.updateLastMessage}
+                        updateMessageById={aiState.updateMessageById}
                         providers={aiState.providers}
                         activeProviderId={aiState.activeProviderId}
                         activeModelId={aiState.activeModelId}
