@@ -31,8 +31,8 @@ type AgentIconVisual = {
 
 const AGENT_ICON_VISUALS: Record<AgentIconKey, AgentIconVisual> = {
   catty: {
-    src: '/ai/agents/sparkles.svg',
-    badgeClassName: 'border-white/8 bg-white/[0.04]',
+    src: '/ai/agents/catty.svg',
+    badgeClassName: 'border-violet-500/20 bg-violet-500/10',
     imageClassName: 'object-contain dark:brightness-0 dark:invert opacity-90',
   },
   openai: {

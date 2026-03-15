@@ -1,4 +1,4 @@
-import { Bot, Circle, FolderTree, LayoutGrid, PanelLeft, PanelRight, Palette, Server, X, Zap } from 'lucide-react';
+import { Circle, FolderTree, LayoutGrid, MessageSquare, PanelLeft, PanelRight, Palette, Server, X, Zap } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useActiveTabId } from '../application/state/activeTabStore';
 import { useTerminalBackend } from '../application/state/useTerminalBackend';
@@ -243,7 +243,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   // Side panel state - per-tab tracking of which sub-panel is active
   // Maps tab IDs to the active sub-panel type (sftp/scripts/theme), absent = closed
   const [sidePanelOpenTabs, setSidePanelOpenTabs] = useState<Map<string, SidePanelTab>>(new Map());
-  const [sidePanelWidth, setSidePanelWidth] = useState(320);
+  const [sidePanelWidth, setSidePanelWidth] = useState(() => {
+    const stored = localStorage.getItem('netcatty_side_panel_width');
+    return stored ? Math.max(280, Math.min(800, Number(stored))) : 420;
+  });
   const [sidePanelPosition, setSidePanelPosition] = useStoredString<'left' | 'right'>(
     'netcatty_side_panel_position',
     'left',
@@ -375,13 +378,15 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     const startX = e.clientX;
     const startWidth = sidePanelWidth;
 
+    let lastWidth = startWidth;
     const onMouseMove = (ev: MouseEvent) => {
       const delta = ev.clientX - startX;
-      const newWidth = Math.max(200, Math.min(600, startWidth + (sidePanelPosition === 'left' ? delta : -delta)));
-      setSidePanelWidth(newWidth);
+      lastWidth = Math.max(280, Math.min(800, startWidth + (sidePanelPosition === 'left' ? delta : -delta)));
+      setSidePanelWidth(lastWidth);
     };
     const onMouseUp = () => {
       sftpResizingRef.current = false;
+      localStorage.setItem('netcatty_side_panel_width', String(lastWidth));
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
@@ -1180,12 +1185,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                 )}
               >
                 {isSidePanelOpenForCurrentTab && (
-                  <div className="flex h-8 items-center px-1.5 py-0.5 flex-shrink-0 gap-0.5">
+                  <div className="flex h-9 items-center px-1.5 py-1 flex-shrink-0 gap-1">
                     <Button
                       variant="ghost"
                       size="icon"
                       className={cn(
-                        "h-6 w-6 rounded-md p-0",
+                        "h-7 w-7 rounded-md p-0",
                         activeSidePanelTab === 'sftp'
                           ? "text-foreground opacity-100"
                           : "text-muted-foreground opacity-70 hover:opacity-100",
@@ -1194,13 +1199,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                       onClick={handleToggleSftpFromBar}
                       title="SFTP"
                     >
-                      <FolderTree size={14} />
+                      <FolderTree size={15} />
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
                       className={cn(
-                        "h-6 w-6 rounded-md p-0",
+                        "h-7 w-7 rounded-md p-0",
                         activeSidePanelTab === 'scripts'
                           ? "text-foreground opacity-100"
                           : "text-muted-foreground opacity-70 hover:opacity-100",
@@ -1209,13 +1214,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                       onClick={handleOpenScripts}
                       title="Scripts"
                     >
-                      <Zap size={14} />
+                      <Zap size={15} />
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
                       className={cn(
-                        "h-6 w-6 rounded-md p-0",
+                        "h-7 w-7 rounded-md p-0",
                         activeSidePanelTab === 'theme'
                           ? "text-foreground opacity-100"
                           : "text-muted-foreground opacity-70 hover:opacity-100",
@@ -1224,13 +1229,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                       onClick={handleOpenTheme}
                       title="Theme"
                     >
-                      <Palette size={14} />
+                      <Palette size={15} />
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
                       className={cn(
-                        "h-6 w-6 rounded-md p-0",
+                        "h-7 w-7 rounded-md p-0",
                         activeSidePanelTab === 'ai'
                           ? "text-foreground opacity-100"
                           : "text-muted-foreground opacity-70 hover:opacity-100",
@@ -1239,32 +1244,32 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                       onClick={handleOpenAI}
                       title="AI Chat"
                     >
-                      <Bot size={14} />
+                      <MessageSquare size={15} />
                     </Button>
                     <div className="flex-1" />
                     <Button
                       variant="ghost"
                       size="icon"
                       className={cn(
-                        "h-6 w-6 rounded-md p-0 text-muted-foreground",
+                        "h-7 w-7 rounded-md p-0 text-muted-foreground",
                         "hover:bg-transparent hover:text-foreground",
                       )}
                       onClick={() => setSidePanelPosition(p => p === 'left' ? 'right' : 'left')}
                       title={sidePanelPosition === 'left' ? 'Move panel to right' : 'Move panel to left'}
                     >
-                      {sidePanelPosition === 'left' ? <PanelRight size={14} /> : <PanelLeft size={14} />}
+                      {sidePanelPosition === 'left' ? <PanelRight size={15} /> : <PanelLeft size={15} />}
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
                       className={cn(
-                        "h-6 w-6 rounded-md p-0 text-muted-foreground",
+                        "h-7 w-7 rounded-md p-0 text-muted-foreground",
                         "hover:bg-transparent hover:text-foreground",
                       )}
                       onClick={handleCloseSidePanel}
                       title="Close panel"
                     >
-                      <X size={14} />
+                      <X size={15} />
                     </Button>
                   </div>
                 )}

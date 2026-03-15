@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Cat ears -->
+  <path d="M4 11V4.5L7.5 8" />
+  <path d="M20 11V4.5L16.5 8" />
+  <!-- Terminal body (rounded rect) -->
+  <rect x="3" y="8" width="18" height="13" rx="2.5" ry="2.5" />
+  <!-- Large 4-point star -->
+  <polygon points="10,11 11.2,13.5 10,16 8.8,13.5" fill="currentColor" stroke="none" />
+  <polygon points="7.5,13.5 10,12.3 12.5,13.5 10,14.7" fill="currentColor" stroke="none" />
+  <!-- Small 4-point star -->
+  <polygon points="16,14 16.6,15.5 16,17 15.4,15.5" fill="currentColor" stroke="none" />
+  <polygon points="14.5,15.5 16,14.9 17.5,15.5 16,16.1" fill="currentColor" stroke="none" />
+</svg>
