@@ -1562,6 +1562,9 @@ const zhCN: Messages = {
   // AI Chat
   'ai.chat.noProvider': '尚未配置 AI 提供商。请前往 **设置 → AI → 提供商** 添加并启用一个提供商。',
   'ai.chat.toolDenied': '操作已被用户拒绝。',
+  'ai.chat.toolApprovalTitle': '需要权限确认',
+  'ai.chat.toolApproved': '已批准',
+  'ai.chat.toolApprovalHint': '按回车批准，按 Esc 拒绝',
   'ai.chat.emptyHint': '询问服务器相关问题、执行命令或获取配置帮助。',
   'ai.chat.placeholder': '向 {agent} 发送消息 — @ 引用上下文，/ 使用命令',
   'ai.chat.placeholderDefault': '向 Catty Agent 发送消息...',

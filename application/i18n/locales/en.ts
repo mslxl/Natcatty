@@ -1547,6 +1547,9 @@ const en: Messages = {
   // AI Chat
   'ai.chat.noProvider': 'No AI provider is configured. Go to **Settings → AI → Providers** to add and enable a provider.',
   'ai.chat.toolDenied': 'Action was rejected by the user.',
+  'ai.chat.toolApprovalTitle': 'Permission Required',
+  'ai.chat.toolApproved': 'Approved',
+  'ai.chat.toolApprovalHint': 'Press Enter to approve, Escape to reject',
   'ai.chat.emptyHint': 'Ask about your servers, run commands, or get help with configurations.',
   'ai.chat.placeholder': 'Message {agent} — @ to include context, / for commands',
   'ai.chat.placeholderDefault': 'Message Catty Agent...',

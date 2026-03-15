@@ -41,6 +41,13 @@ export interface ChatMessage {
   model?: string;
   providerId?: AIProviderId;
   executionStatus?: 'pending' | 'approved' | 'rejected' | 'running' | 'completed' | 'failed';
+  pendingApproval?: {
+    approvalId: string;
+    toolCallId: string;
+    toolName: string;
+    toolArgs: Record<string, unknown>;
+    status: 'pending' | 'approved' | 'denied';
+  };
 }
 
 export interface ToolCall {

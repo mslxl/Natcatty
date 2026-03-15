@@ -15,7 +15,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { streamText, stepCountIs } from 'ai';
 import { cn } from '../lib/utils';
 import { useI18n } from '../application/i18n/I18nProvider';
-import { PermissionDialog } from './ai/PermissionDialog';
 import { useWindowControls } from '../application/state/useWindowControls';
 import { useImageUpload } from '../application/state/useImageUpload';
 import type {
@@ -165,11 +164,21 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   // Per-scope abort controllers
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
 
-  // Permission dialog state for confirm mode
-  const [pendingApproval, setPendingApproval] = useState<{
-    toolCall: { name: string; arguments: Record<string, unknown> };
+  // Pending approval context — stores SDK state needed to resume after user approves/rejects
+  const pendingApprovalContextRef = useRef<{
+    sessionId: string;
+    scopeKey: string;
+    sdkMessages: Array<Record<string, unknown>>;
+    approvalInfo: {
+      approvalId: string;
+      toolCallId: string;
+      toolName: string;
+      toolArgs: Record<string, unknown>;
+    };
+    model: ReturnType<typeof createModelFromConfig>;
+    systemPrompt: string;
+    tools: ReturnType<typeof createCattyTools>;
   } | null>(null);
-  const approvalResolverRef = useRef<((approved: boolean) => void) | null>(null);
 
   const { images, addImages, removeImage, clearImages } = useImageUpload();
   const { openSettingsWindow } = useWindowControls();
@@ -597,21 +606,18 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       defaultModel: activeModelId || activeProvider.defaultModel || '',
     });
 
-    try {
-      // Build message array for the SDK.
-      // Only include user and assistant TEXT messages — tool call/result
-      // history is managed internally by each streamText invocation.
-      const sdkMessages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
-      for (const m of (currentSession?.messages ?? [])) {
-        if (m.role === 'user') {
-          sdkMessages.push({ role: 'user', content: m.content });
-        } else if (m.role === 'assistant' && m.content) {
-          sdkMessages.push({ role: 'assistant', content: m.content });
-        }
-        // Skip tool messages and empty assistant messages (tool-call-only)
-      }
-      sdkMessages.push({ role: 'user', content: trimmed });
-
+    // --- Reusable stream processor ---
+    // Returns approval info if the stream ended with a tool-approval-request,
+    // or null if the stream completed normally.
+    const processStream = async (
+      sdkMessages: Array<Record<string, unknown>>,
+      signal: AbortSignal,
+    ): Promise<{
+      approvalId: string;
+      toolCallId: string;
+      toolName: string;
+      toolArgs: Record<string, unknown>;
+    } | null> => {
       console.log('[Catty] streamText request:', {
         modelId: model.modelId,
         messageCount: sdkMessages.length,
@@ -625,14 +631,19 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         system: systemPrompt,
         tools,
         stopWhen: stepCountIs(maxIterations),
-        abortSignal: abortController.signal,
+        abortSignal: signal,
       });
 
-      // Stream the response using getReader() to avoid Electron stream hanging issues
       let chunkIndex = 0;
-      // Track last message role locally (React state is stale in async closures)
       let lastAddedRole: 'assistant' | 'tool' = 'assistant';
       const reader = result.fullStream.getReader();
+      let pendingApprovalInfo: {
+        approvalId: string;
+        toolCallId: string;
+        toolName: string;
+        toolArgs: Record<string, unknown>;
+      } | null = null;
+
       while (true) {
         const { done, value: chunk } = await reader.read();
         if (done) break;
@@ -646,7 +657,6 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
             const text = (chunk as unknown as { text?: string; textDelta?: string }).text
               ?? (chunk as unknown as { textDelta?: string }).textDelta;
             if (text) {
-              // If last message was a tool result, create a new assistant message first
               if (lastAddedRole === 'tool') {
                 addMessageToSession(sessionId!, {
                   id: generateId(),
@@ -691,7 +701,6 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           case 'finish':
           case 'start-step':
           case 'finish-step':
-            // Lifecycle events, no action needed
             break;
           case 'tool-call':
             console.log(`[Catty] tool-call: ${chunk.toolName}`);
@@ -728,36 +737,24 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           case 'tool-approval-request': {
             const approvalChunk = chunk as unknown as {
               approvalId: string;
-              toolCallId: string;
-              toolCall: { toolName: string; input: Record<string, unknown> };
+              toolCall: { toolCallId: string; toolName: string; args?: Record<string, unknown>; input?: Record<string, unknown> };
             };
-            console.log(`[Catty] tool-approval-request: ${approvalChunk.toolCall.toolName}`, approvalChunk.approvalId);
+            console.log(`[Catty] tool-approval-request: ${approvalChunk.toolCall.toolName}`, approvalChunk.approvalId, 'toolCallId:', approvalChunk.toolCall.toolCallId);
 
-            // Show PermissionDialog and wait for user response
-            const approved = await new Promise<boolean>((resolve) => {
-              approvalResolverRef.current = resolve;
-              setPendingApproval({
-                toolCall: {
-                  name: approvalChunk.toolCall.toolName,
-                  arguments: approvalChunk.toolCall.input || {},
-                },
-              });
-            });
-            setPendingApproval(null);
-            approvalResolverRef.current = null;
-
-            if (!approved) {
-              // User rejected — add a denial message and stop
-              updateLastMessage(sessionId!, msg => ({
-                ...msg,
-                content: msg.content + (msg.content ? '\n\n' : '') + t('ai.chat.toolDenied'),
-                executionStatus: 'completed',
-              }));
-            }
-            // Note: whether approved or denied, the stream has already ended for this step.
-            // The SDK requires a new streamText call with approval response in messages
-            // to continue. For now, we show the result — full multi-turn approval loop
-            // can be added later.
+            // Save approval info to the current assistant message (inline card)
+            pendingApprovalInfo = {
+              approvalId: approvalChunk.approvalId,
+              toolCallId: approvalChunk.toolCall.toolCallId,
+              toolName: approvalChunk.toolCall.toolName,
+              toolArgs: approvalChunk.toolCall.args ?? approvalChunk.toolCall.input ?? {},
+            };
+            updateLastMessage(sessionId!, msg => ({
+              ...msg,
+              pendingApproval: {
+                ...pendingApprovalInfo!,
+                status: 'pending' as const,
+              },
+            }));
             break;
           }
           case 'error':
@@ -768,11 +765,45 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
             }));
             break;
           default:
-            // tool-input-start/delta/end, tool-output-denied, and other types
             break;
         }
       }
       console.log(`[Catty] stream finished, total chunks: ${chunkIndex}`);
+      return pendingApprovalInfo;
+    };
+
+    try {
+      // Build message array for the SDK
+      const sdkMessages: Array<Record<string, unknown>> = [];
+      for (const m of (currentSession?.messages ?? [])) {
+        if (m.role === 'user') {
+          sdkMessages.push({ role: 'user', content: m.content });
+        } else if (m.role === 'assistant' && m.content) {
+          sdkMessages.push({ role: 'assistant', content: m.content });
+        }
+      }
+      sdkMessages.push({ role: 'user', content: trimmed });
+
+      const approvalInfo = await processStream(sdkMessages, abortController.signal);
+
+      if (approvalInfo) {
+        // Stream ended with a pending approval — store the context needed
+        // to resume once the user approves/rejects via the inline card.
+        // The approval card is already rendered. We save the SDK messages
+        // and approval metadata so handleApprovalResponse can resume.
+        pendingApprovalContextRef.current = {
+          sessionId: sessionId!,
+          scopeKey: sendScopeKey,
+          sdkMessages,
+          approvalInfo,
+          model,
+          systemPrompt,
+          tools,
+        };
+        // Keep streaming flag on — the flow is waiting for user input
+        // (streaming will be cleared when user approves/rejects)
+        return;
+      }
     } catch (err) {
       console.error('[Catty] streamText error:', err);
       if (!abortController.signal.aborted) {
@@ -782,9 +813,11 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         }));
       }
     } finally {
-      setStreamingForScope(sendScopeKey, false);
-      abortControllersRef.current.delete(sendScopeKey);
-      // Auto-title the session from first user message
+      // Only clean up if there is no pending approval waiting for user action
+      if (!pendingApprovalContextRef.current || pendingApprovalContextRef.current.sessionId !== sessionId) {
+        setStreamingForScope(sendScopeKey, false);
+        abortControllersRef.current.delete(sendScopeKey);
+      }
       const finalSession = sessions.find(s => s.id === sessionId);
       if (
         finalSession &&
@@ -832,7 +865,262 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     controller?.abort();
     abortControllersRef.current.delete(scopeKey);
     setStreamingForScope(scopeKey, false);
+    // Also clear any pending approval
+    if (pendingApprovalContextRef.current?.scopeKey === scopeKey) {
+      pendingApprovalContextRef.current = null;
+    }
   }, [scopeKey, setStreamingForScope]);
+
+  // Handle inline approval response (approve/reject from InlineApprovalCard)
+  const handleApprovalResponse = useCallback(async (messageId: string, approved: boolean) => {
+    const ctx = pendingApprovalContextRef.current;
+    if (!ctx) return;
+    pendingApprovalContextRef.current = null;
+
+    const { sessionId: sid, scopeKey: sk, sdkMessages, approvalInfo } = ctx;
+
+    // Update the message's pendingApproval status
+    updateLastMessage(sid, msg => {
+      if (msg.id !== messageId && !msg.pendingApproval) return msg;
+      return {
+        ...msg,
+        pendingApproval: msg.pendingApproval
+          ? { ...msg.pendingApproval, status: approved ? 'approved' as const : 'denied' as const }
+          : undefined,
+      };
+    });
+
+    if (!approved) {
+      // User rejected — add denial text and stop
+      updateLastMessage(sid, msg => ({
+        ...msg,
+        content: msg.content + (msg.content ? '\n\n' : '') + t('ai.chat.toolDenied'),
+        executionStatus: 'completed',
+      }));
+      setStreamingForScope(sk, false);
+      abortControllersRef.current.delete(sk);
+      return;
+    }
+
+    // User approved — construct SDK messages with approval response and resume
+    const resumeMessages: Array<Record<string, unknown>> = [
+      ...sdkMessages,
+      // The assistant message that contained the tool call + approval request
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolCallId: approvalInfo.toolCallId,
+            toolName: approvalInfo.toolName,
+            input: approvalInfo.toolArgs,
+          },
+          {
+            type: 'tool-approval-request',
+            approvalId: approvalInfo.approvalId,
+            toolCallId: approvalInfo.toolCallId,
+          },
+        ],
+      },
+      // The user's approval response
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-approval-response',
+            approvalId: approvalInfo.approvalId,
+            approved: true,
+          },
+        ],
+      },
+    ];
+
+    // Create a new assistant message placeholder for the continuation
+    addMessageToSession(sid, {
+      id: generateId(),
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+    });
+
+    const abortController = new AbortController();
+    abortControllersRef.current.set(sk, abortController);
+
+    try {
+      // Re-create model/tools/systemPrompt from the saved context
+      const { model, systemPrompt, tools } = ctx;
+
+      // Reuse processStream — we need to define it outside handleSend.
+      // Since processStream is defined inside handleSend, we duplicate the
+      // streamText call here. This is acceptable since the logic is the same.
+      console.log('[Catty] Resuming after approval, messages:', resumeMessages.length);
+
+      const result = streamText({
+        model,
+        messages: resumeMessages,
+        system: systemPrompt,
+        tools,
+        stopWhen: stepCountIs(maxIterations),
+        abortSignal: abortController.signal,
+      });
+
+      let chunkIndex = 0;
+      let lastAddedRole: 'assistant' | 'tool' = 'assistant';
+      const reader = result.fullStream.getReader();
+      let newApprovalInfo: typeof approvalInfo | null = null;
+
+      while (true) {
+        const { done, value: chunk } = await reader.read();
+        if (done) break;
+        if (chunkIndex < 10) {
+          console.log(`[Catty resume] chunk[${chunkIndex}]:`, JSON.stringify(chunk).slice(0, 200));
+        }
+        chunkIndex++;
+        switch (chunk.type) {
+          case 'text':
+          case 'text-delta': {
+            const text = (chunk as unknown as { text?: string; textDelta?: string }).text
+              ?? (chunk as unknown as { textDelta?: string }).textDelta;
+            if (text) {
+              if (lastAddedRole === 'tool') {
+                addMessageToSession(sid, {
+                  id: generateId(),
+                  role: 'assistant',
+                  content: '',
+                  timestamp: Date.now(),
+                });
+                lastAddedRole = 'assistant';
+              }
+              updateLastMessage(sid, msg => ({
+                ...msg,
+                content: msg.content + text,
+              }));
+            }
+            break;
+          }
+          case 'reasoning':
+          case 'reasoning-start':
+          case 'reasoning-delta': {
+            const rText = (chunk as unknown as { text?: string }).text;
+            if (rText) {
+              if (lastAddedRole === 'tool') {
+                addMessageToSession(sid, {
+                  id: generateId(),
+                  role: 'assistant',
+                  content: '',
+                  timestamp: Date.now(),
+                });
+                lastAddedRole = 'assistant';
+              }
+              updateLastMessage(sid, msg => ({
+                ...msg,
+                thinking: (msg.thinking || '') + rText,
+              }));
+            }
+            break;
+          }
+          case 'reasoning-end':
+          case 'text-start':
+          case 'text-end':
+          case 'start':
+          case 'finish':
+          case 'start-step':
+          case 'finish-step':
+            break;
+          case 'tool-call':
+            console.log(`[Catty resume] tool-call: ${chunk.toolName}`);
+            updateLastMessage(sid, msg => ({
+              ...msg,
+              toolCalls: [...(msg.toolCalls || []), {
+                id: chunk.toolCallId,
+                name: chunk.toolName,
+                arguments: (chunk as unknown as { input?: unknown; args?: unknown }).input ?? (chunk as unknown as { args?: unknown }).args,
+              }],
+              executionStatus: 'running',
+            }));
+            break;
+          case 'tool-result': {
+            const toolOutput = (chunk as unknown as { output?: unknown; result?: unknown }).output ?? (chunk as unknown as { result?: unknown }).result;
+            console.log(`[Catty resume] tool-result: ${chunk.toolCallId}`);
+            addMessageToSession(sid, {
+              id: generateId(),
+              role: 'tool',
+              content: '',
+              toolResults: [{
+                toolCallId: chunk.toolCallId,
+                content: typeof toolOutput === 'string'
+                  ? toolOutput
+                  : JSON.stringify(toolOutput),
+                isError: false,
+              }],
+              timestamp: Date.now(),
+              executionStatus: 'completed',
+            });
+            lastAddedRole = 'tool';
+            break;
+          }
+          case 'tool-approval-request': {
+            const approvalChunk = chunk as unknown as {
+              approvalId: string;
+              toolCall: { toolCallId: string; toolName: string; args?: Record<string, unknown>; input?: Record<string, unknown> };
+            };
+            console.log(`[Catty resume] tool-approval-request: ${approvalChunk.toolCall.toolName}`, approvalChunk.approvalId, 'toolCallId:', approvalChunk.toolCall.toolCallId);
+            newApprovalInfo = {
+              approvalId: approvalChunk.approvalId,
+              toolCallId: approvalChunk.toolCall.toolCallId,
+              toolName: approvalChunk.toolCall.toolName,
+              toolArgs: approvalChunk.toolCall.args ?? approvalChunk.toolCall.input ?? {},
+            };
+            updateLastMessage(sid, msg => ({
+              ...msg,
+              pendingApproval: {
+                ...newApprovalInfo!,
+                status: 'pending' as const,
+              },
+            }));
+            break;
+          }
+          case 'error':
+            updateLastMessage(sid, msg => ({
+              ...msg,
+              content: msg.content + '\n\n**Error:** ' + String(chunk.error),
+              executionStatus: 'failed',
+            }));
+            break;
+          default:
+            break;
+        }
+      }
+      console.log(`[Catty resume] stream finished, total chunks: ${chunkIndex}`);
+
+      if (newApprovalInfo) {
+        // Another approval needed — save context for the next round
+        pendingApprovalContextRef.current = {
+          sessionId: sid,
+          scopeKey: sk,
+          sdkMessages: resumeMessages,
+          approvalInfo: newApprovalInfo,
+          model,
+          systemPrompt,
+          tools,
+        };
+        return;
+      }
+    } catch (err) {
+      console.error('[Catty resume] streamText error:', err);
+      if (!abortController.signal.aborted) {
+        updateLastMessage(sid, msg => ({
+          ...msg,
+          content: msg.content + '\n\n**Error:** ' + (err instanceof Error ? err.message : String(err)),
+        }));
+      }
+    } finally {
+      if (!pendingApprovalContextRef.current || pendingApprovalContextRef.current.sessionId !== sid) {
+        setStreamingForScope(sk, false);
+        abortControllersRef.current.delete(sk);
+      }
+    }
+  }, [maxIterations, addMessageToSession, updateLastMessage, setStreamingForScope, t]);
 
   const handleSelectSession = useCallback(
     (sessionId: string) => {
@@ -943,7 +1231,12 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       ) : (
         <>
           {/* Chat messages */}
-          <ChatMessageList messages={messages} isStreaming={isStreaming} />
+          <ChatMessageList
+            messages={messages}
+            isStreaming={isStreaming}
+            onApprove={(messageId) => void handleApprovalResponse(messageId, true)}
+            onReject={(messageId) => void handleApprovalResponse(messageId, false)}
+          />
 
           {/* Recent sessions (Zed-style, shown when no messages) */}
           {messages.length === 0 && historySessions.length > 0 && (
@@ -995,15 +1288,6 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         </>
       )}
 
-      {/* Permission approval dialog for confirm mode */}
-      <PermissionDialog
-        open={!!pendingApproval}
-        toolCall={pendingApproval?.toolCall ?? null}
-        recommendation="confirm"
-        onApprove={() => approvalResolverRef.current?.(true)}
-        onReject={() => approvalResolverRef.current?.(false)}
-        onDismiss={() => approvalResolverRef.current?.(false)}
-      />
     </div>
   );
 };

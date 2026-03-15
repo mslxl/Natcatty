@@ -16,14 +16,17 @@ import {
 } from '../ai-elements/conversation';
 import { Message, MessageContent, MessageResponse } from '../ai-elements/message';
 import { ToolCall } from '../ai-elements/tool-call';
+import { InlineApprovalCard } from './InlineApprovalCard';
 import ThinkingBlock from './ThinkingBlock';
 
 interface ChatMessageListProps {
   messages: ChatMessage[];
   isStreaming?: boolean;
+  onApprove?: (messageId: string) => void;
+  onReject?: (messageId: string) => void;
 }
 
-const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming }) => {
+const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming, onApprove, onReject }) => {
   const { t } = useI18n();
   const visibleMessages = messages.filter(m => m.role !== 'system');
 
@@ -101,6 +104,17 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
                     isLoading={isThisStreaming && message.executionStatus === 'running'}
                   />
                 ))}
+
+                {/* Inline approval card */}
+                {message.pendingApproval && (
+                  <InlineApprovalCard
+                    toolName={message.pendingApproval.toolName}
+                    toolArgs={message.pendingApproval.toolArgs}
+                    status={message.pendingApproval.status}
+                    onApprove={() => onApprove?.(message.id)}
+                    onReject={() => onReject?.(message.id)}
+                  />
+                )}
               </MessageContent>
             </Message>
           );
