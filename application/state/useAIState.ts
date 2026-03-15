@@ -212,6 +212,12 @@ export function useAIState() {
           b3?.aiMcpSetMaxIterations?.(iters);
           break;
         }
+        case STORAGE_KEY_AI_HOST_PERMISSIONS:
+          setHostPermissionsRaw(localStorageAdapter.read<HostAIPermission[]>(STORAGE_KEY_AI_HOST_PERMISSIONS) ?? []);
+          break;
+        case STORAGE_KEY_AI_AGENT_MODEL_MAP:
+          setAgentModelMapRaw(localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_AI_AGENT_MODEL_MAP) ?? {});
+          break;
       }
     };
     window.addEventListener('storage', handleStorage);
