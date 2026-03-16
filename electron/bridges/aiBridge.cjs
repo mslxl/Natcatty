@@ -165,25 +165,51 @@ function init(deps) {
 }
 
 /**
- * Validate that an IPC event sender is the main window's webContents.
+ * Validate that an IPC event sender is the main window.
  * Returns true if valid, false otherwise.
  */
 function validateSender(event) {
-  // Lazily resolve mainWebContentsId if not yet set
-  if (mainWebContentsId == null) {
-    try {
-      const windowManager = require("./windowManager.cjs");
-      const mainWin = windowManager.getMainWindow?.();
-      if (mainWin && !mainWin.isDestroyed?.()) {
-        mainWebContentsId = mainWin.webContents?.id ?? null;
-      }
-    } catch {
-      // Cannot resolve — reject for safety
-      return false;
+  return _validateSenderImpl(event, false);
+}
+
+/**
+ * Validate that an IPC event sender is a trusted window (main or settings).
+ * Use this for handlers that the settings window legitimately needs access to
+ * (e.g. model listing, provider sync, Codex login, agent discovery).
+ */
+function validateSenderOrSettings(event) {
+  return _validateSenderImpl(event, true);
+}
+
+function _validateSenderImpl(event, allowSettings) {
+  try {
+    const windowManager = require("./windowManager.cjs");
+
+    // Always resolve the current main window id to handle window recreation
+    const mainWin = windowManager.getMainWindow?.();
+    if (mainWin && !mainWin.isDestroyed?.()) {
+      mainWebContentsId = mainWin.webContents?.id ?? null;
     }
+
+    const senderId = event.sender?.id;
+    if (senderId == null) return false;
+
+    // Allow main window
+    if (mainWebContentsId != null && senderId === mainWebContentsId) return true;
+
+    // Allow settings window only for designated handlers
+    if (allowSettings) {
+      const settingsWin = windowManager.getSettingsWindow?.();
+      if (settingsWin && !settingsWin.isDestroyed?.()) {
+        if (senderId === settingsWin.webContents?.id) return true;
+      }
+    }
+
+    return false;
+  } catch {
+    // Cannot resolve — reject for safety
+    return false;
   }
-  if (mainWebContentsId == null) return false;
-  return event.sender?.id === mainWebContentsId;
 }
 
 /**
@@ -331,12 +357,78 @@ function streamRequest(url, options, event, requestId) {
 function registerHandlers(ipcMain) {
   // ── Provider config sync (renderer → main, keys stay encrypted) ──
   ipcMain.handle("netcatty:ai:sync-providers", async (event, { providers }) => {
-    if (!validateSender(event)) return { ok: false };
+    if (!validateSenderOrSettings(event)) return { ok: false };
     if (Array.isArray(providers)) {
       providerConfigs = providers;
       rebuildProviderFetchHosts();
     }
     return { ok: true };
+  });
+
+  // Temporarily add a host to the fetch allowlist (used by settings model listing).
+  // Entries are auto-removed after 30 seconds unless they belong to a synced provider.
+  const TEMP_ALLOWLIST_TTL = 30_000;
+  // Track temporarily added entries so cleanup can distinguish them from synced ones
+  const tempAllowedHosts = new Set();
+  const tempAllowedPorts = new Set();
+
+  /** Check if a host is owned by a currently synced provider config */
+  function isHostInProviderConfigs(host) {
+    for (const config of providerConfigs) {
+      if (!config.baseURL) continue;
+      try { if (new URL(config.baseURL).hostname === host) return true; } catch {}
+    }
+    return false;
+  }
+  /** Check if a localhost port is owned by a currently synced provider config */
+  function isPortInProviderConfigs(port) {
+    for (const config of providerConfigs) {
+      if (!config.baseURL) continue;
+      try {
+        const p = new URL(config.baseURL);
+        if ((p.hostname === "localhost" || p.hostname === "127.0.0.1") &&
+            Number(p.port || (p.protocol === "https:" ? 443 : 80)) === port) return true;
+      } catch {}
+    }
+    return false;
+  }
+
+  ipcMain.handle("netcatty:ai:allowlist:add-host", async (event, { baseURL }) => {
+    if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
+    if (typeof baseURL !== "string") return { ok: false, error: "baseURL must be a string" };
+    try {
+      const parsed = new URL(baseURL);
+      const host = parsed.hostname;
+      if (host === "localhost" || host === "127.0.0.1") {
+        const port = parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 80);
+        if (!ALLOWED_LOCALHOST_PORTS.has(port)) {
+          ALLOWED_LOCALHOST_PORTS.add(port);
+          tempAllowedPorts.add(port);
+          setTimeout(() => {
+            // Only remove if still temporary (not built-in and not synced by a provider)
+            if (!BUILTIN_LOCALHOST_PORTS.includes(port) && !isPortInProviderConfigs(port)) {
+              ALLOWED_LOCALHOST_PORTS.delete(port);
+            }
+            tempAllowedPorts.delete(port);
+          }, TEMP_ALLOWLIST_TTL);
+        }
+      } else {
+        if (!providerFetchHosts.has(host)) {
+          providerFetchHosts.add(host);
+          tempAllowedHosts.add(host);
+          setTimeout(() => {
+            // Only remove if not owned by a synced provider config
+            if (!isHostInProviderConfigs(host)) {
+              providerFetchHosts.delete(host);
+            }
+            tempAllowedHosts.delete(host);
+          }, TEMP_ALLOWLIST_TTL);
+        }
+      }
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "Invalid URL" };
+    }
   });
 
   // URL allowlist: only permit requests to known AI provider domains + HTTPS
@@ -358,6 +450,9 @@ function registerHandlers(ipcMain) {
     // Reset localhost ports to built-in defaults, then add provider-configured ones
     ALLOWED_LOCALHOST_PORTS.clear();
     for (const port of BUILTIN_LOCALHOST_PORTS) ALLOWED_LOCALHOST_PORTS.add(port);
+    // Re-add any still-active temporary entries so a sync doesn't wipe them
+    for (const host of tempAllowedHosts) providerFetchHosts.add(host);
+    for (const port of tempAllowedPorts) ALLOWED_LOCALHOST_PORTS.add(port);
     for (const config of providerConfigs) {
       if (!config.baseURL) continue;
       try {
@@ -447,7 +542,8 @@ function registerHandlers(ipcMain) {
   });
 
   // Cancel an active stream
-  ipcMain.handle("netcatty:ai:chat:cancel", async (_event, { requestId }) => {
+  ipcMain.handle("netcatty:ai:chat:cancel", async (event, { requestId }) => {
+    if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
     const controller = activeStreams.get(requestId);
     if (controller) {
       controller.abort();
@@ -459,8 +555,8 @@ function registerHandlers(ipcMain) {
 
   // Non-streaming request (for model listing, validation, etc.)
   ipcMain.handle("netcatty:ai:fetch", async (event, { url, method, headers, body, providerId }) => {
-    // Validate IPC sender (Issue #17)
-    if (!validateSender(event)) {
+    // Validate IPC sender — settings window needs this for model listing
+    if (!validateSenderOrSettings(event)) {
       return { ok: false, status: 0, data: "", error: "Unauthorized IPC sender" };
     }
 
@@ -840,7 +936,8 @@ function registerHandlers(ipcMain) {
   }
 
   // Discover external agents from PATH, plus the bundled Codex CLI if present.
-  ipcMain.handle("netcatty:ai:agents:discover", async () => {
+  ipcMain.handle("netcatty:ai:agents:discover", async (event) => {
+    if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     const agents = [];
     const knownAgents = [
       {
@@ -909,7 +1006,8 @@ function registerHandlers(ipcMain) {
   });
 
   // Resolve a CLI binary path (auto-detect or validate custom path)
-  ipcMain.handle("netcatty:ai:resolve-cli", async (_event, { command, customPath }) => {
+  ipcMain.handle("netcatty:ai:resolve-cli", async (event, { command, customPath }) => {
+    if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     const shellEnv = await getShellEnv();
     let resolvedPath = null;
 
@@ -937,7 +1035,8 @@ function registerHandlers(ipcMain) {
     return { path: resolvedPath, version, available: true };
   });
 
-  ipcMain.handle("netcatty:ai:codex:get-integration", async () => {
+  ipcMain.handle("netcatty:ai:codex:get-integration", async (event) => {
+    if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     try {
       const result = await runCodexCli(["login", "status"]);
       const rawOutput = [result.stdout, result.stderr]
@@ -987,7 +1086,8 @@ function registerHandlers(ipcMain) {
     }
   });
 
-  ipcMain.handle("netcatty:ai:codex:start-login", async () => {
+  ipcMain.handle("netcatty:ai:codex:start-login", async (event) => {
+    if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     const existingSession = getActiveCodexLoginSession();
     if (existingSession) {
       return { ok: true, session: toCodexLoginSessionResponse(existingSession) };
@@ -1051,7 +1151,8 @@ function registerHandlers(ipcMain) {
     }
   });
 
-  ipcMain.handle("netcatty:ai:codex:get-login-session", async (_event, { sessionId }) => {
+  ipcMain.handle("netcatty:ai:codex:get-login-session", async (event, { sessionId }) => {
+    if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     const session = codexLoginSessions.get(sessionId);
     if (!session) {
       return { ok: false, error: "Codex login session not found" };
@@ -1059,7 +1160,8 @@ function registerHandlers(ipcMain) {
     return { ok: true, session: toCodexLoginSessionResponse(session) };
   });
 
-  ipcMain.handle("netcatty:ai:codex:cancel-login", async (_event, { sessionId }) => {
+  ipcMain.handle("netcatty:ai:codex:cancel-login", async (event, { sessionId }) => {
+    if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     const session = codexLoginSessions.get(sessionId);
     if (!session) {
       return { ok: true, found: false };
@@ -1075,7 +1177,8 @@ function registerHandlers(ipcMain) {
     return { ok: true, found: true, session: toCodexLoginSessionResponse(session) };
   });
 
-  ipcMain.handle("netcatty:ai:codex:logout", async () => {
+  ipcMain.handle("netcatty:ai:codex:logout", async (event) => {
+    if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     try {
       const logoutResult = await runCodexCli(["logout"]);
       invalidateCodexValidationCache();
@@ -1249,12 +1352,14 @@ function registerHandlers(ipcMain) {
 
   // ── MCP Server session metadata ──
 
-  ipcMain.handle("netcatty:ai:mcp:update-sessions", async (_event, { sessions: sessionList, chatSessionId }) => {
+  ipcMain.handle("netcatty:ai:mcp:update-sessions", async (event, { sessions: sessionList, chatSessionId }) => {
+    if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     mcpServerBridge.updateSessionMetadata(sessionList || [], chatSessionId);
     return { ok: true };
   });
 
-  ipcMain.handle("netcatty:ai:mcp:set-command-blocklist", async (_event, { blocklist }) => {
+  ipcMain.handle("netcatty:ai:mcp:set-command-blocklist", async (event, { blocklist }) => {
+    if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     // Validate: must be an array of strings, each a valid regex pattern
     if (!Array.isArray(blocklist)) {
       return { ok: false, error: "blocklist must be an array" };
@@ -1273,7 +1378,8 @@ function registerHandlers(ipcMain) {
     return { ok: true };
   });
 
-  ipcMain.handle("netcatty:ai:mcp:set-command-timeout", async (_event, { timeout }) => {
+  ipcMain.handle("netcatty:ai:mcp:set-command-timeout", async (event, { timeout }) => {
+    if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     const value = Number(timeout);
     if (!Number.isFinite(value) || value < 1 || value > 3600) {
       return { ok: false, error: "timeout must be a number between 1 and 3600" };
@@ -1282,7 +1388,8 @@ function registerHandlers(ipcMain) {
     return { ok: true };
   });
 
-  ipcMain.handle("netcatty:ai:mcp:set-max-iterations", async (_event, { maxIterations }) => {
+  ipcMain.handle("netcatty:ai:mcp:set-max-iterations", async (event, { maxIterations }) => {
+    if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     const value = Number(maxIterations);
     if (!Number.isFinite(value) || value < 1 || value > 100) {
       return { ok: false, error: "maxIterations must be a number between 1 and 100" };
@@ -1291,7 +1398,8 @@ function registerHandlers(ipcMain) {
     return { ok: true };
   });
 
-  ipcMain.handle("netcatty:ai:mcp:set-permission-mode", async (_event, { mode }) => {
+  ipcMain.handle("netcatty:ai:mcp:set-permission-mode", async (event, { mode }) => {
+    if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     const validModes = ["observer", "confirm", "autonomous"];
     if (!validModes.includes(mode)) {
       return { ok: false, error: `mode must be one of: ${validModes.join(", ")}` };
@@ -1523,7 +1631,8 @@ function registerHandlers(ipcMain) {
     return { ok: true };
   });
 
-  ipcMain.handle("netcatty:ai:acp:cancel", async (_event, { requestId }) => {
+  ipcMain.handle("netcatty:ai:acp:cancel", async (event, { requestId }) => {
+    if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
     // Cancel any active PTY executions (send Ctrl+C)
     mcpServerBridge.cancelAllPtyExecs();
     const controller = acpActiveStreams.get(requestId);
@@ -1536,7 +1645,8 @@ function registerHandlers(ipcMain) {
   });
 
   // Cleanup a specific ACP session (when chat session is deleted)
-  ipcMain.handle("netcatty:ai:acp:cleanup", async (_event, { chatSessionId }) => {
+  ipcMain.handle("netcatty:ai:acp:cleanup", async (event, { chatSessionId }) => {
+    if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
     cleanupAcpProvider(chatSessionId);
     mcpServerBridge.cleanupScopedMetadata(chatSessionId);
     return { ok: true };

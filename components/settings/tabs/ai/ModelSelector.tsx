@@ -35,6 +35,11 @@ export const ModelSelector: React.FC<{
     setIsLoading(true);
     setError(null);
     try {
+      // Temporarily allow the provider's host in the backend fetch allowlist
+      // so model listing works for URLs not yet synced from the main window.
+      if (bridge.aiAllowlistAddHost && baseURL) {
+        await bridge.aiAllowlistAddHost(baseURL);
+      }
       const url = `${baseURL.replace(/\/+$/, "")}${modelsEndpoint}`;
       const headers: Record<string, string> = {};
       if (apiKey) {

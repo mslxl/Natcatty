@@ -50,6 +50,7 @@ export interface FetchedModel {
 
 export interface FetchBridge {
   aiFetch?: (url: string, method?: string, headers?: Record<string, string>, body?: string) => Promise<{ ok: boolean; data: string; error?: string }>;
+  aiAllowlistAddHost?: (baseURL: string) => Promise<{ ok: boolean }>;
 }
 
 export interface NetcattyAiBridge {
