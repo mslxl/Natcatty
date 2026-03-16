@@ -435,7 +435,7 @@ export interface TerminalSettings {
   disableBracketedPaste: boolean; // Disable bracketed paste mode (avoid ^[[200~ artifacts)
 
   // Clipboard
-  osc52Clipboard: 'off' | 'write-only' | 'read-write'; // OSC-52 clipboard access: off, write-only (default), or read-write
+  osc52Clipboard: 'off' | 'write-only' | 'read-write' | 'prompt'; // OSC-52 clipboard access: off, write-only (default), read-write, or prompt on read
 
   // Rendering
   rendererType: 'auto' | 'webgl' | 'canvas'; // Terminal renderer: auto (detect based on hardware), webgl, or canvas

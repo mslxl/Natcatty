@@ -94,6 +94,9 @@ export type CreateXTermRuntimeContext = {
 
   // Callback when shell reports CWD change via OSC 7
   onCwdChange?: (cwd: string) => void;
+
+  // Callback when remote requests clipboard read in 'prompt' mode; resolves to user's decision
+  onOsc52ReadRequest?: () => Promise<boolean>;
 };
 
 const detectPlatform = (): XTermPlatform => {
@@ -632,8 +635,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       const payload = data.substring(semi + 1);
 
       if (payload === '?') {
-        // Read request — only allowed in read-write mode
-        if (mode !== 'read-write') {
+        // Read request — allowed in read-write mode, or prompt user in prompt mode
+        if (mode !== 'read-write' && mode !== 'prompt') {
           logger.debug('[XTerm] OSC 52 read request ignored (mode:', mode, ')');
           return true;
         }
@@ -647,7 +650,16 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           } catch {}
           return navigator.clipboard.readText();
         };
-        readClipboard().then((text) => {
+        const doRead = async () => {
+          // In prompt mode, ask user first
+          if (mode === 'prompt') {
+            const allowed = ctx.onOsc52ReadRequest ? await ctx.onOsc52ReadRequest() : false;
+            if (!allowed) {
+              logger.debug('[XTerm] OSC 52 read denied by user');
+              return;
+            }
+          }
+          const text = await readClipboard();
           // Chunked base64 encoding to avoid stack overflow on large payloads
           const bytes = new TextEncoder().encode(text);
           let binary = '';
@@ -655,9 +667,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
             binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
           }
           const b64 = btoa(binary);
-          // Reply with OSC 52 response: \x1b]52;c;<base64>\x07
           ctx.terminalBackend.writeToSession(sessionId, `\x1b]52;${target};${b64}\x07`);
-        }).catch((err) => {
+        };
+        doRead().catch((err) => {
           logger.warn('[XTerm] OSC 52 clipboard read failed:', err);
         });
         return true;
