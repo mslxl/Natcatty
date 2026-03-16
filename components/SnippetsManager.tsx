@@ -28,6 +28,7 @@ interface SnippetsManagerProps {
   hotkeyScheme: HotkeyScheme;
   keyBindings: KeyBinding[];
   onSave: (snippet: Snippet) => void;
+  onBulkSave: (snippets: Snippet[]) => void;
   onDelete: (id: string) => void;
   onPackagesChange: (packages: string[]) => void;
   onRunSnippet?: (snippet: Snippet, targetHosts: Host[]) => void;
@@ -51,6 +52,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
   hotkeyScheme,
   keyBindings,
   onSave,
+  onBulkSave,
   onDelete,
   onPackagesChange,
   onRunSnippet,
@@ -486,11 +488,8 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     // Update packages first, then save snippets
     onPackagesChange(keep);
     
-    // Only save snippets that were actually modified
-    const modifiedSnippets = updatedSnippets.filter((s, index) => 
-      s.package !== snippets[index].package
-    );
-    modifiedSnippets.forEach(onSave);
+    // Bulk-save all snippets to avoid stale-closure overwrites
+    onBulkSave(updatedSnippets);
     
     // Reset selected package if it was deleted
     if (selectedPackage && (selectedPackage === path || selectedPackage.startsWith(path + '/'))) {
@@ -527,7 +526,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     });
 
     onPackagesChange(Array.from(new Set(updatedPackages)));
-    updatedSnippets.forEach(onSave);
+    onBulkSave(updatedSnippets);
     if (selectedPackage === source) setSelectedPackage(newPath);
   };
 
@@ -568,8 +567,8 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
       return;
     }
 
-    // Validate: duplicate (case-insensitive)
-    const existingPackage = packages.find(p => p.toLowerCase() === newPath.toLowerCase());
+    // Validate: duplicate (case-insensitive), excluding the package being renamed
+    const existingPackage = packages.find(p => p !== renamingPackagePath && p.toLowerCase() === newPath.toLowerCase());
     if (existingPackage) {
       setRenameError(t('snippets.renameDialog.error.duplicate'));
       return;
@@ -595,7 +594,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     });
 
     onPackagesChange(Array.from(new Set(updatedPackages)));
-    updatedSnippets.forEach(onSave);
+    onBulkSave(updatedSnippets);
 
     // Update selected package if it was renamed
     if (selectedPackage === renamingPackagePath) {

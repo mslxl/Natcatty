@@ -2201,6 +2201,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                   : [...snippets, s],
               )
             }
+            onBulkSave={onUpdateSnippets}
             onDelete={(id) =>
               onUpdateSnippets(snippets.filter((s) => s.id !== id))
             }
