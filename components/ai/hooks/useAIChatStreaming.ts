@@ -684,12 +684,23 @@ export function useAIChatStreaming({
           }
         } else if (m.role === 'tool' && m.toolResults?.length) {
           // Map tool results to SDK tool message format
+          // Gemini requires functionResponse.name to be non-empty,
+          // so we look up the toolName from the preceding assistant tool calls.
+          const findToolName = (toolCallId: string): string => {
+            for (const prev of currentSession?.messages ?? []) {
+              if (prev.role === 'assistant' && prev.toolCalls) {
+                const tc = prev.toolCalls.find(t => t.id === toolCallId);
+                if (tc) return tc.name;
+              }
+            }
+            return 'unknown';
+          };
           sdkMessages.push({
             role: 'tool',
             content: m.toolResults.map(tr => ({
               type: 'tool-result' as const,
               toolCallId: tr.toolCallId,
-              toolName: '',
+              toolName: findToolName(tr.toolCallId),
               output: { type: 'text' as const, value: tr.content },
             })),
           });
