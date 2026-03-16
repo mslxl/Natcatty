@@ -10,6 +10,7 @@ import { SSHKey } from '../../types';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
+import { Dropdown, DropdownContent, DropdownTrigger } from '../ui/dropdown';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
 export type TerminalAuthMethod = 'password' | 'key' | 'certificate';
@@ -265,25 +266,34 @@ export const TerminalAuthDialog: React.FC<TerminalAuthDialogProps> = ({
                 <Button variant="secondary" onClick={onCancel}>
                     {t("common.close")}
                 </Button>
-                <div className="flex items-center gap-2">
-                    <Popover>
-                        <PopoverTrigger asChild>
-                            <Button disabled={!isValid} onClick={onSubmit}>
-                                {t("terminal.auth.continueSave")}
-                                <ChevronDown size={14} className="ml-2" />
-                            </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-40 p-1 z-50" align="end">
-                            <button
-                                className="w-full px-3 py-2 text-sm text-left hover:bg-secondary rounded-md"
-                                onClick={onSubmitWithoutSave ?? onSubmit}
+                <Dropdown>
+                    <div className="flex items-center rounded-md bg-primary text-primary-foreground">
+                        <Button
+                            disabled={!isValid}
+                            onClick={onSubmit}
+                            className="rounded-r-none bg-transparent hover:bg-white/10 shadow-none"
+                        >
+                            {t("terminal.auth.continueSave")}
+                        </Button>
+                        <DropdownTrigger asChild>
+                            <Button
                                 disabled={!isValid}
+                                className="px-2 rounded-l-none bg-transparent hover:bg-white/10 border-l border-primary-foreground/20 shadow-none"
                             >
-                                {t("common.continue")}
-                            </button>
-                        </PopoverContent>
-                    </Popover>
-                </div>
+                                <ChevronDown size={14} />
+                            </Button>
+                        </DropdownTrigger>
+                    </div>
+                    <DropdownContent className="w-44 p-1 z-50" align="end">
+                        <button
+                            className="w-full px-3 py-2 text-sm text-left hover:bg-secondary rounded-md"
+                            onClick={onSubmitWithoutSave ?? onSubmit}
+                            disabled={!isValid}
+                        >
+                            {t("common.continue")}
+                        </button>
+                    </DropdownContent>
+                </Dropdown>
             </div>
         </>
     );
