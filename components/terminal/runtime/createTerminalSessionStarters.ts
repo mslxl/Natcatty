@@ -11,6 +11,9 @@ import {
 } from "../../../domain/credentials";
 import { resolveHostAuth } from "../../../domain/sshAuth";
 
+/** Timeout of distro detection task */
+const DISTRO_DETECT_TIMEOUT = 8000; // ms
+
 type TerminalBackendApi = {
   backendAvailable: () => boolean;
   telnetAvailable: () => boolean;
@@ -225,8 +228,9 @@ const runDistroDetection = async (
       port: ctx.host.port || 22,
       password: auth.password,
       privateKey: auth.key?.privateKey,
+      passphrase: auth.key?.passphrase,
       command: "cat /etc/os-release 2>/dev/null || uname -a",
-      timeout: 8000,
+      timeout: DISTRO_DETECT_TIMEOUT,
     });
     const data = `${res.stdout || ""}\n${res.stderr || ""}`;
     const idMatch = data.match(/^ID="?([\w-]+)"?$/im);
