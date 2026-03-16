@@ -189,6 +189,7 @@ declare global {
       port?: number;
       password?: string;
       privateKey?: string;
+      passphrase?: string;
       command: string;
       timeout?: number;
       enableKeyboardInteractive?: boolean;
