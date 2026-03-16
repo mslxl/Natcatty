@@ -396,7 +396,7 @@ export const useSettingsState = () => {
 
     // Custom terminal themes
     customThemeStore.loadFromStorage();
-  }, [syncAppearanceFromStorage, syncCustomCssFromStorage]);
+  }, [syncAppearanceFromStorage, syncCustomCssFromStorage, setTerminalSettings]);
 
   useLayoutEffect(() => {
     const tokens = getUiThemeById(resolvedTheme, resolvedTheme === 'dark' ? darkUiThemeId : lightUiThemeId).tokens;
@@ -877,7 +877,6 @@ export const useSettingsState = () => {
         });
       }
     }).catch(() => { /* bridge unavailable */ });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Persist auto-update enabled setting.

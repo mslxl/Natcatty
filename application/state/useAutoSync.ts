@@ -259,7 +259,6 @@ export const useAutoSync = (config: AutoSyncConfig) => {
         clearTimeout(syncTimeoutRef.current);
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- settingsVersion intentionally triggers re-evaluation
   }, [sync.hasAnyConnectedProvider, sync.autoSyncEnabled, sync.isUnlocked, sync.isSyncing, getDataHash, syncNow, config.settingsVersion]);
   
   // Check remote version on startup/unlock
