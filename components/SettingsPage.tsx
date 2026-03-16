@@ -97,7 +97,7 @@ const SettingsSyncTabWithVault: React.FC = () => {
 const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }) => {
     const { t } = useI18n();
     const { notifyRendererReady, closeSettingsWindow } = useWindowControls();
-    const { updateState, checkNow, installUpdate, openReleasePage } = useUpdateCheck();
+    const { updateState, checkNow, installUpdate, openReleasePage } = useUpdateCheck({ autoUpdateEnabled: settings.autoUpdateEnabled });
     const aiState = useAIState();
     const [activeTab, setActiveTab] = useState("application");
     const [mountedTabs, setMountedTabs] = useState(() => new Set(["application"]));
@@ -309,6 +309,8 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                             hotkeyRegistrationError={settings.hotkeyRegistrationError}
                             globalHotkeyEnabled={settings.globalHotkeyEnabled}
                             setGlobalHotkeyEnabled={settings.setGlobalHotkeyEnabled}
+                            autoUpdateEnabled={settings.autoUpdateEnabled}
+                            setAutoUpdateEnabled={settings.setAutoUpdateEnabled}
                             updateState={updateState}
                             checkNow={checkNow}
                             installUpdate={installUpdate}

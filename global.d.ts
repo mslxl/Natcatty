@@ -703,6 +703,7 @@ declare global {
     checkForUpdate?(): Promise<{
       available: boolean;
       supported?: boolean;
+      checking?: boolean;
       version?: string;
       releaseNotes?: string;
       releaseDate?: string | null;
@@ -710,7 +711,7 @@ declare global {
     }>;
     downloadUpdate?(): Promise<{ success: boolean; error?: string }>;
     installUpdate?(): void;
-    getUpdateStatus?(): Promise<{ status: 'idle' | 'downloading' | 'ready' | 'error'; percent: number; error: string | null; version: string | null; isChecking?: boolean }>;
+    getUpdateStatus?(): Promise<{ status: 'idle' | 'available' | 'downloading' | 'ready' | 'error'; percent: number; error: string | null; version: string | null; isChecking?: boolean }>;
 
     onUpdateDownloadProgress?(cb: (progress: {
       percent: number;
@@ -731,6 +732,10 @@ declare global {
     registerGlobalHotkey?(hotkey: string): Promise<{ success: boolean; enabled?: boolean; error?: string; accelerator?: string }>;
     unregisterGlobalHotkey?(): Promise<{ success: boolean }>;
     getGlobalHotkeyStatus?(): Promise<{ enabled: boolean; hotkey: string | null }>;
+
+    // Auto-Update toggle
+    getAutoUpdate?(): Promise<{ enabled: boolean }>;
+    setAutoUpdate?(enabled: boolean): Promise<{ success: boolean }>;
 
     // System Tray / Close to Tray
     setCloseToTray?(enabled: boolean): Promise<{ success: boolean; enabled: boolean }>;

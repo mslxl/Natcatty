@@ -13,6 +13,40 @@
 let _deps = null;
 
 /**
+ * Read the persisted auto-update preference from a JSON file in userData.
+ * Returns true (default) if the file doesn't exist or is unreadable.
+ */
+function readAutoUpdatePreference() {
+  try {
+    const { app } = _deps?.electronModule || {};
+    if (!app) return true;
+    const path = require('path');
+    const fs = require('fs');
+    const prefPath = path.join(app.getPath('userData'), 'auto-update-pref.json');
+    const data = JSON.parse(fs.readFileSync(prefPath, 'utf8'));
+    return data.enabled !== false;
+  } catch {
+    return true; // default to enabled
+  }
+}
+
+/**
+ * Persist the auto-update preference to a JSON file in userData.
+ */
+function writeAutoUpdatePreference(enabled) {
+  try {
+    const { app } = _deps?.electronModule || {};
+    if (!app) return;
+    const path = require('path');
+    const fs = require('fs');
+    const prefPath = path.join(app.getPath('userData'), 'auto-update-pref.json');
+    fs.writeFileSync(prefPath, JSON.stringify({ enabled }), 'utf8');
+  } catch (err) {
+    console.warn('[AutoUpdate] Failed to write preference:', err?.message || err);
+  }
+}
+
+/**
  * Returns true when the current packaging format supports electron-updater
  * (macOS zip/dmg, Windows NSIS, Linux AppImage).
  */
@@ -51,7 +85,7 @@ function getAutoUpdater() {
   if (_autoUpdater) return _autoUpdater;
   try {
     const { autoUpdater } = require("electron-updater");
-    autoUpdater.autoDownload = true;
+    autoUpdater.autoDownload = readAutoUpdatePreference();
     autoUpdater.autoInstallOnAppQuit = false;
     // Silence the default electron-log transport (we log ourselves).
     autoUpdater.logger = null;
@@ -84,9 +118,12 @@ function setupGlobalListeners() {
 
   updater.on("update-available", (info) => {
     _isChecking = false;
-    // autoDownload=true means the download begins immediately after this event
-    _isDownloading = true;
-    _lastStatus = { status: 'downloading', percent: 0, error: null, version: info.version || null, isChecking: false };
+    // Only track as downloading when autoDownload is enabled — otherwise no
+    // download will actually start and the status would be stuck at 0%.
+    // Use 'available' so late-opening windows can still hydrate the version.
+    const willDownload = updater.autoDownload !== false;
+    _isDownloading = willDownload;
+    _lastStatus = { status: willDownload ? 'downloading' : 'available', percent: 0, error: null, version: info.version || null, isChecking: false };
     broadcastToAllWindows("netcatty:update:update-available", {
       version: info.version || "",
       releaseNotes: typeof info.releaseNotes === "string" ? info.releaseNotes : "",
@@ -144,11 +181,20 @@ function startAutoCheck(delayMs = 5000) {
     console.log("[AutoUpdate] Platform does not support auto-update, skipping auto-check");
     return;
   }
+  // Cancel any existing timer to avoid duplicate concurrent checks
+  // (e.g. from multiple windows initializing or re-enable toggle).
+  cancelAutoCheck();
   _autoCheckTimer = setTimeout(async () => {
     _autoCheckTimer = null;
     const updater = getAutoUpdater();
     if (!updater) {
       console.warn("[AutoUpdate] Auto-check skipped — updater not available");
+      return;
+    }
+    // Respect autoDownload flag — the renderer may have disabled it via IPC
+    // before this timer fires.
+    if (updater.autoDownload === false) {
+      console.log("[AutoUpdate] Auto-check skipped — autoDownload is disabled");
       return;
     }
     _isChecking = true;
@@ -315,6 +361,34 @@ function registerHandlers(ipcMain) {
     }
 
     updater.quitAndInstall(false, true);
+  });
+
+  // ---- Get auto-update preference -----------------------------------------
+  ipcMain.handle("netcatty:update:getAutoUpdate", () => {
+    return { enabled: readAutoUpdatePreference() };
+  });
+
+  // ---- Enable/disable auto-update ----------------------------------------
+  let _prevAutoDownloadEnabled = readAutoUpdatePreference();
+  ipcMain.handle("netcatty:update:setAutoUpdate", (_event, { enabled }) => {
+    const wasEnabled = _prevAutoDownloadEnabled;
+    _prevAutoDownloadEnabled = !!enabled;
+    const updater = getAutoUpdater();
+    if (updater) {
+      updater.autoDownload = !!enabled;
+      console.log("[AutoUpdate] autoDownload set to:", !!enabled);
+    }
+    // Persist so the preference survives app restarts
+    writeAutoUpdatePreference(!!enabled);
+    if (!enabled) {
+      cancelAutoCheck();
+    } else if (!wasEnabled && !_isChecking) {
+      // Only re-schedule when actually re-enabling (not on every mount sync),
+      // to avoid duplicate checks from multiple windows initializing.
+      // Skip if a check is already in flight to prevent concurrent calls.
+      startAutoCheck(2000);
+    }
+    return { success: true };
   });
 
   console.log("[AutoUpdate] Handlers registered");

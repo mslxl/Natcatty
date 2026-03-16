@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { checkForUpdates, getReleaseUrl, type ReleaseInfo, type UpdateCheckResult } from '../../infrastructure/services/updateService';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
-import { STORAGE_KEY_UPDATE_DISMISSED_VERSION, STORAGE_KEY_UPDATE_LAST_CHECK, STORAGE_KEY_UPDATE_LATEST_RELEASE } from '../../infrastructure/config/storageKeys';
+import { STORAGE_KEY_UPDATE_DISMISSED_VERSION, STORAGE_KEY_UPDATE_LAST_CHECK, STORAGE_KEY_UPDATE_LATEST_RELEASE, STORAGE_KEY_AUTO_UPDATE_ENABLED } from '../../infrastructure/config/storageKeys';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 
 // Check for updates at most once per hour
@@ -56,7 +56,13 @@ export interface UseUpdateCheckResult {
  * - Respects dismissed version to avoid nagging
  * - Provides manual check capability
  */
-export function useUpdateCheck(): UseUpdateCheckResult {
+export function useUpdateCheck(options?: { autoUpdateEnabled?: boolean }): UseUpdateCheckResult {
+  // Accept auto-update toggle from the caller (e.g. useSettingsState) so it
+  // reacts immediately in the same window. Falls back to reading localStorage
+  // when no caller provides the value (e.g. in non-settings contexts).
+  const autoUpdateEnabled = options?.autoUpdateEnabled ??
+    (localStorageAdapter.readString(STORAGE_KEY_AUTO_UPDATE_ENABLED) !== 'false');
+
   const [updateState, setUpdateState] = useState<UpdateState>({
     isChecking: false,
     hasUpdate: false,
@@ -136,14 +142,20 @@ export function useUpdateCheck(): UseUpdateCheckResult {
         return;
       }
 
+      // 'available' means an update was found but auto-download is disabled.
+      // Surface the version info (hasUpdate + latestRelease) but keep
+      // autoDownloadStatus at 'idle' so the manual download path shows.
+      const isAvailableOnly = snapshot.status === 'available';
+
       setUpdateState((prev) => {
         // Don't overwrite if the renderer already has a newer state
         if (prev.autoDownloadStatus !== 'idle') return prev;
         return {
           ...prev,
-          autoDownloadStatus: snapshot.status,
-          downloadPercent: snapshot.percent,
-          downloadError: snapshot.error,
+          hasUpdate: isAvailableOnly ? true : prev.hasUpdate,
+          autoDownloadStatus: isAvailableOnly ? 'idle' : snapshot.status,
+          downloadPercent: isAvailableOnly ? 0 : snapshot.percent,
+          downloadError: isAvailableOnly ? null : snapshot.error,
           // Use snapshot version if no release data or if versions differ
           latestRelease: (!prev.latestRelease || (snapshot.version && prev.latestRelease.version !== snapshot.version)) ? (snapshot.version ? {
             version: snapshot.version,
@@ -186,15 +198,18 @@ export function useUpdateCheck(): UseUpdateCheckResult {
       if (isDismissed) {
         dismissedAutoDownloadRef.current = true;
       }
+      // When auto-update is disabled, autoDownload=false in the main process
+      // so no download will start. Don't transition to 'downloading' or the
+      // UI will be stuck at 0%. Keep status idle and let the manual download
+      // link surface instead.
+      const isAutoUpdateOff = localStorageAdapter.readString(STORAGE_KEY_AUTO_UPDATE_ENABLED) === 'false';
+      const shouldTrackDownload = !isDismissed && !isAutoUpdateOff;
       setUpdateState((prev) => ({
         ...prev,
         hasUpdate: !isDismissed,
-        // Only transition to 'downloading' if the user hasn't dismissed this
-        // version — otherwise leave the status at 'idle' so no download
-        // progress/ready toast appears for a release they don't want.
-        autoDownloadStatus: isDismissed ? prev.autoDownloadStatus : 'downloading',
-        downloadPercent: isDismissed ? prev.downloadPercent : 0,
-        downloadError: isDismissed ? prev.downloadError : null,
+        autoDownloadStatus: shouldTrackDownload ? 'downloading' : prev.autoDownloadStatus,
+        downloadPercent: shouldTrackDownload ? 0 : prev.downloadPercent,
+        downloadError: shouldTrackDownload ? null : prev.downloadError,
         // Use electron-updater's version if GitHub API hasn't resolved yet or
         // if the updater reports a different version than the cached release.
         latestRelease: (!prev.latestRelease || prev.latestRelease.version !== info.version) ? {
@@ -439,6 +454,20 @@ export function useUpdateCheck(): UseUpdateCheckResult {
         } else if (res?.checking) {
           // Another check is already in flight — don't change status; the
           // in-flight check will resolve via IPC events.
+        } else if (nextStatus === 'error' && res?.available) {
+          // GitHub API failed but electron-updater found an update.
+          // Respect dismissed versions before surfacing.
+          const dismissed = localStorageAdapter.readString(STORAGE_KEY_UPDATE_DISMISSED_VERSION);
+          if (res.version && res.version === dismissed) {
+            // User dismissed this version — don't re-surface
+          } else {
+            setUpdateState((prev) => ({
+              ...prev,
+              manualCheckStatus: 'available',
+              hasUpdate: true,
+              error: null,
+            }));
+          }
         } else if (nextStatus === 'error' && !res?.error && !res?.available) {
           // GitHub API failed but electron-updater says no update available.
           // Clear the error status so Settings doesn't stay stuck in error state.
@@ -519,12 +548,12 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     if (IS_UPDATE_DEMO_MODE) {
       return;
     }
-    
-    debugLog('Version check effect', { 
-      hasChecked: hasCheckedOnStartupRef.current, 
+
+    debugLog('Version check effect', {
+      hasChecked: hasCheckedOnStartupRef.current,
       currentVersion: updateState.currentVersion
     });
-    
+
     if (hasCheckedOnStartupRef.current) {
       return;
     }
@@ -533,12 +562,11 @@ export function useUpdateCheck(): UseUpdateCheckResult {
       return;
     }
 
-    // Check if we've checked recently
+    // Hydrate cached release info so update status is visible across windows.
+    // When auto-update is disabled, hydrate release data (for the Settings UI)
+    // but don't set hasUpdate (which would trigger the toast in App.tsx).
     const lastCheck = localStorageAdapter.readNumber(STORAGE_KEY_UPDATE_LAST_CHECK);
-    const now = Date.now();
-    if (lastCheck && now - lastCheck < UPDATE_CHECK_INTERVAL_MS) {
-      hasCheckedOnStartupRef.current = true;
-      // Hydrate cached release info so late-opening windows show the result
+    if (lastCheck) {
       const cachedRelease = localStorageAdapter.readString(STORAGE_KEY_UPDATE_LATEST_RELEASE);
       if (cachedRelease) {
         try {
@@ -556,6 +584,19 @@ export function useUpdateCheck(): UseUpdateCheckResult {
           // Ignore corrupted cache
         }
       }
+    }
+
+    // Respect auto-update toggle — skip automatic check when disabled.
+    // Don't set hasCheckedOnStartupRef so re-enabling (which changes the
+    // autoUpdateEnabled dependency) can re-trigger this effect.
+    if (!autoUpdateEnabled) {
+      return;
+    }
+
+    // Check if we've checked recently
+    const now = Date.now();
+    if (lastCheck && now - lastCheck < UPDATE_CHECK_INTERVAL_MS) {
+      hasCheckedOnStartupRef.current = true;
       return;
     }
 
@@ -563,6 +604,13 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     debugLog('Starting delayed update check for version:', updateState.currentVersion);
 
     startupCheckTimeoutRef.current = setTimeout(async () => {
+      // Re-check the toggle at fire time — the user may have toggled it
+      // after the timer was scheduled.
+      const stillEnabled = localStorageAdapter.readString(STORAGE_KEY_AUTO_UPDATE_ENABLED);
+      if (stillEnabled === 'false') {
+        debugLog('Skipping startup check — auto-update disabled after timer was scheduled');
+        return;
+      }
       // If electron-updater's auto-check already started a download, skip the
       // redundant GitHub API check to avoid duplicate toast notifications.
       if (autoDownloadStatusRef.current !== 'idle') {
@@ -601,7 +649,7 @@ export function useUpdateCheck(): UseUpdateCheckResult {
         clearTimeout(startupCheckTimeoutRef.current);
       }
     };
-  }, [updateState.currentVersion, performCheck]);
+  }, [updateState.currentVersion, autoUpdateEnabled, performCheck]);
 
   return {
     updateState,
