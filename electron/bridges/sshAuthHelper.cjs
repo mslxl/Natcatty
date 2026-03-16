@@ -123,36 +123,46 @@ async function findAllDefaultPrivateKeys(options = {}) {
   return results.filter(Boolean);
 }
 
-/**
- * Check if a Windows named pipe exists (non-blocking).
- * Works for OpenSSH Agent, Bitwarden SSH Agent, 1Password, etc.
- */
-function windowsPipeExists(pipePath) {
-  try {
-    fs.statSync(pipePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 const WIN_SSH_AGENT_PIPE = "\\\\.\\pipe\\openssh-ssh-agent";
 
 /**
+ * Check if a Windows named pipe is connectable.
+ * fs.statSync is unreliable for named pipes (returns EBUSY even when the
+ * pipe is usable), so we attempt an actual net.connect() which is the
+ * authoritative check.
+ * @param {string} pipePath
+ * @param {number} [timeoutMs=1000]
+ * @returns {Promise<boolean>}
+ */
+function windowsPipeConnectable(pipePath, timeoutMs = 1000) {
+  const net = require("net");
+  return new Promise((resolve) => {
+    const socket = net.connect(pipePath);
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      try { socket.destroy(); } catch {}
+      resolve(ok);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+  });
+}
+
+/**
  * Check if an SSH agent is available on Windows.
- * Instead of checking the OpenSSH Authentication Agent *service*, we probe
- * the well-known named pipe directly. This supports any agent that provides
- * the pipe — Bitwarden, 1Password, gpg-agent, etc.
+ * Probes the well-known named pipe via net.connect(). This supports any
+ * agent that provides the pipe — Bitwarden, 1Password, gpg-agent, etc.
  * @returns {Promise<boolean>}
  */
 function checkWindowsSshAgentRunning() {
-  return new Promise((resolve) => {
-    if (process.platform !== "win32") {
-      resolve(true);
-      return;
-    }
-    resolve(windowsPipeExists(WIN_SSH_AGENT_PIPE));
-  });
+  if (process.platform !== "win32") {
+    return Promise.resolve(true);
+  }
+  return windowsPipeConnectable(WIN_SSH_AGENT_PIPE);
 }
 
 /**
