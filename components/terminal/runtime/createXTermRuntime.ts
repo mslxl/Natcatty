@@ -614,6 +614,31 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     return true; // Indicate we handled the sequence
   });
 
+  // OSC 52 — clipboard integration
+  // Format: 52;<target>;<base64-data>  (write)  or  52;<target>;?  (query/read)
+  // <target> is typically "c" (clipboard) or "p" (primary selection)
+  const osc52Disposable = term.parser.registerOscHandler(52, (data) => {
+    try {
+      const semi = data.indexOf(';');
+      if (semi < 0) return true;
+      const payload = data.substring(semi + 1);
+      if (payload === '?') {
+        // Read request — ignore for security (don't expose clipboard to remote)
+        logger.debug('[XTerm] OSC 52 read request ignored for security');
+        return true;
+      }
+      // Write: payload is base64-encoded text
+      const text = atob(payload);
+      navigator.clipboard.writeText(text).catch((err) => {
+        logger.warn('[XTerm] OSC 52 clipboard write failed:', err);
+      });
+      logger.debug('[XTerm] OSC 52 clipboard write', { length: text.length });
+    } catch (err) {
+      logger.warn('[XTerm] Failed to handle OSC 52:', err);
+    }
+    return true;
+  });
+
   let resizeTimeout: NodeJS.Timeout | null = null;
   const resizeDebounceMs = XTERM_PERFORMANCE_CONFIG.resize.debounceMs;
   term.onResize(({ cols, rows }) => {
@@ -639,6 +664,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       cleanupMiddleClick?.();
       keywordHighlighter.dispose();
       osc7Disposable.dispose();
+      osc52Disposable.dispose();
       try {
         term.dispose();
       } catch (err) {
