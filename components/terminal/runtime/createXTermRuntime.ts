@@ -626,6 +626,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     try {
       const semi = data.indexOf(';');
       if (semi < 0) return true;
+      const target = data.substring(0, semi);
+      // Only handle clipboard target ('c'); reject unsupported targets like 'p' (PRIMARY)
+      if (target !== 'c' && target !== '') return true;
       const payload = data.substring(semi + 1);
 
       if (payload === '?') {
@@ -653,7 +656,6 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           }
           const b64 = btoa(binary);
           // Reply with OSC 52 response: \x1b]52;c;<base64>\x07
-          const target = data.substring(0, semi);
           ctx.terminalBackend.writeToSession(sessionId, `\x1b]52;${target};${b64}\x07`);
         }).catch((err) => {
           logger.warn('[XTerm] OSC 52 clipboard read failed:', err);
