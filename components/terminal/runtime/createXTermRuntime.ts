@@ -636,9 +636,22 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         }
         const sessionId = ctx.sessionRef.current;
         if (!sessionId) return true;
-        navigator.clipboard.readText().then((text) => {
+        // Use Electron bridge as primary, fall back to navigator.clipboard
+        const readClipboard = async (): Promise<string> => {
+          try {
+            const bridge = netcattyBridge.get();
+            if (bridge?.readClipboardText) return await bridge.readClipboardText();
+          } catch {}
+          return navigator.clipboard.readText();
+        };
+        readClipboard().then((text) => {
+          // Chunked base64 encoding to avoid stack overflow on large payloads
           const bytes = new TextEncoder().encode(text);
-          const b64 = btoa(String.fromCharCode(...bytes));
+          let binary = '';
+          for (let i = 0; i < bytes.length; i += 8192) {
+            binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+          }
+          const b64 = btoa(binary);
           // Reply with OSC 52 response: \x1b]52;c;<base64>\x07
           const target = data.substring(0, semi);
           ctx.terminalBackend.writeToSession(sessionId, `\x1b]52;${target};${b64}\x07`);
