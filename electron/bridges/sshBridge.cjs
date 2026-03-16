@@ -143,29 +143,33 @@ async function findAllDefaultPrivateKeys() {
 const WIN_SSH_AGENT_PIPE = "\\\\.\\pipe\\openssh-ssh-agent";
 
 /**
- * Check if an SSH agent is available on Windows by probing the well-known
- * named pipe. This detects any agent that provides the pipe — OpenSSH Agent
- * service, Bitwarden, 1Password, gpg-agent, etc.
+ * Check if an SSH agent is available on Windows by connecting to the
+ * well-known named pipe. fs.statSync is unreliable for named pipes (returns
+ * EBUSY even when usable), so we use net.connect() as the authoritative check.
  * @returns {Promise<{ running: boolean, startupType: string | null, error: string | null }>}
  */
 function checkWindowsSshAgent() {
+  if (process.platform !== "win32") {
+    return Promise.resolve({ running: true, startupType: null, error: null });
+  }
+  const net = require("net");
   return new Promise((resolve) => {
-    if (process.platform !== "win32") {
-      resolve({ running: true, startupType: null, error: null });
-      return;
-    }
-    let pipeExists = false;
-    try {
-      fs.statSync(WIN_SSH_AGENT_PIPE);
-      pipeExists = true;
-    } catch {
-      // pipe not found
-    }
-    resolve({
-      running: pipeExists,
-      startupType: pipeExists ? "running" : "stopped",
-      error: pipeExists ? null : "SSH Agent pipe not found",
-    });
+    const socket = net.connect(WIN_SSH_AGENT_PIPE);
+    let settled = false;
+    const finish = (ok, error) => {
+      if (settled) return;
+      settled = true;
+      try { socket.destroy(); } catch {}
+      resolve({
+        running: ok,
+        startupType: ok ? "running" : "stopped",
+        error: ok ? null : (error || "SSH Agent pipe not connectable"),
+      });
+    };
+    socket.setTimeout(1000);
+    socket.once("connect", () => finish(true, null));
+    socket.once("timeout", () => finish(false, "SSH Agent pipe connect timeout"));
+    socket.once("error", (err) => finish(false, err.message));
   });
 }
 
