@@ -375,6 +375,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const [osc52ReadPromptVisible, setOsc52ReadPromptVisible] = useState(false);
   const osc52ReadResolverRef = useRef<((allowed: boolean) => void) | null>(null);
   const handleOsc52ReadRequest = useCallback((): Promise<boolean> => {
+    // Reject if another prompt is already pending (avoid resolver overwrite)
+    if (osc52ReadResolverRef.current) return Promise.resolve(false);
     return new Promise((resolve) => {
       osc52ReadResolverRef.current = resolve;
       setOsc52ReadPromptVisible(true);
@@ -1696,7 +1698,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
           {/* OSC-52 clipboard read prompt */}
           {osc52ReadPromptVisible && (
-            <div className="absolute inset-0 z-40 flex items-center justify-center bg-background/60">
+            <div
+              className="absolute inset-0 z-40 flex items-center justify-center bg-background/60"
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') handleOsc52ReadResponse(false);
+              }}
+            >
               <div className="rounded-lg border bg-card p-4 shadow-lg max-w-sm space-y-3">
                 <p className="text-sm font-medium">{t("terminal.osc52.readPrompt.title")}</p>
                 <p className="text-sm text-muted-foreground">{t("terminal.osc52.readPrompt.desc")}</p>
@@ -1704,7 +1711,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                   <Button variant="secondary" size="sm" onClick={() => handleOsc52ReadResponse(false)}>
                     {t("terminal.osc52.readPrompt.deny")}
                   </Button>
-                  <Button size="sm" onClick={() => handleOsc52ReadResponse(true)}>
+                  <Button size="sm" autoFocus onClick={() => handleOsc52ReadResponse(true)}>
                     {t("terminal.osc52.readPrompt.allow")}
                   </Button>
                 </div>
