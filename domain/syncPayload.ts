@@ -75,7 +75,7 @@ const SYNCABLE_TERMINAL_KEYS = [
   'scrollOnInput', 'scrollOnOutput', 'scrollOnKeyPress', 'scrollOnPaste',
   'rightClickBehavior', 'copyOnSelect', 'middleClickPaste', 'wordSeparators',
   'linkModifier', 'keywordHighlightEnabled', 'keywordHighlightRules',
-  'keepaliveInterval', 'disableBracketedPaste',
+  'keepaliveInterval', 'disableBracketedPaste', 'osc52Clipboard',
 ] as const;
 
 /**
