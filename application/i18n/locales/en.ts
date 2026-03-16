@@ -270,6 +270,17 @@ const en: Messages = {
   'settings.terminal.behavior.bracketedPaste': 'Bracketed paste mode',
   'settings.terminal.behavior.bracketedPaste.desc':
     'Wrap pasted text with escape sequences so the shell can distinguish paste from typed input. Disable if you see ^[[200~ artifacts.',
+  'settings.terminal.behavior.osc52Clipboard': 'OSC-52 clipboard',
+  'settings.terminal.behavior.osc52Clipboard.desc':
+    'Allow remote programs (tmux, vim, etc.) to access the local clipboard via OSC-52 escape sequences.',
+  'settings.terminal.behavior.osc52Clipboard.off': 'Disabled',
+  'settings.terminal.behavior.osc52Clipboard.writeOnly': 'Write only',
+  'settings.terminal.behavior.osc52Clipboard.readWrite': 'Read & Write',
+  'settings.terminal.behavior.osc52Clipboard.prompt': 'Write + Prompt on Read',
+  'terminal.osc52.readPrompt.title': 'Clipboard Read Request',
+  'terminal.osc52.readPrompt.desc': 'A remote program is requesting to read your clipboard. Allow?',
+  'terminal.osc52.readPrompt.allow': 'Allow',
+  'terminal.osc52.readPrompt.deny': 'Deny',
   'settings.terminal.behavior.scrollOnInput': 'Scroll on input',
   'settings.terminal.behavior.scrollOnInput.desc': 'Scroll terminal to bottom when typing',
   'settings.terminal.behavior.scrollOnOutput': 'Scroll on output',

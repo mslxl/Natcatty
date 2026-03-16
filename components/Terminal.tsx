@@ -4,7 +4,7 @@ import { SerializeAddon } from "@xterm/addon-serialize";
 import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import { Cpu, HardDrive, Maximize2, MemoryStick, Radio, ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
-import React, { memo, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 // flushSync removed - no longer needed
 import { useI18n } from "../application/i18n/I18nProvider";
 import { logger } from "../lib/logger";
@@ -371,6 +371,27 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const [pendingHostKeyInfo, setPendingHostKeyInfo] = useState<HostKeyInfo | null>(null);
   const pendingConnectionRef = useRef<(() => void) | null>(null);
 
+  // OSC-52 clipboard read prompt
+  const [osc52ReadPromptVisible, setOsc52ReadPromptVisible] = useState(false);
+  const osc52ReadResolverRef = useRef<((allowed: boolean) => void) | null>(null);
+  const handleOsc52ReadRequest = useCallback((): Promise<boolean> => {
+    // Reject if terminal is not visible (background tab) — user can't see the prompt
+    if (!isVisibleRef.current) return Promise.resolve(false);
+    // Reject if another prompt is already pending (avoid resolver overwrite)
+    if (osc52ReadResolverRef.current) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      osc52ReadResolverRef.current = resolve;
+      setOsc52ReadPromptVisible(true);
+    });
+  }, []);
+  const handleOsc52ReadResponse = useCallback((allowed: boolean) => {
+    setOsc52ReadPromptVisible(false);
+    osc52ReadResolverRef.current?.(allowed);
+    osc52ReadResolverRef.current = null;
+    // Restore focus to terminal
+    termRef.current?.focus();
+  }, []);
+
   // Subscribe to custom theme changes so editing triggers re-render
   const customThemes = useCustomThemes();
 
@@ -502,6 +523,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           serialLocalEcho: serialConfig?.localEcho,
           serialLineMode: serialConfig?.lineMode,
           serialLineBufferRef,
+          onOsc52ReadRequest: handleOsc52ReadRequest,
         });
 
         xtermRuntimeRef.current = runtime;
@@ -1675,6 +1697,29 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                 onContinue={handleHostKeyContinue}
                 onAddAndContinue={handleHostKeyAddAndContinue}
               />
+            </div>
+          )}
+
+          {/* OSC-52 clipboard read prompt */}
+          {osc52ReadPromptVisible && (
+            <div
+              className="absolute inset-0 z-40 flex items-center justify-center bg-background/60"
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') handleOsc52ReadResponse(false);
+              }}
+            >
+              <div className="rounded-lg border bg-card p-4 shadow-lg max-w-sm space-y-3">
+                <p className="text-sm font-medium">{t("terminal.osc52.readPrompt.title")}</p>
+                <p className="text-sm text-muted-foreground">{t("terminal.osc52.readPrompt.desc")}</p>
+                <div className="flex justify-end gap-2">
+                  <Button variant="secondary" size="sm" onClick={() => handleOsc52ReadResponse(false)}>
+                    {t("terminal.osc52.readPrompt.deny")}
+                  </Button>
+                  <Button size="sm" autoFocus onClick={() => handleOsc52ReadResponse(true)}>
+                    {t("terminal.osc52.readPrompt.allow")}
+                  </Button>
+                </div>
+              </div>
             </div>
           )}
 

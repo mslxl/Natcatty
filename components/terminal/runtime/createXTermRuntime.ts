@@ -94,6 +94,9 @@ export type CreateXTermRuntimeContext = {
 
   // Callback when shell reports CWD change via OSC 7
   onCwdChange?: (cwd: string) => void;
+
+  // Callback when remote requests clipboard read in 'prompt' mode; resolves to user's decision
+  onOsc52ReadRequest?: () => Promise<boolean>;
 };
 
 const detectPlatform = (): XTermPlatform => {
@@ -614,6 +617,78 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     return true; // Indicate we handled the sequence
   });
 
+  // OSC 52 — clipboard integration
+  // Format: 52;<target>;<base64-data>  (write)  or  52;<target>;?  (query/read)
+  // <target> is typically "c" (clipboard) or "p" (primary selection)
+  // Controlled by terminalSettings.osc52Clipboard: 'off' | 'write-only' | 'read-write'
+  const osc52Disposable = term.parser.registerOscHandler(52, (data) => {
+    const settings = ctx.terminalSettingsRef.current;
+    const mode = settings?.osc52Clipboard ?? 'write-only';
+    if (mode === 'off') return true;
+
+    try {
+      const semi = data.indexOf(';');
+      if (semi < 0) return true;
+      const target = data.substring(0, semi);
+      // Only handle clipboard target ('c'); reject unsupported targets like 'p' (PRIMARY)
+      if (target !== 'c' && target !== '') return true;
+      const payload = data.substring(semi + 1);
+
+      if (payload === '?') {
+        // Read request — allowed in read-write mode, or prompt user in prompt mode
+        if (mode !== 'read-write' && mode !== 'prompt') {
+          logger.debug('[XTerm] OSC 52 read request ignored (mode:', mode, ')');
+          return true;
+        }
+        const sessionId = ctx.sessionRef.current;
+        if (!sessionId) return true;
+        // Use Electron bridge as primary, fall back to navigator.clipboard
+        const readClipboard = async (): Promise<string> => {
+          try {
+            const bridge = netcattyBridge.get();
+            if (bridge?.readClipboardText) return await bridge.readClipboardText();
+          } catch {}
+          return navigator.clipboard.readText();
+        };
+        const doRead = async () => {
+          // In prompt mode, ask user first
+          if (mode === 'prompt') {
+            const allowed = ctx.onOsc52ReadRequest ? await ctx.onOsc52ReadRequest() : false;
+            if (!allowed) {
+              logger.debug('[XTerm] OSC 52 read denied by user');
+              return;
+            }
+          }
+          const text = await readClipboard();
+          // Chunked base64 encoding to avoid stack overflow on large payloads
+          const bytes = new TextEncoder().encode(text);
+          let binary = '';
+          for (let i = 0; i < bytes.length; i += 8192) {
+            binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+          }
+          const b64 = btoa(binary);
+          ctx.terminalBackend.writeToSession(sessionId, `\x1b]52;${target};${b64}\x07`);
+        };
+        doRead().catch((err) => {
+          logger.warn('[XTerm] OSC 52 clipboard read failed:', err);
+        });
+        return true;
+      }
+
+      // Write: payload is base64-encoded UTF-8 text
+      const binary = atob(payload);
+      const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+      const text = new TextDecoder().decode(bytes);
+      navigator.clipboard.writeText(text).catch((err) => {
+        logger.warn('[XTerm] OSC 52 clipboard write failed:', err);
+      });
+      logger.debug('[XTerm] OSC 52 clipboard write', { length: text.length });
+    } catch (err) {
+      logger.warn('[XTerm] Failed to handle OSC 52:', err);
+    }
+    return true;
+  });
+
   let resizeTimeout: NodeJS.Timeout | null = null;
   const resizeDebounceMs = XTERM_PERFORMANCE_CONFIG.resize.debounceMs;
   term.onResize(({ cols, rows }) => {
@@ -639,6 +714,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       cleanupMiddleClick?.();
       keywordHighlighter.dispose();
       osc7Disposable.dispose();
+      osc52Disposable.dispose();
       try {
         term.dispose();
       } catch (err) {

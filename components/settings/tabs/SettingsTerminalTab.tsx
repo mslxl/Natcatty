@@ -576,6 +576,23 @@ export default function SettingsTerminalTab(props: {
         </SettingRow>
 
         <SettingRow
+          label={t("settings.terminal.behavior.osc52Clipboard")}
+          description={t("settings.terminal.behavior.osc52Clipboard.desc")}
+        >
+          <Select
+            value={terminalSettings.osc52Clipboard ?? 'write-only'}
+            options={[
+              { value: "off", label: t("settings.terminal.behavior.osc52Clipboard.off") },
+              { value: "write-only", label: t("settings.terminal.behavior.osc52Clipboard.writeOnly") },
+              { value: "read-write", label: t("settings.terminal.behavior.osc52Clipboard.readWrite") },
+              { value: "prompt", label: t("settings.terminal.behavior.osc52Clipboard.prompt") },
+            ]}
+            onChange={(v) => updateTerminalSetting("osc52Clipboard", v as "off" | "write-only" | "read-write" | "prompt")}
+            className="w-40"
+          />
+        </SettingRow>
+
+        <SettingRow
           label={t("settings.terminal.behavior.scrollOnInput")}
           description={t("settings.terminal.behavior.scrollOnInput.desc")}
         >
