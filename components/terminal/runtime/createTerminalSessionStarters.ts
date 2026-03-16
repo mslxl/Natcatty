@@ -218,7 +218,7 @@ const attachSessionToTerminal = (
 
 const runDistroDetection = async (
   ctx: TerminalSessionStartersContext,
-  auth: { username: string; password?: string; key?: SSHKey },
+  auth: { username: string; password?: string; key?: SSHKey; passphrase?: string },
 ) => {
   if (!ctx.terminalBackend.execAvailable()) return;
   try {
@@ -228,7 +228,7 @@ const runDistroDetection = async (
       port: ctx.host.port || 22,
       password: auth.password,
       privateKey: auth.key?.privateKey,
-      passphrase: auth.key?.passphrase,
+      passphrase: auth.passphrase ?? auth.key?.passphrase,
       command: "cat /etc/os-release 2>/dev/null || uname -a",
       timeout: DISTRO_DETECT_TIMEOUT,
     });
@@ -577,6 +577,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           username: effectiveUsername,
           password: usedPassword,
           key: usedKey,
+          passphrase: effectivePassphrase,
         }),
       600,
     );
