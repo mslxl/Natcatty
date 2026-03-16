@@ -25,6 +25,12 @@ module.exports = {
         'node_modules/@zed-industries/codex-acp-*/**/*',
         'node_modules/@modelcontextprotocol/sdk/**/*',
         'node_modules/zod/**/*',
+        'node_modules/zod-to-json-schema/**/*',
+        'node_modules/ajv/**/*',
+        'node_modules/ajv-formats/**/*',
+        'node_modules/fast-deep-equal/**/*',
+        'node_modules/fast-uri/**/*',
+        'node_modules/json-schema-traverse/**/*',
         'electron/mcp/**/*'
     ],
     mac: {
