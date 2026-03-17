@@ -251,7 +251,11 @@ export function useAIChatStreaming({
     err: unknown,
   ) => {
     if (abortSignal.aborted) return;
-    const errorStr = err instanceof Error ? err.message : String(err);
+    let errorStr: string;
+    if (err instanceof Error) errorStr = err.message;
+    else if (typeof err === 'object' && err !== null && 'message' in err) errorStr = String((err as { message: unknown }).message);
+    else if (typeof err === 'string') errorStr = err;
+    else { try { errorStr = JSON.stringify(err) ?? 'Unknown error'; } catch { errorStr = 'Unknown error'; } }
     // Log the full unsanitized error for debugging
     console.error('[AIChatSidePanel] Stream error (full):', errorStr);
     const errorInfo = classifyError(errorStr);
@@ -464,7 +468,11 @@ export function useAIChatStreaming({
             id: generateId(),
             role: 'assistant',
             content: '',
-            errorInfo: classifyError(String(typedChunk.error)),
+            errorInfo: classifyError(
+              typedChunk.error instanceof Error ? typedChunk.error.message
+                : typeof typedChunk.error === 'string' ? typedChunk.error
+                : (() => { try { return JSON.stringify(typedChunk.error) ?? 'Unknown error'; } catch { return 'Unknown error'; } })(),
+            ),
             timestamp: Date.now(),
           });
           break;
