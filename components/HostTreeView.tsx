@@ -173,7 +173,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
                 )}
                 {(node.hosts.length > 0 || hasChildren) && (
                   <span className="text-xs opacity-70 bg-background/50 px-2 py-0.5 rounded-full border border-border">
-                    { hostsCountInNode }
+                    {hostsCountInNode}
                   </span>
                 )}
               </div>
