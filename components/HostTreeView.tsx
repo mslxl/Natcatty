@@ -100,7 +100,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   const hasChildren = node.children && Object.keys(node.children).length > 0;
   const paddingLeft = `${depth * 20 + 12}px`;
   const isManaged = managedGroupPaths?.has(node.path) ?? false;
-  const hostsCountInNode = countAllHostsInNode(node);
+  const hostsCountInNode = useMemo(() => countAllHostsInNode(node), [node]);
 
   const childNodes = useMemo(() => {
     if (!node.children) return [];
@@ -183,7 +183,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
                 )}
                 {(node.hosts.length > 0 || hasChildren) && (
                   <span className="text-xs opacity-70 bg-background/50 px-2 py-0.5 rounded-full border border-border">
-                    { hostsCountInNode }
+                    {hostsCountInNode}
                   </span>
                 )}
               </div>
