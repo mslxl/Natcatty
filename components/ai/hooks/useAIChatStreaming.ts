@@ -18,7 +18,9 @@ import type {
   ChatMessage,
   ExternalAgentConfig,
   ProviderConfig,
+  WebSearchConfig,
 } from '../../../infrastructure/ai/types';
+import { isWebSearchReady } from '../../../infrastructure/ai/types';
 import { buildSystemPrompt } from '../../../infrastructure/ai/cattyAgent/systemPrompt';
 import { createModelFromConfig } from '../../../infrastructure/ai/sdk/providers';
 import { createCattyTools } from '../../../infrastructure/ai/sdk/tools';
@@ -93,6 +95,7 @@ type StreamChunk =
 export interface PanelBridge extends NetcattyBridge {
   credentialsDecrypt?: (value: string) => Promise<string>;
   aiSyncProviders?: (providers: Array<{ id: string; providerId: string; apiKey?: string; baseURL?: string; enabled: boolean }>) => Promise<{ ok: boolean }>;
+  aiSyncWebSearch?: (apiHost: string | null, apiKey: string | null) => Promise<{ ok: boolean }>;
   aiMcpUpdateSessions?: (sessions: TerminalSessionInfo[], chatSessionId?: string) => Promise<unknown>;
   aiAcpCleanup?: (chatSessionId: string) => Promise<{ ok: boolean }>;
   [key: string]: ((...args: unknown[]) => unknown) | undefined;
@@ -203,6 +206,7 @@ export interface SendToCattyContext {
   globalPermissionMode: AIPermissionMode;
   commandBlocklist?: string[];
   terminalSessions: TerminalSessionInfo[];
+  webSearchConfig?: WebSearchConfig | null;
   setPendingApproval: (ctx: PendingApprovalContext | null) => void;
   autoTitleSession: (sessionId: string, text: string) => void;
 }
@@ -247,7 +251,11 @@ export function useAIChatStreaming({
     err: unknown,
   ) => {
     if (abortSignal.aborted) return;
-    const errorStr = err instanceof Error ? err.message : String(err);
+    let errorStr: string;
+    if (err instanceof Error) errorStr = err.message;
+    else if (typeof err === 'object' && err !== null && 'message' in err) errorStr = String((err as { message: unknown }).message);
+    else if (typeof err === 'string') errorStr = err;
+    else { try { errorStr = JSON.stringify(err) ?? 'Unknown error'; } catch { errorStr = 'Unknown error'; } }
     // Log the full unsanitized error for debugging
     console.error('[AIChatSidePanel] Stream error (full):', errorStr);
     const errorInfo = classifyError(errorStr);
@@ -460,7 +468,11 @@ export function useAIChatStreaming({
             id: generateId(),
             role: 'assistant',
             content: '',
-            errorInfo: classifyError(String(typedChunk.error)),
+            errorInfo: classifyError(
+              typedChunk.error instanceof Error ? typedChunk.error.message
+                : typeof typedChunk.error === 'string' ? typedChunk.error
+                : (() => { try { return JSON.stringify(typedChunk.error) ?? 'Unknown error'; } catch { return 'Unknown error'; } })(),
+            ),
             timestamp: Date.now(),
           });
           break;
@@ -621,7 +633,7 @@ export function useAIChatStreaming({
       sessions: context.terminalSessions,
       workspaceId: context.scopeTargetId,
       workspaceName: context.scopeLabel,
-    }, context.commandBlocklist, context.globalPermissionMode);
+    }, context.commandBlocklist, context.globalPermissionMode, context.webSearchConfig ?? undefined);
 
     const systemPrompt = buildSystemPrompt({
       scopeType: context.scopeType, scopeLabel: context.scopeLabel,
@@ -630,6 +642,7 @@ export function useAIChatStreaming({
         os: s.os, username: s.username, connected: s.connected,
       })),
       permissionMode: context.globalPermissionMode,
+      webSearchEnabled: isWebSearchReady(context.webSearchConfig),
     });
 
     // Guard: activeProvider must exist for Catty agent path
@@ -656,13 +669,35 @@ export function useAIChatStreaming({
     try {
       // Issue #5: Build SDK messages including tool-call and tool-result messages
       // so the LLM maintains full conversation context
+      const allMessages = currentSession?.messages ?? [];
+
+      // Collect all tool call IDs that have a corresponding tool result,
+      // so we can skip orphaned tool calls (e.g. from user stopping mid-execution)
+      const resolvedToolCallIds = new Set<string>();
+      for (const m of allMessages) {
+        if (m.role === 'tool' && m.toolResults) {
+          for (const tr of m.toolResults) resolvedToolCallIds.add(tr.toolCallId);
+        }
+      }
+
+      const findToolName = (toolCallId: string): string => {
+        for (const prev of allMessages) {
+          if (prev.role === 'assistant' && prev.toolCalls) {
+            const tc = prev.toolCalls.find(t => t.id === toolCallId);
+            if (tc) return tc.name;
+          }
+        }
+        return 'unknown';
+      };
+
       const sdkMessages: Array<ModelMessage> = [];
-      for (const m of (currentSession?.messages ?? [])) {
+      for (const m of allMessages) {
         if (m.role === 'user') {
           sdkMessages.push({ role: 'user', content: m.content });
         } else if (m.role === 'assistant') {
           if (m.toolCalls?.length) {
-            // Build assistant content parts: text + tool calls
+            // Only include tool calls that have matching results
+            const resolvedCalls = m.toolCalls.filter(tc => resolvedToolCallIds.has(tc.id));
             const contentParts: Array<
               { type: 'text'; text: string } |
               { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown }
@@ -670,7 +705,7 @@ export function useAIChatStreaming({
             if (m.content) {
               contentParts.push({ type: 'text' as const, text: m.content });
             }
-            for (const tc of m.toolCalls) {
+            for (const tc of resolvedCalls) {
               contentParts.push({
                 type: 'tool-call' as const,
                 toolCallId: tc.id,
@@ -678,23 +713,14 @@ export function useAIChatStreaming({
                 input: tc.arguments ?? {},
               });
             }
-            sdkMessages.push({ role: 'assistant', content: contentParts });
+            // If all tool calls were orphaned, just include the text content
+            if (contentParts.length > 0) {
+              sdkMessages.push({ role: 'assistant', content: contentParts.length === 1 && contentParts[0].type === 'text' ? (contentParts[0] as { type: 'text'; text: string }).text : contentParts });
+            }
           } else if (m.content) {
             sdkMessages.push({ role: 'assistant', content: m.content });
           }
         } else if (m.role === 'tool' && m.toolResults?.length) {
-          // Map tool results to SDK tool message format
-          // Gemini requires functionResponse.name to be non-empty,
-          // so we look up the toolName from the preceding assistant tool calls.
-          const findToolName = (toolCallId: string): string => {
-            for (const prev of currentSession?.messages ?? []) {
-              if (prev.role === 'assistant' && prev.toolCalls) {
-                const tc = prev.toolCalls.find(t => t.id === toolCallId);
-                if (tc) return tc.name;
-              }
-            }
-            return 'unknown';
-          };
           sdkMessages.push({
             role: 'tool',
             content: m.toolResults.map(tr => ({

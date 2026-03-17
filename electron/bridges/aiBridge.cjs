@@ -60,6 +60,9 @@ const acpActiveStreams = new Map();
 // ── Provider registry (synced from renderer, keys stay encrypted) ──
 const ENC_PREFIX = "enc:v1:";
 let providerConfigs = [];
+// Web search config (synced from renderer — apiKey stays encrypted, decrypted on use)
+let webSearchApiHost = null;
+let webSearchApiKeyEncrypted = null;
 
 /**
  * Decrypt an API key using Electron's safeStorage.
@@ -94,8 +97,17 @@ function resolveProviderApiKey(providerId) {
   };
 }
 
+/** Check if TLS verification should be skipped for a given provider. */
+function shouldSkipTLSVerify(providerId) {
+  if (!providerId) return false;
+  const config = providerConfigs.find(p => p.id === providerId);
+  return config?.skipTLSVerify === true;
+}
+
 /** Placeholder token used by the renderer to avoid sending real API keys over IPC. */
 const API_KEY_PLACEHOLDER = "__IPC_SECURED__";
+/** Placeholder for web search API key — replaced in main process before HTTP request. */
+const WEB_SEARCH_KEY_PLACEHOLDER = "__WEB_SEARCH_KEY__";
 
 /**
  * Replace the API key placeholder in HTTP headers and URL with the real decrypted key.
@@ -221,7 +233,7 @@ function _validateSenderImpl(event, allowSettings) {
  * renderer can construct a Response with the real status. Data continues to
  * flow via stream:data / stream:end / stream:error IPC events.
  */
-function streamRequest(url, options, event, requestId) {
+function streamRequest(url, options, event, requestId, skipTLS) {
   return new Promise((resolve, reject) => {
     const parsedUrl = new URL(url);
     const isHttps = parsedUrl.protocol === "https:";
@@ -240,29 +252,37 @@ function streamRequest(url, options, event, requestId) {
       return;
     }
 
-    const req = lib.request(
-      parsedUrl,
-      {
+    const reqOpts = {
         method: options.method || "POST",
         headers: options.headers || {},
         timeout: 120000, // 2 min connection timeout
-      },
+    };
+    if (skipTLS && isHttps) reqOpts.rejectUnauthorized = false;
+
+    const req = lib.request(parsedUrl, reqOpts,
       (res) => {
         const statusCode = res.statusCode || 0;
         const statusText = res.statusMessage || "";
 
         if (statusCode < 200 || statusCode >= 300) {
-          // Resolve immediately with error status so the renderer sees it
-          resolve({ statusCode, statusText });
-
+          // Read the error body before resolving so we can include it in the response
           let errorBody = "";
           res.on("data", (chunk) => { errorBody += chunk.toString(); });
           res.on("end", () => {
+            // Try to extract error message from JSON response (OpenAI-compatible format)
+            let errorDetail = statusText;
+            try {
+              const parsed = JSON.parse(errorBody);
+              errorDetail = parsed?.error?.message || parsed?.message || parsed?.detail || errorBody.slice(0, 500);
+            } catch {
+              if (errorBody.trim()) errorDetail = errorBody.slice(0, 500);
+            }
             safeSend(event.sender, "netcatty:ai:stream:error", {
               requestId,
-              error: `HTTP ${statusCode}: ${errorBody}`,
+              error: `HTTP ${statusCode}: ${errorDetail}`,
             });
             activeStreams.delete(requestId);
+            resolve({ statusCode, statusText: `${statusCode} ${errorDetail}` });
           });
           return;
         }
@@ -365,6 +385,30 @@ function registerHandlers(ipcMain) {
     return { ok: true };
   });
 
+  // ── Web search config sync (renderer → main, for fetch allowlist + key decryption) ──
+  ipcMain.handle("netcatty:ai:sync-web-search", async (event, { apiHost, apiKey }) => {
+    if (!validateSenderOrSettings(event)) return { ok: false };
+    webSearchApiHost = typeof apiHost === "string" ? apiHost : null;
+    webSearchApiKeyEncrypted = typeof apiKey === "string" ? apiKey : null;
+    rebuildProviderFetchHosts();
+    return { ok: true };
+  });
+
+  /**
+   * Inject the decrypted web search API key into request headers.
+   * Replaces __WEB_SEARCH_KEY__ placeholder, similar to __IPC_SECURED__ for providers.
+   */
+  function injectWebSearchKeyIntoHeaders(headers) {
+    if (!webSearchApiKeyEncrypted || !headers) return headers;
+    const realKey = decryptApiKeyValue(webSearchApiKeyEncrypted);
+    if (!realKey) return headers;
+    const patched = {};
+    for (const [k, v] of Object.entries(headers)) {
+      patched[k] = typeof v === "string" ? v.replace(WEB_SEARCH_KEY_PLACEHOLDER, realKey) : v;
+    }
+    return patched;
+  }
+
   // Temporarily add a host to the fetch allowlist (used by settings model listing).
   // Entries are auto-removed after 30 seconds unless they belong to a synced provider.
   const TEMP_ALLOWLIST_TTL = 30_000;
@@ -437,6 +481,11 @@ function registerHandlers(ipcMain) {
     "api.anthropic.com",
     "generativelanguage.googleapis.com",
     "openrouter.ai",
+    // Web search providers
+    "api.tavily.com",
+    "api.exa.ai",
+    "api.bochaai.com",
+    "open.bigmodel.cn",
   ]);
   // Dynamically populated from configured provider baseURLs
   const providerFetchHosts = new Set();
@@ -469,6 +518,19 @@ function registerHandlers(ipcMain) {
         // Invalid URL in config — skip
       }
     }
+    // Add web search apiHost if configured (e.g. SearXNG self-hosted instance)
+    if (webSearchApiHost) {
+      try {
+        const parsed = new URL(webSearchApiHost);
+        const host = parsed.hostname;
+        if (host === "localhost" || host === "127.0.0.1") {
+          const port = parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 80);
+          ALLOWED_LOCALHOST_PORTS.add(port);
+        } else {
+          providerFetchHosts.add(host);
+        }
+      } catch {}
+    }
   }
 
   // Allowed localhost ports to prevent SSRF (Issue #9)
@@ -484,16 +546,69 @@ function registerHandlers(ipcMain) {
     8888,   // Common local dev
   ];
   const ALLOWED_LOCALHOST_PORTS = new Set(BUILTIN_LOCALHOST_PORTS);
-  function isAllowedFetchUrl(urlString) {
+  // RFC1918 / link-local / loopback / IPv6 private ranges — used by SSRF guard
+  function isPrivateIp(ip) {
+    if (!ip) return false;
+    // Strip IPv6 brackets that URL.hostname may include
+    const cleaned = ip.replace(/^\[|\]$/g, "");
+    if (cleaned === "::1" || cleaned === "0.0.0.0" || cleaned === "::") return true;
+    // IPv6 private ranges: fc00::/7 (unique local), fe80::/10 (link-local), ::ffff:127.x (mapped loopback)
+    const lower = cleaned.toLowerCase();
+    if (lower.startsWith("fc") || lower.startsWith("fd")) return true;   // fc00::/7
+    if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) return true; // fe80::/10
+    if (lower.startsWith("::ffff:")) {
+      // IPv4-mapped IPv6 — extract IPv4 portion and check
+      const v4 = lower.slice(7);
+      return isPrivateIp(v4);
+    }
+    // IPv4
+    const parts = cleaned.split(".");
+    if (parts.length === 4 && parts.every(p => /^\d+$/.test(p))) {
+      const [a, b] = parts.map(Number);
+      if (a === 10) return true;                           // 10.0.0.0/8
+      if (a === 172 && b >= 16 && b <= 31) return true;   // 172.16.0.0/12
+      if (a === 192 && b === 168) return true;             // 192.168.0.0/16
+      if (a === 127) return true;                          // 127.0.0.0/8
+      if (a === 169 && b === 254) return true;             // 169.254.0.0/16 link-local
+      if (a === 100 && b >= 64 && b <= 127) return true;   // 100.64.0.0/10 CGNAT (Tailscale etc.)
+      if (a === 0) return true;                            // 0.0.0.0/8
+    }
+    return false;
+  }
+
+  function isPrivateHost(hostname) {
+    if (hostname === "localhost") return true;
+    // metadata endpoints (AWS, GCP, Azure)
+    if (hostname === "metadata.google.internal") return true;
+    return isPrivateIp(hostname);
+  }
+
+  function isAllowedFetchUrl(urlString, skipHostCheck) {
     try {
       const parsed = new URL(urlString);
-      // Allow localhost/127.0.0.1 only on known ports (e.g. Ollama)
+      // Always block private/internal hosts when skipHostCheck is set (SSRF protection)
+      if (skipHostCheck) {
+        if (isPrivateHost(parsed.hostname)) return false;
+        // Require HTTPS for skipHostCheck requests
+        if (parsed.protocol !== "https:") return false;
+        return true;
+      }
+      // Allow localhost/127.0.0.1 only on known ports (e.g. Ollama) — normal fetch path only
       if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") {
         const port = parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 80);
         return ALLOWED_LOCALHOST_PORTS.has(port);
       }
-      // Require HTTPS for remote hosts
-      if (parsed.protocol !== "https:") return false;
+      // Require HTTPS for remote hosts; allow HTTP only for the configured web search apiHost
+      // (e.g. self-hosted SearXNG at http://searxng.lan:8080 or http://192.168.x.x)
+      if (parsed.protocol !== "https:") {
+        if (!webSearchApiHost) return false;
+        try {
+          const wsHost = new URL(webSearchApiHost).hostname;
+          if (parsed.hostname !== wsHost) return false;
+        } catch {
+          return false;
+        }
+      }
       // Check built-in + provider-configured host allowlist
       if (BUILTIN_FETCH_HOSTS.has(parsed.hostname)) return true;
       if (providerFetchHosts.has(parsed.hostname)) return true;
@@ -534,7 +649,8 @@ function registerHandlers(ipcMain) {
         return { ok: false, error: "URL host is not in the allowed list" };
       }
 
-      const { statusCode, statusText } = await streamRequest(resolvedUrl, { method: "POST", headers: resolvedHeaders, body }, event, requestId);
+      const skipTLS = shouldSkipTLSVerify(providerId);
+      const { statusCode, statusText } = await streamRequest(resolvedUrl, { method: "POST", headers: resolvedHeaders, body }, event, requestId, skipTLS);
       return { ok: true, statusCode, statusText };
     } catch (err) {
       return { ok: false, error: err?.message || String(err) };
@@ -554,7 +670,7 @@ function registerHandlers(ipcMain) {
   });
 
   // Non-streaming request (for model listing, validation, etc.)
-  ipcMain.handle("netcatty:ai:fetch", async (event, { url, method, headers, body, providerId }) => {
+  ipcMain.handle("netcatty:ai:fetch", async (event, { url, method, headers, body, providerId, skipHostCheck, followRedirects, skipTLSVerify }) => {
     // Validate IPC sender — settings window needs this for model listing
     if (!validateSenderOrSettings(event)) {
       return { ok: false, status: 0, data: "", error: "Unauthorized IPC sender" };
@@ -563,7 +679,8 @@ function registerHandlers(ipcMain) {
     // Inject real API key if providerId is given (replaces placeholder in headers/URL)
     const patched = injectApiKeyIntoRequest(url, headers, providerId);
     const resolvedUrl = patched.url;
-    const resolvedHeaders = patched.headers;
+    // Also inject web search API key if placeholder is present
+    const resolvedHeaders = injectWebSearchKeyIntoHeaders(patched.headers);
 
     // Validate URL: block non-HTTP(S) schemes and internal network access
     try {
@@ -576,53 +693,71 @@ function registerHandlers(ipcMain) {
       return { ok: false, status: 0, data: "", error: "Invalid URL" };
     }
 
-    // Check URL against allowed hosts (server-side allowlist only)
-    if (!isAllowedFetchUrl(resolvedUrl)) {
+    // Check URL against allowed hosts; skipHostCheck allows public HTTPS but still blocks private/internal
+    if (!isAllowedFetchUrl(resolvedUrl, !!skipHostCheck)) {
       return { ok: false, status: 0, data: "", error: "URL host is not in the allowed list" };
     }
 
-    return new Promise((resolve) => {
-      const parsedUrl = new URL(resolvedUrl);
-      const isHttps = parsedUrl.protocol === "https:";
-      const lib = isHttps ? https : http;
-      const MAX_RESPONSE_SIZE = 10 * 1024 * 1024; // 10MB safety limit
+    const MAX_RESPONSE_SIZE = 10 * 1024 * 1024; // 10MB safety limit
+    const MAX_REDIRECTS = followRedirects ? 5 : 0;
 
-      const req = lib.request(
-        parsedUrl,
-        { method: method || "GET", headers: resolvedHeaders || {}, timeout: 30000 },
-        (res) => {
-          let data = "";
-          let totalSize = 0;
-          res.on("data", (chunk) => {
-            totalSize += chunk.length;
-            if (totalSize > MAX_RESPONSE_SIZE) {
-              req.destroy();
-              resolve({ ok: false, status: 0, data: "", error: "Response body exceeded maximum size (10MB)" });
+    function doFetch(fetchUrl, redirectsLeft) {
+      return new Promise((resolve) => {
+        const parsedUrl = new URL(fetchUrl);
+        const isHttps = parsedUrl.protocol === "https:";
+        const lib = isHttps ? https : http;
+
+        const fetchOpts = { method: method || "GET", headers: resolvedHeaders || {}, timeout: 30000 };
+        if ((skipTLSVerify || shouldSkipTLSVerify(providerId)) && isHttps) fetchOpts.rejectUnauthorized = false;
+        const req = lib.request(parsedUrl, fetchOpts,
+          (res) => {
+            // Handle redirects
+            if (redirectsLeft > 0 && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+              const location = new URL(res.headers.location, fetchUrl).href;
+              res.resume(); // drain the response
+              // Revalidate the redirect target hostname (blocks localhost/metadata etc.)
+              if (!isAllowedFetchUrl(location, !!skipHostCheck)) {
+                resolve({ ok: false, status: 0, data: "", error: "Redirect target is not allowed" });
+                return;
+              }
+              resolve(doFetch(location, redirectsLeft - 1));
               return;
             }
-            data += chunk.toString();
-          });
-          res.on("end", () => {
-            resolve({
-              ok: res.statusCode >= 200 && res.statusCode < 300,
-              status: res.statusCode,
-              data,
+            let data = "";
+            let totalSize = 0;
+            res.on("data", (chunk) => {
+              totalSize += chunk.length;
+              if (totalSize > MAX_RESPONSE_SIZE) {
+                req.destroy();
+                resolve({ ok: false, status: 0, data: "", error: "Response body exceeded maximum size (10MB)" });
+                return;
+              }
+              data += chunk.toString();
             });
-          });
-        }
-      );
+            res.on("end", () => {
+              resolve({
+                ok: res.statusCode >= 200 && res.statusCode < 300,
+                status: res.statusCode,
+                data,
+              });
+            });
+          }
+        );
 
-      req.on("error", (err) => {
-        resolve({ ok: false, status: 0, data: "", error: err.message });
-      });
-      req.on("timeout", () => {
-        req.destroy();
-        resolve({ ok: false, status: 0, data: "", error: "Request timeout" });
-      });
+        req.on("error", (err) => {
+          resolve({ ok: false, status: 0, data: "", error: err.message });
+        });
+        req.on("timeout", () => {
+          req.destroy();
+          resolve({ ok: false, status: 0, data: "", error: "Request timeout" });
+        });
 
-      if (body) req.write(body);
-      req.end();
-    });
+        if (body) req.write(body);
+        req.end();
+      });
+    }
+
+    return doFetch(resolvedUrl, MAX_REDIRECTS);
   });
 
   // Execute a command on a terminal session (for Catty Agent)

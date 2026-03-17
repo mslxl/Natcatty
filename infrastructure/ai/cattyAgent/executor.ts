@@ -1,13 +1,10 @@
-import type { ToolCall, ToolResult, AIPermissionMode } from '../types';
+import type { ToolCall, ToolResult, AIPermissionMode, WebSearchConfig } from '../types';
 import {
   executeTerminalExecute,
-  executeTerminalSendInput,
-  executeSftpListDirectory,
-  executeSftpReadFile,
-  executeSftpWriteFile,
   executeWorkspaceGetInfo,
   executeWorkspaceGetSessionInfo,
-  executeMultiHostExecute,
+  executeWebSearch,
+  executeUrlFetch,
   type ToolDeps,
   type ToolExecResult,
 } from '../shared/toolExecutors';
@@ -27,26 +24,6 @@ export interface NetcattyBridge {
     exitCode?: number;
     error?: string;
   }>;
-  aiTerminalWrite(
-    sessionId: string,
-    data: string,
-  ): Promise<{ ok: boolean; error?: string }>;
-  listSftp(
-    sftpId: string,
-    path: string,
-    encoding?: string,
-  ): Promise<unknown>;
-  readSftp(
-    sftpId: string,
-    path: string,
-    encoding?: string,
-  ): Promise<string>;
-  writeSftp(
-    sftpId: string,
-    path: string,
-    content: string,
-    encoding?: string,
-  ): Promise<void>;
 }
 
 // Workspace context provided to the executor
@@ -60,7 +37,6 @@ export interface ExecutorContext {
     os?: string;
     username?: string;
     connected: boolean;
-    sftpId?: string; // If SFTP is open for this session
   }>;
   // Workspace info
   workspaceId?: string;
@@ -90,22 +66,6 @@ function toToolResult(toolCallId: string, r: ToolExecResult): ToolResult {
       .join('\n\n');
     return { toolCallId, content: output || 'Command completed (no output)' };
   }
-  // For terminal_send_input
-  if (typeof r.data === 'object' && r.data !== null && 'sent' in r.data) {
-    return { toolCallId, content: `Sent input to terminal: ${JSON.stringify((r.data as { sent: string }).sent)}` };
-  }
-  // For sftp_list_directory with output fallback
-  if (typeof r.data === 'object' && r.data !== null && 'output' in r.data && !('files' in r.data)) {
-    return { toolCallId, content: (r.data as { output: string }).output };
-  }
-  // For sftp_read_file
-  if (typeof r.data === 'object' && r.data !== null && 'content' in r.data) {
-    return { toolCallId, content: (r.data as { content: string }).content };
-  }
-  // For sftp_write_file
-  if (typeof r.data === 'object' && r.data !== null && 'written' in r.data) {
-    return { toolCallId, content: `File written: ${(r.data as { written: string }).written}` };
-  }
   // Default: JSON-serialize the data
   return { toolCallId, content: JSON.stringify(r.data, null, 2) };
 }
@@ -119,6 +79,7 @@ export function createToolExecutor(
   context: ExecutorContext,
   commandBlocklist?: string[],
   permissionMode: AIPermissionMode = 'confirm',
+  webSearchConfig?: WebSearchConfig,
 ): (toolCall: ToolCall) => Promise<ToolResult> {
   return async (toolCall: ToolCall): Promise<ToolResult> => {
     if (!bridge) {
@@ -129,7 +90,7 @@ export function createToolExecutor(
       };
     }
 
-    const deps: ToolDeps = { bridge, context, commandBlocklist, permissionMode };
+    const deps: ToolDeps = { bridge, context, commandBlocklist, permissionMode, webSearchConfig };
     const args = toolCall.arguments;
 
     try {
@@ -138,40 +99,6 @@ export function createToolExecutor(
           const r = await executeTerminalExecute(deps, {
             sessionId: String(args.sessionId || ''),
             command: String(args.command || ''),
-          });
-          return toToolResult(toolCall.id, r);
-        }
-
-        case 'terminal_send_input': {
-          const r = await executeTerminalSendInput(deps, {
-            sessionId: String(args.sessionId || ''),
-            input: String(args.input || ''),
-          });
-          return toToolResult(toolCall.id, r);
-        }
-
-        case 'sftp_list_directory': {
-          const r = await executeSftpListDirectory(deps, {
-            sessionId: String(args.sessionId || ''),
-            path: String(args.path || '/'),
-          });
-          return toToolResult(toolCall.id, r);
-        }
-
-        case 'sftp_read_file': {
-          const r = await executeSftpReadFile(deps, {
-            sessionId: String(args.sessionId || ''),
-            path: String(args.path || ''),
-            maxBytes: Number(args.maxBytes) || 10000,
-          });
-          return toToolResult(toolCall.id, r);
-        }
-
-        case 'sftp_write_file': {
-          const r = await executeSftpWriteFile(deps, {
-            sessionId: String(args.sessionId || ''),
-            path: String(args.path || ''),
-            content: String(args.content || ''),
           });
           return toToolResult(toolCall.id, r);
         }
@@ -188,12 +115,18 @@ export function createToolExecutor(
           return toToolResult(toolCall.id, r);
         }
 
-        case 'multi_host_execute': {
-          const r = await executeMultiHostExecute(deps, {
-            sessionIds: (args.sessionIds as string[]) || [],
-            command: String(args.command || ''),
-            mode: String(args.mode || 'parallel'),
-            stopOnError: Boolean(args.stopOnError),
+        case 'web_search': {
+          const r = await executeWebSearch(deps, {
+            query: String(args.query || ''),
+            maxResults: Number(args.maxResults) || 5,
+          });
+          return toToolResult(toolCall.id, r);
+        }
+
+        case 'url_fetch': {
+          const r = await executeUrlFetch(deps, {
+            url: String(args.url || ''),
+            maxLength: Number(args.maxLength) || 50000,
           });
           return toToolResult(toolCall.id, r);
         }

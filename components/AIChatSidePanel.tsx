@@ -29,6 +29,7 @@ import type {
   DiscoveredAgent,
   ExternalAgentConfig,
   ProviderConfig,
+  WebSearchConfig,
 } from '../infrastructure/ai/types';
 import { getAgentModelPresets } from '../infrastructure/ai/types';
 import { useAgentDiscovery } from '../application/state/useAgentDiscovery';
@@ -81,6 +82,9 @@ interface AIChatSidePanelProps {
   setGlobalPermissionMode?: (mode: AIPermissionMode) => void;
   commandBlocklist?: string[];
   maxIterations?: number;
+
+  // Web search
+  webSearchConfig?: WebSearchConfig | null;
 
   // Context
   scopeType: 'terminal' | 'workspace';
@@ -137,6 +141,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   setGlobalPermissionMode,
   commandBlocklist,
   maxIterations = 20,
+  webSearchConfig,
   scopeType,
   scopeTargetId,
   scopeHostIds,
@@ -226,6 +231,16 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       void bridge.aiSyncProviders(providers);
     }
   }, [providers]);
+
+  // Sync web search config to main process (allowlist + encrypted API key for server-side decryption).
+  // Note: This is fire-and-forget; if the first search fires before sync completes, it will fail
+  // with a clear error and succeed on retry. Making this blocking would require async tool creation.
+  useEffect(() => {
+    const bridge = getNetcattyBridge();
+    if (bridge?.aiSyncWebSearch) {
+      void bridge.aiSyncWebSearch(webSearchConfig?.apiHost || null, webSearchConfig?.apiKey || null);
+    }
+  }, [webSearchConfig?.apiHost, webSearchConfig?.apiKey, webSearchConfig?.enabled]);
 
   // Abort all active streams and clean up on unmount
   useEffect(() => {
@@ -452,6 +467,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         globalPermissionMode,
         commandBlocklist,
         terminalSessions,
+        webSearchConfig,
         setPendingApproval,
         autoTitleSession,
       });
@@ -463,7 +479,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     setStreamingForScope, setInputValue, clearImages,
     sendToExternalAgent, sendToCattyAgent, reportStreamError, autoTitleSession, t,
     abortControllersRef, terminalSessions, providers, selectedAgentModel,
-    scopeType, scopeTargetId, scopeLabel, globalPermissionMode, commandBlocklist, setPendingApproval,
+    scopeType, scopeTargetId, scopeLabel, globalPermissionMode, commandBlocklist, webSearchConfig, setPendingApproval,
   ]);
 
   const handleStop = useCallback(() => {
@@ -584,6 +600,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
               scopeLabel,
               globalPermissionMode,
               commandBlocklist,
+              webSearchConfig,
             })}
             onReject={(messageId) => void handleApprovalResponse(messageId, false, {
               terminalSessions,
@@ -592,6 +609,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
               scopeLabel,
               globalPermissionMode,
               commandBlocklist,
+              webSearchConfig,
             })}
           />
 

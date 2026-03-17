@@ -1433,6 +1433,7 @@ const zhCN: Messages = {
   'snippets.renameDialog.error.duplicate': '已存在同名的代码包',
   'snippets.renameDialog.error.invalidChars': '代码包名称只能包含字母、数字、连字符和下划线',
 
+  'snippets.field.noAutoRun': '仅粘贴（不自动执行）',
   // Snippet Shortkey
   'snippets.field.shortkey': '快捷键',
   'snippets.shortkey.placeholder': '点击设置快捷键',
@@ -1528,6 +1529,7 @@ const zhCN: Messages = {
   'ai.providers.apiKey.placeholder': '输入 API Key',
   'ai.providers.apiKey.decrypting': '解密中...',
   'ai.providers.baseUrl': 'Base URL',
+  'ai.providers.skipTLSVerify': '跳过 TLS 证书验证（用于自签名证书）',
   'ai.providers.defaultModel': '默认模型',
   'ai.providers.defaultModel.placeholder': '例如 gpt-4o, claude-sonnet-4-20250514',
   'ai.providers.refreshModels': '刷新模型列表',
@@ -1632,6 +1634,21 @@ const zhCN: Messages = {
 
   // AI Error
   'ai.codex.bridgeError': 'Codex 主进程处理器尚未加载。请完全重启 Netcatty 或重启 Electron 开发进程，然后重试。',
+
+  // AI Web Search
+  'ai.webSearch.title': '网络搜索',
+  'ai.webSearch.enable': '启用网络搜索',
+  'ai.webSearch.enable.description': '允许 AI 代理搜索互联网获取最新信息。',
+  'ai.webSearch.provider': '搜索供应商',
+  'ai.webSearch.provider.description': '选择一个网络搜索 API 供应商。',
+  'ai.webSearch.apiKey': 'API 密钥',
+  'ai.webSearch.apiKey.description': '所选搜索供应商的 API 密钥。',
+  'ai.webSearch.apiKey.placeholder': '输入 API 密钥...',
+  'ai.webSearch.apiHost': 'API 地址',
+  'ai.webSearch.apiHost.description': '自定义 API 端点。除非使用代理，否则保持默认值。',
+  'ai.webSearch.apiHost.searxngDescription': 'SearXNG 实例的 URL（必填）。',
+  'ai.webSearch.maxResults': '最大结果数',
+  'ai.webSearch.maxResults.description': '搜索返回的最大结果数（1-20）。',
 
   // AI Safety Settings
   'ai.safety.title': '安全',

@@ -10,6 +10,7 @@ export interface ProviderConfig {
   defaultModel?: string;
   customHeaders?: Record<string, string>;
   enabled: boolean;
+  skipTLSVerify?: boolean;   // skip TLS certificate verification (for self-signed certs)
 }
 
 export interface ModelInfo {
@@ -162,6 +163,38 @@ export interface DiscoveredAgent {
   acpArgs?: string[];
 }
 
+// Web Search types
+export type WebSearchProviderId = 'tavily' | 'exa' | 'bocha' | 'zhipu' | 'searxng';
+
+export interface WebSearchConfig {
+  providerId: WebSearchProviderId;
+  apiKey?: string;        // enc:v1: encrypted via credentialBridge
+  apiHost?: string;       // custom API endpoint (required for SearXNG)
+  enabled: boolean;
+  maxResults?: number;    // default 5
+}
+
+export const WEB_SEARCH_PROVIDER_PRESETS: Record<WebSearchProviderId, { name: string; defaultApiHost: string; requiresApiKey: boolean }> = {
+  tavily: { name: 'Tavily', defaultApiHost: 'https://api.tavily.com', requiresApiKey: true },
+  exa: { name: 'Exa', defaultApiHost: 'https://api.exa.ai', requiresApiKey: true },
+  bocha: { name: 'Bocha', defaultApiHost: 'https://api.bochaai.com', requiresApiKey: true },
+  zhipu: { name: 'Zhipu', defaultApiHost: 'https://open.bigmodel.cn/api/paas/v4', requiresApiKey: true },
+  searxng: { name: 'SearXNG', defaultApiHost: '', requiresApiKey: false },
+};
+
+/** Check if a WebSearchConfig is fully configured and ready to use. */
+export function isWebSearchReady(config?: WebSearchConfig | null): boolean {
+  if (!config?.enabled) return false;
+  const preset = WEB_SEARCH_PROVIDER_PRESETS[config.providerId];
+  if (preset?.requiresApiKey && !config.apiKey) return false;
+  if (config.providerId === 'searxng' && !config.apiHost) return false;
+  // Validate apiHost is a well-formed URL if provided
+  if (config.apiHost) {
+    try { new URL(config.apiHost); } catch { return false; }
+  }
+  return true;
+}
+
 // AI Settings (stored in localStorage)
 export interface AISettings {
   providers: ProviderConfig[];
@@ -173,6 +206,7 @@ export interface AISettings {
   commandBlocklist: string[];    // global command blocklist patterns
   commandTimeout: number;        // seconds, default 60
   maxIterations: number;         // doom loop prevention, default 20
+  webSearchConfig?: WebSearchConfig;
 }
 
 export const DEFAULT_COMMAND_BLOCKLIST = [

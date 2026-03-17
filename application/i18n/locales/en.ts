@@ -1418,6 +1418,7 @@ const en: Messages = {
   'snippets.renameDialog.error.duplicate': 'A package with this name already exists',
   'snippets.renameDialog.error.invalidChars': 'Package name can only contain letters, numbers, hyphens, and underscores',
 
+  'snippets.field.noAutoRun': 'Paste only (do not auto-execute)',
   // Snippet Shortkey
   'snippets.field.shortkey': 'Keyboard Shortcut',
   'snippets.shortkey.placeholder': 'Click to set shortcut',
@@ -1513,6 +1514,7 @@ const en: Messages = {
   'ai.providers.apiKey.placeholder': 'Enter API key',
   'ai.providers.apiKey.decrypting': 'Decrypting...',
   'ai.providers.baseUrl': 'Base URL',
+  'ai.providers.skipTLSVerify': 'Skip TLS certificate verification (for self-signed certs)',
   'ai.providers.defaultModel': 'Default Model',
   'ai.providers.defaultModel.placeholder': 'e.g. gpt-4o, claude-sonnet-4-20250514',
   'ai.providers.refreshModels': 'Refresh models',
@@ -1617,6 +1619,21 @@ const en: Messages = {
 
   // AI Error
   'ai.codex.bridgeError': 'Codex main-process handlers are not loaded yet. Fully restart Netcatty, or restart the Electron dev process, then try again.',
+
+  // AI Web Search
+  'ai.webSearch.title': 'Web Search',
+  'ai.webSearch.enable': 'Enable Web Search',
+  'ai.webSearch.enable.description': 'Allow the AI agent to search the web for current information.',
+  'ai.webSearch.provider': 'Search Provider',
+  'ai.webSearch.provider.description': 'Choose a web search API provider.',
+  'ai.webSearch.apiKey': 'API Key',
+  'ai.webSearch.apiKey.description': 'API key for the selected search provider.',
+  'ai.webSearch.apiKey.placeholder': 'Enter API key...',
+  'ai.webSearch.apiHost': 'API Host',
+  'ai.webSearch.apiHost.description': 'Custom API endpoint. Leave default unless you use a proxy.',
+  'ai.webSearch.apiHost.searxngDescription': 'URL of your SearXNG instance (required).',
+  'ai.webSearch.maxResults': 'Max Results',
+  'ai.webSearch.maxResults.description': 'Maximum number of search results to return (1-20).',
 
   // AI Safety Settings
   'ai.safety.title': 'Safety',

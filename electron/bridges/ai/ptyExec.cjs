@@ -165,7 +165,7 @@ function execViaChannel(sshClient, command, options) {
         return;
       }
       if (!execStream) {
-        resolve({ ok: false, output: 'Failed to create exec stream', exitCode: 1 });
+        resolve({ ok: false, error: 'Failed to create exec stream', exitCode: 1 });
         return;
       }
       let stdout = "";
@@ -184,7 +184,12 @@ function execViaChannel(sshClient, command, options) {
         if (finished) return;
         finished = true;
         clearTimeout(timeoutId);
-        resolve({ ok: code === 0, stdout, stderr, exitCode: code });
+        // code is null when SSH disconnects or process is signal-terminated
+        if (code == null) {
+          resolve({ ok: false, stdout, stderr, exitCode: -1, error: "Command terminated unexpectedly (connection lost or signal)" });
+        } else {
+          resolve({ ok: code === 0, stdout, stderr, exitCode: code });
+        }
       });
     });
   });

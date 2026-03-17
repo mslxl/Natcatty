@@ -10,10 +10,11 @@ export interface SystemPromptContext {
     connected: boolean;
   }>;
   permissionMode: 'observer' | 'confirm' | 'autonomous';
+  webSearchEnabled?: boolean;
 }
 
 export function buildSystemPrompt(context: SystemPromptContext): string {
-  const { scopeType, scopeLabel, hosts, permissionMode } = context;
+  const { scopeType, scopeLabel, hosts, permissionMode, webSearchEnabled } = context;
 
   const scopeDescription = buildScopeDescription(scopeType, scopeLabel);
   const hostList = buildHostList(hosts);
@@ -37,7 +38,7 @@ ${permissionRules}
 
 1. **Plan before acting.** When a task involves multiple steps, present a brief numbered plan to the user before executing. Wait for acknowledgment on complex or risky operations.
 
-2. **Use the right tool.** For operations that target multiple hosts, prefer \`multi_host_execute\` over calling \`terminal_execute\` repeatedly. For normal shell commands, use \`terminal_execute\` so you receive the command output. Use \`terminal_send_input\` only when responding to an interactive prompt that is already running in the terminal. \`terminal_send_input\` writes keystrokes but does not read back the updated terminal screen.
+2. **Use the right tool.** For normal shell commands, use \`terminal_execute\` so you receive the command output. When operating on multiple hosts, call \`terminal_execute\` for each host.
 
 3. **Never execute dangerous commands.** Commands matching the blocklist (e.g. \`rm -rf /\`, \`mkfs\`, \`dd\` to disk devices, \`shutdown\`, fork bombs, recursive chmod 777 on root) are strictly forbidden and will be automatically denied. Do not attempt to bypass these restrictions.
 
@@ -49,7 +50,11 @@ ${permissionRules}
 
 7. **Respect connection status.** Only attempt operations on hosts that are currently connected. If a host is disconnected, inform the user and suggest reconnecting.
 
-8. **Be careful with file operations.** When writing files via SFTP, confirm the target path with the user if there is any ambiguity. Always prefer appending or targeted edits over full file overwrites when possible.`;
+8. **Be careful with file operations.** When writing files via shell commands, confirm the target path with the user if there is any ambiguity. Always prefer appending or targeted edits over full file overwrites when possible.
+
+9. **Fetch URLs when provided.** When the user shares a URL or asks you to read a webpage, use \`url_fetch\` to retrieve its content.${webSearchEnabled ? `
+
+10. **Search proactively.** You have access to \`web_search\`. Use it whenever you encounter something you are unsure about, don't fully understand, or need to verify — including unfamiliar commands, tools, error messages, configuration syntax, or any factual claims. Don't guess; search first. Also use it when the user asks about current events or recent information. Cite sources when presenting search results.` : ''}`;
 }
 
 function buildScopeDescription(
@@ -98,9 +103,9 @@ function buildPermissionRules(
     case 'observer':
       return [
         'You are in **observer** mode. You may only perform read-only operations:',
-        '- Listing directories (`sftp_list_directory`)',
-        '- Reading files (`sftp_read_file`)',
         '- Getting workspace and session info (`workspace_get_info`, `workspace_get_session_info`)',
+        '- Fetching URLs (`url_fetch`)',
+        '- Searching the web (`web_search`)',
         '',
         'All write and execute operations are denied. If the user asks you to run a command or modify a file, explain that observer mode does not allow it and suggest switching to confirm or autonomous mode.',
       ].join('\n');
@@ -108,9 +113,7 @@ function buildPermissionRules(
     case 'confirm':
       return [
         'You are in **confirm** mode. Every write or execute operation requires explicit user approval before it runs:',
-        '- Command execution (`terminal_execute`, `multi_host_execute`)',
-        '- Sending terminal input (`terminal_send_input`)',
-        '- Writing files (`sftp_write_file`)',
+        '- Command execution (`terminal_execute`)',
         '',
         'Read-only operations are allowed without confirmation. When proposing a command, clearly state what it will do so the user can make an informed decision.',
       ].join('\n');
