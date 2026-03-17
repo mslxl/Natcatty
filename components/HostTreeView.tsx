@@ -61,6 +61,17 @@ interface TreeNodeProps {
   toggleHostSelection?: (hostId: string) => void;
 }
 
+// Helper function to recursively count all hosts in a node and its children
+const countAllHostsInNode = (node: GroupNode): number => {
+  let count = node.hosts.length;
+  if (node.children) {
+    Object.values(node.children).forEach((child) => {
+      count += countAllHostsInNode(child);
+    });
+  }
+  return count;
+};
+
 const TreeNode: React.FC<TreeNodeProps> = ({
   node,
   depth,
@@ -89,6 +100,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   const hasChildren = node.children && Object.keys(node.children).length > 0;
   const paddingLeft = `${depth * 20 + 12}px`;
   const isManaged = managedGroupPaths?.has(node.path) ?? false;
+  const hostsCountInNode = useMemo(() => countAllHostsInNode(node), [node]);
 
   const childNodes = useMemo(() => {
     if (!node.children) return [];
@@ -171,7 +183,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
                 )}
                 {(node.hosts.length > 0 || hasChildren) && (
                   <span className="text-xs opacity-70 bg-background/50 px-2 py-0.5 rounded-full border border-border">
-                    {node.hosts.length}
+                    {hostsCountInNode}
                   </span>
                 )}
               </div>
