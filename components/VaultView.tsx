@@ -896,19 +896,19 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
         insertPath(host.group, host);
       }
     });
+    // Pre-compute totalHostCount for each node bottom-up so TreeNode can read it directly
+    // without recomputing on every re-render triggered by expand/collapse/selection changes.
+    const computeCounts = (node: GroupNode): number => {
+      let count = node.hosts.length;
+      Object.values(node.children).forEach((child) => {
+        count += computeCounts(child);
+      });
+      node.totalHostCount = count;
+      return count;
+    };
+    Object.values(root).forEach(computeCounts);
     return root;
   }, [treeViewHosts, customGroups]);
-
-  // Helper function to recursively count all hosts in a node and its children
-  const countAllHostsInNode = (node: GroupNode): number => {
-    let count = node.hosts.length;
-    if (node.children) {
-      Object.values(node.children).forEach((child) => {
-        count += countAllHostsInNode(child);
-      });
-    }
-    return count;
-  };
 
   // Create tree view specific group tree that excludes ungrouped hosts
   const treeViewGroupTree = useMemo<GroupNode[]>(() => {
@@ -1749,7 +1749,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                                       )}
                                     </div>
                                     <div className="text-[11px] text-muted-foreground">
-                                      {t("vault.groups.hostsCount", { count: countAllHostsInNode(node) })}
+                                      {t("vault.groups.hostsCount", { count: node.totalHostCount ?? node.hosts.length })}
                                     </div>
                                   </div>
                                 </div>

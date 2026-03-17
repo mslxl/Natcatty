@@ -168,6 +168,8 @@ export interface GroupNode {
   path: string;
   children: Record<string, GroupNode>;
   hosts: Host[];
+  /** Pre-computed total host count including all descendants. Set during tree construction. */
+  totalHostCount?: number;
 }
 
 export interface SyncConfig {
