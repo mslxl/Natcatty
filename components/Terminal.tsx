@@ -247,8 +247,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       // Host-level toggle: undefined = inherit global, true/false = explicit override
       const hostEnabled = host?.keywordHighlightEnabled;
 
-      // If host explicitly disabled highlighting, disable everything for this terminal
-      const effectiveGlobalEnabled = hostEnabled === false ? false : globalEnabled;
+      // Global and host-level highlights are independent:
+      // global toggle controls global rules, host toggle controls host-specific rules
+      const effectiveGlobalEnabled = globalEnabled;
       const effectiveHostEnabled = hostEnabled ?? false;
 
       const mergedRules = [
@@ -542,7 +543,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         const hostRules = host?.keywordHighlightRules ?? [];
         const globalEnabled = terminalSettingsRef.current?.keywordHighlightEnabled ?? false;
         const hostEnabled = host?.keywordHighlightEnabled;
-        const effectiveGlobalEnabled = hostEnabled === false ? false : globalEnabled;
+        const effectiveGlobalEnabled = globalEnabled;
         const effectiveHostEnabled = hostEnabled ?? false;
         const mergedRules = [
           ...(effectiveGlobalEnabled ? globalRules : []),
