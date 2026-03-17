@@ -57,6 +57,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
   const hasCheckedRemoteRef = useRef(false);
   const isInitializedRef = useRef(false);
   const isSyncRunningRef = useRef(false);
+  const skipNextSyncRef = useRef(false);
 
   const getSyncSnapshot = useCallback(() => {
     let effectivePFRules = config.portForwardingRules;
@@ -162,6 +163,16 @@ export const useAutoSync = (config: AutoSyncConfig) => {
 
       const results = await sync.syncNow(payload);
 
+      // Apply merged payloads first (before checking for failures) so local
+      // state gets updated even when some providers failed
+      for (const result of results.values()) {
+        if (result.mergedPayload) {
+          config.onApplyPayload(result.mergedPayload);
+          skipNextSyncRef.current = true;
+          break; // All providers share the same merged payload
+        }
+      }
+
       for (const result of results.values()) {
         if (!result.success) {
           if (result.conflictDetected) {
@@ -207,18 +218,26 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     
     try {
       console.log('[AutoSync] Checking remote version...');
+      // Load base BEFORE downloading (downloadFromProvider overwrites the base)
+      const base = await manager.loadSyncBase(connectedProvider);
       const remotePayload = await sync.downloadFromProvider(connectedProvider);
-      
+
       if (remotePayload && remotePayload.syncedAt > state.localUpdatedAt) {
-        console.log('[AutoSync] Remote is newer, applying...');
-        config.onApplyPayload(remotePayload);
+        const { mergeSyncPayloads } = await import('../../domain/syncMerge');
+        const localPayload = buildPayload();
+        const mergeResult = mergeSyncPayloads(base, localPayload, remotePayload);
+
+        console.log('[AutoSync] Remote is newer, merged:', mergeResult.summary);
+        config.onApplyPayload(mergeResult.payload);
+        // Don't save base or skip auto-sync — let the data-change effect
+        // naturally trigger an upload of the merged payload (which will
+        // go through syncAllProviders and save base on success).
         toast.success(t('sync.autoSync.syncedMessage'), t('sync.autoSync.syncedTitle'));
       }
     } catch (error) {
       console.error('[AutoSync] Failed to check remote version:', error);
-      // Don't show error toast for initial check - it's not critical
     }
-  }, [sync, config, t]);
+  }, [sync, config, buildPayload, t]);
   
   // Debounced auto-sync when data changes
   useEffect(() => {
@@ -235,7 +254,15 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     }
     
     const currentHash = getDataHash();
-    
+
+    // After a merge, onApplyPayload changes local state which triggers
+    // this effect. Skip that cycle and just update the hash baseline.
+    if (skipNextSyncRef.current) {
+      skipNextSyncRef.current = false;
+      lastSyncedDataRef.current = currentHash;
+      return;
+    }
+
     // Skip if data hasn't changed
     if (currentHash === lastSyncedDataRef.current) {
       return;
