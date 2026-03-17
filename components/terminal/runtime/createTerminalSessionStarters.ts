@@ -41,7 +41,7 @@ type TerminalBackendApi = {
   onSessionData: (sessionId: string, cb: (data: string) => void) => () => void;
   onSessionExit: (
     sessionId: string,
-    cb: (evt: { exitCode?: number; signal?: number }) => void,
+    cb: (evt: { exitCode?: number; signal?: number; error?: string; reason?: "exited" | "error" | "timeout" | "closed" }) => void,
   ) => () => void;
   onChainProgress: (
     cb: (hop: number, total: number, label: string, status: string) => void,
@@ -100,7 +100,7 @@ export type TerminalSessionStartersContext = {
   t?: (key: string) => string;
 
   onSessionAttached?: (sessionId: string) => void;
-  onSessionExit?: (sessionId: string) => void;
+  onSessionExit?: (sessionId: string, evt: { exitCode?: number; signal?: number; error?: string; reason?: "exited" | "error" | "timeout" | "closed" }) => void;
   onTerminalDataCapture?: (sessionId: string, data: string) => void;
   onOsDetected?: (hostId: string, distro: string) => void;
   onCommandExecuted?: (
@@ -213,7 +213,7 @@ const attachSessionToTerminal = (
       }
     }
 
-    ctx.onSessionExit?.(ctx.sessionId);
+    ctx.onSessionExit?.(ctx.sessionId, evt);
   });
 };
 
@@ -754,7 +754,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           }
         }
 
-        ctx.onSessionExit?.(ctx.sessionId);
+        ctx.onSessionExit?.(ctx.sessionId, evt);
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

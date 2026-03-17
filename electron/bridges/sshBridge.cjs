@@ -1017,6 +1017,19 @@ async function startSSHSession(event, options) {
               bufferData(decoder.write(data));
             });
 
+            // Capture the real exit code from the remote process.
+            // "exit" fires when the remote shell/process exits normally;
+            // "close" fires whenever the channel closes (could be network drop).
+            // Only treat it as user-initiated exit if "exit" fired with a numeric
+            // code and no signal. Signal terminations (e.g. server kill, idle
+            // timeout) have code=null and signal set — those are not user exits.
+            let streamExitCode = 0;
+            let streamExited = false;
+            stream.on("exit", (code, signal) => {
+              streamExitCode = typeof code === "number" ? code : 0;
+              streamExited = typeof code === "number" && !signal;
+            });
+
             stream.on("close", () => {
               // Flush any remaining data before close
               if (flushTimeout) {
@@ -1024,7 +1037,7 @@ async function startSSHSession(event, options) {
               }
               flushBuffer();
               const contents = event.sender;
-              safeSend(contents, "netcatty:exit", { sessionId, exitCode: 0 });
+              safeSend(contents, "netcatty:exit", { sessionId, exitCode: streamExitCode, reason: streamExited ? "exited" : "closed" });
               sessions.delete(sessionId);
               sessionEncodings.delete(sessionId);
               sessionDecoders.delete(sessionId);
@@ -1072,7 +1085,7 @@ async function startSSHSession(event, options) {
           console.error(`${logPrefix} ${options.hostname} error:`, err.message);
         }
 
-        safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: err.message });
+        safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: err.message, reason: "error" });
         sessions.delete(sessionId);
         sessionEncodings.delete(sessionId);
         sessionDecoders.delete(sessionId);
@@ -1086,7 +1099,7 @@ async function startSSHSession(event, options) {
         console.error(`${logPrefix} ${options.hostname} connection timeout`);
         const err = new Error(`Connection timeout to ${options.hostname}`);
         const contents = event.sender;
-        safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: err.message });
+        safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: err.message, reason: "timeout" });
         sessions.delete(sessionId);
         sessionEncodings.delete(sessionId);
         sessionDecoders.delete(sessionId);
@@ -1098,7 +1111,7 @@ async function startSSHSession(event, options) {
 
       conn.once("close", () => {
         const contents = event.sender;
-        safeSend(contents, "netcatty:exit", { sessionId, exitCode: 0 });
+        safeSend(contents, "netcatty:exit", { sessionId, exitCode: 0, reason: "closed" });
         sessions.delete(sessionId);
         sessionEncodings.delete(sessionId);
         sessionDecoders.delete(sessionId);
