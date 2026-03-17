@@ -178,9 +178,28 @@ export function createBridgeFetchForSDK(providerId?: string): typeof globalThis.
 
       if (!result.ok) {
         cleanup();
-        return new Response(result.error || 'Stream request failed', {
+        const errorMessage = result.error || 'Stream request failed';
+        const jsonBody = JSON.stringify({ error: { message: errorMessage } });
+        return new Response(jsonBody, {
           status: 502,
           statusText: 'Bad Gateway',
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+
+      // If the server returned a non-2xx status, return the error details
+      // as a JSON body in OpenAI-compatible format so the AI SDK's
+      // failedResponseHandler can extract the message properly.
+      // Also set a safe ASCII statusText as fallback for non-OpenAI SDK providers.
+      const statusCode = result.statusCode ?? 200;
+      if (statusCode < 200 || statusCode >= 300) {
+        cleanup();
+        const errorDetail = result.statusText || `HTTP ${statusCode}`;
+        const jsonBody = JSON.stringify({ error: { message: errorDetail } });
+        return new Response(jsonBody, {
+          status: statusCode,
+          statusText: `Error ${statusCode}`,
+          headers: { 'content-type': 'application/json' },
         });
       }
 
@@ -191,7 +210,7 @@ export function createBridgeFetchForSDK(providerId?: string): typeof globalThis.
       });
 
       return new Response(stream, {
-        status: result.statusCode ?? 200,
+        status: statusCode,
         statusText: result.statusText ?? 'OK',
         headers: { 'content-type': 'text/event-stream' },
       });
