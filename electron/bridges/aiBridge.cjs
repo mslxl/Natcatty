@@ -56,6 +56,7 @@ const MAX_CONCURRENT_AGENTS = 5;
 // ACP providers (module-level so cleanup() can access them)
 const acpProviders = new Map();
 const acpActiveStreams = new Map();
+const acpRequestSessions = new Map();
 
 // ── Provider registry (synced from renderer, keys stay encrypted) ──
 const ENC_PREFIX = "enc:v1:";
@@ -137,6 +138,8 @@ function injectApiKeyIntoRequest(url, headers, providerId) {
 function cleanupAcpProvider(chatSessionId) {
   const entry = acpProviders.get(chatSessionId);
   if (!entry) return;
+  const rootPid = entry.provider?.model?.agentProcess?.pid;
+  const childPids = getChildProcessTreePids(rootPid);
   try {
     if (typeof entry.provider.forceCleanup === "function") {
       entry.provider.forceCleanup();
@@ -146,7 +149,63 @@ function cleanupAcpProvider(chatSessionId) {
   } catch (err) {
     console.warn("[ACP] Provider cleanup failed for session", chatSessionId, err?.message || err);
   }
+  killTrackedProcessTree(rootPid, childPids);
   acpProviders.delete(chatSessionId);
+}
+
+function getChildProcessTreePids(rootPid) {
+  if (!Number.isInteger(rootPid) || rootPid <= 0) return [];
+  if (process.platform === "win32") return [];
+
+  const discovered = new Set();
+  const queue = [rootPid];
+
+  while (queue.length > 0) {
+    const pid = queue.shift();
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    try {
+      const output = execFileSync("pgrep", ["-P", String(pid)], { encoding: "utf8" }).trim();
+      if (!output) continue;
+      for (const line of output.split(/\s+/)) {
+        const childPid = Number(line);
+        if (!Number.isInteger(childPid) || childPid <= 0 || discovered.has(childPid)) continue;
+        discovered.add(childPid);
+        queue.push(childPid);
+      }
+    } catch {
+      // No child processes or pgrep unavailable.
+    }
+  }
+
+  return Array.from(discovered);
+}
+
+function killTrackedProcessTree(rootPid, childPids) {
+  if (process.platform === "win32") {
+    if (Number.isInteger(rootPid) && rootPid > 0) {
+      try {
+        execFileSync("taskkill", ["/PID", String(rootPid), "/T", "/F"], { stdio: "ignore" });
+      } catch {
+        // Ignore kill failures; the process may have already exited.
+      }
+    }
+    return;
+  }
+
+  const pids = [...(Array.isArray(childPids) ? childPids : [])];
+  if (Number.isInteger(rootPid) && rootPid > 0) {
+    pids.push(rootPid);
+  }
+
+  // Kill children before the wrapper so orphaned grandchildren do not survive.
+  for (const pid of pids.reverse()) {
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Ignore kill failures; the process may have already exited.
+    }
+  }
 }
 
 /**
@@ -1551,6 +1610,7 @@ function registerHandlers(ipcMain) {
       return { ok: false, error: "Unauthorized IPC sender" };
     }
     try {
+      mcpServerBridge.setChatSessionCancelled?.(chatSessionId, false);
       const { createACPProvider } = require("@mcpc-tech/acp-ai-provider");
       const { streamText, stepCountIs } = require("ai");
 
@@ -1651,6 +1711,7 @@ function registerHandlers(ipcMain) {
 
       const abortController = new AbortController();
       acpActiveStreams.set(requestId, abortController);
+      acpRequestSessions.set(requestId, chatSessionId);
 
       // Prepend context hint so the agent uses MCP tools for remote hosts
       const contextualPrompt =
@@ -1761,27 +1822,37 @@ function registerHandlers(ipcMain) {
       });
     } finally {
       acpActiveStreams.delete(requestId);
+      acpRequestSessions.delete(requestId);
     }
 
     return { ok: true };
   });
 
-  ipcMain.handle("netcatty:ai:acp:cancel", async (event, { requestId }) => {
+  ipcMain.handle("netcatty:ai:acp:cancel", async (event, { requestId, chatSessionId }) => {
     if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
     // Cancel any active PTY executions (send Ctrl+C)
     mcpServerBridge.cancelAllPtyExecs();
+    const effectiveChatSessionId = chatSessionId || acpRequestSessions.get(requestId);
+    mcpServerBridge.setChatSessionCancelled?.(effectiveChatSessionId, true);
     const controller = acpActiveStreams.get(requestId);
+    let cancelled = false;
     if (controller) {
       controller.abort();
       acpActiveStreams.delete(requestId);
-      return { ok: true };
+      cancelled = true;
     }
-    return { ok: false, error: "Stream not found" };
+    if (effectiveChatSessionId) {
+      cleanupAcpProvider(effectiveChatSessionId);
+      cancelled = true;
+    }
+    acpRequestSessions.delete(requestId);
+    return cancelled ? { ok: true } : { ok: false, error: "Stream not found" };
   });
 
   // Cleanup a specific ACP session (when chat session is deleted)
   ipcMain.handle("netcatty:ai:acp:cleanup", async (event, { chatSessionId }) => {
     if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+    mcpServerBridge.setChatSessionCancelled?.(chatSessionId, true);
     cleanupAcpProvider(chatSessionId);
     mcpServerBridge.cleanupScopedMetadata(chatSessionId);
     return { ok: true };

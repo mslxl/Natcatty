@@ -492,7 +492,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     updateLastMessage(activeSessionId, msg => ({
       ...msg,
       statusText: '',
-      executionStatus: msg.executionStatus === 'running' ? 'completed' : msg.executionStatus,
+      executionStatus: msg.executionStatus === 'running' ? 'cancelled' : msg.executionStatus,
     }));
     // Also clear any pending approval (clears timeout too via setPendingApproval)
     if (pendingApprovalContextRef.current?.sessionId === activeSessionId) {
@@ -516,8 +516,6 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   const handleDeleteSession = useCallback(
     (e: React.MouseEvent, sessionId: string) => {
       e.stopPropagation();
-      const bridge = getNetcattyBridge();
-      void bridge?.aiAcpCleanup?.(sessionId).catch(() => {});
       deleteSession(sessionId, scopeKey);
       // Active session clearing is handled by deleteSession with scopeKey
     },
