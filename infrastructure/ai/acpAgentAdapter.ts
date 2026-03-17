@@ -9,6 +9,7 @@
 import type { ExternalAgentConfig } from './types';
 
 export interface AcpAgentCallbacks {
+  onSessionId?: (sessionId: string) => void;
   onTextDelta: (text: string) => void;
   onThinkingDelta: (text: string) => void;
   onThinkingDone: () => void;
@@ -29,6 +30,8 @@ interface AcpBridge {
     cwd?: string,
     providerId?: string,
     model?: string,
+    existingSessionId?: string,
+    historyMessages?: Array<{ role: 'user' | 'assistant'; content: string }>,
     images?: ImageAttachment[],
   ): Promise<{ ok: boolean; error?: string }>;
   aiAcpCancel(requestId: string, chatSessionId?: string): Promise<{ ok: boolean }>;
@@ -63,6 +66,8 @@ export async function runAcpAgentTurn(
   signal?: AbortSignal,
   providerId?: string,
   model?: string,
+  existingSessionId?: string,
+  historyMessages?: Array<{ role: 'user' | 'assistant'; content: string }>,
   images?: ImageAttachment[],
 ): Promise<void> {
   const acpBridge = bridge as unknown as AcpBridge;
@@ -117,6 +122,8 @@ export async function runAcpAgentTurn(
     undefined, // cwd
     providerId,
     model,
+    existingSessionId,
+    historyMessages,
     images?.length ? images : undefined,
   ).catch((err: Error) => {
     callbacks.onError(err.message);
@@ -175,6 +182,11 @@ function handleStreamEvent(event: StreamEvent, callbacks: AcpAgentCallbacks) {
     case 'status': {
       const msg = (event.message as string) || '';
       if (msg) callbacks.onStatus?.(msg);
+      break;
+    }
+    case 'session-id': {
+      const sessionId = (event.sessionId as string) || '';
+      if (sessionId) callbacks.onSessionId?.(sessionId);
       break;
     }
     case 'error': {

@@ -10,7 +10,7 @@
  * - Error reporting
  */
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { streamText, stepCountIs, type ModelMessage } from 'ai';
 import type {
   AIPermissionMode,
@@ -24,7 +24,7 @@ import { isWebSearchReady } from '../../../infrastructure/ai/types';
 import { buildSystemPrompt } from '../../../infrastructure/ai/cattyAgent/systemPrompt';
 import { createModelFromConfig } from '../../../infrastructure/ai/sdk/providers';
 import { createCattyTools } from '../../../infrastructure/ai/sdk/tools';
-import type { NetcattyBridge } from '../../../infrastructure/ai/cattyAgent/executor';
+import type { NetcattyBridge, ExecutorContext } from '../../../infrastructure/ai/cattyAgent/executor';
 import { runExternalAgentTurn } from '../../../infrastructure/ai/externalAgentAdapter';
 import { runAcpAgentTurn } from '../../../infrastructure/ai/acpAgentAdapter';
 import { classifyError, sanitizeErrorMessage } from '../../../infrastructure/ai/errorClassifier';
@@ -141,6 +141,20 @@ function generateId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+const sharedStreamingSessionIds = new Set<string>();
+const sharedAbortControllers = new Map<string, AbortController>();
+const streamingSubscribers = new Set<() => void>();
+
+function emitStreamingStoreChange(): void {
+  streamingSubscribers.forEach(listener => {
+    try {
+      listener();
+    } catch (err) {
+      console.error('[AIChatStreaming] Failed to notify streaming subscriber:', err);
+    }
+  });
+}
+
 // -------------------------------------------------------------------
 // Hook parameters
 // -------------------------------------------------------------------
@@ -207,12 +221,16 @@ export interface SendToCattyContext {
   commandBlocklist?: string[];
   terminalSessions: TerminalSessionInfo[];
   webSearchConfig?: WebSearchConfig | null;
+  getExecutorContext?: () => ExecutorContext;
   setPendingApproval: (ctx: PendingApprovalContext | null) => void;
   autoTitleSession: (sessionId: string, text: string) => void;
 }
 
 /** Context values needed by sendToExternalAgent that change frequently. */
 export interface SendToExternalContext {
+  existingSessionId?: string;
+  updateExternalSessionId?: (sessionId: string, externalSessionId: string | undefined) => void;
+  historyMessages?: Array<{ role: 'user' | 'assistant'; content: string }>;
   terminalSessions: TerminalSessionInfo[];
   providers: ProviderConfig[];
   selectedAgentModel?: string;
@@ -229,17 +247,34 @@ export function useAIChatStreaming({
   updateMessageById,
 }: UseAIChatStreamingParams): UseAIChatStreamingReturn {
   // Per-session streaming state (keyed by sessionId)
-  const [streamingSessionIds, setStreamingSessions] = useState<Set<string>>(new Set());
+  const [streamingSessionIds, setStreamingSessions] = useState<Set<string>>(
+    () => new Set(sharedStreamingSessionIds),
+  );
+  useEffect(() => {
+    const syncFromStore = () => {
+      setStreamingSessions(new Set(sharedStreamingSessionIds));
+    };
+    streamingSubscribers.add(syncFromStore);
+    syncFromStore();
+    return () => {
+      streamingSubscribers.delete(syncFromStore);
+    };
+  }, []);
+
   const setStreamingForScope = useCallback((key: string, val: boolean) => {
-    setStreamingSessions(prev => {
-      const next = new Set(prev);
-      if (val) next.add(key); else next.delete(key);
-      return next;
-    });
+    const hadKey = sharedStreamingSessionIds.has(key);
+    if (val) {
+      sharedStreamingSessionIds.add(key);
+    } else {
+      sharedStreamingSessionIds.delete(key);
+    }
+    if (hadKey !== val) {
+      emitStreamingStoreChange();
+    }
   }, []);
 
   // Per-scope abort controllers
-  const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
+  const abortControllersRef = useRef<Map<string, AbortController>>(sharedAbortControllers);
 
   // -------------------------------------------------------------------
   // reportStreamError
@@ -581,6 +616,9 @@ export function useAIChatStreaming({
             maybeCreateAssistantMsg();
             updateLastMessage(sessionId, msg => ({ ...msg, statusText: message }));
           },
+          onSessionId: (externalSessionId: string) => {
+            context.updateExternalSessionId?.(sessionId, externalSessionId);
+          },
           onError: (error: string) => {
             reportStreamError(sessionId, abortController.signal, error);
             setStreamingForScope(sessionId, false);
@@ -590,6 +628,8 @@ export function useAIChatStreaming({
         abortController.signal,
         agentProviderId,
         context.selectedAgentModel,
+        context.existingSessionId,
+        context.historyMessages,
         attachedImages.length > 0 ? attachedImages : undefined,
       );
     } else {
@@ -629,11 +669,18 @@ export function useAIChatStreaming({
     context: SendToCattyContext,
   ) => {
     const bridge = getNetcattyBridge();
-    const tools = createCattyTools(bridge, {
+    const toolContext = context.getExecutorContext ?? (() => ({
       sessions: context.terminalSessions,
-      workspaceId: context.scopeTargetId,
-      workspaceName: context.scopeLabel,
-    }, context.commandBlocklist, context.globalPermissionMode, context.webSearchConfig ?? undefined);
+      workspaceId: context.scopeType === 'workspace' ? context.scopeTargetId : undefined,
+      workspaceName: context.scopeType === 'workspace' ? context.scopeLabel : undefined,
+    }));
+    const tools = createCattyTools(
+      bridge,
+      toolContext,
+      context.commandBlocklist,
+      context.globalPermissionMode,
+      context.webSearchConfig ?? undefined,
+    );
 
     const systemPrompt = buildSystemPrompt({
       scopeType: context.scopeType, scopeLabel: context.scopeLabel,

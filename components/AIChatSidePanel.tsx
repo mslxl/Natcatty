@@ -42,6 +42,7 @@ import ConversationExport from './ai/ConversationExport';
 import { useAIChatStreaming, getNetcattyBridge } from './ai/hooks/useAIChatStreaming';
 import { useToolApproval } from './ai/hooks/useToolApproval';
 import { useConversationExport } from './ai/hooks/useConversationExport';
+import type { ExecutorContext } from '../infrastructure/ai/cattyAgent/executor';
 
 // -------------------------------------------------------------------
 // Props
@@ -55,6 +56,7 @@ interface AIChatSidePanelProps {
   createSession: (scope: AISessionScope, agentId?: string) => AISession;
   deleteSession: (sessionId: string, scopeKey?: string) => void;
   updateSessionTitle: (sessionId: string, title: string) => void;
+  updateSessionExternalSessionId: (sessionId: string, externalSessionId: string | undefined) => void;
   addMessageToSession: (sessionId: string, message: ChatMessage) => void;
   updateLastMessage: (
     sessionId: string,
@@ -115,6 +117,35 @@ function generateId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function buildAcpHistoryMessages(messages: ChatMessage[]): Array<{ role: 'user' | 'assistant'; content: string }> {
+  return messages.flatMap((message) => {
+    if (message.role === 'system') return [];
+
+    if (message.role === 'user') {
+      return message.content ? [{ role: 'user' as const, content: message.content }] : [];
+    }
+
+    if (message.role === 'assistant') {
+      const parts: string[] = [];
+      if (message.content) parts.push(message.content);
+      if (message.toolCalls?.length) {
+        parts.push(...message.toolCalls.map((tc) => `Tool call: ${tc.name}(${JSON.stringify(tc.arguments ?? {})})`));
+      }
+      if (!parts.length) return [];
+      return [{ role: 'assistant' as const, content: parts.join('\n\n') }];
+    }
+
+    if (message.role === 'tool' && message.toolResults?.length) {
+      return message.toolResults.map((tr) => ({
+        role: 'assistant' as const,
+        content: `Tool result:\n${tr.content}`,
+      }));
+    }
+
+    return [];
+  });
+}
+
 // -------------------------------------------------------------------
 // Component
 // -------------------------------------------------------------------
@@ -126,6 +157,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   createSession,
   deleteSession,
   updateSessionTitle,
+  updateSessionExternalSessionId,
   addMessageToSession,
   updateLastMessage,
   updateMessageById,
@@ -166,6 +198,14 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
 
   const { images, addImages, removeImage, clearImages } = useImageUpload();
   const { openSettingsWindow } = useWindowControls();
+  const terminalSessionsRef = useRef(terminalSessions);
+  terminalSessionsRef.current = terminalSessions;
+  const scopeTypeRef = useRef(scopeType);
+  scopeTypeRef.current = scopeType;
+  const scopeTargetIdRef = useRef(scopeTargetId);
+  scopeTargetIdRef.current = scopeTargetId;
+  const scopeLabelRef = useRef(scopeLabel);
+  scopeLabelRef.current = scopeLabel;
 
   // ── Streaming hook ──
   const {
@@ -242,16 +282,13 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     }
   }, [webSearchConfig?.apiHost, webSearchConfig?.apiKey, webSearchConfig?.enabled]);
 
-  // Abort all active streams and clean up on unmount
+  // Preserve active streams across tab switches. The panel is conditionally
+  // mounted per tab, so unmounting here should not cancel in-flight work.
   useEffect(() => {
-    const controllers = abortControllersRef.current;
     return () => {
-      controllers.forEach(c => c.abort());
-      controllers.clear();
-      // Clear pending approval (clears timeout too via setPendingApproval)
-      setPendingApproval(null);
+      // no-op: stream lifecycle is managed by explicit stop/delete actions
     };
-  }, [abortControllersRef, setPendingApproval]);
+  }, []);
 
   // Agent discovery
   const {
@@ -379,6 +416,12 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     }
   }, [updateSessionTitle]);
 
+  const getExecutorContext = useCallback((): ExecutorContext => ({
+    sessions: terminalSessionsRef.current,
+    workspaceId: scopeTypeRef.current === 'workspace' ? scopeTargetIdRef.current : undefined,
+    workspaceName: scopeTypeRef.current === 'workspace' ? scopeLabelRef.current : undefined,
+  }), []);
+
   /** Ensure a session exists for the current scope and return its ID. */
   const ensureSession = useCallback((): string => {
     if (activeSessionId) return activeSessionId;
@@ -445,6 +488,9 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       }
       try {
         await sendToExternalAgent(sessionId, trimmed, agentConfig, abortController, attachedImages, {
+          existingSessionId: currentSession?.externalSessionId,
+          updateExternalSessionId: updateSessionExternalSessionId,
+          historyMessages: buildAcpHistoryMessages(currentSession?.messages ?? []),
           terminalSessions,
           providers,
           selectedAgentModel,
@@ -468,6 +514,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         commandBlocklist,
         terminalSessions,
         webSearchConfig,
+        getExecutorContext,
         setPendingApproval,
         autoTitleSession,
       });
@@ -478,8 +525,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     ensureSession, addMessageToSession, updateMessageById, updateLastMessage,
     setStreamingForScope, setInputValue, clearImages,
     sendToExternalAgent, sendToCattyAgent, reportStreamError, autoTitleSession, t,
-    abortControllersRef, terminalSessions, providers, selectedAgentModel,
-    scopeType, scopeTargetId, scopeLabel, globalPermissionMode, commandBlocklist, webSearchConfig, setPendingApproval,
+    abortControllersRef, terminalSessions, providers, selectedAgentModel, updateSessionExternalSessionId,
+    scopeType, scopeTargetId, scopeLabel, globalPermissionMode, commandBlocklist, webSearchConfig, getExecutorContext, setPendingApproval,
   ]);
 
   const handleStop = useCallback(() => {

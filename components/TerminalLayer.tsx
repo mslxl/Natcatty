@@ -1332,6 +1332,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                         createSession={aiState.createSession}
                         deleteSession={aiState.deleteSession}
                         updateSessionTitle={aiState.updateSessionTitle}
+                        updateSessionExternalSessionId={aiState.updateSessionExternalSessionId}
                         addMessageToSession={aiState.addMessageToSession}
                         updateLastMessage={aiState.updateLastMessage}
                         updateMessageById={aiState.updateMessageById}
@@ -1357,7 +1358,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                             }).filter((id): id is string => !!id)
                           : activeSession?.hostId ? [activeSession.hostId] : []
                         }
-                        scopeLabel={activeWorkspace?.name ?? activeSession?.label ?? ''}
+                        scopeLabel={activeWorkspace?.title ?? activeSession?.hostLabel ?? ''}
                         terminalSessions={aiTerminalSessions}
                       />
                     </div>
