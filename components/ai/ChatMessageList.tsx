@@ -139,7 +139,9 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
                   <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-destructive/10 border border-destructive/20 text-sm">
                     <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
                     <div className="flex-1 min-w-0">
-                      <p className="text-destructive font-medium">{message.errorInfo.message}</p>
+                      <p className="text-destructive font-medium whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                        {message.errorInfo.message}
+                      </p>
                       {message.errorInfo.retryable && (
                         <p className="text-muted-foreground text-xs mt-1">{t('ai.chat.retryHint')}</p>
                       )}
