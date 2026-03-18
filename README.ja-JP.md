@@ -59,6 +59,8 @@
 - [ビルドとパッケージ](#ビルドとパッケージ)
 - [技術スタック](#技術スタック)
 - [コントリビューション](#コントリビューション)
+- [コントリビューター](#コントリビューター)
+- [Star 履歴](#star-履歴)
 - [ライセンス](#ライセンス)
 
 ---
@@ -110,37 +112,37 @@
 <a name="デモ"></a>
 # デモ
 
-GIF で機能をさっと確認できます（素材は `screenshots/gifs/`）：
+動画で機能をさっと確認できます（素材は `screenshots/gifs/`）：
 
 ### Vault ビュー：グリッド / リスト / ツリー
 状況に合わせて見え方を切り替え。グリッドで全体像、リストで密度、ツリーで階層を扱えます。
 
-![Vault ビュー：グリッド/リスト/ツリー](screenshots/gifs/gird-list-tre-views.gif)
+https://github.com/user-attachments/assets/e2742987-3131-404d-bd4b-06423e5bfd99
 
 ### 分割ターミナル + セッション管理
 複数セッションを分割ペインで並べて作業。関連タスクを横並びにしてコンテキストスイッチを減らします。
 
-![分割ターミナル + セッション管理](screenshots/gifs/dual-terminal--split-manage.gif)
+https://github.com/user-attachments/assets/377d0c46-cc5a-4382-aa31-5acfd412ce62
 
 ### SFTP：ドラッグ＆ドロップ + 内蔵エディタ
 ドラッグ＆ドロップでファイルを移動し、内蔵エディタでそのまま編集できます。
 
-![SFTP：ドラッグ＆ドロップ + 内蔵エディタ](screenshots/gifs/sftpview-with-drag-and-built-in-editor.gif)
+https://github.com/user-attachments/assets/c6e06af4-b0d5-461c-b0c7-9d6f655af6c7
 
 ### ドラッグでアップロード
 ファイルをそのままドロップしてアップロードを開始。ダイアログ操作を減らせます。
 
-![ドラッグでアップロード](screenshots/gifs/drag-file-upload.gif)
+https://github.com/user-attachments/assets/c8e0c4ff-f020-4e18-9b09-681ec97b003f
 
 ### カスタムテーマ
 テーマを調整して自分の好みに合わせた見た目に。
 
-![カスタムテーマ](screenshots/gifs/custom-themes.gif)
+https://github.com/user-attachments/assets/77e2a693-4ef2-4823-8ca1-9bcbf14ed98b
 
 ### キーワードハイライト
 重要な出力（エラー/警告/マーカーなど）を見つけやすくするために、ハイライトをカスタマイズできます。
 
-![キーワードハイライト](screenshots/gifs/custom-highlight.gif)
+https://github.com/user-attachments/assets/e6516993-ad66-4594-8c28-57426082339b
 
 ---
 
@@ -305,10 +307,34 @@ npm run pack:linux   # Linux (AppImage + DEB + RPM)
 
 ---
 
+<a name="コントリビューター"></a>
+# コントリビューター
+
+貢献してくださったすべての方に感謝します！
+
+<a href="https://github.com/binaricat/Netcatty/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=binaricat/Netcatty" />
+</a>
+
+---
+
 <a name="ライセンス"></a>
 # ライセンス
 
 このプロジェクトは **GPL-3.0 ライセンス** の下でライセンスされています - 詳細は [LICENSE](LICENSE) ファイルをご覧ください。
+
+---
+
+<a name="star-履歴"></a>
+# Star 履歴
+
+<a href="https://star-history.com/#binaricat/Netcatty&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date" />
+ </picture>
+</a>
 
 ---
 

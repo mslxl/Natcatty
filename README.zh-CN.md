@@ -59,6 +59,8 @@
 - [构建与打包](#构建与打包)
 - [技术栈](#技术栈)
 - [参与贡献](#参与贡献)
+- [贡献者](#贡献者)
+- [Star 历史](#star-历史)
 - [开源协议](#开源协议)
 
 ---
@@ -111,37 +113,37 @@
 <a name="演示"></a>
 # 演示
 
-GIF 预览（素材均在 `screenshots/gifs/`），在 GitHub README 中可直接观看：
+视频预览（素材均在 `screenshots/gifs/`），在 GitHub README 中可直接观看：
 
 ### Vault 视图：网格 / 列表 / 树形
 根据不同场景自由切换视图：网格适合总览，列表适合密集浏览，树形适合层级导航与整理。
 
-![Vault 视图：网格/列表/树形](screenshots/gifs/gird-list-tre-views.gif)
+https://github.com/user-attachments/assets/e2742987-3131-404d-bd4b-06423e5bfd99
 
 ### 分屏终端 + 会话管理
 用分屏把多个会话并排放在同一个工作区里，降低来回切换窗口/标签页的成本。
 
-![分屏终端 + 会话管理](screenshots/gifs/dual-terminal--split-manage.gif)
+https://github.com/user-attachments/assets/377d0c46-cc5a-4382-aa31-5acfd412ce62
 
 ### SFTP：拖拽 + 内置编辑器
 通过拖拽完成文件传输，并用内置编辑器快速修改文件内容，不用来回切换工具。
 
-![SFTP：拖拽 + 内置编辑器](screenshots/gifs/sftpview-with-drag-and-built-in-editor.gif)
+https://github.com/user-attachments/assets/c6e06af4-b0d5-461c-b0c7-9d6f655af6c7
 
 ### 拖拽文件上传
 把文件直接拖进应用即可触发上传流程，省去多层对话框与路径选择。
 
-![拖拽文件上传](screenshots/gifs/drag-file-upload.gif)
+https://github.com/user-attachments/assets/c8e0c4ff-f020-4e18-9b09-681ec97b003f
 
 ### 自定义主题
 按自己的审美与习惯定制主题与界面外观，让日常使用更顺手。
 
-![自定义主题](screenshots/gifs/custom-themes.gif)
+https://github.com/user-attachments/assets/77e2a693-4ef2-4823-8ca1-9bcbf14ed98b
 
 ### 关键词高亮
 让关键输出一眼可见：错误、告警或特定标记被高亮后更容易扫到与定位。
 
-![关键词高亮](screenshots/gifs/custom-highlight.gif)
+https://github.com/user-attachments/assets/e6516993-ad66-4594-8c28-57426082339b
 
 ---
 
@@ -309,7 +311,9 @@ npm run pack:linux   # Linux (AppImage, deb, rpm)
 
 感谢所有参与贡献的人！
 
-查看：https://github.com/binaricat/Netcatty/graphs/contributors
+<a href="https://github.com/binaricat/Netcatty/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=binaricat/Netcatty" />
+</a>
 
 ---
 
@@ -317,6 +321,19 @@ npm run pack:linux   # Linux (AppImage, deb, rpm)
 # 开源协议
 
 本项目采用 **GPL-3.0 协议** 开源 - 查看 [LICENSE](LICENSE) 文件了解详情。
+
+---
+
+<a name="star-历史"></a>
+# Star 历史
+
+<a href="https://star-history.com/#binaricat/Netcatty&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date" />
+ </picture>
+</a>
 
 ---
 
