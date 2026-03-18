@@ -689,6 +689,15 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     ],
   );
 
+  const countAllHostsInNode = (node: GroupNode): number => {
+    let count = node.hosts.length;
+    Object.values(node.children).forEach((child) => {
+      count += countAllHostsInNode(child);
+    });
+    node.totalHostCount = count;
+    return count;
+  };
+
   const buildGroupTree = useMemo<Record<string, GroupNode>>(() => {
     const root: Record<string, GroupNode> = {};
     const insertPath = (path: string, host?: Host) => {
@@ -712,6 +721,9 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     };
     customGroups.forEach((path) => insertPath(path));
     hosts.forEach((host) => insertPath(host.group || "General", host));
+
+    Object.values(root).forEach(countAllHostsInNode);
+
     return root;
   }, [hosts, customGroups]);
 
@@ -896,19 +908,11 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
         insertPath(host.group, host);
       }
     });
+
+    Object.values(root).forEach(countAllHostsInNode);
+    
     return root;
   }, [treeViewHosts, customGroups]);
-
-  // Helper function to recursively count all hosts in a node and its children
-  const countAllHostsInNode = (node: GroupNode): number => {
-    let count = node.hosts.length;
-    if (node.children) {
-      Object.values(node.children).forEach((child) => {
-        count += countAllHostsInNode(child);
-      });
-    }
-    return count;
-  };
 
   // Create tree view specific group tree that excludes ungrouped hosts
   const treeViewGroupTree = useMemo<GroupNode[]>(() => {
@@ -1749,7 +1753,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                                       )}
                                     </div>
                                     <div className="text-[11px] text-muted-foreground">
-                                      {t("vault.groups.hostsCount", { count: countAllHostsInNode(node) })}
+                                      {t("vault.groups.hostsCount", { count: node.totalHostCount ?? node.hosts.length })}
                                     </div>
                                   </div>
                                 </div>
