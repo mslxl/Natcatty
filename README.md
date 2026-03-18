@@ -118,7 +118,8 @@ Video previews (stored in `screenshots/gifs/`), rendered inline on GitHub:
 ### Vault views: grid / list / tree
 Switch between different Vault views to match your workflow: overview in grid, dense scanning in list, and hierarchical navigation in tree.
 
-<video src="screenshots/gifs/gird-list-tre-views.mp4" width="100%" autoplay loop muted playsinline></video>
+https://github.com/user-attachments/assets/e2742987-3131-404d-bd4b-06423e5bfd99
+
 
 ### Split terminals + session management
 Work in multiple sessions at once with split panes. Keep related tasks side-by-side and reduce context switching.
@@ -133,17 +134,21 @@ Move files with drag & drop, then edit quickly using the built-in editor without
 ### Drag file upload
 Drop files into the app to kick off uploads without hunting through dialogs.
 
-<video src="screenshots/gifs/drag-file-upload.mp4" width="100%" autoplay loop muted playsinline></video>
+https://github.com/user-attachments/assets/5e4bbaf5-3f63-40f5-b49e-e16414698dd2
+
 
 ### Custom themes
 Make Netcatty yours: customize themes and UI appearance.
 
-<video src="screenshots/gifs/custom-themes.mp4" width="100%" autoplay loop muted playsinline></video>
+
+https://github.com/user-attachments/assets/755d7325-6e25-4e6d-893b-50b7ae2b0e6c
+
 
 ### Keyword highlighting
 Highlight important terminal output so errors, warnings, and key events stand out at a glance.
 
-<video src="screenshots/gifs/custom-highlight.mp4" width="100%" autoplay loop muted playsinline></video>
+https://github.com/user-attachments/assets/8c49ed9e-e1cc-431a-bd75-77f4c063f5c7
+
 
 ---
 
