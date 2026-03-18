@@ -59,6 +59,8 @@
 - [Build & Package](#build--package)
 - [Tech Stack](#tech-stack)
 - [Contributing](#contributing)
+- [Contributors](#contributors)
+- [Star History](#star-history)
 - [License](#license)
 
 ---
@@ -111,17 +113,17 @@ If you regularly work with a fleet of servers, Netcatty is built for speed and f
 <a name="demos"></a>
 # Demos
 
-GIF previews (stored in `screenshots/gifs/`), rendered inline on GitHub:
+Video previews (stored in `screenshots/gifs/`), rendered inline on GitHub:
 
 ### Vault views: grid / list / tree
 Switch between different Vault views to match your workflow: overview in grid, dense scanning in list, and hierarchical navigation in tree.
 
-![Vault views: grid/list/tree](screenshots/gifs/gird-list-tre-views.gif)
+<video src="screenshots/gifs/gird-list-tre-views.mp4" width="100%" autoplay loop muted playsinline></video>
 
 ### Split terminals + session management
 Work in multiple sessions at once with split panes. Keep related tasks side-by-side and reduce context switching.
 
-![Split terminals + session management](screenshots/gifs/dual-terminal--split-manage.gif)
+<video src="screenshots/gifs/dual-terminal--split-manage.mp4" width="100%" autoplay loop muted playsinline></video>
 
 ### SFTP: drag & drop + built-in editor
 Move files with drag & drop, then edit quickly using the built-in editor without leaving the app.
@@ -131,17 +133,17 @@ Move files with drag & drop, then edit quickly using the built-in editor without
 ### Drag file upload
 Drop files into the app to kick off uploads without hunting through dialogs.
 
-![Drag file upload](screenshots/gifs/drag-file-upload.gif)
+<video src="screenshots/gifs/drag-file-upload.mp4" width="100%" autoplay loop muted playsinline></video>
 
 ### Custom themes
 Make Netcatty yours: customize themes and UI appearance.
 
-![Custom themes](screenshots/gifs/custom-themes.gif)
+<video src="screenshots/gifs/custom-themes.mp4" width="100%" autoplay loop muted playsinline></video>
 
 ### Keyword highlighting
 Highlight important terminal output so errors, warnings, and key events stand out at a glance.
 
-![Keyword highlighting](screenshots/gifs/custom-highlight.gif)
+<video src="screenshots/gifs/custom-highlight.mp4" width="100%" autoplay loop muted playsinline></video>
 
 ---
 
@@ -309,7 +311,9 @@ See [agents.md](agents.md) for architecture overview and coding conventions.
 
 Thanks to all the people who contribute!
 
-See: https://github.com/binaricat/Netcatty/graphs/contributors
+<a href="https://github.com/binaricat/Netcatty/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=binaricat/Netcatty" />
+</a>
 
 ---
 
@@ -317,6 +321,19 @@ See: https://github.com/binaricat/Netcatty/graphs/contributors
 # License
 
 This project is licensed under the **GPL-3.0 License** - see the [LICENSE](LICENSE) file for details.
+
+---
+
+<a name="star-history"></a>
+# Star History
+
+<a href="https://star-history.com/#binaricat/Netcatty&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date" />
+ </picture>
+</a>
 
 ---
 
