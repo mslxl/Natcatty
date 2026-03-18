@@ -124,12 +124,15 @@ https://github.com/user-attachments/assets/e2742987-3131-404d-bd4b-06423e5bfd99
 ### Split terminals + session management
 Work in multiple sessions at once with split panes. Keep related tasks side-by-side and reduce context switching.
 
-<video src="screenshots/gifs/dual-terminal--split-manage.mp4" width="100%" autoplay loop muted playsinline></video>
+https://github.com/user-attachments/assets/377d0c46-cc5a-4382-aa31-5acfd412ce62
+
+
 
 ### SFTP: drag & drop + built-in editor
 Move files with drag & drop, then edit quickly using the built-in editor without leaving the app.
 
-https://github.com/user-attachments/assets/18e98116-e1cb-496d-b9a1-119f597c7183
+https://github.com/user-attachments/assets/c6e06af4-b0d5-461c-b0c7-9d6f655af6c7
+
 
 
 
@@ -137,20 +140,25 @@ https://github.com/user-attachments/assets/18e98116-e1cb-496d-b9a1-119f597c7183
 ### Drag file upload
 Drop files into the app to kick off uploads without hunting through dialogs.
 
-https://github.com/user-attachments/assets/5e4bbaf5-3f63-40f5-b49e-e16414698dd2
+https://github.com/user-attachments/assets/c8e0c4ff-f020-4e18-9b09-681ec97b003f
+
+
 
 
 ### Custom themes
 Make Netcatty yours: customize themes and UI appearance.
 
+https://github.com/user-attachments/assets/77e2a693-4ef2-4823-8ca1-9bcbf14ed98b
 
-https://github.com/user-attachments/assets/755d7325-6e25-4e6d-893b-50b7ae2b0e6c
+
 
 
 ### Keyword highlighting
 Highlight important terminal output so errors, warnings, and key events stand out at a glance.
 
-https://github.com/user-attachments/assets/8c49ed9e-e1cc-431a-bd75-77f4c063f5c7
+https://github.com/user-attachments/assets/e6516993-ad66-4594-8c28-57426082339b
+
+
 
 
 ---
