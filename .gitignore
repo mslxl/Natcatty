@@ -37,6 +37,9 @@ coverage
 
 # Claude Code
 /.claude/
+
+# Codex
+/.codex/
 /CLAUDE.md
 
 # AI / Superpowers generated docs (local only)
