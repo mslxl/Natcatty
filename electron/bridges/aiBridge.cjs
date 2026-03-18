@@ -486,12 +486,27 @@ function registerHandlers(ipcMain) {
   // Track temporarily added entries so cleanup can distinguish them from synced ones
   const tempAllowedHosts = new Set();
   const tempAllowedPorts = new Set();
+  // Track temporarily added HTTP hosts (for rebuild restoration)
+  const tempHttpHosts = new Set();
+  // Track active expiry timers per host to avoid duplicate/premature expiry
+  const hostExpiryTimers = new Map();
 
   /** Check if a host is owned by a currently synced provider config */
   function isHostInProviderConfigs(host) {
     for (const config of providerConfigs) {
       if (!config.baseURL) continue;
       try { if (new URL(config.baseURL).hostname === host) return true; } catch {}
+    }
+    return false;
+  }
+  /** Check if a host is owned by a provider config that uses http:// */
+  function isHttpHostInProviderConfigs(host) {
+    for (const config of providerConfigs) {
+      if (!config.baseURL) continue;
+      try {
+        const p = new URL(config.baseURL);
+        if (p.hostname === host && p.protocol === "http:") return true;
+      } catch {}
     }
     return false;
   }
@@ -528,17 +543,36 @@ function registerHandlers(ipcMain) {
           }, TEMP_ALLOWLIST_TTL);
         }
       } else {
-        if (!providerFetchHosts.has(host)) {
+        const isNewHost = !providerFetchHosts.has(host);
+        if (isNewHost) {
           providerFetchHosts.add(host);
-          tempAllowedHosts.add(host);
-          setTimeout(() => {
-            // Only remove if not owned by a synced provider config
-            if (!isHostInProviderConfigs(host)) {
-              providerFetchHosts.delete(host);
-            }
-            tempAllowedHosts.delete(host);
-          }, TEMP_ALLOWLIST_TTL);
         }
+        // Always track in tempAllowedHosts so rebuild can restore to providerFetchHosts
+        // even if the original persistent source (e.g. HTTPS provider) is removed mid-TTL
+        tempAllowedHosts.add(host);
+        if (parsed.protocol === "http:") {
+          providerHttpHosts.add(host);
+          if (!isHttpHostInProviderConfigs(host)) tempHttpHosts.add(host);
+        }
+        // Always (re-)schedule expiry timer to clean up temp entries
+        const existing = hostExpiryTimers.get(host);
+        if (existing) clearTimeout(existing);
+        const timer = setTimeout(() => {
+          hostExpiryTimers.delete(host);
+          // Check if host is still needed by a provider config or web search
+          const isWebSearchHost = webSearchApiHost && (() => {
+            try { return new URL(webSearchApiHost).hostname === host; } catch { return false; }
+          })();
+          if (!isHostInProviderConfigs(host) && !isWebSearchHost) {
+            providerFetchHosts.delete(host);
+            providerHttpHosts.delete(host);
+          } else if (!isHttpHostInProviderConfigs(host)) {
+            providerHttpHosts.delete(host);
+          }
+          tempAllowedHosts.delete(host);
+          tempHttpHosts.delete(host);
+        }, TEMP_ALLOWLIST_TTL);
+        hostExpiryTimers.set(host, timer);
       }
       return { ok: true };
     } catch {
@@ -560,6 +594,8 @@ function registerHandlers(ipcMain) {
   ]);
   // Dynamically populated from configured provider baseURLs
   const providerFetchHosts = new Set();
+  // Subset of providerFetchHosts where the provider baseURL explicitly uses http://
+  const providerHttpHosts = new Set();
 
   /**
    * Rebuild the dynamic host allowlist from the current providerConfigs.
@@ -567,11 +603,13 @@ function registerHandlers(ipcMain) {
    */
   function rebuildProviderFetchHosts() {
     providerFetchHosts.clear();
+    providerHttpHosts.clear();
     // Reset localhost ports to built-in defaults, then add provider-configured ones
     ALLOWED_LOCALHOST_PORTS.clear();
     for (const port of BUILTIN_LOCALHOST_PORTS) ALLOWED_LOCALHOST_PORTS.add(port);
     // Re-add any still-active temporary entries so a sync doesn't wipe them
     for (const host of tempAllowedHosts) providerFetchHosts.add(host);
+    for (const host of tempHttpHosts) providerHttpHosts.add(host);
     for (const port of tempAllowedPorts) ALLOWED_LOCALHOST_PORTS.add(port);
     for (const config of providerConfigs) {
       if (!config.baseURL) continue;
@@ -584,6 +622,7 @@ function registerHandlers(ipcMain) {
           ALLOWED_LOCALHOST_PORTS.add(port);
         } else {
           providerFetchHosts.add(host);
+          if (parsed.protocol === "http:") providerHttpHosts.add(host);
         }
       } catch {
         // Invalid URL in config — skip
@@ -669,16 +708,16 @@ function registerHandlers(ipcMain) {
         const port = parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 80);
         return ALLOWED_LOCALHOST_PORTS.has(port);
       }
-      // Require HTTPS for remote hosts; allow HTTP only for the configured web search apiHost
-      // (e.g. self-hosted SearXNG at http://searxng.lan:8080 or http://192.168.x.x)
-      if (parsed.protocol !== "https:") {
-        if (!webSearchApiHost) return false;
-        try {
-          const wsHost = new URL(webSearchApiHost).hostname;
-          if (parsed.hostname !== wsHost) return false;
-        } catch {
-          return false;
+      // Only allow http: and https: schemes for remote hosts
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
+      // For HTTP, only allow providers explicitly configured with http:// or the web search apiHost
+      if (parsed.protocol === "http:") {
+        const isProviderHost = providerHttpHosts.has(parsed.hostname);
+        let isWebSearchHost = false;
+        if (webSearchApiHost) {
+          try { isWebSearchHost = new URL(webSearchApiHost).hostname === parsed.hostname; } catch { }
         }
+        if (!isProviderHost && !isWebSearchHost) return false;
       }
       // Check built-in + provider-configured host allowlist
       if (BUILTIN_FETCH_HOSTS.has(parsed.hostname)) return true;
@@ -701,15 +740,11 @@ function registerHandlers(ipcMain) {
       const resolvedUrl = patched.url;
       const resolvedHeaders = patched.headers;
 
-      // Validate URL: only allow HTTP(S) schemes; require HTTPS for non-localhost
+      // Validate URL: only allow HTTP(S) schemes
       try {
         const parsed = new URL(resolvedUrl);
         if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
           return { ok: false, error: "Only HTTP(S) URLs are allowed" };
-        }
-        const isLocalhost = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
-        if (parsed.protocol === "http:" && !isLocalhost) {
-          return { ok: false, error: "HTTP is only allowed for localhost" };
         }
       } catch {
         return { ok: false, error: "Invalid URL" };
