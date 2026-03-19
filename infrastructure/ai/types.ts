@@ -23,17 +23,23 @@ export interface ModelInfo {
 }
 
 // Chat types
-export interface ChatMessageImage {
+export interface ChatMessageAttachment {
   base64Data: string;
   mediaType: string;
   filename?: string;
+  filePath?: string;    // original filesystem path (for ACP agents to read directly)
 }
+
+/** @deprecated Use ChatMessageAttachment instead */
+export type ChatMessageImage = ChatMessageAttachment;
 
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
-  images?: ChatMessageImage[];
+  attachments?: ChatMessageAttachment[];
+  /** @deprecated Use attachments instead. Kept for backward compatibility with persisted sessions. */
+  images?: ChatMessageAttachment[];
   thinking?: string;
   thinkingDurationMs?: number;
   toolCalls?: ToolCall[];

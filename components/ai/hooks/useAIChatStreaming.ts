@@ -16,6 +16,7 @@ import type {
   AIPermissionMode,
   AISession,
   ChatMessage,
+  ChatMessageAttachment,
   ExternalAgentConfig,
   ProviderConfig,
   WebSearchConfig,
@@ -199,6 +200,7 @@ export interface UseAIChatStreamingReturn {
     currentSession: AISession | undefined,
     assistantMsgId: string,
     context: SendToCattyContext,
+    attachments?: ChatMessageAttachment[],
   ) => Promise<void>;
   /** Send a message to an external agent (ACP or raw process). */
   sendToExternalAgent: (
@@ -592,20 +594,25 @@ export function useAIChatStreaming({
               ...msg, thinkingDurationMs: msg.thinkingDurationMs || (Date.now() - msg.timestamp),
             }));
           },
-          onToolCall: (toolName: string, args: Record<string, unknown>) => {
+          onToolCall: (toolName: string, args: Record<string, unknown>, toolCallId?: string) => {
             maybeCreateAssistantMsg();
             updateLastMessage(sessionId, msg => ({
               ...msg,
-              toolCalls: [...(msg.toolCalls || []), { id: `tc_${Date.now()}`, name: toolName, arguments: args }],
+              toolCalls: [...(msg.toolCalls || []), { id: toolCallId || `tc_${Date.now()}`, name: toolName, arguments: args }],
               executionStatus: 'running',
               statusText: undefined,
             }));
           },
-          onToolResult: (toolCallId: string, result: string) => {
-            updateLastMessage(sessionId, msg =>
-              msg.role === 'assistant' && msg.executionStatus === 'running'
-                ? { ...msg, executionStatus: 'completed', statusText: undefined } : msg,
-            );
+          onToolResult: (toolCallId: string, result: string, toolName?: string) => {
+            updateLastMessage(sessionId, msg => {
+              if (msg.role !== 'assistant' || msg.executionStatus !== 'running') return msg;
+              // Only patch tool call name if the existing name is missing/generic
+              // (don't overwrite a good name from onToolCall with a wrapper name from tool-result)
+              const updatedToolCalls = toolName && !toolName.includes('acp_provider_agent_dynamic_tool') && msg.toolCalls
+                ? msg.toolCalls.map(tc => tc.id === toolCallId && !tc.name ? { ...tc, name: toolName } : tc)
+                : msg.toolCalls;
+              return { ...msg, toolCalls: updatedToolCalls, executionStatus: 'completed', statusText: undefined };
+            });
             addMessageToSession(sessionId, {
               id: generateId(), role: 'tool', content: '',
               toolResults: [{ toolCallId, content: result, isError: false }],
@@ -668,6 +675,7 @@ export function useAIChatStreaming({
     currentSession: AISession | undefined,
     assistantMsgId: string,
     context: SendToCattyContext,
+    attachments?: ChatMessageAttachment[],
   ) => {
     const bridge = getNetcattyBridge();
     const getExecutorContext = context.getExecutorContext ?? (() => ({
@@ -741,7 +749,22 @@ export function useAIChatStreaming({
       const sdkMessages: Array<ModelMessage> = [];
       for (const m of allMessages) {
         if (m.role === 'user') {
-          sdkMessages.push({ role: 'user', content: m.content });
+          // Build multimodal content when attachments are present (fallback to legacy `images` field)
+          const messageAttachments = m.attachments ?? m.images;
+          if (messageAttachments?.length) {
+            const parts: Array<{ type: 'text'; text: string } | { type: 'image'; image: string; mediaType?: string } | { type: 'file'; data: string; mediaType: string; filename?: string }> = [];
+            parts.push({ type: 'text', text: m.content });
+            for (const att of messageAttachments) {
+              if (att.mediaType.startsWith('image/')) {
+                parts.push({ type: 'image', image: att.base64Data, mediaType: att.mediaType });
+              } else {
+                parts.push({ type: 'file', data: att.base64Data, mediaType: att.mediaType, filename: att.filename });
+              }
+            }
+            sdkMessages.push({ role: 'user', content: parts });
+          } else {
+            sdkMessages.push({ role: 'user', content: m.content });
+          }
         } else if (m.role === 'assistant') {
           if (m.toolCalls?.length) {
             // Only include tool calls that have matching results
@@ -780,7 +803,21 @@ export function useAIChatStreaming({
           });
         }
       }
-      sdkMessages.push({ role: 'user', content: trimmed });
+      // Build the current user message — include attachments as multimodal content
+      if (attachments?.length) {
+        const parts: Array<{ type: 'text'; text: string } | { type: 'image'; image: string; mediaType?: string } | { type: 'file'; data: string; mediaType: string; filename?: string }> = [];
+        parts.push({ type: 'text', text: trimmed });
+        for (const att of attachments) {
+          if (att.mediaType.startsWith('image/')) {
+            parts.push({ type: 'image', image: att.base64Data, mediaType: att.mediaType });
+          } else {
+            parts.push({ type: 'file', data: att.base64Data, mediaType: att.mediaType, filename: att.filename });
+          }
+        }
+        sdkMessages.push({ role: 'user', content: parts });
+      } else {
+        sdkMessages.push({ role: 'user', content: trimmed });
+      }
 
       const approvalInfo = await processCattyStream(sessionId, model, systemPrompt, tools, sdkMessages, abortController.signal, assistantMsgId);
 
