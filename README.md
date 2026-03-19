@@ -67,13 +67,21 @@
 
 Ask Catty Agent to check a server's health, and it runs the right commands, analyzes the output, and gives you a clear summary — all in seconds.
 
-https://github.com/binaricat/Netcatty/raw/main/screenshots/gifs/ai-feature.mp4
+
+https://github.com/user-attachments/assets/eecf08f1-80bd-49db-886d-b36e93388865
+
+
+
 
 #### 🚀 Multi-Host — Docker Swarm Cluster Setup
 
 Watch Catty Agent orchestrate a Docker Swarm cluster across two servers in one conversation. It handles the init, token exchange, and node joining — you just tell it what you want.
 
-https://github.com/binaricat/Netcatty/raw/main/screenshots/gifs/ai-feature-muti-hosts.mp4
+
+
+https://github.com/user-attachments/assets/282027aa-5c9e-4bb1-b2c3-5eea9df2b203
+
+
 
 ---
 
