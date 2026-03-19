@@ -5,13 +5,13 @@
 <h1 align="center">Netcatty</h1>
 
 <p align="center">
-  <strong>Modern SSH Client, SFTP Browser & Terminal Manager</strong><br/>
+  <strong>🔥 AI-Powered SSH Client, SFTP Browser & Terminal Manager 🚀</strong><br/>
   <a href="https://netcatty.app"><strong>netcatty.app</strong></a>
 </p>
 
 <p align="center">
   A beautiful, feature-rich SSH workspace built with Electron, React, and xterm.js.<br/>
-  Split terminals, Vault views, SFTP workflows, custom themes, and keyword highlighting — all in one.
+  🔥 Built-in AI Agent · Split terminals · Vault views · SFTP workflows · Custom themes — all in one.
 </p>
 
 <p align="center">
@@ -44,8 +44,42 @@
 
 ---
 
+<a name="catty-agent"></a>
+# 🔥 Catty Agent — Your IT Ops AI Partner
+
+> 🚀 **Boost your IT ops daily work with AI power.** Catty Agent is the built-in AI assistant that understands your servers, executes commands, and handles complex multi-host operations — all through natural conversation.
+
+<p align="center">
+  <img src="screenshots/ai-feature.png" alt="Catty Agent Interface" width="800">
+</p>
+
+### 🔥 What can Catty Agent do?
+
+- 🚀 **Natural language server management** — just tell it what you need, no more memorizing commands
+- 🔥 **Real-time server diagnostics** — check status, inspect logs, monitor resources through conversation
+- 🚀 **Multi-host orchestration** — coordinate tasks across multiple servers simultaneously
+- 🔥 **Intelligent context awareness** — understands your server environment and provides tailored responses
+- 🚀 **One-click complex operations** — set up clusters, deploy services, and more with simple instructions
+
+### 🎬 AI in Action
+
+#### 🔥 Single Host — Intelligent Server Diagnostics
+
+Ask Catty Agent to check a server's health, and it runs the right commands, analyzes the output, and gives you a clear summary — all in seconds.
+
+https://github.com/binaricat/Netcatty/raw/main/screenshots/gifs/ai-feature.mp4
+
+#### 🚀 Multi-Host — Docker Swarm Cluster Setup
+
+Watch Catty Agent orchestrate a Docker Swarm cluster across two servers in one conversation. It handles the init, token exchange, and node joining — you just tell it what you want.
+
+https://github.com/binaricat/Netcatty/raw/main/screenshots/gifs/ai-feature-muti-hosts.mp4
+
+---
+
 # Contents <!-- omit in toc -->
 
+- [🔥 Catty Agent — AI Partner](#catty-agent)
 - [What is Netcatty](#what-is-netcatty)
 - [Why Netcatty](#why-netcatty)
 - [Features](#features)
