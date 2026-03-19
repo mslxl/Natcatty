@@ -1073,7 +1073,7 @@ function App({ settings }: { settings: SettingsState }) {
     } else {
       if (IS_DEV) console.log('[handleTerminalDataCapture] No matching log found!');
     }
-  }, [sessions, connectionLogs, updateConnectionLog, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat]);
+  }, [sessions, connectionLogs, updateConnectionLog]);
 
   // Check if host has multiple protocols enabled
   const hasMultipleProtocols = useCallback((host: Host) => {

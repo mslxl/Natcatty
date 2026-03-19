@@ -689,14 +689,14 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     ],
   );
 
-  const countAllHostsInNode = (node: GroupNode): number => {
+  const countAllHostsInNode = useCallback((node: GroupNode): number => {
     let count = node.hosts.length;
     Object.values(node.children).forEach((child) => {
       count += countAllHostsInNode(child);
     });
     node.totalHostCount = count;
     return count;
-  };
+  }, []);
 
   const buildGroupTree = useMemo<Record<string, GroupNode>>(() => {
     const root: Record<string, GroupNode> = {};
@@ -725,7 +725,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     Object.values(root).forEach(countAllHostsInNode);
 
     return root;
-  }, [hosts, customGroups]);
+  }, [hosts, customGroups, countAllHostsInNode]);
 
   // Generate all possible group paths from the tree (including all intermediate nodes)
   const allGroupPaths = useMemo(() => {
@@ -912,7 +912,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     Object.values(root).forEach(countAllHostsInNode);
     
     return root;
-  }, [treeViewHosts, customGroups]);
+  }, [treeViewHosts, customGroups, countAllHostsInNode]);
 
   // Create tree view specific group tree that excludes ungrouped hosts
   const treeViewGroupTree = useMemo<GroupNode[]>(() => {
