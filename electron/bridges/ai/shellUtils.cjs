@@ -143,22 +143,43 @@ async function getShellEnv() {
 
 // ── Claude Code ACP binary resolution ──
 
+/**
+ * Resolve the Claude ACP binary, returning { command, prependArgs }.
+ *
+ * On macOS/Linux a shebang-based .js script can be spawned directly, but on
+ * Windows `child_process.spawn` does not interpret shebangs — so when the
+ * resolved path is a JS file we invoke it via the system Node runtime.
+ */
 function resolveClaudeAcpBinaryPath(shellEnv, electronModule) {
   const binaryName = "claude-agent-acp";
 
-  // Dev mode: prefer system PATH
+  // Dev mode: prefer system PATH (npm creates platform-appropriate wrappers)
   const isPackaged = electronModule?.app?.isPackaged;
   if (!isPackaged && shellEnv) {
     const systemPath = resolveCliFromPath(binaryName, shellEnv);
-    if (systemPath) return systemPath;
+    if (systemPath) return { command: systemPath, prependArgs: [] };
   }
 
   // Packaged build (or dev fallback): use npm-bundled binary
   try {
     const resolved = require.resolve("@zed-industries/claude-agent-acp/dist/index.js");
-    return toUnpackedAsarPath(resolved);
+    const scriptPath = toUnpackedAsarPath(resolved);
+
+    // On Windows, .js files cannot be spawned directly (no shebang support) —
+    // invoke via Node.  In packaged Electron builds process.execPath is the
+    // app binary (e.g. Netcatty.exe), not a Node runtime, so we must resolve
+    // the real `node` from PATH.  If Node is not installed, fall back to the
+    // bare command name and let the system find the npm-generated .cmd wrapper.
+    if (process.platform === "win32") {
+      const nodePath = resolveCliFromPath("node", shellEnv);
+      if (nodePath) {
+        return { command: nodePath, prependArgs: [scriptPath] };
+      }
+      return { command: binaryName, prependArgs: [] };
+    }
+    return { command: scriptPath, prependArgs: [] };
   } catch {
-    return binaryName;
+    return { command: binaryName, prependArgs: [] };
   }
 }
 
