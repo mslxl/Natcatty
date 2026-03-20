@@ -1200,7 +1200,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
                     value={form.distroMode || "auto"}
                     onValueChange={(val) => handleDistroModeChange(val as "auto" | "manual")}
                   >
-                    <SelectTrigger className="h-8">
+                    <SelectTrigger className="h-8" aria-label={t("hostDetails.distro.mode")}>
                       <span className="truncate whitespace-nowrap pr-2 text-left">
                         {form.distroMode === "manual"
                           ? t("hostDetails.distro.mode.manual")
@@ -1221,7 +1221,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
                       value={form.manualDistro}
                       onValueChange={(val) => update("manualDistro", val)}
                     >
-                      <SelectTrigger className="h-8">
+                      <SelectTrigger className="h-8" aria-label={t("hostDetails.distro.manualLabel")}>
                         {(() => {
                           const selectedOption = distroOptions.find((option) => option.value === form.manualDistro);
                           return selectedOption ? (

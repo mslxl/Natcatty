@@ -44,7 +44,8 @@ export const getEffectiveHostDistro = (
   const detected = normalizeDistroId(host.distro);
   const manual = normalizeDistroId(host.manualDistro);
   if (host.distroMode === 'manual') return manual || detected;
-  return detected || manual;
+  if (host.distroMode === 'auto') return detected;
+  return detected;
 };
 
 export const sanitizeHost = (host: Host): Host => {
