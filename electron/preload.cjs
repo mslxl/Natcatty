@@ -27,19 +27,33 @@ function cleanupTransferListeners(transferId) {
   transferCancelledListeners.delete(transferId);
 }
 
-// Filter MCP marker artifacts from terminal output:
-// 1. Marker output lines (standalone): __NCMCP_xxx_S or __NCMCP_xxx_E:0
-// 2. End marker command echo: __nc=$?;printf '__NCMCP_...'
-// 3. Start marker printf prefix in echoed command: printf '__NCMCP_...\n';
-// We keep the actual command part visible.
+// Filter MCP marker artifacts from terminal output.
+// All internal wrapper vars use the __NCMCP_ prefix so the guard
+// `data.includes("__NCMCP_")` catches every chunk containing wrapper noise.
 function filterMcpMarkers(data) {
   return data
-    // Remove standalone marker output lines (printf output)
+    // ── Marker output lines (printf / Write-Output / echo output) ──
     .replace(/^__NCMCP_[^\r\n]*[\r\n]*/gm, "")
-    // Remove end marker command echo lines
-    .replace(/[^\r\n]*__nc=\$\?;printf '[^\r\n]*__NCMCP_[^\r\n]*[\r\n]*/g, "")
-    // Remove start marker printf prefix from combined command lines
-    .replace(/printf '__NCMCP_[^']*\\n';/g, "");
+    // ── Posix: echoed combined line 1 ──
+    // printf '%s\n' '__NCMCP_..._S'; PAGER=... command
+    // → strip the printf prefix, keep the command visible, also strip PAGER env
+    .replace(/printf '%s\\n' '__NCMCP_[^']*';/g, "")
+    // ── Posix: echoed combined line 2 ──
+    // __NCMCP_rc=$?;printf ... (exit $__NCMCP_rc)
+    .replace(/[^\r\n]*__NCMCP_rc=\$\?;printf [^\r\n]*[\r\n]*/g, "")
+    // ── Pager env var prefixes (inline on the command line) ──
+    .replace(/PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= /g, "")
+    // ── Fish: pager + marker lines ──
+    .replace(/^set -gx (?:PAGER|SYSTEMD_PAGER|GIT_PAGER|LESS) [^\r\n]*[\r\n]*/gm, "")
+    .replace(/^set __NCMCP_rc \$status[\r\n]*/gm, "")
+    // ── Cmd: pager + marker lines ──
+    .replace(/^set "(?:PAGER|SYSTEMD_PAGER|GIT_PAGER|LESS)=[^"]*"[\r\n]*/gm, "")
+    .replace(/^echo __NCMCP_[^\r\n]*[\r\n]*/gm, "")
+    // ── PowerShell: pager + marker lines ──
+    .replace(/^\$env:(?:PAGER|SYSTEMD_PAGER|GIT_PAGER|LESS)='[^']*'[\r\n]*/gm, "")
+    .replace(/^Write-Output '__NCMCP_[^']*'[\r\n]*/gm, "")
+    .replace(/^\$global:LASTEXITCODE = 0[\r\n]*/gm, "")
+    .replace(/^\$__NCMCP_rc = if \(\$LASTEXITCODE[^\r\n]*[\r\n]*/gm, "");
 }
 
 ipcRenderer.on("netcatty:data", (_event, payload) => {
@@ -1063,6 +1077,21 @@ const api = {
   },
   aiMcpSetPermissionMode: async (mode) => {
     return ipcRenderer.invoke("netcatty:ai:mcp:set-permission-mode", { mode });
+  },
+  // MCP approval gate: renderer receives approval requests from main process
+  onMcpApprovalRequest: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("netcatty:ai:mcp:approval-request", handler);
+    return () => ipcRenderer.removeListener("netcatty:ai:mcp:approval-request", handler);
+  },
+  respondMcpApproval: async (approvalId, approved) => {
+    return ipcRenderer.invoke("netcatty:ai:mcp:approval-response", { approvalId, approved });
+  },
+  // MCP approval cleared: main process timed out or cancelled an approval
+  onMcpApprovalCleared: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("netcatty:ai:mcp:approval-cleared", handler);
+    return () => ipcRenderer.removeListener("netcatty:ai:mcp:approval-cleared", handler);
   },
   // ACP streaming
   aiAcpStream: async (requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, providerId, model, existingSessionId, historyMessages, images) => {

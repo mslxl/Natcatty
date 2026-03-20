@@ -64,16 +64,30 @@ interface ToolResultChunk {
   result?: unknown;
 }
 
-/** Shape of a tool-approval-request chunk from the Vercel AI SDK fullStream. */
-interface ToolApprovalRequestChunk {
-  type: 'tool-approval-request';
-  approvalId: string;
-  toolCall: {
-    toolCallId: string;
-    toolName: string;
-    args?: Record<string, unknown>;
-    input?: Record<string, unknown>;
-  };
+/** Detect tool results that represent errors/denials (e.g. `{ error: "..." }` or `{ ok: false }`) */
+function isToolResultError(output: unknown): boolean {
+  if (output == null) return false;
+  
+  if (typeof output === 'object') {
+    const obj = output as Record<string, unknown>;
+    // Check for explicit error objects
+    if ('error' in obj && typeof obj.error === 'string') return true;
+    if ('ok' in obj && obj.ok === false) return true;
+  }
+  
+  // Check stringified JSON (common for tool result wrapping)
+  if (typeof output === 'string') {
+    try {
+      const parsed = JSON.parse(output);
+      if (parsed && typeof parsed === 'object') {
+        const parsedObj = parsed as Record<string, unknown>;
+        if ('error' in parsedObj && typeof parsedObj.error === 'string') return true;
+        if ('ok' in parsedObj && parsedObj.ok === false) return true;
+      }
+    } catch { /* not JSON, not an error */ }
+  }
+  
+  return false;
 }
 
 /** Shape of an error chunk from the Vercel AI SDK fullStream. */
@@ -88,9 +102,8 @@ type StreamChunk =
   | ReasoningChunk
   | ToolCallChunk
   | ToolResultChunk
-  | ToolApprovalRequestChunk
   | ErrorChunk
-  | { type: 'reasoning-end' | 'text-start' | 'text-end' | 'start' | 'finish' | 'start-step' | 'finish-step' };
+  | { type: 'reasoning-end' | 'text-start' | 'text-end' | 'start' | 'finish' | 'start-step' | 'finish-step' | 'tool-approval-request' };
 
 /** Shape of the netcatty bridge exposed on `window` (panel-specific subset). */
 export interface PanelBridge extends NetcattyBridge {
@@ -121,27 +134,8 @@ export function getNetcattyBridge(): PanelBridge | undefined {
   return (window as any).netcatty as PanelBridge | undefined;
 }
 
-/** Approval info returned by processCattyStream when a tool-approval-request is received. */
-export interface ApprovalInfo {
-  approvalId: string;
-  toolCallId: string;
-  toolName: string;
-  toolArgs: Record<string, unknown>;
-}
-
-/** Pending approval context stored between approval request and user response. */
-export interface PendingApprovalContext {
-  sessionId: string;
-  scopeKey: string;
-  sdkMessages: Array<ModelMessage>;
-  approvalInfo: ApprovalInfo;
-  model: ReturnType<typeof createModelFromConfig>;
-  systemPrompt: string;
-  tools: ReturnType<typeof createCattyTools>;
-  scopeType: 'terminal' | 'workspace';
-  scopeLabel?: string;
-  getExecutorContext: () => ExecutorContext;
-}
+// ApprovalInfo and PendingApprovalContext removed — approval is now handled
+// inside the tool's execute function via the approvalGate module.
 
 function generateId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -183,7 +177,7 @@ export interface UseAIChatStreamingReturn {
   setStreamingForScope: (key: string, val: boolean) => void;
   /** Ref to per-session abort controllers. */
   abortControllersRef: React.MutableRefObject<Map<string, AbortController>>;
-  /** Process a Catty agent stream, returning approval info if one is requested. */
+  /** Process a Catty agent stream. */
   processCattyStream: (
     streamSessionId: string,
     model: ReturnType<typeof createModelFromConfig>,
@@ -192,7 +186,7 @@ export interface UseAIChatStreamingReturn {
     sdkMessages: Array<ModelMessage>,
     signal: AbortSignal,
     currentAssistantMsgId: string,
-  ) => Promise<ApprovalInfo | null>;
+  ) => Promise<void>;
   /** Send a message to the Catty agent (built-in). */
   sendToCattyAgent: (
     sessionId: string,
@@ -229,7 +223,6 @@ export interface SendToCattyContext {
   terminalSessions: TerminalSessionInfo[];
   webSearchConfig?: WebSearchConfig | null;
   getExecutorContext?: () => ExecutorContext;
-  setPendingApproval: (ctx: PendingApprovalContext | null) => void;
   autoTitleSession: (sessionId: string, text: string) => void;
 }
 
@@ -327,7 +320,7 @@ export function useAIChatStreaming({
     sdkMessages: Array<ModelMessage>,
     signal: AbortSignal,
     currentAssistantMsgId: string,
-  ): Promise<ApprovalInfo | null> => {
+  ): Promise<void> => {
     const result = streamText({
       model,
       messages: sdkMessages,
@@ -341,7 +334,6 @@ export function useAIChatStreaming({
     let activeMsgId = currentAssistantMsgId;
     let lastAddedRole: 'assistant' | 'tool' = 'assistant';
     const reader = result.fullStream.getReader();
-    let pendingApprovalInfo: ApprovalInfo | null = null;
 
     // -- Text-delta batching: accumulate deltas and flush periodically --
     let pendingText = '';
@@ -459,6 +451,7 @@ export function useAIChatStreaming({
               ? { ...msg, executionStatus: 'completed', statusText: undefined } : msg,
           );
           const toolOutput = typedChunk.output ?? typedChunk.result;
+          const toolError = isToolResultError(toolOutput);
           addMessageToSession(streamSessionId, {
             id: generateId(),
             role: 'tool',
@@ -468,7 +461,7 @@ export function useAIChatStreaming({
               content: typeof toolOutput === 'string'
                 ? toolOutput
                 : JSON.stringify(toolOutput),
-              isError: false,
+              isError: toolError,
             }],
             timestamp: Date.now(),
             executionStatus: 'completed',
@@ -476,25 +469,9 @@ export function useAIChatStreaming({
           lastAddedRole = 'tool';
           break;
         }
-        case 'tool-approval-request': {
-          cancelPendingFlush();
-          flushText();
-          const typedChunk = chunk as ToolApprovalRequestChunk;
-          pendingApprovalInfo = {
-            approvalId: typedChunk.approvalId,
-            toolCallId: typedChunk.toolCall.toolCallId,
-            toolName: typedChunk.toolCall.toolName,
-            toolArgs: typedChunk.toolCall.args ?? typedChunk.toolCall.input ?? {},
-          };
-          updateMessageById(streamSessionId, activeMsgId, msg => ({
-            ...msg,
-            pendingApproval: {
-              ...pendingApprovalInfo!,
-              status: 'pending' as const,
-            },
-          }));
-          break;
-        }
+        // tool-approval-request is no longer handled here — approval is now
+        // inside the tool's execute function via the approvalGate module.
+        // The SDK may still emit this chunk type but we simply ignore it.
         case 'error': {
           cancelPendingFlush();
           flushText();
@@ -526,7 +503,7 @@ export function useAIChatStreaming({
       flushText();
       reader.releaseLock();
     }
-    return pendingApprovalInfo;
+    return;
   }, [maxIterations, addMessageToSession, updateMessageById]);
 
   // -------------------------------------------------------------------
@@ -615,9 +592,10 @@ export function useAIChatStreaming({
                 : msg.toolCalls;
               return { ...msg, toolCalls: updatedToolCalls, executionStatus: 'completed', statusText: undefined };
             });
+            const toolError = isToolResultError(result);
             addMessageToSession(sessionId, {
               id: generateId(), role: 'tool', content: '',
-              toolResults: [{ toolCallId, content: result, isError: false }],
+              toolResults: [{ toolCallId, content: result, isError: toolError }],
               timestamp: Date.now(), executionStatus: 'completed',
             });
             needsNewAssistantMsg = true;
@@ -691,6 +669,7 @@ export function useAIChatStreaming({
       context.commandBlocklist,
       context.globalPermissionMode,
       context.webSearchConfig ?? undefined,
+      sessionId,
     );
 
     const systemPrompt = buildSystemPrompt({
@@ -825,23 +804,7 @@ export function useAIChatStreaming({
         sdkMessages.push({ role: 'user', content: trimmed });
       }
 
-      const approvalInfo = await processCattyStream(sessionId, model, systemPrompt, tools, sdkMessages, abortController.signal, assistantMsgId);
-
-      if (approvalInfo) {
-        context.setPendingApproval({
-          sessionId,
-          scopeKey: sendScopeKey,
-          sdkMessages,
-          approvalInfo,
-          model,
-          systemPrompt,
-          tools,
-          scopeType: context.scopeType,
-          scopeLabel: context.scopeLabel,
-          getExecutorContext,
-        });
-        return; // Keep streaming flag — waiting for user approval
-      }
+      await processCattyStream(sessionId, model, systemPrompt, tools, sdkMessages, abortController.signal, assistantMsgId);
     } catch (err) {
       console.error('[Catty] streamText error:', err);
       reportStreamError(sessionId, abortController.signal, err);

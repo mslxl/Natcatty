@@ -57,6 +57,91 @@ let permissionMode = "confirm";
 const activePtyExecs = new Map(); // marker → { ptyStream, cleanup }
 const cancelledChatSessions = new Set();
 
+// ── Approval gate (for confirm mode with ACP/MCP agents) ──
+let getMainWindowFn = null; // () => BrowserWindow | null
+const pendingApprovals = new Map(); // approvalId → { resolve, chatSessionId }
+let approvalIdCounter = 0;
+
+function setMainWindowGetter(fn) {
+  getMainWindowFn = fn;
+}
+
+/**
+ * Request approval from the renderer process.
+ * Sends an IPC event and returns a Promise<boolean> that resolves
+ * when the user approves/rejects in the UI, or auto-denies after timeout.
+ */
+const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
+function requestApprovalFromRenderer(toolName, args, chatSessionId) {
+  return new Promise((resolve) => {
+    const mainWin = typeof getMainWindowFn === 'function' ? getMainWindowFn() : null;
+    if (!mainWin || mainWin.isDestroyed()) {
+      // No renderer available — deny to preserve confirm mode safety guarantee
+      resolve(false);
+      return;
+    }
+    const approvalId = `mcp_approval_${++approvalIdCounter}_${Date.now()}`;
+
+    // Auto-deny after timeout so ACP/MCP tool calls don't hang indefinitely
+    const timerId = setTimeout(() => {
+      if (pendingApprovals.has(approvalId)) {
+        pendingApprovals.delete(approvalId);
+        resolve(false);
+        // Notify renderer to remove the stale approval card
+        try {
+          const win = typeof getMainWindowFn === 'function' ? getMainWindowFn() : null;
+          if (win && !win.isDestroyed()) {
+            win.webContents.send('netcatty:ai:mcp:approval-cleared', { approvalIds: [approvalId] });
+          }
+        } catch { /* ignore */ }
+      }
+    }, APPROVAL_TIMEOUT_MS);
+
+    pendingApprovals.set(approvalId, {
+      resolve: (approved) => {
+        clearTimeout(timerId);
+        resolve(approved);
+      },
+      chatSessionId: chatSessionId || null,
+    });
+    mainWin.webContents.send('netcatty:ai:mcp:approval-request', {
+      approvalId,
+      toolName,
+      args,
+      chatSessionId: chatSessionId || undefined,
+    });
+  });
+}
+
+function resolveApprovalFromRenderer(approvalId, approved) {
+  const entry = pendingApprovals.get(approvalId);
+  if (entry) {
+    pendingApprovals.delete(approvalId);
+    entry.resolve(approved);
+  }
+}
+
+/**
+ * Clear pending MCP approvals, optionally scoped to a specific chatSessionId.
+ * Resolves matched entries with false (denied) to unblock hanging promises.
+ */
+function clearPendingApprovals(chatSessionId) {
+  if (!chatSessionId) {
+    for (const [, entry] of pendingApprovals) {
+      entry.resolve(false);
+    }
+    pendingApprovals.clear();
+    return;
+  }
+  for (const [id, entry] of pendingApprovals) {
+    if (entry.chatSessionId === chatSessionId) {
+      pendingApprovals.delete(id);
+      entry.resolve(false);
+    }
+  }
+}
+
 function cancelAllPtyExecs() {
   for (const [marker, entry] of activePtyExecs) {
     try {
@@ -368,6 +453,15 @@ async function dispatch(method, params) {
 
   if (WRITE_METHODS.has(method) && isChatSessionCancelled(params?.chatSessionId)) {
     return { ok: false, error: "Operation cancelled: the ACP session was stopped." };
+  }
+
+  // Confirm mode: request user approval for write operations
+  if (permissionMode === "confirm" && WRITE_METHODS.has(method)) {
+    const { chatSessionId, ...toolArgs } = params || {};
+    const approved = await requestApprovalFromRenderer(method, toolArgs, chatSessionId);
+    if (!approved) {
+      return { ok: false, error: "Operation denied by user." };
+    }
   }
 
   // Scope validation for session-targeted operations
@@ -875,4 +969,7 @@ module.exports = {
   cancelAllPtyExecs,
   cleanupScopedMetadata,
   cleanup,
+  setMainWindowGetter,
+  resolveApprovalFromRenderer,
+  clearPendingApprovals,
 };

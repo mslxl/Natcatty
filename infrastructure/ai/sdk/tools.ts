@@ -13,6 +13,7 @@ import {
   type ToolDeps,
   type ToolExecResult,
 } from '../shared/toolExecutors';
+import { requestApproval } from '../shared/approvalGate';
 
 /** Unwrap a shared ToolExecResult into the shape expected by Vercel AI SDK tool results. */
 function unwrap<T>(r: ToolExecResult<T>): T | { error: string } {
@@ -34,8 +35,8 @@ export function createCattyTools(
   commandBlocklist?: string[],
   permissionMode: AIPermissionMode = 'confirm',
   webSearchConfig?: WebSearchConfig,
+  chatSessionId?: string,
 ) {
-  const writeToolNeedsApproval = permissionMode === 'confirm';
   const deps: ToolDeps = { bridge, context, commandBlocklist, permissionMode, webSearchConfig };
 
   return {
@@ -47,8 +48,15 @@ export function createCattyTools(
         sessionId: z.string().describe('The terminal session ID to execute the command on.'),
         command: z.string().describe('The shell command to execute in the target session.'),
       }),
-      needsApproval: writeToolNeedsApproval,
-      execute: async ({ sessionId, command }) => {
+      // No needsApproval — approval is handled inside execute via the approval gate.
+      execute: async ({ sessionId, command }, { toolCallId }) => {
+        // In confirm mode, await user approval before executing
+        if (permissionMode === 'confirm') {
+          const approved = await requestApproval(toolCallId, 'terminal_execute', { sessionId, command }, chatSessionId);
+          if (!approved) {
+            return { error: 'User denied command execution.' };
+          }
+        }
         return unwrap(await executeTerminalExecute(deps, { sessionId, command }));
       },
     }),
