@@ -47,7 +47,8 @@ assert_loadable_native_module() {
   local file="$1"
   echo "[node-pty] loading native module with Electron runtime: ${file}"
   ELECTRON_RUN_AS_NODE=1 "$(electron_bin)" -e '
-    require(process.argv[1]);
+    const path = require("node:path");
+    require(path.resolve(process.argv[1]));
     console.log("[node-pty] native module loaded successfully");
   ' "${file}"
 }
