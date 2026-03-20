@@ -6,6 +6,7 @@ import { collectSessionIds } from '../domain/workspace';
 import { SplitDirection } from '../domain/workspace';
 import { KeyBinding, TerminalSettings } from '../domain/models';
 import { cn } from '../lib/utils';
+import { detectLocalOs } from '../lib/localShell';
 import { useStoredString } from '../application/state/useStoredString';
 import { buildCacheKey } from '../application/state/sftp/sharedRemoteHostCache';
 import type { DropEntry } from '../lib/sftpFileUtils';
@@ -63,6 +64,38 @@ const filterTabsMap = <T,>(source: Map<string, T>, validIds: Set<string>): Map<s
     }
   }
   return changed ? next : source;
+};
+
+type AITerminalSessionInfo = {
+  sessionId: string;
+  hostId: string;
+  hostname: string;
+  label: string;
+  os?: string;
+  username?: string;
+  protocol?: string;
+  shellType?: string;
+  connected: boolean;
+};
+
+const buildAITerminalSessionInfo = (
+  session: TerminalSession | undefined,
+  host: Host | undefined,
+  localOs: 'linux' | 'macos' | 'windows',
+): AITerminalSessionInfo => {
+  const protocol = session?.protocol || host?.protocol;
+  const isLocalSession = protocol === 'local' || session?.hostId?.startsWith('local-');
+  return {
+    sessionId: session?.id || '',
+    hostId: session?.hostId || '',
+    hostname: host?.hostname || session?.hostname || '',
+    label: host?.label || session?.hostLabel || '',
+    os: host?.os || (isLocalSession ? localOs : undefined),
+    username: host?.username || session?.username,
+    protocol,
+    shellType: session?.shellType && session.shellType !== 'unknown' ? session.shellType : undefined,
+    connected: session?.status === 'connected',
+  };
 };
 
 interface TerminalLayerProps {
@@ -1008,6 +1041,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
   // Build terminal session context for the AI chat panel
   const aiTerminalSessions = useMemo(() => {
+    const localOs = detectLocalOs(navigator.userAgent || navigator.platform);
     const sessionIds = activeWorkspace?.root
       ? collectSessionIds(activeWorkspace.root)
       : activeSession ? [activeSession.id] : [];
@@ -1015,15 +1049,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     const result = sessionIds.map(sid => {
       const s = sessions.find(s => s.id === sid);
       const host = s?.hostId ? hosts.find(h => h.id === s.hostId) : undefined;
-      return {
-        sessionId: sid,
-        hostId: s?.hostId || '',
-        hostname: host?.hostname || '',
-        label: host?.label || s?.hostLabel || '',
-        os: host?.os,
-        username: host?.username,
-        connected: s?.status === 'connected',
-      };
+      return buildAITerminalSessionInfo(s, host, localOs);
     });
     return result;
   }, [sessions, hosts, activeWorkspace, activeSession]);
@@ -1036,6 +1062,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     const latestWorkspaces = workspacesRef.current;
     const latestSessions = sessionsRef.current;
     const latestHosts = hostsRef.current;
+    const localOs = detectLocalOs(navigator.userAgent || navigator.platform);
     const sessionIds = scope.type === 'workspace'
       ? (() => {
           const workspace = scope.targetId ? latestWorkspaces.find((w) => w.id === scope.targetId) : undefined;
@@ -1051,15 +1078,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       sessions: sessionIds.map((sid) => {
         const session = latestSessions.find((s) => s.id === sid);
         const host = session?.hostId ? latestHosts.find((h) => h.id === session.hostId) : undefined;
-        return {
-          sessionId: sid,
-          hostId: session?.hostId || '',
-          hostname: host?.hostname || '',
-          label: host?.label || session?.hostLabel || '',
-          os: host?.os,
-          username: host?.username,
-          connected: session?.status === 'connected',
-        };
+        return buildAITerminalSessionInfo(session, host, localOs);
       }),
       workspaceId: scope.type === 'workspace' ? scope.targetId : undefined,
       workspaceName,

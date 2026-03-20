@@ -102,6 +102,8 @@ interface AIChatSidePanelProps {
     label: string;
     os?: string;
     username?: string;
+    protocol?: string;
+    shellType?: string;
     connected: boolean;
   }>;
   resolveExecutorContext?: (scope: {
@@ -260,7 +262,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   // Proactively sync terminal session metadata to main process whenever scope or sessions change
   useEffect(() => {
     const bridge = getNetcattyBridge();
-    if (bridge?.aiMcpUpdateSessions && terminalSessions.length > 0) {
+    if (bridge?.aiMcpUpdateSessions) {
       void bridge.aiMcpUpdateSessions(terminalSessions, activeSessionId ?? undefined);
     }
   }, [terminalSessions, scopeKey, activeSessionId]);

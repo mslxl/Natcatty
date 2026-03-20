@@ -12,6 +12,7 @@ const pty = require("node-pty");
 const { SerialPort } = require("serialport");
 
 const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
+const { detectShellKind } = require("./ai/ptyExec.cjs");
 
 // Shared references
 let sessions = null;
@@ -20,6 +21,22 @@ let electronModule = null;
 const DEFAULT_UTF8_LOCALE = "en_US.UTF-8";
 const LOGIN_SHELLS = new Set(["bash", "zsh", "fish", "ksh"]);
 const POWERSHELL_SHELLS = new Set(["powershell", "powershell.exe", "pwsh", "pwsh.exe"]);
+
+function expandHomePath(targetPath) {
+  if (!targetPath) return targetPath;
+  if (targetPath === "~") return os.homedir();
+  if (targetPath.startsWith("~/")) return path.join(os.homedir(), targetPath.slice(2));
+  return targetPath;
+}
+
+function normalizeExecutablePath(targetPath) {
+  const expanded = expandHomePath(targetPath);
+  if (!expanded) return expanded;
+  if (expanded.includes(path.sep) || expanded.startsWith(".")) {
+    return path.resolve(expanded);
+  }
+  return expanded;
+}
 
 const getLoginShellArgs = (shellPath) => {
   if (!shellPath || process.platform === "win32") return [];
@@ -174,8 +191,9 @@ function startLocalSession(event, payload) {
     payload?.sessionId ||
     `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const defaultShell = getDefaultLocalShell();
-  const shell = payload?.shell || defaultShell;
+  const shell = normalizeExecutablePath(payload?.shell) || defaultShell;
   const shellArgs = getLocalShellArgs(shell);
+  const shellKind = detectShellKind(shell);
   const env = applyLocaleDefaults({
     ...process.env,
     ...(payload?.env || {}),
@@ -191,7 +209,7 @@ function startLocalSession(event, payload) {
   if (payload?.cwd) {
     try {
       // Resolve to absolute path and check if it exists and is a directory
-      const resolvedPath = path.resolve(payload.cwd);
+      const resolvedPath = path.resolve(expandHomePath(payload.cwd));
       if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isDirectory()) {
         cwd = resolvedPath;
       } else {
@@ -212,7 +230,21 @@ function startLocalSession(event, payload) {
   
   const session = {
     proc,
+    pty: proc,
+    type: "local",
+    protocol: "local",
     webContentsId: event.sender.id,
+    hostname: "localhost",
+    username: (() => {
+      try {
+        return os.userInfo().username || "local";
+      } catch {
+        return "local";
+      }
+    })(),
+    label: "Local Terminal",
+    shellExecutable: shell,
+    shellKind,
   };
   sessions.set(sessionId, session);
 
@@ -543,8 +575,15 @@ async function startMoshSession(event, options) {
 
     const session = {
       proc,
+      pty: proc,
       type: 'mosh',
+      protocol: 'mosh',
       webContentsId: event.sender.id,
+      hostname: options.hostname || '',
+      username: options.username || '',
+      label: options.label || options.hostname || 'Mosh Session',
+      shellKind: 'posix',
+      shellExecutable: 'remote-shell',
     };
     sessions.set(sessionId, session);
 
@@ -818,12 +857,7 @@ function validatePath(event, payload) {
   
   try {
     // Resolve path (handle ~, etc.)
-    let resolvedPath = targetPath;
-    if (resolvedPath === "~") {
-      resolvedPath = os.homedir();
-    } else if (resolvedPath.startsWith("~/")) {
-      resolvedPath = path.join(os.homedir(), resolvedPath.slice(2));
-    }
+    let resolvedPath = expandHomePath(targetPath);
     resolvedPath = path.resolve(resolvedPath);
     
     if (fs.existsSync(resolvedPath)) {

@@ -36,6 +36,8 @@ export interface ExecutorContext {
     label: string;
     os?: string;
     username?: string;
+    protocol?: string;
+    shellType?: string;
     connected: boolean;
   }>;
   // Workspace info

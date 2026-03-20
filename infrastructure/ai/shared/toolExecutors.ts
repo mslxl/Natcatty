@@ -112,6 +112,8 @@ export function executeWorkspaceGetInfo(
     label: string;
     os?: string;
     username?: string;
+    protocol?: string;
+    shellType?: string;
     connected: boolean;
   }>;
 }> {
@@ -127,6 +129,8 @@ export function executeWorkspaceGetInfo(
         label: s.label,
         os: s.os,
         username: s.username,
+        protocol: s.protocol,
+        shellType: s.shellType,
         connected: s.connected,
       })),
     },

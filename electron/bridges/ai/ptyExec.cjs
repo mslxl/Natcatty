@@ -11,6 +11,91 @@
 
 const crypto = require("crypto");
 const { stripAnsi } = require("./shellUtils.cjs");
+const { classifyLocalShellType } = require("../../../lib/localShell.cjs");
+
+function detectShellKind(shellPath, platform = process.platform) {
+  return classifyLocalShellType(shellPath, platform);
+}
+
+function subscribeToPtyData(ptyStream, onData) {
+  if (typeof ptyStream?.onData === "function") {
+    const disposable = ptyStream.onData((data) => onData(data));
+    return () => {
+      try {
+        disposable?.dispose?.();
+      } catch {
+        // Ignore cleanup failures
+      }
+    };
+  }
+
+  if (typeof ptyStream?.on === "function" && typeof ptyStream?.removeListener === "function") {
+    ptyStream.on("data", onData);
+    return () => {
+      try {
+        ptyStream.removeListener("data", onData);
+      } catch {
+        // Ignore cleanup failures
+      }
+    };
+  }
+
+  throw new Error("PTY stream does not support data subscriptions");
+}
+
+function buildWrappedCommand(command, shellKind, marker) {
+  switch (shellKind) {
+    case "powershell":
+      return [
+        "$env:PAGER='cat'",
+        "$env:SYSTEMD_PAGER=''",
+        "$env:GIT_PAGER='cat'",
+        "$env:LESS=''",
+        `Write-Output '${marker}_S'`,
+        "$global:LASTEXITCODE = 0",
+        command,
+        "$__nc = if ($LASTEXITCODE -ne 0) { [int]$LASTEXITCODE } elseif ($?) { 0 } else { 1 }",
+        `Write-Output ("${marker}_E:{0}" -f $__nc)`,
+        "",
+      ].join("\r\n");
+
+    case "cmd":
+      return [
+        'set "PAGER=cat"',
+        'set "SYSTEMD_PAGER="',
+        'set "GIT_PAGER=cat"',
+        'set "LESS="',
+        `echo ${marker}_S`,
+        command,
+        `echo ${marker}_E:%errorlevel%`,
+        "",
+      ].join("\r\n");
+
+    case "fish":
+      return [
+        "set -gx PAGER cat",
+        "set -gx SYSTEMD_PAGER ''",
+        "set -gx GIT_PAGER cat",
+        "set -gx LESS ''",
+        `printf '%s\\n' '${marker}_S'`,
+        command,
+        "set __nc $status",
+        `printf '%s\\n' '${marker}_E:'$__nc`,
+        "",
+      ].join("\n");
+
+    case "posix":
+    default: {
+      const noPager = "PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= ";
+      return (
+        `printf '%s\\n' '${marker}_S'\n` +
+        `${noPager}${command}\n` +
+        `__nc=$?;printf '%s\\n' '${marker}_E:'"$__nc"\n` +
+        `(exit $__nc)\n`
+      );
+    }
+  }
+}
 
 /**
  * Execute command through a terminal PTY stream.
@@ -29,15 +114,18 @@ function execViaPty(ptyStream, command, options) {
     stripMarkers = false,
     trackForCancellation = null,
     timeoutMs = 60000,
+    shellKind,
   } = options || {};
 
   const marker = `__NCMCP_${Date.now().toString(36)}_${crypto.randomBytes(16).toString('hex')}__`;
+  const resolvedShellKind = shellKind || "posix";
 
   return new Promise((resolve) => {
     let output = "";
     let foundStart = false;
     let timeoutId = null;
     let finished = false;
+    let unsubscribe = null;
 
     const onData = (data) => {
       const text = data.toString();
@@ -97,7 +185,7 @@ function execViaPty(ptyStream, command, options) {
       if (finished) return;
       finished = true;
       clearTimeout(timeoutId);
-      ptyStream.removeListener("data", onData);
+      unsubscribe?.();
       if (trackForCancellation) {
         trackForCancellation.delete(marker);
       }
@@ -117,7 +205,7 @@ function execViaPty(ptyStream, command, options) {
     timeoutId = setTimeout(() => {
       if (finished) return;
       finished = true;
-      ptyStream.removeListener("data", onData);
+      unsubscribe?.();
       if (trackForCancellation) {
         trackForCancellation.delete(marker);
       }
@@ -128,22 +216,21 @@ function execViaPty(ptyStream, command, options) {
       resolve({ ok: false, stdout: cleaned, stderr: "", exitCode: -1, error: `Command timed out (${timeoutSec}s)` });
     }, timeoutMs);
 
-    ptyStream.on("data", onData);
+    unsubscribe = subscribeToPtyData(ptyStream, onData);
 
     // Register for cancellation if tracking map provided
     if (trackForCancellation) {
       trackForCancellation.set(marker, {
         ptyStream,
-        cleanup: () => { clearTimeout(timeoutId); ptyStream.removeListener("data", onData); },
+        cleanup: () => {
+          clearTimeout(timeoutId);
+          unsubscribe?.();
+        },
       });
     }
 
     // Markers are filtered from terminal display by preload.cjs (MCP_MARKER_RE).
-    const noPager = "PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= ";
-    ptyStream.write(
-      `printf '${marker}_S\\n';${noPager}${command}\n` +
-      `__nc=$?;printf '${marker}_E:'$__nc'\\n';(exit $__nc)\n`
-    );
+    ptyStream.write(buildWrappedCommand(command, resolvedShellKind, marker));
   });
 }
 
@@ -214,5 +301,6 @@ function execViaChannel(sshClient, command, options) {
 module.exports = {
   execViaPty,
   execViaChannel,
+  detectShellKind,
   stripAnsi,
 };

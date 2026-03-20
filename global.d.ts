@@ -1,6 +1,11 @@
 import type { RemoteFile, SftpFilenameEncoding } from "./types";
 import type { S3Config, SMBConfig, SyncedFile, WebDAVConfig } from "./domain/sync";
 
+declare module "*.cjs" {
+  const value: Record<string, unknown>;
+  export = value;
+}
+
 declare global {
   // Extend HTMLInputElement to support webkitdirectory attribute
   namespace JSX {
@@ -689,7 +694,16 @@ declare global {
       logoutOutput?: string;
       error?: string;
     }>;
-    aiMcpUpdateSessions?(sessions: Array<{ sessionId: string; hostname: string; label: string; os?: string; username?: string; connected: boolean }>): Promise<{ ok: boolean }>;
+    aiMcpUpdateSessions?(sessions: Array<{
+      sessionId: string;
+      hostname: string;
+      label: string;
+      os?: string;
+      username?: string;
+      protocol?: string;
+      shellType?: string;
+      connected: boolean;
+    }>, chatSessionId?: string): Promise<{ ok: boolean }>;
     aiSpawnAgent?(agentId: string, command: string, args?: string[], env?: Record<string, string>, options?: { closeStdin?: boolean }): Promise<{ ok: boolean; pid?: number; error?: string }>;
     aiWriteToAgent?(agentId: string, data: string): Promise<{ ok: boolean; error?: string }>;
     aiCloseAgentStdin?(agentId: string): Promise<{ ok: boolean; error?: string }>;
