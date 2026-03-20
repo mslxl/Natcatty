@@ -2,6 +2,7 @@
  * @type {import('electron-builder').Configuration}
  */
 module.exports = {
+    nativeRebuilder: 'legacy',
     appId: 'com.netcatty.app',
     productName: 'Netcatty',
     artifactName: '${productName}-${version}-${os}-${arch}.${ext}',
