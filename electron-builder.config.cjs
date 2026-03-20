@@ -13,6 +13,7 @@ module.exports = {
     files: [
         'dist/**/*',
         'electron/**/*',
+        'lib/**/*.cjs',
         '!electron/.dev-config.json',
         'public/**/*',
         'node_modules/**/*'
