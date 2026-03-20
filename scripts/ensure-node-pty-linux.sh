@@ -49,7 +49,7 @@ prepare() {
 
   echo "[node-pty] rebuilding native modules for Electron on linux-${arch}"
   log_electron_runtime_info
-  npm run rebuild
+  npm run rebuild || echo "[node-pty] warning: rebuild command exited with non-zero status, verifying artifacts..."
 
   test -f "${release_dir}/pty.node"
   test -f "${release_dir}/spawn-helper"
