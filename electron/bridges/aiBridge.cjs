@@ -1543,7 +1543,6 @@ function registerHandlers(ipcMain) {
       const proc = spawn(command, args || [], {
         stdio: [stdinMode, "pipe", "pipe"],
         env: { ...filteredUserEnv, ...safeEnv },
-        shell: shouldUseShellForCommand(command),
       });
 
       proc.stdout.on("data", (data) => {
