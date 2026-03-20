@@ -34,6 +34,7 @@ const TRANSFER_CONCURRENCY = 64;          // 64 parallel SFTP requests
 // Progress IPC throttle: sending too many IPC messages bogs down the event loop
 const PROGRESS_THROTTLE_MS = 100;         // Send IPC at most every 100ms
 const PROGRESS_THROTTLE_BYTES = 256 * 1024; // Or every 256KB of progress
+const ISOLATED_DOWNLOAD_IDLE_TTL_MS = 5000;
 
 // Speed calculation uses strict sliding-window average:
 // speed = bytes_delta_in_window / time_delta_in_window
@@ -45,6 +46,7 @@ let sftpClients = null;
 
 // Active transfers storage
 const activeTransfers = new Map();
+const isolatedDownloadChannelPools = new WeakMap();
 
 /**
  * Initialize the transfer bridge with dependencies
@@ -63,6 +65,185 @@ async function openIsolatedSftpChannel(client) {
       else resolve(sftp);
     });
   });
+}
+
+function getIsolatedDownloadChannelPool(client) {
+  let pool = isolatedDownloadChannelPools.get(client);
+  if (!pool) {
+    pool = {
+      idle: [],
+      idleTimers: new Map(),
+      busy: new Set(),
+      waiters: [],
+      opening: 0,
+      maxChannels: null,
+      warnedCapacity: false,
+    };
+    isolatedDownloadChannelPools.set(client, pool);
+  }
+  return pool;
+}
+
+function isIsolatedChannelOpenFailure(err) {
+  const message = err?.message || String(err || "");
+  return (
+    message.includes("Channel open failure") ||
+    message.includes("open failed")
+  );
+}
+
+function waitForIsolatedDownloadChannel(pool, transfer) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const waiter = () => {
+      if (settled) return;
+      settled = true;
+      const index = pool.waiters.indexOf(waiter);
+      if (index !== -1) {
+        pool.waiters.splice(index, 1);
+      }
+      if (transfer?.wakeWaiter === waiter) {
+        transfer.wakeWaiter = null;
+      }
+      resolve();
+    };
+    if (transfer) {
+      transfer.wakeWaiter = waiter;
+    }
+    pool.waiters.push(waiter);
+  });
+}
+
+function notifyIsolatedDownloadWaiter(pool) {
+  const waiter = pool.waiters.shift();
+  if (waiter) waiter();
+}
+
+function removeIdleIsolatedDownloadChannel(pool, sftp) {
+  const index = pool.idle.indexOf(sftp);
+  if (index !== -1) {
+    pool.idle.splice(index, 1);
+  }
+}
+
+function clearIdleIsolatedDownloadTimer(pool, sftp) {
+  const timer = pool.idleTimers.get(sftp);
+  if (timer) {
+    clearTimeout(timer);
+    pool.idleTimers.delete(sftp);
+  }
+}
+
+function scheduleIdleIsolatedDownloadChannel(client, sftp) {
+  const pool = isolatedDownloadChannelPools.get(client);
+  if (!pool) return;
+
+  clearIdleIsolatedDownloadTimer(pool, sftp);
+  const timer = setTimeout(() => {
+    clearIdleIsolatedDownloadTimer(pool, sftp);
+    removeIdleIsolatedDownloadChannel(pool, sftp);
+    try { sftp?.end?.(); } catch { }
+  }, ISOLATED_DOWNLOAD_IDLE_TTL_MS);
+  pool.idleTimers.set(sftp, timer);
+}
+
+function releaseIsolatedDownloadChannel(client, sftp, options = {}) {
+  const { dispose = false } = options;
+  const pool = isolatedDownloadChannelPools.get(client);
+  if (!pool) {
+    if (dispose) {
+      try { sftp?.end?.(); } catch { }
+    }
+    return;
+  }
+
+  pool.busy.delete(sftp);
+  clearIdleIsolatedDownloadTimer(pool, sftp);
+
+  if (dispose) {
+    try { sftp?.end?.(); } catch { }
+    notifyIsolatedDownloadWaiter(pool);
+    return;
+  }
+
+  pool.idle.push(sftp);
+  scheduleIdleIsolatedDownloadChannel(client, sftp);
+  notifyIsolatedDownloadWaiter(pool);
+}
+
+async function acquireIsolatedDownloadChannel(client, transfer) {
+  const pool = getIsolatedDownloadChannelPool(client);
+
+  while (true) {
+    if (transfer?.cancelled) return null;
+
+    const cached = pool.idle.pop();
+    if (cached) {
+      clearIdleIsolatedDownloadTimer(pool, cached);
+      pool.busy.add(cached);
+      return cached;
+    }
+
+    const knownCapacity = pool.maxChannels;
+    const currentChannelCount = pool.idle.length + pool.busy.size + pool.opening;
+    if (knownCapacity !== null && currentChannelCount >= knownCapacity) {
+      if (pool.opening > 0) {
+        await waitForIsolatedDownloadChannel(pool, transfer);
+        if (transfer?.cancelled) return null;
+        continue;
+      }
+      if (pool.busy.size === 0) {
+        return null;
+      }
+      await waitForIsolatedDownloadChannel(pool, transfer);
+      if (transfer?.cancelled) return null;
+      continue;
+    }
+
+    pool.opening += 1;
+    try {
+      const opened = await openIsolatedSftpChannel(client);
+      pool.opening -= 1;
+      notifyIsolatedDownloadWaiter(pool);
+      if (!opened) return null;
+      pool.busy.add(opened);
+      const knownCapacity = pool.idle.length + pool.busy.size;
+      if (pool.maxChannels !== null) {
+        pool.maxChannels = Math.max(pool.maxChannels, knownCapacity);
+      }
+      return opened;
+    } catch (err) {
+      pool.opening -= 1;
+      notifyIsolatedDownloadWaiter(pool);
+      if (isIsolatedChannelOpenFailure(err)) {
+        if (pool.opening > 0) {
+          await waitForIsolatedDownloadChannel(pool, transfer);
+          if (transfer?.cancelled) return null;
+          continue;
+        }
+        const detectedCapacity = pool.idle.length + pool.busy.size;
+        pool.maxChannels = detectedCapacity;
+        if (!pool.warnedCapacity) {
+          pool.warnedCapacity = true;
+          console.warn(
+            `[transferBridge] Isolated fastGet channel capacity reached; reusing up to ${detectedCapacity} extra channel(s) for this SFTP session.`,
+          );
+        }
+        if (detectedCapacity > 0) {
+          await waitForIsolatedDownloadChannel(pool, transfer);
+          if (transfer?.cancelled) return null;
+          continue;
+        }
+        return null;
+      }
+
+      console.warn(
+        "[transferBridge] Failed to open isolated SFTP channel for fastGet, falling back to streams:",
+        err.message || String(err),
+      );
+      return null;
+    }
+  }
 }
 
 /**
@@ -184,12 +365,7 @@ async function downloadFile(remotePath, localPath, client, fileSize, transfer, s
 
   // Prefer fastGet on an isolated SFTP channel so cancellation can abort just this transfer.
   if (!client.__netcattySudoMode) {
-    let fastSftp = null;
-    try {
-      fastSftp = await openIsolatedSftpChannel(client);
-    } catch (err) {
-      console.warn("[transferBridge] Failed to open isolated SFTP channel for fastGet, falling back to streams:", err.message || String(err));
-    }
+      const fastSftp = await acquireIsolatedDownloadChannel(client, transfer);
 
     if (fastSftp && typeof fastSftp.fastGet === "function") {
       return new Promise((resolve, reject) => {
@@ -205,7 +381,9 @@ async function downloadFile(remotePath, localPath, client, fileSize, transfer, s
             try { fastSftp.removeListener("error", onFastSftpError); } catch { }
             onFastSftpError = null;
           }
-          try { fastSftp.end(); } catch { }
+          releaseIsolatedDownloadChannel(client, fastSftp, {
+            dispose: !!err || transfer.cancelled,
+          });
 
           if (transfer.cancelled) reject(new Error("Transfer cancelled"));
           else if (err) reject(err);
@@ -214,7 +392,6 @@ async function downloadFile(remotePath, localPath, client, fileSize, transfer, s
         const abortFastTransfer = () => {
           if (settled) return;
           transfer.cancelled = true;
-          try { fastSftp.end(); } catch { }
           finish(new Error("Transfer cancelled"));
         };
         transfer.abort = abortFastTransfer;
@@ -235,10 +412,6 @@ async function downloadFile(remotePath, localPath, client, fileSize, transfer, s
           },
         }, finish);
       });
-    }
-
-    if (fastSftp && typeof fastSftp.end === "function") {
-      try { fastSftp.end(); } catch { }
     }
   }
 
@@ -302,7 +475,7 @@ async function startTransfer(event, payload, onProgress) {
   } = payload;
   const sender = event.sender;
 
-  const transfer = { cancelled: false, readStream: null, writeStream: null, abort: null };
+  const transfer = { cancelled: false, readStream: null, writeStream: null, abort: null, wakeWaiter: null };
   activeTransfers.set(transferId, transfer);
   const transferCreatedAt = Date.now();
 
@@ -554,6 +727,9 @@ async function cancelTransfer(event, payload) {
   const transfer = activeTransfers.get(transferId);
   if (transfer) {
     transfer.cancelled = true;
+    if (typeof transfer.wakeWaiter === "function") {
+      try { transfer.wakeWaiter(); } catch { }
+    }
 
     if (typeof transfer.abort === "function") {
       try { transfer.abort(); } catch { }
