@@ -4,7 +4,7 @@ import { activeTabStore, useActiveTabId } from '../application/state/activeTabSt
 import { LogView } from '../application/state/useSessionState';
 import { useWindowControls } from '../application/state/useWindowControls';
 import { useI18n } from '../application/i18n/I18nProvider';
-import { normalizeDistroId } from '../domain/host';
+import { getEffectiveHostDistro } from '../domain/host';
 import { cn } from '../lib/utils';
 import { Host, TerminalSession, Workspace } from '../types';
 import { DISTRO_LOGOS, DISTRO_COLORS } from './DistroAvatar';
@@ -89,7 +89,7 @@ const SessionTabIcon: React.FC<{ host: Host | undefined; isActive: boolean; prot
 
   // Try distro logo with brand background color
   if (host) {
-    const distro = normalizeDistroId(host.distro) || (host.distro || '').toLowerCase();
+    const distro = getEffectiveHostDistro(host);
     const logo = DISTRO_LOGOS[distro];
     if (logo) {
       const bg = DISTRO_COLORS[distro] || DISTRO_COLORS.default;
@@ -97,7 +97,7 @@ const SessionTabIcon: React.FC<{ host: Host | undefined; isActive: boolean; prot
         <div className={cn(boxBase, bg)}>
           <img
             src={logo}
-            alt={host.distro || host.os}
+            alt={distro || host.os}
             className={cn(iconSize, "object-contain invert brightness-0")}
           />
         </div>

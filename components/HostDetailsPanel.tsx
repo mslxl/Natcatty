@@ -28,6 +28,7 @@ import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useApplicationBackend } from "../application/state/useApplicationBackend";
 import { useSettingsState } from "../application/state/useSettingsState";
+import { getEffectiveHostDistro, LINUX_DISTRO_OPTIONS } from "../domain/host";
 import { customThemeStore } from "../application/state/customThemeStore";
 import {
   clearHostFontSizeOverride,
@@ -40,6 +41,7 @@ import {
 import { MIN_FONT_SIZE, MAX_FONT_SIZE } from "../infrastructure/config/fonts";
 import { cn } from "../lib/utils";
 import { EnvVar, Host, Identity, ManagedSource, ProxyConfig, SSHKey } from "../types";
+import { DISTRO_COLORS, DISTRO_LOGOS } from "./DistroAvatar";
 import { DistroAvatar } from "./DistroAvatar";
 import ThemeSelectPanel from "./ThemeSelectPanel";
 import {
@@ -76,6 +78,8 @@ type SubPanel =
   | "env-vars"
   | "theme-select"
   | "telnet-theme-select";
+
+const LINUX_DISTRO_OPTION_IDS = [...LINUX_DISTRO_OPTIONS];
 
 interface HostDetailsPanelProps {
   initialData?: Host | null;
@@ -123,6 +127,9 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
         os: "linux",
         authMethod: "password",
         charset: "UTF-8",
+        theme: terminalThemeId,
+        fontSize: terminalFontSize,
+        distroMode: "auto",
         createdAt: Date.now(),
         group: defaultGroup || undefined, // Pre-fill with current navigation group
       } as Host),
@@ -203,6 +210,37 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   );
   const effectiveTelnetThemeId =
     form.protocols?.find((p) => p.protocol === "telnet")?.theme || effectiveThemeId;
+  const distroOptions = useMemo(
+    () =>
+      LINUX_DISTRO_OPTION_IDS.map((value) => ({
+        value,
+        label: t(`hostDetails.distro.option.${value}`),
+        icon: DISTRO_LOGOS[value],
+        bgClass: DISTRO_COLORS[value] || DISTRO_COLORS.default,
+      })),
+    [t],
+  );
+
+  const getDistroOptionLabel = useCallback(
+    (value?: string) =>
+      distroOptions.find((option) => option.value === value)?.label ||
+      value ||
+      t("hostDetails.distro.pending"),
+    [distroOptions, t],
+  );
+
+  const effectiveFormDistro = getEffectiveHostDistro(form);
+
+  const handleDistroModeChange = useCallback((mode: "auto" | "manual") => {
+    setForm((prev) => ({
+      ...prev,
+      distroMode: mode,
+      manualDistro:
+        mode === "manual"
+          ? prev.manualDistro || getEffectiveHostDistro(prev) || "linux"
+          : prev.manualDistro,
+    }));
+  }, []);
 
   const updateProxyConfig = useCallback(
     (field: keyof ProxyConfig, value: string | number) => {
@@ -1144,6 +1182,113 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
               {t("hostDetails.section.appearance")}
             </p>
           </div>
+
+          {form.os === "linux" && (
+            <div className="space-y-2 rounded-lg border border-border/70 bg-secondary/30 p-3">
+              <div className="flex items-start gap-2">
+                <Globe size={14} className="mt-0.5 text-muted-foreground" />
+                <div className="space-y-0.5">
+                  <p className="text-xs font-semibold">{t("hostDetails.distro.title")}</p>
+                  <p className="text-xs text-muted-foreground">{t("hostDetails.distro.desc")}</p>
+                </div>
+              </div>
+
+              <div className="grid gap-2 md:grid-cols-2">
+                <div className="space-y-1">
+                  <span className="text-xs text-muted-foreground">{t("hostDetails.distro.mode")}</span>
+                  <Select
+                    value={form.distroMode || "auto"}
+                    onValueChange={(val) => handleDistroModeChange(val as "auto" | "manual")}
+                  >
+                    <SelectTrigger className="h-8">
+                      <span className="truncate whitespace-nowrap pr-2 text-left">
+                        {form.distroMode === "manual"
+                          ? t("hostDetails.distro.mode.manual")
+                          : t("hostDetails.distro.mode.auto")}
+                      </span>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">{t("hostDetails.distro.mode.auto")}</SelectItem>
+                      <SelectItem value="manual">{t("hostDetails.distro.mode.manual")}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {form.distroMode === "manual" ? (
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground">{t("hostDetails.distro.manualLabel")}</span>
+                    <Select
+                      value={form.manualDistro}
+                      onValueChange={(val) => update("manualDistro", val)}
+                    >
+                      <SelectTrigger className="h-8">
+                        {(() => {
+                          const selectedOption = distroOptions.find((option) => option.value === form.manualDistro);
+                          return selectedOption ? (
+                            <div className="flex min-w-0 items-center gap-2 pr-2">
+                              <div
+                                className={cn(
+                                  "flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden rounded-[2px]",
+                                  selectedOption.bgClass,
+                                )}
+                              >
+                                {selectedOption.icon ? (
+                                  <img
+                                    src={selectedOption.icon}
+                                    alt={selectedOption.label}
+                                    className="h-3 w-3 object-contain invert brightness-0"
+                                  />
+                                ) : (
+                                  <div className="h-2 w-2 rounded-full bg-white/70" />
+                                )}
+                              </div>
+                              <span className="truncate whitespace-nowrap">{selectedOption.label}</span>
+                            </div>
+                          ) : (
+                            <SelectValue placeholder={t("hostDetails.distro.unknown")} />
+                          );
+                        })()}
+                      </SelectTrigger>
+                      <SelectContent className="min-w-[14rem]">
+                        {distroOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            <div className="flex items-center gap-2">
+                              <div
+                                className={cn(
+                                  "flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden rounded-[2px]",
+                                  option.bgClass,
+                                )}
+                              >
+                                {option.icon ? (
+                                  <img
+                                    src={option.icon}
+                                    alt={option.label}
+                                    className="h-3 w-3 object-contain invert brightness-0"
+                                  />
+                                ) : (
+                                  <div className="h-2 w-2 rounded-full bg-white/70" />
+                                )}
+                              </div>
+                              <span className="whitespace-nowrap">{option.label}</span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground">{t("hostDetails.distro.detectedLabel")}</span>
+                    <div className="flex h-8 items-center rounded-md border border-border/60 bg-background/50 px-3 text-sm">
+                      {effectiveFormDistro
+                        ? getDistroOptionLabel(effectiveFormDistro)
+                        : t("hostDetails.distro.unknown")}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* SSH Theme Selection */}
           <button

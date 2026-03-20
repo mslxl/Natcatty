@@ -1,6 +1,6 @@
 import { Server, Usb } from "lucide-react";
 import React, { memo } from "react";
-import { normalizeDistroId } from "../domain/host";
+import { getEffectiveHostDistro } from "../domain/host";
 import { cn } from "../lib/utils";
 import { Host } from "../types";
 
@@ -58,8 +58,7 @@ const DistroAvatarInner: React.FC<DistroAvatarProps> = ({
   className,
   size = "md",
 }) => {
-  const distro =
-    normalizeDistroId(host.distro) || (host.distro || "").toLowerCase();
+  const distro = getEffectiveHostDistro(host);
   const logo = DISTRO_LOGOS[distro];
   const [errored, setErrored] = React.useState(false);
   const bg = DISTRO_COLORS[distro] || DISTRO_COLORS.default;
@@ -106,7 +105,7 @@ const DistroAvatarInner: React.FC<DistroAvatarProps> = ({
       >
         <img
           src={logo}
-          alt={host.distro || host.os}
+          alt={distro || host.os}
           className={cn("object-contain invert brightness-0", iconSize)}
           onError={() => setErrored(true)}
         />

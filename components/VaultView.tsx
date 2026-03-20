@@ -32,7 +32,7 @@ import { useI18n } from "../application/i18n/I18nProvider";
 import { useStoredViewMode } from "../application/state/useStoredViewMode";
 import { useStoredBoolean } from "../application/state/useStoredBoolean";
 import { useTreeExpandedState } from "../application/state/useTreeExpandedState";
-import { sanitizeHost } from "../domain/host";
+import { getEffectiveHostDistro, sanitizeHost } from "../domain/host";
 import { importVaultHostsFromText, exportHostsToCsvWithStats } from "../domain/vaultImport";
 import type { VaultImportFormat } from "../domain/vaultImport";
 import { STORAGE_KEY_VAULT_HOSTS_VIEW_MODE, STORAGE_KEY_VAULT_HOSTS_TREE_EXPANDED, STORAGE_KEY_VAULT_SIDEBAR_COLLAPSED } from "../infrastructure/config/storageKeys";
@@ -1918,9 +1918,10 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                             >
                               {group.hosts.map((host) => {
                                 const safeHost = sanitizeHost(host);
+                                const effectiveDistro = getEffectiveHostDistro(safeHost);
                                 const distroBadge = {
                                   text: (safeHost.os || "L")[0].toUpperCase(),
-                                  label: safeHost.distro || safeHost.os || "Linux",
+                                  label: effectiveDistro || safeHost.os || "Linux",
                                 };
                                 return (
                                   <ContextMenu key={host.id}>
@@ -2056,9 +2057,10 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                       >
                         {displayedHosts.map((host) => {
                           const safeHost = sanitizeHost(host);
+                          const effectiveDistro = getEffectiveHostDistro(safeHost);
                           const distroBadge = {
                             text: (safeHost.os || "L")[0].toUpperCase(),
-                            label: safeHost.distro || safeHost.os || "Linux",
+                            label: effectiveDistro || safeHost.os || "Linux",
                           };
                           return (
                             <ContextMenu key={host.id}>

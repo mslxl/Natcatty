@@ -92,6 +92,8 @@ export interface Host {
   fontSize?: number; // Terminal font size for this host (pt)
   fontSizeOverride?: boolean; // Explicitly override the global terminal font size for this host
   distro?: string; // detected distro id (e.g., ubuntu, debian)
+  distroMode?: 'auto' | 'manual'; // whether distro icon comes from detection or manual override
+  manualDistro?: string; // manually selected distro id when distroMode='manual'
   // Multi-protocol support
   protocols?: ProtocolConfig[]; // Multiple protocol configurations
   telnetPort?: number; // Telnet-specific port (for quick access)

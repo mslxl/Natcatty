@@ -1,5 +1,22 @@
 import { Host } from './models';
 
+export const LINUX_DISTRO_OPTIONS = [
+  'linux',
+  'ubuntu',
+  'debian',
+  'centos',
+  'rocky',
+  'fedora',
+  'arch',
+  'alpine',
+  'amazon',
+  'opensuse',
+  'redhat',
+  'almalinux',
+  'oracle',
+  'kali',
+] as const;
+
 export const normalizeDistroId = (value?: string) => {
   const v = (value || '').toLowerCase().trim();
   if (!v) return '';
@@ -16,11 +33,35 @@ export const normalizeDistroId = (value?: string) => {
   if (v.includes('almalinux')) return 'almalinux';
   if (v.includes('oracle')) return 'oracle';
   if (v.includes('kali')) return 'kali';
+  if (v === 'linux' || v.includes('linux')) return 'linux';
   return '';
+};
+
+export const getEffectiveHostDistro = (
+  host?: Pick<Host, 'distro' | 'manualDistro' | 'distroMode'> | null,
+) => {
+  if (!host) return '';
+  const detected = normalizeDistroId(host.distro);
+  const manual = normalizeDistroId(host.manualDistro);
+  if (host.distroMode === 'manual') return manual || detected;
+  return detected || manual;
 };
 
 export const sanitizeHost = (host: Host): Host => {
   const cleanHostname = (host.hostname || '').split(/\s+/)[0];
   const cleanDistro = normalizeDistroId(host.distro);
-  return { ...host, hostname: cleanHostname, distro: cleanDistro };
+  const cleanManualDistro = normalizeDistroId(host.manualDistro);
+  const cleanDistroMode =
+    host.distroMode === 'manual'
+      ? 'manual'
+      : host.distroMode === 'auto'
+        ? 'auto'
+        : undefined;
+  return {
+    ...host,
+    hostname: cleanHostname,
+    distro: cleanDistro,
+    distroMode: cleanDistroMode,
+    manualDistro: cleanManualDistro || undefined,
+  };
 };
