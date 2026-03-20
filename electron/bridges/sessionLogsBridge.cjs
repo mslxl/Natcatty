@@ -8,12 +8,35 @@ const path = require("node:path");
 const { dialog } = require("electron");
 
 /**
+ * Get current Date to a local ISO-like string (YYYY-MM-DDTHH-MM-SS)
+ */
+function toLocalISOString(date = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  const seconds = pad(date.getSeconds());
+
+  return `${year}-${month}-${day}T${hours}-${minutes}-${seconds}`;
+}
+
+/**
  * Strip ANSI escape codes from text
  * Used for plain text export format
  */
 function stripAnsi(str) {
   // eslint-disable-next-line no-control-regex
-  return str.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
+  return str
+    // OSC: ESC ] ... BEL or ESC ] ... ESC \
+    .replace(/\x1B\][\s\S]*?(?:\x07|\x1B\\)/g, '')
+    // ANSI CSI / ESC sequences
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "")
+    // Remove remaining control chars except \n \r \t
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
 }
 
 /**
@@ -148,7 +171,7 @@ async function exportSessionLog(event, payload) {
 
   // Generate default filename
   const date = new Date(startTime);
-  const dateStr = date.toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const dateStr = toLocalISOString(date);
   const safeHostLabel = (hostLabel || hostname || "session").replace(/[^a-zA-Z0-9-_]/g, "_");
   const ext = format === "html" ? "html" : format === "raw" ? "log" : "txt";
   const defaultPath = `${safeHostLabel}_${dateStr}.${ext}`;
@@ -223,7 +246,7 @@ async function autoSaveSessionLog(event, payload) {
 
     // Generate filename with timestamp
     const date = new Date(startTime);
-    const dateStr = date.toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const dateStr = toLocalISOString(date);
     const ext = format === "html" ? "html" : format === "raw" ? "log" : "txt";
     const fileName = `${dateStr}.${ext}`;
     const filePath = path.join(hostDir, fileName);
@@ -285,5 +308,6 @@ module.exports = {
   autoSaveSessionLog,
   openSessionLogsDir,
   stripAnsi,
+  toLocalISOString,
   terminalDataToHtml,
 };
