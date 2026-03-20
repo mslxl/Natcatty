@@ -26,6 +26,17 @@ log_file_info() {
   checksum "${file}"
 }
 
+log_optional_spawn_helper() {
+  local file="$1"
+
+  if [[ -f "${file}" ]]; then
+    test -x "${file}"
+    log_file_info "${file}"
+  else
+    echo "[node-pty] spawn-helper not present at ${file} (expected on Linux)"
+  fi
+}
+
 log_electron_runtime_info() {
   ELECTRON_RUN_AS_NODE=1 "$(electron_bin)" -e '
     console.log(`[node-pty] electron=${process.versions.electron || "unknown"} node=${process.versions.node} modules=${process.versions.modules}`);
@@ -52,21 +63,21 @@ prepare() {
   npx electron-rebuild
 
   test -f "${release_dir}/pty.node"
-  test -f "${release_dir}/spawn-helper"
-  test -x "${release_dir}/spawn-helper"
 
   echo "[node-pty] built Linux runtime artifacts:"
   log_file_info "${release_dir}/pty.node"
-  log_file_info "${release_dir}/spawn-helper"
+  log_optional_spawn_helper "${release_dir}/spawn-helper"
   assert_loadable_native_module "${release_dir}/pty.node"
 
   mkdir -p "${prebuild_dir}"
   cp "${release_dir}/pty.node" "${prebuild_dir}/pty.node"
-  cp "${release_dir}/spawn-helper" "${prebuild_dir}/spawn-helper"
+  if [[ -f "${release_dir}/spawn-helper" ]]; then
+    cp "${release_dir}/spawn-helper" "${prebuild_dir}/spawn-helper"
+  fi
 
   echo "[node-pty] mirrored Linux runtime artifacts into ${prebuild_dir}:"
   log_file_info "${prebuild_dir}/pty.node"
-  log_file_info "${prebuild_dir}/spawn-helper"
+  log_optional_spawn_helper "${prebuild_dir}/spawn-helper"
 }
 
 verify() {
@@ -90,20 +101,16 @@ verify() {
   fi
 
   test -f "${release_dir}/pty.node"
-  test -f "${release_dir}/spawn-helper"
   test -f "${prebuild_dir}/pty.node"
-  test -f "${prebuild_dir}/spawn-helper"
-  test -x "${release_dir}/spawn-helper"
-  test -x "${prebuild_dir}/spawn-helper"
 
   echo "[node-pty] packaged build/Release artifacts:"
   log_file_info "${release_dir}/pty.node"
-  log_file_info "${release_dir}/spawn-helper"
+  log_optional_spawn_helper "${release_dir}/spawn-helper"
   assert_loadable_native_module "${release_dir}/pty.node"
 
   echo "[node-pty] packaged prebuild artifacts:"
   log_file_info "${prebuild_dir}/pty.node"
-  log_file_info "${prebuild_dir}/spawn-helper"
+  log_optional_spawn_helper "${prebuild_dir}/spawn-helper"
   assert_loadable_native_module "${prebuild_dir}/pty.node"
 
   echo "[node-pty] packaged artifact locations:"
