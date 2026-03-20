@@ -118,21 +118,37 @@ FontItem.displayName = 'FontItem';
 
 interface ThemeSidePanelProps {
   currentThemeId: string;
+  globalThemeId: string;
   currentFontFamilyId: string;
+  globalFontFamilyId: string;
   currentFontSize: number;
+  canResetTheme?: boolean;
+  canResetFontFamily?: boolean;
+  canResetFontSize?: boolean;
   onThemeChange: (themeId: string) => void;
+  onThemeReset?: () => void;
   onFontFamilyChange: (fontFamilyId: string) => void;
+  onFontFamilyReset?: () => void;
   onFontSizeChange: (fontSize: number) => void;
+  onFontSizeReset?: () => void;
   isVisible?: boolean;
 }
 
 const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
   currentThemeId,
+  globalThemeId,
   currentFontFamilyId,
+  globalFontFamilyId,
   currentFontSize,
+  canResetTheme = false,
+  canResetFontFamily = false,
+  canResetFontSize = false,
   onThemeChange,
+  onThemeReset,
   onFontFamilyChange,
+  onFontFamilyReset,
   onFontSizeChange,
+  onFontSizeReset,
   isVisible = true,
 }) => {
   const { t } = useI18n();
@@ -148,6 +164,14 @@ const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
   const allThemes = useMemo(
     () => [...TERMINAL_THEMES, ...customThemes],
     [customThemes]
+  );
+  const globalTheme = useMemo(
+    () => allThemes.find((theme) => theme.id === globalThemeId) || TERMINAL_THEMES[0],
+    [allThemes, globalThemeId],
+  );
+  const globalFont = useMemo(
+    () => availableFonts.find((font) => font.id === globalFontFamilyId) || availableFonts[0],
+    [availableFonts, globalFontFamilyId],
   );
 
   const handleThemeSelect = useCallback((themeId: string) => {
@@ -294,6 +318,18 @@ const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
                     ))}
                   </>
                 )}
+                {canResetTheme && (
+                  <>
+                    <div className="text-[9px] uppercase tracking-wider text-muted-foreground mt-2 mb-1 px-1 font-semibold">
+                      {t('terminal.themeModal.globalTheme')}
+                    </div>
+                    <ThemeItem
+                      theme={globalTheme}
+                      isSelected={!canResetTheme}
+                      onSelect={() => onThemeReset?.()}
+                    />
+                  </>
+                )}
               </div>
             )}
             {activeTab === 'font' && (
@@ -306,6 +342,18 @@ const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
                     onSelect={handleFontSelect}
                   />
                 ))}
+                {canResetFontFamily && (
+                  <>
+                    <div className="text-[9px] uppercase tracking-wider text-muted-foreground mt-2 mb-1 px-1 font-semibold">
+                      {t('terminal.themeModal.globalFont')}
+                    </div>
+                    <FontItem
+                      font={globalFont}
+                      isSelected={!canResetFontFamily}
+                      onSelect={() => onFontFamilyReset?.()}
+                    />
+                  </>
+                )}
               </div>
             )}
             {activeTab === 'custom' && !editingTheme && (
@@ -365,8 +413,18 @@ const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
         {/* Font Size Control (only in font tab) */}
         {activeTab === 'font' && (
           <div className="p-2.5 border-t border-border/50 shrink-0">
-            <div className="text-[9px] uppercase tracking-wider text-muted-foreground mb-1.5 font-semibold">
-              {t('terminal.themeModal.fontSize')}
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">
+                {t('terminal.themeModal.fontSize')}
+              </div>
+              {canResetFontSize && (
+                <button
+                  onClick={onFontSizeReset}
+                  className="text-[10px] font-medium text-primary hover:opacity-80 transition-opacity"
+                >
+                  {t('common.useGlobal')}
+                </button>
+              )}
             </div>
             <div className="flex items-center justify-between gap-2 bg-muted/30 rounded-lg p-1.5">
               <button
