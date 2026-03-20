@@ -17,6 +17,8 @@ const mcpServerBridge = require("./mcpServerBridge.cjs");
 // ── Extracted modules ──
 const {
   stripAnsi,
+  normalizeCliPathForPlatform,
+  shouldUseShellForCommand,
   resolveCliFromPath,
   resolveClaudeAcpBinaryPath,
   getShellEnv,
@@ -966,6 +968,7 @@ function registerHandlers(ipcMain) {
         stdio: ["ignore", "pipe", "pipe"],
         cwd: options?.cwd || undefined,
         env: options?.env || process.env,
+        shell: shouldUseShellForCommand(command),
         windowsHide: true,
       });
 
@@ -1223,22 +1226,7 @@ function registerHandlers(ipcMain) {
     const seenPaths = new Set();
 
     for (const agent of knownAgents) {
-      let resolvedPath = null;
-
-      try {
-        const whichCmd = process.platform === "win32" ? "where" : "which";
-        const result = execFileSync(whichCmd, [agent.command], {
-          encoding: "utf8",
-          timeout: 5000,
-          stdio: ["pipe", "pipe", "pipe"],
-          env: shellEnv,
-        }).trim();
-        if (result) {
-          resolvedPath = result.split("\n")[0].trim();
-        }
-      } catch {
-        resolvedPath = null;
-      }
+      let resolvedPath = resolveCliFromPath(agent.command, shellEnv);
 
       // If the base command is not on PATH, check whether the bundled ACP
       // binary is available — the agent can still work via ACP without the
@@ -1305,10 +1293,8 @@ function registerHandlers(ipcMain) {
     let resolvedPath = null;
 
     if (customPath) {
-      // User provided a custom path – validate it exists
-      if (existsSync(customPath)) {
-        resolvedPath = customPath;
-      }
+      // Normalize Windows shim paths like `codex` -> `codex.cmd` when present.
+      resolvedPath = normalizeCliPathForPlatform(customPath);
     } else {
       resolvedPath = resolveCliFromPath(command, shellEnv);
     }
@@ -1393,6 +1379,7 @@ function registerHandlers(ipcMain) {
       const child = spawn(codexCliPath, ["login"], {
         stdio: ["ignore", "pipe", "pipe"],
         env: shellEnv,
+        shell: shouldUseShellForCommand(codexCliPath),
         windowsHide: true,
       });
 
