@@ -14,7 +14,7 @@ import { joinPath } from "./utils";
 
 interface UseSftpTransfersParams {
   getActivePane: (side: "left" | "right") => SftpPane | null;
-  refresh: (side: "left" | "right") => Promise<void>;
+  refresh: (side: "left" | "right", options?: { tabId?: string }) => Promise<void>;
   sftpSessionsRef: React.MutableRefObject<Map<string, string>>;
   listLocalFiles: (path: string) => Promise<SftpFileEntry[]>;
   listRemoteFiles: (sftpId: string, path: string, encoding?: SftpFilenameEncoding) => Promise<SftpFileEntry[]>;
@@ -64,65 +64,9 @@ export const useSftpTransfers = ({
   const [transfers, setTransfers] = useState<TransferTask[]>([]);
   const [conflicts, setConflicts] = useState<FileConflict[]>([]);
 
-  const progressIntervalsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
   // Track cancelled task IDs for checking during async operations
   const cancelledTasksRef = useRef<Set<string>>(new Set());
   const completionHandlersRef = useRef<Map<string, (result: TransferResult) => void | Promise<void>>>(new Map());
-
-  useEffect(() => {
-    const intervalsRef = progressIntervalsRef.current;
-    return () => {
-      intervalsRef.forEach((interval) => {
-        clearInterval(interval);
-      });
-      intervalsRef.clear();
-    };
-  }, []);
-
-  const startProgressSimulation = useCallback(
-    (taskId: string, estimatedBytes: number) => {
-      const existing = progressIntervalsRef.current.get(taskId);
-      if (existing) clearInterval(existing);
-
-      const baseSpeed = Math.max(50000, Math.min(500000, estimatedBytes / 10));
-      const variability = 0.3;
-
-      let transferred = 0;
-      const interval = setInterval(() => {
-        const speedFactor = 1 + (Math.random() - 0.5) * variability;
-        const chunkSize = Math.floor(baseSpeed * speedFactor * 0.1);
-        transferred = Math.min(transferred + chunkSize, estimatedBytes);
-
-        setTransfers((prev) =>
-          prev.map((t) => {
-            if (t.id !== taskId || t.status !== "transferring") return t;
-            return {
-              ...t,
-              transferredBytes: transferred,
-              totalBytes: estimatedBytes,
-              speed: chunkSize * 10,
-            };
-          }),
-        );
-
-        if (transferred >= estimatedBytes * 0.95) {
-          clearInterval(interval);
-          progressIntervalsRef.current.delete(taskId);
-        }
-      }, 100);
-
-      progressIntervalsRef.current.set(taskId, interval);
-    },
-    [],
-  );
-
-  const stopProgressSimulation = useCallback((taskId: string) => {
-    const interval = progressIntervalsRef.current.get(taskId);
-    if (interval) {
-      clearInterval(interval);
-      progressIntervalsRef.current.delete(taskId);
-    }
-  }, []);
 
   const clearCancelledTask = useCallback((taskId: string) => {
     cancelledTasksRef.current.delete(taskId);
@@ -207,114 +151,64 @@ export const useSftpTransfers = ({
       throw new Error("Transfer cancelled");
     }
 
-    if (netcattyBridge.get()?.startStreamTransfer) {
-      return new Promise((resolve, reject) => {
-        const options = {
-          transferId: task.id,
-          sourcePath: task.sourcePath,
-          targetPath: task.targetPath,
-          sourceType: sourceIsLocal ? ("local" as const) : ("sftp" as const),
-          targetType: targetIsLocal ? ("local" as const) : ("sftp" as const),
-          sourceSftpId: sourceSftpId || undefined,
-          targetSftpId: targetSftpId || undefined,
-          totalBytes: task.totalBytes || undefined,
-          sourceEncoding: sourceIsLocal ? undefined : sourceEncoding,
-          targetEncoding: targetIsLocal ? undefined : targetEncoding,
-        };
+    return new Promise((resolve, reject) => {
+      const options = {
+        transferId: task.id,
+        sourcePath: task.sourcePath,
+        targetPath: task.targetPath,
+        sourceType: sourceIsLocal ? ("local" as const) : ("sftp" as const),
+        targetType: targetIsLocal ? ("local" as const) : ("sftp" as const),
+        sourceSftpId: sourceSftpId || undefined,
+        targetSftpId: targetSftpId || undefined,
+        totalBytes: task.totalBytes || undefined,
+        sourceEncoding: sourceIsLocal ? undefined : sourceEncoding,
+        targetEncoding: targetIsLocal ? undefined : targetEncoding,
+      };
 
-        const onProgress = (
-          transferred: number,
-          total: number,
-          speed: number,
-        ) => {
-          // Bubble up streaming progress to parent (for directory transfers)
-          onStreamProgress?.(transferred, total, speed);
+      const onProgress = (
+        transferred: number,
+        total: number,
+        speed: number,
+      ) => {
+        // Bubble up streaming progress to parent (for directory transfers)
+        onStreamProgress?.(transferred, total, speed);
 
-          setTransfers((prev) =>
-            prev.map((t) => {
-              if (t.id !== task.id) return t;
-              if (t.status === "cancelled") return t;
-              const normalizedTotal = total > 0 ? total : t.totalBytes;
-              const normalizedTransferred = Math.max(
-                t.transferredBytes,
-                Math.min(transferred, normalizedTotal > 0 ? normalizedTotal : transferred),
-              );
-              return {
-                ...t,
-                transferredBytes: normalizedTransferred,
-                totalBytes: normalizedTotal,
-                speed: Number.isFinite(speed) && speed > 0 ? speed : 0,
-              };
-            }),
-          );
-        };
-
-        const onComplete = () => {
-          resolve();
-        };
-
-        const onError = (error: string) => {
-          reject(new Error(error));
-        };
-
-        netcattyBridge.require().startStreamTransfer!(
-          options,
-          onProgress,
-          onComplete,
-          onError,
-        ).catch(reject);
-      });
-    }
-
-    let content: ArrayBuffer | string;
-
-    if (sourceIsLocal) {
-      content =
-        (await netcattyBridge.get()?.readLocalFile?.(task.sourcePath)) ||
-        new ArrayBuffer(0);
-    } else if (sourceSftpId) {
-      if (netcattyBridge.get()?.readSftpBinary) {
-        content = await netcattyBridge.get()!.readSftpBinary!(
-          sourceSftpId,
-          task.sourcePath,
-          sourceEncoding,
+        setTransfers((prev) =>
+          prev.map((t) => {
+            if (t.id !== task.id) return t;
+            if (t.status === "cancelled") return t;
+            const normalizedTotal = total > 0 ? total : t.totalBytes;
+            // Clamp to [previous, total] — the backend normalizes progress
+            // but we guard against any non-monotonic edge cases.
+            const normalizedTransferred = Math.max(
+              t.transferredBytes,
+              Math.min(transferred, normalizedTotal > 0 ? normalizedTotal : transferred),
+            );
+            return {
+              ...t,
+              transferredBytes: normalizedTransferred,
+              totalBytes: normalizedTotal,
+              speed: Number.isFinite(speed) && speed > 0 ? speed : 0,
+            };
+          }),
         );
-      } else {
-        content =
-          (await netcattyBridge.get()?.readSftp(sourceSftpId, task.sourcePath, sourceEncoding)) || "";
-      }
-    } else {
-      throw new Error("No source connection");
-    }
+      };
 
-    if (targetIsLocal) {
-      if (content instanceof ArrayBuffer) {
-        await netcattyBridge.get()?.writeLocalFile?.(task.targetPath, content);
-      } else {
-        const encoder = new TextEncoder();
-        await netcattyBridge.get()?.writeLocalFile?.(
-          task.targetPath,
-          encoder.encode(content).buffer,
-        );
-      }
-    } else if (targetSftpId) {
-      if (content instanceof ArrayBuffer && netcattyBridge.get()?.writeSftpBinary) {
-        await netcattyBridge.get()!.writeSftpBinary!(
-          targetSftpId,
-          task.targetPath,
-          content,
-          targetEncoding,
-        );
-      } else {
-        const text =
-          content instanceof ArrayBuffer
-            ? new TextDecoder().decode(content)
-            : content;
-        await netcattyBridge.get()?.writeSftp(targetSftpId, task.targetPath, text, targetEncoding);
-      }
-    } else {
-      throw new Error("No target connection");
-    }
+      const onComplete = () => {
+        resolve();
+      };
+
+      const onError = (error: string) => {
+        reject(new Error(error));
+      };
+
+      netcattyBridge.require().startStreamTransfer!(
+        options,
+        onProgress,
+        onComplete,
+        onError,
+      ).catch(reject);
+    });
   };
 
   const transferDirectory = async (
@@ -456,6 +350,7 @@ export const useSftpTransfers = ({
         // Fall back to the existing estimate below if size discovery fails.
       }
     } else if (actualFileSize === 0) {
+      // Fallback stat when file wasn't in the pane's file list (e.g., filtered view)
       try {
         const sourceSftpId = sourcePane.connection?.isLocal
           ? null
@@ -463,14 +358,24 @@ export const useSftpTransfers = ({
 
         if (sourcePane.connection?.isLocal) {
           const stat = await netcattyBridge.get()?.statLocal?.(task.sourcePath);
-          if (stat) actualFileSize = stat.size;
+          if (stat) {
+            actualFileSize = stat.size;
+            if (!task.sourceLastModified && stat.lastModified) {
+              task.sourceLastModified = stat.lastModified;
+            }
+          }
         } else if (sourceSftpId) {
           const stat = await netcattyBridge.get()?.statSftp?.(
             sourceSftpId,
             task.sourcePath,
             sourceEncoding,
           );
-          if (stat) actualFileSize = stat.size;
+          if (stat) {
+            actualFileSize = stat.size;
+            if (!task.sourceLastModified && stat.lastModified) {
+              task.sourceLastModified = stat.lastModified;
+            }
+          }
         }
       } catch {
         // Ignore stat errors
@@ -484,7 +389,6 @@ export const useSftpTransfers = ({
           ? 1024 * 1024
           : 256 * 1024;
 
-    const hasStreamingTransfer = !!netcattyBridge.get()?.startStreamTransfer;
 
     const sourceSftpId = sourcePane.connection?.isLocal
       ? null
@@ -504,8 +408,6 @@ export const useSftpTransfers = ({
       throw new Error("Target SFTP session not found");
     }
 
-    let useSimulatedProgress = false;
-
     try {
       if (prescanCancelled) {
         throw new Error("Transfer cancelled");
@@ -518,41 +420,14 @@ export const useSftpTransfers = ({
         startTime: Date.now(),
       });
 
-      if (!hasStreamingTransfer && !task.isDirectory) {
-        useSimulatedProgress = true;
-        startProgressSimulation(task.id, estimatedSize);
-      }
-
       if (!task.skipConflictCheck && !task.isDirectory && targetPane.connection) {
         let targetExists = false;
         let existingStat: { size: number; mtime: number } | null = null;
-        let sourceStat: { size: number; mtime: number } | null = null;
-
-        try {
-          if (sourcePane.connection.isLocal) {
-            const stat = await netcattyBridge.get()?.statLocal?.(task.sourcePath);
-            if (stat) {
-              sourceStat = {
-                size: stat.size,
-                mtime: stat.lastModified || Date.now(),
-              };
-            }
-          } else if (sourceSftpId) {
-            const stat = await netcattyBridge.get()?.statSftp?.(
-              sourceSftpId,
-              task.sourcePath,
-              sourceEncoding,
-            );
-            if (stat) {
-              sourceStat = {
-                size: stat.size,
-                mtime: stat.lastModified || Date.now(),
-              };
-            }
-          }
-        } catch {
-          // ignore
-        }
+        // Use cached metadata from the task instead of an extra stat round-trip
+        const sourceStat: { size: number; mtime: number } | null =
+          (task.totalBytes > 0 || task.sourceLastModified)
+            ? { size: task.totalBytes, mtime: task.sourceLastModified || Date.now() }
+            : null;
 
         try {
           if (targetPane.connection.isLocal) {
@@ -583,8 +458,6 @@ export const useSftpTransfers = ({
         }
 
         if (targetExists && existingStat) {
-          stopProgressSimulation(task.id);
-
           const newConflict: FileConflict = {
             transferId: task.id,
             fileName: task.fileName,
@@ -654,10 +527,6 @@ export const useSftpTransfers = ({
         );
       }
 
-      if (useSimulatedProgress) {
-        stopProgressSimulation(task.id);
-      }
-
       setTransfers((prev) =>
         prev.map((t) => {
           if (t.id !== task.id) return t;
@@ -671,7 +540,9 @@ export const useSftpTransfers = ({
         }),
       );
 
-      await refresh(targetSide);
+      // Refresh the specific target tab, not whichever tab happens to be
+      // active now — focus may have switched during the transfer.
+      await refresh(targetSide, { tabId: targetPane.id });
       const completionHandler = completionHandlersRef.current.get(task.id);
       if (completionHandler) {
         try {
@@ -687,10 +558,6 @@ export const useSftpTransfers = ({
       }
       return "completed";
     } catch (err) {
-      if (useSimulatedProgress) {
-        stopProgressSimulation(task.id);
-      }
-
       // Check if this was a cancellation
       const isCancelled = cancelledTasksRef.current.has(task.id) ||
         (err instanceof Error && err.message === "Transfer cancelled");
@@ -754,17 +621,9 @@ export const useSftpTransfers = ({
 
       if (!sourcePane?.connection || !targetPane?.connection) return [];
 
-      const sourceEncoding: SftpFilenameEncoding = sourcePane.connection.isLocal
-        ? "auto"
-        : sourcePane.filenameEncoding || "auto";
-
       const sourcePath = options?.sourcePath ?? sourcePane.connection.currentPath;
       const targetPath = targetPane.connection.currentPath;
       const sourceConnectionId = options?.sourceConnectionId ?? sourcePane.connection.id;
-
-      const sourceSftpId = sourcePane.connection.isLocal
-        ? null
-        : sftpSessionsRef.current.get(sourceConnectionId);
 
       const newTasks: TransferTask[] = [];
 
@@ -776,25 +635,11 @@ export const useSftpTransfers = ({
               ? "download"
               : "remote-to-remote";
 
-        let fileSize = 0;
-        if (!file.isDirectory) {
-          try {
-            const fullPath = joinPath(sourcePath, file.name);
-            if (sourcePane.connection!.isLocal) {
-              const stat = await netcattyBridge.get()?.statLocal?.(fullPath);
-              if (stat) fileSize = stat.size;
-            } else if (sourceSftpId) {
-              const stat = await netcattyBridge.get()?.statSftp?.(
-                sourceSftpId,
-                fullPath,
-                sourceEncoding,
-              );
-              if (stat) fileSize = stat.size;
-            }
-          } catch {
-            // ignore
-          }
-        }
+        // Use cached metadata from the source pane's file list to avoid
+        // redundant stat calls over the network.
+        const fileEntry = sourcePane.files.find((f) => f.name === file.name);
+        const fileSize = file.isDirectory ? 0 : (fileEntry?.size ?? 0);
+        const sourceLastModified = fileEntry?.lastModified ?? 0;
 
         newTasks.push({
           id: crypto.randomUUID(),
@@ -811,6 +656,7 @@ export const useSftpTransfers = ({
           speed: 0,
           startTime: Date.now(),
           isDirectory: file.isDirectory,
+          sourceLastModified,
         });
       }
 
@@ -845,8 +691,6 @@ export const useSftpTransfers = ({
       // Add to cancelled set so async operations can check
       cancelledTasksRef.current.add(transferId);
 
-      stopProgressSimulation(transferId);
-
       setTransfers((prev) =>
         prev.map((t) =>
           t.id === transferId
@@ -870,7 +714,7 @@ export const useSftpTransfers = ({
       }
 
     },
-    [stopProgressSimulation],
+    [],
   );
 
   const retryTransfer = useCallback(

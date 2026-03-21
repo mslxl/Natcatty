@@ -194,7 +194,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   // Maps tab IDs to the connectionKey used to create them, so we can
   // correctly identify tabs when the same host ID has different overrides.
   const tabConnectionKeyMapRef = useRef<Map<string, string>>(new Map());
-  const pendingConnectionKeyRef = useRef<string | null>(null);
 
   // NOTE: We intentionally do NOT reset lastAppliedInitialLocationKeyRef on
   // visibility changes. When the user switches terminal tabs, the panel
@@ -213,14 +212,12 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
 
   // Track whether there's active work that should block connection switching.
   // Computed outside the effect so it can be in the dependency array.
-  const hasActiveTransfers = useMemo(
-    () => sftp.transfers.some((t) => t.status === "pending" || t.status === "transferring"),
-    [sftp.transfers],
-  );
-  // Block host-following while any connection-sensitive UI or operation
-  // is active: text editor, permissions dialog, file-opener dialog, or
+  // Block host-following while any connection-sensitive interactive UI is
+  // active: text editor, permissions dialog, file-opener dialog, or
   // auto-synced external file watches.
-  const hasActiveWork = hasActiveTransfers || showTextEditor || !!permissionsState || showFileOpenerDialog
+  // Note: transfers are NOT included here — they run on their own sftpId
+  // independent of the active tab, and forceNewTab preserves old connections.
+  const hasActiveWork = showTextEditor || !!permissionsState || showFileOpenerDialog
     || (sftp.activeFileWatchCountRef?.current ?? 0) > 0;
 
   useEffect(() => {
@@ -305,27 +302,23 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       return;
     }
 
-    // Create a new tab when there's already an active connection to a different
-    // host, so the previous tab is preserved for instant switching on focus change.
+    // Create a new tab when there's already an active connection, so the
+    // previous tab is preserved for instant switching on focus change.
+    // This covers both different hosts AND same host with different
+    // session-time overrides (port/protocol), preventing the old SFTP
+    // session from being closed while it may have in-flight transfers.
     const currentConn = s.leftPane.connection;
-    const needsNewTab = !!(currentConn && currentConn.status === "connected" && currentConn.hostId !== activeHost.id);
+    const needsNewTab = !!(currentConn && currentConn.status === "connected");
 
     connectedKeyRef.current = connectionKey;
     connectedHostObjRef.current = activeHost;
-    // Store the pending key so the effect below can map it once the tab is created
-    pendingConnectionKeyRef.current = connectionKey;
-    s.connect("left", activeHost, needsNewTab ? { forceNewTab: true } : undefined);
+    s.connect("left", activeHost, {
+      ...(needsNewTab ? { forceNewTab: true } : undefined),
+      onTabCreated: (tabId) => {
+        tabConnectionKeyMapRef.current.set(tabId, connectionKey);
+      },
+    });
   }, [activeHost, hasActiveWork]); // Re-evaluate when work finishes so deferred switch can proceed
-
-  // Track the active tab's connectionKey after connect() creates or reuses it.
-  // Watches both activeTabId (new tab) and connection status (reused tab reconnecting).
-  useEffect(() => {
-    const activeTabId = sftp.leftTabs.activeTabId;
-    if (activeTabId && pendingConnectionKeyRef.current) {
-      tabConnectionKeyMapRef.current.set(activeTabId, pendingConnectionKeyRef.current);
-      pendingConnectionKeyRef.current = null;
-    }
-  }, [sftp.leftTabs.activeTabId, sftp.leftPane.connection?.status]);
 
   // Clear the remembered connection key when the pane disconnects or the
   // session is lost, so re-opening SFTP for the same terminal reconnects.
@@ -432,10 +425,19 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   ]);
 
   const MAX_VISIBLE_TRANSFERS = 5;
-  const visibleTransfers = useMemo(
-    () => [...sftp.transfers].reverse().slice(0, MAX_VISIBLE_TRANSFERS),
-    [sftp.transfers],
-  );
+  const visibleTransfers = useMemo(() => {
+    const connection = sftp.leftPane.connection;
+    if (!connection) return [];
+    // Filter transfers to those relevant to the active connection's host,
+    // so workspace focus switches don't show transfers from other hosts.
+    const filtered = sftp.transfers.filter((t) => {
+      if (connection.isLocal) {
+        return t.sourceConnectionId === connection.id || t.targetConnectionId === connection.id;
+      }
+      return t.targetHostId === connection.hostId || t.sourceConnectionId === connection.id || t.targetConnectionId === connection.id;
+    });
+    return [...filtered].reverse().slice(0, MAX_VISIBLE_TRANSFERS);
+  }, [sftp.transfers, sftp.leftPane.connection]);
 
   const handleRevealTransferTarget = useCallback(
     async (task: TransferTask) => {

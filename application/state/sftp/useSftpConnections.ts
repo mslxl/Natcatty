@@ -34,7 +34,7 @@ interface UseSftpConnectionsParams {
 }
 
 interface UseSftpConnectionsResult {
-  connect: (side: "left" | "right", host: Host | "local", options?: { forceNewTab?: boolean }) => Promise<void>;
+  connect: (side: "left" | "right", host: Host | "local", options?: { forceNewTab?: boolean; onTabCreated?: (tabId: string) => void }) => Promise<void>;
   disconnect: (side: "left" | "right") => Promise<void>;
   listLocalFiles: (path: string) => Promise<SftpFileEntry[]>;
   listRemoteFiles: (sftpId: string, path: string, encoding?: SftpFilenameEncoding) => Promise<SftpFileEntry[]>;
@@ -69,7 +69,7 @@ export const useSftpConnections = ({
   const { listLocalFiles, listRemoteFiles } = useSftpDirectoryListing();
 
   const connect = useCallback(
-    async (side: "left" | "right", host: Host | "local", options?: { forceNewTab?: boolean }) => {
+    async (side: "left" | "right", host: Host | "local", options?: { forceNewTab?: boolean; onTabCreated?: (tabId: string) => void }) => {
       const setTabs = side === "left" ? setLeftTabs : setRightTabs;
 
       let activeTabId: string | null = null;
@@ -87,6 +87,11 @@ export const useSftpConnections = ({
       }
 
       if (!activeTabId) return;
+
+      // Notify caller of the tab ID synchronously, before any async work.
+      // This allows callers to map metadata (e.g. connection keys) to the tab
+      // immediately, avoiding race conditions with deferred effects.
+      options?.onTabCreated?.(activeTabId);
 
       const connectionId = `${side}-${Date.now()}`;
 
@@ -118,12 +123,15 @@ export const useSftpConnections = ({
         if (currentPane?.connection && !currentPane.connection.isLocal) {
           const oldSftpId = sftpSessionsRef.current.get(currentPane.connection.id);
           if (oldSftpId) {
+            // Delete the mapping BEFORE the async closeSftp call to prevent
+            // concurrent code from using a stale sftpId that the backend may
+            // have already removed during the await.
+            sftpSessionsRef.current.delete(currentPane.connection.id);
             try {
               await netcattyBridge.get()?.closeSftp(oldSftpId);
             } catch {
               // Ignore errors when closing stale SFTP sessions
             }
-            sftpSessionsRef.current.delete(currentPane.connection.id);
           }
         }
       }
