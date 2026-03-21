@@ -440,6 +440,7 @@ const zhCN: Messages = {
   'sftp.path.doubleClickToEdit': '双击编辑路径',
   'sftp.showHiddenPaths': '隐藏的路径',
   'sftp.task.waiting': '等待中...',
+  'sftp.transfer.preparing': '准备中...',
   'sftp.status.loading': '加载中...',
   'sftp.status.uploading': '上传中...',
   'sftp.status.ready': '就绪',

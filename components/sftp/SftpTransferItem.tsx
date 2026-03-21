@@ -135,7 +135,7 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
                             {task.status === 'pending'
                                 ? 'waiting...'
                                 : isIndeterminate
-                                    ? t('sftp.transfer.preparing', 'preparing...')
+                                    ? t('sftp.transfer.preparing')
                                     : hasKnownTotal
                                         ? `${Math.round(progress)}%`
                                         : '...'}

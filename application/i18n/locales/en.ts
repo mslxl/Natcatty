@@ -613,6 +613,7 @@ const en: Messages = {
   'sftp.path.doubleClickToEdit': 'Double-click to edit path',
   'sftp.showHiddenPaths': 'Hidden paths',
   'sftp.task.waiting': 'Waiting...',
+  'sftp.transfer.preparing': 'preparing...',
   'sftp.status.loading': 'Loading...',
   'sftp.status.uploading': 'Uploading...',
   'sftp.status.ready': 'Ready',
