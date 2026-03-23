@@ -314,6 +314,7 @@ declare global {
     renameSftp?(sftpId: string, oldPath: string, newPath: string, encoding?: SftpFilenameEncoding): Promise<void>;
     statSftp?(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<SftpStatResult>;
     chmodSftp?(sftpId: string, path: string, mode: string, encoding?: SftpFilenameEncoding): Promise<void>;
+    getSftpHomeDir?(sftpId: string): Promise<{ success: boolean; homeDir?: string; error?: string }>;
 
     // Write binary with real-time progress callback
     writeSftpBinaryWithProgress?(
