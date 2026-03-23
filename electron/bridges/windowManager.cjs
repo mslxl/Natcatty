@@ -692,8 +692,9 @@ async function createWindow(electronModule, options) {
 
   mainWindow = win;
 
-  // Log renderer crashes for diagnostics
+  // Log renderer crashes for diagnostics (skip normal clean exits)
   win.webContents.on("render-process-gone", (_event, details) => {
+    if (details?.reason === "clean-exit") return;
     try {
       const crashLogBridge = require("./crashLogBridge.cjs");
       crashLogBridge.captureError("render-process-gone", new Error(

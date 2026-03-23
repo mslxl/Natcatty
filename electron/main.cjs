@@ -37,6 +37,9 @@ process.on('uncaughtException', (err) => {
 });
 
 process.on('unhandledRejection', (reason) => {
+  // Skip benign stream teardown errors
+  const code = reason?.code;
+  if (code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED') return;
   try { crashLogBridge.captureError('unhandledRejection', reason); } catch {}
   console.error('Unhandled rejection:', reason);
   // Re-throw to preserve fatal semantics. Mark so uncaughtException handler
