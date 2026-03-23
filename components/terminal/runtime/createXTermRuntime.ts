@@ -391,12 +391,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
             e.preventDefault();
             e.stopPropagation();
             // Send the snippet command to the terminal
-            const payload = snippet.noAutoRun
-              ? normalizeLineEndings(snippet.command)
-              : `${normalizeLineEndings(snippet.command)}\r`;
-            ctx.terminalBackend.writeToSession(id, payload);
+            let snippetData = normalizeLineEndings(snippet.command);
+            const snippetIsMultiLine = snippetData.includes("\n");
+            if (!snippet.noAutoRun) snippetData = `${snippetData}\r`;
+            if (snippetIsMultiLine) snippetData = wrapBracketedPaste(snippetData);
+            ctx.terminalBackend.writeToSession(id, snippetData);
             if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
-              ctx.onBroadcastInputRef.current(payload, ctx.sessionId);
+              ctx.onBroadcastInputRef.current(snippetData, ctx.sessionId);
             }
             if (!snippet.noAutoRun && ctx.onCommandExecuted) {
               const cmd = snippet.command.trim();
