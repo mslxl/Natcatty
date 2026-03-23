@@ -7,6 +7,7 @@ import React from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { cn } from '../../lib/utils';
 import { Host, SSHKey } from '../../types';
+import { formatHostPort } from '../../domain/host';
 import { DistroAvatar } from '../DistroAvatar';
 import { Button } from '../ui/button';
 import { TerminalAuthDialog, TerminalAuthDialogProps } from './TerminalAuthDialog';
@@ -85,12 +86,12 @@ export const TerminalConnectionDialog: React.FC<TerminalConnectionDialogProps> =
         )}>
             <div className="w-[560px] max-w-[90vw] bg-background/95 border border-border/60 rounded-xl shadow-xl p-6 space-y-4">
                 <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <DistroAvatar host={host} fallback={host.label.slice(0, 2).toUpperCase()} className="h-10 w-10 rounded-lg" />
-                        <div>
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <DistroAvatar host={host} fallback={host.label.slice(0, 2).toUpperCase()} className="h-10 w-10 rounded-lg shrink-0" />
+                        <div className="min-w-0">
                             {chainProgress ? (
                                 <>
-                                    <div className="text-sm font-semibold">
+                                    <div className="text-sm font-semibold truncate">
                                         <span className="text-muted-foreground">
                                             {t('terminal.connection.chainOf', {
                                                 current: chainProgress.currentHop,
@@ -100,21 +101,21 @@ export const TerminalConnectionDialog: React.FC<TerminalConnectionDialogProps> =
                                         </span>
                                         <span>{chainProgress.currentHostLabel}</span>
                                     </div>
-                                    <div className="text-[11px] text-muted-foreground font-mono">
-                                        {t(protocolInfo.i18nKey)} {protocolInfo.showPort ? `${host.hostname}:${protocolInfo.port}` : host.hostname}
+                                    <div className="text-[11px] text-muted-foreground font-mono truncate">
+                                        {t(protocolInfo.i18nKey)} {protocolInfo.showPort ? formatHostPort(host.hostname, protocolInfo.port) : host.hostname}
                                     </div>
                                 </>
                             ) : (
                                 <>
-                                    <div className="text-lg font-semibold">{host.label}</div>
-                                    <div className="text-[11px] text-muted-foreground font-mono">
-                                        {t(protocolInfo.i18nKey)} {protocolInfo.showPort ? `${host.hostname}:${protocolInfo.port}` : host.hostname}
+                                    <div className="text-lg font-semibold truncate">{host.label}</div>
+                                    <div className="text-[11px] text-muted-foreground font-mono truncate">
+                                        {t(protocolInfo.i18nKey)} {protocolInfo.showPort ? formatHostPort(host.hostname, protocolInfo.port) : host.hostname}
                                     </div>
                                 </>
                             )}
                         </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0 ml-3">
                         {!needsAuth && (
                             <Button
                                 size="sm"

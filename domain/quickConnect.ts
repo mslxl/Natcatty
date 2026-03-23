@@ -9,15 +9,45 @@ interface QuickConnectParseResult {
   warnings: string[];
 }
 
+/** Test whether a string looks like a bare (un-bracketed) IPv6 address.
+ *  Must have only hex digits and colons, with either:
+ *  - A "::" shorthand (unambiguously IPv6), or
+ *  - Exactly 7 colons (full 8-group notation like 2607:f130:0:179:0:0:b0df:eec4)
+ *  This avoids false positives on MAC addresses (6 groups, 5 colons). */
+const BARE_IPV6_RE = /^[a-fA-F0-9:]+$/;
+const isBareIPv6 = (s: string): boolean => {
+  if (!BARE_IPV6_RE.test(s)) return false;
+  if (s.includes('::')) return true;
+  return (s.match(/:/g) || []).length === 7;
+};
+
 const parseDirectTarget = (input: string): QuickConnectTarget | null => {
   const trimmed = input.trim();
   if (!trimmed) return null;
 
   // Pattern: [user@]hostname[:port]
-  // Hostname can be IP (v4 or v6) or domain name
+  // Hostname can be IP (v4 or v6 in brackets) or domain name
   const regex = /^(?:([^@]+)@)?([^\s:]+|\[[^\]]+\])(?::(\d+))?$/;
   const match = trimmed.match(regex);
-  if (!match) return null;
+
+  // If the main regex fails, try bare IPv6: [user@]ipv6_address
+  // Bare IPv6 contains colons so the main regex can't distinguish host:port.
+  // Port must be specified via brackets: [ipv6]:port
+  if (!match) {
+    const bareIpv6Regex = /^(?:([^@]+)@)?([a-fA-F0-9:]+)$/;
+    const bareMatch = trimmed.match(bareIpv6Regex);
+    if (bareMatch) {
+      const [, bareUser, bareHost] = bareMatch;
+      if (isBareIPv6(bareHost)) {
+        return {
+          hostname: bareHost,
+          username: bareUser || undefined,
+          port: undefined,
+        };
+      }
+    }
+    return null;
+  }
 
   const [, username, hostname, portStr] = match;
 
