@@ -1,7 +1,7 @@
 /**
  * Settings System Tab - System information, temp file management, session logs, and global hotkey
  */
-import { Download, ExternalLink, FileText, FolderOpen, HardDrive, Keyboard, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Download, ExternalLink, FileText, FolderOpen, HardDrive, Keyboard, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import React, { useCallback, useEffect, useState } from "react";
 import { useI18n } from "../../../application/i18n/I18nProvider";
 import { getCredentialProtectionAvailability } from "../../../infrastructure/services/credentialProtection";
@@ -12,6 +12,23 @@ import { TabsContent } from "../../ui/tabs";
 import { Button } from "../../ui/button";
 import { Toggle, Select, SettingRow } from "../settings-ui";
 import { cn } from "../../../lib/utils";
+
+interface CrashLogFile {
+  fileName: string;
+  date: string;
+  size: number;
+  entryCount: number;
+}
+
+interface CrashLogEntry {
+  timestamp: string;
+  source: string;
+  message: string;
+  stack?: string;
+  platform?: string;
+  arch?: string;
+  version?: string;
+}
 
 interface TempDirInfo {
   path: string;
@@ -98,6 +115,12 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   const [hotkeyError, setHotkeyError] = useState<string | null>(null);
   const [credentialsAvailable, setCredentialsAvailable] = useState<boolean | null>(null);
   const [isCheckingCredentials, setIsCheckingCredentials] = useState(false);
+  const [crashLogs, setCrashLogs] = useState<CrashLogFile[]>([]);
+  const [isLoadingCrashLogs, setIsLoadingCrashLogs] = useState(false);
+  const [expandedLog, setExpandedLog] = useState<string | null>(null);
+  const [logEntries, setLogEntries] = useState<CrashLogEntry[]>([]);
+  const [isClearingCrashLogs, setIsClearingCrashLogs] = useState(false);
+  const [crashLogClearResult, setCrashLogClearResult] = useState<{ deletedCount: number } | null>(null);
 
   const [appVersion, setAppVersion] = useState('');
 
@@ -143,6 +166,65 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   useEffect(() => {
     void loadCredentialProtectionStatus();
   }, [loadCredentialProtectionStatus]);
+
+  const loadCrashLogs = useCallback(async () => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.getCrashLogs) return;
+    setIsLoadingCrashLogs(true);
+    try {
+      const logs = await bridge.getCrashLogs();
+      setCrashLogs(logs);
+    } catch (err) {
+      console.error("[SettingsSystemTab] Failed to load crash logs:", err);
+    } finally {
+      setIsLoadingCrashLogs(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadCrashLogs();
+  }, [loadCrashLogs]);
+
+  const handleExpandCrashLog = useCallback(async (fileName: string) => {
+    if (expandedLog === fileName) {
+      setExpandedLog(null);
+      setLogEntries([]);
+      return;
+    }
+    const bridge = netcattyBridge.get();
+    if (!bridge?.readCrashLog) return;
+    try {
+      const entries = await bridge.readCrashLog(fileName);
+      setLogEntries(entries);
+      setExpandedLog(fileName);
+    } catch (err) {
+      console.error("[SettingsSystemTab] Failed to read crash log:", err);
+    }
+  }, [expandedLog]);
+
+  const handleClearCrashLogs = useCallback(async () => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.clearCrashLogs) return;
+    setIsClearingCrashLogs(true);
+    setCrashLogClearResult(null);
+    try {
+      const result = await bridge.clearCrashLogs();
+      setCrashLogClearResult(result);
+      setCrashLogs([]);
+      setExpandedLog(null);
+      setLogEntries([]);
+    } catch (err) {
+      console.error("[SettingsSystemTab] Failed to clear crash logs:", err);
+    } finally {
+      setIsClearingCrashLogs(false);
+    }
+  }, []);
+
+  const handleOpenCrashLogsDir = useCallback(async () => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.openCrashLogsDir) return;
+    await bridge.openCrashLogsDir();
+  }, []);
 
   const handleClearTempFiles = useCallback(async () => {
     const bridge = netcattyBridge.get();
@@ -447,6 +529,113 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                 {t("settings.system.credentials.portabilityHint")}
               </p>
             </div>
+          </div>
+
+          {/* Crash Logs Section */}
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={18} className="text-muted-foreground" />
+              <h3 className="text-base font-medium">{t("settings.system.crashLogs.title")}</h3>
+            </div>
+
+            <div className="bg-muted/30 rounded-lg p-4 space-y-3">
+              <p className="text-sm text-muted-foreground">
+                {t("settings.system.crashLogs.description")}
+              </p>
+
+              {crashLogs.length === 0 && !isLoadingCrashLogs && (
+                <p className="text-sm text-muted-foreground italic">
+                  {t("settings.system.crashLogs.noLogs")}
+                </p>
+              )}
+
+              {crashLogs.length > 0 && (
+                <div className="space-y-2">
+                  {crashLogs.map((log) => (
+                    <div key={log.fileName} className="border border-border/60 rounded-md overflow-hidden">
+                      <button
+                        onClick={() => handleExpandCrashLog(log.fileName)}
+                        className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-muted/50 transition-colors"
+                      >
+                        <div className="flex items-center gap-2">
+                          {expandedLog === log.fileName ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                          <span className="font-mono">{log.date}</span>
+                          <span className="text-muted-foreground">
+                            ({t("settings.system.crashLogs.entries").replace("{count}", String(log.entryCount))})
+                          </span>
+                        </div>
+                        <span className="text-xs text-muted-foreground">{formatBytes(log.size)}</span>
+                      </button>
+
+                      {expandedLog === log.fileName && logEntries.length > 0 && (
+                        <div className="border-t border-border/60 max-h-64 overflow-y-auto">
+                          {logEntries.map((entry, idx) => (
+                            <div key={idx} className="px-3 py-2 text-xs border-b border-border/30 last:border-b-0 space-y-1">
+                              <div className="flex items-center gap-3 flex-wrap">
+                                <span className="font-mono text-muted-foreground">
+                                  {new Date(entry.timestamp).toLocaleTimeString()}
+                                </span>
+                                <span className="px-1.5 py-0.5 rounded bg-destructive/10 text-destructive font-medium">
+                                  {entry.source}
+                                </span>
+                              </div>
+                              <p className="font-mono break-all">{entry.message}</p>
+                              {entry.stack && (
+                                <pre className="mt-1 p-2 bg-muted rounded text-[11px] leading-relaxed overflow-x-auto whitespace-pre-wrap break-all text-muted-foreground">
+                                  {entry.stack}
+                                </pre>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="flex items-center gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={loadCrashLogs}
+                  disabled={isLoadingCrashLogs}
+                  className="gap-1.5"
+                >
+                  <RefreshCw size={14} className={isLoadingCrashLogs ? "animate-spin" : ""} />
+                  {t("settings.system.refresh")}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleClearCrashLogs}
+                  disabled={isClearingCrashLogs || crashLogs.length === 0}
+                  className="gap-1.5 text-destructive hover:text-destructive hover:bg-destructive/10"
+                >
+                  <Trash2 size={14} />
+                  {t("settings.system.crashLogs.clear")}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleOpenCrashLogsDir}
+                  title={t("settings.system.openFolder")}
+                >
+                  <FolderOpen size={16} />
+                </Button>
+              </div>
+
+              {crashLogClearResult && (
+                <p className="text-sm text-muted-foreground">
+                  {t("settings.system.crashLogs.cleared").replace("{count}", String(crashLogClearResult.deletedCount))}
+                </p>
+              )}
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              {t("settings.system.crashLogs.hint")}
+            </p>
           </div>
 
           {/* Temp Directory Section */}

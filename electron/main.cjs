@@ -20,12 +20,18 @@ if (process.env.ELECTRON_RUN_AS_NODE) {
 
 // Handle uncaught exceptions for EPIPE errors
 process.on('uncaughtException', (err) => {
+  try { crashLogBridge.captureError('uncaughtException', err); } catch {}
   if (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED') {
     console.warn('Ignored stream error:', err.code);
     return;
   }
   console.error('Uncaught exception:', err);
   throw err;
+});
+
+process.on('unhandledRejection', (reason) => {
+  try { crashLogBridge.captureError('unhandledRejection', reason); } catch {}
+  console.error('Unhandled rejection:', reason);
 });
 
 // Load Electron
@@ -85,6 +91,7 @@ const globalShortcutBridge = require("./bridges/globalShortcutBridge.cjs");
 const credentialBridge = require("./bridges/credentialBridge.cjs");
 const autoUpdateBridge = require("./bridges/autoUpdateBridge.cjs");
 const aiBridge = require("./bridges/aiBridge.cjs");
+const crashLogBridge = require("./bridges/crashLogBridge.cjs");
 const windowManager = require("./bridges/windowManager.cjs");
 
 // GPU settings
@@ -381,6 +388,7 @@ const registerBridges = (win) => {
   fileWatcherBridge.init(deps);
   globalShortcutBridge.init(deps);
   aiBridge.init(deps);
+  crashLogBridge.init(deps);
 
   // Initialize compress upload bridge with transferBridge dependency
   compressUploadBridge.init({
@@ -412,6 +420,7 @@ const registerBridges = (win) => {
   autoUpdateBridge.init(deps);
   autoUpdateBridge.registerHandlers(ipcMain);
   aiBridge.registerHandlers(ipcMain);
+  crashLogBridge.registerHandlers(ipcMain);
 
   // Settings window handler
   ipcMain.handle("netcatty:settings:open", async () => {

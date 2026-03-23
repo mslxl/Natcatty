@@ -99,6 +99,21 @@ const en: Messages = {
   'settings.system.credentials.unavailableHint': 'Credentials encrypted on another user profile or machine cannot be decrypted here. Re-enter and save credentials on this device.',
   'settings.system.credentials.portabilityHint': 'Cloud Sync is portable because it uses your master key encryption. Local safeStorage encryption is device/user scoped.',
 
+  // Settings > System > Crash Logs
+  'settings.system.crashLogs.title': 'Crash Logs',
+  'settings.system.crashLogs.description': 'View error logs from the main process to help diagnose unexpected behavior.',
+  'settings.system.crashLogs.noLogs': 'No crash logs found.',
+  'settings.system.crashLogs.entries': '{count} entries',
+  'settings.system.crashLogs.clear': 'Clear all logs',
+  'settings.system.crashLogs.cleared': 'Cleared {count} log file(s).',
+  'settings.system.crashLogs.source': 'Source',
+  'settings.system.crashLogs.time': 'Time',
+  'settings.system.crashLogs.message': 'Message',
+  'settings.system.crashLogs.stack': 'Stack Trace',
+  'settings.system.crashLogs.hint': 'Crash logs are retained for 30 days and automatically rotated.',
+  'settings.system.crashLogs.collapse': 'Collapse',
+  'settings.system.crashLogs.expand': 'Show details',
+
   // Settings > System > Software Update
   'settings.update.title': 'Software Update',
   'settings.update.currentVersion': 'Current version',

@@ -918,6 +918,16 @@ const api = {
   openSessionLogsDir: (directory) =>
     ipcRenderer.invoke("netcatty:sessionLogs:openDir", { directory }),
 
+  // Crash Logs
+  getCrashLogs: () =>
+    ipcRenderer.invoke("netcatty:crashLogs:list"),
+  readCrashLog: (fileName) =>
+    ipcRenderer.invoke("netcatty:crashLogs:read", { fileName }),
+  clearCrashLogs: () =>
+    ipcRenderer.invoke("netcatty:crashLogs:clear"),
+  openCrashLogsDir: () =>
+    ipcRenderer.invoke("netcatty:crashLogs:openDir"),
+
   // Global Toggle Hotkey (Quake Mode)
   registerGlobalHotkey: (hotkey) =>
     ipcRenderer.invoke("netcatty:globalHotkey:register", { hotkey }),
