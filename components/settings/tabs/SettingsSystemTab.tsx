@@ -25,6 +25,9 @@ interface CrashLogEntry {
   source: string;
   message: string;
   stack?: string;
+  errorMeta?: Record<string, unknown>;
+  extra?: Record<string, unknown>;
+  pid?: number;
   platform?: string;
   arch?: string;
   version?: string;
@@ -593,11 +596,30 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                                 </span>
                               </div>
                               <p className="font-mono break-all">{entry.message}</p>
+                              {entry.errorMeta && Object.keys(entry.errorMeta).length > 0 && (
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {Object.entries(entry.errorMeta).map(([k, v]) => (
+                                    <span key={k} className="px-1.5 py-0.5 rounded bg-muted font-mono">
+                                      {k}={String(v)}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              {entry.extra && Object.keys(entry.extra).length > 0 && (
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {Object.entries(entry.extra).map(([k, v]) => (
+                                    <span key={k} className="px-1.5 py-0.5 rounded bg-muted font-mono">
+                                      {k}={String(v)}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                               <div className="flex items-center gap-3 flex-wrap text-muted-foreground">
                                 {entry.version && <span>v{entry.version}</span>}
                                 {entry.electronVersion && <span>Electron {entry.electronVersion}</span>}
                                 {entry.platform && <span>{entry.platform}/{entry.arch}</span>}
                                 {entry.osVersion && <span>OS {entry.osVersion}</span>}
+                                {entry.pid && <span>PID {entry.pid}</span>}
                                 {entry.activeSessionCount != null && entry.activeSessionCount >= 0 && (
                                   <span>Sessions: {entry.activeSessionCount}</span>
                                 )}

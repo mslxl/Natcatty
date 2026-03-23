@@ -597,6 +597,9 @@ declare global {
       source: string;
       message: string;
       stack?: string;
+      errorMeta?: Record<string, unknown>;
+      extra?: Record<string, unknown>;
+      pid?: number;
       platform?: string;
       arch?: string;
       version?: string;

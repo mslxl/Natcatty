@@ -699,7 +699,7 @@ async function createWindow(electronModule, options) {
       const crashLogBridge = require("./crashLogBridge.cjs");
       crashLogBridge.captureError("render-process-gone", new Error(
         `Renderer process gone: reason=${details?.reason}, exitCode=${details?.exitCode}`
-      ));
+      ), { reason: details?.reason, exitCode: details?.exitCode });
     } catch {}
     console.error("[WindowManager] Renderer process gone:", details);
   });

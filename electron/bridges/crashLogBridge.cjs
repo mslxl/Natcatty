@@ -65,7 +65,7 @@ function todayFileName() {
   return `crash-${ymd}.log`;
 }
 
-function buildEntry(source, err) {
+function buildEntry(source, err, extra) {
   const error = err instanceof Error ? err : new Error(String(err ?? "unknown"));
 
   let mem;
@@ -80,11 +80,22 @@ function buildEntry(source, err) {
     // ignore
   }
 
+  // Extract extra properties from the error object (code, errno, syscall, etc.)
+  const errorMeta = {};
+  for (const key of ["code", "errno", "syscall", "hostname", "port", "signal", "level"]) {
+    if (error[key] !== undefined) {
+      errorMeta[key] = error[key];
+    }
+  }
+
   return {
     timestamp: new Date().toISOString(),
     source,
     message: error.message || String(err),
     stack: error.stack || undefined,
+    errorMeta: Object.keys(errorMeta).length > 0 ? errorMeta : undefined,
+    extra: extra || undefined,
+    pid: process.pid,
     platform: process.platform,
     arch: process.arch,
     version: electronApp?.getVersion?.() ?? "unknown",
@@ -104,12 +115,12 @@ function buildEntry(source, err) {
  * Write a crash/error entry to today's log file (sync, safe for use in
  * uncaughtException handlers).
  */
-function captureError(source, err) {
+function captureError(source, err, extra) {
   try {
     const dir = ensureLogDir();
     if (!dir) return;
 
-    const entry = buildEntry(source, err);
+    const entry = buildEntry(source, err, extra);
     const filePath = path.join(dir, todayFileName());
     fs.appendFileSync(filePath, JSON.stringify(entry) + "\n", "utf-8");
   } catch {
