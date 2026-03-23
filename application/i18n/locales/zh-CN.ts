@@ -83,6 +83,21 @@ const zhCN: Messages = {
   'settings.system.credentials.unavailableHint': '在其他用户或机器上加密的凭据无法在此处解密。请在当前设备重新输入并保存凭据。',
   'settings.system.credentials.portabilityHint': '云同步可跨设备，因为使用主密钥加密；本地 safeStorage 加密仅绑定当前系统用户/设备。',
 
+  // Settings > System > Crash Logs
+  'settings.system.crashLogs.title': '崩溃日志',
+  'settings.system.crashLogs.description': '查看主进程错误日志，帮助诊断异常行为。',
+  'settings.system.crashLogs.noLogs': '未找到崩溃日志。',
+  'settings.system.crashLogs.entries': '{count} 条记录',
+  'settings.system.crashLogs.clear': '清除所有日志',
+  'settings.system.crashLogs.cleared': '已清除 {count} 个日志文件。',
+  'settings.system.crashLogs.source': '来源',
+  'settings.system.crashLogs.time': '时间',
+  'settings.system.crashLogs.message': '消息',
+  'settings.system.crashLogs.stack': '堆栈跟踪',
+  'settings.system.crashLogs.hint': '崩溃日志保留 30 天，超期自动清理。',
+  'settings.system.crashLogs.collapse': '收起',
+  'settings.system.crashLogs.expand': '查看详情',
+
   // Settings > System > Software Update
   'settings.update.title': '软件更新',
   'settings.update.currentVersion': '当前版本',

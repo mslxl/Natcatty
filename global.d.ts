@@ -590,6 +590,28 @@ declare global {
     // Temp file cleanup
     deleteTempFile?(filePath: string): Promise<{ success: boolean }>;
 
+    // Crash Logs
+    getCrashLogs?(): Promise<Array<{ fileName: string; date: string; size: number; entryCount: number }>>;
+    readCrashLog?(fileName: string): Promise<Array<{
+      timestamp: string;
+      source: string;
+      message: string;
+      stack?: string;
+      errorMeta?: Record<string, unknown>;
+      extra?: Record<string, unknown>;
+      pid?: number;
+      platform?: string;
+      arch?: string;
+      version?: string;
+      electronVersion?: string;
+      osVersion?: string;
+      memoryMB?: { rss: number; heapUsed: number; heapTotal: number };
+      activeSessionCount?: number;
+      uptimeSeconds?: number;
+    }>>;
+    clearCrashLogs?(): Promise<{ deletedCount: number }>;
+    openCrashLogsDir?(): Promise<{ success: boolean }>;
+
     // Temp directory management
     getTempDirInfo?(): Promise<{ path: string; fileCount: number; totalSize: number }>;
     clearTempDir?(): Promise<{ deletedCount: number; failedCount: number; error?: string }>;

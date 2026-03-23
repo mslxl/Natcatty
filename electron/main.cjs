@@ -18,13 +18,34 @@ if (process.env.ELECTRON_RUN_AS_NODE) {
   delete process.env.ELECTRON_RUN_AS_NODE;
 }
 
+// Load crash log bridge early so process-level error handlers can use it
+const crashLogBridge = require("./bridges/crashLogBridge.cjs");
+
 // Handle uncaught exceptions for EPIPE errors
 process.on('uncaughtException', (err) => {
+  // Skip benign stream teardown errors — don't pollute crash logs with false positives
   if (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED') {
     console.warn('Ignored stream error:', err.code);
     return;
   }
+  // Skip logging if already captured by unhandledRejection handler
+  if (!err.__fromUnhandledRejection) {
+    try { crashLogBridge.captureError('uncaughtException', err); } catch {}
+  }
   console.error('Uncaught exception:', err);
+  throw err;
+});
+
+process.on('unhandledRejection', (reason) => {
+  // Skip benign stream teardown errors
+  const code = reason?.code;
+  if (code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED') return;
+  try { crashLogBridge.captureError('unhandledRejection', reason); } catch {}
+  console.error('Unhandled rejection:', reason);
+  // Re-throw to preserve fatal semantics. Mark so uncaughtException handler
+  // can skip duplicate logging.
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  err.__fromUnhandledRejection = true;
   throw err;
 });
 
@@ -85,6 +106,7 @@ const globalShortcutBridge = require("./bridges/globalShortcutBridge.cjs");
 const credentialBridge = require("./bridges/credentialBridge.cjs");
 const autoUpdateBridge = require("./bridges/autoUpdateBridge.cjs");
 const aiBridge = require("./bridges/aiBridge.cjs");
+// crashLogBridge is required at the top of the file (before error handlers)
 const windowManager = require("./bridges/windowManager.cjs");
 
 // GPU settings
@@ -381,6 +403,7 @@ const registerBridges = (win) => {
   fileWatcherBridge.init(deps);
   globalShortcutBridge.init(deps);
   aiBridge.init(deps);
+  crashLogBridge.init(deps);
 
   // Initialize compress upload bridge with transferBridge dependency
   compressUploadBridge.init({
@@ -412,6 +435,7 @@ const registerBridges = (win) => {
   autoUpdateBridge.init(deps);
   autoUpdateBridge.registerHandlers(ipcMain);
   aiBridge.registerHandlers(ipcMain);
+  crashLogBridge.registerHandlers(ipcMain);
 
   // Settings window handler
   ipcMain.handle("netcatty:settings:open", async () => {

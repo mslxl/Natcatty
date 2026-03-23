@@ -692,6 +692,18 @@ async function createWindow(electronModule, options) {
 
   mainWindow = win;
 
+  // Log renderer crashes for diagnostics (skip normal clean exits)
+  win.webContents.on("render-process-gone", (_event, details) => {
+    if (details?.reason === "clean-exit") return;
+    try {
+      const crashLogBridge = require("./crashLogBridge.cjs");
+      crashLogBridge.captureError("render-process-gone", new Error(
+        `Renderer process gone: reason=${details?.reason}, exitCode=${details?.exitCode}`
+      ), { reason: details?.reason, exitCode: details?.exitCode });
+    } catch {}
+    console.error("[WindowManager] Renderer process gone:", details);
+  });
+
   // Prevent top-level navigation away from the app origin. If a remote origin ever
   // loads in a privileged window (with preload), it can become an RCE vector.
   const allowedOrigins = new Set(["app://netcatty"]);
