@@ -278,8 +278,24 @@ export const useSftpConnections = ({
           let homeDir = sharedHostCache?.homeDir ?? startPath;
 
           if (!sharedHostCache) {
-            const statSftp = netcattyBridge.get()?.statSftp;
-            if (statSftp) {
+            // Detect home directory: SSH exec `echo ~` → SFTP realpath('.') → hardcoded fallback
+            const bridge = netcattyBridge.get();
+            let detected = false;
+
+            if (bridge?.getSftpHomeDir) {
+              try {
+                const result = await bridge.getSftpHomeDir(sftpId);
+                if (result?.success && result.homeDir) {
+                  startPath = result.homeDir;
+                  homeDir = result.homeDir;
+                  detected = true;
+                }
+              } catch {
+                // Fall through to hardcoded candidates
+              }
+            }
+
+            if (!detected) {
               const candidates: string[] = [];
               if (credentials.username === "root") {
                 candidates.push("/root");
@@ -289,63 +305,33 @@ export const useSftpConnections = ({
               } else {
                 candidates.push("/root");
               }
-              for (const candidate of candidates) {
-                try {
-                  const stat = await statSftp(sftpId, candidate, filenameEncoding);
-                  if (stat?.type === "directory") {
-                    startPath = candidate;
-                    homeDir = candidate;
-                    break;
-                  }
-                } catch {
-                  // Ignore missing/permission errors
-                }
-              }
-            } else {
-              if (credentials.username === "root") {
-                try {
-                  const rootFiles = await netcattyBridge.get()?.listSftp(sftpId, "/root", filenameEncoding);
-                  if (rootFiles) {
-                    startPath = "/root";
-                    homeDir = "/root";
-                  }
-                } catch {
-                  // Fallback path not available
-                }
-              } else if (credentials.username) {
-                try {
-                  const homeFiles = await netcattyBridge.get()?.listSftp(
-                    sftpId,
-                    `/home/${credentials.username}`,
-                    filenameEncoding,
-                  );
-                  if (homeFiles) {
-                    startPath = `/home/${credentials.username}`;
-                    homeDir = startPath;
-                  }
-                } catch {
-                  // Fall through to /root check
-                }
-                if (startPath === "/") {
+              const statSftp = bridge?.statSftp;
+              if (statSftp) {
+                for (const candidate of candidates) {
                   try {
-                    const rootFiles = await netcattyBridge.get()?.listSftp(sftpId, "/root", filenameEncoding);
-                    if (rootFiles) {
-                      startPath = "/root";
-                      homeDir = "/root";
+                    const stat = await statSftp(sftpId, candidate, filenameEncoding);
+                    if (stat?.type === "directory") {
+                      startPath = candidate;
+                      homeDir = candidate;
+                      break;
                     }
                   } catch {
-                    // Fallback path not available
+                    // Ignore missing/permission errors
                   }
                 }
               } else {
-                try {
-                  const rootFiles = await netcattyBridge.get()?.listSftp(sftpId, "/root", filenameEncoding);
-                  if (rootFiles) {
-                    startPath = "/root";
-                    homeDir = "/root";
+                // Fallback: probe candidates via listSftp when statSftp is unavailable
+                for (const candidate of candidates) {
+                  try {
+                    const files = await bridge?.listSftp(sftpId, candidate, filenameEncoding);
+                    if (files) {
+                      startPath = candidate;
+                      homeDir = candidate;
+                      break;
+                    }
+                  } catch {
+                    // Ignore missing/permission errors
                   }
-                } catch {
-                  // Fallback path not available
                 }
               }
             }

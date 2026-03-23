@@ -225,6 +225,11 @@ const requireSftpChannel = async (client) => {
   return sftp;
 };
 
+const realpathAsync = (sftp, targetPath) =>
+  new Promise((resolve, reject) => {
+    sftp.realpath(targetPath, (err, absPath) => (err ? reject(err) : resolve(absPath)));
+  });
+
 const statAsync = (sftp, targetPath) =>
   new Promise((resolve, reject) => {
     sftp.stat(targetPath, (err, stats) => (err ? reject(err) : resolve(stats)));
@@ -1587,6 +1592,62 @@ async function chmodSftp(event, payload) {
 }
 
 /**
+ * Resolve the remote user's home directory.
+ * Strategy: exec `echo ~` via SSH, fallback to SFTP realpath('.').
+ */
+async function getSftpHomeDir(_event, payload) {
+  const { sftpId } = payload;
+  const client = sftpClients.get(sftpId);
+  if (!client) return { success: false, error: "SFTP session not found" };
+
+  // Method 1: SSH exec `echo ~` (with 5s timeout to avoid hanging on
+  // hosts with blocking shell init scripts or forced commands)
+  const sshClient = client.client;
+  if (sshClient && typeof sshClient.exec === "function") {
+    let execStream = null;
+    try {
+      const execPromise = new Promise((resolve, reject) => {
+        sshClient.exec("echo ~", (err, stream) => {
+          if (err) return reject(err);
+          execStream = stream;
+          let stdout = "";
+          stream.on("close", (code) => resolve({ stdout, code }));
+          stream.on("data", (data) => { stdout += data.toString(); });
+          stream.stderr.on("data", () => {});
+        });
+      });
+      const result = await Promise.race([
+        execPromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 5000)),
+      ]);
+      const home = result.stdout?.trim();
+      if (home && home.startsWith("/")) {
+        return { success: true, homeDir: home };
+      }
+    } catch {
+      // Timeout or error — kill the exec channel if still open
+      try { execStream?.close?.(); } catch {}
+      try { execStream?.destroy?.(); } catch {}
+      // Fall through to SFTP realpath
+    }
+  }
+
+  // Method 2: SFTP realpath('.') — skip if result is '/' for non-root users
+  // because some SFTP servers start in '/' rather than the user's home
+  try {
+    const sftp = await requireSftpChannel(client);
+    const absPath = await realpathAsync(sftp, ".");
+    if (absPath && absPath !== "/") {
+      return { success: true, homeDir: absPath };
+    }
+  } catch {
+    // ignore
+  }
+
+  return { success: false, error: "Could not determine home directory" };
+}
+
+/**
  * Register IPC handlers for SFTP operations
  */
 function registerHandlers(ipcMain) {
@@ -1604,6 +1665,7 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:sftp:rename", renameSftp);
   ipcMain.handle("netcatty:sftp:stat", statSftp);
   ipcMain.handle("netcatty:sftp:chmod", chmodSftp);
+  ipcMain.handle("netcatty:sftp:homeDir", getSftpHomeDir);
 }
 
 /**
