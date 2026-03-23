@@ -394,7 +394,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
             let snippetData = normalizeLineEndings(snippet.command);
             const snippetIsMultiLine = snippetData.includes("\n");
             if (!snippet.noAutoRun) snippetData = `${snippetData}\r`;
-            if (snippetIsMultiLine) snippetData = wrapBracketedPaste(snippetData);
+            if (snippetIsMultiLine && term.modes.bracketedPasteMode && !ctx.terminalSettingsRef.current?.disableBracketedPaste) snippetData = wrapBracketedPaste(snippetData);
             ctx.terminalBackend.writeToSession(id, snippetData);
             if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
               ctx.onBroadcastInputRef.current(snippetData, ctx.sessionId);

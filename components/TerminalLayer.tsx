@@ -988,13 +988,14 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     // Wrap multi-line snippets in bracketed paste so the shell treats it
     // as a single paste operation rather than executing lines individually,
     // which can cause out-of-order execution on Windows ConPTY/PowerShell.
-    if (isMultiLine) data = wrapBracketedPaste(data);
+    // Respect the user's disableBracketedPaste setting.
+    if (isMultiLine && !terminalSettings?.disableBracketedPaste) data = wrapBracketedPaste(data);
     terminalBackend.writeToSession(sessionId, data);
     // Re-focus the terminal so the user can interact immediately
     const pane = document.querySelector(`[data-session-id="${sessionId}"]`);
     const textarea = pane?.querySelector('textarea.xterm-helper-textarea') as HTMLTextAreaElement | null;
     textarea?.focus();
-  }, [activeWorkspace?.focusedSessionId, activeSession?.id, terminalBackend]);
+  }, [activeWorkspace?.focusedSessionId, activeSession?.id, terminalBackend, terminalSettings?.disableBracketedPaste]);
 
   // Resolve theme change handler for the focused session
   const focusedHost = useMemo((): Host | null => {
