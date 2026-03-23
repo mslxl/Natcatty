@@ -1600,11 +1600,15 @@ async function getSftpHomeDir(_event, payload) {
   const client = sftpClients.get(sftpId);
   if (!client) return { success: false, error: "SFTP session not found" };
 
-  // Method 1: SSH exec `echo ~`
+  // Method 1: SSH exec `echo ~` (with 5s timeout to avoid hanging on
+  // hosts with blocking shell init scripts or forced commands)
   const sshClient = client.client;
   if (sshClient && typeof sshClient.exec === "function") {
     try {
-      const result = await execSshCommand(sshClient, "echo ~");
+      const result = await Promise.race([
+        execSshCommand(sshClient, "echo ~"),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 5000)),
+      ]);
       const home = result.stdout?.trim();
       if (home && home.startsWith("/")) {
         return { success: true, homeDir: home };
