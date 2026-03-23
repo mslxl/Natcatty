@@ -28,9 +28,24 @@ function ensureLogDir() {
   if (logDir) return logDir;
 
   try {
-    const userDataPath = electronApp
-      ? electronApp.getPath("userData")
-      : null;
+    // Try the stored app reference first, then fall back to requiring electron
+    // directly so crash logging works even before init() is called.
+    let userDataPath = null;
+    if (electronApp) {
+      userDataPath = electronApp.getPath("userData");
+    } else {
+      try {
+        const { app } = require("node:electron");
+        userDataPath = app?.getPath?.("userData") ?? null;
+      } catch {
+        try {
+          const { app } = require("electron");
+          userDataPath = app?.getPath?.("userData") ?? null;
+        } catch {
+          // Electron not available yet
+        }
+      }
+    }
     if (!userDataPath) return null;
 
     logDir = path.join(userDataPath, "crash-logs");

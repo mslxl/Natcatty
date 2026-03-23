@@ -32,6 +32,8 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
   try { crashLogBridge.captureError('unhandledRejection', reason); } catch {}
   console.error('Unhandled rejection:', reason);
+  // Re-throw so Node's default --unhandled-rejections=throw behavior is preserved
+  throw reason instanceof Error ? reason : new Error(String(reason));
 });
 
 // Load Electron
