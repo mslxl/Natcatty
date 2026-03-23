@@ -185,6 +185,7 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
     void loadCrashLogs();
   }, [loadCrashLogs]);
 
+  const expandRequestRef = React.useRef(0);
   const handleExpandCrashLog = useCallback(async (fileName: string) => {
     if (expandedLog === fileName) {
       setExpandedLog(null);
@@ -193,11 +194,17 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
     }
     const bridge = netcattyBridge.get();
     if (!bridge?.readCrashLog) return;
+    const requestId = ++expandRequestRef.current;
+    // Optimistically show expanded state while loading
+    setExpandedLog(fileName);
+    setLogEntries([]);
     try {
       const entries = await bridge.readCrashLog(fileName);
+      // Discard if user clicked a different file while awaiting
+      if (expandRequestRef.current !== requestId) return;
       setLogEntries(entries);
-      setExpandedLog(fileName);
     } catch (err) {
+      if (expandRequestRef.current !== requestId) return;
       console.error("[SettingsSystemTab] Failed to read crash log:", err);
     }
   }, [expandedLog]);

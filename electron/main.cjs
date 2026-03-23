@@ -18,6 +18,9 @@ if (process.env.ELECTRON_RUN_AS_NODE) {
   delete process.env.ELECTRON_RUN_AS_NODE;
 }
 
+// Load crash log bridge early so process-level error handlers can use it
+const crashLogBridge = require("./bridges/crashLogBridge.cjs");
+
 // Handle uncaught exceptions for EPIPE errors
 process.on('uncaughtException', (err) => {
   try { crashLogBridge.captureError('uncaughtException', err); } catch {}
@@ -93,7 +96,7 @@ const globalShortcutBridge = require("./bridges/globalShortcutBridge.cjs");
 const credentialBridge = require("./bridges/credentialBridge.cjs");
 const autoUpdateBridge = require("./bridges/autoUpdateBridge.cjs");
 const aiBridge = require("./bridges/aiBridge.cjs");
-const crashLogBridge = require("./bridges/crashLogBridge.cjs");
+// crashLogBridge is required at the top of the file (before error handlers)
 const windowManager = require("./bridges/windowManager.cjs");
 
 // GPU settings
