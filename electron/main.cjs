@@ -23,13 +23,14 @@ const crashLogBridge = require("./bridges/crashLogBridge.cjs");
 
 // Handle uncaught exceptions for EPIPE errors
 process.on('uncaughtException', (err) => {
-  // Skip logging if already captured by unhandledRejection handler
-  if (!err.__fromUnhandledRejection) {
-    try { crashLogBridge.captureError('uncaughtException', err); } catch {}
-  }
+  // Skip benign stream teardown errors — don't pollute crash logs with false positives
   if (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED') {
     console.warn('Ignored stream error:', err.code);
     return;
+  }
+  // Skip logging if already captured by unhandledRejection handler
+  if (!err.__fromUnhandledRejection) {
+    try { crashLogBridge.captureError('uncaughtException', err); } catch {}
   }
   console.error('Uncaught exception:', err);
   throw err;

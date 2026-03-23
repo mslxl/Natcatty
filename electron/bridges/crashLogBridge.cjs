@@ -219,8 +219,9 @@ async function openDir() {
   const dir = ensureLogDir();
   if (!dir || !electronShell?.openPath) return { success: false };
   try {
-    await electronShell.openPath(dir);
-    return { success: true };
+    const errorMessage = await electronShell.openPath(dir);
+    // shell.openPath resolves to an error string on failure, empty string on success
+    return { success: !errorMessage };
   } catch {
     return { success: false };
   }
