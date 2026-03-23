@@ -28,6 +28,11 @@ interface CrashLogEntry {
   platform?: string;
   arch?: string;
   version?: string;
+  electronVersion?: string;
+  osVersion?: string;
+  memoryMB?: { rss: number; heapUsed: number; heapTotal: number };
+  activeSessionCount?: number;
+  uptimeSeconds?: number;
 }
 
 interface TempDirInfo {
@@ -588,6 +593,19 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                                 </span>
                               </div>
                               <p className="font-mono break-all">{entry.message}</p>
+                              <div className="flex items-center gap-3 flex-wrap text-muted-foreground">
+                                {entry.version && <span>v{entry.version}</span>}
+                                {entry.electronVersion && <span>Electron {entry.electronVersion}</span>}
+                                {entry.platform && <span>{entry.platform}/{entry.arch}</span>}
+                                {entry.osVersion && <span>OS {entry.osVersion}</span>}
+                                {entry.activeSessionCount != null && entry.activeSessionCount >= 0 && (
+                                  <span>Sessions: {entry.activeSessionCount}</span>
+                                )}
+                                {entry.memoryMB && <span>RAM: {entry.memoryMB.rss}MB</span>}
+                                {entry.uptimeSeconds != null && (
+                                  <span>Uptime: {entry.uptimeSeconds}s</span>
+                                )}
+                              </div>
                               {entry.stack && (
                                 <pre className="mt-1 p-2 bg-muted rounded text-[11px] leading-relaxed overflow-x-auto whitespace-pre-wrap break-all text-muted-foreground">
                                   {entry.stack}

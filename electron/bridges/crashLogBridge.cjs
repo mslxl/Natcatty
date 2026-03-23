@@ -17,6 +17,7 @@ const os = require("node:os");
 let logDir = null;
 let electronApp = null;
 let electronShell = null;
+let sessionsMap = null;
 
 const LOG_RETENTION_DAYS = 30;
 
@@ -66,6 +67,19 @@ function todayFileName() {
 
 function buildEntry(source, err) {
   const error = err instanceof Error ? err : new Error(String(err ?? "unknown"));
+
+  let mem;
+  try {
+    const m = process.memoryUsage();
+    mem = {
+      rss: Math.round(m.rss / 1048576),
+      heapUsed: Math.round(m.heapUsed / 1048576),
+      heapTotal: Math.round(m.heapTotal / 1048576),
+    };
+  } catch {
+    // ignore
+  }
+
   return {
     timestamp: new Date().toISOString(),
     source,
@@ -74,6 +88,11 @@ function buildEntry(source, err) {
     platform: process.platform,
     arch: process.arch,
     version: electronApp?.getVersion?.() ?? "unknown",
+    electronVersion: process.versions?.electron ?? "unknown",
+    osVersion: os.release(),
+    memoryMB: mem,
+    activeSessionCount: sessionsMap?.size ?? -1,
+    uptimeSeconds: Math.round(process.uptime()),
   };
 }
 
@@ -270,10 +289,11 @@ async function openDir() {
 // ---------------------------------------------------------------------------
 
 function init(deps) {
-  const { electronModule } = deps;
+  const { electronModule, sessions } = deps;
   const { app, shell } = electronModule || {};
   electronApp = app;
   electronShell = shell;
+  sessionsMap = sessions || null;
 
   ensureLogDir();
   pruneOldLogs();

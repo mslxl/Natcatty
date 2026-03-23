@@ -600,6 +600,11 @@ declare global {
       platform?: string;
       arch?: string;
       version?: string;
+      electronVersion?: string;
+      osVersion?: string;
+      memoryMB?: { rss: number; heapUsed: number; heapTotal: number };
+      activeSessionCount?: number;
+      uptimeSeconds?: number;
     }>>;
     clearCrashLogs?(): Promise<{ deletedCount: number }>;
     openCrashLogsDir?(): Promise<{ success: boolean }>;
