@@ -131,6 +131,23 @@ function pruneOldLogs() {
 // IPC handlers
 // ---------------------------------------------------------------------------
 
+/**
+ * Count newlines in a file by streaming instead of reading entire content.
+ */
+async function countLines(filePath) {
+  return new Promise((resolve) => {
+    let count = 0;
+    const stream = fs.createReadStream(filePath, { encoding: "utf-8" });
+    stream.on("data", (chunk) => {
+      for (let i = 0; i < chunk.length; i++) {
+        if (chunk[i] === "\n") count++;
+      }
+    });
+    stream.on("end", () => resolve(count));
+    stream.on("error", () => resolve(0));
+  });
+}
+
 async function listLogs() {
   const dir = ensureLogDir();
   if (!dir) return [];
@@ -144,14 +161,12 @@ async function listLogs() {
       try {
         const filePath = path.join(dir, file);
         const stat = await fs.promises.stat(filePath);
-        // Count entries (lines)
-        const content = await fs.promises.readFile(filePath, "utf-8");
-        const lines = content.split("\n").filter(Boolean);
+        const entryCount = await countLines(filePath);
         results.push({
           fileName: file,
           date: file.replace("crash-", "").replace(".log", ""),
           size: stat.size,
-          entryCount: lines.length,
+          entryCount,
         });
       } catch {
         // skip unreadable files
@@ -166,6 +181,10 @@ async function listLogs() {
   }
 }
 
+const MAX_READ_ENTRIES = 500;
+// Read up to ~256KB from the tail of the file to cap memory/CPU usage
+const MAX_TAIL_BYTES = 256 * 1024;
+
 async function readLog(fileName) {
   const dir = ensureLogDir();
   if (!dir) return [];
@@ -175,19 +194,38 @@ async function readLog(fileName) {
 
   try {
     const filePath = path.join(dir, fileName);
-    const content = await fs.promises.readFile(filePath, "utf-8");
-    const lines = content.split("\n").filter(Boolean);
+    const stat = await fs.promises.stat(filePath);
 
-    // Parse each JSONL line, limit to 500 most recent
+    let content;
+    if (stat.size > MAX_TAIL_BYTES) {
+      // Only read the tail of the file
+      const buf = Buffer.alloc(MAX_TAIL_BYTES);
+      const fd = await fs.promises.open(filePath, "r");
+      try {
+        await fd.read(buf, 0, MAX_TAIL_BYTES, stat.size - MAX_TAIL_BYTES);
+      } finally {
+        await fd.close();
+      }
+      const raw = buf.toString("utf-8");
+      // Drop the first partial line
+      const firstNewline = raw.indexOf("\n");
+      content = firstNewline >= 0 ? raw.slice(firstNewline + 1) : raw;
+    } else {
+      content = await fs.promises.readFile(filePath, "utf-8");
+    }
+
+    const lines = content.split("\n").filter(Boolean);
+    // Only parse the last MAX_READ_ENTRIES lines
+    const tail = lines.slice(-MAX_READ_ENTRIES);
     const entries = [];
-    for (const line of lines) {
+    for (const line of tail) {
       try {
         entries.push(JSON.parse(line));
       } catch {
         // skip malformed lines
       }
     }
-    return entries.slice(-500);
+    return entries;
   } catch {
     return [];
   }
