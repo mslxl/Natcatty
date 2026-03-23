@@ -392,13 +392,16 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
             e.stopPropagation();
             // Send the snippet command to the terminal
             let snippetData = normalizeLineEndings(snippet.command);
-            const snippetIsMultiLine = snippetData.includes("\n");
             if (!snippet.noAutoRun) snippetData = `${snippetData}\r`;
-            if (snippetIsMultiLine && term.modes.bracketedPasteMode && !ctx.terminalSettingsRef.current?.disableBracketedPaste) snippetData = wrapBracketedPaste(snippetData);
-            ctx.terminalBackend.writeToSession(id, snippetData);
+            // Broadcast the normalized (un-wrapped) data so each target
+            // session can apply its own bracket paste state
             if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
               ctx.onBroadcastInputRef.current(snippetData, ctx.sessionId);
             }
+            // Wrap for this terminal only, after broadcasting
+            const snippetIsMultiLine = snippetData.includes("\n");
+            if (snippetIsMultiLine && term.modes.bracketedPasteMode && !ctx.terminalSettingsRef.current?.disableBracketedPaste) snippetData = wrapBracketedPaste(snippetData);
+            ctx.terminalBackend.writeToSession(id, snippetData);
             if (!snippet.noAutoRun && ctx.onCommandExecuted) {
               const cmd = snippet.command.trim();
               if (cmd) ctx.onCommandExecuted(cmd, ctx.host.id, ctx.host.label, ctx.sessionId);

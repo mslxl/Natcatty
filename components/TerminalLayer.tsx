@@ -16,7 +16,7 @@ import {
   resolveHostTerminalFontSize,
   resolveHostTerminalThemeId,
 } from '../domain/terminalAppearance';
-import { cn, normalizeLineEndings, wrapBracketedPaste } from '../lib/utils';
+import { cn, normalizeLineEndings } from '../lib/utils';
 import { detectLocalOs } from '../lib/localShell';
 import { useStoredString } from '../application/state/useStoredString';
 import { buildCacheKey } from '../application/state/sftp/sharedRemoteHostCache';
@@ -983,19 +983,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     const sessionId = activeWorkspace?.focusedSessionId ?? activeSession?.id;
     if (!sessionId) return;
     let data = normalizeLineEndings(command);
-    const isMultiLine = data.includes("\n");
     if (!noAutoRun) data = `${data}\r`;
-    // Wrap multi-line snippets in bracketed paste so the shell treats it
-    // as a single paste operation rather than executing lines individually,
-    // which can cause out-of-order execution on Windows ConPTY/PowerShell.
-    // Respect the user's disableBracketedPaste setting.
-    if (isMultiLine && !terminalSettings?.disableBracketedPaste) data = wrapBracketedPaste(data);
     terminalBackend.writeToSession(sessionId, data);
     // Re-focus the terminal so the user can interact immediately
     const pane = document.querySelector(`[data-session-id="${sessionId}"]`);
     const textarea = pane?.querySelector('textarea.xterm-helper-textarea') as HTMLTextAreaElement | null;
     textarea?.focus();
-  }, [activeWorkspace?.focusedSessionId, activeSession?.id, terminalBackend, terminalSettings?.disableBracketedPaste]);
+  }, [activeWorkspace?.focusedSessionId, activeSession?.id, terminalBackend]);
 
   // Resolve theme change handler for the focused session
   const focusedHost = useMemo((): Host | null => {
