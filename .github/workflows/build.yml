@@ -243,6 +243,40 @@ jobs:
       - name: List artifacts
         run: ls -la artifacts/
 
+      - name: Verify update metadata files
+        run: |
+          missing=0
+          for f in latest-mac.yml latest.yml latest-linux.yml latest-linux-arm64.yml; do
+            if [ ! -f "artifacts/$f" ]; then
+              echo "::warning::Missing $f in merged artifacts, attempting recovery..."
+              missing=1
+            fi
+          done
+          if [ "$missing" = "1" ]; then
+            echo "Re-downloading individual artifacts to recover missing files..."
+            for name in netcatty-macos netcatty-windows netcatty-linux-x64 netcatty-linux-arm64; do
+              tmpdir="/tmp/artifact-${name}"
+              gh run download ${{ github.run_id }} --name "${name}" --dir "${tmpdir}" 2>/dev/null || true
+              if [ -d "${tmpdir}" ]; then
+                for yml in "${tmpdir}"/latest*.yml; do
+                  [ -f "$yml" ] && cp -v "$yml" artifacts/
+                done
+              fi
+            done
+            echo "After recovery:"
+            ls -la artifacts/*.yml
+          fi
+          # Final check — fail if any update yml is still missing
+          for f in latest-mac.yml latest.yml latest-linux.yml latest-linux-arm64.yml; do
+            if [ ! -f "artifacts/$f" ]; then
+              echo "::error::$f is still missing after recovery attempt"
+              exit 1
+            fi
+          done
+          echo "All update metadata files present."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Verify downloaded Linux amd64 deb artifact
         run: |
           deb_file="$(find artifacts -maxdepth 1 -type f -name '*-linux-amd64.deb' -print | sort | head -n 1)"
