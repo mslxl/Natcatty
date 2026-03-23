@@ -23,7 +23,10 @@ const crashLogBridge = require("./bridges/crashLogBridge.cjs");
 
 // Handle uncaught exceptions for EPIPE errors
 process.on('uncaughtException', (err) => {
-  try { crashLogBridge.captureError('uncaughtException', err); } catch {}
+  // Skip logging if already captured by unhandledRejection handler
+  if (!err.__fromUnhandledRejection) {
+    try { crashLogBridge.captureError('uncaughtException', err); } catch {}
+  }
   if (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED') {
     console.warn('Ignored stream error:', err.code);
     return;
@@ -35,8 +38,11 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
   try { crashLogBridge.captureError('unhandledRejection', reason); } catch {}
   console.error('Unhandled rejection:', reason);
-  // Re-throw so Node's default --unhandled-rejections=throw behavior is preserved
-  throw reason instanceof Error ? reason : new Error(String(reason));
+  // Re-throw to preserve fatal semantics. Mark so uncaughtException handler
+  // can skip duplicate logging.
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  err.__fromUnhandledRejection = true;
+  throw err;
 });
 
 // Load Electron

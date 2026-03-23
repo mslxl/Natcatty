@@ -217,15 +217,16 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
     try {
       const result = await bridge.clearCrashLogs();
       setCrashLogClearResult(result);
-      setCrashLogs([]);
       setExpandedLog(null);
       setLogEntries([]);
+      // Reload the list so partial failures still show remaining files
+      await loadCrashLogs();
     } catch (err) {
       console.error("[SettingsSystemTab] Failed to clear crash logs:", err);
     } finally {
       setIsClearingCrashLogs(false);
     }
-  }, []);
+  }, [loadCrashLogs]);
 
   const handleOpenCrashLogsDir = useCallback(async () => {
     const bridge = netcattyBridge.get();
