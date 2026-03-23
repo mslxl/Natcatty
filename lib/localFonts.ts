@@ -54,6 +54,7 @@ const KNOWN_MONOSPACE_FONTS = new Set([
     'noto sans mono',
     'sarasa mono',
     'maple mono',
+    'meslolgs nf',
 ]);
 
 /**
