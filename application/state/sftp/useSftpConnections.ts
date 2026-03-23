@@ -319,6 +319,20 @@ export const useSftpConnections = ({
                     // Ignore missing/permission errors
                   }
                 }
+              } else {
+                // Fallback: probe candidates via listSftp when statSftp is unavailable
+                for (const candidate of candidates) {
+                  try {
+                    const files = await bridge?.listSftp(sftpId, candidate, filenameEncoding);
+                    if (files) {
+                      startPath = candidate;
+                      homeDir = candidate;
+                      break;
+                    }
+                  } catch {
+                    // Ignore missing/permission errors
+                  }
+                }
               }
             }
           }
