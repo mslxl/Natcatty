@@ -614,20 +614,23 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                                   ))}
                                 </div>
                               )}
-                              <div className="flex items-center gap-3 flex-wrap text-muted-foreground">
-                                {entry.version && <span>v{entry.version}</span>}
-                                {entry.electronVersion && <span>Electron {entry.electronVersion}</span>}
-                                {entry.platform && <span>{entry.platform}/{entry.arch}</span>}
-                                {entry.osVersion && <span>OS {entry.osVersion}</span>}
-                                {entry.pid && <span>PID {entry.pid}</span>}
-                                {entry.activeSessionCount != null && entry.activeSessionCount >= 0 && (
-                                  <span>Sessions: {entry.activeSessionCount}</span>
-                                )}
-                                {entry.memoryMB && <span>RAM: {entry.memoryMB.rss}MB</span>}
-                                {entry.uptimeSeconds != null && (
-                                  <span>Uptime: {entry.uptimeSeconds}s</span>
-                                )}
-                              </div>
+                              {(() => {
+                                const parts: string[] = [];
+                                if (entry.version) parts.push(`v${entry.version}`);
+                                if (entry.electronVersion) parts.push(`Electron ${entry.electronVersion}`);
+                                if (entry.platform) parts.push(`${entry.platform}/${entry.arch}`);
+                                if (entry.osVersion) parts.push(`OS ${entry.osVersion}`);
+                                if (entry.pid) parts.push(`PID ${entry.pid}`);
+                                if (entry.activeSessionCount != null && entry.activeSessionCount >= 0) parts.push(`Sessions: ${entry.activeSessionCount}`);
+                                if (entry.memoryMB) parts.push(`RAM: ${entry.memoryMB.rss}MB`);
+                                if (entry.uptimeSeconds != null) parts.push(`Uptime: ${entry.uptimeSeconds}s`);
+                                const text = parts.join('  ');
+                                return text ? (
+                                  <div className="text-muted-foreground truncate" title={text}>
+                                    {text}
+                                  </div>
+                                ) : null;
+                              })()}
                               {entry.stack && (
                                 <pre className="mt-1 p-2 bg-muted rounded text-[11px] leading-relaxed overflow-x-auto whitespace-pre-wrap break-all text-muted-foreground">
                                   {entry.stack}
