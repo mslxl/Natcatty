@@ -38,7 +38,6 @@ import { DEFAULT_FONT_SIZE } from '../../infrastructure/config/fonts';
 import { DARK_UI_THEMES, LIGHT_UI_THEMES, UiThemeTokens, getUiThemeById } from '../../infrastructure/config/uiThemes';
 import { UI_FONTS, DEFAULT_UI_FONT_ID } from '../../infrastructure/config/uiFonts';
 import { uiFontStore, useUIFontsLoaded } from './uiFontStore';
-import { useAvailableFonts } from './fontStore';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 
@@ -155,7 +154,6 @@ const applyThemeTokens = (
 };
 
 export const useSettingsState = () => {
-  const availableFonts = useAvailableFonts();
   const uiFontsLoaded = useUIFontsLoaded();
   const [theme, setTheme] = useState<'dark' | 'light' | 'system'>(() => {
     const stored = readStoredString(STORAGE_KEY_THEME);
@@ -287,6 +285,10 @@ export const useSettingsState = () => {
   const localTerminalSettingsVersionRef = useRef(0);
   const broadcastedLocalTerminalSettingsVersionRef = useRef(0);
 
+  // Fix 1: Mount guard — skip redundant IPC broadcasts & localStorage writes on initial mount.
+  // Set to true by the LAST useEffect declaration; all persist effects see false on first render.
+  const persistMountedRef = useRef(false);
+
   const setTerminalSettings = useCallback((nextValue: SetStateAction<TerminalSettings>) => {
     setTerminalSettingsState((prev) => {
       const candidate = typeof nextValue === 'function'
@@ -333,6 +335,17 @@ export const useSettingsState = () => {
     const nextAccentMode = storedAccentMode === 'theme' || storedAccentMode === 'custom' ? storedAccentMode : accentMode;
     const storedAccent = readStoredString(STORAGE_KEY_COLOR);
     const nextAccent = storedAccent && isValidHslToken(storedAccent) ? storedAccent.trim() : customAccent;
+
+    // Fix 2: Skip expensive DOM operations if nothing actually changed
+    if (
+      nextTheme === theme &&
+      nextLightId === lightUiThemeId &&
+      nextDarkId === darkUiThemeId &&
+      nextAccentMode === accentMode &&
+      nextAccent === customAccent
+    ) {
+      return;
+    }
 
     setTheme(nextTheme);
     setLightUiThemeId(nextLightId);
@@ -414,12 +427,11 @@ export const useSettingsState = () => {
     localStorageAdapter.writeString(STORAGE_KEY_UI_THEME_DARK, darkUiThemeId);
     localStorageAdapter.writeString(STORAGE_KEY_ACCENT_MODE, accentMode);
     localStorageAdapter.writeString(STORAGE_KEY_COLOR, customAccent);
-    // Notify other windows
+    // Fix 1: Skip IPC broadcast on initial mount (values already match localStorage)
+    if (!persistMountedRef.current) return;
+    // Fix 3: Send a single IPC instead of 5 — the receiver calls syncAppearanceFromStorage()
+    // which re-reads ALL appearance values from localStorage.
     notifySettingsChanged(STORAGE_KEY_THEME, theme);
-    notifySettingsChanged(STORAGE_KEY_UI_THEME_LIGHT, lightUiThemeId);
-    notifySettingsChanged(STORAGE_KEY_UI_THEME_DARK, darkUiThemeId);
-    notifySettingsChanged(STORAGE_KEY_ACCENT_MODE, accentMode);
-    notifySettingsChanged(STORAGE_KEY_COLOR, customAccent);
   }, [theme, resolvedTheme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, notifySettingsChanged]);
 
   // Listen for OS color scheme changes to keep systemPreference in sync
@@ -437,7 +449,10 @@ export const useSettingsState = () => {
     localStorageAdapter.writeString(STORAGE_KEY_UI_LANGUAGE, uiLanguage);
     document.documentElement.lang = uiLanguage;
     netcattyBridge.get()?.setLanguage?.(uiLanguage);
-    notifySettingsChanged(STORAGE_KEY_UI_LANGUAGE, uiLanguage);
+    // Fix 1: Skip IPC broadcast on initial mount
+    if (persistMountedRef.current) {
+      notifySettingsChanged(STORAGE_KEY_UI_LANGUAGE, uiLanguage);
+    }
   }, [uiLanguage, notifySettingsChanged]);
 
   // Apply and persist UI font family
@@ -446,7 +461,10 @@ export const useSettingsState = () => {
     const font = uiFontStore.getFontById(uiFontFamilyId);
     document.documentElement.style.setProperty('--font-sans', font.family);
     localStorageAdapter.writeString(STORAGE_KEY_UI_FONT_FAMILY, uiFontFamilyId);
-    notifySettingsChanged(STORAGE_KEY_UI_FONT_FAMILY, uiFontFamilyId);
+    // Fix 1: Skip IPC broadcast on initial mount
+    if (persistMountedRef.current) {
+      notifySettingsChanged(STORAGE_KEY_UI_FONT_FAMILY, uiFontFamilyId);
+    }
   }, [uiFontFamilyId, uiFontsLoaded, notifySettingsChanged]);
 
   // Listen for settings changes from other windows via IPC
@@ -567,53 +585,76 @@ export const useSettingsState = () => {
     };
   }, []);
 
+  // Fix 4: Keep a ref snapshot of current settings so the storage event handler
+  // can compare without capturing 25+ state variables in its closure / dep array.
+  // This avoids constant listener detach/reattach on every state change.
+  const settingsSnapshotRef = useRef({
+    theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent,
+    customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage,
+    terminalThemeId, terminalFontFamilyId, terminalFontSize,
+    sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
+    sftpUseCompressedUpload, sftpAutoOpenSidebar,
+    editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat,
+    globalHotkeyEnabled, autoUpdateEnabled,
+  });
+  settingsSnapshotRef.current = {
+    theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent,
+    customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage,
+    terminalThemeId, terminalFontFamilyId, terminalFontSize,
+    sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
+    sftpUseCompressedUpload, sftpAutoOpenSidebar,
+    editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat,
+    globalHotkeyEnabled, autoUpdateEnabled,
+  };
+
   // Listen for storage changes from other windows (cross-window sync)
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
+      const s = settingsSnapshotRef.current;
       if (e.key === STORAGE_KEY_THEME && e.newValue) {
-        if (isValidTheme(e.newValue) && e.newValue !== theme) {
+        if (isValidTheme(e.newValue) && e.newValue !== s.theme) {
           setTheme(e.newValue);
         }
       }
       if (e.key === STORAGE_KEY_UI_THEME_LIGHT && e.newValue) {
-        if (isValidUiThemeId('light', e.newValue) && e.newValue !== lightUiThemeId) {
+        if (isValidUiThemeId('light', e.newValue) && e.newValue !== s.lightUiThemeId) {
           setLightUiThemeId(e.newValue);
         }
       }
       if (e.key === STORAGE_KEY_UI_THEME_DARK && e.newValue) {
-        if (isValidUiThemeId('dark', e.newValue) && e.newValue !== darkUiThemeId) {
+        if (isValidUiThemeId('dark', e.newValue) && e.newValue !== s.darkUiThemeId) {
           setDarkUiThemeId(e.newValue);
         }
       }
       if (e.key === STORAGE_KEY_ACCENT_MODE && e.newValue) {
-        if ((e.newValue === 'theme' || e.newValue === 'custom') && e.newValue !== accentMode) {
+        if ((e.newValue === 'theme' || e.newValue === 'custom') && e.newValue !== s.accentMode) {
           setAccentMode(e.newValue);
         }
       }
       if (e.key === STORAGE_KEY_COLOR && e.newValue) {
-        if (isValidHslToken(e.newValue) && e.newValue !== customAccent) {
+        if (isValidHslToken(e.newValue) && e.newValue !== s.customAccent) {
           setCustomAccent(e.newValue.trim());
         }
       }
       if (e.key === STORAGE_KEY_CUSTOM_CSS && e.newValue !== null) {
-        if (e.newValue !== customCSS) {
+        if (e.newValue !== s.customCSS) {
           setCustomCSS(e.newValue);
         }
       }
       if (e.key === STORAGE_KEY_UI_FONT_FAMILY && e.newValue) {
-        if (isValidUiFontId(e.newValue) && e.newValue !== uiFontFamilyId) {
+        if (isValidUiFontId(e.newValue) && e.newValue !== s.uiFontFamilyId) {
           setUiFontFamilyId(e.newValue);
         }
       }
       if (e.key === STORAGE_KEY_HOTKEY_SCHEME && e.newValue) {
         const newScheme = e.newValue as HotkeyScheme;
-        if (newScheme !== hotkeyScheme) {
+        if (newScheme !== s.hotkeyScheme) {
           setHotkeyScheme(newScheme);
         }
       }
       if (e.key === STORAGE_KEY_UI_LANGUAGE && e.newValue) {
         const next = resolveSupportedLocale(e.newValue);
-        if (next !== uiLanguage) {
+        if (next !== s.uiLanguage) {
           setUiLanguage(next as UILanguage);
         }
       }
@@ -636,64 +677,64 @@ export const useSettingsState = () => {
       }
       // Sync terminal theme from other windows
       if (e.key === STORAGE_KEY_TERM_THEME && e.newValue) {
-        if (e.newValue !== terminalThemeId) {
+        if (e.newValue !== s.terminalThemeId) {
           setTerminalThemeId(e.newValue);
         }
       }
       // Sync terminal font family from other windows
       if (e.key === STORAGE_KEY_TERM_FONT_FAMILY && e.newValue) {
-        if (e.newValue !== terminalFontFamilyId) {
+        if (e.newValue !== s.terminalFontFamilyId) {
           setTerminalFontFamilyId(e.newValue);
         }
       }
       // Sync terminal font size from other windows
       if (e.key === STORAGE_KEY_TERM_FONT_SIZE && e.newValue) {
         const newSize = parseInt(e.newValue, 10);
-        if (!isNaN(newSize) && newSize !== terminalFontSize) {
+        if (!isNaN(newSize) && newSize !== s.terminalFontSize) {
           setTerminalFontSize(newSize);
         }
       }
       // Sync SFTP double-click behavior from other windows
       if (e.key === STORAGE_KEY_SFTP_DOUBLE_CLICK_BEHAVIOR && e.newValue) {
-        if ((e.newValue === 'open' || e.newValue === 'transfer') && e.newValue !== sftpDoubleClickBehavior) {
+        if ((e.newValue === 'open' || e.newValue === 'transfer') && e.newValue !== s.sftpDoubleClickBehavior) {
           setSftpDoubleClickBehavior(e.newValue);
         }
       }
       // Sync SFTP auto-sync setting from other windows
       if (e.key === STORAGE_KEY_SFTP_AUTO_SYNC && e.newValue !== null) {
         const newValue = e.newValue === 'true';
-        if (newValue !== sftpAutoSync) {
+        if (newValue !== s.sftpAutoSync) {
           setSftpAutoSync(newValue);
         }
       }
       // Sync SFTP show hidden files setting from other windows
       if (e.key === STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES && e.newValue !== null) {
         const newValue = e.newValue === 'true';
-        if (newValue !== sftpShowHiddenFiles) {
+        if (newValue !== s.sftpShowHiddenFiles) {
           setSftpShowHiddenFiles(newValue);
         }
       }
       if (e.key === STORAGE_KEY_EDITOR_WORD_WRAP && e.newValue !== null) {
         const newValue = e.newValue === 'true';
-        if (newValue !== editorWordWrap) {
+        if (newValue !== s.editorWordWrap) {
           setEditorWordWrapState(newValue);
         }
       }
       if (e.key === STORAGE_KEY_SESSION_LOGS_ENABLED && e.newValue !== null) {
         const newValue = e.newValue === 'true';
-        if (newValue !== sessionLogsEnabled) {
+        if (newValue !== s.sessionLogsEnabled) {
           setSessionLogsEnabled(newValue);
         }
       }
       if (e.key === STORAGE_KEY_SESSION_LOGS_DIR && e.newValue !== null) {
-        if (e.newValue !== sessionLogsDir) {
+        if (e.newValue !== s.sessionLogsDir) {
           setSessionLogsDir(e.newValue);
         }
       }
       if (e.key === STORAGE_KEY_SESSION_LOGS_FORMAT && e.newValue) {
         if (
           (e.newValue === 'txt' || e.newValue === 'raw' || e.newValue === 'html') &&
-          e.newValue !== sessionLogsFormat
+          e.newValue !== s.sessionLogsFormat
         ) {
           setSessionLogsFormat(e.newValue);
         }
@@ -701,28 +742,28 @@ export const useSettingsState = () => {
       // Sync SFTP compressed upload setting from other windows
       if (e.key === STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD && e.newValue !== null) {
         const newValue = e.newValue === 'true' || e.newValue === 'enabled';
-        if (newValue !== sftpUseCompressedUpload) {
+        if (newValue !== s.sftpUseCompressedUpload) {
           setSftpUseCompressedUpload(newValue);
         }
       }
       // Sync SFTP auto-open sidebar setting from other windows
       if (e.key === STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR && e.newValue !== null) {
         const newValue = e.newValue === 'true';
-        if (newValue !== sftpAutoOpenSidebar) {
+        if (newValue !== s.sftpAutoOpenSidebar) {
           setSftpAutoOpenSidebar(newValue);
         }
       }
       // Sync global hotkey enabled setting from other windows
       if (e.key === STORAGE_KEY_GLOBAL_HOTKEY_ENABLED && e.newValue !== null) {
         const newValue = e.newValue === 'true';
-        if (newValue !== globalHotkeyEnabled) {
+        if (newValue !== s.globalHotkeyEnabled) {
           setGlobalHotkeyEnabled(newValue);
         }
       }
       // Sync auto-update enabled setting from other windows
       if (e.key === STORAGE_KEY_AUTO_UPDATE_ENABLED && e.newValue !== null) {
         const newValue = e.newValue === 'true';
-        if (newValue !== autoUpdateEnabled) {
+        if (newValue !== s.autoUpdateEnabled) {
           setAutoUpdateEnabled(newValue);
         }
       }
@@ -730,25 +771,29 @@ export const useSettingsState = () => {
 
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
-  }, [theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage, terminalThemeId, terminalFontFamilyId, terminalFontSize, sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload, sftpAutoOpenSidebar, editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, globalHotkeyEnabled, autoUpdateEnabled, mergeIncomingTerminalSettings]);
+  }, [mergeIncomingTerminalSettings]); // Fix 4: stable deps only — state comparisons use settingsSnapshotRef
 
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_TERM_THEME, terminalThemeId);
+    if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_TERM_THEME, terminalThemeId);
   }, [terminalThemeId, notifySettingsChanged]);
 
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_TERM_FONT_FAMILY, terminalFontFamilyId);
+    if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_TERM_FONT_FAMILY, terminalFontFamilyId);
   }, [terminalFontFamilyId, notifySettingsChanged]);
 
   useEffect(() => {
     localStorageAdapter.writeNumber(STORAGE_KEY_TERM_FONT_SIZE, terminalFontSize);
+    if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_TERM_FONT_SIZE, terminalFontSize);
   }, [terminalFontSize, notifySettingsChanged]);
 
   useEffect(() => {
     localStorageAdapter.write(STORAGE_KEY_TERM_SETTINGS, terminalSettings);
+    if (!persistMountedRef.current) return;
     const currentSignature = serializeTerminalSettings(terminalSettings);
     const hasPendingUnbroadcastLocalChanges =
       localTerminalSettingsVersionRef.current !== broadcastedLocalTerminalSettingsVersionRef.current;
@@ -763,11 +808,13 @@ export const useSettingsState = () => {
 
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_HOTKEY_SCHEME, hotkeyScheme);
+    if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_HOTKEY_SCHEME, hotkeyScheme);
   }, [hotkeyScheme, notifySettingsChanged]);
 
   useEffect(() => {
     localStorageAdapter.write(STORAGE_KEY_CUSTOM_KEY_BINDINGS, customKeyBindings);
+    if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_CUSTOM_KEY_BINDINGS, customKeyBindings);
   }, [customKeyBindings, notifySettingsChanged]);
 
@@ -778,10 +825,7 @@ export const useSettingsState = () => {
 
   // Apply and persist custom CSS
   useEffect(() => {
-    localStorageAdapter.writeString(STORAGE_KEY_CUSTOM_CSS, customCSS);
-    notifySettingsChanged(STORAGE_KEY_CUSTOM_CSS, customCSS);
-
-    // Apply custom CSS to document
+    // Always apply CSS to document (needed on mount)
     let styleEl = document.getElementById('netcatty-custom-css') as HTMLStyleElement | null;
     if (!styleEl) {
       styleEl = document.createElement('style');
@@ -789,59 +833,69 @@ export const useSettingsState = () => {
       document.head.appendChild(styleEl);
     }
     styleEl.textContent = customCSS;
+    localStorageAdapter.writeString(STORAGE_KEY_CUSTOM_CSS, customCSS);
+    // Skip IPC on initial mount
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_CUSTOM_CSS, customCSS);
   }, [customCSS, notifySettingsChanged]);
 
   // Persist SFTP double-click behavior
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_SFTP_DOUBLE_CLICK_BEHAVIOR, sftpDoubleClickBehavior);
+    if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_SFTP_DOUBLE_CLICK_BEHAVIOR, sftpDoubleClickBehavior);
   }, [sftpDoubleClickBehavior, notifySettingsChanged]);
 
   // Persist SFTP auto-sync setting
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_SFTP_AUTO_SYNC, sftpAutoSync ? 'true' : 'false');
+    if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_SFTP_AUTO_SYNC, sftpAutoSync);
   }, [sftpAutoSync, notifySettingsChanged]);
 
   // Persist SFTP show hidden files setting
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES, sftpShowHiddenFiles ? 'true' : 'false');
+    if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES, sftpShowHiddenFiles);
   }, [sftpShowHiddenFiles, notifySettingsChanged]);
 
   // Persist SFTP compressed upload setting
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD, sftpUseCompressedUpload ? 'true' : 'false');
+    if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD, sftpUseCompressedUpload);
   }, [sftpUseCompressedUpload, notifySettingsChanged]);
 
   // Persist SFTP auto-open sidebar setting
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR, sftpAutoOpenSidebar ? 'true' : 'false');
+    if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR, sftpAutoOpenSidebar);
   }, [sftpAutoOpenSidebar, notifySettingsChanged]);
 
   // Persist Session Logs settings
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_SESSION_LOGS_ENABLED, sessionLogsEnabled ? 'true' : 'false');
+    if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_SESSION_LOGS_ENABLED, sessionLogsEnabled);
   }, [sessionLogsEnabled, notifySettingsChanged]);
 
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_SESSION_LOGS_DIR, sessionLogsDir);
+    if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_SESSION_LOGS_DIR, sessionLogsDir);
   }, [sessionLogsDir, notifySettingsChanged]);
 
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_SESSION_LOGS_FORMAT, sessionLogsFormat);
+    if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_SESSION_LOGS_FORMAT, sessionLogsFormat);
   }, [sessionLogsFormat, notifySettingsChanged]);
 
   // Persist and sync toggle window hotkey setting
   useEffect(() => {
-    localStorageAdapter.writeString(STORAGE_KEY_TOGGLE_WINDOW_HOTKEY, toggleWindowHotkey);
-    notifySettingsChanged(STORAGE_KEY_TOGGLE_WINDOW_HOTKEY, toggleWindowHotkey);
-    // Register/unregister the global hotkey in main process
+    // Register/unregister the global hotkey in main process (needed on mount)
     const bridge = netcattyBridge.get();
     if (bridge?.registerGlobalHotkey) {
       if (toggleWindowHotkey && globalHotkeyEnabled) {
@@ -865,25 +919,32 @@ export const useSettingsState = () => {
         });
       }
     }
+    localStorageAdapter.writeString(STORAGE_KEY_TOGGLE_WINDOW_HOTKEY, toggleWindowHotkey);
+    // Skip IPC on initial mount
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_TOGGLE_WINDOW_HOTKEY, toggleWindowHotkey);
   }, [toggleWindowHotkey, globalHotkeyEnabled, notifySettingsChanged]);
 
   // Persist global hotkey enabled setting
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_GLOBAL_HOTKEY_ENABLED, globalHotkeyEnabled ? 'true' : 'false');
+    if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_GLOBAL_HOTKEY_ENABLED, globalHotkeyEnabled);
   }, [globalHotkeyEnabled, notifySettingsChanged]);
 
   // Persist and sync close to tray setting
   useEffect(() => {
-    localStorageAdapter.writeString(STORAGE_KEY_CLOSE_TO_TRAY, closeToTray ? 'true' : 'false');
-    notifySettingsChanged(STORAGE_KEY_CLOSE_TO_TRAY, closeToTray);
-    // Update main process tray behavior
+    // Update main process tray behavior (needed on mount)
     const bridge = netcattyBridge.get();
     if (bridge?.setCloseToTray) {
       bridge.setCloseToTray(closeToTray).catch((err) => {
         console.warn('[SystemTray] Failed to set close-to-tray:', err);
       });
     }
+    localStorageAdapter.writeString(STORAGE_KEY_CLOSE_TO_TRAY, closeToTray ? 'true' : 'false');
+    // Skip IPC on initial mount
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_CLOSE_TO_TRAY, closeToTray);
   }, [closeToTray, notifySettingsChanged]);
 
   // Hydrate auto-update state from the main-process preference file on mount.
@@ -904,22 +965,24 @@ export const useSettingsState = () => {
   }, []);
 
   // Persist auto-update enabled setting.
-  // Skip IPC on initial mount to avoid overwriting the main-process preference
-  // file when localStorage has been cleared (where the default is true).
-  const autoUpdateMountedRef = useRef(false);
+  // Initial mount still writes localStorage, but skips cross-window/main-process IPC.
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_AUTO_UPDATE_ENABLED, autoUpdateEnabled ? 'true' : 'false');
+    if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_AUTO_UPDATE_ENABLED, autoUpdateEnabled);
-    if (!autoUpdateMountedRef.current) {
-      autoUpdateMountedRef.current = true;
-      return; // Skip IPC on initial mount
-    }
     // Notify main process on user-initiated changes
     const bridge = netcattyBridge.get();
     bridge?.setAutoUpdate?.(autoUpdateEnabled).catch((err: unknown) => {
       console.warn('[AutoUpdate] Failed to set auto-update:', err);
     });
   }, [autoUpdateEnabled, notifySettingsChanged]);
+
+  // Fix 1: Mark all persist effects as mounted.
+  // This MUST be declared AFTER all persist useEffects so that React runs it last
+  // during the initial mount cycle (effects fire in declaration order).
+  useEffect(() => {
+    persistMountedRef.current = true;
+  }, []);
 
   // Get merged key bindings (defaults + custom overrides)
   const keyBindings = useMemo((): KeyBinding[] => {
@@ -983,11 +1046,6 @@ export const useSettingsState = () => {
     [terminalThemeId, customThemes]
   );
 
-  const currentTerminalFont = useMemo(
-    () => availableFonts.find(f => f.id === terminalFontFamilyId) || availableFonts[0],
-    [terminalFontFamilyId, availableFonts]
-  );
-
   const updateTerminalSetting = useCallback(<K extends keyof TerminalSettings>(
     key: K,
     value: TerminalSettings[K]
@@ -1018,7 +1076,6 @@ export const useSettingsState = () => {
     currentTerminalTheme,
     terminalFontFamilyId,
     setTerminalFontFamilyId,
-    currentTerminalFont,
     terminalFontSize,
     setTerminalFontSize,
     terminalSettings,
@@ -1052,7 +1109,6 @@ export const useSettingsState = () => {
       localStorageAdapter.writeString(STORAGE_KEY_EDITOR_WORD_WRAP, String(enabled));
       notifySettingsChanged(STORAGE_KEY_EDITOR_WORD_WRAP, enabled);
     }, [notifySettingsChanged]),
-    availableFonts,
     // Session Logs
     sessionLogsEnabled,
     setSessionLogsEnabled,

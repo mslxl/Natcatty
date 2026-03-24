@@ -930,6 +930,19 @@ if (!gotLock) {
       // Trigger auto-update check 5 s after window creation.
       // startAutoCheck() is a no-op on unsupported platforms (Linux deb/rpm/snap).
       getAutoUpdateBridge().startAutoCheck(5000);
+
+      // Pre-warm the settings window in the background so it opens instantly.
+      // Delay slightly to avoid competing with main window first-paint resources.
+      setTimeout(() => {
+        getWindowManager().prewarmSettingsWindow(electronModule, {
+          preload,
+          devServerUrl: effectiveDevServerUrl,
+          isDev,
+          appIcon,
+          isMac,
+          electronDir,
+        });
+      }, 3000);
     }).catch((err) => {
       console.error("[Main] Failed to create main window:", err);
       showStartupError(err);

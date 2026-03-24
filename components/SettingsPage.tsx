@@ -5,6 +5,7 @@
 import { AppWindow, Cloud, FileType, HardDrive, Keyboard, Palette, Sparkles, TerminalSquare, X } from "lucide-react";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useSettingsState } from "../application/state/useSettingsState";
+import { useAvailableFonts } from "../application/state/fontStore";
 import { usePortForwardingState } from "../application/state/usePortForwardingState";
 import { useVaultState } from "../application/state/useVaultState";
 import { useWindowControls } from "../application/state/useWindowControls";
@@ -19,7 +20,6 @@ import SettingsTerminalTab from "./settings/tabs/SettingsTerminalTab";
 import SettingsSystemTab from "./settings/tabs/SettingsSystemTab";
 const SettingsAITab = React.lazy(() => import("./settings/tabs/SettingsAITab"));
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
-import type { TerminalFont } from "../infrastructure/config/fonts";
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
@@ -45,11 +45,62 @@ class AITabErrorBoundary extends React.Component<
   }
 }
 
-type SettingsState = ReturnType<typeof useSettingsState> & {
-    availableFonts: TerminalFont[];
-};
+type SettingsState = ReturnType<typeof useSettingsState>;
 
 const SettingsSyncTab = React.lazy(() => import("./settings/tabs/SettingsSyncTab"));
+
+const SettingsTerminalTabContainer: React.FC<{ settings: SettingsState }> = ({ settings }) => {
+    const availableFonts = useAvailableFonts();
+
+    return (
+        <SettingsTerminalTab
+            terminalThemeId={settings.terminalThemeId}
+            setTerminalThemeId={settings.setTerminalThemeId}
+            terminalFontFamilyId={settings.terminalFontFamilyId}
+            setTerminalFontFamilyId={settings.setTerminalFontFamilyId}
+            terminalFontSize={settings.terminalFontSize}
+            setTerminalFontSize={settings.setTerminalFontSize}
+            terminalSettings={settings.terminalSettings}
+            updateTerminalSetting={settings.updateTerminalSetting}
+            availableFonts={availableFonts}
+        />
+    );
+};
+
+const SettingsAITabContainer: React.FC = () => {
+    const aiState = useAIState();
+
+    return (
+        <AITabErrorBoundary>
+            <React.Suspense fallback={<div className="flex-1 px-6 py-5 text-sm text-muted-foreground">Loading AI settings...</div>}>
+                <SettingsAITab
+                    providers={aiState.providers}
+                    addProvider={aiState.addProvider}
+                    updateProvider={aiState.updateProvider}
+                    removeProvider={aiState.removeProvider}
+                    activeProviderId={aiState.activeProviderId}
+                    setActiveProviderId={aiState.setActiveProviderId}
+                    activeModelId={aiState.activeModelId}
+                    setActiveModelId={aiState.setActiveModelId}
+                    globalPermissionMode={aiState.globalPermissionMode}
+                    setGlobalPermissionMode={aiState.setGlobalPermissionMode}
+                    externalAgents={aiState.externalAgents}
+                    setExternalAgents={aiState.setExternalAgents}
+                    defaultAgentId={aiState.defaultAgentId}
+                    setDefaultAgentId={aiState.setDefaultAgentId}
+                    commandBlocklist={aiState.commandBlocklist}
+                    setCommandBlocklist={aiState.setCommandBlocklist}
+                    commandTimeout={aiState.commandTimeout}
+                    setCommandTimeout={aiState.setCommandTimeout}
+                    maxIterations={aiState.maxIterations}
+                    setMaxIterations={aiState.setMaxIterations}
+                    webSearchConfig={aiState.webSearchConfig}
+                    setWebSearchConfig={aiState.setWebSearchConfig}
+                />
+            </React.Suspense>
+        </AITabErrorBoundary>
+    );
+};
 
 const SettingsSyncTabWithVault: React.FC<{ onSettingsApplied?: () => void }> = ({ onSettingsApplied }) => {
     const {
@@ -99,7 +150,6 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
     const { t } = useI18n();
     const { notifyRendererReady, closeSettingsWindow } = useWindowControls();
     const { updateState, checkNow, installUpdate, openReleasePage } = useUpdateCheck({ autoUpdateEnabled: settings.autoUpdateEnabled });
-    const aiState = useAIState();
     const [activeTab, setActiveTab] = useState("application");
     const [mountedTabs, setMountedTabs] = useState(() => new Set(["application"]));
 
@@ -231,17 +281,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                     )}
 
                     {mountedTabs.has("terminal") && (
-                        <SettingsTerminalTab
-                            terminalThemeId={settings.terminalThemeId}
-                            setTerminalThemeId={settings.setTerminalThemeId}
-                            terminalFontFamilyId={settings.terminalFontFamilyId}
-                            setTerminalFontFamilyId={settings.setTerminalFontFamilyId}
-                            terminalFontSize={settings.terminalFontSize}
-                            setTerminalFontSize={settings.setTerminalFontSize}
-                            terminalSettings={settings.terminalSettings}
-                            updateTerminalSetting={settings.updateTerminalSetting}
-                            availableFonts={settings.availableFonts}
-                        />
+                        <SettingsTerminalTabContainer settings={settings} />
                     )}
 
                     {mountedTabs.has("shortcuts") && (
@@ -261,34 +301,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                     )}
 
                     {mountedTabs.has("ai") && (
-                        <AITabErrorBoundary>
-                        <React.Suspense fallback={null}>
-                        <SettingsAITab
-                            providers={aiState.providers}
-                            addProvider={aiState.addProvider}
-                            updateProvider={aiState.updateProvider}
-                            removeProvider={aiState.removeProvider}
-                            activeProviderId={aiState.activeProviderId}
-                            setActiveProviderId={aiState.setActiveProviderId}
-                            activeModelId={aiState.activeModelId}
-                            setActiveModelId={aiState.setActiveModelId}
-                            globalPermissionMode={aiState.globalPermissionMode}
-                            setGlobalPermissionMode={aiState.setGlobalPermissionMode}
-                            externalAgents={aiState.externalAgents}
-                            setExternalAgents={aiState.setExternalAgents}
-                            defaultAgentId={aiState.defaultAgentId}
-                            setDefaultAgentId={aiState.setDefaultAgentId}
-                            commandBlocklist={aiState.commandBlocklist}
-                            setCommandBlocklist={aiState.setCommandBlocklist}
-                            commandTimeout={aiState.commandTimeout}
-                            setCommandTimeout={aiState.setCommandTimeout}
-                            maxIterations={aiState.maxIterations}
-                            setMaxIterations={aiState.setMaxIterations}
-                            webSearchConfig={aiState.webSearchConfig}
-                            setWebSearchConfig={aiState.setWebSearchConfig}
-                        />
-                        </React.Suspense>
-                        </AITabErrorBoundary>
+                        <SettingsAITabContainer />
                     )}
 
                     {mountedTabs.has("sync") && (

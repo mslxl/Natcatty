@@ -794,7 +794,7 @@ async function createWindow(electronModule, options) {
       if (saveStateTimer) clearTimeout(saveStateTimer);
       const state = getWindowBoundsState(win, lastNormalBounds);
       if (state) saveWindowStateSync(state);
-      closeSettingsWindow();
+      hideSettingsWindow();
       return;
     }
 
@@ -910,12 +910,13 @@ async function createWindow(electronModule, options) {
 /**
  * Create or focus the settings window
  */
-async function openSettingsWindow(electronModule, options) {
+async function openSettingsWindow(electronModule, options, { showOnLoad = true } = {}) {
   const { BrowserWindow, shell } = electronModule;
   const { preload, devServerUrl, isDev, appIcon, isMac, electronDir } = options;
 
-  // If settings window already exists, just focus it
+  // If settings window already exists, show and focus it
   if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.show();
     settingsWindow.focus();
     return settingsWindow;
   }
@@ -1047,10 +1048,20 @@ async function openSettingsWindow(electronModule, options) {
     // ignore
   }
 
-  // Defer show until renderer is ready; use fallback timeout to avoid keeping window hidden forever.
-  setupDeferredShow(win, { timeoutMs: isDev ? 1200 : 600, waitForRendererReady: false });
+  // Hide instead of close so the window can be reused instantly.
+  // When the app is quitting, allow normal close/destroy.
+  win.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      try {
+        win.hide();
+      } catch {
+        // ignore
+      }
+    }
+  });
 
-  // Clean up reference when closed
+  // Clean up reference when actually destroyed
   win.on('closed', () => {
     settingsWindow = null;
   });
@@ -1062,6 +1073,7 @@ async function openSettingsWindow(electronModule, options) {
     try {
       const baseUrl = getDevRendererBaseUrl(devServerUrl);
       await win.loadURL(`${baseUrl}${settingsPath}`);
+      if (showOnLoad) { win.show(); win.focus(); }
       return win;
     } catch (e) {
       console.warn("Dev server not reachable for settings window", e);
@@ -1070,17 +1082,48 @@ async function openSettingsWindow(electronModule, options) {
 
   // Production mode - load via custom protocol.
   await win.loadURL("app://netcatty/index.html#/settings");
+  if (showOnLoad) { win.show(); win.focus(); }
 
   return win;
 }
 
 /**
- * Close the settings window
+ * Destroy the settings window (used when the app is quitting).
  */
 function closeSettingsWindow() {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
-    settingsWindow.close();
+    try {
+      settingsWindow.destroy();
+    } catch {
+      // ignore
+    }
     settingsWindow = null;
+  }
+}
+
+/**
+ * Hide the settings window without destroying it (used when main window hides to tray).
+ */
+function hideSettingsWindow() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    try {
+      settingsWindow.hide();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * Pre-warm the settings window in the background so that opening it later is instant.
+ * The window is created hidden and fully loaded; `openSettingsWindow` will simply show it.
+ */
+async function prewarmSettingsWindow(electronModule, options) {
+  if (settingsWindow && !settingsWindow.isDestroyed()) return;
+  try {
+    await openSettingsWindow(electronModule, options, { showOnLoad: false });
+  } catch (err) {
+    debugLog("Failed to pre-warm settings window", { error: String(err) });
   }
 }
 
@@ -1184,13 +1227,13 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
 
   // Settings window close handler
   ipcMain.handle("netcatty:settings:close", (event) => {
-    // Prefer closing the tracked settings window (if any).
+    // Prefer hiding the tracked settings window (reused on next open).
     if (settingsWindow && !settingsWindow.isDestroyed()) {
       debugLog("settings:close (tracked)", {
         senderId: event?.sender?.id,
         settingsId: settingsWindow.webContents?.id,
       });
-      closeSettingsWindow();
+      hideSettingsWindow();
       return true;
     }
 
@@ -1320,6 +1363,7 @@ module.exports = {
   createWindow,
   openSettingsWindow,
   closeSettingsWindow,
+  prewarmSettingsWindow,
   buildAppMenu,
   getMainWindow,
   getSettingsWindow,
