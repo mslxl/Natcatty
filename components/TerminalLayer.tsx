@@ -1,5 +1,5 @@
 import { Circle, FolderTree, LayoutGrid, MessageSquare, PanelLeft, PanelRight, Palette, Server, X, Zap } from 'lucide-react';
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useActiveTabId } from '../application/state/activeTabStore';
 import { useTerminalBackend } from '../application/state/useTerminalBackend';
 import { collectSessionIds } from '../domain/workspace';
@@ -100,6 +100,10 @@ type AIPanelContext = {
   terminalSessions: AITerminalSessionInfo[];
 };
 
+type AIStateValue = ReturnType<typeof useAIState>;
+
+const AIStateContext = createContext<AIStateValue | null>(null);
+
 const buildAITerminalSessionInfo = (
   session: TerminalSession | undefined,
   host: Host | undefined,
@@ -132,6 +136,18 @@ interface AIChatPanelsHostProps {
   }) => ExecutorContext;
 }
 
+const AIStateProviderInner: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const aiState = useAIState();
+  return (
+    <AIStateContext.Provider value={aiState}>
+      {children}
+    </AIStateContext.Provider>
+  );
+};
+
+const AIStateProvider = memo(AIStateProviderInner);
+AIStateProvider.displayName = 'AIStateProvider';
+
 const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
   mountedTabIds,
   activeTabId,
@@ -139,7 +155,11 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
   contextsByTabId,
   resolveExecutorContext,
 }) => {
-  const aiState = useAIState();
+  const aiState = useContext(AIStateContext);
+
+  if (!aiState) {
+    throw new Error('AIChatPanelsHost must be rendered inside AIStateProvider');
+  }
 
   return (
     <>
@@ -1443,12 +1463,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   };
 
   return (
-    <div
-      ref={workspaceOuterRef}
-      className="absolute inset-0 bg-background flex flex-col"
-      style={{ display: isTerminalLayerVisible ? 'flex' : 'none', zIndex: isTerminalLayerVisible ? 10 : 0 }}
-    >
-      <div className={cn("flex-1 flex min-h-0 relative", sidePanelPosition === 'right' && "flex-row-reverse")}>
+    <AIStateProvider>
+      <div
+        ref={workspaceOuterRef}
+        className="absolute inset-0 bg-background flex flex-col"
+        style={{ display: isTerminalLayerVisible ? 'flex' : 'none', zIndex: isTerminalLayerVisible ? 10 : 0 }}
+      >
+        <div className={cn("flex-1 flex min-h-0 relative", sidePanelPosition === 'right' && "flex-row-reverse")}>
         {/* Side panel with tab header + content (SFTP / Scripts / Theme) */}
         {(isSidePanelOpenForCurrentTab || mountedSftpTabIds.length > 0 || mountedAiTabIds.length > 0) && (
           <>
@@ -1628,19 +1649,19 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                     </div>
                   )}
 
+                  <AIChatPanelsHost
+                    mountedTabIds={mountedAiTabIds}
+                    activeTabId={activeTabId}
+                    activeSidePanelTab={activeSidePanelTab}
+                    contextsByTabId={aiContextsByTabId}
+                    resolveExecutorContext={resolveAIExecutorContext}
+                  />
+
                 </div>
               </div>
             </div>
           </>
         )}
-
-        <AIChatPanelsHost
-          mountedTabIds={mountedAiTabIds}
-          activeTabId={activeTabId}
-          activeSidePanelTab={activeSidePanelTab}
-          contextsByTabId={aiContextsByTabId}
-          resolveExecutorContext={resolveAIExecutorContext}
-        />
 
         {/* Focus mode sidebar */}
         {isFocusMode && renderFocusModeSidebar()}
@@ -1847,25 +1868,26 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       </div>
 
       {/* Global compose bar for workspace mode */}
-      {activeWorkspace && isComposeBarOpen && (
-        <TerminalComposeBar
-          onSend={handleComposeSend}
-          onClose={() => {
-            setIsComposeBarOpen(false);
-            // Refocus the terminal pane (matching solo-session behavior)
-            if (focusedSessionId) {
-              requestAnimationFrame(() => {
-                const pane = document.querySelector(`[data-session-id="${focusedSessionId}"]`);
-                const textarea = pane?.querySelector('textarea.xterm-helper-textarea') as HTMLTextAreaElement | null;
-                textarea?.focus();
-              });
-            }
-          }}
-          isBroadcastEnabled={isBroadcastEnabled?.(activeWorkspace.id)}
-          themeColors={composeBarThemeColors}
-        />
-      )}
-    </div>
+        {activeWorkspace && isComposeBarOpen && (
+          <TerminalComposeBar
+            onSend={handleComposeSend}
+            onClose={() => {
+              setIsComposeBarOpen(false);
+              // Refocus the terminal pane (matching solo-session behavior)
+              if (focusedSessionId) {
+                requestAnimationFrame(() => {
+                  const pane = document.querySelector(`[data-session-id="${focusedSessionId}"]`);
+                  const textarea = pane?.querySelector('textarea.xterm-helper-textarea') as HTMLTextAreaElement | null;
+                  textarea?.focus();
+                });
+              }
+            }}
+            isBroadcastEnabled={isBroadcastEnabled?.(activeWorkspace.id)}
+            themeColors={composeBarThemeColors}
+          />
+        )}
+      </div>
+    </AIStateProvider>
   );
 };
 
