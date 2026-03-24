@@ -336,8 +336,11 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const jumpPassword = sanitizeCredentialValue(rawJumpPassword);
       const jumpPrivateKey = sanitizeCredentialValue(rawJumpPrivateKey);
       const jumpPassphrase = sanitizeCredentialValue(rawJumpPassphrase);
-      const hasEncryptedJumpProxyCredential =
+      const hasConfiguredJumpProxyEndpoint =
         index === 0 &&
+        !!(jumpHost.proxyConfig?.host && jumpHost.proxyConfig?.port);
+      const hasEncryptedJumpProxyCredential =
+        hasConfiguredJumpProxyEndpoint &&
         Boolean(jumpHost.proxyConfig?.username) &&
         isEncryptedCredentialPlaceholder(jumpHost.proxyConfig?.password);
 

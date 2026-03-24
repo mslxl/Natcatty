@@ -40,8 +40,11 @@ export const useSftpHostCredentials = ({
               identities,
             });
             const jumpKey = jumpAuth.key;
-            if (
+            const hasConfiguredJumpProxyEndpoint =
               index === 0 &&
+              !!(jumpHost.proxyConfig?.host && jumpHost.proxyConfig?.port);
+            if (
+              hasConfiguredJumpProxyEndpoint &&
               jumpHost.proxyConfig?.username &&
               isEncryptedCredentialPlaceholder(jumpHost.proxyConfig.password) &&
               !sanitizeCredentialValue(jumpHost.proxyConfig.password)
