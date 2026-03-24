@@ -24,8 +24,22 @@ const {
 } = require("./sshAuthHelper.cjs");
 const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
 
-// Default SSH key names in priority order
-const DEFAULT_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
+// Default SSH key names in priority order (preferred keys tried first)
+const PREFERRED_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
+// Match any private key file: id_* but not *.pub
+const SSH_KEY_PATTERN = /^id_[\w-]+$/;
+
+/**
+ * Quick check if file content looks like an SSH private key.
+ * Rejects non-key files that happen to match the id_* filename pattern.
+ */
+function looksLikePrivateKey(content) {
+  if (!content || typeof content !== "string") return false;
+  const trimmed = content.trimStart();
+  return trimmed.startsWith("-----BEGIN") ||
+    trimmed.startsWith("openssh-key-v1") ||
+    trimmed.startsWith("PuTTY-User-Key-File");
+}
 
 /**
  * Check if an SSH private key is encrypted (requires passphrase)
@@ -33,6 +47,12 @@ const DEFAULT_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
  * @returns {boolean} - True if the key is encrypted
  */
 function isKeyEncrypted(keyContent) {
+  // Check for PuTTY PPK encrypted format
+  const ppkEncMatch = keyContent.match(/^Encryption:\s*(.+)$/m);
+  if (ppkEncMatch && ppkEncMatch[1].trim() !== "none") {
+    return true;
+  }
+
   // Check for PKCS#8 encrypted format (-----BEGIN ENCRYPTED PRIVATE KEY-----)
   if (keyContent.includes("-----BEGIN ENCRYPTED PRIVATE KEY-----")) {
     return true;
@@ -82,14 +102,31 @@ function isKeyEncrypted(keyContent) {
  */
 async function findDefaultPrivateKey() {
   const sshDir = path.join(os.homedir(), ".ssh");
-  log("Searching for default SSH keys", { sshDir, keyNames: DEFAULT_KEY_NAMES });
-  for (const name of DEFAULT_KEY_NAMES) {
+  // Scan ~/.ssh/ for all files matching id_* (same as Tabby/OpenSSH),
+  // with preferred key types tried first
+  let allNames = [];
+  try {
+    const entries = await fs.promises.readdir(sshDir);
+    allNames = entries.filter(f => SSH_KEY_PATTERN.test(f));
+  } catch {
+    return null;
+  }
+  // Sort: preferred keys first (in order), then rest alphabetically
+  const preferred = PREFERRED_KEY_NAMES.filter(n => allNames.includes(n));
+  const rest = allNames.filter(n => !PREFERRED_KEY_NAMES.includes(n)).sort();
+  const sorted = [...preferred, ...rest];
+  log("Searching for default SSH keys", { sshDir, found: sorted });
+
+  for (const name of sorted) {
     const keyPath = path.join(sshDir, name);
     try {
-      await fs.promises.access(keyPath, fs.constants.F_OK);
+      const stat = await fs.promises.stat(keyPath);
+      if (!stat.isFile()) continue;
       const privateKey = await fs.promises.readFile(keyPath, "utf8");
-      // Skip encrypted keys - they require a passphrase and would abort
-      // authentication before password/keyboard-interactive can be tried
+      if (!looksLikePrivateKey(privateKey)) {
+        log("Skipping non-key file", { keyPath, keyName: name });
+        continue;
+      }
       const encrypted = isKeyEncrypted(privateKey);
       log("Key file read", { keyPath, keyName: name, encrypted, keyLength: privateKey.length });
       if (encrypted) {
@@ -114,13 +151,28 @@ async function findDefaultPrivateKey() {
  */
 async function findAllDefaultPrivateKeys() {
   const sshDir = path.join(os.homedir(), ".ssh");
-  log("Searching for ALL default SSH keys", { sshDir, keyNames: DEFAULT_KEY_NAMES });
+  let allNames = [];
+  try {
+    const entries = await fs.promises.readdir(sshDir);
+    allNames = entries.filter(f => SSH_KEY_PATTERN.test(f));
+  } catch {
+    return [];
+  }
+  const preferred = PREFERRED_KEY_NAMES.filter(n => allNames.includes(n));
+  const rest = allNames.filter(n => !PREFERRED_KEY_NAMES.includes(n)).sort();
+  const sorted = [...preferred, ...rest];
+  log("Searching for ALL default SSH keys", { sshDir, found: sorted });
 
-  const promises = DEFAULT_KEY_NAMES.map(async (name) => {
+  const promises = sorted.map(async (name) => {
     const keyPath = path.join(sshDir, name);
     try {
-      await fs.promises.access(keyPath, fs.constants.F_OK);
+      const stat = await fs.promises.stat(keyPath);
+      if (!stat.isFile()) return null;
       const privateKey = await fs.promises.readFile(keyPath, "utf8");
+      if (!looksLikePrivateKey(privateKey)) {
+        log("Skipping non-key file", { keyPath, keyName: name });
+        return null;
+      }
       const encrypted = isKeyEncrypted(privateKey);
       if (!encrypted) {
         log("Found default key for fallback", { keyPath, keyName: name });
@@ -770,7 +822,7 @@ async function startSSHSession(event, options) {
     let lastTriedMethod = null;
 
     if (authAgent) {
-      const order = ["agent"];
+      const order = ["none", "agent"];
       if (connectOpts.password) order.push("password");
       // Add default key fallback if available and no user key configured
       // Must also set connectOpts.privateKey for ssh2 to actually try publickey auth
@@ -848,8 +900,9 @@ async function startSSHSession(event, options) {
         }
       }
 
-      // Use dynamic authHandler if we have multiple auth options
-      if (authMethods.length > 1) {
+      // Always use dynamic authHandler to ensure consistent "none" probing
+      // and auth method logging regardless of how many methods are configured
+      if (authMethods.length >= 1) {
         let authIndex = 0;
         // Track methods that have been attempted (to avoid re-trying on failure)
         // This prevents reusing the same key when server requires multiple publickey auth steps
@@ -866,6 +919,17 @@ async function startSSHSession(event, options) {
           // Log rejection of previous method
           if (lastTriedMethod && !partialSuccess) {
             sendProgress(totalHops, totalHops, options.hostname, 'auth-attempt', `${lastTriedMethod} rejected`);
+          }
+
+          // On the very first call (methodsLeft === null), try "none" auth.
+          // Per RFC 4252, the "none" request is how the client discovers which
+          // methods the server supports.  It also allows passwordless login on
+          // embedded devices.  This matches the behavior of OpenSSH and Tabby.
+          if (methodsLeft === null && !attemptedMethodIds.has("none")) {
+            attemptedMethodIds.add("none");
+            lastTriedMethod = "none";
+            sendProgress(totalHops, totalHops, options.hostname, 'auth-attempt', 'none (no credentials)');
+            return callback("none");
           }
 
           // methodsLeft can be null on first call (before server responds with available methods)
@@ -1188,17 +1252,29 @@ async function startSSHSession(event, options) {
             });
 
             stream.on("close", () => {
-              // Flush any remaining data before close
+              // Always flush buffered data regardless of session state
               if (flushTimeout) {
                 clearTimeout(flushTimeout);
               }
               flushBuffer();
               sessionLogStreamManager.stopStream(sessionId);
-              const contents = event.sender;
-              safeSend(contents, "netcatty:exit", { sessionId, exitCode: streamExitCode, reason: streamExited ? "exited" : "closed" });
-              sessions.delete(sessionId);
-              sessionEncodings.delete(sessionId);
-              sessionDecoders.delete(sessionId);
+
+              // Only send exit if session hasn't already been cleaned up by
+              // conn.once("close") — which fires before stream.on("close")
+              // in ssh2 when the transport drops.
+              if (sessions.has(sessionId)) {
+                const contents = event.sender;
+                const session = sessions.get(sessionId);
+                const transportError = session?._transportError;
+                if (transportError) {
+                  safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: transportError, reason: "error" });
+                } else {
+                  safeSend(contents, "netcatty:exit", { sessionId, exitCode: streamExitCode, reason: streamExited ? "exited" : "closed" });
+                }
+                sessions.delete(sessionId);
+                sessionEncodings.delete(sessionId);
+                sessionDecoders.delete(sessionId);
+              }
               conn.end();
               for (const c of chainConnections) {
                 try { c.end(); } catch { }
@@ -1224,6 +1300,22 @@ async function startSSHSession(event, options) {
       });
 
       conn.on("error", (err) => {
+        // After the promise is settled, we can't reject again. But if the
+        // session was already established (resolved), we still need to notify
+        // the renderer about transport errors so the session shows as failed
+        // rather than silently closing.
+        // Don't send netcatty:exit here — the stream close handler will flush
+        // any buffered data first and then send exit with this error info.
+        if (settled) {
+          console.warn(`${logPrefix} ${options.hostname} post-settle error:`, err.message);
+          // Store the error so the close handler can include it in the exit event
+          if (sessions.has(sessionId)) {
+            const session = sessions.get(sessionId);
+            if (session) session._transportError = err.message;
+          }
+          return;
+        }
+
         const contents = event.sender;
 
         const isAuthError = err.message?.toLowerCase().includes('authentication') ||
@@ -1253,6 +1345,9 @@ async function startSSHSession(event, options) {
         for (const c of chainConnections) {
           try { c.end(); } catch { }
         }
+        // Destroy the connection to prevent further socket errors from leaking
+        // as uncaught exceptions (e.g. ECONNRESET on embedded devices).
+        try { conn.destroy(); } catch { }
         settled = true;
         reject(err);
       });
@@ -1270,6 +1365,7 @@ async function startSSHSession(event, options) {
         for (const c of chainConnections) {
           try { c.end(); } catch { }
         }
+        try { conn.destroy(); } catch { }
         settled = true;
         reject(err);
       });
@@ -1279,7 +1375,19 @@ async function startSSHSession(event, options) {
         if (!settled) {
           sendProgress(totalHops, totalHops, options.hostname, 'error', `Connection to ${options.hostname} closed unexpectedly`);
         }
-        safeSend(contents, "netcatty:exit", { sessionId, exitCode: 0, reason: "closed" });
+        // Only send exit if the session hasn't already been cleaned up by the
+        // error handler (avoids sending a misleading exitCode:0 "closed" after
+        // a real transport error was already reported).
+        if (sessions.has(sessionId)) {
+          const session = sessions.get(sessionId);
+          const transportError = session?._transportError;
+          if (transportError) {
+            // A transport error was recorded — report it as an error exit
+            safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: transportError, reason: "error" });
+          } else {
+            safeSend(contents, "netcatty:exit", { sessionId, exitCode: 0, reason: "closed" });
+          }
+        }
         sessionLogStreamManager.stopStream(sessionId);
         sessions.delete(sessionId);
         sessionEncodings.delete(sessionId);
@@ -1619,7 +1727,11 @@ async function startSSHSessionWrapper(event, options) {
                 authError.isAuthError = true;
                 throw authError;
               }
-              throw retryErr;
+              // Wrap non-auth retry errors as connection errors to prevent crash
+              const connError = new Error(retryErr.message);
+              connError.level = retryErr.level || 'client-socket';
+              connError.code = retryErr.code;
+              throw connError;
             }
           } else {
             console.log('[SSH] User did not unlock any keys, not retrying');
@@ -1634,7 +1746,15 @@ async function startSSHSessionWrapper(event, options) {
       authError.isAuthError = true;
       throw authError;
     }
-    throw err;
+
+    // Non-auth errors (e.g. ECONNRESET, ETIMEDOUT) — wrap in a clean Error
+    // so Electron's ipcMain.handle can serialize it back to the renderer
+    // instead of it becoming an uncaught exception that crashes the app.
+    // See: https://github.com/nicely-gg/netcatty/issues/482
+    const connError = new Error(err.message);
+    connError.level = err.level || 'client-socket';
+    connError.code = err.code;
+    throw connError;
   }
 }
 
@@ -2107,14 +2227,17 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:ssh:get-default-keys", async () => {
     const sshDir = path.join(os.homedir(), ".ssh");
     const keys = [];
-    for (const name of DEFAULT_KEY_NAMES) {
-      const keyPath = path.join(sshDir, name);
-      try {
-        await fs.promises.access(keyPath, fs.constants.F_OK);
-        keys.push({ name, path: keyPath });
-      } catch {
-        // ignore missing keys
+    try {
+      const entries = await fs.promises.readdir(sshDir);
+      const names = entries.filter(f => SSH_KEY_PATTERN.test(f));
+      // Preferred first, then rest alphabetically
+      const preferred = PREFERRED_KEY_NAMES.filter(n => names.includes(n));
+      const rest = names.filter(n => !PREFERRED_KEY_NAMES.includes(n)).sort();
+      for (const name of [...preferred, ...rest]) {
+        keys.push({ name, path: path.join(sshDir, name) });
       }
+    } catch {
+      // ~/.ssh doesn't exist
     }
     return keys;
   });
