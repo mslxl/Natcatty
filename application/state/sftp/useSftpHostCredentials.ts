@@ -33,7 +33,7 @@ export const useSftpHostCredentials = ({
         jumpHosts = host.hostChain.hostIds
           .map((hostId) => hosts.find((h) => h.id === hostId))
           .filter((h): h is Host => !!h)
-          .map((jumpHost) => {
+          .map((jumpHost, index) => {
             const jumpAuth = resolveHostAuth({
               host: jumpHost,
               keys,
@@ -41,6 +41,7 @@ export const useSftpHostCredentials = ({
             });
             const jumpKey = jumpAuth.key;
             if (
+              index === 0 &&
               jumpHost.proxyConfig?.username &&
               isEncryptedCredentialPlaceholder(jumpHost.proxyConfig.password) &&
               !sanitizeCredentialValue(jumpHost.proxyConfig.password)

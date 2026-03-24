@@ -323,7 +323,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       : undefined;
 
     const jumpHostsWithUnavailableCredentials: string[] = [];
-    const jumpHosts = ctx.resolvedChainHosts.map<NetcattyJumpHost>((jumpHost) => {
+    const jumpHosts = ctx.resolvedChainHosts.map<NetcattyJumpHost>((jumpHost, index) => {
       const jumpAuth = resolveHostAuth({
         host: jumpHost,
         keys: ctx.keys,
@@ -337,6 +337,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const jumpPrivateKey = sanitizeCredentialValue(rawJumpPrivateKey);
       const jumpPassphrase = sanitizeCredentialValue(rawJumpPassphrase);
       const hasEncryptedJumpProxyCredential =
+        index === 0 &&
         Boolean(jumpHost.proxyConfig?.username) &&
         isEncryptedCredentialPlaceholder(jumpHost.proxyConfig?.password);
 

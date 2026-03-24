@@ -402,8 +402,9 @@ export const startPortForward = async (
       }
       jumpHosts = resolvedJumpHosts
         .filter((jumpHost): jumpHost is Host => Boolean(jumpHost))
-        .map((jumpHost) => {
+        .map((jumpHost, index) => {
           if (
+            index === 0 &&
             jumpHost.proxyConfig?.username &&
             isEncryptedCredentialPlaceholder(jumpHost.proxyConfig.password) &&
             !sanitizeCredentialValue(jumpHost.proxyConfig.password)
