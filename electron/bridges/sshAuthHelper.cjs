@@ -383,7 +383,19 @@ function buildAuthHandler(options) {
   let lastAttemptedLabel = null;
   const attemptedMethodIds = new Set();
 
+  let triedNone = false;
+
   const authHandler = (methodsLeft, partialSuccess, callback) => {
+    // Per RFC 4252, always try "none" first to discover available methods
+    // and to support passwordless login (e.g. embedded devices).
+    // This matches the behavior of OpenSSH and Tabby.
+    if (methodsLeft === null && !triedNone) {
+      triedNone = true;
+      lastAttemptedLabel = "none";
+      onAuthAttempt?.("none (no credentials)");
+      return callback("none");
+    }
+
     const availableMethods = methodsLeft || ["publickey", "password", "keyboard-interactive", "agent"];
 
     // Log rejection of previous method (authHandler is called again when server rejects)
