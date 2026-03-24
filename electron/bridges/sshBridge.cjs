@@ -47,6 +47,12 @@ function looksLikePrivateKey(content) {
  * @returns {boolean} - True if the key is encrypted
  */
 function isKeyEncrypted(keyContent) {
+  // Check for PuTTY PPK encrypted format
+  const ppkEncMatch = keyContent.match(/^Encryption:\s*(.+)$/m);
+  if (ppkEncMatch && ppkEncMatch[1].trim() !== "none") {
+    return true;
+  }
+
   // Check for PKCS#8 encrypted format (-----BEGIN ENCRYPTED PRIVATE KEY-----)
   if (keyContent.includes("-----BEGIN ENCRYPTED PRIVATE KEY-----")) {
     return true;
@@ -894,8 +900,9 @@ async function startSSHSession(event, options) {
         }
       }
 
-      // Use dynamic authHandler if we have multiple auth options
-      if (authMethods.length > 1) {
+      // Always use dynamic authHandler to ensure consistent "none" probing
+      // and auth method logging regardless of how many methods are configured
+      if (authMethods.length >= 1) {
         let authIndex = 0;
         // Track methods that have been attempted (to avoid re-trying on failure)
         // This prevents reusing the same key when server requires multiple publickey auth steps

@@ -34,6 +34,13 @@ function looksLikePrivateKey(content) {
 function isKeyEncrypted(keyContent) {
   if (!keyContent || typeof keyContent !== "string") return false;
 
+  // Check for PuTTY PPK encrypted format (Encryption: aes256-cbc, etc.)
+  // PPK keys with "Encryption: none" are unencrypted
+  const ppkEncMatch = keyContent.match(/^Encryption:\s*(.+)$/m);
+  if (ppkEncMatch && ppkEncMatch[1].trim() !== "none") {
+    return true;
+  }
+
   // Check for PKCS#8 encrypted format (-----BEGIN ENCRYPTED PRIVATE KEY-----)
   if (keyContent.includes("-----BEGIN ENCRYPTED PRIVATE KEY-----")) {
     return true;
