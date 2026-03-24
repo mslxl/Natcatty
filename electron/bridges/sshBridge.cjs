@@ -868,18 +868,6 @@ async function startSSHSession(event, options) {
             sendProgress(totalHops, totalHops, options.hostname, 'auth-attempt', `${lastTriedMethod} rejected`);
           }
 
-          // On the very first call, try "none" auth — but only when no explicit
-          // credentials are configured. This avoids wasting an auth attempt on
-          // servers with low MaxAuthTries.  For embedded devices with no root
-          // password this is the only method that works.
-          const hasExplicitCredentials = !!connectOpts.privateKey || !!connectOpts.password || !!connectOpts.agent;
-          if (methodsLeft === null && !hasExplicitCredentials && !attemptedMethodIds.has("none")) {
-            attemptedMethodIds.add("none");
-            lastTriedMethod = "none";
-            sendProgress(totalHops, totalHops, options.hostname, 'auth-attempt', 'none (no credentials)');
-            return callback("none");
-          }
-
           // methodsLeft can be null on first call (before server responds with available methods)
           // Include "agent" for SSH agent-based auth (used with agentForwarding)
           const availableMethods = methodsLeft || ["publickey", "password", "keyboard-interactive", "agent"];

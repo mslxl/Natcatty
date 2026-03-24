@@ -383,19 +383,7 @@ function buildAuthHandler(options) {
   let lastAttemptedLabel = null;
   const attemptedMethodIds = new Set();
 
-  let triedNone = false;
-
   const authHandler = (methodsLeft, partialSuccess, callback) => {
-    // On the very first call, try "none" auth — but only when no explicit
-    // credentials were configured.  Avoids wasting an auth attempt on
-    // servers with low MaxAuthTries.
-    if (methodsLeft === null && !triedNone && !hasExplicitAuth) {
-      triedNone = true;
-      lastAttemptedLabel = "none";
-      onAuthAttempt?.("none (no credentials)");
-      return callback("none");
-    }
-
     const availableMethods = methodsLeft || ["publickey", "password", "keyboard-interactive", "agent"];
 
     // Log rejection of previous method (authHandler is called again when server rejects)
