@@ -1628,18 +1628,19 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                     </div>
                   )}
 
-                  <AIChatPanelsHost
-                    mountedTabIds={mountedAiTabIds}
-                    activeTabId={activeTabId}
-                    activeSidePanelTab={activeSidePanelTab}
-                    contextsByTabId={aiContextsByTabId}
-                    resolveExecutorContext={resolveAIExecutorContext}
-                  />
                 </div>
               </div>
             </div>
           </>
         )}
+
+        <AIChatPanelsHost
+          mountedTabIds={mountedAiTabIds}
+          activeTabId={activeTabId}
+          activeSidePanelTab={activeSidePanelTab}
+          contextsByTabId={aiContextsByTabId}
+          resolveExecutorContext={resolveAIExecutorContext}
+        />
 
         {/* Focus mode sidebar */}
         {isFocusMode && renderFocusModeSidebar()}
