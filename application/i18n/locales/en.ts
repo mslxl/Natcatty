@@ -899,6 +899,7 @@ const en: Messages = {
   'hostDetails.credential.certificate': 'Certificate',
   'hostDetails.credential.localKeyFile': 'Local Key File',
   'hostDetails.credential.localKeyFilePlaceholder': '~/.ssh/id_ed25519',
+  'hostDetails.credential.browseKeyFile': 'Browse...',
   'hostDetails.credential.missing': 'Credential not found',
   'hostDetails.keys.search': 'Search keys...',
   'hostDetails.keys.empty': 'No keys available',

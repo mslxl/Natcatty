@@ -588,6 +588,7 @@ const zhCN: Messages = {
   'hostDetails.credential.certificate': '证书',
   'hostDetails.credential.localKeyFile': '本地密钥文件',
   'hostDetails.credential.localKeyFilePlaceholder': '~/.ssh/id_ed25519',
+  'hostDetails.credential.browseKeyFile': '浏览…',
   'hostDetails.credential.missing': '凭据不存在',
   'hostDetails.keys.search': '搜索密钥…',
   'hostDetails.keys.empty': '暂无密钥',

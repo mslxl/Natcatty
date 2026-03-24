@@ -21,6 +21,7 @@ import {
   TerminalSquare,
   User,
   FileKey,
+  FolderOpen,
   Trash2,
   Variable,
   Wifi,
@@ -1193,20 +1194,26 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
                     />
                     <Button
                       variant="secondary"
-                      size="sm"
-                      className="h-8 px-2 shrink-0"
-                      disabled={!newKeyFilePath.trim()}
-                      onClick={() => {
-                        if (newKeyFilePath.trim()) {
-                          const paths = [...(form.identityFilePaths || []), newKeyFilePath.trim()];
+                      size="icon"
+                      className="h-8 w-8 shrink-0"
+                      title={t("hostDetails.credential.browseKeyFile")}
+                      onClick={async () => {
+                        const bridge = (window as unknown as { netcatty?: NetcattyBridge }).netcatty;
+                        if (!bridge?.selectFile) return;
+                        const filePath = await bridge.selectFile(
+                          "Select SSH Private Key",
+                          undefined,
+                          [{ name: "All Files", extensions: ["*"] }]
+                        );
+                        if (filePath) {
+                          const paths = [...(form.identityFilePaths || []), filePath];
                           update("identityFilePaths", paths);
                           update("identityFileId", undefined);
                           update("authMethod", "key");
-                          setNewKeyFilePath("");
                         }
                       }}
                     >
-                      <Plus size={14} />
+                      <FolderOpen size={14} />
                     </Button>
                     <Button
                       variant="ghost"
