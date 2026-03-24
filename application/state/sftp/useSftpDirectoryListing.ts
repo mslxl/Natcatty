@@ -49,6 +49,7 @@ export const useSftpDirectoryListing = () => {
           sizeFormatted: formatFileSize(size),
           lastModified,
           lastModifiedFormatted: formatDate(lastModified),
+          permissions: f.permissions,
           linkTarget: f.linkTarget as "file" | "directory" | null | undefined,
         };
       });
