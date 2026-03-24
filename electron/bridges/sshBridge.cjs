@@ -530,7 +530,18 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
       const hasUsableJumpProxy = !!(jump.proxy?.host && jump.proxy?.port);
       const effectiveHopProxy = isFirst ? ((hasUsableJumpProxy ? jump.proxy : null) || options.proxy) : null;
       if (effectiveHopProxy) {
-        currentSocket = await createProxySocket(effectiveHopProxy, jump.hostname, jump.port || 22);
+        currentSocket = await createProxySocket(effectiveHopProxy, jump.hostname, jump.port || 22, {
+          onSocket: (socket) => {
+            if (options?._tunnelRef) {
+              options._tunnelRef.pendingConn = socket;
+              options._tunnelRef.chainConnections = connections;
+            }
+          },
+        });
+        if (options?._tunnelRef) {
+          options._tunnelRef.pendingConn = null;
+          options._tunnelRef.chainConnections = connections;
+        }
         connOpts.sock = currentSocket;
         delete connOpts.host;
         delete connOpts.port;
