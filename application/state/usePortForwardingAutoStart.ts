@@ -35,6 +35,31 @@ export const usePortForwardingAutoStart = ({
   const keysRef = useRef<SSHKey[]>(keys);
   const identitiesRef = useRef<Identity[]>(identities);
 
+  const isHostAuthReady = (host: Host, seen = new Set<string>()): boolean => {
+    if (!host || seen.has(host.id)) return true;
+    seen.add(host.id);
+
+    if (host.identityId) {
+      const identity = identitiesRef.current.find((candidate) => candidate.id === host.identityId);
+      if (!identity) return false;
+      if (identity.keyId && !keysRef.current.some((key) => key.id === identity.keyId)) {
+        return false;
+      }
+    }
+    if (host.identityFileId && !keysRef.current.some((key) => key.id === host.identityFileId)) {
+      return false;
+    }
+
+    const chainIds = host.hostChain?.hostIds || [];
+    for (const chainId of chainIds) {
+      const chainHost = hostsRef.current.find((candidate) => candidate.id === chainId);
+      if (!chainHost) return false;
+      if (!isHostAuthReady(chainHost, seen)) return false;
+    }
+
+    return true;
+  };
+
   // Keep refs in sync
   useEffect(() => {
     hostsRef.current = hosts;
@@ -157,23 +182,3 @@ export const usePortForwardingAutoStart = ({
     void runAutoStart();
   }, [hosts, identities, keys]);
 };
-  const isHostAuthReady = (host: Host, seen = new Set<string>()): boolean => {
-    if (!host || seen.has(host.id)) return true;
-    seen.add(host.id);
-
-    if (host.identityId && !identitiesRef.current.some((identity) => identity.id === host.identityId)) {
-      return false;
-    }
-    if (host.identityFileId && !keysRef.current.some((key) => key.id === host.identityFileId)) {
-      return false;
-    }
-
-    const chainIds = host.hostChain?.hostIds || [];
-    for (const chainId of chainIds) {
-      const chainHost = hostsRef.current.find((candidate) => candidate.id === chainId);
-      if (!chainHost) return false;
-      if (!isHostAuthReady(chainHost, seen)) return false;
-    }
-
-    return true;
-  };

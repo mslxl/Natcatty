@@ -157,53 +157,69 @@ async function startPortForward(event, payload) {
   sendStatus('connecting');
   portForwardingTunnels.set(tunnelId, tunnelState);
 
-  // Get default keys
-  const defaultKeys = await findAllDefaultPrivateKeysFromHelper();
+  let defaultKeys = [];
+  try {
+    // Get default keys
+    defaultKeys = await findAllDefaultPrivateKeysFromHelper();
 
-  // Build auth handler using shared helper
-  const authConfig = buildAuthHandler({
-    privateKey: connectOpts.privateKey,
-    password,
-    passphrase: connectOpts.passphrase,
-    agent: connectOpts.agent,
-    username: connectOpts.username,
-    logPrefix: "[PortForward]",
-    defaultKeys,
-  });
-  applyAuthToConnOpts(connectOpts, authConfig);
+    // Build auth handler using shared helper
+    const authConfig = buildAuthHandler({
+      privateKey: connectOpts.privateKey,
+      password,
+      passphrase: connectOpts.passphrase,
+      agent: connectOpts.agent,
+      username: connectOpts.username,
+      logPrefix: "[PortForward]",
+      defaultKeys,
+    });
+    applyAuthToConnOpts(connectOpts, authConfig);
 
-  if (hasJumpHosts) {
-    const chainResult = await connectThroughChain(
-      event,
-      {
+    if (hasJumpHosts) {
+      const chainResult = await connectThroughChain(
+        event,
+        {
+          hostname,
+          port,
+          username,
+          password,
+          privateKey,
+          passphrase,
+          proxy,
+          jumpHosts,
+          _defaultKeys: defaultKeys,
+          _connectionsRef: chainConnections,
+          _tunnelRef: tunnelState,
+        },
+        jumpHosts,
         hostname,
         port,
-        username,
-        password,
-        privateKey,
-        passphrase,
-        proxy,
-        jumpHosts,
-        _defaultKeys: defaultKeys,
-        _connectionsRef: chainConnections,
-        _tunnelRef: tunnelState,
-      },
-      jumpHosts,
-      hostname,
-      port,
-      tunnelId,
-    );
-    connectionSocket = chainResult.socket;
-    chainConnections = chainResult.connections;
-    tunnelState.chainConnections = chainConnections;
-    connectOpts.sock = connectionSocket;
-    delete connectOpts.host;
-    delete connectOpts.port;
-  } else if (hasProxy) {
-    connectionSocket = await createProxySocket(proxy, hostname, port);
-    connectOpts.sock = connectionSocket;
-    delete connectOpts.host;
-    delete connectOpts.port;
+        tunnelId,
+      );
+      connectionSocket = chainResult.socket;
+      chainConnections = chainResult.connections;
+      tunnelState.chainConnections = chainConnections;
+      connectOpts.sock = connectionSocket;
+      delete connectOpts.host;
+      delete connectOpts.port;
+    } else if (hasProxy) {
+      connectionSocket = await createProxySocket(proxy, hostname, port);
+      connectOpts.sock = connectionSocket;
+      delete connectOpts.host;
+      delete connectOpts.port;
+    }
+  } catch (err) {
+    tunnelState.cancelled = true;
+    if (tunnelState.pendingConn) {
+      try { tunnelState.pendingConn.end(); } catch { /* ignore */ }
+    }
+    cleanupChainConnections(tunnelState.chainConnections);
+    if (connectionSocket) {
+      try { connectionSocket.end?.(); } catch { /* ignore */ }
+      try { connectionSocket.destroy?.(); } catch { /* ignore */ }
+    }
+    portForwardingTunnels.delete(tunnelId);
+    sendStatus('error', err?.message || String(err));
+    throw err;
   }
 
   // Handle keyboard-interactive authentication (2FA/MFA)
