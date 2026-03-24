@@ -868,6 +868,17 @@ async function startSSHSession(event, options) {
             sendProgress(totalHops, totalHops, options.hostname, 'auth-attempt', `${lastTriedMethod} rejected`);
           }
 
+          // On the very first call (methodsLeft === null), try "none" auth first.
+          // This is the SSH protocol's way to check if the server allows login
+          // without credentials (common on embedded devices with no root password).
+          // ssh2 does this by default, but custom authHandlers must do it explicitly.
+          if (methodsLeft === null && !attemptedMethodIds.has("none")) {
+            attemptedMethodIds.add("none");
+            lastTriedMethod = "none";
+            sendProgress(totalHops, totalHops, options.hostname, 'auth-attempt', 'none (no credentials)');
+            return callback("none");
+          }
+
           // methodsLeft can be null on first call (before server responds with available methods)
           // Include "agent" for SSH agent-based auth (used with agentForwarding)
           const availableMethods = methodsLeft || ["publickey", "password", "keyboard-interactive", "agent"];

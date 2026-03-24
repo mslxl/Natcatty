@@ -383,7 +383,19 @@ function buildAuthHandler(options) {
   let lastAttemptedLabel = null;
   const attemptedMethodIds = new Set();
 
+  let triedNone = false;
+
   const authHandler = (methodsLeft, partialSuccess, callback) => {
+    // On the very first call, try "none" auth — the SSH protocol's way to
+    // check if the server allows login without credentials (e.g. embedded
+    // devices with no root password).
+    if (methodsLeft === null && !triedNone) {
+      triedNone = true;
+      lastAttemptedLabel = "none";
+      onAuthAttempt?.("none (no credentials)");
+      return callback("none");
+    }
+
     const availableMethods = methodsLeft || ["publickey", "password", "keyboard-interactive", "agent"];
 
     // Log rejection of previous method (authHandler is called again when server rejects)
