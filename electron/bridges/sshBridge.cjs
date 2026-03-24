@@ -1704,11 +1704,41 @@ async function getServerStats(event, payload) {
 
   const conn = session.conn;
 
+  // macOS stats command: uses sysctl, vm_stat, top, ps, df, netstat
+  // CPU reported as direct percentage (top computes delta internally)
+  // cpuPerCore not available on macOS without sudo
+  const macosStatsCommand = [
+    `cores=$(sysctl -n hw.logicalcpu 2>/dev/null || echo "1")`,
+    `pagesize=$(sysctl -n hw.pagesize 2>/dev/null || echo "4096")`,
+    `memsize=$(sysctl -n hw.memsize 2>/dev/null || echo "0")`,
+    // CPU usage: top -l 1 gives one logging sample, parse idle%
+    `cpuline=$(top -l 1 -s 0 -n 0 2>/dev/null | grep "CPU usage:" | head -1)`,
+    `cpupct=$(echo "$cpuline" | awk '{for(i=1;i<=NF;i++){if($(i+1)~/^idle/){v=$i;gsub(/%/,"",v);idle=v+0;found=1}};if(found)printf "%.0f",100-idle}')`,
+    // Memory: single vm_stat pipe → awk extracts all page counts (strip trailing dots with gsub)
+    // Outputs: "memfree memcached" in MB
+    `vmmem=$(vm_stat 2>/dev/null | awk -v ps="$pagesize" '/^Pages free:/{gsub(/[^0-9]/,"",$NF);free=$NF+0} /^Pages speculative:/{gsub(/[^0-9]/,"",$NF);spec=$NF+0} /^Pages inactive:/{gsub(/[^0-9]/,"",$NF);inact=$NF+0} /^Pages purgeable:/{gsub(/[^0-9]/,"",$NF);purg=$NF+0} END{mfree=int((free+spec)*ps/1024/1024);mcached=int((inact+purg)*ps/1024/1024);printf "%d %d",mfree,mcached}')`,
+    `memtotal=$(echo "$memsize" | awk '{printf "%d",$1/1024/1024}')`,
+    `memfree=$(echo "$vmmem" | awk '{print $1}')`,
+    `memcached=$(echo "$vmmem" | awk '{print $2}')`,
+    // Swap
+    `swapraw=$(sysctl vm.swapusage 2>/dev/null)`,
+    `swaptotal=$(echo "$swapraw" | awk '{for(i=1;i<=NF;i++){if($i=="total"&&$(i+1)=="="){v=$(i+2);m=1;if(v~/G/)m=1024;gsub(/[MmGg]/,"",v);st=v*m}};printf "%.0f",st+0}')`,
+    `swapused=$(echo "$swapraw" | awk '{for(i=1;i<=NF;i++){if($i=="used"&&$(i+1)=="="){v=$(i+2);m=1;if(v~/G/)m=1024;gsub(/[MmGg]/,"",v);su=v*m}};printf "%.0f",su+0}')`,
+    `swapfree=$(echo "$swaptotal $swapused" | awk '{printf "%.0f",$1-$2}')`,
+    // Top processes by memory%
+    `procs=$(ps -A -o pid=,%mem=,comm= 2>/dev/null | sort -k2 -rn | head -10 | awk '{gsub(/;/,"_",$3);printf "%s;%.1f;%s,",$1,$2,$3}' | sed 's/,$//')`,
+    // Disk: only show root "/" and external volumes "/Volumes/*", skip system APFS snapshots
+    `disks=$(df -k 2>/dev/null | awk 'NR>1&&index($1,"/dev/")==1&&NF>=9&&($NF=="/"||index($NF,"/Volumes/")==1){u=$3/1048576;t=$2/1048576;p=$5;gsub(/%/,"",p);printf "%s:%.0f:%.0f:%s,",$NF,u,t,p}' | sed 's/,$//')`,
+    // Network: Link# lines only, exclude loopback, detect column shift (no MAC addr → cols shift left)
+    `net=$(netstat -ib 2>/dev/null | awk '/^[a-z]/&&$3~/Link/&&$1!~/^lo/{if($4~/:/){rx=$7;tx=$10}else{rx=$6;tx=$9};if((rx+0)>0){gsub(/[*]/,"",$1);printf "%s:%s:%s,",$1,rx,tx}}' | sed 's/,$//')`,
+    `echo "CPU:$cpupct|CORES:$cores|MEMINFO:$memtotal $memfree 0 $memcached $swaptotal $swapfree|PROCS:$procs|DISKS:$disks|NET:$net"`,
+  ].join('; ');
+
   // Command to get CPU (overall + per-core), Memory, Disk, and Network stats
   // This command is designed to work across most Linux distributions
   // Note: Using semicolons and avoiding comments for single-line execution
   // CPU: Output raw values (total and idle) instead of percentage - we calculate delta on backend
-  const statsCommand = [
+  const linuxStatsCommand = [
     // Get number of CPU cores
     `cores=$(nproc 2>/dev/null || grep -c "^processor" /proc/cpuinfo 2>/dev/null || echo "1")`,
     // Get raw CPU values from /proc/stat: "total idle" for overall CPU
@@ -1732,6 +1762,8 @@ async function getServerStats(event, payload) {
     `echo "CPURAW:$cpuraw|CORES:$cores|PERCORERAW:$percoreraw|MEMINFO:$meminfo|PROCS:$procs|DISKS:$disks|NET:$net"`
   ].join('; ');
 
+  // Auto-detect OS via uname — only Linux and macOS are supported
+  const statsCommand = `ostype=$(uname -s 2>/dev/null || echo "Unknown"); if [ "$ostype" = "Darwin" ]; then ${macosStatsCommand}; elif [ "$ostype" = "Linux" ]; then ${linuxStatsCommand}; else echo "UNSUPPORTED_OS:$ostype"; fi`;
   return new Promise((resolve) => {
     const timeout = setTimeout(() => {
       resolve({ success: false, error: 'Timeout getting server stats' });
@@ -1760,8 +1792,16 @@ async function getServerStats(event, payload) {
 
         // Parse the output
         const output = stdout.trim();
+
+        // Unsupported OS — stop polling this session
+        if (output.startsWith('UNSUPPORTED_OS:')) {
+          resolve({ success: false, error: `Server stats not supported on this OS (${output.substring(15)})` });
+          return;
+        }
+
         const parts = output.split('|');
 
+        let cpuDirect = null;    // macOS: direct CPU percentage from top
         let cpuRawTotal = null;
         let cpuRawIdle = null;
         let cpuPerCoreRaw = [];  // Array of { total, idle }
@@ -1778,7 +1818,11 @@ async function getServerStats(event, payload) {
         let networkInterfaces = [];  // Array of { name, rxBytes, txBytes }
 
         for (const part of parts) {
-          if (part.startsWith('CPURAW:')) {
+          if (part.startsWith('CPU:')) {
+            // macOS: top reports CPU% directly (no delta needed)
+            const val = parseFloat(part.substring(4).trim());
+            if (!isNaN(val)) cpuDirect = Math.min(100, Math.max(0, Math.round(val)));
+          } else if (part.startsWith('CPURAW:')) {
             const rawParts = part.substring(7).trim().split(/\s+/);
             if (rawParts.length >= 2) {
               cpuRawTotal = parseInt(rawParts[0], 10);
@@ -1955,6 +1999,11 @@ async function getServerStats(event, payload) {
           }
         }
 
+        // macOS: use direct percentage from top (no delta needed)
+        if (cpu === null && cpuDirect !== null) {
+          cpu = cpuDirect;
+        }
+
         // Calculate per-core CPU usage from deltas
         if (cpuPerCoreRaw.length > 0 && prevCpu.perCore.length > 0) {
           cpuPerCore = cpuPerCoreRaw.map((core, index) => {
@@ -1989,6 +2038,12 @@ async function getServerStats(event, payload) {
         const diskPercent = rootDisk ? rootDisk.percent : null;
         const diskUsed = rootDisk ? rootDisk.used : null;
         const diskTotal = rootDisk ? rootDisk.total : null;
+
+        // If no meaningful data was parsed, treat as failure to stop futile polling
+        if (cpu === null && memTotal === null && cpuCores === null) {
+          resolve({ success: false, error: 'Unable to parse server stats (unsupported OS or shell)' });
+          return;
+        }
 
         resolve({
           success: true,
