@@ -155,6 +155,24 @@ function cancelAllPtyExecs() {
   activePtyExecs.clear();
 }
 
+/**
+ * Cancel PTY executions scoped to a specific chat session.
+ * Only affects entries whose chatSessionId matches.
+ */
+function cancelPtyExecsForSession(chatSessionId) {
+  if (!chatSessionId) return;
+  for (const [marker, entry] of activePtyExecs) {
+    if (entry.chatSessionId !== chatSessionId) continue;
+    try {
+      entry.cleanup();
+      if (entry.ptyStream && typeof entry.ptyStream.write === "function") {
+        entry.ptyStream.write("\x03");
+      }
+    } catch { /* ignore */ }
+    activePtyExecs.delete(marker);
+  }
+}
+
 function init(deps) {
   sessions = deps.sessions;
   sftpClients = deps.sftpClients;
@@ -598,6 +616,7 @@ function handleExec(params) {
       trackForCancellation: activePtyExecs,
       timeoutMs: commandTimeoutMs,
       shellKind: session.shellKind,
+      expectedPrompt: session.lastIdlePrompt || "",
     });
   }
 
@@ -966,7 +985,9 @@ module.exports = {
   getScopedSessionIds,
   getOrCreateHost,
   buildMcpServerConfig,
+  activePtyExecs,
   cancelAllPtyExecs,
+  cancelPtyExecsForSession,
   cleanupScopedMetadata,
   cleanup,
   setMainWindowGetter,

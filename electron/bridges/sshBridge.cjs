@@ -23,6 +23,7 @@ const {
   getSshAgentSocket,
 } = require("./sshAuthHelper.cjs");
 const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
+const { trackSessionIdlePrompt } = require("./ai/shellUtils.cjs");
 
 // Default SSH key names in priority order (preferred keys tried first)
 const PREFERRED_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
@@ -1180,6 +1181,9 @@ async function startSSHSession(event, options) {
               hostname: options.host || options.hostname || '',
               username: options.username || '',
               label: options.label || '',
+              lastIdlePrompt: '',
+              lastIdlePromptAt: 0,
+              _promptTrackTail: '',
             };
             sessions.set(sessionId, session);
 
@@ -1227,6 +1231,7 @@ async function startSSHSession(event, options) {
             stream.on("data", (data) => {
               const decoder = getSessionDecoder(sessionId, "stdout");
               const decoded = decoder.write(data);
+              trackSessionIdlePrompt(session, decoded);
               bufferData(decoded);
               sessionLogStreamManager.appendData(sessionId, decoded);
             });

@@ -881,7 +881,7 @@ function registerHandlers(ipcMain) {
   });
 
   // Execute a command on a terminal session (for Catty Agent)
-  ipcMain.handle("netcatty:ai:exec", async (event, { sessionId, command }) => {
+  ipcMain.handle("netcatty:ai:exec", async (event, { sessionId, command, chatSessionId }) => {
     // Validate IPC sender (Issue #17)
     if (!validateSender(event)) {
       return { ok: false, error: "Unauthorized IPC sender" };
@@ -915,8 +915,11 @@ function registerHandlers(ipcMain) {
         const timeoutMs = mcpServerBridge.getCommandTimeoutMs ? mcpServerBridge.getCommandTimeoutMs() : 60000;
         return execViaPty(ptyStream, command, {
           stripMarkers: true,
+          trackForCancellation: mcpServerBridge.activePtyExecs,
           timeoutMs,
           shellKind: session.shellKind,
+          chatSessionId,
+          expectedPrompt: session.lastIdlePrompt || "",
         });
       }
 
@@ -925,13 +928,26 @@ function registerHandlers(ipcMain) {
       if (sshClient && typeof sshClient.exec === "function") {
         const { execViaChannel } = require("./ai/ptyExec.cjs");
         const channelTimeoutMs = mcpServerBridge.getCommandTimeoutMs ? mcpServerBridge.getCommandTimeoutMs() : 60000;
-        return execViaChannel(sshClient, command, { timeoutMs: channelTimeoutMs });
+        return execViaChannel(sshClient, command, {
+          timeoutMs: channelTimeoutMs,
+          trackForCancellation: mcpServerBridge.activePtyExecs,
+          chatSessionId,
+        });
       }
 
       return { ok: false, error: "No terminal stream or SSH client available for this session" };
     } catch (err) {
       return { ok: false, error: err?.message || String(err) };
     }
+  });
+
+  // Cancel in-flight Catty Agent command executions for a chat session
+  ipcMain.handle("netcatty:ai:catty:cancel", async (event, { chatSessionId }) => {
+    if (!validateSender(event)) {
+      return { ok: false, error: "Unauthorized IPC sender" };
+    }
+    mcpServerBridge.cancelPtyExecsForSession(chatSessionId);
+    return { ok: true };
   });
 
   // Write to terminal session (send input like a user typing)
@@ -2069,9 +2085,9 @@ function registerHandlers(ipcMain) {
 
   ipcMain.handle("netcatty:ai:acp:cancel", async (event, { requestId, chatSessionId }) => {
     if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
-    // Cancel any active PTY executions (send Ctrl+C)
-    mcpServerBridge.cancelAllPtyExecs();
     const effectiveChatSessionId = chatSessionId || acpRequestSessions.get(requestId);
+    // Cancel PTY executions scoped to this chat session (send Ctrl+C)
+    mcpServerBridge.cancelPtyExecsForSession(effectiveChatSessionId);
     mcpServerBridge.setChatSessionCancelled?.(effectiveChatSessionId, true);
     mcpServerBridge.clearPendingApprovals(effectiveChatSessionId);
     const activeRun = effectiveChatSessionId ? acpChatRuns.get(effectiveChatSessionId) : null;

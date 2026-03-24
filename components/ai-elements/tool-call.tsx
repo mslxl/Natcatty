@@ -75,17 +75,18 @@ export const ToolCall = ({
       : approvalStatus === 'denied'
         ? 'border-red-500/20 bg-red-500/[0.03]'
         : 'border-border/25 bg-muted/10';
+  const statusIconClass = 'shrink-0';
 
   const statusIcon = approvalStatus === 'pending' ? (
-    <ShieldAlert size={12} className="text-yellow-500/70 shrink-0" />
+    <ShieldAlert size={12} className={cn('text-yellow-500/70', statusIconClass)} />
   ) : isLoading ? (
-    <Loader2 size={12} className="animate-spin text-blue-400/70" />
+    <Loader2 size={12} className={cn('animate-spin text-blue-400/70', statusIconClass)} />
   ) : isInterrupted ? (
-    <Slash size={12} className="text-muted-foreground/55" />
+    <Slash size={12} className={cn('text-muted-foreground/55', statusIconClass)} />
   ) : isError ? (
-    <XCircle size={12} className="text-red-400/70" />
+    <XCircle size={12} className={cn('text-red-400/70', statusIconClass)} />
   ) : result !== undefined ? (
-    <CheckCircle2 size={12} className="text-green-400/70" />
+    <CheckCircle2 size={12} className={cn('text-green-400/70', statusIconClass)} />
   ) : null;
 
   return (
@@ -105,7 +106,13 @@ export const ToolCall = ({
           ? <ChevronDown size={12} className="text-muted-foreground/40 shrink-0" />
           : <ChevronRight size={12} className="text-muted-foreground/40 shrink-0" />
         }
-        <span className="font-mono text-muted-foreground/70 truncate">{name}</span>
+        {name === 'terminal_execute' && args?.command ? (
+          <span className="font-mono text-muted-foreground/70 truncate" title={String(args.command)}>
+            <span className="text-muted-foreground/40">$ </span>{String(args.command)}
+          </span>
+        ) : (
+          <span className="font-mono text-muted-foreground/70 truncate">{name}</span>
+        )}
         <span className="flex-1" />
         {/* Approval badge for resolved approvals */}
         {approvalStatus === 'approved' && (

@@ -17,6 +17,7 @@ export interface NetcattyBridge {
   aiExec(
     sessionId: string,
     command: string,
+    chatSessionId?: string,
   ): Promise<{
     ok: boolean;
     stdout?: string;
