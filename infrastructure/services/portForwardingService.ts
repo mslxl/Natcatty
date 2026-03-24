@@ -4,7 +4,8 @@
  * for establishing and managing SSH port forwarding tunnels.
  */
 
-import { Host,PortForwardingRule } from '../../domain/models';
+import { Host, Identity, PortForwardingRule, SSHKey } from '../../domain/models';
+import { resolveHostAuth } from '../../domain/sshAuth';
 import { logger } from '../../lib/logger';
 import { netcattyBridge } from './netcattyBridge';
 
@@ -357,7 +358,9 @@ export const reconcileWithBackend = async (): Promise<{
 export const startPortForward = async (
   rule: PortForwardingRule,
   host: Host,
-  keys: { id: string; privateKey: string; passphrase: string }[],
+  hosts: Host[],
+  keys: SSHKey[],
+  identities: Identity[],
   onStatusChange: (status: PortForwardingRule['status'], error?: string) => void,
   enableReconnect = false
 ): Promise<{ success: boolean; error?: string }> => {
@@ -375,17 +378,41 @@ export const startPortForward = async (
   try {
     // Generate a unique tunnel ID
     const tunnelId = `pf-${rule.id}-${Date.now()}`;
-    
-    // Get the private key and passphrase if using key auth
-    let privateKey: string | undefined;
-    let passphrase: string | undefined;
-    if (host.identityFileId) {
-      const key = keys.find(k => k.id === host.identityFileId);
-      if (key) {
-        privateKey = key.privateKey;
-        passphrase = key.passphrase;
+
+    const resolved = resolveHostAuth({ host, keys, identities });
+    const key = resolved.key;
+    const proxy = host.proxyConfig
+      ? {
+        type: host.proxyConfig.type,
+        host: host.proxyConfig.host,
+        port: host.proxyConfig.port,
+        username: host.proxyConfig.username,
+        password: host.proxyConfig.password,
       }
-    }
+      : undefined;
+    const jumpHosts = host.hostChain?.hostIds?.length
+      ? host.hostChain.hostIds
+        .map((hostId) => hosts.find((candidate) => candidate.id === hostId))
+        .filter((jumpHost): jumpHost is Host => Boolean(jumpHost))
+        .map((jumpHost) => {
+          const jumpResolved = resolveHostAuth({ host: jumpHost, keys, identities });
+          const jumpKey = jumpResolved.key;
+          return {
+            hostname: jumpHost.hostname,
+            port: jumpHost.port || 22,
+            username: jumpResolved.username || 'root',
+            password: jumpResolved.password,
+            privateKey: jumpKey?.privateKey,
+            certificate: jumpKey?.certificate,
+            passphrase: jumpResolved.passphrase || jumpKey?.passphrase,
+            publicKey: jumpKey?.publicKey,
+            keyId: jumpResolved.keyId,
+            keySource: jumpKey?.source,
+            label: jumpHost.label,
+            identityFilePaths: jumpHost.identityFilePaths,
+          };
+        })
+      : undefined;
     
     // Subscribe to status updates first
     const unsubscribe = bridge.onPortForwardStatus?.(tunnelId, (status, error) => {
@@ -428,10 +455,15 @@ export const startPortForward = async (
       remotePort: rule.remotePort,
       hostname: host.hostname,
       port: host.port,
-      username: host.username,
-      password: host.password,
-      privateKey,
-      passphrase,
+      username: resolved.username,
+      password: resolved.password,
+      privateKey: key?.privateKey,
+      certificate: key?.certificate,
+      keyId: resolved.keyId,
+      passphrase: resolved.passphrase || key?.passphrase,
+      proxy,
+      jumpHosts: jumpHosts && jumpHosts.length > 0 ? jumpHosts : undefined,
+      identityFilePaths: host.identityFilePaths,
     });
     
     if (!result.success) {

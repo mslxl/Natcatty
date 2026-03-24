@@ -2255,6 +2255,7 @@ function registerHandlers(ipcMain) {
 module.exports = {
   init,
   registerHandlers,
+  connectThroughChain,
   createProxySocket,
   startSSHSession,
   execCommand,

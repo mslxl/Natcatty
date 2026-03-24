@@ -5,7 +5,10 @@
 
 const net = require("node:net");
 const { Client: SSHClient } = require("ssh2");
+const { NetcattyAgent } = require("./netcattyAgent.cjs");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
+const { connectThroughChain } = require("./sshBridge.cjs");
+const { createProxySocket } = require("./proxyUtils.cjs");
 const { 
   buildAuthHandler, 
   createKeyboardInteractiveHandler, 
@@ -44,11 +47,19 @@ async function startPortForward(event, payload) {
     username,
     password,
     privateKey,
+    certificate,
+    keyId,
     passphrase,
+    proxy,
+    jumpHosts = [],
   } = payload;
 
   const conn = new SSHClient();
   const sender = event.sender;
+  const hasJumpHosts = jumpHosts.length > 0;
+  const hasProxy = !!proxy;
+  let chainConnections = [];
+  let connectionSocket = null;
 
   const sendStatus = (status, error = null) => {
     if (!sender.isDestroyed()) {
@@ -66,7 +77,20 @@ async function startPortForward(event, payload) {
     tryKeyboard: true,
   };
 
-  if (privateKey) {
+  const hasCertificate = typeof certificate === "string" && certificate.trim().length > 0;
+
+  if (hasCertificate) {
+    connectOpts.agent = new NetcattyAgent({
+      mode: "certificate",
+      webContents: sender,
+      meta: {
+        label: keyId || username || "",
+        certificate,
+        privateKey,
+        passphrase,
+      },
+    });
+  } else if (privateKey) {
     connectOpts.privateKey = privateKey;
   }
   if (passphrase) {
@@ -84,11 +108,43 @@ async function startPortForward(event, payload) {
     privateKey,
     password,
     passphrase,
+    agent: connectOpts.agent,
     username: connectOpts.username,
     logPrefix: "[PortForward]",
     defaultKeys,
   });
   applyAuthToConnOpts(connectOpts, authConfig);
+
+  if (hasJumpHosts) {
+    const chainResult = await connectThroughChain(
+      event,
+      {
+        hostname,
+        port,
+        username,
+        password,
+        privateKey,
+        passphrase,
+        proxy,
+        jumpHosts,
+        _defaultKeys: defaultKeys,
+      },
+      jumpHosts,
+      hostname,
+      port,
+      tunnelId,
+    );
+    connectionSocket = chainResult.socket;
+    chainConnections = chainResult.connections;
+    connectOpts.sock = connectionSocket;
+    delete connectOpts.host;
+    delete connectOpts.port;
+  } else if (hasProxy) {
+    connectionSocket = await createProxySocket(proxy, hostname, port);
+    connectOpts.sock = connectionSocket;
+    delete connectOpts.host;
+    delete connectOpts.port;
+  }
 
   // Handle keyboard-interactive authentication (2FA/MFA)
   conn.on("keyboard-interactive", createKeyboardInteractiveHandler({
@@ -144,6 +200,7 @@ async function startPortForward(event, payload) {
             type: 'local',
             conn,
             server,
+            chainConnections,
             status: 'active',
             webContentsId: sender.id
           });
@@ -168,6 +225,7 @@ async function startPortForward(event, payload) {
           portForwardingTunnels.set(tunnelId, {
             type: 'remote',
             conn,
+            chainConnections,
             status: 'active',
             webContentsId: sender.id
           });
@@ -284,6 +342,7 @@ async function startPortForward(event, payload) {
             type: 'dynamic',
             conn,
             server,
+            chainConnections,
             status: 'active',
             webContentsId: sender.id
           });
@@ -315,6 +374,11 @@ async function startPortForward(event, payload) {
         if (tunnel.server) {
           try { tunnel.server.close(); } catch { }
         }
+        if (Array.isArray(tunnel.chainConnections)) {
+          for (const chainConn of tunnel.chainConnections) {
+            try { chainConn.end(); } catch { }
+          }
+        }
         sendStatus('inactive');
         portForwardingTunnels.delete(tunnelId);
       }
@@ -339,6 +403,7 @@ async function startPortForward(event, payload) {
       type,
       conn,
       server: null,
+      chainConnections,
       status: 'connecting',
       webContentsId: sender.id,
     });

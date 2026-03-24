@@ -120,7 +120,12 @@ declare global {
     username: string;
     password?: string;
     privateKey?: string;
+    certificate?: string;
+    keyId?: string;
     passphrase?: string;
+    proxy?: NetcattyProxyConfig;
+    jumpHosts?: NetcattyJumpHost[];
+    identityFilePaths?: string[];
   }
 
   interface PortForwardResult {

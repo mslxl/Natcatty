@@ -4,7 +4,7 @@
  * when the application starts, not when the user navigates to the port forwarding page.
  */
 import { useEffect, useRef } from "react";
-import { Host, PortForwardingRule } from "../../domain/models";
+import { Host, Identity, PortForwardingRule, SSHKey } from "../../domain/models";
 import { STORAGE_KEY_PORT_FORWARDING } from "../../infrastructure/config/storageKeys";
 import { localStorageAdapter } from "../../infrastructure/persistence/localStorageAdapter";
 import {
@@ -17,7 +17,8 @@ import { logger } from "../../lib/logger";
 
 export interface UsePortForwardingAutoStartOptions {
   hosts: Host[];
-  keys: { id: string; privateKey: string; passphrase: string }[];
+  keys: SSHKey[];
+  identities: Identity[];
 }
 
 /**
@@ -27,10 +28,12 @@ export interface UsePortForwardingAutoStartOptions {
 export const usePortForwardingAutoStart = ({
   hosts,
   keys,
+  identities,
 }: UsePortForwardingAutoStartOptions): void => {
   const autoStartExecutedRef = useRef(false);
   const hostsRef = useRef<Host[]>(hosts);
-  const keysRef = useRef<{ id: string; privateKey: string; passphrase: string }[]>(keys);
+  const keysRef = useRef<SSHKey[]>(keys);
+  const identitiesRef = useRef<Identity[]>(identities);
 
   // Keep refs in sync
   useEffect(() => {
@@ -40,6 +43,10 @@ export const usePortForwardingAutoStart = ({
   useEffect(() => {
     keysRef.current = keys;
   }, [keys]);
+
+  useEffect(() => {
+    identitiesRef.current = identities;
+  }, [identities]);
 
   // Set up the reconnect callback
   useEffect(() => {
@@ -62,7 +69,7 @@ export const usePortForwardingAutoStart = ({
         return { success: false, error: "Host not found" };
       }
 
-      return startPortForward(rule, host, keysRef.current, onStatusChange, true);
+      return startPortForward(rule, host, hostsRef.current, keysRef.current, identitiesRef.current, onStatusChange, true);
     };
 
     setReconnectCallback(handleReconnect);
@@ -108,7 +115,9 @@ export const usePortForwardingAutoStart = ({
           void startPortForward(
             rule,
             host,
+            hosts,
             keys,
+            identities,
             (status, error) => {
               // Update the rule status in storage
               const currentRules = localStorageAdapter.read<PortForwardingRule[]>(
@@ -135,5 +144,5 @@ export const usePortForwardingAutoStart = ({
     };
 
     void runAutoStart();
-  }, [hosts, keys]);
+  }, [hosts, identities, keys]);
 };
