@@ -346,12 +346,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const isLocalConnection = host.protocol === "local";
   const isSerialConnection = host.protocol === "serial";
 
-  // Server stats (CPU, Memory, Disk) for Linux servers
+  // Server stats (CPU, Memory, Disk) — OS auto-detected via uname on the remote
   const { stats: serverStats } = useServerStats({
     sessionId,
     enabled: terminalSettings?.showServerStats ?? true,
     refreshInterval: terminalSettings?.serverStatsRefreshInterval ?? 5,
-    isLinux: host.os === 'linux',
     isConnected: status === 'connected',
   });
 
@@ -1356,8 +1355,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                 )}
               />
             </div>
-            {/* Server Stats Display - Linux only */}
-            {host.os === 'linux' && terminalSettings?.showServerStats && status === 'connected' && serverStats.lastUpdated && (
+            {/* Server Stats Display */}
+            {terminalSettings?.showServerStats && status === 'connected' && serverStats.lastUpdated && (
               <div className="flex items-center gap-2.5 ml-2 text-[10px] opacity-80 flex-nowrap overflow-hidden min-w-0">
                 {/* CPU with HoverCard for per-core details */}
                 <HoverCard openDelay={200} closeDelay={100}>
@@ -1403,6 +1402,24 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                               </div>
                             </div>
                           ))}
+                        </div>
+                      ) : serverStats.cpu !== null ? (
+                        <div className="flex flex-col gap-1.5 min-w-[160px]">
+                          <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+                            <div
+                              className={cn(
+                                "h-full rounded-full transition-all",
+                                serverStats.cpu >= 90 ? "bg-red-500" : serverStats.cpu >= 70 ? "bg-amber-500" : "bg-emerald-500"
+                              )}
+                              style={{ width: `${serverStats.cpu}%` }}
+                            />
+                          </div>
+                          <div className={cn(
+                            "text-center text-[11px] font-medium",
+                            serverStats.cpu >= 90 ? "text-red-400" : serverStats.cpu >= 70 ? "text-amber-400" : "text-emerald-400"
+                          )}>
+                            {serverStats.cpu}% · {serverStats.cpuCores ?? '?'} cores
+                          </div>
                         </div>
                       ) : (
                         <div className="text-muted-foreground">{t("terminal.serverStats.noData")}</div>

@@ -48,7 +48,6 @@ interface UseServerStatsOptions {
   sessionId: string;
   enabled: boolean;           // Whether stats collection is enabled (from settings)
   refreshInterval: number;    // Refresh interval in seconds
-  isLinux: boolean;           // Only collect stats for Linux servers
   isConnected: boolean;       // Only collect when connected
 }
 
@@ -56,7 +55,6 @@ export function useServerStats({
   sessionId,
   enabled,
   refreshInterval,
-  isLinux,
   isConnected,
 }: UseServerStatsOptions) {
   const [stats, setStats] = useState<ServerStats>({
@@ -86,7 +84,7 @@ export function useServerStats({
   const isMountedRef = useRef(true);
 
   const fetchStats = useCallback(async () => {
-    if (!enabled || !isLinux || !isConnected || !sessionId) {
+    if (!enabled || !isConnected || !sessionId) {
       return;
     }
 
@@ -137,7 +135,7 @@ export function useServerStats({
         setIsLoading(false);
       }
     }
-  }, [sessionId, enabled, isLinux, isConnected]);
+  }, [sessionId, enabled, isConnected]);
 
   // Initial fetch and periodic refresh
   useEffect(() => {
@@ -149,8 +147,7 @@ export function useServerStats({
       intervalRef.current = null;
     }
 
-    // Don't run if not enabled or not a Linux system
-    if (!enabled || !isLinux || !isConnected) {
+    if (!enabled || !isConnected) {
       // Reset stats when disabled or not connected
       setStats({
         cpu: null,
@@ -193,7 +190,7 @@ export function useServerStats({
         intervalRef.current = null;
       }
     };
-  }, [enabled, isLinux, isConnected, refreshInterval, fetchStats]);
+  }, [enabled, isConnected, refreshInterval, fetchStats]);
 
   // Manual refresh function
   const refresh = useCallback(() => {

@@ -208,7 +208,7 @@ declare global {
     }): Promise<{ stdout: string; stderr: string; code: number | null }>;
     /** Get current working directory from an active SSH session */
     getSessionPwd?(sessionId: string): Promise<{ success: boolean; cwd?: string; error?: string }>;
-    /** Get server stats (CPU, Memory, Disk, Network) from an active SSH session - Linux only */
+    /** Get server stats (CPU, Memory, Disk, Network) from an active SSH session */
     getServerStats?(sessionId: string): Promise<{
       success: boolean;
       error?: string;
