@@ -81,7 +81,7 @@ function buildWrappedCommand(command, shellKind, marker) {
     case "cmd": {
       const cmdEscaped = escapeCmdForNestedShell(command);
       return (
-        `set "${marker}=0" & set "${marker}_CMD=${cmdEscaped}" & echo ^> ${command} & (echo ${marker}_S & set "PAGER=cat" & set "SYSTEMD_PAGER=" & set "GIT_PAGER=cat" & set "LESS=" & cmd /d /s /c "%${marker}_CMD%" & call echo ${marker}_E:^%errorlevel^%)\r\n`
+        `set "${marker}=0" & set "${marker}_CMD=${cmdEscaped}" & echo ^> ${command} & (echo ${marker}_S & set "PAGER=cat" & set "SYSTEMD_PAGER=" & set "GIT_PAGER=cat" & set "LESS=" & call cmd /d /s /c "%%${marker}_CMD%%" & call echo ${marker}_E:^%errorlevel^%)\r\n`
       );
     }
 
