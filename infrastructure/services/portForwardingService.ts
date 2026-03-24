@@ -5,6 +5,7 @@
  */
 
 import { Host, Identity, PortForwardingRule, SSHKey } from '../../domain/models';
+import { isEncryptedCredentialPlaceholder, sanitizeCredentialValue } from '../../domain/credentials';
 import { resolveHostAuth } from '../../domain/sshAuth';
 import { logger } from '../../lib/logger';
 import { netcattyBridge } from './netcattyBridge';
@@ -387,7 +388,7 @@ export const startPortForward = async (
         host: host.proxyConfig.host,
         port: host.proxyConfig.port,
         username: host.proxyConfig.username,
-        password: host.proxyConfig.password,
+        password: sanitizeCredentialValue(host.proxyConfig.password),
       }
       : undefined;
     let jumpHosts: NetcattyJumpHost[] | undefined;
@@ -401,7 +402,18 @@ export const startPortForward = async (
       }
       jumpHosts = resolvedJumpHosts
         .filter((jumpHost): jumpHost is Host => Boolean(jumpHost))
-        .map((jumpHost) => {
+        .map((jumpHost, index) => {
+          const hasConfiguredJumpProxyEndpoint =
+            index === 0 &&
+            !!(jumpHost.proxyConfig?.host && jumpHost.proxyConfig?.port);
+          if (
+            hasConfiguredJumpProxyEndpoint &&
+            jumpHost.proxyConfig?.username &&
+            isEncryptedCredentialPlaceholder(jumpHost.proxyConfig.password) &&
+            !sanitizeCredentialValue(jumpHost.proxyConfig.password)
+          ) {
+            throw new Error(`Proxy credentials for jump host "${jumpHost.label || jumpHost.hostname}" cannot be decrypted on this device. Open host settings and re-enter the proxy password.`);
+          }
           const jumpResolved = resolveHostAuth({ host: jumpHost, keys, identities });
           const jumpKey = jumpResolved.key;
           return {
@@ -416,9 +428,22 @@ export const startPortForward = async (
             keyId: jumpResolved.keyId,
             keySource: jumpKey?.source,
             label: jumpHost.label,
+            proxy: jumpHost.proxyConfig?.host && jumpHost.proxyConfig?.port
+              ? {
+                type: jumpHost.proxyConfig.type,
+                host: jumpHost.proxyConfig.host,
+                port: jumpHost.proxyConfig.port,
+                username: jumpHost.proxyConfig.username,
+                password: sanitizeCredentialValue(jumpHost.proxyConfig.password),
+              }
+              : undefined,
             identityFilePaths: jumpHost.identityFilePaths,
           };
         });
+    }
+    const usesTargetProxyForFirstHop = !!proxy && !jumpHosts?.[0]?.proxy;
+    if (usesTargetProxyForFirstHop && host.proxyConfig?.username && isEncryptedCredentialPlaceholder(host.proxyConfig.password) && !proxy?.password) {
+      throw new Error('Proxy credentials cannot be decrypted on this device. Open host settings and re-enter the proxy password.');
     }
     
     // Subscribe to status updates first

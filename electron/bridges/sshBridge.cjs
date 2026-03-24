@@ -527,8 +527,21 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
       applyAuthToConnOpts(connOpts, authConfig);
 
       // If first hop and proxy is configured, connect through proxy
-      if (isFirst && options.proxy) {
-        currentSocket = await createProxySocket(options.proxy, jump.hostname, jump.port || 22);
+      const hasUsableJumpProxy = !!(jump.proxy?.host && jump.proxy?.port);
+      const effectiveHopProxy = isFirst ? ((hasUsableJumpProxy ? jump.proxy : null) || options.proxy) : null;
+      if (effectiveHopProxy) {
+        currentSocket = await createProxySocket(effectiveHopProxy, jump.hostname, jump.port || 22, {
+          onSocket: (socket) => {
+            if (options?._tunnelRef) {
+              options._tunnelRef.pendingConn = socket;
+              options._tunnelRef.chainConnections = connections;
+            }
+          },
+        });
+        if (options?._tunnelRef) {
+          options._tunnelRef.pendingConn = null;
+          options._tunnelRef.chainConnections = connections;
+        }
         connOpts.sock = currentSocket;
         delete connOpts.host;
         delete connOpts.port;

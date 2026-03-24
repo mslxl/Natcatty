@@ -323,7 +323,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       : undefined;
 
     const jumpHostsWithUnavailableCredentials: string[] = [];
-    const jumpHosts = ctx.resolvedChainHosts.map<NetcattyJumpHost>((jumpHost) => {
+    const jumpHosts = ctx.resolvedChainHosts.map<NetcattyJumpHost>((jumpHost, index) => {
       const jumpAuth = resolveHostAuth({
         host: jumpHost,
         keys: ctx.keys,
@@ -336,13 +336,20 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const jumpPassword = sanitizeCredentialValue(rawJumpPassword);
       const jumpPrivateKey = sanitizeCredentialValue(rawJumpPrivateKey);
       const jumpPassphrase = sanitizeCredentialValue(rawJumpPassphrase);
+      const hasConfiguredJumpProxyEndpoint =
+        index === 0 &&
+        !!(jumpHost.proxyConfig?.host && jumpHost.proxyConfig?.port);
+      const hasEncryptedJumpProxyCredential =
+        hasConfiguredJumpProxyEndpoint &&
+        Boolean(jumpHost.proxyConfig?.username) &&
+        isEncryptedCredentialPlaceholder(jumpHost.proxyConfig?.password);
 
       const hasEncryptedJumpCredential =
         isEncryptedCredentialPlaceholder(rawJumpPassword) ||
         isEncryptedCredentialPlaceholder(rawJumpPrivateKey) ||
         isEncryptedCredentialPlaceholder(rawJumpPassphrase);
 
-      if (hasEncryptedJumpCredential && !jumpPassword && !jumpPrivateKey) {
+      if (hasEncryptedJumpProxyCredential || (hasEncryptedJumpCredential && !jumpPassword && !jumpPrivateKey)) {
         jumpHostsWithUnavailableCredentials.push(jumpHost.label || jumpHost.hostname);
       }
 
@@ -358,11 +365,21 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         keyId: jumpAuth.keyId,
         keySource: jumpKey?.source,
         label: jumpHost.label,
+        proxy: jumpHost.proxyConfig?.host && jumpHost.proxyConfig?.port
+          ? {
+            type: jumpHost.proxyConfig.type,
+            host: jumpHost.proxyConfig.host,
+            port: jumpHost.proxyConfig.port,
+            username: jumpHost.proxyConfig.username,
+            password: sanitizeCredentialValue(jumpHost.proxyConfig.password),
+          }
+          : undefined,
         identityFilePaths: jumpHost.identityFilePaths,
       };
     });
 
-    if (hasEncryptedProxyPassword && !proxyConfig?.password && proxyConfig?.username) {
+    const usesTargetProxyForFirstHop = !!proxyConfig && !jumpHosts[0]?.proxy;
+    if (usesTargetProxyForFirstHop && hasEncryptedProxyPassword && !proxyConfig?.password && proxyConfig?.username) {
       const message = tr(
         "terminal.auth.proxyCredentialsUnavailable",
         "Proxy credentials cannot be decrypted on this device. Open host settings and re-enter the proxy password.",
