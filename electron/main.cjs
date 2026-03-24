@@ -31,10 +31,25 @@ function isNonFatalNetworkError(err) {
   // never a reason to kill the entire multi-session app.
   if (err.level) return true;
   const code = err.code;
-  if (code === 'ECONNRESET' || code === 'ECONNREFUSED' || code === 'ETIMEDOUT' ||
-      code === 'ENOTFOUND' || code === 'EHOSTUNREACH' || code === 'ENETUNREACH' ||
-      code === 'ECONNABORTED' || code === 'EADDRNOTAVAIL') return true;
-  return false;
+  // Common TCP/DNS/routing errors that can surface from Node.js sockets
+  // without an ssh2 `level` (e.g. proxy sockets, raw net.connect calls).
+  switch (code) {
+    case 'ECONNRESET':
+    case 'ECONNREFUSED':
+    case 'ECONNABORTED':
+    case 'ETIMEDOUT':
+    case 'ENOTFOUND':
+    case 'EHOSTUNREACH':
+    case 'EHOSTDOWN':
+    case 'ENETUNREACH':
+    case 'ENETDOWN':
+    case 'EADDRNOTAVAIL':
+    case 'EPROTO':
+    case 'EPERM':
+      return true;
+    default:
+      return false;
+  }
 }
 
 // Handle uncaught exceptions — log all, only re-throw truly fatal ones
