@@ -159,6 +159,7 @@ export const useSftpConnections = ({
           loading: true,
           reconnecting: false,
           error: null,
+          connectionLogs: [],
           filenameEncoding, // Reset encoding for new connection
         }));
 
@@ -213,13 +214,57 @@ export const useSftpConnections = ({
           loading: true,
           reconnecting: prev.reconnecting,
           error: null,
+          connectionLogs: [],
           files: prev.reconnecting ? prev.files : (sharedHostCache?.files ?? []),
           filenameEncoding, // Reset encoding for new connection
         }));
 
+        // Subscribe to SFTP connection progress events for auth logging
+        const sftpSessionId = `sftp-${connectionId}`;
+        let unsubSftpProgress: (() => void) | undefined;
+        const bridge = netcattyBridge.get();
+        if (bridge?.onSftpConnectionProgress) {
+          unsubSftpProgress = bridge.onSftpConnectionProgress((sid, label, status, detail) => {
+            if (sid !== sftpSessionId) return;
+            let logLine: string;
+            switch (status) {
+              case 'connecting':
+                logLine = `Connecting to ${label}...`;
+                break;
+              case 'authenticating':
+                logLine = `${label} - Key exchange complete`;
+                break;
+              case 'auth-attempt':
+                if (detail?.endsWith('rejected')) {
+                  logLine = `${label} - ✗ ${detail}`;
+                } else if (detail === 'all methods exhausted') {
+                  logLine = `${label} - ✗ All authentication methods exhausted`;
+                } else if (detail === 'waiting for user input...' || detail === 'user responded') {
+                  logLine = `${label} - ${detail}`;
+                } else {
+                  logLine = `${label} - Trying ${detail}...`;
+                }
+                break;
+              case 'connected':
+                logLine = `${label} - Connected`;
+                break;
+              case 'error':
+                logLine = `${label} - Error${detail ? `: ${detail}` : ''}`;
+                break;
+              default:
+                logLine = `${label} - ${status}${detail ? `: ${detail}` : ''}`;
+            }
+            // Only update if this is still the active request (avoids stale logs leaking)
+            if (navSeqRef.current[side] !== connectRequestId) return;
+            updateTab(side, activeTabId, (prev) => ({
+              ...prev,
+              connectionLogs: [...prev.connectionLogs, logLine],
+            }));
+          });
+        }
+
         try {
           const credentials = getHostCredentials(host);
-          const bridge = netcattyBridge.get();
           const openSftp = bridge?.openSftp;
           if (!openSftp) throw new Error("SFTP bridge unavailable");
 
@@ -407,6 +452,7 @@ export const useSftpConnections = ({
             files,
             loading: false,
             reconnecting: false,
+            connectionLogs: [], // Clear after successful connect to avoid replay during navigation
           }));
         } catch (err) {
           if (navSeqRef.current[side] !== connectRequestId) return;
@@ -424,6 +470,8 @@ export const useSftpConnections = ({
             loading: false,
             reconnecting: false,
           }));
+        } finally {
+          unsubSftpProgress?.();
         }
       }
     },
