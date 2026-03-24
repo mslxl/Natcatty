@@ -458,10 +458,19 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
       </span>
     </div>
 
-    {/* Loading overlay - covers entire pane when navigating directories */}
+    {/* Loading overlay - covers entire pane when navigating or reconnecting */}
     {pane.loading && sortedDisplayFiles.length > 0 && !pane.reconnecting && (
-      <div className="absolute inset-0 flex items-center justify-center bg-background/40 backdrop-blur-[1px] z-10">
+      <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/40 backdrop-blur-[1px] z-10">
         <Loader2 size={24} className="animate-spin text-muted-foreground" />
+        {pane.connectionLogs.length > 0 && (
+          <div className="w-full max-w-sm mt-2 space-y-0.5 px-4">
+            {pane.connectionLogs.map((log, i) => (
+              <div key={i} className="text-[11px] text-muted-foreground truncate">
+                {log}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     )}
 
