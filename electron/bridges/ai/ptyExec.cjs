@@ -210,7 +210,10 @@ function execViaPty(ptyStream, command, options) {
           const lastNl = combined.lastIndexOf("\n");
           pendingStart = lastNl === -1 ? combined : combined.slice(lastNl + 1);
         }
-        if (foundStart) checkEnd();
+        if (foundStart) {
+          schedulePromptFallback();
+          checkEnd();
+        }
         return;
       }
 
