@@ -944,6 +944,10 @@ async function openSftp(event, options) {
       } else {
         delete connectOpts.privateKey;
         if (result?.cancelled) {
+          // Clean up any chain/proxy connections opened earlier
+          for (const c of chainConnections) {
+            try { c.end(); } catch {}
+          }
           throw new Error(`Passphrase entry cancelled for ${options.hostname}`);
         }
       }
