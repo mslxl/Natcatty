@@ -3,7 +3,7 @@
  * This should be used at the App level to ensure auto-start happens
  * when the application starts, not when the user navigates to the port forwarding page.
  */
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { Host, Identity, PortForwardingRule, SSHKey } from "../../domain/models";
 import { STORAGE_KEY_PORT_FORWARDING } from "../../infrastructure/config/storageKeys";
 import { localStorageAdapter } from "../../infrastructure/persistence/localStorageAdapter";
@@ -35,7 +35,7 @@ export const usePortForwardingAutoStart = ({
   const keysRef = useRef<SSHKey[]>(keys);
   const identitiesRef = useRef<Identity[]>(identities);
 
-  const isHostAuthReady = (host: Host, seen = new Set<string>()): boolean => {
+  const isHostAuthReady = useCallback((host: Host, seen = new Set<string>()): boolean => {
     if (!host || seen.has(host.id)) return true;
     seen.add(host.id);
 
@@ -58,7 +58,7 @@ export const usePortForwardingAutoStart = ({
     }
 
     return true;
-  };
+  }, []);
 
   // Keep refs in sync
   useEffect(() => {
