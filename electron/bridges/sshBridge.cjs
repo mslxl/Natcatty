@@ -397,7 +397,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           const result = await passphraseHandler.requestPassphrase(
             sender,
             `SSH key for ${keyLabel}`,
-            jump.keyId || `hop-${i + 1}-key`,
+            keyLabel,
             hopLabel
           );
           if (result?.passphrase) {

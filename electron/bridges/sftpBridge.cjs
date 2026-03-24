@@ -496,7 +496,7 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
           const result = await passphraseHandler.requestPassphrase(
             sender,
             `SSH key for ${keyLabel}`,
-            jump.keyId || `hop-${i + 1}-key`,
+            keyLabel,
             hopLabel
           );
           if (result?.passphrase) {
@@ -936,7 +936,7 @@ async function openSftp(event, options) {
       const result = await passphraseHandler.requestPassphrase(
         event.sender,
         `SSH key for ${options.hostname}`,
-        options.keyId || 'private-key',
+        options.hostname,
         options.hostname
       );
       if (result?.passphrase) {
