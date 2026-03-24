@@ -180,5 +180,5 @@ export const usePortForwardingAutoStart = ({
     };
 
     void runAutoStart();
-  }, [hosts, identities, keys]);
+  }, [hosts, identities, isHostAuthReady, keys]);
 };
