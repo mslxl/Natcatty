@@ -1252,24 +1252,29 @@ async function startSSHSession(event, options) {
             });
 
             stream.on("close", () => {
-              // Flush any remaining data before close
+              // Always flush buffered data regardless of session state
               if (flushTimeout) {
                 clearTimeout(flushTimeout);
               }
               flushBuffer();
               sessionLogStreamManager.stopStream(sessionId);
-              const contents = event.sender;
-              // Check if a transport error was recorded (e.g. ECONNRESET)
-              const session = sessions.get(sessionId);
-              const transportError = session?._transportError;
-              if (transportError) {
-                safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: transportError, reason: "error" });
-              } else {
-                safeSend(contents, "netcatty:exit", { sessionId, exitCode: streamExitCode, reason: streamExited ? "exited" : "closed" });
+
+              // Only send exit if session hasn't already been cleaned up by
+              // conn.once("close") — which fires before stream.on("close")
+              // in ssh2 when the transport drops.
+              if (sessions.has(sessionId)) {
+                const contents = event.sender;
+                const session = sessions.get(sessionId);
+                const transportError = session?._transportError;
+                if (transportError) {
+                  safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: transportError, reason: "error" });
+                } else {
+                  safeSend(contents, "netcatty:exit", { sessionId, exitCode: streamExitCode, reason: streamExited ? "exited" : "closed" });
+                }
+                sessions.delete(sessionId);
+                sessionEncodings.delete(sessionId);
+                sessionDecoders.delete(sessionId);
               }
-              sessions.delete(sessionId);
-              sessionEncodings.delete(sessionId);
-              sessionDecoders.delete(sessionId);
               conn.end();
               for (const c of chainConnections) {
                 try { c.end(); } catch { }
