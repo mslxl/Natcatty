@@ -199,6 +199,27 @@ export function useAIState() {
     setLatestAIActiveSessionMapSnapshot(activeSessionIdMap);
   }, [activeSessionIdMap]);
 
+  useEffect(() => {
+    const validSessionIds = new Set(sessions.map((session) => session.id));
+    let changed = false;
+    const nextActiveSessionIdMap: Record<string, string | null> = {};
+
+    for (const [scopeKey, sessionId] of Object.entries(activeSessionIdMap)) {
+      const nextSessionId = sessionId && validSessionIds.has(sessionId) ? sessionId : null;
+      nextActiveSessionIdMap[scopeKey] = nextSessionId;
+      if (nextSessionId !== sessionId) {
+        changed = true;
+      }
+    }
+
+    if (!changed) return;
+
+    setLatestAIActiveSessionMapSnapshot(nextActiveSessionIdMap);
+    localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, nextActiveSessionIdMap);
+    setActiveSessionIdMapRaw(nextActiveSessionIdMap);
+    emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
+  }, [sessions, activeSessionIdMap]);
+
   const setActiveSessionId = useCallback((scopeKey: string, id: string | null) => {
     setActiveSessionIdMapRaw(prev => {
       const next = { ...prev, [scopeKey]: id };
@@ -407,7 +428,24 @@ export function useAIState() {
     const handleLocalStateChanged = (event: Event) => {
       const key = (event as CustomEvent<{ key?: string }>).detail?.key;
       if (!key) return;
-      handleStorage({ key } as StorageEvent);
+      switch (key) {
+        case STORAGE_KEY_AI_SESSIONS:
+          setSessionsRaw(
+            latestAISessionsSnapshot
+              ?? localStorageAdapter.read<AISession[]>(STORAGE_KEY_AI_SESSIONS)
+              ?? [],
+          );
+          return;
+        case STORAGE_KEY_AI_ACTIVE_SESSION_MAP:
+          setActiveSessionIdMapRaw(
+            latestAIActiveSessionMapSnapshot
+              ?? localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP)
+              ?? {},
+          );
+          return;
+        default:
+          handleStorage({ key } as StorageEvent);
+      }
     };
     window.addEventListener(AI_STATE_CHANGED_EVENT, handleLocalStateChanged);
     return () => {
@@ -629,9 +667,11 @@ export function useAIState() {
 
   const cleanupOrphanedSessions = useCallback((activeTargetIds: Set<string>) => {
     cleanupOrphanedAISessions(activeTargetIds);
-    setSessionsRaw(localStorageAdapter.read<AISession[]>(STORAGE_KEY_AI_SESSIONS) ?? []);
+    setSessionsRaw(latestAISessionsSnapshot ?? localStorageAdapter.read<AISession[]>(STORAGE_KEY_AI_SESSIONS) ?? []);
     setActiveSessionIdMapRaw(
-      localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP) ?? {},
+      latestAIActiveSessionMapSnapshot
+        ?? localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP)
+        ?? {},
     );
   }, []);
 
