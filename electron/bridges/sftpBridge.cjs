@@ -501,8 +501,11 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
           );
           if (result?.passphrase) {
             connOpts.passphrase = result.passphrase;
-          } else if (result?.cancelled) {
-            throw new Error(`Passphrase entry cancelled for ${hopLabel}`);
+          } else {
+            delete connOpts.privateKey;
+            if (result?.cancelled) {
+              throw new Error(`Passphrase entry cancelled for ${hopLabel}`);
+            }
           }
         }
       }
@@ -938,8 +941,11 @@ async function openSftp(event, options) {
       );
       if (result?.passphrase) {
         connectOpts.passphrase = result.passphrase;
-      } else if (result?.cancelled) {
-        throw new Error(`Passphrase entry cancelled for ${options.hostname}`);
+      } else {
+        delete connectOpts.privateKey;
+        if (result?.cancelled) {
+          throw new Error(`Passphrase entry cancelled for ${options.hostname}`);
+        }
       }
     }
   }

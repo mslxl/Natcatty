@@ -402,11 +402,14 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           );
           if (result?.passphrase) {
             connOpts.passphrase = result.passphrase;
-          } else if (result?.cancelled) {
-            throw new Error(`Passphrase entry cancelled for ${hopLabel}`);
+          } else {
+            // No passphrase (cancelled/skipped/timeout) — remove the encrypted
+            // key so buildAuthHandler won't try it and stall auth.
+            delete connOpts.privateKey;
+            if (result?.cancelled) {
+              throw new Error(`Passphrase entry cancelled for ${hopLabel}`);
+            }
           }
-          // If skipped/timeout, proceed without passphrase — auth will fall back
-          // to other methods (password, keyboard-interactive, default keys)
         }
       }
 
