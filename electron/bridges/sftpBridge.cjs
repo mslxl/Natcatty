@@ -951,7 +951,11 @@ async function openSftp(event, options) {
           if (connectionSocket) {
             try { connectionSocket.destroy(); } catch {}
           }
-          throw new Error(`Passphrase entry cancelled for ${options.hostname}`);
+          // Use "authentication" in the message so the SFTP frontend's
+          // isAuthError() check recognizes this and falls back to password.
+          const err = new Error(`Authentication cancelled — passphrase not provided for ${options.hostname}`);
+          err.level = 'client-authentication';
+          throw err;
         }
       }
     }
