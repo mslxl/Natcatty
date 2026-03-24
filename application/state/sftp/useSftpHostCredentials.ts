@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import type { Host, Identity, SSHKey } from "../../../domain/models";
+import { sanitizeCredentialValue } from "../../../domain/credentials";
 import { resolveHostAuth } from "../../../domain/sshAuth";
 
 interface UseSftpHostCredentialsParams {
@@ -24,7 +25,7 @@ export const useSftpHostCredentials = ({
           host: host.proxyConfig.host,
           port: host.proxyConfig.port,
           username: host.proxyConfig.username,
-          password: host.proxyConfig.password,
+          password: sanitizeCredentialValue(host.proxyConfig.password),
         }
         : undefined;
 
@@ -58,7 +59,7 @@ export const useSftpHostCredentials = ({
                   host: jumpHost.proxyConfig.host,
                   port: jumpHost.proxyConfig.port,
                   username: jumpHost.proxyConfig.username,
-                  password: jumpHost.proxyConfig.password,
+                  password: sanitizeCredentialValue(jumpHost.proxyConfig.password),
                 }
                 : undefined,
               identityFilePaths: jumpHost.identityFilePaths,

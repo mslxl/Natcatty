@@ -5,6 +5,7 @@
  */
 
 import { Host, Identity, PortForwardingRule, SSHKey } from '../../domain/models';
+import { sanitizeCredentialValue } from '../../domain/credentials';
 import { resolveHostAuth } from '../../domain/sshAuth';
 import { logger } from '../../lib/logger';
 import { netcattyBridge } from './netcattyBridge';
@@ -387,7 +388,7 @@ export const startPortForward = async (
         host: host.proxyConfig.host,
         port: host.proxyConfig.port,
         username: host.proxyConfig.username,
-        password: host.proxyConfig.password,
+        password: sanitizeCredentialValue(host.proxyConfig.password),
       }
       : undefined;
     let jumpHosts: NetcattyJumpHost[] | undefined;
@@ -422,7 +423,7 @@ export const startPortForward = async (
                 host: jumpHost.proxyConfig.host,
                 port: jumpHost.proxyConfig.port,
                 username: jumpHost.proxyConfig.username,
-                password: jumpHost.proxyConfig.password,
+                password: sanitizeCredentialValue(jumpHost.proxyConfig.password),
               }
               : undefined,
             identityFilePaths: jumpHost.identityFilePaths,
