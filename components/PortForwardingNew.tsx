@@ -130,7 +130,9 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
         const result = await startTunnel(
           rule,
           _host,
-          keys.map((k) => ({ id: k.id, privateKey: k.privateKey, passphrase: k.passphrase })),
+          hosts,
+          keys,
+          identities,
           (status, error) => {
             // Show toast on error (only once)
             if (status === "error" && error && !errorShown) {
@@ -159,7 +161,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
         });
       }
     },
-    [hosts, keys, setRuleStatus, startTunnel, t],
+    [hosts, identities, keys, setRuleStatus, startTunnel, t],
   );
 
   // Stop a port forwarding tunnel

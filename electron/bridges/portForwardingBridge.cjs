@@ -3,18 +3,37 @@
  * Extracted from main.cjs for single responsibility
  */
 
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const net = require("node:net");
 const { Client: SSHClient } = require("ssh2");
+const { NetcattyAgent } = require("./netcattyAgent.cjs");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
+const { connectThroughChain } = require("./sshBridge.cjs");
+const { createProxySocket } = require("./proxyUtils.cjs");
 const { 
   buildAuthHandler, 
   createKeyboardInteractiveHandler, 
   applyAuthToConnOpts,
   findAllDefaultPrivateKeys: findAllDefaultPrivateKeysFromHelper,
+  isKeyEncrypted,
 } = require("./sshAuthHelper.cjs");
+const passphraseHandler = require("./passphraseHandler.cjs");
 
 // Active port forwarding tunnels
 const portForwardingTunnels = new Map();
+
+function cleanupChainConnections(connections) {
+  if (!Array.isArray(connections)) return;
+  for (const chainConn of connections) {
+    try { chainConn.end(); } catch { /* ignore */ }
+  }
+}
+
+function isTunnelCancelled(tunnelState) {
+  return Boolean(tunnelState?.cancelled);
+}
 
 /**
  * Send message to renderer safely
@@ -44,11 +63,30 @@ async function startPortForward(event, payload) {
     username,
     password,
     privateKey,
+    certificate,
+    keyId,
     passphrase,
+    proxy,
+    jumpHosts = [],
+    identityFilePaths,
   } = payload;
 
   const conn = new SSHClient();
   const sender = event.sender;
+  const hasJumpHosts = jumpHosts.length > 0;
+  const hasProxy = !!proxy;
+  let chainConnections = [];
+  let connectionSocket = null;
+  const tunnelState = {
+    type,
+    conn,
+    pendingConn: null,
+    server: null,
+    chainConnections,
+    status: 'connecting',
+    webContentsId: sender.id,
+    cancelled: false,
+  };
 
   const sendStatus = (status, error = null) => {
     if (!sender.isDestroyed()) {
@@ -66,8 +104,52 @@ async function startPortForward(event, payload) {
     tryKeyboard: true,
   };
 
-  if (privateKey) {
+  const hasCertificate = typeof certificate === "string" && certificate.trim().length > 0;
+
+  if (hasCertificate) {
+    connectOpts.agent = new NetcattyAgent({
+      mode: "certificate",
+      webContents: sender,
+      meta: {
+        label: keyId || username || "",
+        certificate,
+        privateKey,
+        passphrase,
+      },
+    });
+  } else if (privateKey) {
     connectOpts.privateKey = privateKey;
+  }
+
+  // Read identity files from local paths (e.g. SSH config IdentityFile)
+  // when no explicit key/certificate was already configured.
+  if (!connectOpts.privateKey && !connectOpts.agent && identityFilePaths?.length > 0) {
+    for (const keyPath of identityFilePaths) {
+      try {
+        const resolvedPath = keyPath.startsWith("~/")
+          ? path.join(os.homedir(), keyPath.slice(2))
+          : keyPath;
+        const keyContent = await fs.promises.readFile(resolvedPath, "utf8");
+        connectOpts.privateKey = keyContent;
+        if (isKeyEncrypted(keyContent)) {
+          const result = await passphraseHandler.requestPassphrase(
+            sender,
+            resolvedPath,
+            path.basename(resolvedPath),
+            hostname,
+          );
+          if (result?.passphrase) {
+            connectOpts.passphrase = result.passphrase;
+          } else {
+            delete connectOpts.privateKey;
+            continue;
+          }
+        }
+        break;
+      } catch (err) {
+        console.warn(`[PortForward] Failed to read identity file ${keyPath}:`, err.message);
+      }
+    }
   }
   if (passphrase) {
     connectOpts.passphrase = passphrase;
@@ -76,19 +158,101 @@ async function startPortForward(event, payload) {
     connectOpts.password = password;
   }
 
-  // Get default keys
-  const defaultKeys = await findAllDefaultPrivateKeysFromHelper();
+  sendStatus('connecting');
+  portForwardingTunnels.set(tunnelId, tunnelState);
 
-  // Build auth handler using shared helper
-  const authConfig = buildAuthHandler({
-    privateKey,
-    password,
-    passphrase,
-    username: connectOpts.username,
-    logPrefix: "[PortForward]",
-    defaultKeys,
-  });
-  applyAuthToConnOpts(connectOpts, authConfig);
+  let defaultKeys = [];
+  try {
+    // Get default keys
+    defaultKeys = await findAllDefaultPrivateKeysFromHelper();
+    if (isTunnelCancelled(tunnelState)) {
+      portForwardingTunnels.delete(tunnelId);
+      return { tunnelId, success: false, cancelled: true };
+    }
+
+    // Build auth handler using shared helper
+    const authConfig = buildAuthHandler({
+      privateKey: connectOpts.privateKey,
+      password,
+      passphrase: connectOpts.passphrase,
+      agent: connectOpts.agent,
+      username: connectOpts.username,
+      logPrefix: "[PortForward]",
+      defaultKeys,
+    });
+    applyAuthToConnOpts(connectOpts, authConfig);
+    if (isTunnelCancelled(tunnelState)) {
+      portForwardingTunnels.delete(tunnelId);
+      return { tunnelId, success: false, cancelled: true };
+    }
+
+    if (hasJumpHosts) {
+      const chainResult = await connectThroughChain(
+        event,
+        {
+          hostname,
+          port,
+          username,
+          password,
+          privateKey,
+          passphrase,
+          proxy,
+          jumpHosts,
+          _defaultKeys: defaultKeys,
+          _connectionsRef: chainConnections,
+          _tunnelRef: tunnelState,
+        },
+        jumpHosts,
+        hostname,
+        port,
+        tunnelId,
+      );
+      connectionSocket = chainResult.socket;
+      chainConnections = chainResult.connections;
+      tunnelState.chainConnections = chainConnections;
+      if (isTunnelCancelled(tunnelState)) {
+        cleanupChainConnections(chainConnections);
+        portForwardingTunnels.delete(tunnelId);
+        return { tunnelId, success: false, cancelled: true };
+      }
+      connectOpts.sock = connectionSocket;
+      delete connectOpts.host;
+      delete connectOpts.port;
+    } else if (hasProxy) {
+      connectionSocket = await createProxySocket(proxy, hostname, port, {
+        onSocket: (socket) => {
+          tunnelState.pendingConn = socket;
+        },
+      });
+      if (isTunnelCancelled(tunnelState)) {
+        try { connectionSocket?.end?.(); } catch { /* ignore */ }
+        try { connectionSocket?.destroy?.(); } catch { /* ignore */ }
+        portForwardingTunnels.delete(tunnelId);
+        return { tunnelId, success: false, cancelled: true };
+      }
+      tunnelState.pendingConn = null;
+      connectOpts.sock = connectionSocket;
+      delete connectOpts.host;
+      delete connectOpts.port;
+    }
+  } catch (err) {
+    if (isTunnelCancelled(tunnelState)) {
+      portForwardingTunnels.delete(tunnelId);
+      return { tunnelId, success: false, cancelled: true };
+    }
+    tunnelState.cancelled = true;
+    if (tunnelState.pendingConn) {
+      try { tunnelState.pendingConn.end(); } catch { /* ignore */ }
+    }
+    cleanupChainConnections(tunnelState.chainConnections);
+    if (connectionSocket) {
+      try { connectionSocket.end?.(); } catch { /* ignore */ }
+      try { connectionSocket.destroy?.(); } catch { /* ignore */ }
+    }
+    portForwardingTunnels.delete(tunnelId);
+    sendStatus('error', err?.message || String(err));
+    throw err;
+  }
 
   // Handle keyboard-interactive authentication (2FA/MFA)
   conn.on("keyboard-interactive", createKeyboardInteractiveHandler({
@@ -133,20 +297,20 @@ async function startPortForward(event, payload) {
           console.error(`[PortForward] Server error:`, err.message);
           sendStatus('error', err.message);
           conn.end();
-          portForwardingTunnels.delete(tunnelId);
           settled = true;
           reject(err);
         });
 
         server.listen(localPort, bindAddress, () => {
           console.log(`[PortForward] Local forwarding active: ${bindAddress}:${localPort} -> ${remoteHost}:${remotePort}`);
-          portForwardingTunnels.set(tunnelId, {
-            type: 'local',
-            conn,
-            server,
-            status: 'active',
-            webContentsId: sender.id
-          });
+          tunnelState.type = 'local';
+          tunnelState.conn = conn;
+          tunnelState.server = server;
+          tunnelState.chainConnections = chainConnections;
+          tunnelState.status = 'active';
+          tunnelState.webContentsId = sender.id;
+          tunnelState.pendingConn = null;
+          portForwardingTunnels.set(tunnelId, tunnelState);
           sendStatus('active');
           settled = true;
           resolve({ tunnelId, success: true });
@@ -165,12 +329,14 @@ async function startPortForward(event, payload) {
           }
 
           console.log(`[PortForward] Remote forwarding active: remote ${bindAddress}:${localPort} -> local ${remoteHost}:${remotePort}`);
-          portForwardingTunnels.set(tunnelId, {
-            type: 'remote',
-            conn,
-            status: 'active',
-            webContentsId: sender.id
-          });
+          tunnelState.type = 'remote';
+          tunnelState.conn = conn;
+          tunnelState.server = null;
+          tunnelState.chainConnections = chainConnections;
+          tunnelState.status = 'active';
+          tunnelState.webContentsId = sender.id;
+          tunnelState.pendingConn = null;
+          portForwardingTunnels.set(tunnelId, tunnelState);
           sendStatus('active');
           settled = true;
           resolve({ tunnelId, success: true });
@@ -273,20 +439,20 @@ async function startPortForward(event, payload) {
           console.error(`[PortForward] SOCKS server error:`, err.message);
           sendStatus('error', err.message);
           conn.end();
-          portForwardingTunnels.delete(tunnelId);
           settled = true;
           reject(err);
         });
 
         server.listen(localPort, bindAddress, () => {
           console.log(`[PortForward] Dynamic SOCKS5 proxy active on ${bindAddress}:${localPort}`);
-          portForwardingTunnels.set(tunnelId, {
-            type: 'dynamic',
-            conn,
-            server,
-            status: 'active',
-            webContentsId: sender.id
-          });
+          tunnelState.type = 'dynamic';
+          tunnelState.conn = conn;
+          tunnelState.server = server;
+          tunnelState.chainConnections = chainConnections;
+          tunnelState.status = 'active';
+          tunnelState.webContentsId = sender.id;
+          tunnelState.pendingConn = null;
+          portForwardingTunnels.set(tunnelId, tunnelState);
           sendStatus('active');
           settled = true;
           resolve({ tunnelId, success: true });
@@ -301,7 +467,7 @@ async function startPortForward(event, payload) {
       console.error(`[PortForward] SSH error:`, err.message);
       if (settled) return;
       sendStatus('error', err.message);
-      portForwardingTunnels.delete(tunnelId);
+      cleanupChainConnections(chainConnections);
       settled = true;
       reject(err);
     });
@@ -314,6 +480,12 @@ async function startPortForward(event, payload) {
       if (tunnel) {
         if (tunnel.server) {
           try { tunnel.server.close(); } catch { }
+        }
+        if (Array.isArray(tunnel.chainConnections)) {
+          cleanupChainConnections(tunnel.chainConnections);
+        }
+        if (tunnel.pendingConn) {
+          try { tunnel.pendingConn.end(); } catch { /* ignore */ }
         }
         sendStatus('inactive');
         portForwardingTunnels.delete(tunnelId);
@@ -330,18 +502,6 @@ async function startPortForward(event, payload) {
       }
     });
 
-    sendStatus('connecting');
-    // Register the connection BEFORE the handshake starts so that
-    // stopPortForwardByRuleId can find and kill it at any point,
-    // including during the SSH handshake window.  The conn.on('ready')
-    // handler updates the entry to include the server object later.
-    portForwardingTunnels.set(tunnelId, {
-      type,
-      conn,
-      server: null,
-      status: 'connecting',
-      webContentsId: sender.id,
-    });
     conn.connect(connectOpts);
   });
 }
@@ -364,6 +524,10 @@ async function stopPortForward(event, payload) {
     if (tunnel.server) {
       tunnel.server.close();
     }
+    if (tunnel.pendingConn) {
+      tunnel.pendingConn.end();
+    }
+    cleanupChainConnections(tunnel.chainConnections);
     if (tunnel.conn) {
       tunnel.conn.end();
     }
@@ -418,6 +582,10 @@ function stopAllPortForwards() {
       if (tunnel.server) {
         tunnel.server.close();
       }
+      if (tunnel.pendingConn) {
+        tunnel.pendingConn.end();
+      }
+      cleanupChainConnections(tunnel.chainConnections);
       if (tunnel.conn) {
         tunnel.conn.end();
       }
@@ -447,6 +615,8 @@ function stopPortForwardByRuleId(_event, { ruleId }) {
         // close handler resolves gracefully instead of rejecting.
         tunnel.cancelled = true;
         if (tunnel.server) tunnel.server.close();
+        if (tunnel.pendingConn) tunnel.pendingConn.end();
+        cleanupChainConnections(tunnel.chainConnections);
         if (tunnel.conn) tunnel.conn.end();
         // Don't delete here — let the conn.on('close') handler delete
         // the entry so it can read tunnel.cancelled first.
