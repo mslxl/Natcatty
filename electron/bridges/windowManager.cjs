@@ -5,7 +5,12 @@
 
 const path = require("node:path");
 const fs = require("node:fs");
-const globalShortcutBridge = require("./globalShortcutBridge.cjs");
+
+const V8_CACHE_OPTIONS = "bypassHeatCheck";
+
+function getGlobalShortcutBridge() {
+  return require("./globalShortcutBridge.cjs");
+}
 
 // Theme colors configuration
 const THEME_COLORS = {
@@ -443,6 +448,7 @@ function createAppWindowOpenHandler(shell, { backgroundColor, appIcon }) {
           nodeIntegration: false,
           // Sandboxed because this window renders remote content and does not need a preload bridge.
           sandbox: true,
+          v8CacheOptions: V8_CACHE_OPTIONS,
         },
       },
     };
@@ -687,6 +693,7 @@ async function createWindow(electronModule, options) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      v8CacheOptions: V8_CACHE_OPTIONS,
     },
   });
 
@@ -782,7 +789,7 @@ async function createWindow(electronModule, options) {
   // Save state when window is about to close
   win.on("close", (event) => {
     // Check if close-to-tray is enabled
-    if (!isQuitting && globalShortcutBridge.handleWindowClose(event, win)) {
+    if (!isQuitting && getGlobalShortcutBridge().handleWindowClose(event, win)) {
       // Window was hidden to tray - save state before returning
       if (saveStateTimer) clearTimeout(saveStateTimer);
       const state = getWindowBoundsState(win, lastNormalBounds);
@@ -955,6 +962,7 @@ async function openSettingsWindow(electronModule, options) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      v8CacheOptions: V8_CACHE_OPTIONS,
     },
   });
 

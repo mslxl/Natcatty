@@ -130,6 +130,16 @@ try {
 
 // Apply ssh2 protocol patch needed for OpenSSH sk-* signature layouts.
 
+function createLazyModule(modulePath) {
+  let cachedModule = null;
+  return () => {
+    if (!cachedModule) {
+      cachedModule = require(modulePath);
+    }
+    return cachedModule;
+  };
+}
+
 // Import bridge modules
 const sshBridge = require("./bridges/sshBridge.cjs");
 const sftpBridge = require("./bridges/sftpBridge.cjs");
@@ -137,22 +147,22 @@ const localFsBridge = require("./bridges/localFsBridge.cjs");
 const transferBridge = require("./bridges/transferBridge.cjs");
 const portForwardingBridge = require("./bridges/portForwardingBridge.cjs");
 const terminalBridge = require("./bridges/terminalBridge.cjs");
-const oauthBridge = require("./bridges/oauthBridge.cjs");
-const githubAuthBridge = require("./bridges/githubAuthBridge.cjs");
-const googleAuthBridge = require("./bridges/googleAuthBridge.cjs");
-const onedriveAuthBridge = require("./bridges/onedriveAuthBridge.cjs");
-const cloudSyncBridge = require("./bridges/cloudSyncBridge.cjs");
-const fileWatcherBridge = require("./bridges/fileWatcherBridge.cjs");
-const tempDirBridge = require("./bridges/tempDirBridge.cjs");
-const sessionLogsBridge = require("./bridges/sessionLogsBridge.cjs");
 const sessionLogStreamManager = require("./bridges/sessionLogStreamManager.cjs");
-const compressUploadBridge = require("./bridges/compressUploadBridge.cjs");
-const globalShortcutBridge = require("./bridges/globalShortcutBridge.cjs");
-const credentialBridge = require("./bridges/credentialBridge.cjs");
-const autoUpdateBridge = require("./bridges/autoUpdateBridge.cjs");
-const aiBridge = require("./bridges/aiBridge.cjs");
 // crashLogBridge is required at the top of the file (before error handlers)
-const windowManager = require("./bridges/windowManager.cjs");
+const getOauthBridge = createLazyModule("./bridges/oauthBridge.cjs");
+const getGithubAuthBridge = createLazyModule("./bridges/githubAuthBridge.cjs");
+const getGoogleAuthBridge = createLazyModule("./bridges/googleAuthBridge.cjs");
+const getOnedriveAuthBridge = createLazyModule("./bridges/onedriveAuthBridge.cjs");
+const getCloudSyncBridge = createLazyModule("./bridges/cloudSyncBridge.cjs");
+const getFileWatcherBridge = createLazyModule("./bridges/fileWatcherBridge.cjs");
+const getTempDirBridge = createLazyModule("./bridges/tempDirBridge.cjs");
+const getSessionLogsBridge = createLazyModule("./bridges/sessionLogsBridge.cjs");
+const getCompressUploadBridge = createLazyModule("./bridges/compressUploadBridge.cjs");
+const getGlobalShortcutBridge = createLazyModule("./bridges/globalShortcutBridge.cjs");
+const getCredentialBridge = createLazyModule("./bridges/credentialBridge.cjs");
+const getAutoUpdateBridge = createLazyModule("./bridges/autoUpdateBridge.cjs");
+const getAiBridge = createLazyModule("./bridges/aiBridge.cjs");
+const getWindowManager = createLazyModule("./bridges/windowManager.cjs");
 
 // GPU settings
 // NOTE: Do not disable Chromium sandbox by default.
@@ -384,6 +394,19 @@ const registerBridges = (win) => {
 
   const { ipcMain } = electronModule;
   const { safeStorage } = electronModule;
+  const oauthBridge = getOauthBridge();
+  const githubAuthBridge = getGithubAuthBridge();
+  const googleAuthBridge = getGoogleAuthBridge();
+  const onedriveAuthBridge = getOnedriveAuthBridge();
+  const cloudSyncBridge = getCloudSyncBridge();
+  const fileWatcherBridge = getFileWatcherBridge();
+  const tempDirBridge = getTempDirBridge();
+  const sessionLogsBridge = getSessionLogsBridge();
+  const compressUploadBridge = getCompressUploadBridge();
+  const globalShortcutBridge = getGlobalShortcutBridge();
+  const credentialBridge = getCredentialBridge();
+  const autoUpdateBridge = getAutoUpdateBridge();
+  const aiBridge = getAiBridge();
 
   const getCloudSyncPasswordPath = () => {
     try {
@@ -485,7 +508,7 @@ const registerBridges = (win) => {
   // Settings window handler
   ipcMain.handle("netcatty:settings:open", async () => {
     try {
-      await windowManager.openSettingsWindow(electronModule, {
+      await getWindowManager().openSettingsWindow(electronModule, {
         preload,
         devServerUrl: effectiveDevServerUrl,
         isDev,
@@ -719,7 +742,7 @@ const registerBridges = (win) => {
     
     const client = require("./bridges/sftpBridge.cjs");
     // Use tempDirBridge for dedicated Netcatty temp directory
-    const localPath = await tempDirBridge.getTempFilePath(fileName);
+    const localPath = await getTempDirBridge().getTempFilePath(fileName);
     
     console.log(`[Main]   Local temp path: ${localPath}`);
     
@@ -758,7 +781,7 @@ const registerBridges = (win) => {
   // only carries the resolved temp path. Cancellation is NOT an error here —
   // the UI already transitions the task to "cancelled" via the dedicated event.
   ipcMain.handle("netcatty:sftp:downloadToTempWithProgress", async (event, { sftpId, remotePath, fileName, encoding, transferId }) => {
-    const localPath = await tempDirBridge.getTempFilePath(fileName);
+    const localPath = await getTempDirBridge().getTempFilePath(fileName);
     const cleanupPartialDownload = async () => {
       try {
         await fs.promises.rm(localPath, { force: true });
@@ -799,7 +822,7 @@ const registerBridges = (win) => {
   ipcMain.handle("netcatty:deleteTempFile", async (_event, { filePath }) => {
     try {
       // Only allow deleting files in Netcatty temp directory for security
-      const netcattyTempDir = path.resolve(tempDirBridge.getTempDir());
+      const netcattyTempDir = path.resolve(getTempDirBridge().getTempDir());
       const resolvedPath = path.resolve(String(filePath || ""));
       if (!isPathInside(netcattyTempDir, resolvedPath)) {
         console.warn(`[Main] Refused to delete file outside Netcatty temp dir: ${filePath}`);
@@ -823,7 +846,7 @@ const registerBridges = (win) => {
  * Create the main application window
  */
 async function createWindow() {
-  const win = await windowManager.createWindow(electronModule, {
+  const win = await getWindowManager().createWindow(electronModule, {
     preload,
     devServerUrl: effectiveDevServerUrl,
     isDev,
@@ -882,11 +905,12 @@ if (!gotLock) {
     }
 
     // Build and set application menu
-    const menu = windowManager.buildAppMenu(Menu, app, isMac);
+    const menu = getWindowManager().buildAppMenu(Menu, app, isMac);
     Menu.setApplicationMenu(menu);
 
     app.on("browser-window-created", (_event, win) => {
       try {
+        const windowManager = getWindowManager();
         const mainWin = windowManager.getMainWindow();
         const settingsWin = windowManager.getSettingsWindow();
         const isPrimary = win === mainWin || win === settingsWin;
@@ -905,7 +929,7 @@ if (!gotLock) {
     void createWindow().then(() => {
       // Trigger auto-update check 5 s after window creation.
       // startAutoCheck() is a no-op on unsupported platforms (Linux deb/rpm/snap).
-      autoUpdateBridge.startAutoCheck(5000);
+      getAutoUpdateBridge().startAutoCheck(5000);
     }).catch((err) => {
       console.error("[Main] Failed to create main window:", err);
       showStartupError(err);
@@ -919,7 +943,7 @@ if (!gotLock) {
       // If the main window was hidden (e.g. "close to tray"), clicking the Dock icon
       // should bring it back. Fallback to creating a new window if none exists.
       try {
-        const mainWin = windowManager.getMainWindow?.();
+        const mainWin = getWindowManager().getMainWindow?.();
         if (mainWin && !mainWin.isDestroyed?.()) {
           if (mainWin.isMinimized?.()) mainWin.restore();
           mainWin.show?.();
@@ -949,7 +973,7 @@ if (!gotLock) {
   });
 
   app.on("before-quit", () => {
-    windowManager.setIsQuitting(true);
+    getWindowManager().setIsQuitting(true);
   });
 
   // Cleanup all PTY sessions and port forwarding tunnels before quitting
@@ -970,12 +994,12 @@ if (!gotLock) {
       console.warn("Error during port forwarding cleanup:", err);
     }
     try {
-      globalShortcutBridge.cleanup();
+      getGlobalShortcutBridge().cleanup();
     } catch (err) {
       console.warn("Error during global shortcut cleanup:", err);
     }
     try {
-      aiBridge.cleanup();
+      getAiBridge().cleanup();
     } catch (err) {
       console.warn("Error during AI bridge cleanup:", err);
     }
