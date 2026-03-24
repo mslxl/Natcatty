@@ -1731,11 +1731,32 @@ function registerHandlers(ipcMain) {
     }
     let abortController = null;
     try {
+      const existingRun = acpChatRuns.get(chatSessionId);
+      if (existingRun && existingRun.requestId !== requestId) {
+        existingRun.cancelRequested = true;
+        const existingController = acpActiveStreams.get(existingRun.requestId);
+        if (existingController) {
+          existingController.abort();
+          acpActiveStreams.delete(existingRun.requestId);
+        }
+        acpRequestSessions.delete(existingRun.requestId);
+        cleanupAcpProvider(chatSessionId);
+      }
+
       mcpServerBridge.setChatSessionCancelled?.(chatSessionId, false);
+      abortController = new AbortController();
+      acpActiveStreams.set(requestId, abortController);
+      acpRequestSessions.set(requestId, chatSessionId);
+      acpChatRuns.set(chatSessionId, { requestId, cancelRequested: false });
+
+      const shouldAbortStartup = () =>
+        Boolean(abortController?.signal?.aborted || mcpServerBridge.isChatSessionCancelled?.(chatSessionId));
+
       const { createACPProvider } = require("@mcpc-tech/acp-ai-provider");
       const { streamText, stepCountIs } = require("ai");
 
       const shellEnv = await getShellEnv();
+      if (shouldAbortStartup()) return { ok: true };
       const sessionCwd = cwd || process.cwd();
       const isCodexAgent = acpCommand === "codex-acp";
       const isClaudeAgent = acpCommand === "claude-agent-acp";
@@ -1746,6 +1767,7 @@ function registerHandlers(ipcMain) {
 
       if (isCodexAgent && !apiKey) {
         const validation = await validateCodexChatGptAuth({ maxAgeMs: 10000 });
+        if (shouldAbortStartup()) return { ok: true };
         if (!validation.ok) {
           if (isCodexAuthError(validation)) {
             try {
@@ -1768,6 +1790,7 @@ function registerHandlers(ipcMain) {
       const mcpSnapshot = isCodexAgent
         ? await resolveCodexMcpSnapshot(sessionCwd)
         : { mcpServers: [], fingerprint: getCodexMcpFingerprint([]) };
+      if (shouldAbortStartup()) return { ok: true };
 
       // Inject Netcatty MCP server for scoped terminal-session access
       try {
@@ -1778,23 +1801,12 @@ function registerHandlers(ipcMain) {
       } catch (err) {
         console.error("[ACP] Failed to inject Netcatty MCP server:", err?.message || err);
       }
+      if (shouldAbortStartup()) return { ok: true };
 
       // Recalculate fingerprint after injection
       mcpSnapshot.fingerprint = getCodexMcpFingerprint(mcpSnapshot.mcpServers);
 
       const currentPermissionMode = mcpServerBridge.getPermissionMode();
-      const existingRun = acpChatRuns.get(chatSessionId);
-      if (existingRun && existingRun.requestId !== requestId) {
-        existingRun.cancelRequested = true;
-        const existingController = acpActiveStreams.get(existingRun.requestId);
-        if (existingController) {
-          existingController.abort();
-          acpActiveStreams.delete(existingRun.requestId);
-        }
-        acpRequestSessions.delete(existingRun.requestId);
-        cleanupAcpProvider(chatSessionId);
-      }
-
       let providerEntry = acpProviders.get(chatSessionId);
       const shouldForceProviderReset = acpForceProviderReset.has(chatSessionId);
       const shouldReuseProvider = Boolean(
@@ -1857,6 +1869,7 @@ function registerHandlers(ipcMain) {
       let modelInstance = providerEntry.provider.languageModel(model || undefined);
       try {
         await providerEntry.provider.initSession(providerEntry.provider.tools);
+        if (shouldAbortStartup()) return { ok: true };
       } catch (err) {
         const attemptedResumeSessionId = providerEntry.provider?.getSessionId?.() || existingSessionId;
         if (!attemptedResumeSessionId || !isUnsupportedLoadSessionError(err)) {
@@ -1898,6 +1911,7 @@ function registerHandlers(ipcMain) {
         acpProviders.set(chatSessionId, providerEntry);
         modelInstance = providerEntry.provider.languageModel(model || undefined);
         await providerEntry.provider.initSession(providerEntry.provider.tools);
+        if (shouldAbortStartup()) return { ok: true };
       }
       const activeProviderSessionId = providerEntry.provider.getSessionId?.() || null;
       if (activeProviderSessionId) {
@@ -1906,11 +1920,6 @@ function registerHandlers(ipcMain) {
           event: { type: "session-id", sessionId: activeProviderSessionId },
         });
       }
-
-      abortController = new AbortController();
-      acpActiveStreams.set(requestId, abortController);
-      acpRequestSessions.set(requestId, chatSessionId);
-      acpChatRuns.set(chatSessionId, { requestId, cancelRequested: false });
 
       // Prepend context hint so the agent uses Netcatty MCP tools for the scoped sessions
       const contextualPrompt =

@@ -74,14 +74,14 @@ function buildWrappedCommand(command, shellKind, marker) {
       const psPager = "$env:PAGER='cat'; $env:SYSTEMD_PAGER=''; $env:GIT_PAGER='cat'; $env:LESS=''; ";
       const psEscaped = escapePowerShellSingleQuoted(command);
       return (
-        `$${marker}=0; $${marker}_cmd='${psEscaped}'; Write-Host '> ${psEscaped}'; & { Write-Output '${marker}_S'; ${psPager}try { Invoke-Expression $${marker}_cmd; $${marker}_rc = if ($LASTEXITCODE -ne $null) { $LASTEXITCODE } elseif ($?) { 0 } else { 1 } } catch { $${marker}_rc = 1 }; Write-Output "${marker}_E:$${marker}_rc" }\r\n`
+        `$${marker}=0; $${marker}_cmd='${psEscaped}'; Write-Host '> ${psEscaped}'; & { Write-Output '${marker}_S'; ${psPager}$LASTEXITCODE=$null; try { Invoke-Expression $${marker}_cmd; $${marker}_rc = if ($LASTEXITCODE -ne $null) { $LASTEXITCODE } elseif ($?) { 0 } else { 1 } } catch { $${marker}_rc = 1 }; Write-Output "${marker}_E:$${marker}_rc" }\r\n`
       );
     }
 
     case "cmd": {
       const cmdEscaped = escapeCmdForNestedShell(command);
       return (
-        `set "${marker}=0" & set "${marker}_CMD=${cmdEscaped}" & <nul set /p "=^> %${marker}_CMD%" & echo( & (echo ${marker}_S & set "PAGER=cat" & set "SYSTEMD_PAGER=" & set "GIT_PAGER=cat" & set "LESS=" & call cmd /d /s /c "%%${marker}_CMD%%" & call echo ${marker}_E:^%errorlevel^%)\r\n`
+        `set "${marker}=0" & set "${marker}_CMD=${cmdEscaped}" & call <nul set /p "=^> %%${marker}_CMD%%" & echo( & (echo ${marker}_S & set "PAGER=cat" & set "SYSTEMD_PAGER=" & set "GIT_PAGER=cat" & set "LESS=" & call cmd /d /s /c "%%${marker}_CMD%%" & call echo ${marker}_E:^%errorlevel^%)\r\n`
       );
     }
 
