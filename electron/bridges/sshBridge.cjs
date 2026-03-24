@@ -505,13 +505,23 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           reject(new Error(errMsg));
         });
         // Handle keyboard-interactive authentication for jump hosts (2FA/MFA)
-        conn.on('keyboard-interactive', createKeyboardInteractiveHandler({
+        const chainKiHandler = createKeyboardInteractiveHandler({
           sender,
           sessionId,
           hostname: hopLabel,
           password: jump.password,
           logPrefix: `[Chain] Hop ${i + 1}/${totalHops}`,
-        }));
+        });
+        conn.on('keyboard-interactive', (name, instructions, lang, prompts, finish) => {
+          if (prompts && prompts.length > 0) {
+            sendProgress(i + 1, totalHops + 1, hopLabel, 'auth-attempt', 'waiting for user input...');
+          }
+          const wrappedFinish = (...args) => {
+            sendProgress(i + 1, totalHops + 1, hopLabel, 'auth-attempt', 'user responded');
+            finish(...args);
+          };
+          chainKiHandler(name, instructions, lang, prompts, wrappedFinish);
+        });
         console.log(`[Chain] Hop ${i + 1}/${totalHops}: Connecting to ${hopLabel}...`);
         conn.connect(connOpts);
       });

@@ -616,13 +616,23 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
           reject(new Error(`Connection timeout to ${hopLabel}`));
         });
         // Handle keyboard-interactive authentication for jump hosts (2FA/MFA)
-        conn.on('keyboard-interactive', createKeyboardInteractiveHandler({
+        const sftpChainKiHandler = createKeyboardInteractiveHandler({
           sender,
           sessionId: connId,
           hostname: hopLabel,
           password: jump.password,
           logPrefix: `[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}`,
-        }));
+        });
+        conn.on('keyboard-interactive', (name, instructions, lang, prompts, finish) => {
+          if (prompts && prompts.length > 0) {
+            sendSftpProgress(sender, connId, hopLabel, 'auth-attempt', 'waiting for user input...');
+          }
+          const wrappedFinish = (...args) => {
+            sendSftpProgress(sender, connId, hopLabel, 'auth-attempt', 'user responded');
+            finish(...args);
+          };
+          sftpChainKiHandler(name, instructions, lang, prompts, wrappedFinish);
+        });
         conn.connect(connOpts);
       });
 
@@ -1075,7 +1085,17 @@ async function openSftp(event, options) {
   });
 
   // Add keyboard-interactive listener BEFORE connecting
-  client.on("keyboard-interactive", kiHandler);
+  // Wrap to emit progress events for the SFTP connection log
+  client.on("keyboard-interactive", (name, instructions, lang, prompts, finish) => {
+    if (prompts && prompts.length > 0) {
+      sendSftpProgress(event.sender, connId, options.hostname, 'auth-attempt', 'waiting for user input...');
+    }
+    const wrappedFinish = (...args) => {
+      sendSftpProgress(event.sender, connId, options.hostname, 'auth-attempt', 'user responded');
+      finish(...args);
+    };
+    kiHandler(name, instructions, lang, prompts, wrappedFinish);
+  });
 
   // Increase timeout to allow for keyboard-interactive auth
   connectOpts.readyTimeout = 120000; // 2 minutes for 2FA input
