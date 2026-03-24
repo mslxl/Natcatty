@@ -31,6 +31,10 @@ function cleanupChainConnections(connections) {
   }
 }
 
+function isTunnelCancelled(tunnelState) {
+  return Boolean(tunnelState?.cancelled);
+}
+
 /**
  * Send message to renderer safely
  */
@@ -161,6 +165,10 @@ async function startPortForward(event, payload) {
   try {
     // Get default keys
     defaultKeys = await findAllDefaultPrivateKeysFromHelper();
+    if (isTunnelCancelled(tunnelState)) {
+      portForwardingTunnels.delete(tunnelId);
+      return { tunnelId, success: false, cancelled: true };
+    }
 
     // Build auth handler using shared helper
     const authConfig = buildAuthHandler({
@@ -173,6 +181,10 @@ async function startPortForward(event, payload) {
       defaultKeys,
     });
     applyAuthToConnOpts(connectOpts, authConfig);
+    if (isTunnelCancelled(tunnelState)) {
+      portForwardingTunnels.delete(tunnelId);
+      return { tunnelId, success: false, cancelled: true };
+    }
 
     if (hasJumpHosts) {
       const chainResult = await connectThroughChain(
@@ -198,11 +210,22 @@ async function startPortForward(event, payload) {
       connectionSocket = chainResult.socket;
       chainConnections = chainResult.connections;
       tunnelState.chainConnections = chainConnections;
+      if (isTunnelCancelled(tunnelState)) {
+        cleanupChainConnections(chainConnections);
+        portForwardingTunnels.delete(tunnelId);
+        return { tunnelId, success: false, cancelled: true };
+      }
       connectOpts.sock = connectionSocket;
       delete connectOpts.host;
       delete connectOpts.port;
     } else if (hasProxy) {
       connectionSocket = await createProxySocket(proxy, hostname, port);
+      if (isTunnelCancelled(tunnelState)) {
+        try { connectionSocket?.end?.(); } catch { /* ignore */ }
+        try { connectionSocket?.destroy?.(); } catch { /* ignore */ }
+        portForwardingTunnels.delete(tunnelId);
+        return { tunnelId, success: false, cancelled: true };
+      }
       connectOpts.sock = connectionSocket;
       delete connectOpts.host;
       delete connectOpts.port;

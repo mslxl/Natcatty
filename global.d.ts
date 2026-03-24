@@ -131,6 +131,7 @@ declare global {
   interface PortForwardResult {
     tunnelId: string;
     success: boolean;
+    cancelled?: boolean;
     error?: string;
   }
 
