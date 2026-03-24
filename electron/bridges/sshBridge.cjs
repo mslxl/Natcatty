@@ -387,7 +387,27 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         connOpts.agent = authAgent;
       } else if (jump.privateKey) {
         connOpts.privateKey = jump.privateKey;
-        if (jump.passphrase) connOpts.passphrase = jump.passphrase;
+        if (jump.passphrase) {
+          connOpts.passphrase = jump.passphrase;
+        } else if (isKeyEncrypted(jump.privateKey)) {
+          // Key is encrypted but no passphrase provided — prompt the user
+          console.log(`[Chain] Hop ${i + 1}: key is encrypted, requesting passphrase`);
+          sendProgress(i + 1, totalHops + 1, hopLabel, 'auth-attempt', 'passphrase required');
+          const keyLabel = jump.label || hopLabel;
+          const result = await passphraseHandler.requestPassphrase(
+            sender,
+            `SSH key for ${keyLabel}`,
+            jump.keyId || `hop-${i + 1}-key`,
+            hopLabel
+          );
+          if (result?.passphrase) {
+            connOpts.passphrase = result.passphrase;
+          } else if (result?.cancelled) {
+            throw new Error(`Passphrase entry cancelled for ${hopLabel}`);
+          }
+          // If skipped/timeout, proceed without passphrase — auth will fall back
+          // to other methods (password, keyboard-interactive, default keys)
+        }
       }
 
       if (jump.password) connOpts.password = jump.password;
