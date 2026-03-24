@@ -390,9 +390,16 @@ export const startPortForward = async (
         password: host.proxyConfig.password,
       }
       : undefined;
-    const jumpHosts = host.hostChain?.hostIds?.length
-      ? host.hostChain.hostIds
-        .map((hostId) => hosts.find((candidate) => candidate.id === hostId))
+    let jumpHosts: NetcattyJumpHost[] | undefined;
+    if (host.hostChain?.hostIds?.length) {
+      const resolvedJumpHosts = host.hostChain.hostIds.map((hostId) =>
+        hosts.find((candidate) => candidate.id === hostId),
+      );
+      const missingJumpHostIds = host.hostChain.hostIds.filter((_, index) => !resolvedJumpHosts[index]);
+      if (missingJumpHostIds.length > 0) {
+        throw new Error(`Missing jump host configuration for host chain: ${missingJumpHostIds.join(", ")}`);
+      }
+      jumpHosts = resolvedJumpHosts
         .filter((jumpHost): jumpHost is Host => Boolean(jumpHost))
         .map((jumpHost) => {
           const jumpResolved = resolveHostAuth({ host: jumpHost, keys, identities });
@@ -411,8 +418,8 @@ export const startPortForward = async (
             label: jumpHost.label,
             identityFilePaths: jumpHost.identityFilePaths,
           };
-        })
-      : undefined;
+        });
+    }
     
     // Subscribe to status updates first
     const unsubscribe = bridge.onPortForwardStatus?.(tunnelId, (status, error) => {

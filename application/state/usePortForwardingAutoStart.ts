@@ -83,6 +83,17 @@ export const usePortForwardingAutoStart = ({
     if (autoStartExecutedRef.current) return;
     if (hosts.length === 0) return;
 
+    const storedRules = localStorageAdapter.read<PortForwardingRule[]>(
+      STORAGE_KEY_PORT_FORWARDING,
+    ) ?? [];
+    const pendingAutoStartRules = storedRules.filter((rule) => rule.autoStart && rule.hostId);
+    if (pendingAutoStartRules.some((rule) => {
+      const host = hosts.find((candidate) => candidate.id === rule.hostId);
+      return !host || !isHostAuthReady(host);
+    })) {
+      return;
+    }
+
     // Mark as executed immediately to prevent duplicate runs
     // (React StrictMode or dependency changes could cause re-runs)
     autoStartExecutedRef.current = true;
@@ -146,3 +157,23 @@ export const usePortForwardingAutoStart = ({
     void runAutoStart();
   }, [hosts, identities, keys]);
 };
+  const isHostAuthReady = (host: Host, seen = new Set<string>()): boolean => {
+    if (!host || seen.has(host.id)) return true;
+    seen.add(host.id);
+
+    if (host.identityId && !identitiesRef.current.some((identity) => identity.id === host.identityId)) {
+      return false;
+    }
+    if (host.identityFileId && !keysRef.current.some((key) => key.id === host.identityFileId)) {
+      return false;
+    }
+
+    const chainIds = host.hostChain?.hostIds || [];
+    for (const chainId of chainIds) {
+      const chainHost = hostsRef.current.find((candidate) => candidate.id === chainId);
+      if (!chainHost) return false;
+      if (!isHostAuthReady(chainHost, seen)) return false;
+    }
+
+    return true;
+  };
