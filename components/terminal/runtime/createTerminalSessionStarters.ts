@@ -436,6 +436,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
               logLine = `${prefix}${label} - ✗ ${error}`;
             } else if (error === 'all methods exhausted') {
               logLine = `${prefix}${label} - ✗ All authentication methods exhausted`;
+            } else if (error === 'waiting for user input...' || error === 'user responded') {
+              logLine = `${prefix}${label} - ${error}`;
             } else {
               logLine = `${prefix}${label} - ${tr("terminal.progress.trying", "Trying")} ${error}...`;
             }

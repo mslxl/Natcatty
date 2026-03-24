@@ -239,6 +239,8 @@ export const useSftpConnections = ({
                   logLine = `${label} - ✗ ${detail}`;
                 } else if (detail === 'all methods exhausted') {
                   logLine = `${label} - ✗ All authentication methods exhausted`;
+                } else if (detail === 'waiting for user input...' || detail === 'user responded') {
+                  logLine = `${label} - ${detail}`;
                 } else {
                   logLine = `${label} - Trying ${detail}...`;
                 }
@@ -450,6 +452,7 @@ export const useSftpConnections = ({
             files,
             loading: false,
             reconnecting: false,
+            connectionLogs: [], // Clear after successful connect to avoid replay during navigation
           }));
         } catch (err) {
           if (navSeqRef.current[side] !== connectRequestId) return;

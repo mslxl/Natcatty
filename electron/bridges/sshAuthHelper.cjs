@@ -265,15 +265,6 @@ function buildAuthHandler(options) {
     if (password) authMethods.push("password");
     authMethods.push("keyboard-interactive");
 
-    // Notify which methods will be tried (array handler doesn't have per-attempt callbacks)
-    if (onAuthAttempt) {
-      for (const m of authMethods) {
-        if (m === "publickey") onAuthAttempt("configured key");
-        else if (m === "agent") onAuthAttempt("SSH agent");
-        else onAuthAttempt(m);
-      }
-    }
-
     return {
       authHandler: authMethods,
       privateKey: effectivePrivateKey,
