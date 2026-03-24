@@ -1140,6 +1140,7 @@ async function openSftp(event, options) {
 
       sshClient.once('ready', () => {
         cleanup();
+        sendSftpProgress(event.sender, connId, options.hostname, 'connected');
 
         if (options.sudo) {
           console.log(`[SFTP] Using sudo mode for connection: ${connId}`);

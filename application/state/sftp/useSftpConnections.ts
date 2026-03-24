@@ -159,6 +159,7 @@ export const useSftpConnections = ({
           loading: true,
           reconnecting: false,
           error: null,
+          connectionLogs: [],
           filenameEncoding, // Reset encoding for new connection
         }));
 
@@ -251,6 +252,8 @@ export const useSftpConnections = ({
               default:
                 logLine = `${label} - ${status}${detail ? `: ${detail}` : ''}`;
             }
+            // Only update if this is still the active request (avoids stale logs leaking)
+            if (navSeqRef.current[side] !== connectRequestId) return;
             updateTab(side, activeTabId, (prev) => ({
               ...prev,
               connectionLogs: [...prev.connectionLogs, logLine],
