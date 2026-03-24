@@ -675,6 +675,24 @@ const registerBridges = (win) => {
     return result.filePath;
   });
 
+  // Select a file and return the selected path
+  ipcMain.handle("netcatty:selectFile", async (_event, { title, defaultPath, filters }) => {
+    const { dialog } = electronModule;
+
+    const result = await dialog.showOpenDialog({
+      title: title || "Select File",
+      defaultPath: defaultPath || os.homedir(),
+      filters: filters || [{ name: "All Files", extensions: ["*"] }],
+      properties: ["openFile", "showHiddenFiles"],
+    });
+
+    if (result.canceled || !result.filePaths.length) {
+      return null;
+    }
+
+    return result.filePaths[0];
+  });
+
   // Select a directory and return the selected path
   ipcMain.handle("netcatty:selectDirectory", async (_event, { title, defaultPath }) => {
     const { dialog } = electronModule;

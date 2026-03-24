@@ -38,6 +38,7 @@ declare global {
     keyId?: string;
     keySource?: 'generated' | 'imported';
     label?: string; // Display label for UI
+    identityFilePaths?: string[];
   }
 
   // Host key information for verification
@@ -84,6 +85,8 @@ declare global {
     sudo?: boolean;
     // Session log configuration for real-time streaming
     sessionLog?: { enabled: boolean; directory: string; format: string };
+    // Local SSH key file paths (from SSH config IdentityFile)
+    identityFilePaths?: string[];
   }
 
   interface SftpStatResult {
@@ -579,6 +582,7 @@ declare global {
     // Save dialog for file downloads
     showSaveDialog?(defaultPath: string, filters?: Array<{ name: string; extensions: string[] }>): Promise<string | null>;
     selectDirectory?(title?: string, defaultPath?: string): Promise<string | null>;
+    selectFile?(title?: string, defaultPath?: string, filters?: Array<{ name: string; extensions: string[] }>): Promise<string | null>;
 
     // File watcher for auto-sync feature
     startFileWatch?(localPath: string, remotePath: string, sftpId: string, encoding?: SftpFilenameEncoding): Promise<{ watchId: string }>;
