@@ -1224,6 +1224,14 @@ async function startSSHSession(event, options) {
       });
 
       conn.on("error", (err) => {
+        // Guard against duplicate error handling — after the first error we
+        // already rejected the promise and notified the renderer.  Subsequent
+        // errors (e.g. ECONNRESET after an auth failure) should only be logged.
+        if (settled) {
+          console.warn(`${logPrefix} ${options.hostname} late error (ignored):`, err.message);
+          return;
+        }
+
         const contents = event.sender;
 
         const isAuthError = err.message?.toLowerCase().includes('authentication') ||
@@ -1253,6 +1261,9 @@ async function startSSHSession(event, options) {
         for (const c of chainConnections) {
           try { c.end(); } catch { }
         }
+        // Destroy the connection to prevent further socket errors from leaking
+        // as uncaught exceptions (e.g. ECONNRESET on embedded devices).
+        try { conn.destroy(); } catch { }
         settled = true;
         reject(err);
       });
@@ -1270,6 +1281,7 @@ async function startSSHSession(event, options) {
         for (const c of chainConnections) {
           try { c.end(); } catch { }
         }
+        try { conn.destroy(); } catch { }
         settled = true;
         reject(err);
       });
@@ -1619,7 +1631,11 @@ async function startSSHSessionWrapper(event, options) {
                 authError.isAuthError = true;
                 throw authError;
               }
-              throw retryErr;
+              // Wrap non-auth retry errors as connection errors to prevent crash
+              const connError = new Error(retryErr.message);
+              connError.level = retryErr.level || 'client-socket';
+              connError.code = retryErr.code;
+              throw connError;
             }
           } else {
             console.log('[SSH] User did not unlock any keys, not retrying');
@@ -1634,7 +1650,15 @@ async function startSSHSessionWrapper(event, options) {
       authError.isAuthError = true;
       throw authError;
     }
-    throw err;
+
+    // Non-auth errors (e.g. ECONNRESET, ETIMEDOUT) — wrap in a clean Error
+    // so Electron's ipcMain.handle can serialize it back to the renderer
+    // instead of it becoming an uncaught exception that crashes the app.
+    // See: https://github.com/nicely-gg/netcatty/issues/482
+    const connError = new Error(err.message);
+    connError.level = err.level || 'client-socket';
+    connError.code = err.code;
+    throw connError;
   }
 }
 
