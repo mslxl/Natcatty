@@ -1070,10 +1070,17 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     term.focus();
   }, [scrollToBottomAfterProgrammaticInput, terminalBackend]);
 
+  // Only register the snippet executor once the terminal session is ready.
+  // Before that, TerminalLayer falls back to raw writeToSession which is the
+  // correct path for sessions that are still connecting.
   useEffect(() => {
+    if (status !== "connected") {
+      onSnippetExecutorChange?.(sessionId, null);
+      return;
+    }
     onSnippetExecutorChange?.(sessionId, executeSnippetCommand);
     return () => onSnippetExecutorChange?.(sessionId, null);
-  }, [executeSnippetCommand, onSnippetExecutorChange, sessionId]);
+  }, [executeSnippetCommand, onSnippetExecutorChange, sessionId, status]);
 
   const terminalContextActions = useTerminalContextActions({
     termRef,
