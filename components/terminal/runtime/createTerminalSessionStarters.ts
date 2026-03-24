@@ -582,6 +582,18 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           }
         }, 600);
       }
+
+      // Run OS detection only after successful connection
+      setTimeout(
+        () =>
+          void runDistroDetection(ctx, {
+            username: effectiveUsername,
+            password: usedPassword,
+            key: usedKey,
+            passphrase: effectivePassphrase,
+          }),
+        600,
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const authError = isAuthError(err);
@@ -607,17 +619,6 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       ctx.setChainProgress(null);
       if (unsubscribeChainProgress) unsubscribeChainProgress();
     }
-
-    setTimeout(
-      () =>
-        void runDistroDetection(ctx, {
-          username: effectiveUsername,
-          password: usedPassword,
-          key: usedKey,
-          passphrase: effectivePassphrase,
-        }),
-      600,
-    );
   };
 
   const startTelnet = async (term: XTerm) => {

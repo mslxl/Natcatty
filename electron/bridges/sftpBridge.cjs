@@ -983,6 +983,11 @@ async function openSftp(event, options) {
         sshClient.removeListener('error', onError);
         sshClient.removeListener('end', onEnd);
         sshClient.removeListener('close', onClose);
+        // Keep a catch-all error listener so post-ready errors (e.g. connection
+        // drops during an active SFTP session) don't become uncaught exceptions.
+        sshClient.on('error', (err) => {
+          console.error(`[SFTP] Post-ready SSH error for ${connId}:`, err.message);
+        });
       };
 
       sshClient.on('error', onError);
