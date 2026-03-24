@@ -60,6 +60,7 @@ const MAX_CONCURRENT_AGENTS = 5;
 const acpProviders = new Map();
 const acpActiveStreams = new Map();
 const acpRequestSessions = new Map();
+const acpPendingCancelRequests = new Set();
 const acpForceProviderReset = new Set();
 const acpChatRuns = new Map();
 
@@ -1749,8 +1750,15 @@ function registerHandlers(ipcMain) {
       acpRequestSessions.set(requestId, chatSessionId);
       acpChatRuns.set(chatSessionId, { requestId, cancelRequested: false });
 
+      const consumePendingStartupCancel = () => {
+        if (!acpPendingCancelRequests.has(requestId)) return false;
+        acpPendingCancelRequests.delete(requestId);
+        abortController?.abort();
+        return true;
+      };
+
       const shouldAbortStartup = () =>
-        Boolean(abortController?.signal?.aborted || mcpServerBridge.isChatSessionCancelled?.(chatSessionId));
+        Boolean(abortController?.signal?.aborted || consumePendingStartupCancel());
 
       const { createACPProvider } = require("@mcpc-tech/acp-ai-provider");
       const { streamText, stepCountIs } = require("ai");
@@ -2080,6 +2088,7 @@ function registerHandlers(ipcMain) {
     } finally {
       acpActiveStreams.delete(requestId);
       acpRequestSessions.delete(requestId);
+      acpPendingCancelRequests.delete(requestId);
       const activeRun = acpChatRuns.get(chatSessionId);
       if (activeRun?.requestId === requestId) {
         if (abortController?.signal?.aborted || activeRun.cancelRequested) {
@@ -2109,6 +2118,9 @@ function registerHandlers(ipcMain) {
     if (controller) {
       controller.abort();
       acpActiveStreams.delete(effectiveRequestId);
+      cancelled = true;
+    } else if (effectiveRequestId) {
+      acpPendingCancelRequests.add(effectiveRequestId);
       cancelled = true;
     }
     if (effectiveChatSessionId) {
