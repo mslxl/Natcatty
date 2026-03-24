@@ -28,10 +28,6 @@ export const useSftpHostCredentials = ({
           password: sanitizeCredentialValue(host.proxyConfig.password),
         }
         : undefined;
-      if (host.proxyConfig?.username && isEncryptedCredentialPlaceholder(host.proxyConfig.password) && !proxyConfig?.password) {
-        throw new Error("Proxy credentials cannot be decrypted on this device. Open host settings and re-enter the proxy password.");
-      }
-
       let jumpHosts: NetcattyJumpHost[] | undefined;
       if (host.hostChain?.hostIds && host.hostChain.hostIds.length > 0) {
         jumpHosts = host.hostChain.hostIds
@@ -75,6 +71,10 @@ export const useSftpHostCredentials = ({
               identityFilePaths: jumpHost.identityFilePaths,
             };
           });
+      }
+      const usesTargetProxyForFirstHop = !!proxyConfig && !jumpHosts?.[0]?.proxy;
+      if (usesTargetProxyForFirstHop && host.proxyConfig?.username && isEncryptedCredentialPlaceholder(host.proxyConfig.password) && !proxyConfig?.password) {
+        throw new Error("Proxy credentials cannot be decrypted on this device. Open host settings and re-enter the proxy password.");
       }
 
       return {

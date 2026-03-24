@@ -391,9 +391,6 @@ export const startPortForward = async (
         password: sanitizeCredentialValue(host.proxyConfig.password),
       }
       : undefined;
-    if (host.proxyConfig?.username && isEncryptedCredentialPlaceholder(host.proxyConfig.password) && !proxy?.password) {
-      throw new Error('Proxy credentials cannot be decrypted on this device. Open host settings and re-enter the proxy password.');
-    }
     let jumpHosts: NetcattyJumpHost[] | undefined;
     if (host.hostChain?.hostIds?.length) {
       const resolvedJumpHosts = host.hostChain.hostIds.map((hostId) =>
@@ -439,6 +436,10 @@ export const startPortForward = async (
             identityFilePaths: jumpHost.identityFilePaths,
           };
         });
+    }
+    const usesTargetProxyForFirstHop = !!proxy && !jumpHosts?.[0]?.proxy;
+    if (usesTargetProxyForFirstHop && host.proxyConfig?.username && isEncryptedCredentialPlaceholder(host.proxyConfig.password) && !proxy?.password) {
+      throw new Error('Proxy credentials cannot be decrypted on this device. Open host settings and re-enter the proxy password.');
     }
     
     // Subscribe to status updates first

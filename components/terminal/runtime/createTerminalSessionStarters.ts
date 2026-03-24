@@ -374,7 +374,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       };
     });
 
-    if (hasEncryptedProxyPassword && !proxyConfig?.password && proxyConfig?.username) {
+    const usesTargetProxyForFirstHop = !!proxyConfig && !jumpHosts[0]?.proxy;
+    if (usesTargetProxyForFirstHop && hasEncryptedProxyPassword && !proxyConfig?.password && proxyConfig?.username) {
       const message = tr(
         "terminal.auth.proxyCredentialsUnavailable",
         "Proxy credentials cannot be decrypted on this device. Open host settings and re-enter the proxy password.",
