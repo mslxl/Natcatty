@@ -219,13 +219,18 @@ async function startPortForward(event, payload) {
       delete connectOpts.host;
       delete connectOpts.port;
     } else if (hasProxy) {
-      connectionSocket = await createProxySocket(proxy, hostname, port);
+      connectionSocket = await createProxySocket(proxy, hostname, port, {
+        onSocket: (socket) => {
+          tunnelState.pendingConn = socket;
+        },
+      });
       if (isTunnelCancelled(tunnelState)) {
         try { connectionSocket?.end?.(); } catch { /* ignore */ }
         try { connectionSocket?.destroy?.(); } catch { /* ignore */ }
         portForwardingTunnels.delete(tunnelId);
         return { tunnelId, success: false, cancelled: true };
       }
+      tunnelState.pendingConn = null;
       connectOpts.sock = connectionSocket;
       delete connectOpts.host;
       delete connectOpts.port;
