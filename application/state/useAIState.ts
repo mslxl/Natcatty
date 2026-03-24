@@ -12,6 +12,7 @@ import {
   STORAGE_KEY_AI_COMMAND_TIMEOUT,
   STORAGE_KEY_AI_MAX_ITERATIONS,
   STORAGE_KEY_AI_SESSIONS,
+  STORAGE_KEY_AI_ACTIVE_SESSION_MAP,
   STORAGE_KEY_AI_AGENT_MODEL_MAP,
   STORAGE_KEY_AI_WEB_SEARCH,
 } from '../../infrastructure/config/storageKeys';
@@ -32,11 +33,52 @@ function getAIBridge() {
   return (window as unknown as { netcatty?: Record<string, (...args: unknown[]) => unknown> }).netcatty;
 }
 
+const AI_STATE_CHANGED_EVENT = 'netcatty:ai-state-changed';
+
+function emitAIStateChanged(key: string) {
+  window.dispatchEvent(new CustomEvent<{ key: string }>(AI_STATE_CHANGED_EVENT, { detail: { key } }));
+}
+
 function cleanupAcpSessions(sessionIds: string[]) {
   const bridge = getAIBridge();
   if (!bridge?.aiAcpCleanup || sessionIds.length === 0) return;
   for (const sessionId of sessionIds) {
     void bridge.aiAcpCleanup(sessionId).catch(() => {});
+  }
+}
+
+export function cleanupOrphanedAISessions(activeTargetIds: Set<string>) {
+  const storedSessions = localStorageAdapter.read<AISession[]>(STORAGE_KEY_AI_SESSIONS) ?? [];
+  const removedSessionIds = storedSessions
+    .filter((session) => session.scope.targetId && !activeTargetIds.has(session.scope.targetId))
+    .map((session) => session.id);
+
+  if (removedSessionIds.length === 0) return;
+
+  cleanupAcpSessions(removedSessionIds);
+
+  const nextSessions = storedSessions.filter((session) => {
+    if (!session.scope.targetId) return true;
+    return activeTargetIds.has(session.scope.targetId);
+  });
+  localStorageAdapter.write(STORAGE_KEY_AI_SESSIONS, pruneSessionsForStorage(nextSessions));
+  emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
+
+  const activeSessionIdMap =
+    localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP) ?? {};
+  let activeSessionMapChanged = false;
+  const nextActiveSessionIdMap = { ...activeSessionIdMap };
+
+  for (const [scopeKey, sessionId] of Object.entries(activeSessionIdMap)) {
+    if (sessionId && removedSessionIds.includes(sessionId)) {
+      nextActiveSessionIdMap[scopeKey] = null;
+      activeSessionMapChanged = true;
+    }
+  }
+
+  if (activeSessionMapChanged) {
+    localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, nextActiveSessionIdMap);
+    emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
   }
 }
 
@@ -117,7 +159,9 @@ export function useAIState() {
     sessionsRef.current = sessions;
   }, [sessions]);
   // Per-scope active session: keyed by `${scopeType}:${scopeTargetId}`
-  const [activeSessionIdMap, setActiveSessionIdMapRaw] = useState<Record<string, string | null>>({});
+  const [activeSessionIdMap, setActiveSessionIdMapRaw] = useState<Record<string, string | null>>(() =>
+    localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP) ?? {}
+  );
 
   // Per-agent model selection: remembers last selected model per agent
   const [agentModelMap, setAgentModelMapRaw] = useState<Record<string, string>>(() =>
@@ -130,7 +174,12 @@ export function useAIState() {
   );
 
   const setActiveSessionId = useCallback((scopeKey: string, id: string | null) => {
-    setActiveSessionIdMapRaw(prev => ({ ...prev, [scopeKey]: id }));
+    setActiveSessionIdMapRaw(prev => {
+      const next = { ...prev, [scopeKey]: id };
+      localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, next);
+      emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
+      return next;
+    });
   }, []);
 
   const setAgentModel = useCallback((agentId: string, modelId: string) => {
@@ -306,6 +355,9 @@ export function useAIState() {
           case STORAGE_KEY_AI_AGENT_MODEL_MAP:
             setAgentModelMapRaw(localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_AI_AGENT_MODEL_MAP) ?? {});
             break;
+          case STORAGE_KEY_AI_ACTIVE_SESSION_MAP:
+            setActiveSessionIdMapRaw(localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP) ?? {});
+            break;
           case STORAGE_KEY_AI_WEB_SEARCH:
             setWebSearchConfigRaw(localStorageAdapter.read<WebSearchConfig>(STORAGE_KEY_AI_WEB_SEARCH) ?? null);
             break;
@@ -315,7 +367,16 @@ export function useAIState() {
       }
     };
     window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
+    const handleLocalStateChanged = (event: Event) => {
+      const key = (event as CustomEvent<{ key?: string }>).detail?.key;
+      if (!key) return;
+      handleStorage({ key } as StorageEvent);
+    };
+    window.addEventListener(AI_STATE_CHANGED_EVENT, handleLocalStateChanged);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener(AI_STATE_CHANGED_EVENT, handleLocalStateChanged);
+    };
   }, []);
 
   // ── Sync initial safety settings to MCP Server on mount ──
@@ -396,7 +457,12 @@ export function useAIState() {
     });
     if (scopeKey) {
       setActiveSessionIdMapRaw(prev => {
-        if (prev[scopeKey] === sessionId) return { ...prev, [scopeKey]: null };
+        if (prev[scopeKey] === sessionId) {
+          const next = { ...prev, [scopeKey]: null };
+          localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, next);
+          emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
+          return next;
+        }
         return prev;
       });
     }
@@ -420,7 +486,12 @@ export function useAIState() {
     });
     const scopeKey = `${scopeType}:${targetId}`;
     setActiveSessionIdMapRaw(prev => {
-      if (prev[scopeKey] != null) return { ...prev, [scopeKey]: null };
+      if (prev[scopeKey] != null) {
+        const next = { ...prev, [scopeKey]: null };
+        localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, next);
+        emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
+        return next;
+      }
       return prev;
     });
   }, [persistSessions]);
@@ -509,23 +580,12 @@ export function useAIState() {
   }, [persistSessions]);
 
   const cleanupOrphanedSessions = useCallback((activeTargetIds: Set<string>) => {
-    const removedSessionIds = sessionsRef.current
-      .filter(s => s.scope.targetId && !activeTargetIds.has(s.scope.targetId))
-      .map(s => s.id);
-    cleanupAcpSessions(removedSessionIds);
-    setSessionsRaw(prev => {
-      const next = prev.filter(s => {
-        // Keep sessions without a targetId (global scope)
-        if (!s.scope.targetId) return true;
-        // Keep sessions whose target still exists
-        return activeTargetIds.has(s.scope.targetId);
-      });
-      if (next.length !== prev.length) {
-        persistSessions(next);
-      }
-      return next;
-    });
-  }, [persistSessions]);
+    cleanupOrphanedAISessions(activeTargetIds);
+    setSessionsRaw(localStorageAdapter.read<AISession[]>(STORAGE_KEY_AI_SESSIONS) ?? []);
+    setActiveSessionIdMapRaw(
+      localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP) ?? {},
+    );
+  }, []);
 
   // ── Provider CRUD helpers ──
   const addProvider = useCallback((provider: ProviderConfig) => {

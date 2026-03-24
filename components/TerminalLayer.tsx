@@ -28,7 +28,7 @@ import { SftpSidePanel } from './SftpSidePanel';
 import { ScriptsSidePanel } from './ScriptsSidePanel';
 import { ThemeSidePanel } from './terminal/ThemeSidePanel';
 import { AIChatSidePanel } from './AIChatSidePanel';
-import { useAIState } from '../application/state/useAIState';
+import { cleanupOrphanedAISessions, useAIState } from '../application/state/useAIState';
 import { TerminalComposeBar } from './terminal/TerminalComposeBar';
 import { TERMINAL_THEMES } from '../infrastructure/config/terminalThemes';
 import { useCustomThemes } from '../application/state/customThemeStore';
@@ -125,7 +125,6 @@ interface AIChatPanelsHostProps {
   activeTabId: string | null;
   activeSidePanelTab: SidePanelTab | null;
   contextsByTabId: Map<string, AIPanelContext>;
-  activeTargetIds: Set<string>;
   resolveExecutorContext: (scope: {
     type: 'terminal' | 'workspace';
     targetId?: string;
@@ -138,15 +137,9 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
   activeTabId,
   activeSidePanelTab,
   contextsByTabId,
-  activeTargetIds,
   resolveExecutorContext,
 }) => {
   const aiState = useAIState();
-  const { cleanupOrphanedSessions } = aiState;
-
-  useEffect(() => {
-    cleanupOrphanedSessions(activeTargetIds);
-  }, [cleanupOrphanedSessions, activeTargetIds]);
 
   return (
     <>
@@ -733,6 +726,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     setSftpHostForTab(prev => filterTabsMap(prev, validTerminalTabIds));
     setSftpInitialLocationForTab(prev => filterTabsMap(prev, validTerminalTabIds));
     setSftpPendingUploadsForTab(prev => filterTabsMap(prev, validTerminalTabIds));
+  }, [validTerminalTabIds]);
+
+  useEffect(() => {
+    cleanupOrphanedAISessions(validTerminalTabIds);
   }, [validTerminalTabIds]);
 
   const computeWorkspaceRects = useCallback((workspace?: Workspace, size?: { width: number; height: number }): Record<string, WorkspaceRect> => {
@@ -1636,7 +1633,6 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                     activeTabId={activeTabId}
                     activeSidePanelTab={activeSidePanelTab}
                     contextsByTabId={aiContextsByTabId}
-                    activeTargetIds={validTerminalTabIds}
                     resolveExecutorContext={resolveAIExecutorContext}
                   />
                 </div>
