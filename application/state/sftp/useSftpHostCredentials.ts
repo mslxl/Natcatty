@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import type { Host, Identity, SSHKey } from "../../../domain/models";
-import { sanitizeCredentialValue } from "../../../domain/credentials";
+import { isEncryptedCredentialPlaceholder, sanitizeCredentialValue } from "../../../domain/credentials";
 import { resolveHostAuth } from "../../../domain/sshAuth";
 
 interface UseSftpHostCredentialsParams {
@@ -28,6 +28,9 @@ export const useSftpHostCredentials = ({
           password: sanitizeCredentialValue(host.proxyConfig.password),
         }
         : undefined;
+      if (host.proxyConfig?.username && isEncryptedCredentialPlaceholder(host.proxyConfig.password) && !proxyConfig?.password) {
+        throw new Error("Proxy credentials cannot be decrypted on this device. Open host settings and re-enter the proxy password.");
+      }
 
       let jumpHosts: NetcattyJumpHost[] | undefined;
       if (host.hostChain?.hostIds && host.hostChain.hostIds.length > 0) {
@@ -41,6 +44,13 @@ export const useSftpHostCredentials = ({
               identities,
             });
             const jumpKey = jumpAuth.key;
+            if (
+              jumpHost.proxyConfig?.username &&
+              isEncryptedCredentialPlaceholder(jumpHost.proxyConfig.password) &&
+              !sanitizeCredentialValue(jumpHost.proxyConfig.password)
+            ) {
+              throw new Error(`Proxy credentials for jump host "${jumpHost.label || jumpHost.hostname}" cannot be decrypted on this device. Open host settings and re-enter the proxy password.`);
+            }
             return {
               hostname: jumpHost.hostname,
               port: jumpHost.port || 22,

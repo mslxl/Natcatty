@@ -340,7 +340,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const hasEncryptedJumpCredential =
         isEncryptedCredentialPlaceholder(rawJumpPassword) ||
         isEncryptedCredentialPlaceholder(rawJumpPrivateKey) ||
-        isEncryptedCredentialPlaceholder(rawJumpPassphrase);
+        isEncryptedCredentialPlaceholder(rawJumpPassphrase) ||
+        (Boolean(jumpHost.proxyConfig?.username) && isEncryptedCredentialPlaceholder(jumpHost.proxyConfig?.password));
 
       if (hasEncryptedJumpCredential && !jumpPassword && !jumpPrivateKey) {
         jumpHostsWithUnavailableCredentials.push(jumpHost.label || jumpHost.hostname);
