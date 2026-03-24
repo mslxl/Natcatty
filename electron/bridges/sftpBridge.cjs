@@ -22,12 +22,14 @@ try {
 const { NetcattyAgent } = require("./netcattyAgent.cjs");
 const fileWatcherBridge = require("./fileWatcherBridge.cjs");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
+const passphraseHandler = require("./passphraseHandler.cjs");
 const { createProxySocket } = require("./proxyUtils.cjs");
 const {
   buildAuthHandler,
   createKeyboardInteractiveHandler,
   applyAuthToConnOpts,
   safeSend: authSafeSend,
+  isKeyEncrypted,
   findAllDefaultPrivateKeys: findAllDefaultPrivateKeysFromHelper,
   getAvailableAgentSocket,
 } = require("./sshAuthHelper.cjs");
@@ -485,7 +487,27 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
         connOpts.agent = authAgent;
       } else if (jump.privateKey) {
         connOpts.privateKey = jump.privateKey;
-        if (jump.passphrase) connOpts.passphrase = jump.passphrase;
+        if (jump.passphrase) {
+          connOpts.passphrase = jump.passphrase;
+        } else if (isKeyEncrypted(jump.privateKey)) {
+          // Key is encrypted but no passphrase provided — prompt the user
+          console.log(`[SFTP Chain] Hop ${i + 1}: key is encrypted, requesting passphrase`);
+          const keyLabel = jump.label || hopLabel;
+          const result = await passphraseHandler.requestPassphrase(
+            sender,
+            `SSH key for ${keyLabel}`,
+            keyLabel,
+            hopLabel
+          );
+          if (result?.passphrase) {
+            connOpts.passphrase = result.passphrase;
+          } else {
+            delete connOpts.privateKey;
+            if (result?.cancelled) {
+              throw new Error(`Passphrase entry cancelled for ${hopLabel}`);
+            }
+          }
+        }
       }
 
       if (jump.password) connOpts.password = jump.password;
@@ -906,7 +928,37 @@ async function openSftp(event, options) {
     connectOpts.agent = authAgent;
   } else if (options.privateKey) {
     connectOpts.privateKey = options.privateKey;
-    if (options.passphrase) connectOpts.passphrase = options.passphrase;
+    if (options.passphrase) {
+      connectOpts.passphrase = options.passphrase;
+    } else if (isKeyEncrypted(options.privateKey)) {
+      // Key is encrypted but no passphrase provided — prompt the user
+      console.log(`[SFTP] Key is encrypted, requesting passphrase for ${options.hostname}`);
+      const result = await passphraseHandler.requestPassphrase(
+        event.sender,
+        `SSH key for ${options.hostname}`,
+        options.hostname,
+        options.hostname
+      );
+      if (result?.passphrase) {
+        connectOpts.passphrase = result.passphrase;
+      } else {
+        delete connectOpts.privateKey;
+        if (result?.cancelled) {
+          // Clean up any chain/proxy connections and proxy socket opened earlier
+          for (const c of chainConnections) {
+            try { c.end(); } catch {}
+          }
+          if (connectionSocket) {
+            try { connectionSocket.destroy(); } catch {}
+          }
+          // Use "authentication" in the message so the SFTP frontend's
+          // isAuthError() check recognizes this and falls back to password.
+          const err = new Error(`Authentication cancelled — passphrase not provided for ${options.hostname}`);
+          err.level = 'client-authentication';
+          throw err;
+        }
+      }
+    }
   }
 
   if (options.password) connectOpts.password = options.password;
