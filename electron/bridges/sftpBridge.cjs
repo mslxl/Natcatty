@@ -529,7 +529,7 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
               );
               if (result?.passphrase) {
                 connOpts.passphrase = result.passphrase;
-              } else if (result?.cancelled) {
+              } else {
                 delete connOpts.privateKey;
                 continue;
               }
@@ -1012,7 +1012,7 @@ async function openSftp(event, options) {
           );
           if (result?.passphrase) {
             connectOpts.passphrase = result.passphrase;
-          } else if (result?.cancelled) {
+          } else {
             delete connectOpts.privateKey;
             continue;
           }

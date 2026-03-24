@@ -433,7 +433,8 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
               );
               if (result?.passphrase) {
                 connOpts.passphrase = result.passphrase;
-              } else if (result?.cancelled) {
+              } else {
+                // Cancelled/skipped/timeout — clear encrypted key, try next file
                 delete connOpts.privateKey;
                 continue;
               }
@@ -667,8 +668,8 @@ async function startSSHSession(event, options) {
             );
             if (result?.passphrase) {
               connectOpts.passphrase = result.passphrase;
-            } else if (result?.cancelled) {
-              // User cancelled — clear the key so auth falls back to other methods
+            } else {
+              // Cancelled/skipped/timeout — clear encrypted key, try next file
               delete connectOpts.privateKey;
               continue;
             }

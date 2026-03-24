@@ -52,6 +52,7 @@ export const useSftpHostCredentials = ({
               keyId: jumpAuth.keyId,
               keySource: jumpKey?.source,
               label: jumpHost.label,
+              identityFilePaths: jumpHost.identityFilePaths,
             };
           });
       }
