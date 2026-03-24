@@ -579,7 +579,8 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
       applyAuthToConnOpts(connOpts, authConfig);
 
       // If first hop and proxy is configured, connect through proxy
-      const effectiveHopProxy = isFirst ? (jump.proxy || options.proxy) : null;
+      const hasUsableJumpProxy = !!(jump.proxy?.host && jump.proxy?.port);
+      const effectiveHopProxy = isFirst ? ((hasUsableJumpProxy ? jump.proxy : null) || options.proxy) : null;
       if (effectiveHopProxy) {
         currentSocket = await createProxySocket(effectiveHopProxy, jump.hostname, jump.port || 22);
         connOpts.sock = currentSocket;

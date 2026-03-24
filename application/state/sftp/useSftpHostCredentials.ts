@@ -60,7 +60,7 @@ export const useSftpHostCredentials = ({
               keyId: jumpAuth.keyId,
               keySource: jumpKey?.source,
               label: jumpHost.label,
-              proxy: jumpHost.proxyConfig
+              proxy: jumpHost.proxyConfig?.host && jumpHost.proxyConfig?.port
                 ? {
                   type: jumpHost.proxyConfig.type,
                   host: jumpHost.proxyConfig.host,
