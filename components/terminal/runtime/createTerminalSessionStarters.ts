@@ -358,6 +358,15 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         keyId: jumpAuth.keyId,
         keySource: jumpKey?.source,
         label: jumpHost.label,
+        proxy: jumpHost.proxyConfig
+          ? {
+            type: jumpHost.proxyConfig.type,
+            host: jumpHost.proxyConfig.host,
+            port: jumpHost.proxyConfig.port,
+            username: jumpHost.proxyConfig.username,
+            password: sanitizeCredentialValue(jumpHost.proxyConfig.password),
+          }
+          : undefined,
         identityFilePaths: jumpHost.identityFilePaths,
       };
     });
