@@ -1651,8 +1651,8 @@ async function getServerStats(event, payload) {
     `echo "CPURAW:$cpuraw|CORES:$cores|PERCORERAW:$percoreraw|MEMINFO:$meminfo|PROCS:$procs|DISKS:$disks|NET:$net"`
   ].join('; ');
 
-  // Auto-detect OS via uname instead of relying on host.os setting
-  const statsCommand = `ostype=$(uname -s 2>/dev/null || echo "Linux"); if [ "$ostype" = "Darwin" ]; then ${macosStatsCommand}; else ${linuxStatsCommand}; fi`;
+  // Auto-detect OS via uname — only Linux and macOS are supported
+  const statsCommand = `ostype=$(uname -s 2>/dev/null || echo "Unknown"); if [ "$ostype" = "Darwin" ]; then ${macosStatsCommand}; elif [ "$ostype" = "Linux" ]; then ${linuxStatsCommand}; else echo "UNSUPPORTED_OS:$ostype"; fi`;
   return new Promise((resolve) => {
     const timeout = setTimeout(() => {
       resolve({ success: false, error: 'Timeout getting server stats' });
@@ -1681,6 +1681,13 @@ async function getServerStats(event, payload) {
 
         // Parse the output
         const output = stdout.trim();
+
+        // Unsupported OS — stop polling this session
+        if (output.startsWith('UNSUPPORTED_OS:')) {
+          resolve({ success: false, error: `Server stats not supported on this OS (${output.substring(15)})` });
+          return;
+        }
+
         const parts = output.split('|');
 
         let cpuDirect = null;    // macOS: direct CPU percentage from top
@@ -1920,6 +1927,12 @@ async function getServerStats(event, payload) {
         const diskPercent = rootDisk ? rootDisk.percent : null;
         const diskUsed = rootDisk ? rootDisk.used : null;
         const diskTotal = rootDisk ? rootDisk.total : null;
+
+        // If no meaningful data was parsed, treat as failure to stop futile polling
+        if (cpu === null && memTotal === null && cpuCores === null) {
+          resolve({ success: false, error: 'Unable to parse server stats (unsupported OS or shell)' });
+          return;
+        }
 
         resolve({
           success: true,
