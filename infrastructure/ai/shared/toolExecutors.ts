@@ -31,6 +31,7 @@ export interface ToolDeps {
   commandBlocklist?: string[];
   permissionMode: AIPermissionMode;
   webSearchConfig?: WebSearchConfig;
+  chatSessionId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -82,7 +83,7 @@ export async function executeTerminalExecute(
     return { ok: false, error: `Command blocked by safety policy. Matched pattern: ${safety.matchedPattern}` };
   }
 
-  const result = await bridge.aiExec(sessionId, command);
+  const result = await bridge.aiExec(sessionId, command, deps.chatSessionId);
   // Real execution failures (timeout, disconnect, no stream) have an `error` field
   if (!result.ok && result.error) {
     const parts = [result.error];

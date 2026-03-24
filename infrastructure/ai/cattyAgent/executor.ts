@@ -17,6 +17,7 @@ export interface NetcattyBridge {
   aiExec(
     sessionId: string,
     command: string,
+    chatSessionId?: string,
   ): Promise<{
     ok: boolean;
     stdout?: string;
@@ -82,6 +83,7 @@ export function createToolExecutor(
   commandBlocklist?: string[],
   permissionMode: AIPermissionMode = 'confirm',
   webSearchConfig?: WebSearchConfig,
+  chatSessionId?: string,
 ): (toolCall: ToolCall) => Promise<ToolResult> {
   return async (toolCall: ToolCall): Promise<ToolResult> => {
     if (!bridge) {
@@ -92,7 +94,7 @@ export function createToolExecutor(
       };
     }
 
-    const deps: ToolDeps = { bridge, context, commandBlocklist, permissionMode, webSearchConfig };
+    const deps: ToolDeps = { bridge, context, commandBlocklist, permissionMode, webSearchConfig, chatSessionId };
     const args = toolCall.arguments;
 
     try {

@@ -43,53 +43,89 @@ function subscribeToPtyData(ptyStream, onData) {
   throw new Error("PTY stream does not support data subscriptions");
 }
 
+function hasExpectedPromptSuffix(text, expectedPrompt) {
+  if (!expectedPrompt) return false;
+  const normalizedText = stripAnsi(String(text || "")).replace(/\r/g, "");
+  const normalizedPrompt = stripAnsi(String(expectedPrompt || "")).replace(/\r/g, "");
+  return !!normalizedPrompt && normalizedText.endsWith(normalizedPrompt);
+}
+
+function escapePosixSingleQuoted(text) {
+  return String(text || "").replace(/'/g, "'\\''");
+}
+
+function escapePowerShellSingleQuoted(text) {
+  return String(text || "").replace(/'/g, "''");
+}
+
+function escapeFishSingleQuoted(text) {
+  return String(text || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+function escapeCmdForNestedShell(text) {
+  return String(text || "").replace(/"/g, '""').replace(/%/g, "%%");
+}
+
 function buildWrappedCommand(command, shellKind, marker) {
   switch (shellKind) {
     case "powershell": {
-      // Combine into 2 PTY lines (like posix) to minimise prompt echo duplication:
-      //   Line 1: start marker + pager env + user command
-      //   Line 2: capture exit code + end marker
+      // __NCMCP_ prefix ensures the echo line is buffered/filtered even if
+      // the PTY delivers it in small chunks (the marker must appear early).
       const psPager = "$env:PAGER='cat'; $env:SYSTEMD_PAGER=''; $env:GIT_PAGER='cat'; $env:LESS=''; ";
+      const psEscaped = escapePowerShellSingleQuoted(command);
       return (
-        `Write-Output '${marker}_S'; ${psPager}${command}\r\n` +
-        `Write-Output "${marker}_E:$LASTEXITCODE"\r\n`
+        `$${marker}=0; $${marker}_cmd='${psEscaped}'; Write-Host '> ${psEscaped}'; & { Write-Output '${marker}_S'; ${psPager}$LASTEXITCODE=$null; try { Invoke-Expression $${marker}_cmd; $${marker}_rc = if ($LASTEXITCODE -ne $null) { $LASTEXITCODE } elseif ($?) { 0 } else { 1 } } catch { $${marker}_rc = 1 }; Write-Output "${marker}_E:$${marker}_rc" }\r\n`
       );
     }
 
-    case "cmd":
-      return [
-        'set "PAGER=cat"',
-        'set "SYSTEMD_PAGER="',
-        'set "GIT_PAGER=cat"',
-        'set "LESS="',
-        `echo ${marker}_S`,
-        command,
-        `echo ${marker}_E:%errorlevel%`,
-        "",
-      ].join("\r\n");
+    case "cmd": {
+      const cmdEscaped = escapeCmdForNestedShell(command);
+      return (
+        `set "${marker}=0" & set "${marker}_CMD=${cmdEscaped}" & call <nul set /p "=^> %%${marker}_CMD%%" & echo( & (echo ${marker}_S & set "PAGER=cat" & set "SYSTEMD_PAGER=" & set "GIT_PAGER=cat" & set "LESS=" & call cmd /d /s /c "%%${marker}_CMD%%" & call echo ${marker}_E:^%errorlevel^%)\r\n`
+      );
+    }
 
     case "fish":
-      return [
-        "set -gx PAGER cat",
-        "set -gx SYSTEMD_PAGER ''",
-        "set -gx GIT_PAGER cat",
-        "set -gx LESS ''",
-        `printf '%s\\n' '${marker}_S'`,
-        command,
-        "set __NCMCP_rc $status",
-        `printf '%s\\n' '${marker}_E:'$__NCMCP_rc`,
-        "",
-      ].join("\n");
+      // set __NCMCP_... at the start ensures early marker presence in echo.
+      return (
+        `set ${marker} 0; function __ncmcp_int --on-signal INT; printf '%s\\n' '${marker}_E:130'; functions -e __ncmcp_int; end; ` +
+        // Clear the current terminal row before the user-visible echo.
+        `set -l ${marker}_cmd '${escapeFishSingleQuoted(command)}'; printf '\\r\\033[2K> %s\\n' '${escapeFishSingleQuoted(command)}'; ` +
+        `begin; set -gx PAGER cat; set -gx SYSTEMD_PAGER ''; set -gx GIT_PAGER cat; set -gx LESS ''; ` +
+        `printf '%s\\n' '${marker}_S'; eval -- \$${marker}_cmd; set __NCMCP_rc $status; ` +
+        `functions -e __ncmcp_int; printf '%s\\n' '${marker}_E:'\$__NCMCP_rc; end\n`
+      );
 
     case "posix":
     default: {
-      // Combine into 2 PTY lines to minimise prompt echo duplication:
-      //   Line 1: start marker + pager env + user command
-      //   Line 2: capture exit code + end marker + restore exit code
+      // Single-line compound command with early marker & visible command echo.
+      //
+      // Layout: __NCMCP_xxx=0; printf echo; { ... MARKER_S; eval command; MARKER_E; }
+      //
+      // Key design decisions:
+      //
+      // 1) __NCMCP_xxx=0 at the VERY START ensures the PTY echo line
+      //    contains __NCMCP_ in its first few bytes. This is critical:
+      //    preload.cjs filters chunks by buffering incomplete lines that
+      //    contain __NCMCP_. Without this prefix, the first chunk of a
+      //    long echo line might not contain the marker and would leak
+      //    through to the terminal as garbage.
+      //
+      // 2) printf clears the current row and outputs "> command\n"
+      //    (no marker) → visible to user without prompt residue.
+      //
+      // 3) The user command is executed via eval on a quoted string. This
+      //    keeps shell syntax errors inside the eval call so the wrapper
+      //    can still emit the end marker and return a non-zero exit code.
+      //
+      // 4) Single-line { ... } is parsed fully before execution, so SIGINT
+      //    cannot cause bash to flush the end marker from the input buffer.
+      //    trap ':' INT lets child processes receive SIGINT normally while
+      //    preventing the shell from aborting the compound command.
       const noPager = "PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= ";
+      const escaped = escapePosixSingleQuoted(command);
       return (
-        `printf '%s\\n' '${marker}_S';${noPager}${command}\n` +
-        `__NCMCP_rc=$?;printf '%s\\n' '${marker}_E:'"$__NCMCP_rc";(exit $__NCMCP_rc)\n`
+        `${marker}=0; ${marker}_cmd='${escaped}'; printf '\\r\\033[2K> %s\\n' '${escaped}'; { printf '%s\\n' '${marker}_S'; trap ':' INT; ${noPager}eval "$${marker}_cmd"; __NCMCP_rc=$?; trap - INT; printf '%s\\n' '${marker}_E:'\"$__NCMCP_rc\"; (exit $__NCMCP_rc); }\n`
       );
     }
   }
@@ -106,6 +142,9 @@ function buildWrappedCommand(command, shellKind, marker) {
  * @param {boolean} [options.stripMarkers=false] - Strip leaked MCP markers from output
  * @param {Map} [options.trackForCancellation] - Map to register this execution in for cancellation
  * @param {number} [options.timeoutMs=60000] - Command timeout in milliseconds
+ * @param {string} [options.chatSessionId] - Chat session ID for scoped cancellation
+ * @param {AbortSignal} [options.abortSignal] - AbortSignal to cancel execution
+ * @param {string} [options.expectedPrompt] - Last observed idle prompt for exact fallback matching
  */
 function execViaPty(ptyStream, command, options) {
   const {
@@ -113,33 +152,51 @@ function execViaPty(ptyStream, command, options) {
     trackForCancellation = null,
     timeoutMs = 60000,
     shellKind,
+    chatSessionId,
+    abortSignal,
+    expectedPrompt,
   } = options || {};
 
   const marker = `__NCMCP_${Date.now().toString(36)}_${crypto.randomBytes(16).toString('hex')}__`;
   const resolvedShellKind = shellKind || "posix";
 
+  // Fast-path: already aborted before we even start
+  if (abortSignal?.aborted) {
+    return Promise.resolve({ ok: false, stdout: "", stderr: "", exitCode: -1, error: "Cancelled" });
+  }
+
   return new Promise((resolve) => {
     let output = "";
     let foundStart = false;
     let timeoutId = null;
+    let promptFallbackTimer = null;
     let finished = false;
     let unsubscribe = null;
+    const cleanupFns = [];
+
+    // Buffer for incomplete line data when searching for start marker.
+    // SSH channels can split data at arbitrary byte boundaries, so the
+    // start marker may arrive across two chunks.  We keep the content
+    // after the last \n (i.e. the current incomplete line) and prepend
+    // it to the next chunk so indexOf can match the full marker.
+    let pendingStart = "";
 
     const onData = (data) => {
       const text = data.toString();
 
       if (!foundStart) {
-        // Look for the start marker at a line boundary (actual printf output),
-        // not inside the echo of the printf command argument.
+        const combined = pendingStart + text;
+        pendingStart = "";
         const startMarker = marker + "_S";
+        let matched = false;
         let pos = 0;
-        while (pos < text.length) {
-          const idx = text.indexOf(startMarker, pos);
+        while (pos < combined.length) {
+          const idx = combined.indexOf(startMarker, pos);
           if (idx === -1) break;
-          // Accept if at start of text, or preceded by \n or \r (line boundary)
-          if (idx === 0 || text[idx - 1] === '\n' || text[idx - 1] === '\r') {
+          if (idx === 0 || combined[idx - 1] === '\n' || combined[idx - 1] === '\r') {
             foundStart = true;
-            const afterMarker = text.slice(idx);
+            matched = true;
+            const afterMarker = combined.slice(idx);
             const nlIdx = afterMarker.indexOf("\n");
             if (nlIdx !== -1) {
               output += afterMarker.slice(nlIdx + 1);
@@ -148,13 +205,41 @@ function execViaPty(ptyStream, command, options) {
           }
           pos = idx + 1;
         }
-        if (foundStart) checkEnd();
+        if (!matched) {
+          // Keep the last incomplete line for cross-chunk matching
+          const lastNl = combined.lastIndexOf("\n");
+          pendingStart = lastNl === -1 ? combined : combined.slice(lastNl + 1);
+        }
+        if (foundStart) {
+          schedulePromptFallback();
+          checkEnd();
+        }
         return;
       }
 
       output += text;
+      schedulePromptFallback();
       checkEnd();
     };
+
+    function clearPromptFallback() {
+      if (promptFallbackTimer) {
+        clearTimeout(promptFallbackTimer);
+        promptFallbackTimer = null;
+      }
+    }
+
+    function schedulePromptFallback() {
+      clearPromptFallback();
+      if (!hasExpectedPromptSuffix(output, expectedPrompt)) return;
+
+      // Fallback for shells that visibly return to the same idle prompt but
+      // never emit the wrapped end marker line.
+      promptFallbackTimer = setTimeout(() => {
+        if (!hasExpectedPromptSuffix(output, expectedPrompt)) return;
+        finish(output, null, null);
+      }, 250);
+    }
 
     function checkEnd() {
       // Look for the end marker at a line boundary (actual printf output),
@@ -179,39 +264,43 @@ function execViaPty(ptyStream, command, options) {
       }
     }
 
-    function finish(stdout, exitCode) {
+    function finish(stdout, exitCode, error) {
       if (finished) return;
       finished = true;
       clearTimeout(timeoutId);
+      clearPromptFallback();
       unsubscribe?.();
+      for (const fn of cleanupFns) { try { fn(); } catch { /* ignore */ } }
       if (trackForCancellation) {
         trackForCancellation.delete(marker);
       }
 
-      let cleaned = stripAnsi(stdout || "").trim();
+      let cleaned = stripAnsi(stdout || "").replace(/\r/g, "");
       if (stripMarkers) {
-        cleaned = cleaned.replace(/^[^\r\n]*__NCMCP_[^\r\n]*[\r\n]*/gm, "").trim();
+        cleaned = cleaned.replace(/^[^\r\n]*__NCMCP_[^\r\n]*[\r\n]*/gm, "");
       }
-      resolve({
-        ok: exitCode === 0 || exitCode === null,
-        stdout: cleaned,
-        stderr: "",
-        exitCode: exitCode ?? 0,
-      });
+      const normalizedPrompt = stripAnsi(String(expectedPrompt || "")).replace(/\r/g, "");
+      if (normalizedPrompt && cleaned.endsWith(normalizedPrompt)) {
+        cleaned = cleaned.slice(0, cleaned.length - normalizedPrompt.length);
+      }
+      cleaned = cleaned.trim();
+      if (error) {
+        resolve({ ok: false, stdout: cleaned, stderr: "", exitCode: exitCode ?? -1, error });
+      } else {
+        resolve({
+          ok: exitCode === 0 || exitCode === null,
+          stdout: cleaned,
+          stderr: "",
+          exitCode: exitCode ?? 0,
+        });
+      }
     }
 
     timeoutId = setTimeout(() => {
-      if (finished) return;
-      finished = true;
-      unsubscribe?.();
-      if (trackForCancellation) {
-        trackForCancellation.delete(marker);
-      }
       // Send Ctrl+C to kill the timed-out command
       if (typeof ptyStream.write === "function") ptyStream.write("\x03");
-      const cleaned = stripAnsi(output).trim();
       const timeoutSec = Math.round(timeoutMs / 1000);
-      resolve({ ok: false, stdout: cleaned, stderr: "", exitCode: -1, error: `Command timed out (${timeoutSec}s)` });
+      finish(output, -1, `Command timed out (${timeoutSec}s)`);
     }, timeoutMs);
 
     unsubscribe = subscribeToPtyData(ptyStream, onData);
@@ -220,11 +309,45 @@ function execViaPty(ptyStream, command, options) {
     if (trackForCancellation) {
       trackForCancellation.set(marker, {
         ptyStream,
+        chatSessionId: chatSessionId || null,
+        cancel: () => {
+          if (typeof ptyStream.write === "function") ptyStream.write("\x03");
+          finish(output, -1, "Cancelled");
+        },
         cleanup: () => {
           clearTimeout(timeoutId);
           unsubscribe?.();
         },
       });
+    }
+
+    // Stream close/error detection — resolve immediately instead of waiting for timeout
+    if (typeof ptyStream.on === "function") {
+      const onClose = () => finish(output, null, "Stream closed unexpectedly");
+      const onError = (err) => finish(output, -1, `Stream error: ${err?.message || err}`);
+      ptyStream.on("close", onClose);
+      ptyStream.on("end", onClose);
+      ptyStream.on("error", onError);
+      cleanupFns.push(() => {
+        try { ptyStream.removeListener("close", onClose); } catch { /* */ }
+        try { ptyStream.removeListener("end", onClose); } catch { /* */ }
+        try { ptyStream.removeListener("error", onError); } catch { /* */ }
+      });
+    }
+    // node-pty uses onExit instead of close/end
+    if (typeof ptyStream.onExit === "function") {
+      const disposable = ptyStream.onExit(() => finish(output, null, "Process exited"));
+      cleanupFns.push(() => { try { disposable?.dispose?.(); } catch { /* */ } });
+    }
+
+    // AbortSignal handling — send Ctrl+C and resolve when aborted
+    if (abortSignal) {
+      const onAbort = () => {
+        if (typeof ptyStream.write === "function") ptyStream.write("\x03");
+        finish(output, -1, "Cancelled");
+      };
+      abortSignal.addEventListener("abort", onAbort, { once: true });
+      cleanupFns.push(() => abortSignal.removeEventListener("abort", onAbort));
     }
 
     // Markers are filtered from terminal display by preload.cjs (MCP_MARKER_RE).
@@ -244,6 +367,7 @@ function execViaChannel(sshClient, command, options) {
   const {
     timeoutMs = 60000,
     trackForCancellation = null,
+    chatSessionId,
   } = options || {};
 
   return new Promise((resolve) => {
@@ -276,6 +400,11 @@ function execViaChannel(sshClient, command, options) {
       }, timeoutMs);
       if (trackForCancellation) {
         trackForCancellation.set(marker, {
+          chatSessionId: chatSessionId || null,
+          cancel: () => {
+            try { execStream.close(); } catch { /* ignore */ }
+            finish({ ok: false, stdout, stderr, exitCode: -1, error: "Cancelled" });
+          },
           cleanup: () => {
             clearTimeout(timeoutId);
             try { execStream.close(); } catch { /* ignore */ }

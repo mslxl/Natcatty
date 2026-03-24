@@ -16,11 +16,42 @@ const ANSI_ESCAPE_REGEX = /\u001B\[[0-?]*[ -/]*[@-~]/g;
 const ANSI_OSC_REGEX = /\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g;
 const URL_CANDIDATE_REGEX = /https?:\/\/[^\s]+/g;
 const WINDOWS_RUNNABLE_EXTENSIONS = [".exe", ".cmd", ".bat", ".com"];
+const MAX_PROMPT_TRACK_TAIL = 4096;
 
 // ── ANSI stripping ──
 
 function stripAnsi(input) {
   return String(input || "").replace(ANSI_OSC_REGEX, "").replace(ANSI_ESCAPE_REGEX, "");
+}
+
+function extractTrailingIdlePrompt(output) {
+  const normalized = stripAnsi(output).replace(/\r/g, "");
+  if (!normalized || normalized.endsWith("\n")) return "";
+
+  const lastLine = normalized.split("\n").pop() || "";
+  const rightTrimmed = lastLine.replace(/\s+$/, "");
+  if (!rightTrimmed) return "";
+
+  if (/^[^\s@]+@[^\s:]+(?::[^\n\r]*)?[#$]$/.test(rightTrimmed)) {
+    return lastLine;
+  }
+
+  return "";
+}
+
+function trackSessionIdlePrompt(session, chunk) {
+  if (!session || typeof chunk !== "string" || !chunk) return "";
+
+  const nextTail = `${session._promptTrackTail || ""}${chunk}`.slice(-MAX_PROMPT_TRACK_TAIL);
+  session._promptTrackTail = nextTail;
+
+  const prompt = extractTrailingIdlePrompt(nextTail);
+  if (prompt) {
+    session.lastIdlePrompt = prompt;
+    session.lastIdlePromptAt = Date.now();
+  }
+
+  return prompt;
 }
 
 // ── URL helpers ──
@@ -271,6 +302,8 @@ function serializeStreamChunk(chunk) {
 
 module.exports = {
   stripAnsi,
+  extractTrailingIdlePrompt,
+  trackSessionIdlePrompt,
   isLocalhostHostname,
   extractFirstNonLocalhostUrl,
   normalizeCliPathForPlatform,
