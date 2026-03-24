@@ -537,7 +537,7 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   scrollOnOutput: false,
   scrollOnKeyPress: false,
   scrollOnPaste: true,
-  smoothScrolling: true,
+  smoothScrolling: false,
   rightClickBehavior: 'context-menu',
   copyOnSelect: false,
   middleClickPaste: true,
