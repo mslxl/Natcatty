@@ -65,6 +65,8 @@ type PendingSftpUpload = {
   entries: DropEntry[];
 };
 
+type SnippetExecutor = (command: string, noAutoRun?: boolean) => void;
+
 const filterTabsMap = <T,>(source: Map<string, T>, validIds: Set<string>): Map<string, T> => {
   let changed = false;
   const next = new Map<string, T>();
@@ -306,6 +308,15 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
   // Terminal backend for broadcast writes
   const terminalBackend = useTerminalBackend();
+  const snippetExecutorsRef = useRef<Map<string, SnippetExecutor>>(new Map());
+
+  const handleSnippetExecutorChange = useCallback((sessionId: string, executor: SnippetExecutor | null) => {
+    if (executor) {
+      snippetExecutorsRef.current.set(sessionId, executor);
+      return;
+    }
+    snippetExecutorsRef.current.delete(sessionId);
+  }, []);
 
   const [workspaceArea, setWorkspaceArea] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
   const workspaceOuterRef = useRef<HTMLDivElement>(null);
@@ -982,6 +993,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const handleSnippetClickForFocusedSession = useCallback((command: string, noAutoRun?: boolean) => {
     const sessionId = activeWorkspace?.focusedSessionId ?? activeSession?.id;
     if (!sessionId) return;
+    const executor = snippetExecutorsRef.current.get(sessionId);
+    if (executor) {
+      executor(command, noAutoRun);
+      return;
+    }
+
     let data = normalizeLineEndings(command);
     if (!noAutoRun) data = `${data}\r`;
     terminalBackend.writeToSession(sessionId, data);
@@ -1679,6 +1696,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                   onToggleComposeBar={inActiveWorkspace ? handleToggleWorkspaceComposeBar : undefined}
                   isWorkspaceComposeBarOpen={inActiveWorkspace ? isComposeBarOpen : undefined}
                   onBroadcastInput={inActiveWorkspace && activeWorkspace && isBroadcastEnabled?.(activeWorkspace.id) ? handleBroadcastInput : undefined}
+                  onSnippetExecutorChange={handleSnippetExecutorChange}
                   sessionLog={sessionLogsEnabled && sessionLogsDir ? { enabled: true, directory: sessionLogsDir, format: sessionLogsFormat || 'txt' } : undefined}
                 />
               </div>

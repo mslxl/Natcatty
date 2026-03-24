@@ -8,7 +8,7 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "
 // flushSync removed - no longer needed
 import { useI18n } from "../application/i18n/I18nProvider";
 import { logger } from "../lib/logger";
-import { cn } from "../lib/utils";
+import { cn, normalizeLineEndings, wrapBracketedPaste } from "../lib/utils";
 import {
   Host,
   Identity,
@@ -157,6 +157,10 @@ interface TerminalProps {
   onToggleComposeBar?: () => void;
   isWorkspaceComposeBarOpen?: boolean;
   onBroadcastInput?: (data: string, sourceSessionId: string) => void;
+  onSnippetExecutorChange?: (
+    sessionId: string,
+    executor: ((command: string, noAutoRun?: boolean) => void) | null,
+  ) => void;
   // Session log configuration for real-time streaming
   sessionLog?: { enabled: boolean; directory: string; format: string };
 }
@@ -216,6 +220,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   onToggleComposeBar,
   isWorkspaceComposeBarOpen,
   onBroadcastInput,
+  onSnippetExecutorChange,
   sessionLog,
 }) => {
   // Timeout for connection - increased to 120s to allow time for keyboard-interactive (2FA) authentication
@@ -1042,11 +1047,43 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const scrollOnPasteRef = useRef(terminalSettings?.scrollOnPaste ?? true);
   scrollOnPasteRef.current = terminalSettings?.scrollOnPaste ?? true;
 
-  const scrollToBottomAfterProgrammaticInput = (data: string) => {
+  const scrollToBottomAfterProgrammaticInput = useCallback((data: string) => {
     if (termRef.current && shouldScrollOnTerminalInput(terminalSettingsRef.current, data)) {
       termRef.current.scrollToBottom();
     }
-  };
+  }, []);
+
+  const executeSnippetCommand = useCallback((command: string, noAutoRun?: boolean) => {
+    const term = termRef.current;
+    const id = sessionRef.current;
+    if (!term || !id) return;
+
+    let data = normalizeLineEndings(command);
+    const isMultiLine = data.includes('\n');
+    // Wrap in bracketed paste BEFORE appending \r so the Enter is sent
+    // outside the paste markers — otherwise shells treat it as pasted text
+    // instead of a submit action.
+    if (isMultiLine && term.modes.bracketedPasteMode && !disableBracketedPasteRef.current) {
+      data = wrapBracketedPaste(data);
+    }
+    if (!noAutoRun) data = `${data}\r`;
+
+    terminalBackend.writeToSession(id, data);
+    scrollToBottomAfterProgrammaticInput(data);
+    term.focus();
+  }, [scrollToBottomAfterProgrammaticInput, terminalBackend]);
+
+  // Only register the snippet executor once the terminal session is ready.
+  // Before that, TerminalLayer falls back to raw writeToSession which is the
+  // correct path for sessions that are still connecting.
+  useEffect(() => {
+    if (status !== "connected") {
+      onSnippetExecutorChange?.(sessionId, null);
+      return;
+    }
+    onSnippetExecutorChange?.(sessionId, executeSnippetCommand);
+    return () => onSnippetExecutorChange?.(sessionId, null);
+  }, [executeSnippetCommand, onSnippetExecutorChange, sessionId, status]);
 
   const terminalContextActions = useTerminalContextActions({
     termRef,
