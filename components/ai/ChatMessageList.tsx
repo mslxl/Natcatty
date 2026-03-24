@@ -144,12 +144,14 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
       .flatMap((m) => m.toolResults?.map((tr) => tr.toolCallId) ?? []),
   );
 
-  // Build a map from toolCallId → toolName for display
+  // Build maps from toolCallId → toolName / toolArgs for display
   const toolCallNames = new Map<string, string>();
+  const toolCallArgs = new Map<string, Record<string, unknown>>();
   for (const m of visibleMessages) {
     if (m.role === 'assistant' && m.toolCalls) {
       for (const tc of m.toolCalls) {
         toolCallNames.set(tc.id, tc.name);
+        if (tc.arguments) toolCallArgs.set(tc.id, tc.arguments);
       }
     }
   }
@@ -178,6 +180,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
                   <ToolCall
                     key={tr.toolCallId}
                     name={toolCallNames.get(tr.toolCallId) || tr.toolCallId}
+                    args={toolCallArgs.get(tr.toolCallId)}
                     result={tr.content}
                     isError={tr.isError}
                   />

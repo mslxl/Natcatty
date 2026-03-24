@@ -13,6 +13,7 @@ const { SerialPort } = require("serialport");
 
 const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
 const { detectShellKind } = require("./ai/ptyExec.cjs");
+const { trackSessionIdlePrompt } = require("./ai/shellUtils.cjs");
 
 // Shared references
 let sessions = null;
@@ -291,6 +292,9 @@ function startLocalSession(event, payload) {
     shellExecutable: shell,
     shellKind,
     flushPendingData: null,
+    lastIdlePrompt: "",
+    lastIdlePromptAt: 0,
+    _promptTrackTail: "",
   };
   sessions.set(sessionId, session);
 
@@ -312,6 +316,7 @@ function startLocalSession(event, payload) {
   session.flushPendingData = flushLocal;
 
   proc.onData((data) => {
+    trackSessionIdlePrompt(session, data);
     bufferLocalData(data);
     sessionLogStreamManager.appendData(sessionId, data);
   });
@@ -487,6 +492,9 @@ async function startTelnetSession(event, options) {
         cols,
         rows,
         flushPendingData: null,
+        lastIdlePrompt: "",
+        lastIdlePromptAt: 0,
+        _promptTrackTail: "",
       };
       session.flushPendingData = flushTelnet;
       sessions.set(sessionId, session);
@@ -532,6 +540,7 @@ async function startTelnetSession(event, options) {
       if (cleanData.length > 0) {
         const decoded = telnetDecoder.write(cleanData);
         if (decoded) {
+          trackSessionIdlePrompt(session, decoded);
           bufferTelnetData(decoded);
           sessionLogStreamManager.appendData(sessionId, decoded);
         }
@@ -646,6 +655,9 @@ async function startMoshSession(event, options) {
       shellKind: 'posix',
       shellExecutable: 'remote-shell',
       flushPendingData: null,
+      lastIdlePrompt: "",
+      lastIdlePromptAt: 0,
+      _promptTrackTail: "",
     };
     sessions.set(sessionId, session);
 
@@ -667,6 +679,7 @@ async function startMoshSession(event, options) {
     session.flushPendingData = flushMosh;
 
     proc.onData((data) => {
+      trackSessionIdlePrompt(session, data);
       bufferMoshData(data);
       sessionLogStreamManager.appendData(sessionId, data);
     });

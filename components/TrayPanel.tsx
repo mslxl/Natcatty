@@ -116,7 +116,7 @@ const TrayPanelContent: React.FC = () => {
     onTrayPanelMenuData,
   } = useTrayPanelBackend();
 
-  const { hosts, keys } = useVaultState();
+  const { hosts, keys, identities } = useVaultState();
   useSessionState();
   const { rules: portForwardingRules, startTunnel, stopTunnel } = usePortForwardingState();
   const activeTabId = useActiveTabId();
@@ -150,11 +150,6 @@ const TrayPanelContent: React.FC = () => {
     });
     return () => unsubscribe?.();
   }, [onTrayPanelRefresh]);
-
-  const keysForPf = useMemo(
-    () => keys.map((k) => ({ id: k.id, privateKey: k.privateKey, passphrase: k.passphrase })),
-    [keys],
-  );
 
   const handleClose = useCallback(() => {
     void hideTrayPanel();
@@ -339,7 +334,7 @@ const TrayPanelContent: React.FC = () => {
                       if (isActive) {
                         void stopTunnel(rule.id);
                       } else {
-                        void startTunnel(rule, host, keysForPf, (status, error) => {
+                        void startTunnel(rule, host, hosts, keys, identities, (status, error) => {
                           if (status === "error" && error) toast.error(error);
                         }, rule.autoStart);
                       }

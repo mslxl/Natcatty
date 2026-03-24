@@ -35,6 +35,7 @@ function cleanupTransferListeners(transferId) {
 // chunk, then filter complete lines that contain the marker.
 
 const _mcpLineBufs = new Map(); // sessionId -> trailing fragment string
+const _mcpFlushTimers = new Map(); // sessionId -> delayed-flush timer
 
 // Returns true if `s` ends with a non-empty prefix of "__NCMCP_"
 // (i.e. the next chunk might complete it into a marker-containing line).
@@ -47,6 +48,13 @@ function _endsWithMarkerPrefix(s) {
 }
 
 function filterMcpChunk(sessionId, chunk) {
+  // Cancel any pending delayed flush — new data arrived
+  const pendingTimer = _mcpFlushTimers.get(sessionId);
+  if (pendingTimer) {
+    clearTimeout(pendingTimer);
+    _mcpFlushTimers.delete(sessionId);
+  }
+
   // Prepend any buffered fragment from the previous chunk
   const held = _mcpLineBufs.get(sessionId) || "";
   const data = held + chunk;
@@ -59,14 +67,18 @@ function filterMcpChunk(sessionId, chunk) {
 
   // Slow path: scan line by line
   let result = "";
+  let droppedAny = false;
   let pos = 0;
   while (pos < data.length) {
     const nlIdx = data.indexOf("\n", pos);
     if (nlIdx === -1) {
-      // Incomplete trailing line — no newline yet
+      // Incomplete trailing line — no newline yet.
+      // If we dropped any marker line in this chunk, or the tail itself
+      // looks like it could contain a marker, buffer it.  Long command
+      // echoes can wrap across PTY lines; wrapped fragments that don't
+      // contain __NCMCP_ would otherwise leak through as garbage.
       const tail = data.slice(pos);
-      if (tail.includes("__NCMCP_") || _endsWithMarkerPrefix(tail)) {
-        // Hold it; next chunk might complete or confirm the marker
+      if (droppedAny || tail.includes("__NCMCP_") || _endsWithMarkerPrefix(tail)) {
         _mcpLineBufs.set(sessionId, tail);
       } else {
         result += tail; // safe to display immediately
@@ -76,34 +88,52 @@ function filterMcpChunk(sessionId, chunk) {
     const line = data.slice(pos, nlIdx + 1); // includes the \n
     if (!line.includes("__NCMCP_")) {
       result += line;
+    } else {
+      droppedAny = true;
     }
-    // else: drop it — it's a wrapper marker line (or echo of one)
     pos = nlIdx + 1;
   }
 
-  // Also strip Posix pager prefix and Fish env lines that have no __NCMCP_
-  if (result) {
-    result = result
-      .replace(/PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= /g, "")
-      .replace(/^set -gx (?:PAGER|SYSTEMD_PAGER|GIT_PAGER|LESS) [^\r\n]*[\r\n]*/gm, "")
-      .replace(/^set "(?:PAGER|SYSTEMD_PAGER|GIT_PAGER|LESS)=[^"]*"[\r\n]*/gm, "");
-  }
-
   return result;
+}
+
+/**
+ * Deliver data to session listeners.  Used both by the normal data path
+ * and by the delayed-flush timer.
+ */
+function _deliverToListeners(sessionId, data) {
+  const set = dataListeners.get(sessionId);
+  if (!set || !data) return;
+  set.forEach((cb) => {
+    try { cb(data); } catch (err) { console.error("Data callback failed", err); }
+  });
 }
 
 ipcRenderer.on("netcatty:data", (_event, payload) => {
   const set = dataListeners.get(payload.sessionId);
   if (!set) return;
   const data = filterMcpChunk(payload.sessionId, payload.data);
-  if (!data) return;
-  set.forEach((cb) => {
-    try {
-      cb(data);
-    } catch (err) {
-      console.error("Data callback failed", err);
-    }
-  });
+  if (data) {
+    set.forEach((cb) => {
+      try {
+        cb(data);
+      } catch (err) {
+        console.error("Data callback failed", err);
+      }
+    });
+  }
+  // If there is buffered content waiting for more data (e.g. a prompt
+  // right after a dropped marker line), schedule a delayed flush so it
+  // appears after a short pause instead of staying hidden forever.
+  if (_mcpLineBufs.has(payload.sessionId)) {
+    const sid = payload.sessionId;
+    _mcpFlushTimers.set(sid, setTimeout(() => {
+      const held = _mcpLineBufs.get(sid);
+      _mcpLineBufs.delete(sid);
+      _mcpFlushTimers.delete(sid);
+      if (held) _deliverToListeners(sid, held);
+    }, 80));
+  }
 });
 
 ipcRenderer.on("netcatty:exit", (_event, payload) => {
@@ -119,6 +149,11 @@ ipcRenderer.on("netcatty:exit", (_event, payload) => {
   }
   dataListeners.delete(payload.sessionId);
   exitListeners.delete(payload.sessionId);
+  const pendingTimer = _mcpFlushTimers.get(payload.sessionId);
+  if (pendingTimer) {
+    clearTimeout(pendingTimer);
+    _mcpFlushTimers.delete(payload.sessionId);
+  }
   _mcpLineBufs.delete(payload.sessionId); // clean up any held fragment
 });
 
@@ -1091,8 +1126,11 @@ const api = {
   aiAllowlistAddHost: async (baseURL) => {
     return ipcRenderer.invoke("netcatty:ai:allowlist:add-host", { baseURL });
   },
-  aiExec: async (sessionId, command) => {
-    return ipcRenderer.invoke("netcatty:ai:exec", { sessionId, command });
+  aiExec: async (sessionId, command, chatSessionId) => {
+    return ipcRenderer.invoke("netcatty:ai:exec", { sessionId, command, chatSessionId });
+  },
+  aiCattyCancelExec: async (chatSessionId) => {
+    return ipcRenderer.invoke("netcatty:ai:catty:cancel", { chatSessionId });
   },
   aiTerminalWrite: async (sessionId, data) => {
     return ipcRenderer.invoke("netcatty:ai:terminal:write", { sessionId, data });

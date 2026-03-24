@@ -381,16 +381,11 @@ function App({ settings }: { settings: SettingsState }) {
     }
   }, [updateState.autoDownloadStatus, updateState.latestRelease?.version, t, installUpdate, openReleasePage]);
 
-  // Memoize keys for port forwarding to prevent unnecessary re-renders
-  const portForwardingKeys = useMemo(
-    () => keys.map((k) => ({ id: k.id, privateKey: k.privateKey, passphrase: k.passphrase, })),
-    [keys]
-  );
-
   // Auto-start port forwarding rules on app launch
   usePortForwardingAutoStart({
     hosts,
-    keys: portForwardingKeys,
+    keys,
+    identities,
   });
 
   // Sync tray menu data + handle tray actions
@@ -452,9 +447,8 @@ function App({ settings }: { settings: SettingsState }) {
         return;
       }
 
-      const keysForPf = keys.map((k) => ({ id: k.id, privateKey: k.privateKey, passphrase: k.passphrase }));
       if (start) {
-        void startTunnel(rule, host, keysForPf, (status, error) => {
+        void startTunnel(rule, host, hosts, keys, identities, (status, error) => {
           if (status === "error" && error) toast.error(error);
         }, rule.autoStart);
       } else {
@@ -466,7 +460,7 @@ function App({ settings }: { settings: SettingsState }) {
       unsubscribeFocus?.();
       unsubscribeToggle?.();
     };
-  }, [hosts, keys, portForwardingRules, sessions, setActiveTabId, setWorkspaceFocusedSession, startTunnel, stopTunnel, t]);
+  }, [hosts, identities, keys, portForwardingRules, sessions, setActiveTabId, setWorkspaceFocusedSession, startTunnel, stopTunnel, t]);
 
   // Tray panel actions (from main process)
   useEffect(() => {

@@ -543,6 +543,10 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     }));
     // Clear pending approvals for this session (so tool execute functions don't hang)
     clearAllPendingApprovals(activeSessionId);
+    // Cancel in-flight command executions (Catty Agent + ACP Agent)
+    const bridge = getNetcattyBridge();
+    bridge?.aiCattyCancelExec?.(activeSessionId);
+    bridge?.aiAcpCancel?.('', activeSessionId);
   }, [activeSessionId, setStreamingForScope, updateLastMessage, abortControllersRef]);
 
   const handleSelectSession = useCallback(

@@ -15,9 +15,12 @@ const net = require("node:net");
  * @param {string} [proxy.password] - Optional password for auth
  * @param {string} targetHost - Target host to connect through proxy
  * @param {number} targetPort - Target port to connect through proxy
+ * @param {Object} [options]
+ * @param {(socket: net.Socket) => void} [options.onSocket] - Called immediately with the underlying socket
  * @returns {Promise<net.Socket>} Connected socket through proxy
  */
-function createProxySocket(proxy, targetHost, targetPort) {
+function createProxySocket(proxy, targetHost, targetPort, options = {}) {
+    const { onSocket } = options;
     return new Promise((resolve, reject) => {
         if (proxy.type === 'http') {
             // HTTP CONNECT proxy
@@ -45,6 +48,7 @@ function createProxySocket(proxy, targetHost, targetPort) {
                 };
                 socket.on('data', onData);
             });
+            try { onSocket?.(socket); } catch { /* ignore */ }
             socket.on('error', reject);
         } else if (proxy.type === 'socks5') {
             // SOCKS5 proxy
@@ -123,6 +127,7 @@ function createProxySocket(proxy, targetHost, targetPort) {
 
                 socket.on('data', onData);
             });
+            try { onSocket?.(socket); } catch { /* ignore */ }
             socket.on('error', reject);
         } else {
             reject(new Error(`Unknown proxy type: ${proxy.type}`));

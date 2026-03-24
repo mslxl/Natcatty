@@ -3,8 +3,8 @@
  * This should be used at the App level to ensure auto-start happens
  * when the application starts, not when the user navigates to the port forwarding page.
  */
-import { useEffect, useRef } from "react";
-import { Host, PortForwardingRule } from "../../domain/models";
+import { useCallback, useEffect, useRef } from "react";
+import { Host, Identity, PortForwardingRule, SSHKey } from "../../domain/models";
 import { STORAGE_KEY_PORT_FORWARDING } from "../../infrastructure/config/storageKeys";
 import { localStorageAdapter } from "../../infrastructure/persistence/localStorageAdapter";
 import {
@@ -17,7 +17,8 @@ import { logger } from "../../lib/logger";
 
 export interface UsePortForwardingAutoStartOptions {
   hosts: Host[];
-  keys: { id: string; privateKey: string; passphrase: string }[];
+  keys: SSHKey[];
+  identities: Identity[];
 }
 
 /**
@@ -27,10 +28,37 @@ export interface UsePortForwardingAutoStartOptions {
 export const usePortForwardingAutoStart = ({
   hosts,
   keys,
+  identities,
 }: UsePortForwardingAutoStartOptions): void => {
   const autoStartExecutedRef = useRef(false);
   const hostsRef = useRef<Host[]>(hosts);
-  const keysRef = useRef<{ id: string; privateKey: string; passphrase: string }[]>(keys);
+  const keysRef = useRef<SSHKey[]>(keys);
+  const identitiesRef = useRef<Identity[]>(identities);
+
+  const isHostAuthReady = useCallback((host: Host, seen = new Set<string>()): boolean => {
+    if (!host || seen.has(host.id)) return true;
+    seen.add(host.id);
+
+    if (host.identityId) {
+      const identity = identitiesRef.current.find((candidate) => candidate.id === host.identityId);
+      if (!identity) return false;
+      if (identity.keyId && !keysRef.current.some((key) => key.id === identity.keyId)) {
+        return false;
+      }
+    }
+    if (host.identityFileId && !keysRef.current.some((key) => key.id === host.identityFileId)) {
+      return false;
+    }
+
+    const chainIds = host.hostChain?.hostIds || [];
+    for (const chainId of chainIds) {
+      const chainHost = hostsRef.current.find((candidate) => candidate.id === chainId);
+      if (!chainHost) return false;
+      if (!isHostAuthReady(chainHost, seen)) return false;
+    }
+
+    return true;
+  }, []);
 
   // Keep refs in sync
   useEffect(() => {
@@ -40,6 +68,10 @@ export const usePortForwardingAutoStart = ({
   useEffect(() => {
     keysRef.current = keys;
   }, [keys]);
+
+  useEffect(() => {
+    identitiesRef.current = identities;
+  }, [identities]);
 
   // Set up the reconnect callback
   useEffect(() => {
@@ -62,7 +94,7 @@ export const usePortForwardingAutoStart = ({
         return { success: false, error: "Host not found" };
       }
 
-      return startPortForward(rule, host, keysRef.current, onStatusChange, true);
+      return startPortForward(rule, host, hostsRef.current, keysRef.current, identitiesRef.current, onStatusChange, true);
     };
 
     setReconnectCallback(handleReconnect);
@@ -75,6 +107,17 @@ export const usePortForwardingAutoStart = ({
   useEffect(() => {
     if (autoStartExecutedRef.current) return;
     if (hosts.length === 0) return;
+
+    const storedRules = localStorageAdapter.read<PortForwardingRule[]>(
+      STORAGE_KEY_PORT_FORWARDING,
+    ) ?? [];
+    const pendingAutoStartRules = storedRules.filter((rule) => rule.autoStart && rule.hostId);
+    if (pendingAutoStartRules.some((rule) => {
+      const host = hosts.find((candidate) => candidate.id === rule.hostId);
+      return !host || !isHostAuthReady(host);
+    })) {
+      return;
+    }
 
     // Mark as executed immediately to prevent duplicate runs
     // (React StrictMode or dependency changes could cause re-runs)
@@ -108,7 +151,9 @@ export const usePortForwardingAutoStart = ({
           void startPortForward(
             rule,
             host,
+            hosts,
             keys,
+            identities,
             (status, error) => {
               // Update the rule status in storage
               const currentRules = localStorageAdapter.read<PortForwardingRule[]>(
@@ -135,5 +180,5 @@ export const usePortForwardingAutoStart = ({
     };
 
     void runAutoStart();
-  }, [hosts, keys]);
+  }, [hosts, identities, isHostAuthReady, keys]);
 };

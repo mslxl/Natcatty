@@ -23,6 +23,7 @@ const {
   getSshAgentSocket,
 } = require("./sshAuthHelper.cjs");
 const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
+const { trackSessionIdlePrompt } = require("./ai/shellUtils.cjs");
 
 // Default SSH key names in priority order (preferred keys tried first)
 const PREFERRED_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
@@ -382,7 +383,7 @@ function init(deps) {
  */
 async function connectThroughChain(event, options, jumpHosts, targetHost, targetPort, sessionId) {
   const sender = event.sender;
-  const connections = [];
+  const connections = options?._connectionsRef || [];
   let currentSocket = null;
 
   const sendProgress = (hop, total, label, status, error) => {
@@ -404,6 +405,10 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
       sendProgress(i + 1, totalHops + 1, hopLabel, 'connecting');
 
       const conn = new SSHClient();
+      if (options?._tunnelRef) {
+        options._tunnelRef.pendingConn = conn;
+        options._tunnelRef.chainConnections = connections;
+      }
 
       // Build connection options
       const connOpts = {
@@ -543,6 +548,10 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         conn.once('ready', () => {
           console.log(`[Chain] Hop ${i + 1}/${totalHops}: ${hopLabel} connected`);
           sendProgress(i + 1, totalHops + 1, hopLabel, 'connected');
+          if (options?._tunnelRef) {
+            options._tunnelRef.pendingConn = null;
+            options._tunnelRef.chainConnections = connections;
+          }
           resolve();
         });
         conn.once('error', (err) => {
@@ -616,6 +625,10 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
       sendProgress
     };
   } catch (err) {
+    if (options?._tunnelRef) {
+      options._tunnelRef.pendingConn = null;
+      options._tunnelRef.chainConnections = connections;
+    }
     // Cleanup on error
     for (const conn of connections) {
       try { conn.end(); } catch { }
@@ -1180,6 +1193,9 @@ async function startSSHSession(event, options) {
               hostname: options.host || options.hostname || '',
               username: options.username || '',
               label: options.label || '',
+              lastIdlePrompt: '',
+              lastIdlePromptAt: 0,
+              _promptTrackTail: '',
             };
             sessions.set(sessionId, session);
 
@@ -1227,6 +1243,7 @@ async function startSSHSession(event, options) {
             stream.on("data", (data) => {
               const decoder = getSessionDecoder(sessionId, "stdout");
               const decoded = decoder.write(data);
+              trackSessionIdlePrompt(session, decoded);
               bufferData(decoded);
               sessionLogStreamManager.appendData(sessionId, decoded);
             });
@@ -2250,6 +2267,7 @@ function registerHandlers(ipcMain) {
 module.exports = {
   init,
   registerHandlers,
+  connectThroughChain,
   createProxySocket,
   startSSHSession,
   execCommand,

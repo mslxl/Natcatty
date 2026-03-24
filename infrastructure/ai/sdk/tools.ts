@@ -37,7 +37,7 @@ export function createCattyTools(
   webSearchConfig?: WebSearchConfig,
   chatSessionId?: string,
 ) {
-  const deps: ToolDeps = { bridge, context, commandBlocklist, permissionMode, webSearchConfig };
+  const deps: ToolDeps = { bridge, context, commandBlocklist, permissionMode, webSearchConfig, chatSessionId };
 
   return {
     terminal_execute: tool({
