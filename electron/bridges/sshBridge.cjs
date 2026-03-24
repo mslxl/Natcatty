@@ -1322,10 +1322,11 @@ async function execCommand(event, payload) {
             });
         });
       })
-      .once("error", (err) => {
+      .on("error", (err) => {
         if (settled) return;
         clearTimeout(timer);
         settled = true;
+        conn.end();
         reject(err);
       })
       .once("end", () => {

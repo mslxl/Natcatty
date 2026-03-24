@@ -21,11 +21,50 @@ if (process.env.ELECTRON_RUN_AS_NODE) {
 // Load crash log bridge early so process-level error handlers can use it
 const crashLogBridge = require("./bridges/crashLogBridge.cjs");
 
-// Handle uncaught exceptions for EPIPE errors
+// SSH / network errors that must never crash the process.
+// ssh2 can emit multiple 'error' events per connection (e.g. ECONNRESET followed
+// by "Connection lost before handshake"). If a listener is consumed after the first
+// event, the second becomes an uncaught exception. These are non-fatal for the app.
+function isNonFatalNetworkError(err) {
+  if (!err) return false;
+  // Any error with an ssh2 `level` property is a connection/auth-level error,
+  // never a reason to kill the entire multi-session app.
+  if (err.level) return true;
+  const code = err.code;
+  // Common TCP/DNS/routing errors that can surface from Node.js sockets
+  // without an ssh2 `level` (e.g. proxy sockets, raw net.connect calls).
+  switch (code) {
+    case 'ECONNRESET':
+    case 'ECONNREFUSED':
+    case 'ECONNABORTED':
+    case 'ETIMEDOUT':
+    case 'ENOTFOUND':
+    case 'EHOSTUNREACH':
+    case 'EHOSTDOWN':
+    case 'ENETUNREACH':
+    case 'ENETDOWN':
+    case 'EADDRNOTAVAIL':
+    case 'EPROTO':
+    case 'EPERM':
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Handle uncaught exceptions — log all, only re-throw truly fatal ones
 process.on('uncaughtException', (err) => {
   // Skip benign stream teardown errors — don't pollute crash logs with false positives
   if (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED') {
     console.warn('Ignored stream error:', err.code);
+    return;
+  }
+  // Non-fatal SSH/network errors: log but do NOT crash the process
+  if (isNonFatalNetworkError(err)) {
+    if (!err.__fromUnhandledRejection) {
+      try { crashLogBridge.captureError('uncaughtException', err); } catch {}
+    }
+    console.warn('Non-fatal uncaught exception (suppressed):', err.message);
     return;
   }
   // Skip logging if already captured by unhandledRejection handler
@@ -40,6 +79,12 @@ process.on('unhandledRejection', (reason) => {
   // Skip benign stream teardown errors
   const code = reason?.code;
   if (code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED') return;
+  // Non-fatal SSH/network errors: log but do NOT re-throw
+  if (isNonFatalNetworkError(reason)) {
+    try { crashLogBridge.captureError('unhandledRejection', reason); } catch {}
+    console.warn('Non-fatal unhandled rejection (suppressed):', reason?.message || reason);
+    return;
+  }
   try { crashLogBridge.captureError('unhandledRejection', reason); } catch {}
   console.error('Unhandled rejection:', reason);
   // Re-throw to preserve fatal semantics. Mark so uncaughtException handler
