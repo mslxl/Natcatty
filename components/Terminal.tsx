@@ -346,7 +346,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const isLocalConnection = host.protocol === "local";
   const isSerialConnection = host.protocol === "serial";
 
-  // Server stats (CPU, Memory, Disk) — only for Linux/macOS, OS auto-detected via uname on the remote
+  // Server stats (CPU, Memory, Disk) — only for Linux/macOS
   const { stats: serverStats } = useServerStats({
     sessionId,
     enabled: terminalSettings?.showServerStats ?? true,
