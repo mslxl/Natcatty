@@ -868,11 +868,12 @@ async function startSSHSession(event, options) {
             sendProgress(totalHops, totalHops, options.hostname, 'auth-attempt', `${lastTriedMethod} rejected`);
           }
 
-          // On the very first call (methodsLeft === null), try "none" auth first.
-          // This is the SSH protocol's way to check if the server allows login
-          // without credentials (common on embedded devices with no root password).
-          // ssh2 does this by default, but custom authHandlers must do it explicitly.
-          if (methodsLeft === null && !attemptedMethodIds.has("none")) {
+          // On the very first call, try "none" auth — but only when no explicit
+          // credentials are configured. This avoids wasting an auth attempt on
+          // servers with low MaxAuthTries.  For embedded devices with no root
+          // password this is the only method that works.
+          const hasExplicitCredentials = !!connectOpts.privateKey || !!connectOpts.password || !!connectOpts.agent;
+          if (methodsLeft === null && !hasExplicitCredentials && !attemptedMethodIds.has("none")) {
             attemptedMethodIds.add("none");
             lastTriedMethod = "none";
             sendProgress(totalHops, totalHops, options.hostname, 'auth-attempt', 'none (no credentials)');
@@ -1235,11 +1236,19 @@ async function startSSHSession(event, options) {
       });
 
       conn.on("error", (err) => {
-        // Guard against duplicate error handling — after the first error we
-        // already rejected the promise and notified the renderer.  Subsequent
-        // errors (e.g. ECONNRESET after an auth failure) should only be logged.
+        // After the promise is settled, we can't reject again. But if the
+        // session was already established (resolved), we still need to notify
+        // the renderer about transport errors so the session shows as failed
+        // rather than silently closing.
         if (settled) {
-          console.warn(`${logPrefix} ${options.hostname} late error (ignored):`, err.message);
+          console.warn(`${logPrefix} ${options.hostname} post-settle error:`, err.message);
+          // Forward the error to the renderer if the session was active
+          if (sessions.has(sessionId)) {
+            safeSend(event.sender, "netcatty:exit", { sessionId, exitCode: 1, error: err.message, reason: "error" });
+            sessions.delete(sessionId);
+            sessionEncodings.delete(sessionId);
+            sessionDecoders.delete(sessionId);
+          }
           return;
         }
 

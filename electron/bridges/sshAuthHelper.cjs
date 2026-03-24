@@ -386,10 +386,10 @@ function buildAuthHandler(options) {
   let triedNone = false;
 
   const authHandler = (methodsLeft, partialSuccess, callback) => {
-    // On the very first call, try "none" auth — the SSH protocol's way to
-    // check if the server allows login without credentials (e.g. embedded
-    // devices with no root password).
-    if (methodsLeft === null && !triedNone) {
+    // On the very first call, try "none" auth — but only when no explicit
+    // credentials were configured.  Avoids wasting an auth attempt on
+    // servers with low MaxAuthTries.
+    if (methodsLeft === null && !triedNone && !hasExplicitAuth) {
       triedNone = true;
       lastAttemptedLabel = "none";
       onAuthAttempt?.("none (no credentials)");
