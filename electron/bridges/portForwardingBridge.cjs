@@ -297,8 +297,9 @@ async function startPortForward(event, payload) {
       }
     });
 
-    conn.once('error', (err) => {
+    conn.on('error', (err) => {
       console.error(`[PortForward] SSH error:`, err.message);
+      if (settled) return;
       sendStatus('error', err.message);
       portForwardingTunnels.delete(tunnelId);
       settled = true;

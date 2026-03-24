@@ -22,12 +22,14 @@ try {
 const { NetcattyAgent } = require("./netcattyAgent.cjs");
 const fileWatcherBridge = require("./fileWatcherBridge.cjs");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
+const passphraseHandler = require("./passphraseHandler.cjs");
 const { createProxySocket } = require("./proxyUtils.cjs");
 const {
   buildAuthHandler,
   createKeyboardInteractiveHandler,
   applyAuthToConnOpts,
   safeSend: authSafeSend,
+  isKeyEncrypted,
   findAllDefaultPrivateKeys: findAllDefaultPrivateKeysFromHelper,
   getAvailableAgentSocket,
 } = require("./sshAuthHelper.cjs");
@@ -431,6 +433,18 @@ function init(deps) {
 }
 
 /**
+ * Send SFTP connection progress to the renderer for user-visible logging
+ */
+function sendSftpProgress(sender, sessionId, label, status, detail) {
+  try {
+    if (!sender || sender.isDestroyed()) return;
+    sender.send("netcatty:sftp:connection-progress", { sessionId, label, status, detail });
+  } catch {
+    // Ignore destroyed webContents
+  }
+}
+
+/**
  * Connect through a chain of jump hosts for SFTP
  */
 async function connectThroughChainForSftp(event, options, jumpHosts, targetHost, targetPort, connId, agentSocket) {
@@ -447,6 +461,7 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
       const hopLabel = jump.label || (jump.hostname.includes(':') && !jump.hostname.startsWith('[') ? `[${jump.hostname}]:${jump.port || 22}` : `${jump.hostname}:${jump.port || 22}`);
 
       console.log(`[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}: Connecting to ${hopLabel}...`);
+      sendSftpProgress(sender, connId, hopLabel, 'connecting');
 
       const conn = new SSHClient();
       // Increase max listeners to prevent Node.js warning
@@ -485,7 +500,59 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
         connOpts.agent = authAgent;
       } else if (jump.privateKey) {
         connOpts.privateKey = jump.privateKey;
-        if (jump.passphrase) connOpts.passphrase = jump.passphrase;
+        if (jump.passphrase) {
+          connOpts.passphrase = jump.passphrase;
+        } else if (isKeyEncrypted(jump.privateKey)) {
+          // Key is encrypted but no passphrase provided — prompt the user
+          console.log(`[SFTP Chain] Hop ${i + 1}: key is encrypted, requesting passphrase`);
+          const keyLabel = jump.label || hopLabel;
+          const result = await passphraseHandler.requestPassphrase(
+            sender,
+            `SSH key for ${keyLabel}`,
+            keyLabel,
+            hopLabel
+          );
+          if (result?.passphrase) {
+            connOpts.passphrase = result.passphrase;
+          } else {
+            delete connOpts.privateKey;
+            if (result?.cancelled) {
+              throw new Error(`Passphrase entry cancelled for ${hopLabel}`);
+            }
+          }
+        }
+      }
+
+      // Read identity files from local paths (e.g. from SSH config IdentityFile)
+      if (!connOpts.privateKey && !connOpts.agent && jump.identityFilePaths?.length > 0) {
+        for (const keyPath of jump.identityFilePaths) {
+          try {
+            const resolvedPath = keyPath.startsWith("~/")
+              ? path.join(os.homedir(), keyPath.slice(2))
+              : keyPath;
+            const keyContent = await fs.promises.readFile(resolvedPath, "utf8");
+            connOpts.privateKey = keyContent;
+            if (isKeyEncrypted(keyContent)) {
+              console.log(`[SFTP Chain] Hop ${i + 1}: identity file ${resolvedPath} is encrypted, requesting passphrase`);
+              const result = await passphraseHandler.requestPassphrase(
+                sender,
+                resolvedPath,
+                path.basename(resolvedPath),
+                hopLabel
+              );
+              if (result?.passphrase) {
+                connOpts.passphrase = result.passphrase;
+              } else {
+                delete connOpts.privateKey;
+                continue;
+              }
+            }
+            console.log(`[SFTP Chain] Hop ${i + 1}: loaded identity file ${resolvedPath}`);
+            break;
+          } catch (err) {
+            console.warn(`[SFTP Chain] Hop ${i + 1}: failed to read identity file ${keyPath}:`, err.message);
+          }
+        }
       }
 
       if (jump.password) connOpts.password = jump.password;
@@ -505,6 +572,9 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
         unlockedEncryptedKeys: options._unlockedEncryptedKeys || [],
         defaultKeys,
         sshAgentSocketOverride: agentSocket,
+        onAuthAttempt: (method) => {
+          sendSftpProgress(sender, connId, hopLabel, 'auth-attempt', method);
+        },
       });
       applyAuthToConnOpts(connOpts, authConfig);
 
@@ -523,8 +593,12 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
 
       // Connect this hop
       await new Promise((resolve, reject) => {
+        conn.once('handshake', () => {
+          sendSftpProgress(sender, connId, hopLabel, 'authenticating');
+        });
         conn.once('ready', () => {
           console.log(`[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}: ${hopLabel} connected`);
+          sendSftpProgress(sender, connId, hopLabel, 'connected');
           resolve();
         });
         conn.on('error', (err) => {
@@ -534,6 +608,7 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
             return;
           }
           console.error(`[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}: ${hopLabel} error:`, err.message);
+          sendSftpProgress(sender, connId, hopLabel, 'error', err.message);
           reject(err);
         });
         conn.once('timeout', () => {
@@ -541,13 +616,23 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
           reject(new Error(`Connection timeout to ${hopLabel}`));
         });
         // Handle keyboard-interactive authentication for jump hosts (2FA/MFA)
-        conn.on('keyboard-interactive', createKeyboardInteractiveHandler({
+        const sftpChainKiHandler = createKeyboardInteractiveHandler({
           sender,
           sessionId: connId,
           hostname: hopLabel,
           password: jump.password,
           logPrefix: `[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}`,
-        }));
+        });
+        conn.on('keyboard-interactive', (name, instructions, lang, prompts, finish) => {
+          if (prompts && prompts.length > 0) {
+            sendSftpProgress(sender, connId, hopLabel, 'auth-attempt', 'waiting for user input...');
+          }
+          const wrappedFinish = (...args) => {
+            sendSftpProgress(sender, connId, hopLabel, 'auth-attempt', 'user responded');
+            finish(...args);
+          };
+          sftpChainKiHandler(name, instructions, lang, prompts, wrappedFinish);
+        });
         conn.connect(connOpts);
       });
 
@@ -906,7 +991,69 @@ async function openSftp(event, options) {
     connectOpts.agent = authAgent;
   } else if (options.privateKey) {
     connectOpts.privateKey = options.privateKey;
-    if (options.passphrase) connectOpts.passphrase = options.passphrase;
+    if (options.passphrase) {
+      connectOpts.passphrase = options.passphrase;
+    } else if (isKeyEncrypted(options.privateKey)) {
+      // Key is encrypted but no passphrase provided — prompt the user
+      console.log(`[SFTP] Key is encrypted, requesting passphrase for ${options.hostname}`);
+      const result = await passphraseHandler.requestPassphrase(
+        event.sender,
+        `SSH key for ${options.hostname}`,
+        options.hostname,
+        options.hostname
+      );
+      if (result?.passphrase) {
+        connectOpts.passphrase = result.passphrase;
+      } else {
+        delete connectOpts.privateKey;
+        if (result?.cancelled) {
+          // Clean up any chain/proxy connections and proxy socket opened earlier
+          for (const c of chainConnections) {
+            try { c.end(); } catch {}
+          }
+          if (connectionSocket) {
+            try { connectionSocket.destroy(); } catch {}
+          }
+          // Use "authentication" in the message so the SFTP frontend's
+          // isAuthError() check recognizes this and falls back to password.
+          const err = new Error(`Authentication cancelled — passphrase not provided for ${options.hostname}`);
+          err.level = 'client-authentication';
+          throw err;
+        }
+      }
+    }
+  }
+
+  // Read identity files from local paths (e.g. from SSH config IdentityFile)
+  if (!connectOpts.privateKey && !connectOpts.agent && options.identityFilePaths?.length > 0) {
+    for (const keyPath of options.identityFilePaths) {
+      try {
+        const resolvedPath = keyPath.startsWith("~/")
+          ? path.join(os.homedir(), keyPath.slice(2))
+          : keyPath;
+        const keyContent = await fs.promises.readFile(resolvedPath, "utf8");
+        connectOpts.privateKey = keyContent;
+        if (isKeyEncrypted(keyContent)) {
+          console.log(`[SFTP] Identity file ${resolvedPath} is encrypted, requesting passphrase`);
+          const result = await passphraseHandler.requestPassphrase(
+            event.sender,
+            resolvedPath,
+            path.basename(resolvedPath),
+            options.hostname
+          );
+          if (result?.passphrase) {
+            connectOpts.passphrase = result.passphrase;
+          } else {
+            delete connectOpts.privateKey;
+            continue;
+          }
+        }
+        console.log(`[SFTP] Loaded identity file ${resolvedPath}`);
+        break;
+      } catch (err) {
+        console.warn(`[SFTP] Failed to read identity file ${keyPath}:`, err.message);
+      }
+    }
   }
 
   if (options.password) connectOpts.password = options.password;
@@ -922,6 +1069,9 @@ async function openSftp(event, options) {
     logPrefix: "[SFTP]",
     defaultKeys,
     sshAgentSocketOverride: agentSocket,
+    onAuthAttempt: (method) => {
+      sendSftpProgress(event.sender, connId, options.hostname, 'auth-attempt', method);
+    },
   });
   applyAuthToConnOpts(connectOpts, authConfig);
 
@@ -935,7 +1085,17 @@ async function openSftp(event, options) {
   });
 
   // Add keyboard-interactive listener BEFORE connecting
-  client.on("keyboard-interactive", kiHandler);
+  // Wrap to emit progress events for the SFTP connection log
+  client.on("keyboard-interactive", (name, instructions, lang, prompts, finish) => {
+    if (prompts && prompts.length > 0) {
+      sendSftpProgress(event.sender, connId, options.hostname, 'auth-attempt', 'waiting for user input...');
+    }
+    const wrappedFinish = (...args) => {
+      sendSftpProgress(event.sender, connId, options.hostname, 'auth-attempt', 'user responded');
+      finish(...args);
+    };
+    kiHandler(name, instructions, lang, prompts, wrappedFinish);
+  });
 
   // Increase timeout to allow for keyboard-interactive auth
   connectOpts.readyTimeout = 120000; // 2 minutes for 2FA input
@@ -983,14 +1143,24 @@ async function openSftp(event, options) {
         sshClient.removeListener('error', onError);
         sshClient.removeListener('end', onEnd);
         sshClient.removeListener('close', onClose);
+        // Keep a catch-all error listener so post-ready errors (e.g. connection
+        // drops during an active SFTP session) don't become uncaught exceptions.
+        sshClient.on('error', (err) => {
+          console.error(`[SFTP] Post-ready SSH error for ${connId}:`, err.message);
+        });
       };
 
       sshClient.on('error', onError);
       sshClient.on('end', onEnd);
       sshClient.on('close', onClose);
 
+      sshClient.once('handshake', () => {
+        sendSftpProgress(event.sender, connId, options.hostname, 'authenticating');
+      });
+
       sshClient.once('ready', () => {
         cleanup();
+        sendSftpProgress(event.sender, connId, options.hostname, 'connected');
 
         if (options.sudo) {
           console.log(`[SFTP] Using sudo mode for connection: ${connId}`);
@@ -1033,6 +1203,7 @@ async function openSftp(event, options) {
         }
       });
 
+      sendSftpProgress(event.sender, connId, options.hostname, 'connecting');
       try {
         sshClient.connect(connectOpts);
       } catch (e) {

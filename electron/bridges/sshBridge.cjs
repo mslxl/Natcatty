@@ -24,8 +24,22 @@ const {
 } = require("./sshAuthHelper.cjs");
 const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
 
-// Default SSH key names in priority order
-const DEFAULT_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
+// Default SSH key names in priority order (preferred keys tried first)
+const PREFERRED_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
+// Match any private key file: id_* but not *.pub
+const SSH_KEY_PATTERN = /^id_[\w-]+$/;
+
+/**
+ * Quick check if file content looks like an SSH private key.
+ * Rejects non-key files that happen to match the id_* filename pattern.
+ */
+function looksLikePrivateKey(content) {
+  if (!content || typeof content !== "string") return false;
+  const trimmed = content.trimStart();
+  return trimmed.startsWith("-----BEGIN") ||
+    trimmed.startsWith("openssh-key-v1") ||
+    trimmed.startsWith("PuTTY-User-Key-File");
+}
 
 /**
  * Check if an SSH private key is encrypted (requires passphrase)
@@ -33,6 +47,12 @@ const DEFAULT_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
  * @returns {boolean} - True if the key is encrypted
  */
 function isKeyEncrypted(keyContent) {
+  // Check for PuTTY PPK encrypted format
+  const ppkEncMatch = keyContent.match(/^Encryption:\s*(.+)$/m);
+  if (ppkEncMatch && ppkEncMatch[1].trim() !== "none") {
+    return true;
+  }
+
   // Check for PKCS#8 encrypted format (-----BEGIN ENCRYPTED PRIVATE KEY-----)
   if (keyContent.includes("-----BEGIN ENCRYPTED PRIVATE KEY-----")) {
     return true;
@@ -82,14 +102,31 @@ function isKeyEncrypted(keyContent) {
  */
 async function findDefaultPrivateKey() {
   const sshDir = path.join(os.homedir(), ".ssh");
-  log("Searching for default SSH keys", { sshDir, keyNames: DEFAULT_KEY_NAMES });
-  for (const name of DEFAULT_KEY_NAMES) {
+  // Scan ~/.ssh/ for all files matching id_* (same as Tabby/OpenSSH),
+  // with preferred key types tried first
+  let allNames = [];
+  try {
+    const entries = await fs.promises.readdir(sshDir);
+    allNames = entries.filter(f => SSH_KEY_PATTERN.test(f));
+  } catch {
+    return null;
+  }
+  // Sort: preferred keys first (in order), then rest alphabetically
+  const preferred = PREFERRED_KEY_NAMES.filter(n => allNames.includes(n));
+  const rest = allNames.filter(n => !PREFERRED_KEY_NAMES.includes(n)).sort();
+  const sorted = [...preferred, ...rest];
+  log("Searching for default SSH keys", { sshDir, found: sorted });
+
+  for (const name of sorted) {
     const keyPath = path.join(sshDir, name);
     try {
-      await fs.promises.access(keyPath, fs.constants.F_OK);
+      const stat = await fs.promises.stat(keyPath);
+      if (!stat.isFile()) continue;
       const privateKey = await fs.promises.readFile(keyPath, "utf8");
-      // Skip encrypted keys - they require a passphrase and would abort
-      // authentication before password/keyboard-interactive can be tried
+      if (!looksLikePrivateKey(privateKey)) {
+        log("Skipping non-key file", { keyPath, keyName: name });
+        continue;
+      }
       const encrypted = isKeyEncrypted(privateKey);
       log("Key file read", { keyPath, keyName: name, encrypted, keyLength: privateKey.length });
       if (encrypted) {
@@ -114,13 +151,28 @@ async function findDefaultPrivateKey() {
  */
 async function findAllDefaultPrivateKeys() {
   const sshDir = path.join(os.homedir(), ".ssh");
-  log("Searching for ALL default SSH keys", { sshDir, keyNames: DEFAULT_KEY_NAMES });
+  let allNames = [];
+  try {
+    const entries = await fs.promises.readdir(sshDir);
+    allNames = entries.filter(f => SSH_KEY_PATTERN.test(f));
+  } catch {
+    return [];
+  }
+  const preferred = PREFERRED_KEY_NAMES.filter(n => allNames.includes(n));
+  const rest = allNames.filter(n => !PREFERRED_KEY_NAMES.includes(n)).sort();
+  const sorted = [...preferred, ...rest];
+  log("Searching for ALL default SSH keys", { sshDir, found: sorted });
 
-  const promises = DEFAULT_KEY_NAMES.map(async (name) => {
+  const promises = sorted.map(async (name) => {
     const keyPath = path.join(sshDir, name);
     try {
-      await fs.promises.access(keyPath, fs.constants.F_OK);
+      const stat = await fs.promises.stat(keyPath);
+      if (!stat.isFile()) return null;
       const privateKey = await fs.promises.readFile(keyPath, "utf8");
+      if (!looksLikePrivateKey(privateKey)) {
+        log("Skipping non-key file", { keyPath, keyName: name });
+        return null;
+      }
       const encrypted = isKeyEncrypted(privateKey);
       if (!encrypted) {
         log("Found default key for fallback", { keyPath, keyName: name });
@@ -387,7 +439,64 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         connOpts.agent = authAgent;
       } else if (jump.privateKey) {
         connOpts.privateKey = jump.privateKey;
-        if (jump.passphrase) connOpts.passphrase = jump.passphrase;
+        if (jump.passphrase) {
+          connOpts.passphrase = jump.passphrase;
+        } else if (isKeyEncrypted(jump.privateKey)) {
+          // Key is encrypted but no passphrase provided — prompt the user
+          console.log(`[Chain] Hop ${i + 1}: key is encrypted, requesting passphrase`);
+          sendProgress(i + 1, totalHops + 1, hopLabel, 'auth-attempt', 'passphrase required');
+          const keyLabel = jump.label || hopLabel;
+          const result = await passphraseHandler.requestPassphrase(
+            sender,
+            `SSH key for ${keyLabel}`,
+            keyLabel,
+            hopLabel
+          );
+          if (result?.passphrase) {
+            connOpts.passphrase = result.passphrase;
+          } else {
+            // No passphrase (cancelled/skipped/timeout) — remove the encrypted
+            // key so buildAuthHandler won't try it and stall auth.
+            delete connOpts.privateKey;
+            if (result?.cancelled) {
+              throw new Error(`Passphrase entry cancelled for ${hopLabel}`);
+            }
+          }
+        }
+      }
+
+      // Read identity files from local paths (e.g. from SSH config IdentityFile)
+      if (!connOpts.privateKey && !connOpts.agent && jump.identityFilePaths?.length > 0) {
+        for (const keyPath of jump.identityFilePaths) {
+          try {
+            const resolvedPath = keyPath.startsWith("~/")
+              ? path.join(os.homedir(), keyPath.slice(2))
+              : keyPath;
+            const keyContent = await fs.promises.readFile(resolvedPath, "utf8");
+            connOpts.privateKey = keyContent;
+            if (isKeyEncrypted(keyContent)) {
+              console.log(`[Chain] Hop ${i + 1}: identity file ${resolvedPath} is encrypted, requesting passphrase`);
+              sendProgress(i + 1, totalHops + 1, hopLabel, 'auth-attempt', 'passphrase required');
+              const result = await passphraseHandler.requestPassphrase(
+                sender,
+                resolvedPath,
+                path.basename(resolvedPath),
+                hopLabel
+              );
+              if (result?.passphrase) {
+                connOpts.passphrase = result.passphrase;
+              } else {
+                // Cancelled/skipped/timeout — clear encrypted key, try next file
+                delete connOpts.privateKey;
+                continue;
+              }
+            }
+            console.log(`[Chain] Hop ${i + 1}: loaded identity file ${resolvedPath}`);
+            break;
+          } catch (err) {
+            console.warn(`[Chain] Hop ${i + 1}: failed to read identity file ${keyPath}:`, err.message);
+          }
+        }
       }
 
       if (jump.password) connOpts.password = jump.password;
@@ -448,13 +557,23 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           reject(new Error(errMsg));
         });
         // Handle keyboard-interactive authentication for jump hosts (2FA/MFA)
-        conn.on('keyboard-interactive', createKeyboardInteractiveHandler({
+        const chainKiHandler = createKeyboardInteractiveHandler({
           sender,
           sessionId,
           hostname: hopLabel,
           password: jump.password,
           logPrefix: `[Chain] Hop ${i + 1}/${totalHops}`,
-        }));
+        });
+        conn.on('keyboard-interactive', (name, instructions, lang, prompts, finish) => {
+          if (prompts && prompts.length > 0) {
+            sendProgress(i + 1, totalHops + 1, hopLabel, 'auth-attempt', 'waiting for user input...');
+          }
+          const wrappedFinish = (...args) => {
+            sendProgress(i + 1, totalHops + 1, hopLabel, 'auth-attempt', 'user responded');
+            finish(...args);
+          };
+          chainKiHandler(name, instructions, lang, prompts, wrappedFinish);
+        });
         console.log(`[Chain] Hop ${i + 1}/${totalHops}: Connecting to ${hopLabel}...`);
         conn.connect(connOpts);
       });
@@ -590,6 +709,41 @@ async function startSSHSession(event, options) {
       }
     }
 
+    // Read identity files from local paths (e.g. from SSH config IdentityFile)
+    // Only if no explicit key was already configured
+    if (!connectOpts.privateKey && !connectOpts.agent && options.identityFilePaths?.length > 0) {
+      for (const keyPath of options.identityFilePaths) {
+        try {
+          const resolvedPath = keyPath.startsWith("~/")
+            ? path.join(os.homedir(), keyPath.slice(2))
+            : keyPath;
+          const keyContent = await fs.promises.readFile(resolvedPath, "utf8");
+          connectOpts.privateKey = keyContent;
+          // Check if key is encrypted — if so, prompt for passphrase
+          if (isKeyEncrypted(keyContent)) {
+            log("Identity file is encrypted, requesting passphrase", { keyPath: resolvedPath });
+            const result = await passphraseHandler.requestPassphrase(
+              sender,
+              resolvedPath,
+              path.basename(resolvedPath),
+              options.hostname
+            );
+            if (result?.passphrase) {
+              connectOpts.passphrase = result.passphrase;
+            } else {
+              // Cancelled/skipped/timeout — clear encrypted key, try next file
+              delete connectOpts.privateKey;
+              continue;
+            }
+          }
+          log("Loaded identity file", { keyPath: resolvedPath, encrypted: isKeyEncrypted(keyContent) });
+          break; // Use the first successfully loaded key
+        } catch (err) {
+          log("Failed to read identity file", { keyPath, error: err.message });
+        }
+      }
+    }
+
     if (options.password && typeof options.password === "string" && options.password.trim().length > 0) {
       connectOpts.password = options.password;
     }
@@ -668,7 +822,7 @@ async function startSSHSession(event, options) {
     let lastTriedMethod = null;
 
     if (authAgent) {
-      const order = ["agent"];
+      const order = ["none", "agent"];
       if (connectOpts.password) order.push("password");
       // Add default key fallback if available and no user key configured
       // Must also set connectOpts.privateKey for ssh2 to actually try publickey auth
@@ -746,8 +900,9 @@ async function startSSHSession(event, options) {
         }
       }
 
-      // Use dynamic authHandler if we have multiple auth options
-      if (authMethods.length > 1) {
+      // Always use dynamic authHandler to ensure consistent "none" probing
+      // and auth method logging regardless of how many methods are configured
+      if (authMethods.length >= 1) {
         let authIndex = 0;
         // Track methods that have been attempted (to avoid re-trying on failure)
         // This prevents reusing the same key when server requires multiple publickey auth steps
@@ -760,6 +915,22 @@ async function startSSHSession(event, options) {
 
         connectOpts.authHandler = (methodsLeft, partialSuccess, callback) => {
           log("authHandler called", { methodsLeft, partialSuccess, authIndex, attemptedMethodIds: Array.from(attemptedMethodIds) });
+
+          // Log rejection of previous method
+          if (lastTriedMethod && !partialSuccess) {
+            sendProgress(totalHops, totalHops, options.hostname, 'auth-attempt', `${lastTriedMethod} rejected`);
+          }
+
+          // On the very first call (methodsLeft === null), try "none" auth.
+          // Per RFC 4252, the "none" request is how the client discovers which
+          // methods the server supports.  It also allows passwordless login on
+          // embedded devices.  This matches the behavior of OpenSSH and Tabby.
+          if (methodsLeft === null && !attemptedMethodIds.has("none")) {
+            attemptedMethodIds.add("none");
+            lastTriedMethod = "none";
+            sendProgress(totalHops, totalHops, options.hostname, 'auth-attempt', 'none (no credentials)');
+            return callback("none");
+          }
 
           // methodsLeft can be null on first call (before server responds with available methods)
           // Include "agent" for SSH agent-based auth (used with agentForwarding)
@@ -897,6 +1068,7 @@ async function startSSHSession(event, options) {
           }
 
           log("All auth methods exhausted");
+          sendProgress(totalHops, totalHops, options.hostname, 'auth-attempt', 'all methods exhausted');
           return callback(false);
         };
 
@@ -1080,17 +1252,29 @@ async function startSSHSession(event, options) {
             });
 
             stream.on("close", () => {
-              // Flush any remaining data before close
+              // Always flush buffered data regardless of session state
               if (flushTimeout) {
                 clearTimeout(flushTimeout);
               }
               flushBuffer();
               sessionLogStreamManager.stopStream(sessionId);
-              const contents = event.sender;
-              safeSend(contents, "netcatty:exit", { sessionId, exitCode: streamExitCode, reason: streamExited ? "exited" : "closed" });
-              sessions.delete(sessionId);
-              sessionEncodings.delete(sessionId);
-              sessionDecoders.delete(sessionId);
+
+              // Only send exit if session hasn't already been cleaned up by
+              // conn.once("close") — which fires before stream.on("close")
+              // in ssh2 when the transport drops.
+              if (sessions.has(sessionId)) {
+                const contents = event.sender;
+                const session = sessions.get(sessionId);
+                const transportError = session?._transportError;
+                if (transportError) {
+                  safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: transportError, reason: "error" });
+                } else {
+                  safeSend(contents, "netcatty:exit", { sessionId, exitCode: streamExitCode, reason: streamExited ? "exited" : "closed" });
+                }
+                sessions.delete(sessionId);
+                sessionEncodings.delete(sessionId);
+                sessionDecoders.delete(sessionId);
+              }
               conn.end();
               for (const c of chainConnections) {
                 try { c.end(); } catch { }
@@ -1116,6 +1300,22 @@ async function startSSHSession(event, options) {
       });
 
       conn.on("error", (err) => {
+        // After the promise is settled, we can't reject again. But if the
+        // session was already established (resolved), we still need to notify
+        // the renderer about transport errors so the session shows as failed
+        // rather than silently closing.
+        // Don't send netcatty:exit here — the stream close handler will flush
+        // any buffered data first and then send exit with this error info.
+        if (settled) {
+          console.warn(`${logPrefix} ${options.hostname} post-settle error:`, err.message);
+          // Store the error so the close handler can include it in the exit event
+          if (sessions.has(sessionId)) {
+            const session = sessions.get(sessionId);
+            if (session) session._transportError = err.message;
+          }
+          return;
+        }
+
         const contents = event.sender;
 
         const isAuthError = err.message?.toLowerCase().includes('authentication') ||
@@ -1145,6 +1345,9 @@ async function startSSHSession(event, options) {
         for (const c of chainConnections) {
           try { c.end(); } catch { }
         }
+        // Destroy the connection to prevent further socket errors from leaking
+        // as uncaught exceptions (e.g. ECONNRESET on embedded devices).
+        try { conn.destroy(); } catch { }
         settled = true;
         reject(err);
       });
@@ -1162,6 +1365,7 @@ async function startSSHSession(event, options) {
         for (const c of chainConnections) {
           try { c.end(); } catch { }
         }
+        try { conn.destroy(); } catch { }
         settled = true;
         reject(err);
       });
@@ -1171,7 +1375,19 @@ async function startSSHSession(event, options) {
         if (!settled) {
           sendProgress(totalHops, totalHops, options.hostname, 'error', `Connection to ${options.hostname} closed unexpectedly`);
         }
-        safeSend(contents, "netcatty:exit", { sessionId, exitCode: 0, reason: "closed" });
+        // Only send exit if the session hasn't already been cleaned up by the
+        // error handler (avoids sending a misleading exitCode:0 "closed" after
+        // a real transport error was already reported).
+        if (sessions.has(sessionId)) {
+          const session = sessions.get(sessionId);
+          const transportError = session?._transportError;
+          if (transportError) {
+            // A transport error was recorded — report it as an error exit
+            safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: transportError, reason: "error" });
+          } else {
+            safeSend(contents, "netcatty:exit", { sessionId, exitCode: 0, reason: "closed" });
+          }
+        }
         sessionLogStreamManager.stopStream(sessionId);
         sessions.delete(sessionId);
         sessionEncodings.delete(sessionId);
@@ -1201,12 +1417,15 @@ async function startSSHSession(event, options) {
           return;
         }
 
+        sendProgress(totalHops, totalHops, options.hostname, 'auth-attempt', 'waiting for user input...');
+
         // Forward ALL prompts to user - no auto-fill to avoid semantic detection issues
         // (Prompt text is admin-customizable and may not contain expected keywords)
         const requestId = keyboardInteractiveHandler.generateRequestId('ssh');
 
         keyboardInteractiveHandler.storeRequest(requestId, (userResponses) => {
           console.log(`${logPrefix} Received user responses, finishing keyboard-interactive`);
+          sendProgress(totalHops, totalHops, options.hostname, 'auth-attempt', 'user responded');
           finish(userResponses);
         }, sender.id, sessionId);
 
@@ -1322,10 +1541,11 @@ async function execCommand(event, payload) {
             });
         });
       })
-      .once("error", (err) => {
+      .on("error", (err) => {
         if (settled) return;
         clearTimeout(timer);
         settled = true;
+        conn.end();
         reject(err);
       })
       .once("end", () => {
@@ -1507,7 +1727,11 @@ async function startSSHSessionWrapper(event, options) {
                 authError.isAuthError = true;
                 throw authError;
               }
-              throw retryErr;
+              // Wrap non-auth retry errors as connection errors to prevent crash
+              const connError = new Error(retryErr.message);
+              connError.level = retryErr.level || 'client-socket';
+              connError.code = retryErr.code;
+              throw connError;
             }
           } else {
             console.log('[SSH] User did not unlock any keys, not retrying');
@@ -1522,7 +1746,15 @@ async function startSSHSessionWrapper(event, options) {
       authError.isAuthError = true;
       throw authError;
     }
-    throw err;
+
+    // Non-auth errors (e.g. ECONNRESET, ETIMEDOUT) — wrap in a clean Error
+    // so Electron's ipcMain.handle can serialize it back to the renderer
+    // instead of it becoming an uncaught exception that crashes the app.
+    // See: https://github.com/nicely-gg/netcatty/issues/482
+    const connError = new Error(err.message);
+    connError.level = err.level || 'client-socket';
+    connError.code = err.code;
+    throw connError;
   }
 }
 
@@ -1592,11 +1824,41 @@ async function getServerStats(event, payload) {
 
   const conn = session.conn;
 
+  // macOS stats command: uses sysctl, vm_stat, top, ps, df, netstat
+  // CPU reported as direct percentage (top computes delta internally)
+  // cpuPerCore not available on macOS without sudo
+  const macosStatsCommand = [
+    `cores=$(sysctl -n hw.logicalcpu 2>/dev/null || echo "1")`,
+    `pagesize=$(sysctl -n hw.pagesize 2>/dev/null || echo "4096")`,
+    `memsize=$(sysctl -n hw.memsize 2>/dev/null || echo "0")`,
+    // CPU usage: top -l 1 gives one logging sample, parse idle%
+    `cpuline=$(top -l 1 -s 0 -n 0 2>/dev/null | grep "CPU usage:" | head -1)`,
+    `cpupct=$(echo "$cpuline" | awk '{for(i=1;i<=NF;i++){if($(i+1)~/^idle/){v=$i;gsub(/%/,"",v);idle=v+0;found=1}};if(found)printf "%.0f",100-idle}')`,
+    // Memory: single vm_stat pipe → awk extracts all page counts (strip trailing dots with gsub)
+    // Outputs: "memfree memcached" in MB
+    `vmmem=$(vm_stat 2>/dev/null | awk -v ps="$pagesize" '/^Pages free:/{gsub(/[^0-9]/,"",$NF);free=$NF+0} /^Pages speculative:/{gsub(/[^0-9]/,"",$NF);spec=$NF+0} /^Pages inactive:/{gsub(/[^0-9]/,"",$NF);inact=$NF+0} /^Pages purgeable:/{gsub(/[^0-9]/,"",$NF);purg=$NF+0} END{mfree=int((free+spec)*ps/1024/1024);mcached=int((inact+purg)*ps/1024/1024);printf "%d %d",mfree,mcached}')`,
+    `memtotal=$(echo "$memsize" | awk '{printf "%d",$1/1024/1024}')`,
+    `memfree=$(echo "$vmmem" | awk '{print $1}')`,
+    `memcached=$(echo "$vmmem" | awk '{print $2}')`,
+    // Swap
+    `swapraw=$(sysctl vm.swapusage 2>/dev/null)`,
+    `swaptotal=$(echo "$swapraw" | awk '{for(i=1;i<=NF;i++){if($i=="total"&&$(i+1)=="="){v=$(i+2);m=1;if(v~/G/)m=1024;gsub(/[MmGg]/,"",v);st=v*m}};printf "%.0f",st+0}')`,
+    `swapused=$(echo "$swapraw" | awk '{for(i=1;i<=NF;i++){if($i=="used"&&$(i+1)=="="){v=$(i+2);m=1;if(v~/G/)m=1024;gsub(/[MmGg]/,"",v);su=v*m}};printf "%.0f",su+0}')`,
+    `swapfree=$(echo "$swaptotal $swapused" | awk '{printf "%.0f",$1-$2}')`,
+    // Top processes by memory%
+    `procs=$(ps -A -o pid=,%mem=,comm= 2>/dev/null | sort -k2 -rn | head -10 | awk '{gsub(/;/,"_",$3);printf "%s;%.1f;%s,",$1,$2,$3}' | sed 's/,$//')`,
+    // Disk: only show root "/" and external volumes "/Volumes/*", skip system APFS snapshots
+    `disks=$(df -k 2>/dev/null | awk 'NR>1&&index($1,"/dev/")==1&&NF>=9&&($NF=="/"||index($NF,"/Volumes/")==1){u=$3/1048576;t=$2/1048576;p=$5;gsub(/%/,"",p);printf "%s:%.0f:%.0f:%s,",$NF,u,t,p}' | sed 's/,$//')`,
+    // Network: Link# lines only, exclude loopback, detect column shift (no MAC addr → cols shift left)
+    `net=$(netstat -ib 2>/dev/null | awk '/^[a-z]/&&$3~/Link/&&$1!~/^lo/{if($4~/:/){rx=$7;tx=$10}else{rx=$6;tx=$9};if((rx+0)>0){gsub(/[*]/,"",$1);printf "%s:%s:%s,",$1,rx,tx}}' | sed 's/,$//')`,
+    `echo "CPU:$cpupct|CORES:$cores|MEMINFO:$memtotal $memfree 0 $memcached $swaptotal $swapfree|PROCS:$procs|DISKS:$disks|NET:$net"`,
+  ].join('; ');
+
   // Command to get CPU (overall + per-core), Memory, Disk, and Network stats
   // This command is designed to work across most Linux distributions
   // Note: Using semicolons and avoiding comments for single-line execution
   // CPU: Output raw values (total and idle) instead of percentage - we calculate delta on backend
-  const statsCommand = [
+  const linuxStatsCommand = [
     // Get number of CPU cores
     `cores=$(nproc 2>/dev/null || grep -c "^processor" /proc/cpuinfo 2>/dev/null || echo "1")`,
     // Get raw CPU values from /proc/stat: "total idle" for overall CPU
@@ -1620,6 +1882,8 @@ async function getServerStats(event, payload) {
     `echo "CPURAW:$cpuraw|CORES:$cores|PERCORERAW:$percoreraw|MEMINFO:$meminfo|PROCS:$procs|DISKS:$disks|NET:$net"`
   ].join('; ');
 
+  // Auto-detect OS via uname — only Linux and macOS are supported
+  const statsCommand = `ostype=$(uname -s 2>/dev/null || echo "Unknown"); if [ "$ostype" = "Darwin" ]; then ${macosStatsCommand}; elif [ "$ostype" = "Linux" ]; then ${linuxStatsCommand}; else echo "UNSUPPORTED_OS:$ostype"; fi`;
   return new Promise((resolve) => {
     const timeout = setTimeout(() => {
       resolve({ success: false, error: 'Timeout getting server stats' });
@@ -1648,8 +1912,16 @@ async function getServerStats(event, payload) {
 
         // Parse the output
         const output = stdout.trim();
+
+        // Unsupported OS — stop polling this session
+        if (output.startsWith('UNSUPPORTED_OS:')) {
+          resolve({ success: false, error: `Server stats not supported on this OS (${output.substring(15)})` });
+          return;
+        }
+
         const parts = output.split('|');
 
+        let cpuDirect = null;    // macOS: direct CPU percentage from top
         let cpuRawTotal = null;
         let cpuRawIdle = null;
         let cpuPerCoreRaw = [];  // Array of { total, idle }
@@ -1666,7 +1938,11 @@ async function getServerStats(event, payload) {
         let networkInterfaces = [];  // Array of { name, rxBytes, txBytes }
 
         for (const part of parts) {
-          if (part.startsWith('CPURAW:')) {
+          if (part.startsWith('CPU:')) {
+            // macOS: top reports CPU% directly (no delta needed)
+            const val = parseFloat(part.substring(4).trim());
+            if (!isNaN(val)) cpuDirect = Math.min(100, Math.max(0, Math.round(val)));
+          } else if (part.startsWith('CPURAW:')) {
             const rawParts = part.substring(7).trim().split(/\s+/);
             if (rawParts.length >= 2) {
               cpuRawTotal = parseInt(rawParts[0], 10);
@@ -1843,6 +2119,11 @@ async function getServerStats(event, payload) {
           }
         }
 
+        // macOS: use direct percentage from top (no delta needed)
+        if (cpu === null && cpuDirect !== null) {
+          cpu = cpuDirect;
+        }
+
         // Calculate per-core CPU usage from deltas
         if (cpuPerCoreRaw.length > 0 && prevCpu.perCore.length > 0) {
           cpuPerCore = cpuPerCoreRaw.map((core, index) => {
@@ -1877,6 +2158,12 @@ async function getServerStats(event, payload) {
         const diskPercent = rootDisk ? rootDisk.percent : null;
         const diskUsed = rootDisk ? rootDisk.used : null;
         const diskTotal = rootDisk ? rootDisk.total : null;
+
+        // If no meaningful data was parsed, treat as failure to stop futile polling
+        if (cpu === null && memTotal === null && cpuCores === null) {
+          resolve({ success: false, error: 'Unable to parse server stats (unsupported OS or shell)' });
+          return;
+        }
 
         resolve({
           success: true,
@@ -1940,14 +2227,17 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:ssh:get-default-keys", async () => {
     const sshDir = path.join(os.homedir(), ".ssh");
     const keys = [];
-    for (const name of DEFAULT_KEY_NAMES) {
-      const keyPath = path.join(sshDir, name);
-      try {
-        await fs.promises.access(keyPath, fs.constants.F_OK);
-        keys.push({ name, path: keyPath });
-      } catch {
-        // ignore missing keys
+    try {
+      const entries = await fs.promises.readdir(sshDir);
+      const names = entries.filter(f => SSH_KEY_PATTERN.test(f));
+      // Preferred first, then rest alphabetically
+      const preferred = PREFERRED_KEY_NAMES.filter(n => names.includes(n));
+      const rest = names.filter(n => !PREFERRED_KEY_NAMES.includes(n)).sort();
+      for (const name of [...preferred, ...rest]) {
+        keys.push({ name, path: path.join(sshDir, name) });
       }
+    } catch {
+      // ~/.ssh doesn't exist
     }
     return keys;
   });

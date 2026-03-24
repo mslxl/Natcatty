@@ -38,6 +38,7 @@ declare global {
     keyId?: string;
     keySource?: 'generated' | 'imported';
     label?: string; // Display label for UI
+    identityFilePaths?: string[];
   }
 
   // Host key information for verification
@@ -84,6 +85,8 @@ declare global {
     sudo?: boolean;
     // Session log configuration for real-time streaming
     sessionLog?: { enabled: boolean; directory: string; format: string };
+    // Local SSH key file paths (from SSH config IdentityFile)
+    identityFilePaths?: string[];
   }
 
   interface SftpStatResult {
@@ -208,7 +211,7 @@ declare global {
     }): Promise<{ stdout: string; stderr: string; code: number | null }>;
     /** Get current working directory from an active SSH session */
     getSessionPwd?(sessionId: string): Promise<{ success: boolean; cwd?: string; error?: string }>;
-    /** Get server stats (CPU, Memory, Disk, Network) from an active SSH session - Linux only */
+    /** Get server stats (CPU, Memory, Disk, Network) from an active SSH session */
     getServerStats?(sessionId: string): Promise<{
       success: boolean;
       error?: string;
@@ -465,6 +468,9 @@ declare global {
     // Callback receives: (sessionId: string, currentHop: number, totalHops: number, hostLabel: string, status: string, error?: string)
     onChainProgress?(cb: (sessionId: string, hop: number, total: number, label: string, status: string, error?: string) => void): () => void;
 
+    // SFTP connection progress listener (auth method logs)
+    onSftpConnectionProgress?(cb: (sessionId: string, label: string, status: string, detail?: string) => void): () => void;
+
     // OAuth callback server for cloud sync
     startOAuthCallback?(expectedState?: string): Promise<{ code: string; state?: string }>;
     cancelOAuthCallback?(): Promise<void>;
@@ -579,6 +585,7 @@ declare global {
     // Save dialog for file downloads
     showSaveDialog?(defaultPath: string, filters?: Array<{ name: string; extensions: string[] }>): Promise<string | null>;
     selectDirectory?(title?: string, defaultPath?: string): Promise<string | null>;
+    selectFile?(title?: string, defaultPath?: string, filters?: Array<{ name: string; extensions: string[] }>): Promise<string | null>;
 
     // File watcher for auto-sync feature
     startFileWatch?(localPath: string, remotePath: string, sftpId: string, encoding?: SftpFilenameEncoding): Promise<{ watchId: string }>;

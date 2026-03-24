@@ -519,6 +519,7 @@ const importFromSshConfig = (text: string): VaultImportResult => {
     username?: string;
     port?: number;
     proxyJump?: string;
+    identityFiles?: string[];
   };
 
   const blocks: Block[] = [];
@@ -557,6 +558,12 @@ const importFromSshConfig = (text: string): VaultImportResult => {
     else if (keyword === "user") current.username = value;
     else if (keyword === "port") current.port = parsePort(value);
     else if (keyword === "proxyjump") current.proxyJump = value;
+    else if (keyword === "identityfile") {
+      if (!current.identityFiles) current.identityFiles = [];
+      // Remove surrounding quotes (ssh_config allows quoted paths with spaces)
+      const unquoted = value.replace(/^["']|["']$/g, "");
+      current.identityFiles.push(unquoted);
+    }
   }
 
   flush();
@@ -596,6 +603,11 @@ const importFromSshConfig = (text: string): VaultImportResult => {
         port: block.port,
         protocol: "ssh",
       });
+
+      // Attach IdentityFile paths if present
+      if (block.identityFiles && block.identityFiles.length > 0) {
+        host.identityFilePaths = [...block.identityFiles];
+      }
 
       parsedHosts.push(host);
 

@@ -52,6 +52,7 @@ export const useSftpHostCredentials = ({
               keyId: jumpAuth.keyId,
               keySource: jumpKey?.source,
               label: jumpHost.label,
+              identityFilePaths: jumpHost.identityFilePaths,
             };
           });
       }
@@ -70,6 +71,7 @@ export const useSftpHostCredentials = ({
         proxy: proxyConfig,
         jumpHosts: jumpHosts && jumpHosts.length > 0 ? jumpHosts : undefined,
         sudo: host.sftpSudo,
+        identityFilePaths: host.identityFilePaths,
       };
     },
     [hosts, identities, keys],

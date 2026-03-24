@@ -358,6 +358,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         keyId: jumpAuth.keyId,
         keySource: jumpKey?.source,
         label: jumpHost.label,
+        identityFilePaths: jumpHost.identityFilePaths,
       };
     });
 
@@ -431,7 +432,15 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
             logLine = `${prefix}${label} - ${tr("terminal.progress.keyExchangeComplete", "Key exchange complete")}`;
             break;
           case 'auth-attempt':
-            logLine = `${prefix}${label} - ${tr("terminal.progress.trying", "Trying")} ${error}...`;
+            if (error?.endsWith('rejected')) {
+              logLine = `${prefix}${label} - ✗ ${error}`;
+            } else if (error === 'all methods exhausted') {
+              logLine = `${prefix}${label} - ✗ All authentication methods exhausted`;
+            } else if (error === 'waiting for user input...' || error === 'user responded') {
+              logLine = `${prefix}${label} - ${error}`;
+            } else {
+              logLine = `${prefix}${label} - ${tr("terminal.progress.trying", "Trying")} ${error}...`;
+            }
             break;
           case 'authenticated':
             logLine = `${prefix}${label} - ${tr("terminal.progress.authenticated", "Authenticated")}`;
@@ -491,6 +500,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           jumpHosts: jumpHosts.length > 0 ? jumpHosts : undefined,
           keepaliveInterval: ctx.terminalSettings?.keepaliveInterval,
           sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
+          // Only pass local key paths if no vault key is explicitly configured
+          identityFilePaths: attempt.key ? undefined : ctx.host.identityFilePaths,
         });
       };
 
@@ -582,6 +593,18 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           }
         }, 600);
       }
+
+      // Run OS detection only after successful connection
+      setTimeout(
+        () =>
+          void runDistroDetection(ctx, {
+            username: effectiveUsername,
+            password: usedPassword,
+            key: usedKey,
+            passphrase: effectivePassphrase,
+          }),
+        600,
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const authError = isAuthError(err);
@@ -607,17 +630,6 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       ctx.setChainProgress(null);
       if (unsubscribeChainProgress) unsubscribeChainProgress();
     }
-
-    setTimeout(
-      () =>
-        void runDistroDetection(ctx, {
-          username: effectiveUsername,
-          password: usedPassword,
-          key: usedKey,
-          passphrase: effectivePassphrase,
-        }),
-      600,
-    );
   };
 
   const startTelnet = async (term: XTerm) => {

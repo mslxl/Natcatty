@@ -11,7 +11,20 @@ const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
 const passphraseHandler = require("./passphraseHandler.cjs");
 
 // Default SSH key names in priority order
-const DEFAULT_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
+const PREFERRED_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
+const SSH_KEY_PATTERN = /^id_[\w-]+$/;
+
+/**
+ * Quick check if file content looks like an SSH private key.
+ * Rejects non-key files that happen to match the id_* filename pattern.
+ */
+function looksLikePrivateKey(content) {
+  if (!content || typeof content !== "string") return false;
+  const trimmed = content.trimStart();
+  return trimmed.startsWith("-----BEGIN") ||
+    trimmed.startsWith("openssh-key-v1") ||
+    trimmed.startsWith("PuTTY-User-Key-File");
+}
 
 /**
  * Check if an SSH private key is encrypted (requires passphrase)
@@ -20,6 +33,13 @@ const DEFAULT_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
  */
 function isKeyEncrypted(keyContent) {
   if (!keyContent || typeof keyContent !== "string") return false;
+
+  // Check for PuTTY PPK encrypted format (Encryption: aes256-cbc, etc.)
+  // PPK keys with "Encryption: none" are unencrypted
+  const ppkEncMatch = keyContent.match(/^Encryption:\s*(.+)$/m);
+  if (ppkEncMatch && ppkEncMatch[1].trim() !== "none") {
+    return true;
+  }
 
   // Check for PKCS#8 encrypted format (-----BEGIN ENCRYPTED PRIVATE KEY-----)
   if (keyContent.includes("-----BEGIN ENCRYPTED PRIVATE KEY-----")) {
@@ -73,14 +93,25 @@ function isKeyEncrypted(keyContent) {
  */
 async function findDefaultPrivateKey() {
   const sshDir = path.join(os.homedir(), ".ssh");
-  for (const name of DEFAULT_KEY_NAMES) {
+  let allNames = [];
+  try {
+    const entries = await fs.promises.readdir(sshDir);
+    allNames = entries.filter(f => SSH_KEY_PATTERN.test(f));
+  } catch {
+    return null;
+  }
+  const preferred = PREFERRED_KEY_NAMES.filter(n => allNames.includes(n));
+  const rest = allNames.filter(n => !PREFERRED_KEY_NAMES.includes(n)).sort();
+  const sorted = [...preferred, ...rest];
+
+  for (const name of sorted) {
     const keyPath = path.join(sshDir, name);
     try {
-      await fs.promises.access(keyPath, fs.constants.F_OK);
+      const stat = await fs.promises.stat(keyPath);
+      if (!stat.isFile()) continue; // Skip directories, FIFOs, sockets, etc.
       const privateKey = await fs.promises.readFile(keyPath, "utf8");
-      if (isKeyEncrypted(privateKey)) {
-        continue;
-      }
+      if (!looksLikePrivateKey(privateKey)) continue;
+      if (isKeyEncrypted(privateKey)) continue;
       return { privateKey, keyPath, keyName: name };
     } catch {
       continue;
@@ -99,11 +130,24 @@ async function findAllDefaultPrivateKeys(options = {}) {
   const { includeEncrypted = false } = options;
   const sshDir = path.join(os.homedir(), ".ssh");
 
-  const promises = DEFAULT_KEY_NAMES.map(async (name) => {
+  let allNames = [];
+  try {
+    const entries = await fs.promises.readdir(sshDir);
+    allNames = entries.filter(f => SSH_KEY_PATTERN.test(f));
+  } catch {
+    return [];
+  }
+  const preferred = PREFERRED_KEY_NAMES.filter(n => allNames.includes(n));
+  const rest = allNames.filter(n => !PREFERRED_KEY_NAMES.includes(n)).sort();
+  const sorted = [...preferred, ...rest];
+
+  const promises = sorted.map(async (name) => {
     const keyPath = path.join(sshDir, name);
     try {
-      await fs.promises.access(keyPath, fs.constants.F_OK);
+      const stat = await fs.promises.stat(keyPath);
+      if (!stat.isFile()) return null;
       const privateKey = await fs.promises.readFile(keyPath, "utf8");
+      if (!looksLikePrivateKey(privateKey)) return null;
       const encrypted = isKeyEncrypted(privateKey);
       if (encrypted && !includeEncrypted) {
         return null;
@@ -259,7 +303,7 @@ function buildAuthHandler(options) {
 
   // If only simple auth methods and no fallback keys needed, use array-based handler
   if (hasExplicitAuth && !hasFallbackOptions) {
-    const authMethods = [];
+    const authMethods = ["none"]; // Always try none first per RFC 4252
     if (effectiveAgent) authMethods.push("agent");
     if (privateKey) authMethods.push("publickey");
     if (password) authMethods.push("password");
@@ -380,10 +424,28 @@ function buildAuthHandler(options) {
 
   // Use dynamic authHandler to try all keys
   let authIndex = 0;
+  let lastAttemptedLabel = null;
   const attemptedMethodIds = new Set();
 
+  let triedNone = false;
+
   const authHandler = (methodsLeft, partialSuccess, callback) => {
+    // Per RFC 4252, always try "none" first to discover available methods
+    // and to support passwordless login (e.g. embedded devices).
+    // This matches the behavior of OpenSSH and Tabby.
+    if (methodsLeft === null && !triedNone) {
+      triedNone = true;
+      lastAttemptedLabel = "none (no credentials)";
+      onAuthAttempt?.("none (no credentials)");
+      return callback("none");
+    }
+
     const availableMethods = methodsLeft || ["publickey", "password", "keyboard-interactive", "agent"];
+
+    // Log rejection of previous method (authHandler is called again when server rejects)
+    if (lastAttemptedLabel && !partialSuccess) {
+      onAuthAttempt?.(`${lastAttemptedLabel} rejected`);
+    }
 
     while (authIndex < authMethods.length) {
       const method = authMethods[authIndex];
@@ -394,6 +456,7 @@ function buildAuthHandler(options) {
 
       if (method.type === "agent" && (availableMethods.includes("publickey") || availableMethods.includes("agent"))) {
         console.log(`${logPrefix} Trying agent auth`);
+        lastAttemptedLabel = "SSH agent";
         onAuthAttempt?.("SSH agent");
         return callback("agent");
       } else if (method.type === "publickey" && availableMethods.includes("publickey")) {
@@ -406,6 +469,7 @@ function buildAuthHandler(options) {
             : method.id === "publickey-user"
               ? "configured key"
               : method.id;
+        lastAttemptedLabel = keyLabel;
         onAuthAttempt?.(keyLabel);
         const pubkeyAuth = {
           type: "publickey",
@@ -418,6 +482,7 @@ function buildAuthHandler(options) {
         return callback(pubkeyAuth);
       } else if (method.type === "password" && availableMethods.includes("password")) {
         console.log(`${logPrefix} Trying password auth`);
+        lastAttemptedLabel = "password";
         onAuthAttempt?.("password");
         return callback({
           type: "password",
@@ -425,10 +490,12 @@ function buildAuthHandler(options) {
           password,
         });
       } else if (method.type === "keyboard-interactive" && availableMethods.includes("keyboard-interactive")) {
+        lastAttemptedLabel = "keyboard-interactive";
         onAuthAttempt?.("keyboard-interactive");
         return callback("keyboard-interactive");
       }
     }
+    onAuthAttempt?.("all methods exhausted");
     return callback(false);
   };
 
@@ -589,7 +656,9 @@ async function requestPassphrasesForEncryptedKeys(sender, hostname) {
 }
 
 module.exports = {
-  DEFAULT_KEY_NAMES,
+  PREFERRED_KEY_NAMES,
+  SSH_KEY_PATTERN,
+  looksLikePrivateKey,
   isKeyEncrypted,
   findDefaultPrivateKey,
   findAllDefaultPrivateKeys,

@@ -8,6 +8,7 @@ const transferCompleteListeners = new Map();
 const transferErrorListeners = new Map();
 const transferCancelledListeners = new Map();
 const chainProgressListeners = new Map();
+const sftpConnectionProgressListeners = new Set();
 const authFailedListeners = new Map();
 const languageChangeListeners = new Set();
 const fullscreenChangeListeners = new Set();
@@ -130,6 +131,17 @@ ipcRenderer.on("netcatty:chain:progress", (_event, payload) => {
       cb(sessionId, hop, total, label, status, error);
     } catch (err) {
       console.error("Chain progress callback failed", err);
+    }
+  });
+});
+
+// SFTP connection progress events (auth method logs)
+ipcRenderer.on("netcatty:sftp:connection-progress", (_event, payload) => {
+  sftpConnectionProgressListeners.forEach((cb) => {
+    try {
+      cb(payload.sessionId, payload.label, payload.status, payload.detail);
+    } catch (err) {
+      console.error("SFTP connection progress callback failed", err);
     }
   });
 });
@@ -808,6 +820,13 @@ const api = {
       chainProgressListeners.delete(id);
     };
   },
+  // SFTP connection progress listener (auth method logs)
+  onSftpConnectionProgress: (cb) => {
+    sftpConnectionProgressListeners.add(cb);
+    return () => {
+      sftpConnectionProgressListeners.delete(cb);
+    };
+  },
 
   // OAuth callback server
   startOAuthCallback: (expectedState) => ipcRenderer.invoke("oauth:startCallback", expectedState),
@@ -878,6 +897,8 @@ const api = {
     ipcRenderer.invoke("netcatty:showSaveDialog", { defaultPath, filters }),
   selectDirectory: (title, defaultPath) =>
     ipcRenderer.invoke("netcatty:selectDirectory", { title, defaultPath }),
+  selectFile: (title, defaultPath, filters) =>
+    ipcRenderer.invoke("netcatty:selectFile", { title, defaultPath, filters }),
 
   // File watcher for auto-sync feature
   startFileWatch: (localPath, remotePath, sftpId, encoding) =>
