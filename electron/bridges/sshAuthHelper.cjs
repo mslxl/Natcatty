@@ -11,7 +11,8 @@ const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
 const passphraseHandler = require("./passphraseHandler.cjs");
 
 // Default SSH key names in priority order
-const DEFAULT_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
+const PREFERRED_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
+const SSH_KEY_PATTERN = /^id_[\w-]+$/;
 
 /**
  * Check if an SSH private key is encrypted (requires passphrase)
@@ -73,14 +74,22 @@ function isKeyEncrypted(keyContent) {
  */
 async function findDefaultPrivateKey() {
   const sshDir = path.join(os.homedir(), ".ssh");
-  for (const name of DEFAULT_KEY_NAMES) {
+  let allNames = [];
+  try {
+    const entries = await fs.promises.readdir(sshDir);
+    allNames = entries.filter(f => SSH_KEY_PATTERN.test(f));
+  } catch {
+    return null;
+  }
+  const preferred = PREFERRED_KEY_NAMES.filter(n => allNames.includes(n));
+  const rest = allNames.filter(n => !PREFERRED_KEY_NAMES.includes(n)).sort();
+  const sorted = [...preferred, ...rest];
+
+  for (const name of sorted) {
     const keyPath = path.join(sshDir, name);
     try {
-      await fs.promises.access(keyPath, fs.constants.F_OK);
       const privateKey = await fs.promises.readFile(keyPath, "utf8");
-      if (isKeyEncrypted(privateKey)) {
-        continue;
-      }
+      if (isKeyEncrypted(privateKey)) continue;
       return { privateKey, keyPath, keyName: name };
     } catch {
       continue;
@@ -99,10 +108,20 @@ async function findAllDefaultPrivateKeys(options = {}) {
   const { includeEncrypted = false } = options;
   const sshDir = path.join(os.homedir(), ".ssh");
 
-  const promises = DEFAULT_KEY_NAMES.map(async (name) => {
+  let allNames = [];
+  try {
+    const entries = await fs.promises.readdir(sshDir);
+    allNames = entries.filter(f => SSH_KEY_PATTERN.test(f));
+  } catch {
+    return [];
+  }
+  const preferred = PREFERRED_KEY_NAMES.filter(n => allNames.includes(n));
+  const rest = allNames.filter(n => !PREFERRED_KEY_NAMES.includes(n)).sort();
+  const sorted = [...preferred, ...rest];
+
+  const promises = sorted.map(async (name) => {
     const keyPath = path.join(sshDir, name);
     try {
-      await fs.promises.access(keyPath, fs.constants.F_OK);
       const privateKey = await fs.promises.readFile(keyPath, "utf8");
       const encrypted = isKeyEncrypted(privateKey);
       if (encrypted && !includeEncrypted) {
@@ -612,7 +631,8 @@ async function requestPassphrasesForEncryptedKeys(sender, hostname) {
 }
 
 module.exports = {
-  DEFAULT_KEY_NAMES,
+  PREFERRED_KEY_NAMES,
+  SSH_KEY_PATTERN,
   isKeyEncrypted,
   findDefaultPrivateKey,
   findAllDefaultPrivateKeys,

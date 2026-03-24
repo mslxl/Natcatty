@@ -24,8 +24,10 @@ const {
 } = require("./sshAuthHelper.cjs");
 const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
 
-// Default SSH key names in priority order
-const DEFAULT_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
+// Default SSH key names in priority order (preferred keys tried first)
+const PREFERRED_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
+// Match any private key file: id_* but not *.pub
+const SSH_KEY_PATTERN = /^id_[\w-]+$/;
 
 /**
  * Check if an SSH private key is encrypted (requires passphrase)
@@ -82,14 +84,25 @@ function isKeyEncrypted(keyContent) {
  */
 async function findDefaultPrivateKey() {
   const sshDir = path.join(os.homedir(), ".ssh");
-  log("Searching for default SSH keys", { sshDir, keyNames: DEFAULT_KEY_NAMES });
-  for (const name of DEFAULT_KEY_NAMES) {
+  // Scan ~/.ssh/ for all files matching id_* (same as Tabby/OpenSSH),
+  // with preferred key types tried first
+  let allNames = [];
+  try {
+    const entries = await fs.promises.readdir(sshDir);
+    allNames = entries.filter(f => SSH_KEY_PATTERN.test(f));
+  } catch {
+    return null;
+  }
+  // Sort: preferred keys first (in order), then rest alphabetically
+  const preferred = PREFERRED_KEY_NAMES.filter(n => allNames.includes(n));
+  const rest = allNames.filter(n => !PREFERRED_KEY_NAMES.includes(n)).sort();
+  const sorted = [...preferred, ...rest];
+  log("Searching for default SSH keys", { sshDir, found: sorted });
+
+  for (const name of sorted) {
     const keyPath = path.join(sshDir, name);
     try {
-      await fs.promises.access(keyPath, fs.constants.F_OK);
       const privateKey = await fs.promises.readFile(keyPath, "utf8");
-      // Skip encrypted keys - they require a passphrase and would abort
-      // authentication before password/keyboard-interactive can be tried
       const encrypted = isKeyEncrypted(privateKey);
       log("Key file read", { keyPath, keyName: name, encrypted, keyLength: privateKey.length });
       if (encrypted) {
@@ -114,12 +127,21 @@ async function findDefaultPrivateKey() {
  */
 async function findAllDefaultPrivateKeys() {
   const sshDir = path.join(os.homedir(), ".ssh");
-  log("Searching for ALL default SSH keys", { sshDir, keyNames: DEFAULT_KEY_NAMES });
+  let allNames = [];
+  try {
+    const entries = await fs.promises.readdir(sshDir);
+    allNames = entries.filter(f => SSH_KEY_PATTERN.test(f));
+  } catch {
+    return [];
+  }
+  const preferred = PREFERRED_KEY_NAMES.filter(n => allNames.includes(n));
+  const rest = allNames.filter(n => !PREFERRED_KEY_NAMES.includes(n)).sort();
+  const sorted = [...preferred, ...rest];
+  log("Searching for ALL default SSH keys", { sshDir, found: sorted });
 
-  const promises = DEFAULT_KEY_NAMES.map(async (name) => {
+  const promises = sorted.map(async (name) => {
     const keyPath = path.join(sshDir, name);
     try {
-      await fs.promises.access(keyPath, fs.constants.F_OK);
       const privateKey = await fs.promises.readFile(keyPath, "utf8");
       const encrypted = isKeyEncrypted(privateKey);
       if (!encrypted) {
@@ -2095,14 +2117,17 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:ssh:get-default-keys", async () => {
     const sshDir = path.join(os.homedir(), ".ssh");
     const keys = [];
-    for (const name of DEFAULT_KEY_NAMES) {
-      const keyPath = path.join(sshDir, name);
-      try {
-        await fs.promises.access(keyPath, fs.constants.F_OK);
-        keys.push({ name, path: keyPath });
-      } catch {
-        // ignore missing keys
+    try {
+      const entries = await fs.promises.readdir(sshDir);
+      const names = entries.filter(f => SSH_KEY_PATTERN.test(f));
+      // Preferred first, then rest alphabetically
+      const preferred = PREFERRED_KEY_NAMES.filter(n => names.includes(n));
+      const rest = names.filter(n => !PREFERRED_KEY_NAMES.includes(n)).sort();
+      for (const name of [...preferred, ...rest]) {
+        keys.push({ name, path: path.join(sshDir, name) });
       }
+    } catch {
+      // ~/.ssh doesn't exist
     }
     return keys;
   });
