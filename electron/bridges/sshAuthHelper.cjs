@@ -21,7 +21,9 @@ const SSH_KEY_PATTERN = /^id_[\w-]+$/;
 function looksLikePrivateKey(content) {
   if (!content || typeof content !== "string") return false;
   const trimmed = content.trimStart();
-  return trimmed.startsWith("-----BEGIN") || trimmed.startsWith("openssh-key-v1");
+  return trimmed.startsWith("-----BEGIN") ||
+    trimmed.startsWith("openssh-key-v1") ||
+    trimmed.startsWith("PuTTY-User-Key-File");
 }
 
 /**
@@ -98,6 +100,8 @@ async function findDefaultPrivateKey() {
   for (const name of sorted) {
     const keyPath = path.join(sshDir, name);
     try {
+      const stat = await fs.promises.stat(keyPath);
+      if (!stat.isFile()) continue; // Skip directories, FIFOs, sockets, etc.
       const privateKey = await fs.promises.readFile(keyPath, "utf8");
       if (!looksLikePrivateKey(privateKey)) continue;
       if (isKeyEncrypted(privateKey)) continue;
@@ -133,6 +137,8 @@ async function findAllDefaultPrivateKeys(options = {}) {
   const promises = sorted.map(async (name) => {
     const keyPath = path.join(sshDir, name);
     try {
+      const stat = await fs.promises.stat(keyPath);
+      if (!stat.isFile()) return null;
       const privateKey = await fs.promises.readFile(keyPath, "utf8");
       if (!looksLikePrivateKey(privateKey)) return null;
       const encrypted = isKeyEncrypted(privateKey);

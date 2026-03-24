@@ -36,7 +36,9 @@ const SSH_KEY_PATTERN = /^id_[\w-]+$/;
 function looksLikePrivateKey(content) {
   if (!content || typeof content !== "string") return false;
   const trimmed = content.trimStart();
-  return trimmed.startsWith("-----BEGIN") || trimmed.startsWith("openssh-key-v1");
+  return trimmed.startsWith("-----BEGIN") ||
+    trimmed.startsWith("openssh-key-v1") ||
+    trimmed.startsWith("PuTTY-User-Key-File");
 }
 
 /**
@@ -112,6 +114,8 @@ async function findDefaultPrivateKey() {
   for (const name of sorted) {
     const keyPath = path.join(sshDir, name);
     try {
+      const stat = await fs.promises.stat(keyPath);
+      if (!stat.isFile()) continue;
       const privateKey = await fs.promises.readFile(keyPath, "utf8");
       if (!looksLikePrivateKey(privateKey)) {
         log("Skipping non-key file", { keyPath, keyName: name });
@@ -156,6 +160,8 @@ async function findAllDefaultPrivateKeys() {
   const promises = sorted.map(async (name) => {
     const keyPath = path.join(sshDir, name);
     try {
+      const stat = await fs.promises.stat(keyPath);
+      if (!stat.isFile()) return null;
       const privateKey = await fs.promises.readFile(keyPath, "utf8");
       if (!looksLikePrivateKey(privateKey)) {
         log("Skipping non-key file", { keyPath, keyName: name });
@@ -810,7 +816,7 @@ async function startSSHSession(event, options) {
     let lastTriedMethod = null;
 
     if (authAgent) {
-      const order = ["agent"];
+      const order = ["none", "agent"];
       if (connectOpts.password) order.push("password");
       // Add default key fallback if available and no user key configured
       // Must also set connectOpts.privateKey for ssh2 to actually try publickey auth
