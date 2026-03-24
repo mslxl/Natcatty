@@ -1060,10 +1060,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
     let data = normalizeLineEndings(command);
     const isMultiLine = data.includes('\n');
-    if (!noAutoRun) data = `${data}\r`;
+    // Wrap in bracketed paste BEFORE appending \r so the Enter is sent
+    // outside the paste markers — otherwise shells treat it as pasted text
+    // instead of a submit action.
     if (isMultiLine && term.modes.bracketedPasteMode && !disableBracketedPasteRef.current) {
       data = wrapBracketedPaste(data);
     }
+    if (!noAutoRun) data = `${data}\r`;
 
     terminalBackend.writeToSession(id, data);
     scrollToBottomAfterProgrammaticInput(data);
