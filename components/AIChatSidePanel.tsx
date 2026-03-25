@@ -420,7 +420,9 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
 
   /** Ensure a session exists for the current scope and return its ID. */
   const ensureSession = useCallback((): string => {
-    if (activeSessionId) return activeSessionId;
+    if (activeSessionId && sessionsRef.current.some((session) => session.id === activeSessionId)) {
+      return activeSessionId;
+    }
     const scope: AISessionScope = { type: scopeType, targetId: scopeTargetId, hostIds: scopeHostIds };
     const session = createSession(scope, currentAgentId);
     setActiveSessionId(session.id);

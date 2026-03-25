@@ -1,5 +1,5 @@
 import { Circle, FolderTree, LayoutGrid, MessageSquare, PanelLeft, PanelRight, Palette, Server, X, Zap } from 'lucide-react';
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useActiveTabId } from '../application/state/activeTabStore';
 import { useTerminalBackend } from '../application/state/useTerminalBackend';
 import { collectSessionIds } from '../domain/workspace';
@@ -28,7 +28,7 @@ import { SftpSidePanel } from './SftpSidePanel';
 import { ScriptsSidePanel } from './ScriptsSidePanel';
 import { ThemeSidePanel } from './terminal/ThemeSidePanel';
 import { AIChatSidePanel } from './AIChatSidePanel';
-import { useAIState } from '../application/state/useAIState';
+import { cleanupOrphanedAISessions, useAIState } from '../application/state/useAIState';
 import { TerminalComposeBar } from './terminal/TerminalComposeBar';
 import { TERMINAL_THEMES } from '../infrastructure/config/terminalThemes';
 import { useCustomThemes } from '../application/state/customThemeStore';
@@ -92,6 +92,18 @@ type AITerminalSessionInfo = {
   connected: boolean;
 };
 
+type AIPanelContext = {
+  scopeType: 'terminal' | 'workspace';
+  scopeTargetId?: string;
+  scopeHostIds: string[];
+  scopeLabel: string;
+  terminalSessions: AITerminalSessionInfo[];
+};
+
+type AIStateValue = ReturnType<typeof useAIState>;
+
+const AIStateContext = createContext<AIStateValue | null>(null);
+
 const buildAITerminalSessionInfo = (
   session: TerminalSession | undefined,
   host: Host | undefined,
@@ -111,6 +123,98 @@ const buildAITerminalSessionInfo = (
     connected: session?.status === 'connected',
   };
 };
+
+interface AIChatPanelsHostProps {
+  mountedTabIds: string[];
+  activeTabId: string | null;
+  activeSidePanelTab: SidePanelTab | null;
+  contextsByTabId: Map<string, AIPanelContext>;
+  resolveExecutorContext: (scope: {
+    type: 'terminal' | 'workspace';
+    targetId?: string;
+    label?: string;
+  }) => ExecutorContext;
+}
+
+const AIStateProviderInner: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const aiState = useAIState();
+  return (
+    <AIStateContext.Provider value={aiState}>
+      {children}
+    </AIStateContext.Provider>
+  );
+};
+
+const AIStateProvider = memo(AIStateProviderInner);
+AIStateProvider.displayName = 'AIStateProvider';
+
+const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
+  mountedTabIds,
+  activeTabId,
+  activeSidePanelTab,
+  contextsByTabId,
+  resolveExecutorContext,
+}) => {
+  const aiState = useContext(AIStateContext);
+
+  if (!aiState) {
+    throw new Error('AIChatPanelsHost must be rendered inside AIStateProvider');
+  }
+
+  return (
+    <>
+      {mountedTabIds.map((tabId) => {
+        const context = contextsByTabId.get(tabId);
+        if (!context) return null;
+
+        const isVisible = activeTabId === tabId && activeSidePanelTab === 'ai';
+
+        return (
+          <div
+            key={tabId}
+            className={cn("absolute inset-0 z-10", !isVisible && "hidden")}
+          >
+            <AIChatSidePanel
+              sessions={aiState.sessions}
+              activeSessionIdMap={aiState.activeSessionIdMap}
+              setActiveSessionId={aiState.setActiveSessionId}
+              createSession={aiState.createSession}
+              deleteSession={aiState.deleteSession}
+              updateSessionTitle={aiState.updateSessionTitle}
+              updateSessionExternalSessionId={aiState.updateSessionExternalSessionId}
+              addMessageToSession={aiState.addMessageToSession}
+              updateLastMessage={aiState.updateLastMessage}
+              updateMessageById={aiState.updateMessageById}
+              providers={aiState.providers}
+              activeProviderId={aiState.activeProviderId}
+              activeModelId={aiState.activeModelId}
+              defaultAgentId={aiState.defaultAgentId}
+              externalAgents={aiState.externalAgents}
+              setExternalAgents={aiState.setExternalAgents}
+              agentModelMap={aiState.agentModelMap}
+              setAgentModel={aiState.setAgentModel}
+              globalPermissionMode={aiState.globalPermissionMode}
+              setGlobalPermissionMode={aiState.setGlobalPermissionMode}
+              commandBlocklist={aiState.commandBlocklist}
+              maxIterations={aiState.maxIterations}
+              webSearchConfig={aiState.webSearchConfig}
+              scopeType={context.scopeType}
+              scopeTargetId={context.scopeTargetId}
+              scopeHostIds={context.scopeHostIds}
+              scopeLabel={context.scopeLabel}
+              terminalSessions={context.terminalSessions}
+              resolveExecutorContext={resolveExecutorContext}
+              isVisible={isVisible}
+            />
+          </div>
+        );
+      })}
+    </>
+  );
+};
+
+const AIChatPanelsHost = memo(AIChatPanelsHostInner);
+AIChatPanelsHost.displayName = 'AIChatPanelsHost';
 
 interface TerminalLayerProps {
   hosts: Host[];
@@ -644,6 +748,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     setSftpPendingUploadsForTab(prev => filterTabsMap(prev, validTerminalTabIds));
   }, [validTerminalTabIds]);
 
+  useEffect(() => {
+    cleanupOrphanedAISessions(validTerminalTabIds);
+  }, [validTerminalTabIds]);
+
   const computeWorkspaceRects = useCallback((workspace?: Workspace, size?: { width: number; height: number }): Record<string, WorkspaceRect> => {
     if (!workspace) return {} as Record<string, WorkspaceRect>;
     const wTotal = size?.width || 1;
@@ -887,6 +995,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     () => Array.from(sftpHostForTab.keys()),
     [sftpHostForTab],
   );
+  const mountedAiTabIds = useMemo(
+    () =>
+      Array.from(sidePanelOpenTabs.entries())
+        .filter(([, panel]) => panel === 'ai')
+        .map(([tabId]) => tabId),
+    [sidePanelOpenTabs],
+  );
 
   // Get the focused terminal's current working directory
   const getTerminalCwd = useCallback(async (): Promise<string | null> => {
@@ -1076,38 +1191,66 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const focusedFontFamilyOverridden = hasHostFontFamilyOverride(focusedHost);
   const focusedFontSizeOverridden = hasHostFontSizeOverride(focusedHost);
 
-  // AI Chat state
-  const aiState = useAIState();
-  const { cleanupOrphanedSessions } = aiState;
-
-  useEffect(() => {
-    const activeIds = new Set<string>();
-    for (const s of sessions) activeIds.add(s.id);
-    for (const w of workspaces) activeIds.add(w.id);
-    cleanupOrphanedSessions(activeIds);
-  }, [sessions, workspaces, cleanupOrphanedSessions]);
-
   // Keep MCP/ACP approval IPC listener alive for the entire terminal lifecycle.
-  // Must live here (TerminalLayer), NOT in AIChatSidePanel (unmounts on tab switch)
-  // or ChatMessageList (unmounts on panel hide).
+  // Must live here (TerminalLayer), not inside the AI panel subtree, so closing
+  // or hiding the panel never tears down approval handling mid-execution.
   useEffect(() => {
     return setupMcpApprovalBridge();
   }, []);
 
-  // Build terminal session context for the AI chat panel
-  const aiTerminalSessions = useMemo(() => {
+  // Build per-tab AI contexts so hidden panels can stay mounted without
+  // recomputing scope resolution from scratch on every tab switch.
+  const aiContextsByTabId = useMemo(() => {
     const localOs = detectLocalOs(navigator.userAgent || navigator.platform);
-    const sessionIds = activeWorkspace?.root
-      ? collectSessionIds(activeWorkspace.root)
-      : activeSession ? [activeSession.id] : [];
+    const sessionById = new Map(sessions.map((session) => [session.id, session]));
+    const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
+    const tabIds = new Set<string>(mountedAiTabIds);
+    if (activeTabId) tabIds.add(activeTabId);
 
-    const result = sessionIds.map(sid => {
-      const s = sessions.find(s => s.id === sid);
-      const host = s?.hostId ? hosts.find(h => h.id === s.hostId) : undefined;
-      return buildAITerminalSessionInfo(s, host, localOs);
-    });
-    return result;
-  }, [sessions, hosts, activeWorkspace, activeSession]);
+    const contexts = new Map<string, AIPanelContext>();
+
+    for (const tabId of tabIds) {
+      const workspace = workspaceById.get(tabId);
+      if (workspace) {
+        const sessionIds = collectSessionIds(workspace.root);
+        contexts.set(tabId, {
+          scopeType: 'workspace',
+          scopeTargetId: workspace.id,
+          scopeHostIds: sessionIds
+            .map((sessionId) => sessionById.get(sessionId)?.hostId)
+            .filter((hostId): hostId is string => !!hostId),
+          scopeLabel: workspace.title,
+          terminalSessions: sessionIds.map((sessionId) =>
+            buildAITerminalSessionInfo(
+              sessionById.get(sessionId),
+              sessionHostsMap.get(sessionId),
+              localOs,
+            ),
+          ),
+        });
+        continue;
+      }
+
+      const session = sessionById.get(tabId);
+      if (!session) continue;
+
+      contexts.set(tabId, {
+        scopeType: 'terminal',
+        scopeTargetId: session.id,
+        scopeHostIds: session.hostId ? [session.hostId] : [],
+        scopeLabel: session.hostLabel ?? '',
+        terminalSessions: [
+          buildAITerminalSessionInfo(
+            session,
+            sessionHostsMap.get(session.id),
+            localOs,
+          ),
+        ],
+      });
+    }
+
+    return contexts;
+  }, [sessions, workspaces, mountedAiTabIds, activeTabId, sessionHostsMap]);
 
   const resolveAIExecutorContext = useCallback((scope: {
     type: 'terminal' | 'workspace';
@@ -1320,14 +1463,15 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   };
 
   return (
-    <div
-      ref={workspaceOuterRef}
-      className="absolute inset-0 bg-background flex flex-col"
-      style={{ display: isTerminalLayerVisible ? 'flex' : 'none', zIndex: isTerminalLayerVisible ? 10 : 0 }}
-    >
-      <div className={cn("flex-1 flex min-h-0 relative", sidePanelPosition === 'right' && "flex-row-reverse")}>
+    <AIStateProvider>
+      <div
+        ref={workspaceOuterRef}
+        className="absolute inset-0 bg-background flex flex-col"
+        style={{ display: isTerminalLayerVisible ? 'flex' : 'none', zIndex: isTerminalLayerVisible ? 10 : 0 }}
+      >
+        <div className={cn("flex-1 flex min-h-0 relative", sidePanelPosition === 'right' && "flex-row-reverse")}>
         {/* Side panel with tab header + content (SFTP / Scripts / Theme) */}
-        {(isSidePanelOpenForCurrentTab || mountedSftpTabIds.length > 0) && (
+        {(isSidePanelOpenForCurrentTab || mountedSftpTabIds.length > 0 || mountedAiTabIds.length > 0) && (
           <>
             <div
               style={{ width: isSidePanelOpenForCurrentTab ? sidePanelWidth : 0 }}
@@ -1505,48 +1649,14 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                     </div>
                   )}
 
-                  {/* AI Chat sub-panel */}
-                  {activeSidePanelTab === 'ai' && (
-                    <div className="absolute inset-0 z-10">
-                      <AIChatSidePanel
-                        sessions={aiState.sessions}
-                        activeSessionIdMap={aiState.activeSessionIdMap}
-                        setActiveSessionId={aiState.setActiveSessionId}
-                        createSession={aiState.createSession}
-                        deleteSession={aiState.deleteSession}
-                        updateSessionTitle={aiState.updateSessionTitle}
-                        updateSessionExternalSessionId={aiState.updateSessionExternalSessionId}
-                        addMessageToSession={aiState.addMessageToSession}
-                        updateLastMessage={aiState.updateLastMessage}
-                        updateMessageById={aiState.updateMessageById}
-                        providers={aiState.providers}
-                        activeProviderId={aiState.activeProviderId}
-                        activeModelId={aiState.activeModelId}
-                        defaultAgentId={aiState.defaultAgentId}
-                        externalAgents={aiState.externalAgents}
-                        setExternalAgents={aiState.setExternalAgents}
-                        agentModelMap={aiState.agentModelMap}
-                        setAgentModel={aiState.setAgentModel}
-                        globalPermissionMode={aiState.globalPermissionMode}
-                        setGlobalPermissionMode={aiState.setGlobalPermissionMode}
-                        commandBlocklist={aiState.commandBlocklist}
-                        maxIterations={aiState.maxIterations}
-                        webSearchConfig={aiState.webSearchConfig}
-                        scopeType={activeWorkspace ? 'workspace' : 'terminal'}
-                        scopeTargetId={activeWorkspace?.id ?? activeSession?.id}
-                        scopeHostIds={activeWorkspace?.root
-                          ? collectSessionIds(activeWorkspace.root).map(sid => {
-                              const s = sessions.find(s => s.id === sid);
-                              return s?.hostId;
-                            }).filter((id): id is string => !!id)
-                          : activeSession?.hostId ? [activeSession.hostId] : []
-                        }
-                        scopeLabel={activeWorkspace?.title ?? activeSession?.hostLabel ?? ''}
-                        terminalSessions={aiTerminalSessions}
-                        resolveExecutorContext={resolveAIExecutorContext}
-                      />
-                    </div>
-                  )}
+                  <AIChatPanelsHost
+                    mountedTabIds={mountedAiTabIds}
+                    activeTabId={activeTabId}
+                    activeSidePanelTab={activeSidePanelTab}
+                    contextsByTabId={aiContextsByTabId}
+                    resolveExecutorContext={resolveAIExecutorContext}
+                  />
+
                 </div>
               </div>
             </div>
@@ -1758,25 +1868,26 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       </div>
 
       {/* Global compose bar for workspace mode */}
-      {activeWorkspace && isComposeBarOpen && (
-        <TerminalComposeBar
-          onSend={handleComposeSend}
-          onClose={() => {
-            setIsComposeBarOpen(false);
-            // Refocus the terminal pane (matching solo-session behavior)
-            if (focusedSessionId) {
-              requestAnimationFrame(() => {
-                const pane = document.querySelector(`[data-session-id="${focusedSessionId}"]`);
-                const textarea = pane?.querySelector('textarea.xterm-helper-textarea') as HTMLTextAreaElement | null;
-                textarea?.focus();
-              });
-            }
-          }}
-          isBroadcastEnabled={isBroadcastEnabled?.(activeWorkspace.id)}
-          themeColors={composeBarThemeColors}
-        />
-      )}
-    </div>
+        {activeWorkspace && isComposeBarOpen && (
+          <TerminalComposeBar
+            onSend={handleComposeSend}
+            onClose={() => {
+              setIsComposeBarOpen(false);
+              // Refocus the terminal pane (matching solo-session behavior)
+              if (focusedSessionId) {
+                requestAnimationFrame(() => {
+                  const pane = document.querySelector(`[data-session-id="${focusedSessionId}"]`);
+                  const textarea = pane?.querySelector('textarea.xterm-helper-textarea') as HTMLTextAreaElement | null;
+                  textarea?.focus();
+                });
+              }
+            }}
+            isBroadcastEnabled={isBroadcastEnabled?.(activeWorkspace.id)}
+            themeColors={composeBarThemeColors}
+          />
+        )}
+      </div>
+    </AIStateProvider>
   );
 };
 

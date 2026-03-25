@@ -1213,6 +1213,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     return new Set(managedSources.map(s => s.groupName));
   }, [managedSources]);
 
+  const isHostsSectionActive = currentSection === "hosts";
+
   const moveHostToGroup = (hostId: string, groupPath: string | null) => {
     const targetGroup = groupPath || "";
     // Find the most specific (deepest) managed source that matches the target group
@@ -1440,463 +1442,454 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
 
       {/* Main Area */}
       <div className="flex-1 flex flex-col min-h-0 relative">
-        {currentSection === "hosts" && (
-          <header className="border-b border-border/50 bg-secondary/80 backdrop-blur app-drag">
-            <div className="h-14 px-4 py-2 flex items-center gap-3">
-              <div className="relative flex-1 app-no-drag">
-                <Search
-                  size={14}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                />
-                <Input
-                  placeholder={t("vault.hosts.search.placeholder")}
-                  className={cn(
-                    "pl-9 h-10 bg-secondary border-border/60 text-sm",
-                    isSearchQuickConnect &&
-                    "border-primary/50 ring-1 ring-primary/20",
-                  )}
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  onKeyDown={handleSearchKeyDown}
-                />
-                {isSearchQuickConnect && (
-                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                    <Zap size={14} className="text-primary" />
-                  </div>
-                )}
-              </div>
-              <Button
-                variant={isSearchQuickConnect ? "default" : "secondary"}
+        <header
+          className={cn(
+            "border-b border-border/50 bg-secondary/80 backdrop-blur app-drag",
+            !isHostsSectionActive && "hidden",
+          )}
+        >
+          <div className="h-14 px-4 py-2 flex items-center gap-3">
+            <div className="relative flex-1 app-no-drag">
+              <Search
+                size={14}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+              />
+              <Input
+                placeholder={t("vault.hosts.search.placeholder")}
                 className={cn(
-                  "h-10 px-4 app-no-drag",
-                  !isSearchQuickConnect &&
-                  currentSection === "hosts" &&
-                  "bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40",
+                  "pl-9 h-10 bg-secondary border-border/60 text-sm",
+                  isSearchQuickConnect &&
+                  "border-primary/50 ring-1 ring-primary/20",
                 )}
-                onClick={handleConnectClick}
-              >
-                {t("vault.hosts.connect")}
-              </Button>
-              {/* View mode, tag filter, and sort controls */}
-              <div className="flex items-center gap-1 app-no-drag">
-                <Dropdown>
-                  <DropdownTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-10 w-10 app-no-drag">
-                      {viewMode === "grid" ? (
-                        <LayoutGrid size={16} />
-                      ) : viewMode === "list" ? (
-                        <List size={16} />
-                      ) : (
-                        <Network size={16} />
-                      )}
-                      <ChevronDown size={10} className="ml-0.5" />
-                    </Button>
-                  </DropdownTrigger>
-                  <DropdownContent className="w-32" align="end">
-                    <Button
-                      variant={viewMode === "grid" ? "secondary" : "ghost"}
-                      className="w-full justify-start gap-2 h-9"
-                      onClick={() => setViewMode("grid")}
-                    >
-                      <LayoutGrid size={14} /> {t("vault.view.grid")}
-                    </Button>
-                    <Button
-                      variant={viewMode === "list" ? "secondary" : "ghost"}
-                      className="w-full justify-start gap-2 h-9"
-                      onClick={() => setViewMode("list")}
-                    >
-                      <List size={14} /> {t("vault.view.list")}
-                    </Button>
-                    <Button
-                      variant={viewMode === "tree" ? "secondary" : "ghost"}
-                      className="w-full justify-start gap-2 h-9"
-                      onClick={() => setViewMode("tree")}
-                    >
-                      <Network size={14} /> {t("vault.view.tree")}
-                    </Button>
-                  </DropdownContent>
-                </Dropdown>
-                <TagFilterDropdown
-                  allTags={allTags}
-                  selectedTags={selectedTags}
-                  onChange={setSelectedTags}
-                  onEditTag={handleEditTag}
-                  onDeleteTag={handleDeleteTag}
-                  className="h-10 w-10"
-                />
-                <SortDropdown
-                  value={sortMode}
-                  onChange={setSortMode}
-                  className="h-10 w-10"
-                />
-                <Button
-                  variant={isMultiSelectMode ? "secondary" : "ghost"}
-                  size="icon"
-                  className="h-10 w-10"
-                  onClick={() => {
-                    if (isMultiSelectMode) {
-                      clearHostSelection();
-                    } else {
-                      setIsMultiSelectMode(true);
-                    }
-                  }}
-                  title={t("vault.hosts.multiSelect")}
-                >
-                  <CheckSquare size={16} />
-                </Button>
-              </div>
-              {/* New Host split button */}
-              <div className="flex items-center app-no-drag">
-                <Dropdown>
-                  <div className="flex items-center rounded-md bg-primary text-primary-foreground">
-                    <Button
-                      size="sm"
-                      className="h-10 px-3 rounded-r-none bg-transparent hover:bg-white/10 shadow-none app-no-drag"
-                      onClick={handleNewHost}
-                    >
-                      <Plus size={14} className="mr-2" /> {t("vault.hosts.newHost")}
-                    </Button>
-                    <DropdownTrigger asChild>
-                      <Button
-                        size="sm"
-                        className="h-10 px-2 rounded-l-none bg-transparent hover:bg-white/10 border-l border-primary-foreground/20 shadow-none app-no-drag"
-                      >
-                        <ChevronDown size={14} />
-                      </Button>
-                    </DropdownTrigger>
-                  </div>
-                  <DropdownContent className="w-44" align="end" alignToParent>
-                    <Button
-                      variant="ghost"
-                      className="w-full justify-start gap-2"
-                      onClick={() => {
-                        setTargetParentPath(selectedGroupPath);
-                        setNewFolderName("");
-                        setIsNewFolderOpen(true);
-                      }}
-                    >
-                      <FolderTree size={14} /> {t("vault.hosts.newGroup")}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      className="w-full justify-start gap-2"
-                      onClick={() => {
-                        setIsImportOpen(true);
-                      }}
-                    >
-                      <Upload size={14} /> {t("vault.hosts.import")}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      className="w-full justify-start gap-2"
-                      onClick={handleExportHosts}
-                    >
-                      <Download size={14} /> {t("vault.hosts.export")}
-                    </Button>
-                  </DropdownContent>
-                </Dropdown>
-              </div>
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={handleSearchKeyDown}
+              />
+              {isSearchQuickConnect && (
+                <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                  <Zap size={14} className="text-primary" />
+                </div>
+              )}
+            </div>
+            <Button
+              variant={isSearchQuickConnect ? "default" : "secondary"}
+              className={cn(
+                "h-10 px-4 app-no-drag",
+                !isSearchQuickConnect &&
+                "bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40",
+              )}
+              onClick={handleConnectClick}
+            >
+              {t("vault.hosts.connect")}
+            </Button>
+            {/* View mode, tag filter, and sort controls */}
+            <div className="flex items-center gap-1 app-no-drag">
+              <Dropdown>
+                <DropdownTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-10 w-10 app-no-drag">
+                    {viewMode === "grid" ? (
+                      <LayoutGrid size={16} />
+                    ) : viewMode === "list" ? (
+                      <List size={16} />
+                    ) : (
+                      <Network size={16} />
+                    )}
+                    <ChevronDown size={10} className="ml-0.5" />
+                  </Button>
+                </DropdownTrigger>
+                <DropdownContent className="w-32" align="end">
+                  <Button
+                    variant={viewMode === "grid" ? "secondary" : "ghost"}
+                    className="w-full justify-start gap-2 h-9"
+                    onClick={() => setViewMode("grid")}
+                  >
+                    <LayoutGrid size={14} /> {t("vault.view.grid")}
+                  </Button>
+                  <Button
+                    variant={viewMode === "list" ? "secondary" : "ghost"}
+                    className="w-full justify-start gap-2 h-9"
+                    onClick={() => setViewMode("list")}
+                  >
+                    <List size={14} /> {t("vault.view.list")}
+                  </Button>
+                  <Button
+                    variant={viewMode === "tree" ? "secondary" : "ghost"}
+                    className="w-full justify-start gap-2 h-9"
+                    onClick={() => setViewMode("tree")}
+                  >
+                    <Network size={14} /> {t("vault.view.tree")}
+                  </Button>
+                </DropdownContent>
+              </Dropdown>
+              <TagFilterDropdown
+                allTags={allTags}
+                selectedTags={selectedTags}
+                onChange={setSelectedTags}
+                onEditTag={handleEditTag}
+                onDeleteTag={handleDeleteTag}
+                className="h-10 w-10"
+              />
+              <SortDropdown
+                value={sortMode}
+                onChange={setSortMode}
+                className="h-10 w-10"
+              />
               <Button
-                size="sm"
-                variant="secondary"
-                className={cn(
-                  "h-10 px-3 app-no-drag",
-                  currentSection === "hosts" &&
-                  "bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40",
-                )}
-                onClick={onCreateLocalTerminal}
+                variant={isMultiSelectMode ? "secondary" : "ghost"}
+                size="icon"
+                className="h-10 w-10"
+                onClick={() => {
+                  if (isMultiSelectMode) {
+                    clearHostSelection();
+                  } else {
+                    setIsMultiSelectMode(true);
+                  }
+                }}
+                title={t("vault.hosts.multiSelect")}
               >
-                <TerminalSquare size={14} className="mr-2" /> {t("common.terminal")}
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                className={cn(
-                  "h-10 px-3 app-no-drag",
-                  currentSection === "hosts" &&
-                  "bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40",
-                )}
-                onClick={() => setIsSerialModalOpen(true)}
-              >
-                <Usb size={14} className="mr-2" /> {t("serial.button")}
+                <CheckSquare size={16} />
               </Button>
             </div>
-          </header>
-        )}
+            {/* New Host split button */}
+            <div className="flex items-center app-no-drag">
+              <Dropdown>
+                <div className="flex items-center rounded-md bg-primary text-primary-foreground">
+                  <Button
+                    size="sm"
+                    className="h-10 px-3 rounded-r-none bg-transparent hover:bg-white/10 shadow-none app-no-drag"
+                    onClick={handleNewHost}
+                  >
+                    <Plus size={14} className="mr-2" /> {t("vault.hosts.newHost")}
+                  </Button>
+                  <DropdownTrigger asChild>
+                    <Button
+                      size="sm"
+                      className="h-10 px-2 rounded-l-none bg-transparent hover:bg-white/10 border-l border-primary-foreground/20 shadow-none app-no-drag"
+                    >
+                      <ChevronDown size={14} />
+                    </Button>
+                  </DropdownTrigger>
+                </div>
+                <DropdownContent className="w-44" align="end" alignToParent>
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start gap-2"
+                    onClick={() => {
+                      setTargetParentPath(selectedGroupPath);
+                      setNewFolderName("");
+                      setIsNewFolderOpen(true);
+                    }}
+                  >
+                    <FolderTree size={14} /> {t("vault.hosts.newGroup")}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start gap-2"
+                    onClick={() => {
+                      setIsImportOpen(true);
+                    }}
+                  >
+                    <Upload size={14} /> {t("vault.hosts.import")}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start gap-2"
+                    onClick={handleExportHosts}
+                  >
+                    <Download size={14} /> {t("vault.hosts.export")}
+                  </Button>
+                </DropdownContent>
+              </Dropdown>
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              className="h-10 px-3 app-no-drag bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40"
+              onClick={onCreateLocalTerminal}
+            >
+              <TerminalSquare size={14} className="mr-2" /> {t("common.terminal")}
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              className="h-10 px-3 app-no-drag bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40"
+              onClick={() => setIsSerialModalOpen(true)}
+            >
+              <Usb size={14} className="mr-2" /> {t("serial.button")}
+            </Button>
+          </div>
+        </header>
 
-        {currentSection !== "port" &&
-          currentSection !== "keys" &&
-          currentSection !== "knownhosts" &&
-          currentSection !== "snippets" &&
-          currentSection !== "logs" && (
-            <div className="flex-1 overflow-auto px-4 py-4 space-y-6">
-              {currentSection === "hosts" && (
-                <>
-                  <section className="space-y-2">
-                    {viewMode !== "tree" && (
-                      <div className="flex items-center gap-2 text-sm font-semibold">
-                        <button
-                          className="text-primary hover:underline"
-                          onClick={() => setSelectedGroupPath(null)}
-                        >
-                          {t("vault.hosts.allHosts")}
-                        </button>
-                        {selectedGroupPath &&
-                          selectedGroupPath
-                            .split("/")
-                            .filter(Boolean)
-                            .map((part, idx, arr) => {
-                              const crumbPath = arr.slice(0, idx + 1).join("/");
-                              const isLast = idx === arr.length - 1;
-                              return (
-                                <span
-                                  key={crumbPath}
-                                  className="flex items-center gap-2"
-                                >
-                                  <span className="text-muted-foreground">›</span>
-                                  <button
-                                    className={cn(
-                                      isLast
-                                        ? "text-foreground font-semibold"
-                                        : "text-primary hover:underline",
-                                    )}
-                                    onClick={() =>
-                                      setSelectedGroupPath(crumbPath)
-                                    }
-                                  >
-                                    {part}
-                                  </button>
-                                </span>
-                              );
-                            })}
-                      </div>
-                    )}
-                    {viewMode !== "tree" && displayedGroups.length > 0 && (
-                      <>
-                        <div className="flex items-center justify-between">
-                          <h3 className="text-sm font-semibold text-muted-foreground">
-                            {t("vault.groups.title")}
-                          </h3>
-                          <div className="text-xs text-muted-foreground">
-                            {t("vault.groups.total", { count: displayedGroups.length })}
-                          </div>
-                        </div>
-                      </>
-                    )}
-                    {viewMode !== "tree" && (
-                      <div
-                        className={cn(
-                          displayedGroups.length === 0 ? "hidden" : "",
-                          viewMode === "grid"
-                            ? "grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
-                            : "flex flex-col gap-0",
-                        )}
-                        onDragOver={(e) => {
-                          e.preventDefault();
-                        }}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const hostId = e.dataTransfer.getData("host-id");
-                          const groupPath = e.dataTransfer.getData("group-path");
-                          if (hostId) moveHostToGroup(hostId, selectedGroupPath);
-                          if (groupPath && selectedGroupPath !== null)
-                            moveGroup(groupPath, selectedGroupPath);
-                        }}
+        {/* Keep hosts mounted so switching sections does not reset scroll or remount the list. */}
+        <div
+          className={cn(
+            "flex-1 overflow-auto px-4 py-4 space-y-6",
+            !isHostsSectionActive && "hidden",
+          )}
+        >
+                <section className="space-y-2">
+                  {viewMode !== "tree" && (
+                    <div className="flex items-center gap-2 text-sm font-semibold">
+                      <button
+                        className="text-primary hover:underline"
+                        onClick={() => setSelectedGroupPath(null)}
                       >
-                        {displayedGroups.map((node) => (
-                          <ContextMenu key={node.path}>
-                            <ContextMenuTrigger asChild>
-                              <div
-                                className={cn(
-                                  "group cursor-pointer",
-                                  viewMode === "grid"
-                                    ? "soft-card elevate rounded-xl h-[68px] px-3 py-2"
-                                    : "h-14 px-3 py-2 hover:bg-secondary/60 rounded-lg transition-colors",
-                                )}
-                                draggable
-                                onDragStart={(e) =>
-                                  e.dataTransfer.setData("group-path", node.path)
-                                }
-                                onDoubleClick={() =>
-                                  setSelectedGroupPath(node.path)
-                                }
-                                onClick={() => setSelectedGroupPath(node.path)}
-                                onDragOver={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                }}
-                                onDrop={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  const hostId =
-                                    e.dataTransfer.getData("host-id");
-                                  const groupPath =
-                                    e.dataTransfer.getData("group-path");
-                                  if (hostId) moveHostToGroup(hostId, node.path);
-                                  if (groupPath) moveGroup(groupPath, node.path);
-                                }}
+                        {t("vault.hosts.allHosts")}
+                      </button>
+                      {selectedGroupPath &&
+                        selectedGroupPath
+                          .split("/")
+                          .filter(Boolean)
+                          .map((part, idx, arr) => {
+                            const crumbPath = arr.slice(0, idx + 1).join("/");
+                            const isLast = idx === arr.length - 1;
+                            return (
+                              <span
+                                key={crumbPath}
+                                className="flex items-center gap-2"
                               >
-                                <div className="flex items-center gap-3 h-full">
-                                  <div className="h-11 w-11 rounded-xl bg-primary/15 text-primary flex items-center justify-center">
-                                    <FolderTree size={20} />
+                                <span className="text-muted-foreground">›</span>
+                                <button
+                                  className={cn(
+                                    isLast
+                                      ? "text-foreground font-semibold"
+                                      : "text-primary hover:underline",
+                                  )}
+                                  onClick={() =>
+                                    setSelectedGroupPath(crumbPath)
+                                  }
+                                >
+                                  {part}
+                                </button>
+                              </span>
+                            );
+                          })}
+                    </div>
+                  )}
+                  {viewMode !== "tree" && displayedGroups.length > 0 && (
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-semibold text-muted-foreground">
+                        {t("vault.groups.title")}
+                      </h3>
+                      <div className="text-xs text-muted-foreground">
+                        {t("vault.groups.total", { count: displayedGroups.length })}
+                      </div>
+                    </div>
+                  )}
+                  {viewMode !== "tree" && (
+                    <div
+                      className={cn(
+                        displayedGroups.length === 0 ? "hidden" : "",
+                        viewMode === "grid"
+                          ? "grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+                          : "flex flex-col gap-0",
+                      )}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const hostId = e.dataTransfer.getData("host-id");
+                        const groupPath = e.dataTransfer.getData("group-path");
+                        if (hostId) moveHostToGroup(hostId, selectedGroupPath);
+                        if (groupPath && selectedGroupPath !== null)
+                          moveGroup(groupPath, selectedGroupPath);
+                      }}
+                    >
+                      {displayedGroups.map((node) => (
+                        <ContextMenu key={node.path}>
+                          <ContextMenuTrigger asChild>
+                            <div
+                              className={cn(
+                                "group cursor-pointer",
+                                viewMode === "grid"
+                                  ? "soft-card elevate rounded-xl h-[68px] px-3 py-2"
+                                  : "h-14 px-3 py-2 hover:bg-secondary/60 rounded-lg transition-colors",
+                              )}
+                              draggable
+                              onDragStart={(e) =>
+                                e.dataTransfer.setData("group-path", node.path)
+                              }
+                              onDoubleClick={() =>
+                                setSelectedGroupPath(node.path)
+                              }
+                              onClick={() => setSelectedGroupPath(node.path)}
+                              onDragOver={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                              }}
+                              onDrop={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                const hostId =
+                                  e.dataTransfer.getData("host-id");
+                                const groupPath =
+                                  e.dataTransfer.getData("group-path");
+                                if (hostId) moveHostToGroup(hostId, node.path);
+                                if (groupPath) moveGroup(groupPath, node.path);
+                              }}
+                            >
+                              <div className="flex items-center gap-3 h-full">
+                                <div className="h-11 w-11 rounded-xl bg-primary/15 text-primary flex items-center justify-center">
+                                  <FolderTree size={20} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-sm font-semibold truncate flex items-center gap-2">
+                                    {node.name}
+                                    {managedGroupPaths.has(node.path) && (
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-primary/15 text-primary shrink-0">
+                                        <FileSymlink size={10} />
+                                        Managed
+                                      </span>
+                                    )}
                                   </div>
-                                  <div className="flex-1 min-w-0">
-                                    <div className="text-sm font-semibold truncate flex items-center gap-2">
-                                      {node.name}
-                                      {managedGroupPaths.has(node.path) && (
-                                        <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-primary/15 text-primary shrink-0">
-                                          <FileSymlink size={10} />
-                                          Managed
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="text-[11px] text-muted-foreground">
-                                      {t("vault.groups.hostsCount", { count: node.totalHostCount ?? node.hosts.length })}
-                                    </div>
+                                  <div className="text-[11px] text-muted-foreground">
+                                    {t("vault.groups.hostsCount", { count: node.totalHostCount ?? node.hosts.length })}
                                   </div>
                                 </div>
                               </div>
-                            </ContextMenuTrigger>
-                            <ContextMenuContent>
-                              <ContextMenuItem
-                                onClick={() => {
-                                  setTargetParentPath(node.path);
-                                  setNewFolderName("");
-                                  setIsNewFolderOpen(true);
-                                }}
-                              >
-                                <FolderPlus className="mr-2 h-4 w-4" /> {t("vault.groups.newSubgroup")}
-                              </ContextMenuItem>
-                              <ContextMenuItem
-                                onClick={() => {
-                                  setRenameTargetPath(node.path);
-                                  setRenameGroupName(node.name);
-                                  setRenameGroupError(null);
-                                  setIsRenameGroupOpen(true);
-                                }}
-                              >
-                                <Edit2 className="mr-2 h-4 w-4" /> {t("vault.groups.rename")}
-                              </ContextMenuItem>
-                              <ContextMenuItem
-                                className="text-destructive"
-                                onClick={() => {
-                                  setDeleteTargetPath(node.path);
-                                  setIsDeleteGroupOpen(true);
-                                }}
-                              >
-                                <Trash2 className="mr-2 h-4 w-4" /> {t("vault.groups.delete")}
-                              </ContextMenuItem>
-                            </ContextMenuContent>
-                          </ContextMenu>
-                        ))}
-                      </div>
-                    )}
-                  </section>
+                            </div>
+                          </ContextMenuTrigger>
+                          <ContextMenuContent>
+                            <ContextMenuItem
+                              onClick={() => {
+                                setTargetParentPath(node.path);
+                                setNewFolderName("");
+                                setIsNewFolderOpen(true);
+                              }}
+                            >
+                              <FolderPlus className="mr-2 h-4 w-4" /> {t("vault.groups.newSubgroup")}
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              onClick={() => {
+                                setRenameTargetPath(node.path);
+                                setRenameGroupName(node.name);
+                                setRenameGroupError(null);
+                                setIsRenameGroupOpen(true);
+                              }}
+                            >
+                              <Edit2 className="mr-2 h-4 w-4" /> {t("vault.groups.rename")}
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              className="text-destructive"
+                              onClick={() => {
+                                setDeleteTargetPath(node.path);
+                                setIsDeleteGroupOpen(true);
+                              }}
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" /> {t("vault.groups.delete")}
+                            </ContextMenuItem>
+                          </ContextMenuContent>
+                        </ContextMenu>
+                      ))}
+                    </div>
+                  )}
+                </section>
 
-                  <section className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-semibold text-muted-foreground">
-                        {t("vault.nav.hosts")}
-                      </h3>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <span>
-                          {t("vault.hosts.header.entries", { count: viewMode === "tree" ? treeViewHosts.length : displayedHosts.length })}
-                        </span>
-                        <div className="bg-secondary/80 border border-border/70 rounded-md px-2 py-1 text-[11px]">
-                          {t("vault.hosts.header.live", { count: sessions.length })}
-                        </div>
+                <section className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold text-muted-foreground">
+                      {t("vault.nav.hosts")}
+                    </h3>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span>
+                        {t("vault.hosts.header.entries", { count: viewMode === "tree" ? treeViewHosts.length : displayedHosts.length })}
+                      </span>
+                      <div className="bg-secondary/80 border border-border/70 rounded-md px-2 py-1 text-[11px]">
+                        {t("vault.hosts.header.live", { count: sessions.length })}
                       </div>
                     </div>
+                  </div>
 
-                    {isMultiSelectMode && (
-                      <div className="flex items-center gap-2 p-2 bg-secondary/60 rounded-lg border border-border/40">
-                        <span className="text-sm text-muted-foreground">
-                          {t("vault.hosts.selected", { count: selectedHostIds.size })}
-                        </span>
-                        <div className="flex-1" />
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            const allIds = new Set(displayedHosts.map(h => h.id));
-                            setSelectedHostIds(allIds);
-                          }}
-                        >
-                          {t("vault.hosts.selectAll")}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={clearHostSelection}
-                        >
-                          {t("vault.hosts.deselectAll")}
-                        </Button>
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          disabled={selectedHostIds.size === 0}
-                          onClick={deleteSelectedHosts}
-                        >
-                          <Trash2 size={14} className="mr-1" />
-                          {t("vault.hosts.deleteSelected", { count: selectedHostIds.size })}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={clearHostSelection}
-                        >
-                          <X size={14} />
-                        </Button>
-                      </div>
-                    )}
+                  {isMultiSelectMode && (
+                    <div className="flex items-center gap-2 p-2 bg-secondary/60 rounded-lg border border-border/40">
+                      <span className="text-sm text-muted-foreground">
+                        {t("vault.hosts.selected", { count: selectedHostIds.size })}
+                      </span>
+                      <div className="flex-1" />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          const allIds = new Set(displayedHosts.map(h => h.id));
+                          setSelectedHostIds(allIds);
+                        }}
+                      >
+                        {t("vault.hosts.selectAll")}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={clearHostSelection}
+                      >
+                        {t("vault.hosts.deselectAll")}
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        disabled={selectedHostIds.size === 0}
+                        onClick={deleteSelectedHosts}
+                      >
+                        <Trash2 size={14} className="mr-1" />
+                        {t("vault.hosts.deleteSelected", { count: selectedHostIds.size })}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={clearHostSelection}
+                      >
+                        <X size={14} />
+                      </Button>
+                    </div>
+                  )}
 
-                    {viewMode === "tree" ? (
-                      <HostTreeView
-                        groupTree={treeViewGroupTree}
-                        hosts={treeViewHosts} // Use filtered and sorted hosts for tree view
-                        sortMode={sortMode}
-                        expandedPaths={treeExpandedState.expandedPaths}
-                        onTogglePath={treeExpandedState.togglePath}
-                        onExpandAll={treeExpandedState.expandAll}
-                        onCollapseAll={treeExpandedState.collapseAll}
-                        onConnect={handleHostConnect}
-                        onEditHost={handleEditHost}
-                        onDuplicateHost={handleDuplicateHost}
-                        onDeleteHost={(host) => onDeleteHost(host.id)}
-                        onCopyCredentials={handleCopyCredentials}
-                        onNewHost={(groupPath) => {
-                          setEditingHost(null);
-                          setNewHostGroupPath(groupPath || null);
-                          setIsHostPanelOpen(true);
-                        }}
-                        onNewGroup={(parentPath) => {
-                          setTargetParentPath(parentPath || null);
-                          setNewFolderName("");
-                          setIsNewFolderOpen(true);
-                        }}
-                        onEditGroup={(groupPath) => {
-                          setRenameTargetPath(groupPath);
-                          const groupName = groupPath.split('/').pop() || '';
-                          setRenameGroupName(groupName);
-                          setRenameGroupError(null);
-                          setIsRenameGroupOpen(true);
-                        }}
-                        onDeleteGroup={(groupPath) => {
-                          setDeleteTargetPath(groupPath);
-                          setIsDeleteGroupOpen(true);
-                        }}
-                        moveHostToGroup={moveHostToGroup}
-                        moveGroup={moveGroup}
-                        managedGroupPaths={managedGroupPaths}
-                        onUnmanageGroup={handleUnmanageGroup}
-                        isMultiSelectMode={isMultiSelectMode}
-                        selectedHostIds={selectedHostIds}
-                        toggleHostSelection={toggleHostSelection}
-                      />
-                    ) : sortMode === "group" && groupedDisplayHosts ? (
-                      <div className="space-y-6">
+                  {viewMode === "tree" ? (
+                    <HostTreeView
+                      groupTree={treeViewGroupTree}
+                      hosts={treeViewHosts} // Use filtered and sorted hosts for tree view
+                      sortMode={sortMode}
+                      expandedPaths={treeExpandedState.expandedPaths}
+                      onTogglePath={treeExpandedState.togglePath}
+                      onExpandAll={treeExpandedState.expandAll}
+                      onCollapseAll={treeExpandedState.collapseAll}
+                      onConnect={handleHostConnect}
+                      onEditHost={handleEditHost}
+                      onDuplicateHost={handleDuplicateHost}
+                      onDeleteHost={(host) => onDeleteHost(host.id)}
+                      onCopyCredentials={handleCopyCredentials}
+                      onNewHost={(groupPath) => {
+                        setEditingHost(null);
+                        setNewHostGroupPath(groupPath || null);
+                        setIsHostPanelOpen(true);
+                      }}
+                      onNewGroup={(parentPath) => {
+                        setTargetParentPath(parentPath || null);
+                        setNewFolderName("");
+                        setIsNewFolderOpen(true);
+                      }}
+                      onEditGroup={(groupPath) => {
+                        setRenameTargetPath(groupPath);
+                        const groupName = groupPath.split('/').pop() || '';
+                        setRenameGroupName(groupName);
+                        setRenameGroupError(null);
+                        setIsRenameGroupOpen(true);
+                      }}
+                      onDeleteGroup={(groupPath) => {
+                        setDeleteTargetPath(groupPath);
+                        setIsDeleteGroupOpen(true);
+                      }}
+                      moveHostToGroup={moveHostToGroup}
+                      moveGroup={moveGroup}
+                      managedGroupPaths={managedGroupPaths}
+                      onUnmanageGroup={handleUnmanageGroup}
+                      isMultiSelectMode={isMultiSelectMode}
+                      selectedHostIds={selectedHostIds}
+                      toggleHostSelection={toggleHostSelection}
+                    />
+                  ) : sortMode === "group" && groupedDisplayHosts ? (
+                    <div className="space-y-6">
                         {groupedDisplayHosts.map((group) => (
                           <div key={group.name || "__ungrouped__"}>
                             <div className="flex items-center gap-2 mb-3 pb-2 border-b border-border/40">
@@ -2045,16 +2038,16 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                             </p>
                           </div>
                         )}
-                      </div>
-                    ) : (
-                      <div
-                        className={cn(
-                          viewMode === "grid"
-                            ? "grid gap-3 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
-                            : "flex flex-col gap-0",
-                        )}
-                      >
-                        {displayedHosts.map((host) => {
+                    </div>
+                  ) : (
+                    <div
+                      className={cn(
+                        viewMode === "grid"
+                          ? "grid gap-3 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+                          : "flex flex-col gap-0",
+                      )}
+                    >
+                      {displayedHosts.map((host) => {
                           const safeHost = sanitizeHost(host);
                           const effectiveDistro = getEffectiveHostDistro(safeHost);
                           const distroBadge = {
@@ -2167,27 +2160,24 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                               </ContextMenuContent>
                             </ContextMenu>
                           );
-                        })}
-                        {displayedHosts.length === 0 && (
-                          <div className="col-span-full flex flex-col items-center justify-center py-24 text-muted-foreground">
-                            <div className="h-16 w-16 rounded-2xl bg-secondary/80 flex items-center justify-center mb-4">
-                              <LayoutGrid size={32} className="opacity-60" />
-                            </div>
-                            <h3 className="text-lg font-semibold text-foreground mb-2">
-                              {t('vault.hosts.empty.title')}
-                            </h3>
-                            <p className="text-sm text-center max-w-sm">
-                              {t('vault.hosts.empty.desc')}
-                            </p>
+                      })}
+                      {displayedHosts.length === 0 && (
+                        <div className="col-span-full flex flex-col items-center justify-center py-24 text-muted-foreground">
+                          <div className="h-16 w-16 rounded-2xl bg-secondary/80 flex items-center justify-center mb-4">
+                            <LayoutGrid size={32} className="opacity-60" />
                           </div>
-                        )}
-                      </div>
-                    )}
-                  </section>
-                </>
-              )}
-            </div>
-          )}
+                          <h3 className="text-lg font-semibold text-foreground mb-2">
+                            {t('vault.hosts.empty.title')}
+                          </h3>
+                          <p className="text-sm text-center max-w-sm">
+                            {t('vault.hosts.empty.desc')}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </section>
+        </div>
 
         {currentSection === "snippets" && (
           <SnippetsManager

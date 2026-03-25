@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import type { Host, Identity, SSHKey } from "../../../domain/models";
+import { isEncryptedCredentialPlaceholder, sanitizeCredentialValue } from "../../../domain/credentials";
 import { resolveHostAuth } from "../../../domain/sshAuth";
 
 interface UseSftpHostCredentialsParams {
@@ -24,22 +25,32 @@ export const useSftpHostCredentials = ({
           host: host.proxyConfig.host,
           port: host.proxyConfig.port,
           username: host.proxyConfig.username,
-          password: host.proxyConfig.password,
+          password: sanitizeCredentialValue(host.proxyConfig.password),
         }
         : undefined;
-
       let jumpHosts: NetcattyJumpHost[] | undefined;
       if (host.hostChain?.hostIds && host.hostChain.hostIds.length > 0) {
         jumpHosts = host.hostChain.hostIds
           .map((hostId) => hosts.find((h) => h.id === hostId))
           .filter((h): h is Host => !!h)
-          .map((jumpHost) => {
+          .map((jumpHost, index) => {
             const jumpAuth = resolveHostAuth({
               host: jumpHost,
               keys,
               identities,
             });
             const jumpKey = jumpAuth.key;
+            const hasConfiguredJumpProxyEndpoint =
+              index === 0 &&
+              !!(jumpHost.proxyConfig?.host && jumpHost.proxyConfig?.port);
+            if (
+              hasConfiguredJumpProxyEndpoint &&
+              jumpHost.proxyConfig?.username &&
+              isEncryptedCredentialPlaceholder(jumpHost.proxyConfig.password) &&
+              !sanitizeCredentialValue(jumpHost.proxyConfig.password)
+            ) {
+              throw new Error(`Proxy credentials for jump host "${jumpHost.label || jumpHost.hostname}" cannot be decrypted on this device. Open host settings and re-enter the proxy password.`);
+            }
             return {
               hostname: jumpHost.hostname,
               port: jumpHost.port || 22,
@@ -52,9 +63,22 @@ export const useSftpHostCredentials = ({
               keyId: jumpAuth.keyId,
               keySource: jumpKey?.source,
               label: jumpHost.label,
+              proxy: jumpHost.proxyConfig?.host && jumpHost.proxyConfig?.port
+                ? {
+                  type: jumpHost.proxyConfig.type,
+                  host: jumpHost.proxyConfig.host,
+                  port: jumpHost.proxyConfig.port,
+                  username: jumpHost.proxyConfig.username,
+                  password: sanitizeCredentialValue(jumpHost.proxyConfig.password),
+                }
+                : undefined,
               identityFilePaths: jumpHost.identityFilePaths,
             };
           });
+      }
+      const usesTargetProxyForFirstHop = !!proxyConfig && !jumpHosts?.[0]?.proxy;
+      if (usesTargetProxyForFirstHop && host.proxyConfig?.username && isEncryptedCredentialPlaceholder(host.proxyConfig.password) && !proxyConfig?.password) {
+        throw new Error("Proxy credentials cannot be decrypted on this device. Open host settings and re-enter the proxy password.");
       }
 
       return {

@@ -38,6 +38,7 @@ declare global {
     keyId?: string;
     keySource?: 'generated' | 'imported';
     label?: string; // Display label for UI
+    proxy?: NetcattyProxyConfig;
     identityFilePaths?: string[];
   }
 
