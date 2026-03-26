@@ -32,6 +32,14 @@ const SOURCE_LABELS: Record<SuggestionSource, { label: string; fullLabel: string
   subcommand: { label: "s", fullLabel: "Subcommand", fallbackColor: "#60A5FA" },
   option: { label: "o", fullLabel: "Option", fallbackColor: "#A78BFA" },
   arg: { label: "a", fullLabel: "Argument", fallbackColor: "#F87171" },
+  path: { label: "p", fullLabel: "Path", fallbackColor: "#38BDF8" },
+};
+
+/** Icons for file types in path suggestions */
+const FILE_TYPE_ICONS: Record<string, { icon: string; color: string }> = {
+  directory: { icon: "📁", color: "#38BDF8" },
+  file: { icon: "📄", color: "#94A3B8" },
+  symlink: { icon: "🔗", color: "#A78BFA" },
 };
 
 const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
@@ -150,24 +158,40 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
                 onSelect(suggestion);
               }}
             >
-              {/* Source indicator */}
-              <span
-                style={{
-                  width: "18px",
-                  height: "18px",
-                  borderRadius: "3px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "10px",
-                  fontWeight: 600,
-                  color: sourceInfo.fallbackColor,
-                  backgroundColor: `${sourceInfo.fallbackColor}15`,
-                  flexShrink: 0,
-                }}
-              >
-                {sourceInfo.label}
-              </span>
+              {/* Source / file type indicator */}
+              {suggestion.source === "path" && suggestion.fileType ? (
+                <span
+                  style={{
+                    width: "18px",
+                    height: "18px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "14px",
+                    flexShrink: 0,
+                  }}
+                >
+                  {FILE_TYPE_ICONS[suggestion.fileType]?.icon ?? "📄"}
+                </span>
+              ) : (
+                <span
+                  style={{
+                    width: "18px",
+                    height: "18px",
+                    borderRadius: "3px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "10px",
+                    fontWeight: 600,
+                    color: sourceInfo.fallbackColor,
+                    backgroundColor: `${sourceInfo.fallbackColor}15`,
+                    flexShrink: 0,
+                  }}
+                >
+                  {sourceInfo.label}
+                </span>
+              )}
 
               {/* Command text */}
               <span

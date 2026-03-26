@@ -534,6 +534,27 @@ const registerBridges = (win) => {
     }
   });
 
+  // Local directory listing for autocomplete (local terminal sessions)
+  ipcMain.handle("netcatty:local:listdir", async (_event, { path: dirPath, foldersOnly }) => {
+    try {
+      const resolvedPath = dirPath.startsWith("~")
+        ? dirPath.replace(/^~/, require("os").homedir())
+        : dirPath;
+      const entries = await fs.promises.readdir(resolvedPath, { withFileTypes: true });
+      const result = [];
+      for (const entry of entries) {
+        if (entry.name === "." || entry.name === "..") continue;
+        const type = entry.isDirectory() ? "directory" : entry.isSymbolicLink() ? "symlink" : "file";
+        if (foldersOnly && type !== "directory" && type !== "symlink") continue;
+        result.push({ name: entry.name, type });
+      }
+      // Cap at 100 entries
+      return { success: true, entries: result.slice(0, 100) };
+    } catch {
+      return { success: false, entries: [] };
+    }
+  });
+
   // Settings window handler
   ipcMain.handle("netcatty:settings:open", async () => {
     try {

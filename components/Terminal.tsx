@@ -436,6 +436,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       maxSuggestions: terminalSettings.autocompleteMaxSuggestions ?? 8,
     } : undefined,
     onAcceptText: (text) => autocompleteAcceptTextRef.current?.(text),
+    protocol: host.protocol,
+    getCwd: () => xtermRuntimeRef.current?.currentCwd,
   });
 
   // Wire up autocomplete handler refs so createXTermRuntime can use them

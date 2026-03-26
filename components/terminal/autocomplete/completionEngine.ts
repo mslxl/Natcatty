@@ -24,9 +24,14 @@ import {
   type FigSubcommand,
   type FigOption,
 } from "./figSpecLoader";
+import {
+  shouldDoPathCompletion,
+  getPathSuggestions,
+  resolvePathComponents,
+} from "./remotePathCompleter";
 
 /** Source indicator for where a suggestion came from */
-export type SuggestionSource = "history" | "command" | "subcommand" | "option" | "arg";
+export type SuggestionSource = "history" | "command" | "subcommand" | "option" | "arg" | "path";
 
 export interface CompletionSuggestion {
   /** The text to insert */
@@ -41,6 +46,8 @@ export interface CompletionSuggestion {
   score: number;
   /** For history entries: execution frequency */
   frequency?: number;
+  /** For path suggestions: file type */
+  fileType?: "file" | "directory" | "symlink";
 }
 
 export interface CompletionContext {
@@ -141,6 +148,12 @@ export async function getCompletions(
     hostId?: string;
     os?: "linux" | "windows" | "macos";
     maxResults?: number;
+    /** Session ID for remote path completion */
+    sessionId?: string;
+    /** Connection protocol (ssh, local, telnet, serial) */
+    protocol?: string;
+    /** Current working directory (from OSC 7) */
+    cwd?: string;
   } = {},
 ): Promise<CompletionSuggestion[]> {
   const { hostId, os, maxResults = 15 } = options;
@@ -174,6 +187,46 @@ export async function getCompletions(
   if (ctx.commandName && ctx.wordIndex >= 0) {
     const specSuggestions = await getSpecSuggestions(ctx);
     suggestions.push(...specSuggestions);
+  }
+
+  // 2.5. Path completion (remote or local filesystem)
+  if (ctx.commandName && ctx.wordIndex >= 1 && options.sessionId !== undefined) {
+    // Get resolved args from spec to check for path template
+    let resolvedArgs: FigSubcommand["args"] | undefined;
+    try {
+      const specAvail = await hasSpec(ctx.commandName);
+      if (specAvail) {
+        const spec = await loadSpec(ctx.commandName);
+        if (spec) {
+          const resolved = resolveSpecContext(spec, ctx.tokens.slice(1, ctx.wordIndex));
+          resolvedArgs = resolved.args;
+        }
+      }
+    } catch { /* ignore spec errors for path detection */ }
+
+    const pathCheck = shouldDoPathCompletion(ctx, resolvedArgs as import("./figSpecLoader").FigArg | import("./figSpecLoader").FigArg[] | undefined);
+    if (pathCheck.shouldComplete) {
+      const pathEntries = await getPathSuggestions(ctx, {
+        sessionId: options.sessionId,
+        protocol: options.protocol,
+        cwd: options.cwd,
+        foldersOnly: pathCheck.foldersOnly,
+      });
+
+      const { pathPrefix } = resolvePathComponents(ctx.currentWord, options.cwd);
+      for (const entry of pathEntries) {
+        const insertName = entry.name.includes(" ") ? entry.name.replace(/ /g, "\\ ") : entry.name;
+        const suffix = entry.type === "directory" ? "/" : "";
+        const fullPath = pathPrefix + insertName + suffix;
+        suggestions.push({
+          text: rebuildCommand(ctx.tokens, ctx.wordIndex, fullPath),
+          displayText: entry.name + suffix,
+          source: "path",
+          score: 750,
+          fileType: entry.type,
+        });
+      }
+    }
   }
 
   // 3. Fuzzy history fallback (if prefix match yields few results)

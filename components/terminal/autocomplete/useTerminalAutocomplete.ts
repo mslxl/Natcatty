@@ -63,6 +63,10 @@ interface UseTerminalAutocompleteOptions {
   settings?: Partial<AutocompleteSettings>;
   /** Callback to write text to the terminal session — replaces CustomEvent */
   onAcceptText?: (text: string) => void;
+  /** Connection protocol for path completion routing */
+  protocol?: string;
+  /** Get current working directory (from OSC 7 or other source) */
+  getCwd?: () => string | undefined;
 }
 
 export interface TerminalAutocompleteHandle {
@@ -78,7 +82,7 @@ export interface TerminalAutocompleteHandle {
 export function useTerminalAutocomplete(
   options: UseTerminalAutocompleteOptions,
 ): TerminalAutocompleteHandle {
-  const { termRef, sessionId, hostId, hostOs, settings: userSettings, onAcceptText } = options;
+  const { termRef, sessionId, hostId, hostOs, settings: userSettings, onAcceptText, protocol, getCwd } = options;
 
   const settings: AutocompleteSettings = {
     ...DEFAULT_AUTOCOMPLETE_SETTINGS,
@@ -96,6 +100,10 @@ export function useTerminalAutocomplete(
   hostOsRef.current = hostOs;
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
+  const protocolRef = useRef(protocol);
+  protocolRef.current = protocol;
+  const getCwdRef = useRef(getCwd);
+  getCwdRef.current = getCwd;
 
   const [state, setState] = useState<AutocompleteState>(EMPTY_STATE);
 
@@ -223,6 +231,9 @@ export function useTerminalAutocomplete(
       hostId: hostIdRef.current,
       os: hostOsRef.current,
       maxResults: settingsRef.current.maxSuggestions,
+      sessionId: sessionIdRef.current,
+      protocol: protocolRef.current,
+      cwd: getCwdRef.current?.(),
     });
 
     if (disposedRef.current || version !== fetchVersionRef.current) return;

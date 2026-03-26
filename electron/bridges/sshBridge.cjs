@@ -1834,6 +1834,66 @@ async function getSessionPwd(event, payload) {
 }
 
 /**
+ * List directory contents on remote machine for path autocomplete.
+ * Uses a separate exec channel — does not touch the interactive shell.
+ */
+async function listSessionDir(_event, payload) {
+  const { sessionId, path: dirPath, foldersOnly } = payload;
+  const session = sessions.get(sessionId);
+
+  if (!session || !session.conn) {
+    return { success: false, entries: [], error: 'Session not found' };
+  }
+
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      resolve({ success: false, entries: [], error: 'Timeout listing directory' });
+    }, 3000);
+
+    // ls -1Fap: one entry per line, type indicators, include dot files, append / to dirs
+    // head -100: cap output to prevent overwhelming the connection
+    const safePath = dirPath.replace(/'/g, "'\\''");
+    const cmd = `ls -1Fap '${safePath}' 2>/dev/null | head -100`;
+
+    session.conn.exec(cmd, (err, stream) => {
+      if (err) {
+        clearTimeout(timer);
+        resolve({ success: false, entries: [], error: err.message });
+        return;
+      }
+      let out = '';
+      stream.on('data', (d) => { out += d.toString(); });
+      stream.on('close', () => {
+        clearTimeout(timer);
+        const entries = [];
+        for (const line of out.split('\n')) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed === '.' || trimmed === './' || trimmed === '../') continue;
+
+          let name = trimmed;
+          let type = 'file';
+
+          if (name.endsWith('/')) {
+            name = name.slice(0, -1);
+            type = 'directory';
+          } else if (name.endsWith('@')) {
+            name = name.slice(0, -1);
+            type = 'symlink';
+          } else if (name.endsWith('*') || name.endsWith('|') || name.endsWith('=')) {
+            name = name.slice(0, -1);
+          }
+
+          if (foldersOnly && type !== 'directory' && type !== 'symlink') continue;
+
+          entries.push({ name, type });
+        }
+        resolve({ success: true, entries });
+      });
+    });
+  });
+}
+
+/**
  * Get server stats (CPU, Memory, Disk) from an active SSH session
  * Only works for Linux servers
  */
@@ -2241,6 +2301,7 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:start", startSSHSessionWrapper);
   ipcMain.handle("netcatty:ssh:exec", execCommand);
   ipcMain.handle("netcatty:ssh:pwd", getSessionPwd);
+  ipcMain.handle("netcatty:ssh:listdir", listSessionDir);
   ipcMain.handle("netcatty:ssh:stats", getServerStats);
   ipcMain.handle("netcatty:key:generate", generateKeyPair);
   ipcMain.handle("netcatty:ssh:setEncoding", setSessionEncoding);
