@@ -101,6 +101,13 @@ body {
   color: hsl(var(--foreground));
 }
 
+[data-instant-theme-switch="true"],
+[data-instant-theme-switch="true"] *,
+[data-instant-theme-switch="true"] *::before,
+[data-instant-theme-switch="true"] *::after {
+  transition: none !important;
+}
+
 .dark {
   color-scheme: dark;
 }
