@@ -1,6 +1,12 @@
 import { Circle, FolderTree, LayoutGrid, MessageSquare, PanelLeft, PanelRight, Palette, Server, X, Zap } from 'lucide-react';
 import React, { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useActiveTabId } from '../application/state/activeTabStore';
+import {
+  getSessionActivityIdsToClear,
+  getValidSessionActivityIds,
+  shouldMarkSessionActivity,
+} from '../application/state/sessionActivity';
+import { sessionActivityStore } from '../application/state/sessionActivityStore';
 import { useTerminalBackend } from '../application/state/useTerminalBackend';
 import { collectSessionIds } from '../domain/workspace';
 import { SplitDirection } from '../domain/workspace';
@@ -80,6 +86,41 @@ const filterTabsMap = <T,>(source: Map<string, T>, validIds: Set<string>): Map<s
     }
   }
   return changed ? next : source;
+};
+
+// eslint-disable-next-line no-control-regex
+const TERMINAL_OSC_SEQUENCE_REGEX = new RegExp('\\u001B\\][^\\u0007\\u001B]*(?:\\u0007|\\u001B\\\\)', 'g');
+// eslint-disable-next-line no-control-regex
+const TERMINAL_ESCAPE_SEQUENCE_REGEX = new RegExp('\\u001B(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])', 'g');
+// eslint-disable-next-line no-control-regex
+const TERMINAL_CONTROL_CHAR_REGEX = new RegExp('[\\u0000-\\u0008\\u000B-\\u001F\\u007F]', 'g');
+// eslint-disable-next-line no-control-regex
+const INCOMPLETE_ESCAPE_TAIL_REGEX = new RegExp('\\u001B(?:\\][^\\u0007\\u001B]*(?:\\u001B)?|\\[[0-?]*[ -/]*)?$');
+
+const stripTerminalControlSequences = (data: string): string => {
+  return data
+    .replace(TERMINAL_OSC_SEQUENCE_REGEX, '')
+    .replace(TERMINAL_ESCAPE_SEQUENCE_REGEX, '')
+    .replace(TERMINAL_CONTROL_CHAR_REGEX, '');
+};
+
+class ChunkedEscapeFilter {
+  private pending = '';
+
+  feed(chunk: string): string {
+    const data = this.pending + chunk;
+    const tailMatch = INCOMPLETE_ESCAPE_TAIL_REGEX.exec(data);
+    if (tailMatch) {
+      this.pending = tailMatch[0];
+      return stripTerminalControlSequences(data.slice(0, tailMatch.index));
+    }
+    this.pending = '';
+    return stripTerminalControlSequences(data);
+  }
+}
+
+const hasNotifiableTerminalOutput = (filter: ChunkedEscapeFilter, chunk: string): boolean => {
+  return filter.feed(chunk).trim().length > 0;
 };
 
 type AITerminalSessionInfo = {
@@ -424,6 +465,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     snippetExecutorsRef.current.delete(sessionId);
   }, []);
 
+  const onSessionData = terminalBackend.onSessionData;
+
   const [workspaceArea, setWorkspaceArea] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
   const workspaceOuterRef = useRef<HTMLDivElement>(null);
   const workspaceInnerRef = useRef<HTMLDivElement>(null);
@@ -673,6 +716,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     return ids;
   }, [sessions, workspaces]);
 
+  const validSessionActivityIds = useMemo(() => {
+    return getValidSessionActivityIds(sessions);
+  }, [sessions]);
+
   const onSplitSessionRef = useRef(onSplitSession);
   onSplitSessionRef.current = onSplitSession;
   const splitHorizontalHandlersRef = useRef<Map<string, () => void>>(new Map());
@@ -747,7 +794,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     setSftpHostForTab(prev => filterTabsMap(prev, validTerminalTabIds));
     setSftpInitialLocationForTab(prev => filterTabsMap(prev, validTerminalTabIds));
     setSftpPendingUploadsForTab(prev => filterTabsMap(prev, validTerminalTabIds));
-  }, [validTerminalTabIds]);
+    sessionActivityStore.prune(validSessionActivityIds);
+  }, [validSessionActivityIds, validTerminalTabIds]);
 
   useEffect(() => {
     cleanupOrphanedAISessions(validTerminalTabIds);
@@ -1104,6 +1152,38 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     window.addEventListener('netcatty:toggle-ai-panel', handler);
     return () => window.removeEventListener('netcatty:toggle-ai-panel', handler);
   }, [handleOpenAI]);
+
+  useEffect(() => {
+    const sessionIdsToClear = getSessionActivityIdsToClear(activeTabId, sessions);
+    if (sessionIdsToClear.length === 1) {
+      sessionActivityStore.clearTab(sessionIdsToClear[0]);
+      return;
+    }
+    if (sessionIdsToClear.length > 1) {
+      sessionActivityStore.clearTabs(sessionIdsToClear);
+    }
+  }, [activeTabId, sessions]);
+
+  useEffect(() => {
+    const unsubscribers = sessions.map((session) => {
+      const filter = new ChunkedEscapeFilter();
+      return onSessionData(session.id, (chunk) => {
+        if (!hasNotifiableTerminalOutput(filter, chunk)) return;
+
+        if (!shouldMarkSessionActivity(activeTabIdRef.current, session)) {
+          return;
+        }
+
+        sessionActivityStore.setTabActive(session.id, true);
+      });
+    });
+
+    return () => {
+      for (const unsubscribe of unsubscribers) {
+        unsubscribe();
+      }
+    };
+  }, [onSessionData, sessions]);
 
   // Execute snippet on the focused terminal session
   const handleSnippetClickForFocusedSession = useCallback((command: string, noAutoRun?: boolean) => {
