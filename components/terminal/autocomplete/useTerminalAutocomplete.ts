@@ -94,6 +94,7 @@ export interface TerminalAutocompleteHandle {
   handleInput: (data: string) => void;
   handleKeyEvent: (e: KeyboardEvent) => boolean;
   selectSuggestion: (suggestion: CompletionSuggestion) => void;
+  repositionPopup: () => void;
   closePopup: () => void;
   dispose: () => void;
 }
@@ -348,6 +349,24 @@ export function useTerminalAutocomplete(
 
   // Ref to fetchSuggestions (avoids circular dep — defined after fetchSuggestions)
   const fetchSuggestionsRef = useRef<() => void>(() => {});
+
+  const repositionPopup = useCallback(() => {
+    const term = termRef.current;
+    if (!term) return;
+
+    setState((prev) => {
+      if (!prev.popupVisible || prev.suggestions.length === 0) return prev;
+      const { position, expandUpward } = calculatePopupPosition(term, prev.suggestions.length);
+
+      // Force a re-render even when the relative cursor cell hasn't changed.
+      // The terminal container may have moved in the viewport after a fit/resize.
+      return {
+        ...prev,
+        popupPosition: position,
+        expandUpward,
+      };
+    });
+  }, [termRef]);
 
   /** Handle selecting a file/directory from any sub-dir panel.
    *  Builds the full path from the panel stack and replaces the current input. */
@@ -864,6 +883,7 @@ export function useTerminalAutocomplete(
     handleInput,
     handleKeyEvent,
     selectSuggestion,
+    repositionPopup,
     closePopup,
     dispose,
   };

@@ -300,6 +300,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   // Autocomplete handler refs (set after hook initialization)
   const autocompleteKeyEventRef = useRef<((e: KeyboardEvent) => boolean) | undefined>(undefined);
   const autocompleteInputRef = useRef<((data: string) => void) | undefined>(undefined);
+  const autocompleteRepositionRef = useRef<(() => void) | undefined>(undefined);
 
   const terminalBackend = useTerminalBackend();
   const { resizeSession, setSessionEncoding } = terminalBackend;
@@ -443,6 +444,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   // Wire up autocomplete handler refs so createXTermRuntime can use them
   autocompleteKeyEventRef.current = autocomplete.handleKeyEvent;
   autocompleteInputRef.current = autocomplete.handleInput;
+  autocompleteRepositionRef.current = autocomplete.repositionPopup;
 
   // Check if this is a local or serial connection (doesn't need connection dialog during connecting)
   const isLocalConnection = host.protocol === "local";
@@ -796,6 +798,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     if (!options?.force) {
       const lastSize = lastFittedSizeRef.current;
       if (lastSize && lastSize.width === width && lastSize.height === height) {
+        autocompleteRepositionRef.current?.();
         return;
       }
     }
@@ -804,6 +807,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       try {
         lastFittedSizeRef.current = { width, height };
         fitAddon.fit();
+        if (typeof requestAnimationFrame === "function") {
+          requestAnimationFrame(() => {
+            autocompleteRepositionRef.current?.();
+          });
+        } else {
+          autocompleteRepositionRef.current?.();
+        }
       } catch (err) {
         logger.warn("Fit failed", err);
       }

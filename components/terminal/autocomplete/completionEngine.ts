@@ -11,6 +11,7 @@
 
 import {
   queryHistory,
+  queryRecentHistoryByCommand,
   fuzzyQueryHistory,
   type HistoryQueryOptions,
 } from "./commandHistoryStore";
@@ -189,6 +190,32 @@ export async function getCompletions(
     } satisfies CompletionSuggestion;
     suggestions.push(suggestion);
     seenSuggestionTexts.add(suggestion.text);
+  }
+
+  if (preferPathSuggestions && ctx.commandName) {
+    const currentArgumentPrefix = ctx.tokens.slice(1).join(" ").trimStart();
+    const recentHistory = queryRecentHistoryByCommand({
+      commandName: ctx.commandName,
+      excludeCommand: input,
+      argumentPrefix: currentArgumentPrefix,
+      hostId,
+      os,
+      includeOsMatches: true,
+      limit: 3,
+    });
+    for (let index = 0; index < recentHistory.length; index++) {
+      const entry = recentHistory[index];
+      if (seenSuggestionTexts.has(entry.command)) continue;
+      const suggestion = {
+        text: entry.command,
+        displayText: entry.command,
+        source: "history",
+        score: 900 - index,
+        frequency: entry.frequency,
+      } satisfies CompletionSuggestion;
+      suggestions.push(suggestion);
+      seenSuggestionTexts.add(suggestion.text);
+    }
   }
 
   const canQueryPaths = options.protocol === "local" || options.sessionId !== undefined;
