@@ -241,7 +241,19 @@ export function useTerminalAutocomplete(
         : prev);
       return;
     }
-    const dirPath = normalizePathTokenForLookup(parseCommandLine(item.text).currentWord);
+    const term = termRef.current;
+    const livePrompt = term ? detectPrompt(term) : null;
+    const activePrompt = livePrompt?.isAtPrompt ? livePrompt : lastPromptRef.current;
+    const activeWord = activePrompt?.isAtPrompt
+      ? parseCommandLine(activePrompt.userInput).currentWord
+      : parseCommandLine(item.text).currentWord;
+    const cwd = resolveAutocompleteCwd(
+      activePrompt?.promptText ?? "",
+      activeWord,
+      getCwdRef.current?.(),
+      hostOsRef.current,
+    );
+    const dirPath = normalizePathTokenForLookup(parseCommandLine(item.text).currentWord, cwd);
     if (!dirPath) return;
 
     const requestVersion = ++subDirFetchVersionRef.current;
@@ -266,7 +278,7 @@ export function useTerminalAutocomplete(
         });
       });
     });
-  }, [fetchDirEntries]);
+  }, [fetchDirEntries, termRef]);
 
   /** Expand a directory at the given panel level → fetch contents and push new panel.
    *  Does NOT change focus level — use moveFocus param to override. */
@@ -931,7 +943,25 @@ function resolveAutocompleteCwd(
   }
 
   const promptCwd = extractPosixCwdFromPrompt(promptText);
-  return promptCwd ?? fallbackCwd;
+  return chooseAutocompleteCwd(promptCwd, fallbackCwd);
+}
+
+function chooseAutocompleteCwd(
+  promptCwd: string | undefined,
+  fallbackCwd: string | undefined,
+): string | undefined {
+  if (!promptCwd) return fallbackCwd;
+  if (!fallbackCwd) return promptCwd;
+
+  if (promptCwd.startsWith("/")) {
+    return promptCwd;
+  }
+
+  if (promptCwd === "~" || promptCwd.startsWith("~/")) {
+    return fallbackCwd;
+  }
+
+  return promptCwd;
 }
 
 function extractPosixCwdFromPrompt(promptText: string): string | undefined {
@@ -948,6 +978,17 @@ function extractPosixCwdFromPrompt(promptText: string): string | undefined {
     const match = trimmed.match(pattern);
     if (!match) continue;
     const candidate = match[match.length - 1];
+    if (candidate === "/" || candidate.startsWith("/") || candidate === "~" || candidate.startsWith("~/")) {
+      return candidate;
+    }
+  }
+
+  const fallbackTokens = trimmed
+    .split(/\s+/)
+    .map((token) => token.replace(/^[([{:]+/, "").replace(/[\])}:]+$/, ""));
+
+  for (let index = fallbackTokens.length - 1; index >= 0; index--) {
+    const candidate = fallbackTokens[index];
     if (candidate === "/" || candidate.startsWith("/") || candidate === "~" || candidate.startsWith("~/")) {
       return candidate;
     }

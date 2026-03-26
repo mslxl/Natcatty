@@ -234,6 +234,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const serializeAddonRef = useRef<SerializeAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const xtermRuntimeRef = useRef<XTermRuntime | null>(null);
+  const knownCwdRef = useRef<string | undefined>(undefined);
   const disposeDataRef = useRef<(() => void) | null>(null);
   const disposeExitRef = useRef<(() => void) | null>(null);
   const sessionRef = useRef<string | null>(null);
@@ -438,7 +439,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     } : undefined,
     onAcceptText: (text) => autocompleteAcceptTextRef.current?.(text),
     protocol: host.protocol,
-    getCwd: () => xtermRuntimeRef.current?.currentCwd,
+    getCwd: () => knownCwdRef.current ?? xtermRuntimeRef.current?.currentCwd,
   });
 
   // Wire up autocomplete handler refs so createXTermRuntime can use them
@@ -446,6 +447,35 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   autocompleteInputRef.current = autocomplete.handleInput;
   autocompleteRepositionRef.current = autocomplete.repositionPopup;
   const autocompleteClosePopup = autocomplete.closePopup;
+
+  useEffect(() => {
+    knownCwdRef.current = undefined;
+  }, [sessionId, host.id]);
+
+  useEffect(() => {
+    if (host.protocol === "local" || host.protocol === "serial" || host.protocol === "telnet") {
+      return;
+    }
+    if (status !== "connected" || !sessionRef.current || knownCwdRef.current) return;
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      if (!sessionRef.current) return;
+      try {
+        const result = await terminalBackend.getSessionPwd(sessionRef.current);
+        if (!cancelled && result.success && result.cwd) {
+          knownCwdRef.current = result.cwd;
+        }
+      } catch {
+        // Best effort only.
+      }
+    }, 150);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [host.protocol, status, terminalBackend]);
 
   useEffect(() => {
     if (!isVisible) {
@@ -650,6 +680,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           serialLocalEcho: serialConfig?.localEcho,
           serialLineMode: serialConfig?.lineMode,
           serialLineBufferRef,
+          onCwdChange: (cwd: string) => {
+            knownCwdRef.current = cwd;
+          },
           onOsc52ReadRequest: handleOsc52ReadRequest,
           // Autocomplete integration
           onAutocompleteKeyEvent: (e: KeyboardEvent) => autocompleteKeyEventRef.current?.(e) ?? true,

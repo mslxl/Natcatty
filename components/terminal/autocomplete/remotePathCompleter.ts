@@ -120,8 +120,12 @@ export function resolvePathComponents(
   const unquotedWord = stripWrappingQuotes(currentWord);
 
   // Handle empty input — list CWD
-  if (!unquotedWord || unquotedWord === "." || unquotedWord === "~") {
-    const dir = unquotedWord === "~" ? "~" : (cwd || ".");
+  if (!unquotedWord || unquotedWord === "." || unquotedWord === "~" || unquotedWord === "..") {
+    const dir = unquotedWord === "~"
+      ? "~"
+      : unquotedWord === ".."
+        ? resolveDirLookup("../", cwd)
+        : (cwd || ".");
     const visiblePrefix = unquotedWord ? `${quotePrefix}${unquotedWord}/` : quotePrefix;
     return { dirToList: dir, filterPrefix: "", pathPrefix: visiblePrefix, quoteSuffix };
   }
@@ -135,17 +139,7 @@ export function resolvePathComponents(
     const decodedDirPart = decodeShellPathFragment(dirPart);
     const decodedFilterPart = decodeShellPathFragment(filterPart);
 
-    // Resolve directory
-    let dirToList: string;
-    if (decodedDirPart.startsWith("/")) {
-      dirToList = decodedDirPart;
-    } else if (decodedDirPart.startsWith("~/")) {
-      dirToList = decodedDirPart; // Let remote shell expand ~
-    } else if (decodedDirPart.startsWith("./") || decodedDirPart.startsWith("../")) {
-      dirToList = cwd ? `${cwd}/${decodedDirPart}` : decodedDirPart;
-    } else {
-      dirToList = cwd ? `${cwd}/${decodedDirPart}` : decodedDirPart;
-    }
+    const dirToList = resolveDirLookup(decodedDirPart, cwd);
 
     return { dirToList, filterPrefix: decodedFilterPart, pathPrefix: quotePrefix + dirPart, quoteSuffix };
   }
@@ -159,8 +153,16 @@ export function resolvePathComponents(
   };
 }
 
-export function normalizePathTokenForLookup(token: string): string {
-  return decodeShellPathFragment(stripWrappingQuotes(token));
+export function normalizePathTokenForLookup(token: string, cwd?: string): string {
+  const { dirToList, filterPrefix } = resolvePathComponents(token, cwd);
+  if (!filterPrefix) return dirToList;
+
+  if (!dirToList || dirToList === ".") {
+    return filterPrefix;
+  }
+
+  const needsSeparator = !dirToList.endsWith("/");
+  return `${dirToList}${needsSeparator ? "/" : ""}${filterPrefix}`;
 }
 
 /**
@@ -292,6 +294,65 @@ export async function listDirectoryEntries(
 function clampLimit(limit: number): number {
   if (!Number.isFinite(limit)) return 100;
   return Math.max(1, Math.min(200, Math.floor(limit)));
+}
+
+function resolveDirLookup(pathToken: string, cwd: string | undefined): string {
+  if (!pathToken) return cwd || ".";
+  if (pathToken.startsWith("/")) return normalizePosixLikePath(pathToken);
+  if (pathToken === "~" || pathToken.startsWith("~/")) return normalizePosixLikePath(pathToken);
+  if (cwd) return normalizePosixLikePath(`${cwd}/${pathToken}`);
+  return normalizePosixLikePath(pathToken);
+}
+
+function normalizePosixLikePath(input: string): string {
+  if (!input) return ".";
+
+  const hasLeadingSlash = input.startsWith("/");
+  const hasTildeRoot = input === "~" || input.startsWith("~/");
+  const hasTrailingSlash = input.length > 1 && input.endsWith("/");
+  const fixedRootSegments = hasTildeRoot ? 1 : 0;
+  const raw = hasLeadingSlash
+    ? input.slice(1)
+    : hasTildeRoot
+      ? input.slice(2)
+      : input;
+  const segments = hasTildeRoot ? ["~"] : [];
+
+  for (const segment of raw.split("/")) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") {
+      if (
+        segments.length > fixedRootSegments &&
+        segments[segments.length - 1] !== ".."
+      ) {
+        segments.pop();
+      } else if (!hasLeadingSlash || hasTildeRoot) {
+        segments.push(segment);
+      }
+      continue;
+    }
+    segments.push(segment);
+  }
+
+  let result: string;
+  if (hasLeadingSlash) {
+    result = "/" + segments.join("/");
+    if (result === "/") return result;
+  } else if (segments.length > 0) {
+    result = segments.join("/");
+  } else if (hasTildeRoot) {
+    result = "~";
+  } else {
+    result = ".";
+  }
+
+  if (hasTrailingSlash && result !== "/" && result !== "." && result !== "~") {
+    result += "/";
+  } else if (hasTrailingSlash && result === "~") {
+    result = "~/";
+  }
+
+  return result;
 }
 
 function isFresh(

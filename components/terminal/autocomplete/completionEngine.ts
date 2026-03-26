@@ -370,19 +370,12 @@ async function getSpecSuggestions(ctx: CompletionContext): Promise<CompletionSug
         }
       }
       // Show child options
-      if (childResolved.options) {
-        for (const opt of childResolved.options) {
-          const names = resolveNames(opt.name);
-          suggestions.push({
-            text: ctx.commandLine + " " + names[0],
-            displayText: names[0],
-            description: opt.description,
-            source: "option",
-            score: 700,
-          });
-          if (suggestions.length >= 15) break;
-        }
-      }
+      appendOptionPreviewSuggestions(
+        suggestions,
+        ctx.commandLine,
+        childResolved.options?.length ? childResolved.options : childResolved.fallbackOptions,
+        15,
+      );
       return suggestions;
     }
   }
@@ -406,21 +399,14 @@ async function getSpecSuggestions(ctx: CompletionContext): Promise<CompletionSug
   }
 
   // Suggest options
-  if (resolved.options) {
-    for (const opt of resolved.options) {
-      const names = resolveNames(opt.name);
-      for (const name of names) {
-        if (name.startsWith(currentToken) && name !== currentToken) {
-          suggestions.push({
-            text: rebuildCommand(ctx.tokens, ctx.wordIndex, name),
-            displayText: name,
-            description: opt.description,
-            source: "option",
-            score: 700,
-          });
-        }
-      }
-    }
+  const hasDirectOptionSuggestions = appendOptionSuggestions(
+    suggestions,
+    ctx,
+    currentToken,
+    resolved.options,
+  );
+  if (!hasDirectOptionSuggestions) {
+    appendOptionSuggestions(suggestions, ctx, currentToken, resolved.fallbackOptions);
   }
 
   // Suggest argument values from suggestions in the spec
@@ -477,6 +463,7 @@ async function getCommandNameSuggestions(prefix: string): Promise<CompletionSugg
 interface ResolvedContext {
   subcommands?: FigSubcommand[];
   options?: FigOption[];
+  fallbackOptions?: FigOption[];
   args?: FigSubcommand["args"];
 }
 
@@ -486,6 +473,7 @@ interface ResolvedContext {
  */
 function resolveSpecContext(spec: FigSpec, consumedTokens: string[]): ResolvedContext {
   let current: FigSubcommand = spec;
+  let inheritedOptions: FigOption[] = [];
   let skipNext = false;
   let lastOptionArgs: FigSubcommand["args"] | undefined;
 
@@ -500,18 +488,16 @@ function resolveSpecContext(spec: FigSpec, consumedTokens: string[]): ResolvedCo
     // Handle option flags
     if (token.startsWith("-")) {
       // Check if this option expects an argument
-      if (current.options) {
-        const opt = current.options.find((o) => {
-          const names = resolveNames(o.name);
-          return names.includes(token);
-        });
-        if (opt?.args) {
-          // This option expects an argument — the next token is its value
-          const args = Array.isArray(opt.args) ? opt.args : [opt.args];
-          if (args.length > 0 && !args[0].isOptional) {
-            skipNext = true;
-            lastOptionArgs = opt.args; // Track for the case where next token is currentWord
-          }
+      const opt = [...(current.options ?? []), ...inheritedOptions].find((candidate) => {
+        const names = resolveNames(candidate.name);
+        return names.includes(token);
+      });
+      if (opt?.args) {
+        // This option expects an argument — the next token is its value
+        const args = Array.isArray(opt.args) ? opt.args : [opt.args];
+        if (args.length > 0 && !args[0].isOptional) {
+          skipNext = true;
+          lastOptionArgs = opt.args; // Track for the case where next token is currentWord
         }
       }
       continue;
@@ -524,6 +510,7 @@ function resolveSpecContext(spec: FigSpec, consumedTokens: string[]): ResolvedCo
         return names.includes(token);
       });
       if (sub) {
+        inheritedOptions = mergeOptionLists(inheritedOptions, current.options);
         current = sub;
         continue;
       }
@@ -540,6 +527,7 @@ function resolveSpecContext(spec: FigSpec, consumedTokens: string[]): ResolvedCo
     return {
       subcommands: undefined,
       options: undefined,
+      fallbackOptions: inheritedOptions.length > 0 ? inheritedOptions : undefined,
       args: lastOptionArgs,
     };
   }
@@ -547,8 +535,75 @@ function resolveSpecContext(spec: FigSpec, consumedTokens: string[]): ResolvedCo
   return {
     subcommands: current.subcommands,
     options: current.options ? [...current.options] : undefined,
+    fallbackOptions: inheritedOptions.length > 0 ? inheritedOptions : undefined,
     args: current.args,
   };
+}
+
+function mergeOptionLists(
+  left: FigOption[] | undefined,
+  right: FigOption[] | undefined,
+): FigOption[] {
+  const merged: FigOption[] = [];
+  const seen = new Set<string>();
+
+  for (const option of [...(left ?? []), ...(right ?? [])]) {
+    const key = resolveNames(option.name).sort().join("\0");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(option);
+  }
+
+  return merged;
+}
+
+function appendOptionSuggestions(
+  suggestions: CompletionSuggestion[],
+  ctx: CompletionContext,
+  currentToken: string,
+  options: FigOption[] | undefined,
+): boolean {
+  if (!options || options.length === 0) return false;
+
+  let added = false;
+  for (const opt of options) {
+    const names = resolveNames(opt.name);
+    for (const name of names) {
+      if (name.startsWith(currentToken) && name !== currentToken) {
+        suggestions.push({
+          text: rebuildCommand(ctx.tokens, ctx.wordIndex, name),
+          displayText: name,
+          description: opt.description,
+          source: "option",
+          score: 700,
+        });
+        added = true;
+      }
+    }
+  }
+
+  return added;
+}
+
+function appendOptionPreviewSuggestions(
+  suggestions: CompletionSuggestion[],
+  commandLine: string,
+  options: FigOption[] | undefined,
+  limit: number,
+): void {
+  if (!options || options.length === 0 || suggestions.length >= limit) return;
+
+  for (const opt of options) {
+    const names = resolveNames(opt.name);
+    suggestions.push({
+      text: commandLine + " " + names[0],
+      displayText: names[0],
+      description: opt.description,
+      source: "option",
+      score: 700,
+    });
+    if (suggestions.length >= limit) break;
+  }
 }
 
 /**

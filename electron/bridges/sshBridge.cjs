@@ -1875,10 +1875,18 @@ async function listSessionDir(_event, payload) {
     // Emit a NUL-delimited stream from plain POSIX shell/find so we don't depend on
     // Python/Perl, while still preserving whitespace and newline characters in filenames.
     const safePath = dirPath.replace(/'/g, "'\\''");
+    const tildePathSuffix = dirPath.startsWith("~/")
+      ? dirPath.slice(2).replace(/(["\\$`])/g, "\\$1")
+      : "";
     const normalizedPrefix = typeof filterPrefix === "string" ? filterPrefix.toLowerCase() : "";
     const safePrefix = normalizedPrefix.replace(/'/g, "'\\''");
     const maxEntries = Number.isFinite(limit) ? Math.min(Math.max(1, Math.floor(limit)), 200) : 100;
-    const cmd = `find '${safePath}' -mindepth 1 -maxdepth 1 -exec sh -c '
+    const pathExpr = dirPath === "~"
+      ? '"$HOME"'
+      : dirPath.startsWith("~/")
+        ? `"$HOME/${tildePathSuffix}"`
+        : `'${safePath}'`;
+    const cmd = `find ${pathExpr} -mindepth 1 -maxdepth 1 -exec sh -c '
       prefix="$1"
       folders_only="$2"
       limit="$3"

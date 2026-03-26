@@ -138,16 +138,33 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
   const fixedLeft = (containerRect?.left ?? 0) + position.x;
   const fixedTop = (containerRect?.top ?? 0) + position.y;
 
-  // Limit maxHeight so popup doesn't exceed viewport bottom
+  const viewportPadding = 8;
   const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 800;
-  const spaceBelow = viewportHeight - fixedTop - 8;
-  const effectiveMaxHeight = expandUpward ? maxHeight : Math.min(maxHeight, Math.max(120, spaceBelow));
+  const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 1200;
+  const estimatedPopupHeight = Math.min(maxHeight, suggestions.length * 28 + 8);
+  const estimatedDetailHeight = showDetail && detailItem && detailItem.source !== "path" ? 96 : 0;
+  const spaceAbove = Math.max(0, fixedTop - viewportPadding);
+  const spaceBelow = Math.max(0, viewportHeight - fixedTop - viewportPadding);
+  const renderUpward = expandUpward && (
+    spaceAbove >= estimatedPopupHeight ||
+    (spaceAbove > spaceBelow && spaceAbove >= 80)
+  );
+  const availableVerticalSpace = renderUpward ? spaceAbove : spaceBelow;
+  const effectiveMaxHeight = Math.max(0, Math.min(maxHeight, availableVerticalSpace));
+  const contentHeightForPlacement = Math.min(
+    effectiveMaxHeight,
+    Math.max(estimatedPopupHeight, estimatedDetailHeight),
+  );
+  const anchoredTop = renderUpward
+    ? Math.max(viewportPadding, fixedTop - contentHeightForPlacement)
+    : Math.min(fixedTop, viewportHeight - viewportPadding - contentHeightForPlacement);
+  const clampedLeft = Math.max(viewportPadding, Math.min(fixedLeft, viewportWidth - viewportPadding - 400));
 
   const sharedBoxStyle = {
     backgroundColor: popupBg,
     border: `1px solid ${popupBorder}`,
     borderRadius: "6px",
-    boxShadow: expandUpward
+    boxShadow: renderUpward
       ? "0 -2px 6px rgba(0, 0, 0, 0.15)"
       : "0 2px 6px rgba(0, 0, 0, 0.15)",
     fontFamily: "inherit",
@@ -159,13 +176,11 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
     <div
       style={{
         position: "fixed",
-        left: `${fixedLeft}px`,
-        ...(expandUpward
-          ? { bottom: `${viewportHeight - fixedTop}px` }
-          : { top: `${fixedTop}px` }),
+        left: `${clampedLeft}px`,
+        top: `${anchoredTop}px`,
         zIndex: 10000,
         display: "flex",
-        alignItems: expandUpward ? "flex-end" : "flex-start",
+        alignItems: renderUpward ? "flex-end" : "flex-start",
         gap: "4px",
         pointerEvents: "auto", // Re-enable on popup itself (parent is pointer-events-none)
       }}
@@ -354,7 +369,7 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
             padding: "10px 12px",
             maxWidth: "280px",
             minWidth: "160px",
-            alignSelf: expandUpward ? "flex-end" : "flex-start",
+            alignSelf: renderUpward ? "flex-end" : "flex-start",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px" }}>
