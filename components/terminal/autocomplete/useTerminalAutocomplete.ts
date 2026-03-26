@@ -260,8 +260,9 @@ export function useTerminalAutocomplete(
     });
   }, [fetchDirEntries]);
 
-  /** Expand a directory at the given panel level → fetch contents and push new panel. */
-  const expandSubDir = useCallback((level: number, entry: SubDirEntry) => {
+  /** Expand a directory at the given panel level → fetch contents and push new panel.
+   *  Does NOT change focus level — use moveFocus param to override. */
+  const expandSubDir = useCallback((level: number, entry: SubDirEntry, moveFocus = false) => {
     const s = stateRef.current;
     const panel = s.subDirPanels[level];
     if (!panel || entry.type !== "directory") return;
@@ -273,8 +274,12 @@ export function useTerminalAutocomplete(
       if (entries.length === 0) return;
       setState((prev) => {
         const panels = prev.subDirPanels.slice(0, level + 1);
-        panels.push({ entries, selectedIndex: -1, dirPath: childPath });
-        return { ...prev, subDirPanels: panels, subDirFocusLevel: level + 1 };
+        panels.push({ entries, selectedIndex: moveFocus ? 0 : -1, dirPath: childPath });
+        return {
+          ...prev,
+          subDirPanels: panels,
+          subDirFocusLevel: moveFocus ? level + 1 : prev.subDirFocusLevel,
+        };
       });
     });
   }, [fetchDirEntries]);
@@ -575,7 +580,7 @@ export function useTerminalAutocomplete(
             const entry = focusedPanel.entries[focusedPanel.selectedIndex];
             if (entry?.type === "directory") {
               e.preventDefault();
-              expandSubDir(focusLevel, entry);
+              expandSubDir(focusLevel, entry, true); // moveFocus = true
               return false;
             }
           }

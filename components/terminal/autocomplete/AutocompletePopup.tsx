@@ -127,6 +127,10 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
   const detailItem = detailIndex >= 0 ? suggestions[detailIndex] : null;
   const showDetail = detailItem?.description && detailItem.description.length > 0;
 
+  // Limit maxHeight to not overflow below the terminal container
+  // position.y is relative to the terminal container, not viewport
+  const effectiveMaxHeight = expandUpward ? maxHeight : Math.min(maxHeight, Math.max(120, 600 - position.y));
+
   const sharedBoxStyle = {
     backgroundColor: popupBg,
     border: `1px solid ${popupBorder}`,
@@ -164,7 +168,7 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
         className="xterm-autocomplete-popup"
         style={{
           ...sharedBoxStyle,
-          maxHeight: `${maxHeight}px`,
+          maxHeight: `${effectiveMaxHeight}px`,
           minWidth: "180px",
           maxWidth: "400px",
           overflowY: "auto",
@@ -281,7 +285,7 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
           key={panel.dirPath}
           style={{
             ...sharedBoxStyle,
-            maxHeight: `${maxHeight}px`,
+            maxHeight: `${effectiveMaxHeight}px`,
             minWidth: "150px",
             maxWidth: "240px",
             overflowY: "auto",
