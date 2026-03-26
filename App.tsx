@@ -19,10 +19,11 @@ import { resolveHostTerminalThemeId } from './domain/terminalAppearance';
 import { collectSessionIds } from './domain/workspace';
 import { TERMINAL_THEMES } from './infrastructure/config/terminalThemes';
 import { useCustomThemes } from './application/state/customThemeStore';
-import { applySyncPayload } from './domain/syncPayload';
+import { applySyncPayload } from './application/syncPayload';
 import { getCredentialProtectionAvailability } from './infrastructure/services/credentialProtection';
 import { netcattyBridge } from './infrastructure/services/netcattyBridge';
 import { localStorageAdapter } from './infrastructure/persistence/localStorageAdapter';
+import { STORAGE_KEY_DEBUG_HOTKEYS } from './infrastructure/config/storageKeys';
 import { TopTabs } from './components/TopTabs';
 import { Button } from './components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog';
@@ -103,8 +104,7 @@ const LazyCreateWorkspaceDialog = lazy(() =>
 const IS_DEV = import.meta.env.DEV;
 const HOTKEY_DEBUG =
   IS_DEV &&
-  typeof window !== "undefined" &&
-  window.localStorage?.getItem("debug.hotkeys") === "1";
+  localStorageAdapter.readString(STORAGE_KEY_DEBUG_HOTKEYS) === "1";
 
 const LazySftpView = lazy(() =>
   import('./components/SftpView').then((m) => ({ default: m.SftpView })),

@@ -68,9 +68,10 @@ interface SettingsApplicationTabProps {
   checkNow: UseUpdateCheckResult['checkNow'];
   openReleasePage: UseUpdateCheckResult['openReleasePage'];
   installUpdate: UseUpdateCheckResult['installUpdate'];
+  isUpdateDemoMode: boolean;
 }
 
-export default function SettingsApplicationTab({ updateState, checkNow, openReleasePage, installUpdate }: SettingsApplicationTabProps) {
+export default function SettingsApplicationTab({ updateState, checkNow, openReleasePage, installUpdate, isUpdateDemoMode }: SettingsApplicationTabProps) {
   const { t } = useI18n();
   const { openExternal, getApplicationInfo } = useApplicationBackend();
   const [appInfo, setAppInfo] = useState<AppInfo>({ name: "Netcatty", version: "" });
@@ -93,10 +94,6 @@ export default function SettingsApplicationTab({ updateState, checkNow, openRele
       cancelled = true;
     };
   }, [getApplicationInfo]);
-
-  // Check if demo mode is enabled for development testing
-  const isUpdateDemoMode = typeof window !== 'undefined' &&
-    window.localStorage?.getItem('debug.updateDemo') === '1';
 
   const handleCheckForUpdates = async () => {
     // In demo mode, allow checking even for dev builds

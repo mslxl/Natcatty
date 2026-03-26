@@ -10,7 +10,6 @@ const http = require("node:http");
 const { URL } = require("node:url");
 const { spawn, execFileSync } = require("node:child_process");
 const { existsSync } = require("node:fs");
-const path = require("node:path");
 
 const mcpServerBridge = require("./mcpServerBridge.cjs");
 
@@ -224,14 +223,7 @@ function killTrackedProcessTree(rootPid, childPids) {
   }
 }
 
-/**
- * Safely send an IPC message to a renderer, guarding against destroyed senders.
- */
-function safeSend(sender, channel, ...args) {
-  if (sender && !sender.isDestroyed()) {
-    sender.send(channel, ...args);
-  }
-}
+const { safeSend } = require("./ipcUtils.cjs");
 
 function init(deps) {
   sessions = deps.sessions;
