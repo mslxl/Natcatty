@@ -32,6 +32,9 @@ interface AutocompletePopupProps {
   selectedIndex: number;
   /** Position relative to the terminal container (not viewport) */
   position: { x: number; y: number };
+  /** Current input line bounds relative to the terminal container */
+  cursorLineTop: number;
+  cursorLineBottom: number;
   visible: boolean;
   expandUpward?: boolean;
   themeColors?: AutocompleteThemeColors;
@@ -41,6 +44,8 @@ interface AutocompletePopupProps {
   subDirFocusLevel?: number;
   /** Reference to the terminal container for calculating fixed position */
   containerRef?: React.RefObject<HTMLDivElement | null>;
+  /** Ask the autocomplete controller to recompute cursor-relative popup position */
+  onRequestReposition?: () => void;
   /** Offset from top of container to terminal content area (toolbar + search bar) */
   searchBarOffset?: number;
 }
@@ -88,6 +93,8 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
   suggestions,
   selectedIndex,
   position,
+  cursorLineTop,
+  cursorLineBottom,
   visible,
   expandUpward = false,
   themeColors,
@@ -96,6 +103,7 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
   subDirPanels = [],
   subDirFocusLevel = -1,
   containerRef,
+  onRequestReposition,
   searchBarOffset: _searchBarOffset = 30,
 }) => {
   const listRef = useRef<HTMLDivElement>(null);
@@ -115,6 +123,30 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
   useEffect(() => {
     setHoveredIndex(-1);
   }, [suggestions]);
+
+  useEffect(() => {
+    if (!visible || !onRequestReposition) return;
+
+    let frameId = 0;
+    const requestReposition = () => {
+      if (frameId) cancelAnimationFrame(frameId);
+      frameId = requestAnimationFrame(() => {
+        frameId = 0;
+        onRequestReposition();
+      });
+    };
+
+    const container = containerRef?.current;
+    const observer = container ? new ResizeObserver(requestReposition) : null;
+    observer?.observe(container);
+    window.addEventListener("resize", requestReposition);
+
+    return () => {
+      if (frameId) cancelAnimationFrame(frameId);
+      observer?.disconnect();
+      window.removeEventListener("resize", requestReposition);
+    };
+  }, [containerRef, onRequestReposition, visible]);
 
   if (!visible || suggestions.length === 0) return null;
 
@@ -136,28 +168,39 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
   // containerRef already has top offset for toolbar/search bar, so don't add it again.
   const containerRect = containerRef?.current?.getBoundingClientRect();
   const fixedLeft = (containerRect?.left ?? 0) + position.x;
-  const fixedTop = (containerRect?.top ?? 0) + position.y;
+  const fixedLineTop = (containerRect?.top ?? 0) + cursorLineTop;
+  const fixedLineBottom = (containerRect?.top ?? 0) + cursorLineBottom;
 
   const viewportPadding = 8;
+  const anchorGap = 8;
   const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 800;
   const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 1200;
   const estimatedPopupHeight = Math.min(maxHeight, suggestions.length * 28 + 8);
   const estimatedDetailHeight = showDetail && detailItem && detailItem.source !== "path" ? 96 : 0;
-  const spaceAbove = Math.max(0, fixedTop - viewportPadding);
-  const spaceBelow = Math.max(0, viewportHeight - fixedTop - viewportPadding);
-  const renderUpward = expandUpward && (
-    spaceAbove >= estimatedPopupHeight ||
-    (spaceAbove > spaceBelow && spaceAbove >= 80)
+  const desiredContentHeight = Math.min(
+    maxHeight,
+    Math.max(estimatedPopupHeight, estimatedDetailHeight),
   );
+  const spaceAbove = Math.max(0, fixedLineTop - viewportPadding - anchorGap);
+  const spaceBelow = Math.max(0, viewportHeight - fixedLineBottom - viewportPadding - anchorGap);
+  const canFullyRenderAbove = spaceAbove >= desiredContentHeight;
+  const canFullyRenderBelow = spaceBelow >= desiredContentHeight;
+  const renderUpward = canFullyRenderBelow
+    ? false
+    : canFullyRenderAbove
+      ? true
+      : expandUpward
+        ? spaceAbove >= Math.min(spaceBelow, 80)
+        : spaceAbove > spaceBelow;
   const availableVerticalSpace = renderUpward ? spaceAbove : spaceBelow;
   const effectiveMaxHeight = Math.max(0, Math.min(maxHeight, availableVerticalSpace));
   const contentHeightForPlacement = Math.min(
     effectiveMaxHeight,
-    Math.max(estimatedPopupHeight, estimatedDetailHeight),
+    desiredContentHeight,
   );
   const anchoredTop = renderUpward
-    ? Math.max(viewportPadding, fixedTop - contentHeightForPlacement)
-    : Math.min(fixedTop, viewportHeight - viewportPadding - contentHeightForPlacement);
+    ? Math.max(viewportPadding, fixedLineTop - anchorGap - contentHeightForPlacement)
+    : Math.min(fixedLineBottom + anchorGap, viewportHeight - viewportPadding - contentHeightForPlacement);
   const clampedLeft = Math.max(viewportPadding, Math.min(fixedLeft, viewportWidth - viewportPadding - 400));
 
   const sharedBoxStyle = {

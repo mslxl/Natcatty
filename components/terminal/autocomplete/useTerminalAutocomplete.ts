@@ -45,6 +45,8 @@ const EMPTY_STATE: AutocompleteState = Object.freeze({
   selectedIndex: -1,
   popupVisible: false,
   popupPosition: { x: 0, y: 0 },
+  popupCursorLineTop: 0,
+  popupCursorLineBottom: 0,
   expandUpward: false,
   subDirPanels: [],
   subDirFocusLevel: -1,
@@ -67,6 +69,8 @@ export interface AutocompleteState {
   selectedIndex: number;
   popupVisible: boolean;
   popupPosition: { x: number; y: number };
+  popupCursorLineTop: number;
+  popupCursorLineBottom: number;
   expandUpward: boolean;
   /** Stack of sub-directory panels (cascading: panel 0 → panel 1 → ...) */
   subDirPanels: SubDirPanel[];
@@ -367,13 +371,15 @@ export function useTerminalAutocomplete(
 
     setState((prev) => {
       if (!prev.popupVisible || prev.suggestions.length === 0) return prev;
-      const { position, expandUpward } = calculatePopupPosition(term, prev.suggestions.length);
+      const { position, cursorLineTop, cursorLineBottom, expandUpward } = calculatePopupPosition(term, prev.suggestions.length);
 
       // Force a re-render even when the relative cursor cell hasn't changed.
       // The terminal container may have moved in the viewport after a fit/resize.
       return {
         ...prev,
         popupPosition: position,
+        popupCursorLineTop: cursorLineTop,
+        popupCursorLineBottom: cursorLineBottom,
         expandUpward,
       };
     });
@@ -493,7 +499,7 @@ export function useTerminalAutocomplete(
 
     // Popup
     if (settingsRef.current.showPopupMenu && completions.length > 0) {
-      const { position, expandUpward } = calculatePopupPosition(term, completions.length);
+      const { position, cursorLineTop, cursorLineBottom, expandUpward } = calculatePopupPosition(term, completions.length);
       startTransition(() => {
         setState((prev) => {
           const nextState: AutocompleteState = {
@@ -501,6 +507,8 @@ export function useTerminalAutocomplete(
             selectedIndex: -1,
             popupVisible: true,
             popupPosition: position,
+            popupCursorLineTop: cursorLineTop,
+            popupCursorLineBottom: cursorLineBottom,
             expandUpward,
             subDirPanels: [],
             subDirFocusLevel: -1,
@@ -512,6 +520,8 @@ export function useTerminalAutocomplete(
             prev.expandUpward === nextState.expandUpward &&
             prev.popupPosition.x === nextState.popupPosition.x &&
             prev.popupPosition.y === nextState.popupPosition.y &&
+            prev.popupCursorLineTop === nextState.popupCursorLineTop &&
+            prev.popupCursorLineBottom === nextState.popupCursorLineBottom &&
             prev.subDirFocusLevel === -1 &&
             prev.subDirPanels.length === 0 &&
             areSuggestionsEqual(prev.suggestions, nextState.suggestions)
@@ -1042,14 +1052,28 @@ function areSubDirPanelsEqual(left: SubDirPanel[], right: SubDirPanel[]): boolea
 function calculatePopupPosition(
   term: XTerm,
   itemCount: number,
-): { position: { x: number; y: number }; expandUpward: boolean } {
+): {
+  position: { x: number; y: number };
+  cursorLineTop: number;
+  cursorLineBottom: number;
+  expandUpward: boolean;
+} {
   const termElement = term.element;
-  if (!termElement) return { position: { x: 0, y: 0 }, expandUpward: false };
+  if (!termElement) {
+    return {
+      position: { x: 0, y: 0 },
+      cursorLineTop: 0,
+      cursorLineBottom: 0,
+      expandUpward: false,
+    };
+  }
 
   const dims = getXTermCellDimensions(term);
   const buffer = term.buffer.active;
   const cursorX = buffer.cursorX;
   const cursorY = buffer.cursorY;
+  const cursorLineTop = cursorY * dims.height;
+  const cursorLineBottom = (cursorY + 1) * dims.height;
 
   const estimatedPopupHeight = itemCount * 28 + 8;
   const totalRows = term.rows;
@@ -1059,12 +1083,16 @@ function calculatePopupPosition(
   if (expandUpward) {
     return {
       position: { x: cursorX * dims.width, y: cursorY * dims.height },
+      cursorLineTop,
+      cursorLineBottom,
       expandUpward: true,
     };
   }
 
   return {
     position: { x: cursorX * dims.width, y: (cursorY + 1) * dims.height + 4 },
+    cursorLineTop,
+    cursorLineBottom,
     expandUpward: false,
   };
 }

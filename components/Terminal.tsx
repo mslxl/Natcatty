@@ -1938,6 +1938,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                 suggestions={autocomplete.state.suggestions}
                 selectedIndex={autocomplete.state.selectedIndex}
                 position={autocomplete.state.popupPosition}
+                cursorLineTop={autocomplete.state.popupCursorLineTop}
+                cursorLineBottom={autocomplete.state.popupCursorLineBottom}
                 visible={autocomplete.state.popupVisible}
                 expandUpward={autocomplete.state.expandUpward}
                 themeColors={effectiveTheme.colors}
@@ -1945,6 +1947,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                 subDirPanels={autocomplete.state.subDirPanels}
                 subDirFocusLevel={autocomplete.state.subDirFocusLevel}
                 containerRef={containerRef}
+                onRequestReposition={autocomplete.repositionPopup}
                 searchBarOffset={isSearchOpen ? 64 : 30}
               />,
               document.body,
