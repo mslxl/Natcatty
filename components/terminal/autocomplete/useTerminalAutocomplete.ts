@@ -447,14 +447,22 @@ export function useTerminalAutocomplete(
       const s = stateRef.current;
       const ghost = ghostAddonRef.current;
 
-      // Right arrow: accept ghost text
+      // Right arrow: if popup has selected directory with sub-dir entries, enter sub-dir panel first
       if (e.key === "ArrowRight" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        if (s.popupVisible && s.selectedIndex >= 0 && s.subDirEntries.length > 0 && !s.subDirFocused) {
+          const selected = s.suggestions[s.selectedIndex];
+          if (selected?.fileType === "directory") {
+            e.preventDefault();
+            setState((prev) => ({ ...prev, subDirFocused: true, subDirSelectedIndex: 0 }));
+            return false;
+          }
+        }
+        // Otherwise: accept ghost text
         if (ghost?.isVisible()) {
           e.preventDefault();
           const ghostText = ghost.getGhostText();
           if (ghostText) {
             writeToTerminal(ghostText);
-            // Track accepted command for accurate history recording on fast Enter
             lastAcceptedCommandRef.current = ghost.getSuggestion();
             ghost.hide();
             clearState();
@@ -590,17 +598,6 @@ export function useTerminalAutocomplete(
           return false;
         }
 
-        // → on a directory item: enter sub-dir panel
-        if (e.key === "ArrowRight" && !e.ctrlKey && !e.altKey && !e.metaKey) {
-          if (s.selectedIndex >= 0 && s.subDirEntries.length > 0) {
-            const selected = s.suggestions[s.selectedIndex];
-            if (selected?.fileType === "directory") {
-              e.preventDefault();
-              setState((prev) => ({ ...prev, subDirFocused: true, subDirSelectedIndex: 0 }));
-              return false;
-            }
-          }
-        }
 
         // Enter on popup
         if (e.key === "Enter") {

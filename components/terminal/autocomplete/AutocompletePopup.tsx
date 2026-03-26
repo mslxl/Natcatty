@@ -283,7 +283,7 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
         })}
       </div>
 
-      {/* Sub-directory panel — shows contents of highlighted directory */}
+      {/* Sub-directory panel — positioned to align with the selected item */}
       {subDirEntries && subDirEntries.length > 0 && detailItem?.fileType === "directory" && (
         <div
           style={{
@@ -295,10 +295,12 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
             overflowX: "hidden",
             padding: "4px 0",
             userSelect: "none",
-            alignSelf: expandUpward ? "flex-end" : "flex-start",
+            // Align sub-panel top with the selected item (~29px per row)
+            marginTop: expandUpward ? undefined : `${Math.max(0, (selectedIndex >= 0 ? selectedIndex : 0)) * 29}px`,
+            marginBottom: expandUpward ? `${Math.max(0, (selectedIndex >= 0 ? selectedIndex : 0)) * 29}px` : undefined,
             borderLeft: subDirFocused
               ? `2px solid ${themeColors?.cursor ?? "#f5c542"}`
-              : undefined,
+              : `1px solid ${popupBorder}`,
           }}
         >
           {subDirEntries.map((entry, idx) => {
