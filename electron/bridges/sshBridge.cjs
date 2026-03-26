@@ -1838,7 +1838,7 @@ async function getSessionPwd(event, payload) {
  * Uses a separate exec channel — does not touch the interactive shell.
  */
 async function listSessionDir(_event, payload) {
-  const { sessionId, path: dirPath, foldersOnly } = payload;
+  const { sessionId, path: dirPath, foldersOnly, filterPrefix = "", limit = 100 } = payload;
   const session = sessions.get(sessionId);
 
   if (!session || !session.conn) {
@@ -1850,10 +1850,23 @@ async function listSessionDir(_event, payload) {
       resolve({ success: false, entries: [], error: 'Timeout listing directory' });
     }, 3000);
 
-    // ls -1Fap: one entry per line, type indicators, include dot files, append / to dirs
-    // head -100: cap output to prevent overwhelming the connection
+    // ls -1FapU: include dot files, append type suffixes, and avoid sorting.
+    // Prefix filtering happens remotely to reduce transport and renderer work.
     const safePath = dirPath.replace(/'/g, "'\\''");
-    const cmd = `ls -1Fap '${safePath}' 2>/dev/null | head -100`;
+    const normalizedPrefix = typeof filterPrefix === "string" ? filterPrefix.toLowerCase() : "";
+    const safePrefix = normalizedPrefix.replace(/'/g, "'\\''");
+    const maxEntries = Number.isFinite(limit) ? Math.min(Math.max(1, Math.floor(limit)), 200) : 100;
+    const awkConditions = [];
+    if (normalizedPrefix) {
+      awkConditions.push("index(tolower($0), p) == 1");
+    }
+    if (foldersOnly) {
+      awkConditions.push("$0 ~ /[\\/@]$/");
+    }
+    const filterCmd = awkConditions.length > 0
+      ? ` | awk -v p='${safePrefix}' '${awkConditions.join(" && ")}'`
+      : "";
+    const cmd = `LC_ALL=C ls -1FapU -- '${safePath}' 2>/dev/null${filterCmd} | head -n ${maxEntries}`;
 
     session.conn.exec(cmd, (err, stream) => {
       if (err) {

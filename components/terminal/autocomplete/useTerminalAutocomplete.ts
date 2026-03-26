@@ -8,7 +8,7 @@
  * - Input debouncing
  */
 
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { startTransition, useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { GhostTextAddon } from "./GhostTextAddon";
 import { detectPrompt, type PromptDetectionResult } from "./promptDetector";
@@ -16,14 +16,7 @@ import { getCompletions, type CompletionSuggestion } from "./completionEngine";
 import { recordCommand } from "./commandHistoryStore";
 import { preloadCommonSpecs } from "./figSpecLoader";
 import { getXTermCellDimensions } from "./xtermUtils";
-
-// Bridge for sub-directory listing
-function getPathBridge() {
-  return (window as Window & { netcatty?: {
-    listRemoteDir?: (sid: string, p: string, fo: boolean) => Promise<{ success: boolean; entries: SubDirEntry[] }>;
-    listLocalDir?: (p: string, fo: boolean) => Promise<{ success: boolean; entries: SubDirEntry[] }>;
-  } }).netcatty;
-}
+import { listDirectoryEntries } from "./remotePathCompleter";
 
 export interface AutocompleteSettings {
   enabled: boolean;
@@ -109,10 +102,13 @@ export function useTerminalAutocomplete(
   options: UseTerminalAutocompleteOptions,
 ): TerminalAutocompleteHandle {
   const { termRef, sessionId, hostId, hostOs, settings: userSettings, onAcceptText, protocol, getCwd } = options;
-
-  const settings: AutocompleteSettings = {
+  const rawSettings: AutocompleteSettings = {
     ...DEFAULT_AUTOCOMPLETE_SETTINGS,
     ...userSettings,
+  };
+  const settings: AutocompleteSettings = {
+    ...rawSettings,
+    showGhostText: rawSettings.showPopupMenu ? false : rawSettings.showGhostText,
   };
 
   // Use refs for values accessed in callbacks to avoid stale closures
@@ -146,6 +142,8 @@ export function useTerminalAutocomplete(
   const fetchVersionRef = useRef(0);
   /** Last accepted suggestion text — for accurate history recording on fast Enter after accept */
   const lastAcceptedCommandRef = useRef<string | null>(null);
+  /** Monotonic counter to invalidate stale async sub-dir fetches */
+  const subDirFetchVersionRef = useRef(0);
 
   // Preload common specs on first mount (only if enabled)
   useEffect(() => {
@@ -214,6 +212,7 @@ export function useTerminalAutocomplete(
     ghostAddonRef.current?.hide();
     // Bump version to invalidate any in-flight async completions
     fetchVersionRef.current++;
+    subDirFetchVersionRef.current++;
     setState((prev) =>
       prev.popupVisible || prev.suggestions.length > 0 ? { ...EMPTY_STATE } : prev,
     );
@@ -221,16 +220,12 @@ export function useTerminalAutocomplete(
 
   /** Fetch directory listing via IPC. */
   const fetchDirEntries = useCallback(async (dirPath: string): Promise<SubDirEntry[]> => {
-    const bridge = getPathBridge();
-    if (!bridge) return [];
-    try {
-      const proto = protocolRef.current;
-      const sid = sessionIdRef.current;
-      const result = (proto === "local" || !sid)
-        ? await bridge.listLocalDir?.(dirPath, false)
-        : await bridge.listRemoteDir?.(sid, dirPath, false);
-      return result?.success ? result.entries.slice(0, 50) : [];
-    } catch { return []; }
+    return listDirectoryEntries(dirPath, {
+      sessionId: sessionIdRef.current,
+      protocol: protocolRef.current,
+      foldersOnly: false,
+      limit: 50,
+    });
   }, []);
 
   /** Fetch sub-dir entries for the main panel's selected item (level 0). */
@@ -239,6 +234,7 @@ export function useTerminalAutocomplete(
     if (index < 0 || index >= s.suggestions.length) return;
     const item = s.suggestions[index];
     if (item.source !== "path" || item.fileType !== "directory") {
+      subDirFetchVersionRef.current++;
       setState((prev) => prev.subDirPanels.length > 0
         ? { ...prev, subDirPanels: [], subDirFocusLevel: -1 }
         : prev);
@@ -248,14 +244,26 @@ export function useTerminalAutocomplete(
     const dirPath = tokens[tokens.length - 1];
     if (!dirPath) return;
 
+    const requestVersion = ++subDirFetchVersionRef.current;
     fetchDirEntries(dirPath).then((entries) => {
-      setState((prev) => {
-        if (prev.selectedIndex !== index) return prev;
-        return {
-          ...prev,
-          subDirPanels: entries.length > 0 ? [{ entries, selectedIndex: -1, dirPath }] : [],
-          subDirFocusLevel: -1,
-        };
+      if (requestVersion !== subDirFetchVersionRef.current) return;
+      startTransition(() => {
+        setState((prev) => {
+          if (prev.selectedIndex !== index) return prev;
+          const nextPanels = entries.length > 0 ? [{ entries, selectedIndex: -1, dirPath }] : [];
+          if (
+            prev.subDirFocusLevel === -1 &&
+            prev.subDirPanels.length === nextPanels.length &&
+            areSubDirPanelsEqual(prev.subDirPanels, nextPanels)
+          ) {
+            return prev;
+          }
+          return {
+            ...prev,
+            subDirPanels: nextPanels,
+            subDirFocusLevel: -1,
+          };
+        });
       });
     });
   }, [fetchDirEntries]);
@@ -270,16 +278,70 @@ export function useTerminalAutocomplete(
     const parentPath = panel.dirPath.endsWith("/") ? panel.dirPath : panel.dirPath + "/";
     const childPath = parentPath + entry.name + "/";
 
+    const requestVersion = ++subDirFetchVersionRef.current;
     fetchDirEntries(childPath).then((entries) => {
-      if (entries.length === 0) return;
-      setState((prev) => {
-        const panels = prev.subDirPanels.slice(0, level + 1);
-        panels.push({ entries, selectedIndex: moveFocus ? 0 : -1, dirPath: childPath });
-        return {
-          ...prev,
-          subDirPanels: panels,
-          subDirFocusLevel: moveFocus ? level + 1 : prev.subDirFocusLevel,
-        };
+      if (requestVersion !== subDirFetchVersionRef.current || entries.length === 0) return;
+      startTransition(() => {
+        setState((prev) => {
+          const currentPanel = prev.subDirPanels[level];
+          if (!currentPanel || currentPanel.dirPath !== panel.dirPath) return prev;
+
+          const nextPanels = prev.subDirPanels.slice(0, level + 1);
+          nextPanels.push({ entries, selectedIndex: moveFocus ? 0 : -1, dirPath: childPath });
+          const nextFocusLevel = moveFocus ? level + 1 : prev.subDirFocusLevel;
+
+          if (
+            prev.subDirFocusLevel === nextFocusLevel &&
+            prev.subDirPanels.length === nextPanels.length &&
+            areSubDirPanelsEqual(prev.subDirPanels, nextPanels)
+          ) {
+            return prev;
+          }
+
+          return {
+            ...prev,
+            subDirPanels: nextPanels,
+            subDirFocusLevel: nextFocusLevel,
+          };
+        });
+      });
+
+      // When moving focus into a newly opened panel, the first item is auto-selected.
+      // If that first item is itself a directory, eagerly show its next level so the
+      // user doesn't need to move ↓↑ just to trigger the usual auto-expand behavior.
+      const firstEntry = moveFocus ? entries[0] : null;
+      if (firstEntry?.type !== "directory") return;
+
+      const nestedChildPath = `${childPath}${firstEntry.name}/`;
+      fetchDirEntries(nestedChildPath).then((nestedEntries) => {
+        if (requestVersion !== subDirFetchVersionRef.current || nestedEntries.length === 0) return;
+        startTransition(() => {
+          setState((prev) => {
+            const currentChildPanel = prev.subDirPanels[level + 1];
+            if (
+              !currentChildPanel ||
+              currentChildPanel.dirPath !== childPath ||
+              currentChildPanel.selectedIndex !== 0
+            ) {
+              return prev;
+            }
+
+            const nextPanels = prev.subDirPanels.slice(0, level + 2);
+            nextPanels.push({ entries: nestedEntries, selectedIndex: -1, dirPath: nestedChildPath });
+
+            if (
+              prev.subDirPanels.length === nextPanels.length &&
+              areSubDirPanelsEqual(prev.subDirPanels, nextPanels)
+            ) {
+              return prev;
+            }
+
+            return {
+              ...prev,
+              subDirPanels: nextPanels,
+            };
+          });
+        });
       });
     });
   }, [fetchDirEntries]);
@@ -387,19 +449,42 @@ export function useTerminalAutocomplete(
     // Popup
     if (settingsRef.current.showPopupMenu && completions.length > 0) {
       const { position, expandUpward } = calculatePopupPosition(term, completions.length);
-      setState({
-        suggestions: completions,
-        selectedIndex: -1, // No item selected until user presses ↑/↓
-        popupVisible: true,
-        popupPosition: position,
-        expandUpward,
+      startTransition(() => {
+        setState((prev) => {
+          const nextState: AutocompleteState = {
+            suggestions: completions,
+            selectedIndex: -1,
+            popupVisible: true,
+            popupPosition: position,
+            expandUpward,
+            subDirPanels: [],
+            subDirFocusLevel: -1,
+          };
+
+          if (
+            prev.popupVisible &&
+            prev.selectedIndex === nextState.selectedIndex &&
+            prev.expandUpward === nextState.expandUpward &&
+            prev.popupPosition.x === nextState.popupPosition.x &&
+            prev.popupPosition.y === nextState.popupPosition.y &&
+            prev.subDirFocusLevel === -1 &&
+            prev.subDirPanels.length === 0 &&
+            areSuggestionsEqual(prev.suggestions, nextState.suggestions)
+          ) {
+            return prev;
+          }
+
+          return nextState;
+        });
       });
     } else {
-      setState((prev) =>
-        prev.popupVisible
-          ? { ...EMPTY_STATE }
-          : prev,
-      );
+      startTransition(() => {
+        setState((prev) =>
+          prev.popupVisible || prev.suggestions.length > 0
+            ? { ...EMPTY_STATE }
+            : prev,
+        );
+      });
     }
   }, [termRef, clearState]);
 
@@ -502,11 +587,15 @@ export function useTerminalAutocomplete(
           const selected = s.suggestions[s.selectedIndex];
           if (selected?.fileType === "directory") {
             e.preventDefault();
+            const firstEntry = s.subDirPanels[0]?.entries[0];
             setState((prev) => {
               const panels = [...prev.subDirPanels];
               if (panels[0]) panels[0] = { ...panels[0], selectedIndex: 0 };
               return { ...prev, subDirPanels: panels, subDirFocusLevel: 0 };
             });
+            if (firstEntry?.type === "directory") {
+              expandSubDir(0, firstEntry, false);
+            }
             return false;
           }
         }
@@ -598,7 +687,7 @@ export function useTerminalAutocomplete(
             e.preventDefault();
             setState((prev) => ({
               ...prev,
-              subDirPanels: prev.subDirPanels.slice(0, focusLevel),
+              subDirPanels: prev.subDirPanels.slice(0, focusLevel + 1),
               subDirFocusLevel: focusLevel - 1,
             }));
             return false;
@@ -778,6 +867,45 @@ export function useTerminalAutocomplete(
     closePopup,
     dispose,
   };
+}
+
+function areSuggestionsEqual(
+  left: CompletionSuggestion[],
+  right: CompletionSuggestion[],
+): boolean {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i++) {
+    const a = left[i];
+    const b = right[i];
+    if (
+      a.text !== b.text ||
+      a.displayText !== b.displayText ||
+      a.description !== b.description ||
+      a.source !== b.source ||
+      a.score !== b.score ||
+      a.frequency !== b.frequency ||
+      a.fileType !== b.fileType
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function areSubDirPanelsEqual(left: SubDirPanel[], right: SubDirPanel[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i++) {
+    const a = left[i];
+    const b = right[i];
+    if (a.dirPath !== b.dirPath || a.selectedIndex !== b.selectedIndex) return false;
+    if (a.entries.length !== b.entries.length) return false;
+    for (let j = 0; j < a.entries.length; j++) {
+      if (a.entries[j].name !== b.entries[j].name || a.entries[j].type !== b.entries[j].type) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 /**

@@ -162,6 +162,12 @@ export async function getCompletions(
 
   const ctx = parseCommandLine(input);
   const suggestions: CompletionSuggestion[] = [];
+  const seenSuggestionTexts = new Set<string>();
+  const pathCheck = ctx.commandName && ctx.wordIndex >= 1
+    ? shouldDoPathCompletion(ctx, undefined)
+    : { shouldComplete: false, foldersOnly: false };
+  const preferPathSuggestions = pathCheck.shouldComplete;
+  const resultLimit = preferPathSuggestions ? Math.max(maxResults, 24) : maxResults;
 
   // 1. History suggestions (full command line prefix match)
   // Cap history to leave room for spec suggestions in the popup
@@ -169,91 +175,78 @@ export async function getCompletions(
     hostId,
     os,
     includeOsMatches: true,
-    limit: 5,
+    limit: preferPathSuggestions ? 0 : 5,
   };
 
   const historyMatches = queryHistory(input, historyOpts);
   for (const entry of historyMatches) {
-    suggestions.push({
+    const suggestion = {
       text: entry.command,
       displayText: entry.command,
       source: "history",
       score: 1000 + entry.frequency,
       frequency: entry.frequency,
-    });
+    } satisfies CompletionSuggestion;
+    suggestions.push(suggestion);
+    seenSuggestionTexts.add(suggestion.text);
   }
 
-  // 2. Spec-based suggestions
-  if (ctx.commandName && ctx.wordIndex >= 0) {
-    const specSuggestions = await getSpecSuggestions(ctx);
-    suggestions.push(...specSuggestions);
+  const canQueryPaths = options.protocol === "local" || options.sessionId !== undefined;
+
+  const specPromise = ctx.commandName && ctx.wordIndex >= 0
+    ? getSpecSuggestions(ctx)
+    : Promise.resolve([]);
+  const pathPromise = canQueryPaths && pathCheck.shouldComplete
+    ? getPathSuggestions(ctx, {
+      sessionId: options.sessionId,
+      protocol: options.protocol,
+      cwd: options.cwd,
+      foldersOnly: pathCheck.foldersOnly,
+    })
+    : Promise.resolve([]);
+
+  const [specSugs, pathEntries] = await Promise.all([specPromise, pathPromise]);
+
+  for (const suggestion of specSugs) {
+    suggestions.push(suggestion);
+    seenSuggestionTexts.add(suggestion.text);
   }
 
-  // 2.5. Path completion (remote or local filesystem)
-  // Only attempt path completion if:
-  // - There's a session context
-  // - We're past the command name (wordIndex >= 1)
-  // - The current word looks path-like OR the command is a known path command
-  // This avoids expensive IPC calls on every keystroke for non-path contexts.
-  const currentWord = ctx.currentWord;
-  const hasPathTrigger = currentWord.startsWith("/") || currentWord.startsWith("./") ||
-    currentWord.startsWith("../") || currentWord.startsWith("~/") ||
-    currentWord === "." || currentWord === ".." || currentWord === "~";
-
-  if (ctx.commandName && ctx.wordIndex >= 1 && options.sessionId !== undefined &&
-      (hasPathTrigger || suggestions.length < 3)) {
-    let resolvedArgs: FigSubcommand["args"] | undefined;
-    try {
-      const specAvail = await hasSpec(ctx.commandName);
-      if (specAvail) {
-        const spec = await loadSpec(ctx.commandName);
-        if (spec) {
-          const resolved = resolveSpecContext(spec, ctx.tokens.slice(1, ctx.wordIndex));
-          resolvedArgs = resolved.args;
-        }
-      }
-    } catch { /* ignore */ }
-
-    const pathCheck = shouldDoPathCompletion(ctx, resolvedArgs as import("./figSpecLoader").FigArg | import("./figSpecLoader").FigArg[] | undefined);
-    if (pathCheck.shouldComplete) {
-      const pathEntries = await getPathSuggestions(ctx, {
-        sessionId: options.sessionId,
-        protocol: options.protocol,
-        cwd: options.cwd,
-        foldersOnly: pathCheck.foldersOnly,
-      });
-
-      const { pathPrefix } = resolvePathComponents(ctx.currentWord, options.cwd);
-      for (const entry of pathEntries) {
-        const insertName = entry.name.includes(" ") ? entry.name.replace(/ /g, "\\ ") : entry.name;
-        const suffix = entry.type === "directory" ? "/" : "";
-        const fullPath = pathPrefix + insertName + suffix;
-        suggestions.push({
-          text: rebuildCommand(ctx.tokens, ctx.wordIndex, fullPath),
-          displayText: entry.name + suffix,
-          source: "path",
-          score: 750,
-          fileType: entry.type,
-        });
-      }
+  if (pathEntries.length > 0) {
+    const { pathPrefix } = resolvePathComponents(ctx.currentWord, options.cwd);
+    for (const entry of pathEntries) {
+      const insertName = entry.name.includes(" ") ? entry.name.replace(/ /g, "\\ ") : entry.name;
+      const suffix = entry.type === "directory" ? "/" : "";
+      const fullPath = pathPrefix + insertName + suffix;
+      const suggestion = {
+        text: rebuildCommand(ctx.tokens, ctx.wordIndex, fullPath),
+        displayText: entry.name + suffix,
+        source: "path",
+        score: 750,
+        fileType: entry.type,
+      } satisfies CompletionSuggestion;
+      suggestions.push(suggestion);
+      seenSuggestionTexts.add(suggestion.text);
     }
   }
 
   // 3. Fuzzy history fallback (if prefix match yields few results)
-  if (suggestions.length < 3 && input.length >= 2) {
+  if (!preferPathSuggestions && suggestions.length < 3 && input.length >= 2) {
     const fuzzyMatches = fuzzyQueryHistory(input, {
       ...historyOpts,
       limit: 5,
     });
     for (const entry of fuzzyMatches) {
-      if (suggestions.some((s) => s.text === entry.command)) continue;
-      suggestions.push({
+      if (seenSuggestionTexts.has(entry.command)) continue;
+      const suggestion = {
         text: entry.command,
         displayText: entry.command,
         source: "history",
         score: 500 + entry.frequency,
         frequency: entry.frequency,
-      });
+      } satisfies CompletionSuggestion;
+      suggestions.push(suggestion);
+      seenSuggestionTexts.add(suggestion.text);
     }
   }
 
@@ -267,14 +260,14 @@ export async function getCompletions(
     if (seen.has(s.text)) continue;
     seen.add(s.text);
     unique.push(s);
-    if (unique.length >= maxResults) break;
+    if (unique.length >= resultLimit) break;
   }
 
   return unique;
 }
 
 /**
- * Get suggestions from Fig spec based on current command context.
+ * Get suggestions from Fig spec + return resolved args (for path detection reuse).
  */
 async function getSpecSuggestions(ctx: CompletionContext): Promise<CompletionSuggestion[]> {
   const suggestions: CompletionSuggestion[] = [];

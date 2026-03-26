@@ -96,7 +96,7 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
   subDirPanels = [],
   subDirFocusLevel = -1,
   containerRef,
-  searchBarOffset = 30,
+  searchBarOffset: _searchBarOffset = 30,
 }) => {
   const listRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<HTMLDivElement>(null);
@@ -132,10 +132,11 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
   const detailItem = detailIndex >= 0 ? suggestions[detailIndex] : null;
   const showDetail = detailItem?.description && detailItem.description.length > 0;
 
-  // Calculate fixed viewport position from container rect + relative position
+  // Calculate fixed viewport position from container rect + relative cursor position.
+  // containerRef already has top offset for toolbar/search bar, so don't add it again.
   const containerRect = containerRef?.current?.getBoundingClientRect();
-  const fixedLeft = (containerRect?.left ?? 0) + 6 + position.x;
-  const fixedTop = (containerRect?.top ?? 0) + searchBarOffset + position.y;
+  const fixedLeft = (containerRect?.left ?? 0) + position.x;
+  const fixedTop = (containerRect?.top ?? 0) + position.y;
 
   // Limit maxHeight so popup doesn't exceed viewport bottom
   const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 800;

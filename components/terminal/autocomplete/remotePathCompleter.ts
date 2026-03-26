@@ -15,19 +15,34 @@ export interface DirEntry {
 
 /** Bridge interface for directory listing */
 interface PathBridge {
-  listRemoteDir?: (sessionId: string, path: string, foldersOnly: boolean) => Promise<{ success: boolean; entries: DirEntry[] }>;
-  listLocalDir?: (path: string, foldersOnly: boolean) => Promise<{ success: boolean; entries: DirEntry[] }>;
+  listRemoteDir?: (
+    sessionId: string,
+    path: string,
+    foldersOnly: boolean,
+    filterPrefix?: string,
+    limit?: number,
+  ) => Promise<{ success: boolean; entries: DirEntry[] }>;
+  listLocalDir?: (
+    path: string,
+    foldersOnly: boolean,
+    filterPrefix?: string,
+    limit?: number,
+  ) => Promise<{ success: boolean; entries: DirEntry[] }>;
 }
 
 function getBridge(): PathBridge | undefined {
   return (window as Window & { netcatty?: PathBridge }).netcatty;
 }
 
-// Cache: sessionId:path → entries (5 second TTL)
-const dirCache = new Map<string, { entries: DirEntry[]; timestamp: number }>();
+// Cache directory listings for 5 seconds. Full-directory cache is shared between
+// popup suggestions and cascading sub-directory panels; filtered cache avoids
+// repeated round-trips while the user keeps typing within the same directory.
+const fullDirCache = new Map<string, { entries: DirEntry[]; timestamp: number }>();
+const filteredDirCache = new Map<string, { entries: DirEntry[]; timestamp: number }>();
 const inFlightRequests = new Map<string, Promise<DirEntry[]>>();
 const CACHE_TTL_MS = 5000;
 const MAX_CACHE_SIZE = 30;
+const MAX_FILTERED_CACHE_SIZE = 60;
 
 /** Commands that commonly accept file/directory path arguments */
 const PATH_COMMANDS = new Set([
@@ -112,26 +127,28 @@ export function resolvePathComponents(
   if (lastSlash >= 0) {
     const dirPart = currentWord.substring(0, lastSlash + 1); // includes trailing /
     const filterPart = currentWord.substring(lastSlash + 1);
+    const decodedDirPart = decodeShellPathFragment(dirPart);
+    const decodedFilterPart = decodeShellPathFragment(filterPart);
 
     // Resolve directory
     let dirToList: string;
-    if (dirPart.startsWith("/")) {
-      dirToList = dirPart;
-    } else if (dirPart.startsWith("~/")) {
-      dirToList = dirPart; // Let remote shell expand ~
-    } else if (dirPart.startsWith("./") || dirPart.startsWith("../")) {
-      dirToList = cwd ? `${cwd}/${dirPart}` : dirPart;
+    if (decodedDirPart.startsWith("/")) {
+      dirToList = decodedDirPart;
+    } else if (decodedDirPart.startsWith("~/")) {
+      dirToList = decodedDirPart; // Let remote shell expand ~
+    } else if (decodedDirPart.startsWith("./") || decodedDirPart.startsWith("../")) {
+      dirToList = cwd ? `${cwd}/${decodedDirPart}` : decodedDirPart;
     } else {
-      dirToList = cwd ? `${cwd}/${dirPart}` : dirPart;
+      dirToList = cwd ? `${cwd}/${decodedDirPart}` : decodedDirPart;
     }
 
-    return { dirToList, filterPrefix: filterPart, pathPrefix: dirPart };
+    return { dirToList, filterPrefix: decodedFilterPart, pathPrefix: dirPart };
   }
 
   // No slash — filter CWD entries by the typed prefix
   return {
     dirToList: cwd || ".",
-    filterPrefix: currentWord,
+    filterPrefix: decodeShellPathFragment(currentWord),
     pathPrefix: "",
   };
 }
@@ -151,38 +168,63 @@ export async function getPathSuggestions(
   const { sessionId, protocol, cwd, foldersOnly } = options;
   const { dirToList, filterPrefix } = resolvePathComponents(ctx.currentWord, cwd);
 
-  // List directory entries
-  const entries = await listDirectory(dirToList, sessionId, protocol, foldersOnly);
-
-  // Filter by prefix
-  const lowerFilter = filterPrefix.toLowerCase();
-  const filtered = entries.filter((e) => {
-    if (!lowerFilter) return true;
-    return e.name.toLowerCase().startsWith(lowerFilter);
+  const entries = await listDirectoryEntries(dirToList, {
+    sessionId,
+    protocol,
+    foldersOnly,
+    filterPrefix,
+    limit: 100,
   });
 
-  return filtered;
+  return sortPathEntries(entries);
 }
 
 /**
- * List directory contents via IPC, with caching and in-flight dedup.
+ * List directory contents via IPC, with shared caching and in-flight dedup.
  */
-async function listDirectory(
+export async function listDirectoryEntries(
   dirPath: string,
-  sessionId: string | undefined,
-  protocol: string | undefined,
-  foldersOnly: boolean,
+  options: {
+    sessionId?: string;
+    protocol?: string;
+    foldersOnly: boolean;
+    filterPrefix?: string;
+    limit?: number;
+  },
 ): Promise<DirEntry[]> {
-  const cacheKey = `${sessionId || "local"}:${dirPath}:${foldersOnly}`;
+  const {
+    sessionId,
+    protocol,
+    foldersOnly,
+    filterPrefix = "",
+    limit = 100,
+  } = options;
+  const normalizedPrefix = filterPrefix.toLowerCase();
+  const maxEntries = clampLimit(limit);
+  const baseKey = `${protocol || "auto"}:${sessionId || "local"}:${dirPath}:${foldersOnly}`;
+  const fullCacheKey = `${baseKey}:all`;
+  const filteredCacheKey = `${baseKey}:prefix:${normalizedPrefix}:${maxEntries}`;
 
-  // Check cache
-  const cached = dirCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    return cached.entries;
+  // Full directory cache can satisfy both full and filtered lookups.
+  const fullCached = fullDirCache.get(fullCacheKey);
+  if (isFresh(fullCached)) {
+    return filterEntries(fullCached.entries, normalizedPrefix, maxEntries);
   }
 
-  // Check in-flight
-  const inFlight = inFlightRequests.get(cacheKey);
+  if (normalizedPrefix) {
+    const filteredCached = filteredDirCache.get(filteredCacheKey);
+    if (isFresh(filteredCached)) {
+      return filteredCached.entries;
+    }
+  }
+
+  const inFlightFull = inFlightRequests.get(fullCacheKey);
+  if (inFlightFull) {
+    return filterEntries(await inFlightFull, normalizedPrefix, maxEntries);
+  }
+
+  const requestKey = normalizedPrefix ? filteredCacheKey : fullCacheKey;
+  const inFlight = inFlightRequests.get(requestKey);
   if (inFlight) return inFlight;
 
   // Make IPC call
@@ -195,20 +237,22 @@ async function listDirectory(
 
       if (protocol === "local" || !sessionId) {
         if (!bridge.listLocalDir) return [];
-        result = await bridge.listLocalDir(dirPath, foldersOnly);
+        result = await bridge.listLocalDir(dirPath, foldersOnly, normalizedPrefix || undefined, maxEntries);
       } else {
         if (!bridge.listRemoteDir) return [];
-        result = await bridge.listRemoteDir(sessionId, dirPath, foldersOnly);
+        result = await bridge.listRemoteDir(sessionId, dirPath, foldersOnly, normalizedPrefix || undefined, maxEntries);
       }
 
       if (result.success) {
-        // Update cache
-        dirCache.set(cacheKey, { entries: result.entries, timestamp: Date.now() });
-        // Evict old entries
-        if (dirCache.size > MAX_CACHE_SIZE) {
-          const oldestKey = dirCache.keys().next().value;
-          if (oldestKey) dirCache.delete(oldestKey);
+        const timestamp = Date.now();
+        if (normalizedPrefix) {
+          filteredDirCache.set(requestKey, { entries: result.entries, timestamp });
+          evictOldest(filteredDirCache, MAX_FILTERED_CACHE_SIZE);
+          return result.entries;
         }
+
+        fullDirCache.set(requestKey, { entries: result.entries, timestamp });
+        evictOldest(fullDirCache, MAX_CACHE_SIZE);
         return result.entries;
       }
 
@@ -216,10 +260,75 @@ async function listDirectory(
     } catch {
       return [];
     } finally {
-      inFlightRequests.delete(cacheKey);
+      inFlightRequests.delete(requestKey);
     }
   })();
 
-  inFlightRequests.set(cacheKey, promise);
+  inFlightRequests.set(requestKey, promise);
   return promise;
+}
+
+function clampLimit(limit: number): number {
+  if (!Number.isFinite(limit)) return 100;
+  return Math.max(1, Math.min(200, Math.floor(limit)));
+}
+
+function isFresh(
+  cached: { entries: DirEntry[]; timestamp: number } | undefined,
+): cached is { entries: DirEntry[]; timestamp: number } {
+  return Boolean(cached && Date.now() - cached.timestamp < CACHE_TTL_MS);
+}
+
+function filterEntries(entries: DirEntry[], filterPrefix: string, limit: number): DirEntry[] {
+  if (!filterPrefix) return entries.slice(0, limit);
+
+  const filtered: DirEntry[] = [];
+  for (const entry of entries) {
+    if (entry.name.toLowerCase().startsWith(filterPrefix)) {
+      filtered.push(entry);
+      if (filtered.length >= limit) break;
+    }
+  }
+  return filtered;
+}
+
+function evictOldest(
+  cache: Map<string, { entries: DirEntry[]; timestamp: number }>,
+  maxSize: number,
+): void {
+  while (cache.size > maxSize) {
+    const oldestKey = cache.keys().next().value;
+    if (!oldestKey) break;
+    cache.delete(oldestKey);
+  }
+}
+
+function decodeShellPathFragment(value: string): string {
+  let result = "";
+  let escaped = false;
+
+  for (const ch of value) {
+    if (escaped) {
+      result += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    result += ch;
+  }
+
+  if (escaped) result += "\\";
+  return result;
+}
+
+function sortPathEntries(entries: DirEntry[]): DirEntry[] {
+  return [...entries].sort((left, right) => {
+    const leftRank = left.type === "directory" ? 0 : left.type === "symlink" ? 1 : 2;
+    const rightRank = right.type === "directory" ? 0 : right.type === "symlink" ? 1 : 2;
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+  });
 }
