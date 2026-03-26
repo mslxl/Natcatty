@@ -6,6 +6,7 @@
  */
 
 import React, { useEffect, useRef, useState, memo } from "react";
+import { Folder, File, Link } from "lucide-react";
 import type { CompletionSuggestion, SuggestionSource } from "./completionEngine";
 
 export interface AutocompleteThemeColors {
@@ -35,11 +36,29 @@ const SOURCE_LABELS: Record<SuggestionSource, { label: string; fullLabel: string
   path: { label: "p", fullLabel: "Path", fallbackColor: "#38BDF8" },
 };
 
-/** Icons for file types in path suggestions */
-const FILE_TYPE_ICONS: Record<string, { icon: string; color: string }> = {
-  directory: { icon: "📁", color: "#38BDF8" },
-  file: { icon: "📄", color: "#94A3B8" },
-  symlink: { icon: "🔗", color: "#A78BFA" },
+/** Lucide icon components for file types in path suggestions */
+const FILE_TYPE_CONFIG: Record<string, { Icon: React.FC<{ size?: number; color?: string }>; color: string }> = {
+  directory: { Icon: Folder, color: "#38BDF8" },
+  file: { Icon: File, color: "#94A3B8" },
+  symlink: { Icon: Link, color: "#A78BFA" },
+};
+
+const FileTypeIcon: React.FC<{ fileType: string }> = ({ fileType }) => {
+  const cfg = FILE_TYPE_CONFIG[fileType] ?? FILE_TYPE_CONFIG.file;
+  return (
+    <span
+      style={{
+        width: "18px",
+        height: "18px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+      }}
+    >
+      <cfg.Icon size={14} color={cfg.color} />
+    </span>
+  );
 };
 
 const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
@@ -160,19 +179,7 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
             >
               {/* Source / file type indicator */}
               {suggestion.source === "path" && suggestion.fileType ? (
-                <span
-                  style={{
-                    width: "18px",
-                    height: "18px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: "14px",
-                    flexShrink: 0,
-                  }}
-                >
-                  {FILE_TYPE_ICONS[suggestion.fileType]?.icon ?? "📄"}
-                </span>
+                <FileTypeIcon fileType={suggestion.fileType} />
               ) : (
                 <span
                   style={{
