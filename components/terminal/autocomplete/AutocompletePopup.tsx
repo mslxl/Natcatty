@@ -297,6 +297,7 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
             return (
               <div
                 key={entry.name}
+                ref={isSubSelected ? (el) => { el?.scrollIntoView({ block: "nearest" }); } : undefined}
                 style={{
                   display: "flex",
                   alignItems: "center",

@@ -543,27 +543,23 @@ export function useTerminalAutocomplete(
 
         // Sub-dir panel focused: ↑↓ navigate, ← go back, → go deeper
         if (focusLevel >= 0 && focusedPanel) {
-          if (e.key === "ArrowUp") {
+          if (e.key === "ArrowUp" || e.key === "ArrowDown") {
             e.preventDefault();
+            const newIdx = e.key === "ArrowUp"
+              ? (focusedPanel.selectedIndex <= 0 ? focusedPanel.entries.length - 1 : focusedPanel.selectedIndex - 1)
+              : (focusedPanel.selectedIndex >= focusedPanel.entries.length - 1 ? 0 : focusedPanel.selectedIndex + 1);
             setState((prev) => {
               const panels = [...prev.subDirPanels];
               const p = panels[focusLevel];
               if (!p) return prev;
-              panels[focusLevel] = { ...p, selectedIndex: p.selectedIndex <= 0 ? p.entries.length - 1 : p.selectedIndex - 1 };
-              // Trim any panels after this level (selection changed)
+              panels[focusLevel] = { ...p, selectedIndex: newIdx };
               return { ...prev, subDirPanels: panels.slice(0, focusLevel + 1) };
             });
-            return false;
-          }
-          if (e.key === "ArrowDown") {
-            e.preventDefault();
-            setState((prev) => {
-              const panels = [...prev.subDirPanels];
-              const p = panels[focusLevel];
-              if (!p) return prev;
-              panels[focusLevel] = { ...p, selectedIndex: p.selectedIndex >= p.entries.length - 1 ? 0 : p.selectedIndex + 1 };
-              return { ...prev, subDirPanels: panels.slice(0, focusLevel + 1) };
-            });
+            // Auto-expand next level if the newly selected item is a directory
+            const newEntry = focusedPanel.entries[newIdx];
+            if (newEntry?.type === "directory") {
+              expandSubDir(focusLevel, newEntry);
+            }
             return false;
           }
           if (e.key === "ArrowLeft") {
