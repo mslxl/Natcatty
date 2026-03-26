@@ -53,14 +53,20 @@ const EMPTY_STATE: AutocompleteState = Object.freeze({
   popupVisible: false,
   popupPosition: { x: 0, y: 0 },
   expandUpward: false,
-  subDirEntries: [],
-  subDirFocused: false,
-  subDirSelectedIndex: -1,
+  subDirPanels: [],
+  subDirFocusLevel: -1,
 });
 
 export interface SubDirEntry {
   name: string;
   type: "file" | "directory" | "symlink";
+}
+
+export interface SubDirPanel {
+  entries: SubDirEntry[];
+  selectedIndex: number;
+  /** The absolute directory path this panel lists */
+  dirPath: string;
 }
 
 export interface AutocompleteState {
@@ -69,12 +75,10 @@ export interface AutocompleteState {
   popupVisible: boolean;
   popupPosition: { x: number; y: number };
   expandUpward: boolean;
-  /** Sub-directory entries for the currently highlighted directory */
-  subDirEntries: SubDirEntry[];
-  /** Whether focus is in the sub-dir panel */
-  subDirFocused: boolean;
-  /** Selected index in sub-dir panel */
-  subDirSelectedIndex: number;
+  /** Stack of sub-directory panels (cascading: panel 0 → panel 1 → ...) */
+  subDirPanels: SubDirPanel[];
+  /** Which level has focus: -1 = main panel, 0+ = sub-dir panel index */
+  subDirFocusLevel: number;
 }
 
 interface UseTerminalAutocompleteOptions {
@@ -215,73 +219,77 @@ export function useTerminalAutocomplete(
     );
   }, []);
 
-  /**
-   * Fetch sub-directory entries for the item at the given index.
-   * Only fetches if the item is a path suggestion pointing to a directory.
-   */
+  /** Fetch directory listing via IPC. */
+  const fetchDirEntries = useCallback(async (dirPath: string): Promise<SubDirEntry[]> => {
+    const bridge = getPathBridge();
+    if (!bridge) return [];
+    try {
+      const proto = protocolRef.current;
+      const sid = sessionIdRef.current;
+      const result = (proto === "local" || !sid)
+        ? await bridge.listLocalDir?.(dirPath, false)
+        : await bridge.listRemoteDir?.(sid, dirPath, false);
+      return result?.success ? result.entries.slice(0, 50) : [];
+    } catch { return []; }
+  }, []);
+
+  /** Fetch sub-dir entries for the main panel's selected item (level 0). */
   const fetchSubDirForIndex = useCallback((index: number) => {
     const s = stateRef.current;
     if (index < 0 || index >= s.suggestions.length) return;
     const item = s.suggestions[index];
     if (item.source !== "path" || item.fileType !== "directory") {
-      setState((prev) => prev.subDirEntries.length > 0
-        ? { ...prev, subDirEntries: [], subDirFocused: false, subDirSelectedIndex: -1 }
+      setState((prev) => prev.subDirPanels.length > 0
+        ? { ...prev, subDirPanels: [], subDirFocusLevel: -1 }
         : prev);
       return;
     }
-
-    // Extract the directory path from the suggestion text
-    const ctx = item.text.split(/\s+/);
-    const dirPath = ctx[ctx.length - 1]; // Last token is the path
+    const tokens = item.text.split(/\s+/);
+    const dirPath = tokens[tokens.length - 1];
     if (!dirPath) return;
 
-    const bridge = getPathBridge();
-    if (!bridge) return;
+    fetchDirEntries(dirPath).then((entries) => {
+      setState((prev) => {
+        if (prev.selectedIndex !== index) return prev;
+        return {
+          ...prev,
+          subDirPanels: entries.length > 0 ? [{ entries, selectedIndex: -1, dirPath }] : [],
+          subDirFocusLevel: -1,
+        };
+      });
+    });
+  }, [fetchDirEntries]);
 
-    const doFetch = async () => {
-      try {
-        const proto = protocolRef.current;
-        const sid = sessionIdRef.current;
-        let result: { success: boolean; entries: SubDirEntry[] };
-        if (proto === "local" || !sid) {
-          if (!bridge.listLocalDir) return;
-          result = await bridge.listLocalDir(dirPath, false);
-        } else {
-          if (!bridge.listRemoteDir) return;
-          result = await bridge.listRemoteDir(sid, dirPath, false);
-        }
-        if (result.success) {
-          setState((prev) => {
-            // Only update if the selected item hasn't changed
-            if (prev.selectedIndex !== index) return prev;
-            return { ...prev, subDirEntries: result.entries.slice(0, 50) };
-          });
-        }
-      } catch { /* ignore */ }
-    };
-    doFetch();
-  }, []);
+  /** Expand a directory at the given panel level → fetch contents and push new panel. */
+  const expandSubDir = useCallback((level: number, entry: SubDirEntry) => {
+    const s = stateRef.current;
+    const panel = s.subDirPanels[level];
+    if (!panel || entry.type !== "directory") return;
 
-  /**
-   * Handle selecting an item from the sub-dir panel.
-   * Inserts the path into the terminal and re-triggers completion.
-   */
-  // Ref to fetchSuggestions — avoids circular dependency (handleSubDirSelect needs it
-  // but is defined before fetchSuggestions)
+    const parentPath = panel.dirPath.endsWith("/") ? panel.dirPath : panel.dirPath + "/";
+    const childPath = parentPath + entry.name + "/";
+
+    fetchDirEntries(childPath).then((entries) => {
+      if (entries.length === 0) return;
+      setState((prev) => {
+        const panels = prev.subDirPanels.slice(0, level + 1);
+        panels.push({ entries, selectedIndex: -1, dirPath: childPath });
+        return { ...prev, subDirPanels: panels, subDirFocusLevel: level + 1 };
+      });
+    });
+  }, [fetchDirEntries]);
+
+  // Ref to fetchSuggestions (avoids circular dep — defined after fetchSuggestions)
   const fetchSuggestionsRef = useRef<() => void>(() => {});
 
-  const handleSubDirSelect = useCallback((entry: SubDirEntry) => {
-    const s = stateRef.current;
-    if (s.selectedIndex < 0) return;
-
+  /** Handle selecting a file/directory from any sub-dir panel. */
+  const handleSubDirSelect = useCallback((level: number, entry: SubDirEntry) => {
     const suffix = entry.type === "directory" ? "/" : "";
     const entryName = entry.name.includes(" ") ? entry.name.replace(/ /g, "\\ ") : entry.name;
-    const textToWrite = entryName + suffix;
 
-    writeToTerminal(textToWrite);
+    writeToTerminal(entryName + suffix);
     clearState();
 
-    // For directories, re-trigger completion after a short delay to show next level
     if (entry.type === "directory") {
       setTimeout(() => fetchSuggestionsRef.current(), 50);
     }
@@ -456,13 +464,17 @@ export function useTerminalAutocomplete(
       const s = stateRef.current;
       const ghost = ghostAddonRef.current;
 
-      // Right arrow: if popup has selected directory with sub-dir entries, enter sub-dir panel first
+      // Right arrow: if popup has selected directory with sub-dir panel, enter it
       if (e.key === "ArrowRight" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
-        if (s.popupVisible && s.selectedIndex >= 0 && s.subDirEntries.length > 0 && !s.subDirFocused) {
+        if (s.popupVisible && s.selectedIndex >= 0 && s.subDirPanels.length > 0 && s.subDirFocusLevel < 0) {
           const selected = s.suggestions[s.selectedIndex];
           if (selected?.fileType === "directory") {
             e.preventDefault();
-            setState((prev) => ({ ...prev, subDirFocused: true, subDirSelectedIndex: 0 }));
+            setState((prev) => {
+              const panels = [...prev.subDirPanels];
+              if (panels[0]) panels[0] = { ...panels[0], selectedIndex: 0 };
+              return { ...prev, subDirPanels: panels, subDirFocusLevel: 0 };
+            });
             return false;
           }
         }
@@ -526,58 +538,73 @@ export function useTerminalAutocomplete(
       // Up/Down/Left/Right: navigate popup + sub-dir panel
       if (s.popupVisible && s.suggestions.length > 0) {
 
-        // Sub-dir panel focused: ↑↓ navigate sub-dir, ← go back
-        if (s.subDirFocused && s.subDirEntries.length > 0) {
+        const focusLevel = s.subDirFocusLevel;
+        const focusedPanel = focusLevel >= 0 ? s.subDirPanels[focusLevel] : null;
+
+        // Sub-dir panel focused: ↑↓ navigate, ← go back, → go deeper
+        if (focusLevel >= 0 && focusedPanel) {
           if (e.key === "ArrowUp") {
             e.preventDefault();
-            setState((prev) => ({
-              ...prev,
-              subDirSelectedIndex: prev.subDirSelectedIndex <= 0
-                ? prev.subDirEntries.length - 1
-                : prev.subDirSelectedIndex - 1,
-            }));
+            setState((prev) => {
+              const panels = [...prev.subDirPanels];
+              const p = panels[focusLevel];
+              if (!p) return prev;
+              panels[focusLevel] = { ...p, selectedIndex: p.selectedIndex <= 0 ? p.entries.length - 1 : p.selectedIndex - 1 };
+              // Trim any panels after this level (selection changed)
+              return { ...prev, subDirPanels: panels.slice(0, focusLevel + 1) };
+            });
             return false;
           }
           if (e.key === "ArrowDown") {
             e.preventDefault();
-            setState((prev) => ({
-              ...prev,
-              subDirSelectedIndex: prev.subDirSelectedIndex >= prev.subDirEntries.length - 1
-                ? 0
-                : prev.subDirSelectedIndex + 1,
-            }));
+            setState((prev) => {
+              const panels = [...prev.subDirPanels];
+              const p = panels[focusLevel];
+              if (!p) return prev;
+              panels[focusLevel] = { ...p, selectedIndex: p.selectedIndex >= p.entries.length - 1 ? 0 : p.selectedIndex + 1 };
+              return { ...prev, subDirPanels: panels.slice(0, focusLevel + 1) };
+            });
             return false;
           }
           if (e.key === "ArrowLeft") {
             e.preventDefault();
-            setState((prev) => ({ ...prev, subDirFocused: false, subDirSelectedIndex: -1 }));
+            setState((prev) => ({
+              ...prev,
+              subDirPanels: prev.subDirPanels.slice(0, focusLevel),
+              subDirFocusLevel: focusLevel - 1,
+            }));
             return false;
           }
-          // → on a directory in sub-dir: select it (navigate deeper)
           if (e.key === "ArrowRight") {
-            const entry = s.subDirEntries[s.subDirSelectedIndex];
-            if (entry) {
+            const entry = focusedPanel.entries[focusedPanel.selectedIndex];
+            if (entry?.type === "directory") {
               e.preventDefault();
-              handleSubDirSelect(entry);
+              expandSubDir(focusLevel, entry);
               return false;
             }
           }
-          // Enter/Tab on sub-dir item: select it
           if (e.key === "Enter" || e.key === "Tab") {
-            const entry = s.subDirEntries[s.subDirSelectedIndex];
-            if (entry && s.subDirSelectedIndex >= 0) {
+            const entry = focusedPanel.entries[focusedPanel.selectedIndex];
+            if (entry && focusedPanel.selectedIndex >= 0) {
               e.preventDefault();
-              handleSubDirSelect(entry);
+              handleSubDirSelect(focusLevel, entry);
               return false;
             }
           }
-          // Escape: go back to main panel
           if (e.key === "Escape") {
             e.preventDefault();
-            setState((prev) => ({ ...prev, subDirFocused: false, subDirSelectedIndex: -1 }));
+            if (focusLevel > 0) {
+              setState((prev) => ({
+                ...prev,
+                subDirPanels: prev.subDirPanels.slice(0, focusLevel),
+                subDirFocusLevel: focusLevel - 1,
+              }));
+            } else {
+              setState((prev) => ({ ...prev, subDirPanels: [], subDirFocusLevel: -1 }));
+            }
             return false;
           }
-          return false; // Consume all keys when sub-dir focused
+          return false;
         }
 
         // Main panel navigation
@@ -585,12 +612,9 @@ export function useTerminalAutocomplete(
           e.preventDefault();
           setState((prev) => ({
             ...prev,
-            selectedIndex: prev.selectedIndex <= 0
-              ? prev.suggestions.length - 1
-              : prev.selectedIndex - 1,
-            subDirEntries: [], subDirFocused: false, subDirSelectedIndex: -1,
+            selectedIndex: prev.selectedIndex <= 0 ? prev.suggestions.length - 1 : prev.selectedIndex - 1,
+            subDirPanels: [], subDirFocusLevel: -1,
           }));
-          // Fetch sub-dir for newly selected item
           fetchSubDirForIndex(s.selectedIndex <= 0 ? s.suggestions.length - 1 : s.selectedIndex - 1);
           return false;
         }
@@ -598,15 +622,12 @@ export function useTerminalAutocomplete(
           e.preventDefault();
           setState((prev) => ({
             ...prev,
-            selectedIndex: prev.selectedIndex >= prev.suggestions.length - 1
-              ? 0
-              : prev.selectedIndex + 1,
-            subDirEntries: [], subDirFocused: false, subDirSelectedIndex: -1,
+            selectedIndex: prev.selectedIndex >= prev.suggestions.length - 1 ? 0 : prev.selectedIndex + 1,
+            subDirPanels: [], subDirFocusLevel: -1,
           }));
           fetchSubDirForIndex(s.selectedIndex >= s.suggestions.length - 1 ? 0 : s.selectedIndex + 1);
           return false;
         }
-
 
         // Enter on popup
         if (e.key === "Enter") {

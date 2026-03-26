@@ -16,10 +16,15 @@ export interface AutocompleteThemeColors {
   cursor: string;
 }
 
-/** Sub-directory panel entries */
 export interface SubDirEntry {
   name: string;
   type: "file" | "directory" | "symlink";
+}
+
+export interface SubDirPanel {
+  entries: SubDirEntry[];
+  selectedIndex: number;
+  dirPath: string;
 }
 
 interface AutocompletePopupProps {
@@ -31,14 +36,10 @@ interface AutocompletePopupProps {
   themeColors?: AutocompleteThemeColors;
   onSelect: (suggestion: CompletionSuggestion) => void;
   maxHeight?: number;
-  /** Sub-directory entries for the currently highlighted directory */
-  subDirEntries?: SubDirEntry[];
-  /** Whether the sub-dir panel is focused (→ key navigated into it) */
-  subDirFocused?: boolean;
-  /** Selected index in the sub-dir panel */
-  subDirSelectedIndex?: number;
-  /** Called when user selects an item from the sub-dir panel */
-  onSubDirSelect?: (entry: SubDirEntry) => void;
+  /** Stack of cascading sub-directory panels */
+  subDirPanels?: SubDirPanel[];
+  /** Which panel level has focus (-1 = main) */
+  subDirFocusLevel?: number;
 }
 
 const SOURCE_LABELS: Record<SuggestionSource, { label: string; fullLabel: string; fallbackColor: string }> = {
@@ -89,14 +90,11 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
   themeColors,
   onSelect,
   maxHeight = 240,
-  subDirEntries,
-  subDirFocused = false,
-  subDirSelectedIndex = -1,
-  onSubDirSelect,
+  subDirPanels = [],
+  subDirFocusLevel = -1,
 }) => {
   const listRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<HTMLDivElement>(null);
-  const subDirSelectedRef = useRef<HTMLDivElement>(null);
   const [hoveredIndex, setHoveredIndex] = useState(-1);
 
   useEffect(() => {
@@ -107,12 +105,6 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
       });
     }
   }, [selectedIndex]);
-
-  useEffect(() => {
-    if (subDirSelectedRef.current) {
-      subDirSelectedRef.current.scrollIntoView({ block: "nearest", behavior: "instant" as ScrollBehavior });
-    }
-  }, [subDirSelectedIndex]);
 
   // Reset hover when suggestions change
   useEffect(() => {
@@ -283,63 +275,59 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
         })}
       </div>
 
-      {/* Sub-directory panel — positioned to align with the selected item */}
-      {subDirEntries && subDirEntries.length > 0 && detailItem?.fileType === "directory" && (
+      {/* Cascading sub-directory panels */}
+      {subDirPanels.map((panel, level) => (
         <div
+          key={panel.dirPath}
           style={{
             ...sharedBoxStyle,
             maxHeight: `${maxHeight}px`,
-            minWidth: "160px",
-            maxWidth: "260px",
+            minWidth: "150px",
+            maxWidth: "240px",
             overflowY: "auto",
             overflowX: "hidden",
             padding: "4px 0",
             userSelect: "none",
-            // Align sub-panel top with the selected item (~29px per row)
-            marginTop: expandUpward ? undefined : `${Math.max(0, (selectedIndex >= 0 ? selectedIndex : 0)) * 29}px`,
-            marginBottom: expandUpward ? `${Math.max(0, (selectedIndex >= 0 ? selectedIndex : 0)) * 29}px` : undefined,
-            // No extra border-left — sharedBoxStyle already includes full border
+            alignSelf: "flex-start",
           }}
         >
-          {subDirEntries.map((entry, idx) => {
-            const isSubSelected = subDirFocused && idx === subDirSelectedIndex;
+          {panel.entries.map((entry, idx) => {
+            const isFocused = level === subDirFocusLevel;
+            const isSubSelected = isFocused && idx === panel.selectedIndex;
             return (
               <div
                 key={entry.name}
-                ref={isSubSelected ? subDirSelectedRef : undefined}
                 style={{
                   display: "flex",
                   alignItems: "center",
                   padding: "4px 10px",
                   cursor: "pointer",
-                  backgroundColor: isSubSelected ? selectedBg : "transparent",
+                  backgroundColor: isSubSelected ? selectedBg
+                    : (idx === panel.selectedIndex && level < subDirFocusLevel) ? hoverBg
+                    : "transparent",
                   gap: "8px",
                   lineHeight: "1.4",
                 }}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  onSubDirSelect?.(entry);
                 }}
               >
                 <FileTypeIcon fileType={entry.type} />
                 <span style={{
-                  flex: 1,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  color: textColor,
+                  flex: 1, overflow: "hidden", textOverflow: "ellipsis",
+                  whiteSpace: "nowrap", color: textColor,
                 }}>
                   {entry.name}{entry.type === "directory" ? "/" : ""}
                 </span>
                 {entry.type === "directory" && (
-                  <DirExpandIndicator visible color={dimTextColor} />
+                  <DirExpandIndicator visible={isSubSelected || (idx === panel.selectedIndex && level < subDirFocusLevel)} color={dimTextColor} />
                 )}
               </div>
             );
           })}
         </div>
-      )}
+      ))}
 
       {/* Detail tooltip panel — shows full description for non-path items */}
       {showDetail && detailItem && detailItem.source !== "path" && (
