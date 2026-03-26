@@ -1886,6 +1886,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                   expandUpward={autocomplete.state.expandUpward}
                   themeColors={effectiveTheme.colors}
                   onSelect={autocomplete.selectSuggestion}
+                  subDirEntries={autocomplete.state.subDirEntries}
+                  subDirFocused={autocomplete.state.subDirFocused}
+                  subDirSelectedIndex={autocomplete.state.subDirSelectedIndex}
                 />
               </div>
             </div>

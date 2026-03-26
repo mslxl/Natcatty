@@ -16,6 +16,12 @@ export interface AutocompleteThemeColors {
   cursor: string;
 }
 
+/** Sub-directory panel entries */
+export interface SubDirEntry {
+  name: string;
+  type: "file" | "directory" | "symlink";
+}
+
 interface AutocompletePopupProps {
   suggestions: CompletionSuggestion[];
   selectedIndex: number;
@@ -25,6 +31,14 @@ interface AutocompletePopupProps {
   themeColors?: AutocompleteThemeColors;
   onSelect: (suggestion: CompletionSuggestion) => void;
   maxHeight?: number;
+  /** Sub-directory entries for the currently highlighted directory */
+  subDirEntries?: SubDirEntry[];
+  /** Whether the sub-dir panel is focused (→ key navigated into it) */
+  subDirFocused?: boolean;
+  /** Selected index in the sub-dir panel */
+  subDirSelectedIndex?: number;
+  /** Called when user selects an item from the sub-dir panel */
+  onSubDirSelect?: (entry: SubDirEntry) => void;
 }
 
 const SOURCE_LABELS: Record<SuggestionSource, { label: string; fullLabel: string; fallbackColor: string }> = {
@@ -61,6 +75,11 @@ const FileTypeIcon: React.FC<{ fileType: string }> = ({ fileType }) => {
   );
 };
 
+/** Chevron indicator for expandable directory items */
+const DirExpandIndicator: React.FC<{ visible: boolean; color: string }> = ({ visible, color }) => (
+  <span style={{ fontSize: "10px", color, opacity: visible ? 0.6 : 0, flexShrink: 0, marginLeft: "2px" }}>›</span>
+);
+
 const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
   suggestions,
   selectedIndex,
@@ -70,9 +89,14 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
   themeColors,
   onSelect,
   maxHeight = 240,
+  subDirEntries,
+  subDirFocused = false,
+  subDirSelectedIndex = -1,
+  onSubDirSelect,
 }) => {
   const listRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<HTMLDivElement>(null);
+  const subDirSelectedRef = useRef<HTMLDivElement>(null);
   const [hoveredIndex, setHoveredIndex] = useState(-1);
 
   useEffect(() => {
@@ -83,6 +107,12 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
       });
     }
   }, [selectedIndex]);
+
+  useEffect(() => {
+    if (subDirSelectedRef.current) {
+      subDirSelectedRef.current.scrollIntoView({ block: "nearest", behavior: "instant" as ScrollBehavior });
+    }
+  }, [subDirSelectedIndex]);
 
   // Reset hover when suggestions change
   useEffect(() => {
@@ -243,13 +273,76 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
                   ×{suggestion.frequency}
                 </span>
               )}
+
+              {/* Expand indicator for directories */}
+              {suggestion.source === "path" && suggestion.fileType === "directory" && (
+                <DirExpandIndicator visible={isSelected || isHovered} color={dimTextColor} />
+              )}
             </div>
           );
         })}
       </div>
 
-      {/* Detail tooltip panel — shows full description for selected/hovered item */}
-      {showDetail && detailItem && (
+      {/* Sub-directory panel — shows contents of highlighted directory */}
+      {subDirEntries && subDirEntries.length > 0 && detailItem?.fileType === "directory" && (
+        <div
+          style={{
+            ...sharedBoxStyle,
+            maxHeight: `${maxHeight}px`,
+            minWidth: "160px",
+            maxWidth: "260px",
+            overflowY: "auto",
+            overflowX: "hidden",
+            padding: "4px 0",
+            userSelect: "none",
+            alignSelf: expandUpward ? "flex-end" : "flex-start",
+            borderLeft: subDirFocused
+              ? `2px solid ${themeColors?.cursor ?? "#f5c542"}`
+              : undefined,
+          }}
+        >
+          {subDirEntries.map((entry, idx) => {
+            const isSubSelected = subDirFocused && idx === subDirSelectedIndex;
+            return (
+              <div
+                key={entry.name}
+                ref={isSubSelected ? subDirSelectedRef : undefined}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  padding: "4px 10px",
+                  cursor: "pointer",
+                  backgroundColor: isSubSelected ? selectedBg : "transparent",
+                  gap: "8px",
+                  lineHeight: "1.4",
+                }}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onSubDirSelect?.(entry);
+                }}
+              >
+                <FileTypeIcon fileType={entry.type} />
+                <span style={{
+                  flex: 1,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  color: textColor,
+                }}>
+                  {entry.name}{entry.type === "directory" ? "/" : ""}
+                </span>
+                {entry.type === "directory" && (
+                  <DirExpandIndicator visible color={dimTextColor} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Detail tooltip panel — shows full description for non-path items */}
+      {showDetail && detailItem && detailItem.source !== "path" && (
         <div
           style={{
             ...sharedBoxStyle,
@@ -259,39 +352,19 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
             alignSelf: expandUpward ? "flex-end" : "flex-start",
           }}
         >
-          {/* Header: command name + source type */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              marginBottom: "6px",
-            }}
-          >
-            <span style={{ fontWeight: 600, fontSize: "13px" }}>
-              {detailItem.displayText}
-            </span>
-            <span
-              style={{
-                fontSize: "10px",
-                color: SOURCE_LABELS[detailItem.source].fallbackColor,
-                padding: "1px 5px",
-                borderRadius: "3px",
-                backgroundColor: `${SOURCE_LABELS[detailItem.source].fallbackColor}15`,
-              }}
-            >
+          <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px" }}>
+            <span style={{ fontWeight: 600, fontSize: "13px" }}>{detailItem.displayText}</span>
+            <span style={{
+              fontSize: "10px",
+              color: SOURCE_LABELS[detailItem.source].fallbackColor,
+              padding: "1px 5px",
+              borderRadius: "3px",
+              backgroundColor: `${SOURCE_LABELS[detailItem.source].fallbackColor}15`,
+            }}>
               {SOURCE_LABELS[detailItem.source].fullLabel}
             </span>
           </div>
-          {/* Full description */}
-          <div
-            style={{
-              fontSize: "12px",
-              color: dimTextColor,
-              lineHeight: "1.5",
-              wordBreak: "break-word",
-            }}
-          >
+          <div style={{ fontSize: "12px", color: dimTextColor, lineHeight: "1.5", wordBreak: "break-word" }}>
             {detailItem.description}
           </div>
         </div>

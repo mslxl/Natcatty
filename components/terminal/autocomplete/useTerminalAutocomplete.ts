@@ -17,6 +17,14 @@ import { recordCommand } from "./commandHistoryStore";
 import { preloadCommonSpecs } from "./figSpecLoader";
 import { getXTermCellDimensions } from "./xtermUtils";
 
+// Bridge for sub-directory listing
+function getPathBridge() {
+  return (window as Window & { netcatty?: {
+    listRemoteDir?: (sid: string, p: string, fo: boolean) => Promise<{ success: boolean; entries: SubDirEntry[] }>;
+    listLocalDir?: (p: string, fo: boolean) => Promise<{ success: boolean; entries: SubDirEntry[] }>;
+  } }).netcatty;
+}
+
 export interface AutocompleteSettings {
   enabled: boolean;
   showGhostText: boolean;
@@ -45,7 +53,15 @@ const EMPTY_STATE: AutocompleteState = Object.freeze({
   popupVisible: false,
   popupPosition: { x: 0, y: 0 },
   expandUpward: false,
+  subDirEntries: [],
+  subDirFocused: false,
+  subDirSelectedIndex: -1,
 });
+
+export interface SubDirEntry {
+  name: string;
+  type: "file" | "directory" | "symlink";
+}
 
 export interface AutocompleteState {
   suggestions: CompletionSuggestion[];
@@ -53,6 +69,12 @@ export interface AutocompleteState {
   popupVisible: boolean;
   popupPosition: { x: number; y: number };
   expandUpward: boolean;
+  /** Sub-directory entries for the currently highlighted directory */
+  subDirEntries: SubDirEntry[];
+  /** Whether focus is in the sub-dir panel */
+  subDirFocused: boolean;
+  /** Selected index in sub-dir panel */
+  subDirSelectedIndex: number;
 }
 
 interface UseTerminalAutocompleteOptions {
@@ -192,6 +214,72 @@ export function useTerminalAutocomplete(
       prev.popupVisible || prev.suggestions.length > 0 ? { ...EMPTY_STATE } : prev,
     );
   }, []);
+
+  /**
+   * Fetch sub-directory entries for the item at the given index.
+   * Only fetches if the item is a path suggestion pointing to a directory.
+   */
+  const fetchSubDirForIndex = useCallback((index: number) => {
+    const s = stateRef.current;
+    if (index < 0 || index >= s.suggestions.length) return;
+    const item = s.suggestions[index];
+    if (item.source !== "path" || item.fileType !== "directory") {
+      setState((prev) => prev.subDirEntries.length > 0
+        ? { ...prev, subDirEntries: [], subDirFocused: false, subDirSelectedIndex: -1 }
+        : prev);
+      return;
+    }
+
+    // Extract the directory path from the suggestion text
+    const ctx = item.text.split(/\s+/);
+    const dirPath = ctx[ctx.length - 1]; // Last token is the path
+    if (!dirPath) return;
+
+    const bridge = getPathBridge();
+    if (!bridge) return;
+
+    const doFetch = async () => {
+      try {
+        const proto = protocolRef.current;
+        const sid = sessionIdRef.current;
+        let result: { success: boolean; entries: SubDirEntry[] };
+        if (proto === "local" || !sid) {
+          if (!bridge.listLocalDir) return;
+          result = await bridge.listLocalDir(dirPath, false);
+        } else {
+          if (!bridge.listRemoteDir) return;
+          result = await bridge.listRemoteDir(sid, dirPath, false);
+        }
+        if (result.success) {
+          setState((prev) => {
+            // Only update if the selected item hasn't changed
+            if (prev.selectedIndex !== index) return prev;
+            return { ...prev, subDirEntries: result.entries.slice(0, 50) };
+          });
+        }
+      } catch { /* ignore */ }
+    };
+    doFetch();
+  }, []);
+
+  /**
+   * Handle selecting an item from the sub-dir panel.
+   * Inserts the path into the terminal and re-triggers completion.
+   */
+  const handleSubDirSelect = useCallback((entry: SubDirEntry) => {
+    const s = stateRef.current;
+    if (s.selectedIndex < 0) return;
+    const parentItem = s.suggestions[s.selectedIndex];
+    if (!parentItem) return;
+
+    // Build path: parent directory path + entry name
+    const suffix = entry.type === "directory" ? "/" : "";
+    const entryName = entry.name.includes(" ") ? entry.name.replace(/ /g, "\\ ") : entry.name;
+    const textToWrite = entryName + suffix;
+
+    writeToTerminal(textToWrite);
+    clearState();
+  }, [writeToTerminal, clearState]);
 
   /**
    * Fetch and display suggestions based on current input.
@@ -418,8 +506,64 @@ export function useTerminalAutocomplete(
         }
       }
 
-      // Up/Down: navigate popup
+      // Up/Down/Left/Right: navigate popup + sub-dir panel
       if (s.popupVisible && s.suggestions.length > 0) {
+
+        // Sub-dir panel focused: ↑↓ navigate sub-dir, ← go back
+        if (s.subDirFocused && s.subDirEntries.length > 0) {
+          if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setState((prev) => ({
+              ...prev,
+              subDirSelectedIndex: prev.subDirSelectedIndex <= 0
+                ? prev.subDirEntries.length - 1
+                : prev.subDirSelectedIndex - 1,
+            }));
+            return false;
+          }
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setState((prev) => ({
+              ...prev,
+              subDirSelectedIndex: prev.subDirSelectedIndex >= prev.subDirEntries.length - 1
+                ? 0
+                : prev.subDirSelectedIndex + 1,
+            }));
+            return false;
+          }
+          if (e.key === "ArrowLeft") {
+            e.preventDefault();
+            setState((prev) => ({ ...prev, subDirFocused: false, subDirSelectedIndex: -1 }));
+            return false;
+          }
+          // → on a directory in sub-dir: select it (navigate deeper)
+          if (e.key === "ArrowRight") {
+            const entry = s.subDirEntries[s.subDirSelectedIndex];
+            if (entry) {
+              e.preventDefault();
+              handleSubDirSelect(entry);
+              return false;
+            }
+          }
+          // Enter/Tab on sub-dir item: select it
+          if (e.key === "Enter" || e.key === "Tab") {
+            const entry = s.subDirEntries[s.subDirSelectedIndex];
+            if (entry && s.subDirSelectedIndex >= 0) {
+              e.preventDefault();
+              handleSubDirSelect(entry);
+              return false;
+            }
+          }
+          // Escape: go back to main panel
+          if (e.key === "Escape") {
+            e.preventDefault();
+            setState((prev) => ({ ...prev, subDirFocused: false, subDirSelectedIndex: -1 }));
+            return false;
+          }
+          return false; // Consume all keys when sub-dir focused
+        }
+
+        // Main panel navigation
         if (e.key === "ArrowUp") {
           e.preventDefault();
           setState((prev) => ({
@@ -427,7 +571,10 @@ export function useTerminalAutocomplete(
             selectedIndex: prev.selectedIndex <= 0
               ? prev.suggestions.length - 1
               : prev.selectedIndex - 1,
+            subDirEntries: [], subDirFocused: false, subDirSelectedIndex: -1,
           }));
+          // Fetch sub-dir for newly selected item
+          fetchSubDirForIndex(s.selectedIndex <= 0 ? s.suggestions.length - 1 : s.selectedIndex - 1);
           return false;
         }
         if (e.key === "ArrowDown") {
@@ -437,13 +584,25 @@ export function useTerminalAutocomplete(
             selectedIndex: prev.selectedIndex >= prev.suggestions.length - 1
               ? 0
               : prev.selectedIndex + 1,
+            subDirEntries: [], subDirFocused: false, subDirSelectedIndex: -1,
           }));
+          fetchSubDirForIndex(s.selectedIndex >= s.suggestions.length - 1 ? 0 : s.selectedIndex + 1);
           return false;
         }
 
-        // Enter on popup: only execute suggestion if user has actively selected
-        // an item via ↑/↓. If no selection (selectedIndex === -1), close popup
-        // and let Enter pass through to execute the user's own typed command.
+        // → on a directory item: enter sub-dir panel
+        if (e.key === "ArrowRight" && !e.ctrlKey && !e.altKey && !e.metaKey) {
+          if (s.selectedIndex >= 0 && s.subDirEntries.length > 0) {
+            const selected = s.suggestions[s.selectedIndex];
+            if (selected?.fileType === "directory") {
+              e.preventDefault();
+              setState((prev) => ({ ...prev, subDirFocused: true, subDirSelectedIndex: 0 }));
+              return false;
+            }
+          }
+        }
+
+        // Enter on popup
         if (e.key === "Enter") {
           if (s.selectedIndex >= 0) {
             const selected = s.suggestions[s.selectedIndex];
@@ -453,7 +612,6 @@ export function useTerminalAutocomplete(
               return false;
             }
           }
-          // No selection — close popup, let Enter propagate to terminal
           clearState();
         }
       }
