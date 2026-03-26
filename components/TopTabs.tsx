@@ -1,4 +1,4 @@
-import { Bell, Copy, FileText, Folder, LayoutGrid, Minus, Moon, MoreHorizontal, Plus, Server, Shield, Sparkles, Square, Sun, TerminalSquare, Usb, X } from 'lucide-react';
+import { Bell, Copy, FileText, Folder, FolderLock, LayoutGrid, Minus, Moon, MoreHorizontal, Plus, Server, Sparkles, Square, Sun, TerminalSquare, Usb, X } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { activeTabStore, useActiveTabId } from '../application/state/activeTabStore';
 import { buildWorkspaceActivityMap } from '../application/state/sessionActivity';
@@ -795,7 +795,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
               }
             }}
           >
-            <Shield size={14} /> Vaults
+            <FolderLock size={14} /> Vaults
           </div>
           <div
             onClick={() => onSelectTab('sftp')}
