@@ -26,8 +26,6 @@ import {
   shouldScrollOnTerminalInput,
 } from "../domain/terminalScroll";
 import {
-  resolveHostTerminalFontFamilyId,
-  resolveHostTerminalFontSize,
   resolveHostTerminalThemeId,
 } from "../domain/terminalAppearance";
 import { resolveHostAuth } from "../domain/sshAuth";
@@ -111,7 +109,7 @@ interface TerminalProps {
   keys: SSHKey[];
   identities: Identity[];
   snippets: Snippet[];
-  allHosts?: Host[];
+  chainHosts?: Host[];
   knownHosts?: KnownHost[];
   isVisible: boolean;
   inWorkspace?: boolean;
@@ -184,7 +182,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   keys,
   identities,
   snippets,
-  allHosts = [],
+  chainHosts = [],
   knownHosts: _knownHosts = [],
   isVisible,
   inWorkspace,
@@ -547,21 +545,35 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   // Subscribe to custom theme changes so editing triggers re-render
   const customThemes = useCustomThemes();
+  const hasFontSizeOverride = host.fontSizeOverride === true || (host.fontSizeOverride === undefined && host.fontSize != null);
+  const hasFontFamilyOverride = host.fontFamilyOverride === true || (host.fontFamilyOverride === undefined && !!host.fontFamily);
+  const effectiveFontSize = useMemo(
+    () => (hasFontSizeOverride && host.fontSize != null ? host.fontSize : fontSize),
+    [fontSize, hasFontSizeOverride, host.fontSize],
+  );
+  const resolvedFontFamily = useMemo(() => {
+    const hostFontId = hasFontFamilyOverride && host.fontFamily
+      ? host.fontFamily
+      : fontFamilyId;
+    const resolvedFontId = hostFontId || "menlo";
+    return (availableFonts.find((f) => f.id === resolvedFontId) || availableFonts[0]).family;
+  }, [availableFonts, fontFamilyId, hasFontFamilyOverride, host.fontFamily]);
 
   const effectiveTheme = useMemo(() => {
-    const themeId = resolveHostTerminalThemeId(host, terminalTheme.id);
+    const themeId = resolveHostTerminalThemeId(
+      { theme: host.theme, themeOverride: host.themeOverride } as Pick<Host, 'theme' | 'themeOverride'>,
+      terminalTheme.id,
+    );
     if (themeId) {
       const hostTheme = TERMINAL_THEMES.find((t) => t.id === themeId)
         || customThemes.find((t) => t.id === themeId);
       if (hostTheme) return hostTheme;
     }
     return terminalTheme;
-  }, [host, terminalTheme, customThemes]);
+  }, [customThemes, host.theme, host.themeOverride, terminalTheme]);
 
   const resolvedChainHosts =
-    (host.hostChain?.hostIds
-      ?.map((id) => allHosts.find((h) => h.id === id))
-      .filter(Boolean) as Host[]) || [];
+    chainHosts;
 
   const updateStatus = (next: TerminalSession["status"]) => {
     setStatus(next);
@@ -871,9 +883,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   useEffect(() => {
     if (termRef.current) {
-      const effectiveFontSize = resolveHostTerminalFontSize(host, fontSize);
       termRef.current.options.fontSize = effectiveFontSize;
-
+      termRef.current.options.fontFamily = resolvedFontFamily;
       termRef.current.options.theme = {
         ...effectiveTheme.colors,
         selectionBackground: effectiveTheme.colors.selection,
@@ -930,27 +941,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         termRef.current.options.ignoreBracketedPasteMode = terminalSettings.disableBracketedPaste ?? false;
       }
 
-      setTimeout(() => safeFit({ force: true }), 50);
+      if (isVisibleRef.current) {
+        setTimeout(() => safeFit({ force: true, requireVisible: true }), 50);
+      } else {
+        lastFittedSizeRef.current = null;
+      }
     }
-  }, [fontSize, effectiveTheme, terminalSettings, host]);
-
-  useEffect(() => {
-    if (termRef.current) {
-      const effectiveFontSize = resolveHostTerminalFontSize(host, fontSize);
-      termRef.current.options.fontSize = effectiveFontSize;
-
-      const hostFontId = resolveHostTerminalFontFamilyId(host, fontFamilyId) || "menlo";
-      const fontObj = availableFonts.find((f) => f.id === hostFontId) || availableFonts[0];
-      termRef.current.options.fontFamily = fontObj.family;
-
-      termRef.current.options.theme = {
-        ...effectiveTheme.colors,
-        selectionBackground: effectiveTheme.colors.selection,
-      };
-
-      setTimeout(() => safeFit({ force: true }), 50);
-    }
-  }, [host, fontFamilyId, fontSize, effectiveTheme, availableFonts]);
+  }, [effectiveFontSize, effectiveTheme, resolvedFontFamily, terminalSettings]);
 
   useEffect(() => {
     if (!isVisible) return;
@@ -998,7 +995,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
         if (terminalSettings && termRef.current) {
           const fontFamily = termRef.current.options?.fontFamily || "";
-          const effectiveFontSize = resolveHostTerminalFontSize(host, fontSize);
           if (typeof document !== "undefined" && document.fonts?.check) {
             const weightSpec = `${terminalSettings.fontWeightBold} ${effectiveFontSize}px ${fontFamily}`;
             const resolvedBold = document.fonts.check(weightSpec)
@@ -1034,7 +1030,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [host, fontFamilyId, fontSize, resizeSession, sessionId, terminalSettings]);
+  }, [effectiveFontSize, resizeSession, terminalSettings]);
 
   useEffect(() => {
     if (!isVisible || !containerRef.current || !fitAddonRef.current) return;

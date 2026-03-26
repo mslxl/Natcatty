@@ -1,5 +1,5 @@
 import { Circle, FolderTree, LayoutGrid, MessageSquare, PanelLeft, PanelRight, Palette, Server, X, Zap } from 'lucide-react';
-import React, { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, memo, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useActiveTabId } from '../application/state/activeTabStore';
 import {
   getSessionActivityIdsToClear,
@@ -681,15 +681,24 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     for (const session of sessions) {
       const existingHost = hostMap.get(session.hostId);
       if (existingHost) {
-        // Apply session-time protocol overrides to the host
-        const hostWithOverrides: Host = {
-          ...existingHost,
-          // Use session protocol settings if provided (from connection-time selection)
-          protocol: session.protocol ?? existingHost.protocol,
-          port: session.port ?? existingHost.port,
-          moshEnabled: session.moshEnabled ?? existingHost.moshEnabled,
-        };
-        map.set(session.id, hostWithOverrides);
+        const protocol = session.protocol ?? existingHost.protocol;
+        const port = session.port ?? existingHost.port;
+        const moshEnabled = session.moshEnabled ?? existingHost.moshEnabled;
+
+        if (
+          protocol === existingHost.protocol &&
+          port === existingHost.port &&
+          moshEnabled === existingHost.moshEnabled
+        ) {
+          map.set(session.id, existingHost);
+        } else {
+          map.set(session.id, {
+            ...existingHost,
+            protocol,
+            port,
+            moshEnabled,
+          });
+        }
       } else {
         // Create stable fallback host object
         map.set(session.id, {
@@ -708,6 +717,20 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     }
     return map;
   }, [sessions, hostMap]);
+  const sessionChainHostsMap = useMemo(() => {
+    const map = new Map<string, Host[]>();
+    for (const session of sessions) {
+      const host = sessionHostsMap.get(session.id);
+      if (!host?.hostChain?.hostIds?.length) continue;
+      map.set(
+        session.id,
+        host.hostChain.hostIds
+          .map((hostId) => hostMap.get(hostId))
+          .filter((value): value is Host => Boolean(value)),
+      );
+    }
+    return map;
+  }, [sessions, sessionHostsMap, hostMap]);
 
   const validTerminalTabIds = useMemo(() => {
     const ids = new Set<string>();
@@ -1219,51 +1242,6 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     return focusedHost?.protocol === 'local' || !!focusedHost?.id?.startsWith('local-');
   }, [focusedHost]);
 
-  const handleThemeChangeForFocusedSession = useCallback((themeId: string) => {
-    if (isFocusedHostLocal) {
-      onUpdateTerminalThemeId?.(themeId);
-      return;
-    }
-    if (focusedHost) {
-      onUpdateHost({ ...focusedHost, theme: themeId, themeOverride: true });
-    }
-  }, [focusedHost, isFocusedHostLocal, onUpdateTerminalThemeId, onUpdateHost]);
-
-  const handleThemeResetForFocusedSession = useCallback(() => {
-    if (!focusedHost || isFocusedHostLocal) return;
-    onUpdateHost(clearHostThemeOverride(focusedHost));
-  }, [focusedHost, isFocusedHostLocal, onUpdateHost]);
-
-  const handleFontFamilyChangeForFocusedSession = useCallback((fontFamilyId: string) => {
-    if (isFocusedHostLocal) {
-      onUpdateTerminalFontFamilyId?.(fontFamilyId);
-      return;
-    }
-    if (focusedHost) {
-      onUpdateHost({ ...focusedHost, fontFamily: fontFamilyId, fontFamilyOverride: true });
-    }
-  }, [focusedHost, isFocusedHostLocal, onUpdateTerminalFontFamilyId, onUpdateHost]);
-
-  const handleFontFamilyResetForFocusedSession = useCallback(() => {
-    if (!focusedHost || isFocusedHostLocal) return;
-    onUpdateHost(clearHostFontFamilyOverride(focusedHost));
-  }, [focusedHost, isFocusedHostLocal, onUpdateHost]);
-
-  const handleFontSizeChangeForFocusedSession = useCallback((newFontSize: number) => {
-    if (isFocusedHostLocal) {
-      onUpdateTerminalFontSize?.(newFontSize);
-      return;
-    }
-    if (focusedHost) {
-      onUpdateHost({ ...focusedHost, fontSize: newFontSize, fontSizeOverride: true });
-    }
-  }, [focusedHost, isFocusedHostLocal, onUpdateTerminalFontSize, onUpdateHost]);
-
-  const handleFontSizeResetForFocusedSession = useCallback(() => {
-    if (!focusedHost || isFocusedHostLocal) return;
-    onUpdateHost(clearHostFontSizeOverride(focusedHost));
-  }, [focusedHost, isFocusedHostLocal, onUpdateHost]);
-
   // Current theme/font/size for the focused session (for ThemeSidePanel)
   const focusedThemeId = resolveHostTerminalThemeId(focusedHost, terminalTheme.id);
   const focusedFontFamilyId = resolveHostTerminalFontFamilyId(focusedHost, terminalFontFamilyId);
@@ -1271,6 +1249,54 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const focusedThemeOverridden = hasHostThemeOverride(focusedHost);
   const focusedFontFamilyOverridden = hasHostFontFamilyOverride(focusedHost);
   const focusedFontSizeOverridden = hasHostFontSizeOverride(focusedHost);
+
+  const handleThemeChangeForFocusedSession = useCallback((themeId: string) => {
+    if (!focusedHost || themeId === focusedThemeId) return;
+    startTransition(() => {
+      if (isFocusedHostLocal) {
+        onUpdateTerminalThemeId?.(themeId);
+        return;
+      }
+      onUpdateHost({ ...focusedHost, theme: themeId, themeOverride: true });
+    });
+  }, [focusedHost, focusedThemeId, isFocusedHostLocal, onUpdateTerminalThemeId, onUpdateHost]);
+
+  const handleThemeResetForFocusedSession = useCallback(() => {
+    if (!focusedHost || isFocusedHostLocal) return;
+    onUpdateHost(clearHostThemeOverride(focusedHost));
+  }, [focusedHost, isFocusedHostLocal, onUpdateHost]);
+
+  const handleFontFamilyChangeForFocusedSession = useCallback((fontFamilyId: string) => {
+    if (!focusedHost || fontFamilyId === focusedFontFamilyId) return;
+    startTransition(() => {
+      if (isFocusedHostLocal) {
+        onUpdateTerminalFontFamilyId?.(fontFamilyId);
+        return;
+      }
+      onUpdateHost({ ...focusedHost, fontFamily: fontFamilyId, fontFamilyOverride: true });
+    });
+  }, [focusedHost, focusedFontFamilyId, isFocusedHostLocal, onUpdateTerminalFontFamilyId, onUpdateHost]);
+
+  const handleFontFamilyResetForFocusedSession = useCallback(() => {
+    if (!focusedHost || isFocusedHostLocal) return;
+    onUpdateHost(clearHostFontFamilyOverride(focusedHost));
+  }, [focusedHost, isFocusedHostLocal, onUpdateHost]);
+
+  const handleFontSizeChangeForFocusedSession = useCallback((newFontSize: number) => {
+    if (!focusedHost || newFontSize === focusedFontSize) return;
+    startTransition(() => {
+      if (isFocusedHostLocal) {
+        onUpdateTerminalFontSize?.(newFontSize);
+        return;
+      }
+      onUpdateHost({ ...focusedHost, fontSize: newFontSize, fontSizeOverride: true });
+    });
+  }, [focusedHost, focusedFontSize, isFocusedHostLocal, onUpdateTerminalFontSize, onUpdateHost]);
+
+  const handleFontSizeResetForFocusedSession = useCallback(() => {
+    if (!focusedHost || isFocusedHostLocal) return;
+    onUpdateHost(clearHostFontSizeOverride(focusedHost));
+  }, [focusedHost, isFocusedHostLocal, onUpdateHost]);
 
   // Keep MCP/ACP approval IPC listener alive for the entire terminal lifecycle.
   // Must live here (TerminalLayer), not inside the AI panel subtree, so closing
@@ -1861,7 +1887,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                   keys={keys}
                   identities={identities}
                   snippets={snippets}
-                  allHosts={hosts}
+                  chainHosts={sessionChainHostsMap.get(session.id)}
                   knownHosts={knownHosts}
                   isVisible={isVisible}
                   inWorkspace={inActiveWorkspace}
