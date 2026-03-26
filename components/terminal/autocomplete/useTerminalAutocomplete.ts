@@ -266,11 +266,14 @@ export function useTerminalAutocomplete(
    * Handle selecting an item from the sub-dir panel.
    * Inserts the path into the terminal and re-triggers completion.
    */
+  // Ref to fetchSuggestions — avoids circular dependency (handleSubDirSelect needs it
+  // but is defined before fetchSuggestions)
+  const fetchSuggestionsRef = useRef<() => void>(() => {});
+
   const handleSubDirSelect = useCallback((entry: SubDirEntry) => {
     const s = stateRef.current;
     if (s.selectedIndex < 0) return;
 
-    // Build path: entry name + suffix
     const suffix = entry.type === "directory" ? "/" : "";
     const entryName = entry.name.includes(" ") ? entry.name.replace(/ /g, "\\ ") : entry.name;
     const textToWrite = entryName + suffix;
@@ -280,9 +283,9 @@ export function useTerminalAutocomplete(
 
     // For directories, re-trigger completion after a short delay to show next level
     if (entry.type === "directory") {
-      setTimeout(() => fetchSuggestions(), 50);
+      setTimeout(() => fetchSuggestionsRef.current(), 50);
     }
-  }, [writeToTerminal, clearState, fetchSuggestions]);
+  }, [writeToTerminal, clearState]);
 
   /**
    * Fetch and display suggestions based on current input.
@@ -361,6 +364,9 @@ export function useTerminalAutocomplete(
       );
     }
   }, [termRef, clearState]);
+
+  // Keep ref in sync so handleSubDirSelect can call it
+  fetchSuggestionsRef.current = fetchSuggestions;
 
   /**
    * Handle terminal input data. Called on every character.
