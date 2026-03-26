@@ -1885,7 +1885,7 @@ async function listSessionDir(_event, payload) {
       shift 3
       count=0
       for path do
-        name=${path##*/}
+        name=\${path##*/}
         lower_name=$(printf "%s" "$name" | tr "[:upper:]" "[:lower:]")
         if [ -n "$prefix" ]; then
           case "$lower_name" in
