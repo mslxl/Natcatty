@@ -4,7 +4,7 @@ import { SerializeAddon } from "@xterm/addon-serialize";
 import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import { Cpu, HardDrive, Maximize2, MemoryStick, Radio, ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactDOM from "react-dom";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { logger } from "../lib/logger";
@@ -110,6 +110,7 @@ interface TerminalProps {
   identities: Identity[];
   snippets: Snippet[];
   chainHosts?: Host[];
+  themePreviewId?: string;
   knownHosts?: KnownHost[];
   isVisible: boolean;
   inWorkspace?: boolean;
@@ -183,6 +184,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   identities,
   snippets,
   chainHosts = [],
+  themePreviewId,
   knownHosts: _knownHosts = [],
   isVisible,
   inWorkspace,
@@ -560,7 +562,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   }, [availableFonts, fontFamilyId, hasFontFamilyOverride, host.fontFamily]);
 
   const effectiveTheme = useMemo(() => {
-    const themeId = resolveHostTerminalThemeId(
+    const themeId = themePreviewId ?? resolveHostTerminalThemeId(
       { theme: host.theme, themeOverride: host.themeOverride } as Pick<Host, 'theme' | 'themeOverride'>,
       terminalTheme.id,
     );
@@ -570,7 +572,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       if (hostTheme) return hostTheme;
     }
     return terminalTheme;
-  }, [customThemes, host.theme, host.themeOverride, terminalTheme]);
+  }, [customThemes, host.theme, host.themeOverride, terminalTheme, themePreviewId]);
 
   const resolvedChainHosts =
     chainHosts;
@@ -881,14 +883,20 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }
   };
 
-  useEffect(() => {
+  // Sync xterm theme before browser paint so canvas + DOM CSS vars update in the same frame
+  useLayoutEffect(() => {
     if (termRef.current) {
-      termRef.current.options.fontSize = effectiveFontSize;
-      termRef.current.options.fontFamily = resolvedFontFamily;
       termRef.current.options.theme = {
         ...effectiveTheme.colors,
         selectionBackground: effectiveTheme.colors.selection,
       };
+    }
+  }, [effectiveTheme]);
+
+  useEffect(() => {
+    if (termRef.current) {
+      termRef.current.options.fontSize = effectiveFontSize;
+      termRef.current.options.fontFamily = resolvedFontFamily;
 
       if (terminalSettings) {
         termRef.current.options.cursorStyle = terminalSettings.cursorShape;
@@ -947,7 +955,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         lastFittedSizeRef.current = null;
       }
     }
-  }, [effectiveFontSize, effectiveTheme, resolvedFontFamily, terminalSettings]);
+  }, [effectiveFontSize, resolvedFontFamily, terminalSettings]);
 
   useEffect(() => {
     if (!isVisible) return;
@@ -1468,6 +1476,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       : status === "connecting"
         ? "bg-amber-400"
         : "bg-rose-500";
+  const terminalPreviewVars = useMemo(() => ({
+    ['--terminal-ui-bg' as never]: `var(--terminal-preview-bg, ${effectiveTheme.colors.background})`,
+    ['--terminal-ui-fg' as never]: `var(--terminal-preview-fg, ${effectiveTheme.colors.foreground})`,
+    ['--terminal-ui-border' as never]: `var(--terminal-preview-border, color-mix(in srgb, ${effectiveTheme.colors.foreground} 8%, ${effectiveTheme.colors.background} 92%))`,
+    ['--terminal-ui-toolbar-btn' as never]: `var(--terminal-preview-toolbar-btn, color-mix(in srgb, ${effectiveTheme.colors.background} 88%, ${effectiveTheme.colors.foreground} 12%))`,
+    ['--terminal-ui-toolbar-btn-hover' as never]: `var(--terminal-preview-toolbar-btn-hover, color-mix(in srgb, ${effectiveTheme.colors.background} 78%, ${effectiveTheme.colors.foreground} 22%))`,
+    ['--terminal-ui-toolbar-btn-active' as never]: `var(--terminal-preview-toolbar-btn-active, color-mix(in srgb, ${effectiveTheme.colors.background} 68%, ${effectiveTheme.colors.foreground} 32%))`,
+  }), [effectiveTheme.colors.background, effectiveTheme.colors.foreground]);
 
   return (
     <TerminalContextMenu
@@ -1490,6 +1506,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           "relative h-full w-full flex overflow-hidden bg-gradient-to-br from-[#050910] via-[#06101a] to-[#0b1220]",
           isComposeBarOpen && !inWorkspace && "flex-col"
         )}
+        style={terminalPreviewVars}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -1520,14 +1537,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           <div
             className="flex items-center gap-1 px-2 py-0.5 backdrop-blur-md pointer-events-auto min-w-0 border-b-[0.5px]"
             style={{
-              backgroundColor: effectiveTheme.colors.background,
-              color: effectiveTheme.colors.foreground,
-              borderColor: `color-mix(in srgb, ${effectiveTheme.colors.foreground} 8%, ${effectiveTheme.colors.background} 92%)`,
-              ['--terminal-toolbar-fg' as never]: effectiveTheme.colors.foreground,
-              ['--terminal-toolbar-bg' as never]: effectiveTheme.colors.background,
-              ['--terminal-toolbar-btn' as never]: `color-mix(in srgb, ${effectiveTheme.colors.background} 88%, ${effectiveTheme.colors.foreground} 12%)`,
-              ['--terminal-toolbar-btn-hover' as never]: `color-mix(in srgb, ${effectiveTheme.colors.background} 78%, ${effectiveTheme.colors.foreground} 22%)`,
-              ['--terminal-toolbar-btn-active' as never]: `color-mix(in srgb, ${effectiveTheme.colors.background} 68%, ${effectiveTheme.colors.foreground} 32%)`,
+              backgroundColor: 'var(--terminal-ui-bg)',
+              color: 'var(--terminal-ui-fg)',
+              borderColor: 'var(--terminal-ui-border)',
+              ['--terminal-toolbar-fg' as never]: 'var(--terminal-ui-fg)',
+              ['--terminal-toolbar-bg' as never]: 'var(--terminal-ui-bg)',
+              ['--terminal-toolbar-btn' as never]: 'var(--terminal-ui-toolbar-btn)',
+              ['--terminal-toolbar-btn-hover' as never]: 'var(--terminal-ui-toolbar-btn-hover)',
+              ['--terminal-toolbar-btn-active' as never]: 'var(--terminal-ui-toolbar-btn-active)',
             }}
           >
             <div className="flex items-center gap-1 text-[11px] font-semibold">
@@ -1902,7 +1919,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
         <div
           className="h-full flex-1 min-w-0 relative overflow-hidden pt-8"
-          style={{ backgroundColor: effectiveTheme.colors.background }}
+          style={{ backgroundColor: 'var(--terminal-ui-bg)' }}
         >
           <div
             ref={containerRef}
@@ -1910,7 +1927,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
             style={{
               top: isSearchOpen ? "64px" : "30px",
               paddingLeft: 6,
-              backgroundColor: effectiveTheme.colors.background,
+              backgroundColor: 'var(--terminal-ui-bg)',
             }}
           />
 

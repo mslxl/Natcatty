@@ -84,7 +84,14 @@ export const TerminalConnectionDialog: React.FC<TerminalConnectionDialogProps> =
             "absolute inset-0 z-20 flex items-center justify-center",
             needsAuth ? "bg-black" : "bg-black/30"
         )}>
-            <div className="w-[480px] max-w-[88vw] bg-background/95 border border-border/60 rounded-xl shadow-xl p-4 space-y-3">
+            <div
+                className="w-[480px] max-w-[88vw] rounded-xl shadow-xl p-4 space-y-3"
+                style={{
+                    backgroundColor: 'color-mix(in srgb, var(--terminal-ui-bg, var(--background)) 95%, transparent)',
+                    border: '1px solid color-mix(in srgb, var(--terminal-ui-fg, var(--foreground)) 12%, var(--terminal-ui-bg, var(--background)) 88%)',
+                    color: 'var(--terminal-ui-fg, var(--foreground))',
+                }}
+            >
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2.5 min-w-0 flex-1">
                         <DistroAvatar host={host} fallback={host.label.slice(0, 2).toUpperCase()} className="h-8 w-8 rounded-md shrink-0" />
@@ -101,14 +108,20 @@ export const TerminalConnectionDialog: React.FC<TerminalConnectionDialogProps> =
                                         </span>
                                         <span>{chainProgress.currentHostLabel}</span>
                                     </div>
-                                    <div className="text-[10px] text-muted-foreground font-mono truncate">
+                                    <div
+                                        className="text-[10px] font-mono truncate"
+                                        style={{ color: 'color-mix(in srgb, var(--terminal-ui-fg, var(--foreground)) 58%, transparent)' }}
+                                    >
                                         {t(protocolInfo.i18nKey)} {protocolInfo.showPort ? formatHostPort(host.hostname, protocolInfo.port) : host.hostname}
                                     </div>
                                 </>
                             ) : (
                                 <>
                                     <div className="text-base font-semibold truncate">{host.label}</div>
-                                    <div className="text-[10px] text-muted-foreground font-mono truncate">
+                                    <div
+                                        className="text-[10px] font-mono truncate"
+                                        style={{ color: 'color-mix(in srgb, var(--terminal-ui-fg, var(--foreground)) 58%, transparent)' }}
+                                    >
                                         {t(protocolInfo.i18nKey)} {protocolInfo.showPort ? formatHostPort(host.hostname, protocolInfo.port) : host.hostname}
                                     </div>
                                 </>
