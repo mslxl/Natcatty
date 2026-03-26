@@ -15,14 +15,14 @@ export interface DirEntry {
 
 /** Bridge interface for directory listing */
 interface PathBridge {
-  listRemoteDir?: (
+  listAutocompleteRemoteDir?: (
     sessionId: string,
     path: string,
     foldersOnly: boolean,
     filterPrefix?: string,
     limit?: number,
   ) => Promise<{ success: boolean; entries: DirEntry[] }>;
-  listLocalDir?: (
+  listAutocompleteLocalDir?: (
     path: string,
     foldersOnly: boolean,
     filterPrefix?: string,
@@ -236,11 +236,22 @@ export async function listDirectoryEntries(
       let result: { success: boolean; entries: DirEntry[] };
 
       if (protocol === "local" || !sessionId) {
-        if (!bridge.listLocalDir) return [];
-        result = await bridge.listLocalDir(dirPath, foldersOnly, normalizedPrefix || undefined, maxEntries);
+        if (!bridge.listAutocompleteLocalDir) return [];
+        result = await bridge.listAutocompleteLocalDir(
+          dirPath,
+          foldersOnly,
+          normalizedPrefix || undefined,
+          maxEntries,
+        );
       } else {
-        if (!bridge.listRemoteDir) return [];
-        result = await bridge.listRemoteDir(sessionId, dirPath, foldersOnly, normalizedPrefix || undefined, maxEntries);
+        if (!bridge.listAutocompleteRemoteDir) return [];
+        result = await bridge.listAutocompleteRemoteDir(
+          sessionId,
+          dirPath,
+          foldersOnly,
+          normalizedPrefix || undefined,
+          maxEntries,
+        );
       }
 
       if (result.success) {
