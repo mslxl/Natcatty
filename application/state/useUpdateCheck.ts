@@ -43,6 +43,7 @@ export interface UseUpdateCheckResult {
   dismissUpdate: () => void;
   openReleasePage: () => void;
   installUpdate: () => void;
+  startDownload: () => void;
   isUpdateDemoMode: boolean;
 }
 
@@ -514,6 +515,46 @@ export function useUpdateCheck(options?: { autoUpdateEnabled?: boolean }): UseUp
     netcattyBridge.get()?.installUpdate?.();
   }, []);
 
+  const startDownload = useCallback(async () => {
+    if (autoDownloadStatusRef.current === 'downloading' || autoDownloadStatusRef.current === 'ready') return;
+    const bridge = netcattyBridge.get();
+    try {
+      const checkResult = await bridge?.checkForUpdate?.();
+      if (!checkResult || checkResult.checking === true || checkResult.ready === true || checkResult.downloading === true) return;
+      if (checkResult.supported === false) {
+        openReleasePage();
+        return;
+      }
+      if (checkResult.available === false) {
+        openReleasePage();
+        return;
+      }
+    } catch {
+      return;
+    }
+    setUpdateState((prev) => ({
+      ...prev,
+      autoDownloadStatus: 'downloading',
+      downloadPercent: 0,
+      downloadError: null,
+    }));
+    void bridge?.downloadUpdate?.().then((res) => {
+      if (res && !res.success) {
+        setUpdateState((prev) => ({
+          ...prev,
+          autoDownloadStatus: 'error',
+          downloadError: res.error || 'Download failed',
+        }));
+      }
+    }).catch(() => {
+      setUpdateState((prev) => ({
+        ...prev,
+        autoDownloadStatus: 'error',
+        downloadError: 'Download failed',
+      }));
+    });
+  }, [openReleasePage]);
+
   // Startup check with delay - runs once on mount
   useEffect(() => {
     debugLog('Startup check effect mounted, IS_UPDATE_DEMO_MODE:', IS_UPDATE_DEMO_MODE);
@@ -653,6 +694,7 @@ export function useUpdateCheck(options?: { autoUpdateEnabled?: boolean }): UseUp
     dismissUpdate,
     openReleasePage,
     installUpdate,
+    startDownload,
     isUpdateDemoMode: IS_UPDATE_DEMO_MODE,
   };
 }
