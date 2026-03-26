@@ -13,7 +13,7 @@ const path = require("node:path");
 const { existsSync } = require("node:fs");
 
 const { toUnpackedAsarPath } = require("./ai/shellUtils.cjs");
-const { execViaPty, execViaChannel } = require("./ai/ptyExec.cjs");
+const { execViaPty, execViaChannel, execViaRawPty } = require("./ai/ptyExec.cjs");
 
 let sessions = null;   // Map<sessionId, { sshClient, stream, pty, proc, conn, ... }>
 let sftpClients = null; // Map<sftpId, SFTPWrapper>
@@ -550,7 +550,8 @@ function handleGetContext(params) {
     const sshClient = session.conn || session.sshClient;
     const hasCommandablePty = ptyStream && typeof ptyStream.write === "function";
     const hasSshExec = sshClient && typeof sshClient.exec === "function";
-    if (!hasCommandablePty && !hasSshExec) continue;
+    const hasSerialPort = session.serialPort && typeof session.serialPort.write === "function";
+    if (!hasCommandablePty && !hasSshExec && !hasSerialPort) continue;
 
     // Look up metadata scoped to this chat session
     const meta = getSessionMeta(sessionId, chatSessionId) || {};
@@ -563,15 +564,16 @@ function handleGetContext(params) {
       protocol: meta.protocol || session.protocol || session.type || "",
       shellType: meta.shellType || session.shellKind || "",
       supportsSftp: sessionSupportsSftp(session),
-      connected: meta.connected !== undefined ? meta.connected : !!(session.sshClient || session.conn || ptyStream),
+      connected: meta.connected !== undefined ? meta.connected : !!(session.sshClient || session.conn || ptyStream || session.serialPort),
     });
   }
 
   return {
     environment: "netcatty-terminal",
     description: "You are operating inside Netcatty, a multi-session terminal manager. " +
-      "The available sessions may be remote hosts, local terminals, or Mosh-backed shells. " +
+      "The available sessions may be remote hosts, local terminals, Mosh-backed shells, or serial port connections (network devices, embedded systems). " +
       "Use the provided tools to execute commands through the sessions exposed by Netcatty. " +
+      "Serial sessions (protocol: serial, shellType: raw) do not run a standard shell — commands are sent as-is. " +
       "SFTP tools only work for remote SSH sessions. " +
       "Always prefer these tools over suggesting the user to do things manually.",
     hosts,
@@ -588,13 +590,26 @@ function handleExec(params) {
     return { ok: false, error: 'Invalid command', exitCode: 1 };
   }
 
-  const safety = checkCommandSafety(command);
-  if (safety.blocked) {
-    return { ok: false, error: `Command blocked by safety policy. Pattern: ${safety.matchedPattern}` };
-  }
-
   const session = sessions?.get(sessionId);
   if (!session) return { ok: false, error: "Session not found" };
+
+  // The blocklist targets shell-specific patterns (rm -rf, eval, $(), etc.) that
+  // are meaningless on network device CLIs. Serial sessions skip the check because
+  // commands like "shutdown" (disable an interface) are routine on Cisco/Huawei.
+  //
+  // Design note: the serial protocol is explicitly chosen by the user in the UI
+  // for network devices / embedded systems. While startSerialSession technically
+  // supports PTY devices, users connecting to a Linux/BusyBox shell should use
+  // the "local" protocol (which goes through the normal shell path with blocklist).
+  // Additionally, execViaRawPty sends commands without shell wrapping, so shell
+  // metacharacters in blocklist patterns (eval, $(), backticks, pipes) cannot
+  // actually be interpreted even if sent to a serial-connected shell.
+  if (session.protocol !== "serial") {
+    const safety = checkCommandSafety(command);
+    if (safety.blocked) {
+      return { ok: false, error: `Command blocked by safety policy. Pattern: ${safety.matchedPattern}` };
+    }
+  }
 
   if ((session.protocol === "local" || session.type === "local") && session.shellKind === "unknown") {
     return {
@@ -616,17 +631,25 @@ function handleExec(params) {
     });
   }
 
-  // If no PTY stream, fall back to exec channel for SSH sessions only.
-  if (!sshClient || typeof sshClient.exec !== "function") {
-    return { ok: false, error: "Session does not support command execution" };
-  }
-
-  if (!ptyStream || typeof ptyStream.write !== "function") {
+  // Fallback: SSH exec channel (invisible to terminal).
+  // At this point ptyStream is not writable (already returned above if it was).
+  if (sshClient && typeof sshClient.exec === "function") {
     return execViaChannel(sshClient, command, {
       timeoutMs: commandTimeoutMs,
       trackForCancellation: activePtyExecs,
     });
   }
+
+  // Serial port: raw command execution (no shell wrapping)
+  if (session.protocol === "serial" && session.serialPort && typeof session.serialPort.write === "function") {
+    return execViaRawPty(session.serialPort, command, {
+      timeoutMs: commandTimeoutMs,
+      trackForCancellation: activePtyExecs,
+      chatSessionId: params?.chatSessionId,
+    });
+  }
+
+  return { ok: false, error: "Session does not support command execution" };
 }
 
 // ── Handler: terminalWrite ──
@@ -635,14 +658,16 @@ function handleTerminalWrite(params) {
   const { sessionId, input } = params;
   if (!sessionId || input == null) throw new Error("sessionId and input are required");
 
-  // Validate input against command blocklist
-  const safety = checkCommandSafety(input);
-  if (safety.blocked) {
-    return { ok: false, error: `Input blocked by safety policy. Pattern: ${safety.matchedPattern}` };
-  }
-
   const session = sessions?.get(sessionId);
   if (!session) return { ok: false, error: "Session not found" };
+
+  // Shell blocklist is meaningless on network device CLIs. Skip for serial.
+  if (session.protocol !== "serial") {
+    const safety = checkCommandSafety(input);
+    if (safety.blocked) {
+      return { ok: false, error: `Input blocked by safety policy. Pattern: ${safety.matchedPattern}` };
+    }
+  }
 
   if (session.stream) {
     session.stream.write(input);
@@ -654,6 +679,13 @@ function handleTerminalWrite(params) {
   }
   if (session.proc) {
     session.proc.write(input);
+    return { ok: true };
+  }
+  if (session.serialPort) {
+    // Serial devices expect CR (\r) for Enter, not LF (\n). The MCP tool
+    // description tells callers to use \n for Enter, so translate here.
+    const serialInput = input.replace(/\n/g, "\r");
+    session.serialPort.write(serialInput);
     return { ok: true };
   }
   return { ok: false, error: "No writable stream" };
@@ -866,10 +898,8 @@ async function handleMultiExec(params) {
     return { ok: false, error: 'Invalid command' };
   }
 
-  const safety = checkCommandSafety(command);
-  if (safety.blocked) {
-    return { ok: false, error: `Command blocked by safety policy. Pattern: ${safety.matchedPattern}` };
-  }
+  // No outer blocklist check here — handleExec does session-aware checks per
+  // session (serial sessions skip shell-oriented patterns like "shutdown").
 
   const results = {};
 

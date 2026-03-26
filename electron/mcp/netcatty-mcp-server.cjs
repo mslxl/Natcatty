@@ -76,12 +76,14 @@ function checkCommandSafety(command) {
   return { blocked: false };
 }
 
-/** Guard for write tools: blocks in observer mode, checks command safety for commands. */
-function guardWriteOperation(command) {
+/** Guard for write tools: blocks in observer mode, optionally checks command safety. */
+function guardWriteOperation(command, { skipBlocklist = false } = {}) {
   if (PERMISSION_MODE === "observer") {
     return 'Operation denied: permission mode is "observer" (read-only). Change to "confirm" or "autonomous" in Settings → AI → Safety to allow this action.';
   }
-  if (command) {
+  // When skipBlocklist is true, the caller relies on the TCP bridge layer for
+  // session-aware blocklist checks (e.g. serial sessions skip shell patterns).
+  if (!skipBlocklist && command) {
     const safety = checkCommandSafety(command);
     if (safety.blocked) {
       return `Command blocked by safety policy. Pattern: ${safety.matchedPattern}`;
@@ -197,7 +199,7 @@ server.resource(
 // Tool: get_environment
 server.tool(
   "get_environment",
-  "Get information about the current Netcatty scope: all terminal sessions exposed by Netcatty, their session IDs, OS, shell hints, and connection status. Sessions may be remote hosts, a local terminal, or Mosh-backed shells. Call this first before executing commands.",
+  "Get information about the current Netcatty scope: all terminal sessions exposed by Netcatty, their session IDs, OS, shell hints, and connection status. Sessions may be remote hosts, a local terminal, Mosh-backed shells, or serial port connections (network devices, embedded systems). Serial sessions have protocol 'serial' and shellType 'raw'. Call this first before executing commands.",
   {},
   async () => {
     process.stderr.write(`[netcatty-mcp] get_environment called, SCOPED_SESSION_IDS: ${JSON.stringify(SCOPED_SESSION_IDS)}, CHAT_SESSION_ID: ${CHAT_SESSION_ID}\n`);
@@ -218,13 +220,14 @@ server.tool(
 // Tool: terminal_execute
 server.tool(
   "terminal_execute",
-  "Execute a shell command on a Netcatty terminal session. The command runs in that session's shell and output (stdout/stderr) is returned when complete.",
+  "Execute a command on a Netcatty terminal session. For shell sessions, the command runs in the session's shell. For serial/raw sessions (network devices), the command is sent as-is without shell wrapping and exit codes are unavailable.",
   {
     sessionId: z.string().describe("The terminal session ID (from get_environment) to execute on."),
-    command: z.string().describe("The shell command to execute in the target session."),
+    command: z.string().describe("The command to execute in the target session."),
   },
   async ({ sessionId, command }) => {
-    const guardErr = guardWriteOperation(command);
+    // skipBlocklist: bridge layer does session-aware blocklist (serial sessions skip shell patterns)
+    const guardErr = guardWriteOperation(command, { skipBlocklist: true });
     if (guardErr) {
       return { content: [{ type: "text", text: `Error: ${guardErr}` }], isError: true };
     }
@@ -235,7 +238,10 @@ server.tool(
     const parts = [];
     if (result.stdout) parts.push(result.stdout);
     if (result.stderr) parts.push(`[stderr] ${result.stderr}`);
-    parts.push(`[exit code: ${result.exitCode ?? -1}]`);
+    // Serial/raw sessions return null exitCode (vendor CLIs have no exit codes)
+    if (result.exitCode != null) {
+      parts.push(`[exit code: ${result.exitCode}]`);
+    }
     return { content: [{ type: "text", text: parts.join("\n") }] };
   },
 );
@@ -249,7 +255,7 @@ server.tool(
     input: z.string().describe("The raw input string. Use escape sequences for special keys (e.g. \\x03 for ctrl+c, \\n for enter)."),
   },
   async ({ sessionId, input }) => {
-    const guardErr = guardWriteOperation(input);
+    const guardErr = guardWriteOperation(input, { skipBlocklist: true });
     if (guardErr) {
       return { content: [{ type: "text", text: `Error: ${guardErr}` }], isError: true };
     }
@@ -408,12 +414,12 @@ server.tool(
   "Execute a command on multiple Netcatty terminal sessions simultaneously or sequentially. Useful for fleet-wide operations, or to compare local and remote environments.",
   {
     sessionIds: z.array(z.string()).describe("Array of session IDs to execute on."),
-    command: z.string().describe("The shell command to execute on each host."),
+    command: z.string().describe("The command to execute on each host."),
     mode: z.enum(["parallel", "sequential"]).optional().default("parallel").describe("Execution mode. Defaults to parallel."),
     stopOnError: z.boolean().optional().default(false).describe("In sequential mode, stop on first failure."),
   },
   async ({ sessionIds, command, mode, stopOnError }) => {
-    const guardErr = guardWriteOperation(command);
+    const guardErr = guardWriteOperation(command, { skipBlocklist: true });
     if (guardErr) {
       return { content: [{ type: "text", text: `Error: ${guardErr}` }], isError: true };
     }

@@ -891,15 +891,18 @@ function registerHandlers(ipcMain) {
     if (mcpServerBridge.getPermissionMode() === "observer") {
       return { ok: false, error: "Execution blocked: permission mode is 'observer'" };
     }
-    // Check command against safety blocklist before executing
-    const safety = mcpServerBridge.checkCommandSafety(command);
-    if (safety.blocked) {
-      return { ok: false, error: `Command blocked by safety policy. Pattern: ${safety.matchedPattern}` };
-    }
-
     const session = sessions?.get(sessionId);
     if (!session) {
       return { ok: false, error: "Session not found" };
+    }
+
+    // Shell blocklist is meaningless on network device CLIs (e.g. "shutdown"
+    // disables an interface on Cisco). Skip for serial sessions.
+    if (session.protocol !== "serial") {
+      const safety = mcpServerBridge.checkCommandSafety(command);
+      if (safety.blocked) {
+        return { ok: false, error: `Command blocked by safety policy. Pattern: ${safety.matchedPattern}` };
+      }
     }
 
     try {
@@ -936,6 +939,17 @@ function registerHandlers(ipcMain) {
         });
       }
 
+      // Serial port: raw command execution (no shell wrapping)
+      if (session.protocol === "serial" && session.serialPort && typeof session.serialPort.write === "function") {
+        const { execViaRawPty } = require("./ai/ptyExec.cjs");
+        const serialTimeoutMs = mcpServerBridge.getCommandTimeoutMs ? mcpServerBridge.getCommandTimeoutMs() : 60000;
+        return execViaRawPty(session.serialPort, command, {
+          timeoutMs: serialTimeoutMs,
+          trackForCancellation: mcpServerBridge.activePtyExecs,
+          chatSessionId,
+        });
+      }
+
       return { ok: false, error: "No terminal stream or SSH client available for this session" };
     } catch (err) {
       return { ok: false, error: err?.message || String(err) };
@@ -961,15 +975,17 @@ function registerHandlers(ipcMain) {
     if (mcpServerBridge.getPermissionMode() === "observer") {
       return { ok: false, error: "Terminal write blocked: permission mode is 'observer'" };
     }
-    // Check input against safety blocklist before writing
-    const safety = mcpServerBridge.checkCommandSafety(data);
-    if (safety.blocked) {
-      return { ok: false, error: `Input blocked by safety policy. Pattern: ${safety.matchedPattern}` };
-    }
-
     const session = sessions?.get(sessionId);
     if (!session) {
       return { ok: false, error: "Session not found" };
+    }
+
+    // Shell blocklist is meaningless on network device CLIs. Skip for serial.
+    if (session.protocol !== "serial") {
+      const safety = mcpServerBridge.checkCommandSafety(data);
+      if (safety.blocked) {
+        return { ok: false, error: `Input blocked by safety policy. Pattern: ${safety.matchedPattern}` };
+      }
     }
     try {
       if (session.stream) {
@@ -982,6 +998,12 @@ function registerHandlers(ipcMain) {
       }
       if (session.proc) {
         session.proc.write(data);
+        return { ok: true };
+      }
+      if (session.serialPort) {
+        // Serial devices expect CR (\r) for Enter, not LF (\n).
+        const serialData = data.replace(/\n/g, "\r");
+        session.serialPort.write(serialData);
         return { ok: true };
       }
       return { ok: false, error: "No writable stream for session" };
