@@ -535,8 +535,17 @@ const registerBridges = (win) => {
   });
 
   // Local directory listing for autocomplete (local terminal sessions)
-  ipcMain.handle("netcatty:local:listdir", async (_event, { path: dirPath, foldersOnly, filterPrefix = "", limit = 100 }) => {
+  ipcMain.handle("netcatty:local:listdir", async (_event, payload) => {
     try {
+      const {
+        path: dirPath,
+        foldersOnly,
+        filterPrefix = "",
+        limit = 100,
+      } = payload || {};
+      if (typeof dirPath !== "string" || dirPath.length === 0) {
+        return { success: false, entries: [], error: "Invalid directory path" };
+      }
       const resolvedPath = dirPath.startsWith("~")
         ? dirPath.replace(/^~/, require("os").homedir())
         : dirPath;

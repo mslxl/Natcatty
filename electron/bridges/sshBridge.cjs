@@ -1872,33 +1872,44 @@ async function listSessionDir(_event, payload) {
       resolveOnce({ success: false, entries: [], error: 'Timeout listing directory' });
     }, 3000);
 
-    // Use a structured JSON payload from Perl so filenames with whitespace are preserved
-    // and folder-only filtering can distinguish symlinks-to-directories from symlinks-to-files.
+    // Emit a NUL-delimited stream from plain POSIX shell/find so we don't depend on
+    // Python/Perl, while still preserving whitespace and newline characters in filenames.
     const safePath = dirPath.replace(/'/g, "'\\''");
     const normalizedPrefix = typeof filterPrefix === "string" ? filterPrefix.toLowerCase() : "";
     const safePrefix = normalizedPrefix.replace(/'/g, "'\\''");
     const maxEntries = Number.isFinite(limit) ? Math.min(Math.max(1, Math.floor(limit)), 200) : 100;
-    const cmd = `perl -MJSON::PP -e '
-      use strict;
-      use warnings;
-      my ($dir, $prefix, $folders_only, $limit) = @ARGV;
-      opendir(my $dh, $dir) or exit 2;
-      my @entries;
-      while (defined(my $name = readdir($dh))) {
-        next if $name eq "." || $name eq "..";
-        next if length($prefix) && index(lc($name), $prefix) != 0;
-        my $path = $dir;
-        $path .= "/" unless $path =~ m{/$};
-        $path .= $name;
-        my $is_link = -l $path;
-        my $is_dir = -d $path;
-        next if $folders_only && !$is_dir;
-        my $type = $is_link ? "symlink" : ($is_dir ? "directory" : "file");
-        push @entries, { name => $name, type => $type };
-        last if @entries >= $limit;
-      }
-      print encode_json(\\@entries);
-    ' -- '${safePath}' '${safePrefix}' ${foldersOnly ? 1 : 0} ${maxEntries} 2>/dev/null`;
+    const cmd = `find '${safePath}' -mindepth 1 -maxdepth 1 -exec sh -c '
+      prefix="$1"
+      folders_only="$2"
+      limit="$3"
+      shift 3
+      count=0
+      for path do
+        name=${path##*/}
+        lower_name=$(printf "%s" "$name" | tr "[:upper:]" "[:lower:]")
+        if [ -n "$prefix" ]; then
+          case "$lower_name" in
+            "$prefix"*) ;;
+            *) continue ;;
+          esac
+        fi
+        if [ "$folders_only" -eq 1 ] && [ ! -d "$path" ]; then
+          continue
+        fi
+        if [ -L "$path" ]; then
+          type="symlink"
+        elif [ -d "$path" ]; then
+          type="directory"
+        else
+          type="file"
+        fi
+        printf "%s\\0%s\\0" "$name" "$type"
+        count=$((count + 1))
+        if [ "$count" -ge "$limit" ]; then
+          break
+        fi
+      done
+    ' sh '${safePrefix}' ${foldersOnly ? 1 : 0} ${maxEntries} {} + 2>/dev/null`;
 
     session.conn.exec(cmd, (err, stream) => {
       if (err) {
@@ -1906,18 +1917,36 @@ async function listSessionDir(_event, payload) {
         return;
       }
       streamRef = stream;
-      let out = '';
+      const chunks = [];
       let errOut = '';
-      stream.on('data', (d) => { out += d.toString(); });
+      stream.on('data', (d) => { chunks.push(Buffer.from(d)); });
       stream.stderr?.on('data', (d) => { errOut += d.toString(); });
       stream.on('close', () => {
         if (settled) return;
         try {
-          const entries = JSON.parse(out);
-          if (!Array.isArray(entries)) {
+          const output = Buffer.concat(chunks);
+          const entries = [];
+          let fieldStart = 0;
+          let pendingName = null;
+
+          for (let i = 0; i < output.length; i++) {
+            if (output[i] !== 0) continue;
+            const field = output.toString('utf8', fieldStart, i);
+            fieldStart = i + 1;
+            if (pendingName === null) {
+              pendingName = field;
+            } else {
+              entries.push({ name: pendingName, type: field });
+              pendingName = null;
+              if (entries.length >= maxEntries) break;
+            }
+          }
+
+          if (pendingName !== null) {
             resolveOnce({ success: false, entries: [], error: 'Invalid directory listing response' });
             return;
           }
+
           resolveOnce({ success: true, entries });
         } catch {
           resolveOnce({
