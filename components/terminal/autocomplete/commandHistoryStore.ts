@@ -142,6 +142,15 @@ export interface HistoryQueryOptions {
   limit?: number;
 }
 
+export interface RecentHistoryQueryOptions extends HistoryQueryOptions {
+  /** Base command name, e.g. `cd` or `ls` */
+  commandName: string;
+  /** Exact command text to exclude from results */
+  excludeCommand?: string;
+  /** Optional path prefix to require on the current argument */
+  argumentPrefix?: string;
+}
+
 /**
  * Query history entries matching a prefix.
  * Returns entries sorted by relevance (frequency * recency).
@@ -151,6 +160,7 @@ export function queryHistory(
   options: HistoryQueryOptions = {},
 ): HistoryEntry[] {
   const { hostId, includeOsMatches = true, os, limit = 20 } = options;
+  if (limit <= 0) return [];
   const store = loadStore();
   const lowerPrefix = prefix.toLowerCase();
   const now = Date.now(); // Cache once per query
@@ -203,6 +213,7 @@ export function fuzzyQueryHistory(
   options: HistoryQueryOptions = {},
 ): HistoryEntry[] {
   const { hostId, includeOsMatches = true, os, limit = 10 } = options;
+  if (limit <= 0) return [];
   const store = loadStore();
   const lowerQuery = query.toLowerCase();
   const now = Date.now(); // Cache once per query
@@ -244,6 +255,136 @@ export function fuzzyQueryHistory(
   }
 
   return results;
+}
+
+/**
+ * Query the most recently used history entries for the same command name.
+ * Useful when the user is currently completing a path argument and wants
+ * a few recent command-line examples (e.g. recent `cd ...` commands).
+ */
+export function queryRecentHistoryByCommand(
+  options: RecentHistoryQueryOptions,
+): HistoryEntry[] {
+  const {
+    commandName,
+    excludeCommand,
+    argumentPrefix,
+    hostId,
+    includeOsMatches = true,
+    os,
+    limit = 3,
+  } = options;
+  if (!commandName || limit <= 0) return [];
+
+  const store = loadStore();
+  const trimmedCommandName = commandName.trim().toLowerCase();
+  const commandPrefix = `${trimmedCommandName} `;
+  const normalizedArgumentPrefix = normalizeArgumentToken(argumentPrefix ?? "");
+
+  const filtered = store.entries.filter((entry) => {
+    const lowerCommand = entry.command.toLowerCase();
+    if (lowerCommand !== trimmedCommandName && !lowerCommand.startsWith(commandPrefix)) {
+      return false;
+    }
+    if (excludeCommand && entry.command === excludeCommand) return false;
+
+    if (normalizedArgumentPrefix) {
+      const currentToken = normalizeArgumentToken(getCurrentCommandToken(entry.command));
+      if (!currentToken.startsWith(normalizedArgumentPrefix)) {
+        return false;
+      }
+    }
+
+    if (hostId) {
+      if (entry.hostId === hostId) return true;
+      if (includeOsMatches && os && entry.os === os) return true;
+      return false;
+    }
+    return true;
+  });
+
+  filtered.sort((a, b) => {
+    if (hostId) {
+      const aIsHost = a.hostId === hostId ? 1 : 0;
+      const bIsHost = b.hostId === hostId ? 1 : 0;
+      if (aIsHost !== bIsHost) return bIsHost - aIsHost;
+    }
+    return b.lastUsedAt - a.lastUsedAt;
+  });
+
+  const seen = new Set<string>();
+  const results: HistoryEntry[] = [];
+  for (const entry of filtered) {
+    if (seen.has(entry.command)) continue;
+    seen.add(entry.command);
+    results.push(entry);
+    if (results.length >= limit) break;
+  }
+
+  return results;
+}
+
+function getCurrentCommandToken(command: string): string {
+  const tokens = tokenizeShellLike(command);
+  return tokens.length > 0 ? (tokens[tokens.length - 1] || "") : "";
+}
+
+function normalizeArgumentToken(token: string): string {
+  return token
+    .trim()
+    .replace(/^['"]/, "")
+    .replace(/['"]$/, "")
+    .replace(/\\ /g, " ")
+    .toLowerCase();
+}
+
+function tokenizeShellLike(input: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let escaped = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      continue;
+    }
+
+    if (ch === "\\") {
+      escaped = true;
+      current += ch;
+      continue;
+    }
+
+    if (ch === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      current += ch;
+      continue;
+    }
+
+    if (ch === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      current += ch;
+      continue;
+    }
+
+    if (ch === " " && !inSingleQuote && !inDoubleQuote) {
+      if (current.length > 0) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+
+    current += ch;
+  }
+
+  tokens.push(current);
+  return tokens;
 }
 
 /**

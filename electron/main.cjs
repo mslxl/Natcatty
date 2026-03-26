@@ -534,6 +534,52 @@ const registerBridges = (win) => {
     }
   });
 
+  // Local directory listing for autocomplete (local terminal sessions)
+  ipcMain.handle("netcatty:local:listdir", async (_event, payload) => {
+    try {
+      const {
+        path: dirPath,
+        foldersOnly,
+        filterPrefix = "",
+        limit = 100,
+      } = payload || {};
+      if (typeof dirPath !== "string" || dirPath.length === 0) {
+        return { success: false, entries: [], error: "Invalid directory path" };
+      }
+      const resolvedPath = dirPath.startsWith("~")
+        ? dirPath.replace(/^~/, require("os").homedir())
+        : dirPath;
+      const normalizedPrefix = typeof filterPrefix === "string" ? filterPrefix.toLowerCase() : "";
+      const maxEntries = Number.isFinite(limit) ? Math.min(Math.max(1, Math.floor(limit)), 200) : 100;
+      const entries = await fs.promises.readdir(resolvedPath, { withFileTypes: true });
+      const result = [];
+      for (const entry of entries) {
+        if (result.length >= maxEntries) break;
+        if (entry.name === "." || entry.name === "..") continue;
+        if (normalizedPrefix && !entry.name.toLowerCase().startsWith(normalizedPrefix)) continue;
+        let type = entry.isDirectory() ? "directory" : entry.isSymbolicLink() ? "symlink" : "file";
+        if (foldersOnly) {
+          if (type === "directory") {
+            // keep
+          } else if (type === "symlink") {
+            try {
+              const stat = await fs.promises.stat(path.join(resolvedPath, entry.name));
+              if (!stat.isDirectory()) continue;
+            } catch {
+              continue;
+            }
+          } else {
+            continue;
+          }
+        }
+        result.push({ name: entry.name, type });
+      }
+      return { success: true, entries: result };
+    } catch {
+      return { success: false, entries: [] };
+    }
+  });
+
   // Settings window handler
   ipcMain.handle("netcatty:settings:open", async () => {
     try {
