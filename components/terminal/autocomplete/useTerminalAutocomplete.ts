@@ -12,11 +12,11 @@ import { startTransition, useCallback, useEffect, useRef, useState, type RefObje
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { GhostTextAddon } from "./GhostTextAddon";
 import { detectPrompt, type PromptDetectionResult } from "./promptDetector";
-import { getCompletions, type CompletionSuggestion } from "./completionEngine";
+import { getCompletions, parseCommandLine, type CompletionSuggestion } from "./completionEngine";
 import { recordCommand } from "./commandHistoryStore";
 import { preloadCommonSpecs } from "./figSpecLoader";
 import { getXTermCellDimensions } from "./xtermUtils";
-import { listDirectoryEntries } from "./remotePathCompleter";
+import { listDirectoryEntries, normalizePathTokenForLookup } from "./remotePathCompleter";
 
 export interface AutocompleteSettings {
   enabled: boolean;
@@ -241,8 +241,7 @@ export function useTerminalAutocomplete(
         : prev);
       return;
     }
-    const tokens = item.text.split(/\s+/);
-    const dirPath = tokens[tokens.length - 1];
+    const dirPath = normalizePathTokenForLookup(parseCommandLine(item.text).currentWord);
     if (!dirPath) return;
 
     const requestVersion = ++subDirFetchVersionRef.current;
@@ -379,26 +378,34 @@ export function useTerminalAutocomplete(
     const panel = s.subDirPanels[level];
     if (!panel) return;
 
-    const suffix = entry.type === "directory" ? "/" : "";
-    const entryName = entry.name.includes(" ") ? entry.name.replace(/ /g, "\\ ") : entry.name;
-    const fullPath = panel.dirPath + entryName + suffix;
-
     // Get current prompt to know what command prefix to keep (e.g., "cd ")
     const prompt = detectPrompt(term);
     if (!prompt.isAtPrompt) return;
 
     // Find the command part (everything before the path argument)
     // e.g., userInput = "cd /usr/" → command prefix = "cd ", we replace the whole path
-    const cmdTokens = prompt.userInput.split(/\s+/);
-    // The path is the last token — replace it with fullPath
-    const cmdPrefix = cmdTokens.slice(0, -1).join(" ") + (cmdTokens.length > 1 ? " " : "");
+    const parsedPrompt = parseCommandLine(prompt.userInput);
+    const cmdPrefix = parsedPrompt.tokens
+      .slice(0, parsedPrompt.wordIndex)
+      .join(" ") + (parsedPrompt.wordIndex > 0 ? " " : "");
+    const currentToken = parsedPrompt.currentWord;
+    const quotePrefix = currentToken.startsWith('"') || currentToken.startsWith("'")
+      ? currentToken[0]
+      : "";
+    const quoteSuffix = quotePrefix && currentToken.endsWith(quotePrefix) ? quotePrefix : "";
+    const suffix = entry.type === "directory" ? "/" : "";
+    const entryName = quotePrefix || !entry.name.includes(" ")
+      ? entry.name
+      : entry.name.replace(/ /g, "\\ ");
+    const fullPath = panel.dirPath + entryName + suffix;
+    const replacementPath = `${quotePrefix}${fullPath}${quoteSuffix}`;
 
     // Clear current input and write: cmdPrefix + fullPath
     const isWindows = hostOsRef.current === "windows";
     const clearSeq = isWindows
       ? "\b".repeat(prompt.userInput.length)
       : "\x15";
-    writeToTerminal(clearSeq + cmdPrefix + fullPath);
+    writeToTerminal(clearSeq + cmdPrefix + replacementPath);
     clearState();
 
     if (entry.type === "directory") {
@@ -438,6 +445,13 @@ export function useTerminalAutocomplete(
     }
 
     const input = prompt.userInput;
+    const parsedInput = parseCommandLine(input);
+    const cwd = resolveAutocompleteCwd(
+      prompt.promptText,
+      parsedInput.currentWord,
+      getCwdRef.current?.(),
+      hostOsRef.current,
+    );
 
     // Single query for both ghost text and popup
     const completions = await getCompletions(input, {
@@ -446,7 +460,7 @@ export function useTerminalAutocomplete(
       maxResults: settingsRef.current.maxSuggestions,
       sessionId: sessionIdRef.current,
       protocol: protocolRef.current,
-      cwd: getCwdRef.current?.(),
+      cwd,
     });
 
     if (disposedRef.current || version !== fetchVersionRef.current) return;
@@ -655,7 +669,7 @@ export function useTerminalAutocomplete(
       }
 
       // Tab: accept selected popup suggestion, or accept ghost text
-      if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey && s.subDirFocusLevel < 0) {
         if (s.popupVisible && s.suggestions.length > 0) {
           e.preventDefault();
           const selected = s.suggestions[Math.max(0, s.selectedIndex)];
@@ -740,7 +754,16 @@ export function useTerminalAutocomplete(
             }
             return false;
           }
-          return false;
+          if (
+            e.key.length === 1 ||
+            e.key === "Backspace" ||
+            e.key === "Delete" ||
+            e.key === "Home" ||
+            e.key === "End"
+          ) {
+            clearState();
+          }
+          return true;
         }
 
         // Main panel navigation
@@ -887,6 +910,50 @@ export function useTerminalAutocomplete(
     closePopup,
     dispose,
   };
+}
+
+function resolveAutocompleteCwd(
+  promptText: string,
+  currentWord: string,
+  fallbackCwd: string | undefined,
+  os: "linux" | "windows" | "macos",
+): string | undefined {
+  if (os === "windows") return fallbackCwd;
+
+  const normalizedWord = currentWord.trim().replace(/^['"]/, "");
+  const isRelativePathWord = normalizedWord.length > 0 &&
+    !normalizedWord.startsWith("/") &&
+    !normalizedWord.startsWith("~/") &&
+    !normalizedWord.startsWith("-");
+
+  if (!isRelativePathWord) {
+    return fallbackCwd;
+  }
+
+  const promptCwd = extractPosixCwdFromPrompt(promptText);
+  return promptCwd ?? fallbackCwd;
+}
+
+function extractPosixCwdFromPrompt(promptText: string): string | undefined {
+  const trimmed = promptText.trimEnd().replace(/[#$%>]\s*$/, "");
+  if (!trimmed) return undefined;
+
+  const patterns = [
+    /:(\/[^\s\]]*|~(?:\/[^\s\]]*)?)$/,
+    /\s(\/[^\s\]]*|~(?:\/[^\s\]]*)?)\]$/,
+    /(^|[\s:])(\/[^\s\]]*|~(?:\/[^\s\]]*)?)$/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = trimmed.match(pattern);
+    if (!match) continue;
+    const candidate = match[match.length - 1];
+    if (candidate === "/" || candidate.startsWith("/") || candidate === "~" || candidate.startsWith("~/")) {
+      return candidate;
+    }
+  }
+
+  return undefined;
 }
 
 function areSuggestionsEqual(

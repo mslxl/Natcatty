@@ -65,7 +65,7 @@ export function shouldDoPathCompletion(
   ctx: CompletionContext,
   resolvedArgs?: FigArg | FigArg[],
 ): { shouldComplete: boolean; foldersOnly: boolean } {
-  const currentWord = ctx.currentWord;
+  const currentWord = stripWrappingQuotes(ctx.currentWord);
 
   // 1. Typed path trigger: if current word starts with path-like prefix, always complete
   if (currentWord.startsWith("/") || currentWord.startsWith("./") ||
@@ -114,19 +114,24 @@ export function shouldDoPathCompletion(
 export function resolvePathComponents(
   currentWord: string,
   cwd: string | undefined,
-): { dirToList: string; filterPrefix: string; pathPrefix: string } {
+): { dirToList: string; filterPrefix: string; pathPrefix: string; quoteSuffix: string } {
+  const quotePrefix = getLeadingQuote(currentWord);
+  const quoteSuffix = getTrailingMatchingQuote(currentWord, quotePrefix);
+  const unquotedWord = stripWrappingQuotes(currentWord);
+
   // Handle empty input — list CWD
-  if (!currentWord || currentWord === "." || currentWord === "~") {
-    const dir = currentWord === "~" ? "~" : (cwd || ".");
-    return { dirToList: dir, filterPrefix: "", pathPrefix: currentWord ? currentWord + "/" : "" };
+  if (!unquotedWord || unquotedWord === "." || unquotedWord === "~") {
+    const dir = unquotedWord === "~" ? "~" : (cwd || ".");
+    const visiblePrefix = unquotedWord ? `${quotePrefix}${unquotedWord}/` : quotePrefix;
+    return { dirToList: dir, filterPrefix: "", pathPrefix: visiblePrefix, quoteSuffix };
   }
 
   // Find the last path separator
-  const lastSlash = currentWord.lastIndexOf("/");
+  const lastSlash = unquotedWord.lastIndexOf("/");
 
   if (lastSlash >= 0) {
-    const dirPart = currentWord.substring(0, lastSlash + 1); // includes trailing /
-    const filterPart = currentWord.substring(lastSlash + 1);
+    const dirPart = unquotedWord.substring(0, lastSlash + 1); // includes trailing /
+    const filterPart = unquotedWord.substring(lastSlash + 1);
     const decodedDirPart = decodeShellPathFragment(dirPart);
     const decodedFilterPart = decodeShellPathFragment(filterPart);
 
@@ -142,15 +147,20 @@ export function resolvePathComponents(
       dirToList = cwd ? `${cwd}/${decodedDirPart}` : decodedDirPart;
     }
 
-    return { dirToList, filterPrefix: decodedFilterPart, pathPrefix: dirPart };
+    return { dirToList, filterPrefix: decodedFilterPart, pathPrefix: quotePrefix + dirPart, quoteSuffix };
   }
 
   // No slash — filter CWD entries by the typed prefix
   return {
     dirToList: cwd || ".",
-    filterPrefix: decodeShellPathFragment(currentWord),
-    pathPrefix: "",
+    filterPrefix: decodeShellPathFragment(unquotedWord),
+    pathPrefix: quotePrefix,
+    quoteSuffix,
   };
+}
+
+export function normalizePathTokenForLookup(token: string): string {
+  return decodeShellPathFragment(stripWrappingQuotes(token));
 }
 
 /**
@@ -332,6 +342,26 @@ function decodeShellPathFragment(value: string): string {
   }
 
   if (escaped) result += "\\";
+  return result;
+}
+
+function getLeadingQuote(value: string): string {
+  return value.startsWith('"') || value.startsWith("'") ? value[0] : "";
+}
+
+function getTrailingMatchingQuote(value: string, quotePrefix: string): string {
+  return quotePrefix && value.endsWith(quotePrefix) ? quotePrefix : "";
+}
+
+function stripWrappingQuotes(value: string): string {
+  if (!value) return value;
+  let result = value;
+  if (result.startsWith('"') || result.startsWith("'")) {
+    result = result.slice(1);
+  }
+  if (result.endsWith('"') || result.endsWith("'")) {
+    result = result.slice(0, -1);
+  }
   return result;
 }
 

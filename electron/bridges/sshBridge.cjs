@@ -1838,69 +1838,94 @@ async function getSessionPwd(event, payload) {
  * Uses a separate exec channel — does not touch the interactive shell.
  */
 async function listSessionDir(_event, payload) {
-  const { sessionId, path: dirPath, foldersOnly, filterPrefix = "", limit = 100 } = payload;
+  const {
+    sessionId,
+    path: dirPath,
+    foldersOnly,
+    filterPrefix = "",
+    limit = 100,
+  } = payload || {};
   const session = sessions.get(sessionId);
 
   if (!session || !session.conn) {
     return { success: false, entries: [], error: 'Session not found' };
   }
 
+  if (typeof dirPath !== "string" || dirPath.length === 0) {
+    return { success: false, entries: [], error: 'Invalid directory path' };
+  }
+
   return new Promise((resolve) => {
+    let settled = false;
+    let streamRef = null;
+    const resolveOnce = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
     const timer = setTimeout(() => {
-      resolve({ success: false, entries: [], error: 'Timeout listing directory' });
+      try {
+        streamRef?.close?.();
+        streamRef?.destroy?.();
+      } catch {}
+      resolveOnce({ success: false, entries: [], error: 'Timeout listing directory' });
     }, 3000);
 
-    // ls -1FapU: include dot files, append type suffixes, and avoid sorting.
-    // Prefix filtering happens remotely to reduce transport and renderer work.
+    // Use a structured JSON payload from Perl so filenames with whitespace are preserved
+    // and folder-only filtering can distinguish symlinks-to-directories from symlinks-to-files.
     const safePath = dirPath.replace(/'/g, "'\\''");
     const normalizedPrefix = typeof filterPrefix === "string" ? filterPrefix.toLowerCase() : "";
     const safePrefix = normalizedPrefix.replace(/'/g, "'\\''");
     const maxEntries = Number.isFinite(limit) ? Math.min(Math.max(1, Math.floor(limit)), 200) : 100;
-    const awkConditions = [];
-    if (normalizedPrefix) {
-      awkConditions.push("index(tolower($0), p) == 1");
-    }
-    if (foldersOnly) {
-      awkConditions.push("$0 ~ /[\\/@]$/");
-    }
-    const filterCmd = awkConditions.length > 0
-      ? ` | awk -v p='${safePrefix}' '${awkConditions.join(" && ")}'`
-      : "";
-    const cmd = `LC_ALL=C ls -1FapU -- '${safePath}' 2>/dev/null${filterCmd} | head -n ${maxEntries}`;
+    const cmd = `perl -MJSON::PP -e '
+      use strict;
+      use warnings;
+      my ($dir, $prefix, $folders_only, $limit) = @ARGV;
+      opendir(my $dh, $dir) or exit 2;
+      my @entries;
+      while (defined(my $name = readdir($dh))) {
+        next if $name eq "." || $name eq "..";
+        next if length($prefix) && index(lc($name), $prefix) != 0;
+        my $path = $dir;
+        $path .= "/" unless $path =~ m{/$};
+        $path .= $name;
+        my $is_link = -l $path;
+        my $is_dir = -d $path;
+        next if $folders_only && !$is_dir;
+        my $type = $is_link ? "symlink" : ($is_dir ? "directory" : "file");
+        push @entries, { name => $name, type => $type };
+        last if @entries >= $limit;
+      }
+      print encode_json(\\@entries);
+    ' -- '${safePath}' '${safePrefix}' ${foldersOnly ? 1 : 0} ${maxEntries} 2>/dev/null`;
 
     session.conn.exec(cmd, (err, stream) => {
       if (err) {
-        clearTimeout(timer);
-        resolve({ success: false, entries: [], error: err.message });
+        resolveOnce({ success: false, entries: [], error: err.message });
         return;
       }
+      streamRef = stream;
       let out = '';
+      let errOut = '';
       stream.on('data', (d) => { out += d.toString(); });
+      stream.stderr?.on('data', (d) => { errOut += d.toString(); });
       stream.on('close', () => {
-        clearTimeout(timer);
-        const entries = [];
-        for (const line of out.split('\n')) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed === '.' || trimmed === './' || trimmed === '../') continue;
-
-          let name = trimmed;
-          let type = 'file';
-
-          if (name.endsWith('/')) {
-            name = name.slice(0, -1);
-            type = 'directory';
-          } else if (name.endsWith('@')) {
-            name = name.slice(0, -1);
-            type = 'symlink';
-          } else if (name.endsWith('*') || name.endsWith('|') || name.endsWith('=')) {
-            name = name.slice(0, -1);
+        if (settled) return;
+        try {
+          const entries = JSON.parse(out);
+          if (!Array.isArray(entries)) {
+            resolveOnce({ success: false, entries: [], error: 'Invalid directory listing response' });
+            return;
           }
-
-          if (foldersOnly && type !== 'directory' && type !== 'symlink') continue;
-
-          entries.push({ name, type });
+          resolveOnce({ success: true, entries });
+        } catch {
+          resolveOnce({
+            success: false,
+            entries: [],
+            error: errOut.trim() || 'Failed to parse directory listing',
+          });
         }
-        resolve({ success: true, entries });
       });
     });
   });

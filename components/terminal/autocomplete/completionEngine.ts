@@ -193,11 +193,10 @@ export async function getCompletions(
   }
 
   if (preferPathSuggestions && ctx.commandName) {
-    const currentArgumentPrefix = ctx.tokens.slice(1).join(" ").trimStart();
     const recentHistory = queryRecentHistoryByCommand({
       commandName: ctx.commandName,
       excludeCommand: input,
-      argumentPrefix: currentArgumentPrefix,
+      argumentPrefix: normalizeHistoryPathPrefix(ctx.currentWord),
       hostId,
       os,
       includeOsMatches: true,
@@ -240,11 +239,14 @@ export async function getCompletions(
   }
 
   if (pathEntries.length > 0) {
-    const { pathPrefix } = resolvePathComponents(ctx.currentWord, options.cwd);
+    const { pathPrefix, quoteSuffix } = resolvePathComponents(ctx.currentWord, options.cwd);
+    const isQuotedPath = ctx.currentWord.startsWith('"') || ctx.currentWord.startsWith("'");
     for (const entry of pathEntries) {
-      const insertName = entry.name.includes(" ") ? entry.name.replace(/ /g, "\\ ") : entry.name;
+      const insertName = isQuotedPath || !entry.name.includes(" ")
+        ? entry.name
+        : entry.name.replace(/ /g, "\\ ");
       const suffix = entry.type === "directory" ? "/" : "";
-      const fullPath = pathPrefix + insertName + suffix;
+      const fullPath = pathPrefix + insertName + suffix + quoteSuffix;
       const suggestion = {
         text: rebuildCommand(ctx.tokens, ctx.wordIndex, fullPath),
         displayText: entry.name + suffix,
@@ -291,6 +293,14 @@ export async function getCompletions(
   }
 
   return unique;
+}
+
+function normalizeHistoryPathPrefix(token: string): string {
+  return token
+    .trim()
+    .replace(/^['"]/, "")
+    .replace(/['"]$/, "")
+    .replace(/\\ /g, " ");
 }
 
 /**

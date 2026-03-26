@@ -279,7 +279,7 @@ export function queryRecentHistoryByCommand(
   const store = loadStore();
   const trimmedCommandName = commandName.trim().toLowerCase();
   const commandPrefix = `${trimmedCommandName} `;
-  const normalizedArgumentPrefix = argumentPrefix?.toLowerCase().trim() ?? "";
+  const normalizedArgumentPrefix = normalizeArgumentToken(argumentPrefix ?? "");
 
   const filtered = store.entries.filter((entry) => {
     const lowerCommand = entry.command.toLowerCase();
@@ -289,8 +289,8 @@ export function queryRecentHistoryByCommand(
     if (excludeCommand && entry.command === excludeCommand) return false;
 
     if (normalizedArgumentPrefix) {
-      const argument = entry.command.slice(trimmedCommandName.length).trimStart();
-      if (!argument.toLowerCase().startsWith(normalizedArgumentPrefix)) {
+      const currentToken = normalizeArgumentToken(getCurrentCommandToken(entry.command));
+      if (!currentToken.startsWith(normalizedArgumentPrefix)) {
         return false;
       }
     }
@@ -322,6 +322,69 @@ export function queryRecentHistoryByCommand(
   }
 
   return results;
+}
+
+function getCurrentCommandToken(command: string): string {
+  const tokens = tokenizeShellLike(command);
+  return tokens.length > 0 ? (tokens[tokens.length - 1] || "") : "";
+}
+
+function normalizeArgumentToken(token: string): string {
+  return token
+    .trim()
+    .replace(/^['"]/, "")
+    .replace(/['"]$/, "")
+    .replace(/\\ /g, " ")
+    .toLowerCase();
+}
+
+function tokenizeShellLike(input: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let escaped = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      continue;
+    }
+
+    if (ch === "\\") {
+      escaped = true;
+      current += ch;
+      continue;
+    }
+
+    if (ch === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      current += ch;
+      continue;
+    }
+
+    if (ch === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      current += ch;
+      continue;
+    }
+
+    if (ch === " " && !inSingleQuote && !inDoubleQuote) {
+      if (current.length > 0) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+
+    current += ch;
+  }
+
+  tokens.push(current);
+  return tokens;
 }
 
 /**

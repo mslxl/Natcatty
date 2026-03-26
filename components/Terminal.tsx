@@ -445,6 +445,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   autocompleteKeyEventRef.current = autocomplete.handleKeyEvent;
   autocompleteInputRef.current = autocomplete.handleInput;
   autocompleteRepositionRef.current = autocomplete.repositionPopup;
+  const autocompleteClosePopup = autocomplete.closePopup;
+
+  useEffect(() => {
+    if (!isVisible) {
+      autocompleteClosePopup();
+    }
+  }, [isVisible, autocompleteClosePopup]);
 
   // Check if this is a local or serial connection (doesn't need connection dialog during connecting)
   const isLocalConnection = host.protocol === "local";
@@ -1879,7 +1886,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           />
 
           {/* Autocomplete popup — rendered via Portal to escape overflow:hidden */}
-          {autocomplete.state.popupVisible && autocomplete.state.suggestions.length > 0 &&
+          {isVisible && autocomplete.state.popupVisible && autocomplete.state.suggestions.length > 0 &&
             ReactDOM.createPortal(
               <AutocompletePopup
                 suggestions={autocomplete.state.suggestions}

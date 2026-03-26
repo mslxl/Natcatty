@@ -548,8 +548,21 @@ const registerBridges = (win) => {
         if (result.length >= maxEntries) break;
         if (entry.name === "." || entry.name === "..") continue;
         if (normalizedPrefix && !entry.name.toLowerCase().startsWith(normalizedPrefix)) continue;
-        const type = entry.isDirectory() ? "directory" : entry.isSymbolicLink() ? "symlink" : "file";
-        if (foldersOnly && type !== "directory" && type !== "symlink") continue;
+        let type = entry.isDirectory() ? "directory" : entry.isSymbolicLink() ? "symlink" : "file";
+        if (foldersOnly) {
+          if (type === "directory") {
+            // keep
+          } else if (type === "symlink") {
+            try {
+              const stat = await fs.promises.stat(path.join(resolvedPath, entry.name));
+              if (!stat.isDirectory()) continue;
+            } catch {
+              continue;
+            }
+          } else {
+            continue;
+          }
+        }
         result.push({ name: entry.name, type });
       }
       return { success: true, entries: result };
