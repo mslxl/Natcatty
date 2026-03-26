@@ -269,17 +269,20 @@ export function useTerminalAutocomplete(
   const handleSubDirSelect = useCallback((entry: SubDirEntry) => {
     const s = stateRef.current;
     if (s.selectedIndex < 0) return;
-    const parentItem = s.suggestions[s.selectedIndex];
-    if (!parentItem) return;
 
-    // Build path: parent directory path + entry name
+    // Build path: entry name + suffix
     const suffix = entry.type === "directory" ? "/" : "";
     const entryName = entry.name.includes(" ") ? entry.name.replace(/ /g, "\\ ") : entry.name;
     const textToWrite = entryName + suffix;
 
     writeToTerminal(textToWrite);
     clearState();
-  }, [writeToTerminal, clearState]);
+
+    // For directories, re-trigger completion after a short delay to show next level
+    if (entry.type === "directory") {
+      setTimeout(() => fetchSuggestions(), 50);
+    }
+  }, [writeToTerminal, clearState, fetchSuggestions]);
 
   /**
    * Fetch and display suggestions based on current input.

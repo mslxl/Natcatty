@@ -1875,9 +1875,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
               style={{
                 top: isSearchOpen ? "64px" : "30px",
                 paddingLeft: 6,
+                overflow: "visible",
               }}
             >
-              <div className="relative w-full h-full">
+              <div className="relative w-full h-full" style={{ overflow: "visible" }}>
                 <AutocompletePopup
                   suggestions={autocomplete.state.suggestions}
                   selectedIndex={autocomplete.state.selectedIndex}

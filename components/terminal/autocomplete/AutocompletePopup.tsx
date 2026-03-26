@@ -298,9 +298,7 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
             // Align sub-panel top with the selected item (~29px per row)
             marginTop: expandUpward ? undefined : `${Math.max(0, (selectedIndex >= 0 ? selectedIndex : 0)) * 29}px`,
             marginBottom: expandUpward ? `${Math.max(0, (selectedIndex >= 0 ? selectedIndex : 0)) * 29}px` : undefined,
-            borderLeft: subDirFocused
-              ? `2px solid ${themeColors?.cursor ?? "#f5c542"}`
-              : `1px solid ${popupBorder}`,
+            // No extra border-left — sharedBoxStyle already includes full border
           }}
         >
           {subDirEntries.map((entry, idx) => {
