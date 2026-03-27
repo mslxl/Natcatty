@@ -351,6 +351,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     setStreamingForScope,
     shouldRetargetActiveSession,
     streamingSessionIds,
+    abortControllersRef,
   ]);
 
   // Restore agent selector from active session when scope changes
