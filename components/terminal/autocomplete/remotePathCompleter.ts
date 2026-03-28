@@ -46,17 +46,35 @@ const MAX_FILTERED_CACHE_SIZE = 60;
 
 /** Commands that commonly accept file/directory path arguments */
 const PATH_COMMANDS = new Set([
-  "cd", "ls", "ll", "la", "dir", "cat", "less", "more", "head", "tail",
-  "vim", "vi", "nvim", "nano", "emacs", "code", "subl",
-  "cp", "mv", "rm", "mkdir", "rmdir", "touch", "chmod", "chown", "chgrp",
-  "stat", "file", "source", ".", "bat", "rg", "find", "tree",
-  "tar", "zip", "unzip", "gzip", "gunzip",
-  "scp", "rsync", "diff",
-  "python", "python3", "node", "ruby", "perl", "bash", "sh", "zsh",
+  // Navigation & listing
+  "cd", "ls", "ll", "la", "dir", "tree", "exa", "eza", "lsd",
+  // Viewing & editing
+  "cat", "less", "more", "head", "tail", "bat", "tac", "nl",
+  "vim", "vi", "nvim", "nano", "emacs", "code", "subl", "micro", "helix", "hx", "joe", "mcedit",
+  // File operations
+  "cp", "mv", "rm", "mkdir", "rmdir", "touch", "ln", "install", "shred",
+  // Permissions & metadata
+  "chmod", "chown", "chgrp", "stat", "file", "lsattr", "chattr",
+  // Search & filter
+  "find", "rg", "grep", "egrep", "fgrep", "ag", "fd", "locate",
+  "wc", "sort", "uniq", "cut", "awk", "sed",
+  // Archive & compression
+  "tar", "zip", "unzip", "gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "zstd",
+  "7z", "rar", "unrar",
+  // Transfer & sync
+  "scp", "rsync", "diff", "cmp", "patch",
+  // Scripting & execution
+  "source", ".", "bash", "sh", "zsh", "fish",
+  "python", "python3", "node", "ruby", "perl", "php", "java", "go", "cargo", "rustc", "gcc", "g++", "make",
+  "deno", "bun", "tsx", "ts-node", "npx",
+  // Misc
+  "realpath", "readlink", "basename", "dirname", "md5sum", "sha256sum", "xxd", "hexdump",
+  "xdg-open", "open", "start",
+  "docker", "kubectl",
 ]);
 
 /** Commands that only accept directories (not files) */
-const FOLDER_ONLY_COMMANDS = new Set(["cd", "mkdir", "rmdir", "pushd"]);
+const FOLDER_ONLY_COMMANDS = new Set(["cd", "mkdir", "rmdir", "pushd", "popd"]);
 
 /**
  * Check if the current command context expects a path argument.
