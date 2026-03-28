@@ -31,6 +31,7 @@ const SFTP_ACTIONS = new Set([
   "sftpNewFolder",
   "sftpOpen",
   "sftpGoParent",
+  "sftpNavigateTo",
 ]);
 
 // ── Tree Enter key action store ──────────────────────────────────────
@@ -514,6 +515,23 @@ export const useSftpKeyboardShortcuts = ({
           const parentPath = getParentPath(pane.connection.currentPath);
           if (parentPath !== pane.connection.currentPath) {
             sftp.navigateTo(focusedSide, parentPath);
+          }
+          break;
+        }
+
+        case "sftpNavigateTo": {
+          // Navigate to the selected directory (useful in tree view)
+          if (treeSelection.length === 1 && treeSelection[0].isDirectory) {
+            sftp.navigateTo(focusedSide, treeSelection[0].path);
+            break;
+          }
+          // In list view, navigate to selected directory
+          const selectedFiles = Array.from(pane.selectedFiles) as string[];
+          if (selectedFiles.length === 1) {
+            const entry = (pane.files as SftpFileEntry[]).find(f => f.name === selectedFiles[0]);
+            if (entry && isNavigableDirectory(entry)) {
+              sftp.navigateTo(focusedSide, joinPath(pane.connection.currentPath, entry.name));
+            }
           }
           break;
         }

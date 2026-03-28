@@ -375,6 +375,7 @@ export const DEFAULT_KEY_BINDINGS: KeyBinding[] = [
   { id: 'sftp-new-folder', action: 'sftpNewFolder', label: 'New Folder', mac: '⌘ + Shift + N', pc: 'Ctrl + Shift + N', category: 'sftp' },
   { id: 'sftp-open', action: 'sftpOpen', label: 'Open File / Enter Directory', mac: 'Enter', pc: 'Enter', category: 'sftp' },
   { id: 'sftp-go-parent', action: 'sftpGoParent', label: 'Go to Parent Directory', mac: '⌫', pc: 'Backspace', category: 'sftp' },
+  { id: 'sftp-navigate-to', action: 'sftpNavigateTo', label: 'Navigate to Selected Directory', mac: '⌘ + Enter', pc: 'Ctrl + Enter', category: 'sftp' },
 ];
 
 // Terminal appearance settings
