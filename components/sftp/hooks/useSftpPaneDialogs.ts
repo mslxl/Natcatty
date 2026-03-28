@@ -1,15 +1,46 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { SftpPaneCallbacks } from "../SftpContext";
 import type { SftpPane } from "../../../application/state/sftp/types";
+import { getFileName, getParentPath } from "../../../application/state/sftp/utils";
+import { logger } from "../../../lib/logger";
+
+const INVALID_FILENAME_CHARS = /[/\\:*?"<>|]/;
+const RESERVED_NAMES = new Set([
+  "CON",
+  "PRN",
+  "AUX",
+  "NUL",
+  "COM1",
+  "COM2",
+  "COM3",
+  "COM4",
+  "COM5",
+  "COM6",
+  "COM7",
+  "COM8",
+  "COM9",
+  "LPT1",
+  "LPT2",
+  "LPT3",
+  "LPT4",
+  "LPT5",
+  "LPT6",
+  "LPT7",
+  "LPT8",
+  "LPT9",
+]);
 
 interface UseSftpPaneDialogsParams {
   t: (key: string, params?: Record<string, unknown>) => string;
   pane: SftpPane;
   onCreateDirectory: SftpPaneCallbacks["onCreateDirectory"];
+  onCreateDirectoryAtPath: SftpPaneCallbacks["onCreateDirectoryAtPath"];
   onCreateFile: SftpPaneCallbacks["onCreateFile"];
-  onRenameFile: SftpPaneCallbacks["onRenameFile"];
-  onDeleteFiles: SftpPaneCallbacks["onDeleteFiles"];
+  onCreateFileAtPath: SftpPaneCallbacks["onCreateFileAtPath"];
+  onRenameFileAtPath: SftpPaneCallbacks["onRenameFileAtPath"];
+  onDeleteFilesAtPath: SftpPaneCallbacks["onDeleteFilesAtPath"];
   onClearSelection: SftpPaneCallbacks["onClearSelection"];
+  onMutateSuccess?: (paths?: string[]) => void;
 }
 
 interface UseSftpPaneDialogsResult {
@@ -47,6 +78,8 @@ interface UseSftpPaneDialogsResult {
   handleConfirmOverwrite: () => Promise<void>;
   handleRename: () => Promise<void>;
   handleDelete: () => Promise<void>;
+  openNewFolderDialogAtPath: (path: string) => void;
+  openNewFileDialogAtPath: (path: string) => void;
   openRenameDialog: (name: string) => void;
   openDeleteConfirm: (names: string[]) => void;
   getNextUntitledName: (existingFiles: string[]) => string;
@@ -56,17 +89,21 @@ export const useSftpPaneDialogs = ({
   t,
   pane,
   onCreateDirectory,
+  onCreateDirectoryAtPath,
   onCreateFile,
-  onRenameFile,
-  onDeleteFiles,
+  onCreateFileAtPath,
+  onRenameFileAtPath,
+  onDeleteFilesAtPath,
   onClearSelection,
+  onMutateSuccess,
 }: UseSftpPaneDialogsParams): UseSftpPaneDialogsResult => {
   const [showHostPicker, setShowHostPicker] = useState(false);
   const [hostSearch, setHostSearch] = useState("");
-  const [showNewFolderDialog, setShowNewFolderDialog] = useState(false);
+  const [showNewFolderDialogState, setShowNewFolderDialogState] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
-  const [showNewFileDialog, setShowNewFileDialog] = useState(false);
+  const [showNewFileDialogState, setShowNewFileDialogState] = useState(false);
   const [newFileName, setNewFileName] = useState("");
+  const [createTargetPath, setCreateTargetPath] = useState<string | null>(null);
   const [fileNameError, setFileNameError] = useState<string | null>(null);
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
   const [overwriteTarget, setOverwriteTarget] = useState<string | null>(null);
@@ -80,34 +117,24 @@ export const useSftpPaneDialogs = ({
   const [isRenaming, setIsRenaming] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Refs for values accessed inside useCallback to avoid stale closures
+  const newFolderNameRef = useRef(newFolderName);
+  newFolderNameRef.current = newFolderName;
+  const newFileNameRef = useRef(newFileName);
+  newFileNameRef.current = newFileName;
+  const createTargetPathRef = useRef(createTargetPath);
+  createTargetPathRef.current = createTargetPath;
+  const renameTargetRef = useRef(renameTarget);
+  renameTargetRef.current = renameTarget;
+  const renameNameRef = useRef(renameName);
+  renameNameRef.current = renameName;
+  const deleteTargetsRef = useRef(deleteTargets);
+  deleteTargetsRef.current = deleteTargets;
+  const paneRef = useRef(pane);
+  paneRef.current = pane;
+
   const validateFileName = useCallback(
     (name: string): string | null => {
-      const INVALID_FILENAME_CHARS = /[/\\:*?"<>|]/;
-      const RESERVED_NAMES = new Set([
-        "CON",
-        "PRN",
-        "AUX",
-        "NUL",
-        "COM1",
-        "COM2",
-        "COM3",
-        "COM4",
-        "COM5",
-        "COM6",
-        "COM7",
-        "COM8",
-        "COM9",
-        "LPT1",
-        "LPT2",
-        "LPT3",
-        "LPT4",
-        "LPT5",
-        "LPT6",
-        "LPT7",
-        "LPT8",
-        "LPT9",
-      ]);
-
       const trimmed = name.trim();
       if (!trimmed) return null;
 
@@ -145,22 +172,29 @@ export const useSftpPaneDialogs = ({
     return `untitled_${Date.now()}.txt`;
   }, []);
 
-  const handleCreateFolder = async () => {
-    if (!newFolderName.trim() || isCreating) return;
+  const handleCreateFolder = useCallback(async () => {
+    if (!newFolderNameRef.current.trim() || isCreating) return;
     setIsCreating(true);
     try {
-      await onCreateDirectory(newFolderName.trim());
-      setShowNewFolderDialog(false);
+      if (createTargetPathRef.current) {
+        await onCreateDirectoryAtPath(createTargetPathRef.current, newFolderNameRef.current.trim());
+      } else {
+        await onCreateDirectory(newFolderNameRef.current.trim());
+      }
+      const affectedPath = createTargetPathRef.current ?? paneRef.current.connection?.currentPath;
+      onMutateSuccess?.(affectedPath ? [affectedPath] : undefined);
+      setShowNewFolderDialogState(false);
+      setCreateTargetPath(null);
       setNewFolderName("");
-    } catch {
-      /* Error handling */
+    } catch (err) {
+      logger.warn("Failed to create folder", err);
     } finally {
       setIsCreating(false);
     }
-  };
+  }, [isCreating, onCreateDirectory, onCreateDirectoryAtPath, onMutateSuccess]);
 
-  const handleCreateFile = async (forceOverwrite = false) => {
-    const trimmedName = newFileName.trim();
+  const handleCreateFile = useCallback(async (forceOverwrite = false) => {
+    const trimmedName = newFileNameRef.current.trim();
     if (!trimmedName || isCreatingFile) return;
 
     const error = validateFileName(trimmedName);
@@ -169,8 +203,9 @@ export const useSftpPaneDialogs = ({
       return;
     }
 
-    if (!forceOverwrite) {
-      const existingFile = pane.files.find(
+    const currentPane = paneRef.current;
+    if (!forceOverwrite && (!createTargetPathRef.current || createTargetPathRef.current === currentPane.connection?.currentPath)) {
+      const existingFile = currentPane.files.find(
         (f) =>
           f.name.toLowerCase() === trimmedName.toLowerCase() && f.type === "file",
       );
@@ -183,57 +218,110 @@ export const useSftpPaneDialogs = ({
 
     setIsCreatingFile(true);
     try {
-      await onCreateFile(trimmedName);
-      setShowNewFileDialog(false);
+      if (createTargetPathRef.current) {
+        await onCreateFileAtPath(createTargetPathRef.current, trimmedName);
+      } else {
+        await onCreateFile(trimmedName);
+      }
+      const affectedPath = createTargetPathRef.current ?? paneRef.current.connection?.currentPath;
+      onMutateSuccess?.(affectedPath ? [affectedPath] : undefined);
+      setShowNewFileDialogState(false);
       setShowOverwriteConfirm(false);
       setOverwriteTarget(null);
+      setCreateTargetPath(null);
       setNewFileName("");
       setFileNameError(null);
-    } catch {
-      /* Error handling */
+    } catch (err) {
+      logger.warn("Failed to create file", err);
     } finally {
       setIsCreatingFile(false);
     }
-  };
+  }, [isCreatingFile, validateFileName, onCreateFile, onCreateFileAtPath, onMutateSuccess]);
 
-  const handleConfirmOverwrite = async () => {
+  const handleConfirmOverwrite = useCallback(async () => {
     await handleCreateFile(true);
-  };
+  }, [handleCreateFile]);
 
-  const handleRename = async () => {
-    if (!renameTarget || !renameName.trim() || isRenaming) return;
+  const handleRename = useCallback(async () => {
+    if (!renameTargetRef.current || !renameNameRef.current.trim() || isRenaming) return;
     setIsRenaming(true);
     try {
-      await onRenameFile(renameTarget, renameName.trim());
+      // renameTarget is always a full path; use the path-aware variant
+      await onRenameFileAtPath(renameTargetRef.current, renameNameRef.current.trim());
+      onMutateSuccess?.([getParentPath(renameTargetRef.current)]);
       setShowRenameDialog(false);
       setRenameTarget(null);
       setRenameName("");
-    } catch {
-      /* Error handling */
+    } catch (err) {
+      logger.warn("Failed to rename file", err);
     } finally {
       setIsRenaming(false);
     }
-  };
+  }, [isRenaming, onRenameFileAtPath, onMutateSuccess]);
 
-  const handleDelete = async () => {
-    if (deleteTargets.length === 0 || isDeleting) return;
+  const handleDelete = useCallback(async () => {
+    if (deleteTargetsRef.current.length === 0 || isDeleting) return;
     setIsDeleting(true);
     try {
-      await onDeleteFiles(deleteTargets);
+      // deleteTargets are full paths; group by parent dir and use path-aware variant
+      const byDir = new Map<string, string[]>();
+      for (const fullPath of deleteTargetsRef.current) {
+        const dir = getParentPath(fullPath);
+        const name = getFileName(fullPath);
+        const list = byDir.get(dir) ?? [];
+        list.push(name);
+        byDir.set(dir, list);
+      }
+      const connectionId = paneRef.current.connection?.id;
+      if (!connectionId) {
+        throw new Error("Pane connection is no longer available");
+      }
+      for (const [dir, names] of byDir) {
+        await onDeleteFilesAtPath(connectionId, dir, names);
+      }
+      onMutateSuccess?.(Array.from(byDir.keys()));
       setShowDeleteConfirm(false);
       setDeleteTargets([]);
       onClearSelection();
-    } catch {
-      /* Error handling */
+    } catch (err) {
+      logger.warn("Failed to delete files", err);
     } finally {
       setIsDeleting(false);
     }
-  };
+  }, [isDeleting, onDeleteFilesAtPath, onMutateSuccess, onClearSelection]);
 
-  const openRenameDialog = useCallback((name: string) => {
-    setRenameTarget(name);
-    setRenameName(name);
+  // entryPath is the full path; renameName is initialized to the basename
+  const openRenameDialog = useCallback((entryPath: string) => {
+    setRenameTarget(entryPath);
+    setRenameName(getFileName(entryPath) || entryPath);
     setShowRenameDialog(true);
+  }, []);
+
+  const setShowNewFolderDialog = useCallback((open: boolean) => {
+    if (!open) {
+      setCreateTargetPath(null);
+    }
+    setShowNewFolderDialogState(open);
+  }, []);
+
+  const setShowNewFileDialog = useCallback((open: boolean) => {
+    if (!open) {
+      setCreateTargetPath(null);
+    }
+    setShowNewFileDialogState(open);
+  }, []);
+
+  const openNewFolderDialogAtPath = useCallback((path: string) => {
+    setCreateTargetPath(path);
+    setNewFolderName("");
+    setShowNewFolderDialogState(true);
+  }, []);
+
+  const openNewFileDialogAtPath = useCallback((path: string) => {
+    setCreateTargetPath(path);
+    setNewFileName("");
+    setFileNameError(null);
+    setShowNewFileDialogState(true);
   }, []);
 
   const openDeleteConfirm = useCallback((names: string[]) => {
@@ -244,9 +332,9 @@ export const useSftpPaneDialogs = ({
   return {
     showHostPicker,
     hostSearch,
-    showNewFolderDialog,
+    showNewFolderDialog: showNewFolderDialogState,
     newFolderName,
-    showNewFileDialog,
+    showNewFileDialog: showNewFileDialogState,
     newFileName,
     fileNameError,
     showOverwriteConfirm,
@@ -276,6 +364,8 @@ export const useSftpPaneDialogs = ({
     handleConfirmOverwrite,
     handleRename,
     handleDelete,
+    openNewFolderDialogAtPath,
+    openNewFileDialogAtPath,
     openRenameDialog,
     openDeleteConfirm,
     getNextUntitledName,

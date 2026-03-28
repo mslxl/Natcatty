@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import type { MutableRefObject } from "react";
 import type { SftpStateApi } from "../../../application/state/useSftpState";
-import type { SftpDragCallbacks } from "../SftpContext";
+import type { SftpDragCallbacks, SftpTransferSource } from "../SftpContext";
 
 interface UseSftpViewPaneActionsParams {
   sftpRef: MutableRefObject<SftpStateApi>;
@@ -9,7 +9,7 @@ interface UseSftpViewPaneActionsParams {
 
 interface UseSftpViewPaneActionsResult {
   dragCallbacks: SftpDragCallbacks;
-  draggedFiles: { name: string; isDirectory: boolean; side: "left" | "right" }[] | null;
+  draggedFiles: (SftpTransferSource & { side: "left" | "right" })[] | null;
   onConnectLeft: (host: Parameters<SftpStateApi["connect"]>[1]) => void;
   onConnectRight: (host: Parameters<SftpStateApi["connect"]>[1]) => void;
   onDisconnectLeft: () => void;
@@ -20,6 +20,8 @@ interface UseSftpViewPaneActionsResult {
   onNavigateUpRight: () => void;
   onRefreshLeft: () => void;
   onRefreshRight: () => void;
+  onRefreshTabLeft: (tabId: string) => void;
+  onRefreshTabRight: (tabId: string) => void;
   onSetFilenameEncodingLeft: (encoding: Parameters<SftpStateApi["setFilenameEncoding"]>[1]) => void;
   onSetFilenameEncodingRight: (encoding: Parameters<SftpStateApi["setFilenameEncoding"]>[1]) => void;
   onToggleSelectionLeft: (name: string, multi: boolean) => void;
@@ -32,28 +34,38 @@ interface UseSftpViewPaneActionsResult {
   onSetFilterRight: (filter: string) => void;
   onCreateDirectoryLeft: (name: string) => void;
   onCreateDirectoryRight: (name: string) => void;
+  onCreateDirectoryAtPathLeft: (path: string, name: string) => void;
+  onCreateDirectoryAtPathRight: (path: string, name: string) => void;
   onCreateFileLeft: (name: string) => void;
   onCreateFileRight: (name: string) => void;
+  onCreateFileAtPathLeft: (path: string, name: string) => void;
+  onCreateFileAtPathRight: (path: string, name: string) => void;
   onDeleteFilesLeft: (names: string[]) => void;
   onDeleteFilesRight: (names: string[]) => void;
+  onDeleteFilesAtPathLeft: (connectionId: string, path: string, names: string[]) => void;
+  onDeleteFilesAtPathRight: (connectionId: string, path: string, names: string[]) => void;
   onRenameFileLeft: (old: string, newName: string) => void;
   onRenameFileRight: (old: string, newName: string) => void;
-  onCopyToOtherPaneLeft: (files: { name: string; isDirectory: boolean }[]) => void;
-  onCopyToOtherPaneRight: (files: { name: string; isDirectory: boolean }[]) => void;
-  onReceiveFromOtherPaneLeft: (files: { name: string; isDirectory: boolean }[]) => void;
-  onReceiveFromOtherPaneRight: (files: { name: string; isDirectory: boolean }[]) => void;
+  onRenameFileAtPathLeft: (oldPath: string, newName: string) => void;
+  onRenameFileAtPathRight: (oldPath: string, newName: string) => void;
+  onMoveEntriesToPathLeft: (sourcePaths: string[], targetPath: string) => void;
+  onMoveEntriesToPathRight: (sourcePaths: string[], targetPath: string) => void;
+  onCopyToOtherPaneLeft: (files: SftpTransferSource[]) => void;
+  onCopyToOtherPaneRight: (files: SftpTransferSource[]) => void;
+  onReceiveFromOtherPaneLeft: (files: SftpTransferSource[]) => void;
+  onReceiveFromOtherPaneRight: (files: SftpTransferSource[]) => void;
 }
 
 export const useSftpViewPaneActions = ({
   sftpRef,
 }: UseSftpViewPaneActionsParams): UseSftpViewPaneActionsResult => {
   const [draggedFiles, setDraggedFiles] = useState<
-    { name: string; isDirectory: boolean; side: "left" | "right" }[] | null
+    (SftpTransferSource & { side: "left" | "right" })[] | null
   >(null);
 
   const handleDragStart = useCallback(
     (
-      files: { name: string; isDirectory: boolean }[],
+      files: SftpTransferSource[],
       side: "left" | "right",
     ) => {
       setDraggedFiles(files.map((f) => ({ ...f, side })));
@@ -65,25 +77,43 @@ export const useSftpViewPaneActions = ({
     setDraggedFiles(null);
   }, []);
 
-  const onCopyToOtherPaneLeft = useCallback(
-    (files: { name: string; isDirectory: boolean }[]) =>
-      sftpRef.current.startTransfer(files, "left", "right"),
+  const startGroupedTransfer = useCallback(
+    (files: SftpTransferSource[], sourceSide: "left" | "right", targetSide: "left" | "right") => {
+      const groups = new Map<string, SftpTransferSource[]>();
+      for (const file of files) {
+        const key = `${file.sourceConnectionId ?? ""}::${file.sourcePath ?? ""}`;
+        const group = groups.get(key) ?? [];
+        group.push(file);
+        groups.set(key, group);
+      }
+
+      for (const group of groups.values()) {
+        const [{ sourceConnectionId, sourcePath, targetPath }] = group;
+        void sftpRef.current.startTransfer(group, sourceSide, targetSide, {
+          sourceConnectionId,
+          sourcePath,
+          targetPath,
+        });
+      }
+    },
     [sftpRef],
+  );
+
+  const onCopyToOtherPaneLeft = useCallback(
+    (files: SftpTransferSource[]) => startGroupedTransfer(files, "left", "right"),
+    [startGroupedTransfer],
   );
   const onCopyToOtherPaneRight = useCallback(
-    (files: { name: string; isDirectory: boolean }[]) =>
-      sftpRef.current.startTransfer(files, "right", "left"),
-    [sftpRef],
+    (files: SftpTransferSource[]) => startGroupedTransfer(files, "right", "left"),
+    [startGroupedTransfer],
   );
   const onReceiveFromOtherPaneLeft = useCallback(
-    (files: { name: string; isDirectory: boolean }[]) =>
-      sftpRef.current.startTransfer(files, "right", "left"),
-    [sftpRef],
+    (files: SftpTransferSource[]) => startGroupedTransfer(files, "right", "left"),
+    [startGroupedTransfer],
   );
   const onReceiveFromOtherPaneRight = useCallback(
-    (files: { name: string; isDirectory: boolean }[]) =>
-      sftpRef.current.startTransfer(files, "left", "right"),
-    [sftpRef],
+    (files: SftpTransferSource[]) => startGroupedTransfer(files, "left", "right"),
+    [startGroupedTransfer],
   );
 
   const onConnectLeft = useCallback(
@@ -108,6 +138,8 @@ export const useSftpViewPaneActions = ({
   const onNavigateUpRight = useCallback(() => sftpRef.current.navigateUp("right"), [sftpRef]);
   const onRefreshLeft = useCallback(() => sftpRef.current.refresh("left"), [sftpRef]);
   const onRefreshRight = useCallback(() => sftpRef.current.refresh("right"), [sftpRef]);
+  const onRefreshTabLeft = useCallback((tabId: string) => sftpRef.current.refresh("left", { tabId }), [sftpRef]);
+  const onRefreshTabRight = useCallback((tabId: string) => sftpRef.current.refresh("right", { tabId }), [sftpRef]);
   const onSetFilenameEncodingLeft = useCallback(
     (encoding: Parameters<SftpStateApi["setFilenameEncoding"]>[1]) =>
       sftpRef.current.setFilenameEncoding("left", encoding),
@@ -152,12 +184,28 @@ export const useSftpViewPaneActions = ({
     (name: string) => sftpRef.current.createDirectory("right", name),
     [sftpRef],
   );
+  const onCreateDirectoryAtPathLeft = useCallback(
+    (path: string, name: string) => sftpRef.current.createDirectoryAtPath("left", path, name),
+    [sftpRef],
+  );
+  const onCreateDirectoryAtPathRight = useCallback(
+    (path: string, name: string) => sftpRef.current.createDirectoryAtPath("right", path, name),
+    [sftpRef],
+  );
   const onCreateFileLeft = useCallback(
     (name: string) => sftpRef.current.createFile("left", name),
     [sftpRef],
   );
   const onCreateFileRight = useCallback(
     (name: string) => sftpRef.current.createFile("right", name),
+    [sftpRef],
+  );
+  const onCreateFileAtPathLeft = useCallback(
+    (path: string, name: string) => sftpRef.current.createFileAtPath("left", path, name),
+    [sftpRef],
+  );
+  const onCreateFileAtPathRight = useCallback(
+    (path: string, name: string) => sftpRef.current.createFileAtPath("right", path, name),
     [sftpRef],
   );
   const onDeleteFilesLeft = useCallback(
@@ -168,12 +216,38 @@ export const useSftpViewPaneActions = ({
     (names: string[]) => sftpRef.current.deleteFiles("right", names),
     [sftpRef],
   );
+  const onDeleteFilesAtPathLeft = useCallback(
+    (connectionId: string, path: string, names: string[]) =>
+      sftpRef.current.deleteFilesAtPath("left", connectionId, path, names),
+    [sftpRef],
+  );
+  const onDeleteFilesAtPathRight = useCallback(
+    (connectionId: string, path: string, names: string[]) =>
+      sftpRef.current.deleteFilesAtPath("right", connectionId, path, names),
+    [sftpRef],
+  );
   const onRenameFileLeft = useCallback(
     (old: string, newName: string) => sftpRef.current.renameFile("left", old, newName),
     [sftpRef],
   );
   const onRenameFileRight = useCallback(
     (old: string, newName: string) => sftpRef.current.renameFile("right", old, newName),
+    [sftpRef],
+  );
+  const onRenameFileAtPathLeft = useCallback(
+    (oldPath: string, newName: string) => sftpRef.current.renameFileAtPath("left", oldPath, newName),
+    [sftpRef],
+  );
+  const onRenameFileAtPathRight = useCallback(
+    (oldPath: string, newName: string) => sftpRef.current.renameFileAtPath("right", oldPath, newName),
+    [sftpRef],
+  );
+  const onMoveEntriesToPathLeft = useCallback(
+    (sourcePaths: string[], targetPath: string) => sftpRef.current.moveEntriesToPath("left", sourcePaths, targetPath),
+    [sftpRef],
+  );
+  const onMoveEntriesToPathRight = useCallback(
+    (sourcePaths: string[], targetPath: string) => sftpRef.current.moveEntriesToPath("right", sourcePaths, targetPath),
     [sftpRef],
   );
 
@@ -198,6 +272,8 @@ export const useSftpViewPaneActions = ({
     onNavigateUpRight,
     onRefreshLeft,
     onRefreshRight,
+    onRefreshTabLeft,
+    onRefreshTabRight,
     onSetFilenameEncodingLeft,
     onSetFilenameEncodingRight,
     onToggleSelectionLeft,
@@ -210,12 +286,22 @@ export const useSftpViewPaneActions = ({
     onSetFilterRight,
     onCreateDirectoryLeft,
     onCreateDirectoryRight,
+    onCreateDirectoryAtPathLeft,
+    onCreateDirectoryAtPathRight,
     onCreateFileLeft,
     onCreateFileRight,
+    onCreateFileAtPathLeft,
+    onCreateFileAtPathRight,
     onDeleteFilesLeft,
     onDeleteFilesRight,
+    onDeleteFilesAtPathLeft,
+    onDeleteFilesAtPathRight,
     onRenameFileLeft,
     onRenameFileRight,
+    onRenameFileAtPathLeft,
+    onRenameFileAtPathRight,
+    onMoveEntriesToPathLeft,
+    onMoveEntriesToPathRight,
     onCopyToOtherPaneLeft,
     onCopyToOtherPaneRight,
     onReceiveFromOtherPaneLeft,

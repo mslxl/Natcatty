@@ -50,6 +50,7 @@ interface SftpViewProps {
   keys: SSHKey[];
   identities: Identity[];
   updateHosts: (hosts: Host[]) => void;
+  sftpDefaultViewMode: "list" | "tree";
   sftpDoubleClickBehavior: "open" | "transfer";
   sftpAutoSync: boolean;
   sftpShowHiddenFiles: boolean;
@@ -65,6 +66,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
   keys,
   identities,
   updateHosts,
+  sftpDefaultViewMode,
   sftpDoubleClickBehavior,
   sftpAutoSync,
   sftpShowHiddenFiles,
@@ -109,6 +111,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     listSftp,
     mkdirLocal,
     deleteLocalFile,
+    listLocalDir,
   } = useSftpBackend();
 
   // Store sftp in a ref so callbacks can access the latest instance
@@ -205,10 +208,11 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     selectDirectory,
     startStreamTransfer,
     getSftpIdForConnection: sftp.getSftpIdForConnection,
+    listLocalFiles: listLocalDir,
   });
 
   const visibleTransfers = useMemo(
-    () => [...sftp.transfers].reverse().slice(0, 5),
+    () => [...sftp.transfers].filter((t) => !t.parentTaskId).reverse().slice(0, 5),
     [sftp.transfers],
   );
 
@@ -309,6 +313,8 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
                   <SftpPaneView
                     side="left"
                     pane={pane}
+                    isPaneFocused={focusedSide === "left"}
+                    sftpDefaultViewMode={sftpDefaultViewMode}
                     showHeader
                     showEmptyHeader={false}
                     onToggleShowHiddenFiles={() => handleToggleHiddenFiles("left", pane.id)}
@@ -366,6 +372,8 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
                   <SftpPaneView
                     side="right"
                     pane={pane}
+                    isPaneFocused={focusedSide === "right"}
+                    sftpDefaultViewMode={sftpDefaultViewMode}
                     showHeader
                     showEmptyHeader={false}
                     onToggleShowHiddenFiles={() => handleToggleHiddenFiles("right", pane.id)}
@@ -427,6 +435,7 @@ const sftpViewAreEqual = (prev: SftpViewProps, next: SftpViewProps): boolean =>
   prev.hosts === next.hosts &&
   prev.keys === next.keys &&
   prev.identities === next.identities &&
+  prev.sftpDefaultViewMode === next.sftpDefaultViewMode &&
   prev.sftpDoubleClickBehavior === next.sftpDoubleClickBehavior &&
   prev.sftpAutoSync === next.sftpAutoSync &&
   prev.sftpShowHiddenFiles === next.sftpShowHiddenFiles &&

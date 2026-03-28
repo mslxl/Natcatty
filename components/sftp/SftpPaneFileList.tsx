@@ -1,5 +1,5 @@
-import React, { useCallback, useMemo, useState } from "react";
-import { ArrowDown, ChevronDown, ClipboardCopy, Copy, Download, Edit2, ExternalLink, FilePlus, Folder, FolderPlus, Loader2, Pencil, RefreshCw, Shield, Trash2, Unplug } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowDown, ArrowRight, ArrowUp, ChevronDown, ClipboardCopy, Copy, Download, Edit2, ExternalLink, FilePlus, Folder, FolderPlus, Loader2, Pencil, RefreshCw, Shield, Trash2, Unplug } from "lucide-react";
 import { Button } from "../ui/button";
 import {
   ContextMenu,
@@ -9,10 +9,12 @@ import {
   ContextMenuTrigger,
 } from "../ui/context-menu";
 import { cn } from "../../lib/utils";
-import { joinPath } from "../../application/state/sftp/utils";
+import { getParentPath, joinPath } from "../../application/state/sftp/utils";
 import type { SftpFileEntry } from "../../types";
 import type { SftpPane } from "../../application/state/sftp/types";
-import type { ColumnWidths, SortField, SortOrder } from "./utils";
+import type { SftpTransferSource } from "./SftpContext";
+import { sftpListOrderStore } from "./hooks/useSftpListOrderStore";
+import { buildSftpColumnTemplate, type ColumnWidths, type SortField, type SortOrder } from "./utils";
 import { isNavigableDirectory } from "./index";
 import { isKnownBinaryFile } from "../../lib/sftpFileUtils";
 import { SftpFileRow } from "./index";
@@ -21,6 +23,7 @@ interface SftpPaneFileListProps {
   t: (key: string, params?: Record<string, unknown>) => string;
   pane: SftpPane;
   side: "left" | "right";
+  isPaneFocused: boolean;
   columnWidths: ColumnWidths;
   sortField: SortField;
   sortOrder: SortOrder;
@@ -32,8 +35,10 @@ interface SftpPaneFileListProps {
   totalHeight: number;
   sortedDisplayFiles: SftpFileEntry[];
   isDragOverPane: boolean;
-  draggedFiles: { name: string; isDirectory: boolean; side: "left" | "right" }[] | null;
+  draggedFiles: (SftpTransferSource & { side: "left" | "right" })[] | null;
   onRefresh: () => void;
+  onNavigateTo: (path: string) => void;
+  onClearSelection: () => void;
   setShowNewFolderDialog: (open: boolean) => void;
   setShowNewFileDialog: (open: boolean) => void;
   getNextUntitledName: (existingNames: string[]) => string;
@@ -48,7 +53,8 @@ interface SftpPaneFileListProps {
   handleEntryDragOver: (entry: SftpFileEntry, e: React.DragEvent) => void;
   handleRowDragLeave: () => void;
   handleEntryDrop: (entry: SftpFileEntry, e: React.DragEvent) => void;
-  onCopyToOtherPane: (files: { name: string; isDirectory: boolean }[]) => void;
+  onCopyToOtherPane: (files: SftpTransferSource[]) => void;
+  onMoveEntriesToPath: (sourcePaths: string[], targetPath: string) => Promise<void>;
   onOpenFileWith?: (entry: SftpFileEntry) => void;
   onEditFile?: (entry: SftpFileEntry) => void;
   onDownloadFile?: (entry: SftpFileEntry) => void;
@@ -99,10 +105,11 @@ const SftpErrorWithLogs: React.FC<{
   );
 };
 
-export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
+export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
   t,
   pane,
   side,
+  isPaneFocused,
   columnWidths,
   sortField,
   sortOrder,
@@ -116,6 +123,8 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
   isDragOverPane,
   draggedFiles,
   onRefresh,
+  onNavigateTo,
+  onClearSelection,
   setShowNewFolderDialog,
   setShowNewFileDialog,
   getNextUntitledName,
@@ -130,6 +139,7 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
   handleRowDragLeave,
   handleEntryDrop,
   onCopyToOtherPane,
+  onMoveEntriesToPath,
   onOpenFileWith,
   onEditFile,
   onDownloadFile,
@@ -147,6 +157,39 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
     return map;
   }, [sortedDisplayFiles]);
 
+  // Push sorted file names into the list order store for keyboard navigation
+  useEffect(() => {
+    const names = sortedDisplayFiles
+      .filter((f) => f.name !== "..")
+      .map((f) => f.name);
+    sftpListOrderStore.setItems(pane.id, names);
+    return () => sftpListOrderStore.clearPane(pane.id);
+  }, [sortedDisplayFiles, pane.id]);
+
+  useEffect(() => {
+    if (pane.selectedFiles.size !== 1) return;
+    const selectedName = Array.from(pane.selectedFiles)[0];
+    if (!selectedName) return;
+
+    const container = fileListRef.current;
+    if (!container) return;
+
+    const row = Array.from(container.querySelectorAll<HTMLElement>('[data-sftp-row="true"]'))
+      .find((element) => element.dataset.entryName === selectedName);
+    row?.scrollIntoView({ block: "nearest" });
+  }, [fileListRef, pane.selectedFiles]);
+
+  // Use refs for frequently-changing values in context-menu actions
+  const selectedFilesRef = useRef(pane.selectedFiles);
+  selectedFilesRef.current = pane.selectedFiles;
+
+  const handleBackgroundClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('[data-sftp-row="true"]')) return;
+    if (pane.selectedFiles.size === 0) return;
+    onClearSelection();
+  }, [onClearSelection, pane.selectedFiles.size]);
+
   const renderRow = useCallback(
     (entry: SftpFileEntry, index: number) => (
       <ContextMenu>
@@ -155,6 +198,7 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
             entry={entry}
             index={index}
             isSelected={pane.selectedFiles.has(entry.name)}
+            showSelectionHighlight={isPaneFocused}
             isDragOver={dragOverEntry === entry.name}
             columnWidths={columnWidths}
             onSelect={handleRowSelect}
@@ -180,6 +224,11 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
                 </>
               )}
             </ContextMenuItem>
+            {isNavigableDirectory(entry) && (
+              <ContextMenuItem onClick={() => onNavigateTo(joinPath(pane.connection.currentPath, entry.name))}>
+                <ArrowRight size={14} className="mr-2" /> {t("sftp.context.navigateTo")}
+              </ContextMenuItem>
+            )}
             {!isNavigableDirectory(entry) && onOpenFileWith && (
               <ContextMenuItem onClick={() => onOpenFileWith(entry)}>
                 <ExternalLink size={14} className="mr-2" />{" "}
@@ -202,8 +251,9 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
             <ContextMenuSeparator />
             <ContextMenuItem
               onClick={() => {
-                const files = pane.selectedFiles.has(entry.name)
-                  ? Array.from(pane.selectedFiles)
+                const currentSelected = selectedFilesRef.current;
+                const files = currentSelected.has(entry.name)
+                  ? Array.from(currentSelected)
                   : [entry.name];
                 const fileData = files.map((name) => {
                   const fileName = String(name);
@@ -211,6 +261,8 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
                   return {
                     name: fileName,
                     isDirectory: file ? isNavigableDirectory(file) : false,
+                    sourceConnectionId: pane.connection?.id,
+                    sourcePath: pane.connection?.currentPath,
                   };
                 });
                 onCopyToOtherPane(fileData);
@@ -228,7 +280,27 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
               {t("sftp.context.copyPath")}
             </ContextMenuItem>
             <ContextMenuSeparator />
-            <ContextMenuItem onClick={() => openRenameDialog(entry.name)}>
+            {(() => {
+              const sourceParent = getParentPath(joinPath(pane.connection?.currentPath ?? "", entry.name));
+              const targetParent = getParentPath(sourceParent);
+              if (sourceParent === targetParent) return null;
+
+              return (
+                <ContextMenuItem
+                  onClick={() => {
+                    const currentSelected = selectedFilesRef.current;
+                    const sourcePaths = currentSelected.has(entry.name)
+                      ? Array.from(currentSelected as Set<string>).map((n) => joinPath(pane.connection?.currentPath ?? "", n))
+                      : [joinPath(pane.connection?.currentPath ?? "", entry.name)];
+                    void onMoveEntriesToPath(sourcePaths, targetParent);
+                  }}
+                >
+                  <ArrowUp size={14} className="mr-2" />{" "}
+                  {t("sftp.context.moveToParent")}
+                </ContextMenuItem>
+              );
+            })()}
+            <ContextMenuItem onClick={() => openRenameDialog(joinPath(pane.connection?.currentPath ?? "", entry.name))}>
               <Pencil size={14} className="mr-2" /> {t("common.rename")}
             </ContextMenuItem>
             {onEditPermissions && pane.connection && !pane.connection.isLocal && (
@@ -240,9 +312,10 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
             <ContextMenuItem
               className="text-destructive"
               onClick={() => {
-                const files = pane.selectedFiles.has(entry.name)
-                  ? Array.from(pane.selectedFiles)
-                  : [entry.name];
+                const currentSelected = selectedFilesRef.current;
+                const files = currentSelected.has(entry.name)
+                  ? Array.from(currentSelected as Set<string>).map((n) => joinPath(pane.connection?.currentPath ?? "", n))
+                  : [joinPath(pane.connection?.currentPath ?? "", entry.name)];
                 openDeleteConfirm(files);
               }}
             >
@@ -264,7 +337,6 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
     ),
     [
       columnWidths,
-      dragOverEntry,
       filesByName,
       handleEntryDragOver,
       handleEntryDrop,
@@ -272,11 +344,16 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
       handleRowDragLeave,
       handleRowOpen,
       handleRowSelect,
+      dragOverEntry,
+      isPaneFocused,
       onCopyToOtherPane,
+      onClearSelection,
+      onMoveEntriesToPath,
       onDownloadFile,
       onDragEnd,
       onEditFile,
       onEditPermissions,
+      onNavigateTo,
       onOpenFileWith,
       onRefresh,
       openDeleteConfirm,
@@ -306,7 +383,13 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
             {renderRow(entry, index)}
           </React.Fragment>
         )),
-    [renderRow, rowHeight, shouldVirtualize, sortedDisplayFiles, visibleRows],
+    [
+      renderRow,
+      rowHeight,
+      shouldVirtualize,
+      sortedDisplayFiles,
+      visibleRows,
+    ],
   );
 
   return (
@@ -316,16 +399,16 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
       className="text-[11px] uppercase tracking-wide text-muted-foreground px-4 py-2 border-b border-border/40 bg-secondary/10 select-none"
       style={{
         display: "grid",
-        gridTemplateColumns: `${columnWidths.name}% ${columnWidths.modified}% ${columnWidths.size}% ${columnWidths.type}%`,
+        gridTemplateColumns: buildSftpColumnTemplate(columnWidths),
       }}
     >
       <div
-        className="flex items-center gap-1 cursor-pointer hover:text-foreground relative pr-2"
+        className="flex min-w-0 items-center gap-1 cursor-pointer hover:text-foreground relative pr-2 overflow-hidden"
         onClick={() => handleSort("name")}
       >
-        <span>{t("sftp.columns.name")}</span>
+        <span className="truncate whitespace-nowrap">{t("sftp.columns.name")}</span>
         {sortField === "name" && (
-          <span className="text-primary">
+          <span className="shrink-0 text-primary">
             {sortOrder === "asc" ? "↑" : "↓"}
           </span>
         )}
@@ -335,12 +418,12 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
         />
       </div>
       <div
-        className="flex items-center gap-1 cursor-pointer hover:text-foreground relative pr-2"
+        className="flex min-w-0 items-center gap-1 cursor-pointer hover:text-foreground relative pr-2 overflow-hidden"
         onClick={() => handleSort("modified")}
       >
-        <span>{t("sftp.columns.modified")}</span>
+        <span className="truncate whitespace-nowrap">{t("sftp.columns.modified")}</span>
         {sortField === "modified" && (
-          <span className="text-primary">
+          <span className="shrink-0 text-primary">
             {sortOrder === "asc" ? "↑" : "↓"}
           </span>
         )}
@@ -350,30 +433,30 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
         />
       </div>
       <div
-        className="flex items-center gap-1 cursor-pointer hover:text-foreground relative pr-2 justify-end"
+        className="flex min-w-0 items-center gap-1 cursor-pointer hover:text-foreground relative pr-2 justify-end overflow-hidden"
         onClick={() => handleSort("size")}
       >
         {sortField === "size" && (
-          <span className="text-primary">
+          <span className="shrink-0 text-primary">
             {sortOrder === "asc" ? "↑" : "↓"}
           </span>
         )}
-        <span>{t("sftp.columns.size")}</span>
+        <span className="truncate whitespace-nowrap">{t("sftp.columns.size")}</span>
         <div
           className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors"
           onMouseDown={(e) => handleResizeStart("size", e)}
         />
       </div>
       <div
-        className="flex items-center gap-1 cursor-pointer hover:text-foreground justify-end"
+        className="flex min-w-0 items-center gap-1 cursor-pointer hover:text-foreground justify-end overflow-hidden"
         onClick={() => handleSort("type")}
       >
         {sortField === "type" && (
-          <span className="text-primary">
+          <span className="shrink-0 text-primary">
             {sortOrder === "asc" ? "↑" : "↓"}
           </span>
         )}
-        <span>{t("sftp.columns.kind")}</span>
+        <span className="truncate whitespace-nowrap">{t("sftp.columns.kind")}</span>
       </div>
     </div>
 
@@ -386,6 +469,7 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
             "flex-1 min-h-0 overflow-y-auto relative",
             isDragOverPane && "ring-2 ring-primary/30 ring-inset",
           )}
+          onClick={handleBackgroundClick}
           onScroll={handleFileListScroll}
         >
           {pane.loading && sortedDisplayFiles.length === 0 ? (
@@ -457,7 +541,7 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
     <div className="h-9 shrink-0 px-4 flex items-center justify-between text-[11px] text-muted-foreground border-t border-border/40 bg-secondary/30">
       <span>
         {t("sftp.itemsCount", {
-          count: sortedDisplayFiles.filter((f) => f.name !== "..").length,
+          count: sortedDisplayFiles.length - (sortedDisplayFiles[0]?.name === ".." ? 1 : 0),
         })}
         {pane.selectedFiles.size > 0 &&
           ` - ${t("sftp.selectedCount", { count: pane.selectedFiles.size })}`}
@@ -497,4 +581,4 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = ({
     )}
   </>
 );
-};
+});

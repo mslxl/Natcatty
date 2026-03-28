@@ -110,6 +110,30 @@ export const useSftpState = (
     }
   }, []);
 
+  const getPaneByConnectionId = useCallback((connectionId: string) => {
+    for (const tab of leftTabsRef.current.tabs) {
+      if (tab.connection?.id === connectionId) return tab;
+    }
+    for (const tab of rightTabsRef.current.tabs) {
+      if (tab.connection?.id === connectionId) return tab;
+    }
+    return null;
+  }, [leftTabsRef, rightTabsRef]);
+
+  const getTabByConnectionId = useCallback((connectionId: string) => {
+    for (const tab of leftTabsRef.current.tabs) {
+      if (tab.connection?.id === connectionId) {
+        return { side: "left" as const, tabId: tab.id, pane: tab };
+      }
+    }
+    for (const tab of rightTabsRef.current.tabs) {
+      if (tab.connection?.id === connectionId) {
+        return { side: "right" as const, tabId: tab.id, pane: tab };
+      }
+    }
+    return null;
+  }, [leftTabsRef, rightTabsRef]);
+
   // Ref to track pending reconnections to avoid multiple reconnect attempts
   const reconnectingRef = useRef<{ left: boolean; right: boolean }>({
     left: false,
@@ -183,10 +207,14 @@ export const useSftpState = (
     selectAll,
     getFilteredFiles,
     createDirectory,
+    createDirectoryAtPath,
     createFile,
+    createFileAtPath,
     deleteFiles,
     deleteFilesAtPath,
     renameFile,
+    renameFileAtPath,
+    moveEntriesToPath,
     changePermissions,
   } = useSftpPaneActions({
     hosts,
@@ -254,7 +282,11 @@ export const useSftpState = (
     resolveConflict,
   } = useSftpTransfers({
     getActivePane,
+    getPaneByConnectionId,
+    getTabByConnectionId,
+    updateTab,
     refresh,
+    clearCacheForConnection,
     sftpSessionsRef,
     listLocalFiles,
     listRemoteFiles,
@@ -310,10 +342,14 @@ export const useSftpState = (
     setFilenameEncoding,
     setShowHiddenFiles,
     createDirectory,
+    createDirectoryAtPath,
     createFile,
+    createFileAtPath,
     deleteFiles,
     deleteFilesAtPath,
     renameFile,
+    renameFileAtPath,
+    moveEntriesToPath,
     changePermissions,
     readTextFile,
     readBinaryFile,
@@ -332,6 +368,7 @@ export const useSftpState = (
     dismissTransfer,
     resolveConflict,
     getSftpIdForConnection,
+    reportSessionError: handleSessionError,
   });
   methodsRef.current = {
     getFilteredFiles,
@@ -357,10 +394,14 @@ export const useSftpState = (
     setFilenameEncoding,
     setShowHiddenFiles,
     createDirectory,
+    createDirectoryAtPath,
     createFile,
+    createFileAtPath,
     deleteFiles,
     deleteFilesAtPath,
     renameFile,
+    renameFileAtPath,
+    moveEntriesToPath,
     changePermissions,
     readTextFile,
     readBinaryFile,
@@ -379,6 +420,7 @@ export const useSftpState = (
     dismissTransfer,
     resolveConflict,
     getSftpIdForConnection,
+    reportSessionError: handleSessionError,
   };
 
   // Create stable method wrappers that call through methodsRef
@@ -409,11 +451,17 @@ export const useSftpState = (
     setShowHiddenFiles: (...args: Parameters<typeof setShowHiddenFiles>) =>
       methodsRef.current.setShowHiddenFiles(...args),
     createDirectory: (...args: Parameters<typeof createDirectory>) => methodsRef.current.createDirectory(...args),
+    createDirectoryAtPath: (...args: Parameters<typeof createDirectoryAtPath>) =>
+      methodsRef.current.createDirectoryAtPath(...args),
     createFile: (...args: Parameters<typeof createFile>) => methodsRef.current.createFile(...args),
+    createFileAtPath: (...args: Parameters<typeof createFileAtPath>) =>
+      methodsRef.current.createFileAtPath(...args),
     deleteFiles: (...args: Parameters<typeof deleteFiles>) => methodsRef.current.deleteFiles(...args),
     deleteFilesAtPath: (...args: Parameters<typeof deleteFilesAtPath>) =>
       methodsRef.current.deleteFilesAtPath(...args),
     renameFile: (...args: Parameters<typeof renameFile>) => methodsRef.current.renameFile(...args),
+    renameFileAtPath: (...args: Parameters<typeof renameFileAtPath>) => methodsRef.current.renameFileAtPath(...args),
+    moveEntriesToPath: (...args: Parameters<typeof moveEntriesToPath>) => methodsRef.current.moveEntriesToPath(...args),
     changePermissions: (...args: Parameters<typeof changePermissions>) => methodsRef.current.changePermissions(...args),
     readTextFile: (...args: Parameters<typeof readTextFile>) => methodsRef.current.readTextFile(...args),
     readBinaryFile: (...args: Parameters<typeof readBinaryFile>) => methodsRef.current.readBinaryFile(...args),
@@ -433,6 +481,7 @@ export const useSftpState = (
     dismissTransfer: (...args: Parameters<typeof dismissTransfer>) => methodsRef.current.dismissTransfer(...args),
     resolveConflict: (...args: Parameters<typeof resolveConflict>) => methodsRef.current.resolveConflict(...args),
     getSftpIdForConnection: (...args: Parameters<typeof getSftpIdForConnection>) => methodsRef.current.getSftpIdForConnection(...args),
+    reportSessionError: (...args: Parameters<typeof handleSessionError>) => methodsRef.current.reportSessionError(...args),
     activeFileWatchCountRef,
   }), [activeFileWatchCountRef]); // activeFileWatchCountRef is a stable ref
 

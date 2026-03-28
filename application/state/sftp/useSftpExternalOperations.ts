@@ -45,7 +45,8 @@ interface SftpExternalOperationsResult {
   activeFileWatchCountRef: React.MutableRefObject<number>;
   uploadExternalFiles: (
     side: "left" | "right",
-    dataTransfer: DataTransfer
+    dataTransfer: DataTransfer,
+    targetPath?: string
   ) => Promise<UploadResult[]>;
   uploadExternalEntries: (
     side: "left" | "right",
@@ -377,6 +378,7 @@ export const useSftpExternalOperations = (
             speed: 0,
             startTime: Date.now(),
             isDirectory: true,
+            progressMode: "bytes",
           };
           addExternalUpload(scanningTask);
         }
@@ -404,6 +406,8 @@ export const useSftpExternalOperations = (
             speed: 0,
             startTime: Date.now(),
             isDirectory: task.isDirectory,
+            progressMode: task.progressMode ?? "bytes",
+            parentTaskId: task.parentTaskId,
           };
           addExternalUpload(transferTask);
         }
@@ -505,7 +509,7 @@ export const useSftpExternalOperations = (
   }, []);
 
   const uploadExternalFiles = useCallback(
-    async (side: "left" | "right", dataTransfer: DataTransfer): Promise<UploadResult[]> => {
+    async (side: "left" | "right", dataTransfer: DataTransfer, targetPath?: string): Promise<UploadResult[]> => {
       const pane = getActivePane(side);
       if (!pane?.connection) {
         throw new Error("No active connection");
@@ -525,13 +529,14 @@ export const useSftpExternalOperations = (
       }
 
       const uploadPaneId = pane.id;
+      const uploadTargetPath = targetPath || pane.connection.currentPath;
       // Create a new upload controller for this upload
       const controller = new UploadController();
       uploadControllerRef.current = controller;
 
       const callbacks = createUploadCallbacks(
         pane.connection.id,
-        pane.connection.currentPath,
+        uploadTargetPath,
         pane.connection.isLocal ? undefined : pane.connection.hostId,
         pane.connection.isLocal ? undefined : connectionCacheKeyMapRef.current.get(pane.connection.id),
       );
@@ -540,7 +545,7 @@ export const useSftpExternalOperations = (
         const results = await uploadFromDataTransfer(
           dataTransfer,
           {
-            targetPath: pane.connection.currentPath,
+            targetPath: uploadTargetPath,
             sftpId,
             isLocal: pane.connection.isLocal,
             bridge: createUploadBridge,
@@ -551,7 +556,14 @@ export const useSftpExternalOperations = (
           controller
         );
 
-        await refresh(side, { tabId: uploadPaneId });
+        // Invalidate cache for the upload target so returning to that path
+        // triggers a fresh listing.
+        if (clearDirCacheEntry && targetPath) {
+          clearDirCacheEntry(pane.connection.id, uploadTargetPath);
+        }
+        if (uploadTargetPath === pane.connection.currentPath) {
+          await refresh(side, { tabId: uploadPaneId });
+        }
         return results;
       } catch (error) {
         logger.error("[SFTP] Upload failed:", error);
@@ -561,6 +573,7 @@ export const useSftpExternalOperations = (
       }
     },
     [
+      clearDirCacheEntry,
       connectionCacheKeyMapRef,
       getActivePane,
       refresh,
@@ -634,7 +647,9 @@ export const useSftpExternalOperations = (
         if (clearDirCacheEntry) {
           clearDirCacheEntry(pane.connection.id, uploadTargetPath);
         }
-        await refresh(side, { tabId: uploadPaneId });
+        if (uploadTargetPath === pane.connection.currentPath) {
+          await refresh(side, { tabId: uploadPaneId });
+        }
         return results;
       } catch (error) {
         logger.error("[SFTP] Upload failed:", error);

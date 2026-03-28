@@ -193,6 +193,7 @@ function App({ settings }: { settings: SettingsState }) {
     sftpShowHiddenFiles,
     sftpUseCompressedUpload,
     sftpAutoOpenSidebar,
+    sftpDefaultViewMode,
     editorWordWrap,
     setEditorWordWrap,
     sessionLogsEnabled,
@@ -1345,6 +1346,7 @@ function App({ settings }: { settings: SettingsState }) {
           keys={keys}
           identities={identities}
           updateHosts={updateHosts}
+          sftpDefaultViewMode={sftpDefaultViewMode}
           sftpDoubleClickBehavior={sftpDoubleClickBehavior}
           sftpAutoSync={sftpAutoSync}
           sftpShowHiddenFiles={sftpShowHiddenFiles}
@@ -1394,6 +1396,7 @@ function App({ settings }: { settings: SettingsState }) {
           isBroadcastEnabled={isBroadcastEnabled}
           onToggleBroadcast={toggleBroadcast}
           updateHosts={updateHosts}
+          sftpDefaultViewMode={sftpDefaultViewMode}
           sftpDoubleClickBehavior={sftpDoubleClickBehavior}
           sftpAutoSync={sftpAutoSync}
           sftpShowHiddenFiles={sftpShowHiddenFiles}

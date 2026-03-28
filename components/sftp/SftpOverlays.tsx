@@ -24,8 +24,8 @@ interface SftpOverlaysProps {
   setHostSearchRight: (value: string) => void;
   handleHostSelectLeft: (host: Host | "local") => void;
   handleHostSelectRight: (host: Host | "local") => void;
-  permissionsState: { file: SftpFileEntry; side: "left" | "right" } | null;
-  setPermissionsState: (state: { file: SftpFileEntry; side: "left" | "right" } | null) => void;
+  permissionsState: { file: SftpFileEntry; side: "left" | "right"; fullPath: string } | null;
+  setPermissionsState: (state: { file: SftpFileEntry; side: "left" | "right"; fullPath: string } | null) => void;
   showTextEditor: boolean;
   setShowTextEditor: (open: boolean) => void;
   textEditorTarget: { file: SftpFileEntry; side: "left" | "right"; fullPath: string } | null;
@@ -43,7 +43,7 @@ interface SftpOverlaysProps {
   handleSelectSystemApp: (systemApp: { path: string; name: string }) => void;
 }
 
-export const SftpOverlays: React.FC<SftpOverlaysProps> = ({
+export const SftpOverlays: React.FC<SftpOverlaysProps> = React.memo(({
   hosts,
   sftp,
   visibleTransfers,
@@ -101,7 +101,7 @@ export const SftpOverlays: React.FC<SftpOverlaysProps> = ({
       />
 
       {showTransferQueue && (
-        <SftpTransferQueue sftp={sftp} visibleTransfers={visibleTransfers} />
+        <SftpTransferQueue sftp={sftp} visibleTransfers={visibleTransfers} allTransfers={sftp.transfers} />
       )}
 
       <SftpConflictDialog
@@ -114,17 +114,11 @@ export const SftpOverlays: React.FC<SftpOverlaysProps> = ({
         open={!!permissionsState}
         onOpenChange={(open) => !open && setPermissionsState(null)}
         file={permissionsState?.file ?? null}
-        onSave={(file, permissions) => {
+        onSave={(_file, permissions) => {
           if (permissionsState) {
-            const fullPath = sftp.joinPath(
-              permissionsState.side === "left"
-                ? sftp.leftPane.connection?.currentPath || ""
-                : sftp.rightPane.connection?.currentPath || "",
-              file.name,
-            );
             sftp.changePermissions(
               permissionsState.side,
-              fullPath,
+              permissionsState.fullPath,
               permissions,
             );
           }
@@ -160,4 +154,4 @@ export const SftpOverlays: React.FC<SftpOverlaysProps> = ({
       />
     </>
   );
-};
+});

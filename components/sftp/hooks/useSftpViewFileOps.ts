@@ -1,7 +1,7 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
 import type { RemoteFile, SftpFileEntry, SftpFilenameEncoding } from "../../../types";
-import { joinPath as joinFsPath } from "../../../application/state/sftp/utils";
+import { getParentPath, joinPath as joinFsPath } from "../../../application/state/sftp/utils";
 import type { SftpStateApi } from "../../../application/state/useSftpState";
 import { logger } from "../../../lib/logger";
 import { toast } from "../../ui/toast";
@@ -47,9 +47,9 @@ interface UseSftpViewFileOpsParams {
 }
 
 interface UseSftpViewFileOpsResult {
-  permissionsState: { file: SftpFileEntry; side: "left" | "right" } | null;
+  permissionsState: { file: SftpFileEntry; side: "left" | "right"; fullPath: string } | null;
   setPermissionsState: React.Dispatch<
-    React.SetStateAction<{ file: SftpFileEntry; side: "left" | "right" } | null>
+    React.SetStateAction<{ file: SftpFileEntry; side: "left" | "right"; fullPath: string } | null>
   >;
   showTextEditor: boolean;
   setShowTextEditor: React.Dispatch<React.SetStateAction<boolean>>;
@@ -89,20 +89,20 @@ interface UseSftpViewFileOpsResult {
     systemApp?: SystemAppInfo,
   ) => Promise<void>;
   handleSelectSystemApp: () => Promise<SystemAppInfo | null>;
-  onEditPermissionsLeft: (file: SftpFileEntry) => void;
-  onEditPermissionsRight: (file: SftpFileEntry) => void;
-  onOpenEntryLeft: (entry: SftpFileEntry) => void;
-  onOpenEntryRight: (entry: SftpFileEntry) => void;
-  onEditFileLeft: (file: SftpFileEntry) => void;
-  onEditFileRight: (file: SftpFileEntry) => void;
-  onOpenFileLeft: (file: SftpFileEntry) => void;
-  onOpenFileRight: (file: SftpFileEntry) => void;
-  onOpenFileWithLeft: (file: SftpFileEntry) => void;
-  onOpenFileWithRight: (file: SftpFileEntry) => void;
-  onDownloadFileLeft: (file: SftpFileEntry) => void;
-  onDownloadFileRight: (file: SftpFileEntry) => void;
-  onUploadExternalFilesLeft: (dataTransfer: DataTransfer) => void;
-  onUploadExternalFilesRight: (dataTransfer: DataTransfer) => void;
+  onEditPermissionsLeft: (file: SftpFileEntry, fullPath?: string) => void;
+  onEditPermissionsRight: (file: SftpFileEntry, fullPath?: string) => void;
+  onOpenEntryLeft: (entry: SftpFileEntry, fullPath?: string) => void;
+  onOpenEntryRight: (entry: SftpFileEntry, fullPath?: string) => void;
+  onEditFileLeft: (file: SftpFileEntry, fullPath?: string) => void;
+  onEditFileRight: (file: SftpFileEntry, fullPath?: string) => void;
+  onOpenFileLeft: (file: SftpFileEntry, fullPath?: string) => void;
+  onOpenFileRight: (file: SftpFileEntry, fullPath?: string) => void;
+  onOpenFileWithLeft: (file: SftpFileEntry, fullPath?: string) => void;
+  onOpenFileWithRight: (file: SftpFileEntry, fullPath?: string) => void;
+  onDownloadFileLeft: (file: SftpFileEntry, fullPath?: string) => void;
+  onDownloadFileRight: (file: SftpFileEntry, fullPath?: string) => void;
+  onUploadExternalFilesLeft: (dataTransfer: DataTransfer, targetPath?: string) => void;
+  onUploadExternalFilesRight: (dataTransfer: DataTransfer, targetPath?: string) => void;
 }
 
 export const useSftpViewFileOps = ({
@@ -123,6 +123,7 @@ export const useSftpViewFileOps = ({
   const [permissionsState, setPermissionsState] = useState<{
     file: SftpFileEntry;
     side: "left" | "right";
+    fullPath: string;
   } | null>(null);
 
   const [showTextEditor, setShowTextEditor] = useState(false);
@@ -145,27 +146,49 @@ export const useSftpViewFileOps = ({
     fullPath: string;
   } | null>(null);
 
+  // Refs for frequently-changing state used inside stable callbacks
+  const fileOpenerTargetRef = useRef(fileOpenerTarget);
+  fileOpenerTargetRef.current = fileOpenerTarget;
+  const textEditorTargetRef = useRef(textEditorTarget);
+  textEditorTargetRef.current = textEditorTarget;
+
   const onEditPermissionsLeft = useCallback(
-    (file: SftpFileEntry) => setPermissionsState({ file, side: "left" }),
-    [],
+    (file: SftpFileEntry, fullPath?: string) => {
+      const pane = sftpRef.current.leftPane;
+      if (!pane.connection) return;
+      setPermissionsState({
+        file,
+        side: "left",
+        fullPath: fullPath ?? sftpRef.current.joinPath(pane.connection.currentPath, file.name),
+      });
+    },
+    [sftpRef],
   );
   const onEditPermissionsRight = useCallback(
-    (file: SftpFileEntry) => setPermissionsState({ file, side: "right" }),
-    [],
+    (file: SftpFileEntry, fullPath?: string) => {
+      const pane = sftpRef.current.rightPane;
+      if (!pane.connection) return;
+      setPermissionsState({
+        file,
+        side: "right",
+        fullPath: fullPath ?? sftpRef.current.joinPath(pane.connection.currentPath, file.name),
+      });
+    },
+    [sftpRef],
   );
 
   const handleEditFileForSide = useCallback(
-    async (side: "left" | "right", file: SftpFileEntry) => {
+    async (side: "left" | "right", file: SftpFileEntry, fullPath?: string) => {
       const pane = side === "left" ? sftpRef.current.leftPane : sftpRef.current.rightPane;
       if (!pane.connection) return;
 
-      const fullPath = sftpRef.current.joinPath(pane.connection.currentPath, file.name);
+      const resolvedFullPath = fullPath ?? sftpRef.current.joinPath(pane.connection.currentPath, file.name);
 
       try {
         setLoadingTextContent(true);
-        setTextEditorTarget({ file, side, fullPath, hostId: pane.connection.hostId });
+        setTextEditorTarget({ file, side, fullPath: resolvedFullPath, hostId: pane.connection.hostId });
 
-        const content = await sftpRef.current.readTextFile(side, fullPath);
+        const content = await sftpRef.current.readTextFile(side, resolvedFullPath);
 
         setTextEditorContent(content);
         setShowTextEditor(true);
@@ -180,22 +203,22 @@ export const useSftpViewFileOps = ({
   );
 
   const handleOpenFileForSide = useCallback(
-    async (side: "left" | "right", file: SftpFileEntry) => {
+    async (side: "left" | "right", file: SftpFileEntry, fullPath?: string) => {
       const pane = side === "left" ? sftpRef.current.leftPane : sftpRef.current.rightPane;
       if (!pane.connection) return;
 
-      const fullPath = sftpRef.current.joinPath(pane.connection.currentPath, file.name);
+      const resolvedFullPath = fullPath ?? sftpRef.current.joinPath(pane.connection.currentPath, file.name);
       const savedOpener = getOpenerForFileRef.current(file.name);
 
       if (savedOpener && savedOpener.openerType) {
         if (savedOpener.openerType === "builtin-editor") {
-          handleEditFileForSide(side, file);
+          handleEditFileForSide(side, file, resolvedFullPath);
           return;
         } else if (savedOpener.openerType === "system-app" && savedOpener.systemApp) {
           try {
             await sftpRef.current.downloadToTempAndOpen(
               side,
-              fullPath,
+              resolvedFullPath,
               file.name,
               savedOpener.systemApp.path,
               { enableWatch: autoSyncRef.current },
@@ -207,7 +230,7 @@ export const useSftpViewFileOps = ({
         }
       }
 
-      setFileOpenerTarget({ file, side, fullPath });
+      setFileOpenerTarget({ file, side, fullPath: resolvedFullPath });
       setShowFileOpenerDialog(true);
     },
     [sftpRef, handleEditFileForSide, getOpenerForFileRef, autoSyncRef],
@@ -215,23 +238,24 @@ export const useSftpViewFileOps = ({
 
   const handleFileOpenerSelect = useCallback(
     async (openerType: FileOpenerType, setAsDefault: boolean, systemApp?: SystemAppInfo) => {
-      if (!fileOpenerTarget) return;
+      const target = fileOpenerTargetRef.current;
+      if (!target) return;
 
       if (setAsDefault) {
-        const ext = getFileExtension(fileOpenerTarget.file.name);
+        const ext = getFileExtension(target.file.name);
         setOpenerForExtension(ext, openerType, systemApp);
       }
 
       setShowFileOpenerDialog(false);
 
       if (openerType === "builtin-editor") {
-        handleEditFileForSide(fileOpenerTarget.side, fileOpenerTarget.file);
+        handleEditFileForSide(target.side, target.file, target.fullPath);
       } else if (openerType === "system-app" && systemApp) {
         try {
           await sftpRef.current.downloadToTempAndOpen(
-            fileOpenerTarget.side,
-            fileOpenerTarget.fullPath,
-            fileOpenerTarget.file.name,
+            target.side,
+            target.fullPath,
+            target.file.name,
             systemApp.path,
             { enableWatch: autoSyncRef.current },
           );
@@ -242,7 +266,7 @@ export const useSftpViewFileOps = ({
 
       setFileOpenerTarget(null);
     },
-    [fileOpenerTarget, setOpenerForExtension, handleEditFileForSide, autoSyncRef, sftpRef],
+    [setOpenerForExtension, handleEditFileForSide, autoSyncRef, sftpRef],
   );
 
   const handleSelectSystemApp = useCallback(async (): Promise<SystemAppInfo | null> => {
@@ -255,7 +279,8 @@ export const useSftpViewFileOps = ({
 
   const handleSaveTextFile = useCallback(
     async (content: string) => {
-      if (!textEditorTarget) return;
+      const target = textEditorTargetRef.current;
+      if (!target) return;
 
       // Verify the SFTP connection hasn't switched to a different host.
       // We check hostId (not connectionId) because auto-reconnect after a
@@ -263,64 +288,64 @@ export const useSftpViewFileOps = ({
       // endpoint.  The auto-connect effect in SftpSidePanel blocks
       // host-switching while the editor is open, so a hostId mismatch here
       // reliably indicates a genuinely different endpoint.
-      const currentPane = textEditorTarget.side === "left"
+      const currentPane = target.side === "left"
         ? sftpRef.current.leftPane
         : sftpRef.current.rightPane;
-      if (textEditorTarget.hostId && currentPane.connection?.hostId !== textEditorTarget.hostId) {
+      if (target.hostId && currentPane.connection?.hostId !== target.hostId) {
         throw new Error("SFTP connection changed while editing — file not saved to prevent writing to wrong host");
       }
 
       await sftpRef.current.writeTextFile(
-        textEditorTarget.side,
-        textEditorTarget.fullPath,
+        target.side,
+        target.fullPath,
         content,
       );
     },
-    [textEditorTarget, sftpRef],
+    [sftpRef],
   );
 
   const onEditFileLeft = useCallback(
-    (file: SftpFileEntry) => handleEditFileForSide("left", file),
+    (file: SftpFileEntry, fullPath?: string) => handleEditFileForSide("left", file, fullPath),
     [handleEditFileForSide],
   );
   const onEditFileRight = useCallback(
-    (file: SftpFileEntry) => handleEditFileForSide("right", file),
+    (file: SftpFileEntry, fullPath?: string) => handleEditFileForSide("right", file, fullPath),
     [handleEditFileForSide],
   );
   const onOpenFileLeft = useCallback(
-    (file: SftpFileEntry) => handleOpenFileForSide("left", file),
+    (file: SftpFileEntry, fullPath?: string) => handleOpenFileForSide("left", file, fullPath),
     [handleOpenFileForSide],
   );
   const onOpenFileRight = useCallback(
-    (file: SftpFileEntry) => handleOpenFileForSide("right", file),
+    (file: SftpFileEntry, fullPath?: string) => handleOpenFileForSide("right", file, fullPath),
     [handleOpenFileForSide],
   );
 
   const handleOpenFileWithForSide = useCallback(
-    (side: "left" | "right", file: SftpFileEntry) => {
+    (side: "left" | "right", file: SftpFileEntry, fullPath?: string) => {
       const pane = side === "left" ? sftpRef.current.leftPane : sftpRef.current.rightPane;
       if (!pane.connection) return;
 
-      const fullPath = sftpRef.current.joinPath(pane.connection.currentPath, file.name);
-      setFileOpenerTarget({ file, side, fullPath });
+      const resolvedFullPath = fullPath ?? sftpRef.current.joinPath(pane.connection.currentPath, file.name);
+      setFileOpenerTarget({ file, side, fullPath: resolvedFullPath });
       setShowFileOpenerDialog(true);
     },
     [sftpRef],
   );
 
   const onOpenFileWithLeft = useCallback(
-    (file: SftpFileEntry) => handleOpenFileWithForSide("left", file),
+    (file: SftpFileEntry, fullPath?: string) => handleOpenFileWithForSide("left", file, fullPath),
     [handleOpenFileWithForSide],
   );
   const onOpenFileWithRight = useCallback(
-    (file: SftpFileEntry) => handleOpenFileWithForSide("right", file),
+    (file: SftpFileEntry, fullPath?: string) => handleOpenFileWithForSide("right", file, fullPath),
     [handleOpenFileWithForSide],
   );
 
   const handleUploadExternalFilesForSide = useCallback(
-    async (side: "left" | "right", dataTransfer: DataTransfer) => {
+    async (side: "left" | "right", dataTransfer: DataTransfer, targetPath?: string) => {
       try {
-        const results = await sftpRef.current.uploadExternalFiles(side, dataTransfer);
+        const results = await sftpRef.current.uploadExternalFiles(side, dataTransfer, targetPath);
 
         // Check if upload was cancelled
         if (results.some((r) => r.cancelled)) {
@@ -359,21 +384,21 @@ export const useSftpViewFileOps = ({
   );
 
   const onUploadExternalFilesLeft = useCallback(
-    (dataTransfer: DataTransfer) => handleUploadExternalFilesForSide("left", dataTransfer),
+    (dataTransfer: DataTransfer, targetPath?: string) => handleUploadExternalFilesForSide("left", dataTransfer, targetPath),
     [handleUploadExternalFilesForSide],
   );
 
   const onUploadExternalFilesRight = useCallback(
-    (dataTransfer: DataTransfer) => handleUploadExternalFilesForSide("right", dataTransfer),
+    (dataTransfer: DataTransfer, targetPath?: string) => handleUploadExternalFilesForSide("right", dataTransfer, targetPath),
     [handleUploadExternalFilesForSide],
   );
 
   const handleDownloadFileForSide = useCallback(
-    async (side: "left" | "right", file: SftpFileEntry) => {
+    async (side: "left" | "right", file: SftpFileEntry, fullPath?: string) => {
       const pane = side === "left" ? sftpRef.current.leftPane : sftpRef.current.rightPane;
       if (!pane.connection) return;
 
-      const fullPath = sftpRef.current.joinPath(pane.connection.currentPath, file.name);
+      const resolvedFullPath = fullPath ?? sftpRef.current.joinPath(pane.connection.currentPath, file.name);
       const isDirectory = isNavigableDirectory(file);
 
       try {
@@ -384,7 +409,7 @@ export const useSftpViewFileOps = ({
             return;
           }
 
-          const content = await sftpRef.current.readBinaryFile(side, fullPath);
+          const content = await sftpRef.current.readBinaryFile(side, resolvedFullPath);
 
           const blob = new Blob([content], { type: "application/octet-stream" });
           const url = URL.createObjectURL(blob);
@@ -447,10 +472,14 @@ export const useSftpViewFileOps = ({
           let estimatedTotalBytes = 0;
           let activeQueueTasks = 0;
 
-          const isTaskCancelled = () =>
-            sftpRef.current.transfers.some(
+          let cancelled = false;
+          const isTaskCancelled = () => {
+            if (cancelled) return true;
+            cancelled = sftpRef.current.transfers.some(
               (task) => task.id === transferId && task.status === "cancelled",
             );
+            return cancelled;
+          };
 
           const updateAggregateProgress = () => {
             let activeTransferredBytes = 0;
@@ -751,7 +780,7 @@ export const useSftpViewFileOps = ({
           sftpRef.current.addExternalUpload({
             id: transferId,
             fileName: `${file.name} (${t("sftp.upload.scanning")})`,
-            sourcePath: fullPath,
+            sourcePath: resolvedFullPath,
             targetPath,
             sourceConnectionId: pane.connection.id,
             targetConnectionId: "local",
@@ -782,7 +811,7 @@ export const useSftpViewFileOps = ({
             pendingDirectoryTasks = 1;
             enqueueDirectoryTask({
               type: "directory",
-              remotePath: fullPath,
+              remotePath: resolvedFullPath,
               localPath: targetPath,
               symlinkDepth: 0,
             });
@@ -832,7 +861,7 @@ export const useSftpViewFileOps = ({
         sftpRef.current.addExternalUpload({
           id: transferId,
           fileName: file.name,
-          sourcePath: fullPath,
+          sourcePath: resolvedFullPath,
           targetPath,
           sourceConnectionId: pane.connection.id,
           targetConnectionId: 'local',
@@ -851,7 +880,7 @@ export const useSftpViewFileOps = ({
         const result = await startStreamTransfer(
           {
             transferId,
-            sourcePath: fullPath,
+            sourcePath: resolvedFullPath,
             targetPath,
             sourceType: 'sftp',
             targetType: 'local',
@@ -936,17 +965,18 @@ export const useSftpViewFileOps = ({
   );
 
   const onDownloadFileLeft = useCallback(
-    (file: SftpFileEntry) => handleDownloadFileForSide("left", file),
+    (file: SftpFileEntry, fullPath?: string) => handleDownloadFileForSide("left", file, fullPath),
     [handleDownloadFileForSide],
   );
 
   const onDownloadFileRight = useCallback(
-    (file: SftpFileEntry) => handleDownloadFileForSide("right", file),
+    (file: SftpFileEntry, fullPath?: string) => handleDownloadFileForSide("right", file, fullPath),
     [handleDownloadFileForSide],
   );
 
   const onOpenEntryLeft = useCallback(
-    (entry: SftpFileEntry) => {
+    (entry: SftpFileEntry, fullPath?: string) => {
+      const pane = sftpRef.current.leftPane;
       const isDir = isNavigableDirectory(entry);
 
       if (entry.name === ".." || isDir) {
@@ -955,20 +985,28 @@ export const useSftpViewFileOps = ({
       }
 
       if (behaviorRef.current === "transfer") {
+        const sourcePath = fullPath ? getParentPath(fullPath) : pane.connection?.currentPath;
+        const sourceConnectionId = pane.connection?.id;
         const fileData = [{
           name: entry.name,
           isDirectory: isDir,
+          sourceConnectionId,
+          sourcePath,
         }];
-        sftpRef.current.startTransfer(fileData, "left", "right");
+        sftpRef.current.startTransfer(fileData, "left", "right", {
+          sourceConnectionId,
+          sourcePath,
+        });
       } else {
-        onOpenFileLeft(entry);
+        onOpenFileLeft(entry, fullPath);
       }
     },
     [sftpRef, onOpenFileLeft, behaviorRef],
   );
 
   const onOpenEntryRight = useCallback(
-    (entry: SftpFileEntry) => {
+    (entry: SftpFileEntry, fullPath?: string) => {
+      const pane = sftpRef.current.rightPane;
       const isDir = isNavigableDirectory(entry);
 
       if (entry.name === ".." || isDir) {
@@ -977,13 +1015,20 @@ export const useSftpViewFileOps = ({
       }
 
       if (behaviorRef.current === "transfer") {
+        const sourcePath = fullPath ? getParentPath(fullPath) : pane.connection?.currentPath;
+        const sourceConnectionId = pane.connection?.id;
         const fileData = [{
           name: entry.name,
           isDirectory: isDir,
+          sourceConnectionId,
+          sourcePath,
         }];
-        sftpRef.current.startTransfer(fileData, "right", "left");
+        sftpRef.current.startTransfer(fileData, "right", "left", {
+          sourceConnectionId,
+          sourcePath,
+        });
       } else {
-        onOpenFileRight(entry);
+        onOpenFileRight(entry, fullPath);
       }
     },
     [sftpRef, onOpenFileRight, behaviorRef],

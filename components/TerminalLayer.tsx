@@ -375,6 +375,7 @@ interface TerminalLayerProps {
   onToggleBroadcast?: (workspaceId: string) => void;
   // SFTP side panel
   updateHosts: (hosts: Host[]) => void;
+  sftpDefaultViewMode: 'list' | 'tree';
   sftpDoubleClickBehavior: 'open' | 'transfer';
   sftpAutoSync: boolean;
   sftpShowHiddenFiles: boolean;
@@ -425,6 +426,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   isBroadcastEnabled,
   onToggleBroadcast,
   updateHosts,
+  sftpDefaultViewMode,
   sftpDoubleClickBehavior,
   sftpAutoSync,
   sftpShowHiddenFiles,
@@ -1974,6 +1976,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                           keys={keys}
                           identities={identities}
                           updateHosts={updateHosts}
+                          sftpDefaultViewMode={sftpDefaultViewMode}
                           activeHost={isVisibleSftpPanel ? sftpActiveHost : null}
                           initialLocation={
                             isVisibleSftpPanel
@@ -1989,6 +1992,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                           sftpAutoSync={isVisibleSftpPanel ? sftpAutoSync : false}
                           sftpShowHiddenFiles={sftpShowHiddenFiles}
                           sftpUseCompressedUpload={sftpUseCompressedUpload}
+                          hotkeyScheme={hotkeyScheme}
+                          keyBindings={keyBindings}
                           editorWordWrap={editorWordWrap}
                           setEditorWordWrap={setEditorWordWrap}
                           onGetTerminalCwd={getTerminalCwd}
@@ -2293,6 +2298,7 @@ const terminalLayerAreEqual = (prev: TerminalLayerProps, next: TerminalLayerProp
     prev.fontSize === next.fontSize &&
     prev.hotkeyScheme === next.hotkeyScheme &&
     prev.keyBindings === next.keyBindings &&
+    prev.sftpDefaultViewMode === next.sftpDefaultViewMode &&
     prev.sftpDoubleClickBehavior === next.sftpDoubleClickBehavior &&
     prev.sftpAutoSync === next.sftpAutoSync &&
     prev.sftpShowHiddenFiles === next.sftpShowHiddenFiles &&

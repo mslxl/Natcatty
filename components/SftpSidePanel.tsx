@@ -10,7 +10,7 @@
  * Used in TerminalLayer to provide SFTP alongside terminal sessions.
  */
 
-import React, { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatHostPort } from "../domain/host";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useSftpState } from "../application/state/useSftpState";
@@ -31,12 +31,16 @@ import { SftpTransferQueue } from "./sftp/SftpTransferQueue";
 import { SftpContextProvider } from "./sftp";
 import { useSftpViewPaneCallbacks } from "./sftp/hooks/useSftpViewPaneCallbacks";
 import { useSftpViewTabs } from "./sftp/hooks/useSftpViewTabs";
+import { useSftpKeyboardShortcuts } from "./sftp/hooks/useSftpKeyboardShortcuts";
+import { sftpFocusStore } from "./sftp/hooks/useSftpFocusedPane";
+import { KeyBinding, HotkeyScheme } from "../domain/models";
 
 interface SftpSidePanelProps {
   hosts: Host[];
   keys: SSHKey[];
   identities: Identity[];
   updateHosts: (hosts: Host[]) => void;
+  sftpDefaultViewMode: "list" | "tree";
   /** The host to connect to (follows focused terminal) */
   activeHost: Host | null;
   initialLocation?: { hostId: string; path: string } | null;
@@ -55,6 +59,8 @@ interface SftpSidePanelProps {
   sftpAutoSync: boolean;
   sftpShowHiddenFiles: boolean;
   sftpUseCompressedUpload: boolean;
+  hotkeyScheme: HotkeyScheme;
+  keyBindings: KeyBinding[];
   editorWordWrap: boolean;
   setEditorWordWrap: (value: boolean) => void;
   onGetTerminalCwd?: () => Promise<string | null>;
@@ -65,6 +71,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   keys,
   identities,
   updateHosts,
+  sftpDefaultViewMode,
   activeHost,
   initialLocation,
   showWorkspaceHostHeader = false,
@@ -76,6 +83,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   sftpAutoSync,
   sftpShowHiddenFiles,
   sftpUseCompressedUpload,
+  hotkeyScheme,
+  keyBindings,
   editorWordWrap,
   setEditorWordWrap,
   onGetTerminalCwd,
@@ -109,6 +118,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     listSftp,
     mkdirLocal,
     deleteLocalFile,
+    listLocalDir,
   } = useSftpBackend();
 
   const sftpRef = useRef(sftp);
@@ -119,6 +129,15 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
 
   const autoSyncRef = useRef(sftpAutoSync);
   autoSyncRef.current = sftpAutoSync;
+  const panelRootRef = useRef<HTMLDivElement>(null);
+  const [hasPaneFocus, setHasPaneFocus] = useState(false);
+
+  useSftpKeyboardShortcuts({
+    keyBindings,
+    hotkeyScheme,
+    sftpRef,
+    isActive: isVisible && hasPaneFocus,
+  });
 
   const { getOpenerForFile, setOpenerForExtension } = useSftpFileAssociations();
   const getOpenerForFileRef = useRef(getOpenerForFile);
@@ -130,9 +149,39 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     sftpRef.current.setShowHiddenFiles("left", paneId, !pane.showHiddenFiles);
   }, []);
 
+  const handlePaneFocus = useCallback(() => {
+    sftpFocusStore.setFocusedSide("left");
+    setHasPaneFocus(true);
+  }, []);
+
   // NOTE: We intentionally do NOT sync to activeTabStore here.
   // activeTabStore is a global singleton shared with SftpView.
   // Writing to it here would corrupt SftpView's left pane visibility.
+
+  useEffect(() => {
+    if (!isVisible) {
+      setHasPaneFocus(false);
+    }
+  }, [isVisible]);
+
+  useEffect(() => {
+    if (!isVisible) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (panelRootRef.current?.contains(target)) {
+        sftpFocusStore.setFocusedSide("left");
+        setHasPaneFocus(true);
+      } else {
+        setHasPaneFocus(false);
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+    };
+  }, [isVisible]);
 
   const {
     leftCallbacks,
@@ -168,6 +217,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     selectDirectory,
     startStreamTransfer,
     getSftpIdForConnection: sftp.getSftpIdForConnection,
+    listLocalFiles: listLocalDir,
   });
 
   const {
@@ -432,6 +482,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     // Filter transfers to those relevant to the active connection's host,
     // so workspace focus switches don't show transfers from other hosts.
     const filtered = sftp.transfers.filter((t) => {
+      if (t.parentTaskId) return false; // Child tasks rendered by SftpTransferQueue
       if (connection.isLocal) {
         return t.sourceConnectionId === connection.id || t.targetConnectionId === connection.id;
       }
@@ -504,9 +555,11 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       rightCallbacks={rightCallbacks}
     >
       <div
+        ref={panelRootRef}
         className="h-full flex flex-col bg-background overflow-hidden"
         style={isVisible ? undefined : { display: "none" }}
         aria-hidden={!isVisible}
+        onClick={handlePaneFocus}
       >
         {showWorkspaceHostHeader && displayHost && (
           <div className="shrink-0 border-b border-border/50 bg-muted/20 px-3 py-1.5">
@@ -546,6 +599,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
                 <SftpPaneView
                   side="left"
                   pane={pane}
+                  isPaneFocused={isVisible && hasPaneFocus}
+                  sftpDefaultViewMode={sftpDefaultViewMode}
                   showHeader
                   showEmptyHeader
                   onToggleShowHiddenFiles={() => handleToggleHiddenFiles(pane.id)}
@@ -558,6 +613,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         <SftpTransferQueue
           sftp={sftp}
           visibleTransfers={visibleTransfers}
+          allTransfers={sftp.transfers}
           canRevealTransferTarget={canRevealTransferTarget}
           onRevealTransferTarget={handleRevealTransferTarget}
         />
@@ -608,6 +664,7 @@ const sidePanelAreEqual = (prev: SftpSidePanelProps, next: SftpSidePanelProps): 
   prev.keys === next.keys &&
   prev.identities === next.identities &&
   prev.updateHosts === next.updateHosts &&
+  prev.sftpDefaultViewMode === next.sftpDefaultViewMode &&
   prev.activeHost === next.activeHost &&
   prev.showWorkspaceHostHeader === next.showWorkspaceHostHeader &&
   prev.isVisible === next.isVisible &&
