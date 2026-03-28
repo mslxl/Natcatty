@@ -222,6 +222,23 @@ export const useSftpKeyboardShortcuts = ({
         return;
       }
 
+      // ── Backspace key: go to parent directory ──────────────────────
+      if (e.key === 'Backspace' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        const sftp = sftpRef.current;
+        const focusedSide = sftpFocusStore.getFocusedSide();
+        const pane = focusedSide === "left"
+          ? sftp.leftTabs.tabs.find(p => p.id === sftp.leftTabs.activeTabId)
+          : sftp.rightTabs.tabs.find(p => p.id === sftp.rightTabs.activeTabId);
+        if (!pane || !pane.connection) return;
+        const parentPath = getParentPath(pane.connection.currentPath);
+        if (parentPath !== pane.connection.currentPath) {
+          e.preventDefault();
+          e.stopPropagation();
+          sftp.navigateTo(focusedSide, parentPath);
+        }
+        return;
+      }
+
       if (hotkeyScheme === "disabled") return;
 
       const isMac = hotkeyScheme === "mac";
