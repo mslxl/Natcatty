@@ -3,10 +3,10 @@
  * Uses a shared state pattern to sync across components
  */
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
-import { STORAGE_KEY_SFTP_FILE_ASSOCIATIONS } from '../../infrastructure/config/storageKeys';
+import { STORAGE_KEY_SFTP_FILE_ASSOCIATIONS, STORAGE_KEY_SFTP_DEFAULT_OPENER } from '../../infrastructure/config/storageKeys';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import type { FileAssociation, FileOpenerType, SystemAppInfo } from '../../lib/sftpFileUtils';
-import { getFileExtension } from '../../lib/sftpFileUtils';
+import { getFileExtension, isKnownBinaryFile } from '../../lib/sftpFileUtils';
 
 export interface FileAssociationEntry {
   openerType: FileOpenerType;
@@ -17,10 +17,12 @@ export interface FileAssociationsMap {
   [extension: string]: FileAssociationEntry;
 }
 
-// Shared state and subscribers for cross-component synchronization
+// ---------------------------------------------------------------------------
+// Per-extension associations store
+// ---------------------------------------------------------------------------
+
 const subscribers = new Set<() => void>();
 
-// Use a wrapper object so we can update the reference for useSyncExternalStore
 let snapshotRef: { associations: FileAssociationsMap } = { associations: {} };
 
 function loadFromStorage(): FileAssociationsMap {
@@ -39,7 +41,6 @@ function loadFromStorage(): FileAssociationsMap {
   return {};
 }
 
-// Initialize from storage
 snapshotRef = { associations: loadFromStorage() };
 
 function saveToStorage(associations: FileAssociationsMap) {
@@ -47,7 +48,6 @@ function saveToStorage(associations: FileAssociationsMap) {
 }
 
 function updateAssociations(newAssociations: FileAssociationsMap) {
-  // Create new reference so useSyncExternalStore detects change
   snapshotRef = { associations: newAssociations };
   saveToStorage(newAssociations);
   subscribers.forEach(callback => callback());
@@ -62,15 +62,54 @@ function getSnapshot() {
   return snapshotRef;
 }
 
+// ---------------------------------------------------------------------------
+// Default opener store (separate from per-extension associations)
+// ---------------------------------------------------------------------------
+
+const defaultOpenerSubscribers = new Set<() => void>();
+
+let defaultOpenerSnapshot: { entry: FileAssociationEntry | null } = {
+  entry: localStorageAdapter.read<FileAssociationEntry>(STORAGE_KEY_SFTP_DEFAULT_OPENER) ?? null,
+};
+
+function subscribeDefaultOpener(callback: () => void) {
+  defaultOpenerSubscribers.add(callback);
+  return () => defaultOpenerSubscribers.delete(callback);
+}
+
+function getDefaultOpenerSnapshot() {
+  return defaultOpenerSnapshot;
+}
+
+function updateDefaultOpener(entry: FileAssociationEntry | null) {
+  defaultOpenerSnapshot = { entry };
+  if (entry) {
+    localStorageAdapter.write(STORAGE_KEY_SFTP_DEFAULT_OPENER, entry);
+  } else {
+    localStorage.removeItem(STORAGE_KEY_SFTP_DEFAULT_OPENER);
+  }
+  defaultOpenerSubscribers.forEach(callback => callback());
+}
+
+// ---------------------------------------------------------------------------
+// Hook
+// ---------------------------------------------------------------------------
+
 export function useSftpFileAssociations() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const associations = snapshot.associations;
+
+  const defaultOpenerState = useSyncExternalStore(subscribeDefaultOpener, getDefaultOpenerSnapshot, getDefaultOpenerSnapshot);
 
   // Listen for storage events from other tabs/windows
   useEffect(() => {
     const handleStorage = (e: StorageEvent) => {
       if (e.key === STORAGE_KEY_SFTP_FILE_ASSOCIATIONS) {
         updateAssociations(loadFromStorage());
+      } else if (e.key === STORAGE_KEY_SFTP_DEFAULT_OPENER) {
+        updateDefaultOpener(
+          localStorageAdapter.read<FileAssociationEntry>(STORAGE_KEY_SFTP_DEFAULT_OPENER) ?? null,
+        );
       }
     };
     window.addEventListener('storage', handleStorage);
@@ -78,18 +117,46 @@ export function useSftpFileAssociations() {
   }, []);
 
   /**
-   * Get the opener entry for a file based on its extension
+   * Get the opener entry for a file based on its extension.
+   * Falls back to the default opener when no per-extension association exists.
    */
   const getOpenerForFile = useCallback((fileName: string): FileAssociationEntry | null => {
     const ext = getFileExtension(fileName);
-    return associations[ext] || null;
-  }, [associations]);
+    if (associations[ext]) return associations[ext];
+    // Fall back to default opener, but skip built-in editor for binary files
+    const fallback = defaultOpenerState.entry;
+    if (fallback && fallback.openerType === 'builtin-editor' && isKnownBinaryFile(fileName)) {
+      return null;
+    }
+    return fallback;
+  }, [associations, defaultOpenerState]);
+
+  /**
+   * Get the default (fallback) opener, if set.
+   */
+  const getDefaultOpener = useCallback((): FileAssociationEntry | null => {
+    return defaultOpenerState.entry;
+  }, [defaultOpenerState]);
+
+  /**
+   * Set the default opener used when no per-extension association exists.
+   */
+  const setDefaultOpener = useCallback((openerType: FileOpenerType, systemApp?: SystemAppInfo) => {
+    updateDefaultOpener({ openerType, systemApp });
+  }, []);
+
+  /**
+   * Remove the default opener.
+   */
+  const removeDefaultOpener = useCallback(() => {
+    updateDefaultOpener(null);
+  }, []);
 
   /**
    * Set the opener type for a specific extension
    */
   const setOpenerForExtension = useCallback((
-    extension: string, 
+    extension: string,
     openerType: FileOpenerType,
     systemApp?: SystemAppInfo
   ) => {
@@ -109,7 +176,7 @@ export function useSftpFileAssociations() {
   }, []);
 
   /**
-   * Get all associations as an array
+   * Get all per-extension associations as an array.
    */
   const getAllAssociations = useCallback((): FileAssociation[] => {
     return Object.entries(associations).map(([extension, entry]: [string, FileAssociationEntry]) => ({
@@ -129,6 +196,9 @@ export function useSftpFileAssociations() {
   return {
     associations,
     getOpenerForFile,
+    getDefaultOpener,
+    setDefaultOpener,
+    removeDefaultOpener,
     setOpenerForExtension,
     removeAssociation,
     getAllAssociations,
