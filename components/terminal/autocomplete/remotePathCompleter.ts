@@ -77,7 +77,7 @@ const PATH_COMMANDS = new Set([
 ]);
 
 /** Commands that only accept directories (not files) */
-const FOLDER_ONLY_COMMANDS = new Set(["cd", "mkdir", "rmdir", "pushd", "popd"]);
+const FOLDER_ONLY_COMMANDS = new Set(["cd", "mkdir", "rmdir", "pushd"]);
 
 /**
  * Check if the current command context expects a path argument.

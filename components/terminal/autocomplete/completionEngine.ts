@@ -208,7 +208,7 @@ export async function getCompletions(
         text: entry.command,
         displayText: entry.command,
         source: "history",
-        score: 700 - index,
+        score: 720 - index,
         frequency: entry.frequency,
       } satisfies CompletionSuggestion;
       suggestions.push(suggestion);
