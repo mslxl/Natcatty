@@ -64,6 +64,19 @@ export const sftpTreeEnterStore = {
   getSnapshot: () => _treeEnterAction,
 };
 
+// ── Keyboard selection anchor/focus tracking ────────────────────────
+// Tracks the anchor (where Shift-selection started) and focus (cursor)
+// indices per pane so Shift+Arrow extends correctly.
+const _kbSelectionState = new Map<string, { anchor: number; focus: number }>();
+
+function getKbSelection(paneId: string) {
+  return _kbSelectionState.get(paneId) ?? { anchor: 0, focus: 0 };
+}
+
+function setKbSelection(paneId: string, anchor: number, focus: number) {
+  _kbSelectionState.set(paneId, { anchor, focus });
+}
+
 interface UseSftpKeyboardShortcutsParams {
   keyBindings: KeyBinding[];
   hotkeyScheme: "disabled" | "mac" | "pc";
@@ -130,25 +143,33 @@ export const useSftpKeyboardShortcuts = ({
         if (listItems.length > 0) {
           e.preventDefault();
           e.stopPropagation();
+
+          // Resolve current focus position from tracked state, falling back
+          // to the actual selection when out of sync (e.g. after mouse click).
+          const kbState = getKbSelection(pane.id);
           const currentSelected = Array.from(pane.selectedFiles) as string[];
-          let currentIdx = -1;
-          if (currentSelected.length >= 1) {
-            // Use the last selected item as anchor
-            const lastSelected = currentSelected[currentSelected.length - 1];
-            currentIdx = listItems.indexOf(lastSelected);
+          let focusIdx = kbState.focus;
+          // If the tracked focus doesn't match the actual selection, re-sync
+          if (currentSelected.length >= 1 && !currentSelected.includes(listItems[focusIdx])) {
+            focusIdx = listItems.indexOf(currentSelected[currentSelected.length - 1]);
+            if (focusIdx < 0) focusIdx = 0;
+            setKbSelection(pane.id, focusIdx, focusIdx);
           }
-          let nextIdx = currentIdx + delta;
+
+          let nextIdx = focusIdx + delta;
           if (nextIdx < 0) nextIdx = 0;
           if (nextIdx >= listItems.length) nextIdx = listItems.length - 1;
-          const nextName = listItems[nextIdx];
-          if (e.shiftKey && currentSelected.length > 0) {
-            // Shift+Arrow: range selection
-            const anchorIdx = currentIdx >= 0 ? currentIdx : 0;
+
+          if (e.shiftKey) {
+            // Shift+Arrow: extend range from anchor to new focus
+            const anchorIdx = kbState.anchor;
             const start = Math.min(anchorIdx, nextIdx);
             const end = Math.max(anchorIdx, nextIdx);
             sftp.rangeSelect(focusedSide, listItems.slice(start, end + 1));
+            setKbSelection(pane.id, anchorIdx, nextIdx);
           } else {
-            sftp.rangeSelect(focusedSide, [nextName]);
+            sftp.rangeSelect(focusedSide, [listItems[nextIdx]]);
+            setKbSelection(pane.id, nextIdx, nextIdx);
           }
           return;
         }
@@ -160,22 +181,29 @@ export const useSftpKeyboardShortcuts = ({
           e.stopPropagation();
           const items = treeState.visibleItems;
           const currentSelected = [...treeState.selectedPaths];
-          let currentIdx = -1;
-          if (currentSelected.length === 1) {
-            currentIdx = treeState.visibleIndexByPath.get(currentSelected[0]) ?? -1;
+
+          // Use tracked state, re-sync if needed
+          const kbState = getKbSelection(pane.id);
+          let focusIdx = kbState.focus;
+          if (currentSelected.length >= 1 && items[focusIdx]?.path !== currentSelected[currentSelected.length - 1]) {
+            focusIdx = treeState.visibleIndexByPath.get(currentSelected[currentSelected.length - 1]) ?? 0;
+            setKbSelection(pane.id, focusIdx, focusIdx);
           }
-          let nextIdx = currentIdx + delta;
+
+          let nextIdx = focusIdx + delta;
           if (nextIdx < 0) nextIdx = 0;
           if (nextIdx >= items.length) nextIdx = items.length - 1;
-          if (e.shiftKey && currentSelected.length > 0) {
-            // Shift+Arrow: extend selection
-            const anchorIdx = currentIdx >= 0 ? currentIdx : 0;
+
+          if (e.shiftKey) {
+            const anchorIdx = kbState.anchor;
             const start = Math.min(anchorIdx, nextIdx);
             const end = Math.max(anchorIdx, nextIdx);
             const paths = items.slice(start, end + 1).map(item => item.path);
             sftpTreeSelectionStore.setSelection(pane.id, paths);
+            setKbSelection(pane.id, anchorIdx, nextIdx);
           } else {
             sftpTreeSelectionStore.setSelection(pane.id, [items[nextIdx].path]);
+            setKbSelection(pane.id, nextIdx, nextIdx);
           }
           return;
         }
