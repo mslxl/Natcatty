@@ -199,7 +199,7 @@ export async function getCompletions(
       excludeCommand: input,
       argumentPrefix: normalizeHistoryPathPrefix(ctx.currentWord),
       hostId,
-      limit: 3,
+      limit: 5,
     });
     for (let index = 0; index < recentHistory.length; index++) {
       const entry = recentHistory[index];
