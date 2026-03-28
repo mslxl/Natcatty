@@ -347,7 +347,6 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
       dragOverEntry,
       isPaneFocused,
       onCopyToOtherPane,
-      onClearSelection,
       onMoveEntriesToPath,
       onDownloadFile,
       onDragEnd,
