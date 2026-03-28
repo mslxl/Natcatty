@@ -225,7 +225,7 @@ export const useSftpKeyboardShortcuts = ({
 
       const isMac = hotkeyScheme !== "disabled" ? hotkeyScheme === "mac" : false;
       const matched = basicNavAction ? null : matchSftpAction(e, keyBindings, isMac);
-      if (!matched) return;
+      if (!matched && !basicNavAction) return;
 
       const action = basicNavAction ?? matched?.action;
       if (!action || !SFTP_ACTIONS.has(action)) return;
