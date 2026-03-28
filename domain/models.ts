@@ -373,6 +373,8 @@ export const DEFAULT_KEY_BINDINGS: KeyBinding[] = [
   { id: 'sftp-delete', action: 'sftpDelete', label: 'Delete Files', mac: '⌘ + ⌫', pc: 'Delete', category: 'sftp' },
   { id: 'sftp-refresh', action: 'sftpRefresh', label: 'Refresh', mac: '⌘ + R', pc: 'F5', category: 'sftp' },
   { id: 'sftp-new-folder', action: 'sftpNewFolder', label: 'New Folder', mac: '⌘ + Shift + N', pc: 'Ctrl + Shift + N', category: 'sftp' },
+  { id: 'sftp-open', action: 'sftpOpen', label: 'Open File / Enter Directory', mac: 'Enter', pc: 'Enter', category: 'sftp' },
+  { id: 'sftp-go-parent', action: 'sftpGoParent', label: 'Go to Parent Directory', mac: '⌫', pc: 'Backspace', category: 'sftp' },
 ];
 
 // Terminal appearance settings

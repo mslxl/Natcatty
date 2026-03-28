@@ -29,6 +29,8 @@ const SFTP_ACTIONS = new Set([
   "sftpDelete",
   "sftpRefresh",
   "sftpNewFolder",
+  "sftpOpen",
+  "sftpGoParent",
 ]);
 
 // ── Tree Enter key action store ──────────────────────────────────────
@@ -204,63 +206,6 @@ export const useSftpKeyboardShortcuts = ({
             setKbSelection(pane.id, nextIdx, nextIdx);
           }
           return;
-        }
-        return;
-      }
-
-      // ── Enter key: open/navigate/expand ────────────────────────────
-      if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
-        const sftp = sftpRef.current;
-        const focusedSide = sftpFocusStore.getFocusedSide();
-        const pane = focusedSide === "left"
-          ? sftp.leftTabs.tabs.find(p => p.id === sftp.leftTabs.activeTabId)
-          : sftp.rightTabs.tabs.find(p => p.id === sftp.rightTabs.activeTabId);
-        if (!pane || !pane.connection) return;
-
-        // Prefer list selection when the list store is active so stale tree
-        // selection state cannot intercept Enter in list mode.
-        const listItems = sftpListOrderStore.getItems(pane.id);
-        const selectedFiles = Array.from(pane.selectedFiles) as string[];
-        if (listItems.length > 0 && selectedFiles.length === 1) {
-          e.preventDefault();
-          e.stopPropagation();
-          const fileName = selectedFiles[0];
-          const entry = (pane.files as SftpFileEntry[]).find(f => f.name === fileName);
-          if (entry) {
-            if (isNavigableDirectory(entry)) {
-              sftp.navigateTo(focusedSide, joinPath(pane.connection.currentPath, entry.name));
-            } else {
-              sftp.openEntry(focusedSide, entry);
-            }
-          }
-          return;
-        }
-
-        const treeSelection = sftpTreeSelectionStore.getSelectedItems(pane.id);
-        if (treeSelection.length === 1) {
-          e.preventDefault();
-          e.stopPropagation();
-          const item = treeSelection[0];
-          // For tree view: toggle expand for dirs, open for files
-          sftpTreeEnterStore.trigger(pane.id, item.path, item.isDirectory);
-          return;
-        }
-        return;
-      }
-
-      // ── Backspace key: go to parent directory ──────────────────────
-      if (e.key === 'Backspace' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
-        const sftp = sftpRef.current;
-        const focusedSide = sftpFocusStore.getFocusedSide();
-        const pane = focusedSide === "left"
-          ? sftp.leftTabs.tabs.find(p => p.id === sftp.leftTabs.activeTabId)
-          : sftp.rightTabs.tabs.find(p => p.id === sftp.rightTabs.activeTabId);
-        if (!pane || !pane.connection) return;
-        const parentPath = getParentPath(pane.connection.currentPath);
-        if (parentPath !== pane.connection.currentPath) {
-          e.preventDefault();
-          e.stopPropagation();
-          sftp.navigateTo(focusedSide, parentPath);
         }
         return;
       }
@@ -537,6 +482,39 @@ export const useSftpKeyboardShortcuts = ({
         case "sftpNewFolder": {
           // Create new folder
           sftpDialogActionStore.trigger("newFolder");
+          break;
+        }
+
+        case "sftpOpen": {
+          // Prefer list selection when the list store is active
+          const listItems = sftpListOrderStore.getItems(pane.id);
+          const selectedFiles = Array.from(pane.selectedFiles) as string[];
+          if (listItems.length > 0 && selectedFiles.length === 1) {
+            const fileName = selectedFiles[0];
+            const entry = (pane.files as SftpFileEntry[]).find(f => f.name === fileName);
+            if (entry) {
+              if (isNavigableDirectory(entry)) {
+                sftp.navigateTo(focusedSide, joinPath(pane.connection.currentPath, entry.name));
+              } else {
+                sftp.openEntry(focusedSide, entry);
+              }
+            }
+            break;
+          }
+
+          const treeOpenSelection = sftpTreeSelectionStore.getSelectedItems(pane.id);
+          if (treeOpenSelection.length === 1) {
+            const item = treeOpenSelection[0];
+            sftpTreeEnterStore.trigger(pane.id, item.path, item.isDirectory);
+          }
+          break;
+        }
+
+        case "sftpGoParent": {
+          const parentPath = getParentPath(pane.connection.currentPath);
+          if (parentPath !== pane.connection.currentPath) {
+            sftp.navigateTo(focusedSide, parentPath);
+          }
           break;
         }
       }
