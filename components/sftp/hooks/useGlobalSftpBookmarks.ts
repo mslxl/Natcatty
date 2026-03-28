@@ -18,10 +18,26 @@ function getSnapshot() {
     return snapshot;
 }
 
+/** Re-read bookmarks from localStorage (e.g. after cloud sync import). */
+export function rehydrateGlobalBookmarks() {
+    snapshot = localStorageAdapter.read<SftpBookmark[]>(STORAGE_KEY_SFTP_GLOBAL_BOOKMARKS) ?? [];
+    for (const l of listeners) l();
+}
+
+// Rehydrate when another window updates the same localStorage key
+if (typeof window !== 'undefined') {
+    window.addEventListener('storage', (e) => {
+        if (e.key === STORAGE_KEY_SFTP_GLOBAL_BOOKMARKS) {
+            rehydrateGlobalBookmarks();
+        }
+    });
+}
+
 function setBookmarks(next: SftpBookmark[] | ((prev: SftpBookmark[]) => SftpBookmark[])) {
     snapshot = typeof next === "function" ? next(snapshot) : next;
     localStorageAdapter.write(STORAGE_KEY_SFTP_GLOBAL_BOOKMARKS, snapshot);
     for (const l of listeners) l();
+    window.dispatchEvent(new CustomEvent('sftp-bookmarks-changed'));
 }
 
 interface UseGlobalSftpBookmarksParams {
