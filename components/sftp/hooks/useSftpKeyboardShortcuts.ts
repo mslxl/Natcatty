@@ -146,14 +146,14 @@ export const useSftpKeyboardShortcuts = ({
 
           // Resolve current focus position from tracked state, falling back
           // to the actual selection when out of sync (e.g. after mouse click).
-          const kbState = getKbSelection(pane.id);
+          let { anchor: anchorIdx, focus: focusIdx } = getKbSelection(pane.id);
           const currentSelected = Array.from(pane.selectedFiles) as string[];
-          let focusIdx = kbState.focus;
           // If the tracked focus doesn't match the actual selection, re-sync
           if (currentSelected.length >= 1 && !currentSelected.includes(listItems[focusIdx])) {
             focusIdx = listItems.indexOf(currentSelected[currentSelected.length - 1]);
             if (focusIdx < 0) focusIdx = 0;
-            setKbSelection(pane.id, focusIdx, focusIdx);
+            anchorIdx = focusIdx;
+            setKbSelection(pane.id, anchorIdx, focusIdx);
           }
 
           let nextIdx = focusIdx + delta;
@@ -162,7 +162,6 @@ export const useSftpKeyboardShortcuts = ({
 
           if (e.shiftKey) {
             // Shift+Arrow: extend range from anchor to new focus
-            const anchorIdx = kbState.anchor;
             const start = Math.min(anchorIdx, nextIdx);
             const end = Math.max(anchorIdx, nextIdx);
             sftp.rangeSelect(focusedSide, listItems.slice(start, end + 1));
@@ -183,11 +182,11 @@ export const useSftpKeyboardShortcuts = ({
           const currentSelected = [...treeState.selectedPaths];
 
           // Use tracked state, re-sync if needed
-          const kbState = getKbSelection(pane.id);
-          let focusIdx = kbState.focus;
+          let { anchor: anchorIdx, focus: focusIdx } = getKbSelection(pane.id);
           if (currentSelected.length >= 1 && items[focusIdx]?.path !== currentSelected[currentSelected.length - 1]) {
             focusIdx = treeState.visibleIndexByPath.get(currentSelected[currentSelected.length - 1]) ?? 0;
-            setKbSelection(pane.id, focusIdx, focusIdx);
+            anchorIdx = focusIdx;
+            setKbSelection(pane.id, anchorIdx, focusIdx);
           }
 
           let nextIdx = focusIdx + delta;
@@ -195,7 +194,6 @@ export const useSftpKeyboardShortcuts = ({
           if (nextIdx >= items.length) nextIdx = items.length - 1;
 
           if (e.shiftKey) {
-            const anchorIdx = kbState.anchor;
             const start = Math.min(anchorIdx, nextIdx);
             const end = Math.max(anchorIdx, nextIdx);
             const paths = items.slice(start, end + 1).map(item => item.path);
