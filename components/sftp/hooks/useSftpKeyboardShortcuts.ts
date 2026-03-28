@@ -551,6 +551,7 @@ export const useSftpKeyboardShortcuts = ({
           if (selectedFiles.length === 1) {
             const entry = (pane.files as SftpFileEntry[]).find(f => f.name === selectedFiles[0]);
             if (entry && isNavigableDirectory(entry)) {
+              _kbSelectionState.delete(pane.id);
               sftp.navigateTo(focusedSide, joinPath(pane.connection.currentPath, entry.name));
             }
           }
