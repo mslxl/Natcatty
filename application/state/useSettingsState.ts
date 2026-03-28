@@ -22,6 +22,7 @@ import {
   STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES,
   STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD,
   STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR,
+  STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY,
   STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE,
   STORAGE_KEY_EDITOR_WORD_WRAP,
   STORAGE_KEY_SESSION_LOGS_ENABLED,
@@ -246,6 +247,10 @@ export const useSettingsState = () => {
     const stored = readStoredString(STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE);
     return (stored === 'list' || stored === 'tree') ? stored : DEFAULT_SFTP_DEFAULT_VIEW_MODE;
   });
+  const [sftpTransferConcurrency, setSftpTransferConcurrencyState] = useState<number>(() => {
+    const stored = localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY);
+    return stored != null && stored >= 1 && stored <= 16 ? stored : 4;
+  });
 
   // Editor Settings
   const [editorWordWrap, setEditorWordWrapState] = useState<boolean>(() => {
@@ -348,6 +353,13 @@ export const useSettingsState = () => {
     setImmersiveModeState(enabled);
     localStorageAdapter.writeString(STORAGE_KEY_IMMERSIVE_MODE, String(enabled));
     notifySettingsChanged(STORAGE_KEY_IMMERSIVE_MODE, enabled);
+  }, [notifySettingsChanged]);
+
+  const setSftpTransferConcurrency = useCallback((value: number) => {
+    const clamped = Math.max(1, Math.min(16, Math.round(value)));
+    setSftpTransferConcurrencyState(clamped);
+    localStorageAdapter.writeString(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY, String(clamped));
+    notifySettingsChanged(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY, clamped);
   }, [notifySettingsChanged]);
 
   const [workspaceFocusStyle, setWorkspaceFocusStyleState] = useState<'dim' | 'border'>(() => {
@@ -619,6 +631,9 @@ export const useSettingsState = () => {
       if (key === STORAGE_KEY_WORKSPACE_FOCUS_STYLE && (value === 'dim' || value === 'border')) {
         setWorkspaceFocusStyleState((prev) => (prev === value ? prev : value));
       }
+      if (key === STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY && typeof value === 'number') {
+        setSftpTransferConcurrencyState((prev) => (prev === value ? prev : value));
+      }
     });
     return () => {
       try {
@@ -845,6 +860,13 @@ export const useSettingsState = () => {
       if (e.key === STORAGE_KEY_WORKSPACE_FOCUS_STYLE && e.newValue !== null) {
         if (e.newValue === 'dim' || e.newValue === 'border') {
           setWorkspaceFocusStyleState(e.newValue);
+        }
+      }
+      // Sync transfer concurrency from other windows
+      if (e.key === STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY && e.newValue !== null) {
+        const num = Number(e.newValue);
+        if (num >= 1 && num <= 16) {
+          setSftpTransferConcurrencyState(num);
         }
       }
     };
@@ -1197,6 +1219,8 @@ export const useSettingsState = () => {
     setSftpAutoOpenSidebar,
     sftpDefaultViewMode,
     setSftpDefaultViewMode,
+    sftpTransferConcurrency,
+    setSftpTransferConcurrency,
     // Editor Settings
     editorWordWrap,
     setEditorWordWrap: useCallback((enabled: boolean) => {
