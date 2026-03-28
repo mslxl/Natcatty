@@ -80,6 +80,12 @@ function setKbSelection(paneId: string, anchor: number, focus: number) {
   _kbSelectionState.set(paneId, { anchor, focus });
 }
 
+// Basic navigation keys that work even when custom hotkeys are disabled.
+const BASIC_NAV_KEYS: Record<string, string> = {
+  'Enter': 'sftpOpen',
+  'Backspace': 'sftpGoParent',
+};
+
 interface UseSftpKeyboardShortcutsParams {
   keyBindings: KeyBinding[];
   hotkeyScheme: "disabled" | "mac" | "pc";
@@ -213,10 +219,6 @@ export const useSftpKeyboardShortcuts = ({
 
       // Basic navigation actions (Enter, Backspace) must work even when
       // custom hotkeys are disabled — they are essential SFTP navigation.
-      const BASIC_NAV_KEYS: Record<string, string> = {
-        'Enter': 'sftpOpen',
-        'Backspace': 'sftpGoParent',
-      };
       const basicNavAction = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
         ? BASIC_NAV_KEYS[e.key]
         : undefined;
