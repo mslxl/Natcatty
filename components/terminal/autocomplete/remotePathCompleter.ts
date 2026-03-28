@@ -44,12 +44,14 @@ const CACHE_TTL_MS = 5000;
 const MAX_CACHE_SIZE = 30;
 const MAX_FILTERED_CACHE_SIZE = 60;
 
-/** Commands that commonly accept file/directory path arguments */
+/** Commands that commonly accept file/directory path arguments.
+ *  Subcommand-first tools (docker, kubectl, go, cargo, make) are excluded —
+ *  their path arguments are better handled via Fig specs. */
 const PATH_COMMANDS = new Set([
   // Navigation & listing
-  "cd", "ls", "ll", "la", "dir", "tree", "exa", "eza", "lsd",
+  "cd", "pushd", "ls", "ll", "la", "dir", "tree", "exa", "eza", "lsd",
   // Viewing & editing
-  "cat", "less", "more", "head", "tail", "bat", "tac", "nl",
+  "cat", "less", "more", "head", "tail", "bat", "tac", "nl", "tee",
   "vim", "vi", "nvim", "nano", "emacs", "code", "subl", "micro", "helix", "hx", "joe", "mcedit",
   // File operations
   "cp", "mv", "rm", "mkdir", "rmdir", "touch", "ln", "install", "shred",
@@ -65,12 +67,13 @@ const PATH_COMMANDS = new Set([
   "scp", "rsync", "diff", "cmp", "patch",
   // Scripting & execution
   "source", ".", "bash", "sh", "zsh", "fish",
-  "python", "python3", "node", "ruby", "perl", "php", "java", "go", "cargo", "rustc", "gcc", "g++", "make",
-  "deno", "bun", "tsx", "ts-node", "npx",
+  "python", "python3", "node", "ruby", "perl", "php", "rustc", "gcc", "g++",
+  "deno", "bun", "tsx", "ts-node",
+  // Disk & filesystem
+  "du", "df", "chroot",
   // Misc
   "realpath", "readlink", "basename", "dirname", "md5sum", "sha256sum", "xxd", "hexdump",
   "xdg-open", "open", "start",
-  "docker", "kubectl",
 ]);
 
 /** Commands that only accept directories (not files) */

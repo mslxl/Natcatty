@@ -219,13 +219,15 @@ export const useSftpKeyboardShortcuts = ({
 
       // Basic navigation actions (Enter, Backspace) must work even when
       // custom hotkeys are disabled — they are essential SFTP navigation.
-      const basicNavAction = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
+      // When hotkeys are enabled, defer to matchSftpAction so user
+      // customizations are respected.
+      const basicNavAction = hotkeyScheme === "disabled" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
         ? BASIC_NAV_KEYS[e.key]
         : undefined;
 
       if (hotkeyScheme === "disabled" && !basicNavAction) return;
 
-      const isMac = hotkeyScheme !== "disabled" ? hotkeyScheme === "mac" : false;
+      const isMac = hotkeyScheme === "mac";
       const matched = basicNavAction ? null : matchSftpAction(e, keyBindings, isMac);
       if (!matched && !basicNavAction) return;
 
@@ -507,6 +509,7 @@ export const useSftpKeyboardShortcuts = ({
             const entry = (pane.files as SftpFileEntry[]).find(f => f.name === fileName);
             if (entry) {
               if (isNavigableDirectory(entry)) {
+                _kbSelectionState.delete(pane.id);
                 sftp.navigateTo(focusedSide, joinPath(pane.connection.currentPath, entry.name));
               } else {
                 sftp.openEntry(focusedSide, entry);
@@ -515,9 +518,12 @@ export const useSftpKeyboardShortcuts = ({
             break;
           }
 
+          // Only fall through to tree view if list store is empty (tree view mode)
+          if (listItems.length > 0) break;
           const treeOpenSelection = sftpTreeSelectionStore.getSelectedItems(pane.id);
           if (treeOpenSelection.length === 1) {
             const item = treeOpenSelection[0];
+            if (item.isDirectory) _kbSelectionState.delete(pane.id);
             sftpTreeEnterStore.trigger(pane.id, item.path, item.isDirectory);
           }
           break;
@@ -526,6 +532,7 @@ export const useSftpKeyboardShortcuts = ({
         case "sftpGoParent": {
           const parentPath = getParentPath(pane.connection.currentPath);
           if (parentPath !== pane.connection.currentPath) {
+            _kbSelectionState.delete(pane.id);
             sftp.navigateTo(focusedSide, parentPath);
           }
           break;
@@ -533,8 +540,10 @@ export const useSftpKeyboardShortcuts = ({
 
         case "sftpNavigateTo": {
           // Navigate to the selected directory (useful in tree view)
-          if (treeSelection.length === 1 && treeSelection[0].isDirectory) {
-            sftp.navigateTo(focusedSide, treeSelection[0].path);
+          // Filter out ".." entry for consistency with other handlers
+          if (treeActionSelection.length === 1 && treeActionSelection[0].isDirectory) {
+            _kbSelectionState.delete(pane.id);
+            sftp.navigateTo(focusedSide, treeActionSelection[0].path);
             break;
           }
           // In list view, navigate to selected directory
