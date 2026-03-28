@@ -211,14 +211,24 @@ export const useSftpKeyboardShortcuts = ({
         return;
       }
 
-      if (hotkeyScheme === "disabled") return;
+      // Basic navigation actions (Enter, Backspace) must work even when
+      // custom hotkeys are disabled — they are essential SFTP navigation.
+      const BASIC_NAV_KEYS: Record<string, string> = {
+        'Enter': 'sftpOpen',
+        'Backspace': 'sftpGoParent',
+      };
+      const basicNavAction = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
+        ? BASIC_NAV_KEYS[e.key]
+        : undefined;
 
-      const isMac = hotkeyScheme === "mac";
-      const matched = matchSftpAction(e, keyBindings, isMac);
+      if (hotkeyScheme === "disabled" && !basicNavAction) return;
+
+      const isMac = hotkeyScheme !== "disabled" ? hotkeyScheme === "mac" : false;
+      const matched = basicNavAction ? null : matchSftpAction(e, keyBindings, isMac);
       if (!matched) return;
 
-      const { action } = matched;
-      if (!SFTP_ACTIONS.has(action)) return;
+      const action = basicNavAction ?? matched?.action;
+      if (!action || !SFTP_ACTIONS.has(action)) return;
 
       // Prevent default behavior
       e.preventDefault();
