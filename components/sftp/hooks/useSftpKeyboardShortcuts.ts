@@ -136,6 +136,12 @@ export const useSftpKeyboardShortcuts = ({
         return;
       }
 
+      // Skip when a dialog or overlay is open to prevent SFTP shortcuts from
+      // firing while interacting with unrelated dialogs (e.g. settings, confirm).
+      if (document.querySelector('[role="dialog"][data-state="open"]')) {
+        return;
+      }
+
       // ── Arrow Up/Down: move selection ────────────────────────────────
       if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const sftp = sftpRef.current;
