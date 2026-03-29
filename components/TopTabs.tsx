@@ -826,7 +826,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             {isSftpActive && (
               <div
                 className="absolute top-0 left-0 right-0 h-[2px]"
-                style={{ backgroundColor: 'var(--top-tabs-fg, hsl(var(--foreground)))' }}
+                style={{ backgroundColor: 'var(--top-tabs-accent, hsl(var(--accent)))' }}
               />
             )}
             <Folder size={14} /> SFTP
