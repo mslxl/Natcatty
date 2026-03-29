@@ -45,7 +45,11 @@ export const useSftpViewTabs = ({ sftp, sftpRef }: UseSftpViewTabsParams): UseSf
   const clearOtherPaneSelections = useCallback((target: { side: "left" | "right"; tabId: string } | null) => {
     sftpRef.current.clearSelectionsExcept(target);
     if (target) {
-      sftpTreeSelectionStore.clearAllExcept([target.tabId]);
+      // Keep tree selections for all same-side tabs, only clear opposite side
+      const sameSideTabs = target.side === "left"
+        ? sftpRef.current.leftTabs : sftpRef.current.rightTabs;
+      const keepIds = sameSideTabs.tabs.map(t => t.id);
+      sftpTreeSelectionStore.clearAllExcept(keepIds);
       return;
     }
     sftpTreeSelectionStore.clearAllExcept();

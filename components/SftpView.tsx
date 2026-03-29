@@ -146,7 +146,10 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     const activeTabId = sftpRef.current.getActiveTabId(side);
     if (activeTabId) {
       sftpRef.current.clearSelectionsExcept({ side, tabId: activeTabId });
-      sftpTreeSelectionStore.clearAllExcept([activeTabId]);
+      // Keep tree selections for all same-side tabs, only clear opposite side
+      const sameSideTabs = side === "left" ? sftpRef.current.leftTabs : sftpRef.current.rightTabs;
+      const keepIds = sameSideTabs.tabs.map(t => t.id);
+      sftpTreeSelectionStore.clearAllExcept(keepIds);
     } else {
       sftpRef.current.clearSelectionsExcept(null);
       sftpTreeSelectionStore.clearAllExcept();

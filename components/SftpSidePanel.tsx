@@ -153,7 +153,9 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   const syncFocusedSelection = useCallback((tabId: string | null) => {
     if (tabId) {
       sftpRef.current.clearSelectionsExcept({ side: "left", tabId });
-      sftpTreeSelectionStore.clearAllExcept([tabId]);
+      // Keep tree selections for all left-side tabs
+      const keepIds = sftpRef.current.leftTabs.tabs.map(t => t.id);
+      sftpTreeSelectionStore.clearAllExcept(keepIds);
       return;
     }
     sftpRef.current.clearSelectionsExcept(null);
