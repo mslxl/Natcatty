@@ -354,7 +354,7 @@ const SelectHostPanel: React.FC<SelectHostPanelProps> = ({
                       <DistroAvatar
                         host={host}
                         fallback={host.os[0].toUpperCase()}
-                        className="h-8 w-8 rounded-lg"
+                        className="h-8 w-8 rounded-md"
                       />
                       <div className="flex-1 min-w-0">
                         <Tooltip>
