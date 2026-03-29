@@ -102,11 +102,14 @@ interface StatusDotProps {
 }
 
 const StatusDot: React.FC<StatusDotProps> = ({ status, className }) => {
+    if (status === 'connecting') {
+        return <Loader2 className={cn('w-3.5 h-3.5 animate-spin text-muted-foreground', className)} />;
+    }
+
     const colors = {
         connected: 'bg-green-500',
         syncing: 'bg-blue-500 animate-pulse',
         error: 'bg-red-500',
-        connecting: 'bg-yellow-500 animate-pulse',
         disconnected: 'bg-muted-foreground/50',
     };
 
@@ -369,7 +372,9 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                         {error}
                     </p>
                 ) : (
-                    <p className="text-xs text-muted-foreground mt-1">{t('cloudSync.provider.notConnected')}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                        {isConnecting ? t('cloudSync.provider.connecting') : t('cloudSync.provider.notConnected')}
+                    </p>
                 )}
             </div>
 
