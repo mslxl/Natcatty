@@ -93,7 +93,12 @@ export const useSftpDialogActionHandler = (
   const action = useSftpDialogAction();
 
   useEffect(() => {
-    if (!action || action.targetSide !== side || !isActive) return;
+    if (!action || action.targetSide !== side) return;
+    if (!isActive) {
+      // Clear stale action so it doesn't fire when this pane becomes active later
+      sftpDialogActionStore.clear();
+      return;
+    }
 
     // Handle the action and clear it
     switch (action.type) {
