@@ -40,7 +40,7 @@ import { useSftpViewPaneCallbacks } from "./sftp/hooks/useSftpViewPaneCallbacks"
 import { useSftpViewTabs } from "./sftp/hooks/useSftpViewTabs";
 import { useSftpKeyboardShortcuts } from "./sftp/hooks/useSftpKeyboardShortcuts";
 import { sftpFocusStore, SftpFocusedSide, useSftpFocusedSide } from "./sftp/hooks/useSftpFocusedPane";
-import { sftpTreeSelectionStore } from "./sftp/hooks/useSftpTreeSelectionStore";
+
 
 // Wrapper component that subscribes to activeTabId for CSS visibility
 // This isolates the activeTabId subscription - only this component re-renders on tab switch
@@ -143,17 +143,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
   // Clear the opposite side's selection so file operations only affect the focused pane
   const handlePaneFocus = useCallback((side: SftpFocusedSide) => {
     sftpFocusStore.setFocusedSide(side);
-    const activeTabId = sftpRef.current.getActiveTabId(side);
-    if (activeTabId) {
-      sftpRef.current.clearSelectionsExcept({ side, tabId: activeTabId });
-      // Keep tree selections for all same-side tabs, only clear opposite side
-      const sameSideTabs = side === "left" ? sftpRef.current.leftTabs : sftpRef.current.rightTabs;
-      const keepIds = sameSideTabs.tabs.map(t => t.id);
-      sftpTreeSelectionStore.clearAllExcept(keepIds);
-    } else {
-      sftpRef.current.clearSelectionsExcept(null);
-      sftpTreeSelectionStore.clearAllExcept();
-    }
   }, []);
 
   const handleToggleHiddenFiles = useCallback((side: "left" | "right", paneId: string) => {

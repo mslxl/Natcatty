@@ -81,13 +81,11 @@ export const useSftpViewTabs = ({ sftp, sftpRef }: UseSftpViewTabsParams): UseSf
 
   const handleSelectTabLeft = useCallback((tabId: string) => {
     sftpRef.current.selectTab("left", tabId);
-    clearOtherPaneSelections({ side: "left", tabId });
-  }, [clearOtherPaneSelections, sftpRef]);
+  }, [sftpRef]);
 
   const handleSelectTabRight = useCallback((tabId: string) => {
     sftpRef.current.selectTab("right", tabId);
-    clearOtherPaneSelections({ side: "right", tabId });
-  }, [clearOtherPaneSelections, sftpRef]);
+  }, [sftpRef]);
 
   const leftPanes = useMemo(
     () => (sftp.leftTabs.tabs.length > 0 ? sftp.leftTabs.tabs : [sftp.leftPane]),

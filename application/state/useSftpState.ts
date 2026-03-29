@@ -236,6 +236,7 @@ export const useSftpState = (
     listRemoteFiles,
     handleSessionError,
     isSessionError,
+    clearSelectionsExcept,
     dirCacheTtlMs: DIR_CACHE_TTL_MS,
   });
 
