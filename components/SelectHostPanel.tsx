@@ -203,6 +203,7 @@ const SelectHostPanel: React.FC<SelectHostPanelProps> = ({
   }, [currentPath]);
 
   return (
+    <TooltipProvider delayDuration={300}>
     <div
       className={cn(
         "absolute right-0 top-0 bottom-0 w-[380px] border-l border-border/60 bg-background z-40 flex flex-col app-no-drag",
@@ -435,6 +436,7 @@ const SelectHostPanel: React.FC<SelectHostPanelProps> = ({
         />
       )}
     </div>
+    </TooltipProvider>
   );
 };
 
