@@ -499,6 +499,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
           <SftpPaneTreeView
             pane={pane}
             side={side}
+            onPrepareSelection={callbacks.onPrepareSelection}
             onLoadChildren={callbacks.onListDirectory}
             onMoveEntriesToPath={handleMoveEntriesToPath}
             onNavigateUp={callbacks.onNavigateUp}

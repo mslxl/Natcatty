@@ -55,6 +55,7 @@ type NodeDescriptor =
 interface SftpPaneTreeViewProps {
   pane: SftpPane;
   side: 'left' | 'right';
+  onPrepareSelection: () => void;
   onLoadChildren: (path: string) => Promise<SftpFileEntry[]>;
   onMoveEntriesToPath: (sourcePaths: string[], targetPath: string) => Promise<void>;
   onNavigateUp: () => void;
@@ -259,6 +260,7 @@ interface ContextTarget {
 export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
   pane,
   side,
+  onPrepareSelection,
   onLoadChildren,
   onMoveEntriesToPath,
   onNavigateUp,
@@ -376,6 +378,8 @@ export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
   onNavigateUpRef.current = onNavigateUp;
   const onNavigateToRef = useRef(onNavigateTo);
   onNavigateToRef.current = onNavigateTo;
+  const onPrepareSelectionRef = useRef(onPrepareSelection);
+  onPrepareSelectionRef.current = onPrepareSelection;
   const onMoveEntriesToPathRef = useRef(onMoveEntriesToPath);
   onMoveEntriesToPathRef.current = onMoveEntriesToPath;
   const onDragStartRef = useRef(onDragStart);
@@ -585,6 +589,7 @@ export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
       return [entryPath];
     })();
 
+    onPrepareSelectionRef.current();
     sftpTreeSelectionStore.setSelection(pane.id, nextSelection);
     if (currentIdx !== -1) {
       if (e.shiftKey && lastClickedPathRef.current) {
@@ -638,6 +643,7 @@ export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
       if (nextIdx < 0) nextIdx = 0;
       if (nextIdx >= items.length) nextIdx = items.length - 1;
 
+      onPrepareSelectionRef.current();
       if (e.shiftKey && currentSelected.length > 0) {
         const start = Math.min(anchorIdx, nextIdx);
         const end = Math.max(anchorIdx, nextIdx);

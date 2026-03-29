@@ -40,6 +40,7 @@ import { useSftpViewPaneCallbacks } from "./sftp/hooks/useSftpViewPaneCallbacks"
 import { useSftpViewTabs } from "./sftp/hooks/useSftpViewTabs";
 import { useSftpKeyboardShortcuts } from "./sftp/hooks/useSftpKeyboardShortcuts";
 import { sftpFocusStore, SftpFocusedSide, useSftpFocusedSide } from "./sftp/hooks/useSftpFocusedPane";
+import { keepOnlyPaneSelections } from "./sftp/hooks/selectionScope";
 
 
 // Wrapper component that subscribes to activeTabId for CSS visibility
@@ -146,7 +147,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     sftpFocusStore.setFocusedSide(side);
     if (prevSide !== side) {
       // Focus side changed — clear all pane selections
-      sftpRef.current.clearSelectionsExcept(null);
+      keepOnlyPaneSelections(sftpRef.current, null);
     }
   }, []);
 

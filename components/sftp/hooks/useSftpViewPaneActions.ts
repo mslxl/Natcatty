@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import type { MutableRefObject } from "react";
 import type { SftpStateApi } from "../../../application/state/useSftpState";
 import type { SftpDragCallbacks, SftpTransferSource } from "../SftpContext";
+import { keepOnlyActivePaneSelections } from "./selectionScope";
 
 interface UseSftpViewPaneActionsParams {
   sftpRef: MutableRefObject<SftpStateApi>;
@@ -14,6 +15,8 @@ interface UseSftpViewPaneActionsResult {
   onConnectRight: (host: Parameters<SftpStateApi["connect"]>[1]) => void;
   onDisconnectLeft: () => void;
   onDisconnectRight: () => void;
+  onPrepareSelectionLeft: () => void;
+  onPrepareSelectionRight: () => void;
   onNavigateToLeft: (path: string) => void;
   onNavigateToRight: (path: string) => void;
   onNavigateUpLeft: () => void;
@@ -126,6 +129,12 @@ export const useSftpViewPaneActions = ({
   );
   const onDisconnectLeft = useCallback(() => sftpRef.current.disconnect("left"), [sftpRef]);
   const onDisconnectRight = useCallback(() => sftpRef.current.disconnect("right"), [sftpRef]);
+  const onPrepareSelectionLeft = useCallback(() => {
+    keepOnlyActivePaneSelections(sftpRef.current, "left");
+  }, [sftpRef]);
+  const onPrepareSelectionRight = useCallback(() => {
+    keepOnlyActivePaneSelections(sftpRef.current, "right");
+  }, [sftpRef]);
   const onNavigateToLeft = useCallback(
     (path: string) => sftpRef.current.navigateTo("left", path),
     [sftpRef],
@@ -151,20 +160,32 @@ export const useSftpViewPaneActions = ({
     [sftpRef],
   );
   const onToggleSelectionLeft = useCallback(
-    (name: string, multi: boolean) => sftpRef.current.toggleSelection("left", name, multi),
-    [sftpRef],
+    (name: string, multi: boolean) => {
+      onPrepareSelectionLeft();
+      sftpRef.current.toggleSelection("left", name, multi);
+    },
+    [onPrepareSelectionLeft, sftpRef],
   );
   const onToggleSelectionRight = useCallback(
-    (name: string, multi: boolean) => sftpRef.current.toggleSelection("right", name, multi),
-    [sftpRef],
+    (name: string, multi: boolean) => {
+      onPrepareSelectionRight();
+      sftpRef.current.toggleSelection("right", name, multi);
+    },
+    [onPrepareSelectionRight, sftpRef],
   );
   const onRangeSelectLeft = useCallback(
-    (fileNames: string[]) => sftpRef.current.rangeSelect("left", fileNames),
-    [sftpRef],
+    (fileNames: string[]) => {
+      onPrepareSelectionLeft();
+      sftpRef.current.rangeSelect("left", fileNames);
+    },
+    [onPrepareSelectionLeft, sftpRef],
   );
   const onRangeSelectRight = useCallback(
-    (fileNames: string[]) => sftpRef.current.rangeSelect("right", fileNames),
-    [sftpRef],
+    (fileNames: string[]) => {
+      onPrepareSelectionRight();
+      sftpRef.current.rangeSelect("right", fileNames);
+    },
+    [onPrepareSelectionRight, sftpRef],
   );
   const onClearSelectionLeft = useCallback(() => sftpRef.current.clearSelection("left"), [sftpRef]);
   const onClearSelectionRight = useCallback(() => sftpRef.current.clearSelection("right"), [sftpRef]);
@@ -266,6 +287,8 @@ export const useSftpViewPaneActions = ({
     onConnectRight,
     onDisconnectLeft,
     onDisconnectRight,
+    onPrepareSelectionLeft,
+    onPrepareSelectionRight,
     onNavigateToLeft,
     onNavigateToRight,
     onNavigateUpLeft,

@@ -33,7 +33,7 @@ import { useSftpViewPaneCallbacks } from "./sftp/hooks/useSftpViewPaneCallbacks"
 import { useSftpViewTabs } from "./sftp/hooks/useSftpViewTabs";
 import { useSftpKeyboardShortcuts } from "./sftp/hooks/useSftpKeyboardShortcuts";
 import { sftpFocusStore } from "./sftp/hooks/useSftpFocusedPane";
-import { sftpTreeSelectionStore } from "./sftp/hooks/useSftpTreeSelectionStore";
+import { keepOnlyPaneSelections } from "./sftp/hooks/selectionScope";
 import { KeyBinding, HotkeyScheme } from "../domain/models";
 
 interface SftpSidePanelProps {
@@ -152,14 +152,10 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
 
   const syncFocusedSelection = useCallback((tabId: string | null) => {
     if (tabId) {
-      sftpRef.current.clearSelectionsExcept({ side: "left", tabId });
-      // Keep tree selections for all left-side tabs
-      const keepIds = sftpRef.current.leftTabs.tabs.map(t => t.id);
-      sftpTreeSelectionStore.clearAllExcept(keepIds);
+      keepOnlyPaneSelections(sftpRef.current, { side: "left", tabId });
       return;
     }
-    sftpRef.current.clearSelectionsExcept(null);
-    sftpTreeSelectionStore.clearAllExcept();
+    keepOnlyPaneSelections(sftpRef.current, null);
   }, []);
 
   const handlePaneFocus = useCallback(() => {

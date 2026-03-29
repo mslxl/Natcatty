@@ -14,6 +14,7 @@ import { sftpFocusStore } from "./useSftpFocusedPane";
 import { sftpDialogActionStore } from "./useSftpDialogAction";
 import { sftpTreeSelectionStore } from "./useSftpTreeSelectionStore";
 import { sftpListOrderStore } from "./useSftpListOrderStore";
+import { keepOnlyPaneSelections } from "./selectionScope";
 import type { SftpStateApi } from "../../../application/state/useSftpState";
 import { filterHiddenFiles, isNavigableDirectory } from "../index";
 import type { SftpFileEntry } from "../../../types";
@@ -182,6 +183,7 @@ export const useSftpKeyboardShortcuts = ({
           if (nextIdx < 0) nextIdx = 0;
           if (nextIdx >= listItems.length) nextIdx = listItems.length - 1;
 
+          keepOnlyPaneSelections(sftp, { side: focusedSide, tabId: pane.id });
           if (e.shiftKey) {
             // Shift+Arrow: extend range from anchor to new focus
             const start = Math.min(anchorIdx, nextIdx);
@@ -223,6 +225,7 @@ export const useSftpKeyboardShortcuts = ({
           if (nextIdx < 0) nextIdx = 0;
           if (nextIdx >= items.length) nextIdx = items.length - 1;
 
+          keepOnlyPaneSelections(sftp, { side: focusedSide, tabId: pane.id });
           if (e.shiftKey) {
             const start = Math.min(anchorIdx, nextIdx);
             const end = Math.max(anchorIdx, nextIdx);
@@ -462,6 +465,7 @@ export const useSftpKeyboardShortcuts = ({
 
         case "sftpSelectAll": {
           if (treeSelectionState.visibleItems.length > 0) {
+            keepOnlyPaneSelections(sftp, { side: focusedSide, tabId: pane.id });
             sftpTreeSelectionStore.selectAllVisible(pane.id);
             break;
           }
@@ -481,6 +485,7 @@ export const useSftpKeyboardShortcuts = ({
           const allFileNames = visibleFiles
             .filter((f) => f.name !== "..")
             .map((f) => f.name);
+          keepOnlyPaneSelections(sftp, { side: focusedSide, tabId: pane.id });
           sftp.rangeSelect(focusedSide, allFileNames);
           break;
         }
