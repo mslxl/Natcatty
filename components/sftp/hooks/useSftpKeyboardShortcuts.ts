@@ -160,8 +160,9 @@ export const useSftpKeyboardShortcuts = ({
           let { anchor: anchorIdx, focus: focusIdx } = sftpKeyboardSelectionStore.get(pane.id);
           const currentSelected = Array.from(pane.selectedFiles) as string[];
           if (currentSelected.length === 0) {
-            // No selection: start from before the list so the first arrow press lands on item 0
-            anchorIdx = -1;
+            // No selection: start from before the list so the first arrow press lands on item 0.
+            // For Shift+Arrow, anchor at 0 so range selection starts from the first item.
+            anchorIdx = e.shiftKey ? 0 : -1;
             focusIdx = -1;
           } else if (!currentSelected.includes(listItems[focusIdx])) {
             // Tracked focus doesn't match actual selection, re-sync
@@ -199,8 +200,9 @@ export const useSftpKeyboardShortcuts = ({
           // Use tracked state, re-sync if needed
           let { anchor: anchorIdx, focus: focusIdx } = sftpKeyboardSelectionStore.get(pane.id);
           if (currentSelected.length === 0) {
-            // No selection: start from before the list so the first arrow press lands on item 0
-            anchorIdx = -1;
+            // No selection: start from before the list so the first arrow press lands on item 0.
+            // For Shift+Arrow, anchor at 0 so range selection starts from the first item.
+            anchorIdx = e.shiftKey ? 0 : -1;
             focusIdx = -1;
           } else {
             const focusPath = items[focusIdx]?.path;
