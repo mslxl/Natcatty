@@ -16,6 +16,7 @@ import type { Host } from "../../types";
 
 interface SftpPaneDialogsProps {
   t: (key: string, params?: Record<string, unknown>) => string;
+  hostLabel?: string;
   // New folder
   showNewFolderDialog: boolean;
   setShowNewFolderDialog: (open: boolean) => void;
@@ -61,8 +62,14 @@ interface SftpPaneDialogsProps {
   onDisconnect: () => void;
 }
 
+const HostHint: React.FC<{ label?: string }> = ({ label }) =>
+  label ? (
+    <div className="text-xs text-muted-foreground truncate mb-1">{label}</div>
+  ) : null;
+
 export const SftpPaneDialogs: React.FC<SftpPaneDialogsProps> = ({
   t,
+  hostLabel,
   showNewFolderDialog,
   setShowNewFolderDialog,
   newFolderName,
@@ -106,6 +113,7 @@ export const SftpPaneDialogs: React.FC<SftpPaneDialogsProps> = ({
     <Dialog open={showNewFolderDialog} onOpenChange={setShowNewFolderDialog}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
+          <HostHint label={hostLabel} />
           <DialogTitle>{t("sftp.newFolder")}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
@@ -148,6 +156,7 @@ export const SftpPaneDialogs: React.FC<SftpPaneDialogsProps> = ({
     }}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
+          <HostHint label={hostLabel} />
           <DialogTitle>{t("sftp.newFile")}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
@@ -192,6 +201,7 @@ export const SftpPaneDialogs: React.FC<SftpPaneDialogsProps> = ({
     <Dialog open={showOverwriteConfirm} onOpenChange={setShowOverwriteConfirm}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
+          <HostHint label={hostLabel} />
           <DialogTitle>{t("sftp.overwrite.title")}</DialogTitle>
           <DialogDescription>
             {t("sftp.overwrite.desc", { name: overwriteTarget || "" })}
@@ -217,6 +227,7 @@ export const SftpPaneDialogs: React.FC<SftpPaneDialogsProps> = ({
     <Dialog open={showRenameDialog} onOpenChange={setShowRenameDialog}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
+          <HostHint label={hostLabel} />
           <DialogTitle>{t("sftp.rename.title")}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
@@ -254,6 +265,7 @@ export const SftpPaneDialogs: React.FC<SftpPaneDialogsProps> = ({
     <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
+          <HostHint label={hostLabel} />
           <DialogTitle>
             {t("sftp.deleteConfirm.title", { count: deleteTargets.length })}
           </DialogTitle>

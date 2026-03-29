@@ -577,6 +577,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
 
       <SftpPaneDialogs
         t={t}
+        hostLabel={pane.connection?.hostLabel}
         showNewFolderDialog={showNewFolderDialog}
         setShowNewFolderDialog={setShowNewFolderDialog}
         newFolderName={newFolderName}
