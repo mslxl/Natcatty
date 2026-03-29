@@ -700,6 +700,8 @@ const en: Messages = {
   'sftp.deleteConfirm.title': 'Delete {count} item(s)?',
   'sftp.deleteConfirm.desc': 'This action cannot be undone. The following will be deleted:',
   'sftp.deleteConfirm.descSingle': 'This action cannot be undone.',
+  'sftp.deleteConfirm.host': 'Host',
+  'sftp.deleteConfirm.path': 'Path',
   'sftp.error.loadFailed': 'Failed to load directory',
   'sftp.error.downloadFailed': 'Download failed',
   'sftp.error.uploadFailed': 'Upload failed',

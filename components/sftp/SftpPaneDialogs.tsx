@@ -303,13 +303,13 @@ export const SftpPaneDialogs: React.FC<SftpPaneDialogsProps> = ({
             <div className="text-xs text-muted-foreground space-y-1.5">
               {hostLabel ? (
                 <div className="flex items-start gap-2">
-                  <span className="font-medium text-foreground/80 shrink-0">Host:</span>
+                  <span className="font-medium text-foreground/80 shrink-0">{t("sftp.deleteConfirm.host")}:</span>
                   <span className="break-all">{hostLabel}</span>
                 </div>
               ) : null}
               {deletePath ? (
                 <div className="flex items-start gap-2">
-                  <span className="font-medium text-foreground/80 shrink-0">Path:</span>
+                  <span className="font-medium text-foreground/80 shrink-0">{t("sftp.deleteConfirm.path")}:</span>
                   <span className="break-all">{deletePath}</span>
                 </div>
               ) : null}

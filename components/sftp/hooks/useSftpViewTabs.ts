@@ -42,13 +42,17 @@ export const useSftpViewTabs = ({ sftp, sftpRef }: UseSftpViewTabsParams): UseSf
   const [hostSearchLeft, setHostSearchLeft] = useState("");
   const [hostSearchRight, setHostSearchRight] = useState("");
 
-  const clearOtherPaneSelections = useCallback((target: { side: "left" | "right"; tabId: string } | null) => {
+  const clearOtherPaneSelections = useCallback((
+    target: { side: "left" | "right"; tabId: string } | null,
+    extraKeepIds?: string[],
+  ) => {
     sftpRef.current.clearSelectionsExcept(target);
     if (target) {
       // Keep tree selections for all same-side tabs, only clear opposite side
       const sameSideTabs = target.side === "left"
         ? sftpRef.current.leftTabs : sftpRef.current.rightTabs;
       const keepIds = sameSideTabs.tabs.map(t => t.id);
+      if (extraKeepIds) keepIds.push(...extraKeepIds);
       sftpTreeSelectionStore.clearAllExcept(keepIds);
       return;
     }
@@ -110,12 +114,13 @@ export const useSftpViewTabs = ({ sftp, sftpRef }: UseSftpViewTabsParams): UseSf
 
   const handleMoveTabFromLeftToRight = useCallback((tabId: string) => {
     sftpRef.current.moveTabToOtherSide("left", tabId);
-    clearOtherPaneSelections({ side: "right", tabId });
+    // tabId just moved to right side but ref still has pre-move state, include it explicitly
+    clearOtherPaneSelections({ side: "right", tabId }, [tabId]);
   }, [clearOtherPaneSelections, sftpRef]);
 
   const handleMoveTabFromRightToLeft = useCallback((tabId: string) => {
     sftpRef.current.moveTabToOtherSide("right", tabId);
-    clearOtherPaneSelections({ side: "left", tabId });
+    clearOtherPaneSelections({ side: "left", tabId }, [tabId]);
   }, [clearOtherPaneSelections, sftpRef]);
 
   const handleHostSelectLeft = useCallback((host: Host | "local") => {

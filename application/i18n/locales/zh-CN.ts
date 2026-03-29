@@ -508,6 +508,8 @@ const zhCN: Messages = {
   'sftp.deleteConfirm.title': '删除 {count} 个项目？',
   'sftp.deleteConfirm.desc': '此操作不可撤销，将删除以下内容：',
   'sftp.deleteConfirm.descSingle': '此操作不可撤销。',
+  'sftp.deleteConfirm.host': '主机',
+  'sftp.deleteConfirm.path': '路径',
   'sftp.error.loadFailed': '加载目录失败',
   'sftp.error.downloadFailed': '下载失败',
   'sftp.error.uploadFailed': '上传失败',
