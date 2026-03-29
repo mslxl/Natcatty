@@ -100,25 +100,25 @@ export const useSftpTabsState = ({
 
   const clearSelectionsExcept = useCallback(
     (target: { side: "left" | "right"; tabId: string } | null) => {
-      const clearAllTabs = (prev: SftpSideTabs): SftpSideTabs => {
+      const clearSideSelections = (
+        prev: SftpSideTabs,
+        side: "left" | "right",
+      ): SftpSideTabs => {
         let changed = false;
         const tabs = prev.tabs.map((tab) => {
-          if (tab.selectedFiles.size === 0) return tab;
+          const shouldKeepSelection =
+            target?.side === side && target.tabId === tab.id;
+          if (shouldKeepSelection || tab.selectedFiles.size === 0) {
+            return tab;
+          }
           changed = true;
           return { ...tab, selectedFiles: EMPTY_SELECTION };
         });
         return changed ? { ...prev, tabs } : prev;
       };
 
-      // Only clear the opposite side's selections, preserving same-side inactive tabs
-      if (target) {
-        const clearOther = target.side === "left" ? setRightTabs : setLeftTabs;
-        clearOther(clearAllTabs);
-      } else {
-        // No target: clear everything
-        setLeftTabs(clearAllTabs);
-        setRightTabs(clearAllTabs);
-      }
+      setLeftTabs((prev) => clearSideSelections(prev, "left"));
+      setRightTabs((prev) => clearSideSelections(prev, "right"));
     },
     [],
   );
