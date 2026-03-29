@@ -159,8 +159,12 @@ export const useSftpKeyboardShortcuts = ({
           // to the actual selection when out of sync (e.g. after mouse click).
           let { anchor: anchorIdx, focus: focusIdx } = sftpKeyboardSelectionStore.get(pane.id);
           const currentSelected = Array.from(pane.selectedFiles) as string[];
-          // If the tracked focus doesn't match the actual selection, re-sync
-          if (currentSelected.length >= 1 && !currentSelected.includes(listItems[focusIdx])) {
+          if (currentSelected.length === 0) {
+            // No selection: start from before the list so the first arrow press lands on item 0
+            anchorIdx = -1;
+            focusIdx = -1;
+          } else if (!currentSelected.includes(listItems[focusIdx])) {
+            // Tracked focus doesn't match actual selection, re-sync
             focusIdx = listItems.indexOf(currentSelected[currentSelected.length - 1]);
             if (focusIdx < 0) focusIdx = 0;
             anchorIdx = focusIdx;
@@ -194,11 +198,17 @@ export const useSftpKeyboardShortcuts = ({
 
           // Use tracked state, re-sync if needed
           let { anchor: anchorIdx, focus: focusIdx } = sftpKeyboardSelectionStore.get(pane.id);
-          const focusPath = items[focusIdx]?.path;
-          if (currentSelected.length >= 1 && (!focusPath || !treeState.selectedPaths.has(focusPath))) {
-            focusIdx = treeState.visibleIndexByPath.get(currentSelected[currentSelected.length - 1]) ?? 0;
-            anchorIdx = focusIdx;
-            sftpKeyboardSelectionStore.set(pane.id, anchorIdx, focusIdx);
+          if (currentSelected.length === 0) {
+            // No selection: start from before the list so the first arrow press lands on item 0
+            anchorIdx = -1;
+            focusIdx = -1;
+          } else {
+            const focusPath = items[focusIdx]?.path;
+            if (!focusPath || !treeState.selectedPaths.has(focusPath)) {
+              focusIdx = treeState.visibleIndexByPath.get(currentSelected[currentSelected.length - 1]) ?? 0;
+              anchorIdx = focusIdx;
+              sftpKeyboardSelectionStore.set(pane.id, anchorIdx, focusIdx);
+            }
           }
 
           let nextIdx = focusIdx + delta;
