@@ -72,13 +72,15 @@ export const sftpTreeEnterStore = {
 // indices per pane so Shift+Arrow extends correctly.
 const _kbSelectionState = new Map<string, { anchor: number; focus: number }>();
 
-function getKbSelection(paneId: string) {
-  return _kbSelectionState.get(paneId) ?? { anchor: 0, focus: 0 };
-}
-
-function setKbSelection(paneId: string, anchor: number, focus: number) {
-  _kbSelectionState.set(paneId, { anchor, focus });
-}
+export const sftpKeyboardSelectionStore = {
+  get: (paneId: string) => _kbSelectionState.get(paneId) ?? { anchor: 0, focus: 0 },
+  set: (paneId: string, anchor: number, focus: number) => {
+    _kbSelectionState.set(paneId, { anchor, focus });
+  },
+  clear: (paneId: string) => {
+    _kbSelectionState.delete(paneId);
+  },
+};
 
 // Basic navigation keys that work even when custom hotkeys are disabled.
 const BASIC_NAV_KEYS: Record<string, string> = {
@@ -155,14 +157,14 @@ export const useSftpKeyboardShortcuts = ({
 
           // Resolve current focus position from tracked state, falling back
           // to the actual selection when out of sync (e.g. after mouse click).
-          let { anchor: anchorIdx, focus: focusIdx } = getKbSelection(pane.id);
+          let { anchor: anchorIdx, focus: focusIdx } = sftpKeyboardSelectionStore.get(pane.id);
           const currentSelected = Array.from(pane.selectedFiles) as string[];
           // If the tracked focus doesn't match the actual selection, re-sync
           if (currentSelected.length >= 1 && !currentSelected.includes(listItems[focusIdx])) {
             focusIdx = listItems.indexOf(currentSelected[currentSelected.length - 1]);
             if (focusIdx < 0) focusIdx = 0;
             anchorIdx = focusIdx;
-            setKbSelection(pane.id, anchorIdx, focusIdx);
+            sftpKeyboardSelectionStore.set(pane.id, anchorIdx, focusIdx);
           }
 
           let nextIdx = focusIdx + delta;
@@ -174,10 +176,10 @@ export const useSftpKeyboardShortcuts = ({
             const start = Math.min(anchorIdx, nextIdx);
             const end = Math.max(anchorIdx, nextIdx);
             sftp.rangeSelect(focusedSide, listItems.slice(start, end + 1));
-            setKbSelection(pane.id, anchorIdx, nextIdx);
+            sftpKeyboardSelectionStore.set(pane.id, anchorIdx, nextIdx);
           } else {
             sftp.rangeSelect(focusedSide, [listItems[nextIdx]]);
-            setKbSelection(pane.id, nextIdx, nextIdx);
+            sftpKeyboardSelectionStore.set(pane.id, nextIdx, nextIdx);
           }
           return;
         }
@@ -191,11 +193,12 @@ export const useSftpKeyboardShortcuts = ({
           const currentSelected = [...treeState.selectedPaths];
 
           // Use tracked state, re-sync if needed
-          let { anchor: anchorIdx, focus: focusIdx } = getKbSelection(pane.id);
-          if (currentSelected.length >= 1 && items[focusIdx]?.path !== currentSelected[currentSelected.length - 1]) {
+          let { anchor: anchorIdx, focus: focusIdx } = sftpKeyboardSelectionStore.get(pane.id);
+          const focusPath = items[focusIdx]?.path;
+          if (currentSelected.length >= 1 && (!focusPath || !treeState.selectedPaths.has(focusPath))) {
             focusIdx = treeState.visibleIndexByPath.get(currentSelected[currentSelected.length - 1]) ?? 0;
             anchorIdx = focusIdx;
-            setKbSelection(pane.id, anchorIdx, focusIdx);
+            sftpKeyboardSelectionStore.set(pane.id, anchorIdx, focusIdx);
           }
 
           let nextIdx = focusIdx + delta;
@@ -207,10 +210,10 @@ export const useSftpKeyboardShortcuts = ({
             const end = Math.max(anchorIdx, nextIdx);
             const paths = items.slice(start, end + 1).map(item => item.path);
             sftpTreeSelectionStore.setSelection(pane.id, paths);
-            setKbSelection(pane.id, anchorIdx, nextIdx);
+            sftpKeyboardSelectionStore.set(pane.id, anchorIdx, nextIdx);
           } else {
             sftpTreeSelectionStore.setSelection(pane.id, [items[nextIdx].path]);
-            setKbSelection(pane.id, nextIdx, nextIdx);
+            sftpKeyboardSelectionStore.set(pane.id, nextIdx, nextIdx);
           }
           return;
         }
