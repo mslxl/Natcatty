@@ -81,6 +81,7 @@ export interface CloudSyncHook {
     code: string,
     redirectUri: string
   ) => Promise<void>;
+  cancelOAuthConnect: () => void;
   disconnectProvider: (provider: CloudProvider) => Promise<void>;
   resetProviderStatus: (provider: CloudProvider) => void;
 
@@ -265,34 +266,30 @@ export const useCloudSync = (): CloudSyncHook => {
       const adapter = manager.getAdapter('google') as { getPKCEState?: () => string | null } | undefined;
       const expectedState = adapter?.getPKCEState?.() || undefined;
 
-      // Start callback server and open browser
+      // Start callback server and open system browser
       const callbackPromise = startCallback(expectedState);
 
-      // Open browser after starting server — omit noopener/noreferrer so we can track the popup
-      let popup: Window | null = null;
-      let popupPollTimer: ReturnType<typeof setInterval> | null = null;
-      const openTimer = setTimeout(() => {
-        popup = window.open(data.url, "_blank", "width=600,height=700");
-        // Poll for popup closure — if user closes it, cancel the OAuth flow
-        if (popup) {
-          popupPollTimer = setInterval(() => {
-            if (popup?.closed) {
-              if (popupPollTimer) clearInterval(popupPollTimer);
-              bridge?.cancelOAuthCallback?.();
-            }
-          }, 500);
-        }
-      }, 100);
+      // Use system browser to avoid white-screen issues in popup windows (#563)
+      // Race: if browser launch fails, surface the error immediately
+      let openTimer: ReturnType<typeof setTimeout> | null = null;
+      const browserPromise = new Promise<never>((_resolve, reject) => {
+        openTimer = setTimeout(async () => {
+          try {
+            await bridge?.openExternal(data.url);
+          } catch (err) {
+            bridge?.cancelOAuthCallback?.();
+            reject(err instanceof Error ? err : new Error('Failed to open browser for authentication'));
+          }
+        }, 100);
+      });
 
       try {
-        // Wait for callback
-        const { code } = await callbackPromise;
+        const { code } = await Promise.race([callbackPromise, browserPromise]);
 
         // Complete auth with the received code
         await manager.completePKCEAuth('google', code, data.redirectUri);
       } finally {
-        clearTimeout(openTimer);
-        if (popupPollTimer) clearInterval(popupPollTimer);
+        if (openTimer) clearTimeout(openTimer);
       }
     }
 
@@ -314,34 +311,29 @@ export const useCloudSync = (): CloudSyncHook => {
       const adapter = manager.getAdapter('onedrive') as { getPKCEState?: () => string | null } | undefined;
       const expectedState = adapter?.getPKCEState?.() || undefined;
 
-      // Start callback server and open browser
+      // Start callback server and open system browser
       const callbackPromise = startCallback(expectedState);
 
-      // Open browser after starting server — omit noopener/noreferrer so we can track the popup
-      let popup: Window | null = null;
-      let popupPollTimer: ReturnType<typeof setInterval> | null = null;
-      const openTimer = setTimeout(() => {
-        popup = window.open(data.url, "_blank", "width=600,height=700");
-        // Poll for popup closure — if user closes it, cancel the OAuth flow
-        if (popup) {
-          popupPollTimer = setInterval(() => {
-            if (popup?.closed) {
-              if (popupPollTimer) clearInterval(popupPollTimer);
-              bridge?.cancelOAuthCallback?.();
-            }
-          }, 500);
-        }
-      }, 100);
+      // Use system browser to avoid white-screen issues in popup windows (#563)
+      let openTimer: ReturnType<typeof setTimeout> | null = null;
+      const browserPromise = new Promise<never>((_resolve, reject) => {
+        openTimer = setTimeout(async () => {
+          try {
+            await bridge?.openExternal(data.url);
+          } catch (err) {
+            bridge?.cancelOAuthCallback?.();
+            reject(err instanceof Error ? err : new Error('Failed to open browser for authentication'));
+          }
+        }, 100);
+      });
 
       try {
-        // Wait for callback
-        const { code } = await callbackPromise;
+        const { code } = await Promise.race([callbackPromise, browserPromise]);
 
         // Complete auth with the received code
         await manager.completePKCEAuth('onedrive', code, data.redirectUri);
       } finally {
-        clearTimeout(openTimer);
-        if (popupPollTimer) clearInterval(popupPollTimer);
+        if (openTimer) clearTimeout(openTimer);
       }
     }
 
@@ -372,6 +364,11 @@ export const useCloudSync = (): CloudSyncHook => {
     await manager.connectConfigProvider('s3', config);
   }, []);
   
+  const cancelOAuthConnect = useCallback(() => {
+    const bridge = netcattyBridge.get();
+    bridge?.cancelOAuthCallback?.();
+  }, []);
+
   // ========== Settings ==========
   
   const setAutoSync = useCallback((enabled: boolean, intervalMinutes?: number) => {
@@ -469,6 +466,7 @@ export const useCloudSync = (): CloudSyncHook => {
     connectWebDAV,
     connectS3,
     completePKCEAuth,
+    cancelOAuthConnect,
     disconnectProvider,
     resetProviderStatus,
 
