@@ -142,7 +142,12 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
   // Handle pane focus when clicking on a pane container
   // Clear the opposite side's selection so file operations only affect the focused pane
   const handlePaneFocus = useCallback((side: SftpFocusedSide) => {
+    const prevSide = sftpFocusStore.getFocusedSide();
     sftpFocusStore.setFocusedSide(side);
+    if (prevSide !== side) {
+      // Focus side changed — clear all pane selections
+      sftpRef.current.clearSelectionsExcept(null);
+    }
   }, []);
 
   const handleToggleHiddenFiles = useCallback((side: "left" | "right", paneId: string) => {
