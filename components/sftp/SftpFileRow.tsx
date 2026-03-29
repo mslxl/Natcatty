@@ -132,7 +132,8 @@ const SftpFileRowInner: React.FC<SftpFileRowProps> = ({
 const areEqual = (prev: SftpFileRowProps, next: SftpFileRowProps): boolean => {
     if (prev.index !== next.index) return false;
     if (prev.isSelected !== next.isSelected) return false;
-    if (prev.showSelectionHighlight !== next.showSelectionHighlight) return false;
+    // Only re-render for showSelectionHighlight changes when the row is actually selected
+    if (prev.isSelected && prev.showSelectionHighlight !== next.showSelectionHighlight) return false;
     if (prev.isDragOver !== next.isDragOver) return false;
     if (prev.columnWidths.name !== next.columnWidths.name) return false;
     if (prev.columnWidths.modified !== next.columnWidths.modified) return false;
