@@ -73,6 +73,8 @@ interface SftpPaneViewProps {
   showEmptyHeader?: boolean;
   onToggleShowHiddenFiles?: () => void;
   onGoToTerminalCwd?: () => void;
+  /** When true, treat this pane as always active (used by SftpSidePanel which manages visibility itself) */
+  forceActive?: boolean;
 }
 
 const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
@@ -84,9 +86,10 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   showEmptyHeader = true,
   onToggleShowHiddenFiles,
   onGoToTerminalCwd,
+  forceActive,
 }) => {
   const activeTabId = useActiveTabId(side);
-  const isActive = activeTabId ? pane.id === activeTabId : true;
+  const isActive = forceActive || (activeTabId ? pane.id === activeTabId : true);
 
   const callbacks = useSftpPaneCallbacks(side);
   const { draggedFiles, onDragStart, onDragEnd } = useSftpDrag();

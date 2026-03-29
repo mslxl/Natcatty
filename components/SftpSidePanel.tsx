@@ -603,6 +603,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
                   sftpDefaultViewMode={sftpDefaultViewMode}
                   showHeader
                   showEmptyHeader
+                  forceActive
                   onToggleShowHiddenFiles={() => handleToggleHiddenFiles(pane.id)}
                   onGoToTerminalCwd={onGetTerminalCwd ? handleGoToTerminalCwd : undefined}
                 />
