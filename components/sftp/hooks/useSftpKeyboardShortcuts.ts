@@ -371,8 +371,10 @@ export const useSftpKeyboardShortcuts = ({
           if (!clipboard || clipboard.files.length === 0) return;
 
           // Use startTransfer to paste files from source to current pane
-          // The transfer direction is determined by clipboard sourceSide and current focusedSide
-          if (clipboard.sourceSide !== focusedSide) {
+          // Allow paste when source and target are different connections, even on the same side
+          const isSameConnection = clipboard.sourceSide === focusedSide
+            && clipboard.sourceConnectionId === pane.connection.id;
+          if (!isSameConnection) {
             const sourceTabs = clipboard.sourceSide === "left" ? sftp.leftTabs.tabs : sftp.rightTabs.tabs;
             const sourcePane = sourceTabs.find((tab) => tab.connection?.id === clipboard.sourceConnectionId);
 
