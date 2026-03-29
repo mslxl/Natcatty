@@ -33,6 +33,7 @@ import { useSftpViewPaneCallbacks } from "./sftp/hooks/useSftpViewPaneCallbacks"
 import { useSftpViewTabs } from "./sftp/hooks/useSftpViewTabs";
 import { useSftpKeyboardShortcuts } from "./sftp/hooks/useSftpKeyboardShortcuts";
 import { sftpFocusStore } from "./sftp/hooks/useSftpFocusedPane";
+import { keepOnlyPaneSelections } from "./sftp/hooks/selectionScope";
 import { KeyBinding, HotkeyScheme } from "../domain/models";
 
 interface SftpSidePanelProps {
@@ -130,12 +131,14 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   const autoSyncRef = useRef(sftpAutoSync);
   autoSyncRef.current = sftpAutoSync;
   const panelRootRef = useRef<HTMLDivElement>(null);
+  const dialogActionScopeIdRef = useRef(`sftp-side-panel:${crypto.randomUUID()}`);
   const [hasPaneFocus, setHasPaneFocus] = useState(false);
 
   useSftpKeyboardShortcuts({
     keyBindings,
     hotkeyScheme,
     sftpRef,
+    dialogActionScopeId: dialogActionScopeIdRef.current,
     isActive: isVisible && hasPaneFocus,
   });
 
@@ -149,10 +152,19 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     sftpRef.current.setShowHiddenFiles("left", paneId, !pane.showHiddenFiles);
   }, []);
 
+  const syncFocusedSelection = useCallback((tabId: string | null) => {
+    if (tabId) {
+      keepOnlyPaneSelections(sftpRef.current, { side: "left", tabId });
+      return;
+    }
+    keepOnlyPaneSelections(sftpRef.current, null);
+  }, []);
+
   const handlePaneFocus = useCallback(() => {
     sftpFocusStore.setFocusedSide("left");
     setHasPaneFocus(true);
-  }, []);
+    syncFocusedSelection(sftpRef.current.getActiveTabId("left"));
+  }, [syncFocusedSelection]);
 
   // NOTE: We intentionally do NOT sync to activeTabStore here.
   // activeTabStore is a global singleton shared with SftpView.
@@ -161,19 +173,30 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   useEffect(() => {
     if (!isVisible) {
       setHasPaneFocus(false);
+      syncFocusedSelection(null);
     }
-  }, [isVisible]);
+  }, [isVisible, syncFocusedSelection]);
 
   useEffect(() => {
     if (!isVisible) return;
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null;
+      const elementTarget = target instanceof Element ? target : null;
+      const isPortalInteraction = !!elementTarget?.closest(
+        '#netcatty-context-menu-root, [role="dialog"], [data-radix-popper-content-wrapper]',
+      );
+      if (isPortalInteraction) {
+        return;
+      }
+
       if (panelRootRef.current?.contains(target)) {
         sftpFocusStore.setFocusedSide("left");
         setHasPaneFocus(true);
+        syncFocusedSelection(sftpRef.current.getActiveTabId("left"));
       } else {
         setHasPaneFocus(false);
+        syncFocusedSelection(null);
       }
     };
 
@@ -181,7 +204,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown, true);
     };
-  }, [isVisible]);
+  }, [isVisible, syncFocusedSelection]);
 
   const {
     leftCallbacks,
@@ -599,10 +622,12 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
                 <SftpPaneView
                   side="left"
                   pane={pane}
+                  dialogActionScopeId={dialogActionScopeIdRef.current}
                   isPaneFocused={isVisible && hasPaneFocus}
                   sftpDefaultViewMode={sftpDefaultViewMode}
                   showHeader
                   showEmptyHeader
+                  forceActive
                   onToggleShowHiddenFiles={() => handleToggleHiddenFiles(pane.id)}
                   onGoToTerminalCwd={onGetTerminalCwd ? handleGoToTerminalCwd : undefined}
                 />

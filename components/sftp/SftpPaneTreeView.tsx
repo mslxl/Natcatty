@@ -44,7 +44,7 @@ import { getParentPath, joinPath } from '../../application/state/sftp/utils';
 import { buildSftpColumnTemplate, filterHiddenFiles, formatBytes, formatDate, getFileIcon, isNavigableDirectory, sortSftpEntries, type ColumnWidths, type SortField, type SortOrder } from './utils';
 import type { SftpTransferSource } from './SftpContext';
 import { sftpTreeSelectionStore, useSftpTreeSelectionState } from './hooks/useSftpTreeSelectionStore';
-import { sftpTreeEnterStore } from './hooks/useSftpKeyboardShortcuts';
+import { sftpKeyboardSelectionStore, sftpTreeEnterStore } from './hooks/useSftpKeyboardShortcuts';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { isKnownBinaryFile } from '../../lib/sftpFileUtils';
 
@@ -55,6 +55,7 @@ type NodeDescriptor =
 interface SftpPaneTreeViewProps {
   pane: SftpPane;
   side: 'left' | 'right';
+  onPrepareSelection: () => void;
   onLoadChildren: (path: string) => Promise<SftpFileEntry[]>;
   onMoveEntriesToPath: (sourcePaths: string[], targetPath: string) => Promise<void>;
   onNavigateUp: () => void;
@@ -126,8 +127,10 @@ const TreeNode = React.memo<TreeNodeProps>(({
   return (
     <div
       className={cn(
-        'grid items-center gap-x-1 px-2 cursor-pointer select-none hover:bg-accent/50 text-sm',
-        isSelected && 'bg-accent text-accent-foreground',
+        'grid items-center gap-x-1 px-2 cursor-pointer select-none text-sm',
+        isSelected
+          ? 'bg-accent text-accent-foreground hover:bg-accent'
+          : 'hover:bg-accent/50',
         isDragOver && 'ring-2 ring-primary/50 ring-inset bg-primary/10',
       )}
       style={{ gridTemplateColumns: columnTemplate, height: TREE_ROW_HEIGHT }}
@@ -257,6 +260,7 @@ interface ContextTarget {
 export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
   pane,
   side,
+  onPrepareSelection,
   onLoadChildren,
   onMoveEntriesToPath,
   onNavigateUp,
@@ -368,12 +372,21 @@ export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
   const [rootEntries, setRootEntries] = useState<SftpFileEntry[]>(pane.files ?? []);
   const [resolvedRootPath, setResolvedRootPath] = useState(pane.connection?.currentPath ?? '');
 
+  useEffect(() => {
+    if (selectedPaths.size === 0) {
+      lastClickedPathRef.current = null;
+      sftpKeyboardSelectionStore.clear(pane.id);
+    }
+  }, [pane.id, selectedPaths.size]);
+
   const onOpenEntryRef = useRef(onOpenEntry);
   onOpenEntryRef.current = onOpenEntry;
   const onNavigateUpRef = useRef(onNavigateUp);
   onNavigateUpRef.current = onNavigateUp;
   const onNavigateToRef = useRef(onNavigateTo);
   onNavigateToRef.current = onNavigateTo;
+  const onPrepareSelectionRef = useRef(onPrepareSelection);
+  onPrepareSelectionRef.current = onPrepareSelection;
   const onMoveEntriesToPathRef = useRef(onMoveEntriesToPath);
   onMoveEntriesToPathRef.current = onMoveEntriesToPath;
   const onDragStartRef = useRef(onDragStart);
@@ -508,6 +521,7 @@ export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
       invalidateTreeCache();
       dispatchTreePaths({ type: 'RESET' });
       sftpTreeSelectionStore.clearSelection(pane.id);
+      sftpKeyboardSelectionStore.clear(pane.id);
       lastClickedPathRef.current = null;
     }
   }, [pane.connection?.currentPath, pane.connection?.id, pane.id, invalidateTreeCache]);
@@ -556,11 +570,11 @@ export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
     focusTreeContainer();
 
     const state = treeSelectionStateRef.current;
+    const currentIdx = state.visibleIndexByPath.get(entryPath) ?? -1;
     const nextSelection: string[] = (() => {
       if (e.shiftKey && lastClickedPathRef.current) {
         const items = state.visibleItems;
         const lastIdx = state.visibleIndexByPath.get(lastClickedPathRef.current) ?? -1;
-        const currentIdx = state.visibleIndexByPath.get(entryPath) ?? -1;
         if (lastIdx !== -1 && currentIdx !== -1) {
           const parentPath = getParentPath(entryPath);
           const start = Math.min(lastIdx, currentIdx);
@@ -582,7 +596,16 @@ export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
       return [entryPath];
     })();
 
+    onPrepareSelectionRef.current();
     sftpTreeSelectionStore.setSelection(pane.id, nextSelection);
+    if (currentIdx !== -1) {
+      if (e.shiftKey && lastClickedPathRef.current) {
+        const anchorIdx = state.visibleIndexByPath.get(lastClickedPathRef.current) ?? currentIdx;
+        sftpKeyboardSelectionStore.set(pane.id, anchorIdx, currentIdx);
+      } else {
+        sftpKeyboardSelectionStore.set(pane.id, currentIdx, currentIdx);
+      }
+    }
 
     lastClickedPathRef.current = entryPath;
   }, [focusTreeContainer, pane.id]);
@@ -610,23 +633,33 @@ export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
 
       const delta = e.key === 'ArrowDown' ? 1 : -1;
       const currentSelected = [...selectedPathsRef.current];
-      let currentIdx = -1;
-      if (currentSelected.length === 1) {
-        currentIdx = state.visibleIndexByPath.get(currentSelected[0]) ?? -1;
+      let { anchor: anchorIdx, focus: focusIdx } = sftpKeyboardSelectionStore.get(pane.id);
+      if (currentSelected.length === 0) {
+        anchorIdx = e.shiftKey ? 0 : -1;
+        focusIdx = -1;
+      } else {
+        const focusPath = items[focusIdx]?.path;
+        if (!focusPath || !state.selectedPaths.has(focusPath)) {
+          focusIdx = state.visibleIndexByPath.get(currentSelected[currentSelected.length - 1]) ?? 0;
+          anchorIdx = focusIdx;
+          sftpKeyboardSelectionStore.set(pane.id, anchorIdx, focusIdx);
+        }
       }
 
-      let nextIdx = currentIdx + delta;
+      let nextIdx = focusIdx + delta;
       if (nextIdx < 0) nextIdx = 0;
       if (nextIdx >= items.length) nextIdx = items.length - 1;
 
+      onPrepareSelectionRef.current();
       if (e.shiftKey && currentSelected.length > 0) {
-        const anchorIdx = currentIdx >= 0 ? currentIdx : 0;
         const start = Math.min(anchorIdx, nextIdx);
         const end = Math.max(anchorIdx, nextIdx);
         const paths = items.slice(start, end + 1).map((item) => item.path);
         sftpTreeSelectionStore.setSelection(pane.id, paths);
+        sftpKeyboardSelectionStore.set(pane.id, anchorIdx, nextIdx);
       } else {
         sftpTreeSelectionStore.setSelection(pane.id, [items[nextIdx].path]);
+        sftpKeyboardSelectionStore.set(pane.id, nextIdx, nextIdx);
       }
 
       lastClickedPathRef.current = items[nextIdx].path;

@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { SftpFileEntry } from "../../../types";
 import type { SftpPaneCallbacks, SftpDragCallbacks, SftpTransferSource } from "../SftpContext";
 import { isNavigableDirectory } from "../index";
@@ -66,6 +66,12 @@ export const useSftpPaneDragAndSelect = ({
   onMoveEntriesToPathRef.current = onMoveEntriesToPath;
   const onUploadRef = useRef(onUploadExternalFiles);
   onUploadRef.current = onUploadExternalFiles;
+
+  useEffect(() => {
+    if (pane.selectedFiles.size === 0) {
+      lastSelectedIndexRef.current = null;
+    }
+  }, [pane.selectedFiles.size]);
 
   const getSamePaneDragPaths = useCallback((): string[] | null => {
     const dragged = draggedFilesRef.current;

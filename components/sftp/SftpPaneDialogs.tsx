@@ -11,11 +11,14 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { getFileName, getParentPath } from "../../application/state/sftp/utils";
 import { SftpHostPicker } from "./index";
 import type { Host } from "../../types";
 
 interface SftpPaneDialogsProps {
   t: (key: string, params?: Record<string, unknown>) => string;
+  hostLabel?: string;
+  currentPath?: string;
   // New folder
   showNewFolderDialog: boolean;
   setShowNewFolderDialog: (open: boolean) => void;
@@ -61,8 +64,15 @@ interface SftpPaneDialogsProps {
   onDisconnect: () => void;
 }
 
+const HostHint: React.FC<{ label?: string }> = ({ label }) =>
+  label ? (
+    <div className="text-xs text-muted-foreground truncate mb-1">{label}</div>
+  ) : null;
+
 export const SftpPaneDialogs: React.FC<SftpPaneDialogsProps> = ({
   t,
+  hostLabel,
+  currentPath,
   showNewFolderDialog,
   setShowNewFolderDialog,
   newFolderName,
@@ -100,12 +110,36 @@ export const SftpPaneDialogs: React.FC<SftpPaneDialogsProps> = ({
   setHostSearch,
   onConnect,
   onDisconnect,
-}) => (
+}) => {
+  const isSingleDeleteTarget = deleteTargets.length === 1;
+  const deletePath = (() => {
+    if (isSingleDeleteTarget) {
+      return deleteTargets[0];
+    }
+
+    const uniquePaths = Array.from(new Set(deleteTargets.map((target) => getParentPath(target)).filter(Boolean)));
+    if (uniquePaths.length === 1) return uniquePaths[0];
+    if (uniquePaths.length > 1) return "Multiple locations";
+    return currentPath;
+  })();
+  const showDeleteList = deleteTargets.length > 1;
+  const deleteListItems = (() => {
+    if (!showDeleteList) return [];
+
+    const uniquePaths = Array.from(new Set(deleteTargets.map((target) => getParentPath(target)).filter(Boolean)));
+    if (uniquePaths.length === 1) {
+      return deleteTargets.map((target) => getFileName(target) || target);
+    }
+    return deleteTargets;
+  })();
+
+  return (
   <>
     {/* Dialogs */}
     <Dialog open={showNewFolderDialog} onOpenChange={setShowNewFolderDialog}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
+          <HostHint label={hostLabel} />
           <DialogTitle>{t("sftp.newFolder")}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
@@ -148,6 +182,7 @@ export const SftpPaneDialogs: React.FC<SftpPaneDialogsProps> = ({
     }}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
+          <HostHint label={hostLabel} />
           <DialogTitle>{t("sftp.newFile")}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
@@ -192,6 +227,7 @@ export const SftpPaneDialogs: React.FC<SftpPaneDialogsProps> = ({
     <Dialog open={showOverwriteConfirm} onOpenChange={setShowOverwriteConfirm}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
+          <HostHint label={hostLabel} />
           <DialogTitle>{t("sftp.overwrite.title")}</DialogTitle>
           <DialogDescription>
             {t("sftp.overwrite.desc", { name: overwriteTarget || "" })}
@@ -217,6 +253,7 @@ export const SftpPaneDialogs: React.FC<SftpPaneDialogsProps> = ({
     <Dialog open={showRenameDialog} onOpenChange={setShowRenameDialog}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
+          <HostHint label={hostLabel} />
           <DialogTitle>{t("sftp.rename.title")}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
@@ -258,19 +295,39 @@ export const SftpPaneDialogs: React.FC<SftpPaneDialogsProps> = ({
             {t("sftp.deleteConfirm.title", { count: deleteTargets.length })}
           </DialogTitle>
           <DialogDescription>
-            {t("sftp.deleteConfirm.desc")}
+            {t(showDeleteList ? "sftp.deleteConfirm.desc" : "sftp.deleteConfirm.descSingle")}
           </DialogDescription>
         </DialogHeader>
-        <div className="max-h-32 overflow-auto text-sm space-y-1">
-          {deleteTargets.map((name) => (
-            <div
-              key={name}
-              className="flex items-center gap-2 text-muted-foreground"
-            >
-              <Trash2 size={12} />
-              <span className="truncate">{name}</span>
+        <div className="space-y-3">
+          {hostLabel || deletePath ? (
+            <div className="text-xs text-muted-foreground space-y-1.5">
+              {hostLabel ? (
+                <div className="flex items-start gap-2">
+                  <span className="font-medium text-foreground/80 shrink-0">{t("sftp.deleteConfirm.host")}:</span>
+                  <span className="break-all">{hostLabel}</span>
+                </div>
+              ) : null}
+              {deletePath ? (
+                <div className="flex items-start gap-2">
+                  <span className="font-medium text-foreground/80 shrink-0">{t("sftp.deleteConfirm.path")}:</span>
+                  <span className="break-all">{deletePath}</span>
+                </div>
+              ) : null}
             </div>
-          ))}
+          ) : null}
+          {showDeleteList ? (
+            <div className="max-h-32 overflow-auto text-sm space-y-1">
+              {deleteListItems.map((name) => (
+                <div
+                  key={name}
+                  className="flex items-center gap-2 text-muted-foreground"
+                >
+                  <Trash2 size={12} />
+                  <span className="truncate">{name}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
         <DialogFooter>
           <Button
@@ -310,4 +367,5 @@ export const SftpPaneDialogs: React.FC<SftpPaneDialogsProps> = ({
       }}
     />
   </>
-);
+  );
+};

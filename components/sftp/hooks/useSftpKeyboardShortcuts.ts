@@ -14,6 +14,7 @@ import { sftpFocusStore } from "./useSftpFocusedPane";
 import { sftpDialogActionStore } from "./useSftpDialogAction";
 import { sftpTreeSelectionStore } from "./useSftpTreeSelectionStore";
 import { sftpListOrderStore } from "./useSftpListOrderStore";
+import { keepOnlyPaneSelections } from "./selectionScope";
 import type { SftpStateApi } from "../../../application/state/useSftpState";
 import { filterHiddenFiles, isNavigableDirectory } from "../index";
 import type { SftpFileEntry } from "../../../types";
@@ -72,13 +73,15 @@ export const sftpTreeEnterStore = {
 // indices per pane so Shift+Arrow extends correctly.
 const _kbSelectionState = new Map<string, { anchor: number; focus: number }>();
 
-function getKbSelection(paneId: string) {
-  return _kbSelectionState.get(paneId) ?? { anchor: 0, focus: 0 };
-}
-
-function setKbSelection(paneId: string, anchor: number, focus: number) {
-  _kbSelectionState.set(paneId, { anchor, focus });
-}
+export const sftpKeyboardSelectionStore = {
+  get: (paneId: string) => _kbSelectionState.get(paneId) ?? { anchor: 0, focus: 0 },
+  set: (paneId: string, anchor: number, focus: number) => {
+    _kbSelectionState.set(paneId, { anchor, focus });
+  },
+  clear: (paneId: string) => {
+    _kbSelectionState.delete(paneId);
+  },
+};
 
 // Basic navigation keys that work even when custom hotkeys are disabled.
 const BASIC_NAV_KEYS: Record<string, string> = {
@@ -90,6 +93,7 @@ interface UseSftpKeyboardShortcutsParams {
   keyBindings: KeyBinding[];
   hotkeyScheme: "disabled" | "mac" | "pc";
   sftpRef: MutableRefObject<SftpStateApi>;
+  dialogActionScopeId: string;
   isActive: boolean;
 }
 
@@ -115,6 +119,7 @@ export const useSftpKeyboardShortcuts = ({
   keyBindings,
   hotkeyScheme,
   sftpRef,
+  dialogActionScopeId,
   isActive,
 }: UseSftpKeyboardShortcutsParams) => {
   const handleKeyDown = useCallback(
@@ -131,6 +136,12 @@ export const useSftpKeyboardShortcuts = ({
         target.isContentEditable ||
         !!target.closest?.(".monaco-editor, .monaco-diff-editor, .monaco-inputbox");
       if (isEditableTarget) {
+        return;
+      }
+
+      // Skip when a dialog or overlay is open to prevent SFTP shortcuts from
+      // firing while interacting with unrelated dialogs (e.g. settings, confirm).
+      if (document.querySelector('[role="dialog"][data-state="open"]')) {
         return;
       }
 
@@ -155,29 +166,35 @@ export const useSftpKeyboardShortcuts = ({
 
           // Resolve current focus position from tracked state, falling back
           // to the actual selection when out of sync (e.g. after mouse click).
-          let { anchor: anchorIdx, focus: focusIdx } = getKbSelection(pane.id);
+          let { anchor: anchorIdx, focus: focusIdx } = sftpKeyboardSelectionStore.get(pane.id);
           const currentSelected = Array.from(pane.selectedFiles) as string[];
-          // If the tracked focus doesn't match the actual selection, re-sync
-          if (currentSelected.length >= 1 && !currentSelected.includes(listItems[focusIdx])) {
+          if (currentSelected.length === 0) {
+            // No selection: start from before the list so the first arrow press lands on item 0.
+            // For Shift+Arrow, anchor at 0 so range selection starts from the first item.
+            anchorIdx = e.shiftKey ? 0 : -1;
+            focusIdx = -1;
+          } else if (!currentSelected.includes(listItems[focusIdx])) {
+            // Tracked focus doesn't match actual selection, re-sync
             focusIdx = listItems.indexOf(currentSelected[currentSelected.length - 1]);
             if (focusIdx < 0) focusIdx = 0;
             anchorIdx = focusIdx;
-            setKbSelection(pane.id, anchorIdx, focusIdx);
+            sftpKeyboardSelectionStore.set(pane.id, anchorIdx, focusIdx);
           }
 
           let nextIdx = focusIdx + delta;
           if (nextIdx < 0) nextIdx = 0;
           if (nextIdx >= listItems.length) nextIdx = listItems.length - 1;
 
+          keepOnlyPaneSelections(sftp, { side: focusedSide, tabId: pane.id });
           if (e.shiftKey) {
             // Shift+Arrow: extend range from anchor to new focus
             const start = Math.min(anchorIdx, nextIdx);
             const end = Math.max(anchorIdx, nextIdx);
             sftp.rangeSelect(focusedSide, listItems.slice(start, end + 1));
-            setKbSelection(pane.id, anchorIdx, nextIdx);
+            sftpKeyboardSelectionStore.set(pane.id, anchorIdx, nextIdx);
           } else {
             sftp.rangeSelect(focusedSide, [listItems[nextIdx]]);
-            setKbSelection(pane.id, nextIdx, nextIdx);
+            sftpKeyboardSelectionStore.set(pane.id, nextIdx, nextIdx);
           }
           return;
         }
@@ -191,26 +208,35 @@ export const useSftpKeyboardShortcuts = ({
           const currentSelected = [...treeState.selectedPaths];
 
           // Use tracked state, re-sync if needed
-          let { anchor: anchorIdx, focus: focusIdx } = getKbSelection(pane.id);
-          if (currentSelected.length >= 1 && items[focusIdx]?.path !== currentSelected[currentSelected.length - 1]) {
-            focusIdx = treeState.visibleIndexByPath.get(currentSelected[currentSelected.length - 1]) ?? 0;
-            anchorIdx = focusIdx;
-            setKbSelection(pane.id, anchorIdx, focusIdx);
+          let { anchor: anchorIdx, focus: focusIdx } = sftpKeyboardSelectionStore.get(pane.id);
+          if (currentSelected.length === 0) {
+            // No selection: start from before the list so the first arrow press lands on item 0.
+            // For Shift+Arrow, anchor at 0 so range selection starts from the first item.
+            anchorIdx = e.shiftKey ? 0 : -1;
+            focusIdx = -1;
+          } else {
+            const focusPath = items[focusIdx]?.path;
+            if (!focusPath || !treeState.selectedPaths.has(focusPath)) {
+              focusIdx = treeState.visibleIndexByPath.get(currentSelected[currentSelected.length - 1]) ?? 0;
+              anchorIdx = focusIdx;
+              sftpKeyboardSelectionStore.set(pane.id, anchorIdx, focusIdx);
+            }
           }
 
           let nextIdx = focusIdx + delta;
           if (nextIdx < 0) nextIdx = 0;
           if (nextIdx >= items.length) nextIdx = items.length - 1;
 
+          keepOnlyPaneSelections(sftp, { side: focusedSide, tabId: pane.id });
           if (e.shiftKey) {
             const start = Math.min(anchorIdx, nextIdx);
             const end = Math.max(anchorIdx, nextIdx);
             const paths = items.slice(start, end + 1).map(item => item.path);
             sftpTreeSelectionStore.setSelection(pane.id, paths);
-            setKbSelection(pane.id, anchorIdx, nextIdx);
+            sftpKeyboardSelectionStore.set(pane.id, anchorIdx, nextIdx);
           } else {
             sftpTreeSelectionStore.setSelection(pane.id, [items[nextIdx].path]);
-            setKbSelection(pane.id, nextIdx, nextIdx);
+            sftpKeyboardSelectionStore.set(pane.id, nextIdx, nextIdx);
           }
           return;
         }
@@ -350,8 +376,10 @@ export const useSftpKeyboardShortcuts = ({
           if (!clipboard || clipboard.files.length === 0) return;
 
           // Use startTransfer to paste files from source to current pane
-          // The transfer direction is determined by clipboard sourceSide and current focusedSide
-          if (clipboard.sourceSide !== focusedSide) {
+          // Allow paste when source and target are different connections, even on the same side
+          const isSameConnection = clipboard.sourceSide === focusedSide
+            && clipboard.sourceConnectionId === pane.connection.id;
+          if (!isSameConnection) {
             const sourceTabs = clipboard.sourceSide === "left" ? sftp.leftTabs.tabs : sftp.rightTabs.tabs;
             const sourcePane = sourceTabs.find((tab) => tab.connection?.id === clipboard.sourceConnectionId);
 
@@ -439,6 +467,7 @@ export const useSftpKeyboardShortcuts = ({
 
         case "sftpSelectAll": {
           if (treeSelectionState.visibleItems.length > 0) {
+            keepOnlyPaneSelections(sftp, { side: focusedSide, tabId: pane.id });
             sftpTreeSelectionStore.selectAllVisible(pane.id);
             break;
           }
@@ -458,33 +487,38 @@ export const useSftpKeyboardShortcuts = ({
           const allFileNames = visibleFiles
             .filter((f) => f.name !== "..")
             .map((f) => f.name);
+          keepOnlyPaneSelections(sftp, { side: focusedSide, tabId: pane.id });
           sftp.rangeSelect(focusedSide, allFileNames);
           break;
         }
 
         case "sftpRename": {
           if (treeActionSelection.length === 1) {
-            sftpDialogActionStore.trigger("rename", [treeActionSelection[0].path]);
+            sftpDialogActionStore.trigger("rename", dialogActionScopeId, [treeActionSelection[0].path]);
             break;
           }
 
           // Trigger rename for the first selected file
           const selectedFiles = Array.from(pane.selectedFiles) as string[];
           if (selectedFiles.length !== 1) return;
-          sftpDialogActionStore.trigger("rename", selectedFiles);
+          sftpDialogActionStore.trigger("rename", dialogActionScopeId, selectedFiles);
           break;
         }
 
         case "sftpDelete": {
           if (treeActionSelection.length > 0) {
-            sftpDialogActionStore.trigger("delete", treeActionSelection.map((entry) => entry.path));
+            sftpDialogActionStore.trigger(
+              "delete",
+              dialogActionScopeId,
+              treeActionSelection.map((entry) => entry.path),
+            );
             break;
           }
 
           // Delete selected files
           const selectedFiles = Array.from(pane.selectedFiles) as string[];
           if (selectedFiles.length === 0) return;
-          sftpDialogActionStore.trigger("delete", selectedFiles);
+          sftpDialogActionStore.trigger("delete", dialogActionScopeId, selectedFiles);
           break;
         }
 
@@ -496,7 +530,7 @@ export const useSftpKeyboardShortcuts = ({
 
         case "sftpNewFolder": {
           // Create new folder
-          sftpDialogActionStore.trigger("newFolder");
+          sftpDialogActionStore.trigger("newFolder", dialogActionScopeId);
           break;
         }
 
@@ -559,7 +593,7 @@ export const useSftpKeyboardShortcuts = ({
         }
       }
     },
-    [hotkeyScheme, isActive, keyBindings, sftpRef]
+    [dialogActionScopeId, hotkeyScheme, isActive, keyBindings, sftpRef]
   );
 
   useEffect(() => {

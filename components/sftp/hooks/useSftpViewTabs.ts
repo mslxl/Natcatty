@@ -21,8 +21,8 @@ interface UseSftpViewTabsResult {
   setShowHostPickerRight: React.Dispatch<React.SetStateAction<boolean>>;
   setHostSearchLeft: React.Dispatch<React.SetStateAction<string>>;
   setHostSearchRight: React.Dispatch<React.SetStateAction<string>>;
-  handleAddTabLeft: () => void;
-  handleAddTabRight: () => void;
+  handleAddTabLeft: () => string;
+  handleAddTabRight: () => string;
   handleCloseTabLeft: (tabId: string) => void;
   handleCloseTabRight: (tabId: string) => void;
   handleSelectTabLeft: (tabId: string) => void;
@@ -42,13 +42,15 @@ export const useSftpViewTabs = ({ sftp, sftpRef }: UseSftpViewTabsParams): UseSf
   const [hostSearchRight, setHostSearchRight] = useState("");
 
   const handleAddTabLeft = useCallback(() => {
-    sftpRef.current.addTab("left");
+    const tabId = sftpRef.current.addTab("left");
     setShowHostPickerLeft(true);
+    return tabId;
   }, [sftpRef]);
 
   const handleAddTabRight = useCallback(() => {
-    sftpRef.current.addTab("right");
+    const tabId = sftpRef.current.addTab("right");
     setShowHostPickerRight(true);
+    return tabId;
   }, [sftpRef]);
 
   const handleCloseTabLeft = useCallback((tabId: string) => {

@@ -14,6 +14,7 @@ interface SftpTabsState {
   getActivePane: (side: "left" | "right") => SftpPane | null;
   updateTab: (side: "left" | "right", tabId: string, updater: (pane: SftpPane) => SftpPane) => void;
   updateActiveTab: (side: "left" | "right", updater: (pane: SftpPane) => SftpPane) => void;
+  clearSelectionsExcept: (target: { side: "left" | "right"; tabId: string } | null) => void;
   setTabShowHiddenFiles: (side: "left" | "right", tabId: string, showHiddenFiles: boolean) => void;
   addTab: (side: "left" | "right") => string;
   closeTab: (side: "left" | "right", tabId: string) => void;
@@ -33,6 +34,8 @@ interface SftpTabsState {
   }>;
   getActiveTabId: (side: "left" | "right") => string | null;
 }
+
+const EMPTY_SELECTION = new Set<string>();
 
 export const useSftpTabsState = ({
   defaultShowHiddenFiles = false,
@@ -93,6 +96,31 @@ export const useSftpTabsState = ({
       updateTab(side, sideTabs.activeTabId, updater);
     },
     [updateTab],
+  );
+
+  const clearSelectionsExcept = useCallback(
+    (target: { side: "left" | "right"; tabId: string } | null) => {
+      const clearSideSelections = (
+        prev: SftpSideTabs,
+        side: "left" | "right",
+      ): SftpSideTabs => {
+        let changed = false;
+        const tabs = prev.tabs.map((tab) => {
+          const shouldKeepSelection =
+            target?.side === side && target.tabId === tab.id;
+          if (shouldKeepSelection || tab.selectedFiles.size === 0) {
+            return tab;
+          }
+          changed = true;
+          return { ...tab, selectedFiles: EMPTY_SELECTION };
+        });
+        return changed ? { ...prev, tabs } : prev;
+      };
+
+      setLeftTabs((prev) => clearSideSelections(prev, "left"));
+      setRightTabs((prev) => clearSideSelections(prev, "right"));
+    },
+    [],
   );
 
   const setTabShowHiddenFiles = useCallback(
@@ -258,6 +286,7 @@ export const useSftpTabsState = ({
     getActivePane,
     updateTab,
     updateActiveTab,
+    clearSelectionsExcept,
     setTabShowHiddenFiles,
     addTab,
     closeTab,

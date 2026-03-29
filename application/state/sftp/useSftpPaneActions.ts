@@ -28,6 +28,7 @@ interface UseSftpPaneActionsParams {
   listRemoteFiles: (sftpId: string, path: string, encoding?: SftpFilenameEncoding) => Promise<SftpFileEntry[]>;
   handleSessionError: (side: "left" | "right", error: Error) => void;
   isSessionError: (err: unknown) => boolean;
+  clearSelectionsExcept: (target: { side: "left" | "right"; tabId: string } | null) => void;
   dirCacheTtlMs: number;
 }
 
@@ -78,6 +79,7 @@ export const useSftpPaneActions = ({
   listRemoteFiles,
   handleSessionError,
   isSessionError,
+  clearSelectionsExcept,
   dirCacheTtlMs,
 }: UseSftpPaneActionsParams): UseSftpPaneActionsResult => {
   const normalizePathForCompare = useCallback((path: string): string => {
@@ -465,6 +467,10 @@ export const useSftpPaneActions = ({
 
   const toggleSelection = useCallback(
     (side: "left" | "right", fileName: string, multiSelect: boolean) => {
+      const activeTabId = (side === "left" ? leftTabsRef : rightTabsRef).current.activeTabId;
+      if (activeTabId) {
+        clearSelectionsExcept({ side, tabId: activeTabId });
+      }
       updateActiveTab(side, (prev) => {
         const newSelection = new Set(multiSelect ? prev.selectedFiles : []);
         if (newSelection.has(fileName)) {
@@ -475,11 +481,15 @@ export const useSftpPaneActions = ({
         return { ...prev, selectedFiles: newSelection };
       });
     },
-    [updateActiveTab],
+    [updateActiveTab, clearSelectionsExcept, leftTabsRef, rightTabsRef],
   );
 
   const rangeSelect = useCallback(
     (side: "left" | "right", fileNames: string[]) => {
+      const activeTabId = (side === "left" ? leftTabsRef : rightTabsRef).current.activeTabId;
+      if (activeTabId) {
+        clearSelectionsExcept({ side, tabId: activeTabId });
+      }
       const newSelection = new Set<string>();
       for (const name of fileNames) {
         if (name && name !== "..") {
@@ -489,7 +499,7 @@ export const useSftpPaneActions = ({
 
       updateActiveTab(side, (prev) => ({ ...prev, selectedFiles: newSelection }));
     },
-    [updateActiveTab],
+    [updateActiveTab, clearSelectionsExcept, leftTabsRef, rightTabsRef],
   );
 
   const clearSelection = useCallback((side: "left" | "right") => {

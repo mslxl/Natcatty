@@ -67,25 +67,31 @@ SftpPaneWrapper.displayName = "SftpPaneWrapper";
 interface SftpPaneViewProps {
   side: "left" | "right";
   pane: SftpPane;
+  dialogActionScopeId: string;
   isPaneFocused: boolean;
   sftpDefaultViewMode: 'list' | 'tree';
   showHeader?: boolean;
   showEmptyHeader?: boolean;
   onToggleShowHiddenFiles?: () => void;
   onGoToTerminalCwd?: () => void;
+  /** When true, treat this pane as always active (used by SftpSidePanel which manages visibility itself) */
+  forceActive?: boolean;
 }
 
 const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   side,
   pane,
+  dialogActionScopeId,
   isPaneFocused,
   sftpDefaultViewMode,
   showHeader = true,
   showEmptyHeader = true,
   onToggleShowHiddenFiles,
   onGoToTerminalCwd,
+  forceActive,
 }) => {
-  const isActive = true;
+  const activeTabId = useActiveTabId(side);
+  const isActive = forceActive || (activeTabId ? pane.id === activeTabId : true);
 
   const callbacks = useSftpPaneCallbacks(side);
   const { draggedFiles, onDragStart, onDragEnd } = useSftpDrag();
@@ -354,7 +360,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     ],
   );
 
-  useSftpDialogActionHandler(side, dialogActionHandlers);
+  useSftpDialogActionHandler(side, dialogActionScopeId, dialogActionHandlers, isActive);
 
   const handleSortWithTransition = (field: typeof sortField) => {
     startTransition(() => handleSort(field));
@@ -495,6 +501,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
           <SftpPaneTreeView
             pane={pane}
             side={side}
+            onPrepareSelection={callbacks.onPrepareSelection}
             onLoadChildren={callbacks.onListDirectory}
             onMoveEntriesToPath={handleMoveEntriesToPath}
             onNavigateUp={callbacks.onNavigateUp}
@@ -573,6 +580,8 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
 
       <SftpPaneDialogs
         t={t}
+        hostLabel={pane.connection?.hostLabel}
+        currentPath={pane.connection?.currentPath}
         showNewFolderDialog={showNewFolderDialog}
         setShowNewFolderDialog={setShowNewFolderDialog}
         newFolderName={newFolderName}
@@ -621,6 +630,7 @@ const sftpPaneViewAreEqual = (
 ): boolean => {
   if (prev.pane !== next.pane) return false;
   if (prev.side !== next.side) return false;
+  if (prev.dialogActionScopeId !== next.dialogActionScopeId) return false;
   if (prev.isPaneFocused !== next.isPaneFocused) return false;
   if (prev.showHeader !== next.showHeader) return false;
   if (prev.showEmptyHeader !== next.showEmptyHeader) return false;

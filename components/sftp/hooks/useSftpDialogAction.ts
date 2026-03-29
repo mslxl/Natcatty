@@ -13,6 +13,7 @@ type SftpDialogActionType = "rename" | "delete" | "newFolder" | "newFile" | null
 interface SftpDialogAction {
   type: SftpDialogActionType;
   targetSide: SftpFocusedSide;
+  targetScopeId: string;
   targetFiles?: string[]; // For rename (single file) or delete (multiple files)
   timestamp: number; // To distinguish different triggers of the same action
 }
@@ -37,13 +38,14 @@ export const sftpDialogActionStore = {
   /**
    * Trigger a dialog action
    */
-  trigger: (type: SftpDialogActionType, targetFiles?: string[]) => {
+  trigger: (type: SftpDialogActionType, targetScopeId: string, targetFiles?: string[]) => {
     if (!type) {
       dialogAction = null;
     } else {
       dialogAction = {
         type,
         targetSide: sftpFocusStore.getFocusedSide(),
+        targetScopeId,
         targetFiles,
         timestamp: Date.now(),
       };
@@ -82,17 +84,19 @@ export const useSftpDialogAction = (): SftpDialogAction | null => {
  */
 export const useSftpDialogActionHandler = (
   side: SftpFocusedSide,
+  scopeId: string,
   handlers: {
     onRename?: (fileName: string) => void;
     onDelete?: (fileNames: string[]) => void;
     onNewFolder?: () => void;
     onNewFile?: () => void;
-  }
+  },
+  isActive = true
 ) => {
   const action = useSftpDialogAction();
 
   useEffect(() => {
-    if (!action || action.targetSide !== side) return;
+    if (!action || action.targetSide !== side || action.targetScopeId !== scopeId || !isActive) return;
 
     // Handle the action and clear it
     switch (action.type) {
@@ -116,5 +120,5 @@ export const useSftpDialogActionHandler = (
 
     // Clear the action after handling
     sftpDialogActionStore.clear();
-  }, [action, side, handlers]);
+  }, [action, side, scopeId, handlers, isActive]);
 };

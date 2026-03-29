@@ -40,6 +40,8 @@ import { useSftpViewPaneCallbacks } from "./sftp/hooks/useSftpViewPaneCallbacks"
 import { useSftpViewTabs } from "./sftp/hooks/useSftpViewTabs";
 import { useSftpKeyboardShortcuts } from "./sftp/hooks/useSftpKeyboardShortcuts";
 import { sftpFocusStore, SftpFocusedSide, useSftpFocusedSide } from "./sftp/hooks/useSftpFocusedPane";
+import { keepOnlyActivePaneSelections, keepOnlyPaneSelections } from "./sftp/hooks/selectionScope";
+
 
 // Wrapper component that subscribes to activeTabId for CSS visibility
 // This isolates the activeTabId subscription - only this component re-renders on tab switch
@@ -79,6 +81,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
   const { t } = useI18n();
   const isActive = useIsSftpActive();
   const rootRef = useRef<HTMLDivElement>(null);
+  const dialogActionScopeIdRef = useRef("sftp-main-view");
 
   useInstantThemeSwitch(rootRef);
 
@@ -132,6 +135,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     keyBindings,
     hotkeyScheme,
     sftpRef,
+    dialogActionScopeId: dialogActionScopeIdRef.current,
     isActive,
   });
 
@@ -139,8 +143,18 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
   const focusedSide = useSftpFocusedSide();
 
   // Handle pane focus when clicking on a pane container
-  const handlePaneFocus = useCallback((side: SftpFocusedSide) => {
+  // Clear the opposite side's selection so file operations only affect the focused pane
+  const handlePaneFocus = useCallback((side: SftpFocusedSide, targetTabId?: string) => {
+    const prevSide = sftpFocusStore.getFocusedSide();
     sftpFocusStore.setFocusedSide(side);
+    if (prevSide !== side) {
+      if (targetTabId) {
+        keepOnlyPaneSelections(sftpRef.current, { side, tabId: targetTabId });
+      } else {
+        // Focus side changed — clear other panes but keep the newly focused pane intact.
+        keepOnlyActivePaneSelections(sftpRef.current, side);
+      }
+    }
   }, []);
 
   const handleToggleHiddenFiles = useCallback((side: "left" | "right", paneId: string) => {
@@ -255,6 +269,26 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     handleHostSelectRight,
   } = useSftpViewTabs({ sftp, sftpRef });
 
+  const handleAddTabLeftWithFocus = useCallback(() => {
+    const tabId = handleAddTabLeft();
+    handlePaneFocus("left", tabId);
+  }, [handleAddTabLeft, handlePaneFocus]);
+
+  const handleAddTabRightWithFocus = useCallback(() => {
+    const tabId = handleAddTabRight();
+    handlePaneFocus("right", tabId);
+  }, [handleAddTabRight, handlePaneFocus]);
+
+  const handleSelectTabLeftWithFocus = useCallback((tabId: string) => {
+    handleSelectTabLeft(tabId);
+    handlePaneFocus("left", tabId);
+  }, [handlePaneFocus, handleSelectTabLeft]);
+
+  const handleSelectTabRightWithFocus = useCallback((tabId: string) => {
+    handleSelectTabRight(tabId);
+    handlePaneFocus("right", tabId);
+  }, [handlePaneFocus, handleSelectTabRight]);
+
   return (
     <SftpContextProvider
       hosts={hosts}
@@ -295,9 +329,9 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
               <SftpTabBar
                 tabs={leftTabsInfo}
                 side="left"
-                onSelectTab={handleSelectTabLeft}
+                onSelectTab={handleSelectTabLeftWithFocus}
                 onCloseTab={handleCloseTabLeft}
-                onAddTab={handleAddTabLeft}
+                onAddTab={handleAddTabLeftWithFocus}
                 onReorderTabs={handleReorderTabsLeft}
                 onMoveTabToOtherSide={handleMoveTabFromRightToLeft}
               />
@@ -313,6 +347,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
                   <SftpPaneView
                     side="left"
                     pane={pane}
+                    dialogActionScopeId={dialogActionScopeIdRef.current}
                     isPaneFocused={focusedSide === "left"}
                     sftpDefaultViewMode={sftpDefaultViewMode}
                     showHeader
@@ -354,9 +389,9 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
               <SftpTabBar
                 tabs={rightTabsInfo}
                 side="right"
-                onSelectTab={handleSelectTabRight}
+                onSelectTab={handleSelectTabRightWithFocus}
                 onCloseTab={handleCloseTabRight}
-                onAddTab={handleAddTabRight}
+                onAddTab={handleAddTabRightWithFocus}
                 onReorderTabs={handleReorderTabsRight}
                 onMoveTabToOtherSide={handleMoveTabFromLeftToRight}
               />
@@ -372,6 +407,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
                   <SftpPaneView
                     side="right"
                     pane={pane}
+                    dialogActionScopeId={dialogActionScopeIdRef.current}
                     isPaneFocused={focusedSide === "right"}
                     sftpDefaultViewMode={sftpDefaultViewMode}
                     showHeader

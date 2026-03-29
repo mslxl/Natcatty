@@ -21,6 +21,7 @@ export interface SftpTransferSource {
 export interface SftpPaneCallbacks {
     onConnect: (host: Host | "local") => void;
     onDisconnect: () => void;
+    onPrepareSelection: () => void;
     onNavigateTo: (path: string) => void;
     onNavigateUp: () => void;
     onRefresh: () => void;

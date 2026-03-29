@@ -140,6 +140,7 @@ export const useSftpViewPaneCallbacks = ({
     () => ({
       onConnect: paneActions.onConnectLeft,
       onDisconnect: paneActions.onDisconnectLeft,
+      onPrepareSelection: paneActions.onPrepareSelectionLeft,
       onNavigateTo: paneActions.onNavigateToLeft,
       onNavigateUp: paneActions.onNavigateUpLeft,
       onRefresh: paneActions.onRefreshLeft,
@@ -176,6 +177,7 @@ export const useSftpViewPaneCallbacks = ({
     () => ({
       onConnect: paneActions.onConnectRight,
       onDisconnect: paneActions.onDisconnectRight,
+      onPrepareSelection: paneActions.onPrepareSelectionRight,
       onNavigateTo: paneActions.onNavigateToRight,
       onNavigateUp: paneActions.onNavigateUpRight,
       onRefresh: paneActions.onRefreshRight,

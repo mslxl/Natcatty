@@ -214,6 +214,22 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
     [onCloseTab],
   );
 
+  const handleSelectTabClick = useCallback(
+    (e: React.MouseEvent, tabId: string) => {
+      e.stopPropagation();
+      onSelectTab(tabId);
+    },
+    [onSelectTab],
+  );
+
+  const handleAddTabClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onAddTab();
+    },
+    [onAddTab],
+  );
+
   // Cross-pane drag handlers
   const handleCrossPaneDragOver = useCallback(
     (e: React.DragEvent) => {
@@ -302,7 +318,7 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
               <div
                 key={tab.id}
                 data-tab-id={tab.id}
-                onClick={() => onSelectTab(tab.id)}
+                onClick={(e) => handleSelectTabClick(e, tab.id)}
                 draggable
                 onDragStart={(e) => handleTabDragStart(e, tab.id)}
                 onDragEnd={handleTabDragEnd}
@@ -379,7 +395,7 @@ const SftpTabBarInner: React.FC<SftpTabBarProps> = ({
       {/* Add tab button */}
       <button
         className="px-2 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-[linear-gradient(135deg,_hsl(var(--accent)_/_0.18),_hsl(var(--primary)_/_0.18))] transition-all duration-150 border-l border-border/40 cursor-pointer"
-        onClick={onAddTab}
+        onClick={handleAddTabClick}
         title={t("sftp.tabs.addTab")}
       >
         <Plus size={14} />
@@ -418,4 +434,3 @@ const sftpTabBarAreEqual = (
 
 export const SftpTabBar = memo(SftpTabBarInner, sftpTabBarAreEqual);
 SftpTabBar.displayName = "SftpTabBar";
-
