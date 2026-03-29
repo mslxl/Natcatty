@@ -99,6 +99,17 @@ export const sftpTreeSelectionStore = {
     setPaneState(paneId, (state) => ({ ...state, selectedPaths: EMPTY_PATHS }));
   },
 
+  clearAllExcept: (paneIdsToKeep?: Iterable<string>) => {
+    const keep = new Set(paneIdsToKeep ?? []);
+    Array.from(paneStates.keys()).forEach((paneId) => {
+      if (keep.has(paneId)) return;
+      setPaneState(paneId, (state) => {
+        if (state.selectedPaths.size === 0) return state;
+        return { ...state, selectedPaths: EMPTY_PATHS };
+      });
+    });
+  },
+
   selectAllVisible: (paneId: string) => {
     setPaneState(paneId, (state) => ({
       ...state,

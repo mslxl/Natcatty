@@ -33,6 +33,7 @@ import { useSftpViewPaneCallbacks } from "./sftp/hooks/useSftpViewPaneCallbacks"
 import { useSftpViewTabs } from "./sftp/hooks/useSftpViewTabs";
 import { useSftpKeyboardShortcuts } from "./sftp/hooks/useSftpKeyboardShortcuts";
 import { sftpFocusStore } from "./sftp/hooks/useSftpFocusedPane";
+import { sftpTreeSelectionStore } from "./sftp/hooks/useSftpTreeSelectionStore";
 import { KeyBinding, HotkeyScheme } from "../domain/models";
 
 interface SftpSidePanelProps {
@@ -149,10 +150,21 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     sftpRef.current.setShowHiddenFiles("left", paneId, !pane.showHiddenFiles);
   }, []);
 
+  const syncFocusedSelection = useCallback((tabId: string | null) => {
+    if (tabId) {
+      sftpRef.current.clearSelectionsExcept({ side: "left", tabId });
+      sftpTreeSelectionStore.clearAllExcept([tabId]);
+      return;
+    }
+    sftpRef.current.clearSelectionsExcept(null);
+    sftpTreeSelectionStore.clearAllExcept();
+  }, []);
+
   const handlePaneFocus = useCallback(() => {
     sftpFocusStore.setFocusedSide("left");
     setHasPaneFocus(true);
-  }, []);
+    syncFocusedSelection(sftpRef.current.getActiveTabId("left"));
+  }, [syncFocusedSelection]);
 
   // NOTE: We intentionally do NOT sync to activeTabStore here.
   // activeTabStore is a global singleton shared with SftpView.
@@ -161,19 +173,30 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   useEffect(() => {
     if (!isVisible) {
       setHasPaneFocus(false);
+      syncFocusedSelection(null);
     }
-  }, [isVisible]);
+  }, [isVisible, syncFocusedSelection]);
 
   useEffect(() => {
     if (!isVisible) return;
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null;
+      const elementTarget = target instanceof Element ? target : null;
+      const isPortalInteraction = !!elementTarget?.closest(
+        '#netcatty-context-menu-root, [role="dialog"], [data-radix-popper-content-wrapper]',
+      );
+      if (isPortalInteraction) {
+        return;
+      }
+
       if (panelRootRef.current?.contains(target)) {
         sftpFocusStore.setFocusedSide("left");
         setHasPaneFocus(true);
+        syncFocusedSelection(sftpRef.current.getActiveTabId("left"));
       } else {
         setHasPaneFocus(false);
+        syncFocusedSelection(null);
       }
     };
 
@@ -181,7 +204,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown, true);
     };
-  }, [isVisible]);
+  }, [isVisible, syncFocusedSelection]);
 
   const {
     leftCallbacks,

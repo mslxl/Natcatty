@@ -76,8 +76,10 @@ const SftpFileRowInner: React.FC<SftpFileRowProps> = ({
             onClick={handleSelect}
             onDoubleClick={handleOpen}
             className={cn(
-                "px-4 py-2 items-center cursor-pointer text-sm hover:bg-accent/50",
-                isSelectionVisible && "bg-accent text-accent-foreground",
+                "px-4 py-2 items-center cursor-pointer text-sm",
+                isSelectionVisible
+                    ? "bg-accent text-accent-foreground hover:bg-accent"
+                    : "hover:bg-accent/50",
                 isDragOver && isNavDir && "bg-primary/25 ring-1 ring-primary/50"
             )}
             style={{ display: 'grid', gridTemplateColumns: buildSftpColumnTemplate(columnWidths) }}
@@ -130,6 +132,7 @@ const SftpFileRowInner: React.FC<SftpFileRowProps> = ({
 const areEqual = (prev: SftpFileRowProps, next: SftpFileRowProps): boolean => {
     if (prev.index !== next.index) return false;
     if (prev.isSelected !== next.isSelected) return false;
+    if (prev.showSelectionHighlight !== next.showSelectionHighlight) return false;
     if (prev.isDragOver !== next.isDragOver) return false;
     if (prev.columnWidths.name !== next.columnWidths.name) return false;
     if (prev.columnWidths.modified !== next.columnWidths.modified) return false;

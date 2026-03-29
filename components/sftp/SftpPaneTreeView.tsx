@@ -126,8 +126,10 @@ const TreeNode = React.memo<TreeNodeProps>(({
   return (
     <div
       className={cn(
-        'grid items-center gap-x-1 px-2 cursor-pointer select-none hover:bg-accent/50 text-sm',
-        isSelected && 'bg-accent text-accent-foreground',
+        'grid items-center gap-x-1 px-2 cursor-pointer select-none text-sm',
+        isSelected
+          ? 'bg-accent text-accent-foreground hover:bg-accent'
+          : 'hover:bg-accent/50',
         isDragOver && 'ring-2 ring-primary/50 ring-inset bg-primary/10',
       )}
       style={{ gridTemplateColumns: columnTemplate, height: TREE_ROW_HEIGHT }}

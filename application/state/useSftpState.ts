@@ -57,6 +57,7 @@ export const useSftpState = (
     getActivePane,
     updateTab,
     updateActiveTab,
+    clearSelectionsExcept,
     setTabShowHiddenFiles,
     addTab,
     closeTab,
@@ -339,6 +340,7 @@ export const useSftpState = (
     toggleSelection,
     rangeSelect,
     clearSelection,
+    clearSelectionsExcept,
     selectAll,
     setFilter,
     setFilenameEncoding,
@@ -392,6 +394,7 @@ export const useSftpState = (
     toggleSelection,
     rangeSelect,
     clearSelection,
+    clearSelectionsExcept,
     selectAll,
     setFilter,
     setFilenameEncoding,
@@ -448,6 +451,8 @@ export const useSftpState = (
     toggleSelection: (...args: Parameters<typeof toggleSelection>) => methodsRef.current.toggleSelection(...args),
     rangeSelect: (...args: Parameters<typeof rangeSelect>) => methodsRef.current.rangeSelect(...args),
     clearSelection: (...args: Parameters<typeof clearSelection>) => methodsRef.current.clearSelection(...args),
+    clearSelectionsExcept: (...args: Parameters<typeof clearSelectionsExcept>) =>
+      methodsRef.current.clearSelectionsExcept(...args),
     selectAll: (...args: Parameters<typeof selectAll>) => methodsRef.current.selectAll(...args),
     setFilter: (...args: Parameters<typeof setFilter>) => methodsRef.current.setFilter(...args),
     setFilenameEncoding: (...args: Parameters<typeof setFilenameEncoding>) =>
