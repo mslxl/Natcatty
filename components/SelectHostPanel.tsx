@@ -19,6 +19,11 @@ import { Input } from "./ui/input";
 import { ScrollArea } from "./ui/scroll-area";
 import { SortDropdown, SortMode } from "./ui/sort-dropdown";
 import { TagFilterDropdown } from "./ui/tag-filter-dropdown";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "./ui/tooltip";
 
 interface SelectHostPanelProps {
   hosts: Host[];
@@ -271,7 +276,7 @@ const SelectHostPanel: React.FC<SelectHostPanelProps> = ({
 
       {/* Content */}
       <ScrollArea className="flex-1">
-        <div className="p-4 space-y-4">
+        <div className="p-3 space-y-3">
           {/* Breadcrumbs */}
           {currentPath && (
             <div className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -301,20 +306,20 @@ const SelectHostPanel: React.FC<SelectHostPanelProps> = ({
           )}
           {groupsWithCounts.length > 0 && (
             <div>
-              <h4 className="text-sm font-semibold mb-3">{t("vault.groups.title")}</h4>
+              <h4 className="text-xs font-semibold mb-2 text-muted-foreground">{t("vault.groups.title")}</h4>
               <div className="space-y-1">
                 {groupsWithCounts.map((group) => (
                   <div
                     key={group.path}
-                    className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-muted/70 cursor-pointer transition-colors"
+                    className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-muted/70 cursor-pointer transition-colors"
                     onClick={() => setCurrentPath(group.path)}
                   >
-                    <div className="h-10 w-10 rounded-lg bg-primary/15 text-primary flex items-center justify-center">
-                      <LayoutGrid size={18} />
+                    <div className="h-8 w-8 rounded-lg bg-primary/15 text-primary flex items-center justify-center shrink-0">
+                      <LayoutGrid size={15} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium">{group.name}</div>
-                      <div className="text-xs text-muted-foreground">
+                      <div className="text-[13px] font-medium truncate">{group.name}</div>
+                      <div className="text-[11px] text-muted-foreground">
                         {t("vault.groups.hostsCount", { count: group.count })}
                       </div>
                     </div>
@@ -327,18 +332,19 @@ const SelectHostPanel: React.FC<SelectHostPanelProps> = ({
           {/* Hosts Section */}
           {filteredHosts.length > 0 && (
             <div>
-              <h4 className="text-sm font-semibold mb-3">{t("vault.nav.hosts")}</h4>
+              <h4 className="text-xs font-semibold mb-2 text-muted-foreground">{t("vault.nav.hosts")}</h4>
               <div className="space-y-1">
                 {filteredHosts.map((host) => {
                   const isSelected = selectedHostIds.includes(host.id);
+                  const connectionStr = `${host.username}@${host.hostname}:${host.port || 22}`;
 
                   return (
                     <div
                       key={host.id}
                       className={cn(
-                        "flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors",
+                        "flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer transition-colors",
                         isSelected
-                          ? "bg-muted border border-border"
+                          ? "bg-muted"
                           : "hover:bg-muted/70",
                       )}
                       onClick={() => onSelect(host)}
@@ -346,16 +352,32 @@ const SelectHostPanel: React.FC<SelectHostPanelProps> = ({
                       <DistroAvatar
                         host={host}
                         fallback={host.os[0].toUpperCase()}
-                        className="h-10 w-10"
+                        className="h-8 w-8 rounded-lg"
                       />
                       <div className="flex-1 min-w-0">
-                        <div className="font-medium">{host.label}</div>
-                        <div className="text-xs text-muted-foreground truncate">
-                          {host.username}@{host.hostname}:{host.port || 22}
-                        </div>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div className="text-[13px] font-medium truncate">
+                              {host.label}
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" align="start">
+                            <p>{host.label}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div className="text-[11px] text-muted-foreground truncate">
+                              {connectionStr}
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" align="start">
+                            <p>{connectionStr}</p>
+                          </TooltipContent>
+                        </Tooltip>
                       </div>
                       {isSelected && (
-                        <Check size={16} className="text-primary" />
+                        <Check size={14} className="text-primary shrink-0" />
                       )}
                     </div>
                   );

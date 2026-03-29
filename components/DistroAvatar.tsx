@@ -98,7 +98,7 @@ const DistroAvatarInner: React.FC<DistroAvatarProps> = ({
       <div
         className={cn(
           containerClass,
-          "flex items-center justify-center border border-border/40 overflow-hidden",
+          "flex items-center justify-center overflow-hidden",
           bg,
           className,
         )}
