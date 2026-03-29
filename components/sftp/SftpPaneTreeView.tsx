@@ -622,11 +622,16 @@ export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
       const delta = e.key === 'ArrowDown' ? 1 : -1;
       const currentSelected = [...selectedPathsRef.current];
       let { anchor: anchorIdx, focus: focusIdx } = sftpKeyboardSelectionStore.get(pane.id);
-      const focusPath = items[focusIdx]?.path;
-      if (currentSelected.length >= 1 && (!focusPath || !state.selectedPaths.has(focusPath))) {
-        focusIdx = state.visibleIndexByPath.get(currentSelected[currentSelected.length - 1]) ?? 0;
-        anchorIdx = focusIdx;
-        sftpKeyboardSelectionStore.set(pane.id, anchorIdx, focusIdx);
+      if (currentSelected.length === 0) {
+        anchorIdx = e.shiftKey ? 0 : -1;
+        focusIdx = -1;
+      } else {
+        const focusPath = items[focusIdx]?.path;
+        if (!focusPath || !state.selectedPaths.has(focusPath)) {
+          focusIdx = state.visibleIndexByPath.get(currentSelected[currentSelected.length - 1]) ?? 0;
+          anchorIdx = focusIdx;
+          sftpKeyboardSelectionStore.set(pane.id, anchorIdx, focusIdx);
+        }
       }
 
       let nextIdx = focusIdx + delta;
