@@ -22,6 +22,7 @@ interface UseSftpTransfersParams {
   refresh: (side: "left" | "right", options?: { tabId?: string }) => Promise<void>;
   clearCacheForConnection: (connectionId: string) => void;
   sftpSessionsRef: React.MutableRefObject<Map<string, string>>;
+  connectionCacheKeyMapRef: React.MutableRefObject<Map<string, string>>;
   listLocalFiles: (path: string) => Promise<SftpFileEntry[]>;
   listRemoteFiles: (sftpId: string, path: string, encoding?: SftpFilenameEncoding) => Promise<SftpFileEntry[]>;
   handleSessionError: (side: "left" | "right", error: Error) => void;
@@ -78,6 +79,7 @@ export const useSftpTransfers = ({
   refresh,
   clearCacheForConnection,
   sftpSessionsRef,
+  connectionCacheKeyMapRef,
   listLocalFiles,
   listRemoteFiles,
   handleSessionError,
@@ -209,6 +211,7 @@ export const useSftpTransfers = ({
     sourceEncoding: SftpFilenameEncoding,
     targetEncoding: SftpFilenameEncoding,
     rootTaskId: string, // The original top-level task ID for cancellation checking
+    sameHost?: boolean,
     onStreamProgress?: (transferred: number, total: number, speed: number) => void,
   ): Promise<void> => {
     // Check if task or root task was cancelled before starting
@@ -228,6 +231,7 @@ export const useSftpTransfers = ({
         totalBytes: task.totalBytes || undefined,
         sourceEncoding: sourceIsLocal ? undefined : sourceEncoding,
         targetEncoding: targetIsLocal ? undefined : targetEncoding,
+        sameHost: sameHost || undefined,
       };
 
       let lastProgressUpdate = 0;
@@ -343,6 +347,7 @@ export const useSftpTransfers = ({
     sourceEncoding: SftpFilenameEncoding,
     targetEncoding: SftpFilenameEncoding,
     rootTaskId: string, // The original top-level task ID for cancellation checking
+    sameHost?: boolean,
     symlinkDepth = 0,
     followSymlinks = false, // Only true for downloadToLocal — uploads/copies treat symlinks as files
   ) => {
@@ -433,6 +438,7 @@ export const useSftpTransfers = ({
         sourceEncoding,
         targetEncoding,
         rootTaskId,
+        sameHost,
         isSymlink ? symlinkDepth + 1 : symlinkDepth,
         followSymlinks,
       );
@@ -496,6 +502,7 @@ export const useSftpTransfers = ({
               sourceEncoding,
               targetEncoding,
               rootTaskId,
+              sameHost,
             );
 
             activeChildIdsRef.current.get(rootTaskId)?.delete(fileId);
@@ -570,6 +577,22 @@ export const useSftpTransfers = ({
     const targetSftpId = targetPane.connection?.isLocal
       ? null
       : sftpSessionsRef.current.get(targetPane.connection!.id);
+
+    // Detect same-host: both sides connected to the same remote endpoint.
+    // Use per-connection cache keys (hostname+port+protocol+sudo+username) instead of
+    // just hostId, because the same hostId can have different session-time overrides.
+    const sourceCacheKey = sourcePane.connection?.id
+      ? connectionCacheKeyMapRef.current.get(sourcePane.connection.id)
+      : undefined;
+    const targetCacheKey = targetPane.connection?.id
+      ? connectionCacheKeyMapRef.current.get(targetPane.connection.id)
+      : undefined;
+    const sameHost = !!(
+      sourceSftpId && targetSftpId &&
+      !sourcePane.connection?.isLocal && !targetPane.connection?.isLocal &&
+      sourceCacheKey && targetCacheKey &&
+      sourceCacheKey === targetCacheKey
+    );
 
     if (!sourcePane.connection?.isLocal && !sourceSftpId) {
       const sourceSide = targetSide === "left" ? "right" : "left";
@@ -718,7 +741,34 @@ export const useSftpTransfers = ({
 
       let dirPartialFailure = false;
 
-      if (task.isDirectory) {
+      // Same-host exec-based paths are only safe for explicit UTF-8 encodings.
+      // "auto" can resolve to non-UTF-8 (e.g. gb18030) at the session level,
+      // and non-UTF-8 paths need encodePathForSession which exec() cannot use.
+      const encodingSafeForExec =
+        (!sourceEncoding || sourceEncoding === "utf-8") &&
+        (!targetEncoding || targetEncoding === "utf-8");
+
+      // Try same-host directory optimization first; falls back to recursive transfer
+      // if remote cp is unavailable (e.g. Windows SSH servers).
+      let dirHandledBySameHost = false;
+      if (task.isDirectory && sameHost && encodingSafeForExec && sourceSftpId) {
+        if (cancelledTasksRef.current.has(task.id)) {
+          throw new Error("Transfer cancelled");
+        }
+        const result = await netcattyBridge.require().sameHostCopyDirectory!(
+          sourceSftpId,
+          task.sourcePath,
+          task.targetPath,
+          sourceEncoding,
+          task.id,
+        );
+        if (cancelledTasksRef.current.has(task.id)) {
+          throw new Error("Transfer cancelled");
+        }
+        dirHandledBySameHost = result.success;
+      }
+
+      if (task.isDirectory && !dirHandledBySameHost) {
         // For directory transfers, parent task uses:
         //   totalBytes = total file count (discovered async)
         //   transferredBytes = completed file count (incremented by child completions)
@@ -746,12 +796,13 @@ export const useSftpTransfers = ({
           sourceEncoding,
           targetEncoding,
           task.id, // rootTaskId - this is the top-level task
+          sameHost,
         );
 
         if (dirErrors > 0) {
           dirPartialFailure = true;
         }
-      } else {
+      } else if (!task.isDirectory) {
         await transferFile(
           task,
           sourceSftpId,
@@ -761,6 +812,7 @@ export const useSftpTransfers = ({
           sourceEncoding,
           targetEncoding,
           task.id, // rootTaskId - this is the top-level task
+          sameHost,
         );
       }
 
@@ -1247,6 +1299,7 @@ export const useSftpTransfers = ({
             sourceEncoding,
             "auto",      // targetEncoding
             task.id,
+            false,       // sameHost
             0,           // symlinkDepth
             true,        // followSymlinks — download should expand symlink dirs
           );

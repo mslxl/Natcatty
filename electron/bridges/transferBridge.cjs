@@ -50,12 +50,55 @@ let sftpClients = null;
 // Active transfers storage
 const activeTransfers = new Map();
 const isolatedDownloadChannelPools = new WeakMap();
+// Cache sftpIds where remote cp is known to be unavailable, so we skip
+// repeated failed exec attempts for each file in a multi-file transfer.
+const cpUnavailableSet = new Set();
 
 /**
  * Initialize the transfer bridge with dependencies
  */
 function init(deps) {
   sftpClients = deps.sftpClients;
+}
+
+/**
+ * Execute an SSH command with cancellation support.
+ * Registers an abort hook on the transfer object that closes the exec stream,
+ * which sends SIGHUP to the remote process.
+ */
+function execSshCommandCancellable(sshClient, command, transfer) {
+  return new Promise((resolve, reject) => {
+    if (transfer.cancelled) return reject(new Error('Transfer cancelled'));
+
+    sshClient.exec(command, (err, stream) => {
+      if (err) return reject(err);
+
+      // If cancelled between exec() call and callback, kill immediately
+      if (transfer.cancelled) {
+        try { stream.close(); } catch { }
+        return reject(new Error('Transfer cancelled'));
+      }
+
+      let stdout = '';
+      let stderr = '';
+
+      // Wire abort: closing the stream kills the remote process
+      const prevAbort = transfer.abort;
+      transfer.abort = () => {
+        try { stream.close(); } catch { }
+        if (typeof prevAbort === 'function') prevAbort();
+      };
+
+      stream.on('close', (code) => {
+        transfer.abort = prevAbort; // restore
+        if (transfer.cancelled) return reject(new Error('Transfer cancelled'));
+        resolve({ stdout, stderr, code });
+      });
+
+      stream.on('data', (data) => { stdout += data.toString(); });
+      stream.stderr.on('data', (data) => { stderr += data.toString(); });
+    });
+  });
 }
 
 async function openIsolatedSftpChannel(client) {
@@ -475,6 +518,7 @@ async function startTransfer(event, payload, onProgress) {
     totalBytes,
     sourceEncoding,
     targetEncoding,
+    sameHost,
   } = payload;
   const sender = event.sender;
 
@@ -674,34 +718,71 @@ async function startTransfer(event, payload, onProgress) {
       });
 
     } else if (sourceType === 'sftp' && targetType === 'sftp') {
-      const tempPath = path.join(os.tmpdir(), `netcatty-transfer-${transferId}`);
+      // Try same-host optimization first: remote cp via SSH exec.
+      // Falls back to download+upload if cp is unavailable (e.g. Windows SSH servers).
+      let sameHostDone = false;
+      if (sameHost
+        && (!sourceEncoding || sourceEncoding === 'utf-8')
+        && (!targetEncoding || targetEncoding === 'utf-8')
+        && !cpUnavailableSet.has(sourceSftpId)) {
+        const srcClient = sftpClients.get(sourceSftpId);
+        const sshClient = srcClient?.client;
+        if (sshClient && typeof sshClient.exec === 'function') {
+          try {
+            const dir = path.dirname(targetPath).replace(/\\/g, '/');
+            try { await ensureRemoteDirForSession(sourceSftpId, dir, targetEncoding || sourceEncoding); } catch { }
 
-      const sourceClient = sftpClients.get(sourceSftpId);
-      const targetClient = sftpClients.get(targetSftpId);
-      if (!sourceClient) throw new Error("Source SFTP session not found");
-      if (!targetClient) throw new Error("Target SFTP session not found");
+            const escapedSource = sourcePath.replace(/'/g, "'\\''");
+            const escapedTarget = targetPath.replace(/'/g, "'\\''");
+            const command = `cp -a '${escapedSource}' '${escapedTarget}'`;
 
-      const encodedSourcePath = encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
-      const downloadProgress = (transferred) => {
-        sendProgress(Math.floor(transferred / 2), fileSize);
-      };
-      await downloadFile(encodedSourcePath, tempPath, sourceClient, fileSize, transfer, downloadProgress);
-
-      if (transfer.cancelled) {
-        try { await fs.promises.unlink(tempPath); } catch { }
-        throw new Error('Transfer cancelled');
+            const result = await execSshCommandCancellable(sshClient, command, transfer);
+            if (result.code === 0) {
+              sendProgress(fileSize, fileSize);
+              sameHostDone = true;
+            } else if (result.code === 127) {
+              // Exit 127 = command not found — cache to skip future attempts
+              cpUnavailableSet.add(sourceSftpId);
+            }
+            // Other non-zero exits (permission denied, disk full, etc.)
+            // fall through to download+upload without caching
+          } catch (cpErr) {
+            // If cancelled, re-throw; otherwise fall back to download+upload
+            if (transfer.cancelled) throw cpErr;
+          }
+        }
       }
 
-      const dir = path.dirname(targetPath).replace(/\\/g, '/');
-      try { await ensureRemoteDirForSession(targetSftpId, dir, targetEncoding); } catch { }
+      if (!sameHostDone) {
+        const tempPath = path.join(os.tmpdir(), `netcatty-transfer-${transferId}`);
 
-      const encodedTargetPath = encodePathForSession(targetSftpId, targetPath, targetEncoding);
-      const uploadProgress = (transferred) => {
-        sendProgress(Math.floor(fileSize / 2) + Math.floor(transferred / 2), fileSize);
-      };
-      await uploadFile(tempPath, encodedTargetPath, targetClient, fileSize, transfer, uploadProgress);
+        const sourceClient = sftpClients.get(sourceSftpId);
+        const targetClient = sftpClients.get(targetSftpId);
+        if (!sourceClient) throw new Error("Source SFTP session not found");
+        if (!targetClient) throw new Error("Target SFTP session not found");
 
-      try { await fs.promises.unlink(tempPath); } catch { }
+        const encodedSourcePath = encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
+        const downloadProgress = (transferred) => {
+          sendProgress(Math.floor(transferred / 2), fileSize);
+        };
+        await downloadFile(encodedSourcePath, tempPath, sourceClient, fileSize, transfer, downloadProgress);
+
+        if (transfer.cancelled) {
+          try { await fs.promises.unlink(tempPath); } catch { }
+          throw new Error('Transfer cancelled');
+        }
+
+        const dir = path.dirname(targetPath).replace(/\\/g, '/');
+        try { await ensureRemoteDirForSession(targetSftpId, dir, targetEncoding); } catch { }
+
+        const encodedTargetPath = encodePathForSession(targetSftpId, targetPath, targetEncoding);
+        const uploadProgress = (transferred) => {
+          sendProgress(Math.floor(fileSize / 2) + Math.floor(transferred / 2), fileSize);
+        };
+        await uploadFile(tempPath, encodedTargetPath, targetClient, fileSize, transfer, uploadProgress);
+
+        try { await fs.promises.unlink(tempPath); } catch { }
+      }
 
     } else {
       throw new Error("Invalid transfer configuration");
@@ -750,11 +831,72 @@ async function cancelTransfer(event, payload) {
 }
 
 /**
+ * Same-host directory copy: uses a single `cp -ra` command on the remote server
+ * instead of recursively transferring files one by one.
+ */
+async function sameHostCopyDirectory(event, payload) {
+  const { sftpId, sourcePath, targetPath, encoding, transferId } = payload;
+
+  // Register in activeTransfers so cancelTransfer can flag it
+  const transfer = { cancelled: false };
+  if (transferId) {
+    activeTransfers.set(transferId, transfer);
+  }
+
+  try {
+    if (cpUnavailableSet.has(sftpId)) return { success: false };
+
+    const client = sftpClients.get(sftpId);
+    if (!client) return { success: false };
+
+    const sshClient = client.client;
+    if (!sshClient || typeof sshClient.exec !== 'function') {
+      return { success: false };
+    }
+
+    if (transfer.cancelled) throw new Error("Transfer cancelled");
+
+    // Ensure target directory itself exists (not just its parent),
+    // so cp copies contents into it rather than creating a nested subdirectory.
+    const targetDir = targetPath.replace(/\\/g, '/');
+    try { await ensureRemoteDirForSession(sftpId, targetDir, encoding); } catch { }
+
+    // Use "source/." to copy directory *contents* into target, preserving merge
+    // semantics consistent with the recursive per-file transfer path.
+    // Without "/.", `cp -ra source target` would create target/source/ when target exists.
+    const escapedSource = sourcePath.replace(/'/g, "'\\''");
+    const escapedTarget = targetPath.replace(/'/g, "'\\''");
+    const command = `cp -ra '${escapedSource}/.' '${escapedTarget}/'`;
+
+    try {
+      const result = await execSshCommandCancellable(sshClient, command, transfer);
+      if (result.code === 127) {
+        cpUnavailableSet.add(sftpId);
+        return { success: false };
+      }
+      if (result.code !== 0) {
+        return { success: false };
+      }
+    } catch (cpErr) {
+      if (transfer.cancelled) throw cpErr;
+      return { success: false };
+    }
+
+    return { success: true };
+  } finally {
+    if (transferId) {
+      activeTransfers.delete(transferId);
+    }
+  }
+}
+
+/**
  * Register IPC handlers for transfer operations
  */
 function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:transfer:start", startTransfer);
   ipcMain.handle("netcatty:transfer:cancel", cancelTransfer);
+  ipcMain.handle("netcatty:transfer:same-host-copy-dir", sameHostCopyDirectory);
 }
 
 module.exports = {
@@ -762,4 +904,5 @@ module.exports = {
   registerHandlers,
   startTransfer,
   cancelTransfer,
+  sameHostCopyDirectory,
 };

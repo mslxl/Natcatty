@@ -346,6 +346,7 @@ declare global {
     uploadFile?(sftpId: string, localPath: string, remotePath: string, transferId: string): Promise<void>;
     downloadFile?(sftpId: string, remotePath: string, localPath: string, transferId: string): Promise<void>;
     cancelTransfer?(transferId: string): Promise<void>;
+    sameHostCopyDirectory?(sftpId: string, sourcePath: string, targetPath: string, encoding?: SftpFilenameEncoding, transferId?: string): Promise<{ success: boolean }>;
 
     // Compressed folder upload
     startCompressedUpload?(
@@ -383,6 +384,7 @@ declare global {
         totalBytes?: number;
         sourceEncoding?: SftpFilenameEncoding;
         targetEncoding?: SftpFilenameEncoding;
+        sameHost?: boolean;
       },
       onProgress?: (transferred: number, total: number, speed: number) => void,
       onComplete?: () => void,
