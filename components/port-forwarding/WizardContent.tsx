@@ -123,7 +123,7 @@ export const WizardContent: React.FC<WizardContentProps> = ({
                     >
                         {selectedHost ? (
                             <div className="flex items-center gap-2 w-full">
-                                <DistroAvatar host={selectedHost} fallback={selectedHost.os[0].toUpperCase()} className="h-6 w-6" />
+                                <DistroAvatar host={selectedHost} fallback={selectedHost.os[0].toUpperCase()} size="sm" />
                                 <span>{selectedHost.label}</span>
                                 <Check size={14} className="ml-auto" />
                             </div>
@@ -228,7 +228,7 @@ export const WizardContent: React.FC<WizardContentProps> = ({
                     >
                         {selectedHost ? (
                             <div className="flex items-center gap-2 w-full">
-                                <DistroAvatar host={selectedHost} fallback={selectedHost.os[0].toUpperCase()} className="h-6 w-6" />
+                                <DistroAvatar host={selectedHost} fallback={selectedHost.os[0].toUpperCase()} size="sm" />
                                 <span>{selectedHost.label}</span>
                                 <Check size={14} className="ml-auto" />
                             </div>

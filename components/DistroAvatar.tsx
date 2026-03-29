@@ -65,8 +65,8 @@ const DistroAvatarInner: React.FC<DistroAvatarProps> = ({
 
   // Size variants - all use rounded corners for consistency
   const sizeClasses = {
-    sm: "h-6 w-6 rounded-md",
-    md: "h-11 w-11 rounded-xl",
+    sm: "h-6 w-6 rounded",
+    md: "h-11 w-11 rounded-lg",
     lg: "h-14 w-14 rounded-xl",
   };
   const iconSizes = {
@@ -98,7 +98,7 @@ const DistroAvatarInner: React.FC<DistroAvatarProps> = ({
       <div
         className={cn(
           containerClass,
-          "flex items-center justify-center border border-border/40 overflow-hidden",
+          "flex items-center justify-center overflow-hidden",
           bg,
           className,
         )}
