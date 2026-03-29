@@ -22,6 +22,7 @@ import { TagFilterDropdown } from "./ui/tag-filter-dropdown";
 import {
   Tooltip,
   TooltipContent,
+  TooltipProvider,
   TooltipTrigger,
 } from "./ui/tooltip";
 
