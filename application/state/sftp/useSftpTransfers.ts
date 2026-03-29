@@ -741,12 +741,12 @@ export const useSftpTransfers = ({
 
       let dirPartialFailure = false;
 
-      // Same-host exec-based paths are only safe for explicit UTF-8 encodings.
-      // "auto" can resolve to non-UTF-8 (e.g. gb18030) at the session level,
-      // and non-UTF-8 paths need encodePathForSession which exec() cannot use.
+      // Same-host exec-based paths are only safe for UTF-8 compatible encodings.
+      // "auto" is allowed here — the backend resolves it to the actual encoding
+      // and skips exec if it resolved to non-UTF-8 (e.g. gb18030).
       const encodingSafeForExec =
-        (!sourceEncoding || sourceEncoding === "utf-8") &&
-        (!targetEncoding || targetEncoding === "utf-8");
+        (!sourceEncoding || sourceEncoding === "utf-8" || sourceEncoding === "auto") &&
+        (!targetEncoding || targetEncoding === "utf-8" || targetEncoding === "auto");
 
       // Try same-host directory optimization first; falls back to recursive transfer
       // if remote cp is unavailable (e.g. Windows SSH servers).

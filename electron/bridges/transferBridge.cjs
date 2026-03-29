@@ -6,7 +6,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
-const { encodePathForSession, ensureRemoteDirForSession, requireSftpChannel } = require("./sftpBridge.cjs");
+const { encodePathForSession, ensureRemoteDirForSession, requireSftpChannel, resolveEncodingForRequest } = require("./sftpBridge.cjs");
 
 /**
  * Safely ensure a local directory exists.
@@ -721,9 +721,11 @@ async function startTransfer(event, payload, onProgress) {
       // Try same-host optimization first: remote cp via SSH exec.
       // Falls back to download+upload if cp is unavailable (e.g. Windows SSH servers).
       let sameHostDone = false;
+      const resolvedSourceEnc = sourceSftpId ? resolveEncodingForRequest(sourceSftpId, sourceEncoding) : sourceEncoding;
+      const resolvedTargetEnc = targetSftpId ? resolveEncodingForRequest(targetSftpId, targetEncoding) : targetEncoding;
       if (sameHost
-        && (!sourceEncoding || sourceEncoding === 'utf-8')
-        && (!targetEncoding || targetEncoding === 'utf-8')
+        && (!resolvedSourceEnc || resolvedSourceEnc === 'utf-8')
+        && (!resolvedTargetEnc || resolvedTargetEnc === 'utf-8')
         && !cpUnavailableSet.has(sourceSftpId)) {
         const srcClient = sftpClients.get(sourceSftpId);
         const sshClient = srcClient?.client;
