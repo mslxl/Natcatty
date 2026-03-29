@@ -93,6 +93,7 @@ interface UseSftpKeyboardShortcutsParams {
   keyBindings: KeyBinding[];
   hotkeyScheme: "disabled" | "mac" | "pc";
   sftpRef: MutableRefObject<SftpStateApi>;
+  dialogActionScopeId: string;
   isActive: boolean;
 }
 
@@ -118,6 +119,7 @@ export const useSftpKeyboardShortcuts = ({
   keyBindings,
   hotkeyScheme,
   sftpRef,
+  dialogActionScopeId,
   isActive,
 }: UseSftpKeyboardShortcutsParams) => {
   const handleKeyDown = useCallback(
@@ -492,27 +494,31 @@ export const useSftpKeyboardShortcuts = ({
 
         case "sftpRename": {
           if (treeActionSelection.length === 1) {
-            sftpDialogActionStore.trigger("rename", [treeActionSelection[0].path]);
+            sftpDialogActionStore.trigger("rename", dialogActionScopeId, [treeActionSelection[0].path]);
             break;
           }
 
           // Trigger rename for the first selected file
           const selectedFiles = Array.from(pane.selectedFiles) as string[];
           if (selectedFiles.length !== 1) return;
-          sftpDialogActionStore.trigger("rename", selectedFiles);
+          sftpDialogActionStore.trigger("rename", dialogActionScopeId, selectedFiles);
           break;
         }
 
         case "sftpDelete": {
           if (treeActionSelection.length > 0) {
-            sftpDialogActionStore.trigger("delete", treeActionSelection.map((entry) => entry.path));
+            sftpDialogActionStore.trigger(
+              "delete",
+              dialogActionScopeId,
+              treeActionSelection.map((entry) => entry.path),
+            );
             break;
           }
 
           // Delete selected files
           const selectedFiles = Array.from(pane.selectedFiles) as string[];
           if (selectedFiles.length === 0) return;
-          sftpDialogActionStore.trigger("delete", selectedFiles);
+          sftpDialogActionStore.trigger("delete", dialogActionScopeId, selectedFiles);
           break;
         }
 
@@ -524,7 +530,7 @@ export const useSftpKeyboardShortcuts = ({
 
         case "sftpNewFolder": {
           // Create new folder
-          sftpDialogActionStore.trigger("newFolder");
+          sftpDialogActionStore.trigger("newFolder", dialogActionScopeId);
           break;
         }
 
@@ -587,7 +593,7 @@ export const useSftpKeyboardShortcuts = ({
         }
       }
     },
-    [hotkeyScheme, isActive, keyBindings, sftpRef]
+    [dialogActionScopeId, hotkeyScheme, isActive, keyBindings, sftpRef]
   );
 
   useEffect(() => {

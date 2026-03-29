@@ -67,6 +67,7 @@ SftpPaneWrapper.displayName = "SftpPaneWrapper";
 interface SftpPaneViewProps {
   side: "left" | "right";
   pane: SftpPane;
+  dialogActionScopeId: string;
   isPaneFocused: boolean;
   sftpDefaultViewMode: 'list' | 'tree';
   showHeader?: boolean;
@@ -80,6 +81,7 @@ interface SftpPaneViewProps {
 const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   side,
   pane,
+  dialogActionScopeId,
   isPaneFocused,
   sftpDefaultViewMode,
   showHeader = true,
@@ -358,7 +360,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     ],
   );
 
-  useSftpDialogActionHandler(side, dialogActionHandlers, isActive);
+  useSftpDialogActionHandler(side, dialogActionScopeId, dialogActionHandlers, isActive);
 
   const handleSortWithTransition = (field: typeof sortField) => {
     startTransition(() => handleSort(field));
@@ -628,6 +630,7 @@ const sftpPaneViewAreEqual = (
 ): boolean => {
   if (prev.pane !== next.pane) return false;
   if (prev.side !== next.side) return false;
+  if (prev.dialogActionScopeId !== next.dialogActionScopeId) return false;
   if (prev.isPaneFocused !== next.isPaneFocused) return false;
   if (prev.showHeader !== next.showHeader) return false;
   if (prev.showEmptyHeader !== next.showEmptyHeader) return false;

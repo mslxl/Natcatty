@@ -131,12 +131,14 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   const autoSyncRef = useRef(sftpAutoSync);
   autoSyncRef.current = sftpAutoSync;
   const panelRootRef = useRef<HTMLDivElement>(null);
+  const dialogActionScopeIdRef = useRef(`sftp-side-panel:${crypto.randomUUID()}`);
   const [hasPaneFocus, setHasPaneFocus] = useState(false);
 
   useSftpKeyboardShortcuts({
     keyBindings,
     hotkeyScheme,
     sftpRef,
+    dialogActionScopeId: dialogActionScopeIdRef.current,
     isActive: isVisible && hasPaneFocus,
   });
 
@@ -620,6 +622,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
                 <SftpPaneView
                   side="left"
                   pane={pane}
+                  dialogActionScopeId={dialogActionScopeIdRef.current}
                   isPaneFocused={isVisible && hasPaneFocus}
                   sftpDefaultViewMode={sftpDefaultViewMode}
                   showHeader

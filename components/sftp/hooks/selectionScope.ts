@@ -11,11 +11,14 @@ export const keepOnlyPaneSelections = (
   target: SftpSelectionTarget | null,
 ) => {
   sftp.clearSelectionsExcept(target);
-  if (target) {
-    sftpTreeSelectionStore.clearAllExcept([target.tabId]);
-    return;
+  const paneIds = [
+    ...sftp.leftTabs.tabs.map((tab) => tab.id),
+    ...sftp.rightTabs.tabs.map((tab) => tab.id),
+  ];
+  for (const paneId of paneIds) {
+    if (target?.tabId === paneId) continue;
+    sftpTreeSelectionStore.clearSelection(paneId);
   }
-  sftpTreeSelectionStore.clearAllExcept();
 };
 
 export const keepOnlyActivePaneSelections = (

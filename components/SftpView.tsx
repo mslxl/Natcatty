@@ -40,7 +40,7 @@ import { useSftpViewPaneCallbacks } from "./sftp/hooks/useSftpViewPaneCallbacks"
 import { useSftpViewTabs } from "./sftp/hooks/useSftpViewTabs";
 import { useSftpKeyboardShortcuts } from "./sftp/hooks/useSftpKeyboardShortcuts";
 import { sftpFocusStore, SftpFocusedSide, useSftpFocusedSide } from "./sftp/hooks/useSftpFocusedPane";
-import { keepOnlyPaneSelections } from "./sftp/hooks/selectionScope";
+import { keepOnlyActivePaneSelections } from "./sftp/hooks/selectionScope";
 
 
 // Wrapper component that subscribes to activeTabId for CSS visibility
@@ -81,6 +81,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
   const { t } = useI18n();
   const isActive = useIsSftpActive();
   const rootRef = useRef<HTMLDivElement>(null);
+  const dialogActionScopeIdRef = useRef("sftp-main-view");
 
   useInstantThemeSwitch(rootRef);
 
@@ -134,6 +135,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     keyBindings,
     hotkeyScheme,
     sftpRef,
+    dialogActionScopeId: dialogActionScopeIdRef.current,
     isActive,
   });
 
@@ -146,8 +148,8 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     const prevSide = sftpFocusStore.getFocusedSide();
     sftpFocusStore.setFocusedSide(side);
     if (prevSide !== side) {
-      // Focus side changed — clear all pane selections
-      keepOnlyPaneSelections(sftpRef.current, null);
+      // Focus side changed — clear other panes but keep the newly focused pane intact.
+      keepOnlyActivePaneSelections(sftpRef.current, side);
     }
   }, []);
 
@@ -321,6 +323,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
                   <SftpPaneView
                     side="left"
                     pane={pane}
+                    dialogActionScopeId={dialogActionScopeIdRef.current}
                     isPaneFocused={focusedSide === "left"}
                     sftpDefaultViewMode={sftpDefaultViewMode}
                     showHeader
@@ -380,6 +383,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
                   <SftpPaneView
                     side="right"
                     pane={pane}
+                    dialogActionScopeId={dialogActionScopeIdRef.current}
                     isPaneFocused={focusedSide === "right"}
                     sftpDefaultViewMode={sftpDefaultViewMode}
                     showHeader

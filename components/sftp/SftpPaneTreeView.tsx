@@ -372,6 +372,13 @@ export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
   const [rootEntries, setRootEntries] = useState<SftpFileEntry[]>(pane.files ?? []);
   const [resolvedRootPath, setResolvedRootPath] = useState(pane.connection?.currentPath ?? '');
 
+  useEffect(() => {
+    if (selectedPaths.size === 0) {
+      lastClickedPathRef.current = null;
+      sftpKeyboardSelectionStore.clear(pane.id);
+    }
+  }, [pane.id, selectedPaths.size]);
+
   const onOpenEntryRef = useRef(onOpenEntry);
   onOpenEntryRef.current = onOpenEntry;
   const onNavigateUpRef = useRef(onNavigateUp);
