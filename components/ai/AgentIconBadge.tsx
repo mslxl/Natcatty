@@ -11,6 +11,7 @@ type AgentLike = {
 
 type AgentIconKey =
   | 'catty'
+  | 'copilot'
   | 'openai'
   | 'claude'
   | 'anthropic'
@@ -20,7 +21,7 @@ type AgentIconKey =
   | 'openrouter'
   | 'zed'
   | 'atom'
-| 'terminal'
+  | 'terminal'
   | 'plus';
 
 type AgentIconVisual = {
@@ -34,6 +35,11 @@ const AGENT_ICON_VISUALS: Record<AgentIconKey, AgentIconVisual> = {
     src: '/ai/agents/catty.svg',
     badgeClassName: 'border-violet-500/20 bg-violet-500/10',
     imageClassName: 'object-contain dark:brightness-0 dark:invert opacity-90',
+  },
+  copilot: {
+    src: '/ai/agents/copilot.svg',
+    badgeClassName: 'border-zinc-300 bg-white',
+    imageClassName: 'object-contain brightness-0',
   },
   openai: {
     src: '/ai/providers/openai.svg',
@@ -115,6 +121,9 @@ function getAgentIconKey(agent: AgentLike | 'add-more'): AgentIconKey {
   if (tokens.some((token) => token.includes('claude'))) {
     return 'claude';
   }
+  if (tokens.some((token) => token.includes('copilot'))) {
+    return 'copilot';
+  }
   if (tokens.some((token) => token.includes('anthropic'))) {
     return 'anthropic';
   }
@@ -160,7 +169,8 @@ export const AgentIconBadge: React.FC<{
   variant?: 'plain' | 'badge';
   className?: string;
 }> = ({ agent, size = 'md', variant = 'badge', className }) => {
-  const visual = AGENT_ICON_VISUALS[getAgentIconKey(agent)];
+  const iconKey = getAgentIconKey(agent);
+  const visual = AGENT_ICON_VISUALS[iconKey];
   const badgeSize =
     size === 'xs'
       ? 'h-4 w-4 rounded-sm'

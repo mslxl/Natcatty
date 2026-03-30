@@ -21,6 +21,7 @@ import { useI18n } from '../application/i18n/I18nProvider';
 import { useWindowControls } from '../application/state/useWindowControls';
 import { useFileUpload } from '../application/state/useFileUpload';
 import type {
+  AgentModelPreset,
   AIPermissionMode,
   AISession,
   AISessionScope,
@@ -42,6 +43,20 @@ import { useAIChatStreaming, getNetcattyBridge } from './ai/hooks/useAIChatStrea
 import { clearAllPendingApprovals } from '../infrastructure/ai/shared/approvalGate';
 import { useConversationExport } from './ai/hooks/useConversationExport';
 import type { ExecutorContext } from '../infrastructure/ai/cattyAgent/executor';
+
+function isCopilotAgentConfig(agent?: ExternalAgentConfig): boolean {
+  if (!agent) return false;
+  const tokens = [
+    agent.id,
+    agent.name,
+    agent.icon,
+    agent.command,
+    agent.acpCommand,
+  ]
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    .map((value) => value.split('/').pop()?.toLowerCase() ?? value.toLowerCase());
+  return tokens.some((token) => token.includes('copilot'));
+}
 
 // -------------------------------------------------------------------
 // Props
@@ -425,15 +440,57 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
 
   const providerDisplayName = activeProvider?.name ?? '';
   const modelDisplayName = activeModelId || activeProvider?.defaultModel || '';
+  const [runtimeAgentModelPresets, setRuntimeAgentModelPresets] = useState<Record<string, AgentModelPreset[]>>({});
 
   // Agent model presets for the current external agent
   const currentAgentConfig = useMemo(
     () => currentAgentId !== 'catty' ? externalAgents.find(a => a.id === currentAgentId) : undefined,
     [currentAgentId, externalAgents],
   );
+  const isCopilotExternalAgent = useMemo(
+    () => isCopilotAgentConfig(currentAgentConfig),
+    [currentAgentConfig],
+  );
+
+  useEffect(() => {
+    if (!currentAgentConfig?.acpCommand) return;
+    if (!isCopilotExternalAgent) return;
+
+    const bridge = getNetcattyBridge();
+    if (!bridge?.aiAcpListModels) return;
+
+    let cancelled = false;
+    void bridge.aiAcpListModels(
+      currentAgentConfig.acpCommand,
+      currentAgentConfig.acpArgs || [],
+      undefined,
+      undefined,
+      `models_${currentAgentId}`,
+    ).then((result) => {
+      if (cancelled || !result?.ok || !Array.isArray(result.models)) return;
+      const knownModelIds = new Set(result.models.map((model) => model.id));
+      setRuntimeAgentModelPresets((prev) => ({
+        ...prev,
+        [currentAgentId]: result.models ?? [],
+      }));
+      const storedModelId = agentModelMap[currentAgentId];
+      if (result.currentModelId && (!storedModelId || !knownModelIds.has(storedModelId))) {
+        setAgentModel(currentAgentId, result.currentModelId);
+      }
+    }).catch((err) => {
+      if (!cancelled) {
+        console.warn('[AIChatSidePanel] Failed to load ACP agent models:', err);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [agentModelMap, currentAgentConfig, currentAgentId, isCopilotExternalAgent, setAgentModel]);
+
   const agentModelPresets = useMemo(
-    () => getAgentModelPresets(currentAgentConfig?.command),
-    [currentAgentConfig?.command],
+    () => runtimeAgentModelPresets[currentAgentId] ?? getAgentModelPresets(currentAgentConfig?.command),
+    [currentAgentId, currentAgentConfig?.command, runtimeAgentModelPresets],
   );
 
   // Per-agent model: recall last selection or use first preset as default
@@ -593,7 +650,9 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     const assistantMsgId = generateId();
     addMessageToSession(sessionId, {
       id: assistantMsgId, role: 'assistant', content: '', timestamp: Date.now(),
-      model: isExternalAgent ? (agentConfig?.name || 'external') : (activeModelId || activeProvider?.defaultModel || ''),
+      model: isExternalAgent
+        ? (selectedAgentModel || agentConfig?.name || 'external')
+        : (activeModelId || activeProvider?.defaultModel || ''),
       providerId: isExternalAgent ? undefined : activeProvider?.providerId,
     });
 

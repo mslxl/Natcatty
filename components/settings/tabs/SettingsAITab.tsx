@@ -38,6 +38,7 @@ import { ProviderCard } from "./ai/ProviderCard";
 import { AddProviderDropdown } from "./ai/AddProviderDropdown";
 import { CodexConnectionCard } from "./ai/CodexConnectionCard";
 import { ClaudeCodeCard } from "./ai/ClaudeCodeCard";
+import { CopilotCliCard } from "./ai/CopilotCliCard";
 import { SafetySettings } from "./ai/SafetySettings";
 import { WebSearchSettings } from "./ai/WebSearchSettings";
 
@@ -114,6 +115,10 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   const [claudeCustomPath, setClaudeCustomPath] = useState("");
   const [isResolvingClaude, setIsResolvingClaude] = useState(false);
 
+  const [copilotPathInfo, setCopilotPathInfo] = useState<AgentPathInfo | null>(null);
+  const [copilotCustomPath, setCopilotCustomPath] = useState("");
+  const [isResolvingCopilot, setIsResolvingCopilot] = useState(false);
+
   const {
     discoveredAgents,
     isDiscovering,
@@ -137,6 +142,13 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         ? { path: claude.path, version: claude.version, available: true }
         : { path: null, version: null, available: false },
     );
+
+    const copilot = discoveredAgents.find((a) => a.command === "copilot");
+    setCopilotPathInfo(
+      copilot
+        ? { path: copilot.path, version: copilot.version, available: true }
+        : { path: null, version: null, available: false },
+    );
   }, [isDiscovering, discoveredAgents]);
 
   // Auto-register discovered agents in externalAgents
@@ -147,7 +159,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
       const agentsToRegister: ExternalAgentConfig[] = [];
 
       for (const da of discoveredAgents) {
-        if (da.command !== "codex" && da.command !== "claude") continue;
+        if (da.command !== "codex" && da.command !== "claude" && da.command !== "copilot") continue;
         const agentId = `discovered_${da.command}`;
         if (prev.some((ea) => ea.id === agentId)) continue;
         agentsToRegister.push(enableAgent(da));
@@ -158,13 +170,25 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   }, [isDiscovering, discoveredAgents, enableAgent, setExternalAgents]);
 
   // Validate a custom path for an agent
-  const handleCheckCustomPath = useCallback(async (agentKey: "codex" | "claude") => {
+  const handleCheckCustomPath = useCallback(async (agentKey: "codex" | "claude" | "copilot") => {
     const bridge = getBridge();
     if (!bridge?.aiResolveCli) return;
 
-    const customPath = agentKey === "codex" ? codexCustomPath : claudeCustomPath;
-    const setInfo = agentKey === "codex" ? setCodexPathInfo : setClaudePathInfo;
-    const setResolving = agentKey === "codex" ? setIsResolvingCodex : setIsResolvingClaude;
+    const customPath = agentKey === "codex"
+      ? codexCustomPath
+      : agentKey === "claude"
+        ? claudeCustomPath
+        : copilotCustomPath;
+    const setInfo = agentKey === "codex"
+      ? setCodexPathInfo
+      : agentKey === "claude"
+        ? setClaudePathInfo
+        : setCopilotPathInfo;
+    const setResolving = agentKey === "codex"
+      ? setIsResolvingCodex
+      : agentKey === "claude"
+        ? setIsResolvingClaude
+        : setIsResolvingCopilot;
 
     setResolving(true);
     try {
@@ -185,10 +209,15 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
             command: result.path!,
             enabled: true,
             ...defaults,
+            ...(agentKey === "copilot" ? { acpCommand: result.path! } : {}),
           };
           if (idx >= 0) {
             const updated = [...prev];
-            updated[idx] = { ...updated[idx], command: result.path! };
+            updated[idx] = {
+              ...updated[idx],
+              command: result.path!,
+              ...(agentKey === "copilot" ? { acpCommand: result.path! } : {}),
+            };
             return updated;
           }
           return [...prev, config];
@@ -199,7 +228,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     } finally {
       setResolving(false);
     }
-  }, [codexCustomPath, claudeCustomPath, setExternalAgents]);
+  }, [codexCustomPath, claudeCustomPath, copilotCustomPath, setExternalAgents]);
 
   // Add a new provider from preset
   const handleAddProvider = useCallback(
@@ -490,6 +519,22 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
             />
           </div>
 
+          {/* -- GitHub Copilot CLI Section -- */}
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <ProviderIconBadge providerId="copilot" size="sm" />
+              <h3 className="text-base font-medium">{t('ai.copilot.title')}</h3>
+            </div>
+
+            <CopilotCliCard
+              pathInfo={copilotPathInfo}
+              isResolvingPath={isDiscovering || isResolvingCopilot}
+              customPath={copilotCustomPath}
+              onCustomPathChange={setCopilotCustomPath}
+              onRecheckPath={() => void handleCheckCustomPath("copilot")}
+            />
+          </div>
+
           {/* -- Default Agent Section -- */}
           {agentOptions.length > 1 && (
             <div className="space-y-4">
@@ -507,7 +552,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
                     value={defaultAgentId}
                     options={agentOptions}
                     onChange={setDefaultAgentId}
-                    className="w-48"
+                    className="w-64"
                   />
                 </SettingRow>
               </div>

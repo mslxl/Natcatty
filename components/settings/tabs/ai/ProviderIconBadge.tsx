@@ -20,7 +20,8 @@ export const ProviderIconBadge: React.FC<{
       aria-hidden="true"
       draggable={false}
       className={cn(
-        "object-contain brightness-0 invert",
+        "object-contain",
+        providerId === "copilot" ? "brightness-0" : "brightness-0 invert",
         size === "sm" ? "w-3 h-3" : "w-4 h-4",
       )}
     />
