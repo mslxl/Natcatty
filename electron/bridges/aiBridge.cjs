@@ -7,9 +7,11 @@
 
 const https = require("node:https");
 const http = require("node:http");
+const path = require("node:path");
 const { URL } = require("node:url");
 const { spawn, execFileSync } = require("node:child_process");
-const { existsSync } = require("node:fs");
+const fs = require("node:fs");
+const { existsSync } = fs;
 
 const mcpServerBridge = require("./mcpServerBridge.cjs");
 
@@ -60,7 +62,6 @@ const acpProviders = new Map();
 const acpActiveStreams = new Map();
 const acpRequestSessions = new Map();
 const acpPendingCancelRequests = new Set();
-const acpForceProviderReset = new Set();
 const acpChatRuns = new Map();
 
 // ── Provider registry (synced from renderer, keys stay encrypted) ──
@@ -141,21 +142,39 @@ function injectApiKeyIntoRequest(url, headers, providerId) {
 }
 
 function cleanupAcpProvider(chatSessionId) {
+  // Clean up temporary COPILOT_HOME directory regardless of whether a
+  // provider entry exists — prepareCopilotHome may have succeeded before
+  // provider creation failed.
+  try {
+    const tempDirBridge = require("./tempDirBridge.cjs");
+    const tempCopilotHome = path.join(tempDirBridge.getTempDir(), `copilot-home-${chatSessionId}`);
+    if (existsSync(tempCopilotHome)) {
+      fs.rmSync(tempCopilotHome, { recursive: true, force: true });
+    }
+  } catch {
+    // Best-effort cleanup
+  }
+
   const entry = acpProviders.get(chatSessionId);
   if (!entry) return;
-  const rootPid = entry.provider?.model?.agentProcess?.pid;
+  cleanupAcpProviderInstance(entry.provider, chatSessionId);
+  acpProviders.delete(chatSessionId);
+}
+
+function cleanupAcpProviderInstance(provider, chatSessionId = "transient") {
+  if (!provider) return;
+  const rootPid = provider?.model?.agentProcess?.pid;
   const childPids = getChildProcessTreePids(rootPid);
   try {
-    if (typeof entry.provider.forceCleanup === "function") {
-      entry.provider.forceCleanup();
-    } else if (typeof entry.provider.cleanup === "function") {
-      entry.provider.cleanup();
+    if (typeof provider.forceCleanup === "function") {
+      provider.forceCleanup();
+    } else if (typeof provider.cleanup === "function") {
+      provider.cleanup();
     }
   } catch (err) {
     console.warn("[ACP] Provider cleanup failed for session", chatSessionId, err?.message || err);
   }
   killTrackedProcessTree(rootPid, childPids);
-  acpProviders.delete(chatSessionId);
 }
 
 function isActiveAcpRun(chatSessionId, requestId) {
@@ -163,9 +182,10 @@ function isActiveAcpRun(chatSessionId, requestId) {
   return Boolean(activeRun && activeRun.requestId === requestId);
 }
 
-function isUnsupportedLoadSessionError(err) {
+function shouldRetryFreshSession(err) {
   const message = String(err?.message || err || "").toLowerCase();
-  return message.includes("method not found") && message.includes("session/load");
+  return (message.includes("method not found") && message.includes("session/load"))
+    || (message.includes("resource not found") && message.includes("session") && message.includes("not found"));
 }
 
 function getChildProcessTreePids(rootPid) {
@@ -300,6 +320,127 @@ function _validateSenderImpl(event, allowSettings) {
     // Cannot resolve — reject for safety
     return false;
   }
+}
+
+function summarizeMcpServersForDebug(mcpServers) {
+  if (!Array.isArray(mcpServers)) return [];
+  return mcpServers.map((server) => ({
+    name: server?.name || "",
+    type: server?.type || "",
+    command: server?.command || "",
+    args: Array.isArray(server?.args) ? server.args : [],
+    hasEnv: Array.isArray(server?.env) ? server.env.length > 0 : false,
+    url: server?.url || "",
+  }));
+}
+
+function logAcpDebug(agentLabel, message, details) {
+  const prefix = `[ACP DEBUG][${agentLabel}]`;
+  if (details === undefined) {
+    console.log(prefix, message);
+    return;
+  }
+  try {
+    console.log(prefix, message, JSON.stringify(details));
+  } catch {
+    console.log(prefix, message, details);
+  }
+}
+
+function normalizeAgentCommandName(command) {
+  if (typeof command !== "string" || !command) return "";
+  return path.basename(command).toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, "");
+}
+
+function matchesAgentCommand(command, expectedName) {
+  if (typeof command !== "string" || typeof expectedName !== "string") return false;
+  if (command.toLowerCase() === expectedName.toLowerCase()) return true;
+  return normalizeAgentCommandName(command) === normalizeAgentCommandName(expectedName);
+}
+
+function envPairsToObject(entries) {
+  if (!Array.isArray(entries)) return {};
+  const result = {};
+  for (const entry of entries) {
+    if (!entry || typeof entry.name !== "string") continue;
+    result[entry.name] = entry.value == null ? "" : String(entry.value);
+  }
+  return result;
+}
+
+function mapMcpServerToCopilotConfig(server) {
+  if (!server || typeof server !== "object" || !server.name) return null;
+
+  if (server.type === "stdio" || server.type === "local") {
+    return {
+      type: "local",
+      command: server.command || "",
+      args: Array.isArray(server.args) ? server.args : [],
+      env: envPairsToObject(server.env),
+      tools: ["*"],
+    };
+  }
+
+  if (server.type === "http" || server.type === "sse") {
+    return {
+      type: server.type,
+      url: server.url || "",
+      headers: envPairsToObject(server.headers),
+      tools: ["*"],
+    };
+  }
+
+  return null;
+}
+
+function safeReadJson(filePath) {
+  try {
+    if (!existsSync(filePath)) return null;
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function prepareCopilotHome(shellEnv, mcpServers, chatSessionId) {
+  const tempDirBridge = require("./tempDirBridge.cjs");
+  const homeDir = shellEnv.HOME || process.env.HOME || process.env.USERPROFILE || "";
+  const realCopilotHome = shellEnv.COPILOT_HOME || path.join(homeDir, ".copilot");
+  const tempCopilotHome = path.join(tempDirBridge.getTempDir(), `copilot-home-${chatSessionId}`);
+
+  try {
+    fs.rmSync(tempCopilotHome, { recursive: true, force: true });
+  } catch {
+    // Ignore cleanup failures; mkdir/copy below will surface real issues if any.
+  }
+
+  fs.mkdirSync(tempCopilotHome, { recursive: true });
+
+  if (realCopilotHome && existsSync(realCopilotHome)) {
+    fs.cpSync(realCopilotHome, tempCopilotHome, { recursive: true });
+  }
+
+  const configPath = path.join(tempCopilotHome, "mcp-config.json");
+  const baseConfig = safeReadJson(configPath) || { mcpServers: {} };
+  const mergedServers = { ...(baseConfig.mcpServers || {}) };
+
+  for (const server of Array.isArray(mcpServers) ? mcpServers : []) {
+    const mapped = mapMcpServerToCopilotConfig(server);
+    if (!mapped) continue;
+    mergedServers[server.name] = mapped;
+  }
+
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({ ...baseConfig, mcpServers: mergedServers }, null, 2),
+    { mode: 0o600 },
+  );
+
+  return {
+    copilotHome: tempCopilotHome,
+    configPath,
+    serverNames: Object.keys(mergedServers),
+  };
 }
 
 /**
@@ -1253,6 +1394,15 @@ function registerHandlers(ipcMain) {
         args: ["exec", "--full-auto", "--json", "{prompt}"],
         resolveAcp: resolveCodexAcpBinaryPath,
       },
+      {
+        command: "copilot",
+        name: "GitHub Copilot CLI",
+        icon: "copilot",
+        description: "GitHub's coding agent CLI",
+        acpCommand: "copilot",
+        acpArgs: ["--acp", "--stdio"],
+        args: ["-p", "{prompt}"],
+      },
     ];
 
     const shellEnv = await getShellEnv();
@@ -1309,6 +1459,7 @@ function registerHandlers(ipcMain) {
       const { resolveAcp: _unused, ...agentInfo } = agent;
       agents.push({
         ...agentInfo,
+        acpCommand: agent.command === "copilot" ? resolvedPath : agentInfo.acpCommand,
         path: resolvedPath,
         version,
         available: true,
@@ -1523,6 +1674,7 @@ function registerHandlers(ipcMain) {
   const ALLOWED_AGENT_COMMANDS = new Set([
     "claude", "claude-agent-acp",
     "codex", "codex-acp",
+    "copilot",
   ]);
 
   // Spawn an external agent process
@@ -1732,6 +1884,102 @@ function registerHandlers(ipcMain) {
 
   // ── ACP (Agent Client Protocol) streaming ──
 
+  ipcMain.handle("netcatty:ai:acp:list-models", async (event, { acpCommand, acpArgs, cwd, providerId, chatSessionId }) => {
+    if (!validateSender(event)) {
+      return { ok: false, error: "Unauthorized IPC sender" };
+    }
+
+    let provider = null;
+    let copilotConfigInfo = null;
+    try {
+      const { createACPProvider } = require("@mcpc-tech/acp-ai-provider");
+      const shellEnv = await getShellEnv();
+      const sessionCwd = cwd || process.cwd();
+      const isCodexAgent = matchesAgentCommand(acpCommand, "codex-acp");
+      const isClaudeAgent = matchesAgentCommand(acpCommand, "claude-agent-acp");
+      const isCopilotAgent = matchesAgentCommand(acpCommand, "copilot");
+      const agentLabel = isCodexAgent ? "codex" : isClaudeAgent ? "claude" : isCopilotAgent ? "copilot" : acpCommand;
+
+      const resolvedProvider = providerId ? resolveProviderApiKey(providerId) : null;
+      const apiKey = resolvedProvider?.apiKey || undefined;
+
+      const agentEnv = { ...shellEnv };
+      if (apiKey) {
+        agentEnv.CODEX_API_KEY = apiKey;
+      }
+
+      if (isCopilotAgent) {
+        copilotConfigInfo = prepareCopilotHome(shellEnv, [], chatSessionId || `models_${Date.now()}`);
+        agentEnv.COPILOT_HOME = copilotConfigInfo.copilotHome;
+      }
+
+      const claudeAcp = isClaudeAgent ? resolveClaudeAcpBinaryPath(shellEnv, electronModule) : null;
+      const resolvedCommand = isCodexAgent
+        ? resolveCodexAcpBinaryPath(shellEnv, electronModule)
+        : claudeAcp
+          ? claudeAcp.command
+          : acpCommand;
+      const resolvedArgs = claudeAcp
+        ? [...claudeAcp.prependArgs, ...(acpArgs || [])]
+        : acpArgs || [];
+
+      provider = createACPProvider({
+        command: resolvedCommand,
+        args: resolvedArgs,
+        env: agentEnv,
+        session: {
+          cwd: sessionCwd,
+          mcpServers: [],
+        },
+        ...(isCodexAgent
+          ? { authMethodId: apiKey ? "codex-api-key" : "chatgpt" }
+          : isCopilotAgent
+            ? { authMethodId: "copilot-login" }
+            : {}),
+      });
+
+      const sessionInfo = await provider.initSession();
+      const availableModels = Array.isArray(sessionInfo?.models?.availableModels)
+        ? sessionInfo.models.availableModels
+        : [];
+
+      if (isCopilotAgent) {
+        logAcpDebug(agentLabel, "Fetched session models", {
+          chatSessionId: chatSessionId || null,
+          currentModelId: sessionInfo?.models?.currentModelId || null,
+          availableModelIds: availableModels.map((modelInfo) => modelInfo?.modelId).filter(Boolean),
+          copilotHome: copilotConfigInfo?.copilotHome || null,
+          copilotMcpConfigPath: copilotConfigInfo?.configPath || null,
+        });
+      }
+
+      return {
+        ok: true,
+        currentModelId: sessionInfo?.models?.currentModelId || null,
+        models: availableModels.map((modelInfo) => ({
+          id: modelInfo?.modelId,
+          name: modelInfo?.name || modelInfo?.displayName || modelInfo?.modelId,
+          description: modelInfo?.description || undefined,
+        })).filter((modelInfo) => Boolean(modelInfo.id)),
+      };
+    } catch (err) {
+      console.error("[ACP] Failed to list models:", err?.message || err);
+      return { ok: false, error: err?.message || String(err) };
+    } finally {
+      try {
+        cleanupAcpProviderInstance(provider, chatSessionId || "transient-model-list");
+      } catch {
+        // Ignore cleanup failures for transient model-discovery providers.
+      }
+      // Clean up transient COPILOT_HOME created for model listing
+      if (copilotConfigInfo?.copilotHome) {
+        try {
+          fs.rmSync(copilotConfigInfo.copilotHome, { recursive: true, force: true });
+        } catch { /* best-effort */ }
+      }
+    }
+  });
+
   ipcMain.handle("netcatty:ai:acp:stream", async (event, { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, providerId, model, existingSessionId, historyMessages, images }) => {
     // Validate IPC sender (Issue #17)
     if (!validateSender(event)) {
@@ -1773,8 +2021,10 @@ function registerHandlers(ipcMain) {
       const shellEnv = await getShellEnv();
       if (shouldAbortStartup()) return { ok: true };
       const sessionCwd = cwd || process.cwd();
-      const isCodexAgent = acpCommand === "codex-acp";
-      const isClaudeAgent = acpCommand === "claude-agent-acp";
+      const isCodexAgent = matchesAgentCommand(acpCommand, "codex-acp");
+      const isClaudeAgent = matchesAgentCommand(acpCommand, "claude-agent-acp");
+      const isCopilotAgent = matchesAgentCommand(acpCommand, "copilot");
+      const agentLabel = isCodexAgent ? "codex" : isClaudeAgent ? "claude" : isCopilotAgent ? "copilot" : acpCommand;
 
       // Resolve API key from providerId (decrypted in main process only)
       const resolvedProvider = providerId ? resolveProviderApiKey(providerId) : null;
@@ -1813,6 +2063,13 @@ function registerHandlers(ipcMain) {
         const scopedIds = mcpServerBridge.getScopedSessionIds(chatSessionId);
         const netcattyMcpConfig = mcpServerBridge.buildMcpServerConfig(mcpPort, scopedIds, chatSessionId);
         mcpSnapshot.mcpServers.push(netcattyMcpConfig);
+        if (isCopilotAgent) {
+          logAcpDebug(agentLabel, "Injected Netcatty MCP server into session", {
+            chatSessionId,
+            scopedIds,
+            injectedServer: summarizeMcpServersForDebug([netcattyMcpConfig])[0],
+          });
+        }
       } catch (err) {
         console.error("[ACP] Failed to inject Netcatty MCP server:", err?.message || err);
       }
@@ -1823,9 +2080,7 @@ function registerHandlers(ipcMain) {
 
       const currentPermissionMode = mcpServerBridge.getPermissionMode();
       let providerEntry = acpProviders.get(chatSessionId);
-      const shouldForceProviderReset = acpForceProviderReset.has(chatSessionId);
       const shouldReuseProvider = Boolean(
-        !shouldForceProviderReset &&
         providerEntry &&
         providerEntry.acpCommand === acpCommand &&
         providerEntry.cwd === sessionCwd &&
@@ -1842,6 +2097,11 @@ function registerHandlers(ipcMain) {
         if (apiKey) {
           agentEnv.CODEX_API_KEY = apiKey;
         }
+        let copilotConfigInfo = null;
+        if (isCopilotAgent) {
+          copilotConfigInfo = prepareCopilotHome(shellEnv, mcpSnapshot.mcpServers, chatSessionId);
+          agentEnv.COPILOT_HOME = copilotConfigInfo.copilotHome;
+        }
 
         const claudeAcp = isClaudeAgent ? resolveClaudeAcpBinaryPath(shellEnv, electronModule) : null;
         const resolvedCommand = isCodexAgent
@@ -1852,6 +2112,7 @@ function registerHandlers(ipcMain) {
         const resolvedArgs = claudeAcp
           ? [...claudeAcp.prependArgs, ...(acpArgs || [])]
           : acpArgs || [];
+        const sessionMcpServers = isCopilotAgent ? [] : mcpSnapshot.mcpServers;
 
         const provider = createACPProvider({
           command: resolvedCommand,
@@ -1859,14 +2120,30 @@ function registerHandlers(ipcMain) {
           env: agentEnv,
           session: {
             cwd: sessionCwd,
-            mcpServers: mcpSnapshot.mcpServers,
+            mcpServers: sessionMcpServers,
           },
           ...(resumeSessionId ? { existingSessionId: resumeSessionId } : {}),
           ...(isCodexAgent
             ? { authMethodId: apiKey ? "codex-api-key" : "chatgpt" }
+            : isCopilotAgent
+              ? { authMethodId: "copilot-login" }
             : {}),
           persistSession: true,
         });
+
+        if (isCopilotAgent) {
+          logAcpDebug(agentLabel, "Creating ACP provider", {
+            requestId,
+            chatSessionId,
+            cwd: sessionCwd,
+            resolvedCommand,
+            resolvedArgs,
+            sessionMcpServers: summarizeMcpServersForDebug(sessionMcpServers),
+            copilotHome: copilotConfigInfo?.copilotHome || null,
+            copilotMcpConfigPath: copilotConfigInfo?.configPath || null,
+            copilotMcpServerNames: copilotConfigInfo?.serverNames || [],
+          });
+        }
 
         providerEntry = {
           provider,
@@ -1879,15 +2156,21 @@ function registerHandlers(ipcMain) {
         };
         acpProviders.set(chatSessionId, providerEntry);
       }
-      acpForceProviderReset.delete(chatSessionId);
-
       let modelInstance = providerEntry.provider.languageModel(model || undefined);
       try {
         await providerEntry.provider.initSession(providerEntry.provider.tools);
+        if (isCopilotAgent) {
+          logAcpDebug(agentLabel, "ACP session initialized", {
+            requestId,
+            chatSessionId,
+            providerSessionId: providerEntry.provider.getSessionId?.() || null,
+            toolNames: Object.keys(providerEntry.provider.tools || {}),
+          });
+        }
         if (shouldAbortStartup()) return { ok: true };
       } catch (err) {
         const attemptedResumeSessionId = providerEntry.provider?.getSessionId?.() || existingSessionId;
-        if (!attemptedResumeSessionId || !isUnsupportedLoadSessionError(err)) {
+        if (!attemptedResumeSessionId || !shouldRetryFreshSession(err)) {
           throw err;
         }
 
@@ -1903,13 +2186,22 @@ function registerHandlers(ipcMain) {
           args: fallbackClaudeAcp
             ? [...fallbackClaudeAcp.prependArgs, ...(acpArgs || [])]
             : acpArgs || [],
-          env: apiKey ? { ...shellEnv, CODEX_API_KEY: apiKey } : { ...shellEnv },
+          env: (() => {
+            const fallbackEnv = apiKey ? { ...shellEnv, CODEX_API_KEY: apiKey } : { ...shellEnv };
+            if (isCopilotAgent) {
+              const fallbackCopilotConfig = prepareCopilotHome(shellEnv, mcpSnapshot.mcpServers, chatSessionId);
+              fallbackEnv.COPILOT_HOME = fallbackCopilotConfig.copilotHome;
+            }
+            return fallbackEnv;
+          })(),
           session: {
             cwd: sessionCwd,
-            mcpServers: mcpSnapshot.mcpServers,
+            mcpServers: isCopilotAgent ? [] : mcpSnapshot.mcpServers,
           },
           ...(isCodexAgent
             ? { authMethodId: apiKey ? "codex-api-key" : "chatgpt" }
+            : isCopilotAgent
+              ? { authMethodId: "copilot-login" }
             : {}),
           persistSession: true,
         });
@@ -1926,6 +2218,14 @@ function registerHandlers(ipcMain) {
         acpProviders.set(chatSessionId, providerEntry);
         modelInstance = providerEntry.provider.languageModel(model || undefined);
         await providerEntry.provider.initSession(providerEntry.provider.tools);
+        if (isCopilotAgent) {
+          logAcpDebug(agentLabel, "ACP session initialized after fallback", {
+            requestId,
+            chatSessionId,
+            providerSessionId: providerEntry.provider.getSessionId?.() || null,
+            toolNames: Object.keys(providerEntry.provider.tools || {}),
+          });
+        }
         if (shouldAbortStartup()) return { ok: true };
       }
       const activeProviderSessionId = providerEntry.provider.getSessionId?.() || null;
@@ -2044,6 +2344,9 @@ function registerHandlers(ipcMain) {
             if (serialized.type === "text-delta" || serialized.type === "reasoning-delta" || serialized.type === "tool-call") {
               hasContent = true;
             }
+            if (isCopilotAgent && (serialized.type === "tool-call" || serialized.type === "tool-result" || serialized.type === "error" || serialized.type === "status")) {
+              logAcpDebug(agentLabel, `Stream event: ${serialized.type}`, serialized);
+            }
             safeSend(event.sender, "netcatty:ai:acp:event", {
               requestId,
               event: serialized,
@@ -2059,6 +2362,13 @@ function registerHandlers(ipcMain) {
 
       // If stream completed with zero content, likely an auth or connection issue
       if (!hasContent && !abortController.signal.aborted) {
+        if (isCopilotAgent) {
+          logAcpDebug(agentLabel, "Stream completed with no content", {
+            requestId,
+            chatSessionId,
+            providerSessionId: providerEntry.provider.getSessionId?.() || null,
+          });
+        }
         if (!isActiveAcpRun(chatSessionId, requestId)) {
           return { ok: true };
         }
@@ -2097,9 +2407,6 @@ function registerHandlers(ipcMain) {
       acpPendingCancelRequests.delete(requestId);
       const activeRun = acpChatRuns.get(chatSessionId);
       if (activeRun?.requestId === requestId) {
-        if (abortController?.signal?.aborted || activeRun.cancelRequested) {
-          cleanupAcpProvider(chatSessionId);
-        }
         acpChatRuns.delete(chatSessionId);
       }
     }
@@ -2129,10 +2436,6 @@ function registerHandlers(ipcMain) {
       acpPendingCancelRequests.add(effectiveRequestId);
       cancelled = true;
     }
-    if (effectiveChatSessionId) {
-      acpForceProviderReset.add(effectiveChatSessionId);
-      cleanupAcpProvider(effectiveChatSessionId);
-    }
     // Preserve the ACP provider session on stop so the next user message can
     // continue within the same persisted conversation context. Full provider
     // cleanup is handled by netcatty:ai:acp:cleanup when the chat is deleted.
@@ -2145,7 +2448,6 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:ai:acp:cleanup", async (event, { chatSessionId }) => {
     if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
     mcpServerBridge.setChatSessionCancelled?.(chatSessionId, true);
-    acpForceProviderReset.delete(chatSessionId);
     cleanupAcpProvider(chatSessionId);
     mcpServerBridge.cleanupScopedMetadata(chatSessionId);
     return { ok: true };

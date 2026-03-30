@@ -1687,6 +1687,17 @@ const en: Messages = {
   'ai.claude.customPathPlaceholder': 'e.g. /usr/local/bin/claude',
   'ai.claude.check': 'Check',
 
+  // AI GitHub Copilot CLI
+  'ai.copilot.title': 'GitHub Copilot CLI',
+  'ai.copilot.description': 'Uses GitHub Copilot CLI via ACP over stdio (`copilot --acp --stdio`). Once detected, it can be selected as an external coding agent.',
+  'ai.copilot.detecting': 'Detecting...',
+  'ai.copilot.detected': 'Detected',
+  'ai.copilot.notFound': 'Not found',
+  'ai.copilot.path': 'Path:',
+  'ai.copilot.notFoundHint': 'Could not find copilot in PATH. Install it or specify the executable path below.',
+  'ai.copilot.customPathPlaceholder': 'e.g. /usr/local/bin/copilot',
+  'ai.copilot.check': 'Check',
+
   // AI Default Agent
   'ai.defaultAgent': 'Default Agent',
   'ai.defaultAgent.description': 'Agent to use when starting a new AI session',

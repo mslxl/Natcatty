@@ -1694,6 +1694,17 @@ const zhCN: Messages = {
   'ai.claude.customPathPlaceholder': '例如 /usr/local/bin/claude',
   'ai.claude.check': '检查',
 
+  // AI GitHub Copilot CLI
+  'ai.copilot.title': 'GitHub Copilot CLI',
+  'ai.copilot.description': '通过 ACP over stdio（`copilot --acp --stdio`）接入 GitHub Copilot CLI。检测到后即可作为外部编程 Agent 使用。',
+  'ai.copilot.detecting': '检测中...',
+  'ai.copilot.detected': '已检测到',
+  'ai.copilot.notFound': '未找到',
+  'ai.copilot.path': '路径：',
+  'ai.copilot.notFoundHint': '在 PATH 中未找到 copilot。请安装或在下方指定可执行文件路径。',
+  'ai.copilot.customPathPlaceholder': '例如 /usr/local/bin/copilot',
+  'ai.copilot.check': '检查',
+
   // AI Default Agent
   'ai.defaultAgent': '默认 Agent',
   'ai.defaultAgent.description': '创建新 AI 会话时使用的 Agent',

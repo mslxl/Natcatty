@@ -380,6 +380,7 @@ async function handleMessage(socket, line) {
       if (!socket.destroyed) socket.write(response);
       return;
     }
+    console.warn("[MCP Bridge] auth/verify failed or unexpected first method", method);
     // Wrong token or wrong method — reject and close
     const response = JSON.stringify({
       jsonrpc: "2.0",

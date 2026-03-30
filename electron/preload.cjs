@@ -1207,6 +1207,9 @@ const api = {
   aiAcpStream: async (requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, providerId, model, existingSessionId, historyMessages, images) => {
     return ipcRenderer.invoke("netcatty:ai:acp:stream", { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, providerId, model, existingSessionId, historyMessages, images });
   },
+  aiAcpListModels: async (acpCommand, acpArgs, cwd, providerId, chatSessionId) => {
+    return ipcRenderer.invoke("netcatty:ai:acp:list-models", { acpCommand, acpArgs, cwd, providerId, chatSessionId });
+  },
   aiAcpCancel: async (requestId, chatSessionId) => {
     return ipcRenderer.invoke("netcatty:ai:acp:cancel", { requestId, chatSessionId });
   },
