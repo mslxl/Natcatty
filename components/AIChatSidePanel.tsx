@@ -452,6 +452,11 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     [currentAgentConfig],
   );
 
+  // Ref to read agentModelMap inside the effect without re-triggering it
+  // when setAgentModel updates the map (avoids double ACP spawn).
+  const agentModelMapRef = useRef(agentModelMap);
+  agentModelMapRef.current = agentModelMap;
+
   useEffect(() => {
     if (!currentAgentConfig?.acpCommand) return;
     if (!isCopilotExternalAgent) return;
@@ -473,7 +478,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         ...prev,
         [currentAgentId]: result.models ?? [],
       }));
-      const storedModelId = agentModelMap[currentAgentId];
+      const storedModelId = agentModelMapRef.current[currentAgentId];
       if (result.currentModelId && (!storedModelId || !knownModelIds.has(storedModelId))) {
         setAgentModel(currentAgentId, result.currentModelId);
       }
@@ -486,7 +491,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [agentModelMap, currentAgentConfig, currentAgentId, isCopilotExternalAgent, setAgentModel]);
+  }, [currentAgentConfig, currentAgentId, isCopilotExternalAgent, setAgentModel]);
 
   const agentModelPresets = useMemo(
     () => runtimeAgentModelPresets[currentAgentId] ?? getAgentModelPresets(currentAgentConfig?.command),

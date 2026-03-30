@@ -62,7 +62,6 @@ const acpProviders = new Map();
 const acpActiveStreams = new Map();
 const acpRequestSessions = new Map();
 const acpPendingCancelRequests = new Set();
-const acpForceProviderReset = new Set();
 const acpChatRuns = new Map();
 
 // ── Provider registry (synced from renderer, keys stay encrypted) ──
@@ -147,6 +146,17 @@ function cleanupAcpProvider(chatSessionId) {
   if (!entry) return;
   cleanupAcpProviderInstance(entry.provider, chatSessionId);
   acpProviders.delete(chatSessionId);
+
+  // Clean up temporary COPILOT_HOME directory if it exists
+  try {
+    const tempDirBridge = require("./tempDirBridge.cjs");
+    const tempCopilotHome = path.join(tempDirBridge.getTempDir(), `copilot-home-${chatSessionId}`);
+    if (existsSync(tempCopilotHome)) {
+      fs.rmSync(tempCopilotHome, { recursive: true, force: true });
+    }
+  } catch {
+    // Best-effort cleanup
+  }
 }
 
 function cleanupAcpProviderInstance(provider, chatSessionId = "transient") {
@@ -2043,14 +2053,12 @@ function registerHandlers(ipcMain) {
       try {
         const mcpPort = await mcpServerBridge.getOrCreateHost();
         const scopedIds = mcpServerBridge.getScopedSessionIds(chatSessionId);
-        const nodeRuntimePath = resolveCliFromPath("node", shellEnv) || "node";
-        const netcattyMcpConfig = mcpServerBridge.buildMcpServerConfig(mcpPort, scopedIds, chatSessionId, nodeRuntimePath);
+        const netcattyMcpConfig = mcpServerBridge.buildMcpServerConfig(mcpPort, scopedIds, chatSessionId);
         mcpSnapshot.mcpServers.push(netcattyMcpConfig);
         if (isCopilotAgent) {
           logAcpDebug(agentLabel, "Injected Netcatty MCP server into session", {
             chatSessionId,
             scopedIds,
-            nodeRuntimePath,
             injectedServer: summarizeMcpServersForDebug([netcattyMcpConfig])[0],
           });
         }
@@ -2064,9 +2072,7 @@ function registerHandlers(ipcMain) {
 
       const currentPermissionMode = mcpServerBridge.getPermissionMode();
       let providerEntry = acpProviders.get(chatSessionId);
-      const shouldForceProviderReset = acpForceProviderReset.has(chatSessionId);
       const shouldReuseProvider = Boolean(
-        !shouldForceProviderReset &&
         providerEntry &&
         providerEntry.acpCommand === acpCommand &&
         providerEntry.cwd === sessionCwd &&
@@ -2142,8 +2148,6 @@ function registerHandlers(ipcMain) {
         };
         acpProviders.set(chatSessionId, providerEntry);
       }
-      acpForceProviderReset.delete(chatSessionId);
-
       let modelInstance = providerEntry.provider.languageModel(model || undefined);
       try {
         await providerEntry.provider.initSession(providerEntry.provider.tools);
@@ -2395,10 +2399,6 @@ function registerHandlers(ipcMain) {
       acpPendingCancelRequests.delete(requestId);
       const activeRun = acpChatRuns.get(chatSessionId);
       if (activeRun?.requestId === requestId) {
-        if (acpForceProviderReset.has(chatSessionId)) {
-          cleanupAcpProvider(chatSessionId);
-          acpForceProviderReset.delete(chatSessionId);
-        }
         acpChatRuns.delete(chatSessionId);
       }
     }
@@ -2440,7 +2440,6 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:ai:acp:cleanup", async (event, { chatSessionId }) => {
     if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
     mcpServerBridge.setChatSessionCancelled?.(chatSessionId, true);
-    acpForceProviderReset.delete(chatSessionId);
     cleanupAcpProvider(chatSessionId);
     mcpServerBridge.cleanupScopedMetadata(chatSessionId);
     return { ok: true };
