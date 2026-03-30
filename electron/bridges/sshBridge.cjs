@@ -1257,7 +1257,7 @@ async function startSSHSession(event, options) {
                 sessionLogStreamManager.appendData(sessionId, decoded);
               },
               writeToRemote(buf) {
-                try { stream.write(buf); } catch { /* ignore */ }
+                try { return stream.write(buf); } catch { return true; /* ignore */ }
               },
               interruptRemote() {
                 try { stream.signal?.("INT"); } catch { /* ignore */ }

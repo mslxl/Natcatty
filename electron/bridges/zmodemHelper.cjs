@@ -52,6 +52,7 @@ function createZmodemSentry(opts) {
 
   let active = false;
   let currentZSession = null;
+  let _needsDrain = false;
   const pendingEchoes = [];
   let pendingTerminalSuppression = null;
   let cancelInterruptTimer = null;
@@ -257,7 +258,10 @@ function createZmodemSentry(opts) {
     sender(octets) {
       // ZMODEM protocol bytes – send raw to remote.
       rememberOutgoingEcho(octets);
-      writeToRemote(Buffer.from(octets));
+      const ok = writeToRemote(Buffer.from(octets));
+      // Track backpressure: if stream.write() returned false, the
+      // kernel TCP buffer is full.  The upload loop should pause.
+      if (ok === false) _needsDrain = true;
     },
 
     on_detect(detection) {
@@ -290,7 +294,22 @@ function createZmodemSentry(opts) {
         transferType,
       });
 
-      handleTransfer(zsession, transferType, opts)
+      // Provide a drain helper so the upload loop can pause when the
+      // underlying transport's write buffer is full.
+      const transferOpts = {
+        ...opts,
+        waitForDrain: () => {
+          if (!_needsDrain) return Promise.resolve();
+          _needsDrain = false;
+          return new Promise((resolve) => {
+            // Give the event loop time to flush; check again after a short delay.
+            // We can't listen to stream "drain" directly since we don't have the
+            // stream reference, but yielding ~50ms lets TCP flush buffered writes.
+            setTimeout(resolve, 50);
+          });
+        },
+      };
+      handleTransfer(zsession, transferType, transferOpts)
         .then(() => {
           // Only act if this is still the active session (not replaced by a new one)
           if (currentZSession !== zsession) return;
@@ -549,6 +568,9 @@ async function handleUpload(zsession, opts) {
           transferType: "upload",
         });
 
+        // Wait for transport to drain if its buffer is full, then yield
+        // so inbound ZMODEM control frames can be processed.
+        if (opts.waitForDrain) await opts.waitForDrain();
         await yieldToIO();
       }
       await xfer.end();

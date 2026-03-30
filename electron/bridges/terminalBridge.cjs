@@ -346,7 +346,7 @@ function startLocalSession(event, payload) {
         sessionLogStreamManager.appendData(sessionId, str);
       },
       writeToRemote(buf) {
-        try { proc.write(buf); } catch { /* ignore write errors during cleanup */ }
+        try { return proc.write(buf); } catch { return true; }
       },
       getWebContents() {
         return electronModule.webContents.fromId(session.webContentsId);
@@ -590,11 +590,11 @@ async function startTelnetSession(event, options) {
               escaped.push(buf[i]);
               if (buf[i] === 0xff) escaped.push(0xff);
             }
-            socket.write(Buffer.from(escaped));
+            return socket.write(Buffer.from(escaped));
           } else {
-            socket.write(buf);
+            return socket.write(buf);
           }
-        } catch { /* ignore */ }
+        } catch { return true; }
       },
       getWebContents() {
         return electronModule.webContents.fromId(telnetWebContentsId);
@@ -764,7 +764,7 @@ async function startMoshSession(event, options) {
           sessionLogStreamManager.appendData(sessionId, str);
         },
         writeToRemote(buf) {
-          try { proc.write(buf); } catch { /* ignore */ }
+          try { return proc.write(buf); } catch { return true; }
         },
         getWebContents() {
           return electronModule.webContents.fromId(session.webContentsId);
@@ -896,7 +896,7 @@ async function startSerialSession(event, options) {
             sessionLogStreamManager.appendData(sessionId, decoded);
           },
           writeToRemote(buf) {
-            try { serialPort.write(buf); } catch { /* ignore */ }
+            try { return serialPort.write(buf); } catch { return true; }
           },
           getWebContents() {
             return electronModule.webContents.fromId(session.webContentsId);
