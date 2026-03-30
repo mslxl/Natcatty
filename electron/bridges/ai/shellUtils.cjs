@@ -7,7 +7,7 @@
 "use strict";
 
 const { execFileSync } = require("node:child_process");
-const { existsSync } = require("node:fs");
+const { existsSync, statSync } = require("node:fs");
 const path = require("node:path");
 
 // ── ANSI / URL regexes ──
@@ -93,7 +93,11 @@ function normalizeCliPathForPlatform(filePath) {
   if (!normalized) return null;
 
   if (process.platform !== "win32") {
-    return existsSync(normalized) ? normalized : null;
+    // Reject directories (e.g. /Applications/Codex.app) — must be a file
+    try {
+      if (existsSync(normalized) && statSync(normalized).isFile()) return normalized;
+    } catch { /* stat failed */ }
+    return null;
   }
 
   const ext = path.extname(normalized).toLowerCase();
