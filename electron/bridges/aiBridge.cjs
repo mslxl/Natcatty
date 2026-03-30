@@ -1453,8 +1453,11 @@ function registerHandlers(ipcMain) {
         const result = await runCommand(probeCmd, probeArgs, { env: shellEnv });
         version = (result.stdout || result.stderr || "").trim().split("\n")[0];
       } catch {
-        version = "";
+        // --version failed: not a valid CLI executable (e.g. .app bundle)
+        continue;
       }
+
+      if (!version) continue;
 
       const { resolveAcp: _unused, ...agentInfo } = agent;
       agents.push({
@@ -1494,7 +1497,12 @@ function registerHandlers(ipcMain) {
       const result = await runCommand(resolvedPath, ["--version"], { env: shellEnv });
       version = (result.stdout || result.stderr || "").trim().split("\n")[0];
     } catch {
-      version = "";
+      // --version failed: not a valid CLI executable
+      return { path: resolvedPath, version: null, available: false };
+    }
+
+    if (!version) {
+      return { path: resolvedPath, version: null, available: false };
     }
 
     return { path: resolvedPath, version, available: true };
