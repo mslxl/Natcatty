@@ -337,7 +337,6 @@ const MAX_TCP_BUFFER = 10 * 1024 * 1024; // 10MB
 function handleConnection(socket) {
   let buffer = "";
   socket.setEncoding("utf-8");
-  console.log("[MCP Bridge] Client connected");
 
   socket.on("data", (chunk) => {
     if (buffer.length + chunk.length > MAX_TCP_BUFFER) {
@@ -376,7 +375,6 @@ async function handleMessage(socket, line) {
   // All other methods are rejected until the socket is authenticated.
   if (!authenticatedSockets.has(socket)) {
     if (method === "auth/verify" && params?.token === authToken) {
-      console.log("[MCP Bridge] auth/verify succeeded");
       authenticatedSockets.add(socket);
       const response = JSON.stringify({ jsonrpc: "2.0", id, result: { ok: true } }) + "\n";
       if (!socket.destroyed) socket.write(response);
@@ -431,11 +429,6 @@ function validateSessionScope(sessionId, chatSessionId) {
 }
 
 async function dispatch(method, params) {
-  console.log("[MCP Bridge] dispatch", JSON.stringify({
-    method,
-    sessionId: params?.sessionId || null,
-    chatSessionId: params?.chatSessionId || null,
-  }));
   // Observer mode: block all write operations
   if (permissionMode === "observer" && WRITE_METHODS.has(method)) {
     return { ok: false, error: `Operation denied: permission mode is "observer" (read-only). Change to "confirm" or "autonomous" in Settings → AI → Safety to allow this action.` };

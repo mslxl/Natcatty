@@ -1969,6 +1969,12 @@ function registerHandlers(ipcMain) {
       } catch {
         // Ignore cleanup failures for transient model-discovery providers.
       }
+      // Clean up transient COPILOT_HOME created for model listing
+      if (copilotConfigInfo?.copilotHome) {
+        try {
+          fs.rmSync(copilotConfigInfo.copilotHome, { recursive: true, force: true });
+        } catch { /* best-effort */ }
+      }
     }
   });
 
