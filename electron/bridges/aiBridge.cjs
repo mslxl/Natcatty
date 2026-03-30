@@ -335,12 +335,15 @@ function logAcpDebug(agentLabel, message, details) {
   }
 }
 
+function normalizeAgentCommandName(command) {
+  if (typeof command !== "string" || !command) return "";
+  return path.basename(command).toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, "");
+}
+
 function matchesAgentCommand(command, expectedName) {
   if (typeof command !== "string" || typeof expectedName !== "string") return false;
-  if (command === expectedName) return true;
-  const base = path.basename(command).toLowerCase();
-  const normalized = expectedName.toLowerCase();
-  return base === normalized || base === `${normalized}.exe`;
+  if (command.toLowerCase() === expectedName.toLowerCase()) return true;
+  return normalizeAgentCommandName(command) === normalizeAgentCommandName(expectedName);
 }
 
 function envPairsToObject(entries) {
