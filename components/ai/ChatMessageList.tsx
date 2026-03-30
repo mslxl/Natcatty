@@ -240,28 +240,32 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
 
                 {/* Pending tool calls from the *last* assistant message are rendered
                     after all tool-result messages (see below) for chronological order.
-                    Unresolved tool calls from earlier messages or cancelled/failed
-                    messages are shown inline as interrupted. */}
-                {message !== lastAssistantMessage && message.toolCalls?.filter((tc) =>
+                    Unresolved tool calls from earlier or cancelled messages are shown
+                    inline — as interrupted, or with approval controls if still pending. */}
+                {(message !== lastAssistantMessage || message.executionStatus === 'cancelled') && message.toolCalls?.filter((tc) =>
                   !resolvedToolCallIds.has(tc.id),
-                ).map((tc) => (
-                  <ToolCall
-                    key={tc.id}
-                    name={tc.name}
-                    args={tc.arguments}
-                    isInterrupted
-                  />
-                ))}
-                {message === lastAssistantMessage && message.executionStatus === 'cancelled' && message.toolCalls?.filter((tc) =>
-                  !resolvedToolCallIds.has(tc.id),
-                ).map((tc) => (
-                  <ToolCall
-                    key={tc.id}
-                    name={tc.name}
-                    args={tc.arguments}
-                    isInterrupted
-                  />
-                ))}
+                ).map((tc) => {
+                  const isPending = pendingApprovals.has(tc.id);
+                  const resolved = resolvedApprovals.get(tc.id);
+                  const approvalStatus = isPending
+                    ? 'pending' as const
+                    : resolved === true
+                      ? 'approved' as const
+                      : resolved === false
+                        ? 'denied' as const
+                        : undefined;
+                  return (
+                    <ToolCall
+                      key={tc.id}
+                      name={tc.name}
+                      args={tc.arguments}
+                      isInterrupted={!isPending}
+                      approvalStatus={approvalStatus}
+                      onApprove={() => handleApprove(tc.id)}
+                      onReject={() => handleReject(tc.id)}
+                    />
+                  );
+                })}
 
                 {/* Status text with shimmer */}
                 {message.statusText && (
