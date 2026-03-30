@@ -106,11 +106,15 @@ function buildManagedAgentState(
   }
 
   const existingManaged = managedAgents.find((agent) => agent.id === managedId);
+  const defaults = AGENT_DEFAULTS[agentKey];
   const nextManagedAgent: ExternalAgentConfig = {
     ...existingManaged,
-    ...AGENT_DEFAULTS[agentKey],
+    ...defaults,
     id: managedId,
     command: pathInfo.path,
+    // Copilot is its own ACP server (copilot --acp --stdio), so acpCommand
+    // must match the resolved path — not the bare "copilot" from defaults.
+    ...(agentKey === "copilot" ? { acpCommand: pathInfo.path } : {}),
     enabled: managedAgents.length === 0 ? true : managedAgents.some((agent) => agent.enabled),
   };
 

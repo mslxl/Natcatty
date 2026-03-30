@@ -402,8 +402,8 @@ function safeReadJson(filePath) {
 
 function prepareCopilotHome(shellEnv, mcpServers, chatSessionId) {
   const tempDirBridge = require("./tempDirBridge.cjs");
-  const realCopilotHome = shellEnv.COPILOT_HOME
-    || path.join(shellEnv.HOME || process.env.HOME || "", ".copilot");
+  const homeDir = shellEnv.HOME || process.env.HOME || process.env.USERPROFILE || "";
+  const realCopilotHome = shellEnv.COPILOT_HOME || path.join(homeDir, ".copilot");
   const tempCopilotHome = path.join(tempDirBridge.getTempDir(), `copilot-home-${chatSessionId}`);
 
   try {
