@@ -142,12 +142,9 @@ function injectApiKeyIntoRequest(url, headers, providerId) {
 }
 
 function cleanupAcpProvider(chatSessionId) {
-  const entry = acpProviders.get(chatSessionId);
-  if (!entry) return;
-  cleanupAcpProviderInstance(entry.provider, chatSessionId);
-  acpProviders.delete(chatSessionId);
-
-  // Clean up temporary COPILOT_HOME directory if it exists
+  // Clean up temporary COPILOT_HOME directory regardless of whether a
+  // provider entry exists — prepareCopilotHome may have succeeded before
+  // provider creation failed.
   try {
     const tempDirBridge = require("./tempDirBridge.cjs");
     const tempCopilotHome = path.join(tempDirBridge.getTempDir(), `copilot-home-${chatSessionId}`);
@@ -157,6 +154,11 @@ function cleanupAcpProvider(chatSessionId) {
   } catch {
     // Best-effort cleanup
   }
+
+  const entry = acpProviders.get(chatSessionId);
+  if (!entry) return;
+  cleanupAcpProviderInstance(entry.provider, chatSessionId);
+  acpProviders.delete(chatSessionId);
 }
 
 function cleanupAcpProviderInstance(provider, chatSessionId = "transient") {
