@@ -471,7 +471,9 @@ function withTimeout(promise, ms) {
   let timer;
   return Promise.race([
     promise,
-    new Promise((resolve) => { timer = setTimeout(resolve, ms); }),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("ZMODEM handshake timeout")), ms);
+    }),
   ]).finally(() => clearTimeout(timer));
 }
 
