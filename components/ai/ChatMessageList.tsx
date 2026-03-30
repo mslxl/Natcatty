@@ -238,8 +238,13 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
                       </MessageResponse>
                 )}
 
-                {/* Tool calls */}
-                {message.toolCalls?.map((tc) => {
+                {/* Pending tool calls from the *last* assistant message are rendered
+                    after all tool-result messages (see below) for chronological order.
+                    Unresolved tool calls from earlier or cancelled messages are shown
+                    inline — as interrupted, or with approval controls if still pending. */}
+                {(message !== lastAssistantMessage || message.executionStatus === 'cancelled') && message.toolCalls?.filter((tc) =>
+                  !resolvedToolCallIds.has(tc.id),
+                ).map((tc) => {
                   const isPending = pendingApprovals.has(tc.id);
                   const resolved = resolvedApprovals.get(tc.id);
                   const approvalStatus = isPending
@@ -249,14 +254,12 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
                       : resolved === false
                         ? 'denied' as const
                         : undefined;
-
                   return (
                     <ToolCall
                       key={tc.id}
                       name={tc.name}
                       args={tc.arguments}
-                      isLoading={isThisStreaming && message.executionStatus === 'running' && !isPending}
-                      isInterrupted={message.executionStatus === 'cancelled' && !resolvedToolCallIds.has(tc.id)}
+                      isInterrupted={!isPending}
                       approvalStatus={approvalStatus}
                       onApprove={() => handleApprove(tc.id)}
                       onReject={() => handleReject(tc.id)}
@@ -287,6 +290,33 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
                 )}
               </MessageContent>
             </Message>
+          );
+        })}
+
+        {/* Pending tool calls from the last assistant message — rendered here
+            (after all tool-result messages) so they appear at the bottom. */}
+        {lastAssistantMessage?.toolCalls?.filter((tc) =>
+          !resolvedToolCallIds.has(tc.id) && lastAssistantMessage.executionStatus !== 'cancelled',
+        ).map((tc) => {
+          const isPending = pendingApprovals.has(tc.id);
+          const resolved = resolvedApprovals.get(tc.id);
+          const approvalStatus = isPending
+            ? 'pending' as const
+            : resolved === true
+              ? 'approved' as const
+              : resolved === false
+                ? 'denied' as const
+                : undefined;
+          return (
+            <ToolCall
+              key={tc.id}
+              name={tc.name}
+              args={tc.arguments}
+              isLoading={isStreaming && lastAssistantMessage.executionStatus === 'running' && !isPending}
+              approvalStatus={approvalStatus}
+              onApprove={() => handleApprove(tc.id)}
+              onReject={() => handleReject(tc.id)}
+            />
           );
         })}
 
