@@ -14,6 +14,7 @@ const { SerialPort } = require("serialport");
 const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
 const { detectShellKind } = require("./ai/ptyExec.cjs");
 const { trackSessionIdlePrompt } = require("./ai/shellUtils.cjs");
+const { createZmodemSentry } = require("./zmodemHelper.cjs");
 
 // Shared references
 let sessions = null;
@@ -286,6 +287,7 @@ function startLocalSession(event, payload) {
     rows: payload?.rows || 24,
     env,
     cwd,
+    encoding: null, // Return Buffer for ZMODEM binary support
   });
   
   const session = {
@@ -329,11 +331,40 @@ function startLocalSession(event, payload) {
   });
   session.flushPendingData = flushLocal;
 
-  proc.onData((data) => {
-    trackSessionIdlePrompt(session, data);
-    bufferLocalData(data);
-    sessionLogStreamManager.appendData(sessionId, data);
-  });
+  // On Windows, node-pty ignores encoding: null and still emits UTF-8
+  // strings, making raw-byte ZMODEM impossible for local PTY sessions.
+  // Only wire up the sentry on platforms where encoding: null works.
+  if (process.platform !== "win32") {
+    const localDecoder = new StringDecoder("utf8");
+    const zmodemSentry = createZmodemSentry({
+      sessionId,
+      onData(buf) {
+        const str = localDecoder.write(buf);
+        if (!str) return;
+        trackSessionIdlePrompt(session, str);
+        bufferLocalData(str);
+        sessionLogStreamManager.appendData(sessionId, str);
+      },
+      writeToRemote(buf) {
+        try { proc.write(buf); } catch { /* ignore write errors during cleanup */ }
+      },
+      getWebContents() {
+        return electronModule.webContents.fromId(session.webContentsId);
+      },
+      label: "Local",
+    });
+    session.zmodemSentry = zmodemSentry;
+
+    proc.onData((data) => {
+      zmodemSentry.consume(data);
+    });
+  } else {
+    proc.onData((data) => {
+      trackSessionIdlePrompt(session, data);
+      bufferLocalData(data);
+      sessionLogStreamManager.appendData(sessionId, data);
+    });
+  }
 
   proc.onExit((evt) => {
     flushLocal();
@@ -535,19 +566,57 @@ async function startTelnetSession(event, options) {
       contents?.send("netcatty:data", { sessionId, data });
     });
 
+    const telnetZmodemSentry = createZmodemSentry({
+      sessionId,
+      onData(buf) {
+        const decoded = telnetDecoder.write(buf);
+        if (!decoded) return;
+        const session = sessions.get(sessionId);
+        if (session) trackSessionIdlePrompt(session, decoded);
+        bufferTelnetData(decoded);
+        sessionLogStreamManager.appendData(sessionId, decoded);
+      },
+      writeToRemote(buf) {
+        // Escape 0xFF bytes as 0xFF 0xFF per Telnet spec so binary
+        // ZMODEM data passes through without being treated as IAC.
+        try {
+          let hasFF = false;
+          for (let i = 0; i < buf.length; i++) {
+            if (buf[i] === 0xff) { hasFF = true; break; }
+          }
+          if (hasFF) {
+            const escaped = [];
+            for (let i = 0; i < buf.length; i++) {
+              escaped.push(buf[i]);
+              if (buf[i] === 0xff) escaped.push(0xff);
+            }
+            socket.write(Buffer.from(escaped));
+          } else {
+            socket.write(buf);
+          }
+        } catch { /* ignore */ }
+      },
+      getWebContents() {
+        return electronModule.webContents.fromId(telnetWebContentsId);
+      },
+      label: "Telnet",
+    });
+    // Attach sentry to session once created (connect callback runs after this)
+    const attachTelnetSentry = () => {
+      const session = sessions.get(sessionId);
+      if (session) session.zmodemSentry = telnetZmodemSentry;
+    };
+    socket.once('connect', attachTelnetSentry);
+
     socket.on('data', (data) => {
       const session = sessions.get(sessionId);
       if (!session) return;
 
+      // Always run Telnet negotiation — even during ZMODEM, the Telnet
+      // layer still escapes 0xFF as IAC IAC and sends control sequences.
       const cleanData = handleTelnetNegotiation(data);
-
       if (cleanData.length > 0) {
-        const decoded = telnetDecoder.write(cleanData);
-        if (decoded) {
-          trackSessionIdlePrompt(session, decoded);
-          bufferTelnetData(decoded);
-          sessionLogStreamManager.appendData(sessionId, decoded);
-        }
+        telnetZmodemSentry.consume(cleanData);
       }
     });
 
@@ -645,6 +714,7 @@ async function startMoshSession(event, options) {
       rows,
       env,
       cwd: os.homedir(),
+      encoding: null, // Return Buffer for ZMODEM binary support
     });
 
     const session = {
@@ -682,11 +752,37 @@ async function startMoshSession(event, options) {
     });
     session.flushPendingData = flushMosh;
 
-    proc.onData((data) => {
-      trackSessionIdlePrompt(session, data);
-      bufferMoshData(data);
-      sessionLogStreamManager.appendData(sessionId, data);
-    });
+    if (process.platform !== "win32") {
+      const moshDecoder = new StringDecoder("utf8");
+      const moshZmodemSentry = createZmodemSentry({
+        sessionId,
+        onData(buf) {
+          const str = moshDecoder.write(buf);
+          if (!str) return;
+          trackSessionIdlePrompt(session, str);
+          bufferMoshData(str);
+          sessionLogStreamManager.appendData(sessionId, str);
+        },
+        writeToRemote(buf) {
+          try { proc.write(buf); } catch { /* ignore */ }
+        },
+        getWebContents() {
+          return electronModule.webContents.fromId(session.webContentsId);
+        },
+        label: "Mosh",
+      });
+      session.zmodemSentry = moshZmodemSentry;
+
+      proc.onData((data) => {
+        moshZmodemSentry.consume(data);
+      });
+    } else {
+      proc.onData((data) => {
+        trackSessionIdlePrompt(session, data);
+        bufferMoshData(data);
+        sessionLogStreamManager.appendData(sessionId, data);
+      });
+    }
 
     proc.onExit((evt) => {
       flushMosh();
@@ -790,13 +886,28 @@ async function startSerialSession(event, options) {
           });
         }
 
-        serialPort.on('data', (data) => {
-          const decoded = serialDecoder.write(data);
-          if (decoded) {
+        const serialZmodemSentry = createZmodemSentry({
+          sessionId,
+          onData(buf) {
+            const decoded = serialDecoder.write(buf);
+            if (!decoded) return;
             const contents = electronModule.webContents.fromId(session.webContentsId);
             contents?.send("netcatty:data", { sessionId, data: decoded });
             sessionLogStreamManager.appendData(sessionId, decoded);
-          }
+          },
+          writeToRemote(buf) {
+            try { serialPort.write(buf); } catch { /* ignore */ }
+          },
+          getWebContents() {
+            return electronModule.webContents.fromId(session.webContentsId);
+          },
+          label: "Serial",
+        });
+        session.zmodemSentry = serialZmodemSentry;
+
+        serialPort.on('data', (data) => {
+          // data is already Buffer from serialport — feed to sentry
+          serialZmodemSentry.consume(data);
         });
 
         serialPort.on('error', (err) => {
@@ -830,7 +941,15 @@ async function startSerialSession(event, options) {
 function writeToSession(event, payload) {
   const session = sessions.get(payload.sessionId);
   if (!session) return;
-  
+
+  // During ZMODEM transfer, block terminal input (Ctrl+C cancels the transfer)
+  if (session.zmodemSentry?.isActive()) {
+    if (payload.data === '\x03') {
+      session.zmodemSentry.cancel();
+    }
+    return;
+  }
+
   try {
     if (session.stream) {
       session.stream.write(payload.data);
@@ -887,6 +1006,7 @@ function closeSession(event, payload) {
   if (!session) return;
   
   try {
+    session.zmodemSentry?.cancel();
     session.flushPendingData?.();
     if (session.stream) {
       session.stream.close();

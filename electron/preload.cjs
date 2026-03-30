@@ -8,6 +8,7 @@ const transferCompleteListeners = new Map();
 const transferErrorListeners = new Map();
 const transferCancelledListeners = new Map();
 const chainProgressListeners = new Map();
+const zmodemListeners = new Map();
 const sftpConnectionProgressListeners = new Set();
 const authFailedListeners = new Map();
 const languageChangeListeners = new Set();
@@ -109,6 +110,28 @@ function _deliverToListeners(sessionId, data) {
   });
 }
 
+// ZMODEM file transfer events
+ipcRenderer.on("netcatty:zmodem:detect", (_event, payload) => {
+  const set = zmodemListeners.get(payload.sessionId);
+  if (!set) return;
+  set.forEach((cb) => { try { cb({ type: "detect", ...payload }); } catch {} });
+});
+ipcRenderer.on("netcatty:zmodem:progress", (_event, payload) => {
+  const set = zmodemListeners.get(payload.sessionId);
+  if (!set) return;
+  set.forEach((cb) => { try { cb({ type: "progress", ...payload }); } catch {} });
+});
+ipcRenderer.on("netcatty:zmodem:complete", (_event, payload) => {
+  const set = zmodemListeners.get(payload.sessionId);
+  if (!set) return;
+  set.forEach((cb) => { try { cb({ type: "complete", ...payload }); } catch {} });
+});
+ipcRenderer.on("netcatty:zmodem:error", (_event, payload) => {
+  const set = zmodemListeners.get(payload.sessionId);
+  if (!set) return;
+  set.forEach((cb) => { try { cb({ type: "error", ...payload }); } catch {} });
+});
+
 ipcRenderer.on("netcatty:data", (_event, payload) => {
   const set = dataListeners.get(payload.sessionId);
   if (!set) return;
@@ -153,6 +176,7 @@ ipcRenderer.on("netcatty:exit", (_event, payload) => {
   }
   dataListeners.delete(payload.sessionId);
   exitListeners.delete(payload.sessionId);
+  zmodemListeners.delete(payload.sessionId);
   const pendingTimer = _mcpFlushTimers.get(payload.sessionId);
   if (pendingTimer) {
     clearTimeout(pendingTimer);
@@ -569,6 +593,14 @@ const api = {
   },
   setSessionEncoding: (sessionId, encoding) =>
     ipcRenderer.invoke("netcatty:ssh:setEncoding", { sessionId, encoding }),
+  onZmodemEvent: (sessionId, cb) => {
+    if (!zmodemListeners.has(sessionId)) zmodemListeners.set(sessionId, new Set());
+    zmodemListeners.get(sessionId).add(cb);
+    return () => zmodemListeners.get(sessionId)?.delete(cb);
+  },
+  cancelZmodem: (sessionId) => {
+    ipcRenderer.send("netcatty:zmodem:cancel", { sessionId });
+  },
   onSessionData: (sessionId, cb) => {
     if (!dataListeners.has(sessionId)) dataListeners.set(sessionId, new Set());
     dataListeners.get(sessionId).add(cb);

@@ -44,6 +44,8 @@ import { TerminalToolbar } from "./terminal/TerminalToolbar";
 import { TerminalComposeBar } from "./terminal/TerminalComposeBar";
 import { TerminalContextMenu } from "./terminal/TerminalContextMenu";
 import { TerminalSearchBar } from "./terminal/TerminalSearchBar";
+import { ZmodemProgressIndicator } from "./terminal/ZmodemProgressIndicator";
+import { useZmodemTransfer } from "./terminal/hooks/useZmodemTransfer";
 import { createTerminalSessionStarters, type PendingAuth } from "./terminal/runtime/createTerminalSessionStarters";
 import { createXTermRuntime, type XTermRuntime } from "./terminal/runtime/createXTermRuntime";
 import { XTERM_PERFORMANCE_CONFIG } from "../infrastructure/config/xtermPerformance";
@@ -499,6 +501,27 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     isConnected: status === 'connected',
     isVisible,
   });
+
+  const zmodem = useZmodemTransfer(sessionId);
+
+  const zmodemToastedRef = useRef(false);
+  useEffect(() => {
+    if (zmodem.active) {
+      zmodemToastedRef.current = false;
+      return;
+    }
+    if (zmodemToastedRef.current) return;
+    if (zmodem.error) {
+      zmodemToastedRef.current = true;
+      toast.error(zmodem.error, 'ZMODEM');
+    } else if (zmodem.filename) {
+      zmodemToastedRef.current = true;
+      toast.success(
+        `${zmodem.transferType === 'upload' ? 'Uploaded' : 'Downloaded'}: ${zmodem.filename}`,
+        'ZMODEM',
+      );
+    }
+  }, [zmodem.active, zmodem.error, zmodem.filename, zmodem.transferType]);
 
   useEffect(() => {
     if (!error) {
@@ -2048,6 +2071,21 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                 }}
               />
             )}
+
+          {/* ZMODEM transfer progress indicator */}
+          {zmodem.active && (
+            <div className="absolute bottom-4 right-4 z-[25] pointer-events-auto">
+              <ZmodemProgressIndicator
+                transferType={zmodem.transferType}
+                filename={zmodem.filename}
+                transferred={zmodem.transferred}
+                total={zmodem.total}
+                fileIndex={zmodem.fileIndex}
+                fileCount={zmodem.fileCount}
+                onCancel={zmodem.cancel}
+              />
+            </div>
+          )}
         </div>
 
         {/* Compose Bar (solo sessions only; workspace uses TerminalLayer's global bar) */}
