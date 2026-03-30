@@ -175,6 +175,10 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     };
   }
 
+  // Ref to read current defaultAgentId without adding it as a dependency.
+  const defaultAgentIdRef = useRef(defaultAgentId);
+  defaultAgentIdRef.current = defaultAgentId;
+
   const resolveAgentPath = useCallback(async (
     agentKey: ManagedAgentKey,
     customPath = "",
@@ -192,6 +196,25 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         customPath: customPath.trim(),
       });
       setInfo(result);
+
+      // Consolidate managed agent entries using the callback form of
+      // setExternalAgents so we never depend on externalAgents directly.
+      // Both codex and claude resolve concurrently on mount — React runs
+      // state updater callbacks sequentially, so updating the ref inside
+      // ensures the second call sees the first call's defaultAgentId change.
+      let nextDefaultId: string | null = null;
+      setExternalAgents((prev) => {
+        const state = buildManagedAgentState(prev, defaultAgentIdRef.current, agentKey, result);
+        if (state.defaultAgentId !== defaultAgentIdRef.current) {
+          nextDefaultId = state.defaultAgentId;
+          defaultAgentIdRef.current = state.defaultAgentId;
+        }
+        return areExternalAgentListsEqual(prev, state.agents) ? prev : state.agents;
+      });
+      if (nextDefaultId !== null) {
+        setDefaultAgentId(nextDefaultId);
+      }
+
       return result;
     } catch (err) {
       console.error("Path resolution failed:", err);
@@ -199,43 +222,12 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     } finally {
       setResolving(false);
     }
-  }, []);
+  }, [setExternalAgents, setDefaultAgentId]);
 
   useEffect(() => {
     void resolveAgentPath("codex", initialManagedPathsRef.current?.codex ?? "");
     void resolveAgentPath("claude", initialManagedPathsRef.current?.claude ?? "");
   }, [resolveAgentPath]);
-
-  useEffect(() => {
-    if (!codexPathInfo && !claudePathInfo) return;
-
-    let nextDefaultAgentId = defaultAgentId;
-    let nextAgents = externalAgents;
-
-    for (const [agentKey, pathInfo] of [
-      ["codex", codexPathInfo],
-      ["claude", claudePathInfo],
-    ] as const) {
-      if (!pathInfo) continue;
-      const nextState = buildManagedAgentState(nextAgents, nextDefaultAgentId, agentKey, pathInfo);
-      nextAgents = nextState.agents;
-      nextDefaultAgentId = nextState.defaultAgentId;
-    }
-
-    if (!areExternalAgentListsEqual(externalAgents, nextAgents)) {
-      setExternalAgents(nextAgents);
-    }
-    if (nextDefaultAgentId !== defaultAgentId) {
-      setDefaultAgentId(nextDefaultAgentId);
-    }
-  }, [
-    claudePathInfo,
-    codexPathInfo,
-    defaultAgentId,
-    externalAgents,
-    setDefaultAgentId,
-    setExternalAgents,
-  ]);
 
   // Validate a custom path for an agent
   const handleCheckCustomPath = useCallback(async (agentKey: "codex" | "claude") => {
