@@ -246,6 +246,17 @@ function createZmodemSentry(opts) {
     );
   }
 
+  // ZACK is a generic acknowledgement. zmodem.js only handles it in
+  // specific states (after ZSINIT, during file negotiation). Stray
+  // ZACKs from the receiver are harmless and can be safely ignored.
+  function isIgnorableZackError(errMsg) {
+    return Boolean(
+      active &&
+      currentZSession?.type === "send" &&
+      errMsg.includes("Unhandled header: ZACK")
+    );
+  }
+
   const sentry = new Zmodem.Sentry({
     to_terminal(octets) {
       // Normal data – pass raw bytes to the caller for charset-aware decoding.
@@ -383,6 +394,11 @@ function createZmodemSentry(opts) {
         // complains even though the transfer can continue normally.
         if (isIgnorableSendResumePingError(errMsg)) {
           console.log(`[ZMODEM][${label}] Ignoring late post-file ZRPOS`);
+          return;
+        }
+
+        if (isIgnorableZackError(errMsg)) {
+          console.log(`[ZMODEM][${label}] Ignoring stray ZACK`);
           return;
         }
 
