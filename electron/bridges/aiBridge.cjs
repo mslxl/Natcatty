@@ -1888,6 +1888,7 @@ function registerHandlers(ipcMain) {
     }
 
     let provider = null;
+    let copilotConfigInfo = null;
     try {
       const { createACPProvider } = require("@mcpc-tech/acp-ai-provider");
       const shellEnv = await getShellEnv();
@@ -1905,7 +1906,6 @@ function registerHandlers(ipcMain) {
         agentEnv.CODEX_API_KEY = apiKey;
       }
 
-      let copilotConfigInfo = null;
       if (isCopilotAgent) {
         copilotConfigInfo = prepareCopilotHome(shellEnv, [], chatSessionId || `models_${Date.now()}`);
         agentEnv.COPILOT_HOME = copilotConfigInfo.copilotHome;
