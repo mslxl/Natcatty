@@ -588,13 +588,13 @@ async function handleUpload(zsession, opts) {
         if (opts.waitForDrain) await opts.waitForDrain();
         await yieldToIO();
       }
-      await withTimeout(xfer.end(), 10000);
+      await withTimeout(xfer.end(), 120000);
     } finally {
       fs.closeSync(fd);
     }
   }
 
-  await withTimeout(zsession.close(), 10000);
+  await withTimeout(zsession.close(), 120000);
 }
 
 /**
