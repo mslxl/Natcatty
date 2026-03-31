@@ -1452,17 +1452,18 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   }, [applyTerminalPreviewVars, themePreview]);
 
   useEffect(() => {
-    if (activeTopTabsThemeId) {
-      applyTopTabsPreviewVars(activeTopTabsThemeId);
-      return;
+    const themeToApply = activeTopTabsThemeId || (previewTargetSessionId ? focusedThemeId : null);
+    if (themeToApply) {
+      applyTopTabsPreviewVars(themeToApply);
+    } else {
+      clearTopTabsPreviewVars();
     }
-    clearTopTabsPreviewVars();
-  }, [activeTopTabsThemeId, applyTopTabsPreviewVars]);
+  }, [activeTopTabsThemeId, focusedThemeId, previewTargetSessionId, applyTopTabsPreviewVars]);
 
   useEffect(() => {
+    const panelOpen = activeSidePanelTab === 'theme' && !!previewTargetSessionId;
     const shouldKeepPreview =
-      activeSidePanelTab === 'theme' &&
-      !!previewTargetSessionId &&
+      panelOpen &&
       !!themePreview.targetSessionId &&
       !!themePreview.themeId;
 
@@ -1473,8 +1474,6 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       clearTerminalPreviewVars(appliedSessionId);
       appliedPreviewSessionRef.current = null;
     }
-    clearTopTabsPreviewVars();
-
     if (themePreview.targetSessionId || themePreview.themeId) {
       setThemePreview({ targetSessionId: null, themeId: null });
     }
