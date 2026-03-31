@@ -675,6 +675,11 @@ async function createWindow(electronModule, options) {
 
   mainWindow = win;
 
+  // Clear reference when the main window is destroyed
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null;
+  });
+
   // Log renderer crashes for diagnostics (skip normal clean exits)
   win.webContents.on("render-process-gone", (_event, details) => {
     if (details?.reason === "clean-exit") return;
