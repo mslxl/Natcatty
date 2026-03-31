@@ -258,19 +258,6 @@ export default function SettingsAppearanceTab(props: {
         </SettingRow>
       </div>
 
-      <SectionHeader title={t("settings.appearance.immersiveMode")} />
-      <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
-        <SettingRow
-          label={t("settings.appearance.immersiveMode")}
-          description={t("settings.appearance.immersiveMode.desc")}
-        >
-          <Toggle
-            checked={!!isImmersive}
-            onChange={() => onToggleImmersive?.()}
-          />
-        </SettingRow>
-      </div>
-
       <SectionHeader title={t("settings.appearance.customCss")} />
       <div className="space-y-2">
         <p className="text-xs text-muted-foreground">
