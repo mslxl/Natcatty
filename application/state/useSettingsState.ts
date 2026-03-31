@@ -33,7 +33,7 @@ import {
   STORAGE_KEY_GLOBAL_HOTKEY_ENABLED,
   STORAGE_KEY_AUTO_UPDATE_ENABLED,
   STORAGE_KEY_WORKSPACE_FOCUS_STYLE,
-  STORAGE_KEY_IMMERSIVE_MODE,
+
 } from '../../infrastructure/config/storageKeys';
 import { DEFAULT_UI_LOCALE, resolveSupportedLocale } from '../../infrastructure/config/i18n';
 import { TERMINAL_THEMES } from '../../infrastructure/config/terminalThemes';
@@ -456,14 +456,6 @@ export const useSettingsState = () => {
     const storedDefaultViewMode = readStoredString(STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE);
     if (storedDefaultViewMode === 'list' || storedDefaultViewMode === 'tree') setSftpDefaultViewMode(storedDefaultViewMode);
 
-    // Immersive mode
-    const storedImmersive = readStoredString(STORAGE_KEY_IMMERSIVE_MODE);
-    if (storedImmersive === 'true' || storedImmersive === 'false') {
-      const val = storedImmersive === 'true';
-      setImmersiveModeState(val);
-      notifySettingsChanged(STORAGE_KEY_IMMERSIVE_MODE, val);
-    }
-
     // Workspace focus style
     const storedFocusStyle = readStoredString(STORAGE_KEY_WORKSPACE_FOCUS_STYLE);
     if (storedFocusStyle === 'dim' || storedFocusStyle === 'border') setWorkspaceFocusStyleState(storedFocusStyle);
@@ -615,9 +607,6 @@ export const useSettingsState = () => {
         if (value === 'list' || value === 'tree') {
           setSftpDefaultViewMode((prev) => (prev === value ? prev : value));
         }
-      }
-      if (key === STORAGE_KEY_IMMERSIVE_MODE && typeof value === 'boolean') {
-        setImmersiveModeState((prev) => (prev === value ? prev : value));
       }
       if (key === STORAGE_KEY_WORKSPACE_FOCUS_STYLE && (value === 'dim' || value === 'border')) {
         setWorkspaceFocusStyleState((prev) => (prev === value ? prev : value));
@@ -838,13 +827,6 @@ export const useSettingsState = () => {
         const newValue = e.newValue === 'true';
         if (newValue !== s.autoUpdateEnabled) {
           setAutoUpdateEnabled(newValue);
-        }
-      }
-      // Sync immersive mode from other windows
-      if (e.key === STORAGE_KEY_IMMERSIVE_MODE && e.newValue !== null) {
-        const newValue = e.newValue === 'true';
-        if (newValue !== s.immersiveMode) {
-          setImmersiveModeState(newValue);
         }
       }
       // Sync workspace focus style from other windows
