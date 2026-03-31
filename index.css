@@ -337,7 +337,7 @@ body {
 
 /* Dim terminal text in unfocused workspace panes (default) */
 .workspace-pane:not(:focus-within) .xterm-screen {
-  opacity: 0.65;
+  opacity: 0.82;
 }
 /* Border-style focus indicator (opt-in via data attribute) */
 [data-workspace-focus="border"] .workspace-pane:not(:focus-within) .xterm-screen {
