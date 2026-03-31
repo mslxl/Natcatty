@@ -1572,7 +1572,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         )}
         <div className="absolute left-0 right-0 top-0 z-20 pointer-events-none">
           <div
-            className="flex items-center gap-1 px-2 py-0.5 backdrop-blur-md pointer-events-auto min-w-0 border-b-[0.5px]"
+            className="flex items-center gap-1 px-2 py-0.5 backdrop-blur-md pointer-events-auto min-w-0"
             style={{
               backgroundColor: 'var(--terminal-ui-bg)',
               color: 'var(--terminal-ui-fg)',

@@ -522,7 +522,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
                 {activeTabId === session.id && (
                   <div
                     className="absolute top-0 left-0 right-0 h-[2px]"
-                    style={{ backgroundColor: 'var(--top-tabs-fg, hsl(var(--foreground)))' }}
+                    style={{ backgroundColor: 'var(--top-tabs-accent, hsl(var(--primary)))' }}
                   />
                 )}
                 {/* Drop indicator line - before */}
@@ -621,7 +621,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
                 {isActive && (
                   <div
                     className="absolute top-0 left-0 right-0 h-[2px]"
-                    style={{ backgroundColor: 'var(--top-tabs-fg, hsl(var(--foreground)))' }}
+                    style={{ backgroundColor: 'var(--top-tabs-accent, hsl(var(--primary)))' }}
                   />
                 )}
                 {/* Drop indicator line - before */}

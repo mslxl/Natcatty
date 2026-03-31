@@ -2,14 +2,15 @@
  * Host Chain Sub-Panel
  * Panel for configuring SSH jump host chain
  */
-import { ArrowDown,Plus,X } from 'lucide-react';
-import React from 'react';
+import { ArrowDown,Plus,Search,X } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { Host } from '../../types';
 import { DistroAvatar } from '../DistroAvatar';
 import { AsidePanel } from '../ui/aside-panel';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
+import { Input } from '../ui/input';
 import { ScrollArea } from '../ui/scroll-area';
 
 export interface ChainPanelProps {
@@ -38,6 +39,14 @@ export const ChainPanel: React.FC<ChainPanelProps> = ({
     onCancel,
 }) => {
     const { t } = useI18n();
+    const [searchQuery, setSearchQuery] = useState('');
+    const filteredHosts = useMemo(() => {
+        if (!searchQuery.trim()) return availableHostsForChain;
+        const q = searchQuery.toLowerCase();
+        return availableHostsForChain.filter(
+            (host) => host.label.toLowerCase().includes(q) || host.hostname.toLowerCase().includes(q)
+        );
+    }, [availableHostsForChain, searchQuery]);
     return (
         <AsidePanel
             open={true}
@@ -52,16 +61,7 @@ export const ChainPanel: React.FC<ChainPanelProps> = ({
             }
         >
             <ScrollArea className="flex-1">
-                <div className="p-4 space-y-4">
-                    <Card className="p-3 space-y-3 bg-card border-border/80">
-                        <p className="text-xs text-muted-foreground">
-                            {t('hostDetails.chain.desc', { host: formLabel || formHostname })}
-                        </p>
-                        <Button className="w-full h-10" onClick={() => { }}>
-                            <Plus size={14} className="mr-2" /> {t('hostDetails.chain.addHost')}
-                        </Button>
-                    </Card>
-
+                <div className="p-4 space-y-4 w-0 min-w-full">
                     {/* Chain visualization */}
                     <div className="space-y-2">
                         {chainedHosts.map((host, index) => (
@@ -73,7 +73,7 @@ export const ChainPanel: React.FC<ChainPanelProps> = ({
                                 )}
                                 <div className="flex items-center gap-2 p-2 rounded-lg border border-border/60 bg-card">
                                     <DistroAvatar host={host} fallback={host.label.slice(0, 2).toUpperCase()} className="h-8 w-8" />
-                                    <span className="text-sm font-medium flex-1">{host.label || host.hostname}</span>
+                                    <span className="text-sm font-medium flex-1 min-w-0 truncate">{host.label || host.hostname}</span>
                                     <Button
                                         variant="ghost"
                                         size="icon"
@@ -110,11 +110,20 @@ export const ChainPanel: React.FC<ChainPanelProps> = ({
                     {availableHostsForChain.length > 0 && (
                         <Card className="p-3 bg-card border-border/80">
                             <p className="text-xs font-semibold text-muted-foreground mb-2">{t('hostDetails.chain.availableHosts')}</p>
+                            <div className="relative mb-2">
+                                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                                <Input
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    placeholder={t('common.searchPlaceholder')}
+                                    className="h-8 pl-8 text-sm"
+                                />
+                            </div>
                             <div className="space-y-1">
-                                {availableHostsForChain.map((host) => (
+                                {filteredHosts.map((host) => (
                                     <button
                                         key={host.id}
-                                        className="w-full flex items-center gap-2 p-2 rounded-md hover:bg-secondary transition-colors text-left"
+                                        className="w-full flex items-center gap-2 p-2 rounded-md hover:bg-secondary transition-colors text-left overflow-hidden"
                                         onClick={() => onAddHost(host.id)}
                                     >
                                         <DistroAvatar host={host} fallback={host.label.slice(0, 2).toUpperCase()} className="h-8 w-8" />
