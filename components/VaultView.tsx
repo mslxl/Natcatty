@@ -4,6 +4,7 @@ import {
   CheckSquare,
   ChevronDown,
   ClipboardCopy,
+  Clock,
   Copy,
   Download,
   Edit2,
@@ -15,11 +16,13 @@ import {
   LayoutGrid,
   List,
   Network,
+  Pin,
   Plug,
   Plus,
   Search,
   Settings,
   Square,
+  Star,
   TerminalSquare,
   Trash2,
   Upload,
@@ -27,7 +30,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import React, { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, lazy, memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useStoredViewMode } from "../application/state/useStoredViewMode";
 import { useStoredBoolean } from "../application/state/useStoredBoolean";
@@ -35,7 +38,7 @@ import { useTreeExpandedState } from "../application/state/useTreeExpandedState"
 import { getEffectiveHostDistro, sanitizeHost } from "../domain/host";
 import { importVaultHostsFromText, exportHostsToCsvWithStats } from "../domain/vaultImport";
 import type { VaultImportFormat } from "../domain/vaultImport";
-import { STORAGE_KEY_VAULT_HOSTS_VIEW_MODE, STORAGE_KEY_VAULT_HOSTS_TREE_EXPANDED, STORAGE_KEY_VAULT_SIDEBAR_COLLAPSED } from "../infrastructure/config/storageKeys";
+import { STORAGE_KEY_VAULT_HOSTS_VIEW_MODE, STORAGE_KEY_VAULT_HOSTS_TREE_EXPANDED, STORAGE_KEY_VAULT_SIDEBAR_COLLAPSED, STORAGE_KEY_SHOW_RECENT_HOSTS } from "../infrastructure/config/storageKeys";
 import { cn } from "../lib/utils";
 import { useInstantThemeSwitch } from "../lib/useInstantThemeSwitch";
 import {
@@ -184,6 +187,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
 }) => {
   const { t } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
+  const hostsRef = useRef(hosts);
+  hostsRef.current = hosts;
   const [currentSection, setCurrentSection] = useState<VaultSection>("hosts");
   const [search, setSearch] = useState("");
   const [selectedGroupPath, setSelectedGroupPath] = useState<string | null>(
@@ -208,6 +213,13 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   const [sidebarCollapsed, setSidebarCollapsed] = useStoredBoolean(
     STORAGE_KEY_VAULT_SIDEBAR_COLLAPSED,
     false,
+  );
+
+  const [isBreadcrumbDragOver, setIsBreadcrumbDragOver] = useState(false);
+
+  const [showRecentHosts, _setShowRecentHosts] = useStoredBoolean(
+    STORAGE_KEY_SHOW_RECENT_HOSTS,
+    true,
   );
 
   // Handle external navigation requests
@@ -359,6 +371,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
       id: crypto.randomUUID(),
       label: `${host.label} (${t('action.copy')})`,
       createdAt: Date.now(),
+      pinned: undefined,
+      lastConnectedAt: undefined,
     };
     // Open the edit panel with the duplicated host for modification
     setEditingHost(duplicatedHost);
@@ -441,6 +455,18 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
       toast.success(t('vault.hosts.copyCredentials.toast.success'));
     });
   }, [identities, t]);
+
+  const [lastPinnedId, setLastPinnedId] = useState<string | null>(null);
+  const toggleHostPinned = useCallback((hostId: string) => {
+    const host = hostsRef.current.find((h) => h.id === hostId);
+    const isPinning = host && !host.pinned;
+    startTransition(() => {
+      onUpdateHosts(hostsRef.current.map((h) =>
+        h.id === hostId ? { ...h, pinned: !h.pinned } : h
+      ));
+    });
+    setLastPinnedId(isPinning ? hostId : null);
+  }, [onUpdateHosts]);
 
   const toggleHostSelection = useCallback((hostId: string) => {
     setSelectedHostIds(prev => {
@@ -825,6 +851,63 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     });
     return filtered;
   }, [hosts, selectedGroupPath, search, selectedTags, sortMode]);
+
+  // Pinned hosts for root-level display (not inside a subgroup)
+  // Respects active search and tag filters
+  const pinnedHosts = useMemo(() => {
+    if (selectedGroupPath) return [];
+    let filtered = hosts.filter((h) => h.pinned);
+    if (search.trim()) {
+      const s = search.toLowerCase();
+      filtered = filtered.filter(
+        (h) =>
+          h.label.toLowerCase().includes(s) ||
+          h.hostname.toLowerCase().includes(s) ||
+          h.tags.some((t) => t.toLowerCase().includes(s)),
+      );
+    }
+    if (selectedTags.length > 0) {
+      filtered = filtered.filter((h) =>
+        selectedTags.some((t) => h.tags?.includes(t)),
+      );
+    }
+    return filtered.sort((a, b) => a.label.localeCompare(b.label));
+  }, [hosts, selectedGroupPath, search, selectedTags]);
+
+  // Recently connected hosts for root-level display
+  // Respects active search and tag filters
+  const recentHosts = useMemo(() => {
+    if (selectedGroupPath) return [];
+    let filtered = hosts.filter((h) => h.lastConnectedAt && !h.pinned);
+    if (search.trim()) {
+      const s = search.toLowerCase();
+      filtered = filtered.filter(
+        (h) =>
+          h.label.toLowerCase().includes(s) ||
+          h.hostname.toLowerCase().includes(s) ||
+          h.tags.some((t) => t.toLowerCase().includes(s)),
+      );
+    }
+    if (selectedTags.length > 0) {
+      filtered = filtered.filter((h) =>
+        selectedTags.some((t) => h.tags?.includes(t)),
+      );
+    }
+    return filtered
+      .sort((a, b) => (b.lastConnectedAt || 0) - (a.lastConnectedAt || 0))
+      .slice(0, 20);
+  }, [hosts, selectedGroupPath, search, selectedTags]);
+
+  // IDs of hosts already shown in Pinned/Recent sections at root level,
+  // so the main host list can exclude them to avoid duplicates.
+  const pinnedRecentIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const h of pinnedHosts) ids.add(h.id);
+    if (showRecentHosts) {
+      for (const h of recentHosts) ids.add(h.id);
+    }
+    return ids;
+  }, [pinnedHosts, recentHosts, showRecentHosts]);
 
   // For tree view: apply search, tag filter, and sorting, but not group filtering
   const treeViewHosts = useMemo(() => {
@@ -1639,8 +1722,24 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                   {viewMode !== "tree" && (
                     <div className="flex items-center gap-2 text-sm font-semibold">
                       <button
-                        className="text-primary hover:underline"
+                        className={cn(
+                          "text-primary hover:underline transition-all rounded px-1 -mx-1",
+                          isBreadcrumbDragOver && "ring-2 ring-primary bg-primary/10",
+                        )}
                         onClick={() => setSelectedGroupPath(null)}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          setIsBreadcrumbDragOver(true);
+                        }}
+                        onDragLeave={() => setIsBreadcrumbDragOver(false)}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setIsBreadcrumbDragOver(false);
+                          const groupPath = e.dataTransfer.getData("group-path");
+                          const hostId = e.dataTransfer.getData("host-id");
+                          if (groupPath) moveGroup(groupPath, null);
+                          if (hostId) moveHostToGroup(hostId, null);
+                        }}
                       >
                         {t("vault.hosts.allHosts")}
                       </button>
@@ -1673,6 +1772,201 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                             );
                           })}
                     </div>
+                  )}
+                  {/* Pinned hosts section - only at root level */}
+                  {viewMode !== "tree" && !selectedGroupPath && pinnedHosts.length > 0 && (
+                    <section className="space-y-2 mb-4">
+                      <h3 className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
+                        <Pin size={14} />
+                        {t("vault.hosts.pinned")}
+                      </h3>
+                      <div className={cn(
+                        viewMode === "grid"
+                          ? "grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+                          : "flex flex-col gap-0",
+                      )}>
+                        {pinnedHosts.map((host) => {
+                          const safeHost = sanitizeHost(host);
+                          const effectiveDistro = getEffectiveHostDistro(safeHost);
+                          const distroBadge = {
+                            text: (safeHost.os || "L")[0].toUpperCase(),
+                            label: effectiveDistro || safeHost.os || "Linux",
+                          };
+                          return (
+                            <ContextMenu key={host.id}>
+                              <ContextMenuTrigger>
+                                <div
+                                  className={cn(
+                                    "group cursor-pointer relative",
+                                    viewMode === "grid"
+                                      ? "soft-card elevate rounded-xl h-[68px] px-3 py-2"
+                                      : "h-14 px-3 py-2 hover:bg-secondary/60 rounded-lg transition-colors",
+                                  )}
+                                  style={lastPinnedId === host.id ? { animation: "pop-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both" } : undefined}
+                                  onAnimationEnd={() => { if (lastPinnedId === host.id) setLastPinnedId(null); }}
+                                  draggable={!isMultiSelectMode}
+                                  onDragStart={(e) => {
+                                    e.dataTransfer.effectAllowed = "move";
+                                    e.dataTransfer.setData("host-id", host.id);
+                                  }}
+                                  onClick={() => {
+                                    if (isMultiSelectMode) {
+                                      toggleHostSelection(host.id);
+                                    } else {
+                                      handleHostConnect(safeHost);
+                                    }
+                                  }}
+                                >
+                                  {viewMode === "grid" && (
+                                    <Star size={10} className="absolute top-1.5 right-1.5 text-amber-400 fill-amber-400" />
+                                  )}
+                                  <div className="flex items-center gap-3 h-full">
+                                    {isMultiSelectMode && (
+                                      <div className="shrink-0">
+                                        {selectedHostIds.has(host.id) ? (
+                                          <CheckSquare size={18} className="text-primary" />
+                                        ) : (
+                                          <Square size={18} className="text-muted-foreground" />
+                                        )}
+                                      </div>
+                                    )}
+                                    <DistroAvatar host={safeHost} fallback={distroBadge.text} />
+                                    <div className="min-w-0 flex flex-col justify-center gap-0.5 flex-1">
+                                      <span className="text-sm font-semibold truncate leading-5">
+                                        {safeHost.label}
+                                      </span>
+                                      <div className="text-[11px] text-muted-foreground font-mono truncate leading-4">
+                                        {safeHost.username}@{safeHost.hostname}
+                                      </div>
+                                    </div>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleEditHost(host);
+                                      }}
+                                    >
+                                      <Edit2 size={14} />
+                                    </Button>
+                                  </div>
+                                </div>
+                              </ContextMenuTrigger>
+                              <ContextMenuContent>
+                                <ContextMenuItem onClick={() => handleHostConnect(host)}>
+                                  <Plug className="mr-2 h-4 w-4" /> {t('vault.hosts.connect')}
+                                </ContextMenuItem>
+                                <ContextMenuItem onClick={() => handleEditHost(host)}>
+                                  <Edit2 className="mr-2 h-4 w-4" /> {t('action.edit')}
+                                </ContextMenuItem>
+                                <ContextMenuItem onClick={() => toggleHostPinned(host.id)}>
+                                  <Pin className="mr-2 h-4 w-4" /> {t('vault.hosts.unpin')}
+                                </ContextMenuItem>
+                                <ContextMenuItem className="text-destructive" onClick={() => onDeleteHost(host.id)}>
+                                  <Trash2 className="mr-2 h-4 w-4" /> {t('action.delete')}
+                                </ContextMenuItem>
+                              </ContextMenuContent>
+                            </ContextMenu>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  )}
+                  {/* Recently Connected section - only at root level, toggleable */}
+                  {viewMode !== "tree" && !selectedGroupPath && showRecentHosts && recentHosts.length > 0 && (
+                    <section className="space-y-2 mb-4">
+                      <h3 className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
+                        <Clock size={14} />
+                        {t("vault.hosts.recentlyConnected")}
+                      </h3>
+                      <div className={cn(
+                        viewMode === "grid"
+                          ? "grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+                          : "flex flex-col gap-0",
+                      )}>
+                        {recentHosts.map((host) => {
+                          const safeHost = sanitizeHost(host);
+                          const effectiveDistro = getEffectiveHostDistro(safeHost);
+                          const distroBadge = {
+                            text: (safeHost.os || "L")[0].toUpperCase(),
+                            label: effectiveDistro || safeHost.os || "Linux",
+                          };
+                          return (
+                            <ContextMenu key={host.id}>
+                              <ContextMenuTrigger>
+                                <div
+                                  className={cn(
+                                    "group cursor-pointer relative",
+                                    viewMode === "grid"
+                                      ? "soft-card elevate rounded-xl h-[68px] px-3 py-2"
+                                      : "h-14 px-3 py-2 hover:bg-secondary/60 rounded-lg transition-colors",
+                                  )}
+                                  draggable={!isMultiSelectMode}
+                                  onDragStart={(e) => {
+                                    e.dataTransfer.effectAllowed = "move";
+                                    e.dataTransfer.setData("host-id", host.id);
+                                  }}
+                                  onClick={() => {
+                                    if (isMultiSelectMode) {
+                                      toggleHostSelection(host.id);
+                                    } else {
+                                      handleHostConnect(safeHost);
+                                    }
+                                  }}
+                                >
+                                  <div className="flex items-center gap-3 h-full">
+                                    {isMultiSelectMode && (
+                                      <div className="shrink-0">
+                                        {selectedHostIds.has(host.id) ? (
+                                          <CheckSquare size={18} className="text-primary" />
+                                        ) : (
+                                          <Square size={18} className="text-muted-foreground" />
+                                        )}
+                                      </div>
+                                    )}
+                                    <DistroAvatar host={safeHost} fallback={distroBadge.text} />
+                                    <div className="min-w-0 flex flex-col justify-center gap-0.5 flex-1">
+                                      <span className="text-sm font-semibold truncate leading-5">
+                                        {safeHost.label}
+                                      </span>
+                                      <div className="text-[11px] text-muted-foreground font-mono truncate leading-4">
+                                        {safeHost.username}@{safeHost.hostname}
+                                      </div>
+                                    </div>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleEditHost(host);
+                                      }}
+                                    >
+                                      <Edit2 size={14} />
+                                    </Button>
+                                  </div>
+                                </div>
+                              </ContextMenuTrigger>
+                              <ContextMenuContent>
+                                <ContextMenuItem onClick={() => handleHostConnect(host)}>
+                                  <Plug className="mr-2 h-4 w-4" /> {t('vault.hosts.connect')}
+                                </ContextMenuItem>
+                                <ContextMenuItem onClick={() => handleEditHost(host)}>
+                                  <Edit2 className="mr-2 h-4 w-4" /> {t('action.edit')}
+                                </ContextMenuItem>
+                                <ContextMenuItem onClick={() => toggleHostPinned(host.id)}>
+                                  <Pin className="mr-2 h-4 w-4" /> {host.pinned ? t('vault.hosts.unpin') : t('vault.hosts.pinToTop')}
+                                </ContextMenuItem>
+                                <ContextMenuItem className="text-destructive" onClick={() => onDeleteHost(host.id)}>
+                                  <Trash2 className="mr-2 h-4 w-4" /> {t('action.delete')}
+                                </ContextMenuItem>
+                              </ContextMenuContent>
+                            </ContextMenu>
+                          );
+                        })}
+                      </div>
+                    </section>
                   )}
                   {viewMode !== "tree" && displayedGroups.length > 0 && (
                     <div className="flex items-center justify-between">
@@ -1756,6 +2050,20 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                                     {t("vault.groups.hostsCount", { count: node.totalHostCount ?? node.hosts.length })}
                                   </div>
                                 </div>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setRenameTargetPath(node.path);
+                                    setRenameGroupName(node.name);
+                                    setRenameGroupError(null);
+                                    setIsRenameGroupOpen(true);
+                                  }}
+                                >
+                                  <Edit2 size={14} />
+                                </Button>
                               </div>
                             </div>
                           </ContextMenuTrigger>
@@ -1867,6 +2175,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                       onDuplicateHost={handleDuplicateHost}
                       onDeleteHost={(host) => onDeleteHost(host.id)}
                       onCopyCredentials={handleCopyCredentials}
+
                       onNewHost={(groupPath) => {
                         setEditingHost(null);
                         setNewHostGroupPath(groupPath || null);
@@ -1906,7 +2215,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                                 {group.name || t("vault.groups.ungrouped")}
                               </span>
                               <span className="text-xs text-muted-foreground/60">
-                                ({group.hosts.length})
+                                ({selectedGroupPath ? group.hosts.length : group.hosts.filter((h) => !pinnedRecentIds.has(h.id)).length})
                               </span>
                             </div>
                             <div
@@ -1916,7 +2225,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                                   : "flex flex-col gap-0",
                               )}
                             >
-                              {group.hosts.map((host) => {
+                              {group.hosts.filter((h) => selectedGroupPath || !pinnedRecentIds.has(h.id)).map((host) => {
                                 const safeHost = sanitizeHost(host);
                                 const effectiveDistro = getEffectiveHostDistro(safeHost);
                                 const distroBadge = {
@@ -1928,7 +2237,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                                     <ContextMenuTrigger>
                                       <div
                                         className={cn(
-                                          "group cursor-pointer",
+                                          "group cursor-pointer relative",
                                           viewMode === "grid"
                                             ? "soft-card elevate rounded-xl h-[68px] px-3 py-2"
                                             : "h-14 px-3 py-2 hover:bg-secondary/60 rounded-lg transition-colors",
@@ -1946,6 +2255,9 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                                           }
                                         }}
                                       >
+                                        {host.pinned && viewMode === "grid" && (
+                                          <Star size={10} className="absolute top-1.5 right-1.5 text-amber-400 fill-amber-400" />
+                                        )}
                                         <div className="flex items-center gap-3 h-full">
                                           {isMultiSelectMode && (
                                             <div
@@ -1981,21 +2293,17 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                                               {safeHost.username}@{safeHost.hostname}
                                             </div>
                                           </div>
-                                          {viewMode === "list" && (
-                                            <>
-                                              <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                                                onClick={(e) => {
-                                                  e.stopPropagation();
-                                                  handleEditHost(host);
-                                                }}
-                                              >
-                                                <Edit2 size={14} />
-                                              </Button>
-                                            </>
-                                          )}
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleEditHost(host);
+                                            }}
+                                          >
+                                            <Edit2 size={14} />
+                                          </Button>
                                         </div>
                                       </div>
                                     </ContextMenuTrigger>
@@ -2019,6 +2327,9 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                                         onClick={() => handleCopyCredentials(host)}
                                       >
                                         <ClipboardCopy className="mr-2 h-4 w-4" /> {t('vault.hosts.copyCredentials')}
+                                      </ContextMenuItem>
+                                      <ContextMenuItem onClick={() => toggleHostPinned(host.id)}>
+                                        <Pin className="mr-2 h-4 w-4" /> {host.pinned ? t('vault.hosts.unpin') : t('vault.hosts.pinToTop')}
                                       </ContextMenuItem>
                                       <ContextMenuItem
                                         className="text-destructive"
@@ -2055,7 +2366,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                           : "flex flex-col gap-0",
                       )}
                     >
-                      {displayedHosts.map((host) => {
+                      {displayedHosts.filter((h) => selectedGroupPath || !pinnedRecentIds.has(h.id)).map((host) => {
                           const safeHost = sanitizeHost(host);
                           const effectiveDistro = getEffectiveHostDistro(safeHost);
                           const distroBadge = {
@@ -2067,7 +2378,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                               <ContextMenuTrigger>
                                 <div
                                   className={cn(
-                                    "group cursor-pointer",
+                                    "group cursor-pointer relative",
                                     viewMode === "grid"
                                       ? "soft-card elevate rounded-xl h-[68px] px-3 py-2"
                                       : "h-14 px-3 py-2 hover:bg-secondary/60 rounded-lg transition-colors",
@@ -2085,6 +2396,9 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                                     }
                                   }}
                                 >
+                                  {host.pinned && viewMode === "grid" && (
+                                    <Star size={10} className="absolute top-1.5 right-1.5 text-amber-400 fill-amber-400" />
+                                  )}
                                   <div className="flex items-center gap-3 h-full">
                                     {isMultiSelectMode && (
                                       <div
@@ -2120,21 +2434,17 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                                         {safeHost.username}@{safeHost.hostname}
                                       </div>
                                     </div>
-                                    {viewMode === "list" && (
-                                      <>
-                                        <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleEditHost(host);
-                                          }}
-                                        >
-                                          <Edit2 size={14} />
-                                        </Button>
-                                      </>
-                                    )}
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleEditHost(host);
+                                      }}
+                                    >
+                                      <Edit2 size={14} />
+                                    </Button>
                                   </div>
                                 </div>
                               </ContextMenuTrigger>
@@ -2158,6 +2468,9 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                                   onClick={() => handleCopyCredentials(host)}
                                 >
                                   <ClipboardCopy className="mr-2 h-4 w-4" /> {t('vault.hosts.copyCredentials')}
+                                </ContextMenuItem>
+                                <ContextMenuItem onClick={() => toggleHostPinned(host.id)}>
+                                  <Pin className="mr-2 h-4 w-4" /> {host.pinned ? t('vault.hosts.unpin') : t('vault.hosts.pinToTop')}
                                 </ContextMenuItem>
                                 <ContextMenuItem
                                   className="text-destructive"

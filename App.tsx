@@ -239,6 +239,7 @@ function App({ settings }: { settings: SettingsState }) {
     deleteConnectionLog,
     clearUnsavedConnectionLogs,
     updateHostDistro,
+    updateHostLastConnected,
     convertKnownHostToHost,
     importDataFromString,
   } = useVaultState();
@@ -1032,6 +1033,9 @@ function App({ settings }: { settings: SettingsState }) {
   }, [hosts, updateHosts, t]);
 
   // System info for connection logs
+  const hostsRef = useRef(hosts);
+  hostsRef.current = hosts;
+
   const systemInfoRef = useRef<{ username: string; hostname: string }>({
     username: 'user',
     hostname: 'localhost',
@@ -1109,6 +1113,17 @@ function App({ settings }: { settings: SettingsState }) {
       saved: false,
     });
   }, [addConnectionLog, connectToHost, identities, keys]);
+
+  // Wrap updateSessionStatus to track lastConnectedAt on successful connection
+  const handleSessionStatusChange = useCallback((sessionId: string, status: TerminalSession['status']) => {
+    updateSessionStatus(sessionId, status);
+    if (status === 'connected') {
+      const session = sessionById.get(sessionId);
+      if (session?.hostId) {
+        updateHostLastConnected(session.hostId);
+      }
+    }
+  }, [updateSessionStatus, sessionById, updateHostLastConnected]);
 
   // Wrapper to create serial session with logging
   const handleConnectSerial = useCallback((config: SerialConfig, options?: { charset?: string }) => {
@@ -1388,7 +1403,7 @@ function App({ settings }: { settings: SettingsState }) {
           onUpdateTerminalFontFamilyId={setTerminalFontFamilyId}
           onUpdateTerminalFontSize={setTerminalFontSize}
           onCloseSession={closeSession}
-          onUpdateSessionStatus={updateSessionStatus}
+          onUpdateSessionStatus={handleSessionStatusChange}
           onUpdateHostDistro={updateHostDistro}
           onUpdateHost={(host) => updateHosts(hosts.map(h => h.id === host.id ? host : h))}
           onAddKnownHost={(kh) => updateKnownHosts([...knownHosts, kh])}
