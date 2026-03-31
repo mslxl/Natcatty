@@ -1115,6 +1115,26 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     return () => clearTimeout(timer);
   }, [inWorkspace, isVisible]);
 
+  // When search bar opens/closes, re-fit terminal and maintain scroll position
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term || !fitAddonRef.current) return;
+    const buffer = term.buffer.active;
+    const wasAtBottom = buffer.viewportY >= buffer.baseY;
+    const prevViewportY = buffer.viewportY;
+    const timer = setTimeout(() => {
+      safeFit({ force: true, requireVisible: true });
+      requestAnimationFrame(() => {
+        if (wasAtBottom) {
+          term.scrollToBottom();
+        } else {
+          term.scrollToLine(prevViewportY);
+        }
+      });
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [isSearchOpen]);
+
   useEffect(() => {
     const shouldAutoFocus = isVisible && termRef.current && (!inWorkspace || isFocusMode);
     if (shouldAutoFocus) {
