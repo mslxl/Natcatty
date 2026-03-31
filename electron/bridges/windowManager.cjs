@@ -917,6 +917,7 @@ async function openSettingsWindow(electronModule, options, { showOnLoad = true }
   }
 
   const win = new BrowserWindow({
+    title: "netcatty Settings",
     width: settingsWidth,
     height: settingsHeight,
     ...(settingsX !== undefined && settingsY !== undefined ? { x: settingsX, y: settingsY } : {}),
@@ -1041,6 +1042,9 @@ async function openSettingsWindow(electronModule, options, { showOnLoad = true }
   win.on('closed', () => {
     settingsWindow = null;
   });
+
+  // Prevent HTML <title> from overriding the window title
+  win.on('page-title-updated', (e) => { e.preventDefault(); });
 
   // Load the settings page
   const settingsPath = '/#/settings';
