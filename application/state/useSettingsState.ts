@@ -340,20 +340,11 @@ export const useSettingsState = () => {
     }
   }, []);
 
-  const [immersiveMode, setImmersiveModeState] = useState<boolean>(() => {
-    const stored = localStorageAdapter.readString(STORAGE_KEY_IMMERSIVE_MODE);
-    if (stored === null || stored === '') {
-      // Persist default so collectSyncableSettings() can include it
-      localStorageAdapter.writeString(STORAGE_KEY_IMMERSIVE_MODE, 'true');
-      return true;
-    }
-    return stored === 'true';
-  });
-  const setImmersiveMode = useCallback((enabled: boolean) => {
-    setImmersiveModeState(enabled);
-    localStorageAdapter.writeString(STORAGE_KEY_IMMERSIVE_MODE, String(enabled));
-    notifySettingsChanged(STORAGE_KEY_IMMERSIVE_MODE, enabled);
-  }, [notifySettingsChanged]);
+  // Immersive mode is always enabled — the toggle has been removed from settings
+  const immersiveMode = true;
+  const setImmersiveMode = useCallback((_enabled: boolean) => {
+    // no-op: immersive mode is always on
+  }, []);
 
   const setSftpTransferConcurrency = useCallback((value: number) => {
     const clamped = Math.max(1, Math.min(16, Math.round(value)));

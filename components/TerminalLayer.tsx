@@ -1452,13 +1452,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   }, [applyTerminalPreviewVars, themePreview]);
 
   useEffect(() => {
-    const themeToApply = activeTopTabsThemeId || (previewTargetSessionId ? focusedThemeId : null);
-    if (themeToApply) {
-      applyTopTabsPreviewVars(themeToApply);
-    } else {
-      clearTopTabsPreviewVars();
+    if (activeTopTabsThemeId) {
+      applyTopTabsPreviewVars(activeTopTabsThemeId);
+      return;
     }
-  }, [activeTopTabsThemeId, focusedThemeId, previewTargetSessionId, applyTopTabsPreviewVars]);
+    clearTopTabsPreviewVars();
+  }, [activeTopTabsThemeId, applyTopTabsPreviewVars]);
 
   useEffect(() => {
     const panelOpen = activeSidePanelTab === 'theme' && !!previewTargetSessionId;
