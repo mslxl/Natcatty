@@ -411,9 +411,9 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         username: jump.username || 'root',
         readyTimeout: 120000, // 2 minutes to allow for keyboard-interactive (2FA/MFA)
         // Use user-configured keepalive interval from options (in seconds -> convert to ms)
-        // If 0 or not provided, use 10000ms as default
-        keepaliveInterval: options.keepaliveInterval && options.keepaliveInterval > 0 ? options.keepaliveInterval * 1000 : 10000,
-        keepaliveCountMax: 3,
+        // 0 = disabled (no keepalive packets sent)
+        keepaliveInterval: options.keepaliveInterval > 0 ? options.keepaliveInterval * 1000 : 0,
+        keepaliveCountMax: options.keepaliveInterval > 0 ? 3 : 0,
         // Enable keyboard-interactive authentication (required for 2FA/MFA)
         tryKeyboard: true,
         algorithms: buildAlgorithms(options.legacyAlgorithms),
@@ -681,9 +681,9 @@ async function startSSHSession(event, options) {
       // `readyTimeout` covers the entire connection + authentication flow in ssh2.
       readyTimeout: 20000, // Fast failure for non-interactive auth
       // Use user-configured keepalive interval (in seconds -> convert to ms)
-      // If 0 or not provided, use 10000ms as default
-      keepaliveInterval: options.keepaliveInterval && options.keepaliveInterval > 0 ? options.keepaliveInterval * 1000 : 10000,
-      keepaliveCountMax: 3,
+      // 0 = disabled (no keepalive packets sent)
+      keepaliveInterval: options.keepaliveInterval > 0 ? options.keepaliveInterval * 1000 : 0,
+      keepaliveCountMax: options.keepaliveInterval > 0 ? 3 : 0,
       // Enable keyboard-interactive authentication (required for 2FA/MFA)
       tryKeyboard: true,
       algorithms: buildAlgorithms(options.legacyAlgorithms),
