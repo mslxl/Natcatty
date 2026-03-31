@@ -1776,8 +1776,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                   {/* Pinned hosts section - only at root level */}
                   {viewMode !== "tree" && !selectedGroupPath && pinnedHosts.length > 0 && (
                     <section className="space-y-2 mb-4">
-                      <h3 className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
-                        <Pin size={14} />
+                      <h3 className="text-sm font-semibold text-muted-foreground inline-flex items-center gap-1.5">
+                        <Pin size={14} className="shrink-0 translate-y-[0.5px]" />
                         {t("vault.hosts.pinned")}
                       </h3>
                       <div className={cn(
@@ -1876,8 +1876,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                   {/* Recently Connected section - only at root level, toggleable */}
                   {viewMode !== "tree" && !selectedGroupPath && showRecentHosts && recentHosts.length > 0 && (
                     <section className="space-y-2 mb-4">
-                      <h3 className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
-                        <Clock size={14} />
+                      <h3 className="text-sm font-semibold text-muted-foreground inline-flex items-center gap-1.5">
+                        <Clock size={14} className="shrink-0 translate-y-[0.5px]" />
                         {t("vault.hosts.recentlyConnected")}
                       </h3>
                       <div className={cn(
