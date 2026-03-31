@@ -306,6 +306,8 @@ function App({ settings }: { settings: SettingsState }) {
     () => new Map(sessions.map((session) => [session.id, session])),
     [sessions],
   );
+  const sessionByIdRef = useRef(sessionById);
+  sessionByIdRef.current = sessionById;
   const workspaceById = useMemo(
     () => new Map(workspaces.map((workspace) => [workspace.id, workspace])),
     [workspaces],
@@ -1118,12 +1120,12 @@ function App({ settings }: { settings: SettingsState }) {
   const handleSessionStatusChange = useCallback((sessionId: string, status: TerminalSession['status']) => {
     updateSessionStatus(sessionId, status);
     if (status === 'connected') {
-      const session = sessionById.get(sessionId);
+      const session = sessionByIdRef.current.get(sessionId);
       if (session?.hostId) {
         updateHostLastConnected(session.hostId);
       }
     }
-  }, [updateSessionStatus, sessionById, updateHostLastConnected]);
+  }, [updateSessionStatus, updateHostLastConnected]);
 
   // Wrapper to create serial session with logging
   const handleConnectSerial = useCallback((config: SerialConfig, options?: { charset?: string }) => {
