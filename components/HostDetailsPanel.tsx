@@ -99,6 +99,7 @@ interface HostDetailsPanelProps {
   onCancel: () => void;
   onCreateGroup?: (groupPath: string) => void; // Callback to create a new group
   onCreateTag?: (tag: string) => void; // Callback to create a new tag
+  groupDefaults?: Partial<import('../domain/models').GroupConfig>;
 }
 
 const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
@@ -116,6 +117,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   onCancel,
   onCreateGroup,
   onCreateTag,
+  groupDefaults,
 }) => {
   const { t } = useI18n();
   const { checkSshAgent } = useApplicationBackend();
@@ -126,13 +128,13 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
         id: crypto.randomUUID(),
         label: "",
         hostname: "",
-        port: 22,
-        username: "root",
+        port: groupDefaults?.port ? undefined : 22,
+        username: groupDefaults?.username ? "" : "root",
         protocol: "ssh",
         tags: [],
         os: "linux",
         authMethod: "password",
-        charset: "UTF-8",
+        charset: groupDefaults?.charset ? undefined : "UTF-8",
         distroMode: "auto",
         createdAt: Date.now(),
         group: defaultGroup || undefined, // Pre-fill with current navigation group
@@ -282,12 +284,10 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   };
 
   const removeHostFromChain = (index: number) => {
-    setForm((prev) => ({
-      ...prev,
-      hostChain: {
-        hostIds: (prev.hostChain?.hostIds || []).filter((_, i) => i !== index),
-      },
-    }));
+    setForm((prev) => {
+      const ids = (prev.hostChain?.hostIds || []).filter((_, i) => i !== index);
+      return { ...prev, hostChain: ids.length > 0 ? { hostIds: ids } : undefined };
+    });
   };
 
   const clearHostChain = useCallback(() => {
@@ -313,12 +313,10 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   };
 
   const removeEnvVar = (index: number) => {
-    setForm((prev) => ({
-      ...prev,
-      environmentVariables: (prev.environmentVariables || []).filter(
-        (_, i) => i !== index,
-      ),
-    }));
+    setForm((prev) => {
+      const filtered = (prev.environmentVariables || []).filter((_, i) => i !== index);
+      return { ...prev, environmentVariables: filtered.length > 0 ? filtered : undefined };
+    });
   };
 
   const handleSubmit = () => {
@@ -363,7 +361,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
       label: finalLabel,
       group: finalGroup,
       tags: form.tags || [],
-      port: form.port || 22,
+      port: form.port ?? (groupDefaults?.port ? undefined : 22),
       // Clear password if savePassword is explicitly set to false
       password: form.savePassword === false ? undefined : form.password,
       managedSourceId: finalManagedSourceId,
@@ -752,8 +750,9 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
               <div className="ml-auto w-1/2 min-w-0 flex items-center gap-2 justify-end">
                 <Input
                   type="number"
-                  value={form.port}
-                  onChange={(e) => update("port", Number(e.target.value))}
+                  value={form.port ?? ""}
+                  onChange={(e) => update("port", e.target.value ? Number(e.target.value) : undefined)}
+                  placeholder={groupDefaults?.port ? String(groupDefaults.port) : "22"}
                   className="h-8 flex-1 min-w-0 text-center"
                 />
                 <span className="text-xs text-muted-foreground">
@@ -805,7 +804,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
                 if (!hasIdentities) {
                   return (
                     <Input
-                      placeholder={t("hostDetails.username.placeholder")}
+                      placeholder={groupDefaults?.username || t("hostDetails.username.placeholder")}
                       value={form.username}
                       onChange={(e) => update("username", e.target.value)}
                       className="h-10"
@@ -824,7 +823,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
                     <PopoverTrigger asChild>
                       <div className="relative">
                         <Input
-                          placeholder={t("hostDetails.username.placeholder")}
+                          placeholder={groupDefaults?.username || t("hostDetails.username.placeholder")}
                           value={form.username}
                           onChange={(e) => {
                             const next = e.target.value;
@@ -1755,7 +1754,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
                 className="text-muted-foreground hover:text-destructive flex-shrink-0 ml-auto"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setForm((prev) => ({ ...prev, environmentVariables: [] }));
+                  setForm((prev) => ({ ...prev, environmentVariables: undefined }));
                 }}
               />
             </button>
@@ -1778,7 +1777,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
             <p className="text-xs font-semibold">{t("hostDetails.startupCommand")}</p>
           </div>
           <Textarea
-            placeholder={t("hostDetails.startupCommand.placeholder")}
+            placeholder={groupDefaults?.startupCommand || t("hostDetails.startupCommand.placeholder")}
             value={form.startupCommand || ""}
             onChange={(e) => update("startupCommand", e.target.value)}
             className="min-h-[80px] font-mono text-sm"
@@ -1842,7 +1841,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
 
             {/* Telnet Charset */}
             <Input
-              placeholder={t("hostDetails.charset.placeholder")}
+              placeholder={groupDefaults?.charset || t("hostDetails.charset.placeholder")}
               value={form.charset || "UTF-8"}
               onChange={(e) => update("charset", e.target.value)}
               className="h-10"

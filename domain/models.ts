@@ -62,7 +62,7 @@ export interface Host {
   id: string;
   label: string;
   hostname: string;
-  port: number;
+  port?: number;
   username: string;
   // Optional reference to a reusable identity (username + auth) stored in Keychain.
   identityId?: string;
@@ -180,6 +180,39 @@ export interface GroupNode {
   hosts: Host[];
   /** Pre-computed total host count including all descendants. Set during tree construction. */
   totalHostCount?: number;
+}
+
+/** Default configuration for a group. Hosts in this group inherit these values when not explicitly set. */
+export interface GroupConfig {
+  path: string;
+  username?: string;
+  password?: string;
+  savePassword?: boolean;
+  authMethod?: 'password' | 'key' | 'certificate';
+  identityId?: string;
+  identityFileId?: string;
+  identityFilePaths?: string[];
+  port?: number;
+  protocol?: 'ssh' | 'telnet';
+  agentForwarding?: boolean;
+  proxyConfig?: ProxyConfig;
+  hostChain?: HostChainConfig;
+  startupCommand?: string;
+  legacyAlgorithms?: boolean;
+  environmentVariables?: EnvVar[];
+  charset?: string;
+  moshEnabled?: boolean;
+  moshServerPath?: string;
+  telnetEnabled?: boolean;
+  telnetPort?: number;
+  telnetUsername?: string;
+  telnetPassword?: string;
+  theme?: string;
+  themeOverride?: boolean;
+  fontFamily?: string;
+  fontFamilyOverride?: boolean;
+  fontSize?: number;
+  fontSizeOverride?: boolean;
 }
 
 export interface SyncConfig {

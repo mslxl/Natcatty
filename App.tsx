@@ -14,6 +14,7 @@ import { initializeFonts } from './application/state/fontStore';
 import { initializeUIFonts } from './application/state/uiFontStore';
 import { I18nProvider, useI18n } from './application/i18n/I18nProvider';
 import { matchesKeyBinding } from './domain/models';
+import { resolveGroupDefaults, applyGroupDefaults } from './domain/groupConfig';
 import { resolveHostAuth } from './domain/sshAuth';
 import { resolveHostTerminalThemeId } from './domain/terminalAppearance';
 import { collectSessionIds } from './domain/workspace';
@@ -242,6 +243,8 @@ function App({ settings }: { settings: SettingsState }) {
     updateHostLastConnected,
     convertKnownHostToHost,
     importDataFromString,
+    groupConfigs,
+    updateGroupConfigs,
   } = useVaultState();
 
   const {
@@ -385,6 +388,7 @@ function App({ settings }: { settings: SettingsState }) {
     snippetPackages,
     portForwardingRules: portForwardingRulesForSync,
     knownHosts,
+    groupConfigs,
     settingsVersion: settings.settingsVersion,
     onApplyPayload: (payload) => {
       applySyncPayload(payload, {
@@ -429,7 +433,8 @@ function App({ settings }: { settings: SettingsState }) {
     }
 
     if (start) {
-      void startTunnel(rule, host, hosts, keys, identities, (status, error) => {
+      const effectiveHost = resolveEffectiveHost(host);
+      void startTunnel(rule, effectiveHost, hosts, keys, identities, (status, error) => {
         if (status === "error" && error) toast.error(error);
       }, rule.autoStart);
       return;
@@ -444,10 +449,12 @@ function App({ settings }: { settings: SettingsState }) {
       return;
     }
 
+    const effectiveHost = resolveEffectiveHost(host);
+
     const { username, hostname: localHost } = systemInfoRef.current;
-    if (host.protocol === 'serial') {
+    if (effectiveHost.protocol === 'serial') {
       const portName = host.hostname.split('/').pop() || host.hostname;
-      const sessionId = connectToHost(host);
+      const sessionId = connectToHost(effectiveHost);
       addConnectionLog({
         sessionId,
         hostId: host.id,
@@ -463,9 +470,9 @@ function App({ settings }: { settings: SettingsState }) {
       return;
     }
 
-    const protocol = host.moshEnabled ? 'mosh' : (host.protocol || 'ssh');
-    const resolvedAuth = resolveHostAuth({ host, keys, identities });
-    const sessionId = connectToHost(host);
+    const protocol = effectiveHost.moshEnabled ? 'mosh' : (effectiveHost.protocol || 'ssh');
+    const resolvedAuth = resolveHostAuth({ host: effectiveHost, keys, identities });
+    const sessionId = connectToHost(effectiveHost);
     addConnectionLog({
       sessionId,
       hostId: host.id,
@@ -614,6 +621,7 @@ function App({ settings }: { settings: SettingsState }) {
     hosts,
     keys,
     identities,
+    groupConfigs,
   });
 
   // Sync tray menu data + handle tray actions
@@ -1076,14 +1084,22 @@ function App({ settings }: { settings: SettingsState }) {
     });
   }, [addConnectionLog, createLocalTerminalWithCurrentShell]);
 
+  const resolveEffectiveHost = useCallback((host: Host): Host => {
+    if (!host.group) return host;
+    const groupDefaults = resolveGroupDefaults(host.group, groupConfigs);
+    return applyGroupDefaults(host, groupDefaults);
+  }, [groupConfigs]);
+
   // Wrapper to connect to host with logging
   const handleConnectToHost = useCallback((host: Host) => {
     const { username, hostname: localHost } = systemInfoRef.current;
 
+    const effectiveHost = resolveEffectiveHost(host);
+
     // Handle serial hosts separately
-    if (host.protocol === 'serial') {
+    if (effectiveHost.protocol === 'serial') {
       const portName = host.hostname.split('/').pop() || host.hostname;
-      const sessionId = connectToHost(host);
+      const sessionId = connectToHost(effectiveHost);
       addConnectionLog({
         sessionId,
         hostId: host.id,
@@ -1099,9 +1115,9 @@ function App({ settings }: { settings: SettingsState }) {
       return;
     }
 
-    const protocol = host.moshEnabled ? 'mosh' : (host.protocol || 'ssh');
-    const resolvedAuth = resolveHostAuth({ host, keys, identities });
-    const sessionId = connectToHost(host);
+    const protocol = effectiveHost.moshEnabled ? 'mosh' : (effectiveHost.protocol || 'ssh');
+    const resolvedAuth = resolveHostAuth({ host: effectiveHost, keys, identities });
+    const sessionId = connectToHost(effectiveHost);
     addConnectionLog({
       sessionId,
       hostId: host.id,
@@ -1114,7 +1130,7 @@ function App({ settings }: { settings: SettingsState }) {
       localHostname: localHost,
       saved: false,
     });
-  }, [addConnectionLog, connectToHost, identities, keys]);
+  }, [addConnectionLog, connectToHost, resolveEffectiveHost, identities, keys]);
 
   // Wrap updateSessionStatus to track lastConnectedAt on successful connection
   const handleSessionStatusChange = useCallback((sessionId: string, status: TerminalSession['status']) => {
@@ -1179,24 +1195,25 @@ function App({ settings }: { settings: SettingsState }) {
     }
   }, [sessions, connectionLogs, updateConnectionLog]);
 
-  // Check if host has multiple protocols enabled
+  // Check if host has multiple protocols enabled (using effective/resolved host)
   const hasMultipleProtocols = useCallback((host: Host) => {
+    const effective = resolveEffectiveHost(host);
     let count = 0;
     // SSH is always available as base protocol (unless explicitly set to something else)
-    if (host.protocol === 'ssh' || !host.protocol) count++;
+    if (effective.protocol === 'ssh' || !effective.protocol) count++;
     // Mosh adds another option
-    if (host.moshEnabled) count++;
+    if (effective.moshEnabled) count++;
     // Telnet adds another option
-    if (host.telnetEnabled) count++;
+    if (effective.telnetEnabled) count++;
     // If protocol is explicitly telnet (not ssh), count it
-    if (host.protocol === 'telnet' && !host.telnetEnabled) count++;
+    if (effective.protocol === 'telnet' && !effective.telnetEnabled) count++;
     return count > 1;
-  }, []);
+  }, [resolveEffectiveHost]);
 
   // Handle host connect with protocol selection (used by QuickSwitcher)
   const handleHostConnectWithProtocolCheck = useCallback((host: Host) => {
     if (hasMultipleProtocols(host)) {
-      setProtocolSelectHost(host);
+      setProtocolSelectHost(resolveEffectiveHost(host));
       setIsQuickSwitcherOpen(false);
       setQuickSearch('');
     } else {
@@ -1204,7 +1221,7 @@ function App({ settings }: { settings: SettingsState }) {
       setIsQuickSwitcherOpen(false);
       setQuickSearch('');
     }
-  }, [hasMultipleProtocols, handleConnectToHost]);
+  }, [hasMultipleProtocols, handleConnectToHost, resolveEffectiveHost]);
 
   // Handle protocol selection from dialog
   const handleProtocolSelect = useCallback((protocol: HostProtocol, port: number) => {
@@ -1346,6 +1363,8 @@ function App({ settings }: { settings: SettingsState }) {
             onConnectSerial={handleConnectSerial}
             onDeleteHost={handleDeleteHost}
             onConnect={handleConnectToHost}
+            groupConfigs={groupConfigs}
+            onUpdateGroupConfigs={updateGroupConfigs}
             onUpdateHosts={updateHosts}
             onUpdateKeys={updateKeys}
             onUpdateIdentities={updateIdentities}
@@ -1372,6 +1391,7 @@ function App({ settings }: { settings: SettingsState }) {
           hosts={hosts}
           keys={keys}
           identities={identities}
+          groupConfigs={groupConfigs}
           updateHosts={updateHosts}
           sftpDefaultViewMode={sftpDefaultViewMode}
           sftpDoubleClickBehavior={sftpDoubleClickBehavior}
@@ -1386,6 +1406,7 @@ function App({ settings }: { settings: SettingsState }) {
 
         <TerminalLayerMount
           hosts={hosts}
+          groupConfigs={groupConfigs}
           keys={keys}
           identities={identities}
           snippets={snippets}

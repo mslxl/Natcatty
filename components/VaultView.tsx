@@ -35,6 +35,7 @@ import { useI18n } from "../application/i18n/I18nProvider";
 import { useStoredViewMode } from "../application/state/useStoredViewMode";
 import { useStoredBoolean } from "../application/state/useStoredBoolean";
 import { useTreeExpandedState } from "../application/state/useTreeExpandedState";
+import { resolveGroupDefaults, applyGroupDefaults } from "../domain/groupConfig";
 import { getEffectiveHostDistro, sanitizeHost } from "../domain/host";
 import { importVaultHostsFromText, exportHostsToCsvWithStats } from "../domain/vaultImport";
 import type { VaultImportFormat } from "../domain/vaultImport";
@@ -43,6 +44,7 @@ import { cn } from "../lib/utils";
 import { useInstantThemeSwitch } from "../lib/useInstantThemeSwitch";
 import {
   ConnectionLog,
+  GroupConfig,
   GroupNode,
   Host,
   HostProtocol,
@@ -57,6 +59,7 @@ import {
 } from "../types";
 import { AppLogo } from "./AppLogo";
 import { DistroAvatar } from "./DistroAvatar";
+import GroupDetailsPanel from "./GroupDetailsPanel";
 import HostDetailsPanel from "./HostDetailsPanel";
 import { HostTreeView } from "./HostTreeView";
 import KeychainManager from "./KeychainManager";
@@ -138,6 +141,8 @@ interface VaultViewProps {
   onClearUnsavedConnectionLogs: () => void;
   onOpenLogView: (log: ConnectionLog) => void;
   onRunSnippet?: (snippet: Snippet, targetHosts: Host[]) => void;
+  groupConfigs: GroupConfig[];
+  onUpdateGroupConfigs: (configs: GroupConfig[]) => void;
   // Optional: navigate to a specific section on mount or when changed
   navigateToSection?: VaultSection | null;
   onNavigateToSectionHandled?: () => void;
@@ -182,6 +187,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   onClearUnsavedConnectionLogs,
   onOpenLogView,
   onRunSnippet,
+  groupConfigs,
+  onUpdateGroupConfigs,
   navigateToSection,
   onNavigateToSectionHandled,
 }) => {
@@ -246,6 +253,17 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   const [editingHost, setEditingHost] = useState<Host | null>(null);
   const [newHostGroupPath, setNewHostGroupPath] = useState<string | null>(null);
 
+  // Group panel state
+  const [isGroupPanelOpen, setIsGroupPanelOpen] = useState(false);
+  const [editingGroupPath, setEditingGroupPath] = useState<string | null>(null);
+
+  // Compute inherited group defaults for the host being edited
+  const editingHostGroupDefaults = useMemo(() => {
+    const group = editingHost?.group || newHostGroupPath || selectedGroupPath;
+    if (!group) return undefined;
+    return resolveGroupDefaults(group, groupConfigs);
+  }, [editingHost, newHostGroupPath, selectedGroupPath, groupConfigs]);
+
   // Quick connect state
   const [quickConnectTarget, setQuickConnectTarget] = useState<{
     hostname: string;
@@ -290,30 +308,37 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     [isSearchQuickConnect, handleConnectClick],
   );
 
-  // Check if host has multiple protocols enabled
+  // Check if host has multiple protocols enabled (using effective/resolved host)
   const hasMultipleProtocols = useCallback((host: Host) => {
+    const effective = host.group
+      ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigs))
+      : host;
     let count = 0;
     // SSH is always available as base protocol (unless explicitly set to something else)
-    if (host.protocol === "ssh" || !host.protocol) count++;
+    if (effective.protocol === "ssh" || !effective.protocol) count++;
     // Mosh adds another option
-    if (host.moshEnabled) count++;
+    if (effective.moshEnabled) count++;
     // Telnet adds another option
-    if (host.telnetEnabled) count++;
+    if (effective.telnetEnabled) count++;
     // If protocol is explicitly telnet (not ssh), count it
-    if (host.protocol === "telnet" && !host.telnetEnabled) count++;
+    if (effective.protocol === "telnet" && !effective.telnetEnabled) count++;
     return count > 1;
-  }, []);
+  }, [groupConfigs]);
 
   // Handle host connect with protocol selection
   const handleHostConnect = useCallback(
     (host: Host) => {
       if (hasMultipleProtocols(host)) {
-        setProtocolSelectHost(host);
+        // Pass effective host to protocol dialog so it shows correct ports/protocols
+        const effective = host.group
+          ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigs))
+          : host;
+        setProtocolSelectHost(effective);
       } else {
         onConnect(host);
       }
     },
-    [hasMultipleProtocols, onConnect],
+    [hasMultipleProtocols, onConnect, groupConfigs],
   );
 
   // Handle protocol selection
@@ -354,12 +379,16 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   );
 
   const handleNewHost = useCallback(() => {
+    setIsGroupPanelOpen(false);
+    setEditingGroupPath(null);
     setEditingHost(null);
     setNewHostGroupPath(null);
     setIsHostPanelOpen(true);
   }, []);
 
   const handleEditHost = useCallback((host: Host) => {
+    setIsGroupPanelOpen(false);
+    setEditingGroupPath(null);
     setEditingHost(host);
     setIsHostPanelOpen(true);
   }, []);
@@ -412,38 +441,42 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
 
   // Copy host credentials to clipboard
   const handleCopyCredentials = useCallback((host: Host) => {
+    // Apply group defaults so inherited credentials are included
+    const effective = host.group
+      ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigs))
+      : host;
     // Only use telnet-specific port and credentials when protocol is explicitly telnet
     // Don't treat telnetEnabled as primary - that's just an optional protocol
-    const isTelnet = host.protocol === "telnet";
+    const isTelnet = effective.protocol === "telnet";
 
     const defaultPort = isTelnet ? 23 : 22;
     const effectivePort = isTelnet
-      ? (host.telnetPort ?? host.port ?? 23)
-      : (host.port ?? 22);
+      ? (effective.telnetPort ?? effective.port ?? 23)
+      : (effective.port ?? 22);
 
     // Bracket IPv6 addresses when appending non-default port
     let address: string;
     if (effectivePort !== defaultPort) {
-      const isIPv6 = host.hostname.includes(":") && !host.hostname.startsWith("[");
-      const hostname = isIPv6 ? `[${host.hostname}]` : host.hostname;
+      const isIPv6 = effective.hostname.includes(":") && !effective.hostname.startsWith("[");
+      const hostname = isIPv6 ? `[${effective.hostname}]` : effective.hostname;
       address = `${hostname}:${effectivePort}`;
     } else {
-      address = host.hostname;
+      address = effective.hostname;
     }
 
     // Resolve credentials from identity if configured, otherwise use host credentials
     // For telnet hosts, use telnet-specific credentials
-    const identity = host.identityId
-      ? identities.find((i) => i.id === host.identityId)
+    const identity = effective.identityId
+      ? identities.find((i) => i.id === effective.identityId)
       : undefined;
 
     const username = isTelnet
-      ? (host.telnetUsername?.trim() || host.username?.trim())
-      : (identity?.username?.trim() || host.username?.trim());
+      ? (effective.telnetUsername?.trim() || effective.username?.trim())
+      : (identity?.username?.trim() || effective.username?.trim());
 
     const password = isTelnet
-      ? (host.telnetPassword || host.password)
-      : (identity?.password || host.password);
+      ? (effective.telnetPassword || effective.password)
+      : (identity?.password || effective.password);
 
     if (!password) {
       toast.warning(t('vault.hosts.copyCredentials.toast.noPassword'));
@@ -454,7 +487,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     navigator.clipboard.writeText(text).then(() => {
       toast.success(t('vault.hosts.copyCredentials.toast.success'));
     });
-  }, [identities, t]);
+  }, [identities, groupConfigs, t]);
 
   const [lastPinnedId, setLastPinnedId] = useState<string | null>(null);
   const toggleHostPinned = useCallback((hostId: string) => {
@@ -1201,6 +1234,68 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     setIsRenameGroupOpen(false);
   };
 
+  const handleEditGroupConfig = useCallback((groupPath: string) => {
+    setIsHostPanelOpen(false);
+    setEditingHost(null);
+    setEditingGroupPath(groupPath);
+    setIsGroupPanelOpen(true);
+  }, []);
+
+  const handleSaveGroupConfig = useCallback((config: GroupConfig, _newName?: string, _newParent?: string | null) => {
+    const oldPath = editingGroupPath!;
+    const newPath = config.path; // Panel already computed the correct path
+
+    // Validate no duplicate path on rename/reparent
+    if (newPath !== oldPath && customGroups.includes(newPath)) {
+      toast.error(t('vault.groups.errors.duplicatePath'));
+      return;
+    }
+
+    // Save config (use new path)
+    const updatedConfigs = [...groupConfigs.filter(c => c.path !== oldPath), config];
+
+    // Handle path change (rename or parent change)
+    if (newPath !== oldPath) {
+      // Update groups, hosts, managed sources, and configs for path change
+      const updatedGroups = customGroups.map((g) => {
+        if (g === oldPath) return newPath;
+        if (g.startsWith(oldPath + '/')) return newPath + g.slice(oldPath.length);
+        return g;
+      });
+      const updatedHosts = hosts.map((h) => {
+        const g = h.group || '';
+        if (g === oldPath) return { ...h, group: newPath };
+        if (g.startsWith(oldPath + '/')) return { ...h, group: newPath + g.slice(oldPath.length) };
+        return h;
+      });
+      const updatedManagedSources = managedSources.map((s) => {
+        if (s.groupName === oldPath) return { ...s, groupName: newPath };
+        if (s.groupName.startsWith(oldPath + '/')) return { ...s, groupName: newPath + s.groupName.slice(oldPath.length) };
+        return s;
+      });
+      if (updatedManagedSources.some((s, i) => s !== managedSources[i])) {
+        onUpdateManagedSources(updatedManagedSources);
+      }
+      onUpdateCustomGroups(Array.from(new Set(updatedGroups)));
+      onUpdateHosts(updatedHosts);
+      // Update child config paths too
+      const finalConfigs = updatedConfigs.map(c => {
+        if (c.path.startsWith(oldPath + '/')) return { ...c, path: newPath + c.path.slice(oldPath.length) };
+        return c;
+      });
+      onUpdateGroupConfigs(finalConfigs);
+      if (selectedGroupPath === oldPath) setSelectedGroupPath(newPath);
+      if (selectedGroupPath?.startsWith(oldPath + '/')) {
+        setSelectedGroupPath(newPath + selectedGroupPath.slice(oldPath.length));
+      }
+    } else {
+      onUpdateGroupConfigs(updatedConfigs);
+    }
+
+    setIsGroupPanelOpen(false);
+    setEditingGroupPath(null);
+  }, [groupConfigs, editingGroupPath, customGroups, hosts, managedSources, selectedGroupPath, onUpdateGroupConfigs, onUpdateCustomGroups, onUpdateHosts, onUpdateManagedSources]);
+
   const deleteGroupPath = async (path: string, deleteHosts: boolean = false) => {
     const keepGroups = customGroups.filter(
       (g) => !(g === path || g.startsWith(path + "/")),
@@ -1255,6 +1350,13 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
 
     onUpdateCustomGroups(keepGroups);
     onUpdateHosts(keepHosts);
+    // Remove configs for deleted group and its children
+    const updatedGroupConfigs = groupConfigs.filter(
+      (c) => c.path !== path && !c.path.startsWith(path + '/')
+    );
+    if (updatedGroupConfigs.length !== groupConfigs.length) {
+      onUpdateGroupConfigs(updatedGroupConfigs);
+    }
     if (
       selectedGroupPath &&
       (selectedGroupPath === path || selectedGroupPath.startsWith(path + "/"))
@@ -1267,23 +1369,27 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     const name = sourcePath.split("/").filter(Boolean).pop() || "";
     const newPath = targetParent ? `${targetParent}/${name}` : name;
     if (newPath === sourcePath || newPath.startsWith(sourcePath + "/")) return;
+    if (customGroups.includes(newPath)) {
+      toast.error(t('vault.groups.errors.duplicatePath'));
+      return;
+    }
     const updatedGroups = customGroups.map((g) => {
       if (g === sourcePath) return newPath;
-      if (g.startsWith(sourcePath + "/")) return g.replace(sourcePath, newPath);
+      if (g.startsWith(sourcePath + "/")) return newPath + g.slice(sourcePath.length);
       return g;
     });
     const updatedHosts = hosts.map((h) => {
       const g = h.group || "";
       if (g === sourcePath) return { ...h, group: newPath };
       if (g.startsWith(sourcePath + "/"))
-        return { ...h, group: g.replace(sourcePath, newPath) };
+        return { ...h, group: newPath + g.slice(sourcePath.length) };
       return h;
     });
     // Update managed sources if any match the moved group path
     const updatedManagedSources = managedSources.map((s) => {
       if (s.groupName === sourcePath) return { ...s, groupName: newPath };
       if (s.groupName.startsWith(sourcePath + "/"))
-        return { ...s, groupName: s.groupName.replace(sourcePath, newPath) };
+        return { ...s, groupName: newPath + s.groupName.slice(sourcePath.length) };
       return s;
     });
     if (updatedManagedSources.some((s, i) => s !== managedSources[i])) {
@@ -1291,6 +1397,16 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     }
     onUpdateCustomGroups(Array.from(new Set(updatedGroups)));
     onUpdateHosts(updatedHosts);
+    // Update group configs for moved paths
+    const updatedGroupConfigs = groupConfigs.map((c) => {
+      if (c.path === sourcePath) return { ...c, path: newPath };
+      if (c.path.startsWith(sourcePath + '/'))
+        return { ...c, path: newPath + c.path.slice(sourcePath.length) };
+      return c;
+    });
+    if (updatedGroupConfigs.some((c, i) => c !== groupConfigs[i])) {
+      onUpdateGroupConfigs(updatedGroupConfigs);
+    }
     if (
       selectedGroupPath &&
       (selectedGroupPath === sourcePath ||
@@ -2056,10 +2172,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                                   className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setRenameTargetPath(node.path);
-                                    setRenameGroupName(node.name);
-                                    setRenameGroupError(null);
-                                    setIsRenameGroupOpen(true);
+                                    handleEditGroupConfig(node.path);
                                   }}
                                 >
                                   <Edit2 size={14} />
@@ -2078,14 +2191,9 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                               <FolderPlus className="mr-2 h-4 w-4" /> {t("vault.groups.newSubgroup")}
                             </ContextMenuItem>
                             <ContextMenuItem
-                              onClick={() => {
-                                setRenameTargetPath(node.path);
-                                setRenameGroupName(node.name);
-                                setRenameGroupError(null);
-                                setIsRenameGroupOpen(true);
-                              }}
+                              onClick={() => handleEditGroupConfig(node.path)}
                             >
-                              <Edit2 className="mr-2 h-4 w-4" /> {t("vault.groups.rename")}
+                              <Edit2 className="mr-2 h-4 w-4" /> {t("vault.groups.settings")}
                             </ContextMenuItem>
                             <ContextMenuItem
                               className="text-destructive"
@@ -2186,13 +2294,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                         setNewFolderName("");
                         setIsNewFolderOpen(true);
                       }}
-                      onEditGroup={(groupPath) => {
-                        setRenameTargetPath(groupPath);
-                        const groupName = groupPath.split('/').pop() || '';
-                        setRenameGroupName(groupName);
-                        setRenameGroupError(null);
-                        setIsRenameGroupOpen(true);
-                      }}
+                      onEditGroup={(groupPath) => handleEditGroupConfig(groupPath)}
                       onDeleteGroup={(groupPath) => {
                         setDeleteTargetPath(groupPath);
                         setIsDeleteGroupOpen(true);
@@ -2581,6 +2683,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             identities={identities}
             customGroups={customGroups}
             managedSources={managedSources}
+            groupConfigs={groupConfigs}
             onSaveHost={(host) => onUpdateHosts([...hosts, host])}
             onCreateGroup={(groupPath) =>
               onUpdateCustomGroups(
@@ -2612,6 +2715,26 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
         )}
       </div>
 
+      {/* Group Details Panel */}
+      {currentSection === "hosts" && isGroupPanelOpen && editingGroupPath && (
+        <GroupDetailsPanel
+          key={editingGroupPath}
+          groupPath={editingGroupPath}
+          config={groupConfigs.find(c => c.path === editingGroupPath)}
+          availableKeys={keys}
+          identities={identities}
+          allHosts={hosts}
+          groups={allGroupPaths}
+          terminalThemeId={terminalThemeId}
+          terminalFontSize={terminalFontSize}
+          onSave={handleSaveGroupConfig}
+          onCancel={() => {
+            setIsGroupPanelOpen(false);
+            setEditingGroupPath(null);
+          }}
+        />
+      )}
+
       {/* Host Details Panel - positioned at VaultView root level for correct top alignment */}
       {currentSection === "hosts" && isHostPanelOpen && editingHost?.protocol !== 'serial' && (
         <HostDetailsPanel
@@ -2625,6 +2748,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           defaultGroup={editingHost ? undefined : (newHostGroupPath || selectedGroupPath)}
           terminalThemeId={terminalThemeId}
           terminalFontSize={terminalFontSize}
+          groupDefaults={editingHostGroupDefaults}
           onSave={(host) => {
             // Check if host already exists in the list (for updates vs. new/duplicate)
             const hostExists = hosts.some((h) => h.id === host.id);
@@ -2891,6 +3015,7 @@ const vaultViewAreEqual = (
     prev.connectionLogs === next.connectionLogs &&
     prev.sessions === next.sessions &&
     prev.managedSources === next.managedSources &&
+    prev.groupConfigs === next.groupConfigs &&
     prev.terminalThemeId === next.terminalThemeId &&
     prev.terminalFontSize === next.terminalFontSize;
 
