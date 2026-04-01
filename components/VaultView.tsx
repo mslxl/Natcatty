@@ -1294,7 +1294,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
 
     setIsGroupPanelOpen(false);
     setEditingGroupPath(null);
-  }, [groupConfigs, editingGroupPath, customGroups, hosts, managedSources, selectedGroupPath, onUpdateGroupConfigs, onUpdateCustomGroups, onUpdateHosts, onUpdateManagedSources]);
+  }, [groupConfigs, editingGroupPath, customGroups, hosts, managedSources, selectedGroupPath, onUpdateGroupConfigs, onUpdateCustomGroups, onUpdateHosts, onUpdateManagedSources, t]);
 
   const deleteGroupPath = async (path: string, deleteHosts: boolean = false) => {
     const keepGroups = customGroups.filter(
