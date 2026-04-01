@@ -104,11 +104,12 @@ export async function getMonospaceFonts(): Promise<TerminalFont[]> {
         // Filter monospace fonts using robust word boundary matching
         const monoFonts = fonts.filter(f => isMonospaceFont(f.family));
 
-        // Deduplicate by family name (API may return multiple entries per family)
+        // Deduplicate by family name, case-insensitive (API may return multiple entries per family)
         const uniqueFamilies = new Set<string>();
         const dedupedFonts = monoFonts.filter(f => {
-            if (uniqueFamilies.has(f.family)) return false;
-            uniqueFamilies.add(f.family);
+            const key = f.family.toLowerCase();
+            if (uniqueFamilies.has(key)) return false;
+            uniqueFamilies.add(key);
             return true;
         });
 

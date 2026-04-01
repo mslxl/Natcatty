@@ -68,8 +68,14 @@ class FontStore {
       // Add default fonts first
       TERMINAL_FONTS.forEach(font => fontMap.set(font.id, font));
 
-      // Add local fonts with a distinct ID namespace to avoid collisions
+      // Build a set of built-in font family names for dedup (case-insensitive)
+      const builtinFamilyNames = new Set(
+        TERMINAL_FONTS.map(f => f.name.toLowerCase())
+      );
+
+      // Add local fonts, skipping those already covered by built-in fonts
       localFonts.forEach(font => {
+        if (builtinFamilyNames.has(font.name.toLowerCase())) return;
         const localId = font.id.startsWith('local-') ? font.id : `local-${font.id}`;
         fontMap.set(localId, { ...font, id: localId });
       });
