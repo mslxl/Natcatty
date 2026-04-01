@@ -1384,7 +1384,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const focusedFontSizeOverridden = hasHostFontSizeOverride(focusedHost);
   const activeTopTabsThemeId = activeSidePanelTab === 'theme' && previewTargetSessionId
     ? (activeThemePreviewId ?? focusedThemeId)
-    : focusedThemeId;
+    : (isVisible ? focusedThemeId : null);
   const appliedPreviewSessionRef = useRef<string | null>(null);
   const customThemes = useCustomThemes();
   const applyTerminalPreviewVars = useCallback((sessionId: string | null, themeId: string | null) => {
