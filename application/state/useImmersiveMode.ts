@@ -179,7 +179,7 @@ export function useImmersiveMode({
 
   // RESTORE: useEffect — runs after paint, with fade overlay
   useEffect(() => {
-    if (isImmersive && isTerminalTab && activeTerminalTheme) return;
+    if (isTerminalTab && activeTerminalTheme) return;
     if (!overrideActiveRef.current) return;
     overrideActiveRef.current = false;
     appliedFpRef.current = null;
