@@ -1605,6 +1605,17 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
               </p>
             </div>
           )}
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-muted-foreground">{t("hostDetails.backspaceBehavior")}</p>
+            <select
+              className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+              value={form.backspaceBehavior ?? ""}
+              onChange={(e) => update("backspaceBehavior", e.target.value || undefined)}
+            >
+              <option value="">{t("hostDetails.backspaceBehavior.default")}</option>
+              <option value="ctrl-h">^H (0x08)</option>
+            </select>
+          </div>
         </Card>
 
         {/* Proxy via Hosts (Jump Hosts / ProxyJump) */}

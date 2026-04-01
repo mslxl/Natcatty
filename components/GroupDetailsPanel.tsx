@@ -99,7 +99,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
     c.protocol === 'ssh' ||
     c.port !== undefined || !!c.username || !!c.password || !!c.identityFileId ||
     c.agentForwarding !== undefined || c.authMethod !== undefined || !!c.identityId ||
-    !!c.proxyConfig || !!c.hostChain || !!c.startupCommand || c.legacyAlgorithms !== undefined ||
+    !!c.proxyConfig || !!c.hostChain || !!c.startupCommand || c.legacyAlgorithms !== undefined || c.backspaceBehavior !== undefined ||
     (c.environmentVariables && c.environmentVariables.length > 0) ||
     c.moshEnabled !== undefined || !!c.moshServerPath ||
     (c.identityFilePaths && c.identityFilePaths.length > 0);
@@ -149,6 +149,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
       delete next.agentForwarding;
       delete next.startupCommand;
       delete next.legacyAlgorithms;
+      delete next.backspaceBehavior;
       delete next.proxyConfig;
       delete next.hostChain;
       delete next.environmentVariables;
@@ -305,6 +306,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
         ...(form.agentForwarding !== undefined && { agentForwarding: form.agentForwarding }),
         ...(form.startupCommand !== undefined && { startupCommand: form.startupCommand }),
         ...(form.legacyAlgorithms !== undefined && { legacyAlgorithms: form.legacyAlgorithms }),
+        ...(form.backspaceBehavior !== undefined && { backspaceBehavior: form.backspaceBehavior }),
         ...(form.proxyConfig !== undefined && { proxyConfig: form.proxyConfig }),
         ...(form.hostChain !== undefined && { hostChain: form.hostChain }),
         ...(form.environmentVariables !== undefined && { environmentVariables: form.environmentVariables }),
@@ -798,6 +800,19 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
               enabled={!!form.legacyAlgorithms}
               onToggle={() => update("legacyAlgorithms", !form.legacyAlgorithms)}
             />
+
+            {/* Backspace behavior */}
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">{t("hostDetails.backspaceBehavior")}</p>
+              <select
+                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                value={form.backspaceBehavior ?? ""}
+                onChange={(e) => update("backspaceBehavior", e.target.value || undefined)}
+              >
+                <option value="">{t("hostDetails.backspaceBehavior.default")}</option>
+                <option value="ctrl-h">^H (0x08)</option>
+              </select>
+            </div>
 
             {/* Proxy */}
             <button

@@ -117,6 +117,8 @@ export interface Host {
   keywordHighlightEnabled?: boolean;
   // Legacy SSH algorithm support for older network equipment (switches, routers)
   legacyAlgorithms?: boolean;
+  // What the Backspace key sends: undefined = xterm default (no interception), 'ctrl-h' = ^H (0x08)
+  backspaceBehavior?: 'ctrl-h';
   // Local SSH key file paths (from SSH config IdentityFile or user-added)
   // Resolved at connection time — the app reads the file content when connecting.
   identityFilePaths?: string[];
@@ -213,6 +215,7 @@ export interface GroupConfig {
   fontFamilyOverride?: boolean;
   fontSize?: number;
   fontSizeOverride?: boolean;
+  backspaceBehavior?: 'ctrl-h';
 }
 
 export interface SyncConfig {

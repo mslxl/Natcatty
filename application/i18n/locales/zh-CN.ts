@@ -656,6 +656,8 @@ const zhCN: Messages = {
   'hostDetails.legacyAlgorithms': '允许旧版算法',
   'hostDetails.legacyAlgorithms.desc': '启用已弃用的 SSH 算法（diffie-hellman-group1、ssh-dss、3des-cbc 等）以连接老旧网络设备。',
   'hostDetails.legacyAlgorithms.warning': '这些算法存在已知安全漏洞，仅建议在老旧设备不支持现代加密时启用。',
+  'hostDetails.backspaceBehavior': 'Backspace 行为',
+  'hostDetails.backspaceBehavior.default': '默认',
   'hostDetails.jumpHosts': '通过主机代理',
   'hostDetails.jumpHosts.hops': '{count} 跳',
   'hostDetails.jumpHosts.direct': '直连',

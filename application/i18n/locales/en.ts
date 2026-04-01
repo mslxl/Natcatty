@@ -1008,6 +1008,8 @@ const en: Messages = {
   'hostDetails.legacyAlgorithms': 'Allow Legacy Algorithms',
   'hostDetails.legacyAlgorithms.desc': 'Enable deprecated SSH algorithms (diffie-hellman-group1, ssh-dss, 3des-cbc, etc.) for connecting to older network equipment.',
   'hostDetails.legacyAlgorithms.warning': 'These algorithms have known security weaknesses. Only enable for legacy devices that do not support modern cryptography.',
+  'hostDetails.backspaceBehavior': 'Backspace Behavior',
+  'hostDetails.backspaceBehavior.default': 'Default',
   'hostDetails.jumpHosts': 'Proxy via Hosts',
   'hostDetails.jumpHosts.hops': '{count} hop(s)',
   'hostDetails.jumpHosts.direct': 'Direct',

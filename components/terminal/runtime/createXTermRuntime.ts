@@ -562,7 +562,12 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         }
       } else {
         // Character mode (default): send immediately
-        ctx.terminalBackend.writeToSession(id, data);
+        // When backspaceBehavior is configured, remap the Backspace key output
+        let outData = data;
+        if (data === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") {
+          outData = "\x08";
+        }
+        ctx.terminalBackend.writeToSession(id, outData);
 
         // Local echo for serial connections only when explicitly enabled
         if (ctx.host.protocol === "serial" && ctx.serialLocalEcho) {
@@ -579,7 +584,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       }
 
       if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
-        ctx.onBroadcastInputRef.current(data, ctx.sessionId);
+        // Use remapped data so broadcast peers also receive the correct byte
+        const broadcastData = (data === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") ? "\x08" : data;
+        ctx.onBroadcastInputRef.current(broadcastData, ctx.sessionId);
       }
 
       scrollToBottomAfterInput(data);
