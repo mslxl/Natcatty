@@ -20,6 +20,7 @@ loader.config({ paths: { vs: monacoBasePath } });
 
 import { useI18n } from '../application/i18n/I18nProvider';
 import { useClipboardBackend } from '../application/state/useClipboardBackend';
+import { HotkeyScheme, KeyBinding, matchesKeyBinding } from '../domain/models';
 import { getLanguageId, getLanguageName, getSupportedLanguages } from '../lib/sftpFileUtils';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
@@ -34,6 +35,8 @@ interface TextEditorModalProps {
   onSave: (content: string) => Promise<void>;
   editorWordWrap: boolean;
   onToggleWordWrap: () => void;
+  hotkeyScheme: HotkeyScheme;
+  keyBindings: KeyBinding[];
 }
 
 // Map our language IDs to Monaco language IDs
@@ -138,6 +141,8 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
   onSave,
   editorWordWrap,
   onToggleWordWrap,
+  hotkeyScheme,
+  keyBindings,
 }) => {
   const { t } = useI18n();
   const { readClipboardText: readClipboardTextFromBridge } = useClipboardBackend();
@@ -215,6 +220,11 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
   useEffect(() => {
     setHasChanges(content !== initialContent);
   }, [content, initialContent]);
+
+  const closeTabBinding = useMemo(
+    () => keyBindings.find((binding) => binding.action === 'closeTab'),
+    [keyBindings],
+  );
 
   const handleSave = useCallback(async () => {
     if (saving) return;
@@ -347,7 +357,32 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
       }
       void handlePasteRef.current();
     });
+
+    editor.focus();
   }, []);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      editorRef.current?.focus();
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [open]);
+
+  const handleDialogKeyDownCapture = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (hotkeyScheme === 'disabled' || !closeTabBinding) return;
+
+    const isMac = hotkeyScheme === 'mac';
+    const keyStr = isMac ? closeTabBinding.mac : closeTabBinding.pc;
+    if (!matchesKeyBinding(e.nativeEvent, keyStr, isMac)) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    e.nativeEvent.stopPropagation();
+    handleClose();
+  }, [closeTabBinding, handleClose, hotkeyScheme]);
 
   // Trigger search dialog
   const handleSearch = useCallback(() => {
@@ -370,7 +405,12 @@ export const TextEditorModal: React.FC<TextEditorModalProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
-      <DialogContent className="max-w-5xl h-[85vh] flex flex-col p-0 gap-0" hideCloseButton>
+      <DialogContent
+        className="max-w-5xl h-[85vh] flex flex-col p-0 gap-0"
+        hideCloseButton
+        data-hotkey-close-tab="true"
+        onKeyDownCapture={handleDialogKeyDownCapture}
+      >
         {/* Header */}
         <DialogHeader className="px-4 py-3 border-b border-border/60 flex-shrink-0">
           <div className="flex items-center justify-between gap-4">

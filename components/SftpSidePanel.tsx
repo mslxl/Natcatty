@@ -671,6 +671,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
           handleSaveTextFile={handleSaveTextFile}
           editorWordWrap={editorWordWrap}
           setEditorWordWrap={setEditorWordWrap}
+          hotkeyScheme={hotkeyScheme}
+          keyBindings={keyBindings}
           showFileOpenerDialog={showFileOpenerDialog}
           setShowFileOpenerDialog={setShowFileOpenerDialog}
           fileOpenerTarget={fileOpenerTarget}
@@ -700,6 +702,8 @@ const sidePanelAreEqual = (prev: SftpSidePanelProps, next: SftpSidePanelProps): 
   prev.sftpAutoSync === next.sftpAutoSync &&
   prev.sftpShowHiddenFiles === next.sftpShowHiddenFiles &&
   prev.sftpUseCompressedUpload === next.sftpUseCompressedUpload &&
+  prev.hotkeyScheme === next.hotkeyScheme &&
+  prev.keyBindings === next.keyBindings &&
   prev.editorWordWrap === next.editorWordWrap &&
   prev.setEditorWordWrap === next.setEditorWordWrap &&
   prev.onGetTerminalCwd === next.onGetTerminalCwd &&

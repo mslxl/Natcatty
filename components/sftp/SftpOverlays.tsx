@@ -2,6 +2,7 @@ import React from "react";
 import type { Host, SftpFileEntry } from "../../types";
 import type { FileOpenerType, SystemAppInfo } from "../../lib/sftpFileUtils";
 import type { useSftpState } from "../../application/state/useSftpState";
+import type { HotkeyScheme, KeyBinding } from "../../domain/models";
 import FileOpenerDialog from "../FileOpenerDialog";
 import TextEditorModal from "../TextEditorModal";
 import { SftpConflictDialog, SftpHostPicker, SftpPermissionsDialog } from "./index";
@@ -35,6 +36,8 @@ interface SftpOverlaysProps {
   handleSaveTextFile: (content: string) => Promise<void>;
   editorWordWrap: boolean;
   setEditorWordWrap: (enabled: boolean) => void;
+  hotkeyScheme: HotkeyScheme;
+  keyBindings: KeyBinding[];
   showFileOpenerDialog: boolean;
   setShowFileOpenerDialog: (open: boolean) => void;
   fileOpenerTarget: { file: SftpFileEntry; side: "left" | "right"; fullPath: string } | null;
@@ -69,6 +72,8 @@ export const SftpOverlays: React.FC<SftpOverlaysProps> = React.memo(({
   handleSaveTextFile,
   editorWordWrap,
   setEditorWordWrap,
+  hotkeyScheme,
+  keyBindings,
   showFileOpenerDialog,
   setShowFileOpenerDialog,
   fileOpenerTarget,
@@ -139,6 +144,8 @@ export const SftpOverlays: React.FC<SftpOverlaysProps> = React.memo(({
         onSave={handleSaveTextFile}
         editorWordWrap={editorWordWrap}
         onToggleWordWrap={() => setEditorWordWrap(!editorWordWrap)}
+        hotkeyScheme={hotkeyScheme}
+        keyBindings={keyBindings}
       />
 
       {/* File Opener Dialog */}

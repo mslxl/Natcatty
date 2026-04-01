@@ -487,6 +487,25 @@ function App({ settings }: { settings: SettingsState }) {
   const _handleGlobalHotkeyKeyDown = useEffectEvent((e: KeyboardEvent) => {
     const isMac = hotkeyScheme === 'mac';
     const target = e.target as HTMLElement;
+    const isCloseTabHotkey = closeTabKeyStr ? matchesKeyBinding(e, closeTabKeyStr, isMac) : false;
+    const dialogHotkeyScope = target.closest?.('[data-hotkey-close-tab="true"]');
+
+    if (isCloseTabHotkey && dialogHotkeyScope) {
+      return;
+    }
+
+    if (isCloseTabHotkey) {
+      const openDialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"][data-state="open"]'));
+      const topmostOpenDialog = openDialogs[openDialogs.length - 1] ?? null;
+      const topmostDialogClose = topmostOpenDialog?.querySelector<HTMLElement>('[data-dialog-close="true"]');
+      if (topmostDialogClose) {
+        e.preventDefault();
+        e.stopPropagation();
+        topmostDialogClose.click();
+        return;
+      }
+    }
+
     const isFormElement = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
     const isMonacoElement =
       target instanceof HTMLElement &&
@@ -827,6 +846,13 @@ function App({ settings }: { settings: SettingsState }) {
       localShellType: classifyLocalShellType(terminalSettings.localShell, navigator.userAgent),
     });
   }, [copySession, terminalSettings.localShell]);
+
+  const closeTabKeyStr = useMemo(() => {
+    if (hotkeyScheme === 'disabled') return null;
+    const closeTabBinding = keyBindings.find((binding) => binding.action === 'closeTab');
+    if (!closeTabBinding) return null;
+    return hotkeyScheme === 'mac' ? closeTabBinding.mac : closeTabBinding.pc;
+  }, [hotkeyScheme, keyBindings]);
 
   // Shared hotkey action handler - used by both global handler and terminal callback
   const executeHotkeyAction = useCallback((action: string, e: KeyboardEvent) => {
