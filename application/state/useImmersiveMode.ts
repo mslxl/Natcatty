@@ -151,12 +151,10 @@ function removeImmersiveStyle() {
 // ---------------------------------------------------------------------------
 
 export function useImmersiveMode({
-  isImmersive,
   activeTabId,
   activeTerminalTheme,
   restoreOriginalTheme,
 }: {
-  isImmersive: boolean;
   activeTabId: string;
   activeTerminalTheme: TerminalTheme | null;
   restoreOriginalTheme: () => void;
@@ -170,14 +168,14 @@ export function useImmersiveMode({
 
   // APPLY: useLayoutEffect — runs before paint, O(1) Map lookup, single DOM write
   useLayoutEffect(() => {
-    if (isImmersive && isTerminalTab && activeTerminalTheme) {
+    if (isTerminalTab && activeTerminalTheme) {
       const fp = themeFingerprint(activeTerminalTheme);
       if (appliedFpRef.current === fp) return;
       overrideActiveRef.current = true;
       appliedFpRef.current = fp;
       applyImmersiveStyle(getImmersiveCss(activeTerminalTheme), activeTerminalTheme.type === 'dark', activeTerminalTheme.colors.background);
     }
-  }, [isImmersive, isTerminalTab, activeTerminalTheme]);
+  }, [isTerminalTab, activeTerminalTheme]);
 
   // RESTORE: useEffect — runs after paint, with fade overlay
   useEffect(() => {
@@ -198,7 +196,7 @@ export function useImmersiveMode({
     });
     const fallback = setTimeout(() => { if (overlay.parentNode) overlay.remove(); }, 400);
     return () => { clearTimeout(fallback); if (overlay.parentNode) overlay.remove(); };
-  }, [isImmersive, isTerminalTab, activeTerminalTheme, restoreOriginalTheme]);
+  }, [isTerminalTab, activeTerminalTheme, restoreOriginalTheme]);
 
   // Cleanup on unmount
   useEffect(() => {

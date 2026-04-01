@@ -125,7 +125,7 @@ const applyThemeTokens = (
   accentOverride: string,
 ) => {
   const root = window.document.documentElement;
-  // If immersive mode is active (style tag present), it owns the dark/light class — don't override
+  // If immersive override is active (style tag present), it owns the dark/light class — don't override
   if (!document.getElementById('netcatty-immersive-override')) {
     root.classList.remove('light', 'dark');
     root.classList.add(resolvedTheme);
@@ -340,11 +340,6 @@ export const useSettingsState = () => {
     }
   }, []);
 
-  // Immersive mode is always enabled — the toggle has been removed from settings
-  const immersiveMode = true;
-  const setImmersiveMode = useCallback((_enabled: boolean) => {
-    // no-op: immersive mode is always on
-  }, []);
 
   const setSftpTransferConcurrency = useCallback((value: number) => {
     const clamped = Math.max(1, Math.min(16, Math.round(value)));
@@ -651,7 +646,7 @@ export const useSettingsState = () => {
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpDefaultViewMode,
     editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat,
-    globalHotkeyEnabled, autoUpdateEnabled, immersiveMode,
+    globalHotkeyEnabled, autoUpdateEnabled,
   });
   settingsSnapshotRef.current = {
     theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent,
@@ -660,7 +655,7 @@ export const useSettingsState = () => {
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpDefaultViewMode,
     editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat,
-    globalHotkeyEnabled, autoUpdateEnabled, immersiveMode,
+    globalHotkeyEnabled, autoUpdateEnabled,
   };
 
   // Listen for storage changes from other windows (cross-window sync)
@@ -1220,8 +1215,6 @@ export const useSettingsState = () => {
     setGlobalHotkeyEnabled,
     rehydrateAllFromStorage,
     reapplyCurrentTheme,
-    immersiveMode,
-    setImmersiveMode,
     workspaceFocusStyle,
     setWorkspaceFocusStyle,
     // Opaque version that changes when any synced setting changes, used by useAutoSync.
@@ -1232,7 +1225,7 @@ export const useSettingsState = () => {
       terminalThemeId, terminalFontFamilyId, terminalFontSize, terminalSettings,
       customKeyBindings, editorWordWrap,
       sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpDefaultViewMode,
-      customThemes, immersiveMode, workspaceFocusStyle,
+      customThemes, workspaceFocusStyle,
     ]),
   };
 };

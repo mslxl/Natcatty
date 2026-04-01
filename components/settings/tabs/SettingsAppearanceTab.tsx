@@ -27,8 +27,6 @@ export default function SettingsAppearanceTab(props: {
   setUiLanguage: (language: string) => void;
   customCSS: string;
   setCustomCSS: (css: string) => void;
-  isImmersive?: boolean;
-  onToggleImmersive?: () => void;
 }) {
   const { t } = useI18n();
   const availableUIFonts = useAvailableUIFonts();
@@ -49,8 +47,6 @@ export default function SettingsAppearanceTab(props: {
     setUiLanguage,
     customCSS,
     setCustomCSS,
-    isImmersive: _isImmersive,
-    onToggleImmersive: _onToggleImmersive,
   } = props;
 
   const [showRecentHosts, setShowRecentHosts] = useStoredBoolean(

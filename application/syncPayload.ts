@@ -42,7 +42,6 @@ import {
   STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR,
   STORAGE_KEY_SFTP_GLOBAL_BOOKMARKS,
   STORAGE_KEY_CUSTOM_THEMES,
-  STORAGE_KEY_IMMERSIVE_MODE,
   STORAGE_KEY_SHOW_RECENT_HOSTS,
 } from '../infrastructure/config/storageKeys';
 
@@ -171,9 +170,6 @@ export function collectSyncableSettings(): SyncPayload['settings'] {
   const globalBookmarks = localStorageAdapter.read<SftpBookmark[]>(STORAGE_KEY_SFTP_GLOBAL_BOOKMARKS);
   if (globalBookmarks && Array.isArray(globalBookmarks)) settings.sftpGlobalBookmarks = globalBookmarks;
 
-  // Immersive mode
-  const immersive = localStorageAdapter.readString(STORAGE_KEY_IMMERSIVE_MODE);
-  if (immersive === 'true' || immersive === 'false') settings.immersiveMode = immersive === 'true';
 
   const showRecent = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_RECENT_HOSTS);
   if (showRecent != null) settings.showRecentHosts = showRecent;
@@ -240,8 +236,7 @@ function applySyncableSettings(settings: NonNullable<SyncPayload['settings']>): 
   // SFTP Bookmarks (global only)
   if (settings.sftpGlobalBookmarks != null) localStorageAdapter.write(STORAGE_KEY_SFTP_GLOBAL_BOOKMARKS, settings.sftpGlobalBookmarks);
 
-  // Immersive mode
-  if (settings.immersiveMode != null) localStorageAdapter.writeString(STORAGE_KEY_IMMERSIVE_MODE, String(settings.immersiveMode));
+  // Immersive mode (legacy — always enabled, ignore incoming value)
   if (settings.showRecentHosts != null) localStorageAdapter.writeBoolean(STORAGE_KEY_SHOW_RECENT_HOSTS, settings.showRecentHosts);
 }
 

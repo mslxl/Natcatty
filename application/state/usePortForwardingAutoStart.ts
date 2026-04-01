@@ -116,7 +116,7 @@ export const usePortForwardingAutoStart = ({
     return () => {
       setReconnectCallback(null);
     };
-  }, []);
+  }, [resolveEffectiveHost]);
 
   // Auto-start rules on app launch
   useEffect(() => {
@@ -196,5 +196,5 @@ export const usePortForwardingAutoStart = ({
     };
 
     void runAutoStart();
-  }, [hosts, identities, isHostAuthReady, keys]);
+  }, [hosts, identities, isHostAuthReady, keys, resolveEffectiveHost]);
 };

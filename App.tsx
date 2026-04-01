@@ -201,7 +201,6 @@ function App({ settings }: { settings: SettingsState }) {
     sessionLogsDir,
     sessionLogsFormat,
     reapplyCurrentTheme,
-    immersiveMode,
     workspaceFocusStyle,
   } = settings;
 
@@ -358,7 +357,6 @@ function App({ settings }: { settings: SettingsState }) {
   }, [activeTabId, currentTerminalTheme, hostById, sessionById, themeById, workspaceById]);
 
   useImmersiveMode({
-    isImmersive: immersiveMode,
     activeTabId,
     activeTerminalTheme,
     restoreOriginalTheme: reapplyCurrentTheme,
@@ -1312,7 +1310,7 @@ function App({ settings }: { settings: SettingsState }) {
   }, []);
 
   return (
-    <div className={cn("flex flex-col h-screen text-foreground font-sans netcatty-shell", immersiveMode && activeTerminalTheme && "immersive-transition")} onContextMenu={handleRootContextMenu}>
+    <div className={cn("flex flex-col h-screen text-foreground font-sans netcatty-shell", activeTerminalTheme && "immersive-transition")} onContextMenu={handleRootContextMenu}>
       <TopTabs
         theme={resolvedTheme}
         hosts={hosts}
@@ -1333,7 +1331,7 @@ function App({ settings }: { settings: SettingsState }) {
         onToggleTheme={handleToggleTheme}
         onOpenSettings={handleOpenSettings}
         onSyncNow={handleSyncNowManual}
-        isImmersiveActive={immersiveMode && activeTerminalTheme !== null}
+        isImmersiveActive={activeTerminalTheme !== null}
         onStartSessionDrag={setDraggingSessionId}
         onEndSessionDrag={handleEndSessionDrag}
         onReorderTabs={reorderTabs}
