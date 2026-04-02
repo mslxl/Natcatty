@@ -95,6 +95,8 @@ export interface Host {
   fontFamilyOverride?: boolean; // Explicitly override the global terminal font family for this host
   fontSize?: number; // Terminal font size for this host (pt)
   fontSizeOverride?: boolean; // Explicitly override the global terminal font size for this host
+  fontWeight?: number; // Terminal font weight for this host (100-900)
+  fontWeightOverride?: boolean; // Explicitly override the global terminal font weight for this host
   distro?: string; // detected distro id (e.g., ubuntu, debian)
   distroMode?: 'auto' | 'manual'; // whether distro icon comes from detection or manual override
   manualDistro?: string; // manually selected distro id when distroMode='manual'
@@ -220,6 +222,8 @@ export interface GroupConfig {
   fontFamilyOverride?: boolean;
   fontSize?: number;
   fontSizeOverride?: boolean;
+  fontWeight?: number;
+  fontWeightOverride?: boolean;
   backspaceBehavior?: 'ctrl-h';
 }
 

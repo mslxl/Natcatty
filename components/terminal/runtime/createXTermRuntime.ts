@@ -26,6 +26,7 @@ import {
 import {
   resolveHostTerminalFontFamilyId,
   resolveHostTerminalFontSize,
+  resolveHostTerminalFontWeight,
 } from "../../../domain/terminalAppearance";
 import { logger } from "../../../lib/logger";
 import { isMacPlatform, normalizeLineEndings, wrapBracketedPaste } from "../../../lib/utils";
@@ -162,7 +163,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   const cursorBlink = settings?.cursorBlink ?? true;
   const scrollback = settings?.scrollback ?? 10000;
   const drawBoldTextInBrightColors = settings?.drawBoldInBrightColors ?? true;
-  const fontWeight = settings?.fontWeight ?? 400;
+  const fontWeight = resolveHostTerminalFontWeight(ctx.host, settings?.fontWeight ?? 400);
   const fontWeightBold = settings?.fontWeightBold ?? 700;
   const lineHeight = 1 + (settings?.linePadding ?? 0) / 10;
   const minimumContrastRatio = settings?.minimumContrastRatio ?? 1;

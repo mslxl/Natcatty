@@ -14,12 +14,15 @@ import { KeyBinding, TerminalSettings } from '../domain/models';
 import {
   clearHostFontFamilyOverride,
   clearHostFontSizeOverride,
+  clearHostFontWeightOverride,
   clearHostThemeOverride,
   hasHostFontFamilyOverride,
   hasHostFontSizeOverride,
+  hasHostFontWeightOverride,
   hasHostThemeOverride,
   resolveHostTerminalFontFamilyId,
   resolveHostTerminalFontSize,
+  resolveHostTerminalFontWeight,
   resolveHostTerminalThemeId,
 } from '../domain/terminalAppearance';
 import { cn, normalizeLineEndings } from '../lib/utils';
@@ -1388,6 +1391,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const focusedThemeOverridden = hasHostThemeOverride(focusedHost);
   const focusedFontFamilyOverridden = hasHostFontFamilyOverride(focusedHost);
   const focusedFontSizeOverridden = hasHostFontSizeOverride(focusedHost);
+  const focusedFontWeight = resolveHostTerminalFontWeight(focusedHost, terminalSettings?.fontWeight ?? 400);
+  const focusedFontWeightOverridden = hasHostFontWeightOverride(focusedHost);
   const activeTopTabsThemeId = activeSidePanelTab === 'theme' && previewTargetSessionId
     ? (activeThemePreviewId ?? focusedThemeId)
     : (isVisible ? focusedThemeId : null);
@@ -1569,6 +1574,22 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const handleFontSizeResetForFocusedSession = useCallback(() => {
     if (!focusedHost || isFocusedHostLocal) return;
     onUpdateHost(clearHostFontSizeOverride(focusedHost));
+  }, [focusedHost, isFocusedHostLocal, onUpdateHost]);
+
+  const handleFontWeightChangeForFocusedSession = useCallback((newFontWeight: number) => {
+    if (!focusedHost || newFontWeight === focusedFontWeight) return;
+    startTransition(() => {
+      if (isFocusedHostLocal) {
+        onUpdateTerminalFontWeight?.(newFontWeight);
+        return;
+      }
+      onUpdateHost({ ...focusedHost, fontWeight: newFontWeight, fontWeightOverride: true });
+    });
+  }, [focusedHost, focusedFontWeight, isFocusedHostLocal, onUpdateTerminalFontWeight, onUpdateHost]);
+
+  const handleFontWeightResetForFocusedSession = useCallback(() => {
+    if (!focusedHost || isFocusedHostLocal) return;
+    onUpdateHost(clearHostFontWeightOverride(focusedHost));
   }, [focusedHost, isFocusedHostLocal, onUpdateHost]);
 
   // Keep MCP/ACP approval IPC listener alive for the entire terminal lifecycle.
@@ -2041,17 +2062,19 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                         currentFontFamilyId={focusedFontFamilyId}
                         globalFontFamilyId={terminalFontFamilyId}
                         currentFontSize={focusedFontSize}
-                        currentFontWeight={terminalSettings?.fontWeight ?? 400}
+                        currentFontWeight={focusedFontWeight}
                         canResetTheme={focusedThemeOverridden}
                         canResetFontFamily={focusedFontFamilyOverridden}
                         canResetFontSize={focusedFontSizeOverridden}
+                        canResetFontWeight={focusedFontWeightOverridden}
                         onThemeChange={handleThemeChangeForFocusedSession}
                         onThemeReset={handleThemeResetForFocusedSession}
                         onFontFamilyChange={handleFontFamilyChangeForFocusedSession}
                         onFontFamilyReset={handleFontFamilyResetForFocusedSession}
                         onFontSizeChange={handleFontSizeChangeForFocusedSession}
                         onFontSizeReset={handleFontSizeResetForFocusedSession}
-                        onFontWeightChange={(w) => onUpdateTerminalFontWeight?.(w)}
+                        onFontWeightChange={handleFontWeightChangeForFocusedSession}
+                        onFontWeightReset={handleFontWeightResetForFocusedSession}
                         previewColors={resolvedPreviewTheme.colors}
                       />
                     </div>

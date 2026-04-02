@@ -135,6 +135,7 @@ interface ThemeSidePanelProps {
   canResetTheme?: boolean;
   canResetFontFamily?: boolean;
   canResetFontSize?: boolean;
+  canResetFontWeight?: boolean;
   onThemeChange: (themeId: string) => void;
   onThemeReset?: () => void;
   onFontFamilyChange: (fontFamilyId: string) => void;
@@ -142,6 +143,7 @@ interface ThemeSidePanelProps {
   onFontSizeChange: (fontSize: number) => void;
   onFontSizeReset?: () => void;
   onFontWeightChange: (fontWeight: number) => void;
+  onFontWeightReset?: () => void;
   isVisible?: boolean;
   previewColors?: {
     background: string;
@@ -159,6 +161,7 @@ const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
   canResetTheme = false,
   canResetFontFamily = false,
   canResetFontSize = false,
+  canResetFontWeight = false,
   onThemeChange,
   onThemeReset,
   onFontFamilyChange,
@@ -166,6 +169,7 @@ const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
   onFontSizeChange,
   onFontSizeReset,
   onFontWeightChange,
+  onFontWeightReset,
   isVisible = true,
   previewColors,
 }) => {
@@ -508,6 +512,15 @@ const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
               <div className="text-[9px] uppercase tracking-wider font-semibold" style={{ color: 'var(--terminal-panel-muted)' }}>
                 {t('terminal.themeModal.fontWeight')}
               </div>
+              {canResetFontWeight && (
+                <button
+                  onClick={onFontWeightReset}
+                  className="text-[10px] font-medium hover:opacity-80 transition-opacity"
+                  style={{ color: 'var(--terminal-panel-fg)' }}
+                >
+                  {t('common.useGlobal')}
+                </button>
+              )}
             </div>
             <div className="flex items-center gap-2 rounded-lg p-1.5" style={{ backgroundColor: 'var(--terminal-panel-hover)' }}>
               <input

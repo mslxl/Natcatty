@@ -47,3 +47,15 @@ export const resolveHostTerminalFontFamilyId = (host: Host | null | undefined, d
 export const resolveHostTerminalFontSize = (host: Host | null | undefined, defaultFontSize: number): number =>
   hasHostFontSizeOverride(host) && host?.fontSize != null ? host.fontSize : defaultFontSize;
 
+export const hasHostFontWeightOverride = (host?: Pick<Host, 'fontWeightOverride' | 'fontWeight'> | null): boolean =>
+  hasEffectiveOverride(host?.fontWeightOverride, hasLegacyNumberValue(host?.fontWeight));
+
+export const clearHostFontWeightOverride = (host: Host): Host => ({
+  ...host,
+  fontWeight: undefined,
+  fontWeightOverride: false,
+});
+
+export const resolveHostTerminalFontWeight = (host: Host | null | undefined, defaultFontWeight: number): number =>
+  hasHostFontWeightOverride(host) && host?.fontWeight != null ? host.fontWeight : defaultFontWeight;
+
