@@ -576,9 +576,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const customThemes = useCustomThemes();
   const hasFontSizeOverride = host.fontSizeOverride === true || (host.fontSizeOverride === undefined && host.fontSize != null);
   const hasFontFamilyOverride = host.fontFamilyOverride === true || (host.fontFamilyOverride === undefined && !!host.fontFamily);
+  const hasFontWeightOverride = host.fontWeightOverride === true || (host.fontWeightOverride === undefined && host.fontWeight != null);
   const effectiveFontSize = useMemo(
     () => (hasFontSizeOverride && host.fontSize != null ? host.fontSize : fontSize),
     [fontSize, hasFontSizeOverride, host.fontSize],
+  );
+  const effectiveFontWeight = useMemo(
+    () => (hasFontWeightOverride && host.fontWeight != null ? host.fontWeight : (terminalSettings?.fontWeight ?? 400)),
+    [terminalSettings?.fontWeight, hasFontWeightOverride, host.fontWeight],
   );
   const resolvedFontFamily = useMemo(() => {
     const hostFontId = hasFontFamilyOverride && host.fontFamily
@@ -923,6 +928,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       termRef.current.options.theme = {
         ...effectiveTheme.colors,
         selectionBackground: effectiveTheme.colors.selection,
+        scrollbarSliderBackground: effectiveTheme.colors.foreground + '33',
+        scrollbarSliderHoverBackground: effectiveTheme.colors.foreground + '66',
+        scrollbarSliderActiveBackground: effectiveTheme.colors.foreground + '80',
       };
     }
   }, [effectiveTheme]);
@@ -936,7 +944,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         termRef.current.options.cursorStyle = terminalSettings.cursorShape;
         termRef.current.options.cursorBlink = terminalSettings.cursorBlink;
         termRef.current.options.scrollback = terminalSettings.scrollback;
-        termRef.current.options.fontWeight = terminalSettings.fontWeight as
+        termRef.current.options.fontWeight = effectiveFontWeight as
           | 100
           | 200
           | 300
@@ -989,7 +997,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         lastFittedSizeRef.current = null;
       }
     }
-  }, [effectiveFontSize, resolvedFontFamily, terminalSettings]);
+  }, [effectiveFontSize, effectiveFontWeight, resolvedFontFamily, terminalSettings]);
 
   useEffect(() => {
     if (!isVisible) return;
