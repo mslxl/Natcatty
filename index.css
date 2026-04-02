@@ -168,11 +168,11 @@ body {
 
 /* Slim down xterm 6.0 VS Code scrollbar */
 .xterm .xterm-scrollable-element > .scrollbar.vertical {
-  width: 8px !important;
+  width: 5px !important;
 }
 .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
-  width: 8px !important;
-  border-radius: 4px;
+  width: 5px !important;
+  border-radius: 3px;
   left: 0 !important;
 }
 
