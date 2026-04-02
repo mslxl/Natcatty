@@ -1,9 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
   <!-- Darker background for PowerShell Core -->
   <rect width="32" height="32" rx="6" fill="#0D1117"/>
-  <!-- Subtle blue accent bar at top -->
-  <rect x="0" y="0" width="32" height="3" rx="6" fill="#2CA5E0"/>
-  <rect x="0" y="2" width="32" height="1" fill="#2CA5E0"/>
   <!-- PS7 label -->
   <text x="4" y="16" font-family="monospace" font-size="9" font-weight="bold" fill="#5BC4F5">PS7</text>
   <!-- >_ prompt -->
