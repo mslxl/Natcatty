@@ -523,18 +523,26 @@ const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
               )}
             </div>
             <div className="flex items-center gap-2 rounded-lg p-1.5" style={{ backgroundColor: 'var(--terminal-panel-hover)' }}>
-              <input
-                type="range"
-                min={100}
-                max={900}
-                step={100}
+              <select
                 value={currentFontWeight}
                 onChange={(e) => onFontWeightChange(Number(e.target.value))}
-                className="flex-1 h-1 accent-current cursor-pointer"
-              />
-              <span className="text-xs font-mono tabular-nums w-7 text-right" style={{ color: 'var(--terminal-panel-fg)' }}>
-                {currentFontWeight}
-              </span>
+                className="flex-1 h-7 rounded-md border text-xs px-2 cursor-pointer"
+                style={{
+                  backgroundColor: 'var(--terminal-panel-bg)',
+                  color: 'var(--terminal-panel-fg)',
+                  borderColor: 'var(--terminal-panel-border)',
+                }}
+              >
+                <option value={100}>100 Thin</option>
+                <option value={200}>200 ExtraLight</option>
+                <option value={300}>300 Light</option>
+                <option value={400}>400 Normal</option>
+                <option value={500}>500 Medium</option>
+                <option value={600}>600 SemiBold</option>
+                <option value={700}>700 Bold</option>
+                <option value={800}>800 ExtraBold</option>
+                <option value={900}>900 Black</option>
+              </select>
             </div>
           </div>
         )}
