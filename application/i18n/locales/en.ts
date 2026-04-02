@@ -363,7 +363,7 @@ const en: Messages = {
   // Settings > Terminal > Rendering
   'settings.terminal.section.rendering': 'Rendering',
   'settings.terminal.rendering.renderer': 'Renderer',
-  'settings.terminal.rendering.renderer.desc': 'Choose the terminal rendering technology. Auto will use Canvas on low-memory devices. Changes take effect on new terminal sessions.',
+  'settings.terminal.rendering.renderer.desc': 'Choose the terminal rendering technology. Auto will use DOM on low-memory devices. Changes take effect on new terminal sessions.',
   'settings.terminal.rendering.auto': 'Auto',
 
   // Settings > Terminal > Workspace Focus Indicator
