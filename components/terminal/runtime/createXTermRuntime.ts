@@ -232,6 +232,10 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     theme: {
       ...ctx.terminalTheme.colors,
       selectionBackground: ctx.terminalTheme.colors.selection,
+      // Scrollbar theming (xterm 6.0) — derive from foreground color
+      scrollbarSliderBackground: ctx.terminalTheme.colors.foreground + '33', // 20% opacity
+      scrollbarSliderHoverBackground: ctx.terminalTheme.colors.foreground + '66', // 40% opacity
+      scrollbarSliderActiveBackground: ctx.terminalTheme.colors.foreground + '80', // 50% opacity
     },
   });
 
@@ -309,13 +313,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       webglLoaded = true;
     } catch (webglErr) {
       logger.warn(
-        "[XTerm] WebGL addon failed, using canvas renderer. Error:",
+        "[XTerm] WebGL addon failed, using DOM renderer. Error:",
         webglErr instanceof Error ? webglErr.message : webglErr,
       );
     }
   } else {
     logger.info(
-      "[XTerm] Skipping WebGL addon (canvas preferred for macOS profile or low-memory devices)",
+      "[XTerm] Skipping WebGL addon (DOM preferred for low-memory devices)",
     );
   }
 
