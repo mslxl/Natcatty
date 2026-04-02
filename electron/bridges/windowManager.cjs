@@ -721,6 +721,16 @@ async function createWindow(electronModule, options) {
   win.webContents.on("will-navigate", blockUntrustedNavigation);
   win.webContents.on("will-redirect", blockUntrustedNavigation);
 
+  // Prevent Chromium from consuming Alt+Arrow as browser back/forward navigation.
+  // Terminal apps need these keys to pass through to the remote shell (e.g., byobu, tmux).
+  win.webContents.on("before-input-event", (event, input) => {
+    if (input.alt && !input.control && !input.meta && !input.shift) {
+      if (input.key === "ArrowLeft" || input.key === "ArrowRight") {
+        event.preventDefault();
+      }
+    }
+  });
+
   // Restore maximized state if it was saved
   if (savedState?.isMaximized && !savedState?.isFullScreen) {
     win.once("ready-to-show", () => {
