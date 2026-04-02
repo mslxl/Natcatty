@@ -166,6 +166,16 @@ body {
   background: linear-gradient(180deg, hsl(var(--background)) 0%, hsl(var(--background)) 60%, hsl(var(--background) / 0.9) 100%);
 }
 
+/* Slim down xterm 6.0 VS Code scrollbar */
+.xterm .xterm-scrollable-element > .scrollbar.vertical {
+  width: 8px !important;
+}
+.xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+  width: 8px !important;
+  border-radius: 4px;
+  left: 0 !important;
+}
+
 @keyframes shimmer {
   0% {
     transform: translateX(-100%);
