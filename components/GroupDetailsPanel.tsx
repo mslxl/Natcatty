@@ -328,6 +328,8 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
       ...(form.fontFamilyOverride !== undefined && { fontFamilyOverride: form.fontFamilyOverride }),
       ...(form.fontSize !== undefined && { fontSize: form.fontSize }),
       ...(form.fontSizeOverride !== undefined && { fontSizeOverride: form.fontSizeOverride }),
+      ...(form.fontWeight !== undefined && { fontWeight: form.fontWeight }),
+      ...(form.fontWeightOverride !== undefined && { fontWeightOverride: form.fontWeightOverride }),
     };
 
     const nameChanged = trimmedName !== originalName;

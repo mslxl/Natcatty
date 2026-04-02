@@ -1080,7 +1080,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [effectiveFontSize, resizeSession, terminalSettings]);
+  }, [effectiveFontSize, effectiveFontWeight, resizeSession, terminalSettings]);
 
   useEffect(() => {
     if (!isVisible || !containerRef.current || !fitAddonRef.current) return;
