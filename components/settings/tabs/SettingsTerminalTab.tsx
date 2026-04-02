@@ -916,25 +916,16 @@ export default function SettingsTerminalTab(props: {
           label={t("settings.terminal.localShell.shell")}
           description={t("settings.terminal.localShell.shell.desc")}
         >
-          <div className="flex flex-col gap-1.5 items-end">
-            <Select
+          <div className="flex flex-col gap-1 items-end">
+            <select
+              className="h-9 w-48 rounded-md border border-input bg-background px-3 text-sm"
               value={
                 showCustomShellInput
                   ? "__custom__"
                   : terminalSettings.localShell || ""
               }
-              options={[
-                {
-                  value: "",
-                  label: `${t("settings.terminal.localShell.shell.default")}${defaultShell ? ` (${defaultShell.split(/[/\\]/).pop()})` : ""}`,
-                },
-                ...discoveredShells.map((shell) => ({
-                  value: shell.id,
-                  label: shell.name,
-                })),
-                { value: "__custom__", label: t("settings.terminal.localShell.shell.custom") },
-              ]}
-              onChange={(value) => {
+              onChange={(e) => {
+                const value = e.target.value;
                 if (value === "__custom__") {
                   setCustomShellDraft(terminalSettings.localShell || "");
                   setCustomShellModalOpen(true);
@@ -943,8 +934,18 @@ export default function SettingsTerminalTab(props: {
                   updateTerminalSetting("localShell", value);
                 }
               }}
-              className="w-48"
-            />
+            >
+              <option value="">
+                {t("settings.terminal.localShell.shell.default")}
+                {defaultShell ? ` (${defaultShell.split(/[/\\]/).pop()})` : ""}
+              </option>
+              {discoveredShells.map((shell) => (
+                <option key={shell.id} value={shell.id}>
+                  {shell.name}
+                </option>
+              ))}
+              <option value="__custom__">{t("settings.terminal.localShell.shell.custom")}</option>
+            </select>
             {showCustomShellInput && (
               <span className="text-xs text-muted-foreground truncate max-w-48">
                 {terminalSettings.localShell}
