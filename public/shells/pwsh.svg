@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="3" fill="#00001A"/>
+  <rect x="0" y="0" width="32" height="4" rx="2" fill="#012456"/>
+  <rect x="0" y="2" width="32" height="2" fill="#012456"/>
+  <text x="3" y="14" font-family="monospace" font-size="8" font-weight="bold" fill="#2CA5E0">PS 7</text>
+  <text x="3" y="26" font-family="monospace" font-size="10" font-weight="bold" fill="#5BC4F5">&gt;_</text>
+</svg>

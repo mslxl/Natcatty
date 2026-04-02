@@ -10,9 +10,10 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "
 import { useI18n } from "../application/i18n/I18nProvider";
 import { Host, TerminalSession, Workspace } from "../types";
 import { KeyBinding } from "../domain/models";
+import { useDiscoveredShells, getShellIconPath, isMonochromeShellIcon } from "../lib/useDiscoveredShells";
 
 type QuickSwitcherItem = {
-  type: "host" | "tab" | "workspace" | "action";
+  type: "host" | "tab" | "workspace" | "action" | "shell";
   id: string;
   data?: Host | TerminalSession | Workspace;
 };
@@ -66,7 +67,7 @@ interface QuickSwitcherProps {
   onSelect: (host: Host) => void;
   onSelectTab: (tabId: string) => void;
   onClose: () => void;
-  onCreateLocalTerminal?: () => void;
+  onCreateLocalTerminal?: (shell?: { command: string; args?: string[]; name?: string; icon?: string }) => void;
   // onCreateWorkspace removed - feature not currently used
   keyBindings?: KeyBinding[];
 }
@@ -85,6 +86,16 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
   keyBindings,
 }) => {
   const { t } = useI18n();
+  const discoveredShells = useDiscoveredShells();
+
+  const filteredShells = useMemo(() => {
+    if (!query.trim()) return discoveredShells;
+    const q = query.toLowerCase();
+    return discoveredShells.filter(
+      (s) => s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q)
+    );
+  }, [discoveredShells, query]);
+
   // Get hotkey display strings
   const getHotkeyLabel = useCallback((actionId: string) => {
     const binding = keyBindings?.find(k => k.id === actionId);
@@ -155,12 +166,22 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
       workspaces.forEach((w) =>
         items.push({ type: "workspace", id: w.id, data: w }),
       );
-      // Quick connect actions
-      items.push({ type: "action", id: "local-terminal" });
+      // Local shells (or fallback action if discovery not ready)
+      if (filteredShells.length > 0) {
+        filteredShells.forEach((shell) =>
+          items.push({ type: "shell", id: shell.id }),
+        );
+      } else {
+        items.push({ type: "action", id: "local-terminal" });
+      }
     } else {
       // Recent connections only
       results.forEach((host) =>
         items.push({ type: "host", id: host.id, data: host }),
+      );
+      // Also include matching shells in search results
+      filteredShells.forEach((shell) =>
+        items.push({ type: "shell", id: shell.id }),
       );
     }
 
@@ -171,7 +192,7 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
     });
 
     return { flatItems: items, itemIndexMap: indexMap };
-  }, [showCategorized, results, orphanSessions, workspaces]);
+  }, [showCategorized, results, orphanSessions, workspaces, filteredShells]);
 
   // O(1) index lookup
   const getItemIndex = useCallback((type: string, id: string) => {
@@ -210,6 +231,14 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
           onClose();
         }
         break;
+      case "shell": {
+        const shell = discoveredShells.find(s => s.id === item.id);
+        if (shell && onCreateLocalTerminal) {
+          onCreateLocalTerminal({ command: shell.command, args: shell.args, name: shell.name, icon: shell.icon });
+          onClose();
+        }
+        break;
+      }
     }
   };
 
@@ -369,21 +398,60 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
               })}
             </div>
 
-            {/* Quick connect section */}
-            <div>
-              <div className="px-4 py-1.5">
-                <span className="text-xs font-medium text-muted-foreground">
-                  Quick connect
-                </span>
+            {/* Local Shells section */}
+            {/* Local Shells or fallback Local Terminal */}
+            {filteredShells.length > 0 ? (
+              <div>
+                <div className="px-4 py-1.5">
+                  <span className="text-xs font-medium text-muted-foreground">
+                    {t("qs.localShells")}
+                  </span>
+                </div>
+                {filteredShells.map((shell) => {
+                  const idx = getItemIndex("shell", shell.id);
+                  const isSelected = idx === selectedIndex;
+                  return (
+                    <div
+                      key={shell.id}
+                      className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${
+                        isSelected ? "bg-primary/15" : "hover:bg-muted/50"
+                      }`}
+                      onClick={() => {
+                        if (onCreateLocalTerminal) {
+                          onCreateLocalTerminal({ command: shell.command, args: shell.args, name: shell.name, icon: shell.icon });
+                          onClose();
+                        }
+                      }}
+                      onMouseEnter={() => setSelectedIndex(idx)}
+                    >
+                      <img
+                        src={getShellIconPath(shell.icon)}
+                        alt={shell.name}
+                        className={`h-6 w-6 shrink-0${isMonochromeShellIcon(shell.icon) ? " dark:invert" : ""}`}
+                      />
+                      <span className="text-sm font-medium">{shell.name}</span>
+                      {shell.isDefault && (
+                        <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                          {t("qs.default")}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-
-              {/* Local Terminal */}
-              {onCreateLocalTerminal && (
+            ) : onCreateLocalTerminal && (
+              <div>
+                <div className="px-4 py-1.5">
+                  <span className="text-xs font-medium text-muted-foreground">
+                    {t("qs.localShells")}
+                  </span>
+                </div>
                 <div
-                  className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${getItemIndex("action", "local-terminal") === selectedIndex
-                    ? "bg-primary/15"
-                    : "hover:bg-muted/50"
-                    }`}
+                  className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${
+                    getItemIndex("action", "local-terminal") === selectedIndex
+                      ? "bg-primary/15"
+                      : "hover:bg-muted/50"
+                  }`}
                   onClick={() => {
                     onCreateLocalTerminal();
                     onClose();
@@ -397,10 +465,8 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
                   </div>
                   <span className="text-sm font-medium">{t("qs.localTerminal")}</span>
                 </div>
-              )}
-
-              {/* Serial removed (not supported) */}
-            </div>
+              </div>
+            )}
           </div>
         </ScrollArea>
       </div>

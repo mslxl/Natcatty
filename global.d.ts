@@ -25,6 +25,16 @@ declare global {
     password?: string;
   }
 
+  // Discovered local shell (e.g. CMD, PowerShell, WSL, Git Bash)
+  interface DiscoveredShell {
+    id: string;
+    name: string;
+    command: string;
+    args?: string[];
+    icon: string;
+    isDefault?: boolean;
+  }
+
   // Jump host configuration for SSH tunneling
   interface NetcattyJumpHost {
     hostname: string;
@@ -176,7 +186,7 @@ declare global {
       env?: Record<string, string>;
       sessionLog?: { enabled: boolean; directory: string; format: string };
     }): Promise<string>;
-    startLocalSession?(options: { sessionId?: string; cols?: number; rows?: number; shell?: string; cwd?: string; env?: Record<string, string>; sessionLog?: { enabled: boolean; directory: string; format: string } }): Promise<string>;
+    startLocalSession?(options: { sessionId?: string; cols?: number; rows?: number; shell?: string; shellArgs?: string[]; cwd?: string; env?: Record<string, string>; sessionLog?: { enabled: boolean; directory: string; format: string } }): Promise<string>;
     startSerialSession?(options: {
       sessionId?: string;
       path: string;
@@ -197,6 +207,7 @@ declare global {
       pnpId: string;
     }>>;
     getDefaultShell?(): Promise<string>;
+    discoverShells?(): Promise<DiscoveredShell[]>;
     validatePath?(path: string, type?: 'file' | 'directory' | 'any'): Promise<{ exists: boolean; isFile: boolean; isDirectory: boolean }>;
     generateKeyPair?(options: {
       type: 'RSA' | 'ECDSA' | 'ED25519';

@@ -10,6 +10,7 @@ import { getEffectiveHostDistro } from '../domain/host';
 import { cn } from '../lib/utils';
 import { Host, TerminalSession, Workspace } from '../types';
 import { DISTRO_LOGOS, DISTRO_COLORS } from './DistroAvatar';
+import { getShellIconPath, isMonochromeShellIcon } from '../lib/useDiscoveredShells';
 import { Button } from './ui/button';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from './ui/context-menu';
 import { SyncStatusButton } from './SyncStatusButton';
@@ -54,7 +55,7 @@ const localOsId = (() => {
 })();
 
 // Lightweight OS/distro icon for session tabs — matches DistroAvatar "sm" style
-const SessionTabIcon: React.FC<{ host: Host | undefined; isActive: boolean; protocol?: string }> = memo(({ host, isActive, protocol }) => {
+const SessionTabIcon: React.FC<{ host: Host | undefined; isActive: boolean; protocol?: string; shellIcon?: string }> = memo(({ host, isActive, protocol, shellIcon }) => {
   const boxBase = "shrink-0 h-4 w-4 rounded flex items-center justify-center";
   const iconSize = "h-2.5 w-2.5";
   const fallbackStyle = { color: isActive ? 'var(--top-tabs-accent, hsl(var(--accent)))' : 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' };
@@ -68,8 +69,19 @@ const SessionTabIcon: React.FC<{ host: Host | undefined; isActive: boolean; prot
     );
   }
 
-  // Local protocol → OS-specific icon (protocol may be undefined for local sessions)
+  // Local protocol → shell-specific icon if available, else OS-specific icon
   if (protocol === 'local' || host?.protocol === 'local' || (!protocol && !host)) {
+    // Use shell icon from discovery when available
+    const iconId = shellIcon || host?.localShellIcon;
+    if (iconId) {
+      return (
+        <img
+          src={getShellIconPath(iconId)}
+          alt={iconId}
+          className={cn("shrink-0 h-4 w-4 object-contain", isMonochromeShellIcon(iconId) && "dark:invert")}
+        />
+      );
+    }
     const logo = DISTRO_LOGOS[localOsId];
     const bg = DISTRO_COLORS[localOsId] || DISTRO_COLORS.default;
     if (logo) {
@@ -540,7 +552,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
                   />
                 )}
                 <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <SessionTabIcon host={hostMap.get(session.hostId)} isActive={activeTabId === session.id} protocol={session.protocol} />
+                  <SessionTabIcon host={hostMap.get(session.hostId)} isActive={activeTabId === session.id} protocol={session.protocol} shellIcon={session.localShellIcon} />
                   <span className="truncate">{session.hostLabel}</span>
                   <div className="flex-shrink-0">{sessionStatusDot(session.status, hasActivity)}</div>
                 </div>

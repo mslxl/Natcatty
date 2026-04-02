@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Generic terminal: dark window with >_ prompt -->
+  <rect width="32" height="32" rx="3" fill="#282828"/>
+  <!-- Title bar -->
+  <rect x="0" y="0" width="32" height="7" rx="3" fill="#404040"/>
+  <rect x="0" y="4" width="32" height="3" fill="#404040"/>
+  <!-- Title bar dots -->
+  <circle cx="5" cy="3.5" r="1.5" fill="#FF5F57"/>
+  <circle cx="10" cy="3.5" r="1.5" fill="#FEBC2E"/>
+  <circle cx="15" cy="3.5" r="1.5" fill="#28C840"/>
+  <!-- >_ prompt in white -->
+  <text x="4" y="20" font-family="monospace" font-size="11" font-weight="bold" fill="#FFFFFF">&gt;_</text>
+</svg>

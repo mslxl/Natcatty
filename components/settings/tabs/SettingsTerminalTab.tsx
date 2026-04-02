@@ -14,6 +14,7 @@ import { TERMINAL_THEMES } from "../../../infrastructure/config/terminalThemes";
 import { customThemeStore, useCustomThemes } from "../../../application/state/customThemeStore";
 import { parseItermcolors } from "../../../infrastructure/parsers/itermcolorsParser";
 import { cn } from "../../../lib/utils";
+import { useDiscoveredShells } from "../../../lib/useDiscoveredShells";
 import { Button } from "../../ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../../ui/dialog";
 import { Input } from "../../ui/input";
@@ -294,6 +295,18 @@ export default function SettingsTerminalTab(props: {
   const [defaultShell, setDefaultShell] = useState<string>("");
   const [shellValidation, setShellValidation] = useState<{ valid: boolean; message?: string } | null>(null);
   const [dirValidation, setDirValidation] = useState<{ valid: boolean; message?: string } | null>(null);
+
+  const discoveredShells = useDiscoveredShells();
+  const [showCustomShellInput, setShowCustomShellInput] = useState(() => {
+    if (!terminalSettings.localShell) return false;
+    return !discoveredShells.some(s => s.id === terminalSettings.localShell);
+  });
+
+  // Update showCustomShellInput once discovered shells load
+  useEffect(() => {
+    if (!terminalSettings.localShell) return;
+    setShowCustomShellInput(!discoveredShells.some(s => s.id === terminalSettings.localShell));
+  }, [discoveredShells, terminalSettings.localShell]);
   const [themeModalOpen, setThemeModalOpen] = useState(false);
 
   // Subscribe to custom theme changes so editing in-place triggers re-render
@@ -398,12 +411,18 @@ export default function SettingsTerminalTab(props: {
     }
   }, []);
 
-  // Validate shell path when it changes
+  // Validate shell path when it changes (only for custom paths, not discovered shell ids)
   useEffect(() => {
     const bridge = (window as unknown as { netcatty?: NetcattyBridge }).netcatty;
     const shellPath = terminalSettings.localShell;
 
     if (!shellPath) {
+      setShellValidation(null);
+      return;
+    }
+
+    // Skip validation for discovered shell ids — only validate custom paths
+    if (discoveredShells.some(s => s.id === shellPath)) {
       setShellValidation(null);
       return;
     }
@@ -428,7 +447,7 @@ export default function SettingsTerminalTab(props: {
     }, 300);
 
     return () => clearTimeout(timeoutId);
-  }, [terminalSettings.localShell, t]);
+  }, [terminalSettings.localShell, discoveredShells, t]);
 
   // Validate directory path when it changes
   useEffect(() => {
@@ -896,16 +915,46 @@ export default function SettingsTerminalTab(props: {
           description={t("settings.terminal.localShell.shell.desc")}
         >
           <div className="flex flex-col gap-1 items-end">
-            <Input
-              value={terminalSettings.localShell}
-              placeholder={t("settings.terminal.localShell.shell.placeholder")}
-              onChange={(e) => updateTerminalSetting("localShell", e.target.value)}
-              className={cn(
-                "w-48",
-                shellValidation && !shellValidation.valid && "border-destructive focus-visible:ring-destructive"
-              )}
-            />
-            {defaultShell && !terminalSettings.localShell && (
+            <select
+              className="h-9 w-48 rounded-md border border-input bg-background px-3 text-sm"
+              value={
+                showCustomShellInput
+                  ? "__custom__"
+                  : terminalSettings.localShell || ""
+              }
+              onChange={(e) => {
+                const value = e.target.value;
+                if (value === "__custom__") {
+                  setShowCustomShellInput(true);
+                } else {
+                  setShowCustomShellInput(false);
+                  updateTerminalSetting("localShell", value);
+                }
+              }}
+            >
+              <option value="">
+                {t("settings.terminal.localShell.shell.default")}
+                {defaultShell ? ` (${defaultShell.split(/[/\\]/).pop()})` : ""}
+              </option>
+              {discoveredShells.map((shell) => (
+                <option key={shell.id} value={shell.id}>
+                  {shell.name}
+                </option>
+              ))}
+              <option value="__custom__">{t("settings.terminal.localShell.shell.custom")}</option>
+            </select>
+            {showCustomShellInput && (
+              <Input
+                value={terminalSettings.localShell}
+                placeholder={t("settings.terminal.localShell.shell.placeholder")}
+                onChange={(e) => updateTerminalSetting("localShell", e.target.value)}
+                className={cn(
+                  "w-48",
+                  shellValidation && !shellValidation.valid && "border-destructive focus-visible:ring-destructive"
+                )}
+              />
+            )}
+            {!showCustomShellInput && defaultShell && !terminalSettings.localShell && (
               <span className="text-xs text-muted-foreground">
                 {t("settings.terminal.localShell.shell.detected")}: {defaultShell}
               </span>

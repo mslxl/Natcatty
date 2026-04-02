@@ -561,6 +561,7 @@ const api = {
   getDefaultShell: async () => {
     return ipcRenderer.invoke("netcatty:local:defaultShell");
   },
+  discoverShells: () => ipcRenderer.invoke("netcatty:shells:discover"),
   validatePath: async (path, type) => {
     return ipcRenderer.invoke("netcatty:local:validatePath", { path, type });
   },

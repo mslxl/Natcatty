@@ -15,6 +15,7 @@ const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
 const { detectShellKind } = require("./ai/ptyExec.cjs");
 const { trackSessionIdlePrompt } = require("./ai/shellUtils.cjs");
 const { createZmodemSentry } = require("./zmodemHelper.cjs");
+const { discoverShells } = require("./shellDiscovery.cjs");
 
 // Shared references
 let sessions = null;
@@ -252,8 +253,20 @@ function startLocalSession(event, payload) {
     payload?.sessionId ||
     `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const defaultShell = getDefaultLocalShell();
-  const shell = normalizeExecutablePath(payload?.shell) || defaultShell;
-  const shellArgs = getLocalShellArgs(shell);
+  // payload.shell may be a discovered shell ID (e.g., "wsl-ubuntu") — resolve it
+  let resolvedShell = payload?.shell;
+  let resolvedArgs = payload?.shellArgs;
+  if (resolvedShell && !/[/\\]/.test(resolvedShell)) {
+    // Looks like a shell ID, not a path — try to resolve from discovery cache
+    const shells = discoverShells();
+    const match = shells.find((s) => s.id === resolvedShell);
+    if (match) {
+      resolvedShell = match.command;
+      resolvedArgs = resolvedArgs ?? match.args;
+    }
+  }
+  const shell = normalizeExecutablePath(resolvedShell) || defaultShell;
+  const shellArgs = resolvedArgs ?? getLocalShellArgs(shell);
   const shellKind = detectShellKind(shell);
   const env = applyLocaleDefaults({
     ...process.env,
@@ -1044,6 +1057,7 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:serial:list", listSerialPorts);
   ipcMain.handle("netcatty:local:defaultShell", getDefaultShell);
   ipcMain.handle("netcatty:local:validatePath", validatePath);
+  ipcMain.handle("netcatty:shells:discover", () => discoverShells());
   ipcMain.on("netcatty:write", writeToSession);
   ipcMain.on("netcatty:resize", resizeSession);
   ipcMain.on("netcatty:close", closeSession);

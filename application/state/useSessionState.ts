@@ -40,18 +40,26 @@ export const useSessionState = () => {
 
   const createLocalTerminal = useCallback((options?: {
     shellType?: TerminalSession['shellType'];
+    shell?: string;
+    shellArgs?: string[];
+    shellName?: string;
+    shellIcon?: string;
   }) => {
     const sessionId = crypto.randomUUID();
     const localHostId = `local-${sessionId}`;
     const newSession: TerminalSession = {
       id: sessionId,
       hostId: localHostId,
-      hostLabel: 'Local Terminal',
+      hostLabel: options?.shellName || 'Local Terminal',
       hostname: 'localhost',
       username: 'local',
       status: 'connecting',
       protocol: 'local',
       shellType: options?.shellType,
+      localShell: options?.shell,
+      localShellArgs: options?.shellArgs,
+      localShellName: options?.shellName,
+      localShellIcon: options?.shellIcon,
     };
     setSessions(prev => [...prev, newSession]);
     setActiveTabId(sessionId);
@@ -451,6 +459,10 @@ export const useSessionState = () => {
           moshEnabled: session.moshEnabled,
           shellType: nextShellType,
           charset: session.charset,
+          localShell: session.localShell,
+          localShellArgs: session.localShellArgs,
+          localShellName: session.localShellName,
+          localShellIcon: session.localShellIcon,
         };
 
         // Add pane to existing workspace
@@ -483,6 +495,10 @@ export const useSessionState = () => {
         moshEnabled: session.moshEnabled,
         shellType: nextShellType,
         charset: session.charset,
+        localShell: session.localShell,
+        localShellArgs: session.localShellArgs,
+        localShellName: session.localShellName,
+        localShellIcon: session.localShellIcon,
       };
 
       const hint: SplitHint = {
@@ -659,6 +675,10 @@ export const useSessionState = () => {
         shellType: nextShellType,
         charset: session.charset,
         serialConfig: session.serialConfig,
+        localShell: session.localShell,
+        localShellArgs: session.localShellArgs,
+        localShellName: session.localShellName,
+        localShellIcon: session.localShellIcon,
       };
 
       setActiveTabId(newSession.id);

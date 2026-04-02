@@ -4,7 +4,9 @@ export type LocalOs = 'linux' | 'macos' | 'windows';
 const POWERSHELL_SHELLS = new Set(['powershell', 'powershell.exe', 'pwsh', 'pwsh.exe']);
 const CMD_SHELLS = new Set(['cmd', 'cmd.exe']);
 const FISH_SHELLS = new Set(['fish']);
-const POSIX_SHELLS = new Set(['sh', 'bash', 'zsh', 'ksh', 'dash', 'ash']);
+const POSIX_SHELLS = new Set(['sh', 'bash', 'zsh', 'ksh', 'dash', 'ash', 'bash.exe']);
+// WSL launcher — runs a Linux shell inside WSL, classify as posix
+const WSL_SHELLS = new Set(['wsl', 'wsl.exe']);
 
 const getExecutableBaseName = (filePath: string | undefined): string => {
   const normalized = String(filePath || '').trim();
@@ -29,6 +31,7 @@ export const classifyLocalShellType = (
   if (CMD_SHELLS.has(shellName)) return 'cmd';
   if (FISH_SHELLS.has(shellName)) return 'fish';
   if (POSIX_SHELLS.has(shellName)) return 'posix';
+  if (WSL_SHELLS.has(shellName)) return 'posix';
   if (!shellName) {
     return detectLocalOs(platformLike) === 'windows' ? 'powershell' : 'posix';
   }

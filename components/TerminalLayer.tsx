@@ -813,6 +813,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
           protocol: session.protocol ?? 'local' as const,
           moshEnabled: session.moshEnabled,
           charset: session.charset,
+          localShell: session.localShell,
+          localShellArgs: session.localShellArgs,
+          localShellName: session.localShellName,
+          localShellIcon: session.localShellIcon,
         });
       }
     }

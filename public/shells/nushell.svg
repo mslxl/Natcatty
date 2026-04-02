@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Nushell: teal/green accent, modern terminal style -->
+  <rect width="32" height="32" rx="3" fill="#0D1117"/>
+  <!-- Top accent bar in teal -->
+  <rect x="0" y="0" width="32" height="4" rx="2" fill="#4EAA97"/>
+  <rect x="0" y="2" width="32" height="2" fill="#4EAA97"/>
+  <!-- nu label in teal -->
+  <text x="4" y="16" font-family="monospace" font-size="9" font-weight="bold" fill="#4EAA97">nu</text>
+  <!-- > prompt -->
+  <text x="4" y="27" font-family="monospace" font-size="11" font-weight="bold" fill="#56D4C0">&gt;</text>
+  <text x="13" y="27" font-family="monospace" font-size="11" fill="#3A9985">_</text>
+</svg>

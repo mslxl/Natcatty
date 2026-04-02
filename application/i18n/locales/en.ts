@@ -343,6 +343,8 @@ const en: Messages = {
   'settings.terminal.localShell.shell.detected': 'Detected',
   'settings.terminal.localShell.shell.notFound': 'Shell executable not found',
   'settings.terminal.localShell.shell.isDirectory': 'Path is a directory, not an executable',
+  'settings.terminal.localShell.shell.default': 'System Default',
+  'settings.terminal.localShell.shell.custom': 'Custom...',
   'settings.terminal.localShell.startDir': 'Starting directory',
   'settings.terminal.localShell.startDir.desc': 'Directory to start in when opening a local terminal. Leave empty for home directory.',
   'settings.terminal.localShell.startDir.placeholder': 'Home directory',
@@ -911,6 +913,8 @@ const en: Messages = {
   'qs.search.placeholder': 'Search hosts or tabs',
   'qs.jumpTo': 'Jump To',
   'qs.localTerminal': 'Local Terminal',
+  'qs.localShells': 'Local Shells',
+  'qs.default': 'Default',
 
   // Select Host panel
   'selectHost.title': 'Select Host',
