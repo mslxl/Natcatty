@@ -358,6 +358,7 @@ interface TerminalLayerProps {
   onUpdateTerminalThemeId?: (themeId: string) => void;
   onUpdateTerminalFontFamilyId?: (fontFamilyId: string) => void;
   onUpdateTerminalFontSize?: (fontSize: number) => void;
+  onUpdateTerminalFontWeight?: (fontWeight: number) => void;
   onCloseSession: (sessionId: string, e?: React.MouseEvent) => void;
   onUpdateSessionStatus: (sessionId: string, status: TerminalSession['status']) => void;
   onUpdateHostDistro: (hostId: string, distro: string) => void;
@@ -412,6 +413,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   onUpdateTerminalThemeId,
   onUpdateTerminalFontFamilyId,
   onUpdateTerminalFontSize,
+  onUpdateTerminalFontWeight,
   onCloseSession,
   onUpdateSessionStatus,
   onUpdateHostDistro,
@@ -2039,6 +2041,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                         currentFontFamilyId={focusedFontFamilyId}
                         globalFontFamilyId={terminalFontFamilyId}
                         currentFontSize={focusedFontSize}
+                        currentFontWeight={terminalSettings?.fontWeight ?? 400}
                         canResetTheme={focusedThemeOverridden}
                         canResetFontFamily={focusedFontFamilyOverridden}
                         canResetFontSize={focusedFontSizeOverridden}
@@ -2048,6 +2051,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                         onFontFamilyReset={handleFontFamilyResetForFocusedSession}
                         onFontSizeChange={handleFontSizeChangeForFocusedSession}
                         onFontSizeReset={handleFontSizeResetForFocusedSession}
+                        onFontWeightChange={(w) => onUpdateTerminalFontWeight?.(w)}
                         previewColors={resolvedPreviewTheme.colors}
                       />
                     </div>

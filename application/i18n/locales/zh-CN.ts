@@ -839,6 +839,7 @@ const zhCN: Messages = {
   'terminal.themeModal.globalTheme': '全局主题',
   'terminal.themeModal.globalFont': '全局字体',
   'terminal.themeModal.fontSize': '字体大小',
+  'terminal.themeModal.fontWeight': '字体粗细',
   'terminal.themeModal.livePreview': '实时预览',
   'terminal.themeModal.themeType': '{type} 主题',
 

@@ -131,6 +131,7 @@ interface ThemeSidePanelProps {
   currentFontFamilyId: string;
   globalFontFamilyId: string;
   currentFontSize: number;
+  currentFontWeight: number;
   canResetTheme?: boolean;
   canResetFontFamily?: boolean;
   canResetFontSize?: boolean;
@@ -140,6 +141,7 @@ interface ThemeSidePanelProps {
   onFontFamilyReset?: () => void;
   onFontSizeChange: (fontSize: number) => void;
   onFontSizeReset?: () => void;
+  onFontWeightChange: (fontWeight: number) => void;
   isVisible?: boolean;
   previewColors?: {
     background: string;
@@ -153,6 +155,7 @@ const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
   currentFontFamilyId,
   globalFontFamilyId,
   currentFontSize,
+  currentFontWeight,
   canResetTheme = false,
   canResetFontFamily = false,
   canResetFontSize = false,
@@ -162,6 +165,7 @@ const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
   onFontFamilyReset,
   onFontSizeChange,
   onFontSizeReset,
+  onFontWeightChange,
   isVisible = true,
   previewColors,
 }) => {
@@ -497,10 +501,35 @@ const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
           </div>
         )}
 
+        {/* Font Weight Control (only in font tab) */}
+        {activeTab === 'font' && (
+          <div className="p-2.5 border-t shrink-0" style={{ borderColor: 'var(--terminal-panel-border)' }}>
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <div className="text-[9px] uppercase tracking-wider font-semibold" style={{ color: 'var(--terminal-panel-muted)' }}>
+                {t('terminal.themeModal.fontWeight')}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 rounded-lg p-1.5" style={{ backgroundColor: 'var(--terminal-panel-hover)' }}>
+              <input
+                type="range"
+                min={100}
+                max={900}
+                step={100}
+                value={currentFontWeight}
+                onChange={(e) => onFontWeightChange(Number(e.target.value))}
+                className="flex-1 h-1 accent-current cursor-pointer"
+              />
+              <span className="text-xs font-mono tabular-nums w-7 text-right" style={{ color: 'var(--terminal-panel-fg)' }}>
+                {currentFontWeight}
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Current selection info */}
         <div className="px-2.5 py-1.5 border-t shrink-0" style={{ borderColor: 'var(--terminal-panel-border)' }}>
           <div className="text-[9px] truncate" style={{ color: 'var(--terminal-panel-muted)' }}>
-            {allThemes.find(t => t.id === currentThemeId)?.name ?? currentThemeId} • {availableFonts.find(f => f.id === currentFontFamilyId)?.name ?? currentFontFamilyId} • {currentFontSize}px
+            {allThemes.find(t => t.id === currentThemeId)?.name ?? currentThemeId} • {availableFonts.find(f => f.id === currentFontFamilyId)?.name ?? currentFontFamilyId} • {currentFontSize}px • {currentFontWeight}
           </div>
         </div>
       </div>

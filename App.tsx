@@ -187,6 +187,7 @@ function App({ settings }: { settings: SettingsState }) {
     terminalFontSize,
     setTerminalFontSize,
     terminalSettings,
+    updateTerminalSetting,
     hotkeyScheme,
     keyBindings,
     isHotkeyRecording,
@@ -1471,6 +1472,7 @@ function App({ settings }: { settings: SettingsState }) {
           onUpdateTerminalThemeId={setTerminalThemeId}
           onUpdateTerminalFontFamilyId={setTerminalFontFamilyId}
           onUpdateTerminalFontSize={setTerminalFontSize}
+          onUpdateTerminalFontWeight={(w) => updateTerminalSetting('fontWeight', w)}
           onCloseSession={closeSession}
           onUpdateSessionStatus={handleSessionStatusChange}
           onUpdateHostDistro={updateHostDistro}

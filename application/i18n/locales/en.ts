@@ -1221,6 +1221,7 @@ const en: Messages = {
   'terminal.themeModal.globalTheme': 'Global Theme',
   'terminal.themeModal.globalFont': 'Global Font',
   'terminal.themeModal.fontSize': 'Font Size',
+  'terminal.themeModal.fontWeight': 'Font Weight',
   'terminal.themeModal.livePreview': 'Live Preview',
   'terminal.themeModal.themeType': '{type} theme',
 
