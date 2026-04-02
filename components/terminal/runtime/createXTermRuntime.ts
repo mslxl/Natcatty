@@ -359,7 +359,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   // Enable Unicode graphemes for accurate CJK / emoji / Nerd Font character width handling
   const unicodeGraphemes = new UnicodeGraphemesAddon();
   term.loadAddon(unicodeGraphemes);
-  term.unicode.activeVersion = 'graphemes';
+  term.unicode.activeVersion = '15-graphemes';
 
   logRenderer();
 
