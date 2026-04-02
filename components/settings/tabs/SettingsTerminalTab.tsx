@@ -1172,7 +1172,7 @@ export default function SettingsTerminalTab(props: {
               disabled={!customShellDraft.trim()}
               className="px-3 py-1.5 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
-              {t("common.confirm")}
+              {t("common.save")}
             </button>
           </DialogFooter>
         </DialogContent>
