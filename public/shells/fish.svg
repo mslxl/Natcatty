@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
   <!-- Fish shell: simple fish shape in Fish shell green -->
-  <rect width="32" height="32" rx="16" fill="#1A2E1A"/>
+  <rect width="32" height="32" rx="6" fill="#1A2E1A"/>
   <!-- Fish body -->
   <ellipse cx="15" cy="16" rx="9" ry="6" fill="#4DB380"/>
   <!-- Fish tail -->
