@@ -962,7 +962,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           const weightSpec = `${terminalSettings.fontWeightBold} ${effectiveFontSize}px ${fontFamily}`;
           return document.fonts.check(weightSpec)
             ? terminalSettings.fontWeightBold
-            : terminalSettings.fontWeight;
+            : effectiveFontWeight;
         })();
 
         termRef.current.options.fontWeightBold = resolvedFontWeightBold as
@@ -1049,7 +1049,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
             const weightSpec = `${terminalSettings.fontWeightBold} ${effectiveFontSize}px ${fontFamily}`;
             const resolvedBold = document.fonts.check(weightSpec)
               ? terminalSettings.fontWeightBold
-              : terminalSettings.fontWeight;
+              : effectiveFontWeight;
             termRef.current.options.fontWeightBold = resolvedBold as
               | 100
               | 200
