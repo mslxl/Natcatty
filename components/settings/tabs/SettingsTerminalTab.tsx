@@ -301,6 +301,8 @@ export default function SettingsTerminalTab(props: {
     if (!terminalSettings.localShell) return false;
     return !discoveredShells.some(s => s.id === terminalSettings.localShell);
   });
+  const [customShellModalOpen, setCustomShellModalOpen] = useState(false);
+  const [customShellDraft, setCustomShellDraft] = useState("");
 
   // Update showCustomShellInput once discovered shells load
   useEffect(() => {
@@ -934,7 +936,8 @@ export default function SettingsTerminalTab(props: {
               ]}
               onChange={(value) => {
                 if (value === "__custom__") {
-                  setShowCustomShellInput(true);
+                  setCustomShellDraft(terminalSettings.localShell || "");
+                  setCustomShellModalOpen(true);
                 } else {
                   setShowCustomShellInput(false);
                   updateTerminalSetting("localShell", value);
@@ -943,25 +946,13 @@ export default function SettingsTerminalTab(props: {
               className="w-48"
             />
             {showCustomShellInput && (
-              <Input
-                value={terminalSettings.localShell}
-                placeholder={t("settings.terminal.localShell.shell.placeholder")}
-                onChange={(e) => updateTerminalSetting("localShell", e.target.value)}
-                className={cn(
-                  "w-48",
-                  shellValidation && !shellValidation.valid && "border-destructive focus-visible:ring-destructive"
-                )}
-              />
+              <span className="text-xs text-muted-foreground truncate max-w-48">
+                {terminalSettings.localShell}
+              </span>
             )}
             {!showCustomShellInput && defaultShell && !terminalSettings.localShell && (
               <span className="text-xs text-muted-foreground">
                 {t("settings.terminal.localShell.shell.detected")}: {defaultShell}
-              </span>
-            )}
-            {shellValidation && !shellValidation.valid && shellValidation.message && (
-              <span className="text-xs text-destructive flex items-center gap-1">
-                <AlertCircle size={12} />
-                {shellValidation.message}
               </span>
             )}
           </div>
@@ -1118,6 +1109,73 @@ export default function SettingsTerminalTab(props: {
           />
         </SettingRow>
       </div>
+      {/* Custom Shell Modal */}
+      <Dialog open={customShellModalOpen} onOpenChange={setCustomShellModalOpen}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle>{t("settings.terminal.localShell.shell.custom")}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{t("settings.terminal.localShell.shell.customPath")}</label>
+              <Input
+                value={customShellDraft}
+                placeholder={t("settings.terminal.localShell.shell.placeholder")}
+                onChange={(e) => setCustomShellDraft(e.target.value)}
+                className="w-full"
+                autoFocus
+              />
+              {shellValidation && !shellValidation.valid && shellValidation.message && (
+                <span className="text-xs text-destructive flex items-center gap-1">
+                  <AlertCircle size={12} />
+                  {shellValidation.message}
+                </span>
+              )}
+              {shellValidation?.valid && (
+                <span className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                  ✓ {t("settings.terminal.localShell.shell.pathValid")}
+                </span>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs text-muted-foreground">{t("settings.terminal.localShell.shell.commonPaths")}</label>
+              <div className="flex flex-wrap gap-1.5">
+                {["/bin/bash", "/bin/zsh", "/usr/bin/fish", "/bin/sh", "powershell.exe", "pwsh.exe", "cmd.exe"].map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setCustomShellDraft(p)}
+                    className="text-xs px-2 py-1 rounded-md border border-border bg-muted/50 hover:bg-muted transition-colors"
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setCustomShellModalOpen(false)}
+              className="px-3 py-1.5 text-sm rounded-md border border-border hover:bg-muted transition-colors"
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                updateTerminalSetting("localShell", customShellDraft);
+                setShowCustomShellInput(true);
+                setCustomShellModalOpen(false);
+              }}
+              disabled={!customShellDraft.trim()}
+              className="px-3 py-1.5 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+            >
+              {t("common.confirm")}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </SettingsTabContent>
   );
 }
