@@ -1430,6 +1430,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const handleRetry = () => {
     if (!termRef.current) return;
     cleanupSession();
+    // Reset terminal state: disable mouse tracking modes and clear screen so
+    // stale SGR mouse sequences don't leak into the new session as text input.
+    termRef.current.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l');
+    termRef.current.reset();
     auth.resetForRetry();
     terminalDataCapturedRef.current = false;
     hasRunStartupCommandRef.current = false;
