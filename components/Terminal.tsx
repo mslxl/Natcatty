@@ -47,7 +47,7 @@ import { TerminalSearchBar } from "./terminal/TerminalSearchBar";
 import { ZmodemProgressIndicator } from "./terminal/ZmodemProgressIndicator";
 import { useZmodemTransfer } from "./terminal/hooks/useZmodemTransfer";
 import { createTerminalSessionStarters, type PendingAuth } from "./terminal/runtime/createTerminalSessionStarters";
-import { createXTermRuntime, type XTermRuntime } from "./terminal/runtime/createXTermRuntime";
+import { createXTermRuntime, primaryFontFamily, type XTermRuntime } from "./terminal/runtime/createXTermRuntime";
 import { XTERM_PERFORMANCE_CONFIG } from "../infrastructure/config/xtermPerformance";
 import { useTerminalSearch } from "./terminal/hooks/useTerminalSearch";
 import { useTerminalContextActions } from "./terminal/hooks/useTerminalContextActions";
@@ -256,6 +256,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   isVisibleRef.current = isVisible;
   const pendingOutputScrollRef = useRef(false);
   const lastFittedSizeRef = useRef<{ width: number; height: number } | null>(null);
+  const fontWeightFixupDoneRef = useRef(false);
 
   useEffect(() => {
     if (xtermRuntimeRef.current) {
@@ -328,6 +329,23 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   const statusRef = useRef<TerminalSession["status"]>(status);
   statusRef.current = status;
+
+  // Work around xterm.js WebGL renderer bug: glyphs rendered via the constructor
+  // look different from dynamically-set ones. After text appears on screen (status
+  // becomes "connected"), do a fontWeight round-trip to normalize the rendering.
+  useEffect(() => {
+    if (status !== 'connected' || fontWeightFixupDoneRef.current || !termRef.current) return;
+    fontWeightFixupDoneRef.current = true;
+    const timer = setTimeout(() => {
+      if (!termRef.current) return;
+      // Re-read the current weight at fire time to avoid stale closures
+      const w = termRef.current.options.fontWeight;
+      if (w === 'normal' || w === 400) return;
+      termRef.current.options.fontWeight = 'normal';
+      termRef.current.options.fontWeight = w;
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [status]);
 
   const [chainProgress, setChainProgress] = useState<{
     currentHop: number;
@@ -959,7 +977,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           if (typeof document === "undefined" || !document.fonts?.check) {
             return terminalSettings.fontWeightBold;
           }
-          const weightSpec = `${terminalSettings.fontWeightBold} ${effectiveFontSize}px ${fontFamily}`;
+          const weightSpec = `${terminalSettings.fontWeightBold} ${effectiveFontSize}px ${primaryFontFamily(fontFamily)}`;
           return document.fonts.check(weightSpec)
             ? terminalSettings.fontWeightBold
             : effectiveFontWeight;
@@ -1046,7 +1064,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         if (terminalSettings && termRef.current) {
           const fontFamily = termRef.current.options?.fontFamily || "";
           if (typeof document !== "undefined" && document.fonts?.check) {
-            const weightSpec = `${terminalSettings.fontWeightBold} ${effectiveFontSize}px ${fontFamily}`;
+            const weightSpec = `${terminalSettings.fontWeightBold} ${effectiveFontSize}px ${primaryFontFamily(fontFamily)}`;
             const resolvedBold = document.fonts.check(weightSpec)
               ? terminalSettings.fontWeightBold
               : effectiveFontWeight;
