@@ -89,11 +89,13 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
   const discoveredShells = useDiscoveredShells();
 
   const filteredShells = useMemo(() => {
-    if (!query.trim()) return discoveredShells;
-    const q = query.toLowerCase();
-    return discoveredShells.filter(
-      (s) => s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q)
-    );
+    const list = !query.trim()
+      ? discoveredShells
+      : discoveredShells.filter(
+          (s) => s.name.toLowerCase().includes(query.toLowerCase()) || s.id.toLowerCase().includes(query.toLowerCase())
+        );
+    // Default shell first
+    return [...list].sort((a, b) => (a.isDefault === b.isDefault ? 0 : a.isDefault ? -1 : 1));
   }, [discoveredShells, query]);
 
   // Get hotkey display strings
