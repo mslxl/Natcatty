@@ -1135,10 +1135,16 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   useEffect(() => {
     if (!isVisible || !fitAddonRef.current) return;
-    const timer = setTimeout(() => {
+    // Fit twice: once after initial layout (100ms) and again after layout settles
+    // (350ms) to handle race conditions during split operations where the container
+    // dimensions may not be final on the first pass.
+    const timer1 = setTimeout(() => {
       safeFit({ requireVisible: true });
     }, 100);
-    return () => clearTimeout(timer);
+    const timer2 = setTimeout(() => {
+      safeFit({ force: true, requireVisible: true });
+    }, 350);
+    return () => { clearTimeout(timer1); clearTimeout(timer2); };
   }, [inWorkspace, isVisible]);
 
   // When search bar opens/closes, re-fit terminal and maintain scroll position

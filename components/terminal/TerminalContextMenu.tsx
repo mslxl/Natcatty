@@ -75,21 +75,26 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
   const splitVShortcut = getShortcut('split-vertical');
   const clearShortcut = getShortcut('clear-buffer');
 
-  const showContextMenu = rightClickBehavior === 'context-menu' && !isAlternateScreen;
-
+  // Handle right-click: intercept for paste/select-word unless Shift is held
+  // or rightClickBehavior is 'context-menu'. The ContextMenuTrigger stays always
+  // enabled so Shift+Right-Click opens the menu on the first click.
   const handleRightClick = useCallback(
     (e: React.MouseEvent) => {
       // In alternate screen (tmux, vim, etc.), let the terminal application
       // handle right-click natively to avoid conflicting menus
-      if (isAlternateScreen) return;
-
-      if (rightClickBehavior === 'paste') {
+      if (isAlternateScreen) {
         e.preventDefault();
-        e.stopPropagation();
+        return;
+      }
+
+      // Shift+Right-Click or context-menu mode: let Radix open the menu
+      if (e.shiftKey || rightClickBehavior === 'context-menu') return;
+
+      // Paste / select-word: intercept and prevent the context menu
+      e.preventDefault();
+      if (rightClickBehavior === 'paste') {
         onPaste?.();
       } else if (rightClickBehavior === 'select-word') {
-        e.preventDefault();
-        e.stopPropagation();
         onSelectWord?.();
       }
     },
@@ -102,12 +107,11 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
     <ContextMenu>
       <ContextMenuTrigger
         asChild
-        disabled={!showContextMenu}
-        onContextMenu={!showContextMenu ? handleRightClick : undefined}
+        onContextMenu={handleRightClick}
       >
         {children}
       </ContextMenuTrigger>
-      {showContextMenu && (
+      {!isAlternateScreen && (
         <ContextMenuContent className="w-56">
           <ContextMenuItem onClick={onCopy} disabled={!hasSelection}>
             <Copy size={14} className="mr-2" />

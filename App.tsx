@@ -969,32 +969,32 @@ function App({ settings }: { settings: SettingsState }) {
         break;
       }
       case 'splitHorizontal': {
-        // Split current terminal horizontally (top/bottom)
         const currentId = activeTabStore.getActiveTabId();
-        // Check if it's a standalone session or we're in a workspace
         const activeSession = sessions.find(s => s.id === currentId);
         const activeWs = workspaces.find(w => w.id === currentId);
         if (activeSession && !activeSession.workspaceId) {
-          // Standalone session - split it
           splitSessionWithCurrentShell(activeSession.id, 'horizontal');
         } else if (activeWs) {
-          // In a workspace - need to determine focused session
-          // For now, we'll need the terminal to handle this via context menu
-          if (IS_DEV) console.log('[Hotkey] Split horizontal in workspace - use context menu on specific terminal');
+          const liveIds = collectSessionIds(activeWs.root);
+          const targetId = (activeWs.focusedSessionId && liveIds.includes(activeWs.focusedSessionId))
+            ? activeWs.focusedSessionId
+            : liveIds[0];
+          if (targetId) splitSessionWithCurrentShell(targetId, 'horizontal');
         }
         break;
       }
       case 'splitVertical': {
-        // Split current terminal vertically (left/right)
         const currentId = activeTabStore.getActiveTabId();
         const activeSession = sessions.find(s => s.id === currentId);
         const activeWs = workspaces.find(w => w.id === currentId);
         if (activeSession && !activeSession.workspaceId) {
-          // Standalone session - split it
           splitSessionWithCurrentShell(activeSession.id, 'vertical');
         } else if (activeWs) {
-          // In a workspace - need to determine focused session
-          if (IS_DEV) console.log('[Hotkey] Split vertical in workspace - use context menu on specific terminal');
+          const liveIds = collectSessionIds(activeWs.root);
+          const targetId = (activeWs.focusedSessionId && liveIds.includes(activeWs.focusedSessionId))
+            ? activeWs.focusedSessionId
+            : liveIds[0];
+          if (targetId) splitSessionWithCurrentShell(targetId, 'vertical');
         }
         break;
       }
