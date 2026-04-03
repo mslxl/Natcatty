@@ -2012,7 +2012,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         >
           <div
             ref={containerRef}
-            className="absolute inset-x-0 bottom-0"
+            className="xterm-container absolute inset-x-0 bottom-0"
             style={{
               top: isSearchOpen ? "64px" : "30px",
               paddingLeft: 6,
