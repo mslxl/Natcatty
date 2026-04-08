@@ -124,7 +124,10 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
   const hasAnyContent = snippets.length > 0 || packages.length > 0;
 
   return (
-    <div className="h-full flex flex-col bg-background overflow-hidden">
+    <div
+      className="h-full flex flex-col bg-background overflow-hidden"
+      data-section="snippets-panel"
+    >
       {/* Search */}
       <div className="shrink-0 px-2 py-1.5 border-b border-border/50">
         <div className="relative">
