@@ -954,6 +954,14 @@ async function openSftp(event, options) {
     // Enable keyboard-interactive authentication (required for 2FA/MFA)
     tryKeyboard: true,
     readyTimeout: 120000, // 2 minutes for 2FA input
+    // Keep SFTP sessions alive while the panel is idle. Without SSH-level
+    // keepalive packets the connection sits with zero data flow while the
+    // user is just browsing files, and NAT/firewall state tables drop the
+    // idle TCP connection after ~30-60s (the exact symptom of #669).
+    // Honor an explicitly configured positive keepaliveInterval (seconds);
+    // otherwise default to 10s, matching the SFTP jump host path below.
+    keepaliveInterval: options.keepaliveInterval > 0 ? options.keepaliveInterval * 1000 : 10000,
+    keepaliveCountMax: 3,
     algorithms: buildSftpAlgorithms(options.legacyAlgorithms),
   };
 
