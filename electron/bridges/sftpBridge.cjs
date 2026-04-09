@@ -1388,7 +1388,12 @@ async function readSftpBinary(event, payload) {
 }
 
 /**
- * Write file content
+ * Write file content.
+ *
+ * If the target file already exists, its mode is preserved — ssh2-sftp-client's
+ * `put()` otherwise overwrites existing files with the server's default mode
+ * (typically 0o666 after umask), which would silently change permissions on
+ * files edited through the built-in text editor.
  */
 async function writeSftp(event, payload) {
   const client = sftpClients.get(payload.sftpId);
@@ -1397,7 +1402,31 @@ async function writeSftp(event, payload) {
   await requireSftpChannel(client);
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
   const encodedPath = encodePath(payload.path, encoding);
+
+  let existingMode = null;
+  try {
+    const stat = await client.stat(encodedPath);
+    if (typeof stat.mode === "number") {
+      // Mask with 0o7777 so special bits (setuid/setgid/sticky) are preserved too.
+      existingMode = stat.mode & 0o7777;
+    }
+  } catch (_err) {
+    // File does not exist — treat as a new file and let the server apply defaults.
+  }
+
   await client.put(Buffer.from(payload.content, "utf-8"), encodedPath);
+
+  if (existingMode !== null) {
+    try {
+      await client.chmod(encodedPath, existingMode);
+    } catch (err) {
+      console.warn(
+        `[sftp] Failed to restore permissions on ${payload.path}:`,
+        err && err.message ? err.message : err,
+      );
+    }
+  }
+
   return true;
 }
 
