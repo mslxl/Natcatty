@@ -1777,6 +1777,11 @@ const en: Messages = {
   'ai.defaultAgent': 'Default Agent',
   'ai.defaultAgent.description': 'Agent to use when starting a new AI session',
   'ai.defaultAgent.catty': 'Catty (Built-in)',
+  'ai.toolAccess.title': 'Tool Access',
+  'ai.toolAccess.mode': 'Netcatty Access Mode',
+  'ai.toolAccess.description': 'Choose how external ACP agents access Netcatty sessions. MCP exposes the built-in server, while Skills + CLI points agents to the local Netcatty skill and CLI commands.',
+  'ai.toolAccess.mode.mcp': 'MCP',
+  'ai.toolAccess.mode.skills': 'Skills + CLI',
 
   // AI Chat
   'ai.chat.noProvider': 'No AI provider is configured. Go to **Settings → AI → Providers** to add and enable a provider.',
@@ -1853,7 +1858,7 @@ const en: Messages = {
   // AI Safety Settings
   'ai.safety.title': 'Safety',
   'ai.safety.permissionMode': 'Permission Mode',
-  'ai.safety.permissionMode.description': 'Controls how the AI interacts with your terminals. Observer mode blocks all write operations via MCP Server, enforced for both built-in and ACP agents. Confirm mode is advisory for ACP agents (they control their own tool approval flow).',
+  'ai.safety.permissionMode.description': 'Controls how the AI interacts with your terminals. Observer mode blocks all write operations through Netcatty, enforced for both built-in and ACP agents. Confirm mode is advisory for ACP agents (they control their own tool approval flow).',
   'ai.safety.permissionMode.observer': 'Observer - Read only, no actions',
   'ai.safety.permissionMode.confirm': 'Confirm - Ask before actions',
   'ai.safety.permissionMode.autonomous': 'Autonomous - Execute freely',
@@ -1863,7 +1868,7 @@ const en: Messages = {
   'ai.safety.maxIterations': 'Max Iterations',
   'ai.safety.maxIterations.description': 'Maximum number of AI tool-use loops to prevent runaway execution. ACP agents may have their own internal iteration limits that take precedence.',
   'ai.safety.blocklist': 'Command Blocklist',
-  'ai.safety.blocklist.description': 'Regex patterns to block dangerous commands. Applies to both built-in and ACP agents via MCP Server.',
+  'ai.safety.blocklist.description': 'Regex patterns to block dangerous commands. Applies to both built-in and ACP agents through Netcatty execution.',
   'ai.safety.blocklist.placeholder': 'Regex pattern...',
   'ai.safety.blocklist.reset': 'Reset to defaults',
   'ai.safety.blocklist.add': 'Add pattern',
