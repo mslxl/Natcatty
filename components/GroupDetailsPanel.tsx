@@ -21,6 +21,7 @@ import {
 import React, { useCallback, useMemo, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { customThemeStore } from "../application/state/customThemeStore";
+import { resolveGroupDefaults, resolveGroupTerminalThemeId } from "../domain/groupConfig";
 import { cn } from "../lib/utils";
 import {
   EnvVar,
@@ -61,7 +62,7 @@ interface GroupDetailsPanelProps {
   allHosts: Host[];
   groups: string[];
   terminalThemeId: string;
-  inheritedThemeId?: string;
+  groupConfigs?: GroupConfig[];
   terminalFontSize: number;
   onSave: (config: GroupConfig, newName?: string, newParent?: string | null) => void;
   onCancel: () => void;
@@ -76,7 +77,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
   allHosts,
   groups,
   terminalThemeId,
-  inheritedThemeId,
+  groupConfigs = [],
   terminalFontSize,
   onSave,
   onCancel,
@@ -279,9 +280,13 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
   }, [groups, groupPath, t]);
 
   // Effective theme
+  const inheritedThemeId = useMemo(() => {
+    if (!parentGroup || groupConfigs.length === 0) return terminalThemeId;
+    return resolveGroupTerminalThemeId(resolveGroupDefaults(parentGroup, groupConfigs), terminalThemeId);
+  }, [groupConfigs, parentGroup, terminalThemeId]);
   const effectiveThemeId = form.themeOverride === false
-    ? (inheritedThemeId || terminalThemeId)
-    : (form.theme || inheritedThemeId || terminalThemeId);
+    ? inheritedThemeId
+    : (form.theme || inheritedThemeId);
   const hasActiveThemeOverride = form.themeOverride === true || (form.theme != null && form.themeOverride !== false);
 
   // Save handler

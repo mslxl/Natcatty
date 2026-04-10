@@ -56,6 +56,5 @@ export function resolveGroupTerminalThemeId(
   fallbackThemeId: string,
 ): string {
   if (!groupDefaults) return fallbackThemeId;
-  if (groupDefaults.themeOverride === false) return fallbackThemeId;
   return groupDefaults.theme || fallbackThemeId;
 }

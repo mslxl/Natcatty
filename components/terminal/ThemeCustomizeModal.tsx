@@ -138,6 +138,8 @@ interface ThemeCustomizeModalProps {
     onFontSizeChange?: (fontSize: number) => void;
     /** Called when user clicks Save to persist settings */
     onSave?: () => void;
+    /** Optional live preview callback for consumers that render outside this modal */
+    onPreviewThemeChange?: (theme: TerminalTheme | null) => void;
 }
 
 // Memoized preview component to avoid re-rendering on every state change
@@ -284,6 +286,7 @@ export const ThemeCustomizeModal: React.FC<ThemeCustomizeModalProps> = ({
     onFontFamilyChange,
     onFontSizeChange,
     onSave,
+    onPreviewThemeChange,
 }) => {
     const { t } = useI18n();
     const availableFonts = useAvailableFonts();
@@ -354,6 +357,10 @@ export const ThemeCustomizeModal: React.FC<ThemeCustomizeModalProps> = ({
             : null),
         [selectedTheme]
     );
+
+    useEffect(() => {
+        onPreviewThemeChange?.(open ? currentTheme : null);
+    }, [currentTheme, onPreviewThemeChange, open]);
 
     // Handle theme selection - apply immediately for real-time preview
     const handleThemeSelect = useCallback((themeId: string) => {
