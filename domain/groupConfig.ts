@@ -50,3 +50,12 @@ export function applyGroupDefaults(host: Host, groupDefaults: Partial<GroupConfi
   }
   return effective;
 }
+
+export function resolveGroupTerminalThemeId(
+  groupDefaults: Partial<GroupConfig> | undefined,
+  fallbackThemeId: string,
+): string {
+  if (!groupDefaults) return fallbackThemeId;
+  if (groupDefaults.themeOverride === false) return fallbackThemeId;
+  return groupDefaults.theme || fallbackThemeId;
+}

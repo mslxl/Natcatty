@@ -36,6 +36,7 @@ import {
   LINUX_DISTRO_OPTIONS,
   NETWORK_DEVICE_OPTIONS,
 } from "../domain/host";
+import { resolveGroupTerminalThemeId } from "../domain/groupConfig";
 import { customThemeStore } from "../application/state/customThemeStore";
 import {
   clearHostFontSizeOverride,
@@ -212,8 +213,8 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   };
 
   const effectiveThemeId = useMemo(
-    () => resolveHostTerminalThemeId(form, terminalThemeId),
-    [form, terminalThemeId],
+    () => resolveHostTerminalThemeId(form, resolveGroupTerminalThemeId(groupDefaults, terminalThemeId)),
+    [form, groupDefaults, terminalThemeId],
   );
   const effectiveFontSize = useMemo(
     () => resolveHostTerminalFontSize(form, terminalFontSize),

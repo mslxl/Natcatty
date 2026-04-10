@@ -1389,6 +1389,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     if (!focusedHost) return true;
     return !hostMap.has(focusedHost.id);
   }, [focusedHost, isFocusedHostLocal, hostMap]);
+  const rawFocusedHost = useMemo(() => {
+    if (!focusedHost) return null;
+    return hostMap.get(focusedHost.id) ?? null;
+  }, [focusedHost, hostMap]);
   const previewTargetSessionId = activeWorkspace?.focusedSessionId ?? activeSession?.id ?? null;
   const activeThemePreviewId = themePreview.targetSessionId === previewTargetSessionId
     ? themePreview.themeId
@@ -1519,6 +1523,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     const panelOpen = activeSidePanelTab === 'theme' && !!previewTargetSessionId;
     const shouldKeepPreview =
       panelOpen &&
+      themePreview.targetSessionId === previewTargetSessionId &&
       !!themePreview.targetSessionId &&
       !!themePreview.themeId;
 
@@ -1558,10 +1563,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
           onUpdateTerminalThemeId?.(themeId);
           return;
         }
-        onUpdateHost({ ...focusedHost, theme: themeId, themeOverride: true });
+        if (rawFocusedHost) {
+          onUpdateHost({ ...rawFocusedHost, theme: themeId, themeOverride: true });
+        }
       });
     }, 160);
-  }, [applyTerminalPreviewVars, applyTopTabsPreviewVars, focusedHost, isFocusedHostEphemeral, onUpdateTerminalThemeId, onUpdateHost, previewTargetSessionId, previewedOrVisibleThemeId]);
+  }, [applyTerminalPreviewVars, applyTopTabsPreviewVars, focusedHost, isFocusedHostEphemeral, onUpdateTerminalThemeId, onUpdateHost, previewTargetSessionId, previewedOrVisibleThemeId, rawFocusedHost]);
 
   const handleThemeResetForFocusedSession = useCallback(() => {
     if (themeCommitTimerRef.current) {
@@ -1569,9 +1576,9 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     }
     clearTerminalPreviewVars(previewTargetSessionId);
     setThemePreview({ targetSessionId: null, themeId: null });
-    if (!focusedHost || isFocusedHostEphemeral) return;
-    onUpdateHost(clearHostThemeOverride(focusedHost));
-  }, [focusedHost, isFocusedHostEphemeral, onUpdateHost, previewTargetSessionId]);
+    if (!focusedHost || isFocusedHostEphemeral || !rawFocusedHost) return;
+    onUpdateHost(clearHostThemeOverride(rawFocusedHost));
+  }, [focusedHost, isFocusedHostEphemeral, onUpdateHost, previewTargetSessionId, rawFocusedHost]);
 
   const handleFontFamilyChangeForFocusedSession = useCallback((fontFamilyId: string) => {
     if (!focusedHost || fontFamilyId === focusedFontFamilyId) return;

@@ -967,6 +967,7 @@ const topTabsAreEqual = (prev: TopTabsProps, next: TopTabsProps): boolean => {
     prev.isMacClient === next.isMacClient &&
     prev.onOpenSettings === next.onOpenSettings &&
     prev.onSyncNow === next.onSyncNow &&
+    prev.onToggleTheme === next.onToggleTheme &&
     prev.followAppTerminalTheme === next.followAppTerminalTheme &&
     prev.isImmersiveActive === next.isImmersiveActive
   );

@@ -129,6 +129,13 @@ class CustomThemeStore {
         this.notify();
         this.broadcastChange();
     };
+
+    replaceThemes = (themes: TerminalTheme[]) => {
+        this.themes = themes.map((theme) => ({ ...theme, colors: { ...theme.colors }, isCustom: true }));
+        this.saveToStorage();
+        this.notify();
+        this.broadcastChange();
+    };
 }
 
 // Singleton
@@ -172,5 +179,9 @@ export const useCustomThemeActions = () => {
         customThemeStore.deleteTheme(id);
     }, []);
 
-    return { addTheme, updateTheme, deleteTheme };
+    const replaceThemes = useCallback((themes: TerminalTheme[]) => {
+        customThemeStore.replaceThemes(themes);
+    }, []);
+
+    return { addTheme, updateTheme, deleteTheme, replaceThemes };
 };

@@ -868,8 +868,8 @@ const zhCN: Messages = {
   'terminal.themeModal.themeType': '{type} 主题',
   'terminal.hiddenTheme.title': '当前隐藏主题',
   'terminal.hiddenTheme.desc': '这个主题已从手动选择列表中隐藏；当你选择其他可见主题后，它会被替换。',
-  'topTabs.toggleTheme.systemExitTitle': '主题模式已切换',
-  'topTabs.toggleTheme.systemExitMessage': '已从“系统”切换到“{theme}”。',
+  'topTabs.toggleTheme.systemExitTitle': '当前正在跟随系统主题',
+  'topTabs.toggleTheme.systemExitMessage': '请到设置里选择固定的浅色或深色主题。',
   'topTabs.toggleTheme.openSettings': '打开设置',
 
   // Custom Themes

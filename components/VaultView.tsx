@@ -35,7 +35,7 @@ import { useI18n } from "../application/i18n/I18nProvider";
 import { useStoredViewMode } from "../application/state/useStoredViewMode";
 import { useStoredBoolean } from "../application/state/useStoredBoolean";
 import { useTreeExpandedState } from "../application/state/useTreeExpandedState";
-import { resolveGroupDefaults, applyGroupDefaults } from "../domain/groupConfig";
+import { resolveGroupDefaults, applyGroupDefaults, resolveGroupTerminalThemeId } from "../domain/groupConfig";
 import { getEffectiveHostDistro, sanitizeHost } from "../domain/host";
 import { importVaultHostsFromText, exportHostsToCsvWithStats } from "../domain/vaultImport";
 import type { VaultImportFormat } from "../domain/vaultImport";
@@ -292,6 +292,14 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     if (!group) return undefined;
     return resolveGroupDefaults(group, groupConfigs);
   }, [editingHost, newHostGroupPath, selectedGroupPath, groupConfigs]);
+  const editingGroupInheritedThemeId = useMemo(() => {
+    if (!editingGroupPath) return terminalThemeId;
+    const parentPath = editingGroupPath.includes("/")
+      ? editingGroupPath.substring(0, editingGroupPath.lastIndexOf("/"))
+      : "";
+    if (!parentPath) return terminalThemeId;
+    return resolveGroupTerminalThemeId(resolveGroupDefaults(parentPath, groupConfigs), terminalThemeId);
+  }, [editingGroupPath, groupConfigs, terminalThemeId]);
 
   // Quick connect state
   const [quickConnectTarget, setQuickConnectTarget] = useState<{
@@ -2881,6 +2889,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           allHosts={hosts}
           groups={allGroupPaths}
           terminalThemeId={terminalThemeId}
+          inheritedThemeId={editingGroupInheritedThemeId}
           terminalFontSize={terminalFontSize}
           onSave={handleSaveGroupConfig}
           onCancel={() => {

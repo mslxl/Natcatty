@@ -1310,10 +1310,9 @@ function App({ settings }: { settings: SettingsState }) {
   }, [protocolSelectHost, handleConnectToHost]);
 
   const handleToggleTheme = useCallback(() => {
-    const nextTheme = resolvedTheme === 'dark' ? 'light' : 'dark';
     if (theme === 'system') {
       toast.info(
-        t('topTabs.toggleTheme.systemExitMessage', { theme: t(`settings.appearance.theme.${nextTheme}`) }),
+        t('topTabs.toggleTheme.systemExitMessage'),
         {
           title: t('topTabs.toggleTheme.systemExitTitle'),
           actionLabel: t('topTabs.toggleTheme.openSettings'),
@@ -1325,8 +1324,9 @@ function App({ settings }: { settings: SettingsState }) {
           },
         }
       );
+      return;
     }
-    setTheme(nextTheme);
+    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
   }, [openSettingsWindow, resolvedTheme, setTheme, t, theme]);
 
   const handleOpenQuickSwitcher = useCallback(() => {

@@ -61,6 +61,7 @@ interface GroupDetailsPanelProps {
   allHosts: Host[];
   groups: string[];
   terminalThemeId: string;
+  inheritedThemeId?: string;
   terminalFontSize: number;
   onSave: (config: GroupConfig, newName?: string, newParent?: string | null) => void;
   onCancel: () => void;
@@ -75,6 +76,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
   allHosts,
   groups,
   terminalThemeId,
+  inheritedThemeId,
   terminalFontSize,
   onSave,
   onCancel,
@@ -277,7 +279,10 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
   }, [groups, groupPath, t]);
 
   // Effective theme
-  const effectiveThemeId = form.theme || terminalThemeId;
+  const effectiveThemeId = form.themeOverride === false
+    ? (inheritedThemeId || terminalThemeId)
+    : (form.theme || inheritedThemeId || terminalThemeId);
+  const hasActiveThemeOverride = form.themeOverride === true || (form.theme != null && form.themeOverride !== false);
 
   // Save handler
   const handleSubmit = () => {
@@ -325,7 +330,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
       }),
       // Shared fields (always saved)
       ...(form.charset !== undefined && { charset: form.charset }),
-      ...(form.theme !== undefined && { theme: form.theme }),
+      ...((form.themeOverride !== false && form.theme !== undefined) && { theme: form.theme }),
       ...(form.themeOverride !== undefined && { themeOverride: form.themeOverride }),
       ...(form.fontFamily !== undefined && { fontFamily: form.fontFamily }),
       ...(form.fontFamilyOverride !== undefined && { fontFamilyOverride: form.fontFamilyOverride }),
@@ -1027,7 +1032,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
               {customThemeStore.getThemeById(effectiveThemeId)?.name || "Flexoki Dark"}
             </span>
           </button>
-          {form.themeOverride && (
+          {hasActiveThemeOverride && (
             <Button
               variant="ghost"
               size="sm"
