@@ -4,7 +4,7 @@
 import React, { memo, useMemo } from 'react';
 import { Check } from 'lucide-react';
 import { useI18n } from '../application/i18n/I18nProvider';
-import { TERMINAL_THEMES } from '../infrastructure/config/terminalThemes';
+import { TERMINAL_THEMES, USER_VISIBLE_TERMINAL_THEMES, isUiMatchTerminalThemeId } from '../infrastructure/config/terminalThemes';
 import { useCustomThemes } from '../application/state/customThemeStore';
 import { cn } from '../lib/utils';
 import { TerminalTheme } from '../types';
@@ -58,15 +58,32 @@ interface ThemeListProps {
 export const ThemeList: React.FC<ThemeListProps> = ({ selectedThemeId, onSelect }) => {
     const { t } = useI18n();
     const customThemes = useCustomThemes();
+    const hiddenSelectedTheme = useMemo(
+        () => (isUiMatchTerminalThemeId(selectedThemeId)
+            ? TERMINAL_THEMES.find(theme => theme.id === selectedThemeId) || null
+            : null),
+        [selectedThemeId],
+    );
 
     const { darkThemes, lightThemes } = useMemo(() => {
-        const dark = TERMINAL_THEMES.filter(t => t.type === 'dark');
-        const light = TERMINAL_THEMES.filter(t => t.type === 'light');
+        const dark = USER_VISIBLE_TERMINAL_THEMES.filter(t => t.type === 'dark');
+        const light = USER_VISIBLE_TERMINAL_THEMES.filter(t => t.type === 'light');
         return { darkThemes: dark, lightThemes: light };
     }, []);
 
     return (
         <>
+            {hiddenSelectedTheme && (
+                <div className="mb-4 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1 font-semibold">
+                        {t('terminal.hiddenTheme.title')}
+                    </div>
+                    <div className="text-sm font-medium text-foreground">{hiddenSelectedTheme.name}</div>
+                    <div className="text-[11px] text-muted-foreground mt-1">
+                        {t('terminal.hiddenTheme.desc')}
+                    </div>
+                </div>
+            )}
             {/* Dark Themes Section */}
             <div className="mb-4">
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2 font-semibold px-3">

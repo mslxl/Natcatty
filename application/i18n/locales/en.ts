@@ -1252,6 +1252,11 @@ const en: Messages = {
   'terminal.themeModal.fontWeight': 'Font Weight',
   'terminal.themeModal.livePreview': 'Live Preview',
   'terminal.themeModal.themeType': '{type} theme',
+  'terminal.hiddenTheme.title': 'Current hidden theme',
+  'terminal.hiddenTheme.desc': 'This theme is hidden from manual picks and will be replaced when you choose another theme.',
+  'topTabs.toggleTheme.systemExitTitle': 'Theme mode changed',
+  'topTabs.toggleTheme.systemExitMessage': 'Switched from System to {theme}.',
+  'topTabs.toggleTheme.openSettings': 'Open Settings',
 
   // Custom Themes
   'terminal.customTheme.section': 'Custom Themes',

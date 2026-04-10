@@ -15,7 +15,7 @@ import { createPortal } from 'react-dom';
 import { Check, Download, Minus, Palette, Pencil, Plus, Sparkles, Type, X } from 'lucide-react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { useAvailableFonts } from '../../application/state/fontStore';
-import { TERMINAL_THEMES, TerminalThemeConfig } from '../../infrastructure/config/terminalThemes';
+import { TERMINAL_THEMES, TerminalThemeConfig, USER_VISIBLE_TERMINAL_THEMES, isUiMatchTerminalThemeId } from '../../infrastructure/config/terminalThemes';
 import { DEFAULT_FONT_SIZE, MIN_FONT_SIZE, MAX_FONT_SIZE, TerminalFont } from '../../infrastructure/config/fonts';
 import { useCustomThemes, useCustomThemeActions } from '../../application/state/customThemeStore';
 import { parseItermcolors } from '../../infrastructure/parsers/itermcolorsParser';
@@ -125,10 +125,13 @@ interface ThemeCustomizeModalProps {
     open: boolean;
     onClose: () => void;
     currentThemeId?: string;
+    displayThemeId?: string;
     currentFontFamilyId?: string;
     currentFontSize?: number;
     /** Called immediately when user selects a theme (for real-time preview) */
     onThemeChange?: (themeId: string) => void;
+    /** Called when the theme should return to inherited/default state */
+    onThemeReset?: () => void;
     /** Called immediately when user selects a font (for real-time preview) */
     onFontFamilyChange?: (fontFamilyId: string) => void;
     /** Called immediately when user changes font size (for real-time preview) */
@@ -264,10 +267,12 @@ TerminalPreview.displayName = 'TerminalPreview';
 export const ThemeCustomizeModal: React.FC<ThemeCustomizeModalProps> = ({
     open,
     onClose,
-    currentThemeId = 'termius-dark',
+    currentThemeId,
+    displayThemeId,
     currentFontFamilyId = 'menlo',
     currentFontSize = DEFAULT_FONT_SIZE,
     onThemeChange,
+    onThemeReset,
     onFontFamilyChange,
     onFontSizeChange,
     onSave,
@@ -277,8 +282,9 @@ export const ThemeCustomizeModal: React.FC<ThemeCustomizeModalProps> = ({
     const customThemes = useCustomThemes();
     const { addTheme, updateTheme, deleteTheme } = useCustomThemeActions();
 
+    const resolvedThemeId = currentThemeId ?? displayThemeId ?? TERMINAL_THEMES[0].id;
     const [activeTab, setActiveTab] = useState<TabType>('theme');
-    const [selectedTheme, setSelectedTheme] = useState(currentThemeId);
+    const [selectedTheme, setSelectedTheme] = useState(resolvedThemeId);
     const [selectedFont, setSelectedFont] = useState(currentFontFamilyId);
     const [fontSize, setFontSize] = useState(currentFontSize);
 
@@ -310,13 +316,13 @@ export const ThemeCustomizeModal: React.FC<ThemeCustomizeModalProps> = ({
                 fontSize: currentFontSize,
             };
             // Initialize selected values
-            setSelectedTheme(currentThemeId);
+            setSelectedTheme(resolvedThemeId);
             setSelectedFont(currentFontFamilyId);
             setFontSize(currentFontSize);
             setEditingTheme(null);
             setIsNewTheme(false);
         }
-    }, [open, currentThemeId, currentFontFamilyId, currentFontSize]);
+    }, [open, currentThemeId, resolvedThemeId, currentFontFamilyId, currentFontSize]);
 
     const currentFont = useMemo(
         (): TerminalFont => availableFonts.find(f => f.id === selectedFont) || availableFonts[0],
@@ -325,6 +331,12 @@ export const ThemeCustomizeModal: React.FC<ThemeCustomizeModalProps> = ({
     const currentTheme = useMemo(
         () => editingTheme || allThemes.find(t => t.id === selectedTheme) || TERMINAL_THEMES[0],
         [selectedTheme, allThemes, editingTheme]
+    );
+    const hiddenSelectedTheme = useMemo(
+        () => (isUiMatchTerminalThemeId(selectedTheme)
+            ? TERMINAL_THEMES.find((theme) => theme.id === selectedTheme) || null
+            : null),
+        [selectedTheme]
     );
 
     // Handle theme selection - apply immediately for real-time preview
@@ -441,11 +453,15 @@ export const ThemeCustomizeModal: React.FC<ThemeCustomizeModalProps> = ({
     const handleCancel = useCallback(() => {
         const original = originalValuesRef.current;
         // Revert all changes
-        onThemeChange?.(original.theme);
+        if (original.theme) {
+            onThemeChange?.(original.theme);
+        } else {
+            onThemeReset?.();
+        }
         onFontFamilyChange?.(original.font);
         onFontSizeChange?.(original.fontSize);
         onClose();
-    }, [onThemeChange, onFontFamilyChange, onFontSizeChange, onClose]);
+    }, [onThemeChange, onThemeReset, onFontFamilyChange, onFontSizeChange, onClose]);
 
     // Handle ESC key - same as cancel, but skip when child editor is open
     useEffect(() => {
@@ -465,7 +481,7 @@ export const ThemeCustomizeModal: React.FC<ThemeCustomizeModalProps> = ({
     if (!open) return null;
 
     // Separate built-in and custom themes for display in the theme list
-    const builtinThemes = TERMINAL_THEMES;
+    const builtinThemes = USER_VISIBLE_TERMINAL_THEMES;
 
     const modalContent = (
         <div
@@ -541,6 +557,17 @@ export const ThemeCustomizeModal: React.FC<ThemeCustomizeModalProps> = ({
                             <div className="flex-1 min-h-0 overflow-y-auto p-2">
                                 {activeTab === 'theme' && (
                                     <div className="space-y-1">
+                                        {hiddenSelectedTheme && (
+                                            <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5 mb-2">
+                                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1 font-semibold">
+                                                    {t('terminal.hiddenTheme.title')}
+                                                </div>
+                                                <div className="text-xs font-medium text-foreground">{hiddenSelectedTheme.name}</div>
+                                                <div className="text-[10px] text-muted-foreground mt-1">
+                                                    {t('terminal.hiddenTheme.desc')}
+                                                </div>
+                                            </div>
+                                        )}
                                         {/* Built-in themes */}
                                         {builtinThemes.map(theme => (
                                             <ThemeItem

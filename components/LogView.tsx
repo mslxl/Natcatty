@@ -295,9 +295,11 @@ const LogViewComponent: React.FC<LogViewProps> = ({
             <ThemeCustomizeModal
                 open={themeModalOpen}
                 onClose={() => setThemeModalOpen(false)}
-                currentThemeId={currentTheme.id}
+                currentThemeId={log.themeId}
+                displayThemeId={currentTheme.id}
                 currentFontSize={currentFontSize}
                 onThemeChange={handleThemeChange}
+                onThemeReset={() => onUpdateLog(log.id, { themeId: undefined })}
                 onFontSizeChange={handleFontSizeChange}
             />
         </div>

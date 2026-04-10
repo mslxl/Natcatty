@@ -179,6 +179,7 @@ function App({ settings }: { settings: SettingsState }) {
   const [passphraseQueue, setPassphraseQueue] = useState<PassphraseRequest[]>([]);
 
   const {
+    theme,
     setTheme,
     resolvedTheme,
     terminalThemeId,
@@ -1309,10 +1310,24 @@ function App({ settings }: { settings: SettingsState }) {
   }, [protocolSelectHost, handleConnectToHost]);
 
   const handleToggleTheme = useCallback(() => {
-    // Toggle based on the actual rendered theme so clicking always produces a visible change,
-    // even when the stored preference is 'system'.
-    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
-  }, [resolvedTheme, setTheme]);
+    const nextTheme = resolvedTheme === 'dark' ? 'light' : 'dark';
+    if (theme === 'system') {
+      toast.info(
+        t('topTabs.toggleTheme.systemExitMessage', { theme: t(`settings.appearance.theme.${nextTheme}`) }),
+        {
+          title: t('topTabs.toggleTheme.systemExitTitle'),
+          actionLabel: t('topTabs.toggleTheme.openSettings'),
+          onClick: () => {
+            void (async () => {
+              const opened = await openSettingsWindow();
+              if (!opened) toast.error(t('toast.settingsUnavailable'), t('common.settings'));
+            })();
+          },
+        }
+      );
+    }
+    setTheme(nextTheme);
+  }, [openSettingsWindow, resolvedTheme, setTheme, t, theme]);
 
   const handleOpenQuickSwitcher = useCallback(() => {
     setIsQuickSwitcherOpen(true);
@@ -1386,6 +1401,7 @@ function App({ settings }: { settings: SettingsState }) {
     <div className={cn("flex flex-col h-screen text-foreground font-sans netcatty-shell", activeTerminalTheme && "immersive-transition")} onContextMenu={handleRootContextMenu}>
       <TopTabs
         theme={resolvedTheme}
+        followAppTerminalTheme={followAppTerminalTheme}
         hosts={hosts}
         sessions={sessions}
         orphanSessions={orphanSessions}
