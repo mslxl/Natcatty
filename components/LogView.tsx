@@ -47,6 +47,12 @@ const LogViewComponent: React.FC<LogViewProps> = ({
         return exists ? log.themeId : undefined;
     }, [customThemes, log.themeId]);
 
+    useEffect(() => {
+        if (log.themeId && !explicitThemeId) {
+            onUpdateLog(log.id, { themeId: undefined });
+        }
+    }, [explicitThemeId, log.id, log.themeId, onUpdateLog]);
+
     // Use log's saved theme/fontSize or fall back to defaults
     const currentTheme = useMemo(() => {
         if (previewTheme) {
@@ -318,11 +324,6 @@ const LogViewComponent: React.FC<LogViewProps> = ({
                 onThemeReset={() => onUpdateLog(log.id, { themeId: undefined })}
                 onFontSizeChange={handleFontSizeChange}
                 onPreviewThemeChange={setPreviewTheme}
-                onSave={() => {
-                    if (log.themeId && !explicitThemeId && currentTheme.id === defaultTerminalTheme.id) {
-                        onUpdateLog(log.id, { themeId: undefined });
-                    }
-                }}
             />
         </div>
     );

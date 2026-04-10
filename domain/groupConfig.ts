@@ -17,24 +17,28 @@ export function resolveGroupDefaults(
     const config = configMap.get(ancestorPath);
     if (config) {
       for (const [key, value] of Object.entries(config)) {
+        if (
+          (key === 'theme' && config.themeOverride === false) ||
+          (key === 'fontFamily' && config.fontFamilyOverride === false) ||
+          (key === 'fontSize' && config.fontSizeOverride === false) ||
+          (key === 'fontWeight' && config.fontWeightOverride === false)
+        ) {
+          continue;
+        }
         if (key !== 'path' && value !== undefined) {
           merged[key] = value;
         }
       }
       if (config.themeOverride === false) {
-        delete merged.theme;
         delete merged.themeOverride;
       }
       if (config.fontFamilyOverride === false) {
-        delete merged.fontFamily;
         delete merged.fontFamilyOverride;
       }
       if (config.fontSizeOverride === false) {
-        delete merged.fontSize;
         delete merged.fontSizeOverride;
       }
       if (config.fontWeightOverride === false) {
-        delete merged.fontWeight;
         delete merged.fontWeightOverride;
       }
     }
