@@ -495,12 +495,17 @@ export default function SettingsTerminalTab(props: {
   return (
     <SettingsTabContent value="terminal">
       <SectionHeader title={t("settings.terminal.section.theme")} />
-      <ToggleRow
-        label={t("settings.terminal.theme.followApp")}
-        description={t("settings.terminal.theme.followApp.desc")}
-        enabled={followAppTerminalTheme}
-        onToggle={() => setFollowAppTerminalTheme(!followAppTerminalTheme)}
-      />
+      <div className="rounded-lg border bg-card px-4">
+        <SettingRow
+          label={t("settings.terminal.theme.followApp")}
+          description={t("settings.terminal.theme.followApp.desc")}
+        >
+          <Toggle
+            checked={followAppTerminalTheme}
+            onChange={setFollowAppTerminalTheme}
+          />
+        </SettingRow>
+      </div>
       {!followAppTerminalTheme && (
         <ThemePreviewButton
           theme={currentTheme}
