@@ -137,6 +137,7 @@ declare global {
     proxy?: NetcattyProxyConfig;
     jumpHosts?: NetcattyJumpHost[];
     identityFilePaths?: string[];
+    legacyAlgorithms?: boolean;
   }
 
   interface PortForwardResult {

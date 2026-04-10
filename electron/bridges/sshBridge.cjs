@@ -2527,4 +2527,5 @@ module.exports = {
   init,
   registerHandlers,
   connectThroughChain,
+  buildAlgorithms,
 };
