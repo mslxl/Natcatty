@@ -866,6 +866,11 @@ const zhCN: Messages = {
   'terminal.themeModal.fontWeight': '字体粗细',
   'terminal.themeModal.livePreview': '实时预览',
   'terminal.themeModal.themeType': '{type} 主题',
+  'terminal.hiddenTheme.title': '当前隐藏主题',
+  'terminal.hiddenTheme.desc': '这个主题已从手动选择列表中隐藏；当你选择其他可见主题后，它会被替换。',
+  'topTabs.toggleTheme.systemExitTitle': '当前正在跟随系统主题',
+  'topTabs.toggleTheme.systemExitMessage': '请到设置里选择固定的浅色或深色主题。',
+  'topTabs.toggleTheme.openSettings': '打开设置',
 
   // Custom Themes
   'terminal.customTheme.section': '自定义主题',
@@ -1279,6 +1284,8 @@ const zhCN: Messages = {
   'settings.terminal.themeModal.darkThemes': '深色主题',
   'settings.terminal.themeModal.lightThemes': '浅色主题',
   'settings.terminal.theme.selectButton': '选择主题',
+  'settings.terminal.theme.followApp': '跟随应用主题',
+  'settings.terminal.theme.followApp.desc': '终端背景色自动匹配当前应用主题，保持视觉一致性。',
   'settings.terminal.section.font': '字体',
   'settings.terminal.section.cursor': '光标',
   'settings.terminal.section.keyboard': '键盘',

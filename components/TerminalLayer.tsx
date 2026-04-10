@@ -353,6 +353,7 @@ interface TerminalLayerProps {
   knownHosts?: KnownHost[];
   draggingSessionId: string | null;
   terminalTheme: TerminalTheme;
+  followAppTerminalTheme?: boolean;
   terminalSettings?: TerminalSettings;
   terminalFontFamilyId: string;
   fontSize?: number;
@@ -408,6 +409,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   knownHosts = [],
   draggingSessionId,
   terminalTheme,
+  followAppTerminalTheme = false,
   terminalSettings,
   terminalFontFamilyId,
   fontSize = 14,
@@ -1387,6 +1389,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     if (!focusedHost) return true;
     return !hostMap.has(focusedHost.id);
   }, [focusedHost, isFocusedHostLocal, hostMap]);
+  const rawFocusedHost = useMemo(() => {
+    if (!focusedHost) return null;
+    return hostMap.get(focusedHost.id) ?? null;
+  }, [focusedHost, hostMap]);
   const previewTargetSessionId = activeWorkspace?.focusedSessionId ?? activeSession?.id ?? null;
   const activeThemePreviewId = themePreview.targetSessionId === previewTargetSessionId
     ? themePreview.themeId
@@ -1401,9 +1407,11 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const focusedFontSizeOverridden = hasHostFontSizeOverride(focusedHost);
   const focusedFontWeight = resolveHostTerminalFontWeight(focusedHost, terminalSettings?.fontWeight ?? 400);
   const focusedFontWeightOverridden = hasHostFontWeightOverride(focusedHost);
+  const visibleFocusedThemeId = followAppTerminalTheme ? terminalTheme.id : focusedThemeId;
+  const previewedOrVisibleThemeId = activeThemePreviewId ?? visibleFocusedThemeId;
   const activeTopTabsThemeId = activeSidePanelTab === 'theme' && previewTargetSessionId
-    ? (activeThemePreviewId ?? focusedThemeId)
-    : (isVisible ? focusedThemeId : null);
+    ? previewedOrVisibleThemeId
+    : (isVisible ? visibleFocusedThemeId : null);
   const appliedPreviewSessionRef = useRef<string | null>(null);
   const customThemes = useCustomThemes();
   const applyTerminalPreviewVars = useCallback((sessionId: string | null, themeId: string | null) => {
@@ -1495,9 +1503,27 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   }, [activeTopTabsThemeId, applyTopTabsPreviewVars]);
 
   useEffect(() => {
+    if (!followAppTerminalTheme) return;
+    if (themeCommitTimerRef.current) {
+      clearTimeout(themeCommitTimerRef.current);
+      themeCommitTimerRef.current = null;
+    }
+    const appliedSessionId = appliedPreviewSessionRef.current;
+    if (appliedSessionId) {
+      clearTerminalPreviewVars(appliedSessionId);
+      appliedPreviewSessionRef.current = null;
+    }
+    clearTopTabsPreviewVars();
+    if (themePreview.targetSessionId || themePreview.themeId) {
+      setThemePreview({ targetSessionId: null, themeId: null });
+    }
+  }, [followAppTerminalTheme, themePreview.targetSessionId, themePreview.themeId]);
+
+  useEffect(() => {
     const panelOpen = activeSidePanelTab === 'theme' && !!previewTargetSessionId;
     const shouldKeepPreview =
       panelOpen &&
+      themePreview.targetSessionId === previewTargetSessionId &&
       !!themePreview.targetSessionId &&
       !!themePreview.themeId;
 
@@ -1517,14 +1543,14 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     if (
       themePreview.targetSessionId === previewTargetSessionId &&
       themePreview.themeId &&
-      themePreview.themeId === focusedThemeId
+      themePreview.themeId === visibleFocusedThemeId
     ) {
       setThemePreview({ targetSessionId: null, themeId: null });
     }
-  }, [focusedThemeId, previewTargetSessionId, themePreview]);
+  }, [previewTargetSessionId, themePreview, visibleFocusedThemeId]);
 
   const handleThemeChangeForFocusedSession = useCallback((themeId: string) => {
-    if (!focusedHost || themeId === focusedThemeId) return;
+    if (!focusedHost || themeId === previewedOrVisibleThemeId) return;
     applyTerminalPreviewVars(previewTargetSessionId, themeId);
     applyTopTabsPreviewVars(themeId);
     setThemePreview({ targetSessionId: previewTargetSessionId, themeId });
@@ -1537,10 +1563,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
           onUpdateTerminalThemeId?.(themeId);
           return;
         }
-        onUpdateHost({ ...focusedHost, theme: themeId, themeOverride: true });
+        if (rawFocusedHost) {
+          onUpdateHost({ ...rawFocusedHost, theme: themeId, themeOverride: true });
+        }
       });
     }, 160);
-  }, [applyTerminalPreviewVars, applyTopTabsPreviewVars, focusedHost, focusedThemeId, isFocusedHostEphemeral, onUpdateTerminalThemeId, onUpdateHost, previewTargetSessionId]);
+  }, [applyTerminalPreviewVars, applyTopTabsPreviewVars, focusedHost, isFocusedHostEphemeral, onUpdateTerminalThemeId, onUpdateHost, previewTargetSessionId, previewedOrVisibleThemeId, rawFocusedHost]);
 
   const handleThemeResetForFocusedSession = useCallback(() => {
     if (themeCommitTimerRef.current) {
@@ -1548,9 +1576,9 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     }
     clearTerminalPreviewVars(previewTargetSessionId);
     setThemePreview({ targetSessionId: null, themeId: null });
-    if (!focusedHost || isFocusedHostEphemeral) return;
-    onUpdateHost(clearHostThemeOverride(focusedHost));
-  }, [focusedHost, isFocusedHostEphemeral, onUpdateHost, previewTargetSessionId]);
+    if (!focusedHost || isFocusedHostEphemeral || !rawFocusedHost) return;
+    onUpdateHost(clearHostThemeOverride(rawFocusedHost));
+  }, [focusedHost, isFocusedHostEphemeral, onUpdateHost, previewTargetSessionId, rawFocusedHost]);
 
   const handleFontFamilyChangeForFocusedSession = useCallback((fontFamilyId: string) => {
     if (!focusedHost || fontFamilyId === focusedFontFamilyId) return;
@@ -1700,11 +1728,11 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   }, []);
 
   const resolvedPreviewTheme = useMemo(() => {
-    const themeId = activeThemePreviewId ?? focusedThemeId;
+    const themeId = previewedOrVisibleThemeId;
     return TERMINAL_THEMES.find((theme) => theme.id === themeId)
       || customThemes.find((theme) => theme.id === themeId)
       || terminalTheme;
-  }, [activeThemePreviewId, customThemes, focusedThemeId, terminalTheme]);
+  }, [customThemes, previewedOrVisibleThemeId, terminalTheme]);
   const sessionLogConfig = useMemo(
     () =>
       sessionLogsEnabled && sessionLogsDir
@@ -2076,7 +2104,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                   {activeSidePanelTab === 'theme' && (
                     <div className="absolute inset-0 z-10">
                       <ThemeSidePanel
-                        currentThemeId={activeThemePreviewId ?? focusedThemeId}
+                        followAppTerminalTheme={followAppTerminalTheme}
+                        currentThemeId={previewedOrVisibleThemeId}
                         globalThemeId={terminalTheme.id}
                         currentFontFamilyId={focusedFontFamilyId}
                         globalFontFamilyId={terminalFontFamilyId}
@@ -2235,6 +2264,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                   fontFamilyId={terminalFontFamilyId}
                   fontSize={fontSize}
                   terminalTheme={terminalTheme}
+                  followAppTerminalTheme={followAppTerminalTheme}
                   terminalSettings={terminalSettings}
                   sessionId={session.id}
                   startupCommand={session.startupCommand}

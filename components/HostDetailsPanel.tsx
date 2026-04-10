@@ -31,6 +31,7 @@ import {
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useApplicationBackend } from "../application/state/useApplicationBackend";
+import { resolveGroupDefaults, resolveGroupTerminalThemeId } from "../domain/groupConfig";
 import {
   getEffectiveHostDistro,
   LINUX_DISTRO_OPTIONS,
@@ -47,7 +48,7 @@ import {
 } from "../domain/terminalAppearance";
 import { MIN_FONT_SIZE, MAX_FONT_SIZE } from "../infrastructure/config/fonts";
 import { cn } from "../lib/utils";
-import { EnvVar, Host, Identity, ManagedSource, ProxyConfig, SSHKey } from "../types";
+import { EnvVar, GroupConfig, Host, Identity, ManagedSource, ProxyConfig, SSHKey } from "../types";
 import { DISTRO_COLORS, DISTRO_LOGOS } from "./DistroAvatar";
 import { DistroAvatar } from "./DistroAvatar";
 import ThemeSelectPanel from "./ThemeSelectPanel";
@@ -108,6 +109,7 @@ interface HostDetailsPanelProps {
   onCreateGroup?: (groupPath: string) => void; // Callback to create a new group
   onCreateTag?: (tag: string) => void; // Callback to create a new tag
   groupDefaults?: Partial<import('../domain/models').GroupConfig>;
+  groupConfigs?: GroupConfig[];
   layout?: AsidePanelLayout;
 }
 
@@ -127,6 +129,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   onCreateGroup,
   onCreateTag,
   groupDefaults,
+  groupConfigs = [],
   layout = "overlay",
 }) => {
   const { t } = useI18n();
@@ -211,9 +214,17 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
+  const effectiveGroupDefaults = useMemo(() => {
+    const currentGroupPath = form.group || defaultGroup;
+    if (currentGroupPath && groupConfigs.length > 0) {
+      return resolveGroupDefaults(currentGroupPath, groupConfigs);
+    }
+    return groupDefaults;
+  }, [defaultGroup, form.group, groupConfigs, groupDefaults]);
+
   const effectiveThemeId = useMemo(
-    () => resolveHostTerminalThemeId(form, terminalThemeId),
-    [form, terminalThemeId],
+    () => resolveHostTerminalThemeId(form, resolveGroupTerminalThemeId(effectiveGroupDefaults, terminalThemeId)),
+    [effectiveGroupDefaults, form, terminalThemeId],
   );
   const effectiveFontSize = useMemo(
     () => resolveHostTerminalFontSize(form, terminalFontSize),
@@ -584,6 +595,10 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
         open={true}
         selectedThemeId={effectiveThemeId}
         onSelect={(themeId) => {
+          if (themeId === effectiveThemeId && !hasEffectiveThemeOverride) {
+            setActiveSubPanel("none");
+            return;
+          }
           setForm((prev) => ({ ...prev, theme: themeId, themeOverride: true }));
           setActiveSubPanel("none");
         }}

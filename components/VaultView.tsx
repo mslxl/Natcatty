@@ -292,7 +292,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     if (!group) return undefined;
     return resolveGroupDefaults(group, groupConfigs);
   }, [editingHost, newHostGroupPath, selectedGroupPath, groupConfigs]);
-
   // Quick connect state
   const [quickConnectTarget, setQuickConnectTarget] = useState<{
     hostname: string;
@@ -2881,6 +2880,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           allHosts={hosts}
           groups={allGroupPaths}
           terminalThemeId={terminalThemeId}
+          groupConfigs={groupConfigs}
           terminalFontSize={terminalFontSize}
           onSave={handleSaveGroupConfig}
           onCancel={() => {
@@ -2905,6 +2905,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           terminalThemeId={terminalThemeId}
           terminalFontSize={terminalFontSize}
           groupDefaults={editingHostGroupDefaults}
+          groupConfigs={groupConfigs}
           onSave={(host) => {
             // Check if host already exists in the list (for updates vs. new/duplicate)
             const hostExists = hosts.some((h) => h.id === host.id);

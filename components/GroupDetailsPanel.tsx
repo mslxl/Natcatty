@@ -21,6 +21,7 @@ import {
 import React, { useCallback, useMemo, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { customThemeStore } from "../application/state/customThemeStore";
+import { resolveGroupDefaults, resolveGroupTerminalThemeId } from "../domain/groupConfig";
 import { cn } from "../lib/utils";
 import {
   EnvVar,
@@ -61,6 +62,7 @@ interface GroupDetailsPanelProps {
   allHosts: Host[];
   groups: string[];
   terminalThemeId: string;
+  groupConfigs?: GroupConfig[];
   terminalFontSize: number;
   onSave: (config: GroupConfig, newName?: string, newParent?: string | null) => void;
   onCancel: () => void;
@@ -75,6 +77,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
   allHosts,
   groups,
   terminalThemeId,
+  groupConfigs = [],
   terminalFontSize,
   onSave,
   onCancel,
@@ -277,7 +280,14 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
   }, [groups, groupPath, t]);
 
   // Effective theme
-  const effectiveThemeId = form.theme || terminalThemeId;
+  const inheritedThemeId = useMemo(() => {
+    if (!parentGroup || groupConfigs.length === 0) return terminalThemeId;
+    return resolveGroupTerminalThemeId(resolveGroupDefaults(parentGroup, groupConfigs), terminalThemeId);
+  }, [groupConfigs, parentGroup, terminalThemeId]);
+  const effectiveThemeId = form.themeOverride === false
+    ? inheritedThemeId
+    : (form.theme || inheritedThemeId);
+  const hasActiveThemeOverride = form.themeOverride === true || (form.theme != null && form.themeOverride !== false);
 
   // Save handler
   const handleSubmit = () => {
@@ -325,7 +335,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
       }),
       // Shared fields (always saved)
       ...(form.charset !== undefined && { charset: form.charset }),
-      ...(form.theme !== undefined && { theme: form.theme }),
+      ...((form.themeOverride !== false && form.theme !== undefined) && { theme: form.theme }),
       ...(form.themeOverride !== undefined && { themeOverride: form.themeOverride }),
       ...(form.fontFamily !== undefined && { fontFamily: form.fontFamily }),
       ...(form.fontFamilyOverride !== undefined && { fontFamilyOverride: form.fontFamilyOverride }),
@@ -411,6 +421,10 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
         open={true}
         selectedThemeId={effectiveThemeId}
         onSelect={(themeId) => {
+          if (themeId === effectiveThemeId && !hasActiveThemeOverride) {
+            setActiveSubPanel("none");
+            return;
+          }
           setForm((prev) => ({ ...prev, theme: themeId, themeOverride: true }));
           setActiveSubPanel("none");
         }}
@@ -1027,7 +1041,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
               {customThemeStore.getThemeById(effectiveThemeId)?.name || "Flexoki Dark"}
             </span>
           </button>
-          {form.themeOverride && (
+          {hasActiveThemeOverride && (
             <Button
               variant="ghost"
               size="sm"
