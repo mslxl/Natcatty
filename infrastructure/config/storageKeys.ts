@@ -12,6 +12,7 @@ export const STORAGE_KEY_UI_THEME_DARK = 'netcatty_ui_theme_dark_v1';
 export const STORAGE_KEY_UI_FONT_FAMILY = 'netcatty_ui_font_family_v1';
 export const STORAGE_KEY_SYNC = 'netcatty_sync_v1';
 export const STORAGE_KEY_TERM_THEME = 'netcatty_term_theme_v1';
+export const STORAGE_KEY_TERM_FOLLOW_APP_THEME = 'netcatty_term_follow_app_theme_v1';
 export const STORAGE_KEY_TERM_FONT_FAMILY = 'netcatty_term_font_family_v1';
 export const STORAGE_KEY_TERM_FONT_SIZE = 'netcatty_term_font_size_v1';
 export const STORAGE_KEY_TERM_SETTINGS = 'netcatty_term_settings_v1';

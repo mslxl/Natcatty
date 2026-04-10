@@ -56,6 +56,8 @@ const SettingsTerminalTabContainer: React.FC<{ settings: SettingsState }> = ({ s
         <SettingsTerminalTab
             terminalThemeId={settings.terminalThemeId}
             setTerminalThemeId={settings.setTerminalThemeId}
+            followAppTerminalTheme={settings.followAppTerminalTheme}
+            setFollowAppTerminalTheme={settings.setFollowAppTerminalTheme}
             terminalFontFamilyId={settings.terminalFontFamilyId}
             setTerminalFontFamilyId={settings.setTerminalFontFamilyId}
             terminalFontSize={settings.terminalFontSize}

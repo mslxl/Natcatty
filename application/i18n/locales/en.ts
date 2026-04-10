@@ -253,6 +253,8 @@ const en: Messages = {
   'settings.terminal.themeModal.darkThemes': 'Dark Themes',
   'settings.terminal.themeModal.lightThemes': 'Light Themes',
   'settings.terminal.theme.selectButton': 'Select Theme',
+  'settings.terminal.theme.followApp': 'Follow Application Theme',
+  'settings.terminal.theme.followApp.desc': 'Automatically match the terminal background to the current app theme for a seamless look.',
   'settings.terminal.section.font': 'Font',
   'settings.terminal.section.cursor': 'Cursor',
   'settings.terminal.section.keyboard': 'Keyboard',

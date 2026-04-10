@@ -1279,6 +1279,8 @@ const zhCN: Messages = {
   'settings.terminal.themeModal.darkThemes': '深色主题',
   'settings.terminal.themeModal.lightThemes': '浅色主题',
   'settings.terminal.theme.selectButton': '选择主题',
+  'settings.terminal.theme.followApp': '跟随应用主题',
+  'settings.terminal.theme.followApp.desc': '终端背景色自动匹配当前应用主题，保持视觉一致性。',
   'settings.terminal.section.font': '字体',
   'settings.terminal.section.cursor': '光标',
   'settings.terminal.section.keyboard': '键盘',

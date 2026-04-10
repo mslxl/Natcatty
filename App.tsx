@@ -183,6 +183,8 @@ function App({ settings }: { settings: SettingsState }) {
     resolvedTheme,
     terminalThemeId,
     setTerminalThemeId,
+    followAppTerminalTheme,
+    setFollowAppTerminalTheme,
     currentTerminalTheme,
     terminalFontFamilyId,
     setTerminalFontFamilyId,
