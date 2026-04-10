@@ -58,6 +58,15 @@ interface ThemeListProps {
 export const ThemeList: React.FC<ThemeListProps> = ({ selectedThemeId, onSelect }) => {
     const { t } = useI18n();
     const customThemes = useCustomThemes();
+    const deletedSelectedTheme = useMemo(
+        () => (selectedThemeId
+            && !isUiMatchTerminalThemeId(selectedThemeId)
+            && !TERMINAL_THEMES.some((theme) => theme.id === selectedThemeId)
+            && !customThemes.some((theme) => theme.id === selectedThemeId)
+            ? selectedThemeId
+            : null),
+        [customThemes, selectedThemeId],
+    );
     const hiddenSelectedTheme = useMemo(
         () => (isUiMatchTerminalThemeId(selectedThemeId)
             ? TERMINAL_THEMES.find(theme => theme.id === selectedThemeId) || null
@@ -81,6 +90,17 @@ export const ThemeList: React.FC<ThemeListProps> = ({ selectedThemeId, onSelect 
                     <div className="text-sm font-medium text-foreground">{hiddenSelectedTheme.name}</div>
                     <div className="text-[11px] text-muted-foreground mt-1">
                         {t('terminal.hiddenTheme.desc')}
+                    </div>
+                </div>
+            )}
+            {deletedSelectedTheme && (
+                <div className="mb-4 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1 font-semibold">
+                        Missing Theme
+                    </div>
+                    <div className="text-sm font-medium text-foreground">{deletedSelectedTheme}</div>
+                    <div className="text-[11px] text-muted-foreground mt-1">
+                        This custom theme is no longer available. Pick another theme to replace it.
                     </div>
                 </div>
             )}

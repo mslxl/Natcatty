@@ -595,6 +595,10 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
         open={true}
         selectedThemeId={effectiveThemeId}
         onSelect={(themeId) => {
+          if (themeId === effectiveThemeId && !hasEffectiveThemeOverride) {
+            setActiveSubPanel("none");
+            return;
+          }
           setForm((prev) => ({ ...prev, theme: themeId, themeOverride: true }));
           setActiveSubPanel("none");
         }}

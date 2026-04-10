@@ -552,6 +552,10 @@ export const useSettingsState = () => {
       if (key === STORAGE_KEY_TERM_THEME && typeof value === 'string') {
         setTerminalThemeId(value);
       }
+      if (key === STORAGE_KEY_TERM_FOLLOW_APP_THEME) {
+        const next = value === true || value === 'true';
+        setFollowAppTerminalThemeState((prev) => (prev === next ? prev : next));
+      }
       if (key === STORAGE_KEY_TERM_FONT_FAMILY && typeof value === 'string') {
         setTerminalFontFamilyId(value);
       }

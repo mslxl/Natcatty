@@ -75,7 +75,6 @@ class CustomThemeStore {
                 if (payload.key === STORAGE_KEY_CUSTOM_THEMES) {
                     // Another window changed custom themes — reload from localStorage
                     this.loadFromStorage();
-                    this.notify();
                 }
             });
         } catch {

@@ -318,6 +318,11 @@ const LogViewComponent: React.FC<LogViewProps> = ({
                 onThemeReset={() => onUpdateLog(log.id, { themeId: undefined })}
                 onFontSizeChange={handleFontSizeChange}
                 onPreviewThemeChange={setPreviewTheme}
+                onSave={() => {
+                    if (log.themeId && !explicitThemeId && currentTheme.id === defaultTerminalTheme.id) {
+                        onUpdateLog(log.id, { themeId: undefined });
+                    }
+                }}
             />
         </div>
     );

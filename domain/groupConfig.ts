@@ -21,6 +21,22 @@ export function resolveGroupDefaults(
           merged[key] = value;
         }
       }
+      if (config.themeOverride === false) {
+        delete merged.theme;
+        delete merged.themeOverride;
+      }
+      if (config.fontFamilyOverride === false) {
+        delete merged.fontFamily;
+        delete merged.fontFamilyOverride;
+      }
+      if (config.fontSizeOverride === false) {
+        delete merged.fontSize;
+        delete merged.fontSizeOverride;
+      }
+      if (config.fontWeightOverride === false) {
+        delete merged.fontWeight;
+        delete merged.fontWeightOverride;
+      }
     }
   }
   return merged as Partial<GroupConfig>;
