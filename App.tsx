@@ -24,10 +24,11 @@ import { applySyncPayload } from './application/syncPayload';
 import { getCredentialProtectionAvailability } from './infrastructure/services/credentialProtection';
 import { netcattyBridge } from './infrastructure/services/netcattyBridge';
 import { localStorageAdapter } from './infrastructure/persistence/localStorageAdapter';
+import { AlertTriangle, Download, Trash2 } from 'lucide-react';
 import { STORAGE_KEY_DEBUG_HOTKEYS } from './infrastructure/config/storageKeys';
 import { TopTabs } from './components/TopTabs';
 import { Button } from './components/ui/button';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog';
 import { Input } from './components/ui/input';
 import { Label } from './components/ui/label';
 import { ToastProvider, toast } from './components/ui/toast';
@@ -382,7 +383,7 @@ function App({ settings }: { settings: SettingsState }) {
   );
 
   // Auto-sync hook for cloud sync
-  const { syncNow: handleSyncNow } = useAutoSync({
+  const { syncNow: handleSyncNow, emptyVaultConflict, resolveEmptyVaultConflict } = useAutoSync({
     hosts,
     keys,
     identities,
@@ -1679,6 +1680,59 @@ function App({ settings }: { settings: SettingsState }) {
         onCancel={handlePassphraseCancel}
         onSkip={handlePassphraseSkip}
       />
+
+      {/* Empty vault vs cloud data confirmation dialog (#679).
+          This dialog intentionally cannot be dismissed — the user MUST
+          choose "Restore" or "Keep Empty" before the sync flow can
+          proceed. hideCloseButton removes the X button, onOpenChange
+          is a no-op so ESC also does nothing, and onInteractOutside
+          prevents click-away. */}
+      <Dialog open={!!emptyVaultConflict} onOpenChange={() => { /* intentionally non-dismissable */ }}>
+        <DialogContent className="max-w-md" hideCloseButton onInteractOutside={(e) => e.preventDefault()} onEscapeKeyDown={(e) => e.preventDefault()}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-500" />
+              {t('sync.autoSync.emptyVaultConflict.title')}
+            </DialogTitle>
+            <DialogDescription>
+              {t('sync.autoSync.emptyVaultConflict.description')}
+            </DialogDescription>
+          </DialogHeader>
+          {emptyVaultConflict && (
+            <div className="bg-muted/30 rounded-lg p-3 text-sm">
+              <div className="font-medium text-muted-foreground mb-1">{t('sync.autoSync.emptyVaultConflict.cloudLabel')}</div>
+              <div>{t('sync.autoSync.emptyVaultConflict.cloudSummary', {
+                hosts: emptyVaultConflict.hostCount,
+                keys: emptyVaultConflict.keyCount,
+                snippets: emptyVaultConflict.snippetCount,
+              })}</div>
+            </div>
+          )}
+          <DialogFooter className="flex-col gap-2 sm:flex-col">
+            <Button
+              onClick={() => resolveEmptyVaultConflict('restore')}
+              className="w-full justify-start gap-2"
+            >
+              <Download className="w-4 h-4" />
+              <span>
+                {t('sync.autoSync.emptyVaultConflict.restore')}
+                <span className="text-xs opacity-70 ml-1">— {t('sync.autoSync.emptyVaultConflict.restoreDesc')}</span>
+              </span>
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => resolveEmptyVaultConflict('keep-empty')}
+              className="w-full justify-start gap-2"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>
+                {t('sync.autoSync.emptyVaultConflict.keepEmpty')}
+                <span className="text-xs opacity-70 ml-1">— {t('sync.autoSync.emptyVaultConflict.keepEmptyDesc')}</span>
+              </span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
