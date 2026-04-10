@@ -6,7 +6,7 @@
  * and a bottom toolbar with muted controls + subtle send button.
  */
 
-import { AtSign, Check, ChevronDown, ChevronRight, Cpu, Expand, Eye, FileText, ImageIcon, Plus, ShieldCheck, X, Zap } from 'lucide-react';
+import { AtSign, Check, ChevronDown, ChevronRight, Cpu, Expand, Eye, FileText, ImageIcon, Package, Plus, ShieldCheck, X, Zap } from 'lucide-react';
 import React, { useCallback, useRef, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { createPortal } from 'react-dom';
@@ -22,6 +22,7 @@ import {
 import type { PromptInputStatus } from '../ai-elements/prompt-input';
 import { formatThinkingLabel } from '../../infrastructure/ai/types';
 import type { AgentModelPreset, AIPermissionMode } from '../../infrastructure/ai/types';
+import { ScrollArea } from '../ui/scroll-area';
 
 interface ChatInputProps {
   value: string;
@@ -48,6 +49,8 @@ interface ChatInputProps {
   onRemoveFile?: (id: string) => void;
   /** Available hosts for @ mention */
   hosts?: Array<{ sessionId: string; hostname: string; label: string; connected: boolean }>;
+  /** Available user skills for /skill-slug insertion */
+  userSkills?: Array<{ id: string; slug: string; name: string; description: string }>;
   /** Permission mode (only shown for Catty Agent) */
   permissionMode?: AIPermissionMode;
   /** Callback when user changes permission mode */
@@ -72,38 +75,71 @@ const ChatInput: React.FC<ChatInputProps> = ({
   onAddFiles,
   onRemoveFile,
   hosts = [],
+  userSkills = [],
   permissionMode,
   onPermissionModeChange,
 }) => {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   // Consolidate menu state into a single discriminated union to prevent multiple menus open simultaneously
-  type ActiveMenu = 'model' | 'attach' | 'atMention' | 'perm' | null;
+  type ActiveMenu = 'model' | 'attach' | 'atMention' | 'slashSkill' | 'perm' | null;
   const [activeMenu, setActiveMenu] = useState<ActiveMenu>(null);
   const [menuPos, setMenuPos] = useState<{ left: number; bottom: number } | null>(null);
+  const [inputPanelPos, setInputPanelPos] = useState<{ left: number; bottom: number; width: number } | null>(null);
   const [hoveredModelId, setHoveredModelId] = useState<string | null>(null);
-  const [showHostSubmenu, setShowHostSubmenu] = useState(false);
+  const [slashQuery, setSlashQuery] = useState('');
+  const [slashRange, setSlashRange] = useState<{ start: number; end: number } | null>(null);
 
   // Derived booleans for readability
   const showModelPicker = activeMenu === 'model';
   const showAttachMenu = activeMenu === 'attach';
   const showAtMention = activeMenu === 'atMention';
+  const showSlashSkillPicker = activeMenu === 'slashSkill';
   const showPermPicker = activeMenu === 'perm';
 
   const closeAllMenus = useCallback(() => {
     setActiveMenu(null);
     setMenuPos(null);
+    setInputPanelPos(null);
     setHoveredModelId(null);
-    setShowHostSubmenu(false);
+    setSlashQuery('');
+    setSlashRange(null);
   }, []);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inputShellRef = useRef<HTMLDivElement>(null);
   const modelBtnRef = useRef<HTMLButtonElement>(null);
   const permBtnRef = useRef<HTMLButtonElement>(null);
   const attachBtnRef = useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const findSlashTrigger = useCallback((text: string, caretPosition: number) => {
+    const beforeCaret = text.slice(0, caretPosition);
+    const match = /(^|\s)\/([a-z0-9-]*)$/i.exec(beforeCaret);
+    if (!match) return null;
+    const start = beforeCaret.length - match[0].length + match[1].length;
+    return {
+      start,
+      end: beforeCaret.length,
+      query: String(match[2] || '').toLowerCase(),
+    };
+  }, []);
+
+  const getInputPanelMenuPos = useCallback(() => {
+    const rect = inputShellRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    const horizontalMargin = 12;
+    const safeRight = window.innerWidth - horizontalMargin;
+    const width = Math.min(rect.width, safeRight - rect.left);
+    return {
+      left: rect.left,
+      bottom: window.innerHeight - rect.top + 8,
+      width,
+    };
+  }, []);
+
   const handleInputChange = useCallback((newValue: string) => {
     onChange(newValue);
+    const caretPosition = textareaRef.current?.selectionStart ?? newValue.length;
     // Detect if user just typed @
     if (
       hosts.length > 0 &&
@@ -111,16 +147,28 @@ const ChatInput: React.FC<ChatInputProps> = ({
       newValue.endsWith('@')
     ) {
       // Position the popover near the textarea
-      const el = textareaRef.current;
-      if (el) {
-        const rect = el.getBoundingClientRect();
-        setMenuPos({ left: rect.left + 12, bottom: window.innerHeight - rect.top + 4 });
-      }
+      const pos = getInputPanelMenuPos();
+      if (pos) setInputPanelPos(pos);
       setActiveMenu('atMention');
-    } else if (showAtMention && !newValue.includes('@')) {
-      setActiveMenu(null);
+      return;
     }
-  }, [onChange, value, hosts.length, showAtMention]);
+
+    const slashTrigger = findSlashTrigger(newValue, caretPosition);
+    if (userSkills.length > 0 && slashTrigger) {
+      const pos = getInputPanelMenuPos();
+      if (pos) setInputPanelPos(pos);
+      setSlashQuery(slashTrigger.query);
+      setSlashRange({ start: slashTrigger.start, end: slashTrigger.end });
+      setActiveMenu('slashSkill');
+      return;
+    }
+
+    if (showAtMention && !newValue.includes('@')) {
+      setActiveMenu(null);
+    } else if (showSlashSkillPicker) {
+      closeAllMenus();
+    }
+  }, [onChange, value, hosts.length, showAtMention, findSlashTrigger, userSkills.length, showSlashSkillPicker, closeAllMenus, getInputPanelMenuPos]);
 
   const handleSelectAtMention = useCallback((host: { label: string; hostname: string }) => {
     // Replace the trailing @ with @hostname
@@ -132,6 +180,36 @@ const ChatInput: React.FC<ChatInputProps> = ({
     onChange(newValue);
     closeAllMenus();
   }, [value, onChange, closeAllMenus]);
+
+  const openInputPanelMenu = useCallback((menu: 'atMention' | 'slashSkill') => {
+    const pos = getInputPanelMenuPos();
+    if (!pos) return;
+    setInputPanelPos(pos);
+    if (menu === 'slashSkill') {
+      setSlashQuery('');
+      setSlashRange(null);
+    }
+    setActiveMenu(menu);
+  }, [getInputPanelMenuPos]);
+
+  const filteredUserSkills = userSkills.filter((skill) => {
+    if (!slashQuery) return true;
+    const lowerQuery = slashQuery.toLowerCase();
+    return skill.slug.toLowerCase().startsWith(lowerQuery) || skill.name.toLowerCase().includes(lowerQuery);
+  });
+
+  const insertUserSkillToken = useCallback((skill: { slug: string }) => {
+    const token = `/${skill.slug}`;
+    if (slashRange) {
+      const nextValue = `${value.slice(0, slashRange.start)}${token} ${value.slice(slashRange.end)}`;
+      onChange(nextValue);
+      closeAllMenus();
+      return;
+    }
+    const needsSpace = value.length > 0 && !/\s$/.test(value);
+    onChange(`${value}${needsSpace ? ' ' : ''}${token} `);
+    closeAllMenus();
+  }, [closeAllMenus, onChange, slashRange, value]);
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const pastedFiles = Array.from(e.clipboardData.items)
@@ -181,6 +259,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
 
   return (
     <div className="shrink-0 px-4 pb-4">
+      <div ref={inputShellRef} className="relative">
       <PromptInput onSubmit={handleSubmit}>
         {/* File attachment chips */}
         {files.length > 0 && (
@@ -243,31 +322,78 @@ const ChatInput: React.FC<ChatInputProps> = ({
         </div>
 
         {/* @ mention popover */}
-        {showAtMention && hosts.length > 0 && menuPos && createPortal(
+        {showAtMention && hosts.length > 0 && inputPanelPos && createPortal(
           <>
             <div className="fixed inset-0 z-[999]" onClick={closeAllMenus} />
             <div
               role="listbox"
               aria-label="Mention host"
-              className="fixed z-[1000] min-w-[160px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
-              style={{ left: menuPos.left, bottom: menuPos.bottom }}
+              className="fixed z-[1000] overflow-hidden rounded-[20px] border border-border/60 bg-popover shadow-2xl"
+              style={{ left: inputPanelPos.left, bottom: inputPanelPos.bottom, width: inputPanelPos.width }}
             >
-              <div className="px-3 py-1 text-[10px] text-muted-foreground/40 tracking-wide">{t('ai.chat.menuHosts')}</div>
-              {hosts.map(host => (
-                <button
-                  key={host.sessionId}
-                  type="button"
-                  role="option"
-                  onClick={() => handleSelectAtMention(host)}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
-                >
-                  <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${host.connected ? 'bg-green-500' : 'bg-muted-foreground/30'}`} />
-                  <span className="text-foreground/85 truncate">{host.label || host.hostname}</span>
-                  {host.label && host.hostname !== host.label && (
-                    <span className="text-[10px] text-muted-foreground/40">{host.hostname}</span>
-                  )}
-                </button>
-              ))}
+              <div className="px-4 pt-3 pb-1.5 text-[10px] font-medium text-muted-foreground/62 tracking-wide">{t('ai.chat.menuHosts')}</div>
+              <ScrollArea className="max-h-[300px]">
+                <div className="px-2.5 pb-2.5">
+                  {hosts.map(host => (
+                    <button
+                      key={host.sessionId}
+                      type="button"
+                      role="option"
+                      onClick={() => handleSelectAtMention(host)}
+                      className="w-full rounded-[16px] px-3 py-1.5 text-left hover:bg-muted/30 transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center gap-2 text-[12px] text-foreground/90">
+                        <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${host.connected ? 'bg-green-500' : 'bg-muted-foreground/30'}`} />
+                        <span className="truncate">{host.label || host.hostname}</span>
+                      </div>
+                      {host.label && host.hostname !== host.label ? (
+                        <div className="mt-0.5 pl-3.5 text-[10px] text-muted-foreground/60 truncate">
+                          {host.hostname}
+                        </div>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              </ScrollArea>
+            </div>
+          </>,
+          document.body,
+        )}
+
+        {/* / skill popover */}
+        {showSlashSkillPicker && filteredUserSkills.length > 0 && inputPanelPos && createPortal(
+          <>
+            <div className="fixed inset-0 z-[999]" onClick={closeAllMenus} />
+            <div
+              role="listbox"
+              aria-label="Insert user skill"
+              className="fixed z-[1000] overflow-hidden rounded-[20px] border border-border/60 bg-popover shadow-2xl"
+              style={{ left: inputPanelPos.left, bottom: inputPanelPos.bottom, width: inputPanelPos.width }}
+            >
+              <div className="px-4 pt-3 pb-1.5 text-[10px] font-medium text-muted-foreground/62 tracking-wide">{t('ai.chat.menuUserSkills')}</div>
+              <ScrollArea className="max-h-[300px]">
+                <div className="px-2.5 pb-2.5">
+                  {filteredUserSkills.map((skill) => (
+                    <button
+                      key={skill.id}
+                      type="button"
+                      role="option"
+                      onClick={() => insertUserSkillToken(skill)}
+                      className="w-full rounded-[16px] px-3 py-1.5 text-left hover:bg-muted/30 transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center gap-2 text-[12px]">
+                        <Package size={12} className="text-muted-foreground/55 shrink-0" />
+                        <span className="text-foreground/90">/{skill.slug}</span>
+                      </div>
+                      {skill.description ? (
+                        <div className="mt-0.5 pl-5 text-[10px] leading-4.5 text-muted-foreground/62 line-clamp-2">
+                          {skill.description}
+                        </div>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              </ScrollArea>
             </div>
           </>,
           document.body,
@@ -322,48 +448,30 @@ const ChatInput: React.FC<ChatInputProps> = ({
                     <ImageIcon size={13} className="text-muted-foreground/60" />
                     <span className="text-foreground/85">{t('ai.chat.menuImage')}</span>
                   </button>
-                  <div
-                    className="relative"
-                    onMouseEnter={() => setShowHostSubmenu(true)}
-                    onMouseLeave={() => setShowHostSubmenu(false)}
-                    onFocus={() => setShowHostSubmenu(true)}
-                    onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setShowHostSubmenu(false); }}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    aria-label="Mention host"
+                    onClick={() => openInputPanelMenu('atMention')}
+                    className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
                   >
+                    <AtSign size={13} className="text-muted-foreground/60" />
+                    <span className="flex-1 text-foreground/85">{t('ai.chat.menuMentionHost')}</span>
+                    {hosts.length > 0 && <ChevronRight size={10} className="text-muted-foreground/50" />}
+                  </button>
+                  {userSkills.length > 0 && (
                     <button
                       type="button"
                       role="menuitem"
-                      aria-label="Mention host"
-                      aria-expanded={showHostSubmenu && hosts.length > 0}
+                      aria-label="Insert user skill"
+                      onClick={() => openInputPanelMenu('slashSkill')}
                       className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
                     >
-                      <AtSign size={13} className="text-muted-foreground/60" />
-                      <span className="flex-1 text-foreground/85">{t('ai.chat.menuMentionHost')}</span>
-                      {hosts.length > 0 && <ChevronRight size={10} className="text-muted-foreground/50" />}
+                      <Package size={13} className="text-muted-foreground/60" />
+                      <span className="flex-1 text-foreground/85">{t('ai.chat.menuUserSkills')}</span>
+                      <ChevronRight size={10} className="text-muted-foreground/50" />
                     </button>
-                    {showHostSubmenu && hosts.length > 0 && (
-                      <div role="menu" className="absolute left-full top-0 ml-1 min-w-[160px] rounded-lg border border-border/50 bg-popover shadow-lg py-1 z-[1001]">
-                        {hosts.map(host => (
-                          <button
-                            key={host.sessionId}
-                            type="button"
-                            role="menuitem"
-                            onClick={() => {
-                              const mention = `@${host.label || host.hostname} `;
-                              onChange(value + mention);
-                              closeAllMenus();
-                            }}
-                            className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
-                          >
-                            <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${host.connected ? 'bg-green-500' : 'bg-muted-foreground/30'}`} />
-                            <span className="text-foreground/85 truncate">{host.label || host.hostname}</span>
-                            {host.label && host.hostname !== host.label && (
-                              <span className="text-[10px] text-muted-foreground/40">{host.hostname}</span>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  )}
                 </div>
               </>,
               document.body,
@@ -555,6 +663,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
           </div>
         </PromptInputFooter>
       </PromptInput>
+      </div>
     </div>
   );
 };

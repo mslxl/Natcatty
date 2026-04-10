@@ -145,12 +145,29 @@ function generateId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function buildAcpHistoryMessages(messages: ChatMessage[]): Array<{ role: 'user' | 'assistant'; content: string }> {
+function stripUserSkillTokensFromText(input: string, availableSkills: UserSkillOption[]): string {
+  const validSlugs = new Set(availableSkills.map((skill) => skill.slug.toLowerCase()));
+  return String(input || "")
+    .replace(USER_SKILL_TOKEN_REGEX, (match, prefix, slug) => {
+      const normalizedSlug = String(slug || '').toLowerCase();
+      if (!validSlugs.has(normalizedSlug)) {
+        return match;
+      }
+      return prefix;
+    })
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function buildAcpHistoryMessages(messages: ChatMessage[], availableSkills: UserSkillOption[]): Array<{ role: 'user' | 'assistant'; content: string }> {
   return messages.flatMap((message) => {
     if (message.role === 'system') return [];
 
     if (message.role === 'user') {
-      return message.content ? [{ role: 'user' as const, content: message.content }] : [];
+      const content = stripUserSkillTokensFromText(message.content, availableSkills);
+      return content ? [{ role: 'user' as const, content }] : [];
     }
 
     if (message.role === 'assistant') {
@@ -193,6 +210,41 @@ function getSessionScopeMatchRank(
   }
 
   return session.scope.hostIds.some((hostId) => scopeHostIds.includes(hostId)) ? 1 : 0;
+}
+
+interface UserSkillOption {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+}
+
+const USER_SKILL_TOKEN_REGEX = /(^|\s)\/([a-z0-9][a-z0-9-]*)\b/g;
+
+function extractExplicitUserSkills(
+  input: string,
+  availableSkills: UserSkillOption[],
+): { cleanedText: string; selectedSkillSlugs: string[] } {
+  const validSlugs = new Set(availableSkills.map((skill) => skill.slug.toLowerCase()));
+  const selectedSkillSlugs: string[] = [];
+
+  const cleanedText = input
+    .replace(USER_SKILL_TOKEN_REGEX, (match, prefix, slug) => {
+      const normalizedSlug = String(slug || "").toLowerCase();
+      if (!validSlugs.has(normalizedSlug)) {
+        return match;
+      }
+      if (!selectedSkillSlugs.includes(normalizedSlug)) {
+        selectedSkillSlugs.push(normalizedSlug);
+      }
+      return prefix;
+    })
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return { cleanedText, selectedSkillSlugs };
 }
 
 // -------------------------------------------------------------------
@@ -248,6 +300,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   const [showHistory, setShowHistory] = useState(false);
   const [currentAgentId, setCurrentAgentId] = useState(defaultAgentId);
   const [runtimeAgentModelPresets, setRuntimeAgentModelPresets] = useState<Record<string, ReturnType<typeof getAgentModelPresets>>>({});
+  const [userSkillOptions, setUserSkillOptions] = useState<UserSkillOption[]>([]);
 
   const { files, addFiles, removeFile, clearFiles } = useFileUpload();
   const { openSettingsWindow } = useWindowControls();
@@ -413,6 +466,36 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       void bridge.aiMcpUpdateSessions(terminalSessions, activeSessionId ?? undefined);
     }
   }, [terminalSessions, scopeKey, activeSessionId]);
+
+  useEffect(() => {
+    const bridge = getNetcattyBridge();
+    if (!bridge?.aiUserSkillsGetStatus || !isVisible) return;
+
+    let cancelled = false;
+    void bridge.aiUserSkillsGetStatus()
+      .then((result) => {
+        if (cancelled || !result?.ok || !Array.isArray(result.skills)) return;
+        setUserSkillOptions(
+          result.skills
+            .filter((skill) => skill.status === 'ready' && typeof skill.slug === 'string' && skill.slug.length > 0)
+            .map((skill) => ({
+              id: skill.id,
+              slug: skill.slug,
+              name: skill.name,
+              description: skill.description,
+            })),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setUserSkillOptions([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isVisible, toolIntegrationMode, scopeKey]);
 
   // Sync provider configs to main process so it can decrypt API keys server-side.
   // Keys stay encrypted in transit; main process decrypts only when making HTTP requests.
@@ -649,6 +732,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     const trimmed = inputValueRef.current.trim();
     const sendScopeKey = scopeKey;
     if (!trimmed || isStreaming) return;
+    const { cleanedText, selectedSkillSlugs } = extractExplicitUserSkills(trimmed, userSkillOptions);
 
     const isExternalAgent = currentAgentId !== 'catty';
 
@@ -699,15 +783,17 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         return;
       }
       try {
-        await sendToExternalAgent(sessionId, trimmed, agentConfig, abortController, attachments, {
+        await sendToExternalAgent(sessionId, cleanedText, agentConfig, abortController, attachments, {
           existingSessionId: currentSession?.externalSessionId,
           updateExternalSessionId: updateSessionExternalSessionId,
-          historyMessages: buildAcpHistoryMessages(currentSession?.messages ?? []),
+          historyMessages: buildAcpHistoryMessages(currentSession?.messages ?? [], userSkillOptions),
           terminalSessions,
           defaultTargetSession,
           providers,
           selectedAgentModel,
           toolIntegrationMode,
+          selectedUserSkillSlugs: selectedSkillSlugs,
+          availableUserSkillSlugs: userSkillOptions.map((skill) => skill.slug),
         });
       } catch (err) {
         reportStreamError(sessionId, abortController.signal, err);
@@ -716,14 +802,14 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       updateLastMessage(sessionId, msg => msg.statusText ? { ...msg, statusText: '' } : msg);
       setStreamingForScope(sessionId, false);
       abortControllersRef.current.delete(sessionId);
-      autoTitleSession(sessionId, trimmed);
+      autoTitleSession(sessionId, cleanedText || trimmed);
     } else {
       const toolScope = {
         type: scopeType,
         targetId: scopeTargetId,
         label: scopeLabel,
       } as const;
-      await sendToCattyAgent(sessionId, sendScopeKey, trimmed, abortController, currentSession ?? undefined, assistantMsgId, {
+      await sendToCattyAgent(sessionId, sendScopeKey, cleanedText, abortController, currentSession ?? undefined, assistantMsgId, {
         activeProvider,
         activeModelId,
         scopeType,
@@ -735,6 +821,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         webSearchConfig,
         getExecutorContext: () => buildExecutorContextForScope(toolScope),
         autoTitleSession,
+        selectedUserSkillSlugs: selectedSkillSlugs,
+        availableUserSkillSlugs: userSkillOptions.map((skill) => skill.slug),
       }, attachments.length > 0 ? attachments : undefined);
     }
   }, [
@@ -746,6 +834,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     abortControllersRef, terminalSessions, defaultTargetSession, providers, selectedAgentModel, updateSessionExternalSessionId,
     scopeType, scopeTargetId, scopeLabel, globalPermissionMode, commandBlocklist, webSearchConfig, buildExecutorContextForScope,
     toolIntegrationMode,
+    userSkillOptions,
   ]);
 
   const handleStop = useCallback(() => {
@@ -908,6 +997,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
             onAddFiles={addFiles}
             onRemoveFile={removeFile}
             hosts={terminalSessions.map(s => ({ sessionId: s.sessionId, hostname: s.hostname, label: s.label, connected: s.connected }))}
+            userSkills={userSkillOptions}
             permissionMode={globalPermissionMode}
             onPermissionModeChange={setGlobalPermissionMode}
           />
