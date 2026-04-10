@@ -199,7 +199,14 @@ export const useSettingsState = () => {
   const [terminalThemeId, setTerminalThemeId] = useState<string>(() => localStorageAdapter.readString(STORAGE_KEY_TERM_THEME) || DEFAULT_TERMINAL_THEME);
   const [followAppTerminalTheme, setFollowAppTerminalThemeState] = useState<boolean>(() => {
     const stored = localStorageAdapter.readString(STORAGE_KEY_TERM_FOLLOW_APP_THEME);
-    return stored === null ? true : stored === 'true'; // Default ON for new users
+    if (stored !== null) return stored === 'true';
+    // First time seeing this key. For genuinely fresh installs (no existing
+    // terminal theme in storage) default ON so the terminal matches the app
+    // theme out of the box. For upgrades from an older version (existing
+    // terminal theme present) default OFF to avoid silently overriding the
+    // user's manual choice.
+    const isUpgrade = !!localStorageAdapter.readString(STORAGE_KEY_TERM_THEME);
+    return !isUpgrade;
   });
   const [terminalFontFamilyId, setTerminalFontFamilyId] = useState<string>(() => localStorageAdapter.readString(STORAGE_KEY_TERM_FONT_FAMILY) || DEFAULT_FONT_FAMILY);
   const [terminalFontSize, setTerminalFontSize] = useState<number>(() => localStorageAdapter.readNumber(STORAGE_KEY_TERM_FONT_SIZE) || DEFAULT_FONT_SIZE);
@@ -648,7 +655,7 @@ export const useSettingsState = () => {
   const settingsSnapshotRef = useRef({
     theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent,
     customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage,
-    terminalThemeId, terminalFontFamilyId, terminalFontSize,
+    terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpDefaultViewMode,
     editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat,
@@ -657,7 +664,7 @@ export const useSettingsState = () => {
   settingsSnapshotRef.current = {
     theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent,
     customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage,
-    terminalThemeId, terminalFontFamilyId, terminalFontSize,
+    terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpDefaultViewMode,
     editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat,
@@ -736,6 +743,13 @@ export const useSettingsState = () => {
       if (e.key === STORAGE_KEY_TERM_THEME && e.newValue) {
         if (e.newValue !== s.terminalThemeId) {
           setTerminalThemeId(e.newValue);
+        }
+      }
+      // Sync follow-app-theme toggle from other windows
+      if (e.key === STORAGE_KEY_TERM_FOLLOW_APP_THEME && e.newValue) {
+        const next = e.newValue === 'true';
+        if (next !== s.followAppTerminalTheme) {
+          setFollowAppTerminalThemeState(next);
         }
       }
       // Sync terminal font family from other windows
@@ -857,7 +871,9 @@ export const useSettingsState = () => {
 
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_TERM_FOLLOW_APP_THEME, String(followAppTerminalTheme));
-  }, [followAppTerminalTheme]);
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_TERM_FOLLOW_APP_THEME, String(followAppTerminalTheme));
+  }, [followAppTerminalTheme, notifySettingsChanged]);
 
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_TERM_FONT_FAMILY, terminalFontFamilyId);
