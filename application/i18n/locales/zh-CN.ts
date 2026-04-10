@@ -181,6 +181,8 @@ const zhCN: Messages = {
   'settings.application.github.subtitle': '源代码',
   'settings.application.whatsNew': '更新内容',
   'settings.application.whatsNew.subtitle': '查看发布说明',
+  'settings.application.openExternal.failedTitle': '无法打开链接',
+  'settings.application.openExternal.failedBody': '系统浏览器和内置浏览器窗口都无法打开该链接。',
   'settings.vault.title': '主机库',
   'settings.vault.showRecentHosts': '显示最近连接的主机',
   'settings.vault.showRecentHostsDesc': '在主机列表顶部显示最近连接过的主机',

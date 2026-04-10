@@ -483,7 +483,9 @@ declare global {
     // Known Hosts
     readKnownHosts?(): Promise<string | null>;
 
-    // Open URL in default browser
+    // Open URL in default browser. Resolves when the URL is handled by
+    // either the system browser or the in-app fallback BrowserWindow.
+    // Rejects only in the rare case where both paths fail.
     openExternal?(url: string): Promise<void>;
 
     // App info (name/version/platform) for About screens
