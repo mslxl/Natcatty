@@ -183,6 +183,7 @@ function App({ settings }: { settings: SettingsState }) {
     resolvedTheme,
     terminalThemeId,
     setTerminalThemeId,
+    followAppTerminalTheme,
     currentTerminalTheme,
     terminalFontFamilyId,
     setTerminalFontFamilyId,
@@ -328,6 +329,11 @@ function App({ settings }: { settings: SettingsState }) {
     if (activeTabId === 'vault' || activeTabId === 'sftp') return null;
 
     const resolveTheme = (s: TerminalSession): TerminalTheme => {
+      // When "Follow Application Theme" is on, the UI-matched terminal
+      // theme overrides everything — including per-host theme overrides.
+      // This ensures all terminals match the app chrome regardless of
+      // individual host settings.
+      if (followAppTerminalTheme) return currentTerminalTheme;
       const host = hostById.get(s.hostId) ?? null;
       const themeId = resolveHostTerminalThemeId(host, currentTerminalTheme.id);
       return themeById.get(themeId) || currentTerminalTheme;
@@ -360,7 +366,7 @@ function App({ settings }: { settings: SettingsState }) {
     const session = sessionById.get(activeTabId);
     if (!session) return null;
     return resolveTheme(session);
-  }, [activeTabId, currentTerminalTheme, hostById, sessionById, themeById, workspaceById]);
+  }, [activeTabId, currentTerminalTheme, followAppTerminalTheme, hostById, sessionById, themeById, workspaceById]);
 
   useImmersiveMode({
     activeTabId,
@@ -1481,6 +1487,7 @@ function App({ settings }: { settings: SettingsState }) {
           knownHosts={knownHosts}
           draggingSessionId={draggingSessionId}
           terminalTheme={currentTerminalTheme}
+          followAppTerminalTheme={followAppTerminalTheme}
           terminalSettings={terminalSettings}
           terminalFontFamilyId={terminalFontFamilyId}
           fontSize={terminalFontSize}

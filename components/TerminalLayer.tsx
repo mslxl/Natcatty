@@ -353,6 +353,7 @@ interface TerminalLayerProps {
   knownHosts?: KnownHost[];
   draggingSessionId: string | null;
   terminalTheme: TerminalTheme;
+  followAppTerminalTheme?: boolean;
   terminalSettings?: TerminalSettings;
   terminalFontFamilyId: string;
   fontSize?: number;
@@ -408,6 +409,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   knownHosts = [],
   draggingSessionId,
   terminalTheme,
+  followAppTerminalTheme = false,
   terminalSettings,
   terminalFontFamilyId,
   fontSize = 14,
@@ -2235,6 +2237,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                   fontFamilyId={terminalFontFamilyId}
                   fontSize={fontSize}
                   terminalTheme={terminalTheme}
+                  followAppTerminalTheme={followAppTerminalTheme}
                   terminalSettings={terminalSettings}
                   sessionId={session.id}
                   startupCommand={session.startupCommand}

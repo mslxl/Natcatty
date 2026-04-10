@@ -123,6 +123,7 @@ interface TerminalProps {
   fontFamilyId: string;
   fontSize: number;
   terminalTheme: TerminalTheme;
+  followAppTerminalTheme?: boolean;
   terminalSettings?: TerminalSettings;
   sessionId: string;
   startupCommand?: string;
@@ -197,6 +198,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   fontFamilyId,
   fontSize,
   terminalTheme,
+  followAppTerminalTheme = false,
   terminalSettings,
   sessionId,
   startupCommand,
@@ -634,6 +636,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   }, [availableFonts, fontFamilyId, hasFontFamilyOverride, host.fontFamily]);
 
   const effectiveTheme = useMemo(() => {
+    // When "Follow Application Theme" is on and there's no active
+    // preview, skip per-host overrides — all terminals should use the
+    // UI-matched theme passed via terminalTheme prop.
+    if (followAppTerminalTheme && !themePreviewId) return terminalTheme;
     const themeId = themePreviewId ?? resolveHostTerminalThemeId(
       { theme: host.theme, themeOverride: host.themeOverride } as Pick<Host, 'theme' | 'themeOverride'>,
       terminalTheme.id,
@@ -644,7 +650,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       if (hostTheme) return hostTheme;
     }
     return terminalTheme;
-  }, [customThemes, host.theme, host.themeOverride, terminalTheme, themePreviewId]);
+  }, [customThemes, followAppTerminalTheme, host.theme, host.themeOverride, terminalTheme, themePreviewId]);
 
   const resolvedChainHosts =
     chainHosts;
