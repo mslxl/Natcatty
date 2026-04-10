@@ -1878,7 +1878,12 @@ async function writeSftp(event, payload) {
     // File does not exist — treat as a new file and let the server apply defaults.
   }
 
-  await client.put(Buffer.from(payload.content, "utf-8"), encodedPath);
+  // Normalize CRLF → LF so scripts edited on Windows don't break when
+  // saved to a Linux/macOS host. LF is universally supported (Windows
+  // 10+ notepad handles it), while CRLF in shell scripts causes
+  // "command not found" and syntax errors on Linux.
+  const normalized = payload.content.replace(/\r\n/g, '\n');
+  await client.put(Buffer.from(normalized, "utf-8"), encodedPath);
 
   if (existingMode !== null) {
     try {
