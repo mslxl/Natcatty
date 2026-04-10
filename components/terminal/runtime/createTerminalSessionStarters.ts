@@ -365,8 +365,6 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     const effectivePassphrase = sanitizeCredentialValue(resolvedAuth.passphrase);
     const hasEncryptedPrimaryPassword = isEncryptedCredentialPlaceholder(resolvedAuth.password);
     const hasEncryptedPrimaryKey = isEncryptedCredentialPlaceholder(key?.privateKey);
-    let usedKey: SSHKey | undefined;
-    let usedPassword: string | undefined;
 
     const isAuthError = (err: unknown): boolean => {
       if (!(err instanceof Error)) return false;
@@ -638,7 +636,6 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       if (hasKeyMaterial) {
         try {
           id = await startAttempt({ key });
-          usedKey = key;
         } catch (err) {
           if (isAuthError(err) && hasPassword) {
             ctx.setProgressLogs((prev) => [
@@ -646,14 +643,12 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
               "Key auth failed. Trying password...",
             ]);
             id = await startAttempt({ password: effectivePassword });
-            usedPassword = effectivePassword;
           } else {
             throw err;
           }
         }
       } else {
         id = await startAttempt({ password: effectivePassword });
-        usedPassword = effectivePassword;
       }
 
       if (unsubscribeChainProgress) unsubscribeChainProgress();
