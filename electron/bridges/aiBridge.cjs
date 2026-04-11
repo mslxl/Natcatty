@@ -2106,6 +2106,9 @@ function registerHandlers(ipcMain) {
       if (isCodexAgent && apiKey) {
         agentEnv.CODEX_API_KEY = apiKey;
       }
+      if (isCodexAgent && resolvedProvider?.provider?.baseURL) {
+        agentEnv.OPENAI_BASE_URL = resolvedProvider.provider.baseURL;
+      }
       if (isClaudeAgent && apiKey) {
         agentEnv.ANTHROPIC_API_KEY = apiKey;
       }
@@ -2342,6 +2345,9 @@ function registerHandlers(ipcMain) {
         if (isCodexAgent && apiKey) {
           agentEnv.CODEX_API_KEY = apiKey;
         }
+        if (isCodexAgent && resolvedProvider?.provider?.baseURL) {
+          agentEnv.OPENAI_BASE_URL = resolvedProvider.provider.baseURL;
+        }
         if (isClaudeAgent && apiKey) {
           agentEnv.ANTHROPIC_API_KEY = apiKey;
         }
@@ -2466,6 +2472,9 @@ function registerHandlers(ipcMain) {
             const fallbackEnv = withCliDiscoveryEnv(
               isCodexAgent && apiKey ? { ...shellEnv, CODEX_API_KEY: apiKey } : { ...shellEnv },
             );
+            if (isCodexAgent && resolvedProvider?.provider?.baseURL) {
+              fallbackEnv.OPENAI_BASE_URL = resolvedProvider.provider.baseURL;
+            }
             if (isClaudeAgent && apiKey) {
               fallbackEnv.ANTHROPIC_API_KEY = apiKey;
             }
