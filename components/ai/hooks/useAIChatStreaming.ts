@@ -555,11 +555,14 @@ export function useAIChatStreaming({
       // Pass only the provider ID — the main process resolves and decrypts the API key itself,
       // avoiding plaintext key transit across the IPC boundary.
       // Resolve the correct provider based on agent type:
-      // - Claude agent → anthropic or custom provider
+      // - Claude agent → anthropic provider (prefer over generic custom)
       // - Codex agent  → openai provider
       const agentProviderId = (() => {
         if (matchesManagedAgentConfig(agentConfig, 'claude')) {
-          return context.providers.find(p => (p.providerId === 'anthropic' || p.providerId === 'custom') && p.enabled && p.apiKey)?.id;
+          return (
+            context.providers.find(p => p.providerId === 'anthropic' && p.enabled && p.apiKey)?.id
+            ?? context.providers.find(p => p.providerId === 'custom' && p.enabled && p.apiKey && p.baseURL)?.id
+          );
         }
         if (matchesManagedAgentConfig(agentConfig, 'codex')) {
           return context.providers.find(p => p.providerId === 'openai' && p.enabled && p.apiKey)?.id;
