@@ -2275,7 +2275,11 @@ function registerHandlers(ipcMain) {
         }
       }
 
-      const authFingerprint = isCodexAgent ? getCodexAuthFingerprint(apiKey) : null;
+      const authFingerprint = isCodexAgent
+        ? getCodexAuthFingerprint(apiKey)
+        : isClaudeAgent
+          ? getCodexAuthFingerprint(apiKey + (resolvedProvider?.provider?.baseURL || ""))
+          : null;
       const mcpSnapshot = isCodexAgent
         ? await resolveCodexMcpSnapshot(sessionCwd)
         : { mcpServers: [], fingerprint: getCodexMcpFingerprint([]) };
