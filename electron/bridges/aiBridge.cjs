@@ -2103,8 +2103,14 @@ function registerHandlers(ipcMain) {
       const apiKey = resolvedProvider?.apiKey || undefined;
 
       const agentEnv = withCliDiscoveryEnv({ ...shellEnv });
-      if (apiKey) {
+      if (isCodexAgent && apiKey) {
         agentEnv.CODEX_API_KEY = apiKey;
+      }
+      if (isClaudeAgent && apiKey) {
+        agentEnv.ANTHROPIC_API_KEY = apiKey;
+      }
+      if (isClaudeAgent && resolvedProvider?.provider?.baseURL) {
+        agentEnv.ANTHROPIC_BASE_URL = resolvedProvider.provider.baseURL;
       }
 
       if (isCopilotAgent) {
@@ -2333,8 +2339,14 @@ function registerHandlers(ipcMain) {
         cleanupAcpProvider(chatSessionId);
 
         const agentEnv = withCliDiscoveryEnv({ ...shellEnv });
-        if (apiKey) {
+        if (isCodexAgent && apiKey) {
           agentEnv.CODEX_API_KEY = apiKey;
+        }
+        if (isClaudeAgent && apiKey) {
+          agentEnv.ANTHROPIC_API_KEY = apiKey;
+        }
+        if (isClaudeAgent && resolvedProvider?.provider?.baseURL) {
+          agentEnv.ANTHROPIC_BASE_URL = resolvedProvider.provider.baseURL;
         }
         let copilotConfigInfo = null;
         if (isCopilotAgent) {
@@ -2452,8 +2464,14 @@ function registerHandlers(ipcMain) {
             : acpArgs || [],
           env: (() => {
             const fallbackEnv = withCliDiscoveryEnv(
-              apiKey ? { ...shellEnv, CODEX_API_KEY: apiKey } : { ...shellEnv },
+              isCodexAgent && apiKey ? { ...shellEnv, CODEX_API_KEY: apiKey } : { ...shellEnv },
             );
+            if (isClaudeAgent && apiKey) {
+              fallbackEnv.ANTHROPIC_API_KEY = apiKey;
+            }
+            if (isClaudeAgent && resolvedProvider?.provider?.baseURL) {
+              fallbackEnv.ANTHROPIC_BASE_URL = resolvedProvider.provider.baseURL;
+            }
             if (isCopilotAgent) {
               const fallbackCopilotConfig = prepareCopilotHome(shellEnv, mcpSnapshot.mcpServers, chatSessionId);
               fallbackEnv.COPILOT_HOME = fallbackCopilotConfig.copilotHome;
