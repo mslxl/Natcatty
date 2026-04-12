@@ -981,23 +981,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     () => displayedHosts.filter((h) => selectedGroupPath || !pinnedRecentIds.has(h.id)),
     [displayedHosts, selectedGroupPath, pinnedRecentIds],
   );
-  const shouldHideEmptyRootHostsSection = useMemo(() => {
-    if (selectedGroupPath || viewMode === "tree") return false;
-    if (visibleDisplayedHosts.length > 0) return false;
-    return (
-      displayedGroups.length > 0 ||
-      pinnedHosts.length > 0 ||
-      (showRecentHosts && recentHosts.length > 0)
-    );
-  }, [
-    selectedGroupPath,
-    viewMode,
-    visibleDisplayedHosts.length,
-    displayedGroups.length,
-    pinnedHosts.length,
-    showRecentHosts,
-    recentHosts.length,
-  ]);
 
   // For tree view: apply search, tag filter, and sorting, but not group filtering
   const treeViewHosts = useMemo(() => {
@@ -1161,6 +1144,23 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- findGroupNode is derived from buildGroupTree
   }, [buildGroupTree, selectedGroupPath, customGroups]);
+  const shouldHideEmptyRootHostsSection = useMemo(() => {
+    if (selectedGroupPath || viewMode === "tree") return false;
+    if (visibleDisplayedHosts.length > 0) return false;
+    return (
+      displayedGroups.length > 0 ||
+      pinnedHosts.length > 0 ||
+      (showRecentHosts && recentHosts.length > 0)
+    );
+  }, [
+    selectedGroupPath,
+    viewMode,
+    visibleDisplayedHosts.length,
+    displayedGroups.length,
+    pinnedHosts.length,
+    showRecentHosts,
+    recentHosts.length,
+  ]);
 
   // Known Hosts callbacks - use refs to keep stable references
   // Store latest values in refs so callbacks don't need to depend on them
