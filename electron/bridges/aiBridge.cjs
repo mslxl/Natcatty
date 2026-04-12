@@ -234,6 +234,21 @@ function resolveProviderApiKey(providerId) {
   };
 }
 
+function getAcpProviderAuthFingerprint(apiKey, provider) {
+  const parts = [
+    typeof apiKey === "string" ? apiKey.trim() : "",
+    typeof provider?.id === "string" ? provider.id.trim() : "",
+    typeof provider?.providerId === "string" ? provider.providerId.trim() : "",
+    typeof provider?.baseURL === "string" ? provider.baseURL.trim() : "",
+  ].filter(Boolean);
+
+  if (parts.length === 0) {
+    return null;
+  }
+
+  return getCodexAuthFingerprint(parts.join("\n"));
+}
+
 /** Check if TLS verification should be skipped for a given provider. */
 function shouldSkipTLSVerify(providerId) {
   if (!providerId) return false;
@@ -2275,11 +2290,9 @@ function registerHandlers(ipcMain) {
         }
       }
 
-      const authFingerprint = isCodexAgent
-        ? getCodexAuthFingerprint(apiKey)
-        : isClaudeAgent
-          ? getCodexAuthFingerprint(apiKey + (resolvedProvider?.provider?.baseURL || ""))
-          : null;
+      const authFingerprint = isCodexAgent || isClaudeAgent
+        ? getAcpProviderAuthFingerprint(apiKey, resolvedProvider?.provider)
+        : null;
       const mcpSnapshot = isCodexAgent
         ? await resolveCodexMcpSnapshot(sessionCwd)
         : { mcpServers: [], fingerprint: getCodexMcpFingerprint([]) };

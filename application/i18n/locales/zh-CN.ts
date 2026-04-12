@@ -1752,7 +1752,7 @@ const zhCN: Messages = {
   // AI Codex
   'ai.codex': 'Codex',
   'ai.codex.title': 'Codex CLI',
-  'ai.codex.description': '使用 codex + codex-acp 进行 ACP 协议流式传输。在此通过 ChatGPT 订阅登录，或配置 OpenAI 提供商的 API Key（将作为 CODEX_API_KEY 传递）。',
+  'ai.codex.description': '使用 codex + codex-acp 进行 ACP 协议流式传输。可以在这里连接 ChatGPT，也可以在设置里启用兼容 OpenAI 的 API Key 和自定义接口地址。',
   'ai.codex.detecting': '检测中...',
   'ai.codex.notFound': '未找到',
   'ai.codex.awaitingLogin': '等待登录',
@@ -1768,7 +1768,7 @@ const zhCN: Messages = {
   'ai.codex.logout': '退出登录',
   'ai.codex.connectChatGPT': '连接 ChatGPT',
   'ai.codex.refreshStatus': '刷新状态',
-  'ai.codex.apiKeyHint': '检测到已启用的 OpenAI 提供商 API Key。Codex ACP 也可以无需 ChatGPT 登录进行认证。',
+  'ai.codex.apiKeyHint': '检测到已启用的兼容 OpenAI 的 API Key。Codex ACP 也可以不走 ChatGPT 登录直接使用它。',
 
   // AI Claude Code
   'ai.claude.title': 'Claude Code',

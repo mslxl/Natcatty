@@ -1,4 +1,4 @@
-import type { DiscoveredAgent, ExternalAgentConfig } from './types';
+import type { DiscoveredAgent, ExternalAgentConfig, ProviderConfig } from './types';
 
 export type ManagedAgentKey = 'codex' | 'claude' | 'copilot';
 
@@ -66,4 +66,25 @@ export function getManagedAgentStoredPath(
       matchesPrimaryCliBasename(agent.command, agentKey),
   );
   return fallbackAgent?.command ?? null;
+}
+
+export function findManagedAgentProvider(
+  providers: ProviderConfig[],
+  agentKey: ManagedAgentKey,
+): ProviderConfig | undefined {
+  if (agentKey === 'codex') {
+    return (
+      providers.find((provider) => provider.providerId === 'openai' && provider.enabled && !!provider.apiKey)
+      ?? providers.find((provider) => provider.providerId === 'custom' && provider.enabled && !!provider.apiKey && !!provider.baseURL)
+    );
+  }
+
+  if (agentKey === 'claude') {
+    return (
+      providers.find((provider) => provider.providerId === 'anthropic' && provider.enabled && !!provider.apiKey)
+      ?? providers.find((provider) => provider.providerId === 'custom' && provider.enabled && !!provider.apiKey && !!provider.baseURL)
+    );
+  }
+
+  return undefined;
 }

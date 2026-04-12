@@ -15,7 +15,7 @@ export const CodexConnectionCard: React.FC<{
   integration: CodexIntegrationStatus | null;
   loginSession: CodexLoginSession | null;
   isLoading: boolean;
-  hasOpenAiProviderKey: boolean;
+  hasCompatibleProvider: boolean;
   error: string | null;
   onRefresh: () => void;
   onConnect: () => void;
@@ -31,7 +31,7 @@ export const CodexConnectionCard: React.FC<{
   integration,
   loginSession,
   isLoading,
-  hasOpenAiProviderKey,
+  hasCompatibleProvider,
   error,
   onRefresh,
   onConnect,
@@ -157,7 +157,7 @@ export const CodexConnectionCard: React.FC<{
             </Button>
           </div>
 
-          {hasOpenAiProviderKey && (
+          {hasCompatibleProvider && (
             <p className="text-xs text-emerald-500">
               {t('ai.codex.apiKeyHint')}
             </p>

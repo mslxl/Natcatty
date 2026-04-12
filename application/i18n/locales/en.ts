@@ -1744,7 +1744,7 @@ const en: Messages = {
   // AI Codex
   'ai.codex': 'Codex',
   'ai.codex.title': 'Codex CLI',
-  'ai.codex.description': 'Uses codex + codex-acp for ACP protocol streaming. Login with ChatGPT subscription here, or configure an OpenAI provider API key (passed as CODEX_API_KEY).',
+  'ai.codex.description': 'Uses codex + codex-acp for ACP protocol streaming. Login with ChatGPT here, or enable an OpenAI-compatible provider API key and custom endpoint in Settings.',
   'ai.codex.detecting': 'Detecting...',
   'ai.codex.notFound': 'Not found',
   'ai.codex.awaitingLogin': 'Awaiting login',
@@ -1760,7 +1760,7 @@ const en: Messages = {
   'ai.codex.logout': 'Logout',
   'ai.codex.connectChatGPT': 'Connect ChatGPT',
   'ai.codex.refreshStatus': 'Refresh Status',
-  'ai.codex.apiKeyHint': 'Enabled OpenAI provider API key detected. Codex ACP can also authenticate without ChatGPT login.',
+  'ai.codex.apiKeyHint': 'Detected an enabled OpenAI-compatible provider API key. Codex ACP can use it without ChatGPT login.',
 
   // AI Claude Code
   'ai.claude.title': 'Claude Code',
