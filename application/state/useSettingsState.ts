@@ -263,11 +263,11 @@ export const useSettingsState = () => {
     const stored = readStoredString(STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE);
     return (stored === 'list' || stored === 'tree') ? stored : DEFAULT_SFTP_DEFAULT_VIEW_MODE;
   });
-  const [showRecentHosts, setShowRecentHosts] = useState<boolean>(() => {
+  const [showRecentHosts, setShowRecentHostsState] = useState<boolean>(() => {
     const stored = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_RECENT_HOSTS);
     return stored ?? DEFAULT_SHOW_RECENT_HOSTS;
   });
-  const [showOnlyUngroupedHostsInRoot, setShowOnlyUngroupedHostsInRoot] = useState<boolean>(() => {
+  const [showOnlyUngroupedHostsInRoot, setShowOnlyUngroupedHostsInRootState] = useState<boolean>(() => {
     const stored = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT);
     return stored ?? DEFAULT_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT;
   });
@@ -475,9 +475,9 @@ export const useSettingsState = () => {
     const storedDefaultViewMode = readStoredString(STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE);
     if (storedDefaultViewMode === 'list' || storedDefaultViewMode === 'tree') setSftpDefaultViewMode(storedDefaultViewMode);
     const storedShowRecentHosts = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_RECENT_HOSTS);
-    setShowRecentHosts(storedShowRecentHosts ?? DEFAULT_SHOW_RECENT_HOSTS);
+    setShowRecentHostsState(storedShowRecentHosts ?? DEFAULT_SHOW_RECENT_HOSTS);
     const storedShowOnlyUngroupedHostsInRoot = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT);
-    setShowOnlyUngroupedHostsInRoot(storedShowOnlyUngroupedHostsInRoot ?? DEFAULT_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT);
+    setShowOnlyUngroupedHostsInRootState(storedShowOnlyUngroupedHostsInRoot ?? DEFAULT_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT);
 
     // Workspace focus style
     const storedFocusStyle = readStoredString(STORAGE_KEY_WORKSPACE_FOCUS_STYLE);
@@ -854,13 +854,13 @@ export const useSettingsState = () => {
       if (e.key === STORAGE_KEY_SHOW_RECENT_HOSTS && e.newValue !== null) {
         const newValue = e.newValue === 'true';
         if (newValue !== s.showRecentHosts) {
-          setShowRecentHosts(newValue);
+          setShowRecentHostsState(newValue);
         }
       }
       if (e.key === STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT && e.newValue !== null) {
         const newValue = e.newValue === 'true';
         if (newValue !== s.showOnlyUngroupedHostsInRoot) {
-          setShowOnlyUngroupedHostsInRoot(newValue);
+          setShowOnlyUngroupedHostsInRootState(newValue);
         }
       }
       // Sync global hotkey enabled setting from other windows
@@ -952,6 +952,20 @@ export const useSettingsState = () => {
     notifySettingsChanged(STORAGE_KEY_HOTKEY_RECORDING, isRecording);
   }, [notifySettingsChanged]);
 
+  const setShowRecentHosts = useCallback((enabled: boolean) => {
+    setShowRecentHostsState(enabled);
+    localStorageAdapter.writeBoolean(STORAGE_KEY_SHOW_RECENT_HOSTS, enabled);
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_SHOW_RECENT_HOSTS, enabled);
+  }, [notifySettingsChanged]);
+
+  const setShowOnlyUngroupedHostsInRoot = useCallback((enabled: boolean) => {
+    setShowOnlyUngroupedHostsInRootState(enabled);
+    localStorageAdapter.writeBoolean(STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT, enabled);
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT, enabled);
+  }, [notifySettingsChanged]);
+
   // Apply and persist custom CSS
   useEffect(() => {
     // Always apply CSS to document (needed on mount)
@@ -1009,18 +1023,6 @@ export const useSettingsState = () => {
     if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE, sftpDefaultViewMode);
   }, [sftpDefaultViewMode, notifySettingsChanged]);
-
-  useEffect(() => {
-    localStorageAdapter.writeBoolean(STORAGE_KEY_SHOW_RECENT_HOSTS, showRecentHosts);
-    if (!persistMountedRef.current) return;
-    notifySettingsChanged(STORAGE_KEY_SHOW_RECENT_HOSTS, showRecentHosts);
-  }, [showRecentHosts, notifySettingsChanged]);
-
-  useEffect(() => {
-    localStorageAdapter.writeBoolean(STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT, showOnlyUngroupedHostsInRoot);
-    if (!persistMountedRef.current) return;
-    notifySettingsChanged(STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT, showOnlyUngroupedHostsInRoot);
-  }, [showOnlyUngroupedHostsInRoot, notifySettingsChanged]);
 
   // Persist Session Logs settings
   useEffect(() => {
