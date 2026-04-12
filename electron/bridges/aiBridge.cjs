@@ -2303,7 +2303,15 @@ function registerHandlers(ipcMain) {
       const resolvedProvider = providerId ? resolveProviderApiKey(providerId) : null;
       const apiKey = resolvedProvider?.apiKey || undefined;
 
-      if (isCodexAgent && !apiKey) {
+      // Probe ~/.codex/config.toml first so we can tell a ChatGPT user
+      // (needs login validation) from a custom-provider user (must NOT be
+      // forced through ChatGPT validation, since their auth lives in
+      // config.toml / shell env, not auth.json).
+      const codexCustomConfig = isCodexAgent && !apiKey
+        ? readCodexCustomProviderConfig(shellEnv)
+        : null;
+
+      if (isCodexAgent && !apiKey && !codexCustomConfig) {
         const validation = await validateCodexChatGptAuth({ maxAgeMs: 10000 });
         if (shouldAbortStartup()) return { ok: true };
         if (!validation.ok) {
@@ -2324,13 +2332,6 @@ function registerHandlers(ipcMain) {
         }
       }
 
-      // For Codex, also fold the user's ~/.codex/config.toml custom-provider
-      // state into the fingerprint so editing the config invalidates any
-      // cached ACP instance (otherwise a stale provider would keep hitting
-      // the old endpoint / env_key).
-      const codexCustomConfig = isCodexAgent && !apiKey
-        ? readCodexCustomProviderConfig(shellEnv)
-        : null;
       const authFingerprint = isCodexAgent || isClaudeAgent
         ? getAcpProviderAuthFingerprint(apiKey, resolvedProvider?.provider, codexCustomConfig)
         : null;
