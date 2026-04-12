@@ -246,6 +246,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const sessionRef = useRef<string | null>(null);
   const hasConnectedRef = useRef(false);
   const hasRunStartupCommandRef = useRef(false);
+  // Token for an in-flight retry chain. handleRetry sets this to a fresh
+  // symbol; any cancel/close/teardown/subsequent-retry invalidates it. The
+  // chained xterm.write callbacks verify the token before proceeding so a
+  // cancelled retry can't fire a startNewSession after the fact.
+  const retryTokenRef = useRef<symbol | null>(null);
   const terminalDataCapturedRef = useRef(false);
   const onTerminalDataCaptureRef = useRef(onTerminalDataCapture);
   const commandBufferRef = useRef<string>("");
@@ -685,6 +690,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   };
 
   const teardown = () => {
+    retryTokenRef.current = null;
     cleanupSession();
     xtermRuntimeRef.current?.dispose();
     xtermRuntimeRef.current = null;
@@ -1399,6 +1405,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   };
 
   const handleCancelConnect = () => {
+    retryTokenRef.current = null;
     setIsCancelling(true);
     auth.setNeedsAuth(false);
     auth.setAuthRetryMessage(null);
@@ -1418,6 +1425,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   };
 
   const handleCloseDisconnectedSession = () => {
+    retryTokenRef.current = null;
     onCloseSession?.(sessionId);
   };
 
@@ -1460,6 +1468,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     if (!termRef.current) return;
     cleanupSession();
     const term = termRef.current;
+    // Claim a fresh retry token. If the user cancels / closes / unmounts /
+    // kicks off another retry while the chained writes below are still
+    // queued, the token will be invalidated and our callbacks will abort
+    // before opening a ghost backend session with no owning UI.
+    const retryToken = Symbol("retry");
+    retryTokenRef.current = retryToken;
+    const retryStillActive = () => retryTokenRef.current === retryToken && termRef.current === term;
+
     auth.resetForRetry();
     terminalDataCapturedRef.current = false;
     hasRunStartupCommandRef.current = false;
@@ -1470,6 +1486,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     setShowLogs(true);
 
     const startNewSession = () => {
+      if (!retryStillActive()) return;
       if (host.protocol === "serial") {
         sessionStarters.startSerial(term);
       } else if (host.protocol === "local" || host.hostname === "localhost") {
@@ -1493,6 +1510,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     //    is a no-op on the alt buffer (disconnect while in vim/less/top), so
     //    we must be on the normal buffer before preserving.
     term.write('\x1b[?1049l', () => {
+      if (!retryStillActive()) return;
       // 2. Push the previous session's viewport into scrollback so the user
       //    can still read it after reconnect.
       preserveTerminalViewportInScrollback(term);
