@@ -1154,7 +1154,7 @@ const en: Messages = {
   'terminal.toolbar.library': 'Library',
   'terminal.toolbar.noSnippets': 'No snippets available',
   'terminal.toolbar.terminalSettings': 'Terminal settings',
-  'terminal.toolbar.searchTerminal': 'Search terminal (Ctrl+F)',
+  'terminal.toolbar.searchTerminal': 'Search terminal',
   'terminal.toolbar.search': 'Search',
   'terminal.toolbar.broadcast': 'Broadcast',
   'terminal.toolbar.broadcastEnable': 'Enable Broadcast Mode',
