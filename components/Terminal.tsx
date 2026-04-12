@@ -1466,10 +1466,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     // disconnect — see issue #695.
     preserveTerminalViewportInScrollback(term);
     // Disable any stale modes from the previous session (mouse tracking,
-    // alt-screen, SGR colors, hidden cursor) so they don't leak into the new
-    // one as text input or visual artifacts. Home the cursor for a clean
-    // starting position.
-    term.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1049l\x1b[0m\x1b[?25h\x1b[H');
+    // bracketed paste, alt-screen, SGR colors, hidden cursor) so they don't
+    // leak into the new one as text input or visual artifacts. Bracketed
+    // paste in particular must be cleared — if the old session enabled 2004h
+    // and the new one doesn't, our paste/snippet paths would keep wrapping
+    // input with \x1b[200~...\x1b[201~ which the new shell would echo as
+    // literal text. Home the cursor for a clean starting position.
+    term.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?1049l\x1b[0m\x1b[?25h\x1b[H');
     auth.resetForRetry();
     terminalDataCapturedRef.current = false;
     hasRunStartupCommandRef.current = false;
