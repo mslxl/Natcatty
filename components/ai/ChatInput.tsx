@@ -213,8 +213,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const pastedFiles = Array.from(e.clipboardData.items)
-      .map((item) => item.getAsFile())
-      .filter(Boolean) as File[];
+      .map((item: DataTransferItem) => item.getAsFile())
+      .filter((f): f is File => !!f);
     if (pastedFiles.length > 0) {
       e.preventDefault();
       onAddFiles?.(pastedFiles);
@@ -310,6 +310,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
             placeholder={placeholder || defaultPlaceholder}
             disabled={disabled}
             className={expanded ? 'max-h-[220px]' : undefined}
+            maxLength={100000}
           />
           <button
             type="button"

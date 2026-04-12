@@ -6,16 +6,13 @@ declare module "*.cjs" {
   export = value;
 }
 
-declare global {
-  // Extend HTMLInputElement to support webkitdirectory attribute
-  namespace JSX {
-    interface IntrinsicElements {
-      input: React.DetailedHTMLProps<React.InputHTMLAttributes<HTMLInputElement> & {
-        webkitdirectory?: string;
-      }, HTMLInputElement>;
-    }
+declare module 'react' {
+  interface InputHTMLAttributes<T> extends HTMLAttributes<T> {
+    webkitdirectory?: string | boolean;
   }
+}
 
+declare global {
   // Proxy configuration for SSH connections
   interface NetcattyProxyConfig {
     type: 'http' | 'socks5';

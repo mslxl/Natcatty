@@ -1,6 +1,7 @@
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import type { HTMLAttributes } from 'react';
 import { cn } from '../../lib/utils';
 import { Check, ChevronDown, ChevronRight, CheckCircle2, Loader2, ShieldAlert, X, XCircle, Slash } from 'lucide-react';
-import React, { useCallback, useEffect, useRef, useState, type HTMLAttributes } from 'react';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { useI18n } from '../../application/i18n/I18nProvider';
@@ -10,14 +11,14 @@ import { useI18n } from '../../application/i18n/I18nProvider';
  * command results for terminal-like output.
  */
 function formatToolResult(result: unknown): string {
-  let parsed = result;
+  let parsed: any = result;
 
   if (typeof parsed === 'string') {
     try {
       const obj = JSON.parse(parsed);
       if (obj && typeof obj === 'object') parsed = obj;
     } catch {
-      return parsed;
+      return parsed as string;
     }
   }
 
@@ -40,6 +41,7 @@ function formatToolResult(result: unknown): string {
 
 export interface ToolCallProps extends HTMLAttributes<HTMLDivElement> {
   name: string;
+  className?: string;
   args?: Record<string, unknown>;
   result?: unknown;
   isError?: boolean;

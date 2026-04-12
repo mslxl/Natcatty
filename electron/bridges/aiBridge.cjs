@@ -744,7 +744,7 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:ai:user-skills:status", async (event) => {
     if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     try {
-      const status = scanUserSkills(electronModule?.app);
+      const status = await scanUserSkills(electronModule?.app);
       return { ok: true, ...status };
     } catch (err) {
       return { ok: false, error: err?.message || String(err) };
@@ -754,7 +754,7 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:ai:user-skills:open", async (event) => {
     if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     try {
-      const status = scanUserSkills(electronModule?.app);
+      const status = await scanUserSkills(electronModule?.app);
       const openResult = await electronModule?.shell?.openPath?.(status.directoryPath);
       return {
         ok: !openResult,
@@ -769,7 +769,7 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:ai:user-skills:build-context", async (event, { prompt, selectedSkillSlugs }) => {
     if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
     try {
-      const { context, status } = buildUserSkillsContext(electronModule?.app, prompt, selectedSkillSlugs);
+      const { context, status } = await buildUserSkillsContext(electronModule?.app, prompt, selectedSkillSlugs);
       return { ok: true, context, status };
     } catch (err) {
       return { ok: false, error: err?.message || String(err) };

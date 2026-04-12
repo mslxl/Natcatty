@@ -576,7 +576,7 @@ export function useAIChatStreaming({
   ) => {
     const bridge = getNetcattyBridge();
     const userSkillsContext = bridge?.aiUserSkillsBuildContext
-      ? (await bridge.aiUserSkillsBuildContext(trimmed, context.selectedUserSkillSlugs).catch(() => ({ ok: false })))?.context || ''
+      ? (await bridge.aiUserSkillsBuildContext(trimmed, context.selectedUserSkillSlugs).catch(() => ({ ok: false, context: '' })))?.context || ''
       : '';
 
     if (agentConfig.acpCommand && bridge) {
@@ -721,7 +721,7 @@ export function useAIChatStreaming({
   ) => {
     const bridge = getNetcattyBridge();
     const userSkillsContext = bridge?.aiUserSkillsBuildContext
-      ? (await bridge.aiUserSkillsBuildContext(trimmed, context.selectedUserSkillSlugs).catch(() => ({ ok: false })))?.context || ''
+      ? (await bridge.aiUserSkillsBuildContext(trimmed, context.selectedUserSkillSlugs).catch(() => ({ ok: false, context: '' })))?.context || ''
       : '';
     const getExecutorContext = context.getExecutorContext ?? (() => ({
       sessions: context.terminalSessions,

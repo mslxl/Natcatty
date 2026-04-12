@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const fsPromises = require("node:fs/promises");
 const path = require("node:path");
 
 const USER_SKILLS_DIR_NAME = "Skills";
@@ -75,28 +76,30 @@ function getBundledExampleSkillDir() {
   return path.resolve(__dirname, "../../../skills/example-user-skill");
 }
 
-function ensureUserSkillsDir(electronApp) {
+async function ensureUserSkillsDir(electronApp) {
   const skillsDir = getUserSkillsDir(electronApp);
-  fs.mkdirSync(skillsDir, { recursive: true });
+  await fsPromises.mkdir(skillsDir, { recursive: true });
   return skillsDir;
 }
 
-function ensureExampleSkill(electronApp) {
-  const skillsDir = ensureUserSkillsDir(electronApp);
-  const existingEntries = fs.readdirSync(skillsDir, { withFileTypes: true });
-  if (existingEntries.length > 0) return skillsDir;
+async function ensureExampleSkill(electronApp) {
+  const skillsDir = await ensureUserSkillsDir(electronApp);
+  const dirEntries = await fsPromises.readdir(skillsDir, { withFileTypes: true });
+  if (dirEntries.length > 0) return skillsDir;
 
   const sourceDir = getBundledExampleSkillDir();
   const targetDir = path.join(skillsDir, EXAMPLE_SKILL_DIR_NAME);
   if (fs.existsSync(sourceDir)) {
-    fs.cpSync(sourceDir, targetDir, { recursive: true, force: false, errorOnExist: false });
+    // fs.cp is experimental in some node versions, using synchronous version for stability in bridge context
+    // or we can use async if node version is guaranteed
+    await fsPromises.cp(sourceDir, targetDir, { recursive: true, force: false, errorOnExist: false });
   }
   return skillsDir;
 }
 
-function scanUserSkills(electronApp) {
-  const skillsDir = ensureExampleSkill(electronApp);
-  const dirEntries = fs.readdirSync(skillsDir, { withFileTypes: true });
+async function scanUserSkills(electronApp) {
+  const skillsDir = await ensureExampleSkill(electronApp);
+  const dirEntries = await fsPromises.readdir(skillsDir, { withFileTypes: true });
   const skills = [];
   const warnings = [];
 
@@ -118,14 +121,16 @@ function scanUserSkills(electronApp) {
       warnings: [],
     };
 
-    if (!fs.existsSync(skillPath)) {
+    try {
+      await fsPromises.access(skillPath);
+    } catch {
       baseItem.warnings.push("Missing SKILL.md");
       warnings.push(`${dirName}: Missing SKILL.md`);
       skills.push(baseItem);
       continue;
     }
 
-    const stat = fs.statSync(skillPath);
+    const stat = await fsPromises.stat(skillPath);
     if (stat.size > MAX_SKILL_BYTES) {
       baseItem.warnings.push(`SKILL.md is too large (${stat.size} bytes > ${MAX_SKILL_BYTES} bytes).`);
       warnings.push(`${dirName}: SKILL.md is too large.`);
@@ -133,7 +138,7 @@ function scanUserSkills(electronApp) {
       continue;
     }
 
-    const content = fs.readFileSync(skillPath, "utf8");
+    const content = await fsPromises.readFile(skillPath, "utf8");
     const { attributes, body, hasFrontmatter } = parseFrontmatter(content);
     const name = stripQuotes(attributes.name || "").trim();
     const description = stripQuotes(attributes.description || "").trim();
@@ -217,8 +222,8 @@ function scoreSkillMatch(prompt, skill) {
   return overlap;
 }
 
-function buildUserSkillsContext(electronApp, prompt, selectedSkillSlugs = []) {
-  const status = scanUserSkills(electronApp);
+async function buildUserSkillsContext(electronApp, prompt, selectedSkillSlugs = []) {
+  const status = await scanUserSkills(electronApp);
   const readySkills = status._readySkills || [];
   if (readySkills.length === 0) {
     return { context: "", status };

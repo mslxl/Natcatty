@@ -41,7 +41,7 @@ class AITabErrorBoundary extends React.Component<
         </div>
       );
     }
-    return this.props.children;
+    return (this.props as { children: React.ReactNode }).children;
   }
 }
 

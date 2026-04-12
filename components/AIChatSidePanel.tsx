@@ -162,12 +162,12 @@ function stripUserSkillTokensFromText(input: string, availableSkills: UserSkillO
 }
 
 function buildAcpHistoryMessages(messages: ChatMessage[], availableSkills: UserSkillOption[]): Array<{ role: 'user' | 'assistant'; content: string }> {
-  return messages.flatMap((message) => {
+  return messages.flatMap((message): Array<{ role: 'user' | 'assistant'; content: string }> => {
     if (message.role === 'system') return [];
 
     if (message.role === 'user') {
       const content = stripUserSkillTokensFromText(message.content, availableSkills);
-      return content ? [{ role: 'user' as const, content }] : [];
+      return content ? [{ role: 'user', content }] : [];
     }
 
     if (message.role === 'assistant') {
@@ -177,12 +177,12 @@ function buildAcpHistoryMessages(messages: ChatMessage[], availableSkills: UserS
         parts.push(...message.toolCalls.map((tc) => `Tool call: ${tc.name}(${JSON.stringify(tc.arguments ?? {})})`));
       }
       if (!parts.length) return [];
-      return [{ role: 'assistant' as const, content: parts.join('\n\n') }];
+      return [{ role: 'assistant', content: parts.join('\n\n') }];
     }
 
     if (message.role === 'tool' && message.toolResults?.length) {
       return message.toolResults.map((tr) => ({
-        role: 'assistant' as const,
+        role: 'assistant',
         content: `Tool result:\n${tr.content}`,
       }));
     }
