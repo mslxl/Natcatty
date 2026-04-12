@@ -134,14 +134,27 @@ function getActiveCodexLoginSession() {
 // We read and minimally parse the config file so we can surface this as a
 // valid "ready" state and skip the ChatGPT login prompt in the UI.
 
-/** Find `#` outside quoted regions. */
+/** Find `#` outside quoted regions. Tracks escape state via a flag rather
+ *  than peeking at the previous character, so even runs of backslashes like
+ *  `"C:\\path\\"` close the string correctly. Literal (single-quoted) TOML
+ *  strings don't recognize `\` as an escape, so only honor escapes inside
+ *  basic (double-quoted) strings. */
 function findUnquotedHash(value) {
   let inStr = false;
   let quote = "";
+  let escaped = false;
   for (let i = 0; i < value.length; i++) {
     const ch = value[i];
     if (inStr) {
-      if (ch === quote && value[i - 1] !== "\\") {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (quote === '"' && ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === quote) {
         inStr = false;
         quote = "";
       }
@@ -169,7 +182,9 @@ function parseCodexConfigToml(text) {
   let currentProvider = null;
   let atTopLevel = true;
 
-  const lines = String(text || "").split(/\r?\n/);
+  // Strip UTF-8 BOM so the first key still matches the regex on Windows-edited files.
+  const normalized = String(text || "").replace(/^\uFEFF/, "");
+  const lines = normalized.split(/\r?\n/);
   for (const rawLine of lines) {
     let line = rawLine;
     const hashIdx = findUnquotedHash(line);
@@ -266,6 +281,15 @@ function readCodexCustomProviderConfig(shellEnv) {
   const hardcodedApiKey = typeof providerEntry.api_key === "string" ? providerEntry.api_key.trim() : "";
   const activeModel = typeof parsed.model === "string" ? parsed.model.trim() : "";
 
+  // Hash the actual auth material (either the hardcoded api_key or the
+  // resolved env_key value) so the ACP provider fingerprint changes when
+  // the user rotates their key — without ever returning the raw value
+  // across the IPC boundary.
+  const authMaterial = hardcodedApiKey || envKeyValue;
+  const authHash = authMaterial
+    ? createHash("sha256").update(authMaterial).digest("hex")
+    : null;
+
   return {
     providerName: activeName,
     displayName: providerEntry.name || activeName,
@@ -274,6 +298,7 @@ function readCodexCustomProviderConfig(shellEnv) {
     envKeyPresent: Boolean(envKeyValue),
     hasHardcodedApiKey: Boolean(hardcodedApiKey),
     model: activeModel || null,
+    authHash,
   };
 }
 

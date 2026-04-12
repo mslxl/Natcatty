@@ -391,7 +391,14 @@ const ChatInput: React.FC<ChatInputProps> = ({
                 if (!hasModelPicker) return;
                 if (!showModelPicker) {
                   const rect = modelBtnRef.current?.getBoundingClientRect();
-                  if (rect) setMenuPos({ left: rect.left, bottom: window.innerHeight - rect.top + 6 });
+                  if (rect) {
+                    // Clamp so the popover (max-w-[360px]) stays inside the
+                    // viewport when the chip is near the right edge of a
+                    // narrow AI side panel.
+                    const popoverMax = 360;
+                    const left = Math.max(8, Math.min(rect.left, window.innerWidth - popoverMax - 8));
+                    setMenuPos({ left, bottom: window.innerHeight - rect.top + 6 });
+                  }
                   setActiveMenu('model');
                 } else {
                   closeAllMenus();

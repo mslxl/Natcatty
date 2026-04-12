@@ -492,6 +492,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   // OpenAI models regardless of the active provider, which is misleading.
   const [codexConfigModel, setCodexConfigModel] = useState<string | null>(null);
   useEffect(() => {
+    setCodexCustomConfigResolved(false);
     if (!isCodexManagedAgent) {
       setCodexConfigModel(null);
       return;
@@ -501,9 +502,17 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     let cancelled = false;
     void bridge.aiCodexGetIntegration().then((info) => {
       if (cancelled) return;
+      const hasCustom = info?.state === 'connected_custom_config';
       setCodexConfigModel(info?.customConfig?.model ?? null);
+      // Only flip "resolved" to true when the probe confirms this is a
+      // custom-config session; otherwise keep it false so we fall back to
+      // the static CODEX_MODEL_PRESETS.
+      setCodexCustomConfigResolved(hasCustom);
     }).catch(() => {
-      if (!cancelled) setCodexConfigModel(null);
+      if (!cancelled) {
+        setCodexConfigModel(null);
+        setCodexCustomConfigResolved(false);
+      }
     });
     return () => { cancelled = true; };
   }, [isCodexManagedAgent, currentAgentId]);
@@ -547,16 +556,26 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     };
   }, [currentAgentConfig, currentAgentId, isCopilotExternalAgent, setAgentModel]);
 
+  // When Codex is backed by a ~/.codex/config.toml custom provider, the
+  // stock CODEX_MODEL_PRESETS catalog is invalid for that endpoint. Track
+  // whether we got a definitive answer from the integration probe so we can
+  // distinguish "still loading" from "no model set in config.toml".
+  const [codexCustomConfigResolved, setCodexCustomConfigResolved] = useState(false);
+  const hasCodexCustomConfig = codexCustomConfigResolved && isCodexManagedAgent;
+
   const agentModelPresets = useMemo(() => {
-    // When a custom provider is configured in ~/.codex/config.toml, that
-    // config pins a specific model. The stock CODEX_MODEL_PRESETS catalog
-    // would be invalid for that endpoint, so surface just the config.toml
-    // model as the only option.
-    if (isCodexManagedAgent && codexConfigModel) {
-      return [{ id: codexConfigModel, name: codexConfigModel }];
+    if (hasCodexCustomConfig) {
+      // Config.toml with a pinned model → show just that model.
+      if (codexConfigModel) {
+        return [{ id: codexConfigModel, name: codexConfigModel }];
+      }
+      // Config.toml custom provider without a pinned model → codex-acp
+      // uses its provider default. Don't surface the OpenAI presets; they
+      // wouldn't work. Empty list disables the picker.
+      return [];
     }
     return runtimeAgentModelPresets[currentAgentId] ?? getAgentModelPresets(currentAgentConfig?.command);
-  }, [currentAgentConfig?.command, currentAgentId, runtimeAgentModelPresets, isCodexManagedAgent, codexConfigModel]);
+  }, [currentAgentConfig?.command, currentAgentId, runtimeAgentModelPresets, hasCodexCustomConfig, codexConfigModel]);
 
   // Per-agent model: recall last selection or use first preset as default
   const selectedAgentModel = useMemo(() => {

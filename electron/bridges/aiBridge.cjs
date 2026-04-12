@@ -249,6 +249,10 @@ function getAcpProviderAuthFingerprint(apiKey, provider, customConfig) {
           customConfig.baseUrl || "",
           customConfig.envKey || "",
           customConfig.envKeyPresent ? "1" : "0",
+          // authHash changes when the user rotates their hardcoded api_key
+          // or the env_key's resolved value; without it a cached ACP
+          // provider would keep serving the stale key.
+          customConfig.authHash || "",
         ].join(":")
       : "",
   ].filter(Boolean);
@@ -1896,7 +1900,10 @@ function registerHandlers(ipcMain) {
       return {
         ok: true,
         state,
-        isConnected: state === "connected_chatgpt" || state === "connected_api_key",
+        isConnected:
+          state === "connected_chatgpt" ||
+          state === "connected_api_key" ||
+          state === "connected_custom_config",
         rawOutput,
         logoutOutput: [logoutResult.stdout, logoutResult.stderr]
           .filter((chunk) => chunk.trim().length > 0)
@@ -2310,6 +2317,23 @@ function registerHandlers(ipcMain) {
       const codexCustomConfig = isCodexAgent && !apiKey
         ? readCodexCustomProviderConfig(shellEnv)
         : null;
+
+      // Fail loud: custom-provider config is set but has no usable auth
+      // material yet (env_key is named but not exported in the shell env,
+      // and no api_key is hardcoded). Don't spawn — codex-acp would fail
+      // mid-request with an opaque "Missing environment variable" error.
+      if (
+        codexCustomConfig
+        && codexCustomConfig.envKey
+        && !codexCustomConfig.envKeyPresent
+        && !codexCustomConfig.hasHardcodedApiKey
+      ) {
+        safeSend(event.sender, "netcatty:ai:acp:error", {
+          requestId,
+          error: `Codex is configured to use the "${codexCustomConfig.displayName}" provider from ~/.codex/config.toml, but the environment variable ${codexCustomConfig.envKey} is not set. Export it in your shell (e.g. add to ~/.zshrc) and restart netcatty.`,
+        });
+        return { ok: false, error: `Missing env var ${codexCustomConfig.envKey}` };
+      }
 
       if (isCodexAgent && !apiKey && !codexCustomConfig) {
         const validation = await validateCodexChatGptAuth({ maxAgeMs: 10000 });

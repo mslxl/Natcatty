@@ -1753,7 +1753,7 @@ const en: Messages = {
   'ai.codex.connectedCustomConfig': 'Connected via ~/.codex/config.toml',
   'ai.codex.customConfigIncomplete': 'Custom config detected (env var missing)',
   'ai.codex.customConfigHint': 'Using custom provider "{provider}" configured in ~/.codex/config.toml — no ChatGPT login needed.',
-  'ai.codex.customConfigMissingEnvKey': 'Warning: ${envKey} is not set in your shell environment. Export it (or launch netcatty from a shell that has it) so Codex can authenticate.',
+  'ai.codex.customConfigMissingEnvKey': 'Warning: {envKey} is not set in your shell environment. Export it (or launch netcatty from a shell that has it) so Codex can authenticate.',
   'ai.codex.notConnected': 'Not connected',
   'ai.codex.statusUnknown': 'Status unknown',
   'ai.codex.path': 'Path:',
