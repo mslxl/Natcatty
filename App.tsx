@@ -1469,6 +1469,8 @@ function App({ settings }: { settings: SettingsState }) {
             onClearUnsavedConnectionLogs={clearUnsavedConnectionLogs}
             onRunSnippet={runSnippet}
             onOpenLogView={openLogView}
+            showRecentHosts={settings.showRecentHosts}
+            showOnlyUngroupedHostsInRoot={settings.showOnlyUngroupedHostsInRoot}
             navigateToSection={navigateToSection}
             onNavigateToSectionHandled={() => setNavigateToSection(null)}
           />

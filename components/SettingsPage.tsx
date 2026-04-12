@@ -286,6 +286,10 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                             setUiLanguage={settings.setUiLanguage}
                             customCSS={settings.customCSS}
                             setCustomCSS={settings.setCustomCSS}
+                            showRecentHosts={settings.showRecentHosts}
+                            setShowRecentHosts={settings.setShowRecentHosts}
+                            showOnlyUngroupedHostsInRoot={settings.showOnlyUngroupedHostsInRoot}
+                            setShowOnlyUngroupedHostsInRoot={settings.setShowOnlyUngroupedHostsInRoot}
                         />
                     )}
 

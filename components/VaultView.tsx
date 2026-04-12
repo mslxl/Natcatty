@@ -39,7 +39,11 @@ import { resolveGroupDefaults, applyGroupDefaults } from "../domain/groupConfig"
 import { getEffectiveHostDistro, sanitizeHost } from "../domain/host";
 import { importVaultHostsFromText, exportHostsToCsvWithStats } from "../domain/vaultImport";
 import type { VaultImportFormat } from "../domain/vaultImport";
-import { STORAGE_KEY_VAULT_HOSTS_VIEW_MODE, STORAGE_KEY_VAULT_HOSTS_TREE_EXPANDED, STORAGE_KEY_VAULT_SIDEBAR_COLLAPSED, STORAGE_KEY_SHOW_RECENT_HOSTS } from "../infrastructure/config/storageKeys";
+import {
+  STORAGE_KEY_VAULT_HOSTS_TREE_EXPANDED,
+  STORAGE_KEY_VAULT_HOSTS_VIEW_MODE,
+  STORAGE_KEY_VAULT_SIDEBAR_COLLAPSED,
+} from "../infrastructure/config/storageKeys";
 import { cn } from "../lib/utils";
 import { useInstantThemeSwitch } from "../lib/useInstantThemeSwitch";
 import {
@@ -147,6 +151,8 @@ interface VaultViewProps {
   onRunSnippet?: (snippet: Snippet, targetHosts: Host[]) => void;
   groupConfigs: GroupConfig[];
   onUpdateGroupConfigs: (configs: GroupConfig[]) => void;
+  showRecentHosts: boolean;
+  showOnlyUngroupedHostsInRoot: boolean;
   // Optional: navigate to a specific section on mount or when changed
   navigateToSection?: VaultSection | null;
   onNavigateToSectionHandled?: () => void;
@@ -193,6 +199,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   onRunSnippet,
   groupConfigs,
   onUpdateGroupConfigs,
+  showRecentHosts,
+  showOnlyUngroupedHostsInRoot,
   navigateToSection,
   onNavigateToSectionHandled,
 }) => {
@@ -229,11 +237,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   const [dragOverDropTarget, setDragOverDropTarget] = useState<DropTarget | null>(null);
   const [confirmedDropTarget, setConfirmedDropTarget] = useState<DropTarget | null>(null);
   const dropTargetPulseTimeoutRef = useRef<number | null>(null);
-
-  const [showRecentHosts, _setShowRecentHosts] = useStoredBoolean(
-    STORAGE_KEY_SHOW_RECENT_HOSTS,
-    true,
-  );
 
   // Handle external navigation requests
   useEffect(() => {
@@ -874,6 +877,11 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
         }
         return hostGroup === selectedGroupPath;
       });
+    } else if (showOnlyUngroupedHostsInRoot) {
+      filtered = filtered.filter((h) => {
+        const hostGroup = (h.group || "").trim();
+        return hostGroup === "";
+      });
     }
     if (search.trim()) {
       const s = search.toLowerCase();
@@ -911,7 +919,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
       }
     });
     return filtered;
-  }, [hosts, selectedGroupPath, search, selectedTags, sortMode]);
+  }, [hosts, selectedGroupPath, showOnlyUngroupedHostsInRoot, search, selectedTags, sortMode]);
 
   // Pinned hosts for root-level display (not inside a subgroup)
   // Respects active search and tag filters
@@ -962,6 +970,10 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   // No longer deduplicate pinned/recent hosts from the main list,
   // so hosts always appear in their groups regardless of pinned/recent status.
   const pinnedRecentIds = useMemo(() => new Set<string>(), []);
+  const visibleDisplayedHosts = useMemo(
+    () => displayedHosts.filter((h) => selectedGroupPath || !pinnedRecentIds.has(h.id)),
+    [displayedHosts, selectedGroupPath, pinnedRecentIds],
+  );
 
   // For tree view: apply search, tag filter, and sorting, but not group filtering
   const treeViewHosts = useMemo(() => {
@@ -1125,6 +1137,26 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- findGroupNode is derived from buildGroupTree
   }, [buildGroupTree, selectedGroupPath, customGroups]);
+  const shouldHideEmptyRootHostsSection = useMemo(() => {
+    if (selectedGroupPath || viewMode === "tree") return false;
+    if (search.trim() || selectedTags.length > 0) return false;
+    if (visibleDisplayedHosts.length > 0) return false;
+    return (
+      displayedGroups.length > 0 ||
+      pinnedHosts.length > 0 ||
+      (showRecentHosts && recentHosts.length > 0)
+    );
+  }, [
+    selectedGroupPath,
+    viewMode,
+    search,
+    selectedTags.length,
+    visibleDisplayedHosts.length,
+    displayedGroups.length,
+    pinnedHosts.length,
+    showRecentHosts,
+    recentHosts.length,
+  ]);
 
   // Known Hosts callbacks - use refs to keep stable references
   // Store latest values in refs so callbacks don't need to depend on them
@@ -2353,6 +2385,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                   )}
                 </section>
 
+                {!shouldHideEmptyRootHostsSection && (
                 <section className="space-y-2">
                   <div className="flex items-center justify-between">
                     <h3 className="text-sm font-semibold text-muted-foreground">
@@ -2360,7 +2393,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                     </h3>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <span>
-                        {t("vault.hosts.header.entries", { count: viewMode === "tree" ? treeViewHosts.length : displayedHosts.length })}
+                        {t("vault.hosts.header.entries", { count: viewMode === "tree" ? treeViewHosts.length : visibleDisplayedHosts.length })}
                       </span>
                       <div className="bg-secondary/80 border border-border/70 rounded-md px-2 py-1 text-[11px]">
                         {t("vault.hosts.header.live", { count: sessions.length })}
@@ -2622,7 +2655,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                       )}
                       style={viewMode === "grid" ? splitViewGridStyle : undefined}
                     >
-                      {displayedHosts.filter((h) => selectedGroupPath || !pinnedRecentIds.has(h.id)).map((host) => {
+                      {visibleDisplayedHosts.map((host) => {
                           const safeHost = sanitizeHost(host);
                           const effectiveDistro = getEffectiveHostDistro(safeHost);
                           const distroBadge = {
@@ -2754,6 +2787,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                     </div>
                   )}
                 </section>
+                )}
         </div>
 
         {currentSection === "snippets" && (
