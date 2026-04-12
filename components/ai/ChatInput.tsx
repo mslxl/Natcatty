@@ -166,10 +166,26 @@ const ChatInput: React.FC<ChatInputProps> = ({
 
   // Permission mode chip removed — agents run in autonomous mode
 
-  // selectedModelId may be "model/thinking" for codex
-  const selectedBaseModelId = selectedModelId?.split('/')[0];
-  const selectedThinking = selectedModelId?.includes('/') ? selectedModelId.split('/')[1] : undefined;
-  const selectedPreset = modelPresets.find(m => m.id === selectedBaseModelId);
+  // selectedModelId may be "<modelId>/<thinkingLevel>" for codex ChatGPT models
+  // (e.g. "gpt-5.4/high"). Note: custom config.toml / OpenRouter model ids
+  // themselves can contain '/' (e.g. "qwen/qwen3.6-plus"), so don't just
+  // split on the first '/'. Match against the full id first; only treat the
+  // trailing segment as a thinking level when we find a preset whose
+  // declared thinkingLevels make the combined form equal to selectedModelId.
+  const { selectedPreset, selectedThinking } = (() => {
+    if (!selectedModelId) return { selectedPreset: undefined, selectedThinking: undefined };
+    const direct = modelPresets.find(m => m.id === selectedModelId);
+    if (direct) return { selectedPreset: direct, selectedThinking: undefined };
+    const viaThinking = modelPresets.find(
+      m => m.thinkingLevels?.some(level => `${m.id}/${level}` === selectedModelId),
+    );
+    if (viaThinking) {
+      const thinking = selectedModelId.slice(viaThinking.id.length + 1);
+      return { selectedPreset: viaThinking, selectedThinking: thinking };
+    }
+    return { selectedPreset: undefined, selectedThinking: undefined };
+  })();
+  const selectedBaseModelId = selectedPreset?.id;
   const modelLabel = selectedPreset
     ? selectedPreset.name + (selectedThinking ? ` / ${formatThinkingLabel(selectedThinking)}` : '')
     : modelName || providerName || t('ai.chat.noModel');
