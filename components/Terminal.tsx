@@ -49,6 +49,7 @@ import { ZmodemProgressIndicator } from "./terminal/ZmodemProgressIndicator";
 import { useZmodemTransfer } from "./terminal/hooks/useZmodemTransfer";
 import { createTerminalSessionStarters, type PendingAuth } from "./terminal/runtime/createTerminalSessionStarters";
 import { createXTermRuntime, primaryFontFamily, type XTermRuntime } from "./terminal/runtime/createXTermRuntime";
+import { preserveTerminalViewportInScrollback } from "./terminal/clearTerminalViewport";
 import { XTERM_PERFORMANCE_CONFIG } from "../infrastructure/config/xtermPerformance";
 import { useTerminalSearch } from "./terminal/hooks/useTerminalSearch";
 import { useTerminalContextActions } from "./terminal/hooks/useTerminalContextActions";
@@ -1458,10 +1459,17 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const handleRetry = () => {
     if (!termRef.current) return;
     cleanupSession();
-    // Reset terminal state: disable mouse tracking modes and clear screen so
-    // stale SGR mouse sequences don't leak into the new session as text input.
-    termRef.current.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l');
-    termRef.current.reset();
+    const term = termRef.current;
+    // Preserve the previous session's screen by pushing the current viewport
+    // into scrollback instead of calling term.reset() (which wipes scrollback
+    // too). Users can scroll up to see what was on screen before the
+    // disconnect — see issue #695.
+    preserveTerminalViewportInScrollback(term);
+    // Disable any stale modes from the previous session (mouse tracking,
+    // alt-screen, SGR colors, hidden cursor) so they don't leak into the new
+    // one as text input or visual artifacts. Home the cursor for a clean
+    // starting position.
+    term.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1049l\x1b[0m\x1b[?25h\x1b[H');
     auth.resetForRetry();
     terminalDataCapturedRef.current = false;
     hasRunStartupCommandRef.current = false;
