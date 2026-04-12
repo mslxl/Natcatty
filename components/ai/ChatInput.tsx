@@ -395,7 +395,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                 <div
                   role="listbox"
                   aria-label="Select model"
-                  className="fixed z-[1000] min-w-[160px] max-w-[360px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
+                  className="fixed z-[1000] w-[300px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
                   style={{ left: menuPos.left, bottom: menuPos.bottom }}
                   onMouseLeave={() => setHoveredModelId(null)}
                 >
@@ -420,12 +420,18 @@ const ChatInput: React.FC<ChatInputProps> = ({
                               closeAllMenus();
                             }
                           }}
-                          className="w-full min-w-0 flex items-center gap-1.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
+                          className="w-full min-w-0 flex items-center gap-1.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer"
                         >
-                          {isSelected ? <Check size={11} className="text-primary shrink-0" /> : <span className="w-[11px] shrink-0" />}
-                          <span className="flex-1 min-w-0 truncate text-foreground/85">{preset.name}</span>
-                          {preset.description && <span className="text-[10px] text-muted-foreground/50 mr-1 truncate max-w-[160px]">{preset.description}</span>}
-                          {hasThinking && <ChevronRight size={10} className="text-muted-foreground/50 shrink-0" />}
+                          {isSelected ? <Check size={11} className="text-primary shrink-0 mt-[3px] self-start" /> : <span className="w-[11px] shrink-0" />}
+                          <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                            <span className="truncate text-foreground/85">{preset.name}</span>
+                            {preset.description && (
+                              <span className="text-[10px] leading-snug text-muted-foreground/60 break-words">
+                                {preset.description}
+                              </span>
+                            )}
+                          </div>
+                          {hasThinking && <ChevronRight size={10} className="text-muted-foreground/50 shrink-0 self-start mt-[5px]" />}
                         </button>
                         {/* Thinking level sub-menu */}
                         {hasThinking && hoveredModelId === preset.id && (
