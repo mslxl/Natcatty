@@ -307,6 +307,12 @@ function App({ settings }: { settings: SettingsState }) {
   const activeTabId = useActiveTabId();
   const customThemes = useCustomThemes();
 
+  useEffect(() => {
+    if (!settings.showSftpTab && activeTabId === 'sftp') {
+      setActiveTabId('vault');
+    }
+  }, [settings.showSftpTab, activeTabId, setActiveTabId]);
+
   // Resolve the effective TerminalTheme for the currently focused terminal tab
   const hostById = useMemo(
     () => new Map(hosts.map((host) => [host.id, host])),
@@ -968,7 +974,9 @@ function App({ settings }: { settings: SettingsState }) {
         setActiveTabId('vault');
         break;
       case 'openSftp':
-        setActiveTabId('sftp');
+        if (settings.showSftpTab) {
+          setActiveTabId('sftp');
+        }
         break;
       case 'quickSwitch':
       case 'commandPalette':
@@ -1056,7 +1064,7 @@ function App({ settings }: { settings: SettingsState }) {
         break;
       }
     }
-  }, [orderedTabs, sessions, workspaces, setActiveTabId, closeSession, closeWorkspace, createLocalTerminalWithCurrentShell, splitSessionWithCurrentShell, moveFocusInWorkspace, toggleBroadcast]);
+  }, [orderedTabs, sessions, workspaces, setActiveTabId, closeSession, closeWorkspace, createLocalTerminalWithCurrentShell, splitSessionWithCurrentShell, moveFocusInWorkspace, toggleBroadcast, settings.showSftpTab]);
 
   // Callback for terminal to invoke app-level hotkey actions
   const handleHotkeyAction = useCallback((action: string, e: KeyboardEvent) => {
@@ -1424,6 +1432,7 @@ function App({ settings }: { settings: SettingsState }) {
         onStartSessionDrag={setDraggingSessionId}
         onEndSessionDrag={handleEndSessionDrag}
         onReorderTabs={reorderTabs}
+        showSftpTab={settings.showSftpTab}
       />
 
       <div className="flex-1 relative min-h-0">
