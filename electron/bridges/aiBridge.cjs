@@ -24,6 +24,7 @@ const {
   resolveCliFromPath,
   resolveClaudeAcpBinaryPath,
   getShellEnv,
+  invalidateShellEnvCache,
   serializeStreamChunk,
   toUnpackedAsarPath,
 } = require("./ai/shellUtils.cjs");
@@ -37,6 +38,7 @@ const {
   normalizeCodexIntegrationState,
   readCodexCustomProviderConfig,
   getCodexAuthOverride,
+  getCodexCustomConfigPreflightError,
   extractCodexError,
   isCodexAuthError,
   getCodexAuthFingerprint,
@@ -1719,8 +1721,14 @@ function registerHandlers(ipcMain) {
     return { path: resolvedPath, version, available: true };
   });
 
-  ipcMain.handle("netcatty:ai:codex:get-integration", async (event) => {
+  ipcMain.handle("netcatty:ai:codex:get-integration", async (event, options) => {
     if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
+    // When the user clicks "Refresh Status" in Settings we also want to
+    // rescan the shell env — otherwise a newly-exported variable in
+    // .zshrc stays invisible until they restart netcatty entirely.
+    if (options && options.refreshShellEnv) {
+      invalidateShellEnvCache();
+    }
     try {
       const result = await runCodexCli(["login", "status"]);
       const rawOutput = [result.stdout, result.stderr]
@@ -2158,6 +2166,19 @@ function registerHandlers(ipcMain) {
       const resolvedProvider = providerId ? resolveProviderApiKey(providerId) : null;
       const apiKey = resolvedProvider?.apiKey || undefined;
 
+      // Mirror the stream handler's pre-flight: if Codex is pointed at a
+      // config.toml custom provider whose env_key is not exported, surface
+      // a targeted error instead of spawning codex-acp and letting it fail
+      // mid-init with an opaque message.
+      if (isCodexAgent && !apiKey) {
+        const preflight = getCodexCustomConfigPreflightError(
+          readCodexCustomProviderConfig(shellEnv),
+        );
+        if (preflight) {
+          return { ok: false, models: [], error: preflight };
+        }
+      }
+
       const agentEnv = withCliDiscoveryEnv({ ...shellEnv });
       if (isCodexAgent && apiKey) {
         agentEnv.CODEX_API_KEY = apiKey;
@@ -2322,15 +2343,11 @@ function registerHandlers(ipcMain) {
       // material yet (env_key is named but not exported in the shell env,
       // and no api_key is hardcoded). Don't spawn — codex-acp would fail
       // mid-request with an opaque "Missing environment variable" error.
-      if (
-        codexCustomConfig
-        && codexCustomConfig.envKey
-        && !codexCustomConfig.envKeyPresent
-        && !codexCustomConfig.hasHardcodedApiKey
-      ) {
+      const preflightError = getCodexCustomConfigPreflightError(codexCustomConfig);
+      if (preflightError) {
         safeSend(event.sender, "netcatty:ai:acp:error", {
           requestId,
-          error: `Codex is configured to use the "${codexCustomConfig.displayName}" provider from ~/.codex/config.toml, but the environment variable ${codexCustomConfig.envKey} is not set. Export it in your shell (e.g. add to ~/.zshrc) and restart netcatty.`,
+          error: preflightError,
         });
         return { ok: false, error: `Missing env var ${codexCustomConfig.envKey}` };
       }

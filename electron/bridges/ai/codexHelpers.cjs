@@ -303,6 +303,20 @@ function readCodexCustomProviderConfig(shellEnv) {
 }
 
 /**
+ * Returns a user-facing error message when a Codex config.toml custom
+ * provider references an env_key that isn't exported in the shell env and
+ * doesn't have a hardcoded api_key either — otherwise returns null. Shared
+ * by every spawn path (stream handler, list-models handler) so users get
+ * the same actionable message regardless of which one hits first.
+ */
+function getCodexCustomConfigPreflightError(customConfig) {
+  if (!customConfig) return null;
+  if (!customConfig.envKey) return null;
+  if (customConfig.envKeyPresent || customConfig.hasHardcodedApiKey) return null;
+  return `Codex is configured to use the "${customConfig.displayName}" provider from ~/.codex/config.toml, but the environment variable ${customConfig.envKey} is not set. Export it in your shell (e.g. add to ~/.zshrc) and click "Refresh Status" in Settings.`;
+}
+
+/**
  * Compute the ACP auth override object for Codex spawn sites.
  *   - netcatty-managed API key present → "codex-api-key"
  *   - user's own ~/.codex/config.toml custom provider detected → no override
@@ -394,6 +408,7 @@ module.exports = {
   normalizeCodexIntegrationState,
   readCodexCustomProviderConfig,
   getCodexAuthOverride,
+  getCodexCustomConfigPreflightError,
   extractCodexError,
   isCodexAuthError,
   getCodexAuthFingerprint,

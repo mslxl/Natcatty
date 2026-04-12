@@ -23,6 +23,9 @@ import type { PromptInputStatus } from '../ai-elements/prompt-input';
 import { formatThinkingLabel } from '../../infrastructure/ai/types';
 import type { AgentModelPreset, AIPermissionMode } from '../../infrastructure/ai/types';
 
+// Keep in sync with the popover's Tailwind max-width below.
+const MODEL_PICKER_MAX_WIDTH = 360;
+
 interface ChatInputProps {
   value: string;
   onChange: (value: string) => void;
@@ -392,11 +395,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
                 if (!showModelPicker) {
                   const rect = modelBtnRef.current?.getBoundingClientRect();
                   if (rect) {
-                    // Clamp so the popover (max-w-[360px]) stays inside the
-                    // viewport when the chip is near the right edge of a
-                    // narrow AI side panel.
-                    const popoverMax = 360;
-                    const left = Math.max(8, Math.min(rect.left, window.innerWidth - popoverMax - 8));
+                    // Clamp so the popover stays inside the viewport when
+                    // the chip is near the right edge of a narrow AI side
+                    // panel.
+                    const left = Math.max(8, Math.min(rect.left, window.innerWidth - MODEL_PICKER_MAX_WIDTH - 8));
                     setMenuPos({ left, bottom: window.innerHeight - rect.top + 6 });
                   }
                   setActiveMenu('model');
@@ -418,8 +420,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
                 <div
                   role="listbox"
                   aria-label="Select model"
-                  className="fixed z-[1000] w-max min-w-[160px] max-w-[360px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
-                  style={{ left: menuPos.left, bottom: menuPos.bottom }}
+                  className="fixed z-[1000] w-max min-w-[160px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
+                  style={{ left: menuPos.left, bottom: menuPos.bottom, maxWidth: MODEL_PICKER_MAX_WIDTH }}
                   onMouseLeave={() => setHoveredModelId(null)}
                 >
                   {modelPresets.map(preset => {

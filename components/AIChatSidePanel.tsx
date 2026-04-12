@@ -491,6 +491,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   // preset list. Probing codex-acp for its full catalog returns the stock
   // OpenAI models regardless of the active provider, which is misleading.
   const [codexConfigModel, setCodexConfigModel] = useState<string | null>(null);
+  const [codexCustomConfigResolved, setCodexCustomConfigResolved] = useState(false);
   useEffect(() => {
     setCodexCustomConfigResolved(false);
     if (!isCodexManagedAgent) {
@@ -557,10 +558,10 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   }, [currentAgentConfig, currentAgentId, isCopilotExternalAgent, setAgentModel]);
 
   // When Codex is backed by a ~/.codex/config.toml custom provider, the
-  // stock CODEX_MODEL_PRESETS catalog is invalid for that endpoint. Track
-  // whether we got a definitive answer from the integration probe so we can
-  // distinguish "still loading" from "no model set in config.toml".
-  const [codexCustomConfigResolved, setCodexCustomConfigResolved] = useState(false);
+  // stock CODEX_MODEL_PRESETS catalog is invalid for that endpoint.
+  // codexCustomConfigResolved (declared above alongside codexConfigModel)
+  // stays false until the integration probe confirms this session is
+  // custom-config, so we don't flash an empty picker while loading.
   const hasCodexCustomConfig = codexCustomConfigResolved && isCodexManagedAgent;
 
   const agentModelPresets = useMemo(() => {

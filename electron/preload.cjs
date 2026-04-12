@@ -1184,8 +1184,8 @@ const api = {
   aiResolveCli: async (params) => {
     return ipcRenderer.invoke("netcatty:ai:resolve-cli", params);
   },
-  aiCodexGetIntegration: async () => {
-    return ipcRenderer.invoke("netcatty:ai:codex:get-integration");
+  aiCodexGetIntegration: async (options) => {
+    return ipcRenderer.invoke("netcatty:ai:codex:get-integration", options);
   },
   aiCodexStartLogin: async () => {
     return ipcRenderer.invoke("netcatty:ai:codex:start-login");

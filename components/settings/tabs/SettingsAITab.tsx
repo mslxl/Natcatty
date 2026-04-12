@@ -307,14 +307,14 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
 
   const hasCodexCompatibleProvider = Boolean(findManagedAgentProvider(providers, "codex"));
 
-  const refreshCodexIntegration = useCallback(async () => {
+  const refreshCodexIntegration = useCallback(async (opts?: { refreshShellEnv?: boolean }) => {
     const bridge = getBridge();
     if (!bridge?.aiCodexGetIntegration) return;
 
     setIsCodexLoading(true);
     setCodexError(null);
     try {
-      const integration = await bridge.aiCodexGetIntegration();
+      const integration = await bridge.aiCodexGetIntegration(opts);
       setCodexIntegration(integration);
     } catch (err) {
       setCodexError(normalizeCodexBridgeError(err));
@@ -525,7 +525,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               isLoading={isCodexLoading}
               hasCompatibleProvider={hasCodexCompatibleProvider}
               error={codexError}
-              onRefresh={() => void refreshCodexIntegration()}
+              onRefresh={() => void refreshCodexIntegration({ refreshShellEnv: true })}
               onConnect={() => void handleStartCodexLogin()}
               onCancel={() => void handleCancelCodexLogin()}
               onOpenUrl={handleOpenCodexLoginUrl}
