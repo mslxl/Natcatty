@@ -264,6 +264,7 @@ function readCodexCustomProviderConfig(shellEnv) {
   const envKeyName = typeof providerEntry.env_key === "string" ? providerEntry.env_key.trim() : "";
   const envKeyValue = envKeyName && shellEnv ? String(shellEnv[envKeyName] || "").trim() : "";
   const hardcodedApiKey = typeof providerEntry.api_key === "string" ? providerEntry.api_key.trim() : "";
+  const activeModel = typeof parsed.model === "string" ? parsed.model.trim() : "";
 
   return {
     providerName: activeName,
@@ -272,6 +273,7 @@ function readCodexCustomProviderConfig(shellEnv) {
     envKey: envKeyName || null,
     envKeyPresent: Boolean(envKeyValue),
     hasHardcodedApiKey: Boolean(hardcodedApiKey),
+    model: activeModel || null,
   };
 }
 

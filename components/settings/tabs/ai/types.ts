@@ -21,6 +21,7 @@ export interface CodexCustomProviderConfig {
   envKey: string | null;
   envKeyPresent: boolean;
   hasHardcodedApiKey: boolean;
+  model: string | null;
 }
 
 export interface CodexIntegrationStatus {

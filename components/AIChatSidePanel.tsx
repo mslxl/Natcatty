@@ -481,22 +481,39 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     () => isCopilotAgentConfig(currentAgentConfig),
     [currentAgentConfig],
   );
-  // Codex's hardcoded CODEX_MODEL_PRESETS list is only valid for the stock
-  // OpenAI/ChatGPT path. When the user configures a custom model_provider in
-  // ~/.codex/config.toml (OpenRouter, a local model, etc.), those preset
-  // names are meaningless. Probe codex-acp for the real available-models
-  // list so the picker reflects what this session can actually use.
   const isCodexManagedAgent = useMemo(
     () => currentAgentConfig ? matchesManagedAgentConfig(currentAgentConfig, 'codex') : false,
     [currentAgentConfig],
   );
+
+  // For Codex, pick up the model declared in ~/.codex/config.toml (if any)
+  // so the picker can show just that model instead of the hardcoded ChatGPT
+  // preset list. Probing codex-acp for its full catalog returns the stock
+  // OpenAI models regardless of the active provider, which is misleading.
+  const [codexConfigModel, setCodexConfigModel] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isCodexManagedAgent) {
+      setCodexConfigModel(null);
+      return;
+    }
+    const bridge = getNetcattyBridge();
+    if (!bridge?.aiCodexGetIntegration) return;
+    let cancelled = false;
+    void bridge.aiCodexGetIntegration().then((info) => {
+      if (cancelled) return;
+      setCodexConfigModel(info?.customConfig?.model ?? null);
+    }).catch(() => {
+      if (!cancelled) setCodexConfigModel(null);
+    });
+    return () => { cancelled = true; };
+  }, [isCodexManagedAgent, currentAgentId]);
 
   const agentModelMapRef = useRef(agentModelMap);
   agentModelMapRef.current = agentModelMap;
 
   useEffect(() => {
     if (!currentAgentConfig?.acpCommand) return;
-    if (!isCopilotExternalAgent && !isCodexManagedAgent) return;
+    if (!isCopilotExternalAgent) return;
 
     const bridge = getNetcattyBridge();
     if (!bridge?.aiAcpListModels) return;
@@ -528,12 +545,18 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [currentAgentConfig, currentAgentId, isCopilotExternalAgent, isCodexManagedAgent, setAgentModel]);
+  }, [currentAgentConfig, currentAgentId, isCopilotExternalAgent, setAgentModel]);
 
-  const agentModelPresets = useMemo(
-    () => runtimeAgentModelPresets[currentAgentId] ?? getAgentModelPresets(currentAgentConfig?.command),
-    [currentAgentConfig?.command, currentAgentId, runtimeAgentModelPresets],
-  );
+  const agentModelPresets = useMemo(() => {
+    // When a custom provider is configured in ~/.codex/config.toml, that
+    // config pins a specific model. The stock CODEX_MODEL_PRESETS catalog
+    // would be invalid for that endpoint, so surface just the config.toml
+    // model as the only option.
+    if (isCodexManagedAgent && codexConfigModel) {
+      return [{ id: codexConfigModel, name: codexConfigModel }];
+    }
+    return runtimeAgentModelPresets[currentAgentId] ?? getAgentModelPresets(currentAgentConfig?.command);
+  }, [currentAgentConfig?.command, currentAgentId, runtimeAgentModelPresets, isCodexManagedAgent, codexConfigModel]);
 
   // Per-agent model: recall last selection or use first preset as default
   const selectedAgentModel = useMemo(() => {

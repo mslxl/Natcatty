@@ -411,7 +411,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                 <div
                   role="listbox"
                   aria-label="Select model"
-                  className="fixed z-[1000] w-[300px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
+                  className="fixed z-[1000] w-max min-w-[160px] max-w-[360px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
                   style={{ left: menuPos.left, bottom: menuPos.bottom }}
                   onMouseLeave={() => setHoveredModelId(null)}
                 >
