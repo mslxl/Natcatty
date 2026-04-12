@@ -1594,6 +1594,7 @@ function App({ settings }: { settings: SettingsState }) {
             results={quickResults}
             sessions={sessions}
             workspaces={workspaces}
+            showSftpTab={settings.showSftpTab}
             onQueryChange={setQuickSearch}
             onSelect={handleHostConnectWithProtocolCheck}
             onSelectTab={(tabId) => {
