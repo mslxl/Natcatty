@@ -39,7 +39,13 @@ import { resolveGroupDefaults, applyGroupDefaults } from "../domain/groupConfig"
 import { getEffectiveHostDistro, sanitizeHost } from "../domain/host";
 import { importVaultHostsFromText, exportHostsToCsvWithStats } from "../domain/vaultImport";
 import type { VaultImportFormat } from "../domain/vaultImport";
-import { STORAGE_KEY_VAULT_HOSTS_VIEW_MODE, STORAGE_KEY_VAULT_HOSTS_TREE_EXPANDED, STORAGE_KEY_VAULT_SIDEBAR_COLLAPSED, STORAGE_KEY_SHOW_RECENT_HOSTS } from "../infrastructure/config/storageKeys";
+import {
+  STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT,
+  STORAGE_KEY_SHOW_RECENT_HOSTS,
+  STORAGE_KEY_VAULT_HOSTS_TREE_EXPANDED,
+  STORAGE_KEY_VAULT_HOSTS_VIEW_MODE,
+  STORAGE_KEY_VAULT_SIDEBAR_COLLAPSED,
+} from "../infrastructure/config/storageKeys";
 import { cn } from "../lib/utils";
 import { useInstantThemeSwitch } from "../lib/useInstantThemeSwitch";
 import {
@@ -233,6 +239,10 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   const [showRecentHosts, _setShowRecentHosts] = useStoredBoolean(
     STORAGE_KEY_SHOW_RECENT_HOSTS,
     true,
+  );
+  const [showOnlyUngroupedHostsInRoot, _setShowOnlyUngroupedHostsInRoot] = useStoredBoolean(
+    STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT,
+    false,
   );
 
   // Handle external navigation requests
@@ -874,6 +884,11 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
         }
         return hostGroup === selectedGroupPath;
       });
+    } else if (showOnlyUngroupedHostsInRoot) {
+      filtered = filtered.filter((h) => {
+        const hostGroup = (h.group || "").trim();
+        return hostGroup === "" || hostGroup === "General";
+      });
     }
     if (search.trim()) {
       const s = search.toLowerCase();
@@ -911,7 +926,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
       }
     });
     return filtered;
-  }, [hosts, selectedGroupPath, search, selectedTags, sortMode]);
+  }, [hosts, selectedGroupPath, showOnlyUngroupedHostsInRoot, search, selectedTags, sortMode]);
 
   // Pinned hosts for root-level display (not inside a subgroup)
   // Respects active search and tag filters

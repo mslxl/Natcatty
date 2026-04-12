@@ -202,6 +202,8 @@ const en: Messages = {
   'settings.vault.title': 'Vault',
   'settings.vault.showRecentHosts': 'Show recently connected hosts',
   'settings.vault.showRecentHostsDesc': 'Display a section of recently connected hosts at the top of the vault',
+  'settings.vault.showOnlyUngroupedHostsInRoot': 'Only show ungrouped hosts at root',
+  'settings.vault.showOnlyUngroupedHostsInRootDesc': 'When enabled, the root host list only shows hosts without a group. Open a group from the sidebar to see grouped hosts.',
 
   // Update notifications
   'update.available.title': 'Update Available',
