@@ -107,9 +107,15 @@ async function scanUserSkills(electronApp) {
   const warnings = [];
 
   for (const entry of dirEntries) {
-    if (!entry.isDirectory()) continue;
+    // Only process actual directories, skipping symlinks for security
+    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
 
     const dirName = entry.name;
+    // Basic path traversal protection: skip any directory name containing path separators
+    if (dirName.includes("/") || dirName.includes("\\") || dirName === ".." || dirName === ".") {
+      continue;
+    }
+
     const skillDir = path.join(skillsDir, dirName);
     const skillPath = path.join(skillDir, "SKILL.md");
     const baseItem = {
@@ -203,21 +209,38 @@ async function scanUserSkills(electronApp) {
   };
 }
 
+/**
+ * Scores how well a skill matches a user prompt.
+ *
+ * Scored based on:
+ * - 100 points: Explicit slug match (e.g. prompt contains "/my-skill")
+ * - 50 points: Name/directory name match (e.g. prompt contains "my skill")
+ * - 1 point per keyword overlap (after tokenization/stopword filtering)
+ *
+ * @param {string} prompt - The user prompt
+ * @param {object} skill - The skill object from scanUserSkills
+ * @returns {number} The score (higher is better)
+ */
 function scoreSkillMatch(prompt, skill) {
   const lowerPrompt = String(prompt || "").toLowerCase();
   const lowerName = String(skill.name || "").toLowerCase();
   const lowerDirName = String(skill.directoryName || "").toLowerCase();
   const lowerSlug = String(skill.slug || "").toLowerCase();
-  if (
-    (lowerName && lowerPrompt.includes(lowerName)) ||
-    (lowerDirName && lowerPrompt.includes(lowerDirName)) ||
-    (lowerSlug && lowerPrompt.includes(`/${lowerSlug}`))
-  ) {
+
+  // High weight for explicit mention of the skill via slug or name
+  if (lowerSlug && lowerPrompt.includes(`/${lowerSlug}`)) {
     return 100;
   }
+  if (
+    (lowerName && lowerPrompt.includes(lowerName)) ||
+    (lowerDirName && lowerPrompt.includes(lowerDirName))
+  ) {
+    return 50;
+  }
 
+  // Fallback to token keyword overlap
   const promptTokens = new Set(tokenize(prompt));
-  const skillTokens = new Set(tokenize(`${skill.name} ${skill.description}`));
+  const skillTokens = tokenize(`${skill.name} ${skill.description}`);
   let overlap = 0;
   for (const token of skillTokens) {
     if (promptTokens.has(token)) overlap += 1;
@@ -225,6 +248,14 @@ function scoreSkillMatch(prompt, skill) {
   return overlap;
 }
 
+/**
+ * Builds the contextual prompt part from matched user skills.
+ *
+ * @param {object} electronApp - The Electron app instance
+ * @param {string} prompt - The user's input prompt
+ * @param {string[]} selectedSkillSlugs - Explicitly requested skill slugs
+ * @returns {Promise<{context: string, status: object}>} The built prompt part and scan status
+ */
 async function buildUserSkillsContext(electronApp, prompt, selectedSkillSlugs = []) {
   const status = await scanUserSkills(electronApp);
   const readySkills = status._readySkills || [];

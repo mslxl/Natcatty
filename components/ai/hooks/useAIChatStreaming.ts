@@ -575,9 +575,17 @@ export function useAIChatStreaming({
     context: SendToExternalContext,
   ) => {
     const bridge = getNetcattyBridge();
-    const userSkillsContext = bridge?.aiUserSkillsBuildContext
-      ? (await bridge.aiUserSkillsBuildContext(trimmed, context.selectedUserSkillSlugs).catch(() => ({ ok: false, context: '' })))?.context || ''
-      : '';
+    const userSkillsContextPromise = bridge?.aiUserSkillsBuildContext
+      ? bridge.aiUserSkillsBuildContext(trimmed, context.selectedUserSkillSlugs).catch(() => ({ ok: false, context: '' }))
+      : Promise.resolve({ ok: true, context: '' });
+
+    // Race against a 500ms timer to ensure we don't block the UI for too long
+    const userSkillsContext = (await Promise.race([
+      userSkillsContextPromise,
+      new Promise<{ ok: boolean; context: string }>((resolve) =>
+        setTimeout(() => resolve({ ok: false, context: '' }), 500)
+      ),
+    ]))?.context || '';
 
     if (agentConfig.acpCommand && bridge) {
       const requestId = `acp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -720,9 +728,17 @@ export function useAIChatStreaming({
     attachments?: ChatMessageAttachment[],
   ) => {
     const bridge = getNetcattyBridge();
-    const userSkillsContext = bridge?.aiUserSkillsBuildContext
-      ? (await bridge.aiUserSkillsBuildContext(trimmed, context.selectedUserSkillSlugs).catch(() => ({ ok: false, context: '' })))?.context || ''
-      : '';
+    const userSkillsContextPromise = bridge?.aiUserSkillsBuildContext
+      ? bridge.aiUserSkillsBuildContext(trimmed, context.selectedUserSkillSlugs).catch(() => ({ ok: false, context: '' }))
+      : Promise.resolve({ ok: true, context: '' });
+
+    // Race against a 500ms timer to ensure we don't block the UI for too long
+    const userSkillsContext = (await Promise.race([
+      userSkillsContextPromise,
+      new Promise<{ ok: boolean; context: string }>((resolve) =>
+        setTimeout(() => resolve({ ok: false, context: '' }), 500)
+      ),
+    ]))?.context || '';
     const getExecutorContext = context.getExecutorContext ?? (() => ({
       sessions: context.terminalSessions,
       workspaceId: context.scopeType === 'workspace' ? context.scopeTargetId : undefined,
