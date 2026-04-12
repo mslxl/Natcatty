@@ -767,7 +767,7 @@ const zhCN: Messages = {
   'terminal.toolbar.library': '库',
   'terminal.toolbar.noSnippets': '暂无代码片段',
   'terminal.toolbar.terminalSettings': '终端设置',
-  'terminal.toolbar.searchTerminal': '搜索终端 (Ctrl+F)',
+  'terminal.toolbar.searchTerminal': '搜索终端',
   'terminal.toolbar.search': '搜索',
   'terminal.toolbar.broadcast': '广播',
   'terminal.toolbar.broadcastEnable': '启用广播模式',
