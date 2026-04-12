@@ -977,6 +977,27 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   // No longer deduplicate pinned/recent hosts from the main list,
   // so hosts always appear in their groups regardless of pinned/recent status.
   const pinnedRecentIds = useMemo(() => new Set<string>(), []);
+  const visibleDisplayedHosts = useMemo(
+    () => displayedHosts.filter((h) => selectedGroupPath || !pinnedRecentIds.has(h.id)),
+    [displayedHosts, selectedGroupPath, pinnedRecentIds],
+  );
+  const shouldHideEmptyRootHostsSection = useMemo(() => {
+    if (selectedGroupPath || viewMode === "tree") return false;
+    if (visibleDisplayedHosts.length > 0) return false;
+    return (
+      displayedGroups.length > 0 ||
+      pinnedHosts.length > 0 ||
+      (showRecentHosts && recentHosts.length > 0)
+    );
+  }, [
+    selectedGroupPath,
+    viewMode,
+    visibleDisplayedHosts.length,
+    displayedGroups.length,
+    pinnedHosts.length,
+    showRecentHosts,
+    recentHosts.length,
+  ]);
 
   // For tree view: apply search, tag filter, and sorting, but not group filtering
   const treeViewHosts = useMemo(() => {
@@ -2368,6 +2389,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                   )}
                 </section>
 
+                {!shouldHideEmptyRootHostsSection && (
                 <section className="space-y-2">
                   <div className="flex items-center justify-between">
                     <h3 className="text-sm font-semibold text-muted-foreground">
@@ -2375,7 +2397,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                     </h3>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <span>
-                        {t("vault.hosts.header.entries", { count: viewMode === "tree" ? treeViewHosts.length : displayedHosts.length })}
+                        {t("vault.hosts.header.entries", { count: viewMode === "tree" ? treeViewHosts.length : visibleDisplayedHosts.length })}
                       </span>
                       <div className="bg-secondary/80 border border-border/70 rounded-md px-2 py-1 text-[11px]">
                         {t("vault.hosts.header.live", { count: sessions.length })}
@@ -2637,7 +2659,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                       )}
                       style={viewMode === "grid" ? splitViewGridStyle : undefined}
                     >
-                      {displayedHosts.filter((h) => selectedGroupPath || !pinnedRecentIds.has(h.id)).map((host) => {
+                      {visibleDisplayedHosts.map((host) => {
                           const safeHost = sanitizeHost(host);
                           const effectiveDistro = getEffectiveHostDistro(safeHost);
                           const distroBadge = {
@@ -2769,6 +2791,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                     </div>
                   )}
                 </section>
+                )}
         </div>
 
         {currentSection === "snippets" && (
