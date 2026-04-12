@@ -10,14 +10,25 @@ import type {
 export type CodexIntegrationState =
   | "connected_chatgpt"
   | "connected_api_key"
+  | "connected_custom_config"
   | "not_logged_in"
   | "unknown";
+
+export interface CodexCustomProviderConfig {
+  providerName: string;
+  displayName: string;
+  baseUrl: string | null;
+  envKey: string | null;
+  envKeyPresent: boolean;
+  hasHardcodedApiKey: boolean;
+}
 
 export interface CodexIntegrationStatus {
   state: CodexIntegrationState;
   isConnected: boolean;
   rawOutput: string;
   exitCode: number | null;
+  customConfig?: CodexCustomProviderConfig | null;
 }
 
 export type CodexLoginState = "running" | "success" | "error" | "cancelled";

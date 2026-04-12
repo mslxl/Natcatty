@@ -1750,6 +1750,8 @@ const en: Messages = {
   'ai.codex.awaitingLogin': 'Awaiting login',
   'ai.codex.connectedChatGPT': 'Connected via ChatGPT',
   'ai.codex.connectedApiKey': 'Connected via API key',
+  'ai.codex.connectedCustomConfig': 'Connected via ~/.codex/config.toml',
+  'ai.codex.customConfigHint': 'Using custom provider "{provider}" configured in ~/.codex/config.toml — no ChatGPT login needed.',
   'ai.codex.notConnected': 'Not connected',
   'ai.codex.statusUnknown': 'Status unknown',
   'ai.codex.path': 'Path:',

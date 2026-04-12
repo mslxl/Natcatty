@@ -52,9 +52,11 @@ export const CodexConnectionCard: React.FC<{
           ? t('ai.codex.connectedChatGPT')
           : integration?.state === "connected_api_key"
             ? t('ai.codex.connectedApiKey')
-            : integration?.state === "not_logged_in"
-              ? t('ai.codex.notConnected')
-              : t('ai.codex.statusUnknown');
+            : integration?.state === "connected_custom_config"
+              ? t('ai.codex.connectedCustomConfig')
+              : integration?.state === "not_logged_in"
+                ? t('ai.codex.notConnected')
+                : t('ai.codex.statusUnknown');
 
   const statusClassName = isResolvingPath
     ? "text-muted-foreground"
@@ -139,6 +141,9 @@ export const CodexConnectionCard: React.FC<{
                   {t('common.cancel')}
                 </Button>
               </>
+            ) : integration?.state === "connected_custom_config" ? (
+              // Nothing to log out of; config.toml is user-owned state.
+              null
             ) : integration?.isConnected ? (
               <Button variant="outline" size="sm" onClick={onLogout}>
                 <LogOut size={14} className="mr-1.5" />
@@ -157,7 +162,16 @@ export const CodexConnectionCard: React.FC<{
             </Button>
           </div>
 
-          {hasCompatibleProvider && (
+          {integration?.state === "connected_custom_config" && integration.customConfig && (
+            <p className="text-xs text-emerald-500">
+              {t('ai.codex.customConfigHint').replace(
+                '{provider}',
+                integration.customConfig.displayName || integration.customConfig.providerName,
+              )}
+            </p>
+          )}
+
+          {hasCompatibleProvider && integration?.state !== "connected_custom_config" && (
             <p className="text-xs text-emerald-500">
               {t('ai.codex.apiKeyHint')}
             </p>

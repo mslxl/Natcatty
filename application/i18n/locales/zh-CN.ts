@@ -1758,6 +1758,8 @@ const zhCN: Messages = {
   'ai.codex.awaitingLogin': '等待登录',
   'ai.codex.connectedChatGPT': '已通过 ChatGPT 连接',
   'ai.codex.connectedApiKey': '已通过 API Key 连接',
+  'ai.codex.connectedCustomConfig': '使用 ~/.codex/config.toml 自定义 provider',
+  'ai.codex.customConfigHint': '使用 ~/.codex/config.toml 中配置的自定义 provider "{provider}"，无需 ChatGPT 登录。',
   'ai.codex.notConnected': '未连接',
   'ai.codex.statusUnknown': '状态未知',
   'ai.codex.path': '路径：',
