@@ -89,10 +89,13 @@ async function ensureExampleSkill(electronApp) {
 
   const sourceDir = getBundledExampleSkillDir();
   const targetDir = path.join(skillsDir, EXAMPLE_SKILL_DIR_NAME);
-  if (fs.existsSync(sourceDir)) {
+  try {
+    await fsPromises.access(sourceDir);
     // fs.cp is experimental in some node versions, using synchronous version for stability in bridge context
     // or we can use async if node version is guaranteed
     await fsPromises.cp(sourceDir, targetDir, { recursive: true, force: false, errorOnExist: false });
+  } catch (err) {
+    // sourceDir not found, skip
   }
   return skillsDir;
 }
@@ -225,6 +228,7 @@ function scoreSkillMatch(prompt, skill) {
 async function buildUserSkillsContext(electronApp, prompt, selectedSkillSlugs = []) {
   const status = await scanUserSkills(electronApp);
   const readySkills = status._readySkills || [];
+  const trimmedPrompt = String(prompt || "").trim();
   if (readySkills.length === 0) {
     return { context: "", status };
   }
@@ -246,7 +250,7 @@ async function buildUserSkillsContext(electronApp, prompt, selectedSkillSlugs = 
 
   const matchedSkills = readySkills
     .filter((skill) => !explicitSlugs.has(skill.slug))
-    .map((skill) => ({ skill, score: scoreSkillMatch(prompt, skill) }))
+    .map((skill) => ({ skill, score: scoreSkillMatch(trimmedPrompt, skill) }))
     .filter((entry) => entry.score >= 2)
     .sort((left, right) => right.score - left.score)
     .slice(0, MAX_MATCHED_SKILLS)
