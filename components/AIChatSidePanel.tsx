@@ -32,6 +32,7 @@ import type {
   WebSearchConfig,
 } from '../infrastructure/ai/types';
 import { getAgentModelPresets } from '../infrastructure/ai/types';
+import { matchesManagedAgentConfig } from '../infrastructure/ai/managedAgents';
 import { useAgentDiscovery } from '../application/state/useAgentDiscovery';
 import { Button } from './ui/button';
 import { ScrollArea } from './ui/scroll-area';
@@ -480,13 +481,22 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     () => isCopilotAgentConfig(currentAgentConfig),
     [currentAgentConfig],
   );
+  // Codex's hardcoded CODEX_MODEL_PRESETS list is only valid for the stock
+  // OpenAI/ChatGPT path. When the user configures a custom model_provider in
+  // ~/.codex/config.toml (OpenRouter, a local model, etc.), those preset
+  // names are meaningless. Probe codex-acp for the real available-models
+  // list so the picker reflects what this session can actually use.
+  const isCodexManagedAgent = useMemo(
+    () => currentAgentConfig ? matchesManagedAgentConfig(currentAgentConfig, 'codex') : false,
+    [currentAgentConfig],
+  );
 
   const agentModelMapRef = useRef(agentModelMap);
   agentModelMapRef.current = agentModelMap;
 
   useEffect(() => {
     if (!currentAgentConfig?.acpCommand) return;
-    if (!isCopilotExternalAgent) return;
+    if (!isCopilotExternalAgent && !isCodexManagedAgent) return;
 
     const bridge = getNetcattyBridge();
     if (!bridge?.aiAcpListModels) return;
@@ -518,7 +528,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [currentAgentConfig, currentAgentId, isCopilotExternalAgent, setAgentModel]);
+  }, [currentAgentConfig, currentAgentId, isCopilotExternalAgent, isCodexManagedAgent, setAgentModel]);
 
   const agentModelPresets = useMemo(
     () => runtimeAgentModelPresets[currentAgentId] ?? getAgentModelPresets(currentAgentConfig?.command),
