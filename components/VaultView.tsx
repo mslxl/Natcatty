@@ -40,8 +40,6 @@ import { getEffectiveHostDistro, sanitizeHost } from "../domain/host";
 import { importVaultHostsFromText, exportHostsToCsvWithStats } from "../domain/vaultImport";
 import type { VaultImportFormat } from "../domain/vaultImport";
 import {
-  STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT,
-  STORAGE_KEY_SHOW_RECENT_HOSTS,
   STORAGE_KEY_VAULT_HOSTS_TREE_EXPANDED,
   STORAGE_KEY_VAULT_HOSTS_VIEW_MODE,
   STORAGE_KEY_VAULT_SIDEBAR_COLLAPSED,
@@ -153,6 +151,8 @@ interface VaultViewProps {
   onRunSnippet?: (snippet: Snippet, targetHosts: Host[]) => void;
   groupConfigs: GroupConfig[];
   onUpdateGroupConfigs: (configs: GroupConfig[]) => void;
+  showRecentHosts: boolean;
+  showOnlyUngroupedHostsInRoot: boolean;
   // Optional: navigate to a specific section on mount or when changed
   navigateToSection?: VaultSection | null;
   onNavigateToSectionHandled?: () => void;
@@ -199,6 +199,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   onRunSnippet,
   groupConfigs,
   onUpdateGroupConfigs,
+  showRecentHosts,
+  showOnlyUngroupedHostsInRoot,
   navigateToSection,
   onNavigateToSectionHandled,
 }) => {
@@ -235,15 +237,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   const [dragOverDropTarget, setDragOverDropTarget] = useState<DropTarget | null>(null);
   const [confirmedDropTarget, setConfirmedDropTarget] = useState<DropTarget | null>(null);
   const dropTargetPulseTimeoutRef = useRef<number | null>(null);
-
-  const [showRecentHosts, _setShowRecentHosts] = useStoredBoolean(
-    STORAGE_KEY_SHOW_RECENT_HOSTS,
-    true,
-  );
-  const [showOnlyUngroupedHostsInRoot, _setShowOnlyUngroupedHostsInRoot] = useStoredBoolean(
-    STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT,
-    false,
-  );
 
   // Handle external navigation requests
   useEffect(() => {
@@ -887,7 +880,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     } else if (showOnlyUngroupedHostsInRoot) {
       filtered = filtered.filter((h) => {
         const hostGroup = (h.group || "").trim();
-        return hostGroup === "" || hostGroup === "General";
+        return hostGroup === "";
       });
     }
     if (search.trim()) {
@@ -1146,6 +1139,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   }, [buildGroupTree, selectedGroupPath, customGroups]);
   const shouldHideEmptyRootHostsSection = useMemo(() => {
     if (selectedGroupPath || viewMode === "tree") return false;
+    if (search.trim() || selectedTags.length > 0) return false;
     if (visibleDisplayedHosts.length > 0) return false;
     return (
       displayedGroups.length > 0 ||
@@ -1155,6 +1149,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   }, [
     selectedGroupPath,
     viewMode,
+    search,
+    selectedTags.length,
     visibleDisplayedHosts.length,
     displayedGroups.length,
     pinnedHosts.length,

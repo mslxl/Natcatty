@@ -34,7 +34,8 @@ import {
   STORAGE_KEY_GLOBAL_HOTKEY_ENABLED,
   STORAGE_KEY_AUTO_UPDATE_ENABLED,
   STORAGE_KEY_WORKSPACE_FOCUS_STYLE,
-
+  STORAGE_KEY_SHOW_RECENT_HOSTS,
+  STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT,
 } from '../../infrastructure/config/storageKeys';
 import { DEFAULT_UI_LOCALE, resolveSupportedLocale } from '../../infrastructure/config/i18n';
 import { TERMINAL_THEMES } from '../../infrastructure/config/terminalThemes';
@@ -71,6 +72,8 @@ const DEFAULT_SFTP_SHOW_HIDDEN_FILES = false;
 const DEFAULT_SFTP_USE_COMPRESSED_UPLOAD = true;
 const DEFAULT_SFTP_AUTO_OPEN_SIDEBAR = false;
 const DEFAULT_SFTP_DEFAULT_VIEW_MODE: 'list' | 'tree' = 'list';
+const DEFAULT_SHOW_RECENT_HOSTS = true;
+const DEFAULT_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT = false;
 
 // Editor defaults
 const DEFAULT_EDITOR_WORD_WRAP = false;
@@ -259,6 +262,14 @@ export const useSettingsState = () => {
   const [sftpDefaultViewMode, setSftpDefaultViewMode] = useState<'list' | 'tree'>(() => {
     const stored = readStoredString(STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE);
     return (stored === 'list' || stored === 'tree') ? stored : DEFAULT_SFTP_DEFAULT_VIEW_MODE;
+  });
+  const [showRecentHosts, setShowRecentHosts] = useState<boolean>(() => {
+    const stored = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_RECENT_HOSTS);
+    return stored ?? DEFAULT_SHOW_RECENT_HOSTS;
+  });
+  const [showOnlyUngroupedHostsInRoot, setShowOnlyUngroupedHostsInRoot] = useState<boolean>(() => {
+    const stored = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT);
+    return stored ?? DEFAULT_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT;
   });
   const [sftpTransferConcurrency, setSftpTransferConcurrencyState] = useState<number>(() => {
     const stored = localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY);
@@ -463,6 +474,10 @@ export const useSettingsState = () => {
     if (storedAutoOpenSidebar === 'true' || storedAutoOpenSidebar === 'false') setSftpAutoOpenSidebar(storedAutoOpenSidebar === 'true');
     const storedDefaultViewMode = readStoredString(STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE);
     if (storedDefaultViewMode === 'list' || storedDefaultViewMode === 'tree') setSftpDefaultViewMode(storedDefaultViewMode);
+    const storedShowRecentHosts = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_RECENT_HOSTS);
+    setShowRecentHosts(storedShowRecentHosts ?? DEFAULT_SHOW_RECENT_HOSTS);
+    const storedShowOnlyUngroupedHostsInRoot = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT);
+    setShowOnlyUngroupedHostsInRoot(storedShowOnlyUngroupedHostsInRoot ?? DEFAULT_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT);
 
     // Workspace focus style
     const storedFocusStyle = readStoredString(STORAGE_KEY_WORKSPACE_FOCUS_STYLE);
@@ -662,6 +677,7 @@ export const useSettingsState = () => {
     terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpDefaultViewMode,
+    showRecentHosts, showOnlyUngroupedHostsInRoot,
     editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat,
     globalHotkeyEnabled, autoUpdateEnabled,
   });
@@ -671,6 +687,7 @@ export const useSettingsState = () => {
     terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpDefaultViewMode,
+    showRecentHosts, showOnlyUngroupedHostsInRoot,
     editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat,
     globalHotkeyEnabled, autoUpdateEnabled,
   };
@@ -834,6 +851,18 @@ export const useSettingsState = () => {
           setSftpDefaultViewMode(e.newValue);
         }
       }
+      if (e.key === STORAGE_KEY_SHOW_RECENT_HOSTS && e.newValue !== null) {
+        const newValue = e.newValue === 'true';
+        if (newValue !== s.showRecentHosts) {
+          setShowRecentHosts(newValue);
+        }
+      }
+      if (e.key === STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT && e.newValue !== null) {
+        const newValue = e.newValue === 'true';
+        if (newValue !== s.showOnlyUngroupedHostsInRoot) {
+          setShowOnlyUngroupedHostsInRoot(newValue);
+        }
+      }
       // Sync global hotkey enabled setting from other windows
       if (e.key === STORAGE_KEY_GLOBAL_HOTKEY_ENABLED && e.newValue !== null) {
         const newValue = e.newValue === 'true';
@@ -980,6 +1009,18 @@ export const useSettingsState = () => {
     if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE, sftpDefaultViewMode);
   }, [sftpDefaultViewMode, notifySettingsChanged]);
+
+  useEffect(() => {
+    localStorageAdapter.writeBoolean(STORAGE_KEY_SHOW_RECENT_HOSTS, showRecentHosts);
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_SHOW_RECENT_HOSTS, showRecentHosts);
+  }, [showRecentHosts, notifySettingsChanged]);
+
+  useEffect(() => {
+    localStorageAdapter.writeBoolean(STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT, showOnlyUngroupedHostsInRoot);
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT, showOnlyUngroupedHostsInRoot);
+  }, [showOnlyUngroupedHostsInRoot, notifySettingsChanged]);
 
   // Persist Session Logs settings
   useEffect(() => {
@@ -1228,6 +1269,10 @@ export const useSettingsState = () => {
     setSftpAutoOpenSidebar,
     sftpDefaultViewMode,
     setSftpDefaultViewMode,
+    showRecentHosts,
+    setShowRecentHosts,
+    showOnlyUngroupedHostsInRoot,
+    setShowOnlyUngroupedHostsInRoot,
     sftpTransferConcurrency,
     setSftpTransferConcurrency,
     // Editor Settings
@@ -1266,6 +1311,7 @@ export const useSettingsState = () => {
       terminalThemeId, terminalFontFamilyId, terminalFontSize, terminalSettings,
       customKeyBindings, editorWordWrap,
       sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpDefaultViewMode,
+      showRecentHosts, showOnlyUngroupedHostsInRoot,
       customThemes, workspaceFocusStyle,
     ]),
   };
