@@ -1744,12 +1744,16 @@ const en: Messages = {
   // AI Codex
   'ai.codex': 'Codex',
   'ai.codex.title': 'Codex CLI',
-  'ai.codex.description': 'Uses codex + codex-acp for ACP protocol streaming. Login with ChatGPT subscription here, or configure an OpenAI provider API key (passed as CODEX_API_KEY).',
+  'ai.codex.description': 'Uses codex + codex-acp for ACP protocol streaming. Login with ChatGPT here, or enable an OpenAI-compatible provider API key and custom endpoint in Settings.',
   'ai.codex.detecting': 'Detecting...',
   'ai.codex.notFound': 'Not found',
   'ai.codex.awaitingLogin': 'Awaiting login',
   'ai.codex.connectedChatGPT': 'Connected via ChatGPT',
   'ai.codex.connectedApiKey': 'Connected via API key',
+  'ai.codex.connectedCustomConfig': 'Connected via ~/.codex/config.toml',
+  'ai.codex.customConfigIncomplete': 'Custom config detected (env var missing)',
+  'ai.codex.customConfigHint': 'Using custom provider "{provider}" configured in ~/.codex/config.toml — no ChatGPT login needed.',
+  'ai.codex.customConfigMissingEnvKey': 'Warning: {envKey} is not set in your shell environment. Export it (or launch netcatty from a shell that has it) so Codex can authenticate.',
   'ai.codex.notConnected': 'Not connected',
   'ai.codex.statusUnknown': 'Status unknown',
   'ai.codex.path': 'Path:',
@@ -1760,7 +1764,7 @@ const en: Messages = {
   'ai.codex.logout': 'Logout',
   'ai.codex.connectChatGPT': 'Connect ChatGPT',
   'ai.codex.refreshStatus': 'Refresh Status',
-  'ai.codex.apiKeyHint': 'Enabled OpenAI provider API key detected. Codex ACP can also authenticate without ChatGPT login.',
+  'ai.codex.apiKeyHint': 'Detected an enabled OpenAI-compatible provider API key. Codex ACP can use it without ChatGPT login.',
 
   // AI Claude Code
   'ai.claude.title': 'Claude Code',

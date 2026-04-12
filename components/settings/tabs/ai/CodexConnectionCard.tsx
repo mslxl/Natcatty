@@ -15,7 +15,7 @@ export const CodexConnectionCard: React.FC<{
   integration: CodexIntegrationStatus | null;
   loginSession: CodexLoginSession | null;
   isLoading: boolean;
-  hasOpenAiProviderKey: boolean;
+  hasCompatibleProvider: boolean;
   error: string | null;
   onRefresh: () => void;
   onConnect: () => void;
@@ -31,7 +31,7 @@ export const CodexConnectionCard: React.FC<{
   integration,
   loginSession,
   isLoading,
-  hasOpenAiProviderKey,
+  hasCompatibleProvider,
   error,
   onRefresh,
   onConnect,
@@ -41,6 +41,14 @@ export const CodexConnectionCard: React.FC<{
 }) => {
   const { t } = useI18n();
   const found = pathInfo?.available;
+
+  const customConfigIncomplete = Boolean(
+    integration?.state === "connected_custom_config"
+    && integration.customConfig
+    && integration.customConfig.envKey
+    && !integration.customConfig.envKeyPresent
+    && !integration.customConfig.hasHardcodedApiKey,
+  );
 
   const status = isResolvingPath
     ? t('ai.codex.detecting')
@@ -52,9 +60,13 @@ export const CodexConnectionCard: React.FC<{
           ? t('ai.codex.connectedChatGPT')
           : integration?.state === "connected_api_key"
             ? t('ai.codex.connectedApiKey')
-            : integration?.state === "not_logged_in"
-              ? t('ai.codex.notConnected')
-              : t('ai.codex.statusUnknown');
+            : integration?.state === "connected_custom_config"
+              ? customConfigIncomplete
+                ? t('ai.codex.customConfigIncomplete')
+                : t('ai.codex.connectedCustomConfig')
+              : integration?.state === "not_logged_in"
+                ? t('ai.codex.notConnected')
+                : t('ai.codex.statusUnknown');
 
   const statusClassName = isResolvingPath
     ? "text-muted-foreground"
@@ -62,9 +74,11 @@ export const CodexConnectionCard: React.FC<{
       ? "text-amber-500"
       : loginSession?.state === "running"
         ? "text-amber-500"
-        : integration?.isConnected
-          ? "text-emerald-500"
-          : "text-muted-foreground";
+        : customConfigIncomplete
+          ? "text-amber-500"
+          : integration?.isConnected
+            ? "text-emerald-500"
+            : "text-muted-foreground";
 
   const outputText = loginSession?.error
     ? loginSession.error
@@ -139,6 +153,9 @@ export const CodexConnectionCard: React.FC<{
                   {t('common.cancel')}
                 </Button>
               </>
+            ) : integration?.state === "connected_custom_config" ? (
+              // Nothing to log out of; config.toml is user-owned state.
+              null
             ) : integration?.isConnected ? (
               <Button variant="outline" size="sm" onClick={onLogout}>
                 <LogOut size={14} className="mr-1.5" />
@@ -157,7 +174,26 @@ export const CodexConnectionCard: React.FC<{
             </Button>
           </div>
 
-          {hasOpenAiProviderKey && (
+          {integration?.state === "connected_custom_config" && integration.customConfig && (
+            <>
+              <p className="text-xs text-emerald-500">
+                {t('ai.codex.customConfigHint').replace(
+                  '{provider}',
+                  integration.customConfig.displayName || integration.customConfig.providerName,
+                )}
+              </p>
+              {integration.customConfig.envKey && !integration.customConfig.envKeyPresent && !integration.customConfig.hasHardcodedApiKey && (
+                <p className="text-xs text-amber-500">
+                  {t('ai.codex.customConfigMissingEnvKey').replace(
+                    '{envKey}',
+                    integration.customConfig.envKey,
+                  )}
+                </p>
+              )}
+            </>
+          )}
+
+          {hasCompatibleProvider && integration?.state !== "connected_custom_config" && (
             <p className="text-xs text-emerald-500">
               {t('ai.codex.apiKeyHint')}
             </p>

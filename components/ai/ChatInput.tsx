@@ -23,6 +23,9 @@ import type { PromptInputStatus } from '../ai-elements/prompt-input';
 import { formatThinkingLabel } from '../../infrastructure/ai/types';
 import type { AgentModelPreset, AIPermissionMode } from '../../infrastructure/ai/types';
 
+// Keep in sync with the popover's Tailwind max-width below.
+const MODEL_PICKER_MAX_WIDTH = 360;
+
 interface ChatInputProps {
   value: string;
   onChange: (value: string) => void;
@@ -166,10 +169,26 @@ const ChatInput: React.FC<ChatInputProps> = ({
 
   // Permission mode chip removed — agents run in autonomous mode
 
-  // selectedModelId may be "model/thinking" for codex
-  const selectedBaseModelId = selectedModelId?.split('/')[0];
-  const selectedThinking = selectedModelId?.includes('/') ? selectedModelId.split('/')[1] : undefined;
-  const selectedPreset = modelPresets.find(m => m.id === selectedBaseModelId);
+  // selectedModelId may be "<modelId>/<thinkingLevel>" for codex ChatGPT models
+  // (e.g. "gpt-5.4/high"). Note: custom config.toml / OpenRouter model ids
+  // themselves can contain '/' (e.g. "qwen/qwen3.6-plus"), so don't just
+  // split on the first '/'. Match against the full id first; only treat the
+  // trailing segment as a thinking level when we find a preset whose
+  // declared thinkingLevels make the combined form equal to selectedModelId.
+  const { selectedPreset, selectedThinking } = (() => {
+    if (!selectedModelId) return { selectedPreset: undefined, selectedThinking: undefined };
+    const direct = modelPresets.find(m => m.id === selectedModelId);
+    if (direct) return { selectedPreset: direct, selectedThinking: undefined };
+    const viaThinking = modelPresets.find(
+      m => m.thinkingLevels?.some(level => `${m.id}/${level}` === selectedModelId),
+    );
+    if (viaThinking) {
+      const thinking = selectedModelId.slice(viaThinking.id.length + 1);
+      return { selectedPreset: viaThinking, selectedThinking: thinking };
+    }
+    return { selectedPreset: undefined, selectedThinking: undefined };
+  })();
+  const selectedBaseModelId = selectedPreset?.id;
   const modelLabel = selectedPreset
     ? selectedPreset.name + (selectedThinking ? ` / ${formatThinkingLabel(selectedThinking)}` : '')
     : modelName || providerName || t('ai.chat.noModel');
@@ -375,7 +394,13 @@ const ChatInput: React.FC<ChatInputProps> = ({
                 if (!hasModelPicker) return;
                 if (!showModelPicker) {
                   const rect = modelBtnRef.current?.getBoundingClientRect();
-                  if (rect) setMenuPos({ left: rect.left, bottom: window.innerHeight - rect.top + 6 });
+                  if (rect) {
+                    // Clamp so the popover stays inside the viewport when
+                    // the chip is near the right edge of a narrow AI side
+                    // panel.
+                    const left = Math.max(8, Math.min(rect.left, window.innerWidth - MODEL_PICKER_MAX_WIDTH - 8));
+                    setMenuPos({ left, bottom: window.innerHeight - rect.top + 6 });
+                  }
                   setActiveMenu('model');
                 } else {
                   closeAllMenus();
@@ -395,8 +420,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
                 <div
                   role="listbox"
                   aria-label="Select model"
-                  className="fixed z-[1000] min-w-[160px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
-                  style={{ left: menuPos.left, bottom: menuPos.bottom }}
+                  className="fixed z-[1000] w-max min-w-[160px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
+                  style={{ left: menuPos.left, bottom: menuPos.bottom, maxWidth: MODEL_PICKER_MAX_WIDTH }}
                   onMouseLeave={() => setHoveredModelId(null)}
                 >
                   {modelPresets.map(preset => {
@@ -420,12 +445,11 @@ const ChatInput: React.FC<ChatInputProps> = ({
                               closeAllMenus();
                             }
                           }}
-                          className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
+                          className="w-full min-w-0 flex items-center gap-1.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer"
                         >
                           {isSelected ? <Check size={11} className="text-primary shrink-0" /> : <span className="w-[11px] shrink-0" />}
-                          <span className="flex-1 text-foreground/85">{preset.name}</span>
-                          {preset.description && <span className="text-[10px] text-muted-foreground/50 mr-1">{preset.description}</span>}
-                          {hasThinking && <ChevronRight size={10} className="text-muted-foreground/50" />}
+                          <span className="flex-1 min-w-0 truncate text-foreground/85">{preset.name}</span>
+                          {hasThinking && <ChevronRight size={10} className="text-muted-foreground/50 shrink-0" />}
                         </button>
                         {/* Thinking level sub-menu */}
                         {hasThinking && hoveredModelId === preset.id && (

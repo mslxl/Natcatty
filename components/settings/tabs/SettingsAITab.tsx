@@ -18,6 +18,7 @@ import type {
   WebSearchConfig,
 } from "../../../infrastructure/ai/types";
 import {
+  findManagedAgentProvider,
   getManagedAgentStoredPath,
   matchesManagedAgentConfig,
   type ManagedAgentKey,
@@ -304,18 +305,16 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
       .map((a) => ({ value: a.id, label: a.name, icon: <AgentIconBadge agent={a} size="xs" variant="plain" /> })),
   ], [externalAgents, t]);
 
-  const hasOpenAiProviderKey = providers.some(
-    (provider) => provider.providerId === "openai" && provider.enabled && !!provider.apiKey,
-  );
+  const hasCodexCompatibleProvider = Boolean(findManagedAgentProvider(providers, "codex"));
 
-  const refreshCodexIntegration = useCallback(async () => {
+  const refreshCodexIntegration = useCallback(async (opts?: { refreshShellEnv?: boolean }) => {
     const bridge = getBridge();
     if (!bridge?.aiCodexGetIntegration) return;
 
     setIsCodexLoading(true);
     setCodexError(null);
     try {
-      const integration = await bridge.aiCodexGetIntegration();
+      const integration = await bridge.aiCodexGetIntegration(opts);
       setCodexIntegration(integration);
     } catch (err) {
       setCodexError(normalizeCodexBridgeError(err));
@@ -524,9 +523,9 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               integration={codexIntegration}
               loginSession={codexLoginSession}
               isLoading={isCodexLoading}
-              hasOpenAiProviderKey={hasOpenAiProviderKey}
+              hasCompatibleProvider={hasCodexCompatibleProvider}
               error={codexError}
-              onRefresh={() => void refreshCodexIntegration()}
+              onRefresh={() => void refreshCodexIntegration({ refreshShellEnv: true })}
               onConnect={() => void handleStartCodexLogin()}
               onCancel={() => void handleCancelCodexLogin()}
               onOpenUrl={handleOpenCodexLoginUrl}

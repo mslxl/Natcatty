@@ -24,6 +24,7 @@ const {
   resolveCliFromPath,
   resolveClaudeAcpBinaryPath,
   getShellEnv,
+  invalidateShellEnvCache,
   serializeStreamChunk,
   toUnpackedAsarPath,
 } = require("./ai/shellUtils.cjs");
@@ -35,6 +36,9 @@ const {
   toCodexLoginSessionResponse,
   getActiveCodexLoginSession,
   normalizeCodexIntegrationState,
+  readCodexCustomProviderConfig,
+  getCodexAuthOverride,
+  getCodexCustomConfigPreflightError,
   extractCodexError,
   isCodexAuthError,
   getCodexAuthFingerprint,
@@ -232,6 +236,34 @@ function resolveProviderApiKey(providerId) {
     provider: config,
     apiKey: decryptApiKeyValue(config.apiKey),
   };
+}
+
+function getAcpProviderAuthFingerprint(apiKey, provider, customConfig) {
+  const parts = [
+    typeof apiKey === "string" ? apiKey.trim() : "",
+    typeof provider?.id === "string" ? provider.id.trim() : "",
+    typeof provider?.providerId === "string" ? provider.providerId.trim() : "",
+    typeof provider?.baseURL === "string" ? provider.baseURL.trim() : "",
+    customConfig
+      ? [
+          "custom",
+          customConfig.providerName || "",
+          customConfig.baseUrl || "",
+          customConfig.envKey || "",
+          customConfig.envKeyPresent ? "1" : "0",
+          // authHash changes when the user rotates their hardcoded api_key
+          // or the env_key's resolved value; without it a cached ACP
+          // provider would keep serving the stale key.
+          customConfig.authHash || "",
+        ].join(":")
+      : "",
+  ].filter(Boolean);
+
+  if (parts.length === 0) {
+    return null;
+  }
+
+  return getCodexAuthFingerprint(parts.join("\n"));
 }
 
 /** Check if TLS verification should be skipped for a given provider. */
@@ -1689,8 +1721,14 @@ function registerHandlers(ipcMain) {
     return { path: resolvedPath, version, available: true };
   });
 
-  ipcMain.handle("netcatty:ai:codex:get-integration", async (event) => {
+  ipcMain.handle("netcatty:ai:codex:get-integration", async (event, options) => {
     if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
+    // When the user clicks "Refresh Status" in Settings we also want to
+    // rescan the shell env — otherwise a newly-exported variable in
+    // .zshrc stays invisible until they restart netcatty entirely.
+    if (options && options.refreshShellEnv) {
+      invalidateShellEnvCache();
+    }
     try {
       const result = await runCodexCli(["login", "status"]);
       const rawOutput = [result.stdout, result.stderr]
@@ -1724,11 +1762,33 @@ function registerHandlers(ipcMain) {
         }
       }
 
+      // `codex login status` only reflects ~/.codex/auth.json. A user who
+      // configured a custom provider directly in ~/.codex/config.toml is
+      // functional from the CLI but would look "not_logged_in" here. Probe
+      // config.toml so we can surface that as a valid ready state instead of
+      // pushing the user into the ChatGPT login flow.
+      let customConfig = null;
+      if (state !== "connected_chatgpt" && state !== "connected_api_key") {
+        try {
+          const shellEnv = await getShellEnv();
+          customConfig = readCodexCustomProviderConfig(shellEnv);
+          if (customConfig) {
+            state = "connected_custom_config";
+          }
+        } catch {
+          customConfig = null;
+        }
+      }
+
       return {
         state,
-        isConnected: state === "connected_chatgpt" || state === "connected_api_key",
+        isConnected:
+          state === "connected_chatgpt" ||
+          state === "connected_api_key" ||
+          state === "connected_custom_config",
         rawOutput: effectiveRawOutput,
         exitCode: result.exitCode,
+        customConfig,
       };
     } catch (err) {
       return {
@@ -1736,6 +1796,7 @@ function registerHandlers(ipcMain) {
         isConnected: false,
         rawOutput: err?.message || String(err),
         exitCode: null,
+        customConfig: null,
       };
     }
   });
@@ -1847,7 +1908,10 @@ function registerHandlers(ipcMain) {
       return {
         ok: true,
         state,
-        isConnected: state === "connected_chatgpt" || state === "connected_api_key",
+        isConnected:
+          state === "connected_chatgpt" ||
+          state === "connected_api_key" ||
+          state === "connected_custom_config",
         rawOutput,
         logoutOutput: [logoutResult.stdout, logoutResult.stderr]
           .filter((chunk) => chunk.trim().length > 0)
@@ -2102,6 +2166,19 @@ function registerHandlers(ipcMain) {
       const resolvedProvider = providerId ? resolveProviderApiKey(providerId) : null;
       const apiKey = resolvedProvider?.apiKey || undefined;
 
+      // Mirror the stream handler's pre-flight: if Codex is pointed at a
+      // config.toml custom provider whose env_key is not exported, surface
+      // a targeted error instead of spawning codex-acp and letting it fail
+      // mid-init with an opaque message.
+      if (isCodexAgent && !apiKey) {
+        const preflight = getCodexCustomConfigPreflightError(
+          readCodexCustomProviderConfig(shellEnv),
+        );
+        if (preflight) {
+          return { ok: false, models: [], error: preflight };
+        }
+      }
+
       const agentEnv = withCliDiscoveryEnv({ ...shellEnv });
       if (isCodexAgent && apiKey) {
         agentEnv.CODEX_API_KEY = apiKey;
@@ -2143,7 +2220,7 @@ function registerHandlers(ipcMain) {
           mcpServers: [],
         },
         ...(isCodexAgent
-          ? { authMethodId: apiKey ? "codex-api-key" : "chatgpt" }
+          ? getCodexAuthOverride(apiKey, shellEnv)
           : isCopilotAgent
             ? { authMethodId: "copilot-login" }
             : {}),
@@ -2254,7 +2331,28 @@ function registerHandlers(ipcMain) {
       const resolvedProvider = providerId ? resolveProviderApiKey(providerId) : null;
       const apiKey = resolvedProvider?.apiKey || undefined;
 
-      if (isCodexAgent && !apiKey) {
+      // Probe ~/.codex/config.toml first so we can tell a ChatGPT user
+      // (needs login validation) from a custom-provider user (must NOT be
+      // forced through ChatGPT validation, since their auth lives in
+      // config.toml / shell env, not auth.json).
+      const codexCustomConfig = isCodexAgent && !apiKey
+        ? readCodexCustomProviderConfig(shellEnv)
+        : null;
+
+      // Fail loud: custom-provider config is set but has no usable auth
+      // material yet (env_key is named but not exported in the shell env,
+      // and no api_key is hardcoded). Don't spawn — codex-acp would fail
+      // mid-request with an opaque "Missing environment variable" error.
+      const preflightError = getCodexCustomConfigPreflightError(codexCustomConfig);
+      if (preflightError) {
+        safeSend(event.sender, "netcatty:ai:acp:error", {
+          requestId,
+          error: preflightError,
+        });
+        return { ok: false, error: `Missing env var ${codexCustomConfig.envKey}` };
+      }
+
+      if (isCodexAgent && !apiKey && !codexCustomConfig) {
         const validation = await validateCodexChatGptAuth({ maxAgeMs: 10000 });
         if (shouldAbortStartup()) return { ok: true };
         if (!validation.ok) {
@@ -2275,11 +2373,9 @@ function registerHandlers(ipcMain) {
         }
       }
 
-      const authFingerprint = isCodexAgent
-        ? getCodexAuthFingerprint(apiKey)
-        : isClaudeAgent
-          ? getCodexAuthFingerprint(apiKey + (resolvedProvider?.provider?.baseURL || ""))
-          : null;
+      const authFingerprint = isCodexAgent || isClaudeAgent
+        ? getAcpProviderAuthFingerprint(apiKey, resolvedProvider?.provider, codexCustomConfig)
+        : null;
       const mcpSnapshot = isCodexAgent
         ? await resolveCodexMcpSnapshot(sessionCwd)
         : { mcpServers: [], fingerprint: getCodexMcpFingerprint([]) };
@@ -2388,7 +2484,7 @@ function registerHandlers(ipcMain) {
           },
           ...(resumeSessionId ? { existingSessionId: resumeSessionId } : {}),
           ...(isCodexAgent
-            ? { authMethodId: apiKey ? "codex-api-key" : "chatgpt" }
+            ? getCodexAuthOverride(apiKey, shellEnv)
             : isCopilotAgent
               ? { authMethodId: "copilot-login" }
             : {}),
@@ -2400,7 +2496,7 @@ function registerHandlers(ipcMain) {
           resolvedCommand,
           resolvedArgs,
           mcpServerNames: mcpSnapshot.mcpServers.map(server => server.name),
-          authMethodId: isCodexAgent ? (apiKey ? "codex-api-key" : "chatgpt") : null,
+          authMethodId: isCodexAgent ? (getCodexAuthOverride(apiKey, shellEnv).authMethodId || null) : null,
         });
 
         if (isCopilotAgent) {
@@ -2496,7 +2592,7 @@ function registerHandlers(ipcMain) {
             mcpServers: isCopilotAgent ? [] : mcpSnapshot.mcpServers,
           },
           ...(isCodexAgent
-            ? { authMethodId: apiKey ? "codex-api-key" : "chatgpt" }
+            ? getCodexAuthOverride(apiKey, shellEnv)
             : isCopilotAgent
               ? { authMethodId: "copilot-login" }
             : {}),

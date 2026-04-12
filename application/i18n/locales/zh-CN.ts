@@ -1752,12 +1752,16 @@ const zhCN: Messages = {
   // AI Codex
   'ai.codex': 'Codex',
   'ai.codex.title': 'Codex CLI',
-  'ai.codex.description': '使用 codex + codex-acp 进行 ACP 协议流式传输。在此通过 ChatGPT 订阅登录，或配置 OpenAI 提供商的 API Key（将作为 CODEX_API_KEY 传递）。',
+  'ai.codex.description': '使用 codex + codex-acp 进行 ACP 协议流式传输。可以在这里连接 ChatGPT，也可以在设置里启用兼容 OpenAI 的 API Key 和自定义接口地址。',
   'ai.codex.detecting': '检测中...',
   'ai.codex.notFound': '未找到',
   'ai.codex.awaitingLogin': '等待登录',
   'ai.codex.connectedChatGPT': '已通过 ChatGPT 连接',
   'ai.codex.connectedApiKey': '已通过 API Key 连接',
+  'ai.codex.connectedCustomConfig': '使用 ~/.codex/config.toml 自定义 provider',
+  'ai.codex.customConfigIncomplete': '检测到自定义配置（缺少环境变量）',
+  'ai.codex.customConfigHint': '使用 ~/.codex/config.toml 中配置的自定义 provider "{provider}"，无需 ChatGPT 登录。',
+  'ai.codex.customConfigMissingEnvKey': '警告：环境变量 {envKey} 未在当前 shell 中设置。请 export 它（或从包含该变量的 shell 启动 netcatty），否则 Codex 无法鉴权。',
   'ai.codex.notConnected': '未连接',
   'ai.codex.statusUnknown': '状态未知',
   'ai.codex.path': '路径：',
@@ -1768,7 +1772,7 @@ const zhCN: Messages = {
   'ai.codex.logout': '退出登录',
   'ai.codex.connectChatGPT': '连接 ChatGPT',
   'ai.codex.refreshStatus': '刷新状态',
-  'ai.codex.apiKeyHint': '检测到已启用的 OpenAI 提供商 API Key。Codex ACP 也可以无需 ChatGPT 登录进行认证。',
+  'ai.codex.apiKeyHint': '检测到已启用的兼容 OpenAI 的 API Key。Codex ACP 也可以不走 ChatGPT 登录直接使用它。',
 
   // AI Claude Code
   'ai.claude.title': 'Claude Code',

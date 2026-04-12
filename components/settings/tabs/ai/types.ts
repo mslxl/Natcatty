@@ -10,14 +10,27 @@ import type {
 export type CodexIntegrationState =
   | "connected_chatgpt"
   | "connected_api_key"
+  | "connected_custom_config"
   | "not_logged_in"
   | "unknown";
+
+export interface CodexCustomProviderConfig {
+  providerName: string;
+  displayName: string;
+  baseUrl: string | null;
+  envKey: string | null;
+  envKeyPresent: boolean;
+  hasHardcodedApiKey: boolean;
+  model: string | null;
+  authHash: string | null;
+}
 
 export interface CodexIntegrationStatus {
   state: CodexIntegrationState;
   isConnected: boolean;
   rawOutput: string;
   exitCode: number | null;
+  customConfig?: CodexCustomProviderConfig | null;
 }
 
 export type CodexLoginState = "running" | "success" | "error" | "cancelled";
@@ -57,7 +70,7 @@ export interface FetchBridge {
 }
 
 export interface NetcattyAiBridge {
-  aiCodexGetIntegration?: () => Promise<CodexIntegrationStatus>;
+  aiCodexGetIntegration?: (options?: { refreshShellEnv?: boolean }) => Promise<CodexIntegrationStatus>;
   aiCodexStartLogin?: () => Promise<{ ok: boolean; session?: CodexLoginSession; error?: string }>;
   aiCodexGetLoginSession?: (sessionId: string) => Promise<{ ok: boolean; session?: CodexLoginSession; error?: string }>;
   aiCodexCancelLogin?: (sessionId: string) => Promise<{ ok: boolean; found?: boolean; session?: CodexLoginSession; error?: string }>;

@@ -732,11 +732,21 @@ declare global {
       acpCommand?: string;
       acpArgs?: string[];
     }>>;
-    aiCodexGetIntegration?(): Promise<{
-      state: 'connected_chatgpt' | 'connected_api_key' | 'not_logged_in' | 'unknown';
+    aiCodexGetIntegration?(options?: { refreshShellEnv?: boolean }): Promise<{
+      state: 'connected_chatgpt' | 'connected_api_key' | 'connected_custom_config' | 'not_logged_in' | 'unknown';
       isConnected: boolean;
       rawOutput: string;
       exitCode: number | null;
+      customConfig?: {
+        providerName: string;
+        displayName: string;
+        baseUrl: string | null;
+        envKey: string | null;
+        envKeyPresent: boolean;
+        hasHardcodedApiKey: boolean;
+        model: string | null;
+        authHash: string | null;
+      } | null;
     }>;
     aiCodexStartLogin?(): Promise<{
       ok: boolean;
