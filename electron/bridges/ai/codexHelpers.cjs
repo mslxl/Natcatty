@@ -215,18 +215,20 @@ function parseCodexConfigToml(text) {
 }
 
 /**
- * Inspect `~/.codex/config.toml` to determine whether the user has a
- * self-configured custom provider that Codex can authenticate against without
- * needing `codex login`.
+ * Inspect `~/.codex/config.toml` to determine whether the user has
+ * configured a custom `model_provider` that isn't the built-in OpenAI/ChatGPT
+ * path.
  *
  * Returns null when:
  *   - the config file doesn't exist or can't be read
- *   - no `model_provider` is set, or it points to the default OpenAI preset
- *   - the referenced provider entry is missing, or has no usable auth
- *     (neither a hardcoded api_key nor an env_key present in the shell env)
+ *   - no `model_provider` is set, or it points to the default `openai` preset
+ *   - the referenced provider entry is missing (config is malformed)
  *
- * Returns a summary object otherwise, for reporting to the UI and for
- * deciding whether to skip forcing `authMethodId: "chatgpt"` at spawn time.
+ * Returns a summary object otherwise — even if the env_key isn't currently
+ * exported in the shell environment. That case is surfaced via
+ * `envKeyPresent: false` so the UI can warn the user; we don't want the
+ * absence of an env var to silently fall back to the ChatGPT login flow,
+ * because the config.toml is a strong signal the user doesn't want that.
  */
 function readCodexCustomProviderConfig(shellEnv) {
   const home = shellEnv?.HOME || shellEnv?.USERPROFILE || os.homedir();
@@ -262,8 +264,6 @@ function readCodexCustomProviderConfig(shellEnv) {
   const envKeyName = typeof providerEntry.env_key === "string" ? providerEntry.env_key.trim() : "";
   const envKeyValue = envKeyName && shellEnv ? String(shellEnv[envKeyName] || "").trim() : "";
   const hardcodedApiKey = typeof providerEntry.api_key === "string" ? providerEntry.api_key.trim() : "";
-  const hasAuth = Boolean(hardcodedApiKey) || Boolean(envKeyValue);
-  if (!hasAuth) return null;
 
   return {
     providerName: activeName,

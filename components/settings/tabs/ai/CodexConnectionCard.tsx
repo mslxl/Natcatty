@@ -42,6 +42,14 @@ export const CodexConnectionCard: React.FC<{
   const { t } = useI18n();
   const found = pathInfo?.available;
 
+  const customConfigIncomplete = Boolean(
+    integration?.state === "connected_custom_config"
+    && integration.customConfig
+    && integration.customConfig.envKey
+    && !integration.customConfig.envKeyPresent
+    && !integration.customConfig.hasHardcodedApiKey,
+  );
+
   const status = isResolvingPath
     ? t('ai.codex.detecting')
     : !found
@@ -53,7 +61,9 @@ export const CodexConnectionCard: React.FC<{
           : integration?.state === "connected_api_key"
             ? t('ai.codex.connectedApiKey')
             : integration?.state === "connected_custom_config"
-              ? t('ai.codex.connectedCustomConfig')
+              ? customConfigIncomplete
+                ? t('ai.codex.customConfigIncomplete')
+                : t('ai.codex.connectedCustomConfig')
               : integration?.state === "not_logged_in"
                 ? t('ai.codex.notConnected')
                 : t('ai.codex.statusUnknown');
@@ -64,9 +74,11 @@ export const CodexConnectionCard: React.FC<{
       ? "text-amber-500"
       : loginSession?.state === "running"
         ? "text-amber-500"
-        : integration?.isConnected
-          ? "text-emerald-500"
-          : "text-muted-foreground";
+        : customConfigIncomplete
+          ? "text-amber-500"
+          : integration?.isConnected
+            ? "text-emerald-500"
+            : "text-muted-foreground";
 
   const outputText = loginSession?.error
     ? loginSession.error
@@ -163,12 +175,22 @@ export const CodexConnectionCard: React.FC<{
           </div>
 
           {integration?.state === "connected_custom_config" && integration.customConfig && (
-            <p className="text-xs text-emerald-500">
-              {t('ai.codex.customConfigHint').replace(
-                '{provider}',
-                integration.customConfig.displayName || integration.customConfig.providerName,
+            <>
+              <p className="text-xs text-emerald-500">
+                {t('ai.codex.customConfigHint').replace(
+                  '{provider}',
+                  integration.customConfig.displayName || integration.customConfig.providerName,
+                )}
+              </p>
+              {integration.customConfig.envKey && !integration.customConfig.envKeyPresent && !integration.customConfig.hasHardcodedApiKey && (
+                <p className="text-xs text-amber-500">
+                  {t('ai.codex.customConfigMissingEnvKey').replace(
+                    '{envKey}',
+                    integration.customConfig.envKey,
+                  )}
+                </p>
               )}
-            </p>
+            </>
           )}
 
           {hasCompatibleProvider && integration?.state !== "connected_custom_config" && (
