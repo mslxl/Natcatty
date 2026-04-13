@@ -213,3 +213,28 @@ test("duplicate normalized slugs are downgraded to warnings and not injected exp
     },
   );
 });
+
+test("skills without a usable ASCII slug are downgraded to warnings", async () => {
+  await withUserSkills(
+    [
+      {
+        directoryName: "部署助手",
+        name: "部署助手",
+        description: "Deployment helper.",
+        body: "Body for 部署助手",
+      },
+    ],
+    async (electronApp) => {
+      const status = await scanUserSkills(electronApp);
+
+      assert.equal(status.readyCount, 0);
+      assert.equal(status.warningCount, 1);
+      assert.equal(status.skills[0]?.status, "warning");
+      assert.equal(status.skills[0]?.slug, "");
+      assert.match(
+        status.skills[0]?.warnings?.[0] || "",
+        /usable slug/i,
+      );
+    },
+  );
+});

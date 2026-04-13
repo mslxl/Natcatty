@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  getNextSelectedUserSkillSlugsMap,
   getReadyUserSkillOptions,
   pruneSelectedUserSkillSlugsMap,
 } from "./userSkillsState.ts";
@@ -59,5 +60,21 @@ test("pruneSelectedUserSkillSlugsMap removes stale slugs and empty scopes", () =
     {
       "terminal:1": ["alpha"],
     },
+  );
+});
+
+test("getNextSelectedUserSkillSlugsMap preserves selections when refresh fails", () => {
+  const selected = {
+    "terminal:1": ["alpha", "missing"],
+    "workspace:1": ["beta"],
+  };
+
+  assert.equal(
+    getNextSelectedUserSkillSlugsMap(selected, null),
+    selected,
+  );
+  assert.equal(
+    getNextSelectedUserSkillSlugsMap(selected, { ok: false }),
+    selected,
   );
 });

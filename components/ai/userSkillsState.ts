@@ -57,3 +57,17 @@ export function pruneSelectedUserSkillSlugsMap(
 
   return Object.fromEntries(nextEntries);
 }
+
+export function getNextSelectedUserSkillSlugsMap(
+  selectedByScope: Record<string, string[]>,
+  status: UserSkillsStatusLike | null | undefined,
+): Record<string, string[]> {
+  if (!status?.ok || !Array.isArray(status.skills)) {
+    return selectedByScope;
+  }
+
+  return pruneSelectedUserSkillSlugsMap(
+    selectedByScope,
+    getReadyUserSkillOptions(status),
+  );
+}

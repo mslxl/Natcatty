@@ -190,6 +190,7 @@ async function scanUserSkills(electronApp) {
       const { attributes, body, hasFrontmatter } = parseFrontmatter(content);
       const name = stripQuotes(attributes.name || "").trim();
       const description = stripQuotes(attributes.description || "").trim();
+      const usableSlug = slugifySkill(name || dirName);
 
       if (!hasFrontmatter) {
         baseItem.warnings.push("Missing YAML frontmatter.");
@@ -202,11 +203,15 @@ async function scanUserSkills(electronApp) {
       } else if (description.length > MAX_DESCRIPTION_LENGTH) {
         baseItem.warnings.push(`Description is too long (${description.length} chars > ${MAX_DESCRIPTION_LENGTH}).`);
       }
+      if (!usableSlug) {
+        baseItem.warnings.push("Skill name must include ASCII letters or digits to generate a usable slug.");
+      }
 
       if (baseItem.warnings.length > 0) {
         warnings.push(...baseItem.warnings.map((warning) => `${dirName}: ${warning}`));
         skills.push({
           ...baseItem,
+          slug: usableSlug,
           name: name || dirName,
           description,
         });
@@ -215,7 +220,7 @@ async function scanUserSkills(electronApp) {
 
       skills.push({
         ...baseItem,
-        slug: slugifySkill(name || dirName),
+        slug: usableSlug,
         name,
         description,
         status: "ready",

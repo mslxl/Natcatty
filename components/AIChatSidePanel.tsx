@@ -41,7 +41,7 @@ import ChatMessageList from './ai/ChatMessageList';
 import ConversationExport from './ai/ConversationExport';
 import {
   getReadyUserSkillOptions,
-  pruneSelectedUserSkillSlugsMap,
+  getNextSelectedUserSkillSlugsMap,
   type UserSkillOption,
 } from './ai/userSkillsState';
 import {
@@ -434,7 +434,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     }> } | null | undefined) => {
       const nextOptions = getReadyUserSkillOptions(result);
       setUserSkillOptions(nextOptions);
-      setSelectedUserSkillSlugsMap((prev) => pruneSelectedUserSkillSlugsMap(prev, nextOptions));
+      setSelectedUserSkillSlugsMap((prev) => getNextSelectedUserSkillSlugsMap(prev, result));
     };
 
     const bridge = getNetcattyBridge();
