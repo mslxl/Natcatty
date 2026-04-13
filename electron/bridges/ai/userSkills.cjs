@@ -6,8 +6,10 @@ const USER_SKILLS_README_NAME = "README.txt";
 const MAX_SKILL_BYTES = 24 * 1024;
 const MAX_DESCRIPTION_LENGTH = 280;
 const MAX_INDEX_SKILLS = 8;
+const MAX_EXPLICIT_SKILLS = 4;
 const MAX_MATCHED_SKILLS = 2;
 const MAX_MATCHED_SKILL_CHARS = 6000;
+const MAX_TOTAL_INJECTED_SKILL_CHARS = 12000;
 const USER_SKILLS_README_CONTENT = [
   "Netcatty user skills",
   "",
@@ -104,6 +106,21 @@ function parseFrontmatter(content) {
   };
 }
 
+function summarizeSkillSlugs(skillsOrSlugs, maxItems = 4) {
+  const values = (Array.isArray(skillsOrSlugs) ? skillsOrSlugs : [])
+    .map((entry) => {
+      if (typeof entry === "string") return entry;
+      const slug = typeof entry?.slug === "string" ? entry.slug : "";
+      return slug;
+    })
+    .filter(Boolean)
+    .map((slug) => `/${slug}`);
+  if (values.length <= maxItems) {
+    return values.join(", ");
+  }
+  return `${values.slice(0, maxItems).join(", ")}, and ${values.length - maxItems} more`;
+}
+
 function getUserSkillsDir(electronApp) {
   const userDataDir = electronApp?.getPath?.("userData");
   if (!userDataDir) {
@@ -171,7 +188,14 @@ async function scanUserSkills(electronApp) {
     }
 
     try {
-      const stat = await fsPromises.stat(skillPath);
+      const stat = await fsPromises.lstat(skillPath);
+      if (stat.isSymbolicLink()) {
+        baseItem.warnings.push("SKILL.md must not be a symbolic link.");
+        warnings.push(`${dirName}: SKILL.md must not be a symbolic link.`);
+        skills.push(baseItem);
+        continue;
+      }
+
       if (!stat.isFile()) {
         baseItem.warnings.push("SKILL.md must be a regular file.");
         warnings.push(`${dirName}: SKILL.md must be a regular file.`);
@@ -336,18 +360,32 @@ async function buildUserSkillsContext(electronApp, prompt, selectedSkillSlugs = 
     .map((skill) => `${skill.name}: ${skill.description}`)
     .join("; ");
 
-  const explicitSlugs = new Set(
-    (Array.isArray(selectedSkillSlugs) ? selectedSkillSlugs : [])
-      .map((slug) => slugifySkill(slug))
-      .filter(Boolean),
-  );
+  const orderedExplicitSlugs = [];
+  const seenExplicitSlugs = new Set();
+  for (const rawSlug of Array.isArray(selectedSkillSlugs) ? selectedSkillSlugs : []) {
+    const slug = slugifySkill(rawSlug);
+    if (!slug || seenExplicitSlugs.has(slug)) continue;
+    seenExplicitSlugs.add(slug);
+    orderedExplicitSlugs.push(slug);
+  }
 
-  const explicitSkills = readySkills.filter((skill) => explicitSlugs.has(skill.slug));
-  const resolvedExplicitSlugs = new Set(explicitSkills.map((skill) => skill.slug));
-  const unavailableExplicitSlugs = [...explicitSlugs].filter((slug) => !resolvedExplicitSlugs.has(slug));
+  const additionalExplicitCount = Math.max(orderedExplicitSlugs.length - MAX_EXPLICIT_SKILLS, 0);
+  const cappedExplicitSlugs = orderedExplicitSlugs.slice(0, MAX_EXPLICIT_SKILLS);
+  const explicitSlugSet = new Set(cappedExplicitSlugs);
+  const readySkillsBySlug = new Map(readySkills.map((skill) => [skill.slug, skill]));
+  const explicitSkills = [];
+  const unavailableExplicitSlugs = [];
+  for (const slug of cappedExplicitSlugs) {
+    const skill = readySkillsBySlug.get(slug);
+    if (skill) {
+      explicitSkills.push(skill);
+    } else {
+      unavailableExplicitSlugs.push(slug);
+    }
+  }
 
   const matchedSkills = readySkills
-    .filter((skill) => !explicitSlugs.has(skill.slug))
+    .filter((skill) => !explicitSlugSet.has(skill.slug))
     .map((skill) => ({ skill, score: scoreSkillMatch(trimmedPrompt, skill) }))
     .filter((entry) => entry.score >= 2)
     .sort((left, right) => right.score - left.score)
@@ -362,17 +400,88 @@ async function buildUserSkillsContext(electronApp, prompt, selectedSkillSlugs = 
     "Use a user-managed skill only when it clearly matches the current request.",
   ];
 
+  if (additionalExplicitCount > 0) {
+    parts.push(
+      `The user selected ${additionalExplicitCount} additional Netcatty user skills that were omitted to stay within the prompt budget.`,
+    );
+  }
+
   if (unavailableExplicitSlugs.length > 0) {
     parts.push(
-      `The user explicitly selected these Netcatty user skills for this request, but their content is currently unavailable: ${unavailableExplicitSlugs.map((slug) => `/${slug}`).join(", ")}.`,
+      `The user explicitly selected these Netcatty user skills for this request, but their content is currently unavailable: ${summarizeSkillSlugs(unavailableExplicitSlugs)}.`,
     );
   }
 
   if (finalSkills.length > 0) {
+    const includedSkillSections = [];
+    const omittedSkills = [];
+    const truncatedSkills = [];
+    let remainingSkillChars = MAX_TOTAL_INJECTED_SKILL_CHARS;
+    let budgetStopIndex = finalSkills.length;
+
+    for (let index = 0; index < finalSkills.length; index += 1) {
+      const skill = finalSkills[index];
+      const heading = `### ${skill.name}\n`;
+      const maxBodyChars = Math.min(
+        MAX_MATCHED_SKILL_CHARS,
+        Math.max(remainingSkillChars - heading.length, 0),
+      );
+      if (maxBodyChars <= 0) {
+        omittedSkills.push(skill);
+        continue;
+      }
+
+      const rawBody = String(skill.body || "").trim();
+      if (!rawBody) {
+        omittedSkills.push(skill);
+        continue;
+      }
+
+      if (rawBody.length > maxBodyChars && includedSkillSections.length > 0) {
+        omittedSkills.push(skill);
+        budgetStopIndex = index;
+        continue;
+      }
+
+      const body = rawBody.slice(0, maxBodyChars);
+      if (!body) {
+        omittedSkills.push(skill);
+        continue;
+      }
+
+      includedSkillSections.push(`${heading}${body}`);
+      remainingSkillChars -= heading.length + body.length;
+
+      if (body.length < rawBody.length) {
+        truncatedSkills.push(skill);
+        budgetStopIndex = index + 1;
+        break;
+      }
+    }
+
     parts.push("Matched user-managed skills for this request:");
-    for (const skill of finalSkills) {
-      const body = String(skill.body || "").trim().slice(0, MAX_MATCHED_SKILL_CHARS);
-      parts.push(`### ${skill.name}\n${body}`);
+
+    if (includedSkillSections.length > 0) {
+      parts.push(...includedSkillSections);
+    }
+
+    const omittedAfterIncluded = finalSkills.slice(budgetStopIndex);
+    for (const skill of omittedAfterIncluded) {
+      if (!omittedSkills.includes(skill) && !truncatedSkills.includes(skill)) {
+        omittedSkills.push(skill);
+      }
+    }
+
+    if (truncatedSkills.length > 0) {
+      parts.push(
+        `Some matched user-managed skill content was truncated to stay within the prompt budget: ${summarizeSkillSlugs(truncatedSkills)}.`,
+      );
+    }
+
+    if (omittedSkills.length > 0) {
+      parts.push(
+        `Additional matched user-managed skills were omitted to stay within the prompt budget: ${summarizeSkillSlugs(omittedSkills)}.`,
+      );
     }
   }
 
@@ -386,7 +495,8 @@ function toPublicUserSkillsStatus(status) {
   if (!status || typeof status !== "object") {
     return status;
   }
-  const { _readySkills, ...publicStatus } = status;
+  const publicStatus = { ...status };
+  delete publicStatus._readySkills;
   return publicStatus;
 }
 

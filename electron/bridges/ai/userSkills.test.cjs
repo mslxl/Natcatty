@@ -179,6 +179,51 @@ test("unreadable SKILL.md becomes a warning instead of aborting the entire scan"
   );
 });
 
+test("symlinked SKILL.md is downgraded to a warning and never injected", async () => {
+  await withUserSkills(
+    [
+      {
+        directoryName: "Working Skill",
+        name: "Working Skill",
+        description: "A valid skill.",
+        body: "Working body",
+      },
+    ],
+    async (electronApp) => {
+      const skillsDir = path.join(electronApp.getPath("userData"), "Skills");
+      const linkedDir = path.join(skillsDir, "Linked Skill");
+      const externalTarget = path.join(skillsDir, "..", "outside-secret.md");
+      await fs.mkdir(linkedDir, { recursive: true });
+      await fs.writeFile(
+        externalTarget,
+        [
+          "---",
+          "name: Linked Skill",
+          "description: Linked helper.",
+          "---",
+          "",
+          "TOPSECRET",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+      await fs.symlink(externalTarget, path.join(linkedDir, "SKILL.md"));
+
+      const status = await scanUserSkills(electronApp);
+      const result = await buildUserSkillsContext(electronApp, "plain prompt", ["linked-skill"]);
+      const linkedSkill = status.skills.find((skill) => skill.directoryName === "Linked Skill");
+
+      assert.equal(status.readyCount, 1);
+      assert.equal(status.warningCount, 1);
+      assert.equal(linkedSkill?.status, "warning");
+      assert.match(linkedSkill?.warnings?.[0] || "", /symbolic link/i);
+      assert.equal(result.context.includes("TOPSECRET"), false);
+      assert.match(result.context, /linked-skill/i);
+      assert.match(result.context, /unavailable/i);
+    },
+  );
+});
+
 test("duplicate normalized slugs are downgraded to warnings and not injected explicitly", async () => {
   await withUserSkills(
     [
@@ -235,6 +280,57 @@ test("skills without a usable ASCII slug are downgraded to warnings", async () =
         status.skills[0]?.warnings?.[0] || "",
         /usable slug/i,
       );
+    },
+  );
+});
+
+test("explicit selections are capped to stay within the prompt budget", async () => {
+  await withUserSkills(
+    [
+      {
+        directoryName: "Skill One",
+        name: "Skill One",
+        description: "Helper one.",
+        body: "BODY_ONE_" + "a".repeat(3500),
+      },
+      {
+        directoryName: "Skill Two",
+        name: "Skill Two",
+        description: "Helper two.",
+        body: "BODY_TWO_" + "b".repeat(3500),
+      },
+      {
+        directoryName: "Skill Three",
+        name: "Skill Three",
+        description: "Helper three.",
+        body: "BODY_THREE_" + "c".repeat(3500),
+      },
+      {
+        directoryName: "Skill Four",
+        name: "Skill Four",
+        description: "Helper four.",
+        body: "BODY_FOUR_" + "d".repeat(3500),
+      },
+      {
+        directoryName: "Skill Five",
+        name: "Skill Five",
+        description: "Helper five.",
+        body: "BODY_FIVE_" + "e".repeat(3500),
+      },
+    ],
+    async (electronApp) => {
+      const result = await buildUserSkillsContext(
+        electronApp,
+        "plain prompt",
+        ["skill-one", "skill-two", "skill-three", "skill-four", "skill-five"],
+      );
+
+      assert.equal(result.context.includes("BODY_ONE_"), true);
+      assert.equal(result.context.includes("BODY_TWO_"), true);
+      assert.equal(result.context.includes("BODY_THREE_"), true);
+      assert.equal(result.context.includes("BODY_FOUR_"), false);
+      assert.equal(result.context.includes("BODY_FIVE_"), false);
+      assert.match(result.context, /prompt budget|additional selected/i);
     },
   );
 });
