@@ -1805,6 +1805,17 @@ const zhCN: Messages = {
   'ai.toolAccess.description': '选择外部 ACP Agent 访问 Netcatty 会话的方式。MCP 会暴露内置服务器，Skills + CLI 会引导 Agent 读取本地 Skill 并调用 Netcatty CLI。',
   'ai.toolAccess.mode.mcp': 'MCP',
   'ai.toolAccess.mode.skills': 'Skills + CLI',
+  'ai.userSkills.title': '用户 Skills',
+  'ai.userSkills.description': '打开 Netcatty 的 Skills 文件夹以添加你自己的技能目录。Netcatty 会自动扫描这些 skills，默认只注入轻量索引，只有在请求明显命中某个 skill 时才展开正文。',
+  'ai.userSkills.openFolder': '打开 Skills 文件夹',
+  'ai.userSkills.reload': '重新加载 Skills',
+  'ai.userSkills.location': '位置',
+  'ai.userSkills.loading': '正在扫描用户 skills...',
+  'ai.userSkills.summary': '已就绪 {ready} 个，警告 {warnings} 个',
+  'ai.userSkills.empty': '暂未发现用户 skills。打开文件夹后可添加包含 SKILL.md 的技能目录。',
+  'ai.userSkills.unavailable': '当前环境不支持用户 skills。',
+  'ai.userSkills.status.ready': '正常',
+  'ai.userSkills.status.warning': '警告',
 
   // AI Chat
   'ai.chat.noProvider': '尚未配置 AI 提供商。请前往 **设置 → AI → 提供商** 添加并启用一个提供商。',
@@ -1859,6 +1870,7 @@ const zhCN: Messages = {
   'ai.chat.menuFiles': '文件',
   'ai.chat.menuImage': '图片',
   'ai.chat.menuMentionHost': '提及主机',
+  'ai.chat.menuUserSkills': '用户 Skills',
 
   // AI Error
   'ai.codex.bridgeError': 'Codex 主进程处理器尚未加载。请完全重启 Netcatty 或重启 Electron 开发进程，然后重试。',

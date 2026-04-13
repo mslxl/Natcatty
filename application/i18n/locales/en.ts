@@ -1797,6 +1797,17 @@ const en: Messages = {
   'ai.toolAccess.description': 'Choose how external ACP agents access Netcatty sessions. MCP exposes the built-in server, while Skills + CLI points agents to the local Netcatty skill and CLI commands.',
   'ai.toolAccess.mode.mcp': 'MCP',
   'ai.toolAccess.mode.skills': 'Skills + CLI',
+  'ai.userSkills.title': 'User Skills',
+  'ai.userSkills.description': 'Open the Netcatty skills folder to add your own skill directories. Netcatty scans these skills automatically and injects only lightweight indexes unless a skill clearly matches the current request.',
+  'ai.userSkills.openFolder': 'Open Skills Folder',
+  'ai.userSkills.reload': 'Reload Skills',
+  'ai.userSkills.location': 'Location',
+  'ai.userSkills.loading': 'Scanning user skills...',
+  'ai.userSkills.summary': '{ready} ready, {warnings} warnings',
+  'ai.userSkills.empty': 'No user skills found yet. Open the folder to add skill directories with a SKILL.md file.',
+  'ai.userSkills.unavailable': 'User skills are unavailable in this environment.',
+  'ai.userSkills.status.ready': 'Ready',
+  'ai.userSkills.status.warning': 'Warning',
 
   // AI Chat
   'ai.chat.noProvider': 'No AI provider is configured. Go to **Settings → AI → Providers** to add and enable a provider.',
@@ -1851,6 +1862,7 @@ const en: Messages = {
   'ai.chat.menuFiles': 'Files',
   'ai.chat.menuImage': 'Image',
   'ai.chat.menuMentionHost': 'Mention Host',
+  'ai.chat.menuUserSkills': 'User Skills',
 
   // AI Error
   'ai.codex.bridgeError': 'Codex main-process handlers are not loaded yet. Fully restart Netcatty, or restart the Electron dev process, then try again.',

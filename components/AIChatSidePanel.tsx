@@ -41,6 +41,11 @@ import ChatInput from './ai/ChatInput';
 import ChatMessageList from './ai/ChatMessageList';
 import ConversationExport from './ai/ConversationExport';
 import {
+  getReadyUserSkillOptions,
+  getNextSelectedUserSkillSlugsMap,
+  type UserSkillOption,
+} from './ai/userSkillsState';
+import {
   useAIChatStreaming,
   getNetcattyBridge,
   type DefaultTargetSessionHint,
@@ -147,11 +152,11 @@ function generateId(): string {
 }
 
 function buildAcpHistoryMessages(messages: ChatMessage[]): Array<{ role: 'user' | 'assistant'; content: string }> {
-  return messages.flatMap((message) => {
+  return messages.flatMap((message): Array<{ role: 'user' | 'assistant'; content: string }> => {
     if (message.role === 'system') return [];
 
     if (message.role === 'user') {
-      return message.content ? [{ role: 'user' as const, content: message.content }] : [];
+      return message.content ? [{ role: 'user', content: message.content }] : [];
     }
 
     if (message.role === 'assistant') {
@@ -161,12 +166,12 @@ function buildAcpHistoryMessages(messages: ChatMessage[]): Array<{ role: 'user' 
         parts.push(...message.toolCalls.map((tc) => `Tool call: ${tc.name}(${JSON.stringify(tc.arguments ?? {})})`));
       }
       if (!parts.length) return [];
-      return [{ role: 'assistant' as const, content: parts.join('\n\n') }];
+      return [{ role: 'assistant', content: parts.join('\n\n') }];
     }
 
     if (message.role === 'tool' && message.toolResults?.length) {
       return message.toolResults.map((tr) => ({
-        role: 'assistant' as const,
+        role: 'assistant',
         content: `Tool result:\n${tr.content}`,
       }));
     }
@@ -249,6 +254,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   const [showHistory, setShowHistory] = useState(false);
   const [currentAgentId, setCurrentAgentId] = useState(defaultAgentId);
   const [runtimeAgentModelPresets, setRuntimeAgentModelPresets] = useState<Record<string, ReturnType<typeof getAgentModelPresets>>>({});
+  const [userSkillOptions, setUserSkillOptions] = useState<UserSkillOption[]>([]);
+  const [selectedUserSkillSlugsMap, setSelectedUserSkillSlugsMap] = useState<Record<string, string[]>>({});
 
   const { files, addFiles, removeFile, clearFiles } = useFileUpload();
   const { openSettingsWindow } = useWindowControls();
@@ -415,6 +422,43 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     }
   }, [terminalSessions, scopeKey, activeSessionId]);
 
+  useEffect(() => {
+    if (!isVisible) return;
+
+    let cancelled = false;
+    const applyUserSkillsStatus = (result: { ok: boolean; skills?: Array<{
+      id: string;
+      slug: string;
+      name: string;
+      description: string;
+      status: 'ready' | 'warning';
+    }> } | null | undefined) => {
+      const nextOptions = getReadyUserSkillOptions(result);
+      setUserSkillOptions(nextOptions);
+      setSelectedUserSkillSlugsMap((prev) => getNextSelectedUserSkillSlugsMap(prev, result));
+    };
+
+    const bridge = getNetcattyBridge();
+    if (!bridge?.aiUserSkillsGetStatus) {
+      applyUserSkillsStatus(null);
+      return;
+    }
+
+    void bridge.aiUserSkillsGetStatus()
+      .then((result) => {
+        if (cancelled) return;
+        applyUserSkillsStatus(result);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        applyUserSkillsStatus(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSessionIdForScope, isVisible, toolIntegrationMode, scopeKey]);
+
   // Sync provider configs to main process so it can decrypt API keys server-side.
   // Keys stay encrypted in transit; main process decrypts only when making HTTP requests.
   useEffect(() => {
@@ -459,6 +503,18 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   );
 
   const messages = activeSession?.messages ?? [];
+  const selectedUserSkillSlugs = useMemo(
+    () => selectedUserSkillSlugsMap[scopeKey] ?? [],
+    [selectedUserSkillSlugsMap, scopeKey],
+  );
+  const selectedUserSkills = useMemo(
+    () =>
+      selectedUserSkillSlugs.map((slug) => {
+        const option = userSkillOptions.find((skill) => skill.slug === slug);
+        return option ?? { id: slug, slug, name: slug, description: '' };
+      }),
+    [selectedUserSkillSlugs, userSkillOptions],
+  );
 
   // ── Export hook ──
   const { handleExport } = useConversationExport(activeSession);
@@ -613,6 +669,12 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     setActiveSessionId(session.id);
     setShowHistory(false);
     setInputValue('');
+    setSelectedUserSkillSlugsMap((prev) => {
+      if (!(scopeKey in prev)) return prev;
+      const next = { ...prev };
+      delete next[scopeKey];
+      return next;
+    });
   }, [
     scopeType,
     scopeTargetId,
@@ -621,6 +683,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     createSession,
     setActiveSessionId,
     setInputValue,
+    scopeKey,
   ]);
 
   const handleOpenSettings = useCallback(() => {
@@ -663,6 +726,41 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     };
   }, []);
 
+  const addSelectedUserSkill = useCallback((slug: string) => {
+    const normalizedSlug = String(slug || '').trim().toLowerCase();
+    if (!normalizedSlug) return;
+    setSelectedUserSkillSlugsMap((prev) => {
+      const current = prev[scopeKey] ?? [];
+      if (current.includes(normalizedSlug)) return prev;
+      return { ...prev, [scopeKey]: [...current, normalizedSlug] };
+    });
+  }, [scopeKey]);
+
+  const removeSelectedUserSkill = useCallback((slug: string) => {
+    const normalizedSlug = String(slug || '').trim().toLowerCase();
+    if (!normalizedSlug) return;
+    setSelectedUserSkillSlugsMap((prev) => {
+      const current = prev[scopeKey] ?? [];
+      const nextSkills = current.filter((entry) => entry !== normalizedSlug);
+      if (nextSkills.length === current.length) return prev;
+      if (nextSkills.length === 0) {
+        const next = { ...prev };
+        delete next[scopeKey];
+        return next;
+      }
+      return { ...prev, [scopeKey]: nextSkills };
+    });
+  }, [scopeKey]);
+
+  const clearSelectedUserSkills = useCallback(() => {
+    setSelectedUserSkillSlugsMap((prev) => {
+      if (!(scopeKey in prev)) return prev;
+      const next = { ...prev };
+      delete next[scopeKey];
+      return next;
+    });
+  }, [scopeKey]);
+
   /** Ensure a session exists for the current scope and return its ID. */
   const ensureSession = useCallback((): string => {
     if (activeSession && sessionsRef.current.some((session) => session.id === activeSession.id)) {
@@ -702,6 +800,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     const trimmed = inputValueRef.current.trim();
     const sendScopeKey = scopeKey;
     if (!trimmed || isStreaming) return;
+    const selectedSkillSlugs = selectedUserSkillSlugs;
 
     const isExternalAgent = currentAgentId !== 'catty';
 
@@ -728,6 +827,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     });
     setInputValue('');
     clearFiles();
+    clearSelectedUserSkills();
     setStreamingForScope(sessionId, true);
 
     // Create assistant message placeholder with a tracked ID
@@ -761,6 +861,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           providers,
           selectedAgentModel,
           toolIntegrationMode,
+          selectedUserSkillSlugs: selectedSkillSlugs,
         });
       } catch (err) {
         reportStreamError(sessionId, abortController.signal, err);
@@ -788,6 +889,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         webSearchConfig,
         getExecutorContext: () => buildExecutorContextForScope(toolScope),
         autoTitleSession,
+        selectedUserSkillSlugs: selectedSkillSlugs,
       }, attachments.length > 0 ? attachments : undefined);
     }
   }, [
@@ -799,6 +901,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     abortControllersRef, terminalSessions, defaultTargetSession, providers, selectedAgentModel, updateSessionExternalSessionId,
     scopeType, scopeTargetId, scopeLabel, globalPermissionMode, commandBlocklist, webSearchConfig, buildExecutorContextForScope,
     toolIntegrationMode,
+    selectedUserSkillSlugs, clearSelectedUserSkills,
   ]);
 
   const handleStop = useCallback(() => {
@@ -961,6 +1064,10 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
             onAddFiles={addFiles}
             onRemoveFile={removeFile}
             hosts={terminalSessions.map(s => ({ sessionId: s.sessionId, hostname: s.hostname, label: s.label, connected: s.connected }))}
+            selectedUserSkills={selectedUserSkills}
+            userSkills={userSkillOptions}
+            onAddUserSkill={addSelectedUserSkill}
+            onRemoveUserSkill={removeSelectedUserSkill}
             permissionMode={globalPermissionMode}
             onPermissionModeChange={setGlobalPermissionMode}
           />

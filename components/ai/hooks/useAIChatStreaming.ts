@@ -122,6 +122,17 @@ export interface PanelBridge extends NetcattyBridge {
     chatSessionId?: string,
   ) => Promise<{ ok: boolean; models?: Array<{ id: string; name: string; description?: string }>; currentModelId?: string | null; error?: string }>;
   aiAcpCleanup?: (chatSessionId: string) => Promise<{ ok: boolean }>;
+  aiUserSkillsGetStatus?: () => Promise<{
+    ok: boolean;
+    skills?: Array<{
+      id: string;
+      slug: string;
+      name: string;
+      description: string;
+      status: 'ready' | 'warning';
+    }>;
+  }>;
+  aiUserSkillsBuildContext?: (prompt: string, selectedSkillSlugs?: string[]) => Promise<{ ok: boolean; context?: string; error?: string }>;
   [key: string]: ((...args: unknown[]) => unknown) | undefined;
 }
 
@@ -154,6 +165,45 @@ export function getNetcattyBridge(): PanelBridge | undefined {
 
 function generateId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+const USER_SKILLS_CONTEXT_TIMEOUT_MS = 500;
+
+interface UserSkillsContextResult {
+  ok: boolean;
+  context?: string;
+  error?: string;
+}
+
+function buildExplicitUserSkillsFallback(selectedUserSkillSlugs?: string[]): string {
+  if (!selectedUserSkillSlugs?.length) return '';
+  return `The user explicitly selected these Netcatty user skills for this request: ${selectedUserSkillSlugs.map((slug) => `/${slug}`).join(', ')}. Honor those selections even if their expanded skill content is unavailable.`;
+}
+
+async function resolveUserSkillsContext(
+  bridge: PanelBridge | undefined,
+  prompt: string,
+  selectedUserSkillSlugs?: string[],
+): Promise<string> {
+  if (!bridge?.aiUserSkillsBuildContext) {
+    return buildExplicitUserSkillsFallback(selectedUserSkillSlugs);
+  }
+
+  const buildContextPromise: Promise<UserSkillsContextResult> = bridge
+    .aiUserSkillsBuildContext(prompt, selectedUserSkillSlugs)
+    .catch(() => ({ ok: false, context: '' }));
+
+  const hasExplicitSelections = (selectedUserSkillSlugs?.length ?? 0) > 0;
+  const result = hasExplicitSelections
+    ? await buildContextPromise
+    : await Promise.race([
+        buildContextPromise,
+        new Promise<UserSkillsContextResult>((resolve) =>
+          setTimeout(() => resolve({ ok: false, context: '' }), USER_SKILLS_CONTEXT_TIMEOUT_MS),
+        ),
+      ]);
+
+  return result.context || buildExplicitUserSkillsFallback(selectedUserSkillSlugs);
 }
 
 const sharedStreamingSessionIds = new Set<string>();
@@ -240,6 +290,7 @@ export interface SendToCattyContext {
   webSearchConfig?: WebSearchConfig | null;
   getExecutorContext?: () => ExecutorContext;
   autoTitleSession: (sessionId: string, text: string) => void;
+  selectedUserSkillSlugs?: string[];
 }
 
 /** Context values needed by sendToExternalAgent that change frequently. */
@@ -252,6 +303,7 @@ export interface SendToExternalContext {
   providers: ProviderConfig[];
   selectedAgentModel?: string;
   toolIntegrationMode: AIToolIntegrationMode;
+  selectedUserSkillSlugs?: string[];
 }
 
 // -------------------------------------------------------------------
@@ -543,6 +595,11 @@ export function useAIChatStreaming({
     context: SendToExternalContext,
   ) => {
     const bridge = getNetcattyBridge();
+    const userSkillsContext = await resolveUserSkillsContext(
+      bridge,
+      trimmed,
+      context.selectedUserSkillSlugs,
+    );
 
     if (agentConfig.acpCommand && bridge) {
       const requestId = `acp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -655,12 +712,13 @@ export function useAIChatStreaming({
         attachedImages.length > 0 ? attachedImages : undefined,
         context.toolIntegrationMode,
         context.defaultTargetSession,
+        userSkillsContext,
       );
     } else {
       // Fallback: spawn as raw process
       await runExternalAgentTurn(
         agentConfig,
-        trimmed,
+        userSkillsContext ? `${userSkillsContext}\n\nUser request:\n${trimmed}` : trimmed,
         {
           onTextDelta: (text: string) => {
             updateLastMessage(sessionId, msg => ({ ...msg, content: msg.content + text }));
@@ -694,6 +752,11 @@ export function useAIChatStreaming({
     attachments?: ChatMessageAttachment[],
   ) => {
     const bridge = getNetcattyBridge();
+    const userSkillsContext = await resolveUserSkillsContext(
+      bridge,
+      trimmed,
+      context.selectedUserSkillSlugs,
+    );
     const getExecutorContext = context.getExecutorContext ?? (() => ({
       sessions: context.terminalSessions,
       workspaceId: context.scopeType === 'workspace' ? context.scopeTargetId : undefined,
@@ -721,6 +784,7 @@ export function useAIChatStreaming({
       })),
       permissionMode: context.globalPermissionMode,
       webSearchEnabled: isWebSearchReady(context.webSearchConfig),
+      userSkillsContext,
     });
 
     // Guard: activeProvider must exist for Catty agent path

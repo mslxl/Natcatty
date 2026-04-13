@@ -50,6 +50,28 @@ export interface AgentPathInfo {
   available: boolean;
 }
 
+export interface UserSkillStatusItem {
+  id: string;
+  slug: string;
+  directoryName: string;
+  directoryPath: string;
+  skillPath: string;
+  name: string;
+  description: string;
+  status: "ready" | "warning";
+  warnings: string[];
+}
+
+export interface UserSkillsStatusResult {
+  ok: boolean;
+  directoryPath?: string;
+  readyCount?: number;
+  warningCount?: number;
+  skills?: UserSkillStatusItem[];
+  warnings?: string[];
+  error?: string;
+}
+
 export interface ProviderFormState {
   name: string;
   apiKey: string;
@@ -76,6 +98,8 @@ export interface NetcattyAiBridge {
   aiCodexCancelLogin?: (sessionId: string) => Promise<{ ok: boolean; found?: boolean; session?: CodexLoginSession; error?: string }>;
   aiCodexLogout?: () => Promise<{ ok: boolean; state?: CodexIntegrationState; isConnected?: boolean; rawOutput?: string; logoutOutput?: string; error?: string }>;
   aiResolveCli?: (params: { command: string; customPath?: string }) => Promise<AgentPathInfo>;
+  aiUserSkillsGetStatus?: () => Promise<UserSkillsStatusResult>;
+  aiUserSkillsOpenFolder?: () => Promise<UserSkillsStatusResult>;
   openExternal?: (url: string) => Promise<void>;
 }
 
