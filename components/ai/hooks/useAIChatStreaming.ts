@@ -30,7 +30,6 @@ import { createCattyTools } from '../../../infrastructure/ai/sdk/tools';
 import type { NetcattyBridge, ExecutorContext } from '../../../infrastructure/ai/cattyAgent/executor';
 import { runExternalAgentTurn } from '../../../infrastructure/ai/externalAgentAdapter';
 import { runAcpAgentTurn } from '../../../infrastructure/ai/acpAgentAdapter';
-import { findManagedAgentProvider, matchesManagedAgentConfig } from '../../../infrastructure/ai/managedAgents';
 import { classifyError } from '../../../infrastructure/ai/errorClassifier';
 
 // -------------------------------------------------------------------
@@ -609,17 +608,6 @@ export function useAIChatStreaming({
         await bridge.aiMcpUpdateSessions(context.terminalSessions, sessionId);
       }
 
-      // Pass only the provider ID — the main process resolves and decrypts the API key itself,
-      // avoiding plaintext key transit across the IPC boundary.
-      // Codex agent auth is owned entirely by ~/.codex/auth.json or ~/.codex/config.toml
-      // and must not be affected by netcatty's provider list (see issue #705).
-      const agentProviderId = (() => {
-        if (matchesManagedAgentConfig(agentConfig, 'claude')) {
-          return findManagedAgentProvider(context.providers, 'claude')?.id;
-        }
-        return undefined;
-      })();
-
       // Mutable flag: set after tool-result, cleared when new assistant msg is created
       let needsNewAssistantMsg = false;
       const maybeCreateAssistantMsg = () => {
@@ -701,7 +689,10 @@ export function useAIChatStreaming({
           onDone: () => {},
         },
         abortController.signal,
-        agentProviderId,
+        // Managed ACP agents (codex, claude) must resolve auth from their own
+        // CLI config/login state, so we deliberately pass no providerId here.
+        // See issue #705 for Codex; same reasoning for Claude.
+        undefined,
         context.selectedAgentModel,
         context.existingSessionId,
         context.historyMessages,
