@@ -601,7 +601,20 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       undefined,
       `models_${currentAgentId}`,
     ).then((result) => {
-      if (cancelled || !result?.ok || !Array.isArray(result.models) || result.models.length === 0) return;
+      if (cancelled || !result?.ok || !Array.isArray(result.models)) return;
+      // If the probe came back empty, drop any stale cached catalog for this
+      // agent so `agentModelPresets` falls back to the hardcoded presets via
+      // the `?? getAgentModelPresets(...)` branch. Without this, a previously
+      // successful probe would keep surfacing models the backend no longer
+      // advertises.
+      if (result.models.length === 0) {
+        setRuntimeAgentModelPresets((prev) => {
+          if (!(currentAgentId in prev)) return prev;
+          const { [currentAgentId]: _removed, ...rest } = prev;
+          return rest;
+        });
+        return;
+      }
       const knownModelIds = new Set(result.models.map((model) => model.id));
       setRuntimeAgentModelPresets((prev) => ({
         ...prev,
