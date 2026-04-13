@@ -2229,12 +2229,9 @@ function registerHandlers(ipcMain) {
       if (isCodexAgent && resolvedProvider?.provider?.baseURL) {
         agentEnv.OPENAI_BASE_URL = resolvedProvider.provider.baseURL;
       }
-      if (isClaudeAgent && apiKey) {
-        agentEnv.ANTHROPIC_API_KEY = apiKey;
-      }
-      if (isClaudeAgent && resolvedProvider?.provider?.baseURL) {
-        agentEnv.ANTHROPIC_BASE_URL = resolvedProvider.provider.baseURL;
-      }
+      // Claude agent auth is owned entirely by its CLI config/login state
+      // (`claude auth login`, ~/.claude settings, or ANTHROPIC_* in the user's
+      // shell env). netcatty's provider list must not override it.
 
       if (isCopilotAgent) {
         copilotConfigInfo = prepareCopilotHome(shellEnv, [], chatSessionId || `models_${Date.now()}`);
@@ -2416,7 +2413,7 @@ function registerHandlers(ipcMain) {
         }
       }
 
-      const authFingerprint = isCodexAgent || isClaudeAgent
+      const authFingerprint = isCodexAgent
         ? getAcpProviderAuthFingerprint(apiKey, resolvedProvider?.provider, codexCustomConfig)
         : null;
       const mcpSnapshot = isCodexAgent
@@ -2491,12 +2488,7 @@ function registerHandlers(ipcMain) {
         if (isCodexAgent && resolvedProvider?.provider?.baseURL) {
           agentEnv.OPENAI_BASE_URL = resolvedProvider.provider.baseURL;
         }
-        if (isClaudeAgent && apiKey) {
-          agentEnv.ANTHROPIC_API_KEY = apiKey;
-        }
-        if (isClaudeAgent && resolvedProvider?.provider?.baseURL) {
-          agentEnv.ANTHROPIC_BASE_URL = resolvedProvider.provider.baseURL;
-        }
+        // See comment above: Claude auth is CLI-owned, not provider-driven.
         let copilotConfigInfo = null;
         if (isCopilotAgent) {
           copilotConfigInfo = prepareCopilotHome(shellEnv, mcpSnapshot.mcpServers, chatSessionId);
@@ -2618,12 +2610,7 @@ function registerHandlers(ipcMain) {
             if (isCodexAgent && resolvedProvider?.provider?.baseURL) {
               fallbackEnv.OPENAI_BASE_URL = resolvedProvider.provider.baseURL;
             }
-            if (isClaudeAgent && apiKey) {
-              fallbackEnv.ANTHROPIC_API_KEY = apiKey;
-            }
-            if (isClaudeAgent && resolvedProvider?.provider?.baseURL) {
-              fallbackEnv.ANTHROPIC_BASE_URL = resolvedProvider.provider.baseURL;
-            }
+            // See comment above: Claude auth is CLI-owned, not provider-driven.
             if (isCopilotAgent) {
               const fallbackCopilotConfig = prepareCopilotHome(shellEnv, mcpSnapshot.mcpServers, chatSessionId);
               fallbackEnv.COPILOT_HOME = fallbackCopilotConfig.copilotHome;

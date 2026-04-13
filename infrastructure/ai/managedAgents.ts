@@ -1,4 +1,4 @@
-import type { DiscoveredAgent, ExternalAgentConfig, ProviderConfig } from './types';
+import type { DiscoveredAgent, ExternalAgentConfig } from './types';
 
 export type ManagedAgentKey = 'codex' | 'claude' | 'copilot';
 
@@ -68,19 +68,3 @@ export function getManagedAgentStoredPath(
   return fallbackAgent?.command ?? null;
 }
 
-// Codex agent deliberately excluded: its auth is owned by ~/.codex/auth.json
-// or ~/.codex/config.toml and must not be affected by netcatty's provider list
-// (see issue #705).
-export function findManagedAgentProvider(
-  providers: ProviderConfig[],
-  agentKey: ManagedAgentKey,
-): ProviderConfig | undefined {
-  if (agentKey === 'claude') {
-    return (
-      providers.find((provider) => provider.providerId === 'anthropic' && provider.enabled && !!provider.apiKey)
-      ?? providers.find((provider) => provider.providerId === 'custom' && provider.enabled && !!provider.apiKey && !!provider.baseURL)
-    );
-  }
-
-  return undefined;
-}
