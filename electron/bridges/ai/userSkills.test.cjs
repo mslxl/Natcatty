@@ -110,3 +110,81 @@ test("initializing an empty skills directory creates only an instructions file",
     assert.deepEqual(entries.sort(), ["README.txt"]);
   });
 });
+
+test("unreadable SKILL.md becomes a warning instead of aborting the entire scan", async () => {
+  await withUserSkills(
+    [
+      {
+        directoryName: "Working Skill",
+        name: "Working Skill",
+        description: "A valid skill.",
+        body: "Working body",
+      },
+      {
+        directoryName: "Broken Skill",
+        name: "Broken Skill",
+        description: "This file will be unreadable.",
+        body: "Broken body",
+      },
+    ],
+    async (electronApp) => {
+      const unreadablePath = path.join(
+        electronApp.getPath("userData"),
+        "Skills",
+        "Broken Skill",
+        "SKILL.md",
+      );
+
+      await fs.chmod(unreadablePath, 0o000);
+
+      try {
+        const status = await scanUserSkills(electronApp);
+        const workingSkill = status.skills.find((skill) => skill.name === "Working Skill");
+        const brokenSkill = status.skills.find((skill) => skill.directoryName === "Broken Skill");
+
+        assert.equal(status.readyCount, 1);
+        assert.equal(status.warningCount, 1);
+        assert.equal(workingSkill?.status, "ready");
+        assert.equal(brokenSkill?.status, "warning");
+        assert.match(brokenSkill?.warnings?.[0] || "", /Failed to read SKILL\.md/i);
+      } finally {
+        await fs.chmod(unreadablePath, 0o644);
+      }
+    },
+  );
+});
+
+test("duplicate normalized slugs are downgraded to warnings and not injected explicitly", async () => {
+  await withUserSkills(
+    [
+      {
+        directoryName: "Foo Bar",
+        name: "Foo Bar",
+        description: "First skill.",
+        body: "Body for Foo Bar",
+      },
+      {
+        directoryName: "foo-bar",
+        name: "foo-bar",
+        description: "Second skill.",
+        body: "Body for foo-bar",
+      },
+    ],
+    async (electronApp) => {
+      const status = await scanUserSkills(electronApp);
+      const result = await buildUserSkillsContext(electronApp, "plain prompt", ["foo-bar"]);
+
+      assert.equal(status.readyCount, 0);
+      assert.equal(status.warningCount, 2);
+      assert.equal(status.skills.every((skill) => skill.status === "warning"), true);
+      assert.equal(
+        status.skills.every((skill) =>
+          skill.warnings.some((warning) => warning.includes('Duplicate skill slug "foo-bar"')),
+        ),
+        true,
+      );
+      assert.equal(result.context.includes("Body for Foo Bar"), false);
+      assert.equal(result.context.includes("Body for foo-bar"), false);
+    },
+  );
+});

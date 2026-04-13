@@ -65,6 +65,14 @@ function escapeRegExp(value) {
   return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function formatSkillReadWarning(error) {
+  const code = typeof error?.code === "string" ? error.code : null;
+  const message = typeof error?.message === "string" ? error.message : String(error || "Unknown error");
+  return code
+    ? `Failed to read SKILL.md (${code}: ${message}).`
+    : `Failed to read SKILL.md (${message}).`;
+}
+
 function containsPlaintextPhrase(prompt, phrase) {
   const trimmedPhrase = String(phrase || "").trim();
   if (!trimmedPhrase) return false;
@@ -162,51 +170,86 @@ async function scanUserSkills(electronApp) {
       continue;
     }
 
-    const stat = await fsPromises.stat(skillPath);
-    if (stat.size > MAX_SKILL_BYTES) {
-      baseItem.warnings.push(`SKILL.md is too large (${stat.size} bytes > ${MAX_SKILL_BYTES} bytes).`);
-      warnings.push(`${dirName}: SKILL.md is too large.`);
-      skills.push(baseItem);
-      continue;
-    }
+    try {
+      const stat = await fsPromises.stat(skillPath);
+      if (!stat.isFile()) {
+        baseItem.warnings.push("SKILL.md must be a regular file.");
+        warnings.push(`${dirName}: SKILL.md must be a regular file.`);
+        skills.push(baseItem);
+        continue;
+      }
 
-    const content = await fsPromises.readFile(skillPath, "utf8");
-    const { attributes, body, hasFrontmatter } = parseFrontmatter(content);
-    const name = stripQuotes(attributes.name || "").trim();
-    const description = stripQuotes(attributes.description || "").trim();
+      if (stat.size > MAX_SKILL_BYTES) {
+        baseItem.warnings.push(`SKILL.md is too large (${stat.size} bytes > ${MAX_SKILL_BYTES} bytes).`);
+        warnings.push(`${dirName}: SKILL.md is too large.`);
+        skills.push(baseItem);
+        continue;
+      }
 
-    if (!hasFrontmatter) {
-      baseItem.warnings.push("Missing YAML frontmatter.");
-    }
-    if (!name) {
-      baseItem.warnings.push("Missing frontmatter field: name.");
-    }
-    if (!description) {
-      baseItem.warnings.push("Missing frontmatter field: description.");
-    } else if (description.length > MAX_DESCRIPTION_LENGTH) {
-      baseItem.warnings.push(`Description is too long (${description.length} chars > ${MAX_DESCRIPTION_LENGTH}).`);
-    }
+      const content = await fsPromises.readFile(skillPath, "utf8");
+      const { attributes, body, hasFrontmatter } = parseFrontmatter(content);
+      const name = stripQuotes(attributes.name || "").trim();
+      const description = stripQuotes(attributes.description || "").trim();
 
-    if (baseItem.warnings.length > 0) {
-      warnings.push(...baseItem.warnings.map((warning) => `${dirName}: ${warning}`));
+      if (!hasFrontmatter) {
+        baseItem.warnings.push("Missing YAML frontmatter.");
+      }
+      if (!name) {
+        baseItem.warnings.push("Missing frontmatter field: name.");
+      }
+      if (!description) {
+        baseItem.warnings.push("Missing frontmatter field: description.");
+      } else if (description.length > MAX_DESCRIPTION_LENGTH) {
+        baseItem.warnings.push(`Description is too long (${description.length} chars > ${MAX_DESCRIPTION_LENGTH}).`);
+      }
+
+      if (baseItem.warnings.length > 0) {
+        warnings.push(...baseItem.warnings.map((warning) => `${dirName}: ${warning}`));
+        skills.push({
+          ...baseItem,
+          name: name || dirName,
+          description,
+        });
+        continue;
+      }
+
       skills.push({
         ...baseItem,
-        name: name || dirName,
+        slug: slugifySkill(name || dirName),
+        name,
         description,
+        status: "ready",
+        warnings: [],
+        body,
+        mtimeMs: stat.mtimeMs,
       });
-      continue;
+    } catch (error) {
+      const warning = formatSkillReadWarning(error);
+      baseItem.warnings.push(warning);
+      warnings.push(`${dirName}: ${warning}`);
+      skills.push(baseItem);
     }
+  }
 
-    skills.push({
-      ...baseItem,
-      slug: slugifySkill(name || dirName),
-      name,
-      description,
-      status: "ready",
-      warnings: [],
-      body,
-      mtimeMs: stat.mtimeMs,
-    });
+  const readySkillsBySlug = new Map();
+  for (const skill of skills) {
+    if (skill.status !== "ready" || !skill.slug) continue;
+    const matches = readySkillsBySlug.get(skill.slug);
+    if (matches) {
+      matches.push(skill);
+    } else {
+      readySkillsBySlug.set(skill.slug, [skill]);
+    }
+  }
+
+  for (const [slug, duplicateSkills] of readySkillsBySlug.entries()) {
+    if (duplicateSkills.length < 2) continue;
+    const duplicateWarning = `Duplicate skill slug "${slug}". Rename the skill or change its frontmatter name.`;
+    for (const skill of duplicateSkills) {
+      skill.status = "warning";
+      skill.warnings = [...skill.warnings, duplicateWarning];
+      warnings.push(`${skill.directoryName}: ${duplicateWarning}`);
+    }
   }
 
   const readyCount = skills.filter((skill) => skill.status === "ready").length;
