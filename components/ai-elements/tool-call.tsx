@@ -11,14 +11,14 @@ import { useI18n } from '../../application/i18n/I18nProvider';
  * command results for terminal-like output.
  */
 function formatToolResult(result: unknown): string {
-  let parsed: any = result;
+  let parsed = result;
 
   if (typeof parsed === 'string') {
     try {
       const obj = JSON.parse(parsed);
       if (obj && typeof obj === 'object') parsed = obj;
     } catch {
-      return parsed as string;
+      return parsed;
     }
   }
 

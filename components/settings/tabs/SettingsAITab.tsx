@@ -7,7 +7,7 @@
  *   - CodexConnectionCard, ClaudeCodeCard
  *   - SafetySettings
  */
-import { AlertTriangle, Bot, FolderOpen, Globe, RefreshCcw } from "lucide-react";
+import { AlertTriangle, Bot, FolderOpen, Globe, Link, Package, RefreshCcw } from "lucide-react";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AIPermissionMode,
@@ -644,7 +644,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
 
           <div className="space-y-4">
             <div className="flex items-center gap-2">
-              <Bot size={18} className="text-muted-foreground" />
+              <Link size={18} className="text-muted-foreground" />
               <h3 className="text-base font-medium">{t('ai.toolAccess.title')}</h3>
             </div>
 
@@ -669,7 +669,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-2">
-                <FolderOpen size={18} className="text-muted-foreground" />
+                <Package size={18} className="text-muted-foreground" />
                 <h3 className="text-base font-medium">{t('ai.userSkills.title')}</h3>
               </div>
               <div className="flex items-center gap-2">

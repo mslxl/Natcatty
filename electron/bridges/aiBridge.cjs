@@ -18,6 +18,7 @@ const { getCliLauncherPath, TOOL_CLI_DISCOVERY_ENV_VAR } = require("../cli/disco
 const {
   scanUserSkills,
   buildUserSkillsContext,
+  toPublicUserSkillsStatus,
 } = require("./ai/userSkills.cjs");
 
 // ── Extracted modules ──
@@ -745,7 +746,7 @@ function registerHandlers(ipcMain) {
     if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     try {
       const status = await scanUserSkills(electronModule?.app);
-      return { ok: true, ...status };
+      return { ok: true, ...toPublicUserSkillsStatus(status) };
     } catch (err) {
       return { ok: false, error: err?.message || String(err) };
     }
@@ -759,7 +760,7 @@ function registerHandlers(ipcMain) {
       return {
         ok: !openResult,
         error: openResult || undefined,
-        ...status,
+        ...toPublicUserSkillsStatus(status),
       };
     } catch (err) {
       return { ok: false, error: err?.message || String(err) };
@@ -770,7 +771,7 @@ function registerHandlers(ipcMain) {
     if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
     try {
       const { context, status } = await buildUserSkillsContext(electronModule?.app, prompt, selectedSkillSlugs);
-      return { ok: true, context, status };
+      return { ok: true, context, status: toPublicUserSkillsStatus(status) };
     } catch (err) {
       return { ok: false, error: err?.message || String(err) };
     }

@@ -1,14 +1,35 @@
-const fs = require("node:fs");
 const fsPromises = require("node:fs/promises");
 const path = require("node:path");
 
 const USER_SKILLS_DIR_NAME = "Skills";
-const EXAMPLE_SKILL_DIR_NAME = "Example Skill";
+const USER_SKILLS_README_NAME = "README.txt";
 const MAX_SKILL_BYTES = 24 * 1024;
 const MAX_DESCRIPTION_LENGTH = 280;
 const MAX_INDEX_SKILLS = 8;
 const MAX_MATCHED_SKILLS = 2;
 const MAX_MATCHED_SKILL_CHARS = 6000;
+const USER_SKILLS_README_CONTENT = [
+  "Netcatty user skills",
+  "",
+  "Add one folder per skill inside this directory.",
+  "Each skill folder must contain a SKILL.md file.",
+  "",
+  "Example layout:",
+  "  Skills/",
+  "    My Skill/",
+  "      SKILL.md",
+  "",
+  "Minimal SKILL.md:",
+  "  ---",
+  "  name: My Skill",
+  "  description: Short summary of what this skill helps with.",
+  "  ---",
+  "",
+  "  Write the skill instructions here.",
+  "",
+  "After adding or editing a skill, reopen the AI settings page or start a new chat to refresh the list.",
+  "",
+].join("\n");
 
 const STOPWORDS = new Set([
   "the", "and", "for", "with", "that", "this", "from", "into", "when", "then",
@@ -38,6 +59,17 @@ function tokenize(value) {
     .split(/[^a-z0-9]+/i)
     .map((token) => token.trim())
     .filter((token) => token.length >= 3 && !STOPWORDS.has(token));
+}
+
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function containsPlaintextPhrase(prompt, phrase) {
+  const trimmedPhrase = String(phrase || "").trim();
+  if (!trimmedPhrase) return false;
+  const pattern = new RegExp(`(^|\\s)${escapeRegExp(trimmedPhrase)}(?=$|\\s|[.,!?;:])`, "i");
+  return pattern.test(String(prompt || ""));
 }
 
 function parseFrontmatter(content) {
@@ -72,36 +104,27 @@ function getUserSkillsDir(electronApp) {
   return path.join(userDataDir, USER_SKILLS_DIR_NAME);
 }
 
-function getBundledExampleSkillDir() {
-  return path.resolve(__dirname, "../../../skills/example-user-skill");
-}
-
 async function ensureUserSkillsDir(electronApp) {
   const skillsDir = getUserSkillsDir(electronApp);
   await fsPromises.mkdir(skillsDir, { recursive: true });
   return skillsDir;
 }
 
-async function ensureExampleSkill(electronApp) {
+async function ensureUserSkillsReadme(electronApp) {
   const skillsDir = await ensureUserSkillsDir(electronApp);
-  const dirEntries = await fsPromises.readdir(skillsDir, { withFileTypes: true });
-  if (dirEntries.length > 0) return skillsDir;
-
-  const sourceDir = getBundledExampleSkillDir();
-  const targetDir = path.join(skillsDir, EXAMPLE_SKILL_DIR_NAME);
-  try {
-    await fsPromises.access(sourceDir);
-    // fs.cp is experimental in some node versions, using synchronous version for stability in bridge context
-    // or we can use async if node version is guaranteed
-    await fsPromises.cp(sourceDir, targetDir, { recursive: true, force: false, errorOnExist: false });
-  } catch (err) {
-    // sourceDir not found, skip
+  const dirEntries = await fsPromises.readdir(skillsDir);
+  if (dirEntries.length === 0) {
+    await fsPromises.writeFile(
+      path.join(skillsDir, USER_SKILLS_README_NAME),
+      USER_SKILLS_README_CONTENT,
+      "utf8",
+    );
   }
   return skillsDir;
 }
 
 async function scanUserSkills(electronApp) {
-  const skillsDir = await ensureExampleSkill(electronApp);
+  const skillsDir = await ensureUserSkillsReadme(electronApp);
   const dirEntries = await fsPromises.readdir(skillsDir, { withFileTypes: true });
   const skills = [];
   const warnings = [];
@@ -213,8 +236,7 @@ async function scanUserSkills(electronApp) {
  * Scores how well a skill matches a user prompt.
  *
  * Scored based on:
- * - 100 points: Explicit slug match (e.g. prompt contains "/my-skill")
- * - 50 points: Name/directory name match (e.g. prompt contains "my skill")
+ * - 50 points: Plain-text name/directory mention (e.g. prompt contains "my skill")
  * - 1 point per keyword overlap (after tokenization/stopword filtering)
  *
  * @param {string} prompt - The user prompt
@@ -222,18 +244,13 @@ async function scanUserSkills(electronApp) {
  * @returns {number} The score (higher is better)
  */
 function scoreSkillMatch(prompt, skill) {
-  const lowerPrompt = String(prompt || "").toLowerCase();
-  const lowerName = String(skill.name || "").toLowerCase();
-  const lowerDirName = String(skill.directoryName || "").toLowerCase();
-  const lowerSlug = String(skill.slug || "").toLowerCase();
+  const name = String(skill.name || "").trim();
+  const directoryName = String(skill.directoryName || "").trim();
 
-  // High weight for explicit mention of the skill via slug or name
-  if (lowerSlug && lowerPrompt.includes(`/${lowerSlug}`)) {
-    return 100;
-  }
+  // High weight for an exact plain-text mention of the skill name.
   if (
-    (lowerName && lowerPrompt.includes(lowerName)) ||
-    (lowerDirName && lowerPrompt.includes(lowerDirName))
+    (name && containsPlaintextPhrase(prompt, name)) ||
+    (directoryName && containsPlaintextPhrase(prompt, directoryName))
   ) {
     return 50;
   }
@@ -287,7 +304,7 @@ async function buildUserSkillsContext(electronApp, prompt, selectedSkillSlugs = 
     .slice(0, MAX_MATCHED_SKILLS)
     .map((entry) => entry.skill);
 
-  const finalSkills = [...explicitSkills, ...matchedSkills].slice(0, MAX_MATCHED_SKILLS);
+  const finalSkills = [...explicitSkills, ...matchedSkills];
 
   const parts = [
     "User-managed skills are installed in Netcatty.",
@@ -309,11 +326,20 @@ async function buildUserSkillsContext(electronApp, prompt, selectedSkillSlugs = 
   };
 }
 
+function toPublicUserSkillsStatus(status) {
+  if (!status || typeof status !== "object") {
+    return status;
+  }
+  const { _readySkills, ...publicStatus } = status;
+  return publicStatus;
+}
+
 module.exports = {
   USER_SKILLS_DIR_NAME,
   getUserSkillsDir,
   ensureUserSkillsDir,
-  ensureExampleSkill,
+  ensureUserSkillsReadme,
   scanUserSkills,
   buildUserSkillsContext,
+  toPublicUserSkillsStatus,
 };

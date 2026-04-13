@@ -49,8 +49,14 @@ interface ChatInputProps {
   onRemoveFile?: (id: string) => void;
   /** Available hosts for @ mention */
   hosts?: Array<{ sessionId: string; hostname: string; label: string; connected: boolean }>;
+  /** User skills currently selected for the next send */
+  selectedUserSkills?: Array<{ id: string; slug: string; name: string; description: string }>;
   /** Available user skills for /skill-slug insertion */
   userSkills?: Array<{ id: string; slug: string; name: string; description: string }>;
+  /** Callback to add a selected user skill */
+  onAddUserSkill?: (slug: string) => void;
+  /** Callback to remove a selected user skill */
+  onRemoveUserSkill?: (slug: string) => void;
   /** Permission mode (only shown for Catty Agent) */
   permissionMode?: AIPermissionMode;
   /** Callback when user changes permission mode */
@@ -75,7 +81,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
   onAddFiles,
   onRemoveFile,
   hosts = [],
+  selectedUserSkills = [],
   userSkills = [],
+  onAddUserSkill,
+  onRemoveUserSkill,
   permissionMode,
   onPermissionModeChange,
 }) => {
@@ -198,18 +207,23 @@ const ChatInput: React.FC<ChatInputProps> = ({
     return skill.slug.toLowerCase().startsWith(lowerQuery) || skill.name.toLowerCase().includes(lowerQuery);
   });
 
-  const insertUserSkillToken = useCallback((skill: { slug: string }) => {
-    const token = `/${skill.slug}`;
-    if (slashRange) {
-      const nextValue = `${value.slice(0, slashRange.start)}${token} ${value.slice(slashRange.end)}`;
-      onChange(nextValue);
-      closeAllMenus();
-      return;
+  const removeSlashQueryFromInput = useCallback(() => {
+    if (!slashRange) return value;
+    const before = value.slice(0, slashRange.start);
+    const after = value.slice(slashRange.end);
+    if (/\s$/.test(before) && /^\s/.test(after)) {
+      return `${before}${after.slice(1)}`;
     }
-    const needsSpace = value.length > 0 && !/\s$/.test(value);
-    onChange(`${value}${needsSpace ? ' ' : ''}${token} `);
+    return `${before}${after}`;
+  }, [slashRange, value]);
+
+  const insertUserSkillToken = useCallback((skill: { slug: string }) => {
+    onAddUserSkill?.(skill.slug);
+    if (slashRange) {
+      onChange(removeSlashQueryFromInput());
+    }
     closeAllMenus();
-  }, [closeAllMenus, onChange, slashRange, value]);
+  }, [closeAllMenus, onAddUserSkill, onChange, removeSlashQueryFromInput, slashRange]);
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const pastedFiles = Array.from(e.clipboardData.items)
@@ -254,6 +268,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const hasModelPicker = modelPresets.length > 0 && onModelSelect;
   const chipClassName =
     'inline-flex h-6 items-center gap-1 rounded-full px-1.5 text-[10.5px] text-foreground/72';
+  const selectedSkillChipClassName =
+    'inline-flex h-7 items-center gap-1.5 rounded-full border border-primary/18 bg-primary/8 pl-2.5 pr-1.5 text-[11px] font-medium text-foreground/86 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]';
   const iconButtonClassName =
     'h-6 w-6 rounded-full bg-transparent text-foreground/62 hover:bg-muted/24 hover:text-foreground';
 
@@ -303,13 +319,42 @@ const ChatInput: React.FC<ChatInputProps> = ({
 
         {/* Textarea with expand toggle */}
         <div className="relative" onPaste={handlePaste} onDrop={handleDrop} onDragOver={(e) => e.preventDefault()}>
+          {selectedUserSkills.length > 0 && (
+            <div className="px-3 pt-3 pb-1.5">
+              <div className="flex flex-wrap gap-2">
+                {selectedUserSkills.map((skill) => (
+                  <div
+                    key={skill.id}
+                    className={selectedSkillChipClassName}
+                    title={skill.description || skill.name || skill.slug}
+                  >
+                    <Package size={11} className="text-primary/72 shrink-0" />
+                    <span className="truncate max-w-[180px]">
+                      {skill.name && skill.name !== skill.slug ? skill.name : `/${skill.slug}`}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onRemoveUserSkill?.(skill.slug)}
+                      className="inline-flex h-4.5 w-4.5 items-center justify-center rounded-full text-foreground/42 hover:bg-primary/10 hover:text-foreground/72 transition-colors cursor-pointer"
+                      aria-label={`Remove skill ${skill.name || skill.slug}`}
+                    >
+                      <X size={9} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <PromptInputTextarea
             ref={textareaRef}
             value={value}
             onChange={(e) => handleInputChange(e.target.value)}
             placeholder={placeholder || defaultPlaceholder}
             disabled={disabled}
-            className={expanded ? 'max-h-[220px]' : undefined}
+            className={[
+              selectedUserSkills.length > 0 ? 'pt-1.5' : undefined,
+              expanded ? 'max-h-[220px]' : undefined,
+            ].filter(Boolean).join(' ')}
             maxLength={100000}
           />
           <button

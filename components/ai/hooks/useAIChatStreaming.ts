@@ -166,22 +166,43 @@ function generateId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-const USER_SKILL_TOKEN_REGEX = /(^|\s)\/([a-z0-9][a-z0-9-]*)\b/g;
+const USER_SKILLS_CONTEXT_TIMEOUT_MS = 500;
 
-function stripExplicitUserSkillTokens(text: string, availableSkillSlugs?: string[]): string {
-  const validSlugs = new Set((availableSkillSlugs || []).map((slug) => slug.toLowerCase()));
-  return String(text || "")
-    .replace(USER_SKILL_TOKEN_REGEX, (match, prefix, slug) => {
-      const normalizedSlug = String(slug || '').toLowerCase();
-      if (validSlugs.size === 0 || !validSlugs.has(normalizedSlug)) {
-        return match;
-      }
-      return prefix;
-    })
-    .replace(/[ \t]{2,}/g, ' ')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+interface UserSkillsContextResult {
+  ok: boolean;
+  context?: string;
+  error?: string;
+}
+
+function buildExplicitUserSkillsFallback(selectedUserSkillSlugs?: string[]): string {
+  if (!selectedUserSkillSlugs?.length) return '';
+  return `The user explicitly selected these Netcatty user skills for this request: ${selectedUserSkillSlugs.map((slug) => `/${slug}`).join(', ')}. Honor those selections even if their expanded skill content is unavailable.`;
+}
+
+async function resolveUserSkillsContext(
+  bridge: PanelBridge | undefined,
+  prompt: string,
+  selectedUserSkillSlugs?: string[],
+): Promise<string> {
+  if (!bridge?.aiUserSkillsBuildContext) {
+    return buildExplicitUserSkillsFallback(selectedUserSkillSlugs);
+  }
+
+  const buildContextPromise: Promise<UserSkillsContextResult> = bridge
+    .aiUserSkillsBuildContext(prompt, selectedUserSkillSlugs)
+    .catch(() => ({ ok: false, context: '' }));
+
+  const hasExplicitSelections = (selectedUserSkillSlugs?.length ?? 0) > 0;
+  const result = hasExplicitSelections
+    ? await buildContextPromise
+    : await Promise.race([
+        buildContextPromise,
+        new Promise<UserSkillsContextResult>((resolve) =>
+          setTimeout(() => resolve({ ok: false, context: '' }), USER_SKILLS_CONTEXT_TIMEOUT_MS),
+        ),
+      ]);
+
+  return result.context || buildExplicitUserSkillsFallback(selectedUserSkillSlugs);
 }
 
 const sharedStreamingSessionIds = new Set<string>();
@@ -269,7 +290,6 @@ export interface SendToCattyContext {
   getExecutorContext?: () => ExecutorContext;
   autoTitleSession: (sessionId: string, text: string) => void;
   selectedUserSkillSlugs?: string[];
-  availableUserSkillSlugs?: string[];
 }
 
 /** Context values needed by sendToExternalAgent that change frequently. */
@@ -283,7 +303,6 @@ export interface SendToExternalContext {
   selectedAgentModel?: string;
   toolIntegrationMode: AIToolIntegrationMode;
   selectedUserSkillSlugs?: string[];
-  availableUserSkillSlugs?: string[];
 }
 
 // -------------------------------------------------------------------
@@ -575,17 +594,11 @@ export function useAIChatStreaming({
     context: SendToExternalContext,
   ) => {
     const bridge = getNetcattyBridge();
-    const userSkillsContextPromise = bridge?.aiUserSkillsBuildContext
-      ? bridge.aiUserSkillsBuildContext(trimmed, context.selectedUserSkillSlugs).catch(() => ({ ok: false, context: '' }))
-      : Promise.resolve({ ok: true, context: '' });
-
-    // Race against a 500ms timer to ensure we don't block the UI for too long
-    const userSkillsContext = (await Promise.race([
-      userSkillsContextPromise,
-      new Promise<{ ok: boolean; context: string }>((resolve) =>
-        setTimeout(() => resolve({ ok: false, context: '' }), 500)
-      ),
-    ]))?.context || '';
+    const userSkillsContext = await resolveUserSkillsContext(
+      bridge,
+      trimmed,
+      context.selectedUserSkillSlugs,
+    );
 
     if (agentConfig.acpCommand && bridge) {
       const requestId = `acp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -728,17 +741,11 @@ export function useAIChatStreaming({
     attachments?: ChatMessageAttachment[],
   ) => {
     const bridge = getNetcattyBridge();
-    const userSkillsContextPromise = bridge?.aiUserSkillsBuildContext
-      ? bridge.aiUserSkillsBuildContext(trimmed, context.selectedUserSkillSlugs).catch(() => ({ ok: false, context: '' }))
-      : Promise.resolve({ ok: true, context: '' });
-
-    // Race against a 500ms timer to ensure we don't block the UI for too long
-    const userSkillsContext = (await Promise.race([
-      userSkillsContextPromise,
-      new Promise<{ ok: boolean; context: string }>((resolve) =>
-        setTimeout(() => resolve({ ok: false, context: '' }), 500)
-      ),
-    ]))?.context || '';
+    const userSkillsContext = await resolveUserSkillsContext(
+      bridge,
+      trimmed,
+      context.selectedUserSkillSlugs,
+    );
     const getExecutorContext = context.getExecutorContext ?? (() => ({
       sessions: context.terminalSessions,
       workspaceId: context.scopeType === 'workspace' ? context.scopeTargetId : undefined,
@@ -821,7 +828,7 @@ export function useAIChatStreaming({
           const messageAttachments = m.attachments ?? m.images;
           if (messageAttachments?.length) {
             const parts: Array<{ type: 'text'; text: string } | { type: 'image'; image: string; mediaType?: string } | { type: 'file'; data: string; mediaType: string; filename?: string }> = [];
-            parts.push({ type: 'text', text: stripExplicitUserSkillTokens(m.content, context.availableUserSkillSlugs) });
+            parts.push({ type: 'text', text: m.content });
             for (const att of messageAttachments) {
               if (att.mediaType.startsWith('image/')) {
                 parts.push({ type: 'image', image: att.base64Data, mediaType: att.mediaType });
@@ -831,7 +838,7 @@ export function useAIChatStreaming({
             }
             sdkMessages.push({ role: 'user', content: parts });
           } else {
-            sdkMessages.push({ role: 'user', content: stripExplicitUserSkillTokens(m.content, context.availableUserSkillSlugs) });
+            sdkMessages.push({ role: 'user', content: m.content });
           }
         } else if (m.role === 'assistant') {
           if (m.toolCalls?.length) {
@@ -874,7 +881,7 @@ export function useAIChatStreaming({
       // Build the current user message — include attachments as multimodal content
       if (attachments?.length) {
         const parts: Array<{ type: 'text'; text: string } | { type: 'image'; image: string; mediaType?: string } | { type: 'file'; data: string; mediaType: string; filename?: string }> = [];
-        parts.push({ type: 'text', text: stripExplicitUserSkillTokens(trimmed, context.availableUserSkillSlugs) });
+        parts.push({ type: 'text', text: trimmed });
         for (const att of attachments) {
           if (att.mediaType.startsWith('image/')) {
             parts.push({ type: 'image', image: att.base64Data, mediaType: att.mediaType });
@@ -884,7 +891,7 @@ export function useAIChatStreaming({
         }
         sdkMessages.push({ role: 'user', content: parts });
       } else {
-        sdkMessages.push({ role: 'user', content: stripExplicitUserSkillTokens(trimmed, context.availableUserSkillSlugs) });
+        sdkMessages.push({ role: 'user', content: trimmed });
       }
 
       await processCattyStream(sessionId, model, systemPrompt, tools, sdkMessages, abortController.signal, assistantMsgId, context.activeProvider?.advancedParams);

@@ -324,7 +324,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
         })}
 
         {/* Standalone MCP/ACP approval requests (not tied to SDK tool calls) */}
-        {Array.from(pendingApprovals.entries() as Array<[string, any]>)
+        {Array.from(pendingApprovals.entries())
           .filter(([id, req]) => id.startsWith('mcp_approval_') && (!activeSessionId || req.chatSessionId === activeSessionId))
           .map(([id, req]) => {
             return (

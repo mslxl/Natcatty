@@ -145,29 +145,12 @@ function generateId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function stripUserSkillTokensFromText(input: string, availableSkills: UserSkillOption[]): string {
-  const validSlugs = new Set(availableSkills.map((skill) => skill.slug.toLowerCase()));
-  return String(input || "")
-    .replace(USER_SKILL_TOKEN_REGEX, (match, prefix, slug) => {
-      const normalizedSlug = String(slug || '').toLowerCase();
-      if (!validSlugs.has(normalizedSlug)) {
-        return match;
-      }
-      return prefix;
-    })
-    .replace(/[ \t]{2,}/g, " ")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function buildAcpHistoryMessages(messages: ChatMessage[], availableSkills: UserSkillOption[]): Array<{ role: 'user' | 'assistant'; content: string }> {
+function buildAcpHistoryMessages(messages: ChatMessage[]): Array<{ role: 'user' | 'assistant'; content: string }> {
   return messages.flatMap((message): Array<{ role: 'user' | 'assistant'; content: string }> => {
     if (message.role === 'system') return [];
 
     if (message.role === 'user') {
-      const content = stripUserSkillTokensFromText(message.content, availableSkills);
-      return content ? [{ role: 'user', content }] : [];
+      return message.content ? [{ role: 'user', content: message.content }] : [];
     }
 
     if (message.role === 'assistant') {
@@ -217,34 +200,6 @@ interface UserSkillOption {
   slug: string;
   name: string;
   description: string;
-}
-
-const USER_SKILL_TOKEN_REGEX = /(^|\s)\/([a-z0-9][a-z0-9-]*)\b/g;
-
-function extractExplicitUserSkills(
-  input: string,
-  availableSkills: UserSkillOption[],
-): { cleanedText: string; selectedSkillSlugs: string[] } {
-  const validSlugs = new Set(availableSkills.map((skill) => skill.slug.toLowerCase()));
-  const selectedSkillSlugs: string[] = [];
-
-  const cleanedText = input
-    .replace(USER_SKILL_TOKEN_REGEX, (match, prefix, slug) => {
-      const normalizedSlug = String(slug || "").toLowerCase();
-      if (!validSlugs.has(normalizedSlug)) {
-        return match;
-      }
-      if (!selectedSkillSlugs.includes(normalizedSlug)) {
-        selectedSkillSlugs.push(normalizedSlug);
-      }
-      return prefix;
-    })
-    .replace(/[ \t]{2,}/g, " ")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-
-  return { cleanedText, selectedSkillSlugs };
 }
 
 // -------------------------------------------------------------------
@@ -301,6 +256,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   const [currentAgentId, setCurrentAgentId] = useState(defaultAgentId);
   const [runtimeAgentModelPresets, setRuntimeAgentModelPresets] = useState<Record<string, ReturnType<typeof getAgentModelPresets>>>({});
   const [userSkillOptions, setUserSkillOptions] = useState<UserSkillOption[]>([]);
+  const [selectedUserSkillSlugsMap, setSelectedUserSkillSlugsMap] = useState<Record<string, string[]>>({});
 
   const { files, addFiles, removeFile, clearFiles } = useFileUpload();
   const { openSettingsWindow } = useWindowControls();
@@ -541,6 +497,18 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   );
 
   const messages = activeSession?.messages ?? [];
+  const selectedUserSkillSlugs = useMemo(
+    () => selectedUserSkillSlugsMap[scopeKey] ?? [],
+    [selectedUserSkillSlugsMap, scopeKey],
+  );
+  const selectedUserSkills = useMemo(
+    () =>
+      selectedUserSkillSlugs.map((slug) => {
+        const option = userSkillOptions.find((skill) => skill.slug === slug);
+        return option ?? { id: slug, slug, name: slug, description: '' };
+      }),
+    [selectedUserSkillSlugs, userSkillOptions],
+  );
 
   // ── Export hook ──
   const { handleExport } = useConversationExport(activeSession);
@@ -643,6 +611,12 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     setActiveSessionId(session.id);
     setShowHistory(false);
     setInputValue('');
+    setSelectedUserSkillSlugsMap((prev) => {
+      if (!(scopeKey in prev)) return prev;
+      const next = { ...prev };
+      delete next[scopeKey];
+      return next;
+    });
   }, [
     scopeType,
     scopeTargetId,
@@ -651,6 +625,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     createSession,
     setActiveSessionId,
     setInputValue,
+    scopeKey,
   ]);
 
   const handleOpenSettings = useCallback(() => {
@@ -693,6 +668,41 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     };
   }, []);
 
+  const addSelectedUserSkill = useCallback((slug: string) => {
+    const normalizedSlug = String(slug || '').trim().toLowerCase();
+    if (!normalizedSlug) return;
+    setSelectedUserSkillSlugsMap((prev) => {
+      const current = prev[scopeKey] ?? [];
+      if (current.includes(normalizedSlug)) return prev;
+      return { ...prev, [scopeKey]: [...current, normalizedSlug] };
+    });
+  }, [scopeKey]);
+
+  const removeSelectedUserSkill = useCallback((slug: string) => {
+    const normalizedSlug = String(slug || '').trim().toLowerCase();
+    if (!normalizedSlug) return;
+    setSelectedUserSkillSlugsMap((prev) => {
+      const current = prev[scopeKey] ?? [];
+      const nextSkills = current.filter((entry) => entry !== normalizedSlug);
+      if (nextSkills.length === current.length) return prev;
+      if (nextSkills.length === 0) {
+        const next = { ...prev };
+        delete next[scopeKey];
+        return next;
+      }
+      return { ...prev, [scopeKey]: nextSkills };
+    });
+  }, [scopeKey]);
+
+  const clearSelectedUserSkills = useCallback(() => {
+    setSelectedUserSkillSlugsMap((prev) => {
+      if (!(scopeKey in prev)) return prev;
+      const next = { ...prev };
+      delete next[scopeKey];
+      return next;
+    });
+  }, [scopeKey]);
+
   /** Ensure a session exists for the current scope and return its ID. */
   const ensureSession = useCallback((): string => {
     if (activeSession && sessionsRef.current.some((session) => session.id === activeSession.id)) {
@@ -732,7 +742,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     const trimmed = inputValueRef.current.trim();
     const sendScopeKey = scopeKey;
     if (!trimmed || isStreaming) return;
-    const { cleanedText, selectedSkillSlugs } = extractExplicitUserSkills(trimmed, userSkillOptions);
+    const selectedSkillSlugs = selectedUserSkillSlugs;
 
     const isExternalAgent = currentAgentId !== 'catty';
 
@@ -759,6 +769,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     });
     setInputValue('');
     clearFiles();
+    clearSelectedUserSkills();
     setStreamingForScope(sessionId, true);
 
     // Create assistant message placeholder with a tracked ID
@@ -783,17 +794,16 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         return;
       }
       try {
-        await sendToExternalAgent(sessionId, cleanedText, agentConfig, abortController, attachments, {
+        await sendToExternalAgent(sessionId, trimmed, agentConfig, abortController, attachments, {
           existingSessionId: currentSession?.externalSessionId,
           updateExternalSessionId: updateSessionExternalSessionId,
-          historyMessages: buildAcpHistoryMessages(currentSession?.messages ?? [], userSkillOptions),
+          historyMessages: buildAcpHistoryMessages(currentSession?.messages ?? []),
           terminalSessions,
           defaultTargetSession,
           providers,
           selectedAgentModel,
           toolIntegrationMode,
           selectedUserSkillSlugs: selectedSkillSlugs,
-          availableUserSkillSlugs: userSkillOptions.map((skill) => skill.slug),
         });
       } catch (err) {
         reportStreamError(sessionId, abortController.signal, err);
@@ -802,14 +812,14 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       updateLastMessage(sessionId, msg => msg.statusText ? { ...msg, statusText: '' } : msg);
       setStreamingForScope(sessionId, false);
       abortControllersRef.current.delete(sessionId);
-      autoTitleSession(sessionId, cleanedText || trimmed);
+      autoTitleSession(sessionId, trimmed);
     } else {
       const toolScope = {
         type: scopeType,
         targetId: scopeTargetId,
         label: scopeLabel,
       } as const;
-      await sendToCattyAgent(sessionId, sendScopeKey, cleanedText, abortController, currentSession ?? undefined, assistantMsgId, {
+      await sendToCattyAgent(sessionId, sendScopeKey, trimmed, abortController, currentSession ?? undefined, assistantMsgId, {
         activeProvider,
         activeModelId,
         scopeType,
@@ -822,7 +832,6 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         getExecutorContext: () => buildExecutorContextForScope(toolScope),
         autoTitleSession,
         selectedUserSkillSlugs: selectedSkillSlugs,
-        availableUserSkillSlugs: userSkillOptions.map((skill) => skill.slug),
       }, attachments.length > 0 ? attachments : undefined);
     }
   }, [
@@ -834,7 +843,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     abortControllersRef, terminalSessions, defaultTargetSession, providers, selectedAgentModel, updateSessionExternalSessionId,
     scopeType, scopeTargetId, scopeLabel, globalPermissionMode, commandBlocklist, webSearchConfig, buildExecutorContextForScope,
     toolIntegrationMode,
-    userSkillOptions,
+    selectedUserSkillSlugs, clearSelectedUserSkills,
   ]);
 
   const handleStop = useCallback(() => {
@@ -997,7 +1006,10 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
             onAddFiles={addFiles}
             onRemoveFile={removeFile}
             hosts={terminalSessions.map(s => ({ sessionId: s.sessionId, hostname: s.hostname, label: s.label, connected: s.connected }))}
+            selectedUserSkills={selectedUserSkills}
             userSkills={userSkillOptions}
+            onAddUserSkill={addSelectedUserSkill}
+            onRemoveUserSkill={removeSelectedUserSkill}
             permissionMode={globalPermissionMode}
             onPermissionModeChange={setGlobalPermissionMode}
           />
