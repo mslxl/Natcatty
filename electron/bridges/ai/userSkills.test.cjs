@@ -99,6 +99,31 @@ test("keeps every explicitly selected skill in the built context", async () => {
   );
 });
 
+test("preserves an unavailable explicit selection in the built context", async () => {
+  await withUserSkills(
+    [
+      {
+        directoryName: "Beta",
+        name: "Beta",
+        description: "Beta helper.",
+        body: "Body for Beta",
+      },
+    ],
+    async (electronApp) => {
+      const result = await buildUserSkillsContext(
+        electronApp,
+        "plain prompt",
+        ["missing-skill"],
+      );
+
+      assert.equal(result.context.includes("Available user skills: Beta: Beta helper."), true);
+      assert.equal(result.context.includes("/missing-skill"), true);
+      assert.match(result.context, /explicitly selected/i);
+      assert.match(result.context, /unavailable/i);
+    },
+  );
+});
+
 test("initializing an empty skills directory creates only an instructions file", async () => {
   await withUserSkills([], async (electronApp) => {
     const status = await scanUserSkills(electronApp);

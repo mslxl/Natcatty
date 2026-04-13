@@ -338,6 +338,8 @@ async function buildUserSkillsContext(electronApp, prompt, selectedSkillSlugs = 
   );
 
   const explicitSkills = readySkills.filter((skill) => explicitSlugs.has(skill.slug));
+  const resolvedExplicitSlugs = new Set(explicitSkills.map((skill) => skill.slug));
+  const unavailableExplicitSlugs = [...explicitSlugs].filter((slug) => !resolvedExplicitSlugs.has(slug));
 
   const matchedSkills = readySkills
     .filter((skill) => !explicitSlugs.has(skill.slug))
@@ -354,6 +356,12 @@ async function buildUserSkillsContext(electronApp, prompt, selectedSkillSlugs = 
     `Available user skills: ${indexLine}${remainingCount > 0 ? `; and ${remainingCount} more.` : "."}`,
     "Use a user-managed skill only when it clearly matches the current request.",
   ];
+
+  if (unavailableExplicitSlugs.length > 0) {
+    parts.push(
+      `The user explicitly selected these Netcatty user skills for this request, but their content is currently unavailable: ${unavailableExplicitSlugs.map((slug) => `/${slug}`).join(", ")}.`,
+    );
+  }
 
   if (finalSkills.length > 0) {
     parts.push("Matched user-managed skills for this request:");

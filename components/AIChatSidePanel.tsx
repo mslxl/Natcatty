@@ -40,6 +40,11 @@ import ChatInput from './ai/ChatInput';
 import ChatMessageList from './ai/ChatMessageList';
 import ConversationExport from './ai/ConversationExport';
 import {
+  getReadyUserSkillOptions,
+  pruneSelectedUserSkillSlugsMap,
+  type UserSkillOption,
+} from './ai/userSkillsState';
+import {
   useAIChatStreaming,
   getNetcattyBridge,
   type DefaultTargetSessionHint,
@@ -193,13 +198,6 @@ function getSessionScopeMatchRank(
   }
 
   return session.scope.hostIds.some((hostId) => scopeHostIds.includes(hostId)) ? 1 : 0;
-}
-
-interface UserSkillOption {
-  id: string;
-  slug: string;
-  name: string;
-  description: string;
 }
 
 // -------------------------------------------------------------------
@@ -424,34 +422,41 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   }, [terminalSessions, scopeKey, activeSessionId]);
 
   useEffect(() => {
-    const bridge = getNetcattyBridge();
-    if (!bridge?.aiUserSkillsGetStatus || !isVisible) return;
+    if (!isVisible) return;
 
     let cancelled = false;
+    const applyUserSkillsStatus = (result: { ok: boolean; skills?: Array<{
+      id: string;
+      slug: string;
+      name: string;
+      description: string;
+      status: 'ready' | 'warning';
+    }> } | null | undefined) => {
+      const nextOptions = getReadyUserSkillOptions(result);
+      setUserSkillOptions(nextOptions);
+      setSelectedUserSkillSlugsMap((prev) => pruneSelectedUserSkillSlugsMap(prev, nextOptions));
+    };
+
+    const bridge = getNetcattyBridge();
+    if (!bridge?.aiUserSkillsGetStatus) {
+      applyUserSkillsStatus(null);
+      return;
+    }
+
     void bridge.aiUserSkillsGetStatus()
       .then((result) => {
-        if (cancelled || !result?.ok || !Array.isArray(result.skills)) return;
-        setUserSkillOptions(
-          result.skills
-            .filter((skill) => skill.status === 'ready' && typeof skill.slug === 'string' && skill.slug.length > 0)
-            .map((skill) => ({
-              id: skill.id,
-              slug: skill.slug,
-              name: skill.name,
-              description: skill.description,
-            })),
-        );
+        if (cancelled) return;
+        applyUserSkillsStatus(result);
       })
       .catch(() => {
-        if (!cancelled) {
-          setUserSkillOptions([]);
-        }
+        if (cancelled) return;
+        applyUserSkillsStatus(null);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [isVisible, toolIntegrationMode, scopeKey]);
+  }, [activeSessionIdForScope, isVisible, toolIntegrationMode, scopeKey]);
 
   // Sync provider configs to main process so it can decrypt API keys server-side.
   // Keys stay encrypted in transit; main process decrypts only when making HTTP requests.
