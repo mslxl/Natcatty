@@ -218,6 +218,57 @@ function getMainWindow() {
   return mainWins && mainWins.length ? mainWins[0] : null;
 }
 
+function hideWindowRespectingMacFullscreen(win) {
+  if (!win || win.isDestroyed?.()) return false;
+
+  if (process.platform === "darwin" && win.isFullScreen?.()) {
+    let fallbackTimer = null;
+
+    const cleanup = () => {
+      if (fallbackTimer) {
+        clearTimeout(fallbackTimer);
+        fallbackTimer = null;
+      }
+      try {
+        win.removeListener?.("leave-full-screen", finalizeHide);
+        win.removeListener?.("closed", cleanup);
+      } catch {
+        // ignore
+      }
+    };
+
+    const finalizeHide = () => {
+      cleanup();
+      try {
+        if (!win.isDestroyed?.()) {
+          win.hide();
+        }
+      } catch (err) {
+        console.warn("[GlobalShortcut] Error hiding window after leaving fullscreen:", err);
+      }
+    };
+
+    try {
+      win.once?.("leave-full-screen", finalizeHide);
+      win.once?.("closed", cleanup);
+      fallbackTimer = setTimeout(finalizeHide, 1000);
+      win.setFullScreen(false);
+      return true;
+    } catch (err) {
+      cleanup();
+      console.warn("[GlobalShortcut] Error leaving fullscreen before hiding window:", err);
+    }
+  }
+
+  try {
+    win.hide();
+    return true;
+  } catch (err) {
+    console.warn("[GlobalShortcut] Error hiding window:", err);
+    return false;
+  }
+}
+
 /**
  * Convert a hotkey string from frontend format to Electron accelerator format
  * e.g., "⌘ + Space" -> "CommandOrControl+Space"
@@ -617,8 +668,7 @@ function getHotkeyStatus() {
 function handleWindowClose(event, win) {
   if (closeToTray && tray) {
     event.preventDefault();
-    win.hide();
-    return true; // Prevented close
+    return hideWindowRespectingMacFullscreen(win); // Prevented close
   }
   return false; // Allow close
 }
