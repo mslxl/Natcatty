@@ -268,7 +268,6 @@ test("pending fullscreen hide keeps waiting after the deadline and hides once fu
         assert.equal(win.hideCalls, 0);
         assert.equal(getPendingTimerCount(), 1);
         assert.equal(win.listenerCount("leave-full-screen"), 1);
-        assert.equal(win.listenerCount("show"), 1);
         assert.equal(win.listenerCount("closed"), 1);
 
         win.fullscreen = false;
@@ -276,7 +275,6 @@ test("pending fullscreen hide keeps waiting after the deadline and hides once fu
         assert.equal(win.hideCalls, 1);
         assert.equal(getPendingTimerCount(), 0);
         assert.equal(win.listenerCount("leave-full-screen"), 0);
-        assert.equal(win.listenerCount("show"), 0);
         assert.equal(win.listenerCount("closed"), 0);
       });
     });
@@ -305,7 +303,12 @@ test("leave-full-screen hides immediately and clears the pending timer", async (
   });
 });
 
-test("show event cancels a pending fullscreen hide", async () => {
+test("show event does not cancel a pending fullscreen hide", async () => {
+  // macOS fires `show` internally while animating out of fullscreen back into
+  // the window's home Space. Treating that as user intent would skip the
+  // intended hide-to-tray. Only leave-full-screen / closed / the explicit
+  // callers (openMainWindow, toggleWindowVisibility, app.on("activate"),
+  // setCloseToTray(false)) should clear the pending hide.
   await withPatchedTimers(async ({ flushNextTimer, getPendingTimerCount }) => {
     await withPlatform("darwin", async () => {
       const bridge = loadBridge();
@@ -315,12 +318,46 @@ test("show event cancels a pending fullscreen hide", async () => {
 
       const result = bridge.handleWindowClose({ preventDefault() {} }, win);
       assert.equal(result, true);
-      assert.equal(win.listenerCount("show"), 1);
+      assert.equal(win.listenerCount("show"), 0);
       assert.equal(getPendingTimerCount(), 1);
 
       win.emit("show");
 
-      assert.equal(win.listenerCount("show"), 0);
+      // Pending hide still armed: leave-full-screen/closed listeners and the
+      // poll timer remain in place until the real exit event fires.
+      assert.equal(getPendingTimerCount(), 1);
+      assert.equal(win.listenerCount("leave-full-screen"), 1);
+      assert.equal(win.listenerCount("closed"), 1);
+      assert.equal(win.hideCalls, 0);
+
+      win.fullscreen = false;
+      win.emit("leave-full-screen");
+
+      assert.equal(win.hideCalls, 1);
+      assert.equal(getPendingTimerCount(), 0);
+      assert.equal(flushNextTimer(), false);
+    });
+  });
+});
+
+test("app activate clears a pending fullscreen hide", async () => {
+  // Regression for the close-to-tray + fullscreen bug where the internal
+  // `show` emitted during the fullscreen exit animation was cancelling the
+  // hide. main.cjs's app.on("activate") handler now calls into this bridge
+  // to cancel the pending hide when the user actually re-activates the app.
+  await withPatchedTimers(async ({ flushNextTimer, getPendingTimerCount }) => {
+    await withPlatform("darwin", async () => {
+      const bridge = loadBridge();
+      await enableCloseToTray(bridge);
+
+      const win = new FakeWindow({ fullscreen: true });
+
+      const result = bridge.handleWindowClose({ preventDefault() {} }, win);
+      assert.equal(result, true);
+      assert.equal(getPendingTimerCount(), 1);
+
+      bridge.clearPendingFullscreenHide(win);
+
       assert.equal(getPendingTimerCount(), 0);
       assert.equal(win.listenerCount("leave-full-screen"), 0);
       assert.equal(win.listenerCount("closed"), 0);
@@ -355,7 +392,6 @@ test("focusing a visible window cancels a pending fullscreen hide", async () => 
       assert.equal(win.focusCalls, 1);
       assert.equal(getPendingTimerCount(), 0);
       assert.equal(win.listenerCount("leave-full-screen"), 0);
-      assert.equal(win.listenerCount("show"), 0);
       assert.equal(win.listenerCount("closed"), 0);
     });
   });
@@ -402,7 +438,6 @@ test("closing the window clears a pending fullscreen hide", async () => {
       assert.equal(result, true);
       assert.equal(getPendingTimerCount(), 1);
       assert.equal(win.listenerCount("leave-full-screen"), 1);
-      assert.equal(win.listenerCount("show"), 1);
       assert.equal(win.listenerCount("closed"), 1);
 
       win.destroyed = true;
@@ -410,7 +445,6 @@ test("closing the window clears a pending fullscreen hide", async () => {
 
       assert.equal(getPendingTimerCount(), 0);
       assert.equal(win.listenerCount("leave-full-screen"), 0);
-      assert.equal(win.listenerCount("show"), 0);
       assert.equal(win.listenerCount("closed"), 0);
       assert.equal(flushNextTimer(), false);
       assert.equal(win.hideCalls, 0);
@@ -435,7 +469,6 @@ test("disabling close-to-tray clears a pending fullscreen hide", async () => {
 
       assert.equal(getPendingTimerCount(), 0);
       assert.equal(win.listenerCount("leave-full-screen"), 0);
-      assert.equal(win.listenerCount("show"), 0);
       assert.equal(win.listenerCount("closed"), 0);
       assert.equal(flushNextTimer(), false);
       assert.equal(win.hideCalls, 0);

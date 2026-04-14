@@ -1068,6 +1068,12 @@ if (!gotLock) {
       try {
         const mainWin = getWindowManager().getMainWindow?.();
         if (mainWin && !mainWin.isDestroyed?.()) {
+          // If a close-to-tray hide is still pending (fullscreen exit animation
+          // not finished yet), cancel it — user intent to bring the window
+          // back overrides the pending hide.
+          try {
+            getGlobalShortcutBridge().clearPendingFullscreenHide?.(mainWin);
+          } catch {}
           if (mainWin.isMinimized?.()) mainWin.restore();
           mainWin.show?.();
           mainWin.focus?.();

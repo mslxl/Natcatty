@@ -51,7 +51,6 @@ function clearPendingFullscreenHide(win) {
   try {
     win.removeListener?.("leave-full-screen", pending.onLeaveFullScreen);
     win.removeListener?.("closed", pending.onClosed);
-    win.removeListener?.("show", pending.onShow);
   } catch {
     // ignore
   }
@@ -292,6 +291,12 @@ function hideWindowRespectingMacFullscreen(win) {
   clearPendingFullscreenHide(win);
 
   if (process.platform === "darwin" && win.isFullScreen?.()) {
+    // Do not bail out on the window's `show` event: macOS fires `show`
+    // internally while the native fullscreen exit animation lands the
+    // window back in its home Space, and that is not user intent. All
+    // legitimate "bring the window back" entry points (openMainWindow,
+    // toggleWindowVisibility, setCloseToTray(false), app.on("activate"))
+    // explicitly call clearPendingFullscreenHide themselves.
     const pending = {
       timer: null,
       deadline: Date.now() + FULLSCREEN_HIDE_TIMEOUT_MS,
@@ -302,16 +307,12 @@ function hideWindowRespectingMacFullscreen(win) {
       onClosed: () => {
         clearPendingFullscreenHide(win);
       },
-      onShow: () => {
-        clearPendingFullscreenHide(win);
-      },
     };
 
     try {
       pendingFullscreenHideByWindow.set(win, pending);
       win.once?.("leave-full-screen", pending.onLeaveFullScreen);
       win.once?.("closed", pending.onClosed);
-      win.once?.("show", pending.onShow);
       schedulePendingFullscreenHideCheck(win);
       win.setFullScreen(false);
       return true;
@@ -833,5 +834,6 @@ module.exports = {
   init,
   registerHandlers,
   handleWindowClose,
+  clearPendingFullscreenHide,
   cleanup,
 };
