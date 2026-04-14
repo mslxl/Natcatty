@@ -217,7 +217,12 @@ test("handleWindowClose allows normal close when close-to-tray is disabled", () 
   assert.equal(win.hideCalls, 0);
 });
 
-test("handleWindowClose exits mac fullscreen before hiding to tray", async () => {
+test("close-to-tray on a mac fullscreen window defers hide until after leave-full-screen and the trailing show", async () => {
+  // Observed macOS sequence after the red close on a fullscreen window:
+  //   setFullScreen(false) → (animation) → leave-full-screen → trailing show
+  // Hiding before the trailing show causes macOS to pop the window back
+  // during the final space transition. The fix waits for the trailing show
+  // (or a fallback timer) before calling win.hide().
   await withPatchedTimers(async ({ flushNextTimer, getPendingTimerCount }) => {
     await withPlatform("darwin", async () => {
       const bridge = loadBridge();
@@ -232,110 +237,84 @@ test("handleWindowClose exits mac fullscreen before hiding to tray", async () =>
       assert.equal(prevented, true);
       assert.deepEqual(win.setFullScreenCalls, [false]);
       assert.equal(win.hideCalls, 0);
+      // Watchdog timer is pending. No show listener yet — macOS's
+      // pre-leave-full-screen internal `show` events must not trigger hide.
       assert.equal(getPendingTimerCount(), 1);
-
-      flushNextTimer();
-      assert.equal(win.hideCalls, 0);
-      assert.equal(getPendingTimerCount(), 1);
-
-      win.fullscreen = false;
-      flushNextTimer();
-      assert.equal(win.hideCalls, 1);
-      assert.equal(getPendingTimerCount(), 0);
-    });
-  });
-});
-
-test("pending fullscreen hide keeps waiting after the deadline and hides once fullscreen exits", async () => {
-  await withPatchedTimers(async ({ flushNextTimer, getPendingTimerCount }) => {
-    await withPatchedDateNow(1000, async ({ setNow }) => {
-      await withPlatform("darwin", async () => {
-        const bridge = loadBridge();
-        await enableCloseToTray(bridge);
-
-        const win = new FakeWindow({ fullscreen: true });
-
-        const result = bridge.handleWindowClose({ preventDefault() {} }, win);
-        assert.equal(result, true);
-        assert.equal(getPendingTimerCount(), 1);
-
-        flushNextTimer();
-        assert.equal(win.hideCalls, 0);
-        assert.equal(getPendingTimerCount(), 1);
-
-        setNow(6000);
-        flushNextTimer();
-        assert.equal(win.hideCalls, 0);
-        assert.equal(getPendingTimerCount(), 1);
-        assert.equal(win.listenerCount("leave-full-screen"), 1);
-        assert.equal(win.listenerCount("closed"), 1);
-
-        win.fullscreen = false;
-        flushNextTimer();
-        assert.equal(win.hideCalls, 1);
-        assert.equal(getPendingTimerCount(), 0);
-        assert.equal(win.listenerCount("leave-full-screen"), 0);
-        assert.equal(win.listenerCount("closed"), 0);
-      });
-    });
-  });
-});
-
-test("leave-full-screen hides immediately and clears the pending timer", async () => {
-  await withPatchedTimers(async ({ flushNextTimer, getPendingTimerCount }) => {
-    await withPlatform("darwin", async () => {
-      const bridge = loadBridge();
-      await enableCloseToTray(bridge);
-
-      const win = new FakeWindow({ fullscreen: true });
-
-      const result = bridge.handleWindowClose({ preventDefault() {} }, win);
-      assert.equal(result, true);
-      assert.equal(getPendingTimerCount(), 1);
-
-      win.fullscreen = false;
-      win.emit("leave-full-screen");
-
-      assert.equal(win.hideCalls, 1);
-      assert.equal(getPendingTimerCount(), 0);
-      assert.equal(flushNextTimer(), false);
-    });
-  });
-});
-
-test("show event does not cancel a pending fullscreen hide", async () => {
-  // macOS fires `show` internally while animating out of fullscreen back into
-  // the window's home Space. Treating that as user intent would skip the
-  // intended hide-to-tray. Only leave-full-screen / closed / the explicit
-  // callers (openMainWindow, toggleWindowVisibility, app.on("activate"),
-  // setCloseToTray(false)) should clear the pending hide.
-  await withPatchedTimers(async ({ flushNextTimer, getPendingTimerCount }) => {
-    await withPlatform("darwin", async () => {
-      const bridge = loadBridge();
-      await enableCloseToTray(bridge);
-
-      const win = new FakeWindow({ fullscreen: true });
-
-      const result = bridge.handleWindowClose({ preventDefault() {} }, win);
-      assert.equal(result, true);
       assert.equal(win.listenerCount("show"), 0);
-      assert.equal(getPendingTimerCount(), 1);
 
+      // Spurious early show (mid-animation) does nothing.
       win.emit("show");
-
-      // Pending hide still armed: leave-full-screen/closed listeners and the
-      // poll timer remain in place until the real exit event fires.
-      assert.equal(getPendingTimerCount(), 1);
-      assert.equal(win.listenerCount("leave-full-screen"), 1);
-      assert.equal(win.listenerCount("closed"), 1);
       assert.equal(win.hideCalls, 0);
+      assert.equal(getPendingTimerCount(), 1);
 
+      // leave-full-screen arrives. Watchdog cancelled; now we arm a `show`
+      // listener + trailing-show fallback timer. Still no hide.
+      win.fullscreen = false;
+      win.emit("leave-full-screen");
+      assert.equal(win.hideCalls, 0);
+      assert.equal(getPendingTimerCount(), 1);
+      assert.equal(win.listenerCount("show"), 1);
+
+      // Trailing show from macOS finalizing the space transition runs the hide.
+      win.emit("show");
+      assert.equal(win.hideCalls, 1);
+      assert.equal(win.listenerCount("show"), 0);
+      assert.equal(win.listenerCount("leave-full-screen"), 0);
+      assert.equal(win.listenerCount("closed"), 0);
+      assert.equal(getPendingTimerCount(), 0);
+    });
+  });
+});
+
+test("fallback timer hides the window when the trailing show never arrives", async () => {
+  await withPatchedTimers(async ({ flushNextTimer, getPendingTimerCount }) => {
+    await withPlatform("darwin", async () => {
+      const bridge = loadBridge();
+      await enableCloseToTray(bridge);
+
+      const win = new FakeWindow({ fullscreen: true });
+
+      bridge.handleWindowClose({ preventDefault() {} }, win);
       win.fullscreen = false;
       win.emit("leave-full-screen");
 
+      // Watchdog cleared; trailing-show fallback timer is pending.
+      assert.equal(getPendingTimerCount(), 1);
+      assert.equal(win.hideCalls, 0);
+      assert.equal(win.listenerCount("show"), 1);
+
+      // No show ever arrives. Fallback timer runs.
+      flushNextTimer();
+
+      assert.equal(win.hideCalls, 1);
+      assert.equal(win.listenerCount("show"), 0);
+      assert.equal(getPendingTimerCount(), 0);
+    });
+  });
+});
+
+test("watchdog forces the hide path if leave-full-screen never arrives", async () => {
+  await withPatchedTimers(async ({ flushNextTimer, getPendingTimerCount }) => {
+    await withPlatform("darwin", async () => {
+      const bridge = loadBridge();
+      await enableCloseToTray(bridge);
+
+      const win = new FakeWindow({ fullscreen: true });
+
+      bridge.handleWindowClose({ preventDefault() {} }, win);
+      assert.equal(getPendingTimerCount(), 1);
+
+      // Watchdog fires (simulates 5s with no leave-full-screen). It forces
+      // the leave path — which arms the trailing-show listener + fallback.
+      flushNextTimer();
+      assert.equal(win.hideCalls, 0);
+      assert.equal(getPendingTimerCount(), 1);
+      assert.equal(win.listenerCount("show"), 1);
+
+      // Trailing-show fallback fires → hide.
+      flushNextTimer();
       assert.equal(win.hideCalls, 1);
       assert.equal(getPendingTimerCount(), 0);
-      assert.equal(flushNextTimer(), false);
     });
   });
 });
