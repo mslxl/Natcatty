@@ -11,7 +11,6 @@ import React, { useCallback, useRef, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { createPortal } from 'react-dom';
 import type { FormEvent } from 'react';
-import type { UploadedFile } from '../../application/state/useFileUpload';
 import {
   PromptInput,
   PromptInputFooter,
@@ -21,7 +20,7 @@ import {
 } from '../ai-elements/prompt-input';
 import type { PromptInputStatus } from '../ai-elements/prompt-input';
 import { formatThinkingLabel } from '../../infrastructure/ai/types';
-import type { AgentModelPreset, AIPermissionMode } from '../../infrastructure/ai/types';
+import type { AgentModelPreset, AIPermissionMode, UploadedFile } from '../../infrastructure/ai/types';
 import { ScrollArea } from '../ui/scroll-area';
 
 // Keep in sync with the popover's Tailwind max-width below.
