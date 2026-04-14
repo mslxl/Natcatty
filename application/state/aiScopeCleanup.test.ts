@@ -106,3 +106,26 @@ test("pruneInactiveScopedSessions removes non-restorable terminal chats and clos
     sessions[3],
   ]);
 });
+
+test("pruneInactiveScopedSessions preserves original sessions when orphaned restorable chats are already detached", () => {
+  const sessions = [
+    createSession("terminal-restorable", {
+      type: "terminal",
+      targetId: "closed-restorable",
+      hostIds: ["host-1"],
+    }),
+    createSession("terminal-open", {
+      type: "terminal",
+      targetId: "open-terminal",
+      hostIds: ["host-2"],
+    }, "ext-4"),
+  ];
+
+  const next = pruneInactiveScopedSessions(
+    sessions,
+    new Set(["open-terminal"]),
+  );
+
+  assert.deepEqual(next.orphanedSessionIds, ["terminal-restorable"]);
+  assert.equal(next.sessions, sessions);
+});
