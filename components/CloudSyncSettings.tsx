@@ -926,7 +926,17 @@ const LocalBackupsPanel: React.FC<LocalBackupsPanelProps> = ({
                                         size="sm"
                                         variant="outline"
                                         onClick={() => setPendingRestoreBackup(backup)}
-                                        disabled={restoringBackupId === backup.id}
+                                        // Disable every row while ANY restore is in
+                                        // flight. Each restore runs a full
+                                        // `applyProtectedSyncPayload` — multiple
+                                        // localStorage writes + the apply-in-progress
+                                        // sentinel. `withRestoreBarrier` serializes
+                                        // across windows but does NOT serialize
+                                        // same-window re-entry, so two overlapping
+                                        // clicks here would interleave destructive
+                                        // writes and the second run's sentinel-clear
+                                        // could mask a still-partial first apply.
+                                        disabled={restoringBackupId !== null}
                                         className="gap-2"
                                     >
                                         {restoringBackupId === backup.id ? (

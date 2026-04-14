@@ -284,6 +284,18 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       }
 
       lastSyncedDataRef.current = dataHash;
+
+      // Successful sync implies a successful per-provider
+      // `checkProviderConflict` (which inspects remote) — equivalent
+      // to a successful startup reconciliation from the auto-sync
+      // gate's point of view. Opening the gate here is the escape
+      // hatch when a network outage exhausted the startup retry
+      // timer: a user-triggered manual sync (or any first successful
+      // auto sync that somehow ran anyway) resumes auto-sync for the
+      // rest of the session. Without this, a degraded-startup session
+      // would require the user to manually sync after every edit.
+      hasCheckedRemoteRef.current = true;
+      remoteCheckDoneRef.current = true;
     } catch (error) {
       if (trigger === 'manual') {
         throw error;
@@ -617,6 +629,22 @@ export const useAutoSync = (config: AutoSyncConfig) => {
         // persistent failure beyond that is almost certainly a
         // misconfiguration that needs user action rather than more
         // auto-retries.
+        //
+        // When retries exhaust we deliberately leave the auto-sync gate
+        // CLOSED. Opening it here would allow a partially-lost local
+        // vault to silently clobber an unchanged remote: anchor still
+        // matches, `checkProviderConflict` sees no remote change,
+        // `hasMeaningfulSyncData` doesn't flag non-empty-but-partial
+        // local, and the empty-vault prompt never fires.
+        //
+        // Escape hatch: a successful manual sync from Settings opens
+        // the gate via `syncNow`'s success path. That path runs the
+        // same per-provider inspect we use here, so a successful
+        // manual sync is equivalent to a successful startup inspect
+        // from the gate's point of view — the user's explicit click
+        // authorizes both the push and the subsequent auto-sync
+        // resumption. Until then, auto-sync stays paused and the
+        // "sync paused" toast is the user's signal to act.
         if (attempt >= 4) return;
         const delayMs = Math.min(240_000, 30_000 * 2 ** attempt);
         attempt += 1;
