@@ -45,8 +45,16 @@ import {
   encryptProviderSecrets,
 } from '../persistence/secureFieldAdapter';
 import { mergeSyncPayloads } from '../../domain/syncMerge';
+// Extracted into a plain ESM module so the signature logic is covered by
+// the node --test harness (see syncSignature.test.mjs). The previous
+// inline implementation only hashed a handful of meta fields and was
+// trivially forgeable by a misbehaving adapter; v2 hashes the full meta
+// plus a prefix of the ciphertext.
+import { createSyncedFileSignature as createSyncedFileSignatureImpl } from './syncSignature.js';
+import { decideRemoteChanged } from './syncAnchorDecision.js';
 
 const SYNC_HISTORY_STORAGE_KEY = 'netcatty_sync_history_v1';
+const SYNC_REMOTE_ANCHOR_STORAGE_KEY = 'netcatty_sync_remote_anchor_v1';
 
 // ============================================================================
 // Types
@@ -72,6 +80,15 @@ export interface SyncManagerState {
 }
 
 export type SyncEventCallback = (event: SyncEvent) => void;
+
+interface ProviderSyncAnchor {
+  signature: string | null;
+  version: number;
+  updatedAt: number;
+  deviceId?: string;
+  resourceId?: string | null;
+  observedAt: number;
+}
 
 // ============================================================================
 // CloudSyncManager Class
@@ -754,6 +771,7 @@ export class CloudSyncManager {
       await this.saveProviderConnection('github', this.state.providers.github);
       // Clear merge base when (re)authenticating to a potentially different account
       this.removeFromStorage(this.syncBaseKey('github'));
+      this.clearSyncAnchor('github');
       this.emit({
         type: 'AUTH_COMPLETED',
         provider: 'github',
@@ -809,6 +827,7 @@ export class CloudSyncManager {
       await this.saveProviderConnection(provider, this.state.providers[provider]);
       // Clear merge base when (re)authenticating to a potentially different account
       this.removeFromStorage(this.syncBaseKey(provider));
+      this.clearSyncAnchor(provider);
       this.emit({
         type: 'AUTH_COMPLETED',
         provider,
@@ -847,6 +866,7 @@ export class CloudSyncManager {
       await this.saveProviderConnection(provider, this.state.providers[provider]);
       // Clear merge base when (re)configuring to a different endpoint/bucket
       this.removeFromStorage(this.syncBaseKey(provider));
+      this.clearSyncAnchor(provider);
       this.emit({
         type: 'AUTH_COMPLETED',
         provider,
@@ -891,6 +911,7 @@ export class CloudSyncManager {
     // Clear the merge base for this provider so reconnecting to a different
     // account/resource doesn't reuse an unrelated snapshot
     this.removeFromStorage(this.syncBaseKey(provider));
+    this.clearSyncAnchor(provider);
     this.notifyStateChange(); // Ensure UI updates immediately after disconnect
   }
 
@@ -925,44 +946,187 @@ export class CloudSyncManager {
   // Sync Operations
   // ==========================================================================
 
-  /**
-   * Helper: Check for conflicts with a specific provider
-   */
-  private async checkProviderConflict(
-    adapter: CloudAdapter
+  private syncAnchorKey(provider: CloudProvider): string {
+    return `${SYNC_REMOTE_ANCHOR_STORAGE_KEY}_${provider}`;
+  }
+
+  private createSyncedFileSignature(syncedFile: SyncedFile | null): Promise<string | null> {
+    return createSyncedFileSignatureImpl(syncedFile);
+  }
+
+  private loadSyncAnchor(provider: CloudProvider): ProviderSyncAnchor | null {
+    return this.loadFromStorage<ProviderSyncAnchor>(this.syncAnchorKey(provider));
+  }
+
+  private async saveSyncAnchor(
+    provider: CloudProvider,
+    syncedFile: SyncedFile | null,
+    resourceId?: string | null,
+  ): Promise<void> {
+    this.saveToStorage(this.syncAnchorKey(provider), {
+      signature: await this.createSyncedFileSignature(syncedFile),
+      version: syncedFile?.meta.version ?? 0,
+      updatedAt: syncedFile?.meta.updatedAt ?? 0,
+      deviceId: syncedFile?.meta.deviceId,
+      resourceId: resourceId ?? this.state.providers[provider].resourceId ?? null,
+      observedAt: Date.now(),
+    } satisfies ProviderSyncAnchor);
+  }
+
+  private clearSyncAnchor(provider?: CloudProvider): void {
+    if (provider) {
+      this.removeFromStorage(this.syncAnchorKey(provider));
+      return;
+    }
+    for (const p of ['github', 'google', 'onedrive', 'webdav', 's3'] as const) {
+      this.removeFromStorage(this.syncAnchorKey(p));
+    }
+  }
+
+  private async inspectProviderRemoteState(
+    provider: CloudProvider,
+    adapter: CloudAdapter,
   ): Promise<{
-    conflict: boolean;
+    remoteChanged: boolean;
+    remoteFile: SyncedFile | null;
     error?: string;
-    remoteFile?: SyncedFile;
   }> {
     try {
       const remoteFile = await adapter.download();
+      const currentSignature = await this.createSyncedFileSignature(remoteFile);
+      const anchor = this.loadSyncAnchor(provider);
+      const currentResourceId = adapter.resourceId || this.state.providers[provider].resourceId || null;
 
-      if (remoteFile) {
-        // Compare versions
-        if (remoteFile.meta.updatedAt > this.state.localUpdatedAt) {
-          return {
-            conflict: true,
-            remoteFile,
-          };
-        }
-      }
-      return { conflict: false };
+      const decision = decideRemoteChanged({
+        currentSignature,
+        currentResourceId,
+        anchor,
+        hasRemoteFile: Boolean(remoteFile),
+      });
+
+      return {
+        remoteChanged: decision.remoteChanged,
+        remoteFile,
+      };
     } catch (error) {
-      return { conflict: false, error: String(error) };
+      return {
+        remoteChanged: false,
+        remoteFile: null,
+        error: String(error),
+      };
     }
   }
 
   /**
+   * Helper: Check for conflicts with a specific provider
+   *
+   * Fails closed on inspection error: throws rather than returning a
+   * `{conflict: false, error}` tuple. The previous return-shape let
+   * `syncAll`'s `validUploads` filter — which checks `!r.error` (the
+   * outer per-provider try/catch error) and `!r.check?.conflict` but
+   * NOT `r.check?.error` — admit this provider into the upload batch
+   * with `conflict: false`, which then proceeded to upload stale local
+   * data over the remote (the exact #711/#719 failure mode on a
+   * transient download 5xx). Throwing surfaces the failure through the
+   * same per-provider try/catch that already handles connection errors.
+   */
+  private async checkProviderConflict(
+    provider: CloudProvider,
+    adapter: CloudAdapter
+  ): Promise<{
+    conflict: boolean;
+    remoteFile?: SyncedFile;
+  }> {
+    const inspection = await this.inspectProviderRemoteState(provider, adapter);
+    if (inspection.error) {
+      throw new Error(inspection.error);
+    }
+    return {
+      conflict: inspection.remoteChanged && Boolean(inspection.remoteFile),
+      remoteFile: inspection.remoteFile ?? undefined,
+    };
+  }
+
+  async inspectProviderRemote(provider: CloudProvider): Promise<{
+    remoteChanged: boolean;
+    remoteFile: SyncedFile | null;
+    payload: SyncPayload | null;
+  }> {
+    if (this.state.securityState !== 'UNLOCKED' || !this.masterPassword) {
+      throw new Error('Vault is locked');
+    }
+
+    const adapter = await this.getConnectedAdapter(provider);
+    const inspection = await this.inspectProviderRemoteState(provider, adapter);
+    if (inspection.error) {
+      throw new Error(inspection.error);
+    }
+
+    if (!inspection.remoteFile) {
+      return {
+        remoteChanged: inspection.remoteChanged,
+        remoteFile: null,
+        payload: null,
+      };
+    }
+
+    return {
+      remoteChanged: inspection.remoteChanged,
+      remoteFile: inspection.remoteFile,
+      payload: await EncryptionService.decryptPayload(inspection.remoteFile, this.masterPassword),
+    };
+  }
+
+  async commitRemoteInspection(
+    provider: CloudProvider,
+    remoteFile: SyncedFile,
+    payload: SyncPayload,
+  ): Promise<void> {
+    const adapter = await this.getConnectedAdapter(provider);
+    const resourceId = adapter.resourceId || this.state.providers[provider].resourceId || null;
+    if (resourceId && this.state.providers[provider].resourceId !== resourceId) {
+      ++this.providerDecryptSeq[provider];
+      this.state.providers[provider] = {
+        ...this.state.providers[provider],
+        resourceId,
+      };
+    }
+
+    this.state.localVersion = remoteFile.meta.version;
+    this.state.localUpdatedAt = remoteFile.meta.updatedAt;
+    this.state.remoteVersion = remoteFile.meta.version;
+    this.state.remoteUpdatedAt = remoteFile.meta.updatedAt;
+    this.state.providers[provider].lastSync = Date.now();
+    this.state.providers[provider].lastSyncVersion = remoteFile.meta.version;
+
+    this.saveSyncConfig();
+    await this.saveSyncAnchor(provider, remoteFile, resourceId);
+    await this.saveSyncBase(payload, provider);
+    await this.saveProviderConnection(provider, this.state.providers[provider]);
+    this.notifyStateChange();
+  }
+
+  /**
    * Helper: Upload encrypted file to a provider
+   *
+   * `payloadForBase`, when supplied, is persisted as the new sync base
+   * BEFORE the anchor is advanced. Ordering matters: if the renderer
+   * crashes between the two writes, the next startup's inspect must
+   * either (a) see no anchor advance and re-merge against the fresh
+   * base, or (b) see both advanced consistently. The previous ordering
+   * (anchor before base) allowed a crash window where the next run
+   * saw "remote unchanged" (anchor matched) but silently kept a stale
+   * base, so a subsequent 3-way merge could misclassify entries that
+   * landed in this upload.
    */
   private async uploadToProvider(
     provider: CloudProvider,
     adapter: CloudAdapter,
-    syncedFile: SyncedFile
+    syncedFile: SyncedFile,
+    payloadForBase?: SyncPayload,
   ): Promise<SyncResult> {
     try {
-      await adapter.upload(syncedFile);
+      const resourceId = await adapter.upload(syncedFile);
       this.state.lastError = null;
 
       // Update local state (safe to do multiple times if values are same)
@@ -973,10 +1137,21 @@ export class CloudSyncManager {
       // Invalidate any pending provider decrypt so it cannot overwrite
       // the lastSync/lastSyncVersion we are about to set.
       ++this.providerDecryptSeq[provider];
-      this.state.providers[provider].lastSync = Date.now();
-      this.state.providers[provider].lastSyncVersion = syncedFile.meta.version;
+      this.state.providers[provider] = {
+        ...this.state.providers[provider],
+        resourceId: resourceId || this.state.providers[provider].resourceId,
+        lastSync: Date.now(),
+        lastSyncVersion: syncedFile.meta.version,
+      };
 
       this.saveSyncConfig();
+      // Persist base BEFORE anchor so a crash between them degrades
+      // safely: the stale anchor forces re-inspection next run, which
+      // merges against the fresh base and cannot silently drift.
+      if (payloadForBase) {
+        await this.saveSyncBase(payloadForBase, provider);
+      }
+      await this.saveSyncAnchor(provider, syncedFile, resourceId);
       await this.saveProviderConnection(provider, this.state.providers[provider]);
       this.notifyStateChange();
 
@@ -1090,12 +1265,11 @@ export class CloudSyncManager {
     this.emit({ type: 'SYNC_STARTED', provider });
 
     try {
-      // 1. Check for conflict
-      const checkResult = await this.checkProviderConflict(adapter);
-
-      if (checkResult.error) {
-        throw new Error(checkResult.error);
-      }
+      // 1. Check for conflict. `checkProviderConflict` throws on
+      // inspect failure, which the outer try/catch routes to the
+      // SYNC_ERROR path — so we never reach the upload branch with an
+      // unknown remote state.
+      const checkResult = await this.checkProviderConflict(provider, adapter);
 
       if (checkResult.conflict && checkResult.remoteFile) {
         // Remote is newer — attempt three-way merge instead of blocking
@@ -1112,7 +1286,7 @@ export class CloudSyncManager {
           const base = await this.loadSyncBase(provider);
           const mergeResult = mergeSyncPayloads(base, payload, remotePayload);
 
-          console.log('[CloudSyncManager] Three-way merge completed', mergeResult.summary);
+          console.info('[CloudSyncManager] Three-way merge completed', mergeResult.summary);
 
           // Encrypt and upload merged payload
           const mergedSyncedFile = await EncryptionService.encryptPayload(
@@ -1124,10 +1298,17 @@ export class CloudSyncManager {
             checkResult.remoteFile.meta.version, // base on remote version
           );
 
-          const uploadResult = await this.uploadToProvider(provider, adapter, mergedSyncedFile);
+          const uploadResult = await this.uploadToProvider(
+            provider,
+            adapter,
+            mergedSyncedFile,
+            mergeResult.payload,
+          );
 
           if (uploadResult.success) {
-            await this.saveSyncBase(mergeResult.payload, provider);
+            // Base was persisted inside uploadToProvider before the
+            // anchor advanced, so a crash between them cannot leave a
+            // stale base pointing at pre-merge state.
             this.state.syncState = 'IDLE';
 
             this.addSyncHistoryEntry({
@@ -1190,11 +1371,12 @@ export class CloudSyncManager {
         this.state.localVersion
       );
 
-      // 3. Upload
-      const result = await this.uploadToProvider(provider, adapter, syncedFile);
+      // 3. Upload — base is persisted inside uploadToProvider before
+      // the anchor advances so a crash between them cannot leave the
+      // base pointing at a pre-upload snapshot.
+      const result = await this.uploadToProvider(provider, adapter, syncedFile, payload);
 
       if (result.success) {
-        await this.saveSyncBase(payload, provider);
         this.state.syncState = 'IDLE';
       } else {
         this.state.syncState = 'ERROR';
@@ -1260,14 +1442,7 @@ export class CloudSyncManager {
         throw new Error(`Decryption failed (master password may differ between devices): ${decryptError instanceof Error ? decryptError.message : String(decryptError)}`);
       }
 
-      // Update local tracking
-      this.state.localVersion = remoteFile.meta.version;
-      this.state.localUpdatedAt = remoteFile.meta.updatedAt;
-      this.state.remoteVersion = remoteFile.meta.version;
-      this.state.remoteUpdatedAt = remoteFile.meta.updatedAt;
-      this.saveSyncConfig();
-      await this.saveSyncBase(payload, provider);
-      this.notifyStateChange(); // Notify UI of state change
+      await this.commitRemoteInspection(provider, remoteFile, payload);
 
       // Add to sync history
       this.addSyncHistoryEntry({
@@ -1436,7 +1611,7 @@ export class CloudSyncManager {
         this.updateProviderStatus(provider, 'syncing');
         this.emit({ type: 'SYNC_STARTED', provider });
 
-        const check = await this.checkProviderConflict(adapter);
+        const check = await this.checkProviderConflict(provider, adapter);
         return { provider, adapter, check };
       } catch (error) {
         return { provider, error: String(error) };
@@ -1446,7 +1621,49 @@ export class CloudSyncManager {
     const checkResults = await Promise.all(checkTasks);
 
     // 2. Analyze Results & Handle Conflicts — merge ALL conflicting providers
+    //
+    // Contract: every connected provider is assumed to mirror the *same*
+    // logical vault. When providers hold divergent content (e.g. user
+    // intentionally points GitHub and OneDrive at separate accounts with
+    // different data), uploading the conflict-merged payload below will
+    // overwrite provider-unique content on non-conflicting providers. A
+    // proper fix requires per-provider compare-and-swap (follow-up work,
+    // see I-1 and `docs/`). Until then, we log a diagnostic warning when
+    // we detect cross-provider base divergence so the issue is visible in
+    // support logs.
     const conflicts = checkResults.filter((r) => !r.error && r.check?.conflict && r.check?.remoteFile);
+
+    // Instrumentation only — detect divergent provider bases (an
+    // unsupported configuration). Cheap: bases are already persisted
+    // and we only read their aggregate counts.
+    if (checkResults.filter((r) => !r.error).length > 1) {
+      try {
+        const summaries = await Promise.all(
+          checkResults
+            .filter((r) => !r.error)
+            .map(async (r) => {
+              const base = await this.loadSyncBase(r.provider as CloudProvider);
+              return {
+                provider: r.provider,
+                hosts: base?.hosts?.length ?? 0,
+                keys: base?.keys?.length ?? 0,
+                snippets: base?.snippets?.length ?? 0,
+              };
+            }),
+        );
+        const signatures = summaries.map((s) => `${s.hosts}/${s.keys}/${s.snippets}`);
+        const allSame = signatures.every((sig) => sig === signatures[0]);
+        if (!allSame) {
+          console.warn(
+            '[CloudSyncManager] syncAll: connected providers hold divergent bases (multi-account setup?). Uploading the conflict-merged payload will replace each provider\'s current remote. See I-7 in PR #720 for context.',
+            summaries,
+          );
+        }
+      } catch (diagError) {
+        // Non-fatal diagnostic; never let it block the sync.
+        console.warn('[CloudSyncManager] syncAll: base-divergence check failed:', diagError);
+      }
+    }
 
     if (conflicts.length > 0) {
       // Three-way merge: incorporate remote data from every conflicting provider
@@ -1463,7 +1680,7 @@ export class CloudSyncManager {
         }
         const mergeResult = { payload: merged };
 
-        console.log('[CloudSyncManager] syncAll: three-way merge completed');
+        console.info('[CloudSyncManager] syncAll: three-way merge completed');
 
         // Replace payload with merged payload for upload to all providers
         payload = mergeResult.payload;
@@ -1587,9 +1804,13 @@ export class CloudSyncManager {
       return results;
     }
 
-    // 4. Parallel Uploads
+    // 4. Parallel Uploads — pass the payload so base is persisted
+    // inside uploadToProvider BEFORE the per-provider anchor advances.
+    // Ordering matters: a crash between the two writes must leave the
+    // stale anchor re-triggering inspection on next startup, not a
+    // fresh anchor paired with a stale base.
     const uploadTasks = validUploads.map(async ({ provider, adapter }) => {
-      const result = await this.uploadToProvider(provider, adapter, syncedFile);
+      const result = await this.uploadToProvider(provider, adapter, syncedFile, payload);
       results.set(provider, result);
     });
 
@@ -1599,12 +1820,6 @@ export class CloudSyncManager {
     const hasSuccess = Array.from(results.values()).some((r) => r.success);
     if (hasSuccess) {
       this.state.syncState = 'IDLE';
-      // Save base per provider that successfully uploaded
-      if (payload) {
-        for (const [p, r] of results) {
-          if (r.success) await this.saveSyncBase(payload, p);
-        }
-      }
 
       // If a merge happened, attach the merged payload to successful results
       // so callers can apply remote additions to local state
@@ -1750,6 +1965,7 @@ export class CloudSyncManager {
     for (const p of ['github', 'google', 'onedrive', 'webdav', 's3'] as const) {
       this.removeFromStorage(this.syncBaseKey(p));
     }
+    this.clearSyncAnchor();
   }
 
   private addSyncHistoryEntry(entry: Omit<SyncHistoryEntry, 'id'>): void {
@@ -1780,6 +1996,7 @@ export class CloudSyncManager {
     this.saveSyncConfig();
     this.saveToStorage(SYNC_HISTORY_STORAGE_KEY, []);
     this.clearSyncBase();
+    this.clearSyncAnchor();
     this.notifyStateChange();
   }
 
