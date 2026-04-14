@@ -332,6 +332,12 @@ function focusMainWindow() {
       }
     } catch {}
 
+    // Cancel any in-flight close-to-tray hide so second-instance / dock-click
+    // re-entry beats a pending leave-full-screen → hide sequence.
+    try {
+      getGlobalShortcutBridge().clearPendingFullscreenHide?.(win);
+    } catch {}
+
     try {
       if (win.isMinimized && win.isMinimized()) win.restore();
     } catch {}
@@ -1068,6 +1074,12 @@ if (!gotLock) {
       try {
         const mainWin = getWindowManager().getMainWindow?.();
         if (mainWin && !mainWin.isDestroyed?.()) {
+          // If a close-to-tray hide is still pending (fullscreen exit animation
+          // not finished yet), cancel it — user intent to bring the window
+          // back overrides the pending hide.
+          try {
+            getGlobalShortcutBridge().clearPendingFullscreenHide?.(mainWin);
+          } catch {}
           if (mainWin.isMinimized?.()) mainWin.restore();
           mainWin.show?.();
           mainWin.focus?.();

@@ -34,8 +34,15 @@ let trayMenuData = {
 let trayPanelWindow = null;
 
 let trayPanelRefreshTimer = null;
-const FULLSCREEN_HIDE_POLL_MS = 100;
-const FULLSCREEN_HIDE_TIMEOUT_MS = 5000;
+// Watchdog: if `leave-full-screen` never arrives (edge case / stuck transition)
+// we eventually give up and force a hide attempt. Better a visible window than
+// a hung close-to-tray path.
+const FULLSCREEN_LEAVE_WATCHDOG_MS = 5000;
+// After `leave-full-screen` fires, macOS emits a trailing `show` event while
+// the native space transition finishes. Calling `win.hide()` before that show
+// causes the window to pop back on screen. We wait for the trailing show, or
+// fall back on this timeout — whichever comes first.
+const FULLSCREEN_TRAILING_SHOW_FALLBACK_MS = 300;
 const pendingFullscreenHideByWindow = new WeakMap();
 
 function clearPendingFullscreenHide(win) {
@@ -43,15 +50,25 @@ function clearPendingFullscreenHide(win) {
   const pending = pendingFullscreenHideByWindow.get(win);
   if (!pending) return;
 
-  if (pending.timer) {
-    clearTimeout(pending.timer);
-    pending.timer = null;
+  if (pending.watchdogTimer) {
+    clearTimeout(pending.watchdogTimer);
+    pending.watchdogTimer = null;
+  }
+  if (pending.trailingShowTimer) {
+    clearTimeout(pending.trailingShowTimer);
+    pending.trailingShowTimer = null;
   }
 
   try {
-    win.removeListener?.("leave-full-screen", pending.onLeaveFullScreen);
-    win.removeListener?.("closed", pending.onClosed);
-    win.removeListener?.("show", pending.onShow);
+    if (pending.onLeaveFullScreen) {
+      win.removeListener?.("leave-full-screen", pending.onLeaveFullScreen);
+    }
+    if (pending.onClosed) {
+      win.removeListener?.("closed", pending.onClosed);
+    }
+    if (pending.onTrailingShow) {
+      win.removeListener?.("show", pending.onTrailingShow);
+    }
   } catch {
     // ignore
   }
@@ -59,15 +76,12 @@ function clearPendingFullscreenHide(win) {
   pendingFullscreenHideByWindow.delete(win);
 }
 
-function finalizePendingFullscreenHide(win) {
+function performPendingFullscreenHide(win) {
   const pending = pendingFullscreenHideByWindow.get(win);
   if (!pending) return "cancelled";
   if (!win || win.isDestroyed?.()) {
     clearPendingFullscreenHide(win);
     return "cancelled";
-  }
-  if (win.isFullScreen?.()) {
-    return "waiting";
   }
 
   clearPendingFullscreenHide(win);
@@ -81,25 +95,70 @@ function finalizePendingFullscreenHide(win) {
   }
 }
 
-function schedulePendingFullscreenHideCheck(win) {
+function handleLeaveFullScreenForPendingHide(win) {
+  const pending = pendingFullscreenHideByWindow.get(win);
+  if (!pending) return;
+  if (!win || win.isDestroyed?.()) {
+    clearPendingFullscreenHide(win);
+    return;
+  }
+
+  pending.leaveFullScreenFired = true;
+
+  if (pending.watchdogTimer) {
+    clearTimeout(pending.watchdogTimer);
+    pending.watchdogTimer = null;
+  }
+
+  // Wait for the trailing `show` that macOS emits as the space transition
+  // finishes, then hide on top of it. If it never fires within the fallback
+  // window, hide anyway.
+  pending.onTrailingShow = () => {
+    pending.onTrailingShow = null;
+    if (pending.trailingShowTimer) {
+      clearTimeout(pending.trailingShowTimer);
+      pending.trailingShowTimer = null;
+    }
+    performPendingFullscreenHide(win);
+  };
+  try {
+    win.once?.("show", pending.onTrailingShow);
+  } catch {
+    // ignore
+  }
+
+  pending.trailingShowTimer = setTimeout(() => {
+    pending.trailingShowTimer = null;
+    if (pending.onTrailingShow) {
+      try {
+        win.removeListener?.("show", pending.onTrailingShow);
+      } catch {
+        // ignore
+      }
+      pending.onTrailingShow = null;
+    }
+    performPendingFullscreenHide(win);
+  }, FULLSCREEN_TRAILING_SHOW_FALLBACK_MS);
+}
+
+function startPendingFullscreenHideWatchdog(win) {
   const pending = pendingFullscreenHideByWindow.get(win);
   if (!pending) return;
 
-  pending.timer = setTimeout(() => {
-    pending.timer = null;
-
-    const result = finalizePendingFullscreenHide(win);
-    if (result === "hidden" || result === "cancelled" || result === "failed") {
+  pending.watchdogTimer = setTimeout(() => {
+    pending.watchdogTimer = null;
+    if (!pendingFullscreenHideByWindow.has(win)) return;
+    if (!win || win.isDestroyed?.()) {
+      clearPendingFullscreenHide(win);
       return;
     }
+    if (pending.leaveFullScreenFired) return;
 
-    if (!pending.warned && Date.now() >= pending.deadline) {
-      pending.warned = true;
-      console.warn("[GlobalShortcut] Timed out waiting for fullscreen exit before hiding window");
-    }
-
-    schedulePendingFullscreenHideCheck(win);
-  }, FULLSCREEN_HIDE_POLL_MS);
+    console.warn("[GlobalShortcut] Timed out waiting for leave-full-screen before hiding to tray; forcing hide");
+    // Give up and hide anyway. Simulate the leave path so the trailing-show
+    // wait still applies (defence in depth against spurious show events).
+    handleLeaveFullScreenForPendingHide(win);
+  }, FULLSCREEN_LEAVE_WATCHDOG_MS);
 }
 
 function openMainWindow() {
@@ -292,27 +351,42 @@ function hideWindowRespectingMacFullscreen(win) {
   clearPendingFullscreenHide(win);
 
   if (process.platform === "darwin" && win.isFullScreen?.()) {
+    // Close-to-tray on a native-fullscreen window on macOS has two traps:
+    //
+    // 1. `isFullScreen()` can flip to false BEFORE the exit animation
+    //    completes. Polling it and calling `win.hide()` at that moment
+    //    hides the window mid-transition, which macOS then undoes when
+    //    the animation finishes.
+    // 2. Right after the real `leave-full-screen` event, macOS emits an
+    //    internal `show` event as part of finalizing the space transition
+    //    — this show undoes any earlier hide.
+    //
+    // Strategy: wait for `leave-full-screen`, then wait for the trailing
+    // `show` that follows it (or a short timeout), and only then hide.
+    // All legitimate "bring the window back" entry points (openMainWindow,
+    // toggleWindowVisibility, setCloseToTray(false), app.on("activate"),
+    // closed) explicitly call clearPendingFullscreenHide so we never race
+    // with genuine user intent.
     const pending = {
-      timer: null,
-      deadline: Date.now() + FULLSCREEN_HIDE_TIMEOUT_MS,
-      warned: false,
-      onLeaveFullScreen: () => {
-        finalizePendingFullscreenHide(win);
-      },
-      onClosed: () => {
-        clearPendingFullscreenHide(win);
-      },
-      onShow: () => {
-        clearPendingFullscreenHide(win);
-      },
+      watchdogTimer: null,
+      trailingShowTimer: null,
+      leaveFullScreenFired: false,
+      onLeaveFullScreen: null,
+      onClosed: null,
+      onTrailingShow: null,
+    };
+    pending.onLeaveFullScreen = () => {
+      handleLeaveFullScreenForPendingHide(win);
+    };
+    pending.onClosed = () => {
+      clearPendingFullscreenHide(win);
     };
 
     try {
       pendingFullscreenHideByWindow.set(win, pending);
       win.once?.("leave-full-screen", pending.onLeaveFullScreen);
       win.once?.("closed", pending.onClosed);
-      win.once?.("show", pending.onShow);
-      schedulePendingFullscreenHideCheck(win);
+      startPendingFullscreenHideWatchdog(win);
       win.setFullScreen(false);
       return true;
     } catch (err) {
@@ -833,5 +907,6 @@ module.exports = {
   init,
   registerHandlers,
   handleWindowClose,
+  clearPendingFullscreenHide,
   cleanup,
 };
