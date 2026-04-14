@@ -30,6 +30,11 @@ export function setDraftView(
   panelViewByScope: PanelViewByScope,
   scopeKey: string,
 ): PanelViewByScope {
+  const currentPanelView = panelViewByScope[scopeKey];
+  if (currentPanelView?.mode === 'draft') {
+    return panelViewByScope;
+  }
+
   return {
     ...panelViewByScope,
     [scopeKey]: DEFAULT_PANEL_VIEW,
@@ -86,6 +91,21 @@ export function updateDraftForScope(
   return {
     ...draftsByScope,
     [scopeKey]: nextDraft,
+  };
+}
+
+export function ensureDraftForScopeState(
+  draftsByScope: DraftsByScope,
+  scopeKey: string,
+  agentId: string,
+): DraftsByScope {
+  if (draftsByScope[scopeKey]) {
+    return draftsByScope;
+  }
+
+  return {
+    ...draftsByScope,
+    [scopeKey]: createEmptyDraft(agentId),
   };
 }
 

@@ -826,6 +826,9 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     const currentSessionView = activeSessionRef.current;
     const trimmed = draft?.text.trim() ?? '';
     const sendScopeKey = scopeKey;
+    // Double-submit protection currently relies on the draft being cleared
+    // immediately after the first send path starts; `isStreaming` alone does
+    // not protect the initial draft->session transition.
     if (!trimmed || isStreaming) return;
     const selectedSkillSlugs = draft?.selectedUserSkillSlugs ?? [];
     const attachments = (draft?.attachments ?? []).map((file) => ({

@@ -5,6 +5,7 @@ import {
   activateDraftView,
   clearScopeDraftState,
   createEmptyDraft,
+  ensureDraftForScopeState,
   pruneTerminalScopeState,
   pruneTerminalTransientState,
   resolvePanelView,
@@ -56,6 +57,25 @@ test("activateDraftView clears the terminal scope's active session owner", () =>
     "terminal:123": { mode: "draft" },
     "workspace:abc": panelViewByScope["workspace:abc"],
   });
+});
+
+test("activateDraftView is a no-op when the scope already has explicit draft view", () => {
+  const activeSessionIdMap = {
+    "workspace:abc": "session-workspace",
+  };
+  const panelViewByScope = {
+    "terminal:123": { mode: "draft" },
+    "workspace:abc": { mode: "session", sessionId: "session-workspace" },
+  } satisfies Record<string, { mode: "draft" } | { mode: "session"; sessionId: string }>;
+
+  const next = activateDraftView(
+    activeSessionIdMap,
+    panelViewByScope,
+    "terminal:123",
+  );
+
+  assert.equal(next.activeSessionIdMap, activeSessionIdMap);
+  assert.equal(next.panelViewByScope, panelViewByScope);
 });
 
 test("setSessionView records target session id", () => {
@@ -116,6 +136,36 @@ test("updateDraftForScope creates a draft on first write and keeps other scopes 
   assert.equal(next["terminal:1"].agentId, "agent-alpha");
   assert.equal(next["terminal:1"].text, "hello world");
   assert.equal(next["workspace:2"], draftsByScope["workspace:2"]);
+});
+
+test("ensureDraftForScopeState adds the missing scope without dropping siblings", () => {
+  const draftsByScope = {
+    "workspace:2": createEmptyDraft("agent-beta"),
+  };
+
+  const next = ensureDraftForScopeState(
+    draftsByScope,
+    "terminal:1",
+    "agent-alpha",
+  );
+
+  assert.equal(next["terminal:1"].agentId, "agent-alpha");
+  assert.equal(next["terminal:1"].text, "");
+  assert.equal(next["workspace:2"], draftsByScope["workspace:2"]);
+});
+
+test("ensureDraftForScopeState returns the original ref when the scope already exists", () => {
+  const draftsByScope = {
+    "terminal:1": createEmptyDraft("agent-alpha"),
+  };
+
+  const next = ensureDraftForScopeState(
+    draftsByScope,
+    "terminal:1",
+    "agent-beta",
+  );
+
+  assert.equal(next, draftsByScope);
 });
 
 test("pruneTerminalScopeState removes closed terminal drafts and views only", () => {

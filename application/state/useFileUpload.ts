@@ -1,10 +1,9 @@
 /**
- * useFileUpload - Handle file paste/drop with base64 conversion
+ * File upload conversion helpers for AI draft attachments.
  *
  * Supports images, PDFs, and other document types.
  * Ported from 1code's use-agents-file-upload.ts
  */
-import { useCallback, useState } from 'react';
 import type { UploadedFile } from '../../infrastructure/ai/types';
 import { getPathForFile } from '../../lib/sftpFileUtils';
 
@@ -60,25 +59,4 @@ export async function convertFilesToUploads(inputFiles: File[]): Promise<Uploade
   );
 
   return uploads.filter((upload): upload is UploadedFile => upload !== null);
-}
-
-export function useFileUpload() {
-  const [files, setFiles] = useState<UploadedFile[]>([]);
-
-  const addFiles = useCallback(async (inputFiles: File[]) => {
-    const newFiles = await convertFilesToUploads(inputFiles);
-    if (newFiles.length === 0) return;
-
-    setFiles((prev) => [...prev, ...newFiles]);
-  }, []);
-
-  const removeFile = useCallback((id: string) => {
-    setFiles((prev) => prev.filter((f) => f.id !== id));
-  }, []);
-
-  const clearFiles = useCallback(() => {
-    setFiles([]);
-  }, []);
-
-  return { files, addFiles, removeFile, clearFiles };
 }

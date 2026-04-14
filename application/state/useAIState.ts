@@ -34,7 +34,7 @@ import { DEFAULT_COMMAND_BLOCKLIST } from '../../infrastructure/ai/types';
 import {
   activateDraftView,
   clearScopeDraftState,
-  createEmptyDraft,
+  ensureDraftForScopeState,
   setSessionView,
   updateDraftForScope,
 } from './aiDraftState';
@@ -297,6 +297,8 @@ export function useAIState() {
   const [activeSessionIdMap, setActiveSessionIdMapRaw] = useState<Record<string, string | null>>(() =>
     localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP) ?? {}
   );
+  // Per-scope draft/view state is intentionally memory-only so a relaunch
+  // does not restore stale composer input or panel intent against new history.
   const [draftsByScope, setDraftsByScopeRaw] = useState<DraftsByScope>(() =>
     latestAIDraftsByScopeSnapshot ?? {}
   );
@@ -352,33 +354,39 @@ export function useAIState() {
   }, [sessions, activeSessionIdMap]);
 
   const setActiveSessionId = useCallback((scopeKey: string, id: string | null) => {
-    setActiveSessionIdMapRaw(prev => {
-      const next = { ...prev, [scopeKey]: id };
-      setLatestAIActiveSessionMapSnapshot(next);
-      localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, next);
-      emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
-      return next;
-    });
-  }, []);
+    let nextActiveSessionIdMap: Record<string, string | null> | null = null;
 
-  const setDraftsByScope = useCallback((value: DraftsByScope | ((prev: DraftsByScope) => DraftsByScope)) => {
-    setDraftsByScopeRaw((prev) => {
-      const next = typeof value === 'function' ? value(prev) : value;
-      if (next === prev) return prev;
-      setLatestAIDraftsByScopeSnapshot(next);
-      emitAIStateChanged(AI_STATE_CHANGED_DRAFTS_BY_SCOPE);
+    setActiveSessionIdMapRaw(prev => {
+      if (prev[scopeKey] === id) {
+        return prev;
+      }
+
+      const next = { ...prev, [scopeKey]: id };
+      nextActiveSessionIdMap = next;
       return next;
     });
+
+    if (!nextActiveSessionIdMap) return;
+
+    setLatestAIActiveSessionMapSnapshot(nextActiveSessionIdMap);
+    localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, nextActiveSessionIdMap);
+    emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
   }, []);
 
   const setPanelViewByScope = useCallback((value: PanelViewByScope | ((prev: PanelViewByScope) => PanelViewByScope)) => {
+    let nextPanelViewByScope: PanelViewByScope | null = null;
+
     setPanelViewByScopeRaw((prev) => {
       const next = typeof value === 'function' ? value(prev) : value;
       if (next === prev) return prev;
-      setLatestAIPanelViewByScopeSnapshot(next);
-      emitAIStateChanged(AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE);
+      nextPanelViewByScope = next;
       return next;
     });
+
+    if (!nextPanelViewByScope) return;
+
+    setLatestAIPanelViewByScopeSnapshot(nextPanelViewByScope);
+    emitAIStateChanged(AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE);
   }, []);
 
   const setAgentModel = useCallback((agentId: string, modelId: string) => {
@@ -902,23 +910,21 @@ export function useAIState() {
   }, [persistSessions]);
 
   const ensureDraftForScope = useCallback((scopeKey: string, agentId: string): void => {
-    const currentDraftsByScope = latestAIDraftsByScopeSnapshot ?? draftsByScope;
-    if (currentDraftsByScope[scopeKey]) return;
-
-    const next = {
-      ...currentDraftsByScope,
-      [scopeKey]: createEmptyDraft(agentId),
-    };
-
-    bumpDraftMutationVersion(scopeKey);
-    setLatestAIDraftsByScopeSnapshot(next);
-    emitAIStateChanged(AI_STATE_CHANGED_DRAFTS_BY_SCOPE);
+    let nextDraftsByScope: DraftsByScope | null = null;
 
     setDraftsByScopeRaw((prev) => {
-      if (prev[scopeKey]) return prev;
+      const next = ensureDraftForScopeState(prev, scopeKey, agentId);
+      if (next === prev) return prev;
+      nextDraftsByScope = next;
       return next;
     });
-  }, [draftsByScope]);
+
+    if (!nextDraftsByScope) return;
+
+    bumpDraftMutationVersion(scopeKey);
+    setLatestAIDraftsByScopeSnapshot(nextDraftsByScope);
+    emitAIStateChanged(AI_STATE_CHANGED_DRAFTS_BY_SCOPE);
+  }, []);
 
   const updateDraft = useCallback((
     scopeKey: string,
@@ -966,25 +972,36 @@ export function useAIState() {
   }, []);
 
   const showDraftView = useCallback((scopeKey: string) => {
+    const currentPanelViewByScope = latestAIPanelViewByScopeSnapshot ?? panelViewByScope;
+    let nextActiveSessionIdMap: Record<string, string | null> | null = null;
+    let nextPanelViewByScope: PanelViewByScope | null = null;
+    let activeSessionMapChanged = false;
+    let panelViewChanged = false;
+
     setActiveSessionIdMapRaw((prevActiveSessionIdMap) => {
       const next = activateDraftView(
         prevActiveSessionIdMap,
-        latestAIPanelViewByScopeSnapshot ?? panelViewByScope,
+        currentPanelViewByScope,
         scopeKey,
       );
-
-      if (next.activeSessionIdMap !== prevActiveSessionIdMap) {
-        setLatestAIActiveSessionMapSnapshot(next.activeSessionIdMap);
-        localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, next.activeSessionIdMap);
-        emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
-      }
-
-      setLatestAIPanelViewByScopeSnapshot(next.panelViewByScope);
-      setPanelViewByScopeRaw(next.panelViewByScope);
-      emitAIStateChanged(AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE);
-
-      return next.activeSessionIdMap;
+      activeSessionMapChanged = next.activeSessionIdMap !== prevActiveSessionIdMap;
+      panelViewChanged = next.panelViewByScope !== currentPanelViewByScope;
+      nextActiveSessionIdMap = next.activeSessionIdMap;
+      nextPanelViewByScope = next.panelViewByScope;
+      return activeSessionMapChanged ? next.activeSessionIdMap : prevActiveSessionIdMap;
     });
+
+    if (activeSessionMapChanged && nextActiveSessionIdMap) {
+      setLatestAIActiveSessionMapSnapshot(nextActiveSessionIdMap);
+      localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, nextActiveSessionIdMap);
+      emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
+    }
+
+    if (panelViewChanged && nextPanelViewByScope) {
+      setLatestAIPanelViewByScopeSnapshot(nextPanelViewByScope);
+      setPanelViewByScopeRaw(nextPanelViewByScope);
+      emitAIStateChanged(AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE);
+    }
   }, [panelViewByScope]);
 
   const showSessionView = useCallback((scopeKey: string, sessionId: string) => {
@@ -992,24 +1009,40 @@ export function useAIState() {
   }, [setPanelViewByScope]);
 
   const clearDraftForScope = useCallback((scopeKey: string) => {
-    setDraftsByScope((prevDraftsByScope) => {
+    const currentPanelViewByScope = latestAIPanelViewByScopeSnapshot ?? panelViewByScope;
+    let nextDraftsByScope: DraftsByScope | null = null;
+    let nextPanelViewByScope: PanelViewByScope | null = null;
+    let draftsChanged = false;
+    let panelViewChanged = false;
+
+    setDraftsByScopeRaw((prevDraftsByScope) => {
       const next = clearScopeDraftState(
         prevDraftsByScope,
-        latestAIPanelViewByScopeSnapshot ?? panelViewByScope,
+        currentPanelViewByScope,
         scopeKey,
       );
-      if (
-        next.draftsByScope !== prevDraftsByScope
-        || next.panelViewByScope !== (latestAIPanelViewByScopeSnapshot ?? panelViewByScope)
-      ) {
-        bumpDraftMutationVersion(scopeKey);
-      }
-      setLatestAIPanelViewByScopeSnapshot(next.panelViewByScope);
-      setPanelViewByScopeRaw(next.panelViewByScope);
-      emitAIStateChanged(AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE);
-      return next.draftsByScope;
+      draftsChanged = next.draftsByScope !== prevDraftsByScope;
+      panelViewChanged = next.panelViewByScope !== currentPanelViewByScope;
+      nextDraftsByScope = next.draftsByScope;
+      nextPanelViewByScope = next.panelViewByScope;
+      return draftsChanged ? next.draftsByScope : prevDraftsByScope;
     });
-  }, [panelViewByScope, setDraftsByScope]);
+
+    if (!draftsChanged && !panelViewChanged) return;
+
+    bumpDraftMutationVersion(scopeKey);
+
+    if (draftsChanged && nextDraftsByScope) {
+      setLatestAIDraftsByScopeSnapshot(nextDraftsByScope);
+      emitAIStateChanged(AI_STATE_CHANGED_DRAFTS_BY_SCOPE);
+    }
+
+    if (panelViewChanged && nextPanelViewByScope) {
+      setLatestAIPanelViewByScopeSnapshot(nextPanelViewByScope);
+      setPanelViewByScopeRaw(nextPanelViewByScope);
+      emitAIStateChanged(AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE);
+    }
+  }, [panelViewByScope]);
 
   const addDraftFiles = useCallback(async (
     scopeKey: string,

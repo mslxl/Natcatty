@@ -261,7 +261,7 @@ interface AIChatPanelsHostProps {
 }
 
 interface AIStateMaintenanceHostProps {
-  validTerminalTabIds: Set<string>;
+  validAIScopeTargetIds: Set<string>;
 }
 
 const AIStateProviderInner: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -277,7 +277,7 @@ const AIStateProvider = memo(AIStateProviderInner);
 AIStateProvider.displayName = 'AIStateProvider';
 
 const AIStateMaintenanceHostInner: React.FC<AIStateMaintenanceHostProps> = ({
-  validTerminalTabIds,
+  validAIScopeTargetIds,
 }) => {
   const aiState = useContext(AIStateContext);
 
@@ -288,8 +288,8 @@ const AIStateMaintenanceHostInner: React.FC<AIStateMaintenanceHostProps> = ({
   const { cleanupOrphanedSessions } = aiState;
 
   useEffect(() => {
-    cleanupOrphanedSessions(validTerminalTabIds);
-  }, [cleanupOrphanedSessions, validTerminalTabIds]);
+    cleanupOrphanedSessions(validAIScopeTargetIds);
+  }, [cleanupOrphanedSessions, validAIScopeTargetIds]);
 
   return null;
 };
@@ -887,7 +887,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     return map;
   }, [sessions, sessionHostsMap, hostMap, groupConfigs]);
 
-  const validTerminalTabIds = useMemo(() => {
+  const validAIScopeTargetIds = useMemo(() => {
     const ids = new Set<string>();
     for (const session of sessions) ids.add(session.id);
     for (const workspace of workspaces) ids.add(workspace.id);
@@ -975,12 +975,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   }, [workspaces]);
 
   useEffect(() => {
-    setSidePanelOpenTabs(prev => filterTabsMap(prev, validTerminalTabIds));
-    setSftpHostForTab(prev => filterTabsMap(prev, validTerminalTabIds));
-    setSftpInitialLocationForTab(prev => filterTabsMap(prev, validTerminalTabIds));
-    setSftpPendingUploadsForTab(prev => filterTabsMap(prev, validTerminalTabIds));
+    setSidePanelOpenTabs(prev => filterTabsMap(prev, validAIScopeTargetIds));
+    setSftpHostForTab(prev => filterTabsMap(prev, validAIScopeTargetIds));
+    setSftpInitialLocationForTab(prev => filterTabsMap(prev, validAIScopeTargetIds));
+    setSftpPendingUploadsForTab(prev => filterTabsMap(prev, validAIScopeTargetIds));
     sessionActivityStore.prune(validSessionActivityIds);
-  }, [validSessionActivityIds, validTerminalTabIds]);
+  }, [validSessionActivityIds, validAIScopeTargetIds]);
 
   const computeWorkspaceRects = useCallback((workspace?: Workspace, size?: { width: number; height: number }): Record<string, WorkspaceRect> => {
     if (!workspace) return {} as Record<string, WorkspaceRect>;
@@ -1950,7 +1950,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
   return (
     <AIStateProvider>
-      <AIStateMaintenanceHost validTerminalTabIds={validTerminalTabIds} />
+      <AIStateMaintenanceHost validAIScopeTargetIds={validAIScopeTargetIds} />
       <div
         ref={workspaceOuterRef}
         className="absolute inset-0 bg-background flex flex-col"
