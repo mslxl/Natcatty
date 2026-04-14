@@ -332,6 +332,12 @@ function focusMainWindow() {
       }
     } catch {}
 
+    // Cancel any in-flight close-to-tray hide so second-instance / dock-click
+    // re-entry beats a pending leave-full-screen → hide sequence.
+    try {
+      getGlobalShortcutBridge().clearPendingFullscreenHide?.(win);
+    } catch {}
+
     try {
       if (win.isMinimized && win.isMinimized()) win.restore();
     } catch {}
