@@ -141,19 +141,48 @@ export const useSessionState = () => {
     setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, status } : s));
   }, []);
 
+  const closeWorkspace = useCallback((workspaceId: string) => {
+    setWorkspaces(prevWorkspaces => {
+      const remainingWorkspaces = prevWorkspaces.filter(w => w.id !== workspaceId);
+
+      setSessions(prevSessions => prevSessions.filter(s => s.workspaceId !== workspaceId));
+
+      const currentActiveTabId = activeTabStore.getActiveTabId();
+      if (currentActiveTabId === workspaceId) {
+        if (remainingWorkspaces.length > 0) {
+          setActiveTabId(remainingWorkspaces[remainingWorkspaces.length - 1].id);
+        } else {
+          setActiveTabId('vault');
+        }
+      }
+
+      return remainingWorkspaces;
+    });
+  }, [setActiveTabId]);
+
   const closeSession = useCallback((sessionId: string, e?: MouseEvent) => {
     e?.stopPropagation();
-    
+
+    // Pre-compute outside the setSessions updater so we don't depend on React
+    // having run the updater by the time we queue the microtask. React 18+ does
+    // not guarantee updater execution timing under concurrent scheduling.
+    const sessionBeingClosed = sessions.find(s => s.id === sessionId);
+    const workspaceIdToMaybeClose =
+      sessionBeingClosed?.workspaceId &&
+      sessions.every(s => s.id === sessionId || s.workspaceId !== sessionBeingClosed.workspaceId)
+        ? sessionBeingClosed.workspaceId
+        : undefined;
+
     setSessions(prevSessions => {
       const targetSession = prevSessions.find(s => s.id === sessionId);
       const wsId = targetSession?.workspaceId;
-      
+
       setWorkspaces(prevWorkspaces => {
         let removedWorkspaceId: string | null = null;
         let nextWorkspaces = prevWorkspaces;
         let dissolvedWorkspaceId: string | null = null;
         let lastRemainingSessionId: string | null = null;
-        
+
         if (wsId) {
           nextWorkspaces = prevWorkspaces
             .map(ws => {
@@ -163,7 +192,7 @@ export const useSessionState = () => {
                 removedWorkspaceId = ws.id;
                 return null;
               }
-              
+
               // Check if only 1 session remains - dissolve workspace
               const remainingSessionIds = collectSessionIds(pruned);
               if (remainingSessionIds.length === 1) {
@@ -171,12 +200,12 @@ export const useSessionState = () => {
                 lastRemainingSessionId = remainingSessionIds[0];
                 return null;
               }
-              
+
               return { ...ws, root: pruned };
             })
             .filter((ws): ws is Workspace => Boolean(ws));
         }
-        
+
         const remainingSessions = prevSessions.filter(s => s.id !== sessionId);
         const fallbackWorkspace = nextWorkspaces[nextWorkspaces.length - 1];
         const fallbackSolo = remainingSessions.filter(s => !s.workspaceId).slice(-1)[0];
@@ -198,10 +227,10 @@ export const useSessionState = () => {
         } else if (wsId && currentActiveTabId === wsId && !nextWorkspaces.find(w => w.id === wsId)) {
           setActiveTabId(getFallback());
         }
-        
+
         return nextWorkspaces;
       });
-      
+
       // Check if we need to dissolve a workspace (convert remaining session to orphan)
       if (targetSession?.workspaceId) {
         const ws = workspaces.find(w => w.id === targetSession.workspaceId);
@@ -218,29 +247,14 @@ export const useSessionState = () => {
           }
         }
       }
-	      
-	      return prevSessions.filter(s => s.id !== sessionId);
-	    });
-	  }, [workspaces, setActiveTabId]);
 
-  const closeWorkspace = useCallback((workspaceId: string) => {
-    setWorkspaces(prevWorkspaces => {
-      const remainingWorkspaces = prevWorkspaces.filter(w => w.id !== workspaceId);
-      
-      setSessions(prevSessions => prevSessions.filter(s => s.workspaceId !== workspaceId));
-      
-      const currentActiveTabId = activeTabStore.getActiveTabId();
-      if (currentActiveTabId === workspaceId) {
-        if (remainingWorkspaces.length > 0) {
-          setActiveTabId(remainingWorkspaces[remainingWorkspaces.length - 1].id);
-        } else {
-          setActiveTabId('vault');
-        }
-      }
-      
-	      return remainingWorkspaces;
-	    });
-	  }, [setActiveTabId]);
+      return prevSessions.filter(s => s.id !== sessionId);
+    });
+
+    if (workspaceIdToMaybeClose) {
+      queueMicrotask(() => closeWorkspace(workspaceIdToMaybeClose!));
+    }
+  }, [sessions, workspaces, setActiveTabId, closeWorkspace]);
 
   const startSessionRename = useCallback((sessionId: string) => {
     setSessions(prevSessions => {

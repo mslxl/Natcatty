@@ -18,6 +18,7 @@ import { resolveGroupDefaults, applyGroupDefaults } from './domain/groupConfig';
 import { resolveHostAuth } from './domain/sshAuth';
 import { resolveHostTerminalThemeId } from './domain/terminalAppearance';
 import { collectSessionIds } from './domain/workspace';
+import { resolveCloseIntent } from './application/state/resolveCloseIntent';
 import { TERMINAL_THEMES } from './infrastructure/config/terminalThemes';
 import { useCustomThemes } from './application/state/customThemeStore';
 import type { SyncPayload } from './domain/sync';
@@ -992,6 +993,10 @@ function App({ settings }: { settings: SettingsState }) {
   const addConnectionLogRef = useRef(addConnectionLog);
   addConnectionLogRef.current = addConnectionLog;
 
+  const closeSidePanelRef = useRef<(() => void) | null>(null);
+  const activeSidePanelTabRef = useRef<string | null>(null);
+  const closeTabInFlightRef = useRef(false);
+
   const createLocalTerminalWithCurrentShell = useCallback(() => {
     const resolved = resolveShellSetting(terminalSettings.localShell, discoveredShells);
     const matchedShell = discoveredShells.find(s => s.id === terminalSettings.localShell);
@@ -1024,6 +1029,44 @@ function App({ settings }: { settings: SettingsState }) {
     if (!closeTabBinding) return null;
     return hotkeyScheme === 'mac' ? closeTabBinding.mac : closeTabBinding.pc;
   }, [hotkeyScheme, keyBindings]);
+
+  const confirmIfBusyLocalTerminal = useCallback(
+    async (sessionIds: string[]): Promise<boolean> => {
+      const bridge = netcattyBridge.get();
+      const localIds = sessionIds.filter((id) => {
+        const s = sessions.find((x) => x.id === id);
+        return s?.protocol === 'local';
+      });
+      const busyCommands: string[] = [];
+      for (const id of localIds) {
+        const children = (await bridge?.ptyGetChildProcesses?.(id)) ?? [];
+        if (children.length > 0) {
+          busyCommands.push(children[0].command);
+        }
+      }
+      if (busyCommands.length === 0) return true;
+
+      const primary = busyCommands[0];
+      const extraCount = busyCommands.length - 1;
+      const message =
+        extraCount > 0
+          ? t('confirm.closeBusyTerminal.messageWithMore', {
+              command: primary,
+              count: extraCount,
+            })
+          : t('confirm.closeBusyTerminal.message', { command: primary });
+
+      const ok = await bridge?.confirmCloseBusy?.({
+        command: primary,
+        title: t('confirm.closeBusyTerminal.title'),
+        message,
+        cancelLabel: t('confirm.closeBusyTerminal.cancel'),
+        closeLabel: t('confirm.closeBusyTerminal.close'),
+      });
+      return ok === true;
+    },
+    [sessions, t],
+  );
 
   // Shared hotkey action handler - used by both global handler and terminal callback
   const executeHotkeyAction = useCallback((action: string, e: KeyboardEvent) => {
@@ -1069,18 +1112,52 @@ function App({ settings }: { settings: SettingsState }) {
       }
       case 'closeTab': {
         const currentId = activeTabStore.getActiveTabId();
-        if (currentId !== 'vault' && currentId !== 'sftp') {
-          // Find if it's a session or workspace
-          const session = sessions.find(s => s.id === currentId);
-          if (session) {
-            closeSession(currentId);
-          } else {
-            const workspace = workspaces.find(w => w.id === currentId);
-            if (workspace) {
-              closeWorkspace(currentId);
+        if (!currentId || currentId === 'vault' || currentId === 'sftp') break;
+        if (closeTabInFlightRef.current) break;
+
+        const session = sessions.find((s) => s.id === currentId) ?? null;
+        const workspace = workspaces.find((w) => w.id === currentId) ?? null;
+
+        const focusIsInsideTerminal = !!document.activeElement?.closest('[data-session-id]');
+        const activeSidePanel = activeSidePanelTabRef.current;
+
+        const intent = resolveCloseIntent({
+          activeTabId: currentId,
+          workspace: workspace ? { id: workspace.id, focusedSessionId: workspace.focusedSessionId } : null,
+          sessionForTab: session,
+          activeSidePanelTab: activeSidePanel,
+          focusIsInsideTerminal,
+        });
+
+        closeTabInFlightRef.current = true;
+        (async () => {
+          try {
+            switch (intent.kind) {
+              case 'closeTerminal':
+              case 'closeSingleTab': {
+                const ok = await confirmIfBusyLocalTerminal([intent.sessionId]);
+                if (ok) closeSession(intent.sessionId);
+                return;
+              }
+              case 'closeSidePanel': {
+                closeSidePanelRef.current?.();
+                return;
+              }
+              case 'closeWorkspace': {
+                const ids = sessions.filter((s) => s.workspaceId === intent.workspaceId).map((s) => s.id);
+                const ok = await confirmIfBusyLocalTerminal(ids);
+                if (ok) closeWorkspace(intent.workspaceId);
+                return;
+              }
+              case 'noop':
+              default:
+                return;
             }
+          } finally {
+            closeTabInFlightRef.current = false;
           }
-        }
+        })();
+
         break;
       }
       case 'newTab':
@@ -1193,7 +1270,7 @@ function App({ settings }: { settings: SettingsState }) {
         break;
       }
     }
-  }, [orderedTabs, sessions, workspaces, setActiveTabId, closeSession, closeWorkspace, createLocalTerminalWithCurrentShell, splitSessionWithCurrentShell, moveFocusInWorkspace, toggleBroadcast, settings.showSftpTab]);
+  }, [orderedTabs, sessions, workspaces, setActiveTabId, closeSession, closeWorkspace, createLocalTerminalWithCurrentShell, splitSessionWithCurrentShell, moveFocusInWorkspace, toggleBroadcast, settings.showSftpTab, confirmIfBusyLocalTerminal]);
 
   // Callback for terminal to invoke app-level hotkey actions
   const handleHotkeyAction = useCallback((action: string, e: KeyboardEvent) => {
@@ -1684,6 +1761,8 @@ function App({ settings }: { settings: SettingsState }) {
           sessionLogsEnabled={sessionLogsEnabled}
           sessionLogsDir={sessionLogsDir}
           sessionLogsFormat={sessionLogsFormat}
+          closeSidePanelRef={closeSidePanelRef}
+          activeSidePanelTabRef={activeSidePanelTabRef}
         />
 
         {/* Log Views - readonly terminal replays */}
