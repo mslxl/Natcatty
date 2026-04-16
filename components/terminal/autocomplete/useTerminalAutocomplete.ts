@@ -690,7 +690,9 @@ export function useTerminalAutocomplete(
         }
       }
 
-      // Tab: accept selected popup suggestion, or accept ghost text
+      // Tab: accept selected popup suggestion. Ghost text is accepted via → only —
+      // letting Tab pass through lets the shell's native completion (bash/zsh) run,
+      // which is otherwise shadowed by our single-Tab ghost accept.
       if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey && s.subDirFocusLevel < 0) {
         if (s.popupVisible && s.suggestions.length > 0) {
           e.preventDefault();
@@ -698,16 +700,10 @@ export function useTerminalAutocomplete(
           if (selected) insertSuggestion(selected, false);
           return false;
         }
+        // Hide stale ghost text before Tab reaches the shell — the shell's
+        // completion will rewrite the line and the old ghost would mislead.
         if (ghost?.isVisible()) {
-          e.preventDefault();
-          const ghostText = ghost.getGhostText();
-          if (ghostText) {
-            writeToTerminal(ghostText);
-            lastAcceptedCommandRef.current = ghost.getSuggestion();
-            ghost.hide();
-            clearState();
-          }
-          return false;
+          ghost.hide();
         }
       }
 
