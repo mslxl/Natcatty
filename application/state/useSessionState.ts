@@ -668,16 +668,22 @@ export const useSessionState = () => {
   const copySession = useCallback((sessionId: string, options?: {
     localShellType?: TerminalSession['shellType'];
   }) => {
+    // Pre-allocate the new id outside the updater so StrictMode's
+    // double-invocation of the functional updater doesn't mint two ids.
+    const newSessionId = crypto.randomUUID();
+
     setSessions(prevSessions => {
       const session = prevSessions.find(s => s.id === sessionId);
+      // Source may have been closed between the user's action and this
+      // update running; in that case skip entirely — do NOT switch the
+      // active tab or insert into tabOrder, which would leave dangling ids.
       if (!session) return prevSessions;
       const nextShellType = session.protocol === 'local'
         ? options?.localShellType
         : session.shellType;
 
-      // Create a new session with the same connection info
       const newSession: TerminalSession = {
-        id: crypto.randomUUID(),
+        id: newSessionId,
         hostId: session.hostId,
         hostLabel: session.hostLabel,
         hostname: session.hostname,
@@ -695,10 +701,40 @@ export const useSessionState = () => {
         localShellIcon: session.localShellIcon,
       };
 
-      setActiveTabId(newSession.id);
+      // Schedule the activeTab + tabOrder updates only when creation
+      // actually happens. These nested setStates are idempotent, so
+      // StrictMode's double-invocation is harmless.
+      setActiveTabId(newSessionId);
+      setTabOrder(prevTabOrder => {
+        // Fast path: source is already tracked in tabOrder — splice directly.
+        const directIdx = prevTabOrder.indexOf(sessionId);
+        if (directIdx !== -1) {
+          const next = [...prevTabOrder];
+          next.splice(directIdx + 1, 0, newSessionId);
+          return next;
+        }
+        // Fallback: source is only in the derived tab collections. Rebuild the
+        // effective order (same pattern as reorderTabs) to locate its position.
+        const allTabIds = [
+          ...orphanSessions.map(s => s.id),
+          ...workspaces.map(w => w.id),
+          ...logViews.map(lv => lv.id),
+        ];
+        const allTabIdSet = new Set(allTabIds);
+        const orderedIds = prevTabOrder.filter(id => allTabIdSet.has(id));
+        const orderedIdSet = new Set(orderedIds);
+        const newIds = allTabIds.filter(id => !orderedIdSet.has(id));
+        const currentOrder = [...orderedIds, ...newIds];
+        const sourceIdx = currentOrder.indexOf(sessionId);
+        if (sourceIdx === -1) return [...prevTabOrder, newSessionId];
+        const next = [...currentOrder];
+        next.splice(sourceIdx + 1, 0, newSessionId);
+        return next;
+      });
+
       return [...prevSessions, newSession];
     });
-  }, [setActiveTabId]);
+  }, [orphanSessions, workspaces, logViews, setActiveTabId]);
 
   // Toggle broadcast mode for a workspace
   const toggleBroadcast = useCallback((workspaceId: string) => {

@@ -304,11 +304,23 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
     updateScrollState();
     const container = tabsContainerRef.current;
     if (container) {
+      // Translate vertical wheel to horizontal scroll so users can reach
+      // off-screen tabs with a standard mouse wheel. Trackpad gestures that
+      // already carry horizontal delta are left alone so native two-finger
+      // swiping still works.
+      const handleWheel = (e: WheelEvent) => {
+        if (e.deltaY !== 0 && e.deltaX === 0) {
+          e.preventDefault();
+          container.scrollLeft += e.deltaY;
+        }
+      };
       container.addEventListener('scroll', updateScrollState);
+      container.addEventListener('wheel', handleWheel, { passive: false });
       const resizeObserver = new ResizeObserver(updateScrollState);
       resizeObserver.observe(container);
       return () => {
         container.removeEventListener('scroll', updateScrollState);
+        container.removeEventListener('wheel', handleWheel);
         resizeObserver.disconnect();
       };
     }
