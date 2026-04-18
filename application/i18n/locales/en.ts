@@ -308,7 +308,10 @@ const en: Messages = {
     'Wrap pasted text with escape sequences so the shell can distinguish paste from typed input. Disable if you see ^[[200~ artifacts.',
   'settings.terminal.behavior.clearWipesScrollback': '`clear` wipes scrollback',
   'settings.terminal.behavior.clearWipesScrollback.desc':
-    'When the shell `clear` command (or any program) sends CSI 3 J, also wipe the scrollback buffer. Standard POSIX/ncurses behavior since 2013. Disable to keep history visible after `clear` (matches iTerm2). The right-click "Clear Buffer" menu item always preserves scrollback regardless of this setting.',
+    'Make `clear` also wipe the scrollback buffer (POSIX default). Disable to keep history visible after `clear`.',
+  'settings.terminal.behavior.preserveSelectionOnInput': 'Keep selection while typing',
+  'settings.terminal.behavior.preserveSelectionOnInput.desc':
+    'Don\'t clear mouse-selected text when typing — useful for selecting a path then pasting it after a command prefix like `sz `.',
   'settings.terminal.behavior.osc52Clipboard': 'OSC-52 clipboard',
   'settings.terminal.behavior.osc52Clipboard.desc':
     'Allow remote programs (tmux, vim, etc.) to access the local clipboard via OSC-52 escape sequences.',

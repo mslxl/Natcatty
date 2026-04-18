@@ -1391,7 +1391,10 @@ const zhCN: Messages = {
     '粘贴文本时使用转义序列包裹，以便终端区分粘贴和键入。如果出现 ^[[200~ 字样请关闭此选项。',
   'settings.terminal.behavior.clearWipesScrollback': '`clear` 同时清空回滚历史',
   'settings.terminal.behavior.clearWipesScrollback.desc':
-    '启用时，shell 的 clear 命令（或任何程序发送 CSI 3 J）会同时清空回滚历史，这是 2013 年以来 POSIX/ncurses 的标准行为。关闭后 clear 仅清屏、回滚历史保留（与 iTerm2 一致）。右键菜单的"清空缓冲区"始终保留历史，不受此设置影响。',
+    '`clear` 命令同时清空回滚历史（POSIX 默认行为）。关闭则保留历史。',
+  'settings.terminal.behavior.preserveSelectionOnInput': '输入时保留选区',
+  'settings.terminal.behavior.preserveSelectionOnInput.desc':
+    '键盘输入时不清除鼠标选中的文本，方便选中路径后输入 `sz ` 之类命令再粘贴。',
   'settings.terminal.behavior.osc52Clipboard': 'OSC-52 剪贴板',
   'settings.terminal.behavior.osc52Clipboard.desc':
     '允许远程程序（tmux、vim 等）通过 OSC-52 转义序列访问本地剪贴板。',
