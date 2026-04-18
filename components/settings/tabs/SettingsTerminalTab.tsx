@@ -816,6 +816,13 @@ export default function SettingsTerminalTab(props: {
         </SettingRow>
 
         <SettingRow
+          label={t("settings.terminal.behavior.clearWipesScrollback")}
+          description={t("settings.terminal.behavior.clearWipesScrollback.desc")}
+        >
+          <Toggle checked={terminalSettings.clearWipesScrollback ?? true} onChange={(v) => updateTerminalSetting("clearWipesScrollback", v)} />
+        </SettingRow>
+
+        <SettingRow
           label={t("settings.terminal.behavior.osc52Clipboard")}
           description={t("settings.terminal.behavior.osc52Clipboard.desc")}
         >

@@ -497,6 +497,12 @@ export interface TerminalSettings {
   // Paste
   disableBracketedPaste: boolean; // Disable bracketed paste mode (avoid ^[[200~ artifacts)
 
+  // Shell `clear` command behavior — controls whether CSI 3 J (erase scrollback)
+  // from the shell is honored. Default true matches POSIX/ncurses since 2013:
+  // `clear` clears both visible screen and scrollback. Disable to keep history
+  // across `clear` (matches iTerm2 default and pre-2013 behavior).
+  clearWipesScrollback: boolean;
+
   // Clipboard
   osc52Clipboard: 'off' | 'write-only' | 'read-write' | 'prompt'; // OSC-52 clipboard access: off, write-only (default), read-write, or prompt on read
 
@@ -625,6 +631,7 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   showServerStats: true, // Show server stats by default
   serverStatsRefreshInterval: 5, // Refresh every 5 seconds
   disableBracketedPaste: false, // Bracketed paste enabled by default
+  clearWipesScrollback: true, // POSIX-standard: shell `clear` clears scrollback too
   osc52Clipboard: 'write-only', // OSC-52: allow remote programs to write clipboard by default
   rendererType: 'auto', // Auto-detect best renderer based on hardware
   autocompleteEnabled: true, // Autocomplete enabled by default

@@ -664,7 +664,10 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     if (!isEraseScrollbackSequence(params)) {
       return false;
     }
-    return true;
+    // CSI 3 J — POSIX/ncurses default `clear` emits this to wipe scrollback.
+    // Honor it unless the user opts into the legacy "preserve history" behavior.
+    const wipeAllowed = ctx.terminalSettingsRef.current?.clearWipesScrollback ?? true;
+    return !wipeAllowed;
   });
 
   // Register OSC 7 handler using xterm.js parser
