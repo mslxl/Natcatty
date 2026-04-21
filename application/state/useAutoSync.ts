@@ -51,10 +51,35 @@ const AUTO_SYNC_PROVIDER_ORDER: CloudProvider[] = ['github', 'google', 'onedrive
 
 // Cross-window restore barrier: stored as an epoch-ms deadline. Any value
 // in the future means a restore is applying in some window and auto-sync
-// must not push concurrently.
+// must not push concurrently. The writer (`withRestoreBarrier`) heartbeats
+// the deadline to keep it alive; a crashed window naturally expires within
+// ~RESTORE_BARRIER_HOLD_MS. We still defend against two degenerate cases:
+// (1) a stale deadline sitting in the past — harmless but pollutes debug
+//     state, so we opportunistically clear it; (2) a deadline absurdly far
+//     in the future (clock skew between windows, pathological holdMs, or a
+//     tampered value) — would otherwise lock auto-sync indefinitely, so we
+//     clear it and treat the barrier as inactive.
+const RESTORE_BARRIER_SANITY_MAX_MS = 10 * 60 * 1000; // 10 minutes
 const isRestoreInProgress = (): boolean => {
   const raw = localStorageAdapter.readNumber(STORAGE_KEY_VAULT_RESTORE_IN_PROGRESS_UNTIL);
-  return typeof raw === 'number' && raw > Date.now();
+  if (typeof raw !== 'number' || raw <= 0) return false;
+  const now = Date.now();
+  if (raw <= now) {
+    // Deadline is in the past — either a clean finish that failed to
+    // overwrite the key, or a crashed heartbeat. Clear so subsequent
+    // reads are cheap and the key doesn't linger forever.
+    localStorageAdapter.writeNumber(STORAGE_KEY_VAULT_RESTORE_IN_PROGRESS_UNTIL, 0);
+    return false;
+  }
+  if (raw - now > RESTORE_BARRIER_SANITY_MAX_MS) {
+    console.warn(
+      '[useAutoSync] Restore barrier deadline is absurdly far in the future; treating as corrupt and clearing.',
+      { deadline: raw, now },
+    );
+    localStorageAdapter.writeNumber(STORAGE_KEY_VAULT_RESTORE_IN_PROGRESS_UNTIL, 0);
+    return false;
+  }
+  return true;
 };
 
 type SyncTrigger = 'auto' | 'manual';

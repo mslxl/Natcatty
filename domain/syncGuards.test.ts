@@ -32,9 +32,43 @@ function hosts(n: number): SyncPayload["hosts"] {
   })) as SyncPayload["hosts"];
 }
 
-test("null base → not suspicious (first sync / null after re-auth)", () => {
+test("null base, no remote fallback → not suspicious (nothing to compare)", () => {
   const result = detectSuspiciousShrink(payload({ hosts: hosts(1) }), null);
   assert.deepEqual(result, { suspicious: false });
+});
+
+test("null base + empty remote → not suspicious (genuinely empty cloud)", () => {
+  const result = detectSuspiciousShrink(payload({ hosts: hosts(5) }), null, payload());
+  assert.deepEqual(result, { suspicious: false });
+});
+
+test("null base + populated remote + empty outgoing → suspicious via remote (#779 scenario)", () => {
+  // Fresh install with no stored base; remote already holds user's keychain.
+  // Local payload is empty (degraded vault / load race) → must be blocked.
+  const remote = payload({ keys: Array.from({ length: 8 }, (_, i) => ({ id: `k${i}`, label: `k${i}`, privateKey: "x" })) as SyncPayload["keys"] });
+  const out = payload();
+  const result = detectSuspiciousShrink(out, null, remote);
+  assert.equal(result.suspicious, true);
+  if (result.suspicious) {
+    assert.equal(result.entityType, "keys");
+    assert.equal(result.viaRemote, true);
+    assert.equal(result.lost, 8);
+  }
+});
+
+test("null base + larger remote + outgoing growth → not suspicious (lost is negative)", () => {
+  const remote = payload({ hosts: hosts(3) });
+  const out = payload({ hosts: hosts(10) });
+  assert.deepEqual(detectSuspiciousShrink(out, null, remote), { suspicious: false });
+});
+
+test("base present takes precedence over remote fallback", () => {
+  // base=10, outgoing=10 → not suspicious; remote=0 should NOT trigger a
+  // via-remote warning because a real base is available.
+  const base = payload({ hosts: hosts(10) });
+  const remote = payload();
+  const out = payload({ hosts: hosts(10) });
+  assert.deepEqual(detectSuspiciousShrink(out, base, remote), { suspicious: false });
 });
 
 test("no shrink — same counts → not suspicious", () => {

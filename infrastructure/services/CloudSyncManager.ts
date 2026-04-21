@@ -1345,7 +1345,7 @@ export class CloudSyncManager {
           // entities we still have in base. The merge itself is correct if local
           // state is trustworthy — but a degraded local (keychain failure,
           // partial load) can make merge produce a smaller-than-expected result.
-          const mergedShrink = detectSuspiciousShrink(mergeResult.payload, base);
+          const mergedShrink = detectSuspiciousShrink(mergeResult.payload, base, remotePayload);
           const shouldBlockMerged = mergedShrink.suspicious && !overrideShrinkRequested;
           const shouldForceMerged = mergedShrink.suspicious && overrideShrinkRequested;
           if (shouldBlockMerged) {
@@ -1440,9 +1440,28 @@ export class CloudSyncManager {
       }
 
       // Shrink guard (no-conflict path): same rationale as the merge branch —
-      // refuse a payload that drops entities versus the stored base.
+      // refuse a payload that drops entities versus the stored base. When the
+      // stored base is absent (first sync, re-auth, or decrypt failure) fall
+      // back to the current remote payload if one exists — the guard must
+      // have *some* reference to catch a degraded local from wiping the
+      // cloud (#779).
       const directBase = await this.loadSyncBase(provider);
-      const directShrink = detectSuspiciousShrink(payload, directBase);
+      let directRemoteRef: SyncPayload | null = null;
+      if (!directBase && checkResult.remoteFile) {
+        try {
+          directRemoteRef = await EncryptionService.decryptPayload(
+            checkResult.remoteFile,
+            this.masterPassword,
+          );
+        } catch {
+          // Decrypt failure means we can't trust the remote contents as a
+          // reference; leave `null` and let the guard return not-suspicious
+          // rather than block on garbage. The upload itself will likely fail
+          // downstream if the password mismatch is real.
+          directRemoteRef = null;
+        }
+      }
+      const directShrink = detectSuspiciousShrink(payload, directBase, directRemoteRef);
       const shouldBlockDirect = directShrink.suspicious && !overrideShrinkRequested;
       const shouldForceDirect = directShrink.suspicious && overrideShrinkRequested;
       if (shouldBlockDirect) {
@@ -1808,6 +1827,18 @@ export class CloudSyncManager {
             '[CloudSyncManager] syncAll: connected providers hold divergent bases (multi-account setup?). Uploading the conflict-merged payload will replace each provider\'s current remote. See I-7 in PR #720 for context.',
             summaries,
           );
+          // Surface the same finding to the UI so multi-account / intentionally
+          // diverged configurations can be warned visibly instead of silently
+          // having one provider's data merged over another's (#779 follow-up).
+          this.emit({
+            type: 'PROVIDERS_DIVERGED',
+            summaries: summaries.map((s) => ({
+              provider: s.provider as CloudProvider,
+              hosts: s.hosts,
+              keys: s.keys,
+              snippets: s.snippets,
+            })),
+          });
         }
       } catch (diagError) {
         // Non-fatal diagnostic; never let it block the sync.
@@ -1907,7 +1938,26 @@ export class CloudSyncManager {
       .map((r) => r.provider as CloudProvider);
     for (const provider of candidateProviders) {
       const providerBase = await this.loadSyncBase(provider);
-      const finding = detectSuspiciousShrink(payload, providerBase);
+      // When no stored base exists, fall back to the remote payload fetched
+      // during the parallel check above — the shrink guard needs a reference
+      // or it fails open and lets degraded local state overwrite remote
+      // (#779). checkResults carries the per-provider remoteFile already.
+      let providerRemoteRef: SyncPayload | null = null;
+      if (!providerBase) {
+        const entry = checkResults.find((r) => r.provider === provider);
+        const remoteFile = entry?.check?.remoteFile;
+        if (remoteFile) {
+          try {
+            providerRemoteRef = await EncryptionService.decryptPayload(
+              remoteFile,
+              this.masterPassword,
+            );
+          } catch {
+            providerRemoteRef = null;
+          }
+        }
+      }
+      const finding = detectSuspiciousShrink(payload, providerBase, providerRemoteRef);
       if (finding.suspicious) {
         shrinkSuspectByProvider.push({ provider, finding });
       }

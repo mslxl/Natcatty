@@ -18,6 +18,8 @@ export type ShrinkFinding =
       baseCount: number;
       outgoingCount: number;
       lost: number;
+      /** True when the comparison reference was the current remote (base was null). */
+      viaRemote?: boolean;
     };
 
 // Keep in sync with all array-typed fields of SyncPayload. When a new
@@ -49,11 +51,21 @@ function countOf(p: SyncPayload, key: CheckedEntityType): number {
 export function detectSuspiciousShrink(
   outgoing: SyncPayload,
   base: SyncPayload | null,
+  remote?: SyncPayload | null,
 ): ShrinkFinding {
-  if (!base) return { suspicious: false };
+  // Fall back to the current remote when we have no stored base — a null base
+  // happens on first sync, after unlock key re-derivation, or when the base
+  // blob failed to decrypt. Without this fallback, a degraded/empty local
+  // payload would be admitted unconditionally and could overwrite populated
+  // remote data (#779). We only use `remote` when `base` is unavailable so
+  // legitimate resurrections (device that legitimately grew past an older
+  // remote snapshot) remain unaffected.
+  const reference = base ?? remote ?? null;
+  const viaRemote = !base && !!remote;
+  if (!reference) return { suspicious: false };
 
   for (const entityType of CHECKED_ENTITIES) {
-    const baseCount = countOf(base, entityType);
+    const baseCount = countOf(reference, entityType);
     const outgoingCount = countOf(outgoing, entityType);
     const lost = baseCount - outgoingCount;
     if (lost <= 0) continue;
@@ -66,6 +78,7 @@ export function detectSuspiciousShrink(
         baseCount,
         outgoingCount,
         lost,
+        ...(viaRemote ? { viaRemote: true } : {}),
       };
     }
 
@@ -77,6 +90,7 @@ export function detectSuspiciousShrink(
         baseCount,
         outgoingCount,
         lost,
+        ...(viaRemote ? { viaRemote: true } : {}),
       };
     }
   }
