@@ -1623,6 +1623,19 @@ function App({ settings }: { settings: SettingsState }) {
     };
   }, [handleOpenSettings, t]);
 
+  // Delete-from-sidepanel plumbing: ScriptsSidePanel's right-click menu
+  // dispatches `netcatty:snippets:delete` with the snippet id. Handled here
+  // (rather than in QuickAddSnippetDialog) because delete needs no UI.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const id = (e as CustomEvent<{ id?: string }>).detail?.id;
+      if (!id) return;
+      updateSnippets(snippets.filter((s) => s.id !== id));
+    };
+    window.addEventListener('netcatty:snippets:delete', handler);
+    return () => window.removeEventListener('netcatty:snippets:delete', handler);
+  }, [snippets, updateSnippets]);
+
   const handleEndSessionDrag = useCallback(() => {
     setDraggingSessionId(null);
   }, [setDraggingSessionId]);
@@ -1827,12 +1840,17 @@ function App({ settings }: { settings: SettingsState }) {
         })}
       </div>
 
-      {/* Global "quick add snippet" dialog, triggered by the
-          netcatty:snippets:add window event (from ScriptsSidePanel "+"). */}
+      {/* Global "quick add / edit snippet" dialog, triggered by the
+          netcatty:snippets:add and :edit window events (from ScriptsSidePanel
+          "+" button and right-click menu). Delete is handled by a sibling
+          useEffect above — it does not need a dialog. */}
       <QuickAddSnippetDialog
         snippets={snippets}
         packages={snippetPackages}
         onCreateSnippet={(snippet) => updateSnippets([...snippets, snippet])}
+        onUpdateSnippet={(snippet) =>
+          updateSnippets(snippets.map((s) => (s.id === snippet.id ? snippet : s)))
+        }
         onCreatePackage={(pkg) =>
           updateSnippetPackages(Array.from(new Set([...snippetPackages, pkg])))
         }
