@@ -734,16 +734,35 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
           title={editingSnippet.id ? t('snippets.panel.editTitle') : t('snippets.panel.newTitle')}
           layout="inline"
           actions={
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={handleSubmit}
-              disabled={!editingSnippet.label || !editingSnippet.command}
-              aria-label={t('common.save')}
-            >
-              <Check size={16} />
-            </Button>
+            <>
+              {editingSnippet.id && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-destructive hover:text-destructive"
+                  onClick={() => {
+                    const id = editingSnippet.id;
+                    if (!id) return;
+                    onDelete(id);
+                    handleClosePanel();
+                  }}
+                  aria-label={t('common.delete')}
+                  title={t('common.delete')}
+                >
+                  <Trash2 size={16} />
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={handleSubmit}
+                disabled={!editingSnippet.label || !editingSnippet.command}
+                aria-label={t('common.save')}
+              >
+                <Check size={16} />
+              </Button>
+            </>
           }
         >
           <AsidePanelContent>
