@@ -1682,6 +1682,8 @@ const en: Messages = {
   'snippets.breadcrumb.separator': '›',
   'snippets.empty.title': 'Create snippet',
   'snippets.empty.desc': 'Save your most used commands as snippets to reuse them in one click.',
+  'snippets.search.noResults.title': 'No matches',
+  'snippets.search.noResults.desc': 'No snippets or packages match "{query}". Try a different search term or clear the search to browse.',
   'snippets.section.packages': 'Packages',
   'snippets.section.snippets': 'Snippets',
   'snippets.package.count': '{count} snippet(s)',

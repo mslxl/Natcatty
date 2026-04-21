@@ -867,23 +867,30 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
 
   const displayedHosts = useMemo(() => {
     let filtered = hosts;
-    if (selectedGroupPath) {
-      // Match hosts whose group equals the selected path
-      // For "General" group, also match hosts with empty/undefined group
-      filtered = filtered.filter((h) => {
-        const hostGroup = h.group || "";
-        if (selectedGroupPath === "General") {
-          return hostGroup === "" || hostGroup === "General";
-        }
-        return hostGroup === selectedGroupPath;
-      });
-    } else if (showOnlyUngroupedHostsInRoot) {
-      filtered = filtered.filter((h) => {
-        const hostGroup = (h.group || "").trim();
-        return hostGroup === "";
-      });
+    // Search spans all groups (#777): when the user types in the search box
+    // we skip group/ungrouped-root scoping, so a matching host in another
+    // group is still reachable without having to navigate into it first.
+    // The tree view already uses this shape — see `treeViewHosts` below.
+    const hasSearch = search.trim().length > 0;
+    if (!hasSearch) {
+      if (selectedGroupPath) {
+        // Match hosts whose group equals the selected path
+        // For "General" group, also match hosts with empty/undefined group
+        filtered = filtered.filter((h) => {
+          const hostGroup = h.group || "";
+          if (selectedGroupPath === "General") {
+            return hostGroup === "" || hostGroup === "General";
+          }
+          return hostGroup === selectedGroupPath;
+        });
+      } else if (showOnlyUngroupedHostsInRoot) {
+        filtered = filtered.filter((h) => {
+          const hostGroup = (h.group || "").trim();
+          return hostGroup === "";
+        });
+      }
     }
-    if (search.trim()) {
+    if (hasSearch) {
       const s = search.toLowerCase();
       filtered = filtered.filter(
         (h) =>

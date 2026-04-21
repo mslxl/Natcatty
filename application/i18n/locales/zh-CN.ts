@@ -1690,6 +1690,8 @@ const zhCN: Messages = {
   'snippets.breadcrumb.separator': '›',
   'snippets.empty.title': '创建代码片段',
   'snippets.empty.desc': '将常用命令保存为代码片段，一键复用。',
+  'snippets.search.noResults.title': '无匹配结果',
+  'snippets.search.noResults.desc': '没有代码片段或代码包与"{query}"匹配。换一个关键字，或清除搜索进行浏览。',
   'snippets.section.packages': '代码包',
   'snippets.section.snippets': '代码片段',
   'snippets.package.count': '{count} 个代码片段',

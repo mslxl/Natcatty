@@ -402,9 +402,15 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
   }, [packages, selectedPackage, snippets]);
 
   const displayedSnippets = useMemo(() => {
-    let result = snippets.filter((s) => (s.package || '') === (selectedPackage || ''));
-    // Apply search filter
-    if (search.trim()) {
+    // Search spans all packages (#777): when the user types in the search
+    // box we drop the current-package scoping so cross-package matches are
+    // reachable without navigating into each one. Otherwise the user is
+    // browsing and we keep the package scope.
+    const hasSearch = search.trim().length > 0;
+    let result = hasSearch
+      ? snippets
+      : snippets.filter((s) => (s.package || '') === (selectedPackage || ''));
+    if (hasSearch) {
       const s = search.toLowerCase();
       result = result.filter(sn =>
         sn.label.toLowerCase().includes(s) ||
@@ -1068,7 +1074,10 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
         )}
 
         <div className="flex-1 space-y-3 overflow-y-auto px-4 pb-4">
-          {displayedPackages.length > 0 && (
+          {/* Hide the sub-package grid while searching (#777) — search spans
+              all packages, so showing the package tiles alongside a flat
+              cross-package snippet list is noisy. */}
+          {displayedPackages.length > 0 && !search.trim() && (
             <>
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-muted-foreground">{t('snippets.section.packages')}</h3>
@@ -1213,6 +1222,29 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                   </ContextMenu>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Search-with-no-results feedback (#777 codex follow-up). Package
+              tiles are already hidden during search, so the only visible
+              surface is the flat snippet list — if that's empty the content
+              area would be blank without this fallback. The gate intentionally
+              excludes the fully-empty workspace (snippets.length === 0 AND
+              displayedPackages.length === 0), which the global "Create
+              snippet" empty state renders instead — avoids stacking two
+              empty states. Package-only workspaces (no snippets yet) still
+              get this feedback when searching. */}
+          {search.trim() && displayedSnippets.length === 0 && (snippets.length > 0 || displayedPackages.length > 0) && (
+            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+              <div className="h-14 w-14 rounded-2xl bg-secondary/80 flex items-center justify-center mb-3">
+                <Search size={24} className="opacity-60" />
+              </div>
+              <h3 className="text-base font-semibold text-foreground mb-1">
+                {t('snippets.search.noResults.title')}
+              </h3>
+              <p className="text-xs text-center max-w-sm">
+                {t('snippets.search.noResults.desc', { query: search.trim() })}
+              </p>
             </div>
           )}
         </div>
