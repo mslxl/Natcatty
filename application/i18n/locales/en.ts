@@ -1193,6 +1193,7 @@ const en: Messages = {
   'terminal.toolbar.openSftp': 'Open SFTP',
   'terminal.toolbar.availableAfterConnect': 'Available after connect',
   'terminal.toolbar.sftp': 'SFTP',
+  'terminal.toolbar.more': 'More actions',
   'terminal.toolbar.scripts': 'Scripts',
   'terminal.toolbar.library': 'Library',
   'terminal.toolbar.noSnippets': 'No snippets available',

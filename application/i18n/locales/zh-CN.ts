@@ -799,6 +799,7 @@ const zhCN: Messages = {
   'terminal.toolbar.openSftp': '打开 SFTP',
   'terminal.toolbar.availableAfterConnect': '连接后可用',
   'terminal.toolbar.sftp': 'SFTP',
+  'terminal.toolbar.more': '更多操作',
   'terminal.toolbar.scripts': '脚本',
   'terminal.toolbar.library': '库',
   'terminal.toolbar.noSnippets': '暂无代码片段',

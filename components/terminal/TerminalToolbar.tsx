@@ -2,7 +2,7 @@
  * Terminal Toolbar
  * Displays SFTP, Scripts, Theme, Highlight, Search buttons and close button in terminal status bar
  */
-import { Check, FolderInput, Languages, X, Zap, Palette, Search, TextCursorInput } from 'lucide-react';
+import { Check, FolderInput, Languages, MoreVertical, X, Zap, Palette, Search, TextCursorInput } from 'lucide-react';
 import React, { useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { Host } from '../../types';
@@ -57,100 +57,10 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
     const isSSHSession = !isLocalTerminal && !isSerialTerminal && host?.protocol !== 'telnet' && host?.protocol !== 'mosh' && !host?.moshEnabled && host?.hostname !== 'localhost';
     const hidesSftp = isLocalTerminal || isSerialTerminal;
 
+    const menuItemClass = "w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-sm hover:bg-secondary transition-colors";
+
     return (
         <TooltipProvider delayDuration={500} skipDelayDuration={100} disableHoverableContent>
-            {!hidesSftp && (
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                        <Button
-                            variant="secondary"
-                            size="icon"
-                            className={buttonBase}
-                            disabled={status !== 'connected'}
-                            aria-label={t("terminal.toolbar.openSftp")}
-                            onClick={onOpenSFTP}
-                        >
-                            <FolderInput size={12} />
-                        </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                        {status === 'connected' ? t("terminal.toolbar.openSftp") : t("terminal.toolbar.availableAfterConnect")}
-                    </TooltipContent>
-                </Tooltip>
-            )}
-
-            {isSSHSession && onSetTerminalEncoding && (
-                <Popover>
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <PopoverTrigger asChild>
-                                <Button
-                                    variant="secondary"
-                                    size="icon"
-                                    className={buttonBase}
-                                    aria-label={t("terminal.toolbar.encoding")}
-                                >
-                                    <Languages size={12} />
-                                </Button>
-                            </PopoverTrigger>
-                        </TooltipTrigger>
-                        <TooltipContent>{t("terminal.toolbar.encoding")}</TooltipContent>
-                    </Tooltip>
-                    <PopoverContent className="w-36 p-1" align="start">
-                        {(["utf-8", "gb18030"] as const).map((enc) => (
-                            <PopoverClose asChild key={enc}>
-                                <button
-                                    className={cn(
-                                        "w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-sm hover:bg-secondary transition-colors",
-                                        terminalEncoding === enc && "font-medium"
-                                    )}
-                                    onClick={() => onSetTerminalEncoding(enc)}
-                                >
-                                    <Check
-                                        size={12}
-                                        className={cn(
-                                            "shrink-0",
-                                            terminalEncoding === enc ? "opacity-100" : "opacity-0"
-                                        )}
-                                    />
-                                    {t(`terminal.toolbar.encoding.${enc === "utf-8" ? "utf8" : enc}`)}
-                                </button>
-                            </PopoverClose>
-                        ))}
-                    </PopoverContent>
-                </Popover>
-            )}
-
-            <Tooltip>
-                <TooltipTrigger asChild>
-                    <Button
-                        variant="secondary"
-                        size="icon"
-                        className={buttonBase}
-                        aria-label={t("terminal.toolbar.scripts")}
-                        onClick={onOpenScripts}
-                    >
-                        <Zap size={12} />
-                    </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t("terminal.toolbar.scripts")}</TooltipContent>
-            </Tooltip>
-
-            <Tooltip>
-                <TooltipTrigger asChild>
-                    <Button
-                        variant="secondary"
-                        size="icon"
-                        className={buttonBase}
-                        aria-label={t("terminal.toolbar.terminalSettings")}
-                        onClick={onOpenTheme}
-                    >
-                        <Palette size={12} />
-                    </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t("terminal.toolbar.terminalSettings")}</TooltipContent>
-            </Tooltip>
-
             <HostKeywordHighlightPopover
                 host={host}
                 onUpdateHost={onUpdateHost}
@@ -190,6 +100,85 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                 </TooltipTrigger>
                 <TooltipContent>{t("terminal.toolbar.searchTerminal")}</TooltipContent>
             </Tooltip>
+
+            {/* Overflow menu — collapses the four opener-style actions
+                (SFTP / Encoding / Scripts / Terminal Settings) behind a
+                single ⋮ trigger so the toolbar doesn't feel crowded.
+                Highlight / Compose / Search stay visible because they
+                are toggled mid-session, not just once. */}
+            <Popover>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <PopoverTrigger asChild>
+                            <Button
+                                variant="secondary"
+                                size="icon"
+                                className={buttonBase}
+                                aria-label={t("terminal.toolbar.more")}
+                            >
+                                <MoreVertical size={14} />
+                            </Button>
+                        </PopoverTrigger>
+                    </TooltipTrigger>
+                    <TooltipContent>{t("terminal.toolbar.more")}</TooltipContent>
+                </Tooltip>
+                <PopoverContent className="w-48 p-1" align="end">
+                    {!hidesSftp && (
+                        <PopoverClose asChild>
+                            <button
+                                type="button"
+                                className={cn(menuItemClass, status !== 'connected' && "opacity-50 pointer-events-none")}
+                                onClick={onOpenSFTP}
+                                disabled={status !== 'connected'}
+                            >
+                                <FolderInput size={12} className="shrink-0" />
+                                <span className="flex-1 text-left truncate">
+                                    {status === 'connected' ? t("terminal.toolbar.openSftp") : t("terminal.toolbar.availableAfterConnect")}
+                                </span>
+                            </button>
+                        </PopoverClose>
+                    )}
+                    <PopoverClose asChild>
+                        <button type="button" className={menuItemClass} onClick={onOpenScripts}>
+                            <Zap size={12} className="shrink-0" />
+                            <span className="flex-1 text-left truncate">{t("terminal.toolbar.scripts")}</span>
+                        </button>
+                    </PopoverClose>
+                    <PopoverClose asChild>
+                        <button type="button" className={menuItemClass} onClick={onOpenTheme}>
+                            <Palette size={12} className="shrink-0" />
+                            <span className="flex-1 text-left truncate">{t("terminal.toolbar.terminalSettings")}</span>
+                        </button>
+                    </PopoverClose>
+                    {isSSHSession && onSetTerminalEncoding && (
+                        <>
+                            <div className="h-px bg-border/60 my-1 mx-1" />
+                            <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+                                <Languages size={11} />
+                                {t("terminal.toolbar.encoding")}
+                            </div>
+                            {(["utf-8", "gb18030"] as const).map((enc) => (
+                                <PopoverClose asChild key={enc}>
+                                    <button
+                                        type="button"
+                                        className={cn(menuItemClass, "pl-6", terminalEncoding === enc && "font-medium")}
+                                        onClick={() => onSetTerminalEncoding(enc)}
+                                    >
+                                        <Check
+                                            size={12}
+                                            className={cn(
+                                                "shrink-0",
+                                                terminalEncoding === enc ? "opacity-100" : "opacity-0",
+                                            )}
+                                        />
+                                        {t(`terminal.toolbar.encoding.${enc === "utf-8" ? "utf8" : enc}`)}
+                                    </button>
+                                </PopoverClose>
+                            ))}
+                        </>
+                    )}
+                </PopoverContent>
+            </Popover>
 
             {showClose && onClose && (
                 <Tooltip>
