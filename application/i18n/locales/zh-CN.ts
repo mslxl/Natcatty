@@ -1512,6 +1512,7 @@ const zhCN: Messages = {
   'settings.shortcuts.binding.port-forwarding': '打开端口转发',
   'settings.shortcuts.binding.command-palette': '打开命令面板',
   'settings.shortcuts.binding.quick-switch': '快速切换',
+  'settings.shortcuts.binding.new-workspace': '新建工作区',
   'settings.shortcuts.binding.snippets': '打开代码片段',
   'settings.shortcuts.binding.broadcast': '切换广播模式',
   'settings.shortcuts.binding.sftp-copy': '复制文件',

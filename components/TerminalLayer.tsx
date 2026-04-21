@@ -1,4 +1,4 @@
-import { Circle, FolderTree, LayoutGrid, MessageSquare, PanelLeft, PanelRight, Palette, Server, X, Zap } from 'lucide-react';
+import { Circle, Columns2, FolderTree, MessageSquare, PanelLeft, PanelRight, Palette, Plus, Search, Server, X, Zap } from 'lucide-react';
 import React, { createContext, memo, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useActiveTabId } from '../application/state/activeTabStore';
 import {
@@ -49,6 +49,7 @@ import { TerminalComposeBar } from './terminal/TerminalComposeBar';
 import { TERMINAL_THEMES } from '../infrastructure/config/terminalThemes';
 import { useCustomThemes } from '../application/state/customThemeStore';
 import { Button } from './ui/button';
+import { Input } from './ui/input';
 import { RippleButton } from './ui/ripple';
 import { ScrollArea } from './ui/scroll-area';
 import { setupMcpApprovalBridge } from '../infrastructure/ai/shared/approvalGate';
@@ -411,6 +412,7 @@ interface TerminalLayerProps {
   onTerminalDataCapture?: (sessionId: string, data: string) => void;
   onCreateWorkspaceFromSessions: (baseSessionId: string, joiningSessionId: string, hint: Exclude<SplitHint, null>) => void;
   onAddSessionToWorkspace: (workspaceId: string, sessionId: string, hint: Exclude<SplitHint, null>) => void;
+  onRequestAddToWorkspace?: (workspaceId: string) => void;
   onUpdateSplitSizes: (workspaceId: string, splitId: string, sizes: number[]) => void;
   onSetDraggingSessionId: (id: string | null) => void;
   onToggleWorkspaceViewMode?: (workspaceId: string) => void;
@@ -469,6 +471,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   onTerminalDataCapture,
   onCreateWorkspaceFromSessions,
   onAddSessionToWorkspace,
+  onRequestAddToWorkspace,
   onUpdateSplitSizes,
   onSetDraggingSessionId,
   onToggleWorkspaceViewMode,
@@ -604,6 +607,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const workspaceInnerRef = useRef<HTMLDivElement>(null);
   const workspaceOverlayRef = useRef<HTMLDivElement>(null);
   const [dropHint, setDropHint] = useState<SplitHint>(null);
+  // Focus-mode sidebar: client-side filter for the terminal list.
+  const [focusSidebarSearch, setFocusSidebarSearch] = useState('');
   const [themePreview, setThemePreview] = useState<{ targetSessionId: string | null; themeId: string | null }>({
     targetSessionId: null,
     themeId: null,
@@ -1979,30 +1984,63 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
           className="absolute top-0 right-[-3px] h-full w-2 cursor-ew-resize z-30"
           onMouseDown={handleFocusSidebarResizeStart}
         />
-        {/* Header with view toggle */}
+        {/* Header — search box + actions (matches Vault-sidebar search
+            style but skinned to the terminal theme so it blends with the
+            sidebar's bg). */}
         <div
-          className="h-10 flex items-center justify-between px-3"
+          className="h-11 flex items-center gap-1.5 px-2"
           style={{ borderBottom: `1px solid ${separator}` }}
         >
-          <span className="text-xs font-medium" style={{ color: mutedFg }}>
-            Terminals · {workspaceSessions.length}
-          </span>
+          <div className="relative flex-1 min-w-0">
+            <Search
+              size={12}
+              className="absolute left-1 top-1/2 -translate-y-1/2 pointer-events-none"
+              style={{ color: mutedFg }}
+            />
+            <Input
+              value={focusSidebarSearch}
+              onChange={(e) => setFocusSidebarSearch(e.target.value)}
+              placeholder="Search terminals..."
+              className="h-7 pl-6 pr-0 text-xs bg-transparent border-0 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+              style={{ color: termFg }}
+            />
+          </div>
+          {onRequestAddToWorkspace && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0 flex-shrink-0 hover:text-inherit"
+              style={{ color: mutedFg }}
+              onClick={() => onRequestAddToWorkspace(activeWorkspace.id)}
+              title="Add Terminal"
+            >
+              <Plus size={14} />
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 w-7 p-0 hover:text-inherit"
+            className="h-7 w-7 p-0 flex-shrink-0 hover:text-inherit"
             style={{ color: mutedFg }}
             onClick={() => onToggleWorkspaceViewMode?.(activeWorkspace.id)}
             title="Switch to Split View"
           >
-            <LayoutGrid size={14} />
+            <Columns2 size={14} />
           </Button>
         </div>
 
         {/* Session list */}
         <ScrollArea className="flex-1">
           <div className="p-2 space-y-1">
-            {workspaceSessions.map(session => {
+            {workspaceSessions.filter((session) => {
+              const term = focusSidebarSearch.trim().toLowerCase();
+              if (!term) return true;
+              return (
+                session.hostLabel?.toLowerCase().includes(term)
+                || session.hostname?.toLowerCase().includes(term)
+                || session.username?.toLowerCase().includes(term)
+              );
+            }).map(session => {
               const host = sessionHostsMap.get(session.id);
               const isSelected = session.id === focusedSessionId;
               const statusColor = session.status === 'connected'
@@ -2306,6 +2344,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
         {/* Focus mode sidebar */}
         {isFocusMode && renderFocusModeSidebar()}
+
 
         <div ref={workspaceInnerRef} className="overflow-hidden relative flex-1">
           {draggingSessionId && !isFocusMode && (
