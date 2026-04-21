@@ -29,7 +29,10 @@ import { cn, normalizeLineEndings } from '../lib/utils';
 import { detectLocalOs } from '../lib/localShell';
 import { useStoredString } from '../application/state/useStoredString';
 import { useStoredNumber } from '../application/state/useStoredNumber';
-import { STORAGE_KEY_SIDE_PANEL_WIDTH } from '../infrastructure/config/storageKeys';
+import {
+  STORAGE_KEY_SIDE_PANEL_WIDTH,
+  STORAGE_KEY_WORKSPACE_FOCUS_SIDEBAR_WIDTH,
+} from '../infrastructure/config/storageKeys';
 import { buildCacheKey } from '../application/state/sftp/sharedRemoteHostCache';
 import type { DropEntry } from '../lib/sftpFileUtils';
 import { GroupConfig, Host, Identity, KnownHost, SSHKey, Snippet, TerminalSession, TerminalTheme, Workspace, WorkspaceNode } from '../types';
@@ -46,6 +49,7 @@ import { TerminalComposeBar } from './terminal/TerminalComposeBar';
 import { TERMINAL_THEMES } from '../infrastructure/config/terminalThemes';
 import { useCustomThemes } from '../application/state/customThemeStore';
 import { Button } from './ui/button';
+import { RippleButton } from './ui/ripple';
 import { ScrollArea } from './ui/scroll-area';
 import { setupMcpApprovalBridge } from '../infrastructure/ai/shared/approvalGate';
 
@@ -654,6 +658,9 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const [sidePanelWidth, setSidePanelWidth, persistSidePanelWidth] = useStoredNumber(
     STORAGE_KEY_SIDE_PANEL_WIDTH, 420, { min: 280, max: 800 },
   );
+  const [focusSidebarWidth, setFocusSidebarWidth, persistFocusSidebarWidth] = useStoredNumber(
+    STORAGE_KEY_WORKSPACE_FOCUS_SIDEBAR_WIDTH, 224, { min: 160, max: 480 },
+  );
   const [sidePanelPosition, setSidePanelPosition] = useStoredString<'left' | 'right'>(
     'netcatty_side_panel_position',
     'left',
@@ -780,6 +787,35 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       return next;
     });
   }, []);
+
+  // Focus-mode workspace sidebar resize handler. The sidebar is always
+  // anchored to the left of the workspace area, so a rightward drag grows it.
+  const handleFocusSidebarResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = focusSidebarWidth;
+
+    let lastWidth = startWidth;
+    let rafId: number | null = null;
+    const onMouseMove = (ev: MouseEvent) => {
+      const delta = ev.clientX - startX;
+      lastWidth = Math.max(160, Math.min(480, startWidth + delta));
+      if (rafId !== null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        setFocusSidebarWidth(lastWidth);
+      });
+    };
+    const onMouseUp = () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      setFocusSidebarWidth(lastWidth);
+      persistFocusSidebarWidth(lastWidth);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  }, [focusSidebarWidth, setFocusSidebarWidth, persistFocusSidebarWidth]);
 
   // Side panel resize handler
   const handleSidePanelResizeStart = useCallback((e: React.MouseEvent) => {
@@ -1909,20 +1945,53 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const renderFocusModeSidebar = () => {
     if (!activeWorkspace || !isFocusMode) return null;
 
+    // Use terminal-theme colors for every surface in here so the sidebar
+    // stays readable when the app theme and terminal theme diverge
+    // (e.g. followAppTerminalTheme=off, light app + dark terminal).
+    // Tailwind's bg-foreground/* / text-foreground classes bind to app
+    // theme vars, so we derive row colors from the terminal theme
+    // directly with color-mix.
+    const termBg = resolvedPreviewTheme.colors.background;
+    const termFg = resolvedPreviewTheme.colors.foreground;
+    const selectedBg = `color-mix(in srgb, ${termFg} 10%, transparent)`;
+    const selectedHoverBg = `color-mix(in srgb, ${termFg} 15%, transparent)`;
+    const unselectedHoverBg = `color-mix(in srgb, ${termFg} 10%, transparent)`;
+    const unselectedFg = `color-mix(in srgb, ${termFg} 75%, ${termBg} 25%)`;
+    const mutedFg = `color-mix(in srgb, ${termFg} 55%, ${termBg} 45%)`;
+    const separator = `color-mix(in srgb, ${termFg} 10%, ${termBg} 90%)`;
+
     return (
       <div
-        className="w-56 flex-shrink-0 bg-secondary/50 border-r border-border/50 flex flex-col"
+        className="flex-shrink-0 flex flex-col relative"
+        style={{
+          width: focusSidebarWidth,
+          // Paint the sidebar with the terminal's theme background so it
+          // reads as one continuous surface with the focused terminal
+          // (instead of a distinct tinted panel sitting next to it).
+          backgroundColor: termBg,
+          color: termFg,
+          borderRight: `1px solid ${separator}`,
+        }}
         data-section="terminal-workspace-sidebar"
       >
+        {/* Resize handle sitting on the right edge of the sidebar. */}
+        <div
+          className="absolute top-0 right-[-3px] h-full w-2 cursor-ew-resize z-30"
+          onMouseDown={handleFocusSidebarResizeStart}
+        />
         {/* Header with view toggle */}
-        <div className="h-10 flex items-center justify-between px-3 border-b border-border/50">
-          <span className="text-xs font-medium text-muted-foreground">
+        <div
+          className="h-10 flex items-center justify-between px-3"
+          style={{ borderBottom: `1px solid ${separator}` }}
+        >
+          <span className="text-xs font-medium" style={{ color: mutedFg }}>
             Terminals · {workspaceSessions.length}
           </span>
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 w-7 p-0"
+            className="h-7 w-7 p-0 hover:text-inherit"
+            style={{ color: mutedFg }}
             onClick={() => onToggleWorkspaceViewMode?.(activeWorkspace.id)}
             title="Switch to Split View"
           >
@@ -1942,35 +2011,49 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                   ? 'text-amber-500'
                   : 'text-red-500';
 
+              const restBg = isSelected ? selectedBg : 'transparent';
+              const hoverBg = isSelected ? selectedHoverBg : unselectedHoverBg;
+              const rowFg = isSelected ? termFg : unselectedFg;
+
               return (
-                <div
+                <RippleButton
                   key={session.id}
-                  className={cn(
-                    "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors",
-                    isSelected
-                      ? "bg-primary/15 border border-primary/30"
-                      : "hover:bg-secondary/80 border border-transparent"
-                  )}
+                  variant="ghost"
+                  // Row colors are terminal-theme derived (see renderFocusModeSidebar
+                  // top). `hover:text-inherit` pins text against ghost variant's
+                  // hover:text-accent-foreground default; hover bg is swapped
+                  // via inline style so we stay on terminal-theme alpha rather
+                  // than Tailwind's app-theme foreground color.
+                  className="w-full h-auto justify-start gap-2 px-2 py-1.5 font-normal hover:text-inherit"
+                  style={{ backgroundColor: restBg, color: rowFg }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = hoverBg;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = restBg;
+                  }}
                   onClick={() => onSetWorkspaceFocusedSession?.(activeWorkspace.id, session.id)}
                 >
-                  <div className="relative">
+                  <div className="relative flex-shrink-0">
                     {host ? (
                       <DistroAvatar host={host} fallback={session.hostLabel} size="sm" />
                     ) : (
-                      <Server size={16} className="text-muted-foreground" />
+                      <Server size={16} style={{ color: mutedFg }} />
                     )}
                     <Circle
                       size={6}
                       className={cn("absolute -bottom-0.5 -right-0.5 fill-current", statusColor)}
                     />
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-medium truncate">{session.hostLabel}</div>
-                    <div className="text-[10px] text-muted-foreground truncate">
+                  <div className="flex-1 min-w-0 text-left">
+                    <div className={cn("text-xs truncate", isSelected ? "font-semibold" : "font-medium")}>
+                      {session.hostLabel}
+                    </div>
+                    <div className="text-[10px] truncate" style={{ color: mutedFg }}>
                       {session.username}@{session.hostname}
                     </div>
                   </div>
-                </div>
+                </RippleButton>
               );
             })}
           </div>
@@ -1992,14 +2075,18 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
           zIndex: isTerminalLayerVisible ? 10 : 0,
         }}
       >
-        <div className={cn("flex-1 flex min-h-0 relative", sidePanelPosition === 'right' && "flex-row-reverse")}>
-        {/* Side panel with tab header + content (SFTP / Scripts / Theme) */}
+        <div className="flex-1 flex min-h-0 relative">
+        {/* Side panel with tab header + content (SFTP / Scripts / Theme).
+            Uses `order-last` instead of flex-row-reverse on the parent so the
+            workspace focus-mode sidebar and terminal area below stay in source
+            order (sidebar on the left) regardless of the side panel's side. */}
         {(isSidePanelOpenForCurrentTab || mountedSftpTabIds.length > 0 || mountedAiTabIds.length > 0) && (
           <>
             <div
               style={{ width: isSidePanelOpenForCurrentTab ? sidePanelWidth : 0 }}
               className={cn(
                 "flex-shrink-0 h-full relative z-20",
+                sidePanelPosition === 'right' && "order-last",
               )}
             >
               {isSidePanelOpenForCurrentTab && (
