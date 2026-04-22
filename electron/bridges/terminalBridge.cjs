@@ -6,6 +6,7 @@
 const os = require("node:os");
 const fs = require("node:fs");
 const net = require("node:net");
+const { randomUUID } = require("node:crypto");
 const path = require("node:path");
 const { StringDecoder } = require("node:string_decoder");
 const pty = require("node-pty");
@@ -152,8 +153,9 @@ function findExecutable(name) {
     console.warn(`Could not find ${name} via where.exe:`, err.message);
   }
   
-  // Fallback to common locations
   const path = require("node:path");
+  if (!/^[a-zA-Z0-9._-]+$/.test(name)) return name;
+
   const commonPaths = [];
 
   if (name === "pwsh") {
@@ -251,9 +253,7 @@ const applyLocaleDefaults = (env) => {
  * Start a local terminal session
  */
 function startLocalSession(event, payload) {
-  const sessionId =
-    payload?.sessionId ||
-    `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const sessionId = payload?.sessionId || randomUUID();
   const defaultShell = getDefaultLocalShell();
   // payload.shell may be a discovered shell ID (e.g., "wsl-ubuntu") — resolve it
   let resolvedShell = payload?.shell;
@@ -402,9 +402,7 @@ function startLocalSession(event, payload) {
  * Start a Telnet session using native Node.js net module
  */
 async function startTelnetSession(event, options) {
-  const sessionId =
-    options.sessionId ||
-    `telnet-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const sessionId = options.sessionId || randomUUID();
 
   const hostname = options.hostname;
   const port = options.port || 23;
@@ -688,9 +686,7 @@ async function startTelnetSession(event, options) {
  * Start a Mosh session using system mosh-client
  */
 async function startMoshSession(event, options) {
-  const sessionId =
-    options.sessionId ||
-    `mosh-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const sessionId = options.sessionId || randomUUID();
 
   const cols = options.cols || 80;
   const rows = options.rows || 24;
@@ -854,9 +850,7 @@ async function listSerialPorts() {
  * Note: SerialPort library can open PTY devices directly, they just won't appear in list()
  */
 async function startSerialSession(event, options) {
-  const sessionId =
-    options.sessionId ||
-    `serial-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const sessionId = options.sessionId || randomUUID();
 
   const portPath = options.path;
   const baudRate = options.baudRate || 115200;

@@ -14,6 +14,7 @@ import { GhostTextAddon } from "./GhostTextAddon";
 import { getAlignedPrompt, type PromptDetectionResult } from "./promptDetector";
 import { getCompletions, parseCommandLine, type CompletionSuggestion } from "./completionEngine";
 import { recordCommand } from "./commandHistoryStore";
+import { shellEscape } from "./completionEngine";
 import { preloadCommonSpecs } from "./figSpecLoader";
 import { getXTermCellDimensions } from "./xtermUtils";
 import { listDirectoryEntries, normalizePathTokenForLookup } from "./remotePathCompleter";
@@ -63,6 +64,8 @@ export interface SubDirPanel {
   /** The absolute directory path this panel lists */
   dirPath: string;
 }
+
+
 
 export interface AutocompleteState {
   suggestions: CompletionSuggestion[];
@@ -443,9 +446,9 @@ export function useTerminalAutocomplete(
       : "";
     const quoteSuffix = quotePrefix && currentToken.endsWith(quotePrefix) ? quotePrefix : "";
     const suffix = entry.type === "directory" ? "/" : "";
-    const entryName = quotePrefix || !entry.name.includes(" ")
+    const entryName = quotePrefix || !/[\\$'"|!<>;#~` ]/.test(entry.name)
       ? entry.name
-      : entry.name.replace(/ /g, "\\ ");
+      : shellEscape(entry.name);
     const fullPath = panel.dirPath + entryName + suffix;
     const replacementPath = `${quotePrefix}${fullPath}${quoteSuffix}`;
 

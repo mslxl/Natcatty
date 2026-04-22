@@ -6,6 +6,7 @@
 const net = require("node:net");
 const fs = require("node:fs");
 const path = require("node:path");
+const { randomUUID } = require("node:crypto");
 const os = require("node:os");
 const crypto = require("node:crypto");
 const { exec } = require("node:child_process");
@@ -22,6 +23,7 @@ const {
   requestPassphrasesForEncryptedKeys,
   findAllDefaultPrivateKeys: findAllDefaultPrivateKeysFromHelper,
   getSshAgentSocket,
+  readFileNoFollow,
 } = require("./sshAuthHelper.cjs");
 const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
 const { trackSessionIdlePrompt } = require("./ai/shellUtils.cjs");
@@ -123,9 +125,8 @@ async function findDefaultPrivateKey() {
   for (const name of sorted) {
     const keyPath = path.join(sshDir, name);
     try {
-      const stat = await fs.promises.stat(keyPath);
-      if (!stat.isFile()) continue;
-      const privateKey = await fs.promises.readFile(keyPath, "utf8");
+      const privateKey = await readFileNoFollow(keyPath);
+      if (!privateKey) continue;
       if (!looksLikePrivateKey(privateKey)) {
         log("Skipping non-key file", { keyPath, keyName: name });
         continue;
@@ -169,9 +170,8 @@ async function findAllDefaultPrivateKeys() {
   const promises = sorted.map(async (name) => {
     const keyPath = path.join(sshDir, name);
     try {
-      const stat = await fs.promises.stat(keyPath);
-      if (!stat.isFile()) return null;
-      const privateKey = await fs.promises.readFile(keyPath, "utf8");
+      const privateKey = await readFileNoFollow(keyPath);
+      if (!privateKey) return null;
       if (!looksLikePrivateKey(privateKey)) {
         log("Skipping non-key file", { keyPath, keyName: name });
         return null;
@@ -688,9 +688,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
  * Start an SSH session
  */
 async function startSSHSession(event, options) {
-  const sessionId =
-    options.sessionId ||
-    `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const sessionId = options.sessionId || randomUUID();
 
   const cols = options.cols || 80;
   const rows = options.rows || 24;
@@ -1598,7 +1596,7 @@ async function execCommand(event, payload) {
   const baseTimeoutMs = payload.timeout || 10000;
   const timeoutMs = enableKeyboardInteractive ? Math.max(baseTimeoutMs, 120000) : baseTimeoutMs;
   const sender = event.sender;
-  const sessionId = payload.sessionId || `exec-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const sessionId = payload.sessionId || randomUUID();
   const defaultKeys = enableKeyboardInteractive ? await findAllDefaultPrivateKeysFromHelper() : [];
 
   return new Promise((resolve, reject) => {
