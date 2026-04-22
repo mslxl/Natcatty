@@ -130,24 +130,38 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   // Register this instance's writeTextFileByConnection with the editor bridge
   // so editor tabs promoted from SFTP files opened in a terminal side panel
   // can still route saves through this useSftpState.
+  //
+  // Intentionally no deps — go through sftpRef so SFTP state churn (transfers,
+  // tab switches, listings) doesn't make this unregister+reregister on every
+  // re-render.
   useEffect(() => {
     return registerEditorSftpWriterScoped((connectionId, expectedHostId, filePath, content, encoding) =>
-      sftp.writeTextFileByConnection(connectionId, expectedHostId, filePath, content, encoding),
+      sftpRef.current.writeTextFileByConnection(connectionId, expectedHostId, filePath, content, encoding),
     );
-  }, [sftp]);
+  }, []);
 
   // When this side panel unmounts (its hosting terminal tab was closed) we
   // force-close any editor tabs bound to connections this panel owned — the
   // save channel is gone with the SFTP session and there's no way to recover
   // it. Dirty state is dropped intentionally; the user closed the terminal
   // knowing the file was open.
+  //
+  // Collect every connection id across all left/right tabs — the panel can
+  // host multiple SFTP tabs per side, and an editor tab promoted from an
+  // inactive-pane tab would otherwise be stranded by the unmount.
   useEffect(() => {
     return () => {
+      const s = sftpRef.current;
+      if (!s) return;
       const owned = new Set<string>();
-      const l = sftpRef.current?.leftPane?.connection?.id;
-      const r = sftpRef.current?.rightPane?.connection?.id;
-      if (l) owned.add(l);
-      if (r) owned.add(r);
+      for (const tab of s.leftTabs?.tabs ?? []) {
+        const id = tab.connection?.id;
+        if (id) owned.add(id);
+      }
+      for (const tab of s.rightTabs?.tabs ?? []) {
+        const id = tab.connection?.id;
+        if (id) owned.add(id);
+      }
       if (owned.size === 0) return;
       editorTabStore.forceCloseBySessions([...owned]);
     };
