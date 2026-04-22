@@ -18,6 +18,7 @@ import { shellEscape } from "./completionEngine";
 import { preloadCommonSpecs } from "./figSpecLoader";
 import { getXTermCellDimensions } from "./xtermUtils";
 import { listDirectoryEntries, normalizePathTokenForLookup } from "./remotePathCompleter";
+import { decideGhostSuggestion } from "./ghostSuggestionPolicy";
 
 export interface AutocompleteSettings {
   enabled: boolean;
@@ -114,6 +115,13 @@ export function useTerminalAutocomplete(
     ...DEFAULT_AUTOCOMPLETE_SETTINGS,
     ...userSettings,
   };
+  // Mutual-exclusivity guard matching the repo-wide contract:
+  //   - SettingsTerminalTab toggles one off when the other is enabled.
+  //   - domain/models.ts normalizes stored settings so popup wins.
+  // Keep the guard here too so callers that pass DEFAULT_AUTOCOMPLETE_SETTINGS
+  // directly (e.g. tests or future embedders) don't end up rendering both
+  // systems at once. In the normal Terminal.tsx → store path only one of
+  // the two arrives as true, so this is defensive, not load-bearing.
   const settings: AutocompleteSettings = {
     ...rawSettings,
     showGhostText: rawSettings.showPopupMenu ? false : rawSettings.showGhostText,
@@ -230,6 +238,17 @@ export function useTerminalAutocomplete(
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, settings.enabled]);
+
+  // Hide any active ghost when the user turns showGhostText off mid-
+  // session. The fetchSuggestions branch (~L531) already gates new
+  // shows on the flag, but a ghost that was already on screen at toggle
+  // time would otherwise keep sliding around under a disabled setting
+  // until something unrelated called clearState (Codex #815 P2).
+  useEffect(() => {
+    if (!settings.showGhostText) {
+      ghostAddonRef.current?.hide();
+    }
+  }, [settings.showGhostText]);
 
   /**
    * Write accepted text to the terminal via callback (no CustomEvent).
@@ -530,11 +549,19 @@ export function useTerminalAutocomplete(
       return; // Input changed — these completions are stale
     }
 
-    // Ghost text: use the best suggestion
-    if (settingsRef.current.showGhostText && completions.length > 0) {
-      ghostAddonRef.current?.show(completions[0].text, input);
-    } else {
-      ghostAddonRef.current?.hide();
+    // Ghost text: keep the active prediction stable while the user's
+    // input still fits within it. Only swap to a fresh prediction once
+    // the current one no longer matches the typed prefix.
+    if (settingsRef.current.showGhostText) {
+      const ghost = ghostAddonRef.current;
+      const activeSuggestion = ghost?.isActive() ? ghost.getSuggestion() : null;
+      const nextSuggestion = completions.length > 0 ? completions[0].text : null;
+      const ghostDecision = decideGhostSuggestion(activeSuggestion, input, nextSuggestion);
+      if (ghostDecision.type === "show") {
+        ghost?.show(ghostDecision.suggestion, input);
+      } else if (ghostDecision.type === "hide") {
+        ghost?.hide();
+      }
     }
 
     // Popup
@@ -649,6 +676,11 @@ export function useTerminalAutocomplete(
       if (data === "\x03" || data === "\x15") {
         typedInputBufferRef.current = "";
         typedBufferReliableRef.current = true;
+        // Same rationale as the ctrl/escape early returns below: any
+        // previously-accepted suggestion is gone from the line too, so
+        // accept → Ctrl-C → type "foo" → Enter must not log the stale
+        // accepted command via the Enter fast path.
+        lastAcceptedCommandRef.current = null;
         clearState();
         return;
       }
@@ -681,6 +713,10 @@ export function useTerminalAutocomplete(
           ? data.slice("\x1b[200~".length, endIdx)
           : data.slice("\x1b[200~".length);
         typedInputBufferRef.current += content;
+        // Paste extends the line past whatever was accepted, so the
+        // Enter fast-path must not record the pre-paste accepted
+        // command — mirrors the non-bracketed paste branch below.
+        lastAcceptedCommandRef.current = null;
         clearState();
         return;
       } else if (data.startsWith("\x1b") && data !== "\x1b") {
@@ -720,15 +756,27 @@ export function useTerminalAutocomplete(
         // Any other single control char (Ctrl-A, Ctrl-E, Ctrl-B, Ctrl-F,
         // Ctrl-R, Ctrl-P, Ctrl-N, ...) moves the cursor or swaps the
         // line in ways this append-only buffer can't follow. Same story
-        // as escape sequences above.
+        // as escape sequences above — and hide the ghost too, so the
+        // unreliable-accept fallback doesn't pull a stale tail onto a
+        // recalled line (Codex #815 follow-up).
         typedInputBufferRef.current = "";
         typedBufferReliableRef.current = false;
+        // Null the fast-path accepted-command cache: accept-then-Ctrl-R
+        // should not let an old accepted command sneak back in via the
+        // Enter fast path after reverse-search picks a different one.
+        lastAcceptedCommandRef.current = null;
+        clearState();
+        return;
       }
 
       // Escape sequences (arrow keys, Home, End, etc.): clear stale suggestions
       // since cursor position may have changed, making current suggestions invalid.
       // Up/Down/Right/Tab are handled by handleKeyEvent; other sequences land here.
       if (data.startsWith("\x1b") && data !== "\x1b") {
+        // Same fast-path reset as the single-byte ctrl-char branch above —
+        // accept-then-↑/↓ must not record the stale accepted command if
+        // the user then presses Enter on a different recalled line.
+        lastAcceptedCommandRef.current = null;
         clearState();
         return;
       }
@@ -736,6 +784,20 @@ export function useTerminalAutocomplete(
       // User is typing more — invalidate accepted command fallback since the
       // command is being edited further (e.g., accepted "git status" then added " --short")
       lastAcceptedCommandRef.current = null;
+
+      // Re-align any visible ghost text to the freshly-updated buffer
+      // immediately. Without this the ghost keeps the tail it captured at
+      // show() time; a fast "type + press →" sequence then pastes the
+      // pre-update tail on top of the new input ("doc" + "cker ls" →
+      // "doccker ls"). Only safe to call when the buffer is reliable —
+      // otherwise its content doesn't correspond to the live line and
+      // adjustToInput would make the ghost lie. Also skip when the user
+      // has turned showGhostText off mid-session: otherwise a ghost that
+      // was active before the toggle would keep moving around under a
+      // setting the user just said to disable (Codex #815 P2).
+      if (typedBufferReliableRef.current && settingsRef.current.showGhostText) {
+        ghostAddonRef.current?.adjustToInput(typedInputBufferRef.current);
+      }
 
       // Fast typing suppression: if typing faster than threshold, skip this debounce cycle
       const isFastTyping = timeSinceLastKeystroke < settingsRef.current.fastTypingThresholdMs;
@@ -790,20 +852,46 @@ export function useTerminalAutocomplete(
             return false;
           }
         }
-        // Otherwise: accept ghost text
-        if (ghost?.isVisible()) {
+        // Otherwise: accept ghost text. Use isActive(), not isVisible(),
+        // so a fast "type + →" that lands in the hide-until-render gap
+        // still hits this branch and accepts the pending ghost.
+        if (ghost?.isActive()) {
           e.preventDefault();
-          const ghostText = ghost.getGhostText();
+          const fullSuggestion = ghost.getSuggestion();
+          // When the keystroke buffer is reliable, recompute the tail
+          // against the *live* buffer so a fast "type + →" in the
+          // hide-until-render gap still writes the correct tail. When
+          // it's not reliable (post history-recall / Ctrl-R), we can't
+          // treat empty buffer as "nothing typed" — the line actually
+          // has content we're not tracking — so fall back to the
+          // ghost's own cached tail instead of writing the entire
+          // suggestion onto an already-populated line.
+          let ghostText: string;
+          let newBuffer: string | null;
+          if (typedBufferReliableRef.current) {
+            const live = typedInputBufferRef.current;
+            if (fullSuggestion && fullSuggestion.startsWith(live)) {
+              ghostText = fullSuggestion.substring(live.length);
+              newBuffer = fullSuggestion;
+            } else {
+              ghostText = "";
+              newBuffer = null;
+            }
+          } else {
+            ghostText = ghost.getGhostText();
+            newBuffer = null; // buffer is unreliable; don't flip it back on
+          }
           if (ghostText) {
             writeToTerminal(ghostText);
-            const fullSuggestion = ghost.getSuggestion();
             lastAcceptedCommandRef.current = fullSuggestion;
-            if (fullSuggestion) {
-              typedInputBufferRef.current = fullSuggestion;
+            if (newBuffer !== null) {
+              typedInputBufferRef.current = newBuffer;
               typedBufferReliableRef.current = true;
             }
             ghost.hide();
             clearState();
+          } else {
+            ghost.hide();
           }
           return false;
         }
@@ -811,8 +899,32 @@ export function useTerminalAutocomplete(
 
       // Ctrl+Right / Alt+Right (Mac): accept next word
       if (e.key === "ArrowRight" && (e.ctrlKey || e.altKey) && !e.metaKey && !e.shiftKey) {
-        if (ghost?.isVisible()) {
+        if (ghost?.isActive()) {
           e.preventDefault();
+          const fullSuggestion = ghost.getSuggestion();
+          if (!fullSuggestion) {
+            ghost.hide();
+            return false;
+          }
+          // Determine the baseline the next word should extend. Reliable
+          // buffer: resync the ghost to the live buffer so getNextWord
+          // operates on the up-to-date tail. Unreliable buffer (post
+          // history-recall / Ctrl-R): don't reanchor to "" — that would
+          // make getNextWord hand back the very first word and the shell
+          // would duplicate leading tokens on top of the recalled line.
+          // Fall back to the ghost's existing cached input instead.
+          if (typedBufferReliableRef.current) {
+            const live = typedInputBufferRef.current;
+            if (fullSuggestion.startsWith(live)) {
+              ghost.show(fullSuggestion, live);
+            } else {
+              ghost.hide();
+              return false;
+            }
+          }
+          const base = ghost.getGhostText().length > 0
+            ? fullSuggestion.substring(0, fullSuggestion.length - ghost.getGhostText().length)
+            : fullSuggestion;
           const nextWord = ghost.getNextWord();
           if (nextWord) {
             writeToTerminal(nextWord);
@@ -822,13 +934,10 @@ export function useTerminalAutocomplete(
             if (typedBufferReliableRef.current) {
               typedInputBufferRef.current += nextWord;
             }
-            // Update ghost text to show remaining
-            const fullSuggestion = ghost.getSuggestion();
-            const currentInput = ghost.getGhostText().substring(nextWord.length);
-            if (currentInput && fullSuggestion) {
-              // Rebuild: the new input is old input + nextWord
-              const oldInput = fullSuggestion.substring(0, fullSuggestion.length - ghost.getGhostText().length);
-              ghost.show(fullSuggestion, oldInput + nextWord);
+            // Shrink the ghost to reflect what's left after the accept.
+            const newInput = base + nextWord;
+            if (fullSuggestion.startsWith(newInput) && fullSuggestion.length > newInput.length) {
+              ghost.show(fullSuggestion, newInput);
             } else {
               ghost.hide();
             }
@@ -849,7 +958,7 @@ export function useTerminalAutocomplete(
         }
         // Hide stale ghost text before Tab reaches the shell — the shell's
         // completion will rewrite the line and the old ghost would mislead.
-        if (ghost?.isVisible()) {
+        if (ghost?.isActive()) {
           ghost.hide();
         }
       }
