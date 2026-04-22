@@ -379,8 +379,11 @@ const SnippetRow: React.FC<SnippetRowProps> = ({
               type="button"
               onClick={onClick}
               className="w-full flex items-center gap-1.5 pr-3 py-1.5 text-left hover:bg-accent/50 transition-colors overflow-hidden"
-              style={{ paddingLeft: 8 + depth * 14 + 14 }}
+              style={{ paddingLeft: 8 + depth * 14 }}
             >
+              {/* Hidden chevron column mirrors PackageRow's layout so the
+                  snippet icon lines up exactly with the package icon above. */}
+              <ChevronRight size={12} className="shrink-0 opacity-0" aria-hidden />
               <FileCode size={12} className="shrink-0 text-muted-foreground" />
               <span className="flex-1 min-w-0 truncate text-xs font-medium">{snippet.label}</span>
               {subtitle && (
