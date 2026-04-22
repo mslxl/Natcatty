@@ -1184,8 +1184,66 @@ if (!gotLock) {
     }
   });
 
-  app.on("before-quit", () => {
+  // Quit guard state:
+  // - quitConfirmed: once true, before-quit falls through without re-checking.
+  //   Set right before we call app.quit() after a successful dirty-editor check,
+  //   so the re-entered before-quit doesn't loop back into another check.
+  // - quitGuardChannelBusy: prevents a second check from being started while the
+  //   first round-trip is still in flight.
+  // Note: both are intentionally NOT reset on the dirty=true path — if the user
+  // cancels quit to save, a subsequent Cmd+Q re-enters with quitConfirmed=false
+  // and quitGuardChannelBusy=false (reset in the once/timeout handlers), which
+  // kicks off a fresh check as expected.
+  let quitGuardChannelBusy = false;
+  let quitConfirmed = false;
+
+  // 5s timeout: long enough for the renderer to show a toast before reporting
+  // back, short enough that a hung renderer doesn't strand the app forever.
+  const QUIT_GUARD_TIMEOUT_MS = 5000;
+
+  app.on("before-quit", (event) => {
     getWindowManager().setIsQuitting(true);
+
+    // Fast path: we've already confirmed the quit once; let this re-entry through.
+    if (quitConfirmed) return;
+
+    // A check is already in flight — swallow this event; the in-flight handler
+    // will issue app.quit() when it completes if appropriate.
+    if (quitGuardChannelBusy) {
+      event.preventDefault();
+      return;
+    }
+
+    const { ipcMain: _ipcMain } = electronModule;
+    const win = BrowserWindow.getAllWindows()[0];
+    // No window — nothing to check; let the quit proceed.
+    if (!win || win.isDestroyed?.()) return;
+
+    quitGuardChannelBusy = true;
+    event.preventDefault();
+    win.webContents.send("app:query-dirty-editors");
+
+    // Timeout fallback: if the renderer never replies (crash, unhandled
+    // exception in the listener, etc.) we'd otherwise be stuck with
+    // quitGuardChannelBusy=true and the app un-quittable.
+    const timeoutId = setTimeout(() => {
+      _ipcMain.removeAllListeners("app:dirty-editors-result");
+      quitGuardChannelBusy = false;
+      quitConfirmed = true;
+      app.quit();
+    }, QUIT_GUARD_TIMEOUT_MS);
+
+    _ipcMain.once("app:dirty-editors-result", (_evt, { hasDirty }) => {
+      clearTimeout(timeoutId);
+      quitGuardChannelBusy = false;
+      if (!hasDirty) {
+        // No dirty editors — commit to quitting before app.quit() re-fires
+        // before-quit so the re-entry hits the quitConfirmed fast path.
+        quitConfirmed = true;
+        app.quit();
+      }
+      // If hasDirty === true the renderer has shown a toast; stay put.
+    });
   });
 
   // Cleanup all PTY sessions and port forwarding tunnels before quitting
