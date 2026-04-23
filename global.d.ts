@@ -619,13 +619,14 @@ declare global {
       expiresAt: number;
       interval: number;
     }>;
-    githubPollDeviceFlowToken?(options: { clientId?: string; deviceCode: string }): Promise<{
+    githubPollDeviceFlowToken?(options: { clientId?: string; deviceCode: string; pollId?: string }): Promise<{
       access_token?: string;
       token_type?: string;
       scope?: string;
       error?: string;
       error_description?: string;
     }>;
+    githubCancelDeviceFlowPoll?(pollId: string): Promise<void>;
 
     // Google OAuth (cloud sync) - proxied via main process to avoid CORS
     googleExchangeCodeForTokens?(options: {

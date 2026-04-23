@@ -970,6 +970,7 @@ const api = {
   // GitHub Device Flow (proxied via main process to avoid CORS)
   githubStartDeviceFlow: (options) => ipcRenderer.invoke("netcatty:github:deviceFlow:start", options),
   githubPollDeviceFlowToken: (options) => ipcRenderer.invoke("netcatty:github:deviceFlow:poll", options),
+  githubCancelDeviceFlowPoll: (pollId) => ipcRenderer.invoke("netcatty:github:deviceFlow:cancelPoll", pollId),
 
   // Google OAuth (proxied via main process to avoid CORS)
   googleExchangeCodeForTokens: (options) =>

@@ -1123,6 +1123,7 @@ const zhCN: Messages = {
   'cloudSync.conflict.keepLocal': '覆盖云端（保留本地）',
   'cloudSync.conflict.useCloud': '下载云端（覆盖本地）',
   'cloudSync.connect.browserContinue': '请在浏览器中完成授权',
+  'cloudSync.connect.browserCancelled': '已取消上一个浏览器授权流程',
   'cloudSync.connect.github.success': 'GitHub 已连接',
   'cloudSync.connect.github.failedTitle': 'GitHub 连接失败',
   'cloudSync.connect.github.timeout': '连接 GitHub 超时，请检查网络或代理设置。',
