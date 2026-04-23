@@ -1152,6 +1152,40 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
     } | null>(null);
     const [historyPreviewLoading, setHistoryPreviewLoading] = useState(false);
     const [historyError, setHistoryError] = useState<string | null>(null);
+    const [pendingConnectProvider, setPendingConnectProvider] = useState<CloudProvider | null>(null);
+    const pendingConnectProviderRef = useRef<CloudProvider | null>(null);
+
+    const hasConnectingProvider = (Object.values(sync.providers) as Array<{ status: string }>).some(
+        (provider) => provider.status === 'connecting'
+    );
+
+    const isConnectDisabled = (provider: CloudProvider): boolean => {
+        if (pendingConnectProvider && pendingConnectProvider !== provider) {
+            return true;
+        }
+        if (pendingConnectProvider === provider) {
+            return true;
+        }
+        if (hasConnectingProvider && sync.providers[provider].status !== 'connecting') {
+            return true;
+        }
+        return sync.hasAnyConnectedProvider && !isProviderReadyForSync(sync.providers[provider]);
+    };
+
+    const beginPendingConnect = (provider: CloudProvider): boolean => {
+        if (pendingConnectProviderRef.current) {
+            return false;
+        }
+        pendingConnectProviderRef.current = provider;
+        setPendingConnectProvider(provider);
+        return true;
+    };
+
+    const endPendingConnect = (provider: CloudProvider) => {
+        if (pendingConnectProviderRef.current !== provider) return;
+        pendingConnectProviderRef.current = null;
+        setPendingConnectProvider((current) => (current === provider ? null : current));
+    };
 
     // Change master key dialog
     const [showChangeKeyDialog, setShowChangeKeyDialog] = useState(false);
@@ -1275,6 +1309,7 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
 
     // Connect GitHub (disconnect others first - single provider only)
     const handleConnectGitHub = async () => {
+        if (!beginPendingConnect('github')) return;
         try {
             await disconnectOtherProviders('github');
             const deviceFlow = await sync.connectGitHub();
@@ -1300,42 +1335,46 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
             sync.resetProviderStatus('github');
             const message = getNetworkErrorMessage(error, t('common.unknownError'));
             toast.error(message, t('cloudSync.connect.github.failedTitle'));
+        } finally {
+            endPendingConnect('github');
         }
     };
 
     // Connect Google (disconnect others first - single provider only)
     const handleConnectGoogle = async () => {
+        if (!beginPendingConnect('google')) return;
         try {
             await disconnectOtherProviders('google');
             await sync.connectGoogle();
             // Note: Auth flow is handled automatically by oauthBridge
             toast.info(t('cloudSync.connect.browserContinue'));
         } catch (error) {
-            // Reset provider status so button is clickable again (without tearing down existing connections)
-            sync.resetProviderStatus('google');
             const msg = error instanceof Error ? error.message : t('common.unknownError');
             // Don't show toast for user-initiated cancellation (popup closed)
             if (!msg.includes('cancelled')) {
                 toast.error(msg, t('cloudSync.connect.google.failedTitle'));
             }
+        } finally {
+            endPendingConnect('google');
         }
     };
 
     // Connect OneDrive (disconnect others first - single provider only)
     const handleConnectOneDrive = async () => {
+        if (!beginPendingConnect('onedrive')) return;
         try {
             await disconnectOtherProviders('onedrive');
             await sync.connectOneDrive();
             // Note: Auth flow is handled automatically by oauthBridge
             toast.info(t('cloudSync.connect.browserContinue'));
         } catch (error) {
-            // Reset provider status so button is clickable again (without tearing down existing connections)
-            sync.resetProviderStatus('onedrive');
             const msg = error instanceof Error ? error.message : t('common.unknownError');
             // Don't show toast for user-initiated cancellation (popup closed)
             if (!msg.includes('cancelled')) {
                 toast.error(msg, t('cloudSync.connect.onedrive.failedTitle'));
             }
+        } finally {
+            endPendingConnect('onedrive');
         }
     };
 
@@ -1673,7 +1712,7 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                         account={sync.providers.github.account}
                         lastSync={sync.providers.github.lastSync}
                         error={sync.providers.github.error}
-                        disabled={sync.hasAnyConnectedProvider && !isProviderReadyForSync(sync.providers.github)}
+                        disabled={isConnectDisabled('github')}
                         onConnect={handleConnectGitHub}
                         onDisconnect={() => sync.disconnectProvider('github')}
                         onSync={() => handleSync('github')}
@@ -1697,7 +1736,7 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                         account={sync.providers.google.account}
                         lastSync={sync.providers.google.lastSync}
                         error={sync.providers.google.error}
-                        disabled={sync.hasAnyConnectedProvider && !isProviderReadyForSync(sync.providers.google)}
+                        disabled={isConnectDisabled('google')}
                         onConnect={handleConnectGoogle}
                         onCancelConnect={sync.cancelOAuthConnect}
                         onDisconnect={() => sync.disconnectProvider('google')}
@@ -1714,7 +1753,7 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                         account={sync.providers.onedrive.account}
                         lastSync={sync.providers.onedrive.lastSync}
                         error={sync.providers.onedrive.error}
-                        disabled={sync.hasAnyConnectedProvider && !isProviderReadyForSync(sync.providers.onedrive)}
+                        disabled={isConnectDisabled('onedrive')}
                         onConnect={handleConnectOneDrive}
                         onCancelConnect={sync.cancelOAuthConnect}
                         onDisconnect={() => sync.disconnectProvider('onedrive')}
@@ -1731,7 +1770,7 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                         account={sync.providers.webdav.account}
                         lastSync={sync.providers.webdav.lastSync}
                         error={sync.providers.webdav.error}
-                        disabled={sync.hasAnyConnectedProvider && !isProviderReadyForSync(sync.providers.webdav)}
+                        disabled={isConnectDisabled('webdav')}
                         onEdit={openWebdavDialog}
                         onConnect={openWebdavDialog}
                         onDisconnect={() => sync.disconnectProvider('webdav')}
@@ -1748,7 +1787,7 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                         account={sync.providers.s3.account}
                         lastSync={sync.providers.s3.lastSync}
                         error={sync.providers.s3.error}
-                        disabled={sync.hasAnyConnectedProvider && !isProviderReadyForSync(sync.providers.s3)}
+                        disabled={isConnectDisabled('s3')}
                         onEdit={openS3Dialog}
                         onConnect={openS3Dialog}
                         onDisconnect={() => sync.disconnectProvider('s3')}

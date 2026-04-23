@@ -37,7 +37,7 @@ import packageJson from '../../package.json';
 import { EncryptionService } from './EncryptionService';
 import { createAdapter, type CloudAdapter } from './adapters';
 import { localStorageAdapter } from '../persistence/localStorageAdapter';
-import type { GitHubAdapter } from './adapters/GitHubAdapter';
+import type { DeviceFlowState, GitHubAdapter } from './adapters/GitHubAdapter';
 import type { GoogleDriveAdapter } from './adapters/GoogleDriveAdapter';
 import type { OneDriveAdapter } from './adapters/OneDriveAdapter';
 import {
@@ -96,6 +96,10 @@ interface ProviderSyncAnchor {
   resourceId?: string | null;
   observedAt: number;
 }
+
+export type StartProviderAuthResult =
+  | { type: 'device_code'; data: DeviceFlowState }
+  | { type: 'url'; data: { url: string; redirectUri: string } };
 
 // ============================================================================
 // CloudSyncManager Class
@@ -704,10 +708,7 @@ export class CloudSyncManager {
   async startProviderAuth(
     provider: CloudProvider,
     redirectUri?: string
-  ): Promise<{
-    type: 'device_code' | 'url';
-    data: unknown;
-  }> {
+  ): Promise<StartProviderAuthResult> {
     if (provider === 'webdav' || provider === 's3') {
       throw new Error('Provider requires manual configuration');
     }
@@ -730,7 +731,7 @@ export class CloudSyncManager {
         if (!redirectUri) {
           throw new Error(
             `startProviderAuth('${provider}') requires a redirectUri — ` +
-              'call preparePKCECallback on the bridge first and pass its redirectUri through.'
+              'call prepareOAuthCallback on the bridge first and pass its redirectUri through.'
           );
         }
 

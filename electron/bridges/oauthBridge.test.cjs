@@ -192,6 +192,137 @@ test("cancelOAuthCallback releases the bound port", async () => {
   }
 });
 
+test("callbacks that arrive before awaitOAuthCallback do not consume the session", async () => {
+  const { bridge, cleanup } = await freshModule();
+  try {
+    const { port } = await bridge.prepareOAuthCallback();
+
+    const earlyStatus = await fetchCallback(port, { code: "stale-code", state: "stale-state" });
+    assert.equal(earlyStatus, 200);
+    assert.equal(bridge.getActiveOAuthPort(), port);
+
+    const pending = bridge.awaitOAuthCallback("expected-state");
+    const status = await fetchCallback(port, {
+      code: "fresh-code",
+      state: "expected-state",
+    });
+    assert.equal(status, 200);
+
+    const result = await pending;
+    assert.equal(result.code, "fresh-code");
+  } finally {
+    await cleanup();
+  }
+});
+
+test("cancelOAuthCallback before awaitOAuthCallback is replayed as a cancellation", async () => {
+  const { bridge, cleanup } = await freshModule();
+  try {
+    const { sessionId } = await bridge.prepareOAuthCallback();
+    bridge.cancelOAuthCallback(sessionId);
+    await assert.rejects(bridge.awaitOAuthCallback(undefined, sessionId), /cancelled/);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("cancelOAuthCallback during prepare rejects the pending prepare", async () => {
+  const { bridge, cleanup } = await freshModule();
+  try {
+    const pendingPrepare = bridge.prepareOAuthCallback();
+    bridge.cancelOAuthCallback();
+
+    await assert.rejects(pendingPrepare, /cancelled/);
+    assert.equal(bridge.getActiveOAuthPort(), null);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("cancelOAuthCallback ignores stale session ids", async () => {
+  const { bridge, cleanup } = await freshModule();
+  try {
+    const stale = await bridge.prepareOAuthCallback();
+    const fresh = await bridge.prepareOAuthCallback();
+
+    bridge.cancelOAuthCallback(stale.sessionId);
+    assert.equal(bridge.getActiveOAuthPort(), fresh.port);
+
+    const pending = bridge.awaitOAuthCallback(undefined, fresh.sessionId);
+    const status = await fetchCallback(fresh.port, { code: "fresh-code" });
+    assert.equal(status, 200);
+
+    const result = await pending;
+    assert.equal(result.code, "fresh-code");
+  } finally {
+    await cleanup();
+  }
+});
+
+test("awaitOAuthCallback rejects stale session ids instead of attaching to the new flow", async () => {
+  const { bridge, cleanup } = await freshModule();
+  try {
+    const stale = await bridge.prepareOAuthCallback();
+    const fresh = await bridge.prepareOAuthCallback();
+
+    await assert.rejects(
+      bridge.awaitOAuthCallback(undefined, stale.sessionId),
+      /cancelled/
+    );
+
+    const pending = bridge.awaitOAuthCallback(undefined, fresh.sessionId);
+    const status = await fetchCallback(fresh.port, { code: "fresh-code" });
+    assert.equal(status, 200);
+
+    const result = await pending;
+    assert.equal(result.code, "fresh-code");
+  } finally {
+    await cleanup();
+  }
+});
+
+test("concurrent prepareOAuthCallback calls cancel the superseded attempt", async () => {
+  const { bridge, cleanup } = await freshModule();
+  try {
+    const stalePrepare = bridge.prepareOAuthCallback();
+    const staleRejects = assert.rejects(stalePrepare, /cancelled/);
+
+    const freshPrepare = bridge.prepareOAuthCallback();
+    const fresh = await freshPrepare;
+    await staleRejects;
+
+    const pending = bridge.awaitOAuthCallback(undefined, fresh.sessionId);
+    const status = await fetchCallback(fresh.port, { code: "fresh-code" });
+    assert.equal(status, 200);
+
+    const result = await pending;
+    assert.equal(result.code, "fresh-code");
+  } finally {
+    await cleanup();
+  }
+});
+
+test("prepareOAuthCallback replaces an in-flight await cleanly", async () => {
+  const { bridge, cleanup } = await freshModule();
+  try {
+    const stale = await bridge.prepareOAuthCallback();
+    const stalePending = bridge.awaitOAuthCallback(undefined, stale.sessionId);
+    const staleRejects = assert.rejects(stalePending, /cancelled/);
+
+    const fresh = await bridge.prepareOAuthCallback();
+    await staleRejects;
+
+    const nextPending = bridge.awaitOAuthCallback(undefined, fresh.sessionId);
+    const status = await fetchCallback(fresh.port, { code: "fresh-code" });
+    assert.equal(status, 200);
+
+    const result = await nextPending;
+    assert.equal(result.code, "fresh-code");
+  } finally {
+    await cleanup();
+  }
+});
+
 test("getActiveOAuthPort is null before prepare and after cleanup", async () => {
   const { bridge, cleanup } = await freshModule();
   try {

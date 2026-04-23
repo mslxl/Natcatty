@@ -607,9 +607,9 @@ declare global {
     // back to an OS-assigned free port if busy). The caller then builds the
     // OAuth URL against `redirectUri`, opens the browser, and finally awaits
     // the code via `awaitOAuthCallback`.
-    prepareOAuthCallback?(): Promise<{ port: number; redirectUri: string }>;
-    awaitOAuthCallback?(expectedState?: string): Promise<{ code: string; state?: string }>;
-    cancelOAuthCallback?(): Promise<void>;
+    prepareOAuthCallback?(): Promise<{ sessionId: string; port: number; redirectUri: string }>;
+    awaitOAuthCallback?(expectedState?: string, sessionId?: string): Promise<{ code: string; state?: string }>;
+    cancelOAuthCallback?(sessionId?: string): Promise<void>;
 
     // GitHub Device Flow (cloud sync)
     githubStartDeviceFlow?(options?: { clientId?: string; scope?: string }): Promise<{

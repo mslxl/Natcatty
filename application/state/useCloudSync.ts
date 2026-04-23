@@ -146,6 +146,7 @@ const getSnapshot = (): SyncManagerState => {
 export const useCloudSync = (): CloudSyncHook => {
   // Use useSyncExternalStore for real-time state sync across all components
   const state = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const activeOAuthSessionIdRef = useRef<string | null>(null);
 
   // Auto-unlock: if a master key exists, retrieve the persisted password (Electron safeStorage)
   // and unlock silently so users don't have to manage a LOCKED state in the UI.
@@ -262,7 +263,7 @@ export const useCloudSync = (): CloudSyncHook => {
     if (result.type !== 'device_code') {
       throw new Error('Unexpected auth type');
     }
-    return result.data as DeviceFlowState;
+    return result.data;
   }, []);
   
   const completeGitHubAuth = useCallback(async (
@@ -279,30 +280,29 @@ export const useCloudSync = (): CloudSyncHook => {
       const bridge = netcattyBridge.get();
       const prepare = bridge?.prepareOAuthCallback;
       const awaitCallback = bridge?.awaitOAuthCallback;
-      if (!prepare || !awaitCallback) {
+      const openExternal = bridge?.openExternal;
+      if (!prepare || !awaitCallback || !openExternal) {
         throw new Error('OAuth bridge is unavailable');
       }
 
       // Bind the loopback callback server first so we know which port to put
       // in the provider's redirect_uri (#823: 45678 may be in use).
-      const prepared = await prepare();
-      const redirectUri = prepared.redirectUri;
+      const { redirectUri, sessionId } = await prepare();
+      activeOAuthSessionIdRef.current = sessionId;
 
-      let authStarted = false;
       try {
         const result = await manager.startProviderAuth(provider, redirectUri);
         if (result.type !== 'url') {
           throw new Error('Unexpected auth type');
         }
-        authStarted = true;
-        const data = result.data as { url: string; redirectUri: string };
+        const data = result.data;
 
         const adapter = manager.getAdapter(provider) as
           | { getPKCEState?: () => string | null }
           | undefined;
         const expectedState = adapter?.getPKCEState?.() || undefined;
 
-        const callbackPromise = awaitCallback(expectedState);
+        const callbackPromise = awaitCallback(expectedState, sessionId);
 
         // Use system browser to avoid white-screen issues in popup windows (#563).
         // Race: if browser launch fails, surface the error immediately.
@@ -310,9 +310,9 @@ export const useCloudSync = (): CloudSyncHook => {
         const browserPromise = new Promise<never>((_resolve, reject) => {
           openTimer = setTimeout(async () => {
             try {
-              await bridge?.openExternal(data.url);
+              await openExternal(data.url);
             } catch (err) {
-              bridge?.cancelOAuthCallback?.();
+              bridge?.cancelOAuthCallback?.(sessionId);
               reject(
                 err instanceof Error
                   ? err
@@ -331,16 +331,20 @@ export const useCloudSync = (): CloudSyncHook => {
 
         return data.url;
       } catch (err) {
-        // If we bound a server but never reached awaitCallback (or it failed
-        // before resolving), release the port so the next attempt can bind.
-        if (!authStarted) {
-          try {
-            await bridge?.cancelOAuthCallback?.();
-          } catch {
-            // Best-effort cleanup
-          }
+        const ownsActiveSession = activeOAuthSessionIdRef.current === sessionId;
+        try {
+          await bridge?.cancelOAuthCallback?.(sessionId);
+        } catch {
+          // Best-effort cleanup
+        }
+        if (ownsActiveSession) {
+          manager.resetProviderStatus(provider);
         }
         throw err;
+      } finally {
+        if (activeOAuthSessionIdRef.current === sessionId) {
+          activeOAuthSessionIdRef.current = null;
+        }
       }
     },
     []
@@ -380,7 +384,7 @@ export const useCloudSync = (): CloudSyncHook => {
   
   const cancelOAuthConnect = useCallback(() => {
     const bridge = netcattyBridge.get();
-    bridge?.cancelOAuthCallback?.();
+    bridge?.cancelOAuthCallback?.(activeOAuthSessionIdRef.current ?? undefined);
   }, []);
 
   // ========== Settings ==========

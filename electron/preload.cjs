@@ -963,8 +963,9 @@ const api = {
   // port (which may differ from the preferred 45678 if it was in use) and
   // embed it into the provider's redirect_uri before opening the browser.
   prepareOAuthCallback: () => ipcRenderer.invoke("oauth:prepareCallback"),
-  awaitOAuthCallback: (expectedState) => ipcRenderer.invoke("oauth:awaitCallback", expectedState),
-  cancelOAuthCallback: () => ipcRenderer.invoke("oauth:cancelCallback"),
+  awaitOAuthCallback: (expectedState, sessionId) =>
+    ipcRenderer.invoke("oauth:awaitCallback", expectedState, sessionId),
+  cancelOAuthCallback: (sessionId) => ipcRenderer.invoke("oauth:cancelCallback", sessionId),
 
   // GitHub Device Flow (proxied via main process to avoid CORS)
   githubStartDeviceFlow: (options) => ipcRenderer.invoke("netcatty:github:deviceFlow:start", options),
