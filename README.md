@@ -64,7 +64,10 @@
 Ask Catty Agent to check a server's health, and it runs the right commands, analyzes the output, and gives you a clear summary — all in seconds.
 
 
-https://github.com/user-attachments/assets/eecf08f1-80bd-49db-886d-b36e93388865
+
+https://github.com/user-attachments/assets/f819a1b6-8cba-4910-8017-97dfc080b477
+
+
 
 
 
@@ -74,8 +77,9 @@ https://github.com/user-attachments/assets/eecf08f1-80bd-49db-886d-b36e93388865
 Watch Catty Agent orchestrate a Docker Swarm cluster across two servers in one conversation. It handles the init, token exchange, and node joining — you just tell it what you want.
 
 
+https://github.com/user-attachments/assets/52fd30b8-9f02-43d4-a3b2-142691e8e3ec
 
-https://github.com/user-attachments/assets/282027aa-5c9e-4bb1-b2c3-5eea9df2b203
+
 
 
 
@@ -156,21 +160,27 @@ Video previews (stored in `screenshots/gifs/`), rendered inline on GitHub:
 ### Vault views: grid / list / tree
 Switch between different Vault views to match your workflow: overview in grid, dense scanning in list, and hierarchical navigation in tree.
 
-https://github.com/user-attachments/assets/e2742987-3131-404d-bd4b-06423e5bfd99
+
+https://github.com/user-attachments/assets/1ff1f3f1-e5ae-40ea-b35a-0e5148c3afeb
+
 
 
 ### Split terminals + session management
 Work in multiple sessions at once with split panes. Keep related tasks side-by-side and reduce context switching.
 
-https://github.com/user-attachments/assets/377d0c46-cc5a-4382-aa31-5acfd412ce62
+
+
+https://github.com/user-attachments/assets/9c24b519-4b4b-4910-a22a-590d04c9af31
+
+
 
 
 
 ### SFTP: drag & drop + built-in editor
 Move files with drag & drop, then edit quickly using the built-in editor without leaving the app.
 
-https://github.com/user-attachments/assets/c6e06af4-b0d5-461c-b0c7-9d6f655af6c7
 
+https://github.com/user-attachments/assets/f3afdb36-399d-4330-b9f3-4678f178f6db
 
 
 
@@ -178,7 +188,11 @@ https://github.com/user-attachments/assets/c6e06af4-b0d5-461c-b0c7-9d6f655af6c7
 ### Drag file upload
 Drop files into the app to kick off uploads without hunting through dialogs.
 
-https://github.com/user-attachments/assets/c8e0c4ff-f020-4e18-9b09-681ec97b003f
+
+
+https://github.com/user-attachments/assets/e1e26f7a-3489-41cc-975e-8dccba56ea85
+
+
 
 
 
@@ -186,7 +200,10 @@ https://github.com/user-attachments/assets/c8e0c4ff-f020-4e18-9b09-681ec97b003f
 ### Custom themes
 Make Netcatty yours: customize themes and UI appearance.
 
-https://github.com/user-attachments/assets/77e2a693-4ef2-4823-8ca1-9bcbf14ed98b
+
+
+https://github.com/user-attachments/assets/1a6049aa-9a4c-4d52-a13d-0b007a791b00
+
 
 
 
@@ -194,7 +211,11 @@ https://github.com/user-attachments/assets/77e2a693-4ef2-4823-8ca1-9bcbf14ed98b
 ### Keyword highlighting
 Highlight important terminal output so errors, warnings, and key events stand out at a glance.
 
-https://github.com/user-attachments/assets/e6516993-ad66-4594-8c28-57426082339b
+
+
+https://github.com/user-attachments/assets/1a1db7bd-948b-4f3c-97cd-8fd0cbe7cce7
+
+
 
 
 
