@@ -53,6 +53,7 @@ export interface CloudSyncHook {
   remoteVersion: number;
   remoteUpdatedAt: number;
   syncHistory: SyncHistoryEntry[];
+  pendingBrowserAuthProvider: 'google' | 'onedrive' | null;
   
   // Computed
   hasAnyConnectedProvider: boolean;
@@ -72,7 +73,9 @@ export interface CloudSyncHook {
     deviceCode: string,
     interval: number,
     expiresAt: number,
-    onPending?: () => void
+    onPending?: () => void,
+    signal?: AbortSignal,
+    authAttemptId?: number
   ) => Promise<void>;
   connectGoogle: () => Promise<string>;
   connectOneDrive: () => Promise<string>;
@@ -126,6 +129,47 @@ export interface CloudSyncHook {
   getShrinkBlockedFinding: () => Extract<ShrinkFinding, { suspicious: true }> | null;
 }
 
+type PendingBrowserAuthState = {
+  provider: 'google' | 'onedrive';
+  sessionId: string;
+  authAttemptId?: number;
+} | null;
+
+let pendingBrowserAuthState: PendingBrowserAuthState = null;
+const pendingBrowserAuthListeners = new Set<() => void>();
+let activeOAuthBrowserHandoff:
+  | { sessionId: string; cancel: () => void }
+  | null = null;
+const cancelledOAuthSessionIds = new Set<string>();
+
+const getPendingBrowserAuthState = (): PendingBrowserAuthState => pendingBrowserAuthState;
+
+const subscribePendingBrowserAuthState = (callback: () => void) => {
+  pendingBrowserAuthListeners.add(callback);
+  return () => pendingBrowserAuthListeners.delete(callback);
+};
+
+const setPendingBrowserAuthState = (next: PendingBrowserAuthState) => {
+  pendingBrowserAuthState = next;
+  pendingBrowserAuthListeners.forEach((callback) => callback());
+};
+
+const clearPendingBrowserAuthState = (
+  match?: { provider: 'google' | 'onedrive'; sessionId: string; authAttemptId?: number }
+) => {
+  if (!match) {
+    setPendingBrowserAuthState(null);
+    return;
+  }
+  if (
+    pendingBrowserAuthState &&
+    pendingBrowserAuthState.provider === match.provider &&
+    pendingBrowserAuthState.sessionId === match.sessionId
+  ) {
+    setPendingBrowserAuthState(null);
+  }
+};
+
 // ============================================================================
 // Hook Implementation
 // ============================================================================
@@ -146,6 +190,15 @@ const getSnapshot = (): SyncManagerState => {
 export const useCloudSync = (): CloudSyncHook => {
   // Use useSyncExternalStore for real-time state sync across all components
   const state = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const pendingBrowserAuth = useSyncExternalStore(
+    subscribePendingBrowserAuthState,
+    getPendingBrowserAuthState,
+    getPendingBrowserAuthState
+  );
+  const activeOAuthSessionIdRef = useRef<string | null>(null);
+  const activeOAuthProviderRef = useRef<'google' | 'onedrive' | null>(null);
+  const activeGitHubAuthAbortRef = useRef<AbortController | null>(null);
+  const activeGitHubAuthAttemptIdRef = useRef<number | null>(null);
 
   // Auto-unlock: if a master key exists, retrieve the persisted password (Electron safeStorage)
   // and unlock silently so users don't have to manage a LOCKED state in the UI.
@@ -262,107 +315,274 @@ export const useCloudSync = (): CloudSyncHook => {
     if (result.type !== 'device_code') {
       throw new Error('Unexpected auth type');
     }
-    return result.data as DeviceFlowState;
+    activeGitHubAuthAttemptIdRef.current = result.data.authAttemptId ?? null;
+    return result.data;
   }, []);
   
   const completeGitHubAuth = useCallback(async (
     deviceCode: string,
     interval: number,
     expiresAt: number,
-    onPending?: () => void
+    onPending?: () => void,
+    signal?: AbortSignal,
+    authAttemptId?: number
   ): Promise<void> => {
-    await manager.completeGitHubAuth(deviceCode, interval, expiresAt, onPending);
-  }, []);
-  
-  const connectGoogle = useCallback(async (): Promise<string> => {
-    const result = await manager.startProviderAuth('google');
-    if (result.type !== 'url') {
-      throw new Error('Unexpected auth type');
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+
+    if (signal?.aborted) {
+      abort();
+    } else if (signal) {
+      signal.addEventListener('abort', abort, { once: true });
     }
-    const data = result.data as { url: string; redirectUri: string };
 
-    // Start OAuth callback server in Electron and wait for authorization
-    const bridge = netcattyBridge.get();
-    const startCallback = bridge?.startOAuthCallback;
-    if (startCallback) {
-      // Get state from adapter for CSRF protection
-      const adapter = manager.getAdapter('google') as { getPKCEState?: () => string | null } | undefined;
-      const expectedState = adapter?.getPKCEState?.() || undefined;
+    activeGitHubAuthAbortRef.current = controller;
 
-      // Start callback server and open system browser
-      const callbackPromise = startCallback(expectedState);
-
-      // Use system browser to avoid white-screen issues in popup windows (#563)
-      // Race: if browser launch fails, surface the error immediately
-      let openTimer: ReturnType<typeof setTimeout> | null = null;
-      const browserPromise = new Promise<never>((_resolve, reject) => {
-        openTimer = setTimeout(async () => {
-          try {
-            await bridge?.openExternal(data.url);
-          } catch (err) {
-            bridge?.cancelOAuthCallback?.();
-            reject(err instanceof Error ? err : new Error('Failed to open browser for authentication'));
-          }
-        }, 100);
-      });
-
-      try {
-        const { code } = await Promise.race([callbackPromise, browserPromise]);
-
-        // Complete auth with the received code
-        await manager.completePKCEAuth('google', code, data.redirectUri);
-      } finally {
-        if (openTimer) clearTimeout(openTimer);
+    try {
+      await manager.completeGitHubAuth(
+        deviceCode,
+        interval,
+        expiresAt,
+        onPending,
+        controller.signal,
+        authAttemptId
+      );
+    } finally {
+      if (signal) {
+        signal.removeEventListener('abort', abort);
+      }
+      if (activeGitHubAuthAbortRef.current === controller) {
+        activeGitHubAuthAbortRef.current = null;
+      }
+      if (activeGitHubAuthAttemptIdRef.current === (authAttemptId ?? null)) {
+        activeGitHubAuthAttemptIdRef.current = null;
       }
     }
-
-    return data.url;
   }, []);
+
+  const cancelActivePKCEAuth = useCallback(async () => {
+    const pending = getPendingBrowserAuthState();
+    const sessionId = pending?.sessionId ?? activeOAuthSessionIdRef.current;
+    const provider = pending?.provider ?? activeOAuthProviderRef.current;
+    const authAttemptId = pending?.authAttemptId;
+    if (!sessionId || !provider) return;
+
+    cancelledOAuthSessionIds.add(sessionId);
+    if (activeOAuthBrowserHandoff?.sessionId === sessionId) {
+      activeOAuthBrowserHandoff.cancel();
+      activeOAuthBrowserHandoff = null;
+    }
+    manager.cancelProviderAuthAttempt(provider, authAttemptId);
+    activeOAuthSessionIdRef.current = null;
+    activeOAuthProviderRef.current = null;
+    clearPendingBrowserAuthState(
+      pending
+        ? {
+            provider: pending.provider,
+            sessionId: pending.sessionId,
+            authAttemptId: pending.authAttemptId,
+          }
+        : undefined
+    );
+
+    try {
+      await netcattyBridge.get()?.cancelOAuthCallback?.(sessionId);
+    } catch {
+      // Best-effort cleanup
+    }
+  }, []);
+  
+  const runPKCEAuth = useCallback(
+    async (provider: 'google' | 'onedrive'): Promise<string> => {
+      const bridge = netcattyBridge.get();
+      const prepare = bridge?.prepareOAuthCallback;
+      const awaitCallback = bridge?.awaitOAuthCallback;
+      const openExternal = bridge?.openExternal;
+      if (!prepare || !awaitCallback || !openExternal) {
+        throw new Error('OAuth bridge is unavailable');
+      }
+
+      // Only one loopback OAuth flow can be active at a time. If the user
+      // starts another provider while a previous browser hop is still pending,
+      // cancel the stale one first so the new attempt owns the callback port.
+      await cancelActivePKCEAuth();
+
+      // Bind the loopback callback server first so we know which port to put
+      // in the provider's redirect_uri (#823: 45678 may be in use).
+      const { redirectUri, sessionId } = await prepare();
+      activeOAuthSessionIdRef.current = sessionId;
+      activeOAuthProviderRef.current = provider;
+      setPendingBrowserAuthState({ provider, sessionId });
+
+      try {
+        const result = await manager.startProviderAuth(provider, redirectUri);
+        if (result.type !== 'url') {
+          throw new Error('Unexpected auth type');
+        }
+        const data = result.data;
+
+        if (cancelledOAuthSessionIds.has(sessionId)) {
+          throw new Error('OAuth flow cancelled');
+        }
+
+        const adapter = manager.getAdapter(provider) as
+          | { getPKCEState?: () => string | null }
+          | undefined;
+        const expectedState = adapter?.getPKCEState?.() || undefined;
+
+        const callbackPromise = awaitCallback(expectedState, sessionId);
+
+        // Use system browser to avoid white-screen issues in popup windows (#563).
+        // Once the browser has opened, let the rest of the PKCE handshake
+        // continue in the background so closing the browser later does not
+        // leave the whole settings page locked waiting on a timeout.
+        let openTimer: ReturnType<typeof setTimeout> | null = null;
+        let browserOpened = false;
+        let rejectBrowserPromise: ((error: Error) => void) | null = null;
+        const browserPromise = new Promise<void>((resolve, reject) => {
+          rejectBrowserPromise = reject;
+          openTimer = setTimeout(async () => {
+            try {
+              await openExternal(data.url);
+              browserOpened = true;
+              resolve();
+            } catch (err) {
+              bridge?.cancelOAuthCallback?.(sessionId);
+              reject(
+                err instanceof Error
+                  ? err
+                  : new Error('Failed to open browser for authentication')
+              );
+            }
+          }, 100);
+        });
+        activeOAuthBrowserHandoff = {
+          sessionId,
+          cancel: () => {
+          if (openTimer) {
+            clearTimeout(openTimer);
+            openTimer = null;
+          }
+          if (rejectBrowserPromise) {
+            rejectBrowserPromise(new Error('OAuth flow cancelled'));
+            rejectBrowserPromise = null;
+          }
+          },
+        };
+
+        try {
+          await Promise.race([
+            browserPromise,
+            callbackPromise.then(
+              () => {
+                throw new Error('OAuth callback completed before browser handoff');
+              },
+              (error) => {
+                if (browserOpened) {
+                  return new Promise<void>(() => {});
+                }
+                throw error;
+              }
+            ),
+          ]);
+        } finally {
+          if (openTimer) clearTimeout(openTimer);
+          if (activeOAuthBrowserHandoff?.sessionId === sessionId) {
+            activeOAuthBrowserHandoff = null;
+          }
+        }
+        setPendingBrowserAuthState({
+          provider,
+          sessionId,
+          authAttemptId: data.authAttemptId,
+        });
+
+        const completionPromise = (async () => {
+          try {
+            const { code } = await callbackPromise;
+            await manager.completePKCEAuth(provider, code, data.redirectUri, data.authAttemptId);
+          } catch (error) {
+            const ownsActiveSession =
+              activeOAuthSessionIdRef.current === sessionId &&
+              activeOAuthProviderRef.current === provider;
+            const message = error instanceof Error ? error.message : String(error);
+            const cancelledOrSuperseded =
+              message.includes('cancelled') || message.includes('auth superseded');
+            const timedOut = message.toLowerCase().includes('timeout');
+            if (ownsActiveSession && (cancelledOrSuperseded || timedOut)) {
+              activeOAuthSessionIdRef.current = null;
+              activeOAuthProviderRef.current = null;
+              cancelledOAuthSessionIds.delete(sessionId);
+              clearPendingBrowserAuthState({
+                provider,
+                sessionId,
+                authAttemptId: data.authAttemptId,
+              });
+              manager.resetProviderStatus(provider);
+            } else if (ownsActiveSession) {
+              activeOAuthSessionIdRef.current = null;
+              activeOAuthProviderRef.current = null;
+              cancelledOAuthSessionIds.delete(sessionId);
+              clearPendingBrowserAuthState({
+                provider,
+                sessionId,
+                authAttemptId: data.authAttemptId,
+              });
+              manager.setProviderError(provider, message);
+            }
+          } finally {
+            if (
+              activeOAuthSessionIdRef.current === sessionId &&
+              activeOAuthProviderRef.current === provider
+            ) {
+              activeOAuthSessionIdRef.current = null;
+              activeOAuthProviderRef.current = null;
+            }
+            cancelledOAuthSessionIds.delete(sessionId);
+            clearPendingBrowserAuthState({
+              provider,
+              sessionId,
+              authAttemptId: data.authAttemptId,
+            });
+          }
+        })();
+
+        // Release the transient "connecting" UI once the browser handoff has
+        // happened. The callback session remains active in the background and
+        // will mark the provider connected when the redirect completes.
+        manager.resetProviderStatus(provider);
+        manager.clearProviderError(provider);
+        void completionPromise;
+        return data.url;
+      } catch (err) {
+        const ownsActiveSession =
+          activeOAuthSessionIdRef.current === sessionId &&
+          activeOAuthProviderRef.current === provider;
+        try {
+          await bridge?.cancelOAuthCallback?.(sessionId);
+        } catch {
+          // Best-effort cleanup
+        }
+        if (ownsActiveSession) {
+          activeOAuthSessionIdRef.current = null;
+          activeOAuthProviderRef.current = null;
+          manager.cancelProviderAuthAttempt(provider);
+          manager.resetProviderStatus(provider);
+        }
+        throw err;
+      }
+    },
+    [cancelActivePKCEAuth]
+  );
+
+  const connectGoogle = useCallback(async (): Promise<string> => {
+    return runPKCEAuth('google');
+  }, [runPKCEAuth]);
 
   const connectOneDrive = useCallback(async (): Promise<string> => {
-    const result = await manager.startProviderAuth('onedrive');
-    if (result.type !== 'url') {
-      throw new Error('Unexpected auth type');
-    }
-    const data = result.data as { url: string; redirectUri: string };
+    return runPKCEAuth('onedrive');
+  }, [runPKCEAuth]);
 
-    // Start OAuth callback server in Electron and wait for authorization
-    const bridge = netcattyBridge.get();
-    const startCallback = bridge?.startOAuthCallback;
-    if (startCallback) {
-      // Get state from adapter for CSRF protection
-      const adapter = manager.getAdapter('onedrive') as { getPKCEState?: () => string | null } | undefined;
-      const expectedState = adapter?.getPKCEState?.() || undefined;
-
-      // Start callback server and open system browser
-      const callbackPromise = startCallback(expectedState);
-
-      // Use system browser to avoid white-screen issues in popup windows (#563)
-      let openTimer: ReturnType<typeof setTimeout> | null = null;
-      const browserPromise = new Promise<never>((_resolve, reject) => {
-        openTimer = setTimeout(async () => {
-          try {
-            await bridge?.openExternal(data.url);
-          } catch (err) {
-            bridge?.cancelOAuthCallback?.();
-            reject(err instanceof Error ? err : new Error('Failed to open browser for authentication'));
-          }
-        }, 100);
-      });
-
-      try {
-        const { code } = await Promise.race([callbackPromise, browserPromise]);
-
-        // Complete auth with the received code
-        await manager.completePKCEAuth('onedrive', code, data.redirectUri);
-      } finally {
-        if (openTimer) clearTimeout(openTimer);
-      }
-    }
-
-    return data.url;
-  }, []);
-  
   const completePKCEAuth = useCallback(async (
     provider: 'google' | 'onedrive',
     code: string,
@@ -388,9 +608,16 @@ export const useCloudSync = (): CloudSyncHook => {
   }, []);
   
   const cancelOAuthConnect = useCallback(() => {
-    const bridge = netcattyBridge.get();
-    bridge?.cancelOAuthCallback?.();
-  }, []);
+    const githubAbort = activeGitHubAuthAbortRef.current;
+    if (githubAbort) {
+      manager.cancelProviderAuthAttempt('github', activeGitHubAuthAttemptIdRef.current ?? undefined);
+      activeGitHubAuthAttemptIdRef.current = null;
+      githubAbort.abort();
+      return;
+    }
+
+    void cancelActivePKCEAuth();
+  }, [cancelActivePKCEAuth]);
 
   // ========== Settings ==========
   
@@ -478,6 +705,7 @@ export const useCloudSync = (): CloudSyncHook => {
     remoteVersion: state.remoteVersion,
     remoteUpdatedAt: state.remoteUpdatedAt,
     syncHistory: state.syncHistory,
+    pendingBrowserAuthProvider: pendingBrowserAuth?.provider ?? null,
     
     // Computed
     hasAnyConnectedProvider,

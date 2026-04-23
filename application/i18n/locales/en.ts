@@ -1518,6 +1518,7 @@ const en: Messages = {
   'cloudSync.conflict.keepLocal': 'Overwrite cloud (keep local)',
   'cloudSync.conflict.useCloud': 'Download cloud (overwrite local)',
   'cloudSync.connect.browserContinue': 'Complete authorization in browser',
+  'cloudSync.connect.browserCancelled': 'Previous browser authorization was cancelled',
   'cloudSync.connect.github.success': 'GitHub connected successfully',
   'cloudSync.connect.github.failedTitle': 'GitHub connection failed',
   'cloudSync.connect.github.timeout': 'GitHub connection timed out. Check your network or proxy settings.',

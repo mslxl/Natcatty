@@ -433,7 +433,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                         size="sm"
                         variant="outline"
                         onClick={onCancelConnect}
-                        className="gap-1"
+                        className="gap-1 min-w-[136px] justify-center"
                     >
                         <X size={14} />
                         {t('common.cancel')}
@@ -442,7 +442,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                     <Button
                         size="sm"
                         onClick={() => { onConnect(); }}
-                        className="gap-1"
+                        className="gap-1 min-w-[136px] justify-center"
                         disabled={disabled || isConnecting}
                     >
                         {isConnecting ? <Loader2 size={14} className="animate-spin" /> : <Cloud size={14} />}
@@ -1121,6 +1121,10 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
     };
 
     const disconnectOtherProviders = async (current: CloudProvider) => {
+        if (sync.pendingBrowserAuthProvider && sync.pendingBrowserAuthProvider !== current) {
+            toast.info(t('cloudSync.connect.browserCancelled'));
+        }
+        sync.cancelOAuthConnect();
         const providers: CloudProvider[] = ['github', 'google', 'onedrive', 'webdav', 's3'];
         for (const provider of providers) {
             if (provider === current) continue;
@@ -1135,6 +1139,7 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
     const [gitHubUserCode, setGitHubUserCode] = useState('');
     const [gitHubVerificationUri, setGitHubVerificationUri] = useState('');
     const [isPollingGitHub, setIsPollingGitHub] = useState(false);
+    const activeGitHubAttemptIdRef = useRef<number | null>(null);
 
     // Conflict modal
     const [showConflictModal, setShowConflictModal] = useState(false);
@@ -1152,6 +1157,40 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
     } | null>(null);
     const [historyPreviewLoading, setHistoryPreviewLoading] = useState(false);
     const [historyError, setHistoryError] = useState<string | null>(null);
+    const [pendingConnectProvider, setPendingConnectProvider] = useState<CloudProvider | null>(null);
+    const pendingConnectProviderRef = useRef<CloudProvider | null>(null);
+
+    const hasConnectingProvider = (Object.values(sync.providers) as Array<{ status: string }>).some(
+        (provider) => provider.status === 'connecting'
+    );
+
+    const isConnectDisabled = (provider: CloudProvider): boolean => {
+        if (pendingConnectProvider && pendingConnectProvider !== provider) {
+            return true;
+        }
+        if (pendingConnectProvider === provider) {
+            return true;
+        }
+        if (hasConnectingProvider && sync.providers[provider].status !== 'connecting') {
+            return true;
+        }
+        return sync.hasAnyConnectedProvider && !isProviderReadyForSync(sync.providers[provider]);
+    };
+
+    const beginPendingConnect = (provider: CloudProvider): boolean => {
+        if (pendingConnectProviderRef.current) {
+            return false;
+        }
+        pendingConnectProviderRef.current = provider;
+        setPendingConnectProvider(provider);
+        return true;
+    };
+
+    const endPendingConnect = (provider: CloudProvider) => {
+        if (pendingConnectProviderRef.current !== provider) return;
+        pendingConnectProviderRef.current = null;
+        setPendingConnectProvider((current) => (current === provider ? null : current));
+    };
 
     // Change master key dialog
     const [showChangeKeyDialog, setShowChangeKeyDialog] = useState(false);
@@ -1275,9 +1314,14 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
 
     // Connect GitHub (disconnect others first - single provider only)
     const handleConnectGitHub = async () => {
+        if (!beginPendingConnect('github')) return;
+        const cancelController = new AbortController();
+        let authAttemptId: number | null = null;
         try {
             await disconnectOtherProviders('github');
             const deviceFlow = await sync.connectGitHub();
+            authAttemptId = deviceFlow.authAttemptId ?? null;
+            activeGitHubAttemptIdRef.current = authAttemptId;
             setGitHubUserCode(deviceFlow.userCode);
             setGitHubVerificationUri(deviceFlow.verificationUri);
             setShowGitHubModal(true);
@@ -1287,59 +1331,78 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                 deviceFlow.deviceCode,
                 deviceFlow.interval,
                 deviceFlow.expiresAt,
-                () => { } // onPending callback
+                () => { }, // onPending callback
+                cancelController.signal,
+                authAttemptId ?? undefined
             );
 
-            setIsPollingGitHub(false);
-            setShowGitHubModal(false);
+            if (activeGitHubAttemptIdRef.current === authAttemptId) {
+                activeGitHubAttemptIdRef.current = null;
+                setIsPollingGitHub(false);
+                setShowGitHubModal(false);
+            }
             toast.success(t('cloudSync.connect.github.success'));
         } catch (error) {
-            setIsPollingGitHub(false);
-            setShowGitHubModal(false);
-            // Reset provider status so button is clickable again (without tearing down existing connections)
-            sync.resetProviderStatus('github');
+            if (activeGitHubAttemptIdRef.current === authAttemptId) {
+                activeGitHubAttemptIdRef.current = null;
+                setIsPollingGitHub(false);
+                setShowGitHubModal(false);
+            }
             const message = getNetworkErrorMessage(error, t('common.unknownError'));
-            toast.error(message, t('cloudSync.connect.github.failedTitle'));
+            if (!message.toLowerCase().includes('cancelled')) {
+                toast.error(message, t('cloudSync.connect.github.failedTitle'));
+            }
+        } finally {
+            cancelController.abort();
+            if (activeGitHubAttemptIdRef.current == null) {
+                endPendingConnect('github');
+            }
         }
     };
 
     // Connect Google (disconnect others first - single provider only)
     const handleConnectGoogle = async () => {
+        if (!beginPendingConnect('google')) return;
         try {
             await disconnectOtherProviders('google');
             await sync.connectGoogle();
             // Note: Auth flow is handled automatically by oauthBridge
             toast.info(t('cloudSync.connect.browserContinue'));
         } catch (error) {
-            // Reset provider status so button is clickable again (without tearing down existing connections)
-            sync.resetProviderStatus('google');
             const msg = error instanceof Error ? error.message : t('common.unknownError');
             // Don't show toast for user-initiated cancellation (popup closed)
             if (!msg.includes('cancelled')) {
                 toast.error(msg, t('cloudSync.connect.google.failedTitle'));
             }
+        } finally {
+            endPendingConnect('google');
         }
     };
 
     // Connect OneDrive (disconnect others first - single provider only)
     const handleConnectOneDrive = async () => {
+        if (!beginPendingConnect('onedrive')) return;
         try {
             await disconnectOtherProviders('onedrive');
             await sync.connectOneDrive();
             // Note: Auth flow is handled automatically by oauthBridge
             toast.info(t('cloudSync.connect.browserContinue'));
         } catch (error) {
-            // Reset provider status so button is clickable again (without tearing down existing connections)
-            sync.resetProviderStatus('onedrive');
             const msg = error instanceof Error ? error.message : t('common.unknownError');
             // Don't show toast for user-initiated cancellation (popup closed)
             if (!msg.includes('cancelled')) {
                 toast.error(msg, t('cloudSync.connect.onedrive.failedTitle'));
             }
+        } finally {
+            endPendingConnect('onedrive');
         }
     };
 
     const openWebdavDialog = () => {
+        if (sync.pendingBrowserAuthProvider) {
+            toast.info(t('cloudSync.connect.browserCancelled'));
+        }
+        sync.cancelOAuthConnect();
         const config = sync.providers.webdav.config as WebDAVConfig | undefined;
         setWebdavEndpoint(config?.endpoint || '');
         setWebdavAuthType(config?.authType || 'basic');
@@ -1354,6 +1417,10 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
     };
 
     const openS3Dialog = () => {
+        if (sync.pendingBrowserAuthProvider) {
+            toast.info(t('cloudSync.connect.browserCancelled'));
+        }
+        sync.cancelOAuthConnect();
         const config = sync.providers.s3.config as S3Config | undefined;
         setS3Endpoint(config?.endpoint || '');
         setS3Region(config?.region || '');
@@ -1673,7 +1740,7 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                         account={sync.providers.github.account}
                         lastSync={sync.providers.github.lastSync}
                         error={sync.providers.github.error}
-                        disabled={sync.hasAnyConnectedProvider && !isProviderReadyForSync(sync.providers.github)}
+                        disabled={isConnectDisabled('github')}
                         onConnect={handleConnectGitHub}
                         onDisconnect={() => sync.disconnectProvider('github')}
                         onSync={() => handleSync('github')}
@@ -1693,11 +1760,14 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                         icon={<GoogleDriveIcon className="w-6 h-6" />}
                         isConnected={isProviderReadyForSync(sync.providers.google)}
                         isSyncing={sync.providers.google.status === 'syncing'}
-                        isConnecting={sync.providers.google.status === 'connecting'}
+                        isConnecting={
+                            sync.providers.google.status === 'connecting' ||
+                            sync.pendingBrowserAuthProvider === 'google'
+                        }
                         account={sync.providers.google.account}
                         lastSync={sync.providers.google.lastSync}
                         error={sync.providers.google.error}
-                        disabled={sync.hasAnyConnectedProvider && !isProviderReadyForSync(sync.providers.google)}
+                        disabled={isConnectDisabled('google')}
                         onConnect={handleConnectGoogle}
                         onCancelConnect={sync.cancelOAuthConnect}
                         onDisconnect={() => sync.disconnectProvider('google')}
@@ -1710,11 +1780,14 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                         icon={<OneDriveIcon className="w-6 h-6" />}
                         isConnected={isProviderReadyForSync(sync.providers.onedrive)}
                         isSyncing={sync.providers.onedrive.status === 'syncing'}
-                        isConnecting={sync.providers.onedrive.status === 'connecting'}
+                        isConnecting={
+                            sync.providers.onedrive.status === 'connecting' ||
+                            sync.pendingBrowserAuthProvider === 'onedrive'
+                        }
                         account={sync.providers.onedrive.account}
                         lastSync={sync.providers.onedrive.lastSync}
                         error={sync.providers.onedrive.error}
-                        disabled={sync.hasAnyConnectedProvider && !isProviderReadyForSync(sync.providers.onedrive)}
+                        disabled={isConnectDisabled('onedrive')}
                         onConnect={handleConnectOneDrive}
                         onCancelConnect={sync.cancelOAuthConnect}
                         onDisconnect={() => sync.disconnectProvider('onedrive')}
@@ -1731,7 +1804,7 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                         account={sync.providers.webdav.account}
                         lastSync={sync.providers.webdav.lastSync}
                         error={sync.providers.webdav.error}
-                        disabled={sync.hasAnyConnectedProvider && !isProviderReadyForSync(sync.providers.webdav)}
+                        disabled={isConnectDisabled('webdav')}
                         onEdit={openWebdavDialog}
                         onConnect={openWebdavDialog}
                         onDisconnect={() => sync.disconnectProvider('webdav')}
@@ -1748,7 +1821,7 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                         account={sync.providers.s3.account}
                         lastSync={sync.providers.s3.lastSync}
                         error={sync.providers.s3.error}
-                        disabled={sync.hasAnyConnectedProvider && !isProviderReadyForSync(sync.providers.s3)}
+                        disabled={isConnectDisabled('s3')}
                         onEdit={openS3Dialog}
                         onConnect={openS3Dialog}
                         onDisconnect={() => sync.disconnectProvider('s3')}
@@ -1876,11 +1949,11 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                 verificationUri={gitHubVerificationUri}
                 isPolling={isPollingGitHub}
                 onClose={() => {
+                    activeGitHubAttemptIdRef.current = null;
                     setShowGitHubModal(false);
                     setIsPollingGitHub(false);
-                    // Reset provider status so button is clickable again.
-                    // The background polling will continue until expiry but is harmless.
-                    sync.resetProviderStatus('github');
+                    endPendingConnect('github');
+                    sync.cancelOAuthConnect();
                 }}
             />
 

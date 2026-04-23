@@ -959,13 +959,18 @@ const api = {
     };
   },
 
-  // OAuth callback server
-  startOAuthCallback: (expectedState) => ipcRenderer.invoke("oauth:startCallback", expectedState),
-  cancelOAuthCallback: () => ipcRenderer.invoke("oauth:cancelCallback"),
+  // OAuth callback server — two-step so the renderer can learn the bound
+  // port (which may differ from the preferred 45678 if it was in use) and
+  // embed it into the provider's redirect_uri before opening the browser.
+  prepareOAuthCallback: () => ipcRenderer.invoke("oauth:prepareCallback"),
+  awaitOAuthCallback: (expectedState, sessionId) =>
+    ipcRenderer.invoke("oauth:awaitCallback", expectedState, sessionId),
+  cancelOAuthCallback: (sessionId) => ipcRenderer.invoke("oauth:cancelCallback", sessionId),
 
   // GitHub Device Flow (proxied via main process to avoid CORS)
   githubStartDeviceFlow: (options) => ipcRenderer.invoke("netcatty:github:deviceFlow:start", options),
   githubPollDeviceFlowToken: (options) => ipcRenderer.invoke("netcatty:github:deviceFlow:poll", options),
+  githubCancelDeviceFlowPoll: (pollId) => ipcRenderer.invoke("netcatty:github:deviceFlow:cancelPoll", pollId),
 
   // Google OAuth (proxied via main process to avoid CORS)
   googleExchangeCodeForTokens: (options) =>
