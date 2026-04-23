@@ -40,7 +40,8 @@
 
 ---
 
-[![Netcatty Main Interface](screenshots/main-window-dark.png)](screenshots/main-window-dark.png)
+<img width="2868" height="1784" alt="netcatty SSH (Window) 2026-04-23 11:19 PM" src="https://github.com/user-attachments/assets/d6df734f-9ebc-452a-8b7d-e8a0fdc9463a" />
+
 
 ---
 
@@ -48,11 +49,6 @@
 # 🔥 Catty Agent — Your IT Ops AI Partner
 
 > 🚀 **Boost your IT ops daily work with AI power.** Catty Agent is the built-in AI assistant that understands your servers, executes commands, and handles complex multi-host operations — all through natural conversation.
-
-<p align="center">
-  <img src="screenshots/ai-feature.png" alt="Catty Agent Interface" width="800">
-</p>
-
 ### 🔥 What can Catty Agent do?
 
 - 🚀 **Natural language server management** — just tell it what you need, no more memorizing commands
