@@ -274,95 +274,86 @@ export const useCloudSync = (): CloudSyncHook => {
     await manager.completeGitHubAuth(deviceCode, interval, expiresAt, onPending);
   }, []);
   
-  const connectGoogle = useCallback(async (): Promise<string> => {
-    const result = await manager.startProviderAuth('google');
-    if (result.type !== 'url') {
-      throw new Error('Unexpected auth type');
-    }
-    const data = result.data as { url: string; redirectUri: string };
-
-    // Start OAuth callback server in Electron and wait for authorization
-    const bridge = netcattyBridge.get();
-    const startCallback = bridge?.startOAuthCallback;
-    if (startCallback) {
-      // Get state from adapter for CSRF protection
-      const adapter = manager.getAdapter('google') as { getPKCEState?: () => string | null } | undefined;
-      const expectedState = adapter?.getPKCEState?.() || undefined;
-
-      // Start callback server and open system browser
-      const callbackPromise = startCallback(expectedState);
-
-      // Use system browser to avoid white-screen issues in popup windows (#563)
-      // Race: if browser launch fails, surface the error immediately
-      let openTimer: ReturnType<typeof setTimeout> | null = null;
-      const browserPromise = new Promise<never>((_resolve, reject) => {
-        openTimer = setTimeout(async () => {
-          try {
-            await bridge?.openExternal(data.url);
-          } catch (err) {
-            bridge?.cancelOAuthCallback?.();
-            reject(err instanceof Error ? err : new Error('Failed to open browser for authentication'));
-          }
-        }, 100);
-      });
-
-      try {
-        const { code } = await Promise.race([callbackPromise, browserPromise]);
-
-        // Complete auth with the received code
-        await manager.completePKCEAuth('google', code, data.redirectUri);
-      } finally {
-        if (openTimer) clearTimeout(openTimer);
+  const runPKCEAuth = useCallback(
+    async (provider: 'google' | 'onedrive'): Promise<string> => {
+      const bridge = netcattyBridge.get();
+      const prepare = bridge?.prepareOAuthCallback;
+      const awaitCallback = bridge?.awaitOAuthCallback;
+      if (!prepare || !awaitCallback) {
+        throw new Error('OAuth bridge is unavailable');
       }
-    }
 
-    return data.url;
-  }, []);
+      // Bind the loopback callback server first so we know which port to put
+      // in the provider's redirect_uri (#823: 45678 may be in use).
+      const prepared = await prepare();
+      const redirectUri = prepared.redirectUri;
+
+      let authStarted = false;
+      try {
+        const result = await manager.startProviderAuth(provider, redirectUri);
+        if (result.type !== 'url') {
+          throw new Error('Unexpected auth type');
+        }
+        authStarted = true;
+        const data = result.data as { url: string; redirectUri: string };
+
+        const adapter = manager.getAdapter(provider) as
+          | { getPKCEState?: () => string | null }
+          | undefined;
+        const expectedState = adapter?.getPKCEState?.() || undefined;
+
+        const callbackPromise = awaitCallback(expectedState);
+
+        // Use system browser to avoid white-screen issues in popup windows (#563).
+        // Race: if browser launch fails, surface the error immediately.
+        let openTimer: ReturnType<typeof setTimeout> | null = null;
+        const browserPromise = new Promise<never>((_resolve, reject) => {
+          openTimer = setTimeout(async () => {
+            try {
+              await bridge?.openExternal(data.url);
+            } catch (err) {
+              bridge?.cancelOAuthCallback?.();
+              reject(
+                err instanceof Error
+                  ? err
+                  : new Error('Failed to open browser for authentication')
+              );
+            }
+          }, 100);
+        });
+
+        try {
+          const { code } = await Promise.race([callbackPromise, browserPromise]);
+          await manager.completePKCEAuth(provider, code, data.redirectUri);
+        } finally {
+          if (openTimer) clearTimeout(openTimer);
+        }
+
+        return data.url;
+      } catch (err) {
+        // If we bound a server but never reached awaitCallback (or it failed
+        // before resolving), release the port so the next attempt can bind.
+        if (!authStarted) {
+          try {
+            await bridge?.cancelOAuthCallback?.();
+          } catch {
+            // Best-effort cleanup
+          }
+        }
+        throw err;
+      }
+    },
+    []
+  );
+
+  const connectGoogle = useCallback(async (): Promise<string> => {
+    return runPKCEAuth('google');
+  }, [runPKCEAuth]);
 
   const connectOneDrive = useCallback(async (): Promise<string> => {
-    const result = await manager.startProviderAuth('onedrive');
-    if (result.type !== 'url') {
-      throw new Error('Unexpected auth type');
-    }
-    const data = result.data as { url: string; redirectUri: string };
+    return runPKCEAuth('onedrive');
+  }, [runPKCEAuth]);
 
-    // Start OAuth callback server in Electron and wait for authorization
-    const bridge = netcattyBridge.get();
-    const startCallback = bridge?.startOAuthCallback;
-    if (startCallback) {
-      // Get state from adapter for CSRF protection
-      const adapter = manager.getAdapter('onedrive') as { getPKCEState?: () => string | null } | undefined;
-      const expectedState = adapter?.getPKCEState?.() || undefined;
-
-      // Start callback server and open system browser
-      const callbackPromise = startCallback(expectedState);
-
-      // Use system browser to avoid white-screen issues in popup windows (#563)
-      let openTimer: ReturnType<typeof setTimeout> | null = null;
-      const browserPromise = new Promise<never>((_resolve, reject) => {
-        openTimer = setTimeout(async () => {
-          try {
-            await bridge?.openExternal(data.url);
-          } catch (err) {
-            bridge?.cancelOAuthCallback?.();
-            reject(err instanceof Error ? err : new Error('Failed to open browser for authentication'));
-          }
-        }, 100);
-      });
-
-      try {
-        const { code } = await Promise.race([callbackPromise, browserPromise]);
-
-        // Complete auth with the received code
-        await manager.completePKCEAuth('onedrive', code, data.redirectUri);
-      } finally {
-        if (openTimer) clearTimeout(openTimer);
-      }
-    }
-
-    return data.url;
-  }, []);
-  
   const completePKCEAuth = useCallback(async (
     provider: 'google' | 'onedrive',
     code: string,

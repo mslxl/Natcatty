@@ -959,8 +959,11 @@ const api = {
     };
   },
 
-  // OAuth callback server
-  startOAuthCallback: (expectedState) => ipcRenderer.invoke("oauth:startCallback", expectedState),
+  // OAuth callback server — two-step so the renderer can learn the bound
+  // port (which may differ from the preferred 45678 if it was in use) and
+  // embed it into the provider's redirect_uri before opening the browser.
+  prepareOAuthCallback: () => ipcRenderer.invoke("oauth:prepareCallback"),
+  awaitOAuthCallback: (expectedState) => ipcRenderer.invoke("oauth:awaitCallback", expectedState),
   cancelOAuthCallback: () => ipcRenderer.invoke("oauth:cancelCallback"),
 
   // GitHub Device Flow (proxied via main process to avoid CORS)

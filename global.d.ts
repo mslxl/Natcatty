@@ -602,8 +602,13 @@ declare global {
     // SFTP connection progress listener (auth method logs)
     onSftpConnectionProgress?(cb: (sessionId: string, label: string, status: string, detail?: string) => void): () => void;
 
-    // OAuth callback server for cloud sync
-    startOAuthCallback?(expectedState?: string): Promise<{ code: string; state?: string }>;
+    // OAuth callback server for cloud sync. `prepareOAuthCallback` binds the
+    // loopback listener and returns the chosen port (preferred 45678, falls
+    // back to an OS-assigned free port if busy). The caller then builds the
+    // OAuth URL against `redirectUri`, opens the browser, and finally awaits
+    // the code via `awaitOAuthCallback`.
+    prepareOAuthCallback?(): Promise<{ port: number; redirectUri: string }>;
+    awaitOAuthCallback?(expectedState?: string): Promise<{ code: string; state?: string }>;
     cancelOAuthCallback?(): Promise<void>;
 
     // GitHub Device Flow (cloud sync)

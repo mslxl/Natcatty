@@ -695,9 +695,16 @@ export class CloudSyncManager {
 
   /**
    * Start authentication flow for a provider
-   * Returns data needed for the auth flow (device code for GitHub, URL for others)
+   * Returns data needed for the auth flow (device code for GitHub, URL for others).
+   *
+   * For PKCE providers (Google / OneDrive) the caller must supply the
+   * redirect URI the loopback callback server bound to — the port is chosen
+   * dynamically by the main process (#823) so it can't be hardcoded here.
    */
-  async startProviderAuth(provider: CloudProvider): Promise<{
+  async startProviderAuth(
+    provider: CloudProvider,
+    redirectUri?: string
+  ): Promise<{
     type: 'device_code' | 'url';
     data: unknown;
   }> {
@@ -720,7 +727,12 @@ export class CloudSyncManager {
         };
       } else {
         // Google and OneDrive use PKCE with redirect
-        const redirectUri = 'http://127.0.0.1:45678/oauth/callback';
+        if (!redirectUri) {
+          throw new Error(
+            `startProviderAuth('${provider}') requires a redirectUri — ` +
+              'call preparePKCECallback on the bridge first and pass its redirectUri through.'
+          );
+        }
 
         if (provider === 'google') {
           const gdAdapter = adapter as GoogleDriveAdapter;

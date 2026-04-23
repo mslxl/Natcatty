@@ -2,18 +2,23 @@
  * OAuth Callback Bridge
  *
  * Handles OAuth loopback redirects for Google Drive and OneDrive.
- * Starts a temporary HTTP server on 127.0.0.1:45678 to receive authorization codes.
+ * Prepares a temporary HTTP server on 127.0.0.1 (preferred port 45678; falls
+ * back to an OS-assigned free port if 45678 is already in use — issue #823)
+ * and waits on it for the authorization code.
  */
 
 const http = require("node:http");
 const url = require("node:url");
 
 let server = null;
+let activePort = null;
+let requestHandler = null;
 let pendingResolve = null;
 let pendingReject = null;
+let pendingExpectedState = null;
 let serverTimeout = null;
 
-const OAUTH_PORT = 45678;
+const PREFERRED_OAUTH_PORT = 45678;
 const OAUTH_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 
 const escapeHtml = (value) =>
@@ -187,167 +192,240 @@ const renderOAuthPage = ({ title, message, detail, status, autoClose }) => {
 </html>`;
 };
 
+function handleOAuthRequest(req, res) {
+  const parsedUrl = url.parse(req.url, true);
+
+  // Only handle the callback path
+  if (parsedUrl.pathname !== "/oauth/callback") {
+    res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
+    res.end("<h1>404 Not Found</h1>");
+    return;
+  }
+
+  const { code, state, error, error_description } = parsedUrl.query;
+
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+
+  if (error) {
+    res.end(
+      renderOAuthPage({
+        title: "Authorization Failed",
+        message: "We could not complete the sign-in flow.",
+        detail: error_description || error || "Unknown error",
+        status: "error",
+      })
+    );
+    rejectPending(new Error(error_description || error || "Authorization failed"));
+    return;
+  }
+
+  if (!code) {
+    res.end(
+      renderOAuthPage({
+        title: "Missing Authorization Code",
+        message: "The authorization response did not include a code.",
+        status: "error",
+      })
+    );
+    rejectPending(new Error("Missing authorization code"));
+    return;
+  }
+
+  if (pendingExpectedState && state !== pendingExpectedState) {
+    res.end(
+      renderOAuthPage({
+        title: "Security Check Failed",
+        message: "State parameter mismatch. This may indicate a CSRF attack.",
+        status: "error",
+      })
+    );
+    rejectPending(new Error("State mismatch - possible CSRF attack"));
+    return;
+  }
+
+  res.end(
+    renderOAuthPage({
+      title: "Authorization Complete",
+      message: "You are signed in and ready to sync. You can close this tab now.",
+      status: "success",
+    })
+  );
+
+  const resolve = pendingResolve;
+  cleanup();
+  if (resolve) {
+    resolve({ code, state });
+  }
+}
+
+function rejectPending(err) {
+  const reject = pendingReject;
+  cleanup();
+  if (reject) {
+    reject(err);
+  }
+}
+
 /**
- * Start OAuth callback server and wait for authorization code
- * @param {string} expectedState - State parameter to validate
- * @returns {Promise<{code: string, state: string}>}
+ * Try to bind an HTTP server on the loopback interface. Prefers
+ * PREFERRED_OAUTH_PORT; if the port is already in use (EADDRINUSE) or the OS
+ * otherwise refuses it (EACCES), falls back to letting the OS pick a free
+ * ephemeral port.
+ *
+ * @returns {Promise<{server: http.Server, port: number}>}
  */
-function startOAuthCallback(expectedState) {
-  return new Promise((resolve, reject) => {
-    // Clean up any existing server
-    if (server) {
+function bindLoopbackServer() {
+  const ports = [PREFERRED_OAUTH_PORT, 0];
+  return (async () => {
+    let lastErr;
+    for (const port of ports) {
       try {
-        server.close();
-      } catch (e) {
-        console.warn("Failed to close existing OAuth server:", e);
+        const s = http.createServer((req, res) => {
+          if (requestHandler) requestHandler(req, res);
+        });
+        await new Promise((resolve, reject) => {
+          const onError = (err) => {
+            s.removeListener("listening", onListening);
+            reject(err);
+          };
+          const onListening = () => {
+            s.removeListener("error", onError);
+            resolve();
+          };
+          s.once("error", onError);
+          s.once("listening", onListening);
+          s.listen(port, "127.0.0.1");
+        });
+        const bound = s.address();
+        return { server: s, port: bound && typeof bound === "object" ? bound.port : port };
+      } catch (err) {
+        lastErr = err;
+        if (err && (err.code === "EADDRINUSE" || err.code === "EACCES")) {
+          // Try the next candidate (OS-assigned)
+          continue;
+        }
+        throw err;
       }
     }
+    throw lastErr || new Error("Failed to bind OAuth loopback server");
+  })();
+}
 
+/**
+ * Bind a loopback HTTP server for the OAuth callback. Returns the chosen
+ * port and fully-qualified redirect URI so the caller can build the
+ * provider's authorization URL against it.
+ *
+ * @returns {Promise<{port: number, redirectUri: string}>}
+ */
+async function prepareOAuthCallback() {
+  // Close any previously-prepared server (e.g. from an abandoned flow).
+  closeServer();
+
+  const bound = await bindLoopbackServer();
+  server = bound.server;
+  activePort = bound.port;
+  requestHandler = handleOAuthRequest;
+
+  // Don't let the callback server itself keep the process alive — the
+  // awaitOAuthCallback Promise is what should pin the event loop. In Electron
+  // main this is a no-op (the UI keeps things alive), but in tests and CLI
+  // contexts it means the process can exit cleanly between runs.
+  if (typeof server.unref === "function") server.unref();
+
+  server.on("error", (err) => {
+    console.error("OAuth server error:", err);
+    rejectPending(err);
+  });
+
+  const redirectUri = `http://127.0.0.1:${activePort}/oauth/callback`;
+  console.log(`OAuth callback server listening on ${redirectUri}`);
+  return { port: activePort, redirectUri };
+}
+
+/**
+ * Wait for the authorization code to arrive at the prepared callback
+ * server. Must be called after prepareOAuthCallback().
+ *
+ * @param {string} [expectedState] - State parameter to validate
+ * @returns {Promise<{code: string, state?: string}>}
+ */
+function awaitOAuthCallback(expectedState) {
+  return new Promise((resolve, reject) => {
+    if (!server) {
+      reject(new Error("OAuth callback server not prepared"));
+      return;
+    }
+    // Only one await may be outstanding at a time.
+    if (pendingResolve || pendingReject) {
+      reject(new Error("An OAuth callback is already in progress"));
+      return;
+    }
     pendingResolve = resolve;
     pendingReject = reject;
+    pendingExpectedState = expectedState || null;
 
-    server = http.createServer((req, res) => {
-      const parsedUrl = url.parse(req.url, true);
-
-      // Only handle the callback path
-      if (parsedUrl.pathname !== "/oauth/callback") {
-        res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
-        res.end("<h1>404 Not Found</h1>");
-        return;
-      }
-
-      const { code, state, error, error_description } = parsedUrl.query;
-
-      // Send response to browser
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-
-      if (error) {
-        res.end(
-          renderOAuthPage({
-            title: "Authorization Failed",
-            message: "We could not complete the sign-in flow.",
-            detail: error_description || error || "Unknown error",
-            status: "error",
-          })
-        );
-
-        cleanup();
-        if (pendingReject) {
-          pendingReject(new Error(error_description || error || "Authorization failed"));
-          pendingReject = null;
-          pendingResolve = null;
-        }
-        return;
-      }
-
-      if (!code) {
-        res.end(
-          renderOAuthPage({
-            title: "Missing Authorization Code",
-            message: "The authorization response did not include a code.",
-            status: "error",
-          })
-        );
-
-        cleanup();
-        if (pendingReject) {
-          pendingReject(new Error("Missing authorization code"));
-          pendingReject = null;
-          pendingResolve = null;
-        }
-        return;
-      }
-
-      // Validate state if provided
-      if (expectedState && state !== expectedState) {
-        res.end(
-          renderOAuthPage({
-            title: "Security Check Failed",
-            message: "State parameter mismatch. This may indicate a CSRF attack.",
-            status: "error",
-          })
-        );
-
-        cleanup();
-        if (pendingReject) {
-          pendingReject(new Error("State mismatch - possible CSRF attack"));
-          pendingReject = null;
-          pendingResolve = null;
-        }
-        return;
-      }
-
-      // Success!
-      res.end(
-        renderOAuthPage({
-          title: "Authorization Complete",
-          message: "You are signed in and ready to sync. You can close this tab now.",
-          status: "success",
-        })
-      );
-
-      cleanup();
-      if (pendingResolve) {
-        pendingResolve({ code, state });
-        pendingResolve = null;
-        pendingReject = null;
-      }
-    });
-
-    server.on("error", (err) => {
-      console.error("OAuth server error:", err);
-      cleanup();
-      if (pendingReject) {
-        pendingReject(err);
-        pendingReject = null;
-        pendingResolve = null;
-      }
-    });
-
-    server.listen(OAUTH_PORT, "127.0.0.1", () => {
-      console.log(`OAuth callback server listening on http://127.0.0.1:${OAUTH_PORT}`);
-    });
-
-    // Set timeout
     serverTimeout = setTimeout(() => {
-      cleanup();
-      if (pendingReject) {
-        pendingReject(new Error("OAuth timeout - user did not complete authorization in time"));
-        pendingReject = null;
-        pendingResolve = null;
-      }
+      rejectPending(
+        new Error("OAuth timeout - user did not complete authorization in time")
+      );
     }, OAUTH_TIMEOUT);
   });
+}
+
+/**
+ * Return the port the OAuth callback server is currently listening on, or
+ * null when no callback is in flight. Used by windowManager to decide
+ * whether a loopback `/oauth/callback` URL is trustworthy for the in-app
+ * popup fallback.
+ */
+function getActiveOAuthPort() {
+  return activePort;
 }
 
 /**
  * Cancel pending OAuth flow
  */
 function cancelOAuthCallback() {
-  cleanup();
-  if (pendingReject) {
-    pendingReject(new Error("OAuth flow cancelled"));
-    pendingReject = null;
-    pendingResolve = null;
+  rejectPending(new Error("OAuth flow cancelled"));
+}
+
+function closeServer() {
+  if (server) {
+    try {
+      // closeAllConnections (Node 18.2+) forces any keep-alive sockets shut
+      // so the port is immediately reusable — otherwise server.close() would
+      // wait on idle keep-alive connections before fully releasing.
+      if (typeof server.closeAllConnections === "function") {
+        try {
+          server.closeAllConnections();
+        } catch {
+          // ignore
+        }
+      }
+      server.close();
+    } catch {
+      // Ignore
+    }
+    server = null;
   }
+  activePort = null;
+  requestHandler = null;
 }
 
 /**
- * Clean up server and timeout
+ * Clean up pending state and close the server. Called after the code is
+ * delivered, on error, and on cancellation.
  */
 function cleanup() {
   if (serverTimeout) {
     clearTimeout(serverTimeout);
     serverTimeout = null;
   }
-  if (server) {
-    try {
-      server.close();
-    } catch (e) {
-      // Ignore
-    }
-    server = null;
-  }
+  pendingResolve = null;
+  pendingReject = null;
+  pendingExpectedState = null;
+  closeServer();
 }
 
 /**
@@ -355,8 +433,12 @@ function cleanup() {
  * @param {Electron.IpcMain} ipcMain
  */
 function setupOAuthBridge(ipcMain) {
-  ipcMain.handle("oauth:startCallback", async (_event, expectedState) => {
-    return startOAuthCallback(expectedState);
+  ipcMain.handle("oauth:prepareCallback", async () => {
+    return prepareOAuthCallback();
+  });
+
+  ipcMain.handle("oauth:awaitCallback", async (_event, expectedState) => {
+    return awaitOAuthCallback(expectedState);
   });
 
   ipcMain.handle("oauth:cancelCallback", async () => {
@@ -366,6 +448,8 @@ function setupOAuthBridge(ipcMain) {
 
 module.exports = {
   setupOAuthBridge,
-  startOAuthCallback,
+  prepareOAuthCallback,
+  awaitOAuthCallback,
   cancelOAuthCallback,
+  getActiveOAuthPort,
 };
