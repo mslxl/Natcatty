@@ -398,6 +398,11 @@ body {
 .workspace-pane:not(:focus-within) .xterm-screen {
   opacity: 0.82;
 }
+/* Keep current pane fully visible while its context menu / popover is open;
+   focus moves to the menu portal and would otherwise drop :focus-within. */
+.workspace-pane[data-menu-open] .xterm-screen {
+  opacity: 1;
+}
 /* Border-style focus indicator (opt-in via data attribute) */
 [data-workspace-focus="border"] .workspace-pane:not(:focus-within) .xterm-screen {
   opacity: 1;

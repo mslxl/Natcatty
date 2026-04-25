@@ -184,6 +184,29 @@ function formatNetSpeed(bytesPerSec: number): string {
   }
 }
 
+type XTermWithPrivateRenderService = XTerm & {
+  _core?: {
+    _renderService?: {
+      _renderRows?: (start: number, end: number) => void;
+    };
+  };
+};
+
+function forceSyncRenderAfterResize(term: XTerm): void {
+  const renderService = (term as XTermWithPrivateRenderService)._core?._renderService;
+  const renderRows = renderService?._renderRows;
+  if (typeof renderRows !== "function") return;
+
+  const endRow = term.rows - 1;
+  if (endRow < 0) return;
+
+  try {
+    renderRows.call(renderService, 0, endRow);
+  } catch (err) {
+    logger.warn("Sync render after resize failed", err);
+  }
+}
+
 const TerminalComponent: React.FC<TerminalProps> = ({
   host,
   keys,
@@ -982,8 +1005,21 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
     const runFit = () => {
       try {
+        const term = termRef.current;
+        if (!term) return;
+
+        const dimensions = fitAddon.proposeDimensions();
+        if (!dimensions || Number.isNaN(dimensions.cols) || Number.isNaN(dimensions.rows)) return;
+
         lastFittedSizeRef.current = { width, height };
-        fitAddon.fit();
+        // addon-fit 0.11 clears the renderer before resizing, which can show
+        // as a one-frame WebGL blink during layout changes. Resize directly
+        // using the proposed dimensions to preserve the existing behavior
+        // without forcing a blank intermediate frame.
+        if (term.cols !== dimensions.cols || term.rows !== dimensions.rows) {
+          term.resize(dimensions.cols, dimensions.rows);
+          forceSyncRenderAfterResize(term);
+        }
         if (typeof requestAnimationFrame === "function") {
           requestAnimationFrame(() => {
             autocompleteRepositionRef.current?.();
