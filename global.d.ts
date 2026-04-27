@@ -73,6 +73,8 @@ declare global {
     keyId?: string;
     keySource?: 'generated' | 'imported';
     agentForwarding?: boolean;
+    x11Forwarding?: boolean;
+    x11Display?: string;
     cols?: number;
     rows?: number;
     charset?: string;

@@ -1034,6 +1034,17 @@ export default function SettingsTerminalTab(props: {
             className="w-24"
           />
         </SettingRow>
+        <SettingRow
+          label={t("settings.terminal.connection.x11Display")}
+          description={t("settings.terminal.connection.x11Display.desc")}
+        >
+          <Input
+            value={terminalSettings.x11Display}
+            onChange={(e) => updateTerminalSetting("x11Display", e.target.value)}
+            placeholder={t("settings.terminal.connection.x11Display.placeholder")}
+            className="w-48"
+          />
+        </SettingRow>
       </div>
 
       <SectionHeader title={t("settings.terminal.section.serverStats")} />

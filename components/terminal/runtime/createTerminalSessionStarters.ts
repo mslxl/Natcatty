@@ -569,6 +569,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
             ? (effectivePassphrase || sanitizeCredentialValue(attempt.key.passphrase))
             : undefined,
           agentForwarding: ctx.host.agentForwarding,
+          x11Forwarding: ctx.host.x11Forwarding,
+          x11Display: ctx.terminalSettings?.x11Display,
           legacyAlgorithms: ctx.host.legacyAlgorithms,
           cols: term.cols,
           rows: term.rows,
