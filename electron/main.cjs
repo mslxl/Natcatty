@@ -54,7 +54,7 @@ try {
   electronModule = require("electron");
 }
 
-const { app, BrowserWindow, Menu, protocol, shell, clipboard } = electronModule || {};
+const { app, BrowserWindow, Menu, protocol, shell, clipboard, session } = electronModule || {};
 if (!app || !BrowserWindow) {
   throw new Error("Failed to load Electron runtime. Ensure the app is launched with the Electron binary.");
 }
@@ -1077,6 +1077,77 @@ if (!gotLock) {
   // Application lifecycle
   app.whenReady().then(() => {
     registerAppProtocol();
+
+    // Grant only the Chromium permissions the app actually uses, and only
+    // to the app's own origin. The default session is shared with in-app
+    // OAuth pop-ups (accounts.google.com, login.microsoftonline.com, ...),
+    // so non-app origins are denied outright; for the app itself we keep
+    // an explicit allow-list rather than blanket-approving everything.
+    try {
+      const defaultSession = session?.defaultSession;
+      if (defaultSession) {
+        // app:// is registered as a standard scheme in Chromium
+        // (registerSchemesAsPrivileged above) but Node's WHATWG URL parser
+        // doesn't include it in its special-scheme list, so
+        // `new URL('app://netcatty/...').origin` returns the string "null"
+        // — matching against an `app://netcatty` origin string would
+        // therefore fail in packaged builds. Match by protocol + host
+        // instead, and only fall back to .origin for HTTP-family URLs
+        // (the dev server).
+        const allowedHttpOrigins = new Set();
+        if (effectiveDevServerUrl) {
+          try {
+            allowedHttpOrigins.add(new URL(effectiveDevServerUrl).origin);
+          } catch {
+            // ignore malformed dev server URL
+          }
+        }
+        const isAppOrigin = (rawUrl) => {
+          if (!rawUrl) return false;
+          try {
+            const parsed = new URL(String(rawUrl));
+            if (parsed.protocol === "app:") {
+              return parsed.host === "netcatty";
+            }
+            return allowedHttpOrigins.has(parsed.origin);
+          } catch {
+            return false;
+          }
+        };
+
+        // Permissions the renderer is known to need:
+        //   - local-fonts: terminal font picker enumeration (this PR)
+        //   - clipboard-read / clipboard-sanitized-write: terminal & SFTP
+        //     copy-paste flows (navigator.clipboard.{read,write}Text)
+        const APP_ALLOWED_PERMISSIONS = new Set([
+          "local-fonts",
+          "clipboard-read",
+          "clipboard-sanitized-write",
+        ]);
+
+        defaultSession.setPermissionRequestHandler((wc, permission, callback, details) => {
+          const requestingUrl =
+            details?.requestingUrl ||
+            (typeof wc?.getURL === "function" ? wc.getURL() : "");
+          if (!isAppOrigin(requestingUrl)) {
+            callback(false);
+            return;
+          }
+          callback(APP_ALLOWED_PERMISSIONS.has(permission));
+        });
+
+        defaultSession.setPermissionCheckHandler((wc, permission, requestingOrigin, details) => {
+          const url =
+            requestingOrigin ||
+            details?.requestingUrl ||
+            (typeof wc?.getURL === "function" ? wc.getURL() : "");
+          if (!isAppOrigin(url)) return false;
+          return APP_ALLOWED_PERMISSIONS.has(permission);
+        });
+      }
+    } catch (err) {
+      console.warn("[Main] Failed to install permission handlers:", err);
+    }
 
     // Set dock icon on macOS
     if (isMac && appIcon && app.dock?.setIcon) {
