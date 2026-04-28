@@ -147,7 +147,13 @@ const POSIX_EXTRA_PATH_DIRS = [
 function isExecutableFile(candidate) {
   try {
     const st = fs.statSync(candidate);
-    return st.isFile() && (st.mode & 0o111) !== 0;
+    if (!st.isFile()) return false;
+    // Windows has no POSIX execute bit — Node returns mode 0o100666 even for
+    // .exe / .bat / .cmd files, so 0o111 is unreliable there. Treat any
+    // regular file as executable on Win32 and let spawn-time PATHEXT /
+    // extension handling reject non-executables.
+    if (process.platform === "win32") return true;
+    return (st.mode & 0o111) !== 0;
   } catch {
     return false;
   }
@@ -797,7 +803,34 @@ async function startMoshSession(event, options) {
 
   let moshCmd;
   let resolvedMoshDir = null;
-  if (process.platform === "win32") {
+  // 1. Honor user-supplied moshClientPath (Settings → Terminal → Mosh).
+  //    Strict failure: a missing/non-executable file produces a clear error
+  //    instead of silently falling back, so users notice typos / stale paths.
+  const explicitClient = typeof options.moshClientPath === "string" ? options.moshClientPath.trim() : "";
+  if (explicitClient) {
+    const expanded = expandHomePath(explicitClient);
+    // Reject relative paths up front. validatePath in the renderer is shared
+    // with localShell and resolves bare names through PATH (so "mosh.exe"
+    // would look valid in the UI), but here moshClientPath is taken as a
+    // literal filesystem path and any non-absolute value would be resolved
+    // against the app's cwd and silently fail.
+    if (!path.isAbsolute(expanded)) {
+      throw new Error(
+        `Mosh client path must be absolute: "${explicitClient}". Use Settings → Terminal → Mosh to pick the binary, leave it empty to auto-detect, or enter an absolute path.`,
+      );
+    }
+    if (!isExecutableFile(expanded)) {
+      throw new Error(
+        `Configured Mosh client not usable: ${explicitClient}. Update Settings → Terminal → Mosh, leave it empty to auto-detect, or pick another binary.`,
+      );
+    }
+    moshCmd = path.resolve(expanded);
+    // Always remember the directory so we can extend PATH and locate
+    // mosh-client / ssh helpers regardless of platform — Windows
+    // installs outside %PATH% otherwise can't resolve siblings even
+    // though the wrapper itself runs.
+    resolvedMoshDir = path.dirname(moshCmd);
+  } else if (process.platform === "win32") {
     moshCmd = findExecutable("mosh") || "mosh.exe";
   } else {
     const resolved = resolvePosixExecutable("mosh", { pathOverride: mergedPathForResolution });
@@ -807,7 +840,7 @@ async function startMoshSession(event, options) {
           ? "macOS: brew install mosh"
           : "Linux: sudo apt install mosh / sudo dnf install mosh / sudo pacman -S mosh";
       throw new Error(
-        `Mosh client not found on PATH. Install it (${installHint}) or place the 'mosh' binary somewhere on PATH such as /opt/homebrew/bin or /usr/local/bin.`,
+        `Mosh client not found on PATH. Install it (${installHint}) or place the 'mosh' binary somewhere on PATH such as /opt/homebrew/bin or /usr/local/bin. You can also point Settings → Terminal → Mosh at an absolute path.`,
       );
     }
     moshCmd = resolved;
@@ -851,14 +884,25 @@ async function startMoshSession(event, options) {
   // Also point MOSH_CLIENT at the absolute mosh-client when present, so the
   // wrapper picks it up even if PATH is overridden downstream.
   if (resolvedMoshDir) {
+    const sep = path.delimiter; // ":" on POSIX, ";" on Win32
     const existingPath = env.PATH || "";
-    if (!existingPath.split(":").includes(resolvedMoshDir)) {
-      env.PATH = existingPath ? `${resolvedMoshDir}:${existingPath}` : resolvedMoshDir;
+    const onPath = existingPath
+      .split(sep)
+      .some((p) => p && path.normalize(p) === path.normalize(resolvedMoshDir));
+    if (!onPath) {
+      env.PATH = existingPath ? `${resolvedMoshDir}${sep}${existingPath}` : resolvedMoshDir;
     }
     if (!env.MOSH_CLIENT) {
-      const candidateClient = path.join(resolvedMoshDir, "mosh-client");
-      if (isExecutableFile(candidateClient)) {
-        env.MOSH_CLIENT = candidateClient;
+      const clientCandidates =
+        process.platform === "win32"
+          ? ["mosh-client.exe", "mosh-client.bat", "mosh-client.cmd", "mosh-client"]
+          : ["mosh-client"];
+      for (const name of clientCandidates) {
+        const candidate = path.join(resolvedMoshDir, name);
+        if (isExecutableFile(candidate)) {
+          env.MOSH_CLIENT = candidate;
+          break;
+        }
       }
     }
   }
@@ -1229,6 +1273,8 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:local:start", startLocalSession);
   ipcMain.handle("netcatty:telnet:start", startTelnetSession);
   ipcMain.handle("netcatty:mosh:start", startMoshSession);
+  ipcMain.handle("netcatty:mosh:detectClient", () => detectMoshClient());
+  ipcMain.handle("netcatty:mosh:pickClient", () => pickMoshClient());
   ipcMain.handle("netcatty:serial:start", startSerialSession);
   ipcMain.handle("netcatty:serial:list", listSerialPorts);
   ipcMain.handle("netcatty:local:defaultShell", getDefaultShell);
@@ -1251,29 +1297,42 @@ function getDefaultShell() {
  * Validate a path - check if it exists and whether it's a file or directory
  * @param {object} event - IPC event
  * @param {object} payload - Contains { path: string, type?: 'file' | 'directory' | 'any' }
- * @returns {{ exists: boolean, isFile: boolean, isDirectory: boolean }}
+ * @returns {{ exists: boolean, isFile: boolean, isDirectory: boolean, isExecutable: boolean }}
+ *
+ * `isExecutable` mirrors isExecutableFile(): POSIX requires the file mode
+ * to have an execute bit; Win32 treats any regular file as executable
+ * (NTFS lacks POSIX bits — extension/PATHEXT decides at spawn time).
+ * Existing callers ignore the new field; consumers that need exec
+ * semantics (e.g. Mosh client path) read it explicitly.
  */
+function statIsExecutable(stat) {
+  if (!stat || !stat.isFile()) return false;
+  if (process.platform === "win32") return true;
+  return (stat.mode & 0o111) !== 0;
+}
+
 function validatePath(event, payload) {
   const targetPath = payload?.path;
   const type = payload?.type || 'any';
   if (!targetPath) {
-    return { exists: false, isFile: false, isDirectory: false };
+    return { exists: false, isFile: false, isDirectory: false, isExecutable: false };
   }
-  
+
   try {
     // Resolve path (handle ~, etc.)
     let resolvedPath = expandHomePath(targetPath);
     resolvedPath = path.resolve(resolvedPath);
-    
+
     if (fs.existsSync(resolvedPath)) {
       const stat = fs.statSync(resolvedPath);
       return {
         exists: true,
         isFile: stat.isFile(),
         isDirectory: stat.isDirectory(),
+        isExecutable: statIsExecutable(stat),
       };
     }
-    
+
     // If type is 'file' and path doesn't exist, try to resolve via PATH (for executables like cmd.exe, powershell.exe)
     if (type === 'file') {
       const resolvedExecutable = findExecutable(targetPath);
@@ -1284,6 +1343,7 @@ function validatePath(event, payload) {
           exists: true,
           isFile: stat.isFile(),
           isDirectory: stat.isDirectory(),
+          isExecutable: statIsExecutable(stat),
         };
       }
       // Also try with .exe extension on Windows if not already present
@@ -1295,16 +1355,83 @@ function validatePath(event, payload) {
             exists: true,
             isFile: stat.isFile(),
             isDirectory: stat.isDirectory(),
+            isExecutable: statIsExecutable(stat),
           };
         }
       }
     }
-    
-    return { exists: false, isFile: false, isDirectory: false };
+
+    return { exists: false, isFile: false, isDirectory: false, isExecutable: false };
   } catch (err) {
     console.warn(`[Terminal] Error validating path "${targetPath}":`, err.message);
-    return { exists: false, isFile: false, isDirectory: false };
+    return { exists: false, isFile: false, isDirectory: false, isExecutable: false };
   }
+}
+
+/**
+ * Run the same auto-discovery startMoshSession uses, surfacing the result
+ * (and the search list when nothing was found) to the Settings UI.
+ */
+function detectMoshClient() {
+  if (process.platform === "win32") {
+    const resolved = findExecutable("mosh");
+    const found = !!resolved && resolved !== "mosh" && fs.existsSync(resolved);
+    return {
+      platform: "win32",
+      found,
+      path: found ? resolved : null,
+      searchedPaths: [],
+    };
+  }
+  const dirs = [];
+  const seen = new Set();
+  for (const dir of (process.env.PATH || "").split(":")) {
+    if (dir && !seen.has(dir)) { seen.add(dir); dirs.push(dir); }
+  }
+  for (const dir of POSIX_EXTRA_PATH_DIRS) {
+    if (!seen.has(dir)) { seen.add(dir); dirs.push(dir); }
+  }
+  const home = process.env.HOME;
+  if (home) {
+    for (const sub of [".nix-profile/bin", ".cargo/bin", ".local/bin"]) {
+      const dir = path.join(home, sub);
+      if (!seen.has(dir)) { seen.add(dir); dirs.push(dir); }
+    }
+  }
+  const resolved = resolvePosixExecutable("mosh");
+  return {
+    platform: process.platform,
+    found: !!resolved,
+    path: resolved,
+    searchedPaths: dirs,
+  };
+}
+
+/**
+ * Open a native file picker so the user can select a Mosh client binary.
+ * Returns { canceled, filePath } so the renderer can decide what to do.
+ */
+async function pickMoshClient() {
+  const { dialog, BrowserWindow } = electronModule || {};
+  if (!dialog) {
+    return { canceled: true, filePath: null };
+  }
+  const win = BrowserWindow?.getFocusedWindow?.() || undefined;
+  const isWin = process.platform === "win32";
+  const result = await dialog.showOpenDialog(win, {
+    title: "Select Mosh client",
+    properties: ["openFile", "showHiddenFiles"],
+    filters: isWin
+      ? [
+          { name: "Executables", extensions: ["exe", "bat", "cmd"] },
+          { name: "All Files", extensions: ["*"] },
+        ]
+      : [{ name: "All Files", extensions: ["*"] }],
+  });
+  if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+    return { canceled: true, filePath: null };
+  }
+  return { canceled: false, filePath: result.filePaths[0] };
 }
 
 /**
@@ -1356,6 +1483,8 @@ module.exports = {
   startLocalSession,
   startTelnetSession,
   startMoshSession,
+  detectMoshClient,
+  pickMoshClient,
   startSerialSession,
   listSerialPorts,
   writeToSession,
