@@ -387,6 +387,7 @@ const en: Messages = {
   'settings.terminal.mosh.client.notAbsolute': 'Path must be absolute. Use Browse… to pick the binary, leave the field empty to auto-detect, or enter a full path.',
   'settings.terminal.mosh.detect': 'Detect',
   'settings.terminal.mosh.browse': 'Browse…',
+  'settings.terminal.mosh.autoDetected': 'Auto-detected',
   'settings.terminal.mosh.detected': 'Detected at',
   'settings.terminal.mosh.notDetected': 'Mosh not found in:',
   'settings.terminal.section.serverStats': 'Server Stats (Linux)',

@@ -1471,6 +1471,7 @@ const zhCN: Messages = {
   'settings.terminal.mosh.client.notAbsolute': '路径必须为绝对路径。请使用 浏览… 选择二进制、留空以自动探测，或输入完整路径。',
   'settings.terminal.mosh.detect': '探测',
   'settings.terminal.mosh.browse': '浏览…',
+  'settings.terminal.mosh.autoDetected': '自动检测到',
   'settings.terminal.mosh.detected': '已找到',
   'settings.terminal.mosh.notDetected': '在以下位置未找到 mosh：',
   'settings.terminal.section.serverStats': '服务器状态（Linux）',

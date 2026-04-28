@@ -308,6 +308,7 @@ export default function SettingsTerminalTab(props: {
     | { kind: "found"; path: string }
     | { kind: "not-found"; searchedPaths: string[] }
   >({ kind: "idle" });
+  const [autoDetectedMoshPath, setAutoDetectedMoshPath] = useState<string | null>(null);
 
   const discoveredShells = useDiscoveredShells();
   const [showCustomShellInput, setShowCustomShellInput] = useState(() => {
@@ -512,6 +513,24 @@ export default function SettingsTerminalTab(props: {
     }, 300);
     return () => clearTimeout(timeoutId);
   }, [terminalSettings.moshClientPath, t]);
+
+  useEffect(() => {
+    const bridge = (window as unknown as { netcatty?: NetcattyBridge }).netcatty;
+    if (!bridge?.detectMoshClient) return;
+    let canceled = false;
+    bridge.detectMoshClient()
+      .then((result) => {
+        if (!canceled) {
+          setAutoDetectedMoshPath(result.found && result.path ? result.path : null);
+        }
+      })
+      .catch(() => {
+        if (!canceled) setAutoDetectedMoshPath(null);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, []);
 
   const handleDetectMosh = useCallback(async () => {
     const bridge = (window as unknown as { netcatty?: NetcattyBridge }).netcatty;
@@ -1143,8 +1162,8 @@ export default function SettingsTerminalTab(props: {
           label={t("settings.terminal.mosh.client")}
           description={t("settings.terminal.mosh.client.desc")}
         >
-          <div className="flex flex-col gap-1 w-72">
-            <div className="flex gap-2">
+          <div className="flex max-w-full flex-col gap-1.5" style={{ width: "min(420px, 100%)" }}>
+            <div className="grid grid-cols-[minmax(220px,1fr)_auto_auto] gap-2">
               <Input
                 value={terminalSettings.moshClientPath}
                 placeholder={t("settings.terminal.mosh.client.placeholder")}
@@ -1172,6 +1191,11 @@ export default function SettingsTerminalTab(props: {
                 {t("settings.terminal.mosh.browse")}
               </Button>
             </div>
+            {!terminalSettings.moshClientPath && autoDetectedMoshPath && moshDetectStatus.kind !== "found" && (
+              <span className="text-xs text-muted-foreground">
+                {t("settings.terminal.mosh.autoDetected")}: <span className="break-all font-mono">{autoDetectedMoshPath}</span>
+              </span>
+            )}
             {moshValidation && !moshValidation.valid && moshValidation.message && (
               <span className="text-xs text-destructive flex items-center gap-1">
                 <AlertCircle size={12} />
@@ -1180,7 +1204,7 @@ export default function SettingsTerminalTab(props: {
             )}
             {moshDetectStatus.kind === "found" && (
               <span className="text-xs text-muted-foreground">
-                {t("settings.terminal.mosh.detected")}: {moshDetectStatus.path}
+                {t("settings.terminal.mosh.detected")}: <span className="break-all font-mono">{moshDetectStatus.path}</span>
               </span>
             )}
             {moshDetectStatus.kind === "not-found" && (
@@ -1198,9 +1222,9 @@ export default function SettingsTerminalTab(props: {
                     </>
                   )}
                 </span>
-              </span>
-            )}
-          </div>
+                </span>
+              )}
+            </div>
         </SettingRow>
       </div>
 
