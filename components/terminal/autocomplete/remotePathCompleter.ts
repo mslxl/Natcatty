@@ -107,11 +107,6 @@ export function shouldDoPathCompletion(
           foldersOnly: templates.includes("folders") && !templates.includes("filepaths"),
         };
       }
-      // Generators field often indicates path completion (e.g., cd)
-      if (arg.generators) {
-        const foldersOnly = FOLDER_ONLY_COMMANDS.has(ctx.commandName);
-        return { shouldComplete: true, foldersOnly };
-      }
     }
   }
 
