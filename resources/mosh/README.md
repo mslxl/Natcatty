@@ -29,12 +29,18 @@ directly (see `electron/bridges/moshHandshake.cjs` and
 2. The release built by that workflow gets a tag like
    `mosh-bin-1.4.0-1`, with `SHA256SUMS` attached.
 
-3. Release packaging sets `MOSH_BIN_RELEASE=mosh-bin-1.4.0-1` and runs
-   `npm run fetch:mosh` to pull the binaries into
-   `resources/mosh/<platform-arch>/`. For local packaging, set
-   `MOSH_BIN_RELEASE` yourself before running the same fetch command.
+3. Release packaging runs `scripts/resolve-mosh-bin-release.cjs` before
+   `npm run fetch:mosh`. It uses an explicit workflow input first, then
+   the `MOSH_BIN_RELEASE` repository variable, then the latest
+   non-draft `mosh-bin-*` GitHub Release. The fetch step pulls the
+   binaries into `resources/mosh/<platform-arch>/`. For local packaging,
+   set `MOSH_BIN_RELEASE` yourself before running the same fetch command.
    `electron-builder.config.cjs` then copies the matching binary into
    `Resources/mosh/mosh-client[.exe]`.
+
+   Official Windows package builds currently ship x64 only for bundled
+   Mosh coverage. Windows arm64 packaging should be re-enabled there
+   after the `build-mosh-binaries` workflow can produce `win32-arm64`.
 
 The directory is otherwise empty (binaries are gitignored).
 
