@@ -8,8 +8,8 @@ directly (see `electron/bridges/moshHandshake.cjs` and
 
 ## How binaries land here
 
-1. `.github/workflows/build-mosh-binaries.yml` builds `mosh-client` on a
-   `workflow_dispatch` or `mosh-bin-*` tag push. It uses
+1. `.github/workflows/build-mosh-binaries.yml` builds `mosh-client` on
+   relevant pushes/PRs, or on a manual `workflow_dispatch`. It uses
    `scripts/build-mosh/{build-linux,build-macos,build-windows}.sh` to
    produce one binary per target from upstream `mobile-shell/mosh`
    source:
@@ -26,17 +26,28 @@ directly (see `electron/bridges/moshHandshake.cjs` and
    the FluentTerminal-pinned binary; it's no longer wired into the
    default workflow.
 
-2. The release built by that workflow gets a tag like
-   `mosh-bin-1.4.0-1`, with `SHA256SUMS` attached.
+2. When manually dispatched with `release_tag`, that workflow publishes
+   the binaries to the dedicated `binaricat/Netcatty-mosh-bin`
+   repository. The release gets a tag like `mosh-bin-1.4.0-1`, with
+   `SHA256SUMS` attached.
 
 3. Release packaging runs `scripts/resolve-mosh-bin-release.cjs` before
    `npm run fetch:mosh`. It uses an explicit workflow input first, then
    the `MOSH_BIN_RELEASE` repository variable, then the latest
-   non-draft `mosh-bin-*` GitHub Release. The fetch step pulls the
-   binaries into `resources/mosh/<platform-arch>/`. For local packaging,
-   set `MOSH_BIN_RELEASE` yourself before running the same fetch command.
-   `electron-builder.config.cjs` then copies the matching binary into
-   `Resources/mosh/mosh-client[.exe]`.
+   non-draft `mosh-bin-*` GitHub Release from the dedicated binary
+   repository. The fetch step pulls the binaries into
+   `resources/mosh/<platform-arch>/`. For local packaging, set
+   `MOSH_BIN_RELEASE` yourself before running the same fetch command.
+   Override `MOSH_BIN_OWNER` / `MOSH_BIN_REPO` only when testing a
+   different binary repository. `electron-builder.config.cjs` then
+   copies the matching binary into `Resources/mosh/mosh-client[.exe]`.
+
+   Local dev uses the same binary path: `npm run dev` runs
+   `npm run fetch:mosh:dev` first, which downloads the host platform's
+   bundled `mosh-client` into this gitignored directory. Netcatty does
+   not fall back to a system-installed `mosh` or `mosh-client`; if the
+   bundled binary is missing, Mosh startup fails loudly instead of using
+   whatever happens to be installed on the developer machine.
 
    Official Windows package builds currently ship x64 only for bundled
    Mosh coverage. Windows arm64 packaging should be re-enabled there
@@ -84,11 +95,9 @@ For macOS the build needs an Xcode toolchain; see
   to a freshly-spawned `mosh-client` PTY when `MOSH CONNECT` is
   detected. Keystrokes that arrive after the swap go to mosh-client
   because `writeToSession` reads `session.proc` lazily.
-- Preferred whenever a bare `mosh-client` (bundled / explicit /
-  system) and `ssh` (in-box OpenSSH on Win10 1809+, system everywhere
-  else) are both detectable. The legacy path through the system
-  `mosh` Perl wrapper is preserved as a fallback so existing setups
-  don't regress.
+- Mosh startup requires Netcatty's bundled `mosh-client` and a usable
+  `ssh` client for the remote bootstrap. System-installed `mosh` /
+  `mosh-client` binaries are intentionally ignored.
 - Windows binary built in-CI from upstream source via Cygwin GCC; ships
   alongside `cygwin1.dll` + transitive deps so it runs on a stock
   Windows machine without a Cygwin install.

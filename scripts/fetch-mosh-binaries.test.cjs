@@ -10,6 +10,7 @@ const crypto = require("node:crypto");
 
 const script = path.resolve(__dirname, "fetch-mosh-binaries.cjs");
 const execFileAsync = promisify(execFile);
+const { parseMoshBinRepository, resolveHostTarget } = require("./fetch-mosh-binaries.cjs");
 
 function makeTmp(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-fetch-mosh-"));
@@ -32,6 +33,90 @@ function makeTarGz(t, entries) {
   execFileSync("tar", ["-czf", tarPath, "-C", dir, "."], { stdio: "pipe" });
   return fs.readFileSync(tarPath);
 }
+
+test("fetch-mosh-binaries defaults to the dedicated mosh binary repository", () => {
+  assert.deepEqual(parseMoshBinRepository({}), { owner: "binaricat", repo: "Netcatty-mosh-bin" });
+  assert.deepEqual(parseMoshBinRepository({ GITHUB_REPOSITORY: "owner/project" }), {
+    owner: "owner",
+    repo: "Netcatty-mosh-bin",
+  });
+  assert.deepEqual(
+    parseMoshBinRepository({ GITHUB_REPOSITORY: "owner/project", MOSH_BIN_OWNER: "bin", MOSH_BIN_REPO: "binaries" }),
+    { owner: "bin", repo: "binaries" },
+  );
+});
+
+test("resolveHostTarget maps the local platform to the bundled target", () => {
+  assert.deepEqual(resolveHostTarget({ platform: "darwin", arch: "arm64" }), {
+    platform: "darwin",
+    arch: "universal",
+  });
+  assert.deepEqual(resolveHostTarget({ platform: "darwin", arch: "x64" }), {
+    platform: "darwin",
+    arch: "universal",
+  });
+  assert.deepEqual(resolveHostTarget({ platform: "linux", arch: "x64" }), {
+    platform: "linux",
+    arch: "x64",
+  });
+  assert.deepEqual(resolveHostTarget({ platform: "linux", arch: "arm64" }), {
+    platform: "linux",
+    arch: "arm64",
+  });
+  assert.deepEqual(resolveHostTarget({ platform: "win32", arch: "x64" }), {
+    platform: "win32",
+    arch: "x64",
+  });
+  assert.throws(() => resolveHostTarget({ platform: "freebsd", arch: "x64" }), /No bundled mosh-client target/);
+});
+
+test("fetch-mosh-binaries host mode skips unsupported local targets", async (t) => {
+  const resDir = path.join(makeTmp(t), "resources", "mosh");
+  const baseUrl = await serveAssets(t, {
+    SHA256SUMS: "",
+  });
+
+  const { stderr } = await execFileAsync(
+    process.execPath,
+    [script, "--host", "--platform=win32", "--arch=arm64"],
+    {
+      env: {
+        ...process.env,
+        MOSH_BIN_RELEASE: "test",
+        MOSH_BIN_BASE_URL: baseUrl,
+        MOSH_BIN_RES_DIR: resDir,
+        CI: "true",
+      },
+      stdio: "pipe",
+    },
+  );
+
+  assert.match(stderr, /No bundled mosh-client target for win32-arm64/);
+  assert.equal(fs.existsSync(resDir), false);
+});
+
+test("fetch-mosh-binaries host mode skips unsupported targets before resolving release", async (t) => {
+  const resDir = path.join(makeTmp(t), "resources", "mosh");
+
+  const { stdout, stderr } = await execFileAsync(
+    process.execPath,
+    [script, "--host", "--resolve-release", "--platform=win32", "--arch=arm64"],
+    {
+      env: {
+        ...process.env,
+        MOSH_BIN_RELEASE: "",
+        MOSH_BIN_RELEASES_JSON: "[]",
+        MOSH_BIN_RES_DIR: resDir,
+        CI: "true",
+      },
+      stdio: "pipe",
+    },
+  );
+
+  assert.match(stderr, /No bundled mosh-client target for win32-arm64/);
+  assert.doesNotMatch(stdout, /MOSH_BIN_RELEASE is unset/);
+  assert.equal(fs.existsSync(resDir), false);
+});
 
 async function serveAssets(t, assets) {
   const server = http.createServer((req, res) => {
