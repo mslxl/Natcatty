@@ -33,6 +33,7 @@ import { runAcpAgentTurn } from '../../../infrastructure/ai/acpAgentAdapter';
 import { classifyError } from '../../../infrastructure/ai/errorClassifier';
 import {
   extractProviderContinuationFromRawChunk,
+  getOpenAIChatAssistantFieldsForHistoryMessage,
   isProviderContinuationForSource,
   mergeProviderContinuation,
   normalizeProviderContinuationOptions,
@@ -455,8 +456,6 @@ export function useAIChatStreaming({
     // -- Text-delta batching: accumulate deltas and flush periodically --
     let pendingText = '';
     let rafId: number | null = null;
-    const openAIFieldIndexByMessageId = new Map<string, number>();
-
     const ensureAssistantMessage = (): string => {
       if (lastAddedRole !== 'tool') return activeMsgId;
 
@@ -472,33 +471,6 @@ export function useAIChatStreaming({
       return activeMsgId;
     };
 
-    const ensureOpenAIChatFieldSlot = (messageId: string): number | undefined => {
-      if (!continuationContext) return undefined;
-      let fieldIndex = openAIFieldIndexByMessageId.get(messageId);
-      if (fieldIndex === undefined) {
-        fieldIndex = continuationContext.openAIChatAssistantFields.length;
-        continuationContext.openAIChatAssistantFields.push(undefined);
-        openAIFieldIndexByMessageId.set(messageId, fieldIndex);
-      }
-      return fieldIndex;
-    };
-
-    const mergeOpenAIChatFields = (
-      messageId: string,
-      fields: OpenAIChatAssistantFields | undefined,
-    ) => {
-      if (!fields || !continuationContext) return;
-
-      const fieldIndex = ensureOpenAIChatFieldSlot(messageId);
-      if (fieldIndex === undefined) return;
-
-      const merged = mergeProviderContinuation(
-        { openAIChatAssistantFields: continuationContext.openAIChatAssistantFields[fieldIndex] },
-        { openAIChatAssistantFields: fields },
-      );
-      continuationContext.openAIChatAssistantFields[fieldIndex] = merged?.openAIChatAssistantFields;
-    };
-
     const updateAssistantContinuation = (
       messageId: string,
       continuation: ProviderContinuation | undefined,
@@ -506,7 +478,6 @@ export function useAIChatStreaming({
     ) => {
       if (!continuation && !thinkingText) return;
       const sourcedContinuation = withProviderContinuationSource(continuation, continuationContext?.source);
-      mergeOpenAIChatFields(messageId, sourcedContinuation?.openAIChatAssistantFields);
       updateMessageById(streamSessionId, messageId, msg => {
         const providerContinuation = mergeProviderContinuation(msg.providerContinuation, sourcedContinuation);
         return {
@@ -623,7 +594,6 @@ export function useAIChatStreaming({
           flushText();
           const typedChunk = chunk as ToolCallChunk;
           const messageId = ensureAssistantMessage();
-          ensureOpenAIChatFieldSlot(messageId);
           const providerOptions = normalizeProviderContinuationOptions(typedChunk.providerMetadata);
           updateMessageById(streamSessionId, messageId, msg => ({
             ...msg,
@@ -942,7 +912,9 @@ export function useAIChatStreaming({
       };
 
       const sdkMessages: Array<ModelMessage> = [];
+      let previousHistoryMessageWasToolResult = false;
       for (const m of allMessages) {
+        const currentMessageFollowsToolResult = previousHistoryMessageWasToolResult;
         if (m.role === 'user') {
           // Build multimodal content when attachments are present (fallback to legacy `images` field)
           const messageAttachments = m.attachments ?? m.images;
@@ -967,6 +939,10 @@ export function useAIChatStreaming({
           )
             ? m.providerContinuation
             : undefined;
+          const openAIChatAssistantFields = getOpenAIChatAssistantFieldsForHistoryMessage(
+            m,
+            continuationContext.source,
+          );
           if (m.toolCalls?.length) {
             // Only include tool calls that have matching results
             const resolvedCalls = m.toolCalls.filter(tc => resolvedToolCallIds.has(tc.id));
@@ -1002,7 +978,7 @@ export function useAIChatStreaming({
             if (contentParts.length > 0) {
               sdkMessages.push({ role: 'assistant', content: toAssistantModelContent(contentParts) });
               if (resolvedCalls.length > 0) {
-                continuationContext.openAIChatAssistantFields.push(activeContinuation?.openAIChatAssistantFields);
+                continuationContext.openAIChatAssistantFields.push(openAIChatAssistantFields);
               }
             }
           } else if (m.content) {
@@ -1024,6 +1000,9 @@ export function useAIChatStreaming({
               role: 'assistant',
               content: toAssistantModelContent(contentParts),
             });
+            if (currentMessageFollowsToolResult) {
+              continuationContext.openAIChatAssistantFields.push(openAIChatAssistantFields);
+            }
           }
         } else if (m.role === 'tool' && m.toolResults?.length) {
           sdkMessages.push({
@@ -1036,6 +1015,7 @@ export function useAIChatStreaming({
             })),
           });
         }
+        previousHistoryMessageWasToolResult = m.role === 'tool' && !!m.toolResults?.length;
       }
       // Build the current user message — include attachments as multimodal content
       if (attachments?.length) {
