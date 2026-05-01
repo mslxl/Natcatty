@@ -120,8 +120,17 @@ function assertSafeTarEntry(entry) {
   }
 }
 
+function resolveTarArchiveInvocation(archivePath, platform = process.platform) {
+  const pathApi = platform === "win32" ? path.win32 : path;
+  return {
+    cwd: pathApi.dirname(archivePath),
+    archive: pathApi.basename(archivePath),
+  };
+}
+
 function listTarEntries(archivePath) {
-  const out = execFileSync("tar", ["-tzf", archivePath], { encoding: "utf8" });
+  const { cwd, archive } = resolveTarArchiveInvocation(archivePath);
+  const out = execFileSync("tar", ["-tzf", archive], { cwd, encoding: "utf8" });
   return out.split(/\r?\n/).filter(Boolean);
 }
 
@@ -205,7 +214,11 @@ function unpackTarGz(buf, target, { resDir }) {
   try {
     fs.writeFileSync(archive, buf);
     validateTarEntries(listTarEntries(archive));
-    execFileSync("tar", ["-xzf", archive, "-C", extractDir], { stdio: "inherit" });
+    const archiveInvocation = resolveTarArchiveInvocation(archive);
+    execFileSync("tar", ["-xzf", archiveInvocation.archive, "-C", path.basename(extractDir)], {
+      cwd: archiveInvocation.cwd,
+      stdio: "inherit",
+    });
     assertExtractedTreeSafe(extractDir);
     if (target.platform === "win32") {
       normalizeWindowsBundle(extractDir, target);
@@ -309,6 +322,7 @@ module.exports = {
   TARGETS,
   parseMoshBinRepository,
   resolveHostTarget,
+  resolveTarArchiveInvocation,
   parseSums,
   validateTarEntries,
   assertExtractedTreeSafe,

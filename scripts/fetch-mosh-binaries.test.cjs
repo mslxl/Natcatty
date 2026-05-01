@@ -10,7 +10,11 @@ const crypto = require("node:crypto");
 
 const script = path.resolve(__dirname, "fetch-mosh-binaries.cjs");
 const execFileAsync = promisify(execFile);
-const { parseMoshBinRepository, resolveHostTarget } = require("./fetch-mosh-binaries.cjs");
+const {
+  parseMoshBinRepository,
+  resolveHostTarget,
+  resolveTarArchiveInvocation,
+} = require("./fetch-mosh-binaries.cjs");
 
 function makeTmp(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-fetch-mosh-"));
@@ -68,6 +72,19 @@ test("resolveHostTarget maps the local platform to the bundled target", () => {
     arch: "x64",
   });
   assert.throws(() => resolveHostTarget({ platform: "freebsd", arch: "x64" }), /No bundled mosh-client target/);
+});
+
+test("tar archive invocation uses a relative archive name for Windows paths", () => {
+  assert.deepEqual(
+    resolveTarArchiveInvocation(
+      "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\netcatty-mosh-abc\\bundle.tar.gz",
+      "win32",
+    ),
+    {
+      cwd: "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\netcatty-mosh-abc",
+      archive: "bundle.tar.gz",
+    },
+  );
 });
 
 test("fetch-mosh-binaries host mode skips unsupported local targets", async (t) => {
