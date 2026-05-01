@@ -67,6 +67,7 @@ import {
   type DefaultTargetSessionHint,
 } from './ai/hooks/useAIChatStreaming';
 import { buildAcpHistoryMessagesForBridge } from './ai/acpHistory';
+import { canSendWithAgent, findEnabledExternalAgent } from './ai/agentSendEligibility';
 import { clearAllPendingApprovals } from '../infrastructure/ai/shared/approvalGate';
 import { useConversationExport } from './ai/hooks/useConversationExport';
 import type { ExecutorContext } from '../infrastructure/ai/cattyAgent/executor';
@@ -712,6 +713,12 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     return undefined;
   }, [currentAgentId, agentModelMap, agentModelPresets]);
 
+  const inputAgentId = activeSession?.agentId ?? currentDraft?.agentId ?? currentAgentId;
+  const canSendCurrentAgent = useMemo(
+    () => canSendWithAgent(inputAgentId, externalAgents),
+    [inputAgentId, externalAgents],
+  );
+
   const handleAgentModelSelect = useCallback((modelId: string) => {
     setAgentModel(currentAgentId, modelId);
   }, [currentAgentId, setAgentModel]);
@@ -814,6 +821,10 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     // immediately after the first send path starts; `isStreaming` alone does
     // not protect the initial draft->session transition.
     if (!trimmed || isStreaming) return;
+    const sendAgentId = currentSessionView?.agentId ?? draft?.agentId ?? currentAgentId;
+    const agentConfig = sendAgentId !== 'catty' ? findEnabledExternalAgent(externalAgents, sendAgentId) : undefined;
+    if (sendAgentId !== 'catty' && !agentConfig) return;
+
     const selectedSkillSlugs = draft?.selectedUserSkillSlugs ?? [];
     const attachments = (draft?.attachments ?? []).map((file) => ({
       base64Data: file.base64Data,
@@ -830,8 +841,6 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     try {
       let sessionId = currentSessionView?.id ?? null;
       let currentSession = currentSessionView ?? null;
-      const sendAgentId = currentSessionView?.agentId ?? draft?.agentId ?? currentAgentId;
-
       if (isDraftMode) {
         const scope: AISessionScope = { type: scopeType, targetId: scopeTargetId, hostIds: scopeHostIds };
         const createdSession = createSession(scope, sendAgentId);
@@ -871,7 +880,6 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       setStreamingForScope(sessionId, true);
 
       // Create assistant message placeholder with a tracked ID
-      const agentConfig = isExternalAgent ? externalAgents.find((agent) => agent.id === sendAgentId) : undefined;
       const assistantMsgId = generateId();
       addMessageToSession(sessionId, {
         id: assistantMsgId, role: 'assistant', content: '', timestamp: Date.now(),
@@ -1102,6 +1110,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
             onSend={handleSend}
             onStop={handleStop}
             isStreaming={isStreaming}
+            disabled={!canSendCurrentAgent}
             providerName={providerDisplayName}
             modelName={modelDisplayName}
             agentName={currentAgentId === 'catty' ? 'Catty Agent' : externalAgents.find(a => a.id === currentAgentId)?.name}
