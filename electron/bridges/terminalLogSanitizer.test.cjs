@@ -104,3 +104,10 @@ test("later shell clear preserves intervening screen output", () => {
     "before\n\nfirst screen\n\nsecond screen",
   );
 });
+
+test("standalone ED3 preserves current visible screen", () => {
+  assert.equal(
+    terminalDataToPlainText("before\n\x1b[H\x1b[2Jscreen\n\x1b[3Jafter\n"),
+    "before\n\nscreen\nafter",
+  );
+});
