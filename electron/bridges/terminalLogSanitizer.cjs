@@ -303,9 +303,13 @@ class TerminalTextRenderer {
       this.#commitPendingClearedScreen();
       return;
     }
-    if (mode === 2 || mode === 3) {
+    if (mode === 3) {
+      this.pendingClearedScreen = null;
+      return;
+    }
+    if (mode === 2) {
       if (this.hasPreservedScreenHistory) {
-        this.#clearCurrentLogScreen({ keepPending: mode === 2 });
+        this.#clearCurrentLogScreen({ keepPending: true });
         return;
       }
       this.#startNewLogScreen();
