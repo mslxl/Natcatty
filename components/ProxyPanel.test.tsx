@@ -59,3 +59,22 @@ test("ProxyPanel keeps manual proxy fields available without a saved profile sel
   assert.match(markup, /Proxy host/);
   assert.match(markup, /manual-proxy\.example\.com/);
 });
+
+test("ProxyPanel shows a clear missing state for stale saved proxy selections", () => {
+  const markup = renderPanel({
+    proxyProfiles: [proxyProfile],
+    selectedProxyProfileId: "missing-proxy",
+  });
+
+  assert.match(markup, /Missing saved proxy/);
+  assert.match(markup, /Proxy host/);
+});
+
+test("ProxyPanel disables saving invalid manual proxy ports", () => {
+  const markup = renderPanel({
+    proxyConfig: { type: "http", host: "manual-proxy.example.com", port: 65536 },
+  });
+
+  assert.match(markup, /Port must be between 1 and 65535/);
+  assert.match(markup, /disabled=""/);
+});

@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import type { Host, ProxyProfile } from "./models.ts";
 import {
+  isCompleteProxyConfig,
+  normalizeManualProxyConfig,
   materializeHostProxyProfile,
   removeProxyProfileReferences,
 } from "./proxyProfiles.ts";
@@ -73,4 +75,17 @@ test("removeProxyProfileReferences clears hosts and group configs that use a del
   assert.equal(result.hosts[1].proxyProfileId, "proxy-2");
   assert.equal(result.groupConfigs[0].proxyProfileId, undefined);
   assert.equal(result.groupConfigs[1].proxyProfileId, "proxy-2");
+});
+
+test("normalizeManualProxyConfig clears empty proxy drafts", () => {
+  assert.equal(
+    normalizeManualProxyConfig({ type: "http", host: "", port: 8080 }),
+    undefined,
+  );
+});
+
+test("isCompleteProxyConfig requires host and a valid port", () => {
+  assert.equal(isCompleteProxyConfig({ type: "http", host: "", port: 8080 }), false);
+  assert.equal(isCompleteProxyConfig({ type: "http", host: "proxy.example.com", port: 0 }), false);
+  assert.equal(isCompleteProxyConfig({ type: "http", host: "proxy.example.com", port: 3128 }), true);
 });

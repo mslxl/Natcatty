@@ -57,6 +57,7 @@ import { RippleButton } from './ui/ripple';
 import { ScrollArea } from './ui/scroll-area';
 import { setupMcpApprovalBridge } from '../infrastructure/ai/shared/approvalGate';
 import { resolveScriptsSidePanelShortcutIntent } from '../application/state/resolveSnippetsShortcutIntent';
+import { terminalLayerAreEqual } from './terminalLayerMemo';
 
 type SidePanelTab = 'sftp' | 'scripts' | 'theme' | 'ai';
 
@@ -882,6 +883,22 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     for (const h of hosts) map.set(h.id, h);
     return map;
   }, [hosts]);
+  const proxyProfileIdSet = useMemo(
+    () => new Set(proxyProfiles.map((profile) => profile.id)),
+    [proxyProfiles],
+  );
+  const effectiveHosts = useMemo(
+    () => hosts.map((host) => {
+      const groupDefaults = host.group
+        ? resolveGroupDefaults(host.group, groupConfigs, { validProxyProfileIds: proxyProfileIdSet })
+        : {};
+      return materializeHostProxyProfile(
+        applyGroupDefaults(host, groupDefaults, { validProxyProfileIds: proxyProfileIdSet }),
+        proxyProfiles,
+      );
+    }),
+    [groupConfigs, hosts, proxyProfileIdSet, proxyProfiles],
+  );
 
   // Pre-compute fallback hosts to avoid creating new objects on every render
   const sessionHostsMap = useMemo(() => {
@@ -891,10 +908,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       if (rawHost) {
         // Apply group config defaults so Terminal sees the merged host
         const groupDefaults = rawHost.group
-          ? resolveGroupDefaults(rawHost.group, groupConfigs)
+          ? resolveGroupDefaults(rawHost.group, groupConfigs, { validProxyProfileIds: proxyProfileIdSet })
           : {};
         const existingHost = materializeHostProxyProfile(
-          applyGroupDefaults(rawHost, groupDefaults),
+          applyGroupDefaults(rawHost, groupDefaults, { validProxyProfileIds: proxyProfileIdSet }),
           proxyProfiles,
         );
 
@@ -938,7 +955,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       }
     }
     return map;
-  }, [sessions, hostMap, groupConfigs, proxyProfiles]);
+  }, [sessions, hostMap, groupConfigs, proxyProfileIdSet, proxyProfiles]);
   const sessionChainHostsMap = useMemo(() => {
     const map = new Map<string, Host[]>();
     for (const session of sessions) {
@@ -951,10 +968,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
             const rawChainHost = hostMap.get(hostId);
             if (!rawChainHost) return undefined;
             const chainGroupDefaults = rawChainHost.group
-              ? resolveGroupDefaults(rawChainHost.group, groupConfigs)
+              ? resolveGroupDefaults(rawChainHost.group, groupConfigs, { validProxyProfileIds: proxyProfileIdSet })
               : {};
             return materializeHostProxyProfile(
-              applyGroupDefaults(rawChainHost, chainGroupDefaults),
+              applyGroupDefaults(rawChainHost, chainGroupDefaults, { validProxyProfileIds: proxyProfileIdSet }),
               proxyProfiles,
             );
           })
@@ -962,7 +979,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       );
     }
     return map;
-  }, [sessions, sessionHostsMap, hostMap, groupConfigs, proxyProfiles]);
+  }, [sessions, sessionHostsMap, hostMap, groupConfigs, proxyProfileIdSet, proxyProfiles]);
 
   const validAIScopeTargetIds = useMemo(() => {
     const ids = new Set<string>();
@@ -1291,9 +1308,11 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     if (activeWorkspace && focusedSessionId) {
       return sessionHostsMap.get(focusedSessionId) ?? sftpHostForTab.get(activeTabId) ?? null;
     }
-    // For solo session: use stored host (from when SFTP was opened)
+    if (activeSession) {
+      return sessionHostsMap.get(activeSession.id) ?? sftpHostForTab.get(activeTabId) ?? null;
+    }
     return sftpHostForTab.get(activeTabId) ?? null;
-  }, [isSftpOpenForCurrentTab, activeTabId, activeWorkspace, focusedSessionId, sessionHostsMap, sftpHostForTab]);
+  }, [isSftpOpenForCurrentTab, activeTabId, activeWorkspace, activeSession, focusedSessionId, sessionHostsMap, sftpHostForTab]);
 
   // Keep sftpHostForTab in sync with focus changes in workspace mode
   // so that the toggle check uses the currently displayed host.
@@ -2347,7 +2366,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
                     return (
                         <SftpSidePanel
                           key={tabId}
-                          hosts={hosts}
+                          hosts={effectiveHosts}
+                          writableHosts={hosts}
                           keys={keys}
                           identities={identities}
                           updateHosts={updateHosts}
@@ -2659,42 +2679,6 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         )}
       </div>
     </AIStateProvider>
-  );
-};
-
-// Only re-render when data props change - activeTabId/isVisible are now managed internally via store subscription
-const terminalLayerAreEqual = (prev: TerminalLayerProps, next: TerminalLayerProps): boolean => {
-  return (
-    prev.hosts === next.hosts &&
-    prev.proxyProfiles === next.proxyProfiles &&
-    prev.keys === next.keys &&
-    prev.snippets === next.snippets &&
-    prev.snippetPackages === next.snippetPackages &&
-    prev.sessions === next.sessions &&
-    prev.workspaces === next.workspaces &&
-    prev.draggingSessionId === next.draggingSessionId &&
-    prev.terminalTheme === next.terminalTheme &&
-    prev.accentMode === next.accentMode &&
-    prev.customAccent === next.customAccent &&
-    prev.terminalSettings === next.terminalSettings &&
-    prev.fontSize === next.fontSize &&
-    prev.hotkeyScheme === next.hotkeyScheme &&
-    prev.keyBindings === next.keyBindings &&
-    prev.sftpDefaultViewMode === next.sftpDefaultViewMode &&
-    prev.sftpDoubleClickBehavior === next.sftpDoubleClickBehavior &&
-    prev.sftpAutoSync === next.sftpAutoSync &&
-    prev.sftpShowHiddenFiles === next.sftpShowHiddenFiles &&
-    prev.sftpUseCompressedUpload === next.sftpUseCompressedUpload &&
-    prev.sftpAutoOpenSidebar === next.sftpAutoOpenSidebar &&
-    prev.editorWordWrap === next.editorWordWrap &&
-    prev.setEditorWordWrap === next.setEditorWordWrap &&
-    prev.onHotkeyAction === next.onHotkeyAction &&
-    prev.onUpdateHost === next.onUpdateHost &&
-    prev.onToggleWorkspaceViewMode === next.onToggleWorkspaceViewMode &&
-    prev.onSetWorkspaceFocusedSession === next.onSetWorkspaceFocusedSession &&
-    prev.onSplitSession === next.onSplitSession &&
-    prev.toggleScriptsSidePanelRef === next.toggleScriptsSidePanelRef &&
-    prev.identities === next.identities
   );
 };
 

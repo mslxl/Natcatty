@@ -481,7 +481,7 @@ const en: Messages = {
   'sync.autoSync.emptyVaultConflict.restoreDesc': 'Recommended — recover your hosts, keys, and snippets from the cloud backup',
   'sync.autoSync.emptyVaultConflict.keepEmpty': 'Keep Empty',
   'sync.autoSync.emptyVaultConflict.keepEmptyDesc': 'Start fresh with an empty vault',
-  'sync.autoSync.emptyVaultConflict.cloudSummary': '{hosts} hosts, {keys} keys, {snippets} snippets',
+  'sync.autoSync.emptyVaultConflict.cloudSummary': '{hosts} hosts, {keys} keys, {snippets} snippets, {proxyProfiles} proxies',
   'sync.autoSync.emptyVaultManual': 'Cannot sync: the local vault is empty. Restore from a local backup or enable Force Push in the sync panel first.',
 
   'sync.blocked.title': 'Sync paused',
@@ -522,7 +522,7 @@ const en: Messages = {
   'vault.nav.logs': 'Logs',
 
   'proxyProfiles.action.add': 'Add Proxy',
-  'proxyProfiles.search.placeholder': 'Search proxies...',
+  'proxyProfiles.search.placeholder': 'Search proxies…',
   'proxyProfiles.section.proxies': 'Proxies',
   'proxyProfiles.count.items': '{count} items',
   'proxyProfiles.empty.title': 'No Proxies',
@@ -532,6 +532,8 @@ const en: Messages = {
   'proxyProfiles.panel.newTitle': 'New Proxy',
   'proxyProfiles.field.name': 'Proxy name',
   'proxyProfiles.error.required': 'Name, host, and port are required.',
+  'proxyProfiles.error.port': 'Port must be between 1 and 65535.',
+  'proxyProfiles.viewMode': 'Proxy view mode',
   'proxyProfiles.delete.title': 'Delete proxy?',
   'proxyProfiles.delete.desc': 'Deleting "{name}" will unlink it from {count} host or group settings.',
 
@@ -1133,6 +1135,9 @@ const en: Messages = {
   'hostDetails.proxyPanel.savedProxy': 'Saved proxy',
   'hostDetails.proxyPanel.selectSaved': 'Select saved proxy',
   'hostDetails.proxyPanel.customProxy': 'Custom proxy',
+  'hostDetails.proxyPanel.missing': 'Missing',
+  'hostDetails.proxyPanel.missingSaved': 'Missing saved proxy',
+  'hostDetails.proxyPanel.error.required': 'Proxy host and port are required.',
   'hostDetails.envVars': 'Environment Variables',
   'hostDetails.envVars.add': 'Add Environment Variable',
   'hostDetails.envVars.title': 'Environment Variables',

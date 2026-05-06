@@ -37,6 +37,7 @@ import {
   LINUX_DISTRO_OPTIONS,
   NETWORK_DEVICE_OPTIONS,
 } from "../domain/host";
+import { isCompleteProxyConfig, normalizeManualProxyConfig } from "../domain/proxyProfiles";
 import { customThemeStore } from "../application/state/customThemeStore";
 import {
   clearHostFontSizeOverride,
@@ -69,6 +70,7 @@ import { Textarea } from "./ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { ScrollArea } from "./ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { toast } from "./ui/toast";
 
 // Import host-details sub-panels
 import {
@@ -266,6 +268,20 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
     () => proxyProfiles.find((profile) => profile.id === form.proxyProfileId),
     [form.proxyProfileId, proxyProfiles],
   );
+  const hasMissingProxyProfile = Boolean(form.proxyProfileId && !selectedProxyProfile);
+  const proxySummaryType = hasMissingProxyProfile
+    ? t("hostDetails.proxyPanel.missing")
+    : (selectedProxyProfile?.config.type || form.proxyConfig?.type || "http").toUpperCase();
+  const proxySummaryLabel = hasMissingProxyProfile
+    ? t("hostDetails.proxyPanel.missingSaved")
+    : selectedProxyProfile
+      ? selectedProxyProfile.label
+      : `${form.proxyConfig?.host}:${form.proxyConfig?.port}`;
+  const proxySummaryTooltip = hasMissingProxyProfile
+    ? t("hostDetails.proxyPanel.missingSaved")
+    : selectedProxyProfile
+      ? `${selectedProxyProfile.label} - ${selectedProxyProfile.config.host}:${selectedProxyProfile.config.port}`
+      : `${form.proxyConfig?.type?.toUpperCase()} ${form.proxyConfig?.host}:${form.proxyConfig?.port}`;
 
   const handleDistroModeChange = useCallback((mode: "auto" | "manual") => {
     setForm((prev) => ({
@@ -359,6 +375,19 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
 
   const handleSubmit = () => {
     if (!form.hostname) return;
+    const normalizedProxyConfig = normalizeManualProxyConfig(form.proxyConfig);
+    if (normalizedProxyConfig && !isCompleteProxyConfig(normalizedProxyConfig)) {
+      toast.error(
+        normalizedProxyConfig.host ? t("proxyProfiles.error.port") : t("hostDetails.proxyPanel.error.required"),
+      );
+      setActiveSubPanel("proxy");
+      return;
+    }
+    if (hasMissingProxyProfile) {
+      toast.error(t("hostDetails.proxyPanel.missingSaved"));
+      setActiveSubPanel("proxy");
+      return;
+    }
     // If label is empty, use hostname as label
     let finalLabel = form.label?.trim() || form.hostname;
     const finalGroup = groupInputValue.trim() || form.group || "";
@@ -394,8 +423,10 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
       finalManagedSourceId = undefined;
     }
 
+    const { proxyConfig: _draftProxyConfig, ...formWithoutProxyDraft } = form;
     const cleaned: Host = {
-      ...form,
+      ...formWithoutProxyDraft,
+      ...(normalizedProxyConfig && { proxyConfig: normalizedProxyConfig }),
       label: finalLabel,
       group: finalGroup,
       tags: form.tags || [],
@@ -1779,38 +1810,39 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
             <p className="text-xs font-semibold">{t("hostDetails.proxy")}</p>
           </div>
           {form.proxyConfig?.host || form.proxyProfileId ? (
-            <button
-              className="w-full min-w-0 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 p-2 rounded-md bg-secondary/50 hover:bg-secondary transition-colors cursor-pointer overflow-hidden"
-              onClick={() => setActiveSubPanel("proxy")}
-            >
-              <Badge variant="secondary" className="text-xs shrink-0">
-                {(selectedProxyProfile?.config.type || form.proxyConfig?.type || "http").toUpperCase()}
-              </Badge>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="block min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm">
-                      {selectedProxyProfile
-                        ? selectedProxyProfile.label
-                        : `${form.proxyConfig?.host}:${form.proxyConfig?.port}`}
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" align="start" className="max-w-xs break-all">
-                    {selectedProxyProfile
-                      ? `${selectedProxyProfile.label} · ${selectedProxyProfile.config.host}:${selectedProxyProfile.config.port}`
-                      : `${form.proxyConfig?.type?.toUpperCase()} ${form.proxyConfig?.host}:${form.proxyConfig?.port}`}
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-              <X
-                size={14}
-                className="text-muted-foreground hover:text-destructive flex-shrink-0"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  clearProxyConfig();
-                }}
-              />
-            </button>
+            <div className="w-full min-w-0 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1">
+              <button
+                type="button"
+                className="min-w-0 grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 p-2 rounded-md bg-secondary/50 hover:bg-secondary transition-colors cursor-pointer overflow-hidden"
+                onClick={() => setActiveSubPanel("proxy")}
+              >
+                <Badge variant="secondary" className="text-xs shrink-0">
+                  {proxySummaryType}
+                </Badge>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="block min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm">
+                        {proxySummaryLabel}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" align="start" className="max-w-xs break-all">
+                      {proxySummaryTooltip}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 text-muted-foreground hover:text-destructive shrink-0"
+                aria-label={t("hostDetails.proxyPanel.remove")}
+                onClick={clearProxyConfig}
+              >
+                <X size={14} />
+              </Button>
+            </div>
           ) : (
             <Button
               variant="ghost"

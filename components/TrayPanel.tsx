@@ -123,6 +123,10 @@ const TrayPanelContent: React.FC = () => {
   useSessionState();
   const { rules: portForwardingRules, startTunnel, stopTunnel } = usePortForwardingState();
   const activeTabId = useActiveTabId();
+  const proxyProfileIdSet = useMemo(
+    () => new Set(proxyProfiles.map((profile) => profile.id)),
+    [proxyProfiles],
+  );
 
   const [traySessions, setTraySessions] = useState<TraySession[]>([]);
 
@@ -339,8 +343,8 @@ const TrayPanelContent: React.FC = () => {
                       } else {
                         const resolveEffectiveHost = (host: Host) => {
                           const withGroupDefaults = host.group
-                            ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigs))
-                            : host;
+                            ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigs, { validProxyProfileIds: proxyProfileIdSet }), { validProxyProfileIds: proxyProfileIdSet })
+                            : applyGroupDefaults(host, {}, { validProxyProfileIds: proxyProfileIdSet });
                           return materializeHostProxyProfile(withGroupDefaults, proxyProfiles);
                         };
                         const host = resolveEffectiveHost(rawHost);

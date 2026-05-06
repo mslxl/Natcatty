@@ -303,6 +303,10 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     if (!group) return undefined;
     return resolveGroupDefaults(group, groupConfigs);
   }, [editingHost, newHostGroupPath, selectedGroupPath, groupConfigs]);
+  const proxyProfileIdSet = useMemo(
+    () => new Set(proxyProfiles.map((profile) => profile.id)),
+    [proxyProfiles],
+  );
   // Quick connect state
   const [quickConnectTarget, setQuickConnectTarget] = useState<{
     hostname: string;
@@ -350,8 +354,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   // Check if host has multiple protocols enabled (using effective/resolved host)
   const hasMultipleProtocols = useCallback((host: Host) => {
     const effective = host.group
-      ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigs))
-      : host;
+      ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigs, { validProxyProfileIds: proxyProfileIdSet }), { validProxyProfileIds: proxyProfileIdSet })
+      : applyGroupDefaults(host, {}, { validProxyProfileIds: proxyProfileIdSet });
     let count = 0;
     // SSH is always available as base protocol (unless explicitly set to something else)
     if (effective.protocol === "ssh" || !effective.protocol) count++;
@@ -362,7 +366,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     // If protocol is explicitly telnet (not ssh), count it
     if (effective.protocol === "telnet" && !effective.telnetEnabled) count++;
     return count > 1;
-  }, [groupConfigs]);
+  }, [groupConfigs, proxyProfileIdSet]);
 
   // Handle host connect with protocol selection
   const handleHostConnect = useCallback(
@@ -370,14 +374,14 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
       if (hasMultipleProtocols(host)) {
         // Pass effective host to protocol dialog so it shows correct ports/protocols
         const effective = host.group
-          ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigs))
-          : host;
+          ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigs, { validProxyProfileIds: proxyProfileIdSet }), { validProxyProfileIds: proxyProfileIdSet })
+          : applyGroupDefaults(host, {}, { validProxyProfileIds: proxyProfileIdSet });
         setProtocolSelectHost(effective);
       } else {
         onConnect(host);
       }
     },
-    [hasMultipleProtocols, onConnect, groupConfigs],
+    [hasMultipleProtocols, onConnect, groupConfigs, proxyProfileIdSet],
   );
 
   // Handle protocol selection
@@ -482,8 +486,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   const handleCopyCredentials = useCallback((host: Host) => {
     // Apply group defaults so inherited credentials are included
     const effective = host.group
-      ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigs))
-      : host;
+      ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigs, { validProxyProfileIds: proxyProfileIdSet }), { validProxyProfileIds: proxyProfileIdSet })
+      : applyGroupDefaults(host, {}, { validProxyProfileIds: proxyProfileIdSet });
     // Only use telnet-specific port and credentials when protocol is explicitly telnet
     // Don't treat telnetEnabled as primary - that's just an optional protocol
     const isTelnet = effective.protocol === "telnet";
@@ -526,7 +530,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     navigator.clipboard.writeText(text).then(() => {
       toast.success(t('vault.hosts.copyCredentials.toast.success'));
     });
-  }, [identities, groupConfigs, t]);
+  }, [identities, groupConfigs, proxyProfileIdSet, t]);
 
   const [lastPinnedId, setLastPinnedId] = useState<string | null>(null);
   const toggleHostPinned = useCallback((hostId: string) => {

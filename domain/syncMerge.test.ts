@@ -26,8 +26,9 @@ const knownHosts = (n: number): SyncPayload["knownHosts"] =>
     hostname: `host-${i}.example.com`,
     port: 22,
     keyType: "ssh-ed25519",
-    fingerprint: `SHA256:${i}`,
-  })) as SyncPayload["knownHosts"];
+    publicKey: `SHA256:${i}`,
+    discoveredAt: 1,
+  }));
 
 test("mergeSyncPayloads does not carry legacy known hosts forward", () => {
   const result = mergeSyncPayloads(
@@ -65,4 +66,73 @@ test("mergeSyncPayloads merges reusable proxy profiles by id", () => {
     "proxy-local",
     "proxy-remote",
   ]);
+});
+
+test("mergeSyncPayloads preserves proxy profiles when remote payload predates them", () => {
+  const proxy = {
+    id: "proxy-1",
+    label: "Office Proxy",
+    config: { type: "http", host: "proxy.example.com", port: 3128 },
+    createdAt: 1,
+  };
+
+  const result = mergeSyncPayloads(
+    payload({ proxyProfiles: [proxy] } as Partial<SyncPayload>),
+    payload({ proxyProfiles: [proxy] } as Partial<SyncPayload>),
+    payload(),
+  );
+
+  assert.deepEqual(result.payload.proxyProfiles, [proxy]);
+});
+
+test("mergeSyncPayloads keeps missing proxy references visible to connection guards", () => {
+  const result = mergeSyncPayloads(
+    payload({
+      hosts: [{
+        id: "host-1",
+        label: "Host",
+        hostname: "example.com",
+        username: "root",
+        tags: [],
+        os: "linux",
+        proxyProfileId: "proxy-1",
+      }],
+      proxyProfiles: [{
+        id: "proxy-1",
+        label: "Old Proxy",
+        config: { type: "http", host: "old.example.com", port: 3128 },
+        createdAt: 1,
+      }],
+      groupConfigs: [{ path: "prod", proxyProfileId: "proxy-1" }],
+    }),
+    payload({
+      hosts: [{
+        id: "host-1",
+        label: "Host",
+        hostname: "example.com",
+        username: "root",
+        tags: [],
+        os: "linux",
+        proxyProfileId: "proxy-1",
+      }],
+      proxyProfiles: [],
+      groupConfigs: [{ path: "prod", proxyProfileId: "proxy-1" }],
+    }),
+    payload({
+      hosts: [{
+        id: "host-1",
+        label: "Host",
+        hostname: "example.com",
+        username: "root",
+        tags: [],
+        os: "linux",
+        proxyProfileId: "proxy-1",
+      }],
+      proxyProfiles: [],
+      groupConfigs: [{ path: "prod", proxyProfileId: "proxy-1" }],
+    }),
+  );
+
+  assert.equal(result.payload.hosts[0]?.proxyProfileId, "proxy-1");
+  assert.equal(result.payload.groupConfigs?.[0]?.proxyProfileId, "proxy-1");
 });

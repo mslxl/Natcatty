@@ -14,7 +14,7 @@ import {
 import React, { useMemo, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useStoredViewMode } from "../application/state/useStoredViewMode";
-import { removeProxyProfileReferences } from "../domain/proxyProfiles";
+import { isValidProxyPort, removeProxyProfileReferences } from "../domain/proxyProfiles";
 import {
   STORAGE_KEY_VAULT_PROXY_PROFILES_VIEW_MODE,
 } from "../infrastructure/config/storageKeys";
@@ -103,13 +103,17 @@ const ProxyProfileCard: React.FC<ProxyProfileCardProps> = ({
   onDelete,
 }) => {
   const { t } = useI18n();
+  const usageLabel = t("proxyProfiles.usage", { count: usageCount });
+  const accessibleLabel = `${profile.label}, ${profile.config.type.toUpperCase()}, ${profile.config.host}:${profile.config.port}, ${usageLabel}`;
 
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <div
+        <button
+          type="button"
+          aria-label={accessibleLabel}
           className={cn(
-            "group cursor-pointer",
+            "group w-full text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
             viewMode === "grid"
               ? "soft-card elevate rounded-xl h-[68px] px-3 py-2"
               : "h-14 px-3 py-2 hover:bg-secondary/60 rounded-lg transition-colors",
@@ -130,26 +134,11 @@ const ProxyProfileCard: React.FC<ProxyProfileCardProps> = ({
               </div>
               <div className="text-[11px] font-mono text-muted-foreground truncate">
                 {profile.config.host}:{profile.config.port} -{" "}
-                {t("proxyProfiles.usage", { count: usageCount })}
+                {usageLabel}
               </div>
             </div>
-            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-              {viewMode === "list" && (
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-8 w-8"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onEdit();
-                  }}
-                >
-                  <Pencil size={14} />
-                </Button>
-              )}
-            </div>
           </div>
-        </div>
+        </button>
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem onClick={onEdit}>
@@ -254,6 +243,10 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
       toast.error(t("proxyProfiles.error.required"));
       return;
     }
+    if (!isValidProxyPort(draft.config.port)) {
+      toast.error(t("proxyProfiles.error.port"));
+      return;
+    }
 
     const saved: ProxyProfile = {
       ...draft,
@@ -285,6 +278,9 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
     onUpdateProxyProfiles(proxyProfiles.filter((profile) => profile.id !== deleteTarget.id));
     onUpdateHosts(cleaned.hosts);
     onUpdateGroupConfigs(cleaned.groupConfigs);
+    if (draft?.id === deleteTarget.id) {
+      setDraft(null);
+    }
     setDeleteTarget(null);
   };
 
@@ -305,6 +301,7 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
               <div className="relative flex-shrink min-w-[100px]">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <Input
+                  aria-label={t("proxyProfiles.search.placeholder")}
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder={t("proxyProfiles.search.placeholder")}
@@ -314,6 +311,7 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
               <Dropdown>
                 <DropdownTrigger asChild>
                   <Button
+                    aria-label={t("proxyProfiles.viewMode")}
                     variant="ghost"
                     size="icon"
                     className="h-10 w-10 flex-shrink-0"
@@ -332,14 +330,14 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
                     className="w-full justify-start gap-2 h-9"
                     onClick={() => setViewMode("grid")}
                   >
-                    <LayoutGrid size={14} /> {t("keychain.view.grid")}
+                    <LayoutGrid size={14} /> {t("vault.view.grid")}
                   </Button>
                   <Button
                     variant={proxyProfilesViewMode === "list" ? "secondary" : "ghost"}
                     className="w-full justify-start gap-2 h-9"
                     onClick={() => setViewMode("list")}
                   >
-                    <ListIcon size={14} /> {t("keychain.view.list")}
+                    <ListIcon size={14} /> {t("vault.view.list")}
                   </Button>
                 </DropdownContent>
               </Dropdown>
@@ -410,6 +408,7 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
           <AsidePanelContent>
             <Card className="p-3 space-y-3 bg-card border-border/80">
               <Input
+                aria-label={t("proxyProfiles.field.name")}
                 value={draft.label}
                 onChange={(event) => setDraft({ ...draft, label: event.target.value })}
                 placeholder={t("proxyProfiles.field.name")}
@@ -444,16 +443,21 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
 
               <div className="flex gap-2">
                 <Input
+                  aria-label={t("hostDetails.proxyPanel.hostPlaceholder")}
                   value={draft.config.host}
                   onChange={(event) => updateDraftConfig("host", event.target.value)}
                   placeholder={t("hostDetails.proxyPanel.hostPlaceholder")}
                   className="h-10 flex-1"
                 />
                 <Input
+                  aria-label={t("hostDetails.port")}
                   type="number"
                   value={draft.config.port || ""}
-                  onChange={(event) => updateDraftConfig("port", parseInt(event.target.value) || 0)}
+                  onChange={(event) => updateDraftConfig("port", event.target.value === "" ? 0 : Number(event.target.value))}
                   placeholder="3128"
+                  min={1}
+                  max={65535}
+                  step={1}
                   className="h-10 w-24 text-center"
                 />
               </div>
@@ -465,12 +469,14 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
                 <Badge variant="secondary" className="text-xs">{t("common.optional")}</Badge>
               </div>
               <Input
+                aria-label={t("hostDetails.proxyPanel.usernamePlaceholder")}
                 value={draft.config.username || ""}
                 onChange={(event) => updateDraftConfig("username", event.target.value)}
                 placeholder={t("hostDetails.proxyPanel.usernamePlaceholder")}
                 className="h-10"
               />
               <Input
+                aria-label={t("hostDetails.proxyPanel.passwordPlaceholder")}
                 type="password"
                 value={draft.config.password || ""}
                 onChange={(event) => updateDraftConfig("password", event.target.value)}

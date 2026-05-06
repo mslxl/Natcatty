@@ -49,7 +49,8 @@ const knownHost = (id = "kh-1"): KnownHost => ({
   hostname: `${id}.example.com`,
   port: 22,
   keyType: "ssh-ed25519",
-  fingerprint: `SHA256:${id}`,
+  publicKey: `SHA256:${id}`,
+  discoveredAt: 1,
 });
 
 const vault = (knownHosts: KnownHost[] = [knownHost()]): SyncableVaultData => ({
@@ -113,7 +114,7 @@ test("buildLocalVaultPayload preserves known hosts for local backups", () => {
   assert.deepEqual(payload.knownHosts, [knownHost("kh-local")]);
 });
 
-test("applySyncPayload ignores legacy cloud known hosts", () => {
+test("applySyncPayload ignores legacy cloud known hosts", async () => {
   let imported: Record<string, unknown> | null = null;
   const proxyProfiles = [
     {
@@ -135,7 +136,7 @@ test("applySyncPayload ignores legacy cloud known hosts", () => {
     syncedAt: 1,
   } as SyncPayload & { proxyProfiles: typeof proxyProfiles };
 
-  applySyncPayload(payload, {
+  await applySyncPayload(payload, {
     importVaultData: (json) => {
       imported = JSON.parse(json);
     },
@@ -146,7 +147,93 @@ test("applySyncPayload ignores legacy cloud known hosts", () => {
   assert.deepEqual(imported.proxyProfiles, proxyProfiles);
 });
 
-test("applyLocalVaultPayload restores known hosts from local backups", () => {
+test("applySyncPayload keeps missing proxy references visible to connection guards", async () => {
+  let imported: Record<string, unknown> | null = null;
+  const payload: SyncPayload = {
+    hosts: [{
+      id: "host-1",
+      label: "Host",
+      hostname: "example.com",
+      username: "root",
+      tags: [],
+      os: "linux",
+      proxyProfileId: "missing-proxy",
+    }],
+    keys: [],
+    identities: [],
+    proxyProfiles: [],
+    snippets: [],
+    customGroups: [],
+    groupConfigs: [{ path: "prod", proxyProfileId: "missing-proxy" }],
+    syncedAt: 1,
+  };
+
+  await applySyncPayload(payload, {
+    importVaultData: (json) => {
+      imported = JSON.parse(json);
+    },
+  });
+
+  assert.ok(imported);
+  assert.equal((imported.hosts as SyncPayload["hosts"])[0]?.proxyProfileId, "missing-proxy");
+  assert.equal((imported.groupConfigs as SyncPayload["groupConfigs"])?.[0]?.proxyProfileId, "missing-proxy");
+});
+
+test("applySyncPayload preserves host proxy references when group configs are absent", async () => {
+  let imported: Record<string, unknown> | null = null;
+  const payload: SyncPayload = {
+    hosts: [{
+      id: "host-1",
+      label: "Host",
+      hostname: "example.com",
+      username: "root",
+      tags: [],
+      os: "linux",
+      proxyProfileId: "missing-proxy",
+    }],
+    keys: [],
+    identities: [],
+    proxyProfiles: [],
+    snippets: [],
+    customGroups: [],
+    syncedAt: 1,
+  };
+
+  await applySyncPayload(payload, {
+    importVaultData: (json) => {
+      imported = JSON.parse(json);
+    },
+  });
+
+  assert.ok(imported);
+  assert.equal((imported.hosts as SyncPayload["hosts"])[0]?.proxyProfileId, "missing-proxy");
+  assert.equal("groupConfigs" in imported, false);
+});
+
+test("applySyncPayload waits for async vault imports", async () => {
+  let finished = false;
+  const payload: SyncPayload = {
+    hosts: [],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+    syncedAt: 1,
+  };
+
+  const promise = applySyncPayload(payload, {
+    importVaultData: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      finished = true;
+    },
+  });
+
+  assert.equal(finished, false);
+  await promise;
+  assert.equal(finished, true);
+});
+
+test("applyLocalVaultPayload restores known hosts from local backups", async () => {
   let imported: Record<string, unknown> | null = null;
   const payload: SyncPayload = {
     hosts: [],
@@ -158,7 +245,7 @@ test("applyLocalVaultPayload restores known hosts from local backups", () => {
     syncedAt: 1,
   };
 
-  applyLocalVaultPayload(payload, {
+  await applyLocalVaultPayload(payload, {
     importVaultData: (json) => {
       imported = JSON.parse(json);
     },

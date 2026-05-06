@@ -814,6 +814,7 @@ function App({ settings }: { settings: SettingsState }) {
 
   // Auto-start port forwarding rules on app launch
   usePortForwardingAutoStart({
+    isVaultInitialized,
     hosts,
     keys,
     identities,
@@ -1508,12 +1509,21 @@ function App({ settings }: { settings: SettingsState }) {
     });
   }, [addConnectionLog, createLocalTerminal, terminalSettings.localShell, discoveredShells]);
 
+  const proxyProfileIdSet = useMemo(
+    () => new Set(proxyProfiles.map((profile) => profile.id)),
+    [proxyProfiles],
+  );
+
   const resolveEffectiveHost = useCallback((host: Host): Host => {
     const withGroupDefaults = host.group
-      ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigs))
-      : host;
+      ? applyGroupDefaults(
+          host,
+          resolveGroupDefaults(host.group, groupConfigs, { validProxyProfileIds: proxyProfileIdSet }),
+          { validProxyProfileIds: proxyProfileIdSet },
+        )
+      : applyGroupDefaults(host, {}, { validProxyProfileIds: proxyProfileIdSet });
     return materializeHostProxyProfile(withGroupDefaults, proxyProfiles);
-  }, [groupConfigs, proxyProfiles]);
+  }, [groupConfigs, proxyProfileIdSet, proxyProfiles]);
 
   // Wrapper to connect to host with logging
   const handleConnectToHost = useCallback((host: Host) => {
@@ -2228,6 +2238,7 @@ function App({ settings }: { settings: SettingsState }) {
                 hosts: emptyVaultConflict.hostCount,
                 keys: emptyVaultConflict.keyCount,
                 snippets: emptyVaultConflict.snippetCount,
+                proxyProfiles: emptyVaultConflict.proxyProfileCount,
               })}</div>
             </div>
           )}

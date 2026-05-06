@@ -144,7 +144,7 @@ export const useVaultState = () => {
     const cleaned = data.map(sanitizeHost);
     setHosts(cleaned);
     const ver = ++hostsWriteVersion.current;
-    encryptHosts(cleaned).then((enc) => {
+    return encryptHosts(cleaned).then((enc) => {
       if (ver === hostsWriteVersion.current)
         localStorageAdapter.write(STORAGE_KEY_HOSTS, enc);
     });
@@ -153,7 +153,7 @@ export const useVaultState = () => {
   const updateKeys = useCallback((data: SSHKey[]) => {
     setKeys(data);
     const ver = ++keysWriteVersion.current;
-    encryptKeys(data).then((enc) => {
+    return encryptKeys(data).then((enc) => {
       if (ver === keysWriteVersion.current)
         localStorageAdapter.write(STORAGE_KEY_KEYS, enc);
     });
@@ -162,7 +162,7 @@ export const useVaultState = () => {
   const updateIdentities = useCallback((data: Identity[]) => {
     setIdentities(data);
     const ver = ++identitiesWriteVersion.current;
-    encryptIdentities(data).then((enc) => {
+    return encryptIdentities(data).then((enc) => {
       if (ver === identitiesWriteVersion.current)
         localStorageAdapter.write(STORAGE_KEY_IDENTITIES, enc);
     });
@@ -171,7 +171,7 @@ export const useVaultState = () => {
   const updateProxyProfiles = useCallback((data: ProxyProfile[]) => {
     setProxyProfiles(data);
     const ver = ++proxyProfilesWriteVersion.current;
-    encryptProxyProfiles(data).then((enc) => {
+    return encryptProxyProfiles(data).then((enc) => {
       if (ver === proxyProfilesWriteVersion.current)
         localStorageAdapter.write(STORAGE_KEY_PROXY_PROFILES, enc);
     });
@@ -205,7 +205,7 @@ export const useVaultState = () => {
   const updateGroupConfigs = useCallback((data: GroupConfig[]) => {
     setGroupConfigs(data);
     const ver = ++groupConfigsWriteVersion.current;
-    encryptGroupConfigs(data).then((enc) => {
+    return encryptGroupConfigs(data).then((enc) => {
       if (ver === groupConfigsWriteVersion.current)
         localStorageAdapter.write(STORAGE_KEY_GROUP_CONFIGS, enc);
     });
@@ -677,16 +677,18 @@ export const useVaultState = () => {
   );
 
   const importData = useCallback(
-    (payload: Partial<ExportableVaultData>) => {
-      if (payload.hosts) updateHosts(payload.hosts);
-      if (payload.keys) updateKeys(payload.keys);
-      if (payload.identities) updateIdentities(payload.identities);
-      if (Array.isArray(payload.proxyProfiles)) updateProxyProfiles(payload.proxyProfiles);
+    (payload: Partial<ExportableVaultData>): Promise<void> => {
+      const encryptedWrites: Promise<void>[] = [];
+      if (payload.hosts) encryptedWrites.push(updateHosts(payload.hosts));
+      if (payload.keys) encryptedWrites.push(updateKeys(payload.keys));
+      if (payload.identities) encryptedWrites.push(updateIdentities(payload.identities));
+      if (Array.isArray(payload.proxyProfiles)) encryptedWrites.push(updateProxyProfiles(payload.proxyProfiles));
       if (payload.snippets) updateSnippets(payload.snippets);
       if (payload.customGroups) updateCustomGroups(payload.customGroups);
       if (payload.snippetPackages) updateSnippetPackages(payload.snippetPackages);
       if (payload.knownHosts) updateKnownHosts(payload.knownHosts);
-      if (Array.isArray(payload.groupConfigs)) updateGroupConfigs(payload.groupConfigs);
+      if (Array.isArray(payload.groupConfigs)) encryptedWrites.push(updateGroupConfigs(payload.groupConfigs));
+      return Promise.all(encryptedWrites).then(() => undefined);
     },
     [
       updateHosts,
@@ -702,9 +704,9 @@ export const useVaultState = () => {
   );
 
   const importDataFromString = useCallback(
-    (jsonString: string) => {
+    (jsonString: string): Promise<void> => {
       const data = JSON.parse(jsonString);
-      importData(data);
+      return importData(data);
     },
     [importData],
   );

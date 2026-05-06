@@ -51,3 +51,82 @@ test("resolveGroupDefaults treats saved and custom proxies as one inherited sett
   assert.equal(resolved.proxyProfileId, "child-proxy");
   assert.equal(resolved.proxyConfig, undefined);
 });
+
+test("applyGroupDefaults keeps a missing host proxy profile instead of using group proxy", () => {
+  const groupDefaults: Partial<GroupConfig> = {
+    proxyProfileId: "group-proxy",
+  };
+
+  const result = applyGroupDefaults(
+    host({ proxyProfileId: "missing-proxy" }),
+    groupDefaults,
+    { validProxyProfileIds: new Set(["group-proxy"]) },
+  );
+
+  assert.equal(result.proxyProfileId, "missing-proxy");
+  assert.equal(result.proxyConfig, undefined);
+});
+
+test("applyGroupDefaults keeps a missing host proxy profile when no group fallback exists", () => {
+  const result = applyGroupDefaults(
+    host({ proxyProfileId: "missing-proxy" }),
+    {},
+    { validProxyProfileIds: new Set(["group-proxy"]) },
+  );
+
+  assert.equal(result.proxyProfileId, "missing-proxy");
+  assert.equal(result.proxyConfig, undefined);
+});
+
+test("applyGroupDefaults keeps a missing host proxy profile instead of using group custom proxy", () => {
+  const groupProxy = { type: "http" as const, host: "group-proxy.example.com", port: 3128 };
+  const result = applyGroupDefaults(
+    host({ proxyProfileId: "missing-proxy" }),
+    { proxyConfig: groupProxy },
+    { validProxyProfileIds: new Set(["group-proxy"]) },
+  );
+
+  assert.equal(result.proxyProfileId, "missing-proxy");
+  assert.equal(result.proxyConfig, undefined);
+});
+
+test("resolveGroupDefaults keeps a missing group proxy marker when there is no fallback", () => {
+  const resolved = resolveGroupDefaults(
+    "prod",
+    [{ path: "prod", proxyProfileId: "missing-proxy" }],
+    { validProxyProfileIds: new Set(["group-proxy"]) },
+  );
+
+  assert.equal(resolved.proxyProfileId, "missing-proxy");
+});
+
+test("applyGroupDefaults inherits a missing group proxy marker so connect paths can fail", () => {
+  const result = applyGroupDefaults(
+    host({ group: "prod" }),
+    { proxyProfileId: "missing-proxy" },
+    { validProxyProfileIds: new Set(["group-proxy"]) },
+  );
+
+  assert.equal(result.proxyProfileId, "missing-proxy");
+  assert.equal(result.proxyConfig, undefined);
+});
+
+test("resolveGroupDefaults keeps missing child proxy profiles instead of using parent proxy", () => {
+  const resolved = resolveGroupDefaults(
+    "prod/api",
+    [
+      {
+        path: "prod",
+        proxyConfig: { type: "http", host: "parent-proxy.example.com", port: 3128 },
+      },
+      {
+        path: "prod/api",
+        proxyProfileId: "missing-proxy",
+      },
+    ],
+    { validProxyProfileIds: new Set(["group-proxy"]) },
+  );
+
+  assert.equal(resolved.proxyProfileId, "missing-proxy");
+  assert.equal(resolved.proxyConfig, undefined);
+});

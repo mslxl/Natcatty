@@ -3,8 +3,9 @@
  * Panel for configuring HTTP/SOCKS5 proxy settings
  */
 import { Check, Trash2 } from 'lucide-react';
-import React, { useMemo } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
+import { isValidProxyPort } from '../../domain/proxyProfiles';
 import { cn } from '../../lib/utils';
 import { ProxyConfig, ProxyProfile } from '../../types';
 import { AsidePanel, AsidePanelContent, type AsidePanelLayout } from '../ui/aside-panel';
@@ -43,8 +44,16 @@ export const ProxyPanel: React.FC<ProxyPanelProps> = ({
         () => proxyProfiles.find((profile) => profile.id === selectedProxyProfileId),
         [proxyProfiles, selectedProxyProfileId],
     );
+    const hasMissingProfile = Boolean(selectedProxyProfileId && !selectedProfile);
+    const selectedValue = selectedProfile ? selectedProfile.id : customValue;
     const isUsingProfile = Boolean(selectedProfile);
-    const canSave = isUsingProfile || Boolean(proxyConfig?.host);
+    const hasManualProxyHost = Boolean(proxyConfig?.host?.trim());
+    const hasInvalidManualProxyPort = hasManualProxyHost && !isValidProxyPort(proxyConfig?.port);
+    const canSave = isUsingProfile || (hasManualProxyHost && !hasInvalidManualProxyPort);
+    const handleBack = useCallback(() => {
+        if (hasInvalidManualProxyPort) return;
+        onBack();
+    }, [hasInvalidManualProxyPort, onBack]);
 
     return (
         <AsidePanel
@@ -52,23 +61,26 @@ export const ProxyPanel: React.FC<ProxyPanelProps> = ({
             onClose={onCancel}
             title={t('hostDetails.proxyPanel.title')}
             showBackButton={true}
-            onBack={onBack}
+            onBack={handleBack}
             layout={layout}
             actions={
-                <Button size="sm" onClick={onBack} disabled={!canSave}>
+                <Button size="sm" onClick={handleBack} disabled={!canSave}>
                     {t('common.save')}
                 </Button>
             }
         >
             <AsidePanelContent>
-                {proxyProfiles.length > 0 && onSelectProxyProfile && (
+                {(proxyProfiles.length > 0 || hasMissingProfile) && onSelectProxyProfile && (
                     <Card className="p-3 space-y-3 bg-card border-border/80">
                         <p className="text-xs font-semibold">{t('hostDetails.proxyPanel.savedProxy')}</p>
                         <Select
-                            value={selectedProxyProfileId || customValue}
+                            value={selectedValue}
                             onValueChange={(value) => onSelectProxyProfile(value === customValue ? undefined : value)}
                         >
-                            <SelectTrigger className="h-10">
+                            <SelectTrigger
+                                aria-label={t('hostDetails.proxyPanel.savedProxy')}
+                                className="h-10"
+                            >
                                 <SelectValue placeholder={t('hostDetails.proxyPanel.selectSaved')} />
                             </SelectTrigger>
                             <SelectContent>
@@ -80,6 +92,11 @@ export const ProxyPanel: React.FC<ProxyPanelProps> = ({
                                 ))}
                             </SelectContent>
                         </Select>
+                        {hasMissingProfile && (
+                            <div className="min-w-0 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
+                                {t('hostDetails.proxyPanel.missingSaved')}
+                            </div>
+                        )}
                         {selectedProfile && (
                             <div className="min-w-0 rounded-md bg-secondary/50 p-2 text-sm">
                                 <div className="flex min-w-0 items-center gap-2">
@@ -124,6 +141,7 @@ export const ProxyPanel: React.FC<ProxyPanelProps> = ({
 
                             <div className="flex gap-2">
                                 <Input
+                                    aria-label={t('hostDetails.proxyPanel.hostPlaceholder')}
                                     placeholder={t('hostDetails.proxyPanel.hostPlaceholder')}
                                     value={proxyConfig?.host || ""}
                                     onChange={(e) => onUpdateProxy('host', e.target.value)}
@@ -132,14 +150,23 @@ export const ProxyPanel: React.FC<ProxyPanelProps> = ({
                                 <div className="flex items-center gap-1">
                                     <span className="text-xs text-muted-foreground">{t('hostDetails.port')}</span>
                                     <Input
+                                        aria-label={t('hostDetails.port')}
                                         type="number"
                                         placeholder="3128"
+                                        min={1}
+                                        max={65535}
+                                        step={1}
                                         value={proxyConfig?.port || ""}
                                         onChange={(e) => onUpdateProxy('port', parseInt(e.target.value) || 0)}
                                         className="h-10 w-20 text-center"
                                     />
                                 </div>
                             </div>
+                            {hasInvalidManualProxyPort && (
+                                <p className="text-xs text-destructive">
+                                    {t('proxyProfiles.error.port')}
+                                </p>
+                            )}
                         </Card>
 
                         <Card className="p-3 space-y-3 bg-card border-border/80">
@@ -148,12 +175,14 @@ export const ProxyPanel: React.FC<ProxyPanelProps> = ({
                                 <Badge variant="secondary" className="text-xs">{t('common.optional')}</Badge>
                             </div>
                             <Input
+                                aria-label={t('hostDetails.proxyPanel.usernamePlaceholder')}
                                 placeholder={t('hostDetails.proxyPanel.usernamePlaceholder')}
                                 value={proxyConfig?.username || ""}
                                 onChange={(e) => onUpdateProxy('username', e.target.value)}
                                 className="h-10"
                             />
                             <Input
+                                aria-label={t('hostDetails.proxyPanel.passwordPlaceholder')}
                                 placeholder={t('hostDetails.proxyPanel.passwordPlaceholder')}
                                 type="password"
                                 value={proxyConfig?.password || ""}

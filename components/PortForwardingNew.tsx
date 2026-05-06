@@ -10,7 +10,7 @@ import {
   Shuffle,
   Zap,
 } from "lucide-react";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { usePortForwardingState } from "../application/state/usePortForwardingState";
 import {
@@ -117,15 +117,19 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
   const [pendingOperations, setPendingOperations] = useState<Set<string>>(
     new Set(),
   );
+  const proxyProfileIdSet = useMemo(
+    () => new Set(proxyProfiles.map((profile) => profile.id)),
+    [proxyProfiles],
+  );
 
   const resolveEffectiveHost = useCallback(
     (host: Host): Host => {
       const withGroupDefaults = host.group
-        ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigs))
-        : host;
+        ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigs, { validProxyProfileIds: proxyProfileIdSet }), { validProxyProfileIds: proxyProfileIdSet })
+        : applyGroupDefaults(host, {}, { validProxyProfileIds: proxyProfileIdSet });
       return materializeHostProxyProfile(withGroupDefaults, proxyProfiles);
     },
-    [groupConfigs, proxyProfiles],
+    [groupConfigs, proxyProfileIdSet, proxyProfiles],
   );
 
   // Start a port forwarding tunnel

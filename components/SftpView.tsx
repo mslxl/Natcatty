@@ -112,15 +112,15 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
   }), [fileWatchHandlers, sftpUseCompressedUpload, sftpShowHiddenFiles]);
 
   // Pre-resolve group defaults so SFTP connections inherit group config
-  const effectiveHosts = useMemo(() =>
-    hosts.map(h => {
+  const effectiveHosts = useMemo(() => {
+    const validProxyProfileIds = new Set(proxyProfiles.map((profile) => profile.id));
+    return hosts.map(h => {
       const withGroupDefaults = h.group
-        ? applyGroupDefaults(h, resolveGroupDefaults(h.group, groupConfigs))
-        : h;
+        ? applyGroupDefaults(h, resolveGroupDefaults(h.group, groupConfigs, { validProxyProfileIds }), { validProxyProfileIds })
+        : applyGroupDefaults(h, {}, { validProxyProfileIds });
       return materializeHostProxyProfile(withGroupDefaults, proxyProfiles);
-    }),
-    [hosts, groupConfigs, proxyProfiles],
-  );
+    });
+  }, [hosts, groupConfigs, proxyProfiles]);
 
   const sftp = useSftpState(effectiveHosts, keys, identities, sftpOptions);
 
@@ -327,7 +327,8 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
 
   return (
     <SftpContextProvider
-      hosts={hosts}
+      hosts={effectiveHosts}
+      writableHosts={hosts}
       updateHosts={updateHosts}
       draggedFiles={draggedFiles}
       dragCallbacks={dragCallbacks}
@@ -466,7 +467,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
         </div>
 
         <SftpOverlays
-          hosts={hosts}
+          hosts={effectiveHosts}
           sftp={sftp}
           visibleTransfers={visibleTransfers}
           showHostPickerLeft={showHostPickerLeft}

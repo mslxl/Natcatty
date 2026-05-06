@@ -111,6 +111,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     remotePayload: SyncPayload;
     hostCount: number;
     keyCount: number;
+    proxyProfileCount: number;
     snippetCount: number;
   } | null>(null);
   const emptyVaultResolveRef = useRef<((action: 'restore' | 'keep-empty') => void) | null>(null);
@@ -447,6 +448,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
             remotePayload,
             hostCount: remotePayload.hosts?.length ?? 0,
             keyCount: remotePayload.keys?.length ?? 0,
+            proxyProfileCount: remotePayload.proxyProfiles?.length ?? 0,
             snippetCount: remotePayload.snippets?.length ?? 0,
           });
         });

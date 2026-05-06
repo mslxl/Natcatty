@@ -22,6 +22,7 @@ import React, { useCallback, useMemo, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { customThemeStore } from "../application/state/customThemeStore";
 import { resolveGroupDefaults, resolveGroupTerminalThemeId } from "../domain/groupConfig";
+import { isCompleteProxyConfig, normalizeManualProxyConfig } from "../domain/proxyProfiles";
 import { cn } from "../lib/utils";
 import {
   EnvVar,
@@ -52,6 +53,7 @@ import { Input } from "./ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { TerminalFontSelect } from "./settings/TerminalFontSelect";
 import { useAvailableFonts } from "../application/state/fontStore";
+import { toast } from "./ui/toast";
 
 type SubPanel = "none" | "proxy" | "chain" | "env-vars" | "theme-select";
 
@@ -139,6 +141,12 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
     () => proxyProfiles.find((profile) => profile.id === form.proxyProfileId),
     [form.proxyProfileId, proxyProfiles],
   );
+  const hasMissingProxyProfile = Boolean(form.proxyProfileId && !selectedProxyProfile);
+  const proxySummaryLabel = hasMissingProxyProfile
+    ? t("hostDetails.proxyPanel.missingSaved")
+    : selectedProxyProfile
+      ? selectedProxyProfile.label
+      : `${form.proxyConfig?.type?.toUpperCase()} ${form.proxyConfig?.host}:${form.proxyConfig?.port}`;
 
   const update = <K extends keyof GroupConfig>(key: K, value: GroupConfig[K] | undefined) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -316,6 +324,19 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
       setNameError(t("vault.groups.errors.invalidChars"));
       return;
     }
+    const normalizedProxyConfig = normalizeManualProxyConfig(form.proxyConfig);
+    if (normalizedProxyConfig && !isCompleteProxyConfig(normalizedProxyConfig)) {
+      toast.error(
+        normalizedProxyConfig.host ? t("proxyProfiles.error.port") : t("hostDetails.proxyPanel.error.required"),
+      );
+      setActiveSubPanel("proxy");
+      return;
+    }
+    if (sshEnabled && hasMissingProxyProfile) {
+      toast.error(t("hostDetails.proxyPanel.missingSaved"));
+      setActiveSubPanel("proxy");
+      return;
+    }
     setNameError(null);
 
     const newPath = parentGroup
@@ -340,7 +361,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
         ...(form.legacyAlgorithms !== undefined && { legacyAlgorithms: form.legacyAlgorithms }),
         ...(form.backspaceBehavior !== undefined && { backspaceBehavior: form.backspaceBehavior }),
         ...(form.proxyProfileId !== undefined && { proxyProfileId: form.proxyProfileId }),
-        ...(form.proxyConfig !== undefined && { proxyConfig: form.proxyConfig }),
+        ...(normalizedProxyConfig !== undefined && { proxyConfig: normalizedProxyConfig }),
         ...(form.hostChain !== undefined && { hostChain: form.hostChain }),
         ...(form.environmentVariables !== undefined && { environmentVariables: form.environmentVariables }),
         ...(form.moshEnabled !== undefined && { moshEnabled: form.moshEnabled }),
@@ -872,13 +893,16 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
                 <Globe size={14} className="text-muted-foreground" />
                 <span className="text-sm">{t("hostDetails.proxy")}</span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex min-w-0 items-center gap-2">
                 {(form.proxyConfig?.host || form.proxyProfileId) && (
-                  <Badge variant="secondary" className="text-xs">
-                    {selectedProxyProfile
-                      ? selectedProxyProfile.label
-                      : `${form.proxyConfig?.type?.toUpperCase()} ${form.proxyConfig?.host}:${form.proxyConfig?.port}`}
-                  </Badge>
+                  <div title={proxySummaryLabel} className="min-w-0">
+                    <Badge
+                      variant="secondary"
+                      className="max-w-[160px] truncate text-xs"
+                    >
+                      {proxySummaryLabel}
+                    </Badge>
+                  </div>
                 )}
                 <ChevronRight size={14} className="text-muted-foreground" />
               </div>
