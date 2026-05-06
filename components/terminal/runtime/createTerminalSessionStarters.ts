@@ -143,6 +143,16 @@ export type TerminalSessionStartersContext = {
   ) => void;
 };
 
+export const getMissingChainHostIds = (
+  host: Host,
+  resolvedChainHosts: Host[],
+): string[] => {
+  const requestedIds = host.hostChain?.hostIds ?? [];
+  if (requestedIds.length === 0) return [];
+  const resolvedIds = new Set(resolvedChainHosts.map((chainHost) => chainHost.id));
+  return requestedIds.filter((hostId) => !resolvedIds.has(hostId));
+};
+
 const buildTermEnv = (host: Host, terminalSettings?: TerminalSettings) => {
   const env: Record<string, string> = {
     TERM: terminalSettings?.terminalEmulationType ?? "xterm-256color",
@@ -337,6 +347,24 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       return;
     }
 
+    const missingChainHostIds = getMissingChainHostIds(ctx.host, ctx.resolvedChainHosts);
+    if (missingChainHostIds.length > 0) {
+      const base = tr(
+        "terminal.auth.jumpHostMissing",
+        "A configured jump host is missing. Open host settings and repair the jump host chain.",
+      );
+      const suffix = missingChainHostIds.length > 2
+        ? ` +${missingChainHostIds.length - 2}`
+        : "";
+      const message = `${base} (${missingChainHostIds.slice(0, 2).join(", ")}${suffix})`;
+      ctx.setNeedsAuth(false);
+      ctx.setAuthRetryMessage(null);
+      ctx.setError(message);
+      term.writeln(`\r\n[${message}]`);
+      ctx.updateStatus("disconnected");
+      return;
+    }
+
     const pendingAuth = ctx.pendingAuthRef.current;
     const resolvedAuth = resolveHostAuth({
       host: ctx.host,
@@ -372,6 +400,13 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     };
 
     const rawProxyPassword = ctx.host.proxyConfig?.password;
+    if (ctx.host.proxyProfileId && !ctx.host.proxyConfig) {
+      const message = `Saved proxy for host "${ctx.host.label || ctx.host.hostname}" is missing. Open host settings and select a valid proxy.`;
+      ctx.setError(message);
+      term.writeln(`\r\n[${message}]`);
+      ctx.updateStatus("disconnected");
+      return;
+    }
     const hasEncryptedProxyPassword = isEncryptedCredentialPlaceholder(rawProxyPassword);
     const proxyConfig = ctx.host.proxyConfig
       ? {
@@ -384,6 +419,14 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       : undefined;
 
     const jumpHostsWithUnavailableCredentials: string[] = [];
+    const unresolvedJumpProxyHost = ctx.resolvedChainHosts.find((jumpHost) => jumpHost.proxyProfileId && !jumpHost.proxyConfig);
+    if (unresolvedJumpProxyHost) {
+      const message = `Saved proxy for jump host "${unresolvedJumpProxyHost.label || unresolvedJumpProxyHost.hostname}" is missing. Open host settings and select a valid proxy.`;
+      ctx.setError(message);
+      term.writeln(`\r\n[${message}]`);
+      ctx.updateStatus("disconnected");
+      return;
+    }
     const jumpHosts = ctx.resolvedChainHosts.map<NetcattyJumpHost>((jumpHost, index) => {
       const jumpAuth = resolveHostAuth({
         host: jumpHost,
@@ -720,6 +763,22 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       return;
     }
 
+    if (ctx.host.proxyProfileId && !ctx.host.proxyConfig) {
+      const message = `Saved proxy for host "${ctx.host.label || ctx.host.hostname}" is missing. Open host settings and select a valid proxy.`;
+      ctx.setError(message);
+      term.writeln(`\r\n[${message}]`);
+      ctx.updateStatus("disconnected");
+      return;
+    }
+
+    if (ctx.host.proxyConfig?.host && ctx.host.proxyConfig?.port) {
+      const message = "Telnet does not support proxy connections. Use SSH for this host or remove the proxy from this connection.";
+      ctx.setError(message);
+      term.writeln(`\r\n[${message}]`);
+      ctx.updateStatus("disconnected");
+      return;
+    }
+
     try {
       const telnetEnv = buildTermEnv(ctx.host, ctx.terminalSettings);
       const id = await ctx.terminalBackend.startTelnetSession({
@@ -754,6 +813,31 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     }
 
     try {
+      const stopMosh = (message: string) => {
+        ctx.setError(message);
+        term.writeln(`\r\n[${message}]`);
+        ctx.updateStatus("disconnected");
+      };
+
+      if (ctx.host.proxyProfileId && !ctx.host.proxyConfig) {
+        stopMosh(`Saved proxy for host "${ctx.host.label || ctx.host.hostname}" is missing. Open host settings and select a valid proxy.`);
+        return;
+      }
+
+      const unresolvedJumpProxyHost = ctx.resolvedChainHosts.find((jumpHost) => jumpHost.proxyProfileId && !jumpHost.proxyConfig);
+      if (unresolvedJumpProxyHost) {
+        stopMosh(`Saved proxy for jump host "${unresolvedJumpProxyHost.label || unresolvedJumpProxyHost.hostname}" is missing. Open host settings and select a valid proxy.`);
+        return;
+      }
+
+      const hasConfiguredProxy =
+        Boolean(ctx.host.proxyConfig?.host && ctx.host.proxyConfig?.port) ||
+        ctx.resolvedChainHosts.some((jumpHost) => Boolean(jumpHost.proxyConfig?.host && jumpHost.proxyConfig?.port));
+      if (hasConfiguredProxy) {
+        stopMosh("Mosh does not support proxy connections. Use SSH for this host or remove the proxy from this connection.");
+        return;
+      }
+
       const pendingAuth = ctx.pendingAuthRef.current;
       const resolvedAuth = resolveHostAuth({
         host: ctx.host,

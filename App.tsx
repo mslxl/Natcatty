@@ -16,6 +16,7 @@ import { initializeUIFonts } from './application/state/uiFontStore';
 import { I18nProvider, useI18n } from './application/i18n/I18nProvider';
 import { matchesKeyBinding } from './domain/models';
 import { resolveGroupDefaults, applyGroupDefaults } from './domain/groupConfig';
+import { materializeHostProxyProfile } from './domain/proxyProfiles';
 import { resolveHostAuth } from './domain/sshAuth';
 import { applyCustomAccentToTerminalTheme, resolveHostTerminalThemeId } from './domain/terminalAppearance';
 import { collectSessionIds } from './domain/workspace';
@@ -253,6 +254,7 @@ function App({ settings }: { settings: SettingsState }) {
     hosts,
     keys,
     identities,
+    proxyProfiles,
     snippets,
     customGroups,
     snippetPackages,
@@ -263,6 +265,7 @@ function App({ settings }: { settings: SettingsState }) {
     updateHosts,
     updateKeys,
     updateIdentities,
+    updateProxyProfiles,
     updateSnippets,
     updateSnippetPackages,
     updateCustomGroups,
@@ -453,6 +456,7 @@ function App({ settings }: { settings: SettingsState }) {
         hosts,
         keys,
         identities,
+        proxyProfiles,
         snippets,
         customGroups,
         snippetPackages,
@@ -467,6 +471,7 @@ function App({ settings }: { settings: SettingsState }) {
     hosts,
     identities,
     keys,
+    proxyProfiles,
     knownHosts,
     portForwardingRulesForSync,
     snippetPackages,
@@ -527,7 +532,7 @@ function App({ settings }: { settings: SettingsState }) {
     return () => {
       cancelled = true;
     };
-  }, [isVaultInitialized, hosts, keys, identities, snippets, customGroups, snippetPackages, knownHosts]);
+  }, [isVaultInitialized, hosts, keys, identities, proxyProfiles, snippets, customGroups, snippetPackages, knownHosts]);
 
   // Memoized "apply a remote payload safely" callback. Stable identity
   // across renders so useAutoSync's `syncNow` useCallback doesn't rebuild
@@ -560,6 +565,7 @@ function App({ settings }: { settings: SettingsState }) {
     hosts,
     keys,
     identities,
+    proxyProfiles,
     snippets,
     customGroups,
     snippetPackages,
@@ -605,7 +611,7 @@ function App({ settings }: { settings: SettingsState }) {
 
     if (start) {
       const effectiveHost = resolveEffectiveHost(host);
-      void startTunnel(rule, effectiveHost, hosts, keys, identities, (status, error) => {
+      void startTunnel(rule, effectiveHost, hosts.map(resolveEffectiveHost), keys, identities, (status, error) => {
         if (status === "error" && error) toast.error(error);
       }, rule.autoStart);
       return;
@@ -808,9 +814,11 @@ function App({ settings }: { settings: SettingsState }) {
 
   // Auto-start port forwarding rules on app launch
   usePortForwardingAutoStart({
+    isVaultInitialized,
     hosts,
     keys,
     identities,
+    proxyProfiles,
     groupConfigs,
   });
 
@@ -1501,11 +1509,21 @@ function App({ settings }: { settings: SettingsState }) {
     });
   }, [addConnectionLog, createLocalTerminal, terminalSettings.localShell, discoveredShells]);
 
+  const proxyProfileIdSet = useMemo(
+    () => new Set(proxyProfiles.map((profile) => profile.id)),
+    [proxyProfiles],
+  );
+
   const resolveEffectiveHost = useCallback((host: Host): Host => {
-    if (!host.group) return host;
-    const groupDefaults = resolveGroupDefaults(host.group, groupConfigs);
-    return applyGroupDefaults(host, groupDefaults);
-  }, [groupConfigs]);
+    const withGroupDefaults = host.group
+      ? applyGroupDefaults(
+          host,
+          resolveGroupDefaults(host.group, groupConfigs, { validProxyProfileIds: proxyProfileIdSet }),
+          { validProxyProfileIds: proxyProfileIdSet },
+        )
+      : applyGroupDefaults(host, {}, { validProxyProfileIds: proxyProfileIdSet });
+    return materializeHostProxyProfile(withGroupDefaults, proxyProfiles);
+  }, [groupConfigs, proxyProfileIdSet, proxyProfiles]);
 
   // Wrapper to connect to host with logging
   const handleConnectToHost = useCallback((host: Host) => {
@@ -1847,6 +1865,7 @@ function App({ settings }: { settings: SettingsState }) {
             hosts={hosts}
             keys={keys}
             identities={identities}
+            proxyProfiles={proxyProfiles}
             snippets={snippets}
             snippetPackages={snippetPackages}
             customGroups={customGroups}
@@ -1870,6 +1889,7 @@ function App({ settings }: { settings: SettingsState }) {
             onUpdateHosts={updateHosts}
             onUpdateKeys={updateKeys}
             onUpdateIdentities={updateIdentities}
+            onUpdateProxyProfiles={updateProxyProfiles}
             onUpdateSnippets={updateSnippets}
             onUpdateSnippetPackages={updateSnippetPackages}
             onUpdateCustomGroups={updateCustomGroups}
@@ -1895,6 +1915,7 @@ function App({ settings }: { settings: SettingsState }) {
           hosts={hosts}
           keys={keys}
           identities={identities}
+          proxyProfiles={proxyProfiles}
           groupConfigs={groupConfigs}
           updateHosts={updateHosts}
           sftpDefaultViewMode={sftpDefaultViewMode}
@@ -1911,6 +1932,7 @@ function App({ settings }: { settings: SettingsState }) {
         <TerminalLayerMount
           hosts={hosts}
           groupConfigs={groupConfigs}
+          proxyProfiles={proxyProfiles}
           keys={keys}
           identities={identities}
           snippets={snippets}
@@ -2216,6 +2238,7 @@ function App({ settings }: { settings: SettingsState }) {
                 hosts: emptyVaultConflict.hostCount,
                 keys: emptyVaultConflict.keyCount,
                 snippets: emptyVaultConflict.snippetCount,
+                proxyProfiles: emptyVaultConflict.proxyProfileCount,
               })}</div>
             </div>
           )}

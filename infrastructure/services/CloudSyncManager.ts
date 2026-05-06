@@ -1421,6 +1421,7 @@ export class CloudSyncManager {
   buildPayload(data: {
     hosts: SyncPayload['hosts'];
     keys: SyncPayload['keys'];
+    proxyProfiles?: SyncPayload['proxyProfiles'];
     snippets: SyncPayload['snippets'];
     customGroups: SyncPayload['customGroups'];
     snippetPackages?: SyncPayload['snippetPackages'];

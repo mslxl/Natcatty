@@ -344,6 +344,7 @@ export function mergeSyncPayloads(
     hosts: [],
     keys: [],
     identities: [],
+    proxyProfiles: [],
     snippets: [],
     customGroups: [],
     snippetPackages: [],
@@ -363,6 +364,12 @@ export function mergeSyncPayloads(
   const hosts = mergeEntityArrays(b.hosts ?? [], local.hosts ?? [], remote.hosts ?? []);
   const keys = mergeEntityArrays(b.keys ?? [], local.keys ?? [], remote.keys ?? []);
   const identities = mergeEntityArrays(b.identities ?? [], local.identities ?? [], remote.identities ?? []);
+  const baseProxyProfiles = b.proxyProfiles ?? [];
+  const proxyProfiles = mergeEntityArrays(
+    baseProxyProfiles,
+    local.proxyProfiles ?? baseProxyProfiles,
+    remote.proxyProfiles ?? baseProxyProfiles,
+  );
   const snippets = mergeEntityArrays(b.snippets ?? [], local.snippets ?? [], remote.snippets ?? []);
   const portForwardingRules = mergeEntityArrays(
     b.portForwardingRules ?? [],
@@ -376,11 +383,16 @@ export function mergeSyncPayloads(
     (arr ?? []).map(gc => ({ ...gc, id: gc.path }));
   const unwrapGC = (arr: GCWithId[]): import('./models').GroupConfig[] =>
     arr.map(({ id: _id, ...rest }) => rest as import('./models').GroupConfig);
-  const groupConfigsResult = mergeEntityArrays(wrapGC(b.groupConfigs), wrapGC(local.groupConfigs), wrapGC(remote.groupConfigs));
+  const baseGroupConfigs = b.groupConfigs ?? [];
+  const groupConfigsResult = mergeEntityArrays(
+    wrapGC(baseGroupConfigs),
+    wrapGC(local.groupConfigs ?? baseGroupConfigs),
+    wrapGC(remote.groupConfigs ?? baseGroupConfigs),
+  );
 
   // Aggregate stats
   const entityResults: Pick<EntityMergeResult<unknown>, 'added' | 'deleted' | 'modified' | 'conflicts'>[] =
-    [hosts, keys, identities, snippets, portForwardingRules, groupConfigsResult];
+    [hosts, keys, identities, proxyProfiles, snippets, portForwardingRules, groupConfigsResult];
   for (const r of entityResults) {
     summary.added.local += r.added.local;
     summary.added.remote += r.added.remote;
@@ -416,15 +428,18 @@ export function mergeSyncPayloads(
     });
   }
 
+  const groupConfigs = unwrapGC(groupConfigsResult.merged);
+
   const payload: SyncPayload = {
     hosts: hosts.merged,
     keys: keys.merged,
     identities: identities.merged,
+    proxyProfiles: proxyProfiles.merged,
     snippets: snippets.merged,
     customGroups,
     snippetPackages,
     portForwardingRules: portForwardingRules.merged,
-    groupConfigs: unwrapGC(groupConfigsResult.merged),
+    groupConfigs,
     settings,
     syncedAt: Date.now(),
   };

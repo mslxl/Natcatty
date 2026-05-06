@@ -19,7 +19,7 @@ import { SettingsTabContent } from "../settings-ui";
 export default function SettingsSyncTab(props: {
   vault: SyncableVaultData;
   portForwardingRules: PortForwardingRule[];
-  importDataFromString: (data: string) => void;
+  importDataFromString: (data: string) => void | Promise<void>;
   importPortForwardingRules: (rules: PortForwardingRule[]) => void;
   clearVaultData: () => void;
   onSettingsApplied?: () => void;

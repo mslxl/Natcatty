@@ -164,6 +164,7 @@ export interface SyncPayload {
   hosts: import('./models').Host[];
   keys: import('./models').SSHKey[];
   identities?: import('./models').Identity[];
+  proxyProfiles?: import('./models').ProxyProfile[];
   snippets: import('./models').Snippet[];
   customGroups: string[];
   snippetPackages?: string[];

@@ -30,6 +30,7 @@ interface AutoSyncConfig {
   hosts: SyncPayload['hosts'];
   keys: SyncPayload['keys'];
   identities?: SyncPayload['identities'];
+  proxyProfiles?: SyncPayload['proxyProfiles'];
   snippets: SyncPayload['snippets'];
   customGroups: SyncPayload['customGroups'];
   snippetPackages?: SyncPayload['snippetPackages'];
@@ -110,6 +111,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     remotePayload: SyncPayload;
     hostCount: number;
     keyCount: number;
+    proxyProfileCount: number;
     snippetCount: number;
   } | null>(null);
   const emptyVaultResolveRef = useRef<((action: 'restore' | 'keep-empty') => void) | null>(null);
@@ -142,6 +144,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       hosts: config.hosts,
       keys: config.keys,
       identities: config.identities,
+      proxyProfiles: config.proxyProfiles,
       snippets: config.snippets,
       customGroups: config.customGroups,
       snippetPackages: config.snippetPackages,
@@ -152,6 +155,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     config.hosts,
     config.keys,
     config.identities,
+    config.proxyProfiles,
     config.snippets,
     config.customGroups,
     config.snippetPackages,
@@ -444,6 +448,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
             remotePayload,
             hostCount: remotePayload.hosts?.length ?? 0,
             keyCount: remotePayload.keys?.length ?? 0,
+            proxyProfileCount: remotePayload.proxyProfiles?.length ?? 0,
             snippetCount: remotePayload.snippets?.length ?? 0,
           });
         });
