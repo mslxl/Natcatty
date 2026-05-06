@@ -2,7 +2,7 @@
  * Proxy Configuration Sub-Panel
  * Panel for configuring HTTP/SOCKS5 proxy settings
  */
-import { Check, Trash2 } from 'lucide-react';
+import { Check, Globe, KeyRound, Trash2 } from 'lucide-react';
 import React, { useCallback, useMemo } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { isValidProxyPort } from '../../domain/proxyProfiles';
@@ -72,7 +72,10 @@ export const ProxyPanel: React.FC<ProxyPanelProps> = ({
             <AsidePanelContent>
                 {(proxyProfiles.length > 0 || hasMissingProfile) && onSelectProxyProfile && (
                     <Card className="p-3 space-y-3 bg-card border-border/80">
-                        <p className="text-xs font-semibold">{t('hostDetails.proxyPanel.savedProxy')}</p>
+                        <div className="flex items-center gap-2">
+                            <Globe size={14} className="text-muted-foreground" />
+                            <p className="text-xs font-semibold">{t('hostDetails.proxyPanel.savedProxy')}</p>
+                        </div>
                         <Select
                             value={selectedValue}
                             onValueChange={(value) => onSelectProxyProfile(value === customValue ? undefined : value)}
@@ -115,8 +118,11 @@ export const ProxyPanel: React.FC<ProxyPanelProps> = ({
                 {!isUsingProfile && (
                     <>
                         <Card className="p-3 space-y-3 bg-card border-border/80">
-                            <div className="flex items-center justify-between">
-                                <p className="text-xs font-semibold">{t('field.type')}</p>
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-2">
+                                    <Globe size={14} className="text-muted-foreground" />
+                                    <p className="text-xs font-semibold">{t('field.type')}</p>
+                                </div>
                                 <div className="flex gap-2">
                                     <Button
                                         variant={proxyConfig?.type === 'http' ? "secondary" : "ghost"}
@@ -170,8 +176,11 @@ export const ProxyPanel: React.FC<ProxyPanelProps> = ({
                         </Card>
 
                         <Card className="p-3 space-y-3 bg-card border-border/80">
-                            <div className="flex items-center justify-between">
-                                <p className="text-xs font-semibold">{t('hostDetails.proxyPanel.credentials')}</p>
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-2">
+                                    <KeyRound size={14} className="text-muted-foreground" />
+                                    <p className="text-xs font-semibold">{t('hostDetails.proxyPanel.credentials')}</p>
+                                </div>
                                 <Badge variant="secondary" className="text-xs">{t('common.optional')}</Badge>
                             </div>
                             <Input

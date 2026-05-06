@@ -4,11 +4,13 @@ import {
   ChevronDown,
   Copy,
   Globe,
+  KeyRound,
   LayoutGrid,
   List as ListIcon,
   Pencil,
   Plus,
   Search,
+  Settings2,
   Trash2,
 } from "lucide-react";
 import React, { useMemo, useState } from "react";
@@ -407,6 +409,10 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
         >
           <AsidePanelContent>
             <Card className="p-3 space-y-3 bg-card border-border/80">
+              <div className="flex items-center gap-2">
+                <Settings2 size={14} className="text-muted-foreground" />
+                <p className="text-xs font-semibold">{t("proxyProfiles.field.name")}</p>
+              </div>
               <Input
                 aria-label={t("proxyProfiles.field.name")}
                 value={draft.label}
@@ -417,8 +423,11 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
             </Card>
 
             <Card className="p-3 space-y-3 bg-card border-border/80">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold">{t("field.type")}</p>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Globe size={14} className="text-muted-foreground" />
+                  <p className="text-xs font-semibold">{t("field.type")}</p>
+                </div>
                 <div className="flex gap-2">
                   <Button
                     variant={draft.config.type === "http" ? "secondary" : "ghost"}
@@ -464,8 +473,11 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
             </Card>
 
             <Card className="p-3 space-y-3 bg-card border-border/80">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold">{t("hostDetails.proxyPanel.credentials")}</p>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <KeyRound size={14} className="text-muted-foreground" />
+                  <p className="text-xs font-semibold">{t("hostDetails.proxyPanel.credentials")}</p>
+                </div>
                 <Badge variant="secondary" className="text-xs">{t("common.optional")}</Badge>
               </div>
               <Input
