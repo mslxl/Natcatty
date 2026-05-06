@@ -1130,6 +1130,13 @@ async function startMoshSessionViaHandshake(event, options, { bareClient, sshExe
   });
 
   const sshEnv = { ...process.env, ...optionsEnv, TERM: "xterm-256color" };
+  // macOS Terminal/iTerm export LC_CTYPE=UTF-8 (a bare value, not a real
+  // locale name). System ssh_config has `SendEnv LC_*`, so without scrubbing
+  // these the remote shell tries to setlocale("UTF-8") and prints a warning
+  // on every connection. mosh-server sets the locale it needs separately.
+  for (const key of Object.keys(sshEnv)) {
+    if (key.startsWith("LC_")) delete sshEnv[key];
+  }
   if (options.agentForwarding && process.env.SSH_AUTH_SOCK) {
     sshEnv.SSH_AUTH_SOCK = process.env.SSH_AUTH_SOCK;
   }
