@@ -332,6 +332,8 @@ const zhCN: Messages = {
 
   'proxyProfiles.action.add': '添加代理',
   'proxyProfiles.search.placeholder': '搜索代理...',
+  'proxyProfiles.section.proxies': '代理',
+  'proxyProfiles.count.items': '{count} 项',
   'proxyProfiles.empty.title': '暂无代理',
   'proxyProfiles.empty.desc': '创建可复用的 HTTP 或 SOCKS5 代理，然后在主机详情里选择。',
   'proxyProfiles.usage': '已关联 {count} 处',

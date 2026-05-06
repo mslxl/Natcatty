@@ -1,7 +1,23 @@
-import { AlertTriangle, Check, Copy, Edit2, Globe, Plus, Search, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  Copy,
+  Globe,
+  LayoutGrid,
+  List as ListIcon,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+} from "lucide-react";
 import React, { useMemo, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
+import { useStoredViewMode } from "../application/state/useStoredViewMode";
 import { removeProxyProfileReferences } from "../domain/proxyProfiles";
+import {
+  STORAGE_KEY_VAULT_PROXY_PROFILES_VIEW_MODE,
+} from "../infrastructure/config/storageKeys";
 import { cn } from "../lib/utils";
 import type { GroupConfig, Host, ProxyConfig, ProxyProfile } from "../types";
 import {
@@ -13,6 +29,13 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "./ui/context-menu";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -20,6 +43,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "./ui/dialog";
+import { Dropdown, DropdownContent, DropdownTrigger } from "./ui/dropdown";
 import { Input } from "./ui/input";
 import { toast } from "./ui/toast";
 
@@ -55,6 +79,97 @@ const getProfileUsageCount = (
   hosts.filter((host) => host.proxyProfileId === profileId).length +
   groupConfigs.filter((config) => config.proxyProfileId === profileId).length;
 
+type ProxyProfilesViewMode = "grid" | "list";
+
+interface ProxyProfileCardProps {
+  profile: ProxyProfile;
+  usageCount: number;
+  viewMode: ProxyProfilesViewMode;
+  isSelected: boolean;
+  onClick: () => void;
+  onEdit: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+}
+
+const ProxyProfileCard: React.FC<ProxyProfileCardProps> = ({
+  profile,
+  usageCount,
+  viewMode,
+  isSelected,
+  onClick,
+  onEdit,
+  onDuplicate,
+  onDelete,
+}) => {
+  const { t } = useI18n();
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          className={cn(
+            "group cursor-pointer",
+            viewMode === "grid"
+              ? "soft-card elevate rounded-xl h-[68px] px-3 py-2"
+              : "h-14 px-3 py-2 hover:bg-secondary/60 rounded-lg transition-colors",
+            isSelected && "ring-2 ring-primary",
+          )}
+          onClick={onClick}
+        >
+          <div className="flex items-center gap-3 h-full">
+            <div className="h-11 w-11 rounded-xl bg-primary/15 text-primary flex items-center justify-center">
+              <Globe size={18} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="text-sm font-semibold truncate">{profile.label}</div>
+                <Badge variant="secondary" className="text-[10px] shrink-0">
+                  {profile.config.type.toUpperCase()}
+                </Badge>
+              </div>
+              <div className="text-[11px] font-mono text-muted-foreground truncate">
+                {profile.config.host}:{profile.config.port} -{" "}
+                {t("proxyProfiles.usage", { count: usageCount })}
+              </div>
+            </div>
+            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              {viewMode === "list" && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onEdit();
+                  }}
+                >
+                  <Pencil size={14} />
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onClick={onEdit}>
+          <Pencil size={14} className="mr-2" />
+          {t("action.edit")}
+        </ContextMenuItem>
+        <ContextMenuItem onClick={onDuplicate}>
+          <Copy size={14} className="mr-2" />
+          {t("action.duplicate")}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onClick={onDelete} className="text-destructive focus:text-destructive">
+          <Trash2 size={14} className="mr-2" />
+          {t("action.delete")}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+};
+
 export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
   proxyProfiles,
   hosts,
@@ -65,6 +180,12 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
 }) => {
   const { t } = useI18n();
   const [search, setSearch] = useState("");
+  const [viewMode, setViewMode] = useStoredViewMode(
+    STORAGE_KEY_VAULT_PROXY_PROFILES_VIEW_MODE,
+    "grid",
+  );
+  const proxyProfilesViewMode: ProxyProfilesViewMode =
+    viewMode === "list" ? "list" : "grid";
   const [draft, setDraft] = useState<ProxyProfile | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ProxyProfile | null>(null);
 
@@ -170,96 +291,109 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
   return (
     <div className="h-full flex relative">
       <div className={cn("flex-1 flex flex-col min-h-0 transition-all duration-200", draft && "mr-[380px]")}>
-        <div className="h-14 px-4 py-2 flex items-center gap-3 bg-secondary/80 supports-[backdrop-filter]:backdrop-blur-sm border-b border-border/50 shrink-0">
-          <div className="relative flex-1 max-w-md">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder={t("proxyProfiles.search.placeholder")}
-              className="h-10 pl-9"
-            />
-          </div>
-          <div className="ml-auto">
-            <Button onClick={openCreate}>
+        <header className="border-b border-border/50 bg-secondary/80 supports-[backdrop-filter]:backdrop-blur-sm shrink-0">
+          <div className="h-14 px-4 py-2 flex items-center gap-3">
+            <Button onClick={openCreate} size="sm" className="h-10">
               <Plus size={14} className="mr-2" />
               {t("proxyProfiles.action.add")}
             </Button>
-          </div>
-        </div>
-
-        <div className="flex-1 min-h-0 overflow-auto p-4">
-          {filteredProfiles.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-muted-foreground">
-              <div className="h-16 w-16 rounded-2xl bg-secondary/80 flex items-center justify-center mb-4">
-                <Globe size={32} className="opacity-60" />
+            <div className="ml-auto flex items-center gap-2 min-w-0 flex-shrink">
+              <div className="relative flex-shrink min-w-[100px]">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder={t("proxyProfiles.search.placeholder")}
+                  className="h-10 pl-9 w-full bg-secondary border-border/60 text-sm"
+                />
               </div>
-              <h3 className="text-lg font-semibold text-foreground mb-2">
-                {t("proxyProfiles.empty.title")}
-              </h3>
-              <p className="text-sm text-center max-w-sm">
-                {t("proxyProfiles.empty.desc")}
-              </p>
-              <Button className="mt-4" onClick={openCreate}>
-                <Plus size={14} className="mr-2" />
-                {t("proxyProfiles.action.add")}
-              </Button>
-            </div>
-          ) : (
-            <div className="grid gap-3 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {filteredProfiles.map((profile) => {
-                const usageCount = usageByProfileId.get(profile.id) ?? 0;
-                return (
-                  <Card
-                    key={profile.id}
-                    className="p-3 bg-card border-border/80 hover:border-primary/40 transition-colors"
+              <Dropdown>
+                <DropdownTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-10 w-10 flex-shrink-0"
                   >
-                    <button
-                      type="button"
-                      className="w-full min-w-0 text-left"
-                      onClick={() => openEdit(profile)}
-                    >
-                      <div className="flex items-start gap-3">
-                        <div className="h-10 w-10 rounded-md bg-secondary/70 flex items-center justify-center shrink-0">
-                          <Globe size={18} className="text-muted-foreground" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <p className="font-medium truncate">{profile.label}</p>
-                            <Badge variant="secondary" className="text-[10px] shrink-0">
-                              {profile.config.type.toUpperCase()}
-                            </Badge>
-                          </div>
-                          <p className="text-sm text-muted-foreground truncate">
-                            {profile.config.host}:{profile.config.port}
-                          </p>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            {t("proxyProfiles.usage", { count: usageCount })}
-                          </p>
-                        </div>
-                      </div>
-                    </button>
-                    <div className="flex items-center gap-1 mt-3">
-                      <Button variant="ghost" size="sm" className="h-8 px-2" onClick={() => openEdit(profile)}>
-                        <Edit2 size={14} />
-                      </Button>
-                      <Button variant="ghost" size="sm" className="h-8 px-2" onClick={() => duplicateProfile(profile)}>
-                        <Copy size={14} />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 px-2 text-destructive ml-auto"
-                        onClick={() => setDeleteTarget(profile)}
-                      >
-                        <Trash2 size={14} />
-                      </Button>
-                    </div>
-                  </Card>
-                );
-              })}
+                    {proxyProfilesViewMode === "grid" ? (
+                      <LayoutGrid size={16} />
+                    ) : (
+                      <ListIcon size={16} />
+                    )}
+                    <ChevronDown size={10} className="ml-0.5" />
+                  </Button>
+                </DropdownTrigger>
+                <DropdownContent className="w-32" align="end">
+                  <Button
+                    variant={proxyProfilesViewMode === "grid" ? "secondary" : "ghost"}
+                    className="w-full justify-start gap-2 h-9"
+                    onClick={() => setViewMode("grid")}
+                  >
+                    <LayoutGrid size={14} /> {t("keychain.view.grid")}
+                  </Button>
+                  <Button
+                    variant={proxyProfilesViewMode === "list" ? "secondary" : "ghost"}
+                    className="w-full justify-start gap-2 h-9"
+                    onClick={() => setViewMode("list")}
+                  >
+                    <ListIcon size={14} /> {t("keychain.view.list")}
+                  </Button>
+                </DropdownContent>
+              </Dropdown>
             </div>
-          )}
+          </div>
+        </header>
+
+        <div className="flex-1 overflow-y-auto">
+          <div className="space-y-3 p-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold text-muted-foreground">
+                {t("proxyProfiles.section.proxies")}
+              </h2>
+              <span className="text-xs text-muted-foreground">
+                {t("proxyProfiles.count.items", { count: filteredProfiles.length })}
+              </span>
+            </div>
+
+            {filteredProfiles.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
+                <div className="h-16 w-16 rounded-2xl bg-secondary/80 flex items-center justify-center mb-4">
+                  <Globe size={32} className="opacity-60" />
+                </div>
+                <h3 className="text-lg font-semibold text-foreground mb-2">
+                  {t("proxyProfiles.empty.title")}
+                </h3>
+                <p className="text-sm text-center max-w-sm mb-4">
+                  {t("proxyProfiles.empty.desc")}
+                </p>
+                <Button onClick={openCreate}>
+                  <Plus size={14} className="mr-2" />
+                  {t("proxyProfiles.action.add")}
+                </Button>
+              </div>
+            ) : (
+              <div
+                className={
+                  proxyProfilesViewMode === "grid"
+                    ? "grid gap-3 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+                    : "flex flex-col gap-0"
+                }
+              >
+                {filteredProfiles.map((profile) => (
+                  <ProxyProfileCard
+                    key={profile.id}
+                    profile={profile}
+                    usageCount={usageByProfileId.get(profile.id) ?? 0}
+                    viewMode={proxyProfilesViewMode}
+                    isSelected={draft?.id === profile.id}
+                    onClick={() => openEdit(profile)}
+                    onEdit={() => openEdit(profile)}
+                    onDuplicate={() => duplicateProfile(profile)}
+                    onDelete={() => setDeleteTarget(profile)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

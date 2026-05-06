@@ -523,6 +523,8 @@ const en: Messages = {
 
   'proxyProfiles.action.add': 'Add Proxy',
   'proxyProfiles.search.placeholder': 'Search proxies...',
+  'proxyProfiles.section.proxies': 'Proxies',
+  'proxyProfiles.count.items': '{count} items',
   'proxyProfiles.empty.title': 'No Proxies',
   'proxyProfiles.empty.desc': 'Create reusable HTTP or SOCKS5 proxies and select them from host details.',
   'proxyProfiles.usage': '{count} linked',
