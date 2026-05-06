@@ -60,6 +60,7 @@ const renderManager = (viewMode: string | null = null) => {
 test("ProxyProfilesManager uses the shared Vault grid card style by default", () => {
   const markup = renderManager();
 
+  assert.match(markup, /bg-foreground\/5 text-foreground hover:bg-foreground\/10 border-border\/40/);
   assert.match(markup, /soft-card elevate rounded-xl h-\[68px\] px-3 py-2/);
   assert.match(markup, /Office Proxy/);
   assert.match(markup, /127\.0\.0\.1:8080/);

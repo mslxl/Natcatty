@@ -293,8 +293,12 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
       <div className={cn("flex-1 flex flex-col min-h-0 transition-all duration-200", draft && "mr-[380px]")}>
         <header className="border-b border-border/50 bg-secondary/80 supports-[backdrop-filter]:backdrop-blur-sm shrink-0">
           <div className="h-14 px-4 py-2 flex items-center gap-3">
-            <Button onClick={openCreate} size="sm" className="h-10">
-              <Plus size={14} className="mr-2" />
+            <Button
+              onClick={openCreate}
+              variant="secondary"
+              className="h-10 px-3 gap-2 bg-foreground/5 text-foreground hover:bg-foreground/10 border-border/40"
+            >
+              <Plus size={14} />
               {t("proxyProfiles.action.add")}
             </Button>
             <div className="ml-auto flex items-center gap-2 min-w-0 flex-shrink">
