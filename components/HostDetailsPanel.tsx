@@ -48,7 +48,7 @@ import {
 } from "../domain/terminalAppearance";
 import { MIN_FONT_SIZE, MAX_FONT_SIZE } from "../infrastructure/config/fonts";
 import { cn } from "../lib/utils";
-import { EnvVar, GroupConfig, Host, Identity, ManagedSource, ProxyConfig, SSHKey } from "../types";
+import { EnvVar, GroupConfig, Host, Identity, ManagedSource, ProxyConfig, ProxyProfile, SSHKey } from "../types";
 import { DISTRO_COLORS, DISTRO_LOGOS } from "./DistroAvatar";
 import { DistroAvatar } from "./DistroAvatar";
 import ThemeSelectPanel from "./ThemeSelectPanel";
@@ -97,6 +97,7 @@ interface HostDetailsPanelProps {
   initialData?: Host | null;
   availableKeys: SSHKey[];
   identities: Identity[];
+  proxyProfiles?: ProxyProfile[];
   groups: string[];
   managedSources?: ManagedSource[];
   allTags?: string[]; // All available tags for autocomplete
@@ -117,6 +118,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   initialData,
   availableKeys,
   identities,
+  proxyProfiles = [],
   groups,
   managedSources = [],
   allTags = [],
@@ -260,6 +262,10 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   );
 
   const effectiveFormDistro = getEffectiveHostDistro(form);
+  const selectedProxyProfile = useMemo(
+    () => proxyProfiles.find((profile) => profile.id === form.proxyProfileId),
+    [form.proxyProfileId, proxyProfiles],
+  );
 
   const handleDistroModeChange = useCallback((mode: "auto" | "manual") => {
     setForm((prev) => ({
@@ -274,24 +280,35 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
 
   const updateProxyConfig = useCallback(
     (field: keyof ProxyConfig, value: string | number) => {
-      setForm((prev) => ({
-        ...prev,
-        proxyConfig: {
-          type: prev.proxyConfig?.type || "http",
-          host: prev.proxyConfig?.host || "",
-          port: prev.proxyConfig?.port || 8080,
-          ...prev.proxyConfig,
-          [field]: value,
-        },
-      }));
+      setForm((prev) => {
+        const { proxyProfileId: _proxyProfileId, ...rest } = prev;
+        return {
+          ...rest,
+          proxyConfig: {
+            type: prev.proxyConfig?.type || "http",
+            host: prev.proxyConfig?.host || "",
+            port: prev.proxyConfig?.port || 8080,
+            ...prev.proxyConfig,
+            [field]: value,
+          },
+        } as Host;
+      });
     },
     [],
   );
 
   const clearProxyConfig = useCallback(() => {
     setForm((prev) => {
-      const { proxyConfig: _proxyConfig, ...rest } = prev;
+      const { proxyConfig: _proxyConfig, proxyProfileId: _proxyProfileId, ...rest } = prev;
       return rest as Host;
+    });
+  }, []);
+
+  const selectProxyProfile = useCallback((profileId: string | undefined) => {
+    setForm((prev) => {
+      const { proxyConfig: _proxyConfig, proxyProfileId: _proxyProfileId, ...rest } = prev;
+      if (!profileId) return rest as Host;
+      return { ...rest, proxyProfileId: profileId } as Host;
     });
   }, []);
 
@@ -536,7 +553,10 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
     return (
       <ProxyPanel
         proxyConfig={form.proxyConfig}
+        proxyProfiles={proxyProfiles}
+        selectedProxyProfileId={form.proxyProfileId}
         onUpdateProxy={updateProxyConfig}
+        onSelectProxyProfile={selectProxyProfile}
         onClearProxy={clearProxyConfig}
         onBack={() => setActiveSubPanel("none")}
         onCancel={onCancel}
@@ -1758,23 +1778,27 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
             <Globe size={14} className="text-muted-foreground" />
             <p className="text-xs font-semibold">{t("hostDetails.proxy")}</p>
           </div>
-          {form.proxyConfig?.host ? (
+          {form.proxyConfig?.host || form.proxyProfileId ? (
             <button
               className="w-full min-w-0 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 p-2 rounded-md bg-secondary/50 hover:bg-secondary transition-colors cursor-pointer overflow-hidden"
               onClick={() => setActiveSubPanel("proxy")}
             >
               <Badge variant="secondary" className="text-xs shrink-0">
-                {form.proxyConfig.type?.toUpperCase()}
+                {(selectedProxyProfile?.config.type || form.proxyConfig?.type || "http").toUpperCase()}
               </Badge>
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span className="block min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm">
-                      {form.proxyConfig.host}:{form.proxyConfig.port}
+                      {selectedProxyProfile
+                        ? selectedProxyProfile.label
+                        : `${form.proxyConfig?.host}:${form.proxyConfig?.port}`}
                     </span>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" align="start" className="max-w-xs break-all">
-                    {form.proxyConfig.type?.toUpperCase()} {form.proxyConfig.host}:{form.proxyConfig.port}
+                    {selectedProxyProfile
+                      ? `${selectedProxyProfile.label} · ${selectedProxyProfile.config.host}:${selectedProxyProfile.config.port}`
+                      : `${form.proxyConfig?.type?.toUpperCase()} ${form.proxyConfig?.host}:${form.proxyConfig?.port}`}
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>

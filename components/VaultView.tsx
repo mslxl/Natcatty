@@ -12,6 +12,7 @@ import {
   FileSymlink,
   FolderPlus,
   FolderTree,
+  Globe,
   Key,
   LayoutGrid,
   List,
@@ -55,6 +56,7 @@ import {
   Identity,
   KnownHost,
   ManagedSource,
+  ProxyProfile,
   SerialConfig,
   SSHKey,
   ShellHistoryEntry,
@@ -69,6 +71,7 @@ import { HostTreeView } from "./HostTreeView";
 import KeychainManager from "./KeychainManager";
 import KnownHostsManager from "./KnownHostsManager";
 import PortForwarding from "./PortForwardingNew";
+import ProxyProfilesManager from "./ProxyProfilesManager";
 import QuickConnectWizard from "./QuickConnectWizard";
 import { isQuickConnectInput, parseQuickConnectInputWithWarnings } from "../domain/quickConnect";
 import SerialConnectModal from "./SerialConnectModal";
@@ -104,7 +107,7 @@ import { HotkeyScheme, KeyBinding } from "../domain/models";
 const LazyProtocolSelectDialog = lazy(() => import("./ProtocolSelectDialog"));
 const LazyConnectionLogsManager = lazy(() => import("./ConnectionLogsManager"));
 
-export type VaultSection = "hosts" | "keys" | "snippets" | "port" | "knownhosts" | "logs";
+export type VaultSection = "hosts" | "keys" | "proxies" | "snippets" | "port" | "knownhosts" | "logs";
 
 type DropTarget =
   | { kind: "root" }
@@ -115,6 +118,7 @@ interface VaultViewProps {
   hosts: Host[];
   keys: SSHKey[];
   identities: Identity[];
+  proxyProfiles: ProxyProfile[];
   snippets: Snippet[];
   snippetPackages: string[];
   customGroups: string[];
@@ -136,6 +140,7 @@ interface VaultViewProps {
   onUpdateHosts: (hosts: Host[]) => void;
   onUpdateKeys: (keys: SSHKey[]) => void;
   onUpdateIdentities: (identities: Identity[]) => void;
+  onUpdateProxyProfiles: (profiles: ProxyProfile[]) => void;
   onUpdateSnippets: (snippets: Snippet[]) => void;
   onUpdateSnippetPackages: (pkgs: string[]) => void;
   onUpdateCustomGroups: (groups: string[]) => void;
@@ -163,6 +168,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   hosts,
   keys,
   identities,
+  proxyProfiles,
   snippets,
   snippetPackages,
   customGroups,
@@ -184,6 +190,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   onUpdateHosts,
   onUpdateKeys,
   onUpdateIdentities,
+  onUpdateProxyProfiles,
   onUpdateSnippets,
   onUpdateSnippetPackages,
   onUpdateCustomGroups,
@@ -1672,6 +1679,26 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             <Tooltip>
               <TooltipTrigger asChild>
                 <RippleButton
+                  variant={currentSection === "proxies" ? "secondary" : "ghost"}
+                  className={cn(
+                    "w-full h-10",
+                    sidebarCollapsed ? "justify-center p-0" : "justify-start gap-3",
+                    currentSection === "proxies" &&
+                    "bg-foreground/10 text-foreground hover:bg-foreground/15 border-border/40",
+                  )}
+                  onClick={() => {
+                    setCurrentSection("proxies");
+                  }}
+                >
+                  <Globe size={16} className="flex-shrink-0" />
+                  {!sidebarCollapsed && t("vault.nav.proxies")}
+                </RippleButton>
+              </TooltipTrigger>
+              {sidebarCollapsed && <TooltipContent side="right">{t("vault.nav.proxies")}</TooltipContent>}
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <RippleButton
                   variant={currentSection === "port" ? "secondary" : "ghost"}
                   className={cn(
                     "w-full h-10",
@@ -2826,6 +2853,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             }
             onRunSnippet={onRunSnippet}
             availableKeys={keys}
+            proxyProfiles={proxyProfiles}
             managedSources={managedSources}
             onSaveHost={(host) => onUpdateHosts([...hosts, host])}
             onCreateGroup={(groupPath) =>
@@ -2840,6 +2868,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             keys={keys}
             identities={identities}
             hosts={hosts}
+            proxyProfiles={proxyProfiles}
             customGroups={customGroups}
             managedSources={managedSources}
             onSave={(k) => onUpdateKeys([...keys, k])}
@@ -2877,11 +2906,22 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
             }
           />
         )}
+        {currentSection === "proxies" && (
+          <ProxyProfilesManager
+            proxyProfiles={proxyProfiles}
+            hosts={hosts}
+            groupConfigs={groupConfigs}
+            onUpdateProxyProfiles={onUpdateProxyProfiles}
+            onUpdateHosts={onUpdateHosts}
+            onUpdateGroupConfigs={onUpdateGroupConfigs}
+          />
+        )}
         {currentSection === "port" && (
           <PortForwarding
             hosts={hosts}
             keys={keys}
             identities={identities}
+            proxyProfiles={proxyProfiles}
             customGroups={customGroups}
             managedSources={managedSources}
             groupConfigs={groupConfigs}
@@ -2924,6 +2964,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           config={groupConfigs.find(c => c.path === editingGroupPath)}
           availableKeys={keys}
           identities={identities}
+          proxyProfiles={proxyProfiles}
           allHosts={hosts}
           groups={allGroupPaths}
           terminalThemeId={terminalThemeId}
@@ -2944,6 +2985,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           initialData={editingHost}
           availableKeys={keys}
           identities={identities}
+          proxyProfiles={proxyProfiles}
           groups={allGroupPaths}
           managedSources={managedSources}
           allTags={allTags}
@@ -3207,6 +3249,7 @@ export const vaultViewAreEqual = (
     prev.hosts === next.hosts &&
     prev.keys === next.keys &&
     prev.identities === next.identities &&
+    prev.proxyProfiles === next.proxyProfiles &&
     prev.snippets === next.snippets &&
     prev.snippetPackages === next.snippetPackages &&
     prev.customGroups === next.customGroups &&

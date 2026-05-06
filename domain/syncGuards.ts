@@ -9,6 +9,7 @@ export type ShrinkFinding =
         | 'hosts'
         | 'keys'
         | 'identities'
+        | 'proxyProfiles'
         | 'snippets'
         | 'customGroups'
         | 'snippetPackages'
@@ -28,6 +29,7 @@ const CHECKED_ENTITIES = [
   'hosts',
   'keys',
   'identities',
+  'proxyProfiles',
   'snippets',
   'customGroups',
   'snippetPackages',

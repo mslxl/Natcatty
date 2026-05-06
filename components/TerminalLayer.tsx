@@ -36,9 +36,10 @@ import {
 } from '../infrastructure/config/storageKeys';
 import { buildCacheKey } from '../application/state/sftp/sharedRemoteHostCache';
 import type { DropEntry } from '../lib/sftpFileUtils';
-import { GroupConfig, Host, Identity, KnownHost, SSHKey, Snippet, TerminalSession, TerminalTheme, Workspace, WorkspaceNode } from '../types';
+import { GroupConfig, Host, Identity, KnownHost, ProxyProfile, SSHKey, Snippet, TerminalSession, TerminalTheme, Workspace, WorkspaceNode } from '../types';
 import type { ExecutorContext } from '../infrastructure/ai/cattyAgent/executor';
 import { resolveGroupDefaults, applyGroupDefaults } from '../domain/groupConfig';
+import { materializeHostProxyProfile } from '../domain/proxyProfiles';
 import { DistroAvatar } from './DistroAvatar';
 import Terminal from './Terminal';
 import { SftpSidePanel } from './SftpSidePanel';
@@ -386,6 +387,7 @@ AIChatPanelsHost.displayName = 'AIChatPanelsHost';
 interface TerminalLayerProps {
   hosts: Host[];
   groupConfigs: GroupConfig[];
+  proxyProfiles: ProxyProfile[];
   keys: SSHKey[];
   identities: Identity[];
   snippets: Snippet[];
@@ -448,6 +450,7 @@ interface TerminalLayerProps {
 const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   hosts,
   groupConfigs,
+  proxyProfiles,
   keys,
   identities,
   snippets,
@@ -890,7 +893,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         const groupDefaults = rawHost.group
           ? resolveGroupDefaults(rawHost.group, groupConfigs)
           : {};
-        const existingHost = applyGroupDefaults(rawHost, groupDefaults);
+        const existingHost = materializeHostProxyProfile(
+          applyGroupDefaults(rawHost, groupDefaults),
+          proxyProfiles,
+        );
 
         const protocol = session.protocol ?? existingHost.protocol;
         const port = session.port ?? existingHost.port;
@@ -932,7 +938,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       }
     }
     return map;
-  }, [sessions, hostMap, groupConfigs]);
+  }, [sessions, hostMap, groupConfigs, proxyProfiles]);
   const sessionChainHostsMap = useMemo(() => {
     const map = new Map<string, Host[]>();
     for (const session of sessions) {
@@ -947,13 +953,16 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
             const chainGroupDefaults = rawChainHost.group
               ? resolveGroupDefaults(rawChainHost.group, groupConfigs)
               : {};
-            return applyGroupDefaults(rawChainHost, chainGroupDefaults);
+            return materializeHostProxyProfile(
+              applyGroupDefaults(rawChainHost, chainGroupDefaults),
+              proxyProfiles,
+            );
           })
           .filter((value): value is Host => Boolean(value)),
       );
     }
     return map;
-  }, [sessions, sessionHostsMap, hostMap, groupConfigs]);
+  }, [sessions, sessionHostsMap, hostMap, groupConfigs, proxyProfiles]);
 
   const validAIScopeTargetIds = useMemo(() => {
     const ids = new Set<string>();
@@ -2657,6 +2666,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 const terminalLayerAreEqual = (prev: TerminalLayerProps, next: TerminalLayerProps): boolean => {
   return (
     prev.hosts === next.hosts &&
+    prev.proxyProfiles === next.proxyProfiles &&
     prev.keys === next.keys &&
     prev.snippets === next.snippets &&
     prev.snippetPackages === next.snippetPackages &&

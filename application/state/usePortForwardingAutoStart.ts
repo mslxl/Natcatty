@@ -4,8 +4,9 @@
  * when the application starts, not when the user navigates to the port forwarding page.
  */
 import { useCallback, useEffect, useRef } from "react";
-import { GroupConfig, Host, Identity, PortForwardingRule, SSHKey } from "../../domain/models";
+import { GroupConfig, Host, Identity, PortForwardingRule, ProxyProfile, SSHKey } from "../../domain/models";
 import { resolveGroupDefaults, applyGroupDefaults } from "../../domain/groupConfig";
+import { materializeHostProxyProfile } from "../../domain/proxyProfiles";
 import { STORAGE_KEY_PORT_FORWARDING } from "../../infrastructure/config/storageKeys";
 import { localStorageAdapter } from "../../infrastructure/persistence/localStorageAdapter";
 import {
@@ -20,6 +21,7 @@ export interface UsePortForwardingAutoStartOptions {
   hosts: Host[];
   keys: SSHKey[];
   identities: Identity[];
+  proxyProfiles: ProxyProfile[];
   groupConfigs: GroupConfig[];
 }
 
@@ -31,12 +33,14 @@ export const usePortForwardingAutoStart = ({
   hosts,
   keys,
   identities,
+  proxyProfiles,
   groupConfigs,
 }: UsePortForwardingAutoStartOptions): void => {
   const autoStartExecutedRef = useRef(false);
   const hostsRef = useRef<Host[]>(hosts);
   const keysRef = useRef<SSHKey[]>(keys);
   const identitiesRef = useRef<Identity[]>(identities);
+  const proxyProfilesRef = useRef<ProxyProfile[]>(proxyProfiles);
   const groupConfigsRef = useRef<GroupConfig[]>(groupConfigs);
 
   const isHostAuthReady = useCallback((host: Host, seen = new Set<string>()): boolean => {
@@ -78,14 +82,24 @@ export const usePortForwardingAutoStart = ({
   }, [identities]);
 
   useEffect(() => {
+    proxyProfilesRef.current = proxyProfiles;
+  }, [proxyProfiles]);
+
+  useEffect(() => {
     groupConfigsRef.current = groupConfigs;
   }, [groupConfigs]);
 
   const resolveEffectiveHost = useCallback((host: Host): Host => {
-    if (!host.group) return host;
-    const defaults = resolveGroupDefaults(host.group, groupConfigsRef.current);
-    return applyGroupDefaults(host, defaults);
+    const withGroupDefaults = host.group
+      ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigsRef.current))
+      : host;
+    return materializeHostProxyProfile(withGroupDefaults, proxyProfilesRef.current);
   }, []);
+
+  const resolveEffectiveHosts = useCallback(
+    (items: Host[]): Host[] => items.map((host) => resolveEffectiveHost(host)),
+    [resolveEffectiveHost],
+  );
 
   // Set up the reconnect callback
   useEffect(() => {
@@ -109,14 +123,14 @@ export const usePortForwardingAutoStart = ({
       }
 
       const host = resolveEffectiveHost(rawHost);
-      return startPortForward(rule, host, hostsRef.current, keysRef.current, identitiesRef.current, onStatusChange, true);
+      return startPortForward(rule, host, resolveEffectiveHosts(hostsRef.current), keysRef.current, identitiesRef.current, onStatusChange, true);
     };
 
     setReconnectCallback(handleReconnect);
     return () => {
       setReconnectCallback(null);
     };
-  }, [resolveEffectiveHost]);
+  }, [resolveEffectiveHost, resolveEffectiveHosts]);
 
   // Auto-start rules on app launch
   useEffect(() => {
@@ -167,7 +181,7 @@ export const usePortForwardingAutoStart = ({
           void startPortForward(
             rule,
             host,
-            hosts,
+            resolveEffectiveHosts(hosts),
             keys,
             identities,
             (status, error) => {
@@ -196,5 +210,5 @@ export const usePortForwardingAutoStart = ({
     };
 
     void runAutoStart();
-  }, [hosts, identities, isHostAuthReady, keys, resolveEffectiveHost]);
+  }, [hosts, identities, isHostAuthReady, keys, resolveEffectiveHost, resolveEffectiveHosts]);
 };

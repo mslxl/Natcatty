@@ -13,6 +13,7 @@ import type {
   Identity,
   KnownHost,
   PortForwardingRule,
+  ProxyProfile,
   SftpBookmark,
   Snippet,
   SSHKey,
@@ -63,6 +64,7 @@ export interface SyncableVaultData {
   hosts: Host[];
   keys: SSHKey[];
   identities: Identity[];
+  proxyProfiles?: ProxyProfile[];
   snippets: Snippet[];
   customGroups: string[];
   snippetPackages?: string[];
@@ -81,6 +83,7 @@ export function hasMeaningfulSyncData(payload: SyncPayload): boolean {
     (payload.keys?.length ?? 0) > 0 ||
     (payload.snippets?.length ?? 0) > 0 ||
     (payload.identities?.length ?? 0) > 0 ||
+    (payload.proxyProfiles?.length ?? 0) > 0 ||
     (payload.customGroups?.length ?? 0) > 0 ||
     (payload.snippetPackages?.length ?? 0) > 0 ||
     (payload.portForwardingRules?.length ?? 0) > 0 ||
@@ -104,6 +107,7 @@ export function hasMeaningfulCloudSyncData(payload: SyncPayload): boolean {
     (payload.keys?.length ?? 0) > 0 ||
     (payload.snippets?.length ?? 0) > 0 ||
     (payload.identities?.length ?? 0) > 0 ||
+    (payload.proxyProfiles?.length ?? 0) > 0 ||
     (payload.customGroups?.length ?? 0) > 0 ||
     (payload.snippetPackages?.length ?? 0) > 0 ||
     (payload.portForwardingRules?.length ?? 0) > 0 ||
@@ -337,6 +341,7 @@ export function buildSyncPayload(
     hosts: vault.hosts,
     keys: vault.keys,
     identities: vault.identities,
+    proxyProfiles: vault.proxyProfiles,
     snippets: vault.snippets,
     customGroups: vault.customGroups,
     snippetPackages: vault.snippetPackages,
@@ -375,6 +380,7 @@ function applyPayload(
     hosts: payload.hosts,
     keys: payload.keys,
     identities: payload.identities,
+    proxyProfiles: payload.proxyProfiles,
     snippets: payload.snippets,
     customGroups: payload.customGroups,
   };

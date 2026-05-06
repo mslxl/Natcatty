@@ -30,6 +30,7 @@ interface AutoSyncConfig {
   hosts: SyncPayload['hosts'];
   keys: SyncPayload['keys'];
   identities?: SyncPayload['identities'];
+  proxyProfiles?: SyncPayload['proxyProfiles'];
   snippets: SyncPayload['snippets'];
   customGroups: SyncPayload['customGroups'];
   snippetPackages?: SyncPayload['snippetPackages'];
@@ -142,6 +143,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       hosts: config.hosts,
       keys: config.keys,
       identities: config.identities,
+      proxyProfiles: config.proxyProfiles,
       snippets: config.snippets,
       customGroups: config.customGroups,
       snippetPackages: config.snippetPackages,
@@ -152,6 +154,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     config.hosts,
     config.keys,
     config.identities,
+    config.proxyProfiles,
     config.snippets,
     config.customGroups,
     config.snippetPackages,

@@ -38,3 +38,31 @@ test("mergeSyncPayloads does not carry legacy known hosts forward", () => {
 
   assert.equal("knownHosts" in result.payload, false);
 });
+
+test("mergeSyncPayloads merges reusable proxy profiles by id", () => {
+  const localProfile = {
+    id: "proxy-local",
+    label: "Local Proxy",
+    config: { type: "http", host: "local.example.com", port: 3128 },
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const remoteProfile = {
+    id: "proxy-remote",
+    label: "Remote Proxy",
+    config: { type: "socks5", host: "remote.example.com", port: 1080 },
+    createdAt: 2,
+    updatedAt: 2,
+  };
+
+  const result = mergeSyncPayloads(
+    payload(),
+    payload({ proxyProfiles: [localProfile] } as Partial<SyncPayload>),
+    payload({ proxyProfiles: [remoteProfile] } as Partial<SyncPayload>),
+  );
+
+  assert.deepEqual(result.payload.proxyProfiles?.map((item) => item.id).sort(), [
+    "proxy-local",
+    "proxy-remote",
+  ]);
+});

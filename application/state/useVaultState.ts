@@ -8,6 +8,7 @@ import {
   KeyCategory,
   KnownHost,
   ManagedSource,
+  ProxyProfile,
   ShellHistoryEntry,
   Snippet,
   SSHKey,
@@ -26,6 +27,7 @@ import {
   STORAGE_KEY_KNOWN_HOSTS,
   STORAGE_KEY_LEGACY_KEYS,
   STORAGE_KEY_MANAGED_SOURCES,
+  STORAGE_KEY_PROXY_PROFILES,
   STORAGE_KEY_SHELL_HISTORY,
   STORAGE_KEY_SNIPPET_PACKAGES,
   STORAGE_KEY_SNIPPETS,
@@ -36,16 +38,19 @@ import {
   decryptHosts,
   decryptIdentities,
   decryptKeys,
+  decryptProxyProfiles,
   encryptGroupConfigs,
   encryptHosts,
   encryptIdentities,
   encryptKeys,
+  encryptProxyProfiles,
 } from "../../infrastructure/persistence/secureFieldAdapter";
 
 type ExportableVaultData = {
   hosts: Host[];
   keys: SSHKey[];
   identities?: Identity[];
+  proxyProfiles?: ProxyProfile[];
   snippets: Snippet[];
   customGroups: string[];
   snippetPackages?: string[];
@@ -106,6 +111,7 @@ export const useVaultState = () => {
   const [hosts, setHosts] = useState<Host[]>([]);
   const [keys, setKeys] = useState<SSHKey[]>([]);
   const [identities, setIdentities] = useState<Identity[]>([]);
+  const [proxyProfiles, setProxyProfiles] = useState<ProxyProfile[]>([]);
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [customGroups, setCustomGroups] = useState<string[]>([]);
   const [snippetPackages, setSnippetPackages] = useState<string[]>([]);
@@ -121,6 +127,7 @@ export const useVaultState = () => {
   const hostsWriteVersion = useRef(0);
   const keysWriteVersion = useRef(0);
   const identitiesWriteVersion = useRef(0);
+  const proxyProfilesWriteVersion = useRef(0);
   const groupConfigsWriteVersion = useRef(0);
 
   // Read-sequence counters for cross-window storage events.  Each incoming
@@ -130,6 +137,7 @@ export const useVaultState = () => {
   const hostsReadSeq = useRef(0);
   const keysReadSeq = useRef(0);
   const identitiesReadSeq = useRef(0);
+  const proxyProfilesReadSeq = useRef(0);
   const groupConfigsReadSeq = useRef(0);
 
   const updateHosts = useCallback((data: Host[]) => {
@@ -157,6 +165,15 @@ export const useVaultState = () => {
     encryptIdentities(data).then((enc) => {
       if (ver === identitiesWriteVersion.current)
         localStorageAdapter.write(STORAGE_KEY_IDENTITIES, enc);
+    });
+  }, []);
+
+  const updateProxyProfiles = useCallback((data: ProxyProfile[]) => {
+    setProxyProfiles(data);
+    const ver = ++proxyProfilesWriteVersion.current;
+    encryptProxyProfiles(data).then((enc) => {
+      if (ver === proxyProfilesWriteVersion.current)
+        localStorageAdapter.write(STORAGE_KEY_PROXY_PROFILES, enc);
     });
   }, []);
 
@@ -198,6 +215,7 @@ export const useVaultState = () => {
     updateHosts([]);
     updateKeys([]);
     updateIdentities([]);
+    updateProxyProfiles([]);
     updateSnippets([]);
     updateSnippetPackages([]);
     updateCustomGroups([]);
@@ -209,6 +227,7 @@ export const useVaultState = () => {
     updateHosts,
     updateKeys,
     updateIdentities,
+    updateProxyProfiles,
     updateSnippets,
     updateSnippetPackages,
     updateCustomGroups,
@@ -414,6 +433,20 @@ export const useVaultState = () => {
           }
         }
 
+        const savedProxyProfiles =
+          localStorageAdapter.read<ProxyProfile[]>(STORAGE_KEY_PROXY_PROFILES);
+        if (savedProxyProfiles) {
+          const proxyVer = ++proxyProfilesWriteVersion.current;
+          const decryptedProfiles = await decryptProxyProfiles(savedProxyProfiles);
+          if (proxyVer === proxyProfilesWriteVersion.current) {
+            setProxyProfiles(decryptedProfiles);
+            encryptProxyProfiles(decryptedProfiles).then((enc) => {
+              if (proxyVer === proxyProfilesWriteVersion.current)
+                localStorageAdapter.write(STORAGE_KEY_PROXY_PROFILES, enc);
+            });
+          }
+        }
+
         // Read remaining non-encrypted data fresh after all async gaps above
         const savedGroups = localStorageAdapter.read<string[]>(STORAGE_KEY_GROUPS);
         const savedSnippets =
@@ -528,6 +561,18 @@ export const useVaultState = () => {
         return;
       }
 
+      if (key === STORAGE_KEY_PROXY_PROFILES) {
+        const next = safeParse<ProxyProfile[]>(event.newValue) ?? [];
+        ++proxyProfilesWriteVersion.current;
+        const seq = ++proxyProfilesReadSeq.current;
+        const writeAtStart = proxyProfilesWriteVersion.current;
+        decryptProxyProfiles(next).then((dec) => {
+          if (seq === proxyProfilesReadSeq.current && writeAtStart === proxyProfilesWriteVersion.current)
+            setProxyProfiles(dec);
+        });
+        return;
+      }
+
       if (key === STORAGE_KEY_SNIPPETS) {
         const next = safeParse<Snippet[]>(event.newValue) ?? [];
         setSnippets(next);
@@ -621,13 +666,14 @@ export const useVaultState = () => {
       hosts,
       keys,
       identities,
+      proxyProfiles,
       snippets,
       customGroups,
       snippetPackages,
       knownHosts,
       groupConfigs,
     }),
-    [hosts, keys, identities, snippets, customGroups, snippetPackages, knownHosts, groupConfigs],
+    [hosts, keys, identities, proxyProfiles, snippets, customGroups, snippetPackages, knownHosts, groupConfigs],
   );
 
   const importData = useCallback(
@@ -635,6 +681,7 @@ export const useVaultState = () => {
       if (payload.hosts) updateHosts(payload.hosts);
       if (payload.keys) updateKeys(payload.keys);
       if (payload.identities) updateIdentities(payload.identities);
+      if (Array.isArray(payload.proxyProfiles)) updateProxyProfiles(payload.proxyProfiles);
       if (payload.snippets) updateSnippets(payload.snippets);
       if (payload.customGroups) updateCustomGroups(payload.customGroups);
       if (payload.snippetPackages) updateSnippetPackages(payload.snippetPackages);
@@ -645,6 +692,7 @@ export const useVaultState = () => {
       updateHosts,
       updateKeys,
       updateIdentities,
+      updateProxyProfiles,
       updateSnippets,
       updateCustomGroups,
       updateSnippetPackages,
@@ -666,6 +714,7 @@ export const useVaultState = () => {
     hosts,
     keys,
     identities,
+    proxyProfiles,
     snippets,
     customGroups,
     snippetPackages,
@@ -677,6 +726,7 @@ export const useVaultState = () => {
     updateHosts,
     updateKeys,
     updateIdentities,
+    updateProxyProfiles,
     updateSnippets,
     updateSnippetPackages,
     updateCustomGroups,

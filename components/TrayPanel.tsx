@@ -11,6 +11,8 @@ import { useSettingsState } from "../application/state/useSettingsState";
 import { useTrayPanelBackend } from "../application/state/useTrayPanelBackend";
 import { useActiveTabId } from "../application/state/activeTabStore";
 import { resolveGroupDefaults, applyGroupDefaults } from "../domain/groupConfig";
+import { materializeHostProxyProfile } from "../domain/proxyProfiles";
+import type { Host } from "../domain/models";
 import { X, Maximize2, ChevronRight, ChevronDown, Power } from "lucide-react";
 import { AppLogo } from "./AppLogo";
 
@@ -117,7 +119,7 @@ const TrayPanelContent: React.FC = () => {
     onTrayPanelMenuData,
   } = useTrayPanelBackend();
 
-  const { hosts, keys, identities, groupConfigs } = useVaultState();
+  const { hosts, keys, identities, proxyProfiles, groupConfigs } = useVaultState();
   useSessionState();
   const { rules: portForwardingRules, startTunnel, stopTunnel } = usePortForwardingState();
   const activeTabId = useActiveTabId();
@@ -335,10 +337,14 @@ const TrayPanelContent: React.FC = () => {
                       if (isActive) {
                         void stopTunnel(rule.id);
                       } else {
-                        const host = rawHost.group
-                          ? applyGroupDefaults(rawHost, resolveGroupDefaults(rawHost.group, groupConfigs))
-                          : rawHost;
-                        void startTunnel(rule, host, hosts, keys, identities, (status, error) => {
+                        const resolveEffectiveHost = (host: Host) => {
+                          const withGroupDefaults = host.group
+                            ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigs))
+                            : host;
+                          return materializeHostProxyProfile(withGroupDefaults, proxyProfiles);
+                        };
+                        const host = resolveEffectiveHost(rawHost);
+                        void startTunnel(rule, host, hosts.map(resolveEffectiveHost), keys, identities, (status, error) => {
                           if (status === "error" && error) toast.error(error);
                         }, rule.autoStart);
                       }

@@ -73,6 +73,25 @@ test("buildSyncPayload treats known hosts as local-only data", () => {
   assert.equal("knownHosts" in payload, false);
 });
 
+test("buildSyncPayload includes reusable proxy profiles", () => {
+  const proxyProfiles = [
+    {
+      id: "proxy-1",
+      label: "Office Proxy",
+      config: { type: "socks5", host: "proxy.example.com", port: 1080 },
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  ];
+
+  const payload = buildSyncPayload({
+    ...vault(),
+    proxyProfiles,
+  } as SyncableVaultData & { proxyProfiles: typeof proxyProfiles });
+
+  assert.deepEqual(payload.proxyProfiles, proxyProfiles);
+});
+
 test("hasMeaningfulCloudSyncData ignores legacy cloud known hosts", () => {
   assert.equal(
     hasMeaningfulCloudSyncData({
@@ -96,6 +115,15 @@ test("buildLocalVaultPayload preserves known hosts for local backups", () => {
 
 test("applySyncPayload ignores legacy cloud known hosts", () => {
   let imported: Record<string, unknown> | null = null;
+  const proxyProfiles = [
+    {
+      id: "proxy-1",
+      label: "Office Proxy",
+      config: { type: "socks5", host: "proxy.example.com", port: 1080 },
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  ];
   const payload: SyncPayload = {
     hosts: [],
     keys: [],
@@ -103,8 +131,9 @@ test("applySyncPayload ignores legacy cloud known hosts", () => {
     snippets: [],
     customGroups: [],
     knownHosts: [knownHost("kh-legacy")],
+    proxyProfiles,
     syncedAt: 1,
-  };
+  } as SyncPayload & { proxyProfiles: typeof proxyProfiles };
 
   applySyncPayload(payload, {
     importVaultData: (json) => {
@@ -114,6 +143,7 @@ test("applySyncPayload ignores legacy cloud known hosts", () => {
 
   assert.ok(imported);
   assert.equal("knownHosts" in imported, false);
+  assert.deepEqual(imported.proxyProfiles, proxyProfiles);
 });
 
 test("applyLocalVaultPayload restores known hosts from local backups", () => {

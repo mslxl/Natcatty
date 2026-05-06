@@ -156,6 +156,26 @@ test("only non-hosts entity shrinks → reports that entity", () => {
   }
 });
 
+test("proxy profile shrink is protected like other synced vault entities", () => {
+  const proxyProfiles = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `proxy-${i}`,
+      label: `Proxy ${i}`,
+      config: { type: "http", host: `proxy-${i}.example.com`, port: 3128 },
+      createdAt: i,
+    }));
+
+  const base = payload({ proxyProfiles: proxyProfiles(10) } as Partial<SyncPayload>);
+  const out = payload({ proxyProfiles: [] } as Partial<SyncPayload>);
+  const result = detectSuspiciousShrink(out, base);
+
+  assert.equal(result.suspicious, true);
+  if (result.suspicious) {
+    assert.equal(result.entityType, "proxyProfiles");
+    assert.equal(result.reason, "large-shrink");
+  }
+});
+
 test("knownHosts shrink is ignored because known hosts are local-only", () => {
   const kh = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `kh${i}`, hostname: `h${i}`, port: 22, keyType: "rsa", fingerprint: "x" })) as unknown as SyncPayload["knownHosts"];
   const base = payload({ knownHosts: kh(12) });

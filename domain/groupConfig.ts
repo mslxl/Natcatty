@@ -26,6 +26,12 @@ export function resolveGroupDefaults(
           continue;
         }
         if (key !== 'path' && value !== undefined) {
+          if (key === 'proxyProfileId') {
+            delete merged.proxyConfig;
+          }
+          if (key === 'proxyConfig') {
+            delete merged.proxyProfileId;
+          }
           merged[key] = value;
         }
       }
@@ -48,7 +54,7 @@ export function resolveGroupDefaults(
 
 const INHERITABLE_KEYS: (keyof GroupConfig)[] = [
   'username', 'password', 'savePassword', 'authMethod', 'identityId', 'identityFileId', 'identityFilePaths',
-  'port', 'protocol', 'agentForwarding', 'proxyConfig', 'hostChain', 'startupCommand',
+  'port', 'protocol', 'agentForwarding', 'proxyProfileId', 'proxyConfig', 'hostChain', 'startupCommand',
   'legacyAlgorithms', 'environmentVariables', 'charset', 'moshEnabled', 'moshServerPath',
   'telnetEnabled', 'telnetPort', 'telnetUsername', 'telnetPassword',
   'theme', 'themeOverride', 'fontFamily', 'fontFamilyOverride', 'fontSize', 'fontSizeOverride', 'fontWeight', 'fontWeightOverride',
@@ -62,6 +68,8 @@ const INHERITABLE_KEYS: (keyof GroupConfig)[] = [
 export function applyGroupDefaults(host: Host, groupDefaults: Partial<GroupConfig>): Host {
   const effective = { ...host };
   for (const key of INHERITABLE_KEYS) {
+    if (key === 'proxyProfileId' && host.proxyConfig !== undefined) continue;
+    if (key === 'proxyConfig' && host.proxyProfileId !== undefined) continue;
     const hostValue = (host as unknown as Record<string, unknown>)[key];
     const groupValue = (groupDefaults as unknown as Record<string, unknown>)[key];
     if ((hostValue === undefined || hostValue === '' || hostValue === null) && groupValue !== undefined) {

@@ -19,9 +19,11 @@ import {
   ManagedSource,
   PortForwardingRule,
   PortForwardingType,
+  ProxyProfile,
   SSHKey,
 } from "../domain/models";
 import { resolveGroupDefaults, applyGroupDefaults } from "../domain/groupConfig";
+import { materializeHostProxyProfile } from "../domain/proxyProfiles";
 import { cn } from "../lib/utils";
 import SelectHostPanel from "./SelectHostPanel";
 import {
@@ -69,6 +71,7 @@ interface PortForwardingProps {
   customGroups: string[];
   managedSources?: ManagedSource[];
   groupConfigs?: GroupConfig[];
+  proxyProfiles?: ProxyProfile[];
   onNewHost?: () => void;
   onSaveHost?: (host: Host) => void;
   onCreateGroup?: (groupPath: string) => void;
@@ -81,6 +84,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
   customGroups: _customGroups,
   managedSources = [],
   groupConfigs = [],
+  proxyProfiles = [],
   onNewHost: _onNewHost,
   onSaveHost,
   onCreateGroup: _onCreateGroup,
@@ -114,6 +118,16 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
     new Set(),
   );
 
+  const resolveEffectiveHost = useCallback(
+    (host: Host): Host => {
+      const withGroupDefaults = host.group
+        ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigs))
+        : host;
+      return materializeHostProxyProfile(withGroupDefaults, proxyProfiles);
+    },
+    [groupConfigs, proxyProfiles],
+  );
+
   // Start a port forwarding tunnel
   const handleStartTunnel = useCallback(
     async (rule: PortForwardingRule) => {
@@ -127,9 +141,8 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
         return;
       }
 
-      const _host = _rawHost.group
-        ? applyGroupDefaults(_rawHost, resolveGroupDefaults(_rawHost.group, groupConfigs))
-        : _rawHost;
+      const _host = resolveEffectiveHost(_rawHost);
+      const effectiveHosts = hosts.map((host) => resolveEffectiveHost(host));
 
       setPendingOperations((prev) => new Set([...prev, rule.id]));
       let errorShown = false;
@@ -138,7 +151,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
         const result = await startTunnel(
           rule,
           _host,
-          hosts,
+          effectiveHosts,
           keys,
           identities,
           (status, error) => {
@@ -169,7 +182,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
         });
       }
     },
-    [hosts, identities, keys, groupConfigs, setRuleStatus, startTunnel, t],
+    [hosts, identities, keys, resolveEffectiveHost, setRuleStatus, startTunnel, t],
   );
 
   // Stop a port forwarding tunnel
@@ -853,6 +866,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
           onContinue={() => setShowHostSelector(false)}
           availableKeys={keys}
           identities={identities}
+          proxyProfiles={proxyProfiles}
           managedSources={managedSources}
           onSaveHost={onSaveHost}
           onCreateGroup={_onCreateGroup}

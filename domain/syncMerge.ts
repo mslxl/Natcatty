@@ -344,6 +344,7 @@ export function mergeSyncPayloads(
     hosts: [],
     keys: [],
     identities: [],
+    proxyProfiles: [],
     snippets: [],
     customGroups: [],
     snippetPackages: [],
@@ -363,6 +364,7 @@ export function mergeSyncPayloads(
   const hosts = mergeEntityArrays(b.hosts ?? [], local.hosts ?? [], remote.hosts ?? []);
   const keys = mergeEntityArrays(b.keys ?? [], local.keys ?? [], remote.keys ?? []);
   const identities = mergeEntityArrays(b.identities ?? [], local.identities ?? [], remote.identities ?? []);
+  const proxyProfiles = mergeEntityArrays(b.proxyProfiles ?? [], local.proxyProfiles ?? [], remote.proxyProfiles ?? []);
   const snippets = mergeEntityArrays(b.snippets ?? [], local.snippets ?? [], remote.snippets ?? []);
   const portForwardingRules = mergeEntityArrays(
     b.portForwardingRules ?? [],
@@ -380,7 +382,7 @@ export function mergeSyncPayloads(
 
   // Aggregate stats
   const entityResults: Pick<EntityMergeResult<unknown>, 'added' | 'deleted' | 'modified' | 'conflicts'>[] =
-    [hosts, keys, identities, snippets, portForwardingRules, groupConfigsResult];
+    [hosts, keys, identities, proxyProfiles, snippets, portForwardingRules, groupConfigsResult];
   for (const r of entityResults) {
     summary.added.local += r.added.local;
     summary.added.remote += r.added.remote;
@@ -420,6 +422,7 @@ export function mergeSyncPayloads(
     hosts: hosts.merged,
     keys: keys.merged,
     identities: identities.merged,
+    proxyProfiles: proxyProfiles.merged,
     snippets: snippets.merged,
     customGroups,
     snippetPackages,
