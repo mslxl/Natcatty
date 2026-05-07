@@ -1949,7 +1949,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
             <p className="text-xs font-semibold">{t("hostDetails.telnet.credentials")}</p>
             <Input
               placeholder={t("hostDetails.telnet.username")}
-              value={form.telnetUsername || form.username || ""}
+              value={form.telnetUsername ?? form.username ?? ""}
               onChange={(e) =>
                 update("telnetUsername" as keyof Host, e.target.value)
               }
@@ -1958,7 +1958,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
             <Input
               placeholder={t("hostDetails.telnet.password")}
               type="password"
-              value={form.telnetPassword || form.password || ""}
+              value={form.telnetPassword ?? form.password ?? ""}
               onChange={(e) =>
                 update("telnetPassword" as keyof Host, e.target.value)
               }

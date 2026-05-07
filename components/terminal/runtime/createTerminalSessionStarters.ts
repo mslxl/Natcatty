@@ -781,10 +781,20 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
 
     try {
       const telnetEnv = buildTermEnv(ctx.host, ctx.terminalSettings);
+      const telnetUsername =
+        ctx.host.telnetUsername !== undefined
+          ? ctx.host.telnetUsername.trim()
+          : ctx.host.username?.trim();
+      const telnetPassword =
+        ctx.host.telnetPassword !== undefined
+          ? ctx.host.telnetPassword
+          : ctx.host.password;
       const id = await ctx.terminalBackend.startTelnetSession({
         sessionId: ctx.sessionId,
         hostname: ctx.host.hostname,
         port: ctx.host.telnetPort || ctx.host.port || 23,
+        username: telnetUsername,
+        password: telnetPassword,
         cols: term.cols,
         rows: term.rows,
         charset: ctx.host.charset,

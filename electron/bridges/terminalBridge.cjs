@@ -23,6 +23,7 @@ const { createZmodemSentry } = require("./zmodemHelper.cjs");
 const { discoverShells } = require("./shellDiscovery.cjs");
 const moshHandshake = require("./moshHandshake.cjs");
 const tempDirBridge = require("./tempDirBridge.cjs");
+const { createTelnetAutoLogin } = require("./telnetAutoLogin.cjs");
 
 const execFileAsync = promisify(execFile);
 
@@ -520,6 +521,13 @@ async function startTelnetSession(event, options) {
   return new Promise((resolve, reject) => {
     const socket = new net.Socket();
     let connected = false;
+    const telnetAutoLogin = createTelnetAutoLogin({
+      username: options.username,
+      password: options.password,
+      write(data) {
+        if (!socket.destroyed) socket.write(data);
+      },
+    });
 
     // Telnet protocol constants
     const TELNET = {
@@ -663,6 +671,7 @@ async function startTelnetSession(event, options) {
         _promptTrackTail: "",
         encoding: initialTelnetEncoding,
         decoderRef: telnetDecoderRef,
+        autoLogin: telnetAutoLogin,
       };
       session.flushPendingData = flushTelnet;
       sessions.set(sessionId, session);
@@ -700,6 +709,7 @@ async function startTelnetSession(event, options) {
         if (!decoded) return;
         const session = sessions.get(sessionId);
         if (session) trackSessionIdlePrompt(session, decoded);
+        telnetAutoLogin.handleText(decoded);
         bufferTelnetData(decoded);
         sessionLogStreamManager.appendData(sessionId, decoded);
       },
@@ -1555,6 +1565,10 @@ function writeToSession(event, payload) {
   }
 
   try {
+    if (session.type === 'telnet-native') {
+      session.autoLogin?.handleUserInput();
+    }
+
     if (session.stream) {
       session.stream.write(payload.data);
     } else if (session.proc) {

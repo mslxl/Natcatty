@@ -167,6 +167,8 @@ declare global {
       sessionId?: string;
       hostname: string;
       port?: number;
+      username?: string;
+      password?: string;
       cols?: number;
       rows?: number;
       charset?: string;
