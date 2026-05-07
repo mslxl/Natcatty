@@ -527,6 +527,14 @@ async function startTelnetSession(event, options) {
       write(data) {
         if (!socket.destroyed) socket.write(data);
       },
+      onComplete() {
+        const contents = electronModule.webContents.fromId(event.sender.id);
+        contents?.send("netcatty:telnet:auto-login-complete", { sessionId });
+      },
+      onUserInput() {
+        const contents = electronModule.webContents.fromId(event.sender.id);
+        contents?.send("netcatty:telnet:auto-login-cancelled", { sessionId });
+      },
     });
 
     // Telnet protocol constants
@@ -1565,7 +1573,7 @@ function writeToSession(event, payload) {
   }
 
   try {
-    if (session.type === 'telnet-native') {
+    if (session.type === 'telnet-native' && !payload.automated) {
       session.autoLogin?.handleUserInput();
     }
 

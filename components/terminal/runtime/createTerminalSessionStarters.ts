@@ -10,7 +10,12 @@ import {
   sanitizeCredentialValue,
 } from "../../../domain/credentials";
 import { resolveHostAuth } from "../../../domain/sshAuth";
-import { detectVendorFromSshVersion } from "../../../domain/host";
+import {
+  detectVendorFromSshVersion,
+  resolveTelnetPassword,
+  resolveTelnetPort,
+  resolveTelnetUsername,
+} from "../../../domain/host";
 
 /**
  * Per-connection token for stale-timer detection. The renderer reuses the
@@ -68,10 +73,18 @@ type TerminalBackendApi = {
     sessionId: string,
     cb: (evt: { exitCode?: number; signal?: number; error?: string; reason?: "exited" | "error" | "timeout" | "closed" }) => void,
   ) => () => void;
+  onTelnetAutoLoginComplete?: (
+    sessionId: string,
+    cb: (evt: { sessionId: string }) => void,
+  ) => (() => void) | undefined;
+  onTelnetAutoLoginCancelled?: (
+    sessionId: string,
+    cb: (evt: { sessionId: string }) => void,
+  ) => (() => void) | undefined;
   onChainProgress: (
     cb: (sessionId: string, hop: number, total: number, label: string, status: string, error?: string) => void,
   ) => (() => void) | undefined;
-  writeToSession: (sessionId: string, data: string) => void;
+  writeToSession: (sessionId: string, data: string, options?: { automated?: boolean }) => void;
   resizeSession: (sessionId: string, cols: number, rows: number) => void;
 };
 
@@ -209,6 +222,7 @@ const attachSessionToTerminal = (
   opts?: {
     onExitMessage?: (evt: { exitCode?: number; signal?: number; error?: string; reason?: string }) => string;
     onConnected?: () => void;
+    onExit?: (evt: { exitCode?: number; signal?: number; error?: string; reason?: string }) => void;
     // For serial: convert lone LF to CRLF to avoid "staircase effect"
     convertLfToCrlf?: boolean;
   },
@@ -263,8 +277,36 @@ const attachSessionToTerminal = (
     // (previously they would see the old token still in the map and pass).
     connectionTokensBySessionId.delete(ctx.sessionId);
 
+    opts?.onExit?.(evt);
     ctx.onSessionExit?.(ctx.sessionId, evt);
   });
+};
+
+const scheduleStartupCommand = (
+  ctx: TerminalSessionStartersContext,
+  id: string,
+  onSettled?: () => void,
+): (() => void) | undefined => {
+  const commandToRun = ctx.startupCommand || ctx.host.startupCommand;
+  if (!commandToRun || ctx.hasRunStartupCommandRef.current) return undefined;
+
+  ctx.hasRunStartupCommandRef.current = true;
+  const scheduledSessionId = id;
+  const timeoutId = setTimeout(() => {
+    if (!ctx.sessionRef.current || ctx.sessionRef.current !== scheduledSessionId) {
+      onSettled?.();
+      return;
+    }
+    const suffix = ctx.noAutoRun ? "" : "\r";
+    ctx.terminalBackend.writeToSession(ctx.sessionRef.current, `${commandToRun}${suffix}`, {
+      automated: true,
+    });
+    onSettled?.();
+    if (!ctx.noAutoRun && ctx.onCommandExecuted) {
+      ctx.onCommandExecuted(commandToRun, ctx.host.id, ctx.host.label, ctx.sessionId);
+    }
+  }, 600);
+  return () => clearTimeout(timeoutId);
 };
 
 const runDistroDetection = async (
@@ -698,21 +740,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           `\r\n[session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
       });
 
-      const commandToRun = ctx.startupCommand || ctx.host.startupCommand;
-      if (commandToRun && !ctx.hasRunStartupCommandRef.current) {
-        ctx.hasRunStartupCommandRef.current = true;
-        const scheduledSessionId = id;
-        setTimeout(() => {
-          // Guard against stale timers: if the session changed (e.g. user
-          // clicked Start Over quickly), skip to avoid double execution
-          if (!ctx.sessionRef.current || ctx.sessionRef.current !== scheduledSessionId) return;
-          const suffix = ctx.noAutoRun ? '' : '\r';
-          ctx.terminalBackend.writeToSession(ctx.sessionRef.current, `${commandToRun}${suffix}`);
-          if (!ctx.noAutoRun && ctx.onCommandExecuted) {
-            ctx.onCommandExecuted(commandToRun, ctx.host.id, ctx.host.label, ctx.sessionId);
-          }
-        }, 600);
-      }
+      scheduleStartupCommand(ctx, id);
 
       // Run OS detection only after successful connection. Mint a fresh
       // token for this specific connection attempt and register it as
@@ -779,20 +807,68 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       return;
     }
 
+    let disposeAutoLoginComplete: (() => void) | undefined;
+    let disposeAutoLoginCancelled: (() => void) | undefined;
+    let cancelPendingStartupCommand: (() => void) | undefined;
+    const disposeAutoLoginListener = () => {
+      disposeAutoLoginComplete?.();
+      disposeAutoLoginComplete = undefined;
+    };
+    const disposeAutoLoginCancelListener = () => {
+      disposeAutoLoginCancelled?.();
+      disposeAutoLoginCancelled = undefined;
+    };
+    const cleanupTelnetStartupWait = () => {
+      disposeAutoLoginListener();
+      disposeAutoLoginCancelListener();
+      cancelPendingStartupCommand?.();
+      cancelPendingStartupCommand = undefined;
+    };
     try {
       const telnetEnv = buildTermEnv(ctx.host, ctx.terminalSettings);
-      const telnetUsername =
-        ctx.host.telnetUsername !== undefined
-          ? ctx.host.telnetUsername.trim()
-          : ctx.host.username?.trim();
-      const telnetPassword =
-        ctx.host.telnetPassword !== undefined
-          ? ctx.host.telnetPassword
-          : ctx.host.password;
+      const telnetUsername = resolveTelnetUsername(ctx.host);
+      const rawTelnetPassword = resolveTelnetPassword(ctx.host);
+      const telnetPassword = sanitizeCredentialValue(rawTelnetPassword);
+      const hasTelnetPasswordForAutoLogin = rawTelnetPassword !== undefined;
+      if (isEncryptedCredentialPlaceholder(rawTelnetPassword)) {
+        const message = tr(
+          "terminal.auth.credentialsUnavailable",
+          "Saved credentials cannot be decrypted on this device. Please re-enter and save them again.",
+        );
+        ctx.setNeedsAuth(false);
+        ctx.setAuthRetryMessage(null);
+        ctx.setError(message);
+        term.writeln(`\r\n[${message}]`);
+        ctx.updateStatus("disconnected");
+        return;
+      }
+      const commandToRun = ctx.startupCommand || ctx.host.startupCommand;
+      const waitsForAutoLogin = Boolean(
+        commandToRun &&
+        (telnetUsername || hasTelnetPasswordForAutoLogin) &&
+        ctx.terminalBackend.onTelnetAutoLoginComplete,
+      );
+      let telnetSessionId = ctx.sessionId;
+      if (waitsForAutoLogin) {
+        disposeAutoLoginComplete = ctx.terminalBackend.onTelnetAutoLoginComplete?.(
+          ctx.sessionId,
+          () => {
+            disposeAutoLoginListener();
+            cancelPendingStartupCommand = scheduleStartupCommand(ctx, telnetSessionId, () => {
+              cancelPendingStartupCommand = undefined;
+              disposeAutoLoginCancelListener();
+            });
+          },
+        );
+        disposeAutoLoginCancelled = ctx.terminalBackend.onTelnetAutoLoginCancelled?.(
+          ctx.sessionId,
+          cleanupTelnetStartupWait,
+        );
+      }
       const id = await ctx.terminalBackend.startTelnetSession({
         sessionId: ctx.sessionId,
         hostname: ctx.host.hostname,
-        port: ctx.host.telnetPort || ctx.host.port || 23,
+        port: resolveTelnetPort(ctx.host),
         username: telnetUsername,
         password: telnetPassword,
         cols: term.cols,
@@ -801,12 +877,23 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         env: telnetEnv,
         sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
       });
+      telnetSessionId = id;
 
-      attachSessionToTerminal(ctx, term, id, {
-        onExitMessage: (evt) =>
-          `\r\n[Telnet session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
-      });
-    } catch (err) {
+	      attachSessionToTerminal(ctx, term, id, {
+	        onExitMessage: (evt) =>
+	          `\r\n[Telnet session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
+	        onExit: cleanupTelnetStartupWait,
+	      });
+	      const disposeTelnetExit = ctx.disposeExitRef.current;
+	      ctx.disposeExitRef.current = () => {
+	        cleanupTelnetStartupWait();
+	        disposeTelnetExit?.();
+	      };
+	      if (waitsForAutoLogin) {
+	        return;
+	      }
+	    } catch (err) {
+	      cleanupTelnetStartupWait();
       const message = err instanceof Error ? err.message : String(err);
       ctx.setError(message);
       term.writeln(`\r\n[Failed to start Telnet: ${message}]`);
@@ -925,19 +1012,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           `\r\n[Mosh session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
       });
 
-      const commandToRun = ctx.startupCommand || ctx.host.startupCommand;
-      if (commandToRun && !ctx.hasRunStartupCommandRef.current) {
-        ctx.hasRunStartupCommandRef.current = true;
-        const scheduledSessionId = id;
-        setTimeout(() => {
-          if (!ctx.sessionRef.current || ctx.sessionRef.current !== scheduledSessionId) return;
-          const suffix = ctx.noAutoRun ? '' : '\r';
-          ctx.terminalBackend.writeToSession(ctx.sessionRef.current, `${commandToRun}${suffix}`);
-          if (!ctx.noAutoRun && ctx.onCommandExecuted) {
-            ctx.onCommandExecuted(commandToRun, ctx.host.id, ctx.host.label, ctx.sessionId);
-          }
-        }, 600);
-      }
+      scheduleStartupCommand(ctx, id);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       ctx.setError(message);

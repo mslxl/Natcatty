@@ -304,7 +304,7 @@ declare global {
       };
     }>;
     setSessionEncoding?(sessionId: string, encoding: string): Promise<{ ok: boolean; encoding: string }>;
-    writeToSession(sessionId: string, data: string): void;
+    writeToSession(sessionId: string, data: string, options?: { automated?: boolean }): void;
     resizeSession(sessionId: string, cols: number, rows: number): void;
     closeSession(sessionId: string): void;
     // ZMODEM file transfer
@@ -328,6 +328,14 @@ declare global {
     onSessionExit(
       sessionId: string,
       cb: (evt: { exitCode?: number; signal?: number; error?: string; reason?: "exited" | "error" | "timeout" | "closed" }) => void
+    ): () => void;
+    onTelnetAutoLoginComplete?(
+      sessionId: string,
+      cb: (evt: { sessionId: string }) => void
+    ): () => void;
+    onTelnetAutoLoginCancelled?(
+      sessionId: string,
+      cb: (evt: { sessionId: string }) => void
     ): () => void;
     onAuthFailed?(
       sessionId: string,
