@@ -36,10 +36,15 @@ test("startTelnetSession answers login prompts with saved credentials", async ()
   const received = [];
   const server = net.createServer((socket) => {
     socket.setEncoding("utf8");
-    socket.write("Username: ");
+    let promptedForUsername = false;
+    socket.write("Device bannerPress RETURN to get started.");
     socket.on("data", (chunk) => {
       received.push(chunk);
       const joined = received.join("");
+      if (!promptedForUsername && joined.includes("\r")) {
+        promptedForUsername = true;
+        socket.write("Username: ");
+      }
       if (joined.includes("admin\r") && !joined.includes("secret\r")) {
         socket.write("\r\nPassword: ");
       }
@@ -78,8 +83,8 @@ test("startTelnetSession answers login prompts with saved credentials", async ()
     );
 
     assert.equal(result.sessionId, "telnet-auto-login-test");
-    await waitFor(() => received.join("").includes("admin\rsecret\r"));
-    assert.equal(received.join(""), "admin\rsecret\r");
+    await waitFor(() => received.join("").includes("\radmin\rsecret\r"));
+    assert.equal(received.join(""), "\radmin\rsecret\r");
   } finally {
     terminalBridge.cleanupAllSessions();
     await new Promise((resolve) => server.close(resolve));

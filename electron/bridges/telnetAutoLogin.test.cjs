@@ -46,6 +46,36 @@ test("telnet auto-login wakes devices that ask for return before login", () => {
   assert.deepEqual(writes, ["\r", "admin\r", "secret\r"]);
 });
 
+test("telnet auto-login handles prompts concatenated after wake banners", () => {
+  const writes = [];
+  const autoLogin = createTelnetAutoLogin({
+    username: "admin",
+    password: "secret",
+    write: (data) => writes.push(data),
+  });
+
+  autoLogin.handleText("Press RETURN to get started.");
+  autoLogin.handleText("Username: ");
+  autoLogin.handleText("\r\nPassword: ");
+
+  assert.deepEqual(writes, ["\r", "admin\r", "secret\r"]);
+});
+
+test("telnet auto-login handles wake banners concatenated with preceding text", () => {
+  const writes = [];
+  const autoLogin = createTelnetAutoLogin({
+    username: "admin",
+    password: "secret",
+    write: (data) => writes.push(data),
+  });
+
+  autoLogin.handleText("Netcatty local Telnet test servicePress RETURN to get started.");
+  autoLogin.handleText("Username: ");
+  autoLogin.handleText("\r\nPassword: ");
+
+  assert.deepEqual(writes, ["\r", "admin\r", "secret\r"]);
+});
+
 test("telnet auto-login stops when the user starts typing manually", () => {
   const writes = [];
   const autoLogin = createTelnetAutoLogin({
