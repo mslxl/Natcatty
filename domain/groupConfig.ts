@@ -82,6 +82,11 @@ const INHERITABLE_KEYS: (keyof GroupConfig)[] = [
   'backspaceBehavior',
 ];
 
+const EMPTY_STRING_OVERRIDES_GROUP_DEFAULT = new Set<keyof GroupConfig>([
+  'telnetUsername',
+  'telnetPassword',
+]);
+
 /**
  * Apply group defaults to a host. Only fills in fields the host doesn't already have.
  * Returns a new host object — does NOT mutate the original.
@@ -101,7 +106,12 @@ export function applyGroupDefaults(
     if (key === 'proxyConfig' && (host.proxyProfileId !== undefined || hostHasUsableProxyProfile)) continue;
     const hostValue = (effective as unknown as Record<string, unknown>)[key];
     const groupValue = (groupDefaults as unknown as Record<string, unknown>)[key];
-    if ((hostValue === undefined || hostValue === '' || hostValue === null) && groupValue !== undefined) {
+    const emptyStringIsOverride = EMPTY_STRING_OVERRIDES_GROUP_DEFAULT.has(key);
+    const shouldInherit =
+      hostValue === undefined ||
+      hostValue === null ||
+      (hostValue === '' && !emptyStringIsOverride);
+    if (shouldInherit && groupValue !== undefined) {
       (effective as unknown as Record<string, unknown>)[key] = groupValue;
     }
   }

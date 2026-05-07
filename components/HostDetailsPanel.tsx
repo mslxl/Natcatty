@@ -35,6 +35,7 @@ import { resolveGroupDefaults, resolveGroupTerminalThemeId } from "../domain/gro
 import {
   getEffectiveHostDistro,
   LINUX_DISTRO_OPTIONS,
+  normalizePrimaryTelnetState,
   NETWORK_DEVICE_OPTIONS,
 } from "../domain/host";
 import { isCompleteProxyConfig, normalizeManualProxyConfig } from "../domain/proxyProfiles";
@@ -90,6 +91,44 @@ type SubPanel =
   | "theme-select"
   | "telnet-theme-select";
 
+export const parseOptionalPortInput = (value: string): number | undefined =>
+  value ? Number(value) : undefined;
+
+const resolveDetailsTelnetPort = (
+  host: Host,
+  groupDefaults?: Partial<GroupConfig>,
+): number => {
+  if (host.telnetPort !== undefined && host.telnetPort !== null) return host.telnetPort;
+  if (groupDefaults?.telnetPort !== undefined && groupDefaults.telnetPort !== null) {
+    return groupDefaults.telnetPort;
+  }
+  if (host.protocol === "telnet") {
+    if (host.port !== undefined && host.port !== null) return host.port;
+    if (groupDefaults?.port !== undefined && groupDefaults.port !== null) return groupDefaults.port;
+  }
+  return 23;
+};
+
+const resolveDetailsTelnetUsername = (
+  host: Host,
+  groupDefaults?: Partial<GroupConfig>,
+): string =>
+  host.telnetUsername !== undefined
+    ? host.telnetUsername
+    : groupDefaults?.telnetUsername !== undefined
+      ? groupDefaults.telnetUsername
+      : host.username ?? groupDefaults?.username ?? "";
+
+const resolveDetailsTelnetPassword = (
+  host: Host,
+  groupDefaults?: Partial<GroupConfig>,
+): string =>
+  host.telnetPassword !== undefined
+    ? host.telnetPassword
+    : groupDefaults?.telnetPassword !== undefined
+      ? groupDefaults.telnetPassword
+      : host.password ?? groupDefaults?.password ?? "";
+
 const LINUX_DISTRO_OPTION_IDS = [
   ...LINUX_DISTRO_OPTIONS,
   ...NETWORK_DEVICE_OPTIONS,
@@ -140,7 +179,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   const { checkSshAgent } = useApplicationBackend();
   const [form, setForm] = useState<Host>(
     () =>
-      initialData ||
+      (initialData ? normalizePrimaryTelnetState(initialData) : null) ||
       ({
         id: crypto.randomUUID(),
         label: "",
@@ -200,14 +239,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
 
   useEffect(() => {
     if (initialData) {
-      // Ensure telnetEnabled is set when protocol is telnet
-      const updatedData = { ...initialData };
-      if (initialData.protocol === "telnet" && !initialData.telnetEnabled) {
-        updatedData.telnetEnabled = true;
-        updatedData.telnetPort =
-          initialData.telnetPort || initialData.port || 23;
-      }
-      setForm(updatedData);
+      setForm(normalizePrimaryTelnetState(initialData));
       setGroupInputValue(initialData.group || "");
       // Reset password visibility when host changes for privacy
       setShowPassword(false);
@@ -244,6 +276,9 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   );
   const effectiveTelnetThemeId =
     form.protocols?.find((p) => p.protocol === "telnet")?.theme || effectiveThemeId;
+  const effectiveTelnetPort = resolveDetailsTelnetPort(form, effectiveGroupDefaults);
+  const effectiveTelnetUsername = resolveDetailsTelnetUsername(form, effectiveGroupDefaults);
+  const effectiveTelnetPassword = resolveDetailsTelnetPassword(form, effectiveGroupDefaults);
   const distroOptions = useMemo(
     () =>
       LINUX_DISTRO_OPTION_IDS.map((value) => ({
@@ -424,17 +459,22 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
     }
 
     const { proxyConfig: _draftProxyConfig, ...formWithoutProxyDraft } = form;
-    const cleaned: Host = {
+    const finalPort =
+      form.protocol === "telnet"
+        ? form.port
+        : form.port ?? (groupDefaults?.port ? undefined : 22);
+    let cleaned: Host = {
       ...formWithoutProxyDraft,
       ...(normalizedProxyConfig && { proxyConfig: normalizedProxyConfig }),
       label: finalLabel,
       group: finalGroup,
       tags: form.tags || [],
-      port: form.port ?? (groupDefaults?.port ? undefined : 22),
+      port: finalPort,
       // Clear password if savePassword is explicitly set to false
       password: form.savePassword === false ? undefined : form.password,
       managedSourceId: finalManagedSourceId,
     };
+    cleaned = normalizePrimaryTelnetState(cleaned);
     const preserveLegacyTheme = initialData?.theme != null && cleaned.themeOverride !== false;
     const preserveLegacyFontFamily = initialData?.fontFamily != null && cleaned.fontFamilyOverride !== false;
     const preserveLegacyFontSize = initialData?.fontSize != null && cleaned.fontSizeOverride !== false;
@@ -687,7 +727,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
               ...(form.protocols || []),
               {
                 protocol: "telnet" as const,
-                port: form.telnetPort || 23,
+                port: effectiveTelnetPort,
                 enabled: true,
                 theme: themeId,
               },
@@ -1925,42 +1965,46 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
         {form.telnetEnabled || form.protocol === "telnet" ? (
           <Card className="p-3 space-y-3 bg-card border-border/80">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 bg-secondary/70 border border-border/70 rounded-md px-2 py-1">
+              <div className="flex-1 min-w-0 h-10 flex items-center gap-2 bg-secondary/70 border border-border/70 rounded-md px-3">
                 <span className="text-xs text-muted-foreground">{t("hostDetails.telnetOn")}</span>
-                <Input
-                  type="number"
-                  value={form.telnetPort || 23}
-                  onChange={(e) => update("telnetPort", Number(e.target.value))}
-                  className="h-8 w-16 text-center"
-                />
-                <span className="text-xs text-muted-foreground">{t("hostDetails.port")}</span>
+                <div className="ml-auto w-1/2 min-w-0 flex items-center gap-2 justify-end">
+	                  <Input
+	                    type="number"
+	                    value={effectiveTelnetPort}
+	                    onChange={(e) => update("telnetPort", parseOptionalPortInput(e.target.value))}
+	                    className="h-8 flex-1 min-w-0 text-center"
+	                  />
+                  <span className="text-xs text-muted-foreground">{t("hostDetails.port")}</span>
+                </div>
               </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                onClick={() => update("telnetEnabled", false)}
-              >
-                <X size={14} />
-              </Button>
+              {form.protocol !== "telnet" && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                  onClick={() => update("telnetEnabled", false)}
+                >
+                  <X size={14} />
+                </Button>
+              )}
             </div>
 
             {/* Telnet Credentials */}
             <p className="text-xs font-semibold">{t("hostDetails.telnet.credentials")}</p>
-            <Input
-              placeholder={t("hostDetails.telnet.username")}
-              value={form.telnetUsername || form.username || ""}
-              onChange={(e) =>
-                update("telnetUsername" as keyof Host, e.target.value)
-              }
+	            <Input
+	              placeholder={t("hostDetails.telnet.username")}
+	              value={effectiveTelnetUsername}
+	              onChange={(e) =>
+	                update("telnetUsername" as keyof Host, e.target.value)
+	              }
               className="h-10"
             />
             <Input
-              placeholder={t("hostDetails.telnet.password")}
-              type="password"
-              value={form.telnetPassword || form.password || ""}
-              onChange={(e) =>
-                update("telnetPassword" as keyof Host, e.target.value)
+	              placeholder={t("hostDetails.telnet.password")}
+	              type="password"
+	              value={effectiveTelnetPassword}
+	              onChange={(e) =>
+	                update("telnetPassword" as keyof Host, e.target.value)
               }
               className="h-10"
             />
@@ -2009,7 +2053,6 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
             className="w-full h-10 justify-start gap-2 border border-dashed border-border/60"
             onClick={() => {
               update("telnetEnabled", true);
-              update("telnetPort", 23);
             }}
           >
             <Plus size={14} />

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { applyGroupDefaults, resolveGroupDefaults } from "./groupConfig.ts";
+import { resolveTelnetPassword, resolveTelnetUsername } from "./host.ts";
 import type { GroupConfig, Host } from "./models.ts";
 
 const host = (overrides: Partial<Host> = {}): Host => ({
@@ -129,4 +130,55 @@ test("resolveGroupDefaults keeps missing child proxy profiles instead of using p
 
   assert.equal(resolved.proxyProfileId, "missing-proxy");
   assert.equal(resolved.proxyConfig, undefined);
+});
+
+test("applyGroupDefaults preserves explicitly cleared telnet credentials", () => {
+  const result = applyGroupDefaults(
+    host({
+      username: "ssh-user",
+      password: "ssh-password",
+      telnetUsername: "",
+      telnetPassword: "",
+    }),
+    {
+      telnetUsername: "group-telnet-user",
+      telnetPassword: "group-telnet-password",
+    },
+  );
+
+  assert.equal(result.telnetUsername, "");
+  assert.equal(result.telnetPassword, "");
+  assert.equal(resolveTelnetUsername(result), "");
+  assert.equal(resolveTelnetPassword(result), "");
+});
+
+test("applyGroupDefaults still inherits telnet credentials when host fields are unset", () => {
+  const result = applyGroupDefaults(
+    host({
+      username: "ssh-user",
+      password: "ssh-password",
+    }),
+    {
+      telnetUsername: "group-telnet-user",
+      telnetPassword: "group-telnet-password",
+    },
+  );
+
+  assert.equal(result.telnetUsername, "group-telnet-user");
+  assert.equal(result.telnetPassword, "group-telnet-password");
+  assert.equal(resolveTelnetUsername(result), "group-telnet-user");
+  assert.equal(resolveTelnetPassword(result), "group-telnet-password");
+});
+
+test("applyGroupDefaults continues to inherit empty ssh username from the group", () => {
+  const result = applyGroupDefaults(
+    host({
+      username: "",
+    }),
+    {
+      username: "group-ssh-user",
+    },
+  );
+
+  assert.equal(result.username, "group-ssh-user");
 });

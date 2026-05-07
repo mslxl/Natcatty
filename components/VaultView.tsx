@@ -36,8 +36,16 @@ import { useI18n } from "../application/i18n/I18nProvider";
 import { useStoredViewMode } from "../application/state/useStoredViewMode";
 import { useStoredBoolean } from "../application/state/useStoredBoolean";
 import { useTreeExpandedState } from "../application/state/useTreeExpandedState";
+import { sanitizeCredentialValue } from "../domain/credentials";
 import { resolveGroupDefaults, applyGroupDefaults } from "../domain/groupConfig";
-import { getEffectiveHostDistro, sanitizeHost, upsertHostById } from "../domain/host";
+import {
+  getEffectiveHostDistro,
+  resolveTelnetPassword,
+  resolveTelnetPort,
+  resolveTelnetUsername,
+  sanitizeHost,
+  upsertHostById,
+} from "../domain/host";
 import { importVaultHostsFromText, exportHostsToCsvWithStats } from "../domain/vaultImport";
 import type { VaultImportFormat } from "../domain/vaultImport";
 import {
@@ -493,9 +501,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     const isTelnet = effective.protocol === "telnet";
 
     const defaultPort = isTelnet ? 23 : 22;
-    const effectivePort = isTelnet
-      ? (effective.telnetPort ?? effective.port ?? 23)
-      : (effective.port ?? 22);
+    const effectivePort = isTelnet ? resolveTelnetPort(effective) : (effective.port ?? 22);
 
     // Bracket IPv6 addresses when appending non-default port
     let address: string;
@@ -514,12 +520,13 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
       : undefined;
 
     const username = isTelnet
-      ? (effective.telnetUsername?.trim() || effective.username?.trim())
+      ? resolveTelnetUsername(effective)
       : (identity?.username?.trim() || effective.username?.trim());
 
-    const password = isTelnet
-      ? (effective.telnetPassword || effective.password)
+    const rawPassword = isTelnet
+      ? resolveTelnetPassword(effective)
       : (identity?.password || effective.password);
+    const password = sanitizeCredentialValue(rawPassword);
 
     if (!password) {
       toast.warning(t('vault.hosts.copyCredentials.toast.noPassword'));
@@ -2525,11 +2532,12 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
                       isMultiSelectMode={isMultiSelectMode}
                       selectedHostIds={selectedHostIds}
                       toggleHostSelection={toggleHostSelection}
-                      getDropTargetClasses={(path) =>
-                        getDropTargetClasses({ kind: "group", path })
-                      }
-                      setDragOverDropTarget={setGroupDragOverDropTarget}
-                    />
+	                      getDropTargetClasses={(path) =>
+	                        getDropTargetClasses({ kind: "group", path })
+	                      }
+	                      setDragOverDropTarget={setGroupDragOverDropTarget}
+	                      groupConfigs={groupConfigs}
+	                    />
                   ) : sortMode === "group" && groupedDisplayHosts ? (
                     <div className="space-y-6">
                         {groupedDisplayHosts.map((group) => (
