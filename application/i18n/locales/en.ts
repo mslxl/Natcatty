@@ -1814,6 +1814,7 @@ const en: Messages = {
   'passphrase.unlock': 'Unlock',
   'passphrase.unlocking': 'Unlocking...',
   'passphrase.skip': 'Skip',
+  'passphrase.remember': 'Remember this passphrase',
 
   // Text Editor
   'sftp.editor.wordWrap': 'Word Wrap',

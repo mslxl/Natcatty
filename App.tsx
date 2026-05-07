@@ -37,7 +37,9 @@ import { AlertTriangle, Download, Trash2 } from 'lucide-react';
 import {
   STORAGE_KEY_DEBUG_HOTKEYS,
   STORAGE_KEY_PORT_FORWARDING,
+  STORAGE_KEY_DEFAULT_KEY_PASSPHRASES,
 } from './infrastructure/config/storageKeys';
+import { encryptField, decryptField } from './infrastructure/persistence/secureFieldAdapter';
 import { getEffectiveKnownHosts } from './infrastructure/syncHelpers';
 import { TopTabs } from './components/TopTabs';
 import { Button } from './components/ui/button';
@@ -180,6 +182,27 @@ const TerminalLayerMount: React.FC<TerminalLayerProps> = (props) => {
   );
 };
 
+// Helper functions for default SSH key passphrase persistence
+async function saveDefaultKeyPassphrase(keyPath: string, passphrase: string): Promise<void> {
+  const store = localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES) ?? {};
+  store[keyPath] = await encryptField(passphrase) ?? passphrase;
+  localStorageAdapter.write(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES, store);
+}
+
+async function loadDefaultKeyPassphrase(keyPath: string): Promise<string | null> {
+  const store = localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES);
+  const enc = store?.[keyPath];
+  if (!enc) return null;
+  return (await decryptField(enc)) ?? null;
+}
+
+async function removeDefaultKeyPassphrase(keyPath: string): Promise<void> {
+  const store = localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES);
+  if (!store) return;
+  delete store[keyPath];
+  localStorageAdapter.write(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES, store);
+}
+
 function App({ settings }: { settings: SettingsState }) {
   const { t } = useI18n();
 
@@ -203,6 +226,8 @@ function App({ settings }: { settings: SettingsState }) {
   const [keyboardInteractiveQueue, setKeyboardInteractiveQueue] = useState<KeyboardInteractiveRequest[]>([]);
   // Passphrase request queue for encrypted SSH keys
   const [passphraseQueue, setPassphraseQueue] = useState<PassphraseRequest[]>([]);
+  // Track keys that were auto-responded in this session (to detect wrong saved passphrases)
+  const autoRespondedKeysRef = useRef<Set<string>>(new Set());
 
   const {
     theme,
@@ -983,8 +1008,34 @@ function App({ settings }: { settings: SettingsState }) {
     const bridge = netcattyBridge.get();
     if (!bridge?.onPassphraseRequest) return;
 
-    const unsubscribe = bridge.onPassphraseRequest((request) => {
+    const unsubscribe = bridge.onPassphraseRequest(async (request) => {
       console.log('[App] Passphrase request received:', request);
+
+      // Check if this key was already auto-responded in this session
+      // If so, the saved passphrase was wrong - remove it and show modal
+      if (autoRespondedKeysRef.current.has(request.keyPath)) {
+        console.log('[App] Key was auto-responded before but failed, removing saved passphrase');
+        autoRespondedKeysRef.current.delete(request.keyPath);
+        await removeDefaultKeyPassphrase(request.keyPath);
+        setPassphraseQueue(prev => [...prev, {
+          requestId: request.requestId,
+          keyPath: request.keyPath,
+          keyName: request.keyName,
+          hostname: request.hostname,
+        }]);
+        return;
+      }
+
+      // Try to load saved passphrase
+      const saved = await loadDefaultKeyPassphrase(request.keyPath);
+      if (saved) {
+        console.log('[App] Auto-responding with saved passphrase for:', request.keyPath);
+        autoRespondedKeysRef.current.add(request.keyPath);
+        void bridge.respondPassphrase?.(request.requestId, saved, false);
+        return;
+      }
+
+      // No saved passphrase, show modal
       setPassphraseQueue(prev => [...prev, {
         requestId: request.requestId,
         keyPath: request.keyPath,
@@ -999,13 +1050,25 @@ function App({ settings }: { settings: SettingsState }) {
   }, []);
 
   // Handle passphrase submit
-  const handlePassphraseSubmit = useCallback((requestId: string, passphrase: string) => {
+  const handlePassphraseSubmit = useCallback(async (requestId: string, passphrase: string, remember: boolean) => {
     const bridge = netcattyBridge.get();
     if (bridge?.respondPassphrase) {
       void bridge.respondPassphrase(requestId, passphrase, false);
     }
+
+    // Save passphrase if requested
+    if (remember) {
+      const request = passphraseQueue.find(r => r.requestId === requestId);
+      if (request?.keyPath) {
+        console.log('[App] Saving passphrase for:', request.keyPath);
+        void saveDefaultKeyPassphrase(request.keyPath, passphrase);
+        // Clear from auto-responded tracking since user manually entered it
+        autoRespondedKeysRef.current.delete(request.keyPath);
+      }
+    }
+
     setPassphraseQueue(prev => prev.filter(r => r.requestId !== requestId));
-  }, []);
+  }, [passphraseQueue]);
 
   // Handle passphrase cancel
   const handlePassphraseCancel = useCallback((requestId: string) => {
