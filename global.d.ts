@@ -43,7 +43,7 @@ declare global {
     passphrase?: string;
     publicKey?: string;
     keyId?: string;
-    keySource?: 'generated' | 'imported';
+    keySource?: 'generated' | 'imported' | 'reference';
     label?: string; // Display label for UI
     proxy?: NetcattyProxyConfig;
     identityFilePaths?: string[];
@@ -71,7 +71,7 @@ declare global {
     certificate?: string;
     publicKey?: string; // OpenSSH public key line
     keyId?: string;
-    keySource?: 'generated' | 'imported';
+    keySource?: 'generated' | 'imported' | 'reference';
     agentForwarding?: boolean;
     x11Forwarding?: boolean;
     x11Display?: string;
@@ -379,6 +379,9 @@ declare global {
     ): Promise<{ success: boolean; error?: string }>;
     onPassphraseTimeout?(
       cb: (event: { requestId: string }) => void
+    ): () => void;
+    onPassphraseAuthFailed?(
+      cb: (event: { keyPaths: string[] }) => void
     ): () => void;
 
     // SFTP operations

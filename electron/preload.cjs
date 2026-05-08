@@ -19,6 +19,7 @@ const fullscreenChangeListeners = new Set();
 const keyboardInteractiveListeners = new Set();
 const passphraseListeners = new Set();
 const passphraseTimeoutListeners = new Set();
+const passphraseAuthFailedListeners = new Set();
 const updateDownloadProgressListeners = new Set();
 const updateDownloadedListeners = new Set();
 const updateAvailableListeners = new Set();
@@ -303,6 +304,17 @@ ipcRenderer.on("netcatty:passphrase-timeout", (_event, payload) => {
       cb(payload);
     } catch (err) {
       console.error("Passphrase timeout callback failed", err);
+    }
+  });
+});
+
+// Passphrase auth failed events (saved passphrase was wrong)
+ipcRenderer.on("netcatty:passphrase-auth-failed", (_event, payload) => {
+  passphraseAuthFailedListeners.forEach((cb) => {
+    try {
+      cb(payload);
+    } catch (err) {
+      console.error("Passphrase auth-failed callback failed", err);
     }
   });
 });
@@ -710,6 +722,10 @@ const api = {
   onPassphraseTimeout: (cb) => {
     passphraseTimeoutListeners.add(cb);
     return () => passphraseTimeoutListeners.delete(cb);
+  },
+  onPassphraseAuthFailed: (cb) => {
+    passphraseAuthFailedListeners.add(cb);
+    return () => passphraseAuthFailedListeners.delete(cb);
   },
   openSftp: async (options) => {
     const result = await ipcRenderer.invoke("netcatty:sftp:open", options);

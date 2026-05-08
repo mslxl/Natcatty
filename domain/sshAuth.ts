@@ -18,6 +18,7 @@ type ResolvedHostAuth = {
   keyId?: string;
   key?: SSHKey;
   passphrase?: string;
+  identityFilePath?: string;
 };
 
 const inferAuthMethod = (opts: {
@@ -78,6 +79,10 @@ export const resolveHostAuth = (args: {
 
   const passphrase = override?.passphrase || key?.passphrase || undefined;
 
+  const identityFilePath = key?.source === 'reference' && key.filePath
+    ? key.filePath
+    : undefined;
+
   return {
     identity,
     authMethod,
@@ -86,5 +91,6 @@ export const resolveHostAuth = (args: {
     keyId,
     key,
     passphrase,
+    identityFilePath,
   };
 };

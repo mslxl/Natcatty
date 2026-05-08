@@ -153,6 +153,7 @@ interface HostDetailsPanelProps {
   groupDefaults?: Partial<import('../domain/models').GroupConfig>;
   groupConfigs?: GroupConfig[];
   layout?: AsidePanelLayout;
+  onImportKey?: (draft: Partial<SSHKey>) => SSHKey;
 }
 
 const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
@@ -174,6 +175,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   groupDefaults,
   groupConfigs = [],
   layout = "overlay",
+  onImportKey,
 }) => {
   const { t } = useI18n();
   const { checkSshAgent } = useApplicationBackend();
@@ -1316,11 +1318,27 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && newKeyFilePath.trim()) {
                           e.preventDefault();
-                          const paths = [...(form.identityFilePaths || []), newKeyFilePath.trim()];
-                          update("identityFilePaths", paths);
-                          update("identityFileId", undefined);
-                          update("authMethod", "key");
+                          const path = newKeyFilePath.trim();
+                          if (onImportKey) {
+                            const fileName = path.split('/').pop() || path;
+                            const key = onImportKey({
+                              source: 'reference',
+                              filePath: path,
+                              label: fileName,
+                              privateKey: '',
+                              category: 'key',
+                            });
+                            update("identityFileId", key.id);
+                            update("identityFilePaths", undefined);
+                            update("authMethod", "key");
+                          } else {
+                            const paths = [...(form.identityFilePaths || []), path];
+                            update("identityFilePaths", paths);
+                            update("identityFileId", undefined);
+                            update("authMethod", "key");
+                          }
                           setNewKeyFilePath("");
+                          setSelectedCredentialType(null);
                         }
                       }}
                     />
@@ -1338,10 +1356,25 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
                           [{ name: "All Files", extensions: ["*"] }]
                         );
                         if (filePath) {
-                          const paths = [...(form.identityFilePaths || []), filePath];
-                          update("identityFilePaths", paths);
-                          update("identityFileId", undefined);
-                          update("authMethod", "key");
+                          if (onImportKey) {
+                            const fileName = filePath.split('/').pop() || filePath;
+                            const key = onImportKey({
+                              source: 'reference',
+                              filePath,
+                              label: fileName,
+                              privateKey: '',
+                              category: 'key',
+                            });
+                            update("identityFileId", key.id);
+                            update("identityFilePaths", undefined);
+                            update("authMethod", "key");
+                          } else {
+                            const paths = [...(form.identityFilePaths || []), filePath];
+                            update("identityFilePaths", paths);
+                            update("identityFileId", undefined);
+                            update("authMethod", "key");
+                          }
+                          setSelectedCredentialType(null);
                         }
                       }}
                     >

@@ -782,21 +782,26 @@ async function startSSHSession(event, options) {
             : keyPath;
           const keyContent = await fs.promises.readFile(resolvedPath, "utf8");
           connectOpts.privateKey = keyContent;
-          // Check if key is encrypted — if so, prompt for passphrase
+          // Check if key is encrypted — if so, use provided passphrase or prompt
           if (isKeyEncrypted(keyContent)) {
-            log("Identity file is encrypted, requesting passphrase", { keyPath: resolvedPath });
-            const result = await passphraseHandler.requestPassphrase(
-              sender,
-              resolvedPath,
-              path.basename(resolvedPath),
-              options.hostname
-            );
-            if (result?.passphrase) {
-              connectOpts.passphrase = result.passphrase;
+            if (options.passphrase) {
+              log("Identity file is encrypted, using provided passphrase", { keyPath: resolvedPath });
+              connectOpts.passphrase = options.passphrase;
             } else {
-              // Cancelled/skipped/timeout — clear encrypted key, try next file
-              delete connectOpts.privateKey;
-              continue;
+              log("Identity file is encrypted, requesting passphrase", { keyPath: resolvedPath });
+              const result = await passphraseHandler.requestPassphrase(
+                sender,
+                resolvedPath,
+                path.basename(resolvedPath),
+                options.hostname
+              );
+              if (result?.passphrase) {
+                connectOpts.passphrase = result.passphrase;
+              } else {
+                // Cancelled/skipped/timeout — clear encrypted key, try next file
+                delete connectOpts.privateKey;
+                continue;
+              }
             }
           }
           log("Loaded identity file", { keyPath: resolvedPath, encrypted: isKeyEncrypted(keyContent) });
@@ -1856,6 +1861,13 @@ async function startSSHSessionWrapper(event, options) {
                 _unlockedEncryptedKeys: passphraseResult.keys,
               });
             } catch (retryErr) {
+              // Notify renderer that passphrase-based retry failed,
+              // so it can clear any saved passphrases that didn't work.
+              try {
+                const failedKeyPaths = passphraseResult.keys.map(k => k.keyPath);
+                event.sender.send('netcatty:passphrase-auth-failed', { keyPaths: failedKeyPaths });
+              } catch (_) { /* sender may be destroyed */ }
+
               // Re-wrap retry errors the same way as initial errors
               const isRetryAuthError = retryErr.message?.toLowerCase().includes('authentication') ||
                 retryErr.message?.toLowerCase().includes('auth') ||

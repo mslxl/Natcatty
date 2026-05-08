@@ -504,7 +504,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         port: jumpHost.port || 22,
         username: jumpAuth.username || "root",
         password: jumpPassword,
-        privateKey: jumpPrivateKey,
+        privateKey: jumpKey?.source === 'reference' ? undefined : jumpPrivateKey,
         certificate: jumpKey?.certificate,
         passphrase: jumpPassphrase,
         publicKey: jumpKey?.publicKey,
@@ -520,7 +520,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
             password: sanitizeCredentialValue(jumpHost.proxyConfig.password),
           }
           : undefined,
-        identityFilePaths: jumpHost.identityFilePaths,
+        identityFilePaths: jumpKey?.source === 'reference' && jumpKey.filePath
+          ? [jumpKey.filePath]
+          : jumpHost.identityFilePaths,
       };
     });
 
@@ -645,7 +647,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           username: effectiveUsername,
           port: ctx.host.port || 22,
           password: attempt.password,
-          privateKey: attempt.key?.privateKey,
+          privateKey: attempt.key?.source === 'reference' ? undefined : attempt.key?.privateKey,
           certificate: attempt.key?.certificate,
           publicKey: attempt.key?.publicKey,
           keyId: attempt.key?.id,
@@ -665,15 +667,16 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           jumpHosts: jumpHosts.length > 0 ? jumpHosts : undefined,
           keepaliveInterval: ctx.terminalSettings?.keepaliveInterval,
           sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
-          // Only pass local key paths if no vault key is explicitly configured
-          identityFilePaths: attempt.key ? undefined : ctx.host.identityFilePaths,
+          identityFilePaths: attempt.key?.source === 'reference' && attempt.key.filePath
+            ? [attempt.key.filePath]
+            : (attempt.key ? undefined : ctx.host.identityFilePaths),
         });
       };
 
       let id: string;
       // Respect explicit auth method selection - don't use key if password auth was explicitly selected
       const authMethod = resolvedAuth.authMethod;
-      const hasKeyMaterial = !!sanitizeCredentialValue(key?.privateKey) && authMethod !== 'password';
+      const hasKeyMaterial = (!!sanitizeCredentialValue(key?.privateKey) || (key?.source === 'reference' && !!key.filePath)) && authMethod !== 'password';
       const hasPassword = !!effectivePassword;
 
       const needsCredentialReentry =
@@ -964,7 +967,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const key = authMethod === "password" ? undefined : resolvedAuth.key;
       const hasEncryptedPrimaryPassword = isEncryptedCredentialPlaceholder(resolvedAuth.password);
       const hasEncryptedPrimaryKey = isEncryptedCredentialPlaceholder(resolvedAuth.key?.privateKey);
-      const hasKeyMaterial = !!sanitizeCredentialValue(key?.privateKey) && authMethod !== "password";
+      const hasKeyMaterial = (!!sanitizeCredentialValue(key?.privateKey) || (key?.source === 'reference' && !!key.filePath)) && authMethod !== "password";
       const hasPassword = !!effectivePassword;
       const needsCredentialReentry =
         (authMethod === "password" && hasEncryptedPrimaryPassword && !hasPassword) ||
@@ -990,13 +993,15 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         hostname: ctx.host.hostname,
         username: resolvedAuth.username || "root",
         password: effectivePassword,
-        privateKey: sanitizeCredentialValue(key?.privateKey),
+        privateKey: key?.source === 'reference' ? undefined : sanitizeCredentialValue(key?.privateKey),
         certificate: key?.certificate,
         keyId: key?.id,
         passphrase: key
           ? (effectivePassphrase || sanitizeCredentialValue(key.passphrase))
           : undefined,
-        identityFilePaths: authMethod !== "password" && !key ? ctx.host.identityFilePaths : undefined,
+        identityFilePaths: key?.source === 'reference' && key.filePath
+          ? [key.filePath]
+          : (authMethod !== "password" && !key ? ctx.host.identityFilePaths : undefined),
         port: ctx.host.port || 22,
         moshServerPath: ctx.host.moshServerPath,
         agentForwarding: ctx.host.agentForwarding,

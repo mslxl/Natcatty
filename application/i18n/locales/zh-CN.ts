@@ -1696,6 +1696,7 @@ const zhCN: Messages = {
   'keychain.edit.publicKey': '公钥',
   'keychain.edit.certificate': '证书',
   'keychain.edit.certificatePlaceholder': '证书内容（可选）',
+  'keychain.edit.filePath': '文件路径',
   'keychain.edit.keyExport': '密钥导出',
   'keychain.edit.exportToHost': '导出到主机',
 
