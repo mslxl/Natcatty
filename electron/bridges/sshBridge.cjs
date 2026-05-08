@@ -784,24 +784,46 @@ async function startSSHSession(event, options) {
           connectOpts.privateKey = keyContent;
           // Check if key is encrypted — if so, use provided passphrase or prompt
           if (isKeyEncrypted(keyContent)) {
+            let resolved = false;
+            let passphraseInvalid = false;
+            // Try provided passphrase first
             if (options.passphrase) {
-              log("Identity file is encrypted, using provided passphrase", { keyPath: resolvedPath });
-              connectOpts.passphrase = options.passphrase;
-            } else {
-              log("Identity file is encrypted, requesting passphrase", { keyPath: resolvedPath });
+              log("Identity file is encrypted, trying provided passphrase", { keyPath: resolvedPath });
+              const parsed = sshUtils.parseKey(keyContent, options.passphrase);
+              if (parsed && !(parsed instanceof Error)) {
+                connectOpts.passphrase = options.passphrase;
+                resolved = true;
+              } else {
+                log("Provided passphrase failed, will prompt user", { keyPath: resolvedPath });
+                passphraseInvalid = true;
+              }
+            }
+            // Prompt user until a valid passphrase is entered or they cancel/skip
+            while (!resolved) {
+              log("Identity file is encrypted, requesting passphrase", { keyPath: resolvedPath, passphraseInvalid });
               const result = await passphraseHandler.requestPassphrase(
                 sender,
                 resolvedPath,
                 path.basename(resolvedPath),
-                options.hostname
+                options.hostname,
+                passphraseInvalid
               );
-              if (result?.passphrase) {
-                connectOpts.passphrase = result.passphrase;
-              } else {
+              if (!result?.passphrase) {
                 // Cancelled/skipped/timeout — clear encrypted key, try next file
                 delete connectOpts.privateKey;
-                continue;
+                break;
               }
+              const parsed = sshUtils.parseKey(keyContent, result.passphrase);
+              if (parsed && !(parsed instanceof Error)) {
+                connectOpts.passphrase = result.passphrase;
+                resolved = true;
+              } else {
+                log("User-entered passphrase failed locally, requesting again", { keyPath: resolvedPath });
+                passphraseInvalid = true;
+              }
+            }
+            if (!resolved) {
+              continue;
             }
           }
           log("Loaded identity file", { keyPath: resolvedPath, encrypted: isKeyEncrypted(keyContent) });

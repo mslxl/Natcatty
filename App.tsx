@@ -211,6 +211,18 @@ function removeDefaultKeyPassphrases(keyPaths: string[]): void {
   }
 }
 
+function clearReferenceKeyPassphrases(keys: SSHKey[], keyPaths: string[]): SSHKey[] {
+  let changed = false;
+  const updated = keys.map((key) => {
+    if (key.source === 'reference' && key.filePath && keyPaths.includes(key.filePath) && key.passphrase) {
+      changed = true;
+      return { ...key, passphrase: undefined, savePassphrase: false };
+    }
+    return key;
+  });
+  return changed ? updated : keys;
+}
+
 function App({ settings }: { settings: SettingsState }) {
   const { t } = useI18n();
 
@@ -1021,29 +1033,32 @@ function App({ settings }: { settings: SettingsState }) {
     const unsubscribe = bridge.onPassphraseRequest(async (request) => {
       console.log('[App] Passphrase request received:', request);
 
-      // Check if a reference key exists for this path — use its passphrase
-      const currentKeys = keysRef.current;
-      const refKey = currentKeys.find((k: SSHKey) => k.source === 'reference' && k.filePath === request.keyPath);
-      if (refKey?.passphrase && refKey.savePassphrase !== false) {
-        console.log('[App] Auto-responding with reference key passphrase for:', request.keyPath);
-        void bridge.respondPassphrase?.(request.requestId, refKey.passphrase, false);
-        return;
-      }
-
-      // Fallback: try old storage for passphrase
-      const saved = await loadDefaultKeyPassphrase(request.keyPath);
-      if (saved) {
-        console.log('[App] Auto-responding with saved passphrase for:', request.keyPath);
-        void bridge.respondPassphrase?.(request.requestId, saved, false);
-        // Migrate to reference key if one exists
-        if (refKey && !refKey.passphrase) {
-          const updated = currentKeys.map((k: SSHKey) => k.id === refKey.id ? { ...k, passphrase: saved, savePassphrase: true } : k);
-          void updateKeys(updated);
+      // If the bridge already tried a passphrase and it was wrong, skip auto-respond
+      if (!request.passphraseInvalid) {
+        // Check if a reference key exists for this path — use its passphrase
+        const currentKeys = keysRef.current;
+        const refKey = currentKeys.find((k: SSHKey) => k.source === 'reference' && k.filePath === request.keyPath);
+        if (refKey?.passphrase && refKey.savePassphrase !== false) {
+          console.log('[App] Auto-responding with reference key passphrase for:', request.keyPath);
+          void bridge.respondPassphrase?.(request.requestId, refKey.passphrase, false);
+          return;
         }
-        return;
+
+        // Fallback: try old storage for passphrase
+        const saved = await loadDefaultKeyPassphrase(request.keyPath);
+        if (saved) {
+          console.log('[App] Auto-responding with saved passphrase for:', request.keyPath);
+          void bridge.respondPassphrase?.(request.requestId, saved, false);
+          // Migrate to reference key if one exists
+          if (refKey && !refKey.passphrase) {
+            const updated = currentKeys.map((k: SSHKey) => k.id === refKey.id ? { ...k, passphrase: saved, savePassphrase: true } : k);
+            void updateKeys(updated);
+          }
+          return;
+        }
       }
 
-      // No saved passphrase, show modal
+      // No saved passphrase or it was invalid, show modal
       setPassphraseQueue(prev => [...prev, {
         requestId: request.requestId,
         keyPath: request.keyPath,
@@ -1131,12 +1146,16 @@ function App({ settings }: { settings: SettingsState }) {
     const unsubscribe = bridge.onPassphraseAuthFailed((event) => {
       console.log('[App] Passphrase auth failed for keys:', event.keyPaths);
       removeDefaultKeyPassphrases(event.keyPaths);
+      const updated = clearReferenceKeyPassphrases(keysRef.current, event.keyPaths);
+      if (updated !== keysRef.current) {
+        void updateKeys(updated);
+      }
     });
 
     return () => {
       unsubscribe?.();
     };
-  }, []);
+  }, [updateKeys]);
 
   // Debounce ref for moveFocus to prevent double-triggering when focus switches
   const lastMoveFocusTimeRef = useRef<number>(0);

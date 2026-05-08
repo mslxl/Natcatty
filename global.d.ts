@@ -367,6 +367,7 @@ declare global {
         keyPath: string;
         keyName: string;
         hostname?: string;
+        passphraseInvalid?: boolean;
       }) => void
     ): () => void;
     respondPassphrase?(

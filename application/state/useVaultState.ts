@@ -66,7 +66,7 @@ const migrateKey = (key: Partial<SSHKey>): SSHKey => {
   const label = key.label ?? `Key ${id.slice(0, 8)}`;
 
   const source =
-    key.source === "generated" || key.source === "imported"
+    key.source === "generated" || key.source === "imported" || key.source === "reference"
       ? key.source
       : key.privateKey
         ? "imported"
@@ -86,6 +86,7 @@ const migrateKey = (key: Partial<SSHKey>): SSHKey => {
       key.category ||
       ((key.certificate ? "certificate" : "key") as KeyCategory),
     created: key.created || Date.now(),
+    filePath: key.filePath,
   };
 };
 

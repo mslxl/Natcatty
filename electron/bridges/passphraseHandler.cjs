@@ -28,7 +28,7 @@ function generateRequestId(prefix = 'pp') {
  * @param {string} [hostname] - Optional hostname for context
  * @returns {Promise<{ passphrase?: string, cancelled?: boolean, skipped?: boolean } | null>}
  */
-function requestPassphrase(sender, keyPath, keyName, hostname) {
+function requestPassphrase(sender, keyPath, keyName, hostname, passphraseInvalid) {
   return new Promise((resolve) => {
     if (!sender || sender.isDestroyed()) {
       console.warn('[Passphrase] Sender is destroyed, cannot request passphrase');
@@ -75,6 +75,7 @@ function requestPassphrase(sender, keyPath, keyName, hostname) {
         keyPath,
         keyName,
         hostname,
+        passphraseInvalid: !!passphraseInvalid,
       });
     } catch (err) {
       console.error('[Passphrase] Failed to send passphrase request:', err);
