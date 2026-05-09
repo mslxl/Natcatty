@@ -1058,6 +1058,9 @@ function App({ settings }: { settings: SettingsState }) {
 
   const closeSidePanelRef = useRef<(() => void) | null>(null);
   const toggleScriptsSidePanelRef = useRef<(() => void) | null>(null);
+  // Populated below so the hotkey dispatcher can open the Settings window
+  // even though `handleOpenSettings` is declared further down in the file.
+  const handleOpenSettingsRef = useRef<() => void>(() => {});
   const activeSidePanelTabRef = useRef<string | null>(null);
   const closeTabInFlightRef = useRef(false);
   // Populated by UnsavedChangesProvider render-prop below so that the hotkey
@@ -1346,6 +1349,9 @@ function App({ settings }: { settings: SettingsState }) {
         }
         break;
       }
+      case 'openSettings':
+        handleOpenSettingsRef.current();
+        break;
       case 'splitHorizontal': {
         const currentId = activeTabStore.getActiveTabId();
         const activeSession = sessions.find(s => s.id === currentId);
@@ -1703,6 +1709,7 @@ function App({ settings }: { settings: SettingsState }) {
       if (!opened) toast.error(t('toast.settingsUnavailable'), t('common.settings'));
     })();
   }, [openSettingsWindow, t]);
+  handleOpenSettingsRef.current = handleOpenSettings;
 
   const hasShownCredentialProtectionWarningRef = useRef(false);
 
