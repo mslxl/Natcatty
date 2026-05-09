@@ -32,7 +32,6 @@ import {
 import { classifyDistroId } from "../domain/host";
 import { resolveHostAuth } from "../domain/sshAuth";
 import { useTerminalBackend } from "../application/state/useTerminalBackend";
-import KnownHostConfirmDialog, { HostKeyInfo } from "./KnownHostConfirmDialog";
 // SFTPModal removed - SFTP is now handled by SftpSidePanel in TerminalLayer
 import { Button } from "./ui/button";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
@@ -42,6 +41,7 @@ import { TERMINAL_THEMES } from "../infrastructure/config/terminalThemes";
 import { useCustomThemes } from "../application/state/customThemeStore";
 
 import { TerminalConnectionDialog } from "./terminal/TerminalConnectionDialog";
+import { HostKeyInfo } from "./terminal/TerminalHostKeyVerification";
 import { TerminalToolbar } from "./terminal/TerminalToolbar";
 import { TerminalComposeBar } from "./terminal/TerminalComposeBar";
 import { TerminalContextMenu } from "./terminal/TerminalContextMenu";
@@ -1665,7 +1665,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   };
 
   const shouldShowConnectionDialog = status !== "connected"
-    && !needsHostKeyVerification
     && !((isLocalConnection || isSerialConnection) && status === "connecting")
     && !(status === "disconnected" && isDisconnectedDialogDismissed);
 
@@ -2259,18 +2258,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
             )
           }
 
-          {needsHostKeyVerification && pendingHostKeyInfo && (
-            <div className="absolute inset-0 z-30 bg-background">
-              <KnownHostConfirmDialog
-                host={host}
-                hostKeyInfo={pendingHostKeyInfo}
-                onClose={handleHostKeyClose}
-                onContinue={handleHostKeyContinue}
-                onAddAndContinue={handleHostKeyAddAndContinue}
-              />
-            </div>
-          )}
-
           {/* OSC-52 clipboard read prompt */}
           {osc52ReadPromptVisible && (
             <div
@@ -2307,6 +2294,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                 _setShowLogs={setShowLogs}
                 keys={keys}
                 onDismissDisconnected={handleDismissDisconnectedDialog}
+                hostKeyVerification={needsHostKeyVerification && pendingHostKeyInfo ? {
+                  hostKeyInfo: pendingHostKeyInfo,
+                  onClose: handleHostKeyClose,
+                  onContinue: handleHostKeyContinue,
+                  onAddAndContinue: handleHostKeyAddAndContinue,
+                } : undefined}
                 authProps={{
                   authMethod: auth.authMethod,
                   setAuthMethod: auth.setAuthMethod,
