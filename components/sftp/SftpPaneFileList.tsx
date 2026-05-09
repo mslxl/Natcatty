@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowRight, ArrowUp, ChevronDown, ClipboardCopy, Copy, Download, Edit2, ExternalLink, FilePlus, Folder, FolderPlus, Loader2, Pencil, RefreshCw, Shield, Trash2, Unplug } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, ChevronDown, ClipboardCopy, Copy, Download, Edit2, ExternalLink, FilePlus, Folder, FolderPlus, Loader2, Pencil, RefreshCw, Shield, Trash2, Unplug, Upload } from "lucide-react";
 import { Button } from "../ui/button";
 import {
   ContextMenu,
@@ -60,6 +60,7 @@ interface SftpPaneFileListProps {
   onDownloadFile?: (entry: SftpFileEntry) => void;
   onDownloadFiles?: (entries: SftpFileEntry[]) => void;
   onEditPermissions?: (entry: SftpFileEntry) => void;
+  onUploadExternalFiles?: (dataTransfer: DataTransfer, targetPath?: string) => Promise<void> | void;
   openRenameDialog: (name: string) => void;
   openDeleteConfirm: (targets: string[]) => void;
   rowHeight: number;
@@ -146,6 +147,7 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
   onDownloadFile,
   onDownloadFiles,
   onEditPermissions,
+  onUploadExternalFiles,
   openRenameDialog,
   openDeleteConfirm,
   rowHeight,
@@ -191,6 +193,45 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
     if (pane.selectedFiles.size === 0) return;
     onClearSelection();
   }, [onClearSelection, pane.selectedFiles.size]);
+
+  // Hidden file input used by the "Upload File(s)" context menu item to open
+  // a native multi-file picker. The drag-and-drop pipeline already accepts a
+  // DataTransfer, so we wrap the picked FileList into a DataTransfer and reuse
+  // it. Folder upload via the picker is non-trivial across platforms, so this
+  // entrypoint is intentionally restricted to files.
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const uploadTargetPathRef = useRef<string | undefined>(undefined);
+
+  const triggerUploadPicker = useCallback((targetPath?: string) => {
+    if (!onUploadExternalFiles) return;
+    const input = uploadInputRef.current;
+    if (!input) return;
+    uploadTargetPathRef.current = targetPath;
+    // Reset value so selecting the same files twice still fires onChange.
+    input.value = "";
+    input.click();
+  }, [onUploadExternalFiles]);
+
+  const handleUploadInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) {
+      uploadTargetPathRef.current = undefined;
+      return;
+    }
+    if (!onUploadExternalFiles) {
+      uploadTargetPathRef.current = undefined;
+      return;
+    }
+    // Wrap the FileList in a DataTransfer so it flows through the existing
+    // drag-and-drop upload pipeline (extractDropEntries -> uploadFromDataTransfer).
+    const dt = new DataTransfer();
+    for (let i = 0; i < files.length; i++) {
+      dt.items.add(files[i]);
+    }
+    const targetPath = uploadTargetPathRef.current;
+    uploadTargetPathRef.current = undefined;
+    void onUploadExternalFiles(dt, targetPath);
+  }, [onUploadExternalFiles]);
 
   const renderRow = useCallback(
     (entry: SftpFileEntry, index: number) => (
@@ -349,6 +390,21 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
             <ContextMenuItem onClick={() => setShowNewFileDialog(true)}>
               <FilePlus size={14} className="mr-2" /> {t("sftp.newFile")}
             </ContextMenuItem>
+            {onUploadExternalFiles && (
+              <ContextMenuItem
+                onClick={() => {
+                  const target = isNavigableDirectory(entry) && entry.name !== ".."
+                    ? joinPath(pane.connection?.currentPath ?? "", entry.name)
+                    : undefined;
+                  triggerUploadPicker(target);
+                }}
+              >
+                <Upload size={14} className="mr-2" />{" "}
+                {isNavigableDirectory(entry) && entry.name !== ".."
+                  ? t("sftp.context.uploadFilesToFolder", { name: entry.name })
+                  : t("sftp.context.uploadFiles")}
+              </ContextMenuItem>
+            )}
           </ContextMenuContent>
         )}
       </ContextMenu>
@@ -374,6 +430,7 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
       onNavigateTo,
       onOpenFileWith,
       onRefresh,
+      onUploadExternalFiles,
       openDeleteConfirm,
       openRenameDialog,
       pane.connection,
@@ -381,6 +438,7 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
       setShowNewFolderDialog,
       setShowNewFileDialog,
       t,
+      triggerUploadPicker,
     ],
   );
 
@@ -552,8 +610,23 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
         }}>
           <FilePlus size={14} className="mr-2" />{t("sftp.newFile")}
         </ContextMenuItem>
+        {onUploadExternalFiles && (
+          <ContextMenuItem onClick={() => triggerUploadPicker(undefined)}>
+            <Upload size={14} className="mr-2" />{t("sftp.context.uploadFiles")}
+          </ContextMenuItem>
+        )}
       </ContextMenuContent>
     </ContextMenu>
+
+    {/* Hidden file input backing the "Upload File(s)" context menu item.
+        Selecting files dispatches into the existing drag-and-drop upload pipeline. */}
+    <input
+      ref={uploadInputRef}
+      type="file"
+      multiple
+      className="hidden"
+      onChange={handleUploadInputChange}
+    />
 
     {/* Footer */}
     <div className="h-9 shrink-0 px-4 flex items-center justify-between text-[11px] text-muted-foreground border-t border-border/40 bg-secondary/30">

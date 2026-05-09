@@ -558,6 +558,8 @@ const zhCN: Messages = {
   'sftp.context.permissions': '权限',
   'sftp.context.delete': '删除',
   'sftp.context.refresh': '刷新',
+  'sftp.context.uploadFiles': '上传文件...',
+  'sftp.context.uploadFilesToFolder': '上传文件到 "{name}"...',
   'sftp.context.downloadSelected': '下载选中项（{count}）',
   'sftp.context.deleteSelected': '删除选中项（{count}）',
   'sftp.dropFilesHere': '拖拽文件到这里',
