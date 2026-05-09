@@ -46,6 +46,7 @@ import {
   sanitizeHost,
   upsertHostById,
 } from "../domain/host";
+import { upsertKnownHost } from "../domain/knownHosts";
 import { importVaultHostsFromText, exportHostsToCsvWithStats } from "../domain/vaultImport";
 import type { VaultImportFormat } from "../domain/vaultImport";
 import {
@@ -1199,7 +1200,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
 
   // Stable callbacks that read from refs
   const handleSaveKnownHost = useCallback((kh: KnownHost) => {
-    onUpdateKnownHostsRef.current([...knownHostsRef.current, kh]);
+    onUpdateKnownHostsRef.current(upsertKnownHost(knownHostsRef.current, kh));
   }, []);
 
   const handleUpdateKnownHost = useCallback((kh: KnownHost) => {

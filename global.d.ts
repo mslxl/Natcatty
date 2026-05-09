@@ -81,6 +81,7 @@ declare global {
     extraArgs?: string[];
     startupCommand?: string;
     passphrase?: string;
+    knownHosts?: import("./domain/models").KnownHost[];
     // Environment variables to set in the remote shell
     env?: Record<string, string>;
     // Proxy configuration
@@ -364,6 +365,26 @@ declare global {
       requestId: string,
       responses: string[],
       cancelled?: boolean
+    ): Promise<{ success: boolean; error?: string }>;
+
+    onHostKeyVerification?(
+      cb: (request: {
+        requestId: string;
+        sessionId: string;
+        hostname: string;
+        port: number;
+        status: 'unknown' | 'changed';
+        keyType: string;
+        fingerprint: string;
+        publicKey?: string;
+        knownHostId?: string;
+        knownFingerprint?: string;
+      }) => void
+    ): () => void;
+    respondHostKeyVerification?(
+      requestId: string,
+      accept: boolean,
+      addToKnownHosts?: boolean
     ): Promise<{ success: boolean; error?: string }>;
 
     // Passphrase request for encrypted SSH keys

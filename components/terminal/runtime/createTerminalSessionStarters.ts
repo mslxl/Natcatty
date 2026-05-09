@@ -4,7 +4,7 @@ import type { Terminal as XTerm } from "@xterm/xterm";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { shouldScrollOnTerminalOutput } from "../../../domain/terminalScroll";
 import { logger } from "../../../lib/logger";
-import type { Host, Identity, SerialConfig, SSHKey, TerminalSession, TerminalSettings } from "../../../types";
+import type { Host, Identity, KnownHost, SerialConfig, SSHKey, TerminalSession, TerminalSettings } from "../../../types";
 import {
   isEncryptedCredentialPlaceholder,
   sanitizeCredentialValue,
@@ -112,6 +112,7 @@ export type TerminalSessionStartersContext = {
   host: Host;
   keys: SSHKey[];
   identities?: Identity[];
+  knownHosts?: KnownHost[];
   resolvedChainHosts: Host[];
   sessionId: string;
   startupCommand?: string;
@@ -689,6 +690,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           keepaliveInterval: ctx.terminalSettings?.keepaliveInterval,
           sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
           identityFilePaths: attempt.password ? undefined : targetIdentityFilePaths,
+          knownHosts: ctx.knownHosts,
         });
       };
 

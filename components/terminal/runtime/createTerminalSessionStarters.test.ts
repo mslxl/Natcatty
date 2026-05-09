@@ -189,6 +189,88 @@ test("startSSH omits identity file paths when password auth is selected", async 
   assert.equal(capturedOptions.identityFilePaths, undefined);
 });
 
+test("startSSH passes known host records to the SSH bridge", async () => {
+  let capturedOptions: Record<string, unknown> | null = null;
+  const knownHosts = [{
+    id: "kh-1",
+    hostname: "target.example.test",
+    port: 22,
+    keyType: "ssh-ed25519",
+    publicKey: "SHA256:trusted-key",
+    discoveredAt: 1,
+  }];
+
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async (options: Record<string, unknown>) => {
+      capturedOptions = options;
+      return "ssh-session";
+    },
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+
+  const ctx = {
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      authMethod: "password",
+      password: "secret",
+    },
+    keys: [],
+    knownHosts,
+    resolvedChainHosts: [],
+    sessionId: "session-1",
+    terminalSettings: {},
+    terminalBackend,
+    sessionRef: { current: null },
+    hasConnectedRef: { current: false },
+    hasRunStartupCommandRef: { current: false },
+    disposeDataRef: { current: null },
+    disposeExitRef: { current: null },
+    fitAddonRef: { current: null },
+    serializeAddonRef: { current: null },
+    pendingAuthRef: { current: null },
+    updateStatus: noop,
+    setStatus: noop,
+    setError: noop,
+    setNeedsAuth: noop,
+    setAuthRetryMessage: noop,
+    setAuthPassword: noop,
+    setProgressLogs: noop,
+    setProgressValue: noop,
+    setChainProgress: noop,
+  };
+
+  const term = {
+    cols: 120,
+    rows: 32,
+    write: noop,
+    writeln: noop,
+    scrollToBottom: noop,
+  };
+
+  await createTerminalSessionStarters(ctx as never).startSSH(term as never);
+
+  assert.ok(capturedOptions);
+  assert.equal(capturedOptions.knownHosts, knownHosts);
+});
+
 test("startSSH omits jump host identity file paths when password auth is selected", async () => {
   let capturedOptions: Record<string, unknown> | null = null;
 

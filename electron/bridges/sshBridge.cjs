@@ -14,6 +14,7 @@ const { Client: SSHClient, utils: sshUtils } = require("ssh2");
 const { NetcattyAgent } = require("./netcattyAgent.cjs");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
 const passphraseHandler = require("./passphraseHandler.cjs");
+const hostKeyVerifier = require("./hostKeyVerifier.cjs");
 const { createProxySocket } = require("./proxyUtils.cjs");
 const { attachX11Forwarding } = require("./x11Forwarding.cjs");
 const {
@@ -744,6 +745,14 @@ async function startSSHSession(event, options) {
       tryKeyboard: true,
       algorithms: buildAlgorithms(options.legacyAlgorithms),
     };
+
+    connectOpts.hostVerifier = hostKeyVerifier.createHostVerifier({
+      sender,
+      sessionId,
+      hostname: options.hostname,
+      port: options.port || 22,
+      knownHosts: options.knownHosts,
+    });
 
     // Authentication for final target
     const hasCertificate = typeof options.certificate === "string" && options.certificate.trim().length > 0;
@@ -2712,6 +2721,8 @@ function registerHandlers(ipcMain) {
   keyboardInteractiveHandler.registerHandler(ipcMain);
   // Register the passphrase response handler
   passphraseHandler.registerHandler(ipcMain);
+  // Register the SSH host key verification response handler
+  hostKeyVerifier.registerHandler(ipcMain);
 }
 
 module.exports = {

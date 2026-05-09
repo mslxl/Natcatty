@@ -32,7 +32,6 @@ import {
 import { classifyDistroId } from "../domain/host";
 import { resolveHostAuth } from "../domain/sshAuth";
 import { useTerminalBackend } from "../application/state/useTerminalBackend";
-import KnownHostConfirmDialog, { HostKeyInfo } from "./KnownHostConfirmDialog";
 // SFTPModal removed - SFTP is now handled by SftpSidePanel in TerminalLayer
 import { Button } from "./ui/button";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
@@ -42,6 +41,8 @@ import { TERMINAL_THEMES } from "../infrastructure/config/terminalThemes";
 import { useCustomThemes } from "../application/state/customThemeStore";
 
 import { TerminalConnectionDialog } from "./terminal/TerminalConnectionDialog";
+import { HostKeyInfo } from "./terminal/TerminalHostKeyVerification";
+import { createKnownHostFromHostKeyInfo, toHostKeyInfo } from "./terminal/hostKeyVerification";
 import { TerminalToolbar } from "./terminal/TerminalToolbar";
 import { TerminalComposeBar } from "./terminal/TerminalComposeBar";
 import { TerminalContextMenu } from "./terminal/TerminalContextMenu";
@@ -218,7 +219,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   snippets,
   chainHosts = [],
   themePreviewId,
-  knownHosts: _knownHosts = [],
+  knownHosts = [],
   isVisible,
   inWorkspace,
   isResizing,
@@ -639,6 +640,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   const [needsHostKeyVerification, setNeedsHostKeyVerification] = useState(false);
   const [pendingHostKeyInfo, setPendingHostKeyInfo] = useState<HostKeyInfo | null>(null);
+  const [pendingHostKeyRequestId, setPendingHostKeyRequestId] = useState<string | null>(null);
   const pendingConnectionRef = useRef<(() => void) | null>(null);
 
   // OSC-52 clipboard read prompt
@@ -661,6 +663,27 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     // Restore focus to terminal
     termRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    const dispose = terminalBackend.onHostKeyVerification?.((request) => {
+      if (request.sessionId !== sessionId) return;
+
+      setPendingHostKeyRequestId(request.requestId);
+      setPendingHostKeyInfo(toHostKeyInfo(request));
+      setNeedsHostKeyVerification(true);
+      setError(null);
+      setProgressLogs((prev) => [
+        ...prev,
+        request.status === 'changed'
+          ? `Host key changed for ${request.hostname}. Waiting for confirmation...`
+          : `Host key verification required for ${request.hostname}.`,
+      ]);
+    });
+
+    return () => {
+      dispose?.();
+    };
+  }, [sessionId, terminalBackend.onHostKeyVerification]);
 
   const handleTopOverlayMouseDownCapture = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -755,6 +778,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     host,
     keys,
     identities,
+    knownHosts,
     resolvedChainHosts,
     sessionId,
     startupCommand,
@@ -1493,12 +1517,16 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   };
 
   const handleCancelConnect = () => {
+    if (pendingHostKeyRequestId) {
+      void terminalBackend.respondHostKeyVerification(pendingHostKeyRequestId, false);
+    }
     retryTokenRef.current = null;
     setIsCancelling(true);
     auth.setNeedsAuth(false);
     auth.setAuthRetryMessage(null);
     setNeedsHostKeyVerification(false);
     setPendingHostKeyInfo(null);
+    setPendingHostKeyRequestId(null);
     setError("Connection cancelled");
     setProgressLogs((prev) => [...prev, "Cancelled by user."]);
     cleanupSession();
@@ -1520,29 +1548,29 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const handleHostKeyClose = () => {
     setNeedsHostKeyVerification(false);
     setPendingHostKeyInfo(null);
+    setPendingHostKeyRequestId(null);
     handleCancelConnect();
   };
 
   const handleHostKeyContinue = () => {
+    if (pendingHostKeyRequestId) {
+      void terminalBackend.respondHostKeyVerification(pendingHostKeyRequestId, true, false);
+    }
     setNeedsHostKeyVerification(false);
     if (pendingConnectionRef.current) {
       pendingConnectionRef.current();
       pendingConnectionRef.current = null;
     }
     setPendingHostKeyInfo(null);
+    setPendingHostKeyRequestId(null);
   };
 
   const handleHostKeyAddAndContinue = () => {
     if (pendingHostKeyInfo && onAddKnownHost) {
-      const newKnownHost: KnownHost = {
-        id: `kh-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        hostname: pendingHostKeyInfo.hostname,
-        port: pendingHostKeyInfo.port || host.port || 22,
-        keyType: pendingHostKeyInfo.keyType,
-        publicKey: pendingHostKeyInfo.fingerprint,
-        discoveredAt: Date.now(),
-      };
-      onAddKnownHost(newKnownHost);
+      onAddKnownHost(createKnownHostFromHostKeyInfo(pendingHostKeyInfo, host));
+    }
+    if (pendingHostKeyRequestId) {
+      void terminalBackend.respondHostKeyVerification(pendingHostKeyRequestId, true, true);
     }
     setNeedsHostKeyVerification(false);
     if (pendingConnectionRef.current) {
@@ -1550,6 +1578,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       pendingConnectionRef.current = null;
     }
     setPendingHostKeyInfo(null);
+    setPendingHostKeyRequestId(null);
   };
 
   const handleRetry = () => {
@@ -1620,7 +1649,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   };
 
   const shouldShowConnectionDialog = status !== "connected"
-    && !needsHostKeyVerification
     && !((isLocalConnection || isSerialConnection) && status === "connecting")
     && !(status === "disconnected" && isDisconnectedDialogDismissed);
 
@@ -2214,18 +2242,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
             )
           }
 
-          {needsHostKeyVerification && pendingHostKeyInfo && (
-            <div className="absolute inset-0 z-30 bg-background">
-              <KnownHostConfirmDialog
-                host={host}
-                hostKeyInfo={pendingHostKeyInfo}
-                onClose={handleHostKeyClose}
-                onContinue={handleHostKeyContinue}
-                onAddAndContinue={handleHostKeyAddAndContinue}
-              />
-            </div>
-          )}
-
           {/* OSC-52 clipboard read prompt */}
           {osc52ReadPromptVisible && (
             <div
@@ -2262,6 +2278,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                 _setShowLogs={setShowLogs}
                 keys={keys}
                 onDismissDisconnected={handleDismissDisconnectedDialog}
+                hostKeyVerification={needsHostKeyVerification && pendingHostKeyInfo ? {
+                  hostKeyInfo: pendingHostKeyInfo,
+                  onClose: handleHostKeyClose,
+                  onContinue: handleHostKeyContinue,
+                  onAddAndContinue: handleHostKeyAddAndContinue,
+                } : undefined}
                 authProps={{
                   authMethod: auth.authMethod,
                   setAuthMethod: auth.setAuthMethod,
