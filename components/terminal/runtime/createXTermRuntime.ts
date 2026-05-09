@@ -38,15 +38,10 @@ import {
   preserveTerminalViewportInScrollback,
 } from "../clearTerminalViewport";
 import {
-  buildKittyKeyboardModeQueryResponse,
   createKittyKeyboardModeState,
   encodeKittyControlKey,
-  popKittyKeyboardModeFlags,
-  pushKittyKeyboardModeFlags,
-  setKittyKeyboardAlternateScreenActive,
-  setKittyKeyboardModeFlags,
-  type KittyKeyboardModeApplyMode,
 } from "./kittyKeyboardProtocol";
+import { installKittyKeyboardProtocolHandlers } from "./kittyKeyboardRuntime";
 import { installUserCursorPreferenceGuard } from "./cursorPreference";
 import type {
   Host,
@@ -525,6 +520,74 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       }
     }
 
+    const currentBindings = ctx.keyBindingsRef.current;
+    if (currentScheme !== "disabled" && currentBindings.length > 0) {
+      const matched = checkAppShortcut(e, currentBindings, isMac);
+      if (matched) {
+        const { action } = matched;
+
+        if (appLevelActions.has(action)) {
+          return true; // Let app-level handler process it
+        }
+
+        if (terminalActions.has(action)) {
+          e.preventDefault();
+          e.stopPropagation();
+          switch (action) {
+            case "copy": {
+              const selection = term.getSelection();
+              if (selection) navigator.clipboard.writeText(selection);
+              break;
+            }
+            case "paste": {
+              navigator.clipboard.readText().then((text) => {
+                const id = ctx.sessionRef.current;
+                if (id) {
+                  const rawData = normalizeLineEndings(text);
+                  const data = term.modes.bracketedPasteMode && !ctx.terminalSettingsRef.current?.disableBracketedPaste
+                    ? wrapBracketedPaste(rawData)
+                    : rawData;
+                  // Notify autocomplete with the final bytes so bracketed
+                  // pastes preserve their inner newlines as literal input.
+                  ctx.onAutocompleteInput?.(data);
+                  ctx.terminalBackend.writeToSession(id, data);
+                  scrollToBottomAfterPaste();
+                }
+              });
+              break;
+            }
+            case "pasteSelection": {
+              const selection = term.getSelection();
+              const id = ctx.sessionRef.current;
+              if (selection && id) {
+                const rawData = normalizeLineEndings(selection);
+                const data = term.modes.bracketedPasteMode && !ctx.terminalSettingsRef.current?.disableBracketedPaste
+                  ? wrapBracketedPaste(rawData)
+                  : rawData;
+                ctx.onAutocompleteInput?.(data);
+                ctx.terminalBackend.writeToSession(id, data);
+                scrollToBottomAfterPaste();
+              }
+              break;
+            }
+            case "selectAll": {
+              term.selectAll();
+              break;
+            }
+            case "clearBuffer": {
+              clearTerminalViewport(term);
+              break;
+            }
+            case "searchTerminal": {
+              ctx.setIsSearchOpen(true);
+              break;
+            }
+          }
+          return false;
+        }
+      }
+    }
+
     const kittyControlSequence = encodeKittyControlKey(kittyKeyboardMode, e);
     if (kittyControlSequence) {
       const id = ctx.sessionRef.current;
@@ -539,76 +602,6 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         scrollToBottomAfterInput(kittyControlSequence);
         return false;
       }
-    }
-
-    const currentBindings = ctx.keyBindingsRef.current;
-    if (currentScheme === "disabled" || currentBindings.length === 0) {
-      return true;
-    }
-
-    const matched = checkAppShortcut(e, currentBindings, isMac);
-    if (!matched) return true;
-
-    const { action } = matched;
-
-    if (appLevelActions.has(action)) {
-      return true; // Let app-level handler process it
-    }
-
-    if (terminalActions.has(action)) {
-      e.preventDefault();
-      e.stopPropagation();
-      switch (action) {
-        case "copy": {
-          const selection = term.getSelection();
-          if (selection) navigator.clipboard.writeText(selection);
-          break;
-        }
-        case "paste": {
-          navigator.clipboard.readText().then((text) => {
-            const id = ctx.sessionRef.current;
-            if (id) {
-              const rawData = normalizeLineEndings(text);
-              const data = term.modes.bracketedPasteMode && !ctx.terminalSettingsRef.current?.disableBracketedPaste
-                ? wrapBracketedPaste(rawData)
-                : rawData;
-              // Notify autocomplete with the final bytes so bracketed
-              // pastes preserve their inner newlines as literal input.
-              ctx.onAutocompleteInput?.(data);
-              ctx.terminalBackend.writeToSession(id, data);
-              scrollToBottomAfterPaste();
-            }
-          });
-          break;
-        }
-        case "pasteSelection": {
-          const selection = term.getSelection();
-          const id = ctx.sessionRef.current;
-          if (selection && id) {
-            const rawData = normalizeLineEndings(selection);
-            const data = term.modes.bracketedPasteMode && !ctx.terminalSettingsRef.current?.disableBracketedPaste
-              ? wrapBracketedPaste(rawData)
-              : rawData;
-            ctx.onAutocompleteInput?.(data);
-            ctx.terminalBackend.writeToSession(id, data);
-            scrollToBottomAfterPaste();
-          }
-          break;
-        }
-        case "selectAll": {
-          term.selectAll();
-          break;
-        }
-        case "clearBuffer": {
-          clearTerminalViewport(term);
-          break;
-        }
-        case "searchTerminal": {
-          ctx.setIsSearchOpen(true);
-          break;
-        }
-      }
-      return false;
     }
 
     return true;
@@ -760,84 +753,16 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     return !wipeAllowed;
   });
 
-  const readParam = (
-    params: readonly (number | number[])[],
-    index: number,
-    fallback: number,
-  ): number => {
-    const value = params[index];
-    if (Array.isArray(value)) return typeof value[0] === "number" ? value[0] : fallback;
-    return typeof value === "number" && value > 0 ? value : fallback;
-  };
-
   const writeKittyKeyboardReply = (payload: string) => {
     const id = ctx.sessionRef.current;
     if (!id) return;
     ctx.terminalBackend.writeToSession(id, payload);
   };
 
-  const kittyKeyboardQueryDisposable = term.parser.registerCsiHandler(
-    { prefix: "?", final: "u" },
-    () => {
-      writeKittyKeyboardReply(buildKittyKeyboardModeQueryResponse(kittyKeyboardMode));
-      return true;
-    },
-  );
-
-  const kittyKeyboardSetDisposable = term.parser.registerCsiHandler(
-    { prefix: "=", final: "u" },
-    (params) => {
-      const flags = readParam(params, 0, 0);
-      const mode = readParam(params, 1, 1) as KittyKeyboardModeApplyMode;
-      setKittyKeyboardModeFlags(kittyKeyboardMode, flags, mode === 2 || mode === 3 ? mode : 1);
-      return true;
-    },
-  );
-
-  const kittyKeyboardPushDisposable = term.parser.registerCsiHandler(
-    { prefix: ">", final: "u" },
-    (params) => {
-      pushKittyKeyboardModeFlags(kittyKeyboardMode, readParam(params, 0, 0));
-      return true;
-    },
-  );
-
-  const kittyKeyboardPopDisposable = term.parser.registerCsiHandler(
-    { prefix: "<", final: "u" },
-    (params) => {
-      popKittyKeyboardModeFlags(kittyKeyboardMode, readParam(params, 0, 1));
-      return true;
-    },
-  );
-
-  const alternateScreenSetDisposable = term.parser.registerCsiHandler(
-    { prefix: "?", final: "h" },
-    (params) => {
-      const switchesToAlternateScreen = params.some((param) =>
-        Array.isArray(param)
-          ? param.includes(47) || param.includes(1047) || param.includes(1049)
-          : param === 47 || param === 1047 || param === 1049,
-      );
-      if (switchesToAlternateScreen) {
-        setKittyKeyboardAlternateScreenActive(kittyKeyboardMode, true);
-      }
-      return false;
-    },
-  );
-
-  const alternateScreenResetDisposable = term.parser.registerCsiHandler(
-    { prefix: "?", final: "l" },
-    (params) => {
-      const switchesToMainScreen = params.some((param) =>
-        Array.isArray(param)
-          ? param.includes(47) || param.includes(1047) || param.includes(1049)
-          : param === 47 || param === 1047 || param === 1049,
-      );
-      if (switchesToMainScreen) {
-        setKittyKeyboardAlternateScreenActive(kittyKeyboardMode, false);
-      }
-      return false;
-    },
+  const kittyKeyboardDisposable = installKittyKeyboardProtocolHandlers(
+    term.parser,
+    kittyKeyboardMode,
+    writeKittyKeyboardReply,
   );
 
   // Register OSC 7 handler using xterm.js parser
@@ -965,12 +890,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       cleanupMiddleClick?.();
       keywordHighlighter.dispose();
       eraseScrollbackDisposable.dispose();
-      kittyKeyboardQueryDisposable.dispose();
-      kittyKeyboardSetDisposable.dispose();
-      kittyKeyboardPushDisposable.dispose();
-      kittyKeyboardPopDisposable.dispose();
-      alternateScreenSetDisposable.dispose();
-      alternateScreenResetDisposable.dispose();
+      kittyKeyboardDisposable.dispose();
       osc7Disposable.dispose();
       osc52Disposable.dispose();
       cursorPreferenceDisposable?.dispose();
