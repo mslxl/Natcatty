@@ -776,6 +776,8 @@ const en: Messages = {
   'sftp.context.refresh': 'Refresh',
   'sftp.context.uploadFiles': 'Upload File(s)...',
   'sftp.context.uploadFilesToFolder': 'Upload File(s) to "{name}"...',
+  'sftp.context.uploadFolder': 'Upload Folder...',
+  'sftp.context.uploadFolderToFolder': 'Upload Folder to "{name}"...',
   'sftp.context.downloadSelected': 'Download selected ({count})',
   'sftp.context.deleteSelected': 'Delete selected ({count})',
   'sftp.dropFilesHere': 'Drop files here',

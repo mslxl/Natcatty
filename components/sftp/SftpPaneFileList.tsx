@@ -61,6 +61,10 @@ interface SftpPaneFileListProps {
   onDownloadFiles?: (entries: SftpFileEntry[]) => void;
   onEditPermissions?: (entry: SftpFileEntry) => void;
   onUploadExternalFiles?: (dataTransfer: DataTransfer, targetPath?: string) => Promise<void> | void;
+  onUploadExternalFolder?: (fileList: FileList, targetPath?: string) => Promise<void> | void;
+  // Whether this pane is rendering a local filesystem. Upload menu items only
+  // make sense for remote (SFTP) panes, so they are suppressed when isLocal.
+  isLocal?: boolean;
   openRenameDialog: (name: string) => void;
   openDeleteConfirm: (targets: string[]) => void;
   rowHeight: number;
@@ -148,6 +152,8 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
   onDownloadFiles,
   onEditPermissions,
   onUploadExternalFiles,
+  onUploadExternalFolder,
+  isLocal = false,
   openRenameDialog,
   openDeleteConfirm,
   rowHeight,
@@ -194,23 +200,37 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
     onClearSelection();
   }, [onClearSelection, pane.selectedFiles.size]);
 
-  // Hidden file input used by the "Upload File(s)" context menu item to open
-  // a native multi-file picker. The drag-and-drop pipeline already accepts a
-  // DataTransfer, so we wrap the picked FileList into a DataTransfer and reuse
-  // it. Folder upload via the picker is non-trivial across platforms, so this
-  // entrypoint is intentionally restricted to files.
+  // Hidden file inputs backing the "Upload File(s)" / "Upload Folder" context
+  // menu items. The file input wraps the picked FileList into a DataTransfer
+  // and reuses the drag-and-drop upload pipeline. The folder input uses the
+  // non-standard `webkitdirectory` attribute and routes the FileList through
+  // uploadFromFileList so folder structure is preserved via webkitRelativePath.
+  // Both entrypoints are suppressed for local panes — there is no "upload"
+  // semantic when the active pane is the local filesystem.
+  const uploadEnabled = !isLocal && (!!onUploadExternalFiles || !!onUploadExternalFolder);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetPathRef = useRef<string | undefined>(undefined);
+  const folderTargetPathRef = useRef<string | undefined>(undefined);
 
   const triggerUploadPicker = useCallback((targetPath?: string) => {
-    if (!onUploadExternalFiles) return;
+    if (isLocal || !onUploadExternalFiles) return;
     const input = uploadInputRef.current;
     if (!input) return;
     uploadTargetPathRef.current = targetPath;
     // Reset value so selecting the same files twice still fires onChange.
     input.value = "";
     input.click();
-  }, [onUploadExternalFiles]);
+  }, [isLocal, onUploadExternalFiles]);
+
+  const triggerFolderPicker = useCallback((targetPath?: string) => {
+    if (isLocal || !onUploadExternalFolder) return;
+    const input = folderInputRef.current;
+    if (!input) return;
+    folderTargetPathRef.current = targetPath;
+    input.value = "";
+    input.click();
+  }, [isLocal, onUploadExternalFolder]);
 
   const handleUploadInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -232,6 +252,21 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
     uploadTargetPathRef.current = undefined;
     void onUploadExternalFiles(dt, targetPath);
   }, [onUploadExternalFiles]);
+
+  const handleFolderInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) {
+      folderTargetPathRef.current = undefined;
+      return;
+    }
+    if (!onUploadExternalFolder) {
+      folderTargetPathRef.current = undefined;
+      return;
+    }
+    const targetPath = folderTargetPathRef.current;
+    folderTargetPathRef.current = undefined;
+    void onUploadExternalFolder(files, targetPath);
+  }, [onUploadExternalFolder]);
 
   const renderRow = useCallback(
     (entry: SftpFileEntry, index: number) => (
@@ -390,7 +425,7 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
             <ContextMenuItem onClick={() => setShowNewFileDialog(true)}>
               <FilePlus size={14} className="mr-2" /> {t("sftp.newFile")}
             </ContextMenuItem>
-            {onUploadExternalFiles && (
+            {uploadEnabled && onUploadExternalFiles && (
               <ContextMenuItem
                 onClick={() => {
                   const target = isNavigableDirectory(entry) && entry.name !== ".."
@@ -403,6 +438,24 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
                 {isNavigableDirectory(entry) && entry.name !== ".."
                   ? t("sftp.context.uploadFilesToFolder", { name: entry.name })
                   : t("sftp.context.uploadFiles")}
+              </ContextMenuItem>
+            )}
+            {uploadEnabled && onUploadExternalFolder && (
+              <ContextMenuItem
+                onClick={() => {
+                  // For a directory row the picked folder should be uploaded
+                  // INTO that directory (matching drag-and-drop semantics):
+                  // picked `myproj` becomes <dirRow>/myproj.
+                  const target = isNavigableDirectory(entry) && entry.name !== ".."
+                    ? joinPath(pane.connection?.currentPath ?? "", entry.name)
+                    : undefined;
+                  triggerFolderPicker(target);
+                }}
+              >
+                <Upload size={14} className="mr-2" />{" "}
+                {isNavigableDirectory(entry) && entry.name !== ".."
+                  ? t("sftp.context.uploadFolderToFolder", { name: entry.name })
+                  : t("sftp.context.uploadFolder")}
               </ContextMenuItem>
             )}
           </ContextMenuContent>
@@ -431,6 +484,8 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
       onOpenFileWith,
       onRefresh,
       onUploadExternalFiles,
+      onUploadExternalFolder,
+      uploadEnabled,
       openDeleteConfirm,
       openRenameDialog,
       pane.connection,
@@ -439,6 +494,7 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
       setShowNewFileDialog,
       t,
       triggerUploadPicker,
+      triggerFolderPicker,
     ],
   );
 
@@ -610,23 +666,44 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
         }}>
           <FilePlus size={14} className="mr-2" />{t("sftp.newFile")}
         </ContextMenuItem>
-        {onUploadExternalFiles && (
+        {uploadEnabled && onUploadExternalFiles && (
           <ContextMenuItem onClick={() => triggerUploadPicker(undefined)}>
             <Upload size={14} className="mr-2" />{t("sftp.context.uploadFiles")}
+          </ContextMenuItem>
+        )}
+        {uploadEnabled && onUploadExternalFolder && (
+          <ContextMenuItem onClick={() => triggerFolderPicker(undefined)}>
+            <Upload size={14} className="mr-2" />{t("sftp.context.uploadFolder")}
           </ContextMenuItem>
         )}
       </ContextMenuContent>
     </ContextMenu>
 
-    {/* Hidden file input backing the "Upload File(s)" context menu item.
-        Selecting files dispatches into the existing drag-and-drop upload pipeline. */}
-    <input
-      ref={uploadInputRef}
-      type="file"
-      multiple
-      className="hidden"
-      onChange={handleUploadInputChange}
-    />
+    {/* Hidden file inputs backing the "Upload File(s)" / "Upload Folder"
+        context menu items. Suppressed for local panes since upload only makes
+        sense when the pane is a remote SFTP filesystem. */}
+    {uploadEnabled && onUploadExternalFiles && (
+      <input
+        ref={uploadInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={handleUploadInputChange}
+      />
+    )}
+    {uploadEnabled && onUploadExternalFolder && (
+      <input
+        ref={folderInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={handleFolderInputChange}
+        // webkitdirectory is non-standard but is the standard way to expose a
+        // directory picker in Chromium (and Electron is Chromium). React's
+        // intrinsic input typings already include this attribute.
+        webkitdirectory=""
+      />
+    )}
 
     {/* Footer */}
     <div className="h-9 shrink-0 px-4 flex items-center justify-between text-[11px] text-muted-foreground border-t border-border/40 bg-secondary/30">

@@ -7,6 +7,7 @@ import { joinPath } from "./utils";
 import {
   UploadController,
   uploadFromDataTransfer,
+  uploadFromFileList,
   uploadEntriesDirect,
   UploadBridge,
   UploadCallbacks,
@@ -54,6 +55,11 @@ interface SftpExternalOperationsResult {
   uploadExternalFiles: (
     side: "left" | "right",
     dataTransfer: DataTransfer,
+    targetPath?: string
+  ) => Promise<UploadResult[]>;
+  uploadExternalFolder: (
+    side: "left" | "right",
+    fileList: FileList | File[],
     targetPath?: string
   ) => Promise<UploadResult[]>;
   uploadExternalEntries: (
@@ -718,6 +724,88 @@ export const useSftpExternalOperations = (
     ],
   );
 
+  // Upload from a FileList (e.g. <input type="file" webkitdirectory>). Routes
+  // through uploadFromFileList so folder structure is preserved via
+  // webkitRelativePath; mirrors uploadExternalFiles otherwise.
+  const uploadExternalFolder = useCallback(
+    async (
+      side: "left" | "right",
+      fileList: FileList | File[],
+      targetPath?: string,
+    ): Promise<UploadResult[]> => {
+      const pane = getActivePane(side);
+      if (!pane?.connection) {
+        throw new Error("No active connection");
+      }
+
+      const bridge = netcattyBridge.get();
+      if (!bridge) {
+        throw new Error("Bridge not available");
+      }
+
+      const sftpId = pane.connection.isLocal
+        ? null
+        : sftpSessionsRef.current.get(pane.connection.id) || null;
+
+      if (!pane.connection.isLocal && !sftpId) {
+        throw new Error("SFTP session not found");
+      }
+
+      const uploadPaneId = pane.id;
+      const uploadTargetPath = targetPath || pane.connection.currentPath;
+      const controller = new UploadController();
+      uploadControllerRef.current = controller;
+
+      const callbacks = createUploadCallbacks(
+        pane.connection.id,
+        uploadTargetPath,
+        pane.connection.isLocal ? undefined : pane.connection.hostId,
+        pane.connection.isLocal ? undefined : connectionCacheKeyMapRef.current.get(pane.connection.id),
+      );
+
+      try {
+        const results = await uploadFromFileList(
+          fileList,
+          {
+            targetPath: uploadTargetPath,
+            sftpId,
+            isLocal: pane.connection.isLocal,
+            bridge: createUploadBridge,
+            joinPath,
+            callbacks,
+            useCompressedUpload,
+            resolveConflict: createUploadConflictResolver(),
+          },
+          controller,
+        );
+
+        if (clearDirCacheEntry && targetPath) {
+          clearDirCacheEntry(pane.connection.id, uploadTargetPath);
+        }
+        if (uploadTargetPath === pane.connection.currentPath) {
+          await refresh(side, { tabId: uploadPaneId });
+        }
+        return results;
+      } catch (error) {
+        logger.error("[SFTP] Folder upload failed:", error);
+        throw error;
+      } finally {
+        uploadControllerRef.current = null;
+      }
+    },
+    [
+      clearDirCacheEntry,
+      connectionCacheKeyMapRef,
+      getActivePane,
+      refresh,
+      sftpSessionsRef,
+      createUploadCallbacks,
+      createUploadBridge,
+      createUploadConflictResolver,
+      useCompressedUpload,
+    ],
+  );
+
   const uploadExternalEntries = useCallback(
     async (
       side: "left" | "right",
@@ -835,6 +923,7 @@ export const useSftpExternalOperations = (
     writeTextFileByConnection,
     downloadToTempAndOpen,
     uploadExternalFiles,
+    uploadExternalFolder,
     uploadExternalEntries,
     cancelExternalUpload,
     selectApplication,

@@ -106,6 +106,8 @@ interface UseSftpViewFileOpsResult {
   onDownloadFilesRight: (files: SftpFileEntry[]) => void;
   onUploadExternalFilesLeft: (dataTransfer: DataTransfer, targetPath?: string) => void;
   onUploadExternalFilesRight: (dataTransfer: DataTransfer, targetPath?: string) => void;
+  onUploadExternalFolderLeft: (fileList: FileList, targetPath?: string) => void;
+  onUploadExternalFolderRight: (fileList: FileList, targetPath?: string) => void;
 }
 
 export const useSftpViewFileOps = ({
@@ -416,6 +418,56 @@ export const useSftpViewFileOps = ({
   const onUploadExternalFilesRight = useCallback(
     (dataTransfer: DataTransfer, targetPath?: string) => handleUploadExternalFilesForSide("right", dataTransfer, targetPath),
     [handleUploadExternalFilesForSide],
+  );
+
+  const handleUploadExternalFolderForSide = useCallback(
+    async (side: "left" | "right", fileList: FileList, targetPath?: string) => {
+      try {
+        const results = await sftpRef.current.uploadExternalFolder(side, fileList, targetPath);
+
+        if (results.some((r) => r.cancelled)) {
+          toast.info(t("sftp.upload.cancelled"), "SFTP");
+          return;
+        }
+
+        const failCount = results.filter((r) => !r.success && !r.cancelled).length;
+        const successCount = results.filter((r) => r.success).length;
+
+        if (failCount === 0) {
+          const message =
+            successCount === 1
+              ? `${t("sftp.upload")}: ${results[0].fileName}`
+              : `${t("sftp.uploadFiles")}: ${successCount}`;
+          toast.success(message, "SFTP");
+        } else {
+          const failedFiles = results.filter((r) => !r.success && !r.cancelled);
+          failedFiles.forEach((failed) => {
+            const errorMsg = failed.error ? ` - ${failed.error}` : "";
+            toast.error(
+              `${t("sftp.error.uploadFailed")}: ${failed.fileName}${errorMsg}`,
+              "SFTP",
+            );
+          });
+        }
+      } catch (error) {
+        logger.error("[SftpView] Failed to upload external folder:", error);
+        toast.error(
+          error instanceof Error ? error.message : t("sftp.error.uploadFailed"),
+          "SFTP",
+        );
+      }
+    },
+    [sftpRef, t],
+  );
+
+  const onUploadExternalFolderLeft = useCallback(
+    (fileList: FileList, targetPath?: string) => handleUploadExternalFolderForSide("left", fileList, targetPath),
+    [handleUploadExternalFolderForSide],
+  );
+
+  const onUploadExternalFolderRight = useCallback(
+    (fileList: FileList, targetPath?: string) => handleUploadExternalFolderForSide("right", fileList, targetPath),
+    [handleUploadExternalFolderForSide],
   );
 
   const handleDownloadFileForSide = useCallback(
@@ -885,5 +937,7 @@ export const useSftpViewFileOps = ({
     onDownloadFilesRight,
     onUploadExternalFilesLeft,
     onUploadExternalFilesRight,
+    onUploadExternalFolderLeft,
+    onUploadExternalFolderRight,
   };
 };
