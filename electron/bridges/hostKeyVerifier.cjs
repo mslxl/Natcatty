@@ -103,9 +103,21 @@ const classifyHostKey = ({ knownHosts = [], hostname, port = 22, keyType, finger
     return { status: "trusted", knownHost: match.knownHost };
   }
 
-  const sameTypeMismatch = comparableCandidates.find((entry) =>
-    !keyType || keyType === "unknown" || !entry.knownHost.keyType || entry.knownHost.keyType === keyType
-  );
+  const normalizedKeyType = typeof keyType === "string" ? keyType.trim() : "";
+  const hasSpecificIncomingType = normalizedKeyType && normalizedKeyType !== "unknown";
+  let sameTypeMismatch;
+  if (hasSpecificIncomingType) {
+    sameTypeMismatch = comparableCandidates.find((entry) => entry.knownHost.keyType === normalizedKeyType);
+    if (!sameTypeMismatch && comparableCandidates.length === 1) {
+      const onlyCandidate = comparableCandidates[0];
+      if (!onlyCandidate.knownHost.keyType || onlyCandidate.knownHost.keyType === "unknown") {
+        sameTypeMismatch = onlyCandidate;
+      }
+    }
+  } else if (comparableCandidates.length === 1) {
+    sameTypeMismatch = comparableCandidates[0];
+  }
+
   if (sameTypeMismatch) {
     return {
       status: "changed",

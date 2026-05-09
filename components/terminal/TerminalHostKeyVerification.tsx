@@ -12,6 +12,7 @@ export interface HostKeyInfo {
     fingerprint: string;
     publicKey?: string;
     status?: 'unknown' | 'changed';
+    knownHostId?: string;
     knownFingerprint?: string;
 }
 

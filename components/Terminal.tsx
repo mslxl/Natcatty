@@ -42,6 +42,7 @@ import { useCustomThemes } from "../application/state/customThemeStore";
 
 import { TerminalConnectionDialog } from "./terminal/TerminalConnectionDialog";
 import { HostKeyInfo } from "./terminal/TerminalHostKeyVerification";
+import { createKnownHostFromHostKeyInfo, toHostKeyInfo } from "./terminal/hostKeyVerification";
 import { TerminalToolbar } from "./terminal/TerminalToolbar";
 import { TerminalComposeBar } from "./terminal/TerminalComposeBar";
 import { TerminalContextMenu } from "./terminal/TerminalContextMenu";
@@ -668,15 +669,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       if (request.sessionId !== sessionId) return;
 
       setPendingHostKeyRequestId(request.requestId);
-      setPendingHostKeyInfo({
-        hostname: request.hostname,
-        port: request.port,
-        keyType: request.keyType,
-        fingerprint: request.fingerprint,
-        publicKey: request.publicKey,
-        status: request.status,
-        knownFingerprint: request.knownFingerprint,
-      });
+      setPendingHostKeyInfo(toHostKeyInfo(request));
       setNeedsHostKeyVerification(true);
       setError(null);
       setProgressLogs((prev) => [
@@ -1574,16 +1567,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   const handleHostKeyAddAndContinue = () => {
     if (pendingHostKeyInfo && onAddKnownHost) {
-      const newKnownHost: KnownHost = {
-        id: `kh-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        hostname: pendingHostKeyInfo.hostname,
-        port: pendingHostKeyInfo.port || host.port || 22,
-        keyType: pendingHostKeyInfo.keyType,
-        publicKey: pendingHostKeyInfo.publicKey || `SHA256:${pendingHostKeyInfo.fingerprint}`,
-        fingerprint: pendingHostKeyInfo.fingerprint,
-        discoveredAt: Date.now(),
-      };
-      onAddKnownHost(newKnownHost);
+      onAddKnownHost(createKnownHostFromHostKeyInfo(pendingHostKeyInfo, host));
     }
     if (pendingHostKeyRequestId) {
       void terminalBackend.respondHostKeyVerification(pendingHostKeyRequestId, true, true);

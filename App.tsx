@@ -24,6 +24,7 @@ import { initializeUIFonts } from './application/state/uiFontStore';
 import { I18nProvider, useI18n } from './application/i18n/I18nProvider';
 import { matchesKeyBinding } from './domain/models';
 import { resolveGroupDefaults, applyGroupDefaults } from './domain/groupConfig';
+import { upsertKnownHost } from './domain/knownHosts';
 import { materializeHostProxyProfile } from './domain/proxyProfiles';
 import { resolveHostAuth } from './domain/sshAuth';
 import { isEncryptedCredentialPlaceholder } from './domain/credentials';
@@ -62,7 +63,7 @@ import { PassphraseModal, PassphraseRequest } from './components/PassphraseModal
 import { cn } from './lib/utils';
 import { classifyLocalShellType } from './lib/localShell';
 import { useDiscoveredShells, resolveShellSetting } from './lib/useDiscoveredShells';
-import { ConnectionLog, Host, HostProtocol, SerialConfig, SSHKey, TerminalSession, TerminalTheme } from './types';
+import { ConnectionLog, Host, HostProtocol, KnownHost, SerialConfig, SSHKey, TerminalSession, TerminalTheme } from './types';
 import { LogView as LogViewType } from './application/state/useSessionState';
 import type { SftpView as SftpViewComponent } from './components/SftpView';
 import type { TerminalLayer as TerminalLayerComponent } from './components/TerminalLayer';
@@ -297,6 +298,8 @@ function App({ settings }: { settings: SettingsState }) {
 
   const keysRef = useRef(keys);
   keysRef.current = keys;
+  const knownHostsRef = useRef(knownHosts);
+  knownHostsRef.current = knownHosts;
 
   const {
     sessions,
@@ -1572,6 +1575,12 @@ function App({ settings }: { settings: SettingsState }) {
     updateHosts(hosts.filter(h => h.id !== hostId));
   }, [hosts, updateHosts, t]);
 
+  const handleAddKnownHost = useCallback((kh: KnownHost) => {
+    const nextKnownHosts = upsertKnownHost(knownHostsRef.current, kh);
+    knownHostsRef.current = nextKnownHosts;
+    updateKnownHosts(nextKnownHosts);
+  }, [updateKnownHosts]);
+
   // System info for connection logs
   const hostsRef = useRef(hosts);
   hostsRef.current = hosts;
@@ -2077,16 +2086,7 @@ function App({ settings }: { settings: SettingsState }) {
           onUpdateSessionStatus={handleSessionStatusChange}
           onUpdateHostDistro={updateHostDistro}
           onUpdateHost={(host) => updateHosts(hosts.map(h => h.id === host.id ? host : h))}
-          onAddKnownHost={(kh) => updateKnownHosts([
-            ...knownHosts.filter((existing) =>
-              !(
-                existing.hostname.toLowerCase() === kh.hostname.toLowerCase() &&
-                existing.port === kh.port &&
-                existing.keyType === kh.keyType
-              )
-            ),
-            kh,
-          ])}
+          onAddKnownHost={handleAddKnownHost}
           onCommandExecuted={(command, hostId, hostLabel, sessionId) => {
             addShellHistoryEntry({ command, hostId, hostLabel, sessionId });
           }}
