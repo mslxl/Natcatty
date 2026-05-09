@@ -218,7 +218,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   snippets,
   chainHosts = [],
   themePreviewId,
-  knownHosts: _knownHosts = [],
+  knownHosts = [],
   isVisible,
   inWorkspace,
   isResizing,
@@ -639,6 +639,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   const [needsHostKeyVerification, setNeedsHostKeyVerification] = useState(false);
   const [pendingHostKeyInfo, setPendingHostKeyInfo] = useState<HostKeyInfo | null>(null);
+  const [pendingHostKeyRequestId, setPendingHostKeyRequestId] = useState<string | null>(null);
   const pendingConnectionRef = useRef<(() => void) | null>(null);
 
   // OSC-52 clipboard read prompt
@@ -661,6 +662,35 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     // Restore focus to terminal
     termRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    const dispose = terminalBackend.onHostKeyVerification?.((request) => {
+      if (request.sessionId !== sessionId) return;
+
+      setPendingHostKeyRequestId(request.requestId);
+      setPendingHostKeyInfo({
+        hostname: request.hostname,
+        port: request.port,
+        keyType: request.keyType,
+        fingerprint: request.fingerprint,
+        publicKey: request.publicKey,
+        status: request.status,
+        knownFingerprint: request.knownFingerprint,
+      });
+      setNeedsHostKeyVerification(true);
+      setError(null);
+      setProgressLogs((prev) => [
+        ...prev,
+        request.status === 'changed'
+          ? `Host key changed for ${request.hostname}. Waiting for confirmation...`
+          : `Host key verification required for ${request.hostname}.`,
+      ]);
+    });
+
+    return () => {
+      dispose?.();
+    };
+  }, [sessionId, terminalBackend.onHostKeyVerification]);
 
   const handleTopOverlayMouseDownCapture = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -755,6 +785,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     host,
     keys,
     identities,
+    knownHosts,
     resolvedChainHosts,
     sessionId,
     startupCommand,
@@ -1493,12 +1524,16 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   };
 
   const handleCancelConnect = () => {
+    if (pendingHostKeyRequestId) {
+      void terminalBackend.respondHostKeyVerification(pendingHostKeyRequestId, false);
+    }
     retryTokenRef.current = null;
     setIsCancelling(true);
     auth.setNeedsAuth(false);
     auth.setAuthRetryMessage(null);
     setNeedsHostKeyVerification(false);
     setPendingHostKeyInfo(null);
+    setPendingHostKeyRequestId(null);
     setError("Connection cancelled");
     setProgressLogs((prev) => [...prev, "Cancelled by user."]);
     cleanupSession();
@@ -1520,16 +1555,21 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const handleHostKeyClose = () => {
     setNeedsHostKeyVerification(false);
     setPendingHostKeyInfo(null);
+    setPendingHostKeyRequestId(null);
     handleCancelConnect();
   };
 
   const handleHostKeyContinue = () => {
+    if (pendingHostKeyRequestId) {
+      void terminalBackend.respondHostKeyVerification(pendingHostKeyRequestId, true, false);
+    }
     setNeedsHostKeyVerification(false);
     if (pendingConnectionRef.current) {
       pendingConnectionRef.current();
       pendingConnectionRef.current = null;
     }
     setPendingHostKeyInfo(null);
+    setPendingHostKeyRequestId(null);
   };
 
   const handleHostKeyAddAndContinue = () => {
@@ -1539,10 +1579,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         hostname: pendingHostKeyInfo.hostname,
         port: pendingHostKeyInfo.port || host.port || 22,
         keyType: pendingHostKeyInfo.keyType,
-        publicKey: pendingHostKeyInfo.fingerprint,
+        publicKey: pendingHostKeyInfo.publicKey || `SHA256:${pendingHostKeyInfo.fingerprint}`,
+        fingerprint: pendingHostKeyInfo.fingerprint,
         discoveredAt: Date.now(),
       };
       onAddKnownHost(newKnownHost);
+    }
+    if (pendingHostKeyRequestId) {
+      void terminalBackend.respondHostKeyVerification(pendingHostKeyRequestId, true, true);
     }
     setNeedsHostKeyVerification(false);
     if (pendingConnectionRef.current) {
@@ -1550,6 +1594,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       pendingConnectionRef.current = null;
     }
     setPendingHostKeyInfo(null);
+    setPendingHostKeyRequestId(null);
   };
 
   const handleRetry = () => {

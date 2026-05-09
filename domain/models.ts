@@ -870,6 +870,7 @@ export interface KnownHost {
   port: number;
   keyType: string; // ssh-rsa, ssh-ed25519, ecdsa-sha2-nistp256, etc.
   publicKey: string; // The host's public key fingerprint or full key
+  fingerprint?: string; // SHA256 fingerprint without the SHA256: prefix
   discoveredAt: number;
   lastSeen?: number;
   convertedToHostId?: string; // If converted to managed host

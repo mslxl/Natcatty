@@ -17,6 +17,7 @@ const telnetAutoLoginCancelledListeners = new Map();
 const languageChangeListeners = new Set();
 const fullscreenChangeListeners = new Set();
 const keyboardInteractiveListeners = new Set();
+const hostKeyVerificationListeners = new Set();
 const passphraseListeners = new Set();
 const passphraseTimeoutListeners = new Set();
 const passphraseCancelledListeners = new Set();
@@ -283,6 +284,16 @@ ipcRenderer.on("netcatty:keyboard-interactive", (_event, payload) => {
       cb(payload);
     } catch (err) {
       console.error("Keyboard-interactive callback failed", err);
+    }
+  });
+});
+
+ipcRenderer.on("netcatty:host-key:verify", (_event, payload) => {
+  hostKeyVerificationListeners.forEach((cb) => {
+    try {
+      cb(payload);
+    } catch (err) {
+      console.error("Host key verification callback failed", err);
     }
   });
 });
@@ -710,6 +721,17 @@ const api = {
       requestId,
       responses,
       cancelled,
+    });
+  },
+  onHostKeyVerification: (cb) => {
+    hostKeyVerificationListeners.add(cb);
+    return () => hostKeyVerificationListeners.delete(cb);
+  },
+  respondHostKeyVerification: async (requestId, accept, addToKnownHosts = false) => {
+    return ipcRenderer.invoke("netcatty:host-key:respond", {
+      requestId,
+      accept,
+      addToKnownHosts,
     });
   },
   // Passphrase request for encrypted SSH keys

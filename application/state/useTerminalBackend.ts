@@ -111,6 +111,23 @@ export const useTerminalBackend = () => {
     return bridge?.onChainProgress?.(cb);
   }, []);
 
+  const onHostKeyVerification = useCallback((cb: Parameters<NonNullable<NetcattyBridge["onHostKeyVerification"]>>[0]) => {
+    const bridge = netcattyBridge.get();
+    return bridge?.onHostKeyVerification?.(cb);
+  }, []);
+
+  const respondHostKeyVerification = useCallback(async (
+    requestId: string,
+    accept: boolean,
+    addToKnownHosts?: boolean,
+  ) => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.respondHostKeyVerification) {
+      return { success: false, error: "respondHostKeyVerification unavailable" };
+    }
+    return bridge.respondHostKeyVerification(requestId, accept, addToKnownHosts);
+  }, []);
+
   const openExternal = useCallback(async (url: string) => {
     const bridge = netcattyBridge.get();
     await bridge?.openExternal?.(url);
@@ -188,6 +205,8 @@ export const useTerminalBackend = () => {
     onTelnetAutoLoginComplete,
     onTelnetAutoLoginCancelled,
     onChainProgress,
+    onHostKeyVerification,
+    respondHostKeyVerification,
     openExternal,
   };
 };

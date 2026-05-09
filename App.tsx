@@ -2077,7 +2077,16 @@ function App({ settings }: { settings: SettingsState }) {
           onUpdateSessionStatus={handleSessionStatusChange}
           onUpdateHostDistro={updateHostDistro}
           onUpdateHost={(host) => updateHosts(hosts.map(h => h.id === host.id ? host : h))}
-          onAddKnownHost={(kh) => updateKnownHosts([...knownHosts, kh])}
+          onAddKnownHost={(kh) => updateKnownHosts([
+            ...knownHosts.filter((existing) =>
+              !(
+                existing.hostname.toLowerCase() === kh.hostname.toLowerCase() &&
+                existing.port === kh.port &&
+                existing.keyType === kh.keyType
+              )
+            ),
+            kh,
+          ])}
           onCommandExecuted={(command, hostId, hostLabel, sessionId) => {
             addShellHistoryEntry({ command, hostId, hostLabel, sessionId });
           }}

@@ -10,6 +10,8 @@ export interface HostKeyInfo {
     keyType: string; // ssh-rsa, ssh-ed25519, ecdsa-sha2-nistp256, etc.
     fingerprint: string; // SHA256 fingerprint
     publicKey?: string; // Full public key
+    status?: 'unknown' | 'changed';
+    knownFingerprint?: string;
 }
 
 interface KnownHostConfirmDialogProps {
@@ -27,6 +29,8 @@ const KnownHostConfirmDialog: React.FC<KnownHostConfirmDialogProps> = ({
     onContinue,
     onAddAndContinue,
 }) => {
+    const isChanged = hostKeyInfo.status === 'changed';
+
     return (
         <div className="flex flex-col items-center justify-center h-full p-8 max-w-2xl mx-auto">
             {/* Header with host info */}
@@ -60,11 +64,19 @@ const KnownHostConfirmDialog: React.FC<KnownHostConfirmDialogProps> = ({
 
             {/* Warning message */}
             <div className="text-center mb-6">
-                <h3 className="text-lg font-semibold text-amber-500 mb-2">
-                    Are you sure you want to connect?
+                <h3 className={`text-lg font-semibold mb-2 ${isChanged ? 'text-destructive' : 'text-amber-500'}`}>
+                    {isChanged ? 'Host key has changed' : 'Are you sure you want to connect?'}
                 </h3>
                 <p className="text-sm text-muted-foreground">
-                    The authenticity of <span className="font-mono font-medium text-foreground">{hostKeyInfo.hostname}</span> can not be established.
+                    {isChanged ? (
+                        <>
+                            The saved key for <span className="font-mono font-medium text-foreground">{hostKeyInfo.hostname}</span> no longer matches this server.
+                        </>
+                    ) : (
+                        <>
+                            The authenticity of <span className="font-mono font-medium text-foreground">{hostKeyInfo.hostname}</span> can not be established.
+                        </>
+                    )}
                 </p>
             </div>
 
@@ -78,8 +90,18 @@ const KnownHostConfirmDialog: React.FC<KnownHostConfirmDialogProps> = ({
                         {hostKeyInfo.fingerprint}
                     </code>
                 </div>
+                {isChanged && hostKeyInfo.knownFingerprint && (
+                    <div className="bg-destructive/10 rounded-lg p-3 border border-destructive/30">
+                        <p className="text-xs text-destructive mb-1">Saved fingerprint</p>
+                        <code className="text-sm font-mono text-foreground break-all">
+                            {hostKeyInfo.knownFingerprint}
+                        </code>
+                    </div>
+                )}
                 <p className="text-sm text-muted-foreground">
-                    Do you want to add it to the list of known hosts?
+                    {isChanged
+                        ? 'Only continue if you expected this host to change.'
+                        : 'Do you want to add it to the list of known hosts?'}
                 </p>
             </div>
 
@@ -103,7 +125,7 @@ const KnownHostConfirmDialog: React.FC<KnownHostConfirmDialogProps> = ({
                     className="min-w-[140px]"
                     onClick={onAddAndContinue}
                 >
-                    Add and continue
+                    {isChanged ? 'Update and continue' : 'Add and continue'}
                 </Button>
             </div>
         </div>
