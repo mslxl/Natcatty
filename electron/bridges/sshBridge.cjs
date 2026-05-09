@@ -709,6 +709,12 @@ async function startSSHSession(event, options) {
     const conn = new SSHClient();
     let chainConnections = [];
     let connectionSocket = null;
+    // Token returned by sessionLogStreamManager.startStream when (and if)
+    // a real-time log stream is opened. Captured here so every close /
+    // error / timeout handler below can pass it back to stopStream and
+    // avoid tearing down a stream that a subsequent reconnect on the same
+    // sessionId may have already started (issue #916).
+    let logStreamToken = null;
 
     // Determine if we have jump hosts
     const jumpHosts = options.jumpHosts || [];
@@ -1291,7 +1297,7 @@ async function startSSHSession(event, options) {
 
             // Start real-time session log stream if configured
             if (options.sessionLog?.enabled && options.sessionLog?.directory) {
-              sessionLogStreamManager.startStream(sessionId, {
+              logStreamToken = sessionLogStreamManager.startStream(sessionId, {
                 hostLabel: options.hostLabel || options.hostname || '',
                 hostname: options.hostname || '',
                 directory: options.sessionLog.directory,
@@ -1385,7 +1391,7 @@ async function startSSHSession(event, options) {
                 clearTimeout(flushTimeout);
               }
               flushBuffer();
-              sessionLogStreamManager.stopStream(sessionId);
+              sessionLogStreamManager.stopStream(sessionId, logStreamToken);
               if (detachX11Forwarding) {
                 detachX11Forwarding();
                 detachX11Forwarding = null;
@@ -1471,7 +1477,7 @@ async function startSSHSession(event, options) {
 
         sendProgress(totalHops, totalHops, options.hostname, 'error', err.message);
         safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: err.message, reason: "error" });
-        sessionLogStreamManager.stopStream(sessionId);
+        sessionLogStreamManager.stopStream(sessionId, logStreamToken);
         if (detachX11Forwarding) {
           detachX11Forwarding();
           detachX11Forwarding = null;
@@ -1496,7 +1502,7 @@ async function startSSHSession(event, options) {
         const contents = event.sender;
         sendProgress(totalHops, totalHops, options.hostname, 'error', err.message);
         safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: err.message, reason: "timeout" });
-        sessionLogStreamManager.stopStream(sessionId);
+        sessionLogStreamManager.stopStream(sessionId, logStreamToken);
         sessions.get(sessionId)?.zmodemSentry?.cancel();
         sessions.delete(sessionId);
         sessionEncodings.delete(sessionId);
@@ -1527,7 +1533,7 @@ async function startSSHSession(event, options) {
             safeSend(contents, "netcatty:exit", { sessionId, exitCode: 0, reason: "closed" });
           }
         }
-        sessionLogStreamManager.stopStream(sessionId);
+        sessionLogStreamManager.stopStream(sessionId, logStreamToken);
         sessions.get(sessionId)?.zmodemSentry?.cancel();
         sessions.delete(sessionId);
         sessionEncodings.delete(sessionId);
