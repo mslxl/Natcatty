@@ -292,7 +292,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     };
   };
 
-  const logRenderer = (attempt = 0) => {
+  const trackRenderer = (attempt = 0) => {
     const introspected = term as IntrospectableTerminal;
     const renderer = introspected._core?._renderService?._renderer;
     const candidates = [
@@ -310,11 +310,10 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           ? "canvas"
           : rendererName
       : "unknown";
-    logger.info(`[XTerm] renderer=${normalized}`);
     const scopedWindow = window as Window & { __xtermRenderer?: string };
     scopedWindow.__xtermRenderer = normalized;
     if (normalized === "unknown" && attempt < 3) {
-      setTimeout(() => logRenderer(attempt + 1), 150);
+      setTimeout(() => trackRenderer(attempt + 1), 150);
     }
   };
 
@@ -402,7 +401,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   term.loadAddon(unicodeGraphemes);
   term.unicode.activeVersion = '15-graphemes';
 
-  logRenderer();
+  trackRenderer();
 
   const appLevelActions = getAppLevelActions();
   const terminalActions = getTerminalPassthroughActions();
