@@ -103,13 +103,6 @@ test("buildSyncPayload includes AI configuration settings", () => {
     defaultModel: "gpt-test",
     enabled: true,
   }];
-  const externalAgents = [{
-    id: "codex",
-    name: "Codex",
-    command: "codex",
-    enabled: true,
-    acpCommand: "codex-acp",
-  }];
   const webSearch = {
     providerId: "tavily",
     apiKey: "enc:v1:web",
@@ -122,7 +115,6 @@ test("buildSyncPayload includes AI configuration settings", () => {
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_ACTIVE_MODEL, "gpt-test");
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_PERMISSION_MODE, "autonomous");
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_TOOL_INTEGRATION_MODE, "skills");
-  localStorage.setItem(storageKeys.STORAGE_KEY_AI_EXTERNAL_AGENTS, JSON.stringify(externalAgents));
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_DEFAULT_AGENT, "codex");
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_COMMAND_BLOCKLIST, JSON.stringify(["rm -rf"]));
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_COMMAND_TIMEOUT, "120");
@@ -138,7 +130,6 @@ test("buildSyncPayload includes AI configuration settings", () => {
     activeModelId: "gpt-test",
     globalPermissionMode: "autonomous",
     toolIntegrationMode: "skills",
-    externalAgents,
     defaultAgentId: "codex",
     commandBlocklist: ["rm -rf"],
     commandTimeout: 120,
@@ -146,6 +137,16 @@ test("buildSyncPayload includes AI configuration settings", () => {
     agentModelMap: { codex: "gpt-test" },
     webSearchConfig: webSearch,
   });
+});
+
+test("buildSyncPayload excludes externalAgents (device-local OS-bound config)", () => {
+  localStorage.setItem(storageKeys.STORAGE_KEY_AI_EXTERNAL_AGENTS, JSON.stringify([
+    { id: "codex", name: "Codex", command: "/opt/homebrew/bin/codex", enabled: true },
+  ]));
+
+  const payload = buildSyncPayload(vault([]));
+
+  assert.equal("ai" in (payload.settings ?? {}), false);
 });
 
 test("buildSyncPayload omits device-bound encrypted AI API keys", () => {
@@ -176,12 +177,6 @@ test("applySyncPayload restores AI configuration settings", async () => {
     apiKey: "enc:v1:test",
     enabled: true,
   }];
-  const externalAgents = [{
-    id: "claude",
-    name: "Claude",
-    command: "claude",
-    enabled: true,
-  }];
   const webSearch = {
     providerId: "exa",
     apiKey: "enc:v1:web",
@@ -201,7 +196,6 @@ test("applySyncPayload restores AI configuration settings", async () => {
         activeModelId: "claude-test",
         globalPermissionMode: "observer",
         toolIntegrationMode: "mcp",
-        externalAgents,
         defaultAgentId: "claude",
         commandBlocklist: ["shutdown"],
         commandTimeout: 30,
@@ -220,13 +214,43 @@ test("applySyncPayload restores AI configuration settings", async () => {
   assert.equal(localStorage.getItem(storageKeys.STORAGE_KEY_AI_ACTIVE_MODEL), "claude-test");
   assert.equal(localStorage.getItem(storageKeys.STORAGE_KEY_AI_PERMISSION_MODE), "observer");
   assert.equal(localStorage.getItem(storageKeys.STORAGE_KEY_AI_TOOL_INTEGRATION_MODE), "mcp");
-  assert.deepEqual(JSON.parse(localStorage.getItem(storageKeys.STORAGE_KEY_AI_EXTERNAL_AGENTS)!), externalAgents);
   assert.equal(localStorage.getItem(storageKeys.STORAGE_KEY_AI_DEFAULT_AGENT), "claude");
   assert.deepEqual(JSON.parse(localStorage.getItem(storageKeys.STORAGE_KEY_AI_COMMAND_BLOCKLIST)!), ["shutdown"]);
   assert.equal(localStorage.getItem(storageKeys.STORAGE_KEY_AI_COMMAND_TIMEOUT), "30");
   assert.equal(localStorage.getItem(storageKeys.STORAGE_KEY_AI_MAX_ITERATIONS), "5");
   assert.deepEqual(JSON.parse(localStorage.getItem(storageKeys.STORAGE_KEY_AI_AGENT_MODEL_MAP)!), { claude: "claude-test" });
   assert.deepEqual(JSON.parse(localStorage.getItem(storageKeys.STORAGE_KEY_AI_WEB_SEARCH)!), webSearch);
+});
+
+test("applySyncPayload preserves local externalAgents and ignores legacy payload field", async () => {
+  const localAgents = [
+    { id: "codex", name: "Codex", command: "/usr/local/bin/codex", enabled: true },
+  ];
+  localStorage.setItem(storageKeys.STORAGE_KEY_AI_EXTERNAL_AGENTS, JSON.stringify(localAgents));
+
+  const payload = {
+    hosts: [],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+    settings: {
+      ai: {
+        // Legacy snapshot still carries externalAgents; current code must ignore it.
+        externalAgents: [
+          { id: "claude", name: "Claude", command: "C:\\Tools\\claude.exe", enabled: true },
+        ],
+      },
+    },
+    syncedAt: 1,
+  } as unknown as SyncPayload;
+
+  await applySyncPayload(payload, { importVaultData: () => {} });
+
+  assert.deepEqual(
+    JSON.parse(localStorage.getItem(storageKeys.STORAGE_KEY_AI_EXTERNAL_AGENTS)!),
+    localAgents,
+  );
 });
 
 test("applySyncPayload preserves local AI provider apiKeys when synced payload omits them", async () => {

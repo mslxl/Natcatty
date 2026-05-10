@@ -226,7 +226,8 @@ export interface SyncPayload {
       globalPermissionMode?: 'observer' | 'confirm' | 'autonomous';
       toolIntegrationMode?: 'mcp' | 'skills';
       hostPermissions?: Array<Record<string, unknown>>;
-      externalAgents?: Array<Record<string, unknown>>;
+      // externalAgents intentionally omitted: command/args/env are device-local
+      // (binary paths, OS-specific values) and don't survive cross-device sync.
       defaultAgentId?: string;
       commandBlocklist?: string[];
       commandTimeout?: number;

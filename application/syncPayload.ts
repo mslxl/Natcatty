@@ -61,7 +61,6 @@ import {
   STORAGE_KEY_AI_PERMISSION_MODE,
   STORAGE_KEY_AI_TOOL_INTEGRATION_MODE,
   STORAGE_KEY_AI_HOST_PERMISSIONS,
-  STORAGE_KEY_AI_EXTERNAL_AGENTS,
   STORAGE_KEY_AI_DEFAULT_AGENT,
   STORAGE_KEY_AI_COMMAND_BLOCKLIST,
   STORAGE_KEY_AI_COMMAND_TIMEOUT,
@@ -201,7 +200,6 @@ export const SYNCABLE_SETTING_STORAGE_KEYS = [
   STORAGE_KEY_AI_PERMISSION_MODE,
   STORAGE_KEY_AI_TOOL_INTEGRATION_MODE,
   STORAGE_KEY_AI_HOST_PERMISSIONS,
-  STORAGE_KEY_AI_EXTERNAL_AGENTS,
   STORAGE_KEY_AI_DEFAULT_AGENT,
   STORAGE_KEY_AI_COMMAND_BLOCKLIST,
   STORAGE_KEY_AI_COMMAND_TIMEOUT,
@@ -387,8 +385,7 @@ export function collectSyncableSettings(): SyncPayload['settings'] {
   }
   const hostPermissions = readArraySetting(STORAGE_KEY_AI_HOST_PERMISSIONS);
   if (hostPermissions) ai.hostPermissions = hostPermissions;
-  const externalAgents = readArraySetting(STORAGE_KEY_AI_EXTERNAL_AGENTS);
-  if (externalAgents) ai.externalAgents = externalAgents;
+  // externalAgents intentionally not collected: command/args/env are device-local.
   const defaultAgentId = localStorageAdapter.readString(STORAGE_KEY_AI_DEFAULT_AGENT);
   if (defaultAgentId != null) ai.defaultAgentId = defaultAgentId;
   const commandBlocklist = localStorageAdapter.read<string[]>(STORAGE_KEY_AI_COMMAND_BLOCKLIST);
@@ -509,7 +506,8 @@ function applySyncableSettings(settings: NonNullable<SyncPayload['settings']>): 
     if (ai.globalPermissionMode != null) localStorageAdapter.writeString(STORAGE_KEY_AI_PERMISSION_MODE, ai.globalPermissionMode);
     if (ai.toolIntegrationMode != null) localStorageAdapter.writeString(STORAGE_KEY_AI_TOOL_INTEGRATION_MODE, ai.toolIntegrationMode);
     if (ai.hostPermissions != null) localStorageAdapter.write(STORAGE_KEY_AI_HOST_PERMISSIONS, ai.hostPermissions);
-    if (ai.externalAgents != null) localStorageAdapter.write(STORAGE_KEY_AI_EXTERNAL_AGENTS, ai.externalAgents);
+    // externalAgents intentionally not applied: device-local. Legacy snapshots
+    // that still carry an `externalAgents` field are silently ignored.
     if (ai.defaultAgentId != null) localStorageAdapter.writeString(STORAGE_KEY_AI_DEFAULT_AGENT, ai.defaultAgentId);
     if (ai.commandBlocklist != null) localStorageAdapter.write(STORAGE_KEY_AI_COMMAND_BLOCKLIST, ai.commandBlocklist);
     if (ai.commandTimeout != null) localStorageAdapter.writeNumber(STORAGE_KEY_AI_COMMAND_TIMEOUT, ai.commandTimeout);
