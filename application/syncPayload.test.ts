@@ -229,6 +229,151 @@ test("applySyncPayload restores AI configuration settings", async () => {
   assert.deepEqual(JSON.parse(localStorage.getItem(storageKeys.STORAGE_KEY_AI_WEB_SEARCH)!), webSearch);
 });
 
+test("applySyncPayload preserves local AI provider apiKeys when synced payload omits them", async () => {
+  const localProviders = [
+    {
+      id: "openai-main",
+      providerId: "openai",
+      name: "OpenAI",
+      apiKey: "enc:v1:djEwLOCAL",
+      enabled: true,
+    },
+    {
+      id: "anthropic-main",
+      providerId: "anthropic",
+      name: "Anthropic",
+      apiKey: "enc:v1:djEwANTHROPIC",
+      enabled: true,
+    },
+  ];
+  localStorage.setItem(storageKeys.STORAGE_KEY_AI_PROVIDERS, JSON.stringify(localProviders));
+
+  // Synced payload mirrors what `collectSyncableSettings` produces on another device:
+  // metadata is preserved but encrypted device-bound apiKeys are stripped.
+  const syncedProviders = [
+    { id: "openai-main", providerId: "openai", name: "OpenAI (renamed)", enabled: true },
+    { id: "anthropic-main", providerId: "anthropic", name: "Anthropic", enabled: false },
+  ];
+
+  const payload: SyncPayload = {
+    hosts: [],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+    settings: { ai: { providers: syncedProviders } },
+    syncedAt: 1,
+  } as SyncPayload;
+
+  await applySyncPayload(payload, { importVaultData: () => {} });
+
+  const stored = JSON.parse(localStorage.getItem(storageKeys.STORAGE_KEY_AI_PROVIDERS)!);
+  assert.deepEqual(stored, [
+    {
+      id: "openai-main",
+      providerId: "openai",
+      name: "OpenAI (renamed)",
+      apiKey: "enc:v1:djEwLOCAL",
+      enabled: true,
+    },
+    {
+      id: "anthropic-main",
+      providerId: "anthropic",
+      name: "Anthropic",
+      apiKey: "enc:v1:djEwANTHROPIC",
+      enabled: false,
+    },
+  ]);
+});
+
+test("applySyncPayload prefers explicit synced apiKey over local apiKey", async () => {
+  localStorage.setItem(storageKeys.STORAGE_KEY_AI_PROVIDERS, JSON.stringify([
+    { id: "openai-main", providerId: "openai", name: "OpenAI", apiKey: "enc:v1:djEwLOCAL", enabled: true },
+  ]));
+
+  const payload: SyncPayload = {
+    hosts: [],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+    settings: {
+      ai: {
+        providers: [
+          { id: "openai-main", providerId: "openai", name: "OpenAI", apiKey: "plaintext-from-other-device", enabled: true },
+        ],
+      },
+    },
+    syncedAt: 1,
+  } as SyncPayload;
+
+  await applySyncPayload(payload, { importVaultData: () => {} });
+
+  const stored = JSON.parse(localStorage.getItem(storageKeys.STORAGE_KEY_AI_PROVIDERS)!);
+  assert.equal(stored[0].apiKey, "plaintext-from-other-device");
+});
+
+test("applySyncPayload preserves local web-search apiKey when synced config omits it", async () => {
+  localStorage.setItem(storageKeys.STORAGE_KEY_AI_WEB_SEARCH, JSON.stringify({
+    providerId: "tavily",
+    apiKey: "enc:v1:djEwWEB",
+    enabled: true,
+    maxResults: 7,
+  }));
+
+  const payload: SyncPayload = {
+    hosts: [],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+    settings: {
+      ai: {
+        webSearchConfig: { providerId: "tavily", enabled: false, maxResults: 12 },
+      },
+    },
+    syncedAt: 1,
+  } as SyncPayload;
+
+  await applySyncPayload(payload, { importVaultData: () => {} });
+
+  const stored = JSON.parse(localStorage.getItem(storageKeys.STORAGE_KEY_AI_WEB_SEARCH)!);
+  assert.deepEqual(stored, {
+    providerId: "tavily",
+    apiKey: "enc:v1:djEwWEB",
+    enabled: false,
+    maxResults: 12,
+  });
+});
+
+test("applySyncPayload drops local web-search apiKey when synced config switches provider", async () => {
+  localStorage.setItem(storageKeys.STORAGE_KEY_AI_WEB_SEARCH, JSON.stringify({
+    providerId: "tavily",
+    apiKey: "enc:v1:djEwWEB",
+    enabled: true,
+  }));
+
+  const payload: SyncPayload = {
+    hosts: [],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+    settings: {
+      ai: {
+        webSearchConfig: { providerId: "exa", enabled: true },
+      },
+    },
+    syncedAt: 1,
+  } as SyncPayload;
+
+  await applySyncPayload(payload, { importVaultData: () => {} });
+
+  const stored = JSON.parse(localStorage.getItem(storageKeys.STORAGE_KEY_AI_WEB_SEARCH)!);
+  assert.equal("apiKey" in stored, false);
+  assert.equal(stored.providerId, "exa");
+});
+
 test("buildSyncPayload includes syncable terminal options from settings", () => {
   localStorage.setItem(storageKeys.STORAGE_KEY_TERM_FOLLOW_APP_THEME, "true");
   localStorage.setItem(storageKeys.STORAGE_KEY_TERM_SETTINGS, JSON.stringify({

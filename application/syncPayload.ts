@@ -231,6 +231,47 @@ const stripDeviceBoundApiKey = <T extends Record<string, unknown>>(value: T): T 
 };
 
 /**
+ * `collectSyncableSettings` strips device-bound encrypted apiKeys before upload,
+ * so an incoming providers array typically has no apiKey for providers that
+ * already exist locally. Re-attach the local apiKey by id; without this merge,
+ * applying any synced settings change would silently wipe credentials on the
+ * receiving device.
+ */
+const mergeAiProvidersPreservingLocalApiKeys = (
+  incoming: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> => {
+  const local = readArraySetting(STORAGE_KEY_AI_PROVIDERS) ?? [];
+  const localById = new Map<string, Record<string, unknown>>();
+  for (const provider of local) {
+    if (typeof provider?.id === 'string') localById.set(provider.id, provider);
+  }
+  return incoming.map((provider) => {
+    if (provider.apiKey != null) return provider;
+    const id = typeof provider.id === 'string' ? provider.id : undefined;
+    const localProvider = id != null ? localById.get(id) : undefined;
+    if (localProvider && typeof localProvider.apiKey === 'string') {
+      return { ...provider, apiKey: localProvider.apiKey };
+    }
+    return provider;
+  });
+};
+
+/**
+ * Same rationale as `mergeAiProvidersPreservingLocalApiKeys`. Only restores the
+ * local apiKey when the incoming config still points at the same providerId —
+ * switching providers must not silently leak a key meant for a different one.
+ */
+const mergeWebSearchConfigPreservingLocalApiKey = (
+  incoming: Record<string, unknown>,
+): Record<string, unknown> => {
+  if (incoming.apiKey != null) return incoming;
+  const local = readRecordSetting(STORAGE_KEY_AI_WEB_SEARCH);
+  if (!local || typeof local.apiKey !== 'string') return incoming;
+  if (local.providerId !== incoming.providerId) return incoming;
+  return { ...incoming, apiKey: local.apiKey };
+};
+
+/**
  * Collect all syncable settings from localStorage.
  */
 export function collectSyncableSettings(): SyncPayload['settings'] {
@@ -457,7 +498,12 @@ function applySyncableSettings(settings: NonNullable<SyncPayload['settings']>): 
 
   const ai = settings.ai;
   if (ai) {
-    if (ai.providers != null) localStorageAdapter.write(STORAGE_KEY_AI_PROVIDERS, ai.providers);
+    if (ai.providers != null) {
+      localStorageAdapter.write(
+        STORAGE_KEY_AI_PROVIDERS,
+        mergeAiProvidersPreservingLocalApiKeys(ai.providers),
+      );
+    }
     if (ai.activeProviderId != null) localStorageAdapter.writeString(STORAGE_KEY_AI_ACTIVE_PROVIDER, ai.activeProviderId);
     if (ai.activeModelId != null) localStorageAdapter.writeString(STORAGE_KEY_AI_ACTIVE_MODEL, ai.activeModelId);
     if (ai.globalPermissionMode != null) localStorageAdapter.writeString(STORAGE_KEY_AI_PERMISSION_MODE, ai.globalPermissionMode);
@@ -473,7 +519,10 @@ function applySyncableSettings(settings: NonNullable<SyncPayload['settings']>): 
       if (ai.webSearchConfig === null) {
         localStorageAdapter.remove(STORAGE_KEY_AI_WEB_SEARCH);
       } else {
-        localStorageAdapter.write(STORAGE_KEY_AI_WEB_SEARCH, ai.webSearchConfig);
+        localStorageAdapter.write(
+          STORAGE_KEY_AI_WEB_SEARCH,
+          mergeWebSearchConfigPreservingLocalApiKey(ai.webSearchConfig),
+        );
       }
     }
   }
