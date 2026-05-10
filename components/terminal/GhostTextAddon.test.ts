@@ -323,3 +323,130 @@ test("hides ghost immediately when input no longer matches suggestion", () => {
     restoreDocument();
   }
 });
+
+test("applyKeystroke: printable char trims ghost tail when buffer is unreliable (issue #906)", () => {
+  // Repro for issue #906: after Tab passes to shell and the typed-buffer
+  // is flagged unreliable, the ghost addon's currentInput is the only
+  // source of truth for what the user has typed since the last show().
+  // Without applyKeystroke, line 798's reliability gate prevents
+  // adjustToInput from firing and the ghost retains its show-time tail
+  // — when the next keystroke advances the cursor, the stale tail
+  // overlaps the just-typed glyph (e.g., typing 't' after 'systemctl s'
+  // makes the screen read 'systemctl sttop firewalld').
+  const restoreDocument = installFakeDocument();
+  const { term, ghostElement } = createFakeTerm();
+  const addon = new GhostTextAddon();
+
+  try {
+    addon.activate(term as never);
+    addon.show("systemctl stop firewalld", "systemctl s");
+    const ghost = ghostElement();
+    assert.ok(ghost);
+    assert.equal(ghost.textContent, "top firewalld");
+
+    addon.applyKeystroke("t");
+
+    // Ghost tail must shrink by exactly one char so when the shell
+    // echoes 't', the next visible glyph after the cursor is 'o', not
+    // 't' (which would render as 'sttop').
+    assert.equal(ghost.textContent, "op firewalld");
+    assert.equal(addon.isActive(), true);
+  } finally {
+    restoreDocument();
+  }
+});
+
+test("applyKeystroke: backspace re-grows ghost tail by one char", () => {
+  const restoreDocument = installFakeDocument();
+  const { term, ghostElement } = createFakeTerm();
+  const addon = new GhostTextAddon();
+
+  try {
+    addon.activate(term as never);
+    addon.show("docker", "doc");
+    const ghost = ghostElement();
+    assert.ok(ghost);
+    assert.equal(ghost.textContent, "ker");
+
+    addon.applyKeystroke("\x7f");
+
+    assert.equal(ghost.textContent, "cker");
+  } finally {
+    restoreDocument();
+  }
+});
+
+test("applyKeystroke: Ctrl+W word-erases trailing word from currentInput", () => {
+  const restoreDocument = installFakeDocument();
+  const { term, ghostElement } = createFakeTerm();
+  const addon = new GhostTextAddon();
+
+  try {
+    addon.activate(term as never);
+    // Mid-suggestion: user has typed two words; Ctrl+W should drop the
+    // tail word and let the ghost regrow to cover what was erased.
+    addon.show("git commit -m wip", "git com");
+    const ghost = ghostElement();
+    assert.ok(ghost);
+    assert.equal(ghost.textContent, "mit -m wip");
+
+    addon.applyKeystroke("\x17");
+
+    // The same /\s*\S+\s*$/ regex used by handleInput consumes the
+    // leading whitespace too, so "git com" → "git"; the ghost regrows
+    // to cover the now-uncovered leading space + remainder.
+    assert.equal(ghost.textContent, " commit -m wip");
+  } finally {
+    restoreDocument();
+  }
+});
+
+test("applyKeystroke: hides ghost when next char diverges from suggestion", () => {
+  const restoreDocument = installFakeDocument();
+  const { term, ghostElement } = createFakeTerm();
+  const addon = new GhostTextAddon();
+
+  try {
+    addon.activate(term as never);
+    addon.show("docker", "do");
+    const ghost = ghostElement();
+    assert.ok(ghost);
+
+    // 'x' breaks the prefix invariant — ghost must hide immediately so
+    // a → -accept after this point can't pull a stale tail onto a line
+    // that no longer matches the suggestion.
+    addon.applyKeystroke("x");
+
+    assert.equal(ghost.style.display, "none");
+    assert.equal(addon.isActive(), false);
+  } finally {
+    restoreDocument();
+  }
+});
+
+test("applyKeystroke: ignores non-typing data (escape sequences, control codes)", () => {
+  // Escape sequences and other control codes are routed through
+  // clearState() in handleInput, not propagated to the ghost — but we
+  // want applyKeystroke to be a safe no-op if accidentally called with
+  // them (defense in depth).
+  const restoreDocument = installFakeDocument();
+  const { term, ghostElement } = createFakeTerm();
+  const addon = new GhostTextAddon();
+
+  try {
+    addon.activate(term as never);
+    addon.show("docker", "do");
+    const ghost = ghostElement();
+    assert.ok(ghost);
+    const tailBefore = ghost.textContent;
+
+    addon.applyKeystroke("\x1b[A"); // up-arrow escape sequence
+    addon.applyKeystroke("\x01");    // Ctrl+A
+    addon.applyKeystroke("");         // empty
+
+    assert.equal(ghost.textContent, tailBefore);
+    assert.equal(addon.isActive(), true);
+  } finally {
+    restoreDocument();
+  }
+});
