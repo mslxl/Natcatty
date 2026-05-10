@@ -789,14 +789,26 @@ export function useTerminalAutocomplete(
       // immediately. Without this the ghost keeps the tail it captured at
       // show() time; a fast "type + press →" sequence then pastes the
       // pre-update tail on top of the new input ("doc" + "cker ls" →
-      // "doccker ls"). Only safe to call when the buffer is reliable —
-      // otherwise its content doesn't correspond to the live line and
-      // adjustToInput would make the ghost lie. Also skip when the user
-      // has turned showGhostText off mid-session: otherwise a ghost that
-      // was active before the toggle would keep moving around under a
-      // setting the user just said to disable (Codex #815 P2).
-      if (typedBufferReliableRef.current && settingsRef.current.showGhostText) {
-        ghostAddonRef.current?.adjustToInput(typedInputBufferRef.current);
+      // "doccker ls"). Skip when the user has turned showGhostText off
+      // mid-session: otherwise a ghost that was active before the toggle
+      // would keep moving around under a setting the user just said to
+      // disable (Codex #815 P2).
+      //
+      // Reliable buffer: feed adjustToInput the full post-mutation buffer
+      // so multi-char pastes refresh the ghost as one batch. Unreliable
+      // buffer (post Tab / cursor-move / history recall): the buffer
+      // is just the suffix typed since unreliability began, so feeding
+      // it to adjustToInput would fail the prefix invariant and hide
+      // the ghost. Instead let the addon evolve its own currentInput
+      // off the keystroke directly (issue #906) — that input was seeded
+      // by the last show() with the live xterm reading, which is the
+      // only post-Tab source-of-truth we have.
+      if (settingsRef.current.showGhostText) {
+        if (typedBufferReliableRef.current) {
+          ghostAddonRef.current?.adjustToInput(typedInputBufferRef.current);
+        } else {
+          ghostAddonRef.current?.applyKeystroke(data);
+        }
       }
 
       // Fast typing suppression: if typing faster than threshold, skip this debounce cycle

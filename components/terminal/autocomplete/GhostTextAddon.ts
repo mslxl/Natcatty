@@ -213,6 +213,40 @@ export class GhostTextAddon implements IDisposable {
     this.ghostElement.style.display = "block";
   }
 
+  /**
+   * Apply a single keystroke's effect to the ghost without consulting the
+   * outer typed-input buffer. Used when that buffer's reliability flag is
+   * off (post-Tab, history recall, cursor moves) — without this hook the
+   * gate at handleInput's adjustToInput call would freeze the ghost at
+   * the previous show()'s tail, and a subsequent → -accept would paste
+   * that stale tail on top of the chars typed in the meantime
+   * (sttop/dduplicate-glyph bug, issue #906).
+   *
+   * Only forwards events the ghost can locally re-derive: a printable
+   * char appends, Backspace/DEL slices off one char, Ctrl-W performs
+   * the same trailing-word erase as zsh/bash. Anything else (escape
+   * sequences, other control codes) is treated as a no-op — those
+   * paths already clearState() in handleInput, so by the time the user
+   * could trigger an accept, the ghost is gone.
+   */
+  applyKeystroke(data: string): void {
+    if (this.disposed || !this.currentSuggestion || !data) return;
+    let nextInput: string;
+    if (data === "\x7f" || data === "\b") {
+      if (this.currentInput.length === 0) return;
+      nextInput = this.currentInput.slice(0, -1);
+    } else if (data === "\x17") {
+      const erased = this.currentInput.replace(/\s*\S+\s*$/, "");
+      if (erased === this.currentInput) return;
+      nextInput = erased;
+    } else if (data.length === 1 && data.charCodeAt(0) >= 32) {
+      nextInput = this.currentInput + data;
+    } else {
+      return;
+    }
+    this.adjustToInput(nextInput);
+  }
+
   getSuggestion(): string {
     return this.currentSuggestion;
   }
