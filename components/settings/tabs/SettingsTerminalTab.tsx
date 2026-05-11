@@ -22,6 +22,7 @@ import { Label } from "../../ui/label";
 import { SectionHeader, Select, SettingsTabContent, SettingRow, Toggle } from "../settings-ui";
 import { ThemeSelectModal } from "../ThemeSelectModal";
 import { TerminalFontSelect } from "../TerminalFontSelect";
+import { TerminalCjkFontSelect } from "../TerminalCjkFontSelect";
 import { CustomThemeModal } from "../../terminal/CustomThemeModal";
 import type { TerminalTheme } from "../../../domain/models";
 
@@ -611,6 +612,17 @@ export default function SettingsTerminalTab(props: {
             value={terminalFontFamilyId}
             fonts={availableFonts}
             onChange={(id) => setTerminalFontFamilyId(id)}
+            className="w-48"
+          />
+        </SettingRow>
+
+        <SettingRow
+          label={t("settings.terminal.font.cjk")}
+          description={t("settings.terminal.font.cjk.desc")}
+        >
+          <TerminalCjkFontSelect
+            value={terminalSettings.fallbackFont ?? ""}
+            onChange={(next) => updateTerminalSetting("fallbackFont", next)}
             className="w-48"
           />
         </SettingRow>

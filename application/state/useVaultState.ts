@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { normalizeDistroId, sanitizeHost } from "../../domain/host";
+import { sanitizeGroupConfig } from "../../domain/groupConfig";
 import {
   ConnectionLog,
   GroupConfig,
@@ -240,9 +241,15 @@ export const useVaultState = () => {
   }, []);
 
   const updateGroupConfigs = useCallback((data: GroupConfig[]) => {
-    setGroupConfigs(data);
+    // Sanitize on the write path too — applySyncPayload / importVaultData
+    // route legacy payloads through here, and without this step a saved
+    // pingfang-sc / comic-sans-ms override from an older client would
+    // sit in memory and re-persist with `fontFamilyOverride: true` until
+    // the next reload. Mirrors updateHosts → sanitizeHost.
+    const cleaned = data.map(sanitizeGroupConfig);
+    setGroupConfigs(cleaned);
     const ver = ++groupConfigsWriteVersion.current;
-    return encryptGroupConfigs(data).then((enc) => {
+    return encryptGroupConfigs(cleaned).then((enc) => {
       if (ver === groupConfigsWriteVersion.current)
         localStorageAdapter.write(STORAGE_KEY_GROUP_CONFIGS, enc);
     });
@@ -528,8 +535,9 @@ export const useVaultState = () => {
           const gcVer = ++groupConfigsWriteVersion.current;
           const decryptedGC = await decryptGroupConfigs(savedGroupConfigs);
           if (gcVer === groupConfigsWriteVersion.current) {
-            setGroupConfigs(decryptedGC);
-            encryptGroupConfigs(decryptedGC).then((enc) => {
+            const sanitizedGC = decryptedGC.map(sanitizeGroupConfig);
+            setGroupConfigs(sanitizedGC);
+            encryptGroupConfigs(sanitizedGC).then((enc) => {
               if (gcVer === groupConfigsWriteVersion.current)
                 localStorageAdapter.write(STORAGE_KEY_GROUP_CONFIGS, enc);
             });
@@ -659,7 +667,7 @@ export const useVaultState = () => {
         const writeAtStart = groupConfigsWriteVersion.current;
         decryptGroupConfigs(next).then((dec) => {
           if (seq === groupConfigsReadSeq.current && writeAtStart === groupConfigsWriteVersion.current)
-            setGroupConfigs(dec);
+            setGroupConfigs(dec.map(sanitizeGroupConfig));
         });
         return;
       }

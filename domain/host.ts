@@ -1,4 +1,5 @@
 import { Host } from './models';
+import { migrateDeprecatedFontOverride } from '../infrastructure/config/fonts';
 
 export const LINUX_DISTRO_OPTIONS = [
   'linux',
@@ -199,8 +200,9 @@ export const sanitizeHost = (host: Host): Host => {
       : host.distroMode === 'auto'
         ? 'auto'
         : undefined;
+  const migrated = migrateDeprecatedFontOverride(host);
   return {
-    ...host,
+    ...migrated,
     hostname: cleanHostname,
     distro: cleanDistro,
     distroMode: cleanDistroMode,

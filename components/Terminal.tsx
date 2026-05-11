@@ -37,6 +37,7 @@ import { Button } from "./ui/button";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
 import { toast } from "./ui/toast";
 import { useAvailableFonts } from "../application/state/fontStore";
+import { composeFontFamilyStack, type SupportedPlatform } from "../infrastructure/config/cjkFonts";
 import { TERMINAL_THEMES } from "../infrastructure/config/terminalThemes";
 import { useCustomThemes } from "../application/state/customThemeStore";
 
@@ -709,8 +710,20 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       ? host.fontFamily
       : fontFamilyId;
     const resolvedFontId = hostFontId || "menlo";
-    return (availableFonts.find((f) => f.id === resolvedFontId) || availableFonts[0]).family;
-  }, [availableFonts, fontFamilyId, hasFontFamilyOverride, host.fontFamily]);
+    const selectedFont = availableFonts.find((f) => f.id === resolvedFontId) || availableFonts[0];
+    const platform: SupportedPlatform =
+      typeof navigator !== "undefined" && /Mac/i.test(navigator.platform)
+        ? "darwin"
+        : typeof navigator !== "undefined" && /Win/i.test(navigator.platform)
+          ? "win32"
+          : "linux";
+    return composeFontFamilyStack({
+      primaryFamily: selectedFont.family,
+      userFallback: terminalSettings?.fallbackFont ?? "",
+      latinFontId: resolvedFontId,
+      platform,
+    });
+  }, [availableFonts, fontFamilyId, hasFontFamilyOverride, host.fontFamily, terminalSettings?.fallbackFont]);
 
   const effectiveTheme = useMemo(() => {
     // When "Follow Application Theme" is on and there's no active

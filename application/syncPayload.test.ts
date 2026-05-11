@@ -561,6 +561,75 @@ test("applySyncPayload waits for async vault imports", async () => {
   assert.equal(finished, true);
 });
 
+test("buildSyncPayload includes fallbackFont when present in TERM_SETTINGS", () => {
+  localStorage.setItem(
+    storageKeys.STORAGE_KEY_TERM_SETTINGS,
+    JSON.stringify({ scrollback: 5000, fallbackFont: "PingFang SC", fontLigatures: true }),
+  );
+
+  const payload = buildSyncPayload(vault());
+  const termSettings = (payload.settings?.terminalSettings ?? {}) as Record<string, unknown>;
+  assert.equal(termSettings.fallbackFont, "PingFang SC");
+});
+
+test("buildSyncPayload omits fallbackFont when TERM_SETTINGS does not set it", () => {
+  localStorage.setItem(
+    storageKeys.STORAGE_KEY_TERM_SETTINGS,
+    JSON.stringify({ scrollback: 5000, fontLigatures: true }),
+  );
+
+  const payload = buildSyncPayload(vault());
+  const termSettings = (payload.settings?.terminalSettings ?? {}) as Record<string, unknown>;
+  assert.equal("fallbackFont" in termSettings, false);
+});
+
+test("applySyncPayload writes incoming fallbackFont into local TERM_SETTINGS", async () => {
+  const payload: SyncPayload = {
+    hosts: [],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+    syncedAt: 1,
+    settings: { terminalSettings: { fallbackFont: "Sarasa Mono SC" } },
+  };
+
+  await applySyncPayload(payload, {
+    importVaultData: () => {},
+  });
+
+  const raw = localStorage.getItem(storageKeys.STORAGE_KEY_TERM_SETTINGS);
+  assert.ok(raw, "TERM_SETTINGS should be written");
+  const parsed = JSON.parse(raw!);
+  assert.equal(parsed.fallbackFont, "Sarasa Mono SC");
+});
+
+test("applySyncPayload from legacy client (no fallbackFont) preserves local value", async () => {
+  localStorage.setItem(
+    storageKeys.STORAGE_KEY_TERM_SETTINGS,
+    JSON.stringify({ scrollback: 5000, fallbackFont: "Microsoft YaHei UI" }),
+  );
+
+  const payload: SyncPayload = {
+    hosts: [],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+    syncedAt: 1,
+    settings: { terminalSettings: { scrollback: 9999 } },
+  };
+
+  await applySyncPayload(payload, {
+    importVaultData: () => {},
+  });
+
+  const raw = localStorage.getItem(storageKeys.STORAGE_KEY_TERM_SETTINGS);
+  const parsed = JSON.parse(raw!);
+  assert.equal(parsed.fallbackFont, "Microsoft YaHei UI", "legacy payload must not wipe local fallbackFont");
+  assert.equal(parsed.scrollback, 9999);
+});
+
 test("applyLocalVaultPayload restores known hosts from local backups", async () => {
   let imported: Record<string, unknown> | null = null;
   const payload: SyncPayload = {

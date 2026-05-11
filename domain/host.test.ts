@@ -7,6 +7,7 @@ import {
   resolveTelnetPort,
   resolveTelnetPassword,
   resolveTelnetUsername,
+  sanitizeHost,
   upsertHostById,
 } from "./host.ts";
 
@@ -129,4 +130,29 @@ test("resolveTelnetPort uses primary telnet port fallback", () => {
     port: 2325,
     telnetPort: undefined,
   })), 2325);
+});
+
+test("sanitizeHost migrates a deprecated fontFamily and clears the override flag", () => {
+  // Regression guard for codex P2 review on PR #940: hosts saved with
+  // pingfang-sc / microsoft-yahei / comic-sans-ms in fontFamily must
+  // have the override dropped so they fall back to the global default
+  // instead of silently rendering the wrong font while still claiming
+  // an override is active.
+  const before = makeHost({
+    fontFamily: "comic-sans-ms",
+    fontFamilyOverride: true,
+  });
+  const after = sanitizeHost(before);
+  assert.equal(after.fontFamily, undefined);
+  assert.equal(after.fontFamilyOverride, false);
+});
+
+test("sanitizeHost keeps a still-valid fontFamily untouched", () => {
+  const before = makeHost({
+    fontFamily: "fira-code",
+    fontFamilyOverride: true,
+  });
+  const after = sanitizeHost(before);
+  assert.equal(after.fontFamily, "fira-code");
+  assert.equal(after.fontFamilyOverride, true);
 });

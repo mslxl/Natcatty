@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { TERMINAL_FONTS, type TerminalFont } from '../../infrastructure/config/fonts';
-import { getMonospaceFonts } from '../../lib/localFonts';
+import { getAllSystemFontFamilies, getMonospaceFonts } from '../../lib/localFonts';
+import { setSystemFamilies } from '../../lib/fontAvailability';
 
 /**
  * Global font store - singleton pattern using useSyncExternalStore
@@ -60,7 +61,14 @@ class FontStore {
     this.setState({ isLoading: true, error: null });
 
     try {
-      const localFonts = await getMonospaceFonts();
+      // Populate the authoritative installed-family set used by
+      // fontAvailability.isFontInstalled. Runs in parallel with the
+      // monospace-only query (both share an underlying cache).
+      const [localFonts, systemFamilies] = await Promise.all([
+        getMonospaceFonts(),
+        getAllSystemFontFamilies(),
+      ]);
+      setSystemFamilies(systemFamilies);
       
       // Combine default fonts with local fonts, deduplicate by id
       const fontMap = new Map<string, TerminalFont>();
