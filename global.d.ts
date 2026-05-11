@@ -47,6 +47,10 @@ declare global {
     label?: string; // Display label for UI
     proxy?: NetcattyProxyConfig;
     identityFilePaths?: string[];
+    // Resolved keepalive for THIS hop (caller has already applied host
+    // override / global fallback). interval in seconds, 0 = disabled.
+    keepaliveInterval?: number;
+    keepaliveCountMax?: number;
   }
 
   // Host key information for verification
@@ -90,6 +94,8 @@ declare global {
     jumpHosts?: NetcattyJumpHost[];
     // SSH-level keepalive interval in seconds (0 = disabled)
     keepaliveInterval?: number;
+    // Unanswered keepalives before ssh2 declares the connection dead
+    keepaliveCountMax?: number;
     // Enable legacy SSH algorithms for older network equipment
     legacyAlgorithms?: boolean;
     // Use sudo for SFTP server
@@ -139,6 +145,10 @@ declare global {
     jumpHosts?: NetcattyJumpHost[];
     identityFilePaths?: string[];
     legacyAlgorithms?: boolean;
+    // Resolved keepalive for the target connection (caller has already
+    // applied host override / global fallback). interval in seconds.
+    keepaliveInterval?: number;
+    keepaliveCountMax?: number;
   }
 
   interface PortForwardResult {

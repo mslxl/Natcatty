@@ -82,6 +82,8 @@ async function startPortForward(event, payload) {
     jumpHosts = [],
     identityFilePaths,
     legacyAlgorithms,
+    keepaliveInterval: resolvedKeepaliveInterval,
+    keepaliveCountMax: resolvedKeepaliveCountMax,
   } = payload;
 
   const conn = new SSHClient();
@@ -110,12 +112,26 @@ async function startPortForward(event, payload) {
     }
   };
 
+  // Keepalive policy:
+  //   - positive value: honor it
+  //   - explicit 0: truly disabled (host opted out via per-host override —
+  //     a router/switch that doesn't reply to keepalive@openssh.com would
+  //     otherwise be killed by ssh2 after countMax unanswered probes)
+  //   - undefined: legacy caller path, fall back to 10s/3 so an idle
+  //     forwarded TCP tunnel doesn't get dropped by NAT state tables.
+  const tunnelKeepaliveMs = resolvedKeepaliveInterval == null
+    ? 10000
+    : (resolvedKeepaliveInterval > 0 ? resolvedKeepaliveInterval * 1000 : 0);
+  const tunnelKeepaliveCountMax = resolvedKeepaliveInterval == null
+    ? 3
+    : (resolvedKeepaliveInterval > 0 ? (resolvedKeepaliveCountMax ?? 3) : 0);
   const connectOpts = {
     host: hostname,
     port: port,
     username: username || 'root',
     readyTimeout: 120000, // 2 minutes for 2FA input
-    keepaliveInterval: 10000,
+    keepaliveInterval: tunnelKeepaliveMs,
+    keepaliveCountMax: tunnelKeepaliveCountMax,
     // Enable keyboard-interactive authentication (required for 2FA/MFA)
     tryKeyboard: true,
     algorithms: buildAlgorithms(legacyAlgorithms),

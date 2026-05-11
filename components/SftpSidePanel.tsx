@@ -71,6 +71,7 @@ interface SftpSidePanelProps {
   setEditorWordWrap: (value: boolean) => void;
   onGetTerminalCwd?: () => Promise<string | null>;
   onRequestTerminalFocus?: () => void;
+  terminalSettings?: { keepaliveInterval: number; keepaliveCountMax: number };
 }
 
 const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
@@ -98,6 +99,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   setEditorWordWrap,
   onGetTerminalCwd,
   onRequestTerminalFocus,
+  terminalSettings,
 }) => {
   const { t } = useI18n();
   const hostWriteSource = writableHosts ?? hosts;
@@ -119,7 +121,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     useCompressedUpload: sftpUseCompressedUpload,
     defaultShowHiddenFiles: sftpShowHiddenFiles,
     autoConnectLocalOnMount: false,
-  }), [fileWatchHandlers, sftpUseCompressedUpload, sftpShowHiddenFiles]);
+    terminalSettings,
+  }), [fileWatchHandlers, sftpUseCompressedUpload, sftpShowHiddenFiles, terminalSettings]);
 
   const sftp = useSftpState(hosts, keys, identities, sftpOptions);
   const {
@@ -767,7 +770,11 @@ const sidePanelAreEqual = (prev: SftpSidePanelProps, next: SftpSidePanelProps): 
   prev.onGetTerminalCwd === next.onGetTerminalCwd &&
   prev.onRequestTerminalFocus === next.onRequestTerminalFocus &&
   prev.initialLocation?.hostId === next.initialLocation?.hostId &&
-  prev.initialLocation?.path === next.initialLocation?.path;
+  prev.initialLocation?.path === next.initialLocation?.path &&
+  // Only the keepalive fields of terminalSettings affect SFTP connection
+  // resolution today; compare them directly rather than the whole object.
+  prev.terminalSettings?.keepaliveInterval === next.terminalSettings?.keepaliveInterval &&
+  prev.terminalSettings?.keepaliveCountMax === next.terminalSettings?.keepaliveCountMax;
 
 export const SftpSidePanel = memo(SftpSidePanelInner, sidePanelAreEqual);
 SftpSidePanel.displayName = "SftpSidePanel";
