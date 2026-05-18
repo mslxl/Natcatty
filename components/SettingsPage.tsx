@@ -50,6 +50,11 @@ type SettingsState = ReturnType<typeof useSettingsState>;
 
 const SettingsSyncTab = React.lazy(() => import("./settings/tabs/SettingsSyncTab"));
 
+const settingsTabTriggerClassName =
+    "w-full justify-start gap-2 px-3 py-2 text-sm data-[state=active]:bg-background hover:bg-background/60 rounded-md transition-colors overflow-hidden";
+const settingsTabIconClassName = "shrink-0";
+const settingsTabLabelClassName = "min-w-0 truncate";
+
 const SettingsTerminalTabContainer: React.FC<{ settings: SettingsState }> = ({ settings }) => {
     const availableFonts = useAvailableFonts();
 
@@ -213,51 +218,59 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                     <TabsList className="flex flex-col h-auto bg-transparent gap-1 p-0 justify-start">
                         <TabsTrigger
                             value="application"
-                            className="w-full justify-start gap-2 px-3 py-2 text-sm data-[state=active]:bg-background hover:bg-background/60 rounded-md transition-colors"
+                            className={settingsTabTriggerClassName}
                         >
-                            <AppWindow size={14} /> {t("settings.tab.application")}
+                            <AppWindow size={14} className={settingsTabIconClassName} />
+                            <span className={settingsTabLabelClassName}>{t("settings.tab.application")}</span>
                         </TabsTrigger>
                         <TabsTrigger
                             value="appearance"
-                            className="w-full justify-start gap-2 px-3 py-2 text-sm data-[state=active]:bg-background hover:bg-background/60 rounded-md transition-colors"
+                            className={settingsTabTriggerClassName}
                         >
-                            <Palette size={14} /> {t("settings.tab.appearance")}
+                            <Palette size={14} className={settingsTabIconClassName} />
+                            <span className={settingsTabLabelClassName}>{t("settings.tab.appearance")}</span>
                         </TabsTrigger>
                         <TabsTrigger
                             value="terminal"
-                            className="w-full justify-start gap-2 px-3 py-2 text-sm data-[state=active]:bg-background hover:bg-background/60 rounded-md transition-colors"
+                            className={settingsTabTriggerClassName}
                         >
-                            <TerminalSquare size={14} /> {t("settings.tab.terminal")}
+                            <TerminalSquare size={14} className={settingsTabIconClassName} />
+                            <span className={settingsTabLabelClassName}>{t("settings.tab.terminal")}</span>
                         </TabsTrigger>
                         <TabsTrigger
                             value="shortcuts"
-                            className="w-full justify-start gap-2 px-3 py-2 text-sm data-[state=active]:bg-background hover:bg-background/60 rounded-md transition-colors"
+                            className={settingsTabTriggerClassName}
                         >
-                            <Keyboard size={14} /> {t("settings.tab.shortcuts")}
+                            <Keyboard size={14} className={settingsTabIconClassName} />
+                            <span className={settingsTabLabelClassName}>{t("settings.tab.shortcuts")}</span>
                         </TabsTrigger>
                         <TabsTrigger
                             value="file-associations"
-                            className="w-full justify-start gap-2 px-3 py-2 text-sm data-[state=active]:bg-background hover:bg-background/60 rounded-md transition-colors"
+                            className={settingsTabTriggerClassName}
                         >
-                            <FileType size={14} /> {t("settings.tab.sftpFileAssociations")}
+                            <FileType size={14} className={settingsTabIconClassName} />
+                            <span className={settingsTabLabelClassName}>{t("settings.tab.sftpFileAssociations")}</span>
                         </TabsTrigger>
                         <TabsTrigger
                             value="ai"
-                            className="w-full justify-start gap-2 px-3 py-2 text-sm data-[state=active]:bg-background hover:bg-background/60 rounded-md transition-colors"
+                            className={settingsTabTriggerClassName}
                         >
-                            <Sparkles size={14} /> AI
+                            <Sparkles size={14} className={settingsTabIconClassName} />
+                            <span className={settingsTabLabelClassName}>AI</span>
                         </TabsTrigger>
                         <TabsTrigger
                             value="sync"
-                            className="w-full justify-start gap-2 px-3 py-2 text-sm data-[state=active]:bg-background hover:bg-background/60 rounded-md transition-colors"
+                            className={settingsTabTriggerClassName}
                         >
-                            <Cloud size={14} /> {t("settings.tab.syncCloud")}
+                            <Cloud size={14} className={settingsTabIconClassName} />
+                            <span className={settingsTabLabelClassName}>{t("settings.tab.syncCloud")}</span>
                         </TabsTrigger>
                         <TabsTrigger
                             value="system"
-                            className="w-full justify-start gap-2 px-3 py-2 text-sm data-[state=active]:bg-background hover:bg-background/60 rounded-md transition-colors"
+                            className={settingsTabTriggerClassName}
                         >
-                            <HardDrive size={14} /> {t("settings.tab.system")}
+                            <HardDrive size={14} className={settingsTabIconClassName} />
+                            <span className={settingsTabLabelClassName}>{t("settings.tab.system")}</span>
                         </TabsTrigger>
                     </TabsList>
                 </div>
