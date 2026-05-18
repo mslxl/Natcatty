@@ -49,6 +49,10 @@ import {
   shouldBroadcastTerminalUserInput,
   shouldSuppressTerminalInputScrollForUserPaste,
 } from "./terminalUserPaste";
+import {
+  type PromptLineBreakState,
+} from "./promptLineBreak";
+import { recordTerminalCommandExecution } from "./terminalCommandExecution";
 import type {
   Host,
   KeyBinding,
@@ -109,6 +113,7 @@ export type CreateXTermRuntimeContext = {
     sessionId: string,
   ) => void;
   commandBufferRef: RefObject<string>;
+  promptLineBreakStateRef?: RefObject<PromptLineBreakState>;
   setIsSearchOpen: Dispatch<SetStateAction<boolean>>;
 
   // Serial-specific options
@@ -508,10 +513,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
             // where each \n executes an intermediate command (#814 P2).
             ctx.onAutocompleteInput?.(snippetData);
             ctx.terminalBackend.writeToSession(id, snippetData);
-            if (!snippet.noAutoRun && ctx.onCommandExecuted) {
-              const cmd = snippet.command.trim();
-              if (cmd) ctx.onCommandExecuted(cmd, ctx.host.id, ctx.host.label, ctx.sessionId);
-              ctx.commandBufferRef.current = "";
+            if (!snippet.noAutoRun) {
+              recordTerminalCommandExecution(snippet.command, ctx);
             }
             return false;
           }
@@ -682,11 +685,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       // Notify autocomplete of input
       ctx.onAutocompleteInput?.(data);
 
-      if (ctx.statusRef.current === "connected" && ctx.onCommandExecuted) {
+      if (ctx.statusRef.current === "connected") {
         if (data === "\r" || data === "\n") {
-          const cmd = ctx.commandBufferRef.current.trim();
-          if (cmd) ctx.onCommandExecuted(cmd, ctx.host.id, ctx.host.label, ctx.sessionId);
-          ctx.commandBufferRef.current = "";
+          recordTerminalCommandExecution(ctx.commandBufferRef.current, ctx);
         } else if (data === "\x7f" || data === "\b") {
           ctx.commandBufferRef.current = ctx.commandBufferRef.current.slice(0, -1);
         } else if (data === "\x03") {

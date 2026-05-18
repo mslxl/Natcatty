@@ -21,6 +21,12 @@ import {
   clearPasteResidualAfterTerminalWrite,
   prepareTerminalDataForUserPasteDisplay,
 } from "./terminalUserPaste";
+import {
+  markPromptLineBreakCommandPending,
+  prepareTerminalDataForPromptLineBreak,
+  syncPromptLineBreakState,
+  type PromptLineBreakState,
+} from "./promptLineBreak";
 
 /**
  * Per-connection token for stale-timer detection. The renderer reuses the
@@ -138,6 +144,7 @@ export type TerminalSessionStartersContext = {
   fitAddonRef: RefObject<FitAddon | null>;
   serializeAddonRef: RefObject<SerializeAddon | null>;
   pendingAuthRef: RefObject<PendingAuth>;
+  promptLineBreakStateRef?: RefObject<PromptLineBreakState>;
 
   updateStatus: (next: TerminalSession["status"]) => void;
   setStatus: Dispatch<SetStateAction<TerminalSession["status"]>>;
@@ -206,13 +213,54 @@ const handleTerminalOutputAutoScroll = (
   term.scrollToBottom();
 };
 
+type TerminalWriteQueue = {
+  writing: boolean;
+  pending: Array<() => void>;
+};
+
+const terminalWriteQueues = new WeakMap<XTerm, TerminalWriteQueue>();
+
+const scheduleNextTerminalWrite = (term: XTerm, queue: TerminalWriteQueue) => {
+  const next = queue.pending.shift();
+  if (!next) {
+    queue.writing = false;
+    terminalWriteQueues.delete(term);
+    return;
+  }
+
+  queue.writing = true;
+  next();
+};
+
+const enqueueTerminalWrite = (
+  term: XTerm,
+  write: (done: () => void) => void,
+) => {
+  let queue = terminalWriteQueues.get(term);
+  if (!queue) {
+    queue = { writing: false, pending: [] };
+    terminalWriteQueues.set(term, queue);
+  }
+
+  queue.pending.push(() => {
+    write(() => scheduleNextTerminalWrite(term, queue));
+  });
+
+  if (!queue.writing) {
+    scheduleNextTerminalWrite(term, queue);
+  }
+};
+
 const writeTerminalLine = (
   ctx: TerminalSessionStartersContext,
   term: XTerm,
   data: string,
 ) => {
-  ctx.onTerminalLogData?.(`${data}\r\n`);
-  term.writeln(data);
+  enqueueTerminalWrite(term, (done) => {
+    const lineData = `${data}\r\n`;
+    ctx.onTerminalLogData?.(lineData);
+    term.write(lineData, done);
+  });
 };
 
 const writeSessionData = (
@@ -220,25 +268,42 @@ const writeSessionData = (
   term: XTerm,
   data: string,
 ) => {
-  const displayData = prepareTerminalDataForUserPasteDisplay(term, data);
-  ctx.onTerminalLogData?.(displayData);
-  const clearPasteResidualAndCapture = () => {
-    const cleanupData = clearPasteResidualAfterTerminalWrite(term);
-    if (cleanupData) {
-      ctx.onTerminalLogData?.(cleanupData);
+  enqueueTerminalWrite(term, (done) => {
+    const settings = ctx.terminalSettingsRef?.current ?? ctx.terminalSettings;
+    const forcePromptNewLine = settings?.forcePromptNewLine ?? true;
+    if (!forcePromptNewLine && ctx.promptLineBreakStateRef?.current) {
+      ctx.promptLineBreakStateRef.current.pendingCommand = false;
+      ctx.promptLineBreakStateRef.current.suppressNextPromptCache = false;
     }
-  };
-  const settings = ctx.terminalSettingsRef?.current ?? ctx.terminalSettings;
-  if (!shouldScrollOnTerminalOutput(settings)) {
-    term.write(displayData, () => {
+    const pasteDisplayData = prepareTerminalDataForUserPasteDisplay(term, data);
+    const displayData = prepareTerminalDataForPromptLineBreak(
+      term,
+      pasteDisplayData,
+      ctx.promptLineBreakStateRef?.current,
+      forcePromptNewLine,
+    );
+    ctx.onTerminalLogData?.(pasteDisplayData);
+    const clearPasteResidualAndCapture = () => {
+      const cleanupData = clearPasteResidualAfterTerminalWrite(term);
+      if (cleanupData) {
+        ctx.onTerminalLogData?.(cleanupData);
+      }
+    };
+    const syncPrompt = () => {
+      if (forcePromptNewLine) {
+        syncPromptLineBreakState(term, ctx.promptLineBreakStateRef?.current);
+      }
+    };
+    const afterWrite = () => {
       clearPasteResidualAndCapture();
-    });
-    return;
-  }
+      syncPrompt();
+      if (shouldScrollOnTerminalOutput(settings)) {
+        handleTerminalOutputAutoScroll(ctx, term);
+      }
+      done();
+    };
 
-  term.write(displayData, () => {
-    clearPasteResidualAndCapture();
-    handleTerminalOutputAutoScroll(ctx, term);
+    term.write(displayData, afterWrite);
   });
 };
 
@@ -329,6 +394,9 @@ const scheduleStartupCommand = (
     ctx.terminalBackend.writeToSession(ctx.sessionRef.current, `${commandToRun}${suffix}`, {
       automated: true,
     });
+    if (!ctx.noAutoRun) {
+      markPromptLineBreakCommandPending(ctx.promptLineBreakStateRef);
+    }
     onSettled?.();
     if (!ctx.noAutoRun && ctx.onCommandExecuted) {
       ctx.onCommandExecuted(commandToRun, ctx.host.id, ctx.host.label, ctx.sessionId);
