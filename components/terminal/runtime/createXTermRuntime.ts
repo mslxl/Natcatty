@@ -46,6 +46,7 @@ import { installUserCursorPreferenceGuard } from "./cursorPreference";
 import { handleSerialLineModeInput } from "./serialLineInput";
 import {
   pasteTextIntoTerminal,
+  shouldBroadcastTerminalUserInput,
   shouldSuppressTerminalInputScrollForUserPaste,
 } from "./terminalUserPaste";
 import type {
@@ -411,6 +412,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
   const appLevelActions = getAppLevelActions();
   const terminalActions = getTerminalPassthroughActions();
+  const broadcastUserPasteData = (data: string) => {
+    if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
+      ctx.onBroadcastInputRef.current(data, ctx.sessionId);
+      return true;
+    }
+    return false;
+  };
   const scrollToBottomAfterInput = (data: string) => {
     if (shouldScrollOnTerminalInput(ctx.terminalSettingsRef.current, data)) {
       term.scrollToBottom();
@@ -537,6 +545,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
                 if (id) {
                   pasteTextIntoTerminal(term, text, {
                     scrollOnPaste: shouldScrollOnTerminalPaste(ctx.terminalSettingsRef.current),
+                    onPasteData: broadcastUserPasteData,
                   });
                 }
               });
@@ -548,6 +557,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
               if (selection && id) {
                 pasteTextIntoTerminal(term, selection, {
                   scrollOnPaste: shouldScrollOnTerminalPaste(ctx.terminalSettingsRef.current),
+                  onPasteData: broadcastUserPasteData,
                 });
               }
               break;
@@ -600,6 +610,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         if (text && ctx.sessionRef.current) {
           pasteTextIntoTerminal(term, text, {
             scrollOnPaste: shouldScrollOnTerminalPaste(ctx.terminalSettingsRef.current),
+            onPasteData: broadcastUserPasteData,
           });
         }
       } catch (err) {
@@ -654,10 +665,14 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         }
       }
 
-      if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
-        // Use remapped data so broadcast peers also receive the correct byte
-        const broadcastData = (data === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") ? "\x08" : data;
-        ctx.onBroadcastInputRef.current(broadcastData, ctx.sessionId);
+      const onBroadcastInput = ctx.onBroadcastInputRef.current;
+      // Use remapped data so broadcast peers also receive the correct byte
+      const broadcastData = (data === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") ? "\x08" : data;
+      if (shouldBroadcastTerminalUserInput(term, broadcastData, {
+        isBroadcastEnabled: ctx.isBroadcastEnabledRef.current,
+        hasBroadcastInputHandler: !!onBroadcastInput,
+      })) {
+        onBroadcastInput?.(broadcastData, ctx.sessionId);
       }
 
       if (!shouldSuppressTerminalInputScrollForUserPaste(term, data)) {
