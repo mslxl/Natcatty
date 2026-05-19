@@ -1,6 +1,6 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 import type { RefObject } from "react";
-import { detectPrompt } from "../autocomplete/promptDetector";
+import { detectPrompt, getAlignedPrompt } from "../autocomplete/promptDetector";
 
 export type PromptLineBreakState = {
   lastPromptText: string;
@@ -86,6 +86,12 @@ const hasAmbiguousPromptSuffix = (data: string, promptText: string): boolean => 
   return prefixText.length > 0 && !endsWithLineBreak(prefixText);
 };
 
+const isDistinctPromptText = (promptText: string): boolean => {
+  const trimmed = promptText.trim();
+  if (trimmed.length >= 8) return true;
+  return trimmed.length >= 6 && /[@:\\/]/.test(trimmed);
+};
+
 const getCursorX = (term: XTerm): number => {
   try {
     return term.buffer.active.cursorX;
@@ -104,10 +110,49 @@ export function createPromptLineBreakState(): PromptLineBreakState {
 
 export function markPromptLineBreakCommandPending(
   stateRef?: RefObject<PromptLineBreakState>,
+  term?: XTerm | null,
+  command?: string,
 ): void {
   if (!stateRef?.current) return;
+  if (term) {
+    const cachedFromCommand = command
+      ? cachePromptLineBreakPromptFromCommand(term, stateRef.current, command)
+      : false;
+    if (!cachedFromCommand) {
+      cachePromptLineBreakPrompt(term, stateRef.current);
+    }
+  }
   stateRef.current.pendingCommand = true;
   stateRef.current.suppressNextPromptCache = false;
+}
+
+function cachePromptLineBreakPromptFromCommand(
+  term: XTerm,
+  state: PromptLineBreakState | undefined,
+  command: string,
+): boolean {
+  if (!state || command.length === 0) return false;
+
+  const aligned = getAlignedPrompt(term, command, true);
+  if (!aligned.prompt.isAtPrompt || aligned.alignedTyped !== command) return false;
+
+  state.lastPromptText = aligned.prompt.promptText;
+  state.suppressNextPromptCache = false;
+  return true;
+}
+
+export function cachePromptLineBreakPrompt(
+  term: XTerm,
+  state: PromptLineBreakState | undefined,
+): void {
+  if (!state) return;
+
+  const prompt = detectPrompt(term);
+  if (!prompt.isAtPrompt) return;
+  if (prompt.userInput.length > 0) return;
+
+  state.lastPromptText = prompt.promptText;
+  state.suppressNextPromptCache = false;
 }
 
 export function insertPromptLineBreakBeforePrompt(
@@ -123,7 +168,10 @@ export function insertPromptLineBreakBeforePrompt(
   const promptTextStart = mapped.text.length - promptText.length;
   const prefixText = mapped.text.slice(0, promptTextStart);
   if (prefixText.length === 0 && cursorXBeforeWrite <= 0) return data;
-  if (prefixText.length > 0) return data;
+  if (prefixText.length > 0) {
+    if (endsWithLineBreak(prefixText)) return data;
+    if (!isDistinctPromptText(promptText)) return data;
+  }
 
   const promptRawStart = mapped.rawStartByTextIndex[promptTextStart] ?? 0;
   return `${data.slice(0, promptRawStart)}\r\n${data.slice(promptRawStart)}`;
@@ -144,11 +192,11 @@ export function prepareTerminalDataForPromptLineBreak(
     cursorXBeforeWrite,
   );
   const visibleText = mapVisibleText(data).text;
+  const ambiguousPromptSuffix = hasAmbiguousPromptSuffix(data, state.lastPromptText);
   state.suppressNextPromptCache =
     nextData === data &&
-    (cursorXBeforeWrite > 0 ||
-      hasAmbiguousPromptSuffix(data, state.lastPromptText)) &&
-    !containsLineReset(visibleText);
+    (ambiguousPromptSuffix ||
+      (cursorXBeforeWrite > 0 && !containsLineReset(visibleText)));
   return nextData;
 }
 
@@ -160,7 +208,6 @@ export function syncPromptLineBreakState(term: XTerm, state?: PromptLineBreakSta
 
   if (state.pendingCommand && state.suppressNextPromptCache) {
     state.suppressNextPromptCache = false;
-    state.pendingCommand = false;
     return;
   }
 
