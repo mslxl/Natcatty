@@ -38,6 +38,25 @@ export const clearHostFontSizeOverride = (host: Host): Host => ({
   fontSizeOverride: false,
 });
 
+export const mergeTerminalHostUpdate = (
+  savedHost: Host,
+  terminalHostUpdate: Host,
+): Host => {
+  const nextHost: Host = {
+    ...terminalHostUpdate,
+    id: savedHost.id,
+    protocol: savedHost.protocol,
+    port: savedHost.port,
+    moshEnabled: savedHost.moshEnabled,
+  };
+
+  if (!Object.prototype.hasOwnProperty.call(savedHost, 'protocol')) delete nextHost.protocol;
+  if (!Object.prototype.hasOwnProperty.call(savedHost, 'port')) delete nextHost.port;
+  if (!Object.prototype.hasOwnProperty.call(savedHost, 'moshEnabled')) delete nextHost.moshEnabled;
+
+  return nextHost;
+};
+
 export const resolveHostTerminalThemeId = (host: Host | null | undefined, defaultThemeId: string): string =>
   hasHostThemeOverride(host) && host?.theme ? host.theme : defaultThemeId;
 
