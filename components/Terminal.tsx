@@ -69,6 +69,7 @@ import { useTerminalAuthState } from "./terminal/hooks/useTerminalAuthState";
 import { useServerStats } from "./terminal/hooks/useServerStats";
 import { extractDropEntries, getPathForFile, DropEntry } from "../lib/sftpFileUtils";
 import { useTerminalAutocomplete, AutocompletePopup } from "./terminal/autocomplete";
+import { createTerminalCwdTracker, resolvePreferredTerminalCwd } from "./terminal/sftpCwd";
 
 const MAX_CONNECTION_LOG_DATA_CHARS = 1_000_000;
 
@@ -171,6 +172,7 @@ interface TerminalProps {
     pendingUploadEntries?: DropEntry[],
     sourceSessionId?: string,
   ) => void;
+  onTerminalCwdChange?: (sessionId: string, cwd: string | null) => void;
   onOpenScripts?: () => void;
   onOpenTheme?: () => void;
   isBroadcastEnabled?: boolean;
@@ -261,6 +263,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   onSplitHorizontal,
   onSplitVertical,
   onOpenSftp,
+  onTerminalCwdChange,
   onOpenScripts,
   onOpenTheme,
   isBroadcastEnabled,
@@ -281,6 +284,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const serializeAddonRef = useRef<SerializeAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const xtermRuntimeRef = useRef<XTermRuntime | null>(null);
+  const terminalCwdTracker = useMemo(() => createTerminalCwdTracker(), []);
   const knownCwdRef = useRef<string | undefined>(undefined);
   const disposeDataRef = useRef<(() => void) | null>(null);
   const disposeExitRef = useRef<(() => void) | null>(null);
@@ -549,7 +553,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     } : undefined,
     onAcceptText: (text) => autocompleteAcceptTextRef.current?.(text),
     protocol: host.protocol,
-    getCwd: () => knownCwdRef.current ?? xtermRuntimeRef.current?.currentCwd,
+    getCwd: () => terminalCwdTracker.getRendererCwd() ?? knownCwdRef.current,
   });
 
   // Wire up autocomplete handler refs so createXTermRuntime can use them
@@ -558,9 +562,25 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   autocompleteRepositionRef.current = autocomplete.repositionPopup;
   const autocompleteClosePopup = autocomplete.closePopup;
 
-  useEffect(() => {
+  const resolveSftpInitialPath = useCallback(async (): Promise<string | undefined> => {
+    const cwd = await resolvePreferredTerminalCwd({
+      rendererCwd: terminalCwdTracker.getRendererCwd(),
+      sessionId: sessionRef.current,
+      getSessionPwd: (id) => terminalBackend.getSessionPwd(id),
+    });
+    return cwd ?? undefined;
+  }, [terminalBackend, terminalCwdTracker]);
+
+  const clearTerminalCwd = useCallback(() => {
+    terminalCwdTracker.clearRendererCwd();
     knownCwdRef.current = undefined;
-  }, [sessionId, host.id]);
+    onTerminalCwdChange?.(sessionId, null);
+  }, [onTerminalCwdChange, sessionId, terminalCwdTracker]);
+
+  useEffect(() => {
+    clearTerminalCwd();
+    return clearTerminalCwd;
+  }, [clearTerminalCwd, host.id]);
 
   useEffect(() => {
     if (host.protocol === "local" || host.protocol === "serial" || host.protocol === "telnet") {
@@ -573,7 +593,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       if (!sessionRef.current) return;
       try {
         const result = await terminalBackend.getSessionPwd(sessionRef.current);
-        if (!cancelled && result.success && result.cwd) {
+        if (!cancelled && !terminalCwdTracker.getRendererCwd() && result.success && result.cwd) {
           knownCwdRef.current = result.cwd;
         }
       } catch {
@@ -585,7 +605,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [host.protocol, status, terminalBackend]);
+  }, [host.protocol, status, terminalBackend, terminalCwdTracker]);
 
   useEffect(() => {
     if (!isVisible) {
@@ -865,6 +885,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     setChainProgress,
     t,
     onSessionAttached: (id: string) => {
+      clearTerminalCwd();
       // SSH: always sync. Its backend starts in utf-8 regardless of
       // host.charset, so the push is what keeps the UI state aligned
       // across reconnects — including localhost SSH targets, hence
@@ -888,7 +909,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         setSessionEncoding(id, terminalEncodingRef.current);
       }
     },
-    onSessionExit,
+    onSessionExit: (closedSessionId, evt) => {
+      clearTerminalCwd();
+      onSessionExit?.(closedSessionId, evt);
+    },
     onTerminalDataCapture: handleTerminalDataCaptureOnce,
     onTerminalLogData: captureTerminalLogData,
     onOsDetected,
@@ -942,7 +966,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           serialLineBufferRef,
           onTerminalLogData: captureTerminalLogData,
           onCwdChange: (cwd: string) => {
+            terminalCwdTracker.setRendererCwd(cwd);
             knownCwdRef.current = cwd;
+            onTerminalCwdChange?.(sessionId, cwd);
           },
           onOsc52ReadRequest: handleOsc52ReadRequest,
           // Autocomplete integration
@@ -1581,17 +1607,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const handleOpenSFTP = async () => {
     if (onOpenSftp) {
       // Delegate to parent (TerminalLayer) for shared SFTP side panel
-      let initialPath: string | undefined = undefined;
-      if (sessionRef.current) {
-        try {
-          const result = await terminalBackend.getSessionPwd(sessionRef.current);
-          if (result.success && result.cwd) {
-            initialPath = result.cwd;
-          }
-        } catch {
-          // Silently fail
-        }
-      }
+      const initialPath = await resolveSftpInitialPath();
       onOpenSftp(host, initialPath, undefined, sessionId);
       return;
     }
@@ -1804,17 +1820,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       } else {
         // Remote terminal: Trigger SFTP upload via parent
         if (onOpenSftp) {
-          let initialPath: string | undefined = undefined;
-          if (sessionRef.current) {
-            try {
-              const result = await terminalBackend.getSessionPwd(sessionRef.current);
-              if (result.success && result.cwd) {
-                initialPath = result.cwd;
-              }
-            } catch {
-              // Silently fail
-            }
-          }
+          const initialPath = await resolveSftpInitialPath();
           onOpenSftp(host, initialPath, dropEntries, sessionId);
         }
       }
