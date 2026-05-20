@@ -29,12 +29,20 @@ type PasteInputScrollState = {
   remainingDataVariants: string[];
 };
 
+type TerminalProtocolReplyState = {
+  expiresAt: number;
+  pendingCursorPositionReports: number;
+  cursorPositionReportFragment: string;
+};
+
 const pasteDisplayStates = new WeakMap<object, PasteDisplayState>();
 const pasteInputScrollStates = new WeakMap<object, PasteInputScrollState>();
 const pasteBroadcastStates = new WeakMap<object, PasteInputScrollState>();
+const terminalProtocolReplyStates = new WeakMap<object, TerminalProtocolReplyState>();
 const LONG_PASTE_MIN_LENGTH = 200;
 const PASTE_DISPLAY_FIX_WINDOW_MS = 4000;
 const PASTE_INPUT_SCROLL_WINDOW_MS = 4000;
+const TERMINAL_PROTOCOL_REPLY_WINDOW_MS = 4000;
 const READLINE_ACTIVE_REGION_START = "\x1b[7m";
 const READLINE_ACTIVE_REGION_END = "\x1b[27m";
 const BRACKETED_PASTE_START = "\x1b[200~";
@@ -115,6 +123,45 @@ const getPlainTerminalText = (data: string): string =>
   stripNonLineBreakControls(
     stripAnsiEscapeSequences(data).replace(/\r\n/g, "\n").replace(/\r/g, "\n"),
   );
+
+type CursorPositionReportMatch =
+  | { type: "complete"; length: number }
+  | { type: "prefix" }
+  | { type: "none" };
+
+const isAsciiDigit = (char: string): boolean => char >= "0" && char <= "9";
+
+const matchCursorPositionReportFromStart = (data: string): CursorPositionReportMatch => {
+  if (!data.startsWith(ESC)) return { type: "none" };
+  if (data.length === 1) return { type: "prefix" };
+  if (data[1] !== "[") return { type: "none" };
+  if (data.length === 2) return { type: "prefix" };
+
+  let index = 2;
+  if (data[index] === "?") {
+    index += 1;
+    if (index === data.length) return { type: "prefix" };
+  }
+
+  let rowDigits = 0;
+  while (index < data.length && isAsciiDigit(data[index])) {
+    rowDigits += 1;
+    index += 1;
+  }
+  if (index === data.length) return { type: "prefix" };
+  if (rowDigits === 0 || data[index] !== ";") return { type: "none" };
+
+  index += 1;
+  let columnDigits = 0;
+  while (index < data.length && isAsciiDigit(data[index])) {
+    columnDigits += 1;
+    index += 1;
+  }
+  if (index === data.length) return { type: "prefix" };
+  if (columnDigits === 0 || data[index] !== "R") return { type: "none" };
+
+  return { type: "complete", length: index + 1 };
+};
 
 const getPasteEchoFragments = (text: string): string[] =>
   Array.from(
@@ -304,13 +351,81 @@ export function shouldSuppressTerminalBroadcastForUserPaste(term: object, data: 
   return consumePasteInputState(pasteBroadcastStates, term, data);
 }
 
+export function markExpectedTerminalCursorPositionReport(term: object): void {
+  const currentState = terminalProtocolReplyStates.get(term);
+  const activeState = isStateActive(currentState)
+    ? currentState
+    : {
+        expiresAt: 0,
+        pendingCursorPositionReports: 0,
+        cursorPositionReportFragment: "",
+      };
+
+  terminalProtocolReplyStates.set(term, {
+    expiresAt: getNow() + TERMINAL_PROTOCOL_REPLY_WINDOW_MS,
+    pendingCursorPositionReports: activeState.pendingCursorPositionReports + 1,
+    cursorPositionReportFragment: activeState.cursorPositionReportFragment,
+  });
+}
+
+function shouldSuppressTerminalProtocolReplyBroadcast(term: object, data: string): boolean {
+  const state = terminalProtocolReplyStates.get(term);
+  if (!isStateActive(state)) {
+    terminalProtocolReplyStates.delete(term);
+    return false;
+  }
+
+  if (state.pendingCursorPositionReports <= 0 || data.length === 0) {
+    return false;
+  }
+
+  let remainingData = `${state.cursorPositionReportFragment}${data}`;
+  let consumedCursorPositionReports = 0;
+
+  while (remainingData.length > 0) {
+    const match = matchCursorPositionReportFromStart(remainingData);
+    if (match.type === "none") {
+      state.cursorPositionReportFragment = "";
+      return false;
+    }
+
+    if (match.type === "prefix") {
+      if (consumedCursorPositionReports >= state.pendingCursorPositionReports) {
+        return false;
+      }
+      state.pendingCursorPositionReports -= consumedCursorPositionReports;
+      state.cursorPositionReportFragment = remainingData;
+      return true;
+    }
+
+    consumedCursorPositionReports += 1;
+    if (consumedCursorPositionReports > state.pendingCursorPositionReports) {
+      return false;
+    }
+    remainingData = remainingData.slice(match.length);
+  }
+
+  state.pendingCursorPositionReports -= consumedCursorPositionReports;
+  state.cursorPositionReportFragment = "";
+  if (state.pendingCursorPositionReports <= 0) {
+    terminalProtocolReplyStates.delete(term);
+  }
+  return true;
+}
+
 export function shouldBroadcastTerminalUserInput(
   term: object,
   data: string,
   options: BroadcastUserInputOptions,
 ): boolean {
   const isSuppressedUserPaste = shouldSuppressTerminalBroadcastForUserPaste(term, data);
-  return !isSuppressedUserPaste && !!options.isBroadcastEnabled && !!options.hasBroadcastInputHandler;
+  const isSuppressedTerminalProtocolReply = shouldSuppressTerminalProtocolReplyBroadcast(term, data);
+  return (
+    !isSuppressedUserPaste &&
+    !isSuppressedTerminalProtocolReply &&
+    !!options.isBroadcastEnabled &&
+    !!options.hasBroadcastInputHandler
+  );
 }
 
 function consumePasteInputState(
