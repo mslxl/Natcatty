@@ -24,6 +24,7 @@ import { preloadCommonSpecs } from "./figSpecLoader";
 import { getXTermCellDimensions } from "./xtermUtils";
 import { listDirectoryEntries, normalizePathTokenForLookup } from "./remotePathCompleter";
 import { decideGhostSuggestion } from "./ghostSuggestionPolicy";
+import { computeLivePreviewWrite } from "./livePreviewSequence";
 
 export interface AutocompleteSettings {
   enabled: boolean;
@@ -253,6 +254,10 @@ export function useTerminalAutocomplete(
   const fetchVersionRef = useRef(0);
   /** Last accepted suggestion text — for accurate history recording on fast Enter after accept */
   const lastAcceptedCommandRef = useRef<string | null>(null);
+  /** The user's typed input that produced the current popup suggestions (live-preview baseline). */
+  const previewBaselineRef = useRef<string>("");
+  /** Whether a popup candidate is currently rendered into the command line (#1005). */
+  const previewActiveRef = useRef(false);
   /** Monotonic counter to invalidate stale async sub-dir fetches */
   const subDirFetchVersionRef = useRef(0);
   /**
@@ -536,6 +541,41 @@ export function useTerminalAutocomplete(
     });
   }, [termRef]);
 
+  /**
+   * Render the full path for a sub-dir entry into the line WITHOUT finalizing
+   * (no clearState). Used for live-preview while navigating sub-dir panels (#1005).
+   */
+  const renderSubDirPath = useCallback((level: number, entry: SubDirEntry) => {
+    const s = stateRef.current;
+    const term = termRef.current;
+    if (!term) return;
+    const panel = s.subDirPanels[level];
+    if (!panel) return;
+    const { prompt } = getAlignedPrompt(
+      term, typedInputBufferRef.current, typedBufferReliableRef.current,
+    );
+    if (!prompt.isAtPrompt) return;
+    const parsed = parseCommandLine(prompt.userInput);
+    const cmdPrefix = parsed.tokens.slice(0, parsed.wordIndex).join(" ")
+      + (parsed.wordIndex > 0 ? " " : "");
+    const currentToken = parsed.currentWord;
+    const quotePrefix = currentToken.startsWith('"') || currentToken.startsWith("'")
+      ? currentToken[0] : "";
+    const quoteSuffix = quotePrefix && currentToken.endsWith(quotePrefix) ? quotePrefix : "";
+    const suffix = entry.type === "directory" ? "/" : "";
+    const entryName = quotePrefix || !/[\\$'"|!<>;#~` ]/.test(entry.name)
+      ? entry.name : shellEscape(entry.name);
+    const newCommand = cmdPrefix + `${quotePrefix}${panel.dirPath}${entryName}${suffix}${quoteSuffix}`;
+    const seq = computeLivePreviewWrite({
+      currentLine: prompt.userInput, candidate: newCommand, os: hostOsRef.current,
+    });
+    if (seq) writeToTerminal(seq);
+    typedInputBufferRef.current = newCommand;
+    typedBufferReliableRef.current = true;
+    previewActiveRef.current = true;
+    lastAcceptedCommandRef.current = newCommand;
+  }, [termRef, writeToTerminal]);
+
   /** Handle selecting a file/directory from any sub-dir panel.
    *  Builds the full path from the panel stack and replaces the current input. */
   const handleSubDirSelect = useCallback((level: number, entry: SubDirEntry) => {
@@ -666,6 +706,9 @@ export function useTerminalAutocomplete(
 
     // Popup
     if (settingsRef.current.showPopupMenu && completions.length > 0) {
+      // Live-preview baseline: the typed input these suggestions completed.
+      previewBaselineRef.current = input;
+      previewActiveRef.current = false;
       const { position, cursorLineTop, cursorLineBottom, expandUpward } = calculatePopupPosition(term, completions.length);
       startTransition(() => {
         setState((prev) => {
@@ -876,6 +919,10 @@ export function useTerminalAutocomplete(
       // User is typing more — invalidate accepted command fallback since the
       // command is being edited further (e.g., accepted "git status" then added " --short")
       lastAcceptedCommandRef.current = null;
+      // The previewed candidate is now edited, so the line is the user's own
+      // text. Drop preview-active so Escape dismisses the popup without
+      // reverting these edits back to the stale baseline (#1005).
+      previewActiveRef.current = false;
 
       // Re-align any visible ghost text to the freshly-updated buffer
       // immediately. Without this the ghost keeps the tail it captured at
@@ -1055,10 +1102,11 @@ export function useTerminalAutocomplete(
       // which is otherwise shadowed by our single-Tab ghost accept.
       if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey && s.subDirFocusLevel < 0) {
         if (s.popupVisible && s.suggestions.length > 0) {
-          e.preventDefault();
-          const selected = s.suggestions[Math.max(0, s.selectedIndex)];
-          if (selected) insertSuggestion(selected, false);
-          return false;
+          // #1005: don't intercept Tab. Keep whatever is currently rendered on
+          // the line and let Tab reach the shell for native completion.
+          clearState();
+          previewActiveRef.current = false;
+          return true;
         }
         // Hide stale ghost text before Tab reaches the shell — the shell's
         // completion will rewrite the line and the old ghost would mislead.
@@ -1087,8 +1135,10 @@ export function useTerminalAutocomplete(
               panels[focusLevel] = { ...p, selectedIndex: newIdx };
               return { ...prev, subDirPanels: panels.slice(0, focusLevel + 1) };
             });
-            // Auto-expand next level if the newly selected item is a directory
+            // Live-render the highlighted entry's full path into the line (#1005).
             const newEntry = focusedPanel.entries[newIdx];
+            if (newEntry) renderSubDirPath(focusLevel, newEntry);
+            // Auto-expand next level if the newly selected item is a directory
             if (newEntry?.type === "directory") {
               expandSubDir(focusLevel, newEntry);
             }
@@ -1144,39 +1194,37 @@ export function useTerminalAutocomplete(
           return true;
         }
 
-        // Main panel navigation
-        if (e.key === "ArrowUp") {
+        // Main panel navigation. The cycle includes a -1 "no selection" slot so
+        // ↑ off the top / ↓ off the bottom reverts to the typed baseline. Moving
+        // the selection live-renders the candidate into the command line (#1005).
+        if (e.key === "ArrowUp" || e.key === "ArrowDown") {
           e.preventDefault();
+          const n = s.suggestions.length;
+          const cur = s.selectedIndex;
+          const next =
+            e.key === "ArrowDown"
+              ? (cur >= n - 1 ? -1 : cur + 1)
+              : (cur <= -1 ? n - 1 : cur - 1);
           setState((prev) => ({
             ...prev,
-            selectedIndex: prev.selectedIndex <= 0 ? prev.suggestions.length - 1 : prev.selectedIndex - 1,
+            selectedIndex: next,
             subDirPanels: [], subDirFocusLevel: -1,
           }));
-          fetchSubDirForIndex(s.selectedIndex <= 0 ? s.suggestions.length - 1 : s.selectedIndex - 1);
-          return false;
-        }
-        if (e.key === "ArrowDown") {
-          e.preventDefault();
-          setState((prev) => ({
-            ...prev,
-            selectedIndex: prev.selectedIndex >= prev.suggestions.length - 1 ? 0 : prev.selectedIndex + 1,
-            subDirPanels: [], subDirFocusLevel: -1,
-          }));
-          fetchSubDirForIndex(s.selectedIndex >= s.suggestions.length - 1 ? 0 : s.selectedIndex + 1);
+          renderPreviewSelection(next);
+          if (next >= 0) fetchSubDirForIndex(next);
           return false;
         }
 
-        // Enter on popup
+        // Enter on popup. The selected candidate is already rendered into the
+        // line by live-preview, so let Enter reach the shell. Don't record here:
+        // handleInput's Enter path records the *actual* line — it uses
+        // lastAcceptedCommandRef (set on select) but falls back to the live
+        // buffer when the user edited the previewed command (typing nulls that
+        // ref), so recording stays accurate in both cases.
         if (e.key === "Enter") {
-          if (s.selectedIndex >= 0) {
-            const selected = s.suggestions[s.selectedIndex];
-            if (selected) {
-              e.preventDefault();
-              insertSuggestion(selected, true);
-              return false;
-            }
-          }
           clearState();
+          previewActiveRef.current = false;
+          return true;
         }
       }
 
@@ -1185,8 +1233,12 @@ export function useTerminalAutocomplete(
       // when only ghost text is showing (ghost text is passive/non-intrusive)
       if (e.key === "Escape" && s.popupVisible) {
         e.preventDefault();
+        if (previewActiveRef.current) {
+          renderPreviewSelection(-1); // restore the typed baseline
+        }
         ghost?.hide();
         clearState();
+        previewActiveRef.current = false;
         return false;
       }
 
@@ -1195,6 +1247,36 @@ export function useTerminalAutocomplete(
     // eslint-disable-next-line react-hooks/exhaustive-deps -- insertSuggestion uses refs, stable identity
     [writeToTerminal],
   );
+
+  /**
+   * Render the suggestion at `index` straight into the command line (Termius
+   * live-preview, #1005). `index < 0` restores the user's typed baseline.
+   */
+  const renderPreviewSelection = useCallback((index: number) => {
+    const s = stateRef.current;
+    const term = termRef.current;
+    if (!term) return;
+    const baseline = previewBaselineRef.current;
+    const candidate =
+      index >= 0 && s.suggestions[index] ? s.suggestions[index].text : baseline;
+    const { prompt } = getAlignedPrompt(
+      term,
+      typedInputBufferRef.current,
+      typedBufferReliableRef.current,
+    );
+    if (!prompt.isAtPrompt) return;
+    const seq = computeLivePreviewWrite({
+      currentLine: prompt.userInput,
+      candidate,
+      os: hostOsRef.current,
+    });
+    if (seq) writeToTerminal(seq);
+    typedInputBufferRef.current = candidate;
+    typedBufferReliableRef.current = true;
+    const isPreview = index >= 0 && candidate !== baseline;
+    previewActiveRef.current = isPreview;
+    lastAcceptedCommandRef.current = isPreview ? candidate : null;
+  }, [termRef, writeToTerminal]);
 
   /**
    * Insert a suggestion into the terminal.

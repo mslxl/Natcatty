@@ -91,6 +91,32 @@ const DirExpandIndicator: React.FC<{ visible: boolean; color: string }> = ({ vis
   <span style={{ fontSize: "10px", color, opacity: visible ? 0.6 : 0, flexShrink: 0, marginLeft: "2px" }}>›</span>
 );
 
+/** Small key-cap badge shown on the selected row to hint the actionable key. */
+const KeyCap: React.FC<{ label: string; color: string; bg: string }> = ({ label, color, bg }) => (
+  <span
+    style={{
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      boxSizing: "border-box",
+      height: "16px",
+      minWidth: "16px",
+      padding: "0 4px",
+      fontSize: "11px",
+      lineHeight: 1,
+      borderRadius: "4px",
+      border: `1px solid color-mix(in srgb, ${color} 35%, transparent)`,
+      color: `color-mix(in srgb, ${color} 80%, ${bg})`,
+      backgroundColor: `color-mix(in srgb, ${color} 12%, ${bg})`,
+      flexShrink: 0,
+      fontFamily:
+        'ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif',
+    }}
+  >
+    {label}
+  </span>
+);
+
 const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
   suggestions,
   selectedIndex,
@@ -360,6 +386,16 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
               {/* Expand indicator for directories */}
               {suggestion.source === "path" && suggestion.fileType === "directory" && (
                 <DirExpandIndicator visible={isSelected || isHovered} color={dimTextColor} />
+              )}
+
+              {/* Key hint on the selected row: → expands directories, ↵ runs. */}
+              {isSelected && (
+                <span style={{ display: "flex", gap: "3px", marginLeft: "4px", flexShrink: 0 }}>
+                  {suggestion.source === "path" && suggestion.fileType === "directory" && (
+                    <KeyCap label="→" color={dimTextColor} bg={popupBg} />
+                  )}
+                  <KeyCap label="⏎" color={dimTextColor} bg={popupBg} />
+                </span>
               )}
             </div>
           );
