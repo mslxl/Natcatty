@@ -7,6 +7,7 @@ const {
   getFreshIdlePrompt,
   isDefaultPowerShellPromptLine,
   isPlausibleCliVersionOutput,
+  looksLikeIdleAutoLogout,
   prepareCommandForSpawn,
   trackSessionIdlePrompt,
 } = require("./shellUtils.cjs");
@@ -174,4 +175,65 @@ test("getFreshIdlePrompt and trackSessionIdlePrompt round-trip through a real PT
   // The freshness check rescues us: the visible tail no longer ends
   // with the cached PS line, so downstream wrapper selection sees "".
   assert.equal(getFreshIdlePrompt(session), "");
+});
+
+test("looksLikeIdleAutoLogout detects the bash TMOUT banner at the tail", () => {
+  // bash prints this immediately before a TMOUT auto-logout exit. The exit
+  // itself is a clean shell exit (code 0, no signal), so the banner is the
+  // only reliable discriminator from a user-typed `exit` (#1062 / #977).
+  assert.equal(
+    looksLikeIdleAutoLogout("user@host:~$ \x07timed out waiting for input: auto-logout\r\n"),
+    true,
+  );
+});
+
+test("looksLikeIdleAutoLogout detects the csh/tcsh auto-logout banner", () => {
+  assert.equal(looksLikeIdleAutoLogout("\r\nauto-logout\r\n"), true);
+});
+
+test("looksLikeIdleAutoLogout sees through ANSI escapes around the banner", () => {
+  assert.equal(
+    looksLikeIdleAutoLogout("\x1b[0m\x1b[33mtimed out waiting for input: auto-logout\x1b[0m\r\n"),
+    true,
+  );
+});
+
+test("looksLikeIdleAutoLogout ignores a plain (non-timeout) logout", () => {
+  // A normal login-shell exit prints "logout" — without the "auto-" prefix —
+  // and must still auto-close the tab.
+  assert.equal(looksLikeIdleAutoLogout("user@host:~$ logout\r\n"), false);
+});
+
+test("looksLikeIdleAutoLogout ignores the banner when it is not at the tail", () => {
+  // "auto-logout" scrolled past long ago; the user then ran more commands and
+  // exited normally. Only the tail end is inspected, so this is not a timeout.
+  const tail = "auto-logout\n" + "x".repeat(400) + "\nuser@host:~$ logout\r\n";
+  assert.equal(looksLikeIdleAutoLogout(tail), false);
+});
+
+test("looksLikeIdleAutoLogout ignores auto-logout in command output before an intentional exit", () => {
+  // Investigating TMOUT: the user greps the profile (output mentions
+  // "auto-logout"), reads it, then exits on purpose. The banner is not the
+  // final line, so the tab must still auto-close. Guards against matching an
+  // unanchored substring anywhere in the recent output.
+  const tail =
+    "root@h:~# grep -i auto-logout /etc/profile\r\n" +
+    "# bash TMOUT auto-logout setting\r\nTMOUT=300\r\n" +
+    "root@h:~# exit\r\nlogout\r\n";
+  assert.equal(looksLikeIdleAutoLogout(tail), false);
+});
+
+test("looksLikeIdleAutoLogout matches the real-server banner shape (prompt + banner on one line)", () => {
+  // The banner can share a line with the trailing prompt after ANSI/control
+  // bytes are stripped (observed over real SSH); anchoring on the line end
+  // must still match.
+  const tail =
+    "\x1b]0;root@VM:~\x07root@VM:~# \x1b[?2004l\x07timed out waiting for input: auto-logout\n";
+  assert.equal(looksLikeIdleAutoLogout(tail), true);
+});
+
+test("looksLikeIdleAutoLogout returns false for empty / non-string input", () => {
+  assert.equal(looksLikeIdleAutoLogout(""), false);
+  assert.equal(looksLikeIdleAutoLogout(undefined), false);
+  assert.equal(looksLikeIdleAutoLogout(null), false);
 });

@@ -33,7 +33,7 @@ const {
   isPassphraseCancelledError,
 } = require("./sshAuthHelper.cjs");
 const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
-const { trackSessionIdlePrompt } = require("./ai/shellUtils.cjs");
+const { trackSessionIdlePrompt, looksLikeIdleAutoLogout } = require("./ai/shellUtils.cjs");
 const { createZmodemSentry } = require("./zmodemHelper.cjs");
 const {
   buildAlgorithms,
@@ -1386,7 +1386,14 @@ async function startSSHSession(event, options) {
                 if (transportError) {
                   safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: transportError, reason: "error" });
                 } else {
-                  safeSend(contents, "netcatty:exit", { sessionId, exitCode: streamExitCode, reason: streamExited ? "exited" : "closed" });
+                  // A shell TMOUT auto-logout is a clean exit (numeric code, no
+                  // signal) — identical to a user-typed `exit` by code/signal —
+                  // so detect it via the banner the shell prints just before
+                  // exiting and report it as a timeout. That keeps the tab open
+                  // for reconnect instead of auto-closing it (#1062 / #977).
+                  const idleTimedOut = streamExited && looksLikeIdleAutoLogout(session?._promptTrackTail);
+                  const reason = idleTimedOut ? "timeout" : (streamExited ? "exited" : "closed");
+                  safeSend(contents, "netcatty:exit", { sessionId, exitCode: streamExitCode, reason });
                 }
                 sessions.get(sessionId)?.zmodemSentry?.cancel();
                 sessions.delete(sessionId);
