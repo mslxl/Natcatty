@@ -2019,24 +2019,58 @@ async function getSessionPwd(event, payload) {
     // so sh keeps the same PID and $PPID = sshd. Starting another shell
     // without exec would make $PPID point at the intermediate shell instead.
     const posixScript = `SELF=$$
-find_child_shell() {
-  mode=$2
-  ps -e -o pid=,ppid=,stat=,comm= 2>/dev/null | awk -v pp="$1" -v self="$SELF" -v mode="$mode" '
-    $1 != self && $2 == pp && $4 ~ /^(ba|z|fi|k|da)?sh$/ {
-      if (index($3, "+") > 0) { print $1; found=1; exit }
-      if (mode != "foreground" && pid == "") pid=$1
+# Find the interactive shell child of this exec channel's sshd ($PPID).
+# Prefer the one attached to a controlling tty (the user's shell): probe exec
+# channels like this one have no tty ("?"), and ps output is unsorted, so
+# without the tty preference a concurrent probe's shell could be picked when
+# several exist under the same sshd (#1065 review). Falls back to any shell
+# child if none has a tty.
+find_login_shell() {
+  ps -e -o pid=,ppid=,tty=,comm= 2>/dev/null | awk -v pp="$1" -v self="$SELF" '
+    $1 != self && $2 == pp && $4 ~ /^-?(ba|z|fi|k|da|a)?sh$/ {
+      if ($3 != "?") { print $1; found=1; exit }
+      if (any == "") any=$1
     }
-    END { if (!found && mode != "foreground" && pid != "") print pid }
+    END { if (!found && any != "") print any }
   '
 }
-pid=$(find_child_shell "$PPID" any)
-while [ -n "$pid" ]; do
-  child=$(find_child_shell "$pid" foreground)
-  [ -n "$child" ] || break
-  pid="$child"
-done
-if [ -n "$pid" ]; then
+# From the login shell, pick the DEEPEST foreground shell in its process
+# subtree. "Foreground" = the controlling tty's foreground process group ("+"
+# in stat), i.e. the shell the user is actually typing in. Walking the whole
+# subtree (rather than only direct shell children) lets us follow through
+# non-shell foreground parents like su / sudo, so we read the cwd of the
+# su'd / sudo'd shell instead of stopping at the login shell (#1065). Falls
+# back to the login shell when no foreground shell is found.
+find_active_shell() {
+  ps -e -o pid=,ppid=,stat=,comm= 2>/dev/null | awk -v start="$1" '
+    { pp[$1]=$2; st[$1]=$3; cm[$1]=$4; ord[NR]=$1 }
+    function isshell(c) { return c ~ /^-?(ba|z|fi|k|da|a)?sh$/ }
+    function depth(p,   d) { d=0; while (p != "" && d < 64) { if (p == start) return d; p=pp[p]; d++ } return -1 }
+    END {
+      best=-1; bp="";
+      for (i=1; i<=NR; i++) {
+        p=ord[i];
+        if (!isshell(cm[p])) continue;
+        if (index(st[p], "+") == 0) continue;
+        d=depth(p); if (d < 0) continue;
+        if (d > best) { best=d; bp=p }
+      }
+      print (bp != "" ? bp : start)
+    }
+  '
+}
+login=$(find_login_shell "$PPID")
+if [ -n "$login" ]; then
+  pid=$(find_active_shell "$login")
+  [ -n "$pid" ] || pid="$login"
   cwd=$(readlink /proc/$pid/cwd 2>/dev/null)
+  # /proc/<pid>/cwd is only readable for same-uid processes (ptrace perms), so
+  # this unprivileged exec channel cannot read a su'd / sudo'd shell owned by
+  # another user. Fall back to the same-uid login shell's cwd before giving up
+  # to the home directory (#1065 review).
+  if [ -z "$cwd" ] && [ "$pid" != "$login" ]; then
+    cwd=$(readlink /proc/$login/cwd 2>/dev/null)
+  fi
   [ -n "$cwd" ] && printf '%s\\n' "$cwd" && exit 0
 fi
 emit_home() {
