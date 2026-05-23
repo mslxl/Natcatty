@@ -16,6 +16,7 @@ import {
   findSyncPayloadEncryptedCredentialPaths,
 } from '../../domain/credentials';
 import { isProviderReadyForSync, type CloudProvider, type SyncPayload } from '../../domain/sync';
+import { mergeSyncPayloads } from '../../domain/syncMerge';
 import {
   SYNCABLE_SETTING_STORAGE_KEYS,
   collectSyncableSettings,
@@ -506,7 +507,6 @@ export const useAutoSync = (config: AutoSyncConfig) => {
         return;
       }
 
-      const { mergeSyncPayloads } = await import('../../domain/syncMerge');
       const mergeResult = mergeSyncPayloads(base, localPayload, remotePayload);
 
       // Apply merged payload to local state BEFORE committing. If the apply
