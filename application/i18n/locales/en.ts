@@ -2092,6 +2092,11 @@ const en: Messages = {
   'zmodem.uploading': 'Uploading',
   'zmodem.downloading': 'Downloading',
   'zmodem.cancelTransfer': 'Cancel transfer (Ctrl+C)',
+  'zmodem.overwrite.title': 'Remote file already exists',
+  'zmodem.overwrite.applyToRest': 'Apply to remaining conflicts',
+  'zmodem.overwrite.overwrite': 'Overwrite',
+  'zmodem.overwrite.skip': 'Skip',
+  'zmodem.overwrite.cancel': 'Cancel',
   'settings.shortcuts.resetToDefault': 'Reset to default',
 };
 

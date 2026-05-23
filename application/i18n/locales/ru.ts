@@ -2124,6 +2124,11 @@ const ru: Messages = {
   'zmodem.uploading': 'Загрузка',
   'zmodem.downloading': 'Скачивание',
   'zmodem.cancelTransfer': 'Отменить передачу (Ctrl+C)',
+  'zmodem.overwrite.title': 'Remote file already exists',
+  'zmodem.overwrite.applyToRest': 'Apply to remaining conflicts',
+  'zmodem.overwrite.overwrite': 'Overwrite',
+  'zmodem.overwrite.skip': 'Skip',
+  'zmodem.overwrite.cancel': 'Cancel',
   'settings.shortcuts.resetToDefault': 'Сбросить по умолчанию',
 };
 

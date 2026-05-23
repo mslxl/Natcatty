@@ -21,6 +21,35 @@ function getElectron() {
 }
 
 /**
+ * Resolve per-file overwrite choices into an upload plan. Pure (no I/O):
+ * `resolveDecision(name)` is awaited only for files in `existingList`, in input
+ * order; `{ applyToRest: true }` reuses that action for the remaining conflicts.
+ * Returns indices into the original `names` array so callers preserve per-file
+ * identity even when two files share a basename.
+ * Actions: 'overwrite' (rm remote then send), 'skip' (don't send), 'cancel' (abort all).
+ */
+async function buildUploadPlan(names, existingList, resolveDecision) {
+  const existing = new Set(existingList);
+  const offerIndices = [];
+  const removeIndices = [];
+  let bulkAction = null;
+  for (let idx = 0; idx < names.length; idx++) {
+    const name = names[idx];
+    if (!existing.has(name)) { offerIndices.push(idx); continue; }
+    let action = bulkAction;
+    if (!action) {
+      const decision = (await resolveDecision(name)) || { action: "skip" };
+      action = decision.action;
+      if (decision.applyToRest && action !== "cancel") bulkAction = action;
+    }
+    if (action === "cancel") return { offerIndices: [], removeIndices: [], aborted: true };
+    if (action === "overwrite") { removeIndices.push(idx); offerIndices.push(idx); }
+    // 'skip' → omit from both
+  }
+  return { offerIndices, removeIndices, aborted: false };
+}
+
+/**
  * Create a ZMODEM sentry that wraps a session's data stream.
  *
  * All raw data from the PTY / SSH stream / socket should be fed into
@@ -524,10 +553,41 @@ async function handleUpload(zsession, opts) {
   const filePaths = result.filePaths;
   const fileStats = filePaths.map((fp) => fs.statSync(fp));
 
-  for (let i = 0; i < filePaths.length; i++) {
-    const filePath = filePaths[i];
-    const stat = fileStats[i];
-    const name = path.basename(filePath);
+  const allNames = filePaths.map((fp) => path.basename(fp));
+
+  // Conflict handling (SSH only — callbacks absent on local/telnet/serial).
+  // On any failure we fall back to today's behavior (rz silently skips).
+  let plan = { offerIndices: allNames.map((_, i) => i), removeIndices: [], aborted: false };
+  if (opts.probeReceiveConflicts && opts.requestOverwriteDecision) {
+    try {
+      const probe = await opts.probeReceiveConflicts(allNames);
+      if (probe && probe.dir && Array.isArray(probe.existing) && probe.existing.length > 0) {
+        plan = await buildUploadPlan(allNames, probe.existing, opts.requestOverwriteDecision);
+        if (plan.aborted) {
+          try { zsession.abort(); } catch { /* ignore */ }
+          abortRemoteProcess(opts.writeToRemote);
+          throw new Error("Transfer cancelled");
+        }
+        if (plan.removeIndices.length && opts.removeRemoteFiles) {
+          const base = probe.dir.replace(/\/+$/, "");
+          const targets = [...new Set(plan.removeIndices.map((i) => `${base}/${allNames[i]}`))];
+          try {
+            await opts.removeRemoteFiles(targets);
+          } catch (err) {
+            console.warn("[ZMODEM] removeRemoteFiles failed; rz will skip:", err?.message || err);
+          }
+        }
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message === "Transfer cancelled") throw err;
+      console.warn("[ZMODEM] conflict probe failed; proceeding:", err?.message || err);
+    }
+  }
+
+  const offers = plan.offerIndices.map((i) => ({ filePath: filePaths[i], stat: fileStats[i], name: allNames[i] }));
+
+  for (let i = 0; i < offers.length; i++) {
+    const { filePath, stat, name } = offers[i];
 
     safeSend(contents, "netcatty:zmodem:progress", {
       sessionId,
@@ -535,18 +595,18 @@ async function handleUpload(zsession, opts) {
       transferred: 0,
       total: stat.size,
       fileIndex: i,
-      fileCount: filePaths.length,
+      fileCount: offers.length,
       transferType: "upload",
     });
 
     let bytesRemaining = 0;
-    for (let j = i; j < fileStats.length; j++) bytesRemaining += fileStats[j].size;
+    for (let j = i; j < offers.length; j++) bytesRemaining += offers[j].stat.size;
 
     const xfer = await zsession.send_offer({
       name,
       size: stat.size,
       mtime: new Date(stat.mtimeMs),
-      files_remaining: filePaths.length - i,
+      files_remaining: offers.length - i,
       bytes_remaining: bytesRemaining,
     });
 
@@ -579,7 +639,7 @@ async function handleUpload(zsession, opts) {
           transferred: sent,
           total: stat.size,
           fileIndex: i,
-          fileCount: filePaths.length,
+          fileCount: offers.length,
           transferType: "upload",
         });
 
@@ -597,7 +657,7 @@ async function handleUpload(zsession, opts) {
         transferred: stat.size,
         total: stat.size,
         fileIndex: i,
-        fileCount: filePaths.length,
+        fileCount: offers.length,
         transferType: "upload",
         finalizing: true,
       });
@@ -791,4 +851,4 @@ function safeSend(contents, channel, data) {
   }
 }
 
-module.exports = { createZmodemSentry };
+module.exports = { createZmodemSentry, buildUploadPlan };

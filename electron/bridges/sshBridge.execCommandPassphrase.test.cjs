@@ -81,6 +81,7 @@ test("execCommand stops when an identity file passphrase prompt is cancelled", a
     handle(channel, handler) {
       this.handlers.set(channel, handler);
     },
+    on() {},
   };
   bridge.registerHandlers(ipcMain);
   const execHandler = ipcMain.handlers.get("netcatty:ssh:exec");

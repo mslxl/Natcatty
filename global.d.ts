@@ -341,6 +341,15 @@ declare global {
       }) => void
     ): () => void;
     cancelZmodem?(sessionId: string): void;
+    onZmodemOverwriteRequest?(
+      sessionId: string,
+      cb: (payload: { sessionId: string; requestId: string; filename: string }) => void
+    ): () => void;
+    respondZmodemOverwrite?(payload: {
+      requestId: string;
+      action: "overwrite" | "skip" | "cancel";
+      applyToRest: boolean;
+    }): void;
     onSessionData(sessionId: string, cb: (data: string) => void): () => void;
     onSessionExit(
       sessionId: string,

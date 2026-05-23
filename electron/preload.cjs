@@ -10,6 +10,7 @@ const transferErrorListeners = new Map();
 const transferCancelledListeners = new Map();
 const chainProgressListeners = new Map();
 const zmodemListeners = new Map();
+const zmodemOverwriteListeners = new Map(); // sessionId -> Set<cb>
 const sftpConnectionProgressListeners = new Set();
 const authFailedListeners = new Map();
 const telnetAutoLoginCompleteListeners = new Map();
@@ -137,6 +138,10 @@ ipcRenderer.on("netcatty:zmodem:error", (_event, payload) => {
   if (!set) return;
   set.forEach((cb) => { try { cb({ type: "error", ...payload }); } catch {} });
 });
+ipcRenderer.on("netcatty:zmodem:overwrite-request", (_event, payload) => {
+  const set = zmodemOverwriteListeners.get(payload.sessionId);
+  if (set) set.forEach((cb) => cb(payload));
+});
 
 ipcRenderer.on("netcatty:data", (_event, payload) => {
   const set = dataListeners.get(payload.sessionId);
@@ -185,6 +190,7 @@ ipcRenderer.on("netcatty:exit", (_event, payload) => {
   telnetAutoLoginCompleteListeners.delete(payload.sessionId);
   telnetAutoLoginCancelledListeners.delete(payload.sessionId);
   zmodemListeners.delete(payload.sessionId);
+  zmodemOverwriteListeners.delete(payload.sessionId);
   const pendingTimer = _mcpFlushTimers.get(payload.sessionId);
   if (pendingTimer) {
     clearTimeout(pendingTimer);
@@ -681,6 +687,14 @@ const api = {
   },
   cancelZmodem: (sessionId) => {
     ipcRenderer.send("netcatty:zmodem:cancel", { sessionId });
+  },
+  onZmodemOverwriteRequest: (sessionId, cb) => {
+    if (!zmodemOverwriteListeners.has(sessionId)) zmodemOverwriteListeners.set(sessionId, new Set());
+    zmodemOverwriteListeners.get(sessionId).add(cb);
+    return () => zmodemOverwriteListeners.get(sessionId)?.delete(cb);
+  },
+  respondZmodemOverwrite: (payload) => {
+    ipcRenderer.send("netcatty:zmodem:overwrite-response", payload);
   },
   onSessionData: (sessionId, cb) => {
     if (!dataListeners.has(sessionId)) dataListeners.set(sessionId, new Set());

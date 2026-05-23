@@ -27,6 +27,7 @@ const initialState: ZmodemTransferState = {
 
 export function useZmodemTransfer(sessionId: string | null) {
   const [state, setState] = useState<ZmodemTransferState>(initialState);
+  const [overwriteRequest, setOverwriteRequest] = useState<{ requestId: string; filename: string } | null>(null);
   const disposeRef = useRef<(() => void) | null>(null);
 
   const disposeExitRef = useRef<(() => void) | null>(null);
@@ -77,6 +78,10 @@ export function useZmodemTransfer(sessionId: string | null) {
       }
     });
 
+    const disposeOverwrite = bridge.onZmodemOverwriteRequest?.(sessionId, (payload) => {
+      setOverwriteRequest({ requestId: payload.requestId, filename: payload.filename });
+    });
+
     // If the session exits mid-transfer (disconnect, shell exit, etc.),
     // reset state so the progress indicator doesn't stay stuck.
     disposeExitRef.current = bridge.onSessionExit(sessionId, () => {
@@ -86,9 +91,11 @@ export function useZmodemTransfer(sessionId: string | null) {
     return () => {
       disposeRef.current?.();
       disposeRef.current = null;
+      disposeOverwrite?.();
       disposeExitRef.current?.();
       disposeExitRef.current = null;
       setState(initialState);
+      setOverwriteRequest(null);
     };
   }, [sessionId]);
 
@@ -98,5 +105,12 @@ export function useZmodemTransfer(sessionId: string | null) {
     bridge?.cancelZmodem?.(sessionId);
   }, [sessionId]);
 
-  return { ...state, cancel };
+  const respondOverwrite = useCallback((action: "overwrite" | "skip" | "cancel", applyToRest: boolean) => {
+    setOverwriteRequest((req) => {
+      if (req) netcattyBridge.get()?.respondZmodemOverwrite?.({ requestId: req.requestId, action, applyToRest });
+      return null;
+    });
+  }, []);
+
+  return { ...state, cancel, overwriteRequest, respondOverwrite };
 }

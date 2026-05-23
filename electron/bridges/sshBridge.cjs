@@ -365,6 +365,8 @@ function resolveLangFromCharset(charset) {
 
 const { safeSend } = require("./ipcUtils.cjs");
 
+const zmodemOverwritePending = new Map(); // requestId -> (decision) => void
+
 /**
  * Initialize the SSH bridge with dependencies
  */
@@ -1330,6 +1332,28 @@ async function startSSHSession(event, options) {
               interruptRemote() {
                 try { stream.signal?.("INT"); } catch { /* ignore */ }
               },
+              probeReceiveConflicts(names) {
+                return probeReceiveConflicts(sessions.get(sessionId), names);
+              },
+              removeRemoteFiles(paths) {
+                return removeRemoteFiles(sessions.get(sessionId), paths);
+              },
+              requestOverwriteDecision(filename) {
+                return new Promise((resolve) => {
+                  const requestId = randomUUID();
+                  const timer = setTimeout(() => {
+                    zmodemOverwritePending.delete(requestId);
+                    resolve({ action: "skip", applyToRest: false });
+                  }, 120000);
+                  zmodemOverwritePending.set(requestId, (payload) => {
+                    clearTimeout(timer);
+                    resolve({ action: payload.action, applyToRest: !!payload.applyToRest });
+                  });
+                  safeSend(event.sender, "netcatty:zmodem:overwrite-request", {
+                    sessionId, requestId, filename,
+                  });
+                });
+              },
               getWebContents() {
                 return event.sender;
               },
@@ -2118,6 +2142,74 @@ exit 1`;
   });
 }
 
+// Resolve the directory the running `rz` writes to (its own cwd) and report
+// which of `names` already exist there. Returns { dir, existing } or null.
+function probeReceiveConflicts(session, names) {
+  return new Promise((resolve) => {
+    if (!session || !session.conn || !Array.isArray(names) || names.length === 0) {
+      return resolve(null);
+    }
+    const timer = setTimeout(() => resolve(null), 5000);
+    const script = `SELF=$$
+find_login_shell() {
+  ps -e -o pid=,ppid=,tty=,comm= 2>/dev/null | awk -v pp="$1" -v self="$SELF" '
+    $1 != self && $2 == pp && $4 ~ /^-?(ba|z|fi|k|da|a)?sh$/ {
+      if ($3 != "?") { print $1; found=1; exit }
+      if (any == "") any=$1
+    }
+    END { if (!found && any != "") print any }'
+}
+find_fg_leaf() {
+  ps -e -o pid=,ppid=,stat=,comm= 2>/dev/null | awk -v start="$1" '
+    { pp[$1]=$2; st[$1]=$3; ord[NR]=$1 }
+    function depth(p,  d){ d=0; while(p!="" && d<64){ if(p==start) return d; p=pp[p]; d++ } return -1 }
+    END { best=-1; bp=""; for(i=1;i<=NR;i++){ p=ord[i];
+      if(index(st[p],"+")==0) continue; d=depth(p); if(d<0) continue;
+      if(d>best){best=d; bp=p} } print bp }'
+}
+login=$(find_login_shell "$PPID")
+[ -n "$login" ] || exit 0
+leaf=$(find_fg_leaf "$login")
+[ -n "$leaf" ] || leaf="$login"
+dir=$(readlink /proc/$leaf/cwd 2>/dev/null)
+[ -n "$dir" ] || exit 0
+printf 'DIR\\t%s\\n' "$dir"
+cd "$dir" 2>/dev/null || exit 0
+for n in "$@"; do [ -e "$n" ] && printf 'EXIST\\t%s\\n' "$n"; done`;
+    const argv = names.map((n) => quoteShellArg(n)).join(" ");
+    const cmd = `exec sh -c ${quoteShellArg(script)} sh ${argv}`;
+    session.conn.exec(cmd, (err, stream) => {
+      if (err) { clearTimeout(timer); return resolve(null); }
+      let out = "";
+      stream.on("data", (d) => { out += d.toString(); });
+      stream.on("close", () => {
+        clearTimeout(timer);
+        let dir = null; const existing = [];
+        for (const line of out.split("\n")) {
+          const [tag, val] = line.split("\t");
+          if (tag === "DIR") dir = val;
+          else if (tag === "EXIST" && val) existing.push(val);
+        }
+        resolve(dir ? { dir, existing } : null);
+      });
+    });
+  });
+}
+
+// rm -f the given absolute remote paths (quoted; injection-safe).
+function removeRemoteFiles(session, paths) {
+  return new Promise((resolve) => {
+    if (!session || !session.conn || !Array.isArray(paths) || paths.length === 0) return resolve();
+    const argv = paths.map((p) => quoteShellArg(p)).join(" ");
+    const timer = setTimeout(resolve, 5000);
+    session.conn.exec(`exec sh -c 'rm -f -- "$@"' sh ${argv}`, (err, stream) => {
+      if (err) { clearTimeout(timer); return resolve(); }
+      stream.on("data", () => {}); stream.stderr?.on("data", () => {});
+      stream.on("close", () => { clearTimeout(timer); resolve(); });
+    });
+  });
+}
+
 /**
  * List directory contents on remote machine for path autocomplete.
  * Uses a separate exec channel — does not touch the interactive shell.
@@ -2693,6 +2785,10 @@ function registerHandlers(ipcMain) {
       // ~/.ssh doesn't exist
     }
     return keys;
+  });
+  ipcMain.on("netcatty:zmodem:overwrite-response", (_event, payload) => {
+    const resolve = zmodemOverwritePending.get(payload?.requestId);
+    if (resolve) { zmodemOverwritePending.delete(payload.requestId); resolve(payload); }
   });
   // Register the shared keyboard-interactive response handler
   keyboardInteractiveHandler.registerHandler(ipcMain);

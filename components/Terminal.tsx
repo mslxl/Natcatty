@@ -49,6 +49,7 @@ import { TerminalToolbar } from "./terminal/TerminalToolbar";
 import { TerminalComposeBar } from "./terminal/TerminalComposeBar";
 import { TerminalContextMenu } from "./terminal/TerminalContextMenu";
 import { TerminalSearchBar } from "./terminal/TerminalSearchBar";
+import { ZmodemOverwriteDialog } from "./terminal/ZmodemOverwriteDialog";
 import { ZmodemProgressIndicator } from "./terminal/ZmodemProgressIndicator";
 import { createReplaySafeTerminalLogSanitizer } from "./terminal/replaySafeTerminalLog";
 import { useZmodemTransfer } from "./terminal/hooks/useZmodemTransfer";
@@ -2492,6 +2493,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
                 onCancel={zmodem.cancel}
               />
             </div>
+          )}
+          {/* ZMODEM overwrite conflict dialog */}
+          {zmodem.overwriteRequest && (
+            <ZmodemOverwriteDialog
+              filename={zmodem.overwriteRequest.filename}
+              onRespond={zmodem.respondOverwrite}
+            />
           )}
         </div>
 

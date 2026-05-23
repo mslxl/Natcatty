@@ -2101,6 +2101,11 @@ const zhCN: Messages = {
   'zmodem.uploading': '上传中',
   'zmodem.downloading': '下载中',
   'zmodem.cancelTransfer': '取消传输 (Ctrl+C)',
+  'zmodem.overwrite.title': '远端已存在同名文件',
+  'zmodem.overwrite.applyToRest': '应用到其余冲突文件',
+  'zmodem.overwrite.overwrite': '覆盖',
+  'zmodem.overwrite.skip': '跳过',
+  'zmodem.overwrite.cancel': '取消',
   'settings.shortcuts.resetToDefault': '重置为默认',
 };
 
