@@ -56,6 +56,7 @@ import { useZmodemTransfer } from "./terminal/hooks/useZmodemTransfer";
 import { createTerminalSessionStarters, type PendingAuth } from "./terminal/runtime/createTerminalSessionStarters";
 import { createXTermRuntime, primaryFontFamily, type XTermRuntime } from "./terminal/runtime/createXTermRuntime";
 import { applyUserCursorPreference } from "./terminal/runtime/cursorPreference";
+import { terminalAltKeyOptions } from "./terminal/runtime/altKeyOptions";
 import {
   createPromptLineBreakState,
   type PromptLineBreakState,
@@ -1248,7 +1249,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
             : 0;
         termRef.current.options.scrollOnUserInput =
           shouldEnableNativeUserInputAutoScroll(terminalSettings);
-        termRef.current.options.altClickMovesCursor = !terminalSettings.altAsMeta;
+        const altKeyOpts = terminalAltKeyOptions(terminalSettings.altAsMeta);
+        termRef.current.options.macOptionIsMeta = altKeyOpts.macOptionIsMeta;
+        termRef.current.options.altClickMovesCursor = altKeyOpts.altClickMovesCursor;
         termRef.current.options.wordSeparator = terminalSettings.wordSeparators;
         termRef.current.options.ignoreBracketedPasteMode = terminalSettings.disableBracketedPaste ?? false;
       }

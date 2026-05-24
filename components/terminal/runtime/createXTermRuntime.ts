@@ -43,6 +43,7 @@ import {
 } from "./kittyKeyboardProtocol";
 import { installKittyKeyboardProtocolHandlers } from "./kittyKeyboardRuntime";
 import { installUserCursorPreferenceGuard } from "./cursorPreference";
+import { terminalAltKeyOptions } from "./altKeyOptions";
 import { watchDevicePixelRatio } from "./rendererDprWatch";
 import { handleSerialLineModeInput } from "./serialLineInput";
 import {
@@ -294,7 +295,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     smoothScrollDuration,
     scrollOnUserInput,
     macOptionClickForcesSelection: true,
-    altClickMovesCursor: !altIsMeta,
+    ...terminalAltKeyOptions(altIsMeta),
     wordSeparator,
     theme: {
       ...ctx.terminalTheme.colors,
