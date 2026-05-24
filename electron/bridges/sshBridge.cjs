@@ -1338,6 +1338,9 @@ async function startSSHSession(event, options) {
               removeRemoteFiles(paths) {
                 return removeRemoteFiles(sessions.get(sessionId), paths);
               },
+              restoreRemoteModes(entries) {
+                return restoreRemoteModes(sessions.get(sessionId), entries);
+              },
               requestOverwriteDecision(filename) {
                 return new Promise((resolve) => {
                   const requestId = randomUUID();
@@ -2175,7 +2178,11 @@ dir=$(readlink /proc/$leaf/cwd 2>/dev/null)
 [ -n "$dir" ] || exit 0
 printf 'DIR\\t%s\\n' "$dir"
 cd "$dir" 2>/dev/null || exit 0
-for n in "$@"; do [ -e "$n" ] && printf 'EXIST\\t%s\\n' "$n"; done`;
+for n in "$@"; do
+  [ -e "$n" ] || continue
+  m=$(stat -c %a -- "$n" 2>/dev/null || stat -f %Lp -- "$n" 2>/dev/null)
+  printf 'EXIST\\t%s\\t%s\\n' "$n" "$m"
+done`;
     const argv = names.map((n) => quoteShellArg(n)).join(" ");
     const cmd = `exec sh -c ${quoteShellArg(script)} sh ${argv}`;
     session.conn.exec(cmd, (err, stream) => {
@@ -2184,13 +2191,16 @@ for n in "$@"; do [ -e "$n" ] && printf 'EXIST\\t%s\\n' "$n"; done`;
       stream.on("data", (d) => { out += d.toString(); });
       stream.on("close", () => {
         clearTimeout(timer);
-        let dir = null; const existing = [];
+        let dir = null; const existing = []; const modes = {};
         for (const line of out.split("\n")) {
-          const [tag, val] = line.split("\t");
+          const [tag, val, mode] = line.split("\t");
           if (tag === "DIR") dir = val;
-          else if (tag === "EXIST" && val) existing.push(val);
+          else if (tag === "EXIST" && val) {
+            existing.push(val);
+            if (mode && /^[0-7]{3,4}$/.test(mode)) modes[val] = mode;
+          }
         }
-        resolve(dir ? { dir, existing } : null);
+        resolve(dir ? { dir, existing, modes } : null);
       });
     });
   });
@@ -2203,6 +2213,28 @@ function removeRemoteFiles(session, paths) {
     const argv = paths.map((p) => quoteShellArg(p)).join(" ");
     const timer = setTimeout(resolve, 5000);
     session.conn.exec(`exec sh -c 'rm -f -- "$@"' sh ${argv}`, (err, stream) => {
+      if (err) { clearTimeout(timer); return resolve(); }
+      stream.on("data", () => {}); stream.stderr?.on("data", () => {});
+      stream.on("close", () => { clearTimeout(timer); resolve(); });
+    });
+  });
+}
+
+// chmod the given { path, mode } entries back to their captured permissions
+// (parameterized; injection-safe). Modes are validated octal before use.
+function restoreRemoteModes(session, entries) {
+  return new Promise((resolve) => {
+    if (!session || !session.conn || !Array.isArray(entries) || entries.length === 0) return resolve();
+    const args = [];
+    for (const e of entries) {
+      if (!e || !e.path || !/^[0-7]{3,4}$/.test(String(e.mode))) continue;
+      args.push(quoteShellArg(String(e.mode)));
+      args.push(quoteShellArg(e.path));
+    }
+    if (args.length === 0) return resolve();
+    const timer = setTimeout(resolve, 5000);
+    const script = 'while [ "$#" -ge 2 ]; do chmod "$1" "$2" 2>/dev/null; shift 2; done';
+    session.conn.exec(`exec sh -c ${quoteShellArg(script)} sh ${args.join(" ")}`, (err, stream) => {
       if (err) { clearTimeout(timer); return resolve(); }
       stream.on("data", () => {}); stream.stderr?.on("data", () => {});
       stream.on("close", () => { clearTimeout(timer); resolve(); });

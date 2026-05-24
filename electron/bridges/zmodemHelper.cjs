@@ -50,6 +50,29 @@ async function buildUploadPlan(names, existingList, resolveDecision) {
 }
 
 /**
+ * Resolve which overwritten files need their original mode restored after rz
+ * re-creates them. rz writes new files with the remote umask, dropping the
+ * prior permission bits (issue #1079). Pure: returns absolute `{ path, mode }`
+ * entries for the overwritten files, skipping any whose mode wasn't captured
+ * and de-duplicating shared basenames.
+ */
+function buildModeRestores(dir, names, removeIndices, modes) {
+  const base = String(dir).replace(/\/+$/, "");
+  const seen = new Set();
+  const restores = [];
+  for (const i of removeIndices) {
+    const name = names[i];
+    const mode = modes && modes[name];
+    if (!mode) continue;
+    const target = `${base}/${name}`;
+    if (seen.has(target)) continue;
+    seen.add(target);
+    restores.push({ path: target, mode });
+  }
+  return restores;
+}
+
+/**
  * Create a ZMODEM sentry that wraps a session's data stream.
  *
  * All raw data from the PTY / SSH stream / socket should be fed into
@@ -558,10 +581,14 @@ async function handleUpload(zsession, opts) {
   // Conflict handling (SSH only — callbacks absent on local/telnet/serial).
   // On any failure we fall back to today's behavior (rz silently skips).
   let plan = { offerIndices: allNames.map((_, i) => i), removeIndices: [], aborted: false };
+  let probeDir = null;
+  let probeModes = null;
   if (opts.probeReceiveConflicts && opts.requestOverwriteDecision) {
     try {
       const probe = await opts.probeReceiveConflicts(allNames);
       if (probe && probe.dir && Array.isArray(probe.existing) && probe.existing.length > 0) {
+        probeDir = probe.dir;
+        probeModes = probe.modes || {};
         plan = await buildUploadPlan(allNames, probe.existing, opts.requestOverwriteDecision);
         if (plan.aborted) {
           try { zsession.abort(); } catch { /* ignore */ }
@@ -668,6 +695,20 @@ async function handleUpload(zsession, opts) {
   }
 
   await withTimeout(zsession.close(), 120000);
+
+  // rz re-creates overwritten files with the remote umask, dropping their
+  // original permission bits. Now that everything is on disk, restore them
+  // to the modes captured before the rm (issue #1079).
+  if (plan.removeIndices.length && probeDir && opts.restoreRemoteModes) {
+    const restores = buildModeRestores(probeDir, allNames, plan.removeIndices, probeModes);
+    if (restores.length) {
+      try {
+        await opts.restoreRemoteModes(restores);
+      } catch (err) {
+        console.warn("[ZMODEM] restoreRemoteModes failed:", err?.message || err);
+      }
+    }
+  }
 }
 
 /**
@@ -851,4 +892,4 @@ function safeSend(contents, channel, data) {
   }
 }
 
-module.exports = { createZmodemSentry, buildUploadPlan };
+module.exports = { createZmodemSentry, buildUploadPlan, buildModeRestores };

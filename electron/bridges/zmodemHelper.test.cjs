@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { buildUploadPlan } = require("./zmodemHelper.cjs");
+const { buildUploadPlan, buildModeRestores } = require("./zmodemHelper.cjs");
 
 const never = () => { throw new Error("resolver should not be called"); };
 
@@ -47,4 +47,28 @@ test("duplicate basenames keep independent per-file decisions", async () => {
   const plan = await buildUploadPlan(["x.txt", "x.txt"], ["x.txt"],
     async () => ({ action: actions[i++] }));
   assert.deepEqual(plan, { offerIndices: [1], removeIndices: [1], aborted: false });
+});
+
+// Issue #1079: overwriting (rm + rz re-create) drops the original permission
+// bits. buildModeRestores resolves which overwritten files to chmod back.
+
+test("buildModeRestores maps overwritten files to their captured modes", () => {
+  assert.deepEqual(
+    buildModeRestores("/home/u", ["a.sh", "b.txt"], [0], { "a.sh": "755" }),
+    [{ path: "/home/u/a.sh", mode: "755" }],
+  );
+});
+
+test("buildModeRestores skips files whose mode was not captured", () => {
+  assert.deepEqual(
+    buildModeRestores("/srv", ["a", "b"], [0, 1], { a: "644" }),
+    [{ path: "/srv/a", mode: "644" }],
+  );
+});
+
+test("buildModeRestores strips trailing slashes and dedupes duplicate basenames", () => {
+  assert.deepEqual(
+    buildModeRestores("/srv//", ["x", "x"], [0, 1], { x: "600" }),
+    [{ path: "/srv/x", mode: "600" }],
+  );
 });
