@@ -301,6 +301,9 @@ const en: Messages = {
   'settings.terminal.keyboard.altAsMeta': 'Use Option as Meta key',
   'settings.terminal.keyboard.altAsMeta.desc':
     'Use Option (Alt) as the Meta key instead of for special characters',
+  'settings.terminal.keyboard.optionArrowWordJump': 'Option+←/→ jumps by word',
+  'settings.terminal.keyboard.optionArrowWordJump.desc':
+    'Send Meta-b / Meta-f on Option+Left/Right so the shell moves by word, instead of the default ^[[1;3D / ^[[1;3C',
   'settings.terminal.accessibility.minimumContrastRatio': 'Minimum contrast ratio',
   'settings.terminal.accessibility.minimumContrastRatio.desc':
     'Adjust colors to meet contrast requirements (1 = disabled, 21 = max)',

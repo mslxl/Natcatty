@@ -164,7 +164,7 @@ const SYNCABLE_TERMINAL_KEYS = [
   'scrollback', 'drawBoldInBrightColors', 'terminalEmulationType',
   'fontLigatures', 'fontWeight', 'fontWeightBold', 'fallbackFont',
   'linePadding', 'cursorShape', 'cursorBlink', 'minimumContrastRatio',
-  'altAsMeta', 'scrollOnInput', 'scrollOnOutput', 'scrollOnKeyPress', 'scrollOnPaste',
+  'altAsMeta', 'optionArrowWordJump', 'scrollOnInput', 'scrollOnOutput', 'scrollOnKeyPress', 'scrollOnPaste',
   'smoothScrolling',
   'rightClickBehavior', 'copyOnSelect', 'middleClickPaste', 'wordSeparators',
   'linkModifier', 'keywordHighlightEnabled', 'keywordHighlightRules',

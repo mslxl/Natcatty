@@ -493,6 +493,7 @@ export interface TerminalSettings {
 
   // Keyboard
   altAsMeta: boolean; // Use ⌥ as the Meta key
+  optionArrowWordJump: boolean; // macOS: Option+←/→ send Meta-b/f for word jump
   scrollOnInput: boolean; // Scroll terminal to bottom on input
   scrollOnOutput: boolean; // Scroll terminal to bottom on output
   scrollOnKeyPress: boolean; // Scroll terminal to bottom on key press
@@ -692,6 +693,7 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   cursorBlink: true,
   minimumContrastRatio: 1,
   altAsMeta: false,
+  optionArrowWordJump: false,
   scrollOnInput: true,
   scrollOnOutput: false,
   scrollOnKeyPress: false,

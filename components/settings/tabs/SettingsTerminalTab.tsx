@@ -810,6 +810,12 @@ export default function SettingsTerminalTab(props: {
         >
           <Toggle checked={terminalSettings.altAsMeta} onChange={(v) => updateTerminalSetting("altAsMeta", v)} />
         </SettingRow>
+        <SettingRow
+          label={t("settings.terminal.keyboard.optionArrowWordJump")}
+          description={t("settings.terminal.keyboard.optionArrowWordJump.desc")}
+        >
+          <Toggle checked={terminalSettings.optionArrowWordJump} onChange={(v) => updateTerminalSetting("optionArrowWordJump", v)} />
+        </SettingRow>
       </div>
 
       <SectionHeader title={t("settings.terminal.section.accessibility")} />

@@ -301,6 +301,9 @@ const ru: Messages = {
   'settings.terminal.keyboard.altAsMeta': 'Использовать Option как клавишу Meta',
   'settings.terminal.keyboard.altAsMeta.desc':
     'Использовать Option (Alt) как клавишу Meta вместо ввода специальных символов',
+  'settings.terminal.keyboard.optionArrowWordJump': 'Option+←/→ переход по словам',
+  'settings.terminal.keyboard.optionArrowWordJump.desc':
+    'Отправлять Meta-b / Meta-f при Option+Влево/Вправо, чтобы оболочка перемещалась по словам, вместо стандартного ^[[1;3D / ^[[1;3C',
   'settings.terminal.accessibility.minimumContrastRatio': 'Минимальный коэффициент контрастности',
   'settings.terminal.accessibility.minimumContrastRatio.desc':
     'Подстраивать цвета под требования контрастности (1 = отключено, 21 = максимум)',

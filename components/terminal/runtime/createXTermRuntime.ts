@@ -44,6 +44,7 @@ import {
 import { installKittyKeyboardProtocolHandlers } from "./kittyKeyboardRuntime";
 import { installUserCursorPreferenceGuard } from "./cursorPreference";
 import { terminalAltKeyOptions } from "./altKeyOptions";
+import { optionArrowWordJumpSequence } from "./optionArrowWordJump";
 import { watchDevicePixelRatio } from "./rendererDprWatch";
 import { handleSerialLineModeInput } from "./serialLineInput";
 import {
@@ -653,6 +654,29 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           ctx.onBroadcastInputRef.current(kittyControlSequence, ctx.sessionId);
         }
         scrollToBottomAfterInput(kittyControlSequence);
+        return false;
+      }
+    }
+
+    // macOS Option+←/→ → Meta-b / Meta-f so the shell jumps by word (discussion
+    // #826). After kitty mode so apps using the kitty protocol keep their own
+    // arrow encoding; read live so the toggle applies without reconnecting.
+    const wordJumpSequence = optionArrowWordJumpSequence(
+      e,
+      ctx.terminalSettingsRef.current?.optionArrowWordJump ?? false,
+      isMacPlatform(),
+    );
+    if (wordJumpSequence) {
+      const id = ctx.sessionRef.current;
+      if (id) {
+        e.preventDefault();
+        e.stopPropagation();
+        ctx.onAutocompleteInput?.(wordJumpSequence);
+        ctx.terminalBackend.writeToSession(id, wordJumpSequence);
+        if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
+          ctx.onBroadcastInputRef.current(wordJumpSequence, ctx.sessionId);
+        }
+        scrollToBottomAfterInput(wordJumpSequence);
         return false;
       }
     }
