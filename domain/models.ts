@@ -435,6 +435,7 @@ export const DEFAULT_KEY_BINDINGS: KeyBinding[] = [
   { id: 'new-workspace', action: 'newWorkspace', label: 'New Workspace', mac: '⌘ + Shift + J', pc: 'Ctrl + Shift + J', category: 'app' },
   { id: 'snippets', action: 'snippets', label: 'Open Snippets', mac: '⌘ + Shift + S', pc: 'Ctrl + Shift + S', category: 'app' },
   { id: 'broadcast', action: 'broadcast', label: 'Switch the Broadcast Mode', mac: '⌘ + B', pc: 'Ctrl + B', category: 'app' },
+  { id: 'toggle-side-panel', action: 'toggleSidePanel', label: 'Toggle Side Panel', mac: '⌘ + \\', pc: 'Ctrl + \\', category: 'app' },
   { id: 'open-settings', action: 'openSettings', label: 'Open Settings', mac: '⌘ + ,', pc: 'Ctrl + ,', category: 'app' },
 
   // SFTP Operations

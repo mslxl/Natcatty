@@ -57,6 +57,7 @@ import { Input } from './ui/input';
 import { ScrollArea } from './ui/scroll-area';
 import { setupMcpApprovalBridge } from '../infrastructure/ai/shared/approvalGate';
 import { resolveScriptsSidePanelShortcutIntent } from '../application/state/resolveSnippetsShortcutIntent';
+import { resolveSidePanelToggleIntent } from '../application/state/resolveSidePanelToggleIntent';
 import { terminalLayerAreEqual } from './terminalLayerMemo';
 import { getTerminalPaneSnapshot, parseTerminalPaneSnapshot } from './terminalPaneVisibility';
 import { getScopedTopTabsThemeId } from './terminalTopTabsTheme';
@@ -465,9 +466,8 @@ interface TerminalLayerProps {
   sessionLogsEnabled?: boolean;
   sessionLogsDir?: string;
   sessionLogsFormat?: string;
-  closeSidePanelRef?: React.MutableRefObject<(() => void) | null>;
   toggleScriptsSidePanelRef?: React.MutableRefObject<(() => void) | null>;
-  activeSidePanelTabRef?: React.MutableRefObject<string | null>;
+  toggleSidePanelRef?: React.MutableRefObject<(() => void) | null>;
 }
 
 interface TerminalPaneProps {
@@ -890,9 +890,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   sessionLogsEnabled,
   sessionLogsDir,
   sessionLogsFormat,
-  closeSidePanelRef,
   toggleScriptsSidePanelRef,
-  activeSidePanelTabRef,
+  toggleSidePanelRef,
 }) => {
   const { t } = useI18n();
   // Subscribe to activeTabId from external store
@@ -1101,13 +1100,18 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const sidePanelOpenTabsRef = useRef(sidePanelOpenTabs);
   sidePanelOpenTabsRef.current = sidePanelOpenTabs;
 
+  // Remember the last sub-panel shown per tab so the toggle shortcut can
+  // restore it after a close. Overwritten on open, never cleared on close.
+  const lastSidePanelTabRef = useRef<Map<string, SidePanelTab>>(new Map());
+  useEffect(() => {
+    sidePanelOpenTabs.forEach((tab, tabId) => {
+      lastSidePanelTabRef.current.set(tabId, tab);
+    });
+  }, [sidePanelOpenTabs]);
+
   // Whether side panel is open for the currently active tab and which sub-panel
   const isSidePanelOpenForCurrentTab = activeTabId ? sidePanelOpenTabs.has(activeTabId) : false;
   const activeSidePanelTab = activeTabId ? sidePanelOpenTabs.get(activeTabId) ?? null : null;
-  if (activeSidePanelTabRef) {
-    activeSidePanelTabRef.current = activeSidePanelTab;
-  }
-
   // Legacy compatibility helpers for SFTP-specific logic
   const isSftpOpenForCurrentTab = activeSidePanelTab === 'sftp';
 
@@ -1845,13 +1849,23 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     refocusTerminalSession(sessionIdToRefocus);
   }, [activeTabId, getActiveTerminalSessionId, refocusTerminalSession, syncWorkspaceFocusIfNeeded]);
 
-  useEffect(() => {
-    if (!closeSidePanelRef) return;
-    closeSidePanelRef.current = handleCloseSidePanel;
-    return () => {
-      closeSidePanelRef.current = null;
-    };
-  }, [closeSidePanelRef, handleCloseSidePanel]);
+  // Resolve the SFTP host for a tab: a previously-stored host, otherwise the
+  // host of the workspace's focused session or the active session. null = none.
+  const resolveSftpHostForTab = useCallback((tabId: string): Host | null => {
+    const stored = sftpHostForTabRef.current.get(tabId);
+    if (stored) return stored;
+    const currentWorkspace = activeWorkspaceRef.current;
+    const currentFocusedSessionId = focusedSessionIdRef.current;
+    const currentActiveSession = activeSessionRef.current;
+    const currentSessionHosts = sessionHostsMapRef.current;
+    if (currentWorkspace && currentFocusedSessionId) {
+      return currentSessionHosts.get(currentFocusedSessionId) ?? null;
+    }
+    if (currentActiveSession) {
+      return currentSessionHosts.get(currentActiveSession.id) ?? null;
+    }
+    return null;
+  }, []);
 
   // Switch side panel to a specific tab (or toggle if already on that tab)
   const handleSwitchSidePanelTab = useCallback((tab: SidePanelTab) => {
@@ -1864,16 +1878,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
     // If switching to SFTP and no host is stored yet, resolve it
     if (tab === 'sftp' && !sftpHostForTabRef.current.has(tabId)) {
-      let host: Host | null = null;
-      const currentWorkspace = activeWorkspaceRef.current;
-      const currentFocusedSessionId = focusedSessionIdRef.current;
-      const currentActiveSession = activeSessionRef.current;
-      const currentSessionHosts = sessionHostsMapRef.current;
-      if (currentWorkspace && currentFocusedSessionId) {
-        host = currentSessionHosts.get(currentFocusedSessionId) ?? null;
-      } else if (currentActiveSession) {
-        host = currentSessionHosts.get(currentActiveSession.id) ?? null;
-      }
+      const host = resolveSftpHostForTab(tabId);
       if (!host) return;
       setSftpHostForTab(prev => {
         const next = new Map(prev);
@@ -1891,7 +1896,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       next.set(tabId, tab);
       return next;
     });
-  }, []);
+  }, [resolveSftpHostForTab]);
 
   // Toggle SFTP from activity bar header
   const handleToggleSftpFromBar = useCallback(() => {
@@ -1930,6 +1935,34 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       toggleScriptsSidePanelRef.current = null;
     };
   }, [toggleScriptsSidePanelRef, handleToggleScriptsSidePanel]);
+
+  // Toggle the whole side panel (new ⌘/Ctrl+\ shortcut). Close if open; if
+  // closed, reopen the tab's last sub-panel, defaulting to SFTP (when a host is
+  // available) or scripts.
+  const handleToggleSidePanel = useCallback(() => {
+    const tabId = activeTabIdRef.current;
+    if (!tabId) return;
+    const isOpen = sidePanelOpenTabsRef.current.has(tabId);
+    const sftpAvailable = !!resolveSftpHostForTab(tabId);
+    const fallbackTab: SidePanelTab = sftpAvailable ? 'sftp' : 'scripts';
+    const lastTab = lastSidePanelTabRef.current.get(tabId) ?? null;
+    const intent = resolveSidePanelToggleIntent<SidePanelTab>({ isOpen, lastTab, fallbackTab });
+    if (intent.kind === 'close') {
+      handleCloseSidePanel();
+      return;
+    }
+    // If the remembered panel is SFTP but no host is resolvable, use scripts.
+    const target: SidePanelTab = intent.tab === 'sftp' && !sftpAvailable ? 'scripts' : intent.tab;
+    handleSwitchSidePanelTab(target);
+  }, [handleCloseSidePanel, handleSwitchSidePanelTab, resolveSftpHostForTab]);
+
+  useEffect(() => {
+    if (!toggleSidePanelRef) return;
+    toggleSidePanelRef.current = handleToggleSidePanel;
+    return () => {
+      toggleSidePanelRef.current = null;
+    };
+  }, [toggleSidePanelRef, handleToggleSidePanel]);
 
   // Open theme side panel (called from Terminal toolbar)
   const handleOpenTheme = useCallback(() => {

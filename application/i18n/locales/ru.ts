@@ -479,6 +479,7 @@ const ru: Messages = {
   'settings.shortcuts.binding.new-workspace': 'Новая рабочая область',
   'settings.shortcuts.binding.snippets': 'Открыть сниппеты',
   'settings.shortcuts.binding.broadcast': 'Переключить режим трансляции',
+  'settings.shortcuts.binding.toggle-side-panel': 'Переключить боковую панель',
   'settings.shortcuts.binding.sftp-copy': 'Копировать файл',
   'settings.shortcuts.binding.sftp-cut': 'Вырезать файл',
   'settings.shortcuts.binding.sftp-paste': 'Вставить файл',

@@ -37,5 +37,6 @@ export const terminalLayerAreEqual = (
   prev.isBroadcastEnabled === next.isBroadcastEnabled &&
   prev.onToggleBroadcast === next.onToggleBroadcast &&
   prev.toggleScriptsSidePanelRef === next.toggleScriptsSidePanelRef &&
+  prev.toggleSidePanelRef === next.toggleSidePanelRef &&
   prev.identities === next.identities
 );
