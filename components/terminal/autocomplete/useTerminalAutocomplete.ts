@@ -47,6 +47,18 @@ export const DEFAULT_AUTOCOMPLETE_SETTINGS: AutocompleteSettings = {
   fastTypingThresholdMs: 40,
 };
 
+/**
+ * Whether completion work is worth doing — i.e. whether anything would
+ * actually be rendered. With both the popup and ghost text disabled, querying
+ * completions only to discard the result is pure main-thread waste, so callers
+ * skip it entirely.
+ */
+export function shouldQueryCompletions(
+  settings: Pick<AutocompleteSettings, "showPopupMenu" | "showGhostText">,
+): boolean {
+  return settings.showPopupMenu || settings.showGhostText;
+}
+
 /** Shared empty state to avoid creating new objects on every reset */
 const EMPTY_STATE: AutocompleteState = Object.freeze({
   suggestions: [],
@@ -637,6 +649,15 @@ export function useTerminalAutocomplete(
   const fetchSuggestions = useCallback(async () => {
     const term = termRef.current;
     if (!term || disposedRef.current || !settingsRef.current.enabled) {
+      return;
+    }
+
+    // Nothing will be rendered when both the popup and ghost text are off, so
+    // don't run the (potentially expensive) completion query just to throw the
+    // result away. Clear any stale state and bail before touching history,
+    // fig specs, or remote path lookups.
+    if (!shouldQueryCompletions(settingsRef.current)) {
+      clearState();
       return;
     }
 
