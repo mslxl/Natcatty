@@ -192,6 +192,8 @@ export interface SyncPayload {
     // Terminal
     terminalTheme?: string;
     followAppTerminalTheme?: boolean;
+    terminalThemeDark?: string;
+    terminalThemeLight?: string;
     terminalFontFamily?: string;
     terminalFontSize?: number;
     terminalSettings?: Record<string, unknown>;

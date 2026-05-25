@@ -88,6 +88,39 @@ const UI_TO_TERMINAL_THEME: Record<string, string> = {
 export const getTerminalThemeForUiTheme = (uiThemeId: string): string | undefined =>
   UI_TO_TERMINAL_THEME[uiThemeId];
 
+/**
+ * Sentinel stored in the per-mode follow-theme settings meaning "let the
+ * terminal theme follow the active UI theme preset" (the legacy
+ * auto-matching behavior), as opposed to a concrete terminal theme id.
+ */
+export const TERMINAL_THEME_AUTO = 'auto';
+
+/**
+ * Resolve which terminal theme id to use while "Follow Application Theme" is
+ * enabled, honoring the user's per-mode override.
+ *
+ * - A concrete theme id in the active mode's setting is used as-is.
+ * - `TERMINAL_THEME_AUTO` (the default) keeps the legacy behavior: match the
+ *   active UI theme preset, then `fallbackThemeId` when no UI match exists.
+ */
+export const resolveFollowedTerminalThemeId = (args: {
+  resolvedTheme: 'light' | 'dark';
+  terminalThemeDarkId: string;
+  terminalThemeLightId: string;
+  lightUiThemeId: string;
+  darkUiThemeId: string;
+  fallbackThemeId: string;
+}): string => {
+  const selected = args.resolvedTheme === 'dark'
+    ? args.terminalThemeDarkId
+    : args.terminalThemeLightId;
+  if (selected && selected !== TERMINAL_THEME_AUTO) return selected;
+  const activeUiThemeId = args.resolvedTheme === 'dark'
+    ? args.darkUiThemeId
+    : args.lightUiThemeId;
+  return getTerminalThemeForUiTheme(activeUiThemeId) ?? args.fallbackThemeId;
+};
+
 type ParsedHslToken = {
   hue: number;
   saturation: number;

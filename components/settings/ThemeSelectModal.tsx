@@ -15,6 +15,8 @@ interface ThemeSelectModalProps {
     onClose: () => void;
     selectedThemeId: string;
     onSelect: (themeId: string) => void;
+    filterType?: 'dark' | 'light';
+    showAutoOption?: boolean;
 }
 
 export const ThemeSelectModal: React.FC<ThemeSelectModalProps> = ({
@@ -22,6 +24,8 @@ export const ThemeSelectModal: React.FC<ThemeSelectModalProps> = ({
     onClose,
     selectedThemeId,
     onSelect,
+    filterType,
+    showAutoOption,
 }) => {
     const { t } = useI18n();
 
@@ -85,6 +89,8 @@ export const ThemeSelectModal: React.FC<ThemeSelectModalProps> = ({
                     <ThemeList
                         selectedThemeId={selectedThemeId}
                         onSelect={handleThemeSelect}
+                        filterType={filterType}
+                        showAutoOption={showAutoOption}
                     />
                 </div>
 

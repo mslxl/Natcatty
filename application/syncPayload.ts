@@ -43,6 +43,8 @@ import {
   STORAGE_KEY_CUSTOM_CSS,
   STORAGE_KEY_TERM_THEME,
   STORAGE_KEY_TERM_FOLLOW_APP_THEME,
+  STORAGE_KEY_TERM_THEME_DARK,
+  STORAGE_KEY_TERM_THEME_LIGHT,
   STORAGE_KEY_TERM_FONT_FAMILY,
   STORAGE_KEY_TERM_FONT_SIZE,
   STORAGE_KEY_TERM_SETTINGS,
@@ -186,6 +188,8 @@ export const SYNCABLE_SETTING_STORAGE_KEYS = [
   STORAGE_KEY_CUSTOM_CSS,
   STORAGE_KEY_TERM_THEME,
   STORAGE_KEY_TERM_FOLLOW_APP_THEME,
+  STORAGE_KEY_TERM_THEME_DARK,
+  STORAGE_KEY_TERM_THEME_LIGHT,
   STORAGE_KEY_TERM_FONT_FAMILY,
   STORAGE_KEY_TERM_FONT_SIZE,
   STORAGE_KEY_TERM_SETTINGS,
@@ -309,6 +313,10 @@ export function collectSyncableSettings(): SyncPayload['settings'] {
   if (followAppTermTheme === 'true' || followAppTermTheme === 'false') {
     settings.followAppTerminalTheme = followAppTermTheme === 'true';
   }
+  const termThemeDark = localStorageAdapter.readString(STORAGE_KEY_TERM_THEME_DARK);
+  if (termThemeDark) settings.terminalThemeDark = termThemeDark;
+  const termThemeLight = localStorageAdapter.readString(STORAGE_KEY_TERM_THEME_LIGHT);
+  if (termThemeLight) settings.terminalThemeLight = termThemeLight;
   const termFont = localStorageAdapter.readString(STORAGE_KEY_TERM_FONT_FAMILY);
   if (termFont) settings.terminalFontFamily = termFont;
   const termSize = localStorageAdapter.readNumber(STORAGE_KEY_TERM_FONT_SIZE);
@@ -432,6 +440,8 @@ function applySyncableSettings(settings: NonNullable<SyncPayload['settings']>): 
   if (settings.followAppTerminalTheme != null) {
     localStorageAdapter.writeString(STORAGE_KEY_TERM_FOLLOW_APP_THEME, String(settings.followAppTerminalTheme));
   }
+  if (settings.terminalThemeDark != null) localStorageAdapter.writeString(STORAGE_KEY_TERM_THEME_DARK, settings.terminalThemeDark);
+  if (settings.terminalThemeLight != null) localStorageAdapter.writeString(STORAGE_KEY_TERM_THEME_LIGHT, settings.terminalThemeLight);
   if (settings.terminalFontFamily != null) localStorageAdapter.writeString(STORAGE_KEY_TERM_FONT_FAMILY, settings.terminalFontFamily);
   if (settings.terminalFontSize != null) localStorageAdapter.writeString(STORAGE_KEY_TERM_FONT_SIZE, String(settings.terminalFontSize));
 

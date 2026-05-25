@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
-import { SyncConfig, TerminalTheme, TerminalSettings, HotkeyScheme, CustomKeyBindings, DEFAULT_KEY_BINDINGS, KeyBinding, UILanguage, SessionLogFormat, normalizeTerminalSettings } from '../../domain/models';
+import { SyncConfig, TerminalSettings, HotkeyScheme, CustomKeyBindings, DEFAULT_KEY_BINDINGS, KeyBinding, UILanguage, SessionLogFormat, normalizeTerminalSettings } from '../../domain/models';
 import {
   STORAGE_KEY_COLOR,
   STORAGE_KEY_SYNC,
   STORAGE_KEY_TERM_THEME,
   STORAGE_KEY_TERM_FOLLOW_APP_THEME,
+  STORAGE_KEY_TERM_THEME_DARK,
+  STORAGE_KEY_TERM_THEME_LIGHT,
   STORAGE_KEY_THEME,
   STORAGE_KEY_TERM_FONT_FAMILY,
   STORAGE_KEY_TERM_FONT_SIZE,
@@ -49,7 +51,7 @@ import {
   shouldApplyIncomingCustomKeyBindingsRecord,
   updateCustomKeyBinding as updateCustomKeyBindingRecord,
 } from '../../domain/customKeyBindings';
-import { applyCustomAccentToTerminalTheme, getTerminalThemeForUiTheme } from '../../domain/terminalAppearance';
+import { applyCustomAccentToTerminalTheme, resolveFollowedTerminalThemeId, TERMINAL_THEME_AUTO } from '../../domain/terminalAppearance';
 import { customThemeStore, useCustomThemes } from '../state/customThemeStore';
 import { DEFAULT_FONT_SIZE, isDeprecatedPrimaryFontId } from '../../infrastructure/config/fonts';
 import { DARK_UI_THEMES, LIGHT_UI_THEMES, UiThemeTokens, getUiThemeById } from '../../infrastructure/config/uiThemes';
@@ -254,6 +256,12 @@ export const useSettingsState = () => {
     const isUpgrade = !!localStorageAdapter.readString(STORAGE_KEY_TERM_THEME);
     return !isUpgrade;
   });
+  const [terminalThemeDarkId, setTerminalThemeDarkId] = useState<string>(
+    () => localStorageAdapter.readString(STORAGE_KEY_TERM_THEME_DARK) || TERMINAL_THEME_AUTO,
+  );
+  const [terminalThemeLightId, setTerminalThemeLightId] = useState<string>(
+    () => localStorageAdapter.readString(STORAGE_KEY_TERM_THEME_LIGHT) || TERMINAL_THEME_AUTO,
+  );
   const [terminalFontFamilyId, setTerminalFontFamilyId] = useState<string>(() => {
     const stored = localStorageAdapter.readString(STORAGE_KEY_TERM_FONT_FAMILY);
     return migrateIncomingTerminalFontId(stored) ?? DEFAULT_FONT_FAMILY;
@@ -536,6 +544,10 @@ export const useSettingsState = () => {
     // Terminal
     const storedTermTheme = readStoredString(STORAGE_KEY_TERM_THEME);
     if (storedTermTheme) setTerminalThemeId(storedTermTheme);
+    const storedTermThemeDark = readStoredString(STORAGE_KEY_TERM_THEME_DARK);
+    if (storedTermThemeDark) setTerminalThemeDarkId(storedTermThemeDark);
+    const storedTermThemeLight = readStoredString(STORAGE_KEY_TERM_THEME_LIGHT);
+    if (storedTermThemeLight) setTerminalThemeLightId(storedTermThemeLight);
     const storedTermFont = readStoredString(STORAGE_KEY_TERM_FONT_FAMILY);
     const migratedTermFont = migrateIncomingTerminalFontId(storedTermFont);
     if (migratedTermFont) setTerminalFontFamilyId(migratedTermFont);
@@ -668,6 +680,12 @@ export const useSettingsState = () => {
       }
       if (key === STORAGE_KEY_TERM_THEME && typeof value === 'string') {
         setTerminalThemeId(value);
+      }
+      if (key === STORAGE_KEY_TERM_THEME_DARK && typeof value === 'string') {
+        setTerminalThemeDarkId(value);
+      }
+      if (key === STORAGE_KEY_TERM_THEME_LIGHT && typeof value === 'string') {
+        setTerminalThemeLightId(value);
       }
       if (key === STORAGE_KEY_TERM_FOLLOW_APP_THEME) {
         const next = value === true || value === 'true';
@@ -862,6 +880,15 @@ export const useSettingsState = () => {
           setTerminalThemeId(e.newValue);
         }
       }
+      // Sync per-mode follow terminal themes from other windows
+      if (e.key === STORAGE_KEY_TERM_THEME_DARK && e.newValue) {
+        const next = e.newValue;
+        setTerminalThemeDarkId((prev) => (prev === next ? prev : next));
+      }
+      if (e.key === STORAGE_KEY_TERM_THEME_LIGHT && e.newValue) {
+        const next = e.newValue;
+        setTerminalThemeLightId((prev) => (prev === next ? prev : next));
+      }
       // Sync follow-app-theme toggle from other windows
       if (e.key === STORAGE_KEY_TERM_FOLLOW_APP_THEME && e.newValue) {
         const next = e.newValue === 'true';
@@ -1010,6 +1037,18 @@ export const useSettingsState = () => {
     if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_TERM_FOLLOW_APP_THEME, String(followAppTerminalTheme));
   }, [followAppTerminalTheme, notifySettingsChanged]);
+
+  useEffect(() => {
+    localStorageAdapter.writeString(STORAGE_KEY_TERM_THEME_DARK, terminalThemeDarkId);
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_TERM_THEME_DARK, terminalThemeDarkId);
+  }, [terminalThemeDarkId, notifySettingsChanged]);
+
+  useEffect(() => {
+    localStorageAdapter.writeString(STORAGE_KEY_TERM_THEME_LIGHT, terminalThemeLightId);
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_TERM_THEME_LIGHT, terminalThemeLightId);
+  }, [terminalThemeLightId, notifySettingsChanged]);
 
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_TERM_FONT_FAMILY, terminalFontFamilyId);
@@ -1293,25 +1332,32 @@ export const useSettingsState = () => {
   const customThemes = useCustomThemes();
 
   const currentTerminalTheme = useMemo(() => {
-    let baseTheme: TerminalTheme;
-    // When "Follow Application Theme" is enabled, pick the terminal theme
-    // whose background matches the active UI theme preset.
+    // When "Follow Application Theme" is enabled, honor the per-mode override
+    // (or auto-match the active UI theme preset when set to auto).
     if (followAppTerminalTheme) {
-      const activeUiThemeId = resolvedTheme === 'dark' ? darkUiThemeId : lightUiThemeId;
-      const mapped = getTerminalThemeForUiTheme(activeUiThemeId);
-      if (mapped) {
-        const found = TERMINAL_THEMES.find(t => t.id === mapped);
-        if (found) {
-          baseTheme = found;
-          return applyCustomAccentToTerminalTheme(baseTheme, accentMode, customAccent);
-        }
+      const followedId = resolveFollowedTerminalThemeId({
+        resolvedTheme,
+        terminalThemeDarkId,
+        terminalThemeLightId,
+        lightUiThemeId,
+        darkUiThemeId,
+        fallbackThemeId: terminalThemeId,
+      });
+      const followed = TERMINAL_THEMES.find(t => t.id === followedId)
+        || customThemes.find(t => t.id === followedId);
+      if (followed) {
+        return applyCustomAccentToTerminalTheme(followed, accentMode, customAccent);
       }
+      // Explicit override pointing at a deleted theme: fall through to the
+      // manual theme below.
     }
-    baseTheme = TERMINAL_THEMES.find(t => t.id === terminalThemeId)
+    const baseTheme = TERMINAL_THEMES.find(t => t.id === terminalThemeId)
       || customThemes.find(t => t.id === terminalThemeId)
       || TERMINAL_THEMES[0];
     return applyCustomAccentToTerminalTheme(baseTheme, accentMode, customAccent);
-  }, [terminalThemeId, customThemes, followAppTerminalTheme, resolvedTheme, lightUiThemeId, darkUiThemeId, accentMode, customAccent]);
+  }, [terminalThemeId, terminalThemeDarkId, terminalThemeLightId, customThemes,
+      followAppTerminalTheme, resolvedTheme, lightUiThemeId, darkUiThemeId,
+      accentMode, customAccent]);
 
   const updateTerminalSetting = useCallback(<K extends keyof TerminalSettings>(
     key: K,
@@ -1348,6 +1394,10 @@ export const useSettingsState = () => {
     setTerminalThemeId,
     followAppTerminalTheme,
     setFollowAppTerminalTheme: setFollowAppTerminalThemeState,
+    terminalThemeDarkId,
+    setTerminalThemeDarkId,
+    terminalThemeLightId,
+    setTerminalThemeLightId,
     currentTerminalTheme,
     terminalFontFamilyId,
     setTerminalFontFamilyId,

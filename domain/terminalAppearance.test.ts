@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import {
   applyCustomAccentToTerminalTheme,
   mergeTerminalHostUpdate,
+  resolveFollowedTerminalThemeId,
+  TERMINAL_THEME_AUTO,
 } from "./terminalAppearance";
 import type { Host, TerminalTheme } from "./models";
 
@@ -148,4 +150,74 @@ test("terminal appearance reset clears only appearance fields", () => {
   assert.equal(merged.moshEnabled, true);
   assert.equal(merged.fontSize, undefined);
   assert.equal(merged.fontSizeOverride, false);
+});
+
+test("follow-theme resolver: dark + auto follows the active dark UI preset", () => {
+  assert.equal(
+    resolveFollowedTerminalThemeId({
+      resolvedTheme: "dark",
+      terminalThemeDarkId: TERMINAL_THEME_AUTO,
+      terminalThemeLightId: TERMINAL_THEME_AUTO,
+      lightUiThemeId: "snow",
+      darkUiThemeId: "midnight",
+      fallbackThemeId: "netcatty-dark",
+    }),
+    "ui-midnight",
+  );
+});
+
+test("follow-theme resolver: light + auto follows the active light UI preset", () => {
+  assert.equal(
+    resolveFollowedTerminalThemeId({
+      resolvedTheme: "light",
+      terminalThemeDarkId: TERMINAL_THEME_AUTO,
+      terminalThemeLightId: TERMINAL_THEME_AUTO,
+      lightUiThemeId: "snow",
+      darkUiThemeId: "midnight",
+      fallbackThemeId: "netcatty-dark",
+    }),
+    "ui-snow",
+  );
+});
+
+test("follow-theme resolver: explicit dark override wins over auto-matching", () => {
+  assert.equal(
+    resolveFollowedTerminalThemeId({
+      resolvedTheme: "dark",
+      terminalThemeDarkId: "dracula",
+      terminalThemeLightId: TERMINAL_THEME_AUTO,
+      lightUiThemeId: "snow",
+      darkUiThemeId: "midnight",
+      fallbackThemeId: "netcatty-dark",
+    }),
+    "dracula",
+  );
+});
+
+test("follow-theme resolver: explicit light override wins over auto-matching", () => {
+  assert.equal(
+    resolveFollowedTerminalThemeId({
+      resolvedTheme: "light",
+      terminalThemeDarkId: TERMINAL_THEME_AUTO,
+      terminalThemeLightId: "solarized-light",
+      lightUiThemeId: "snow",
+      darkUiThemeId: "midnight",
+      fallbackThemeId: "netcatty-dark",
+    }),
+    "solarized-light",
+  );
+});
+
+test("follow-theme resolver: auto with no UI match falls back to fallbackThemeId", () => {
+  assert.equal(
+    resolveFollowedTerminalThemeId({
+      resolvedTheme: "dark",
+      terminalThemeDarkId: TERMINAL_THEME_AUTO,
+      terminalThemeLightId: TERMINAL_THEME_AUTO,
+      lightUiThemeId: "no-such-ui-theme",
+      darkUiThemeId: "no-such-ui-theme",
+      fallbackThemeId: "netcatty-dark",
+    }),
+    "netcatty-dark",
+  );
 });

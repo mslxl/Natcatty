@@ -27,6 +27,7 @@ import { TerminalFontSelect } from "../TerminalFontSelect";
 import { TerminalCjkFontSelect } from "../TerminalCjkFontSelect";
 import { CustomThemeModal } from "../../terminal/CustomThemeModal";
 import type { TerminalTheme } from "../../../domain/models";
+import { resolveFollowedTerminalThemeId, TERMINAL_THEME_AUTO } from "../../../domain/terminalAppearance";
 
 // Keyword highlight rules editor for global settings
 const DEFAULT_NEW_RULE_COLOR = '#F87171';
@@ -315,6 +316,12 @@ export default function SettingsTerminalTab(props: {
   setTerminalThemeId: (id: string) => void;
   followAppTerminalTheme: boolean;
   setFollowAppTerminalTheme: (value: boolean) => void;
+  terminalThemeDarkId: string;
+  setTerminalThemeDarkId: (id: string) => void;
+  terminalThemeLightId: string;
+  setTerminalThemeLightId: (id: string) => void;
+  lightUiThemeId: string;
+  darkUiThemeId: string;
   terminalFontFamilyId: string;
   setTerminalFontFamilyId: (id: string) => void;
   terminalFontSize: number;
@@ -333,6 +340,12 @@ export default function SettingsTerminalTab(props: {
     setTerminalThemeId,
     followAppTerminalTheme,
     setFollowAppTerminalTheme,
+    terminalThemeDarkId,
+    setTerminalThemeDarkId,
+    terminalThemeLightId,
+    setTerminalThemeLightId,
+    lightUiThemeId,
+    darkUiThemeId,
     terminalFontFamilyId,
     setTerminalFontFamilyId,
     terminalFontSize,
@@ -364,6 +377,7 @@ export default function SettingsTerminalTab(props: {
     setShowCustomShellInput(!discoveredShells.some(s => s.id === terminalSettings.localShell));
   }, [discoveredShells, terminalSettings.localShell]);
   const [themeModalOpen, setThemeModalOpen] = useState(false);
+  const [themeModalSlot, setThemeModalSlot] = useState<'dark' | 'light' | null>(null);
 
   // Subscribe to custom theme changes so editing in-place triggers re-render
   const customThemes = useCustomThemes();
@@ -374,6 +388,38 @@ export default function SettingsTerminalTab(props: {
       || customThemes.find(t => t.id === terminalThemeId)
       || TERMINAL_THEMES[0];
   }, [terminalThemeId, customThemes]);
+
+  // Preview themes for the follow-app per-mode pickers. resolvedTheme is
+  // forced per slot so each preview reflects exactly that mode's selection.
+  const darkPreviewTheme = useMemo(() => {
+    const id = resolveFollowedTerminalThemeId({
+      resolvedTheme: 'dark',
+      terminalThemeDarkId, terminalThemeLightId,
+      lightUiThemeId, darkUiThemeId, fallbackThemeId: terminalThemeId,
+    });
+    return TERMINAL_THEMES.find(t => t.id === id)
+      || customThemes.find(t => t.id === id)
+      // Mirror the runtime fallback in useSettingsState.currentTerminalTheme:
+      // a deleted per-mode override falls back to the manual theme, not [0].
+      || TERMINAL_THEMES.find(t => t.id === terminalThemeId)
+      || customThemes.find(t => t.id === terminalThemeId)
+      || TERMINAL_THEMES[0];
+  }, [terminalThemeDarkId, terminalThemeLightId, lightUiThemeId, darkUiThemeId, terminalThemeId, customThemes]);
+
+  const lightPreviewTheme = useMemo(() => {
+    const id = resolveFollowedTerminalThemeId({
+      resolvedTheme: 'light',
+      terminalThemeDarkId, terminalThemeLightId,
+      lightUiThemeId, darkUiThemeId, fallbackThemeId: terminalThemeId,
+    });
+    return TERMINAL_THEMES.find(t => t.id === id)
+      || customThemes.find(t => t.id === id)
+      // Mirror the runtime fallback in useSettingsState.currentTerminalTheme:
+      // a deleted per-mode override falls back to the manual theme, not [0].
+      || TERMINAL_THEMES.find(t => t.id === terminalThemeId)
+      || customThemes.find(t => t.id === terminalThemeId)
+      || TERMINAL_THEMES[0];
+  }, [terminalThemeDarkId, terminalThemeLightId, lightUiThemeId, darkUiThemeId, terminalThemeId, customThemes]);
 
   const handleAutocompleteGhostTextChange = useCallback((enabled: boolean) => {
     updateTerminalSetting("autocompleteGhostText", enabled);
@@ -556,7 +602,34 @@ export default function SettingsTerminalTab(props: {
           />
         </SettingRow>
       </div>
-      {!followAppTerminalTheme && (
+      {followAppTerminalTheme ? (
+        <div className="space-y-2">
+          <div>
+            <div className="text-xs text-muted-foreground mb-1.5 px-1">
+              {t("settings.terminal.theme.darkTheme")}
+            </div>
+            <ThemePreviewButton
+              theme={darkPreviewTheme}
+              onClick={() => setThemeModalSlot('dark')}
+              buttonLabel={terminalThemeDarkId === TERMINAL_THEME_AUTO
+                ? t("settings.terminal.theme.auto")
+                : t("settings.terminal.theme.selectButton")}
+            />
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground mb-1.5 px-1">
+              {t("settings.terminal.theme.lightTheme")}
+            </div>
+            <ThemePreviewButton
+              theme={lightPreviewTheme}
+              onClick={() => setThemeModalSlot('light')}
+              buttonLabel={terminalThemeLightId === TERMINAL_THEME_AUTO
+                ? t("settings.terminal.theme.auto")
+                : t("settings.terminal.theme.selectButton")}
+            />
+          </div>
+        </div>
+      ) : (
         <ThemePreviewButton
           theme={currentTheme}
           onClick={() => setThemeModalOpen(true)}
@@ -569,6 +642,17 @@ export default function SettingsTerminalTab(props: {
         onClose={() => setThemeModalOpen(false)}
         selectedThemeId={terminalThemeId}
         onSelect={setTerminalThemeId}
+      />
+      <ThemeSelectModal
+        open={themeModalSlot !== null}
+        onClose={() => setThemeModalSlot(null)}
+        selectedThemeId={themeModalSlot === 'dark' ? terminalThemeDarkId : terminalThemeLightId}
+        onSelect={(id) => {
+          if (themeModalSlot === 'dark') setTerminalThemeDarkId(id);
+          else if (themeModalSlot === 'light') setTerminalThemeLightId(id);
+        }}
+        filterType={themeModalSlot === 'light' ? 'light' : 'dark'}
+        showAutoOption
       />
 
       {/* Theme action buttons */}
