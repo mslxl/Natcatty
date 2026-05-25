@@ -476,6 +476,7 @@ export interface TerminalSettings {
   scrollback: number; // Number of lines kept in buffer
   drawBoldInBrightColors: boolean; // Draw bold text in bright colors
   terminalEmulationType: TerminalEmulationType; // Terminal emulation type (TERM env var)
+  startupCommandDelayMs: number; // Delay (ms) after connect before sending the startup command; also used between multiple lines
 
   // Font
   fontLigatures: boolean; // Enable font ligatures
@@ -684,6 +685,7 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   scrollback: 10000,
   drawBoldInBrightColors: true,
   terminalEmulationType: 'xterm-256color',
+  startupCommandDelayMs: 600,
   fontLigatures: true,
   fontWeight: 400,
   fontWeightBold: 700,

@@ -1080,6 +1080,29 @@ export default function SettingsTerminalTab(props: {
         </div>
       </div>
 
+      <SectionHeader title={t("settings.terminal.section.startupCommand")} />
+      <div className="rounded-lg border bg-card p-4">
+        <p className="text-sm text-muted-foreground mb-3">
+          {t("settings.terminal.startupCommandDelay.desc")}
+        </p>
+        <div className="space-y-1">
+          <Label className="text-xs">{t("settings.terminal.startupCommandDelay.label")}</Label>
+          <Input
+            type="number"
+            min={0}
+            max={10000}
+            value={terminalSettings.startupCommandDelayMs}
+            onChange={(e) => {
+              const val = parseInt(e.target.value);
+              if (!isNaN(val) && val >= 0 && val <= 10000) {
+                updateTerminalSetting("startupCommandDelayMs", val);
+              }
+            }}
+            className="w-full"
+          />
+        </div>
+      </div>
+
       <SectionHeader title={t("settings.terminal.section.keywordHighlight")} />
       <div className="rounded-lg border bg-card p-4">
         <div className="flex items-center justify-between mb-4">
