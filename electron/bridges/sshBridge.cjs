@@ -17,6 +17,7 @@ const passphraseHandler = require("./passphraseHandler.cjs");
 const hostKeyVerifier = require("./hostKeyVerifier.cjs");
 const { createProxySocket } = require("./proxyUtils.cjs");
 const { attachX11Forwarding } = require("./x11Forwarding.cjs");
+const { createPtyOutputBuffer } = require("./ptyOutputBuffer.cjs");
 const {
   buildAuthHandler,
   createKeyboardInteractiveHandler,
@@ -1287,35 +1288,14 @@ async function startSSHSession(event, options) {
               });
             }
 
-            // Data buffering for reduced IPC overhead
-            let dataBuffer = '';
-            let flushTimeout = null;
-            const FLUSH_INTERVAL = 8; // ms - flush every 8ms for ~120fps equivalent
-            const MAX_BUFFER_SIZE = 16384; // 16KB - flush immediately if buffer gets too large
-
-            const flushBuffer = () => {
-              if (dataBuffer.length > 0) {
-                const contents = event.sender;
-                safeSend(contents, "netcatty:data", { sessionId, data: dataBuffer });
-                dataBuffer = '';
-              }
-              flushTimeout = null;
-            };
-
-            const bufferData = (data) => {
-              dataBuffer += data;
-              // Immediate flush for large chunks
-              if (dataBuffer.length >= MAX_BUFFER_SIZE) {
-                if (flushTimeout) {
-                  clearTimeout(flushTimeout);
-                  flushTimeout = null;
-                }
-                flushBuffer();
-              } else if (!flushTimeout) {
-                // Schedule flush
-                flushTimeout = setTimeout(flushBuffer, FLUSH_INTERVAL);
-              }
-            };
+            // Coalesce shell output and deliver it to the renderer on the next
+            // event-loop turn (see ptyOutputBuffer) rather than on a fixed timer,
+            // so interactive echo isn't held back by the batch interval. A size
+            // cap still forces an immediate flush for bursts of output.
+            const { bufferData, flush: flushBuffer } = createPtyOutputBuffer((data) => {
+              const contents = event.sender;
+              safeSend(contents, "netcatty:data", { sessionId, data });
+            });
 
             const sshZmodemSentry = createZmodemSentry({
               sessionId,
@@ -1392,10 +1372,8 @@ async function startSSHSession(event, options) {
             });
 
             stream.on("close", () => {
-              // Always flush buffered data regardless of session state
-              if (flushTimeout) {
-                clearTimeout(flushTimeout);
-              }
+              // Always flush buffered data regardless of session state.
+              // flushBuffer() cancels any pending scheduled flush internally.
               flushBuffer();
               sessionLogStreamManager.stopStream(sessionId, logStreamToken);
               if (detachX11Forwarding) {

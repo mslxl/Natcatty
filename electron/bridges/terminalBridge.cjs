@@ -25,6 +25,7 @@ const moshHandshake = require("./moshHandshake.cjs");
 const tempDirBridge = require("./tempDirBridge.cjs");
 const { createTelnetAutoLogin } = require("./telnetAutoLogin.cjs");
 const telnetProtocol = require("./telnetProtocol.cjs");
+const { createPtyOutputBuffer } = require("./ptyOutputBuffer.cjs");
 
 const execFileAsync = promisify(execFile);
 
@@ -78,51 +79,6 @@ const getLoginShellArgs = (shellPath) => {
 function init(deps) {
   sessions = deps.sessions;
   electronModule = deps.electronModule;
-}
-
-/**
- * Create an 8ms/16KB PTY data buffer for reduced IPC overhead.
- * Mirrors the SSH stream buffering strategy in sshBridge.cjs.
- * @param {Function} sendFn - called with the accumulated string to deliver
- * @returns {{ bufferData: (data: string) => void, flush: () => void }}
- */
-function createPtyBuffer(sendFn) {
-  const FLUSH_INTERVAL = 8;      // ms - flush every 8ms (~120fps equivalent)
-  const MAX_BUFFER_SIZE = 16384; // 16KB - flush immediately if buffer grows too large
-
-  let dataBuffer = '';
-  let flushTimeout = null;
-
-  const flushBuffer = () => {
-    if (dataBuffer.length > 0) {
-      sendFn(dataBuffer);
-      dataBuffer = '';
-    }
-    flushTimeout = null;
-  };
-
-  const flush = () => {
-    if (flushTimeout) {
-      clearTimeout(flushTimeout);
-      flushTimeout = null;
-    }
-    flushBuffer();
-  };
-
-  const bufferData = (data) => {
-    dataBuffer += data;
-    if (dataBuffer.length >= MAX_BUFFER_SIZE) {
-      if (flushTimeout) {
-        clearTimeout(flushTimeout);
-        flushTimeout = null;
-      }
-      flushBuffer();
-    } else if (!flushTimeout) {
-      flushTimeout = setTimeout(flushBuffer, FLUSH_INTERVAL);
-    }
-  };
-
-  return { bufferData, flush };
 }
 
 /**
@@ -454,7 +410,7 @@ function startLocalSession(event, payload) {
     });
   }
 
-  const { bufferData: bufferLocalData, flush: flushLocal } = createPtyBuffer((data) => {
+  const { bufferData: bufferLocalData, flush: flushLocal } = createPtyOutputBuffer((data) => {
     const contents = electronModule.webContents.fromId(session.webContentsId);
     contents?.send("netcatty:data", { sessionId, data });
   });
@@ -662,7 +618,7 @@ async function startTelnetSession(event, options) {
     const telnetDecoderRef = { current: iconv.getDecoder(initialTelnetEncoding) };
 
     const telnetWebContentsId = event.sender.id;
-    const { bufferData: bufferTelnetData, flush: flushTelnet } = createPtyBuffer((data) => {
+    const { bufferData: bufferTelnetData, flush: flushTelnet } = createPtyOutputBuffer((data) => {
       const contents = electronModule.webContents.fromId(telnetWebContentsId);
       contents?.send("netcatty:data", { sessionId, data });
     });
@@ -1189,7 +1145,7 @@ async function startMoshSessionViaHandshake(event, options, { bareClient, sshExe
   // it to scope its stopStream call.
   session.logStreamToken = logStreamToken;
 
-  const { bufferData, flush } = createPtyBuffer((data) => {
+  const { bufferData, flush } = createPtyOutputBuffer((data) => {
     const contents = electronModule.webContents.fromId(session.webContentsId);
     contents?.send("netcatty:data", { sessionId, data });
   });
