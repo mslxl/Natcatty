@@ -1949,6 +1949,13 @@ const en: Messages = {
   'ai.claude.path': 'Path:',
   'ai.claude.notFoundHint': 'Could not find claude in PATH. Install it or specify the executable path below.',
   'ai.claude.customPathPlaceholder': 'e.g. /usr/local/bin/claude',
+  'ai.claude.configSection': 'Authentication & config (optional)',
+  'ai.claude.configDir': 'Config directory',
+  'ai.claude.configDir.placeholder': '~/.claude (leave blank for default)',
+  'ai.claude.configDir.hint': 'Sets CLAUDE_CONFIG_DIR — point at a folder where you have run `claude` login (contains settings.json + credentials).',
+  'ai.claude.envVars': 'Environment variables',
+  'ai.claude.envVars.placeholder': 'ANTHROPIC_BASE_URL=https://...\nANTHROPIC_MODEL=...',
+  'ai.claude.envVars.hint': 'One KEY=VALUE per line, passed to the Claude agent. Stored locally in plaintext — for API keys / credentials, prefer the config directory above (a `claude` login).',
   'ai.claude.check': 'Check',
 
   // AI GitHub Copilot CLI

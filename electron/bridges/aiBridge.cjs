@@ -37,6 +37,11 @@ const {
   toUnpackedAsarPath,
 } = require("./ai/shellUtils.cjs");
 
+const { detectClaudeAuthPresence, expandHomePath } = require("./ai/claudeAuth.cjs");
+
+const CLAUDE_AUTH_HELP_MESSAGE =
+  "Claude Code has no usable authentication. Open Settings -> AI -> Claude Code and set a Config directory (point it at a folder where you've run `claude` login) or add an ANTHROPIC_API_KEY under Environment variables. Alternatively, run `claude` in a terminal to log in.";
+
 const {
   codexLoginSessions,
   resolveCodexAcpBinaryPath,
@@ -558,6 +563,12 @@ function normalizeAgentEnv(env) {
   for (const [key, value] of Object.entries(env)) {
     if (!key || value == null) continue;
     result[key] = String(value);
+  }
+  // CLAUDE_CONFIG_DIR is consumed as a filesystem path by the spawned agent,
+  // which won't shell-expand "~". Expand it here so "~/.claude" works and the
+  // stored value stays portable (each device expands to its own home).
+  if (result.CLAUDE_CONFIG_DIR) {
+    result.CLAUDE_CONFIG_DIR = expandHomePath(result.CLAUDE_CONFIG_DIR);
   }
   return result;
 }
@@ -2451,6 +2462,9 @@ function registerHandlers(ipcMain) {
       return { ok: false, error: "Unauthorized IPC sender" };
     }
     let abortController = null;
+    // Hoisted so the catch block can reference them for Claude-specific error handling.
+    let isClaudeAgent = false;
+    let claudeAuthPresence = null;
     try {
       const existingRun = acpChatRuns.get(chatSessionId);
       if (existingRun && existingRun.requestId !== requestId) {
@@ -2503,8 +2517,14 @@ function registerHandlers(ipcMain) {
       if (shouldAbortStartup()) return { ok: true };
       const sessionCwd = cwd || process.cwd();
       const isCodexAgent = matchesAgentCommand(acpCommand, "codex-acp");
-      const isClaudeAgent = matchesAgentCommand(acpCommand, "claude-agent-acp");
+      isClaudeAgent = matchesAgentCommand(acpCommand, "claude-agent-acp");
       const isCopilotAgent = matchesAgentCommand(acpCommand, "copilot");
+      // For Claude: detect whether any auth is reachable so we can turn an
+      // opaque "-32603 Internal error" into actionable guidance on failure.
+      // Heuristic only (macOS may keep creds in Keychain) — never hard-block.
+      claudeAuthPresence = isClaudeAgent
+        ? detectClaudeAuthPresence({ ...shellEnv, ...normalizeAgentEnv(requestedAgentEnv) })
+        : null;
       const agentLabel = isCodexAgent ? "codex" : isClaudeAgent ? "claude" : isCopilotAgent ? "copilot" : acpCommand;
       const effectiveToolIntegrationMode = normalizeToolIntegrationMode(toolIntegrationMode);
       debugMcpLog("ACP request start", {
@@ -2568,7 +2588,13 @@ function registerHandlers(ipcMain) {
 
       const authFingerprint = isCodexAgent
         ? getAcpProviderAuthFingerprint(apiKey, resolvedProvider?.provider, codexCustomConfig)
-        : null;
+        : isClaudeAgent
+          // Fingerprint the Claude agent env (config dir + user env vars) so a
+          // settings change invalidates the cached per-session provider and the
+          // next turn respawns with the new config instead of reusing a stale
+          // process spawned with the old env.
+          ? JSON.stringify(normalizeAgentEnv(requestedAgentEnv))
+          : null;
       const mcpSnapshot = isCodexAgent
         ? await resolveCodexMcpSnapshot(sessionCwd)
         : { mcpServers: [], fingerprint: getCodexMcpFingerprint([]) };
@@ -3009,11 +3035,18 @@ function registerHandlers(ipcMain) {
         if (!isActiveAcpRun(chatSessionId, requestId)) {
           return { ok: true };
         }
+        if (isClaudeAgent) {
+          // Reap the persistent agent process so a failed turn doesn't leak
+          // node.exe processes (provider uses persistSession:true).
+          cleanupAcpProvider(chatSessionId);
+        }
         safeSend(event.sender, "netcatty:ai:acp:error", {
           requestId,
           error: isCodexAgent
             ? "Codex returned an empty response. Connect Codex in Settings -> AI, or configure an enabled OpenAI provider API key."
-            : "Agent returned an empty response.",
+            : isClaudeAgent && claudeAuthPresence === "none"
+              ? CLAUDE_AUTH_HELP_MESSAGE
+              : "Agent returned an empty response.",
         });
       } else {
         // Clear replay fallback when the recovered turn either streamed
@@ -3040,11 +3073,30 @@ function registerHandlers(ipcMain) {
     } catch (err) {
       console.error("[ACP] Handler caught error:", err?.message || err, err?.stack?.split("\n").slice(0, 3).join("\n"));
       const normalized = extractCodexError(err);
-      const errMsg = normalized.message;
+      // #3 (light): include JSON-RPC code/data when present so Claude's bare
+      // "Internal error" isn't shown context-free.
+      const errCode = typeof err?.code === "number" ? err.code : err?.data?.code;
+      // Only surface data fields we don't already show (message/code) so the
+      // detail doesn't echo them back.
+      let errDetail = "";
+      if (err?.data && typeof err.data === "object") {
+        const extra = { ...err.data };
+        delete extra.code;
+        delete extra.message;
+        if (Object.keys(extra).length > 0) {
+          try { errDetail = JSON.stringify(extra); } catch { errDetail = ""; }
+        }
+      }
+      const errMsg = [normalized.message, errCode != null ? `(code ${errCode})` : "", errDetail]
+        .filter(Boolean)
+        .join(" ");
       const isAuthErr = isCodexAuthError(normalized);
 
       if (isAuthErr) {
         console.error("[ACP] Auth error — user needs to re-login:", errMsg);
+        cleanupAcpProvider(chatSessionId);
+      } else if (isClaudeAgent) {
+        // #4: always reap the Claude provider/process tree on error.
         cleanupAcpProvider(chatSessionId);
       }
 
@@ -3052,7 +3104,9 @@ function registerHandlers(ipcMain) {
         requestId,
         error: isAuthErr
           ? `Authentication failed. Connect Codex in Settings -> AI, or configure an enabled OpenAI provider API key.\n\nDetails: ${errMsg}`
-          : errMsg,
+          : isClaudeAgent && claudeAuthPresence === "none"
+            ? `${CLAUDE_AUTH_HELP_MESSAGE}\n\nDetails: ${errMsg}`
+            : errMsg,
       });
     } finally {
       acpActiveStreams.delete(requestId);
