@@ -52,6 +52,7 @@ import { TerminalSearchBar } from "./terminal/TerminalSearchBar";
 import { ZmodemOverwriteDialog } from "./terminal/ZmodemOverwriteDialog";
 import { ZmodemProgressIndicator } from "./terminal/ZmodemProgressIndicator";
 import { createReplaySafeTerminalLogSanitizer } from "./terminal/replaySafeTerminalLog";
+import { createConnectionLogBuffer } from "./terminal/connectionLogBuffer";
 import { useZmodemTransfer } from "./terminal/hooks/useZmodemTransfer";
 import { createTerminalSessionStarters, type PendingAuth } from "./terminal/runtime/createTerminalSessionStarters";
 import { createXTermRuntime, primaryFontFamily, type XTermRuntime } from "./terminal/runtime/createXTermRuntime";
@@ -299,7 +300,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   // cancelled retry can't fire a startNewSession after the fact.
   const retryTokenRef = useRef<symbol | null>(null);
   const terminalDataCapturedRef = useRef(false);
-  const terminalLogDataRef = useRef("");
+  const connectionLogBufferRef = useRef(createConnectionLogBuffer(MAX_CONNECTION_LOG_DATA_CHARS));
   const terminalLogSanitizerRef = useRef(createReplaySafeTerminalLogSanitizer());
   const onTerminalDataCaptureRef = useRef(onTerminalDataCapture);
   const commandBufferRef = useRef<string>("");
@@ -320,21 +321,15 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const captureTerminalLogData = useCallback((data: string) => {
     const replaySafeData = terminalLogSanitizerRef.current.append(data);
     if (!replaySafeData) return;
-    terminalLogDataRef.current += replaySafeData;
-    if (terminalLogDataRef.current.length > MAX_CONNECTION_LOG_DATA_CHARS) {
-      terminalLogDataRef.current = terminalLogDataRef.current.slice(-MAX_CONNECTION_LOG_DATA_CHARS);
-    }
+    connectionLogBufferRef.current.append(replaySafeData);
   }, []);
 
   const finalizeTerminalLogData = useCallback(() => {
     const replaySafeData = terminalLogSanitizerRef.current.finish();
     if (replaySafeData) {
-      terminalLogDataRef.current += replaySafeData;
-      if (terminalLogDataRef.current.length > MAX_CONNECTION_LOG_DATA_CHARS) {
-        terminalLogDataRef.current = terminalLogDataRef.current.slice(-MAX_CONNECTION_LOG_DATA_CHARS);
-      }
+      connectionLogBufferRef.current.append(replaySafeData);
     }
-    return terminalLogDataRef.current;
+    return connectionLogBufferRef.current.toString();
   }, []);
 
   const writeLocalTerminalData = useCallback((data: string) => {
@@ -940,7 +935,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   useEffect(() => {
     let disposed = false;
     terminalDataCapturedRef.current = false;
-    terminalLogDataRef.current = "";
+    connectionLogBufferRef.current.reset();
     terminalLogSanitizerRef.current = createReplaySafeTerminalLogSanitizer();
     setError(null);
     hasConnectedRef.current = false;
