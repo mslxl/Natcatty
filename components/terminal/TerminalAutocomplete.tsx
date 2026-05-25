@@ -6,6 +6,7 @@ import {
   AutocompletePopup,
   type AutocompleteSettings,
 } from "./autocomplete";
+import type { Snippet } from "../../domain/models";
 
 type PopupProps = ComponentProps<typeof AutocompletePopup>;
 
@@ -21,6 +22,8 @@ interface TerminalAutocompleteProps {
   protocol?: string;
   getCwd?: () => string | undefined;
   onAcceptText: (text: string) => void;
+  snippets?: Snippet[];
+  onAcceptSnippet?: (snippet: Snippet) => void;
   /** Whether this terminal tab is the visible one. */
   visible: boolean;
   themeColors: PopupProps["themeColors"];
@@ -54,6 +57,8 @@ export function TerminalAutocomplete({
   protocol,
   getCwd,
   onAcceptText,
+  snippets,
+  onAcceptSnippet,
   visible,
   themeColors,
   containerRef,
@@ -70,6 +75,8 @@ export function TerminalAutocomplete({
     hostOs,
     settings,
     onAcceptText,
+    snippets,
+    onAcceptSnippet,
     protocol,
     getCwd,
   });

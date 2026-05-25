@@ -59,6 +59,7 @@ const SOURCE_LABELS: Record<SuggestionSource, { label: string; fullLabel: string
   option: { label: "o", fullLabel: "Option", fallbackColor: "#A78BFA" },
   arg: { label: "a", fullLabel: "Argument", fallbackColor: "#F87171" },
   path: { label: "p", fullLabel: "Path", fallbackColor: "#38BDF8" },
+  snippet: { label: "{}", fullLabel: "Snippet", fallbackColor: "#C084FC" },
 };
 
 /** Lucide icon components for file types in path suggestions */
@@ -353,8 +354,9 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
                 {suggestion.displayText}
               </span>
 
-              {/* Inline description (truncated) */}
-              {suggestion.description && (
+              {/* Inline description (truncated). Snippets show only their label
+                  in the row — the full command lives in the detail preview. */}
+              {suggestion.source !== "snippet" && suggestion.description && (
                 <span
                   style={{
                     fontSize: "11px",
@@ -481,7 +483,22 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
             </span>
           </div>
           <div style={{ fontSize: "12px", color: dimTextColor, lineHeight: "1.5", wordBreak: "break-word" }}>
-            {detailItem.description}
+            {detailItem.source === "snippet" ? (
+              <pre
+                style={{
+                  margin: 0,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "var(--terminal-font, monospace)",
+                  fontSize: "11px",
+                  lineHeight: 1.4,
+                }}
+              >
+                {detailItem.description}
+              </pre>
+            ) : (
+              detailItem.description
+            )}
           </div>
         </div>
       )}

@@ -1583,10 +1583,21 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }
     if (!noAutoRun) data = `${data}\r`;
 
+    // Broadcast the exact bytes the active session receives so peers mirror it,
+    // including the bracketed-paste wrapping and the auto-run \r. Broadcasting
+    // the raw (un-wrapped) form would let a multi-line noAutoRun snippet run
+    // line-by-line on peers, since handleBroadcastInput writes bytes directly
+    // without re-wrapping. Without broadcasting at all, accepting a snippet in
+    // broadcast mode would clear peer input (the clear keystrokes already go
+    // through the broadcast-aware path) but never send the command.
+    if (isBroadcastEnabledRef.current && onBroadcastInputRef.current) {
+      onBroadcastInputRef.current(data, sessionId);
+    }
+
     terminalBackend.writeToSession(id, data);
     scrollToBottomAfterProgrammaticInput(data);
     term.focus();
-  }, [scrollToBottomAfterProgrammaticInput, terminalBackend]);
+  }, [scrollToBottomAfterProgrammaticInput, terminalBackend, sessionId]);
 
   // Only register the snippet executor once the terminal session is ready.
   // Before that, TerminalLayer falls back to raw writeToSession which is the
@@ -2381,6 +2392,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
             protocol={host.protocol}
             getCwd={() => terminalCwdTracker.getRendererCwd() ?? knownCwdRef.current}
             onAcceptText={(text) => autocompleteAcceptTextRef.current?.(text)}
+            snippets={snippets}
+            onAcceptSnippet={(snippet) => executeSnippetCommand(snippet.command, snippet.noAutoRun)}
             visible={isVisible}
             themeColors={effectiveTheme.colors}
             containerRef={containerRef}

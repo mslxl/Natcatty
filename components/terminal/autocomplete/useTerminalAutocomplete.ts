@@ -18,6 +18,7 @@ import {
   type PromptDetectionResult,
 } from "./promptDetector";
 import { getCompletions, parseCommandLine, type CompletionSuggestion } from "./completionEngine";
+import type { Snippet } from "../../../domain/models";
 import { recordCommand } from "./commandHistoryStore";
 import { shellEscape } from "./completionEngine";
 import { preloadCommonSpecs } from "./figSpecLoader";
@@ -112,6 +113,10 @@ interface UseTerminalAutocompleteOptions {
   protocol?: string;
   /** Get current working directory (from OSC 7 or other source) */
   getCwd?: () => string | undefined;
+  /** Custom snippets to surface at the command position */
+  snippets?: Snippet[];
+  /** Accept a snippet — clears typed input then runs it (host-canonical send) */
+  onAcceptSnippet?: (snippet: Snippet) => void;
 }
 
 export interface TerminalAutocompleteHandle {
@@ -218,7 +223,7 @@ export function getCommandToRecordOnEnter(
 export function useTerminalAutocomplete(
   options: UseTerminalAutocompleteOptions,
 ): TerminalAutocompleteHandle {
-  const { termRef, sessionId, hostId, hostOs, settings: userSettings, onAcceptText, protocol, getCwd } = options;
+  const { termRef, sessionId, hostId, hostOs, settings: userSettings, onAcceptText, protocol, getCwd, snippets, onAcceptSnippet } = options;
   const rawSettings: AutocompleteSettings = {
     ...DEFAULT_AUTOCOMPLETE_SETTINGS,
     ...userSettings,
@@ -240,6 +245,10 @@ export function useTerminalAutocomplete(
   settingsRef.current = settings;
   const onAcceptTextRef = useRef(onAcceptText);
   onAcceptTextRef.current = onAcceptText;
+  const snippetsRef = useRef(snippets);
+  snippetsRef.current = snippets;
+  const onAcceptSnippetRef = useRef(onAcceptSnippet);
+  onAcceptSnippetRef.current = onAcceptSnippet;
   const hostIdRef = useRef(hostId);
   hostIdRef.current = hostId;
   const hostOsRef = useRef(hostOs);
@@ -699,6 +708,7 @@ export function useTerminalAutocomplete(
       sessionId: sessionIdRef.current,
       protocol: protocolRef.current,
       cwd,
+      snippets: snippetsRef.current,
     });
 
     if (disposedRef.current || version !== fetchVersionRef.current) return;
@@ -716,7 +726,8 @@ export function useTerminalAutocomplete(
     if (settingsRef.current.showGhostText) {
       const ghost = ghostAddonRef.current;
       const activeSuggestion = ghost?.isActive() ? ghost.getSuggestion() : null;
-      const nextSuggestion = completions.length > 0 ? completions[0].text : null;
+      // Snippets are popup-only — never used as inline ghost text.
+      const nextSuggestion = completions.find((c) => c.source !== "snippet")?.text ?? null;
       const ghostDecision = decideGhostSuggestion(activeSuggestion, input, nextSuggestion);
       if (ghostDecision.type === "show") {
         ghost?.show(ghostDecision.suggestion, input);
@@ -1243,6 +1254,13 @@ export function useTerminalAutocomplete(
         // buffer when the user edited the previewed command (typing nulls that
         // ref), so recording stays accurate in both cases.
         if (e.key === "Enter") {
+          const selected = s.selectedIndex >= 0 ? s.suggestions[s.selectedIndex] : null;
+          if (selected?.source === "snippet" && selected.snippet) {
+            e.preventDefault();
+            previewActiveRef.current = false;
+            acceptSnippet(selected.snippet);
+            return false; // consume — run the snippet, not the typed text
+          }
           clearState();
           previewActiveRef.current = false;
           return true;
@@ -1278,8 +1296,11 @@ export function useTerminalAutocomplete(
     const term = termRef.current;
     if (!term) return;
     const baseline = previewBaselineRef.current;
+    const selected = index >= 0 ? s.suggestions[index] : null;
+    // Snippets aren't literal completions — keep the user's typed text in the
+    // line (the popup detail panel shows the full command instead).
     const candidate =
-      index >= 0 && s.suggestions[index] ? s.suggestions[index].text : baseline;
+      selected && selected.source !== "snippet" ? selected.text : baseline;
     const { prompt } = getAlignedPrompt(
       term,
       typedInputBufferRef.current,
@@ -1297,6 +1318,26 @@ export function useTerminalAutocomplete(
     const isPreview = index >= 0 && candidate !== baseline;
     previewActiveRef.current = isPreview;
     lastAcceptedCommandRef.current = isPreview ? candidate : null;
+  }, [termRef, writeToTerminal]);
+
+  /** Accept a snippet: clear the user's typed input, then run it via the
+   *  host-canonical send path (onAcceptSnippet). */
+  const acceptSnippet = useCallback((snippet: Snippet) => {
+    const term = termRef.current;
+    if (term) {
+      const { prompt } = getAlignedPrompt(term, typedInputBufferRef.current, typedBufferReliableRef.current);
+      if (prompt.isAtPrompt && prompt.userInput.length > 0) {
+        const clearSequence = hostOsRef.current === "windows"
+          ? "\b".repeat(prompt.userInput.length)
+          : "\x15"; // Ctrl+U (readline kill-line)
+        writeToTerminal(clearSequence);
+      }
+    }
+    typedInputBufferRef.current = "";
+    typedBufferReliableRef.current = true;
+    onAcceptSnippetRef.current?.(snippet);
+    clearState();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- clearState is stable
   }, [termRef, writeToTerminal]);
 
   /**
@@ -1371,9 +1412,13 @@ export function useTerminalAutocomplete(
    */
   const selectSuggestion = useCallback(
     (suggestion: CompletionSuggestion) => {
+      if (suggestion.source === "snippet" && suggestion.snippet) {
+        acceptSnippet(suggestion.snippet);
+        return;
+      }
       insertSuggestion(suggestion, false);
     },
-    [insertSuggestion],
+    [insertSuggestion, acceptSnippet],
   );
 
   const closePopup = useCallback(() => {

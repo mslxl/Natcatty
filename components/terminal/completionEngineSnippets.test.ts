@@ -1,0 +1,19 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import { getCompletions } from "./autocomplete/completionEngine";
+import type { Snippet } from "../../domain/models";
+
+const deploySnippet: Snippet = { id: "d", label: "deploy", command: "kubectl apply -f ." };
+
+test("getCompletions includes snippet suggestions at the command position", async () => {
+  const out = await getCompletions("dep", { snippets: [deploySnippet] });
+  const snip = out.find((s) => s.source === "snippet");
+  assert.ok(snip, "expected a snippet suggestion");
+  assert.equal(snip?.displayText, "deploy");
+});
+
+test("getCompletions does not surface snippets past the command position", async () => {
+  const out = await getCompletions("git dep", { snippets: [deploySnippet] });
+  assert.equal(out.find((s) => s.source === "snippet"), undefined);
+});

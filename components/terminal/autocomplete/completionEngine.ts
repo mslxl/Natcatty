@@ -30,9 +30,11 @@ import {
   getPathSuggestions,
   resolvePathComponents,
 } from "./remotePathCompleter";
+import { getSnippetSuggestions } from "./snippetCompleter";
+import type { Snippet } from "../../../domain/models";
 
 /** Source indicator for where a suggestion came from */
-export type SuggestionSource = "history" | "command" | "subcommand" | "option" | "arg" | "path";
+export type SuggestionSource = "history" | "command" | "subcommand" | "option" | "arg" | "path" | "snippet";
 
 export interface CompletionSuggestion {
   /** The text to insert */
@@ -49,6 +51,8 @@ export interface CompletionSuggestion {
   frequency?: number;
   /** For path suggestions: file type */
   fileType?: "file" | "directory" | "symlink";
+  /** For snippet suggestions: the source snippet (used by the accept path). */
+  snippet?: Snippet;
 }
 
 export interface CompletionContext {
@@ -168,6 +172,8 @@ export async function getCompletions(
     protocol?: string;
     /** Current working directory (from OSC 7) */
     cwd?: string;
+    /** Custom snippets to surface at the command position */
+    snippets?: Snippet[];
   } = {},
 ): Promise<CompletionSuggestion[]> {
   const { hostId, maxResults = 15 } = options;
@@ -287,6 +293,16 @@ export async function getCompletions(
       } satisfies CompletionSuggestion;
       suggestions.push(suggestion);
       seenSuggestionTexts.add(suggestion.text);
+    }
+  }
+
+  // Snippets: only at the command position (typing the command name).
+  // Push without the early seen-text skip: snippets score above history, so if
+  // a snippet's label collides with an existing history entry's text, the
+  // score-sort + final dedup below keeps the snippet (the higher-scored one).
+  if (options.snippets && options.snippets.length > 0 && ctx.wordIndex === 0) {
+    for (const snippetSuggestion of getSnippetSuggestions(input, options.snippets, { hostId })) {
+      suggestions.push(snippetSuggestion);
     }
   }
 
