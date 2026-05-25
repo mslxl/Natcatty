@@ -27,6 +27,7 @@ import {
   syncPromptLineBreakState,
   type PromptLineBreakState,
 } from "./promptLineBreak";
+import { createOutputFlowController, type OutputFlowController } from "./outputFlowController";
 
 /**
  * Per-connection token for stale-timer detection. The renderer reuses the
@@ -97,6 +98,8 @@ type TerminalBackendApi = {
   ) => (() => void) | undefined;
   writeToSession: (sessionId: string, data: string, options?: { automated?: boolean }) => void;
   resizeSession: (sessionId: string, cols: number, rows: number) => void;
+  /** Pause/resume the source stream for output back-pressure (optional). */
+  setSessionFlowPaused?: (sessionId: string, paused: boolean) => void;
 };
 
 export type PendingAuth = {
@@ -251,6 +254,38 @@ const enqueueTerminalWrite = (
   }
 };
 
+// Output back-pressure. Without this the renderer can't slow a flooding source,
+// so a busy stream grows the write queue and xterm's buffer unbounded. The
+// controller tracks bytes received-but-not-yet-rendered and asks the main
+// process to pause/resume the session's source stream at these watermarks.
+const FLOW_HIGH_WATER_MARK = 256 * 1024; // pause the source above ~256KB backlog
+const FLOW_LOW_WATER_MARK = 64 * 1024; // resume once drained to ~64KB
+
+const terminalFlowControllers = new WeakMap<XTerm, OutputFlowController>();
+
+const getFlowController = (
+  ctx: TerminalSessionStartersContext,
+  term: XTerm,
+): OutputFlowController => {
+  let controller = terminalFlowControllers.get(term);
+  if (!controller) {
+    controller = createOutputFlowController({
+      highWaterMark: FLOW_HIGH_WATER_MARK,
+      lowWaterMark: FLOW_LOW_WATER_MARK,
+      onPause: () => {
+        const id = ctx.sessionRef.current;
+        if (id) ctx.terminalBackend.setSessionFlowPaused?.(id, true);
+      },
+      onResume: () => {
+        const id = ctx.sessionRef.current;
+        if (id) ctx.terminalBackend.setSessionFlowPaused?.(id, false);
+      },
+    });
+    terminalFlowControllers.set(term, controller);
+  }
+  return controller;
+};
+
 const writeTerminalLine = (
   ctx: TerminalSessionStartersContext,
   term: XTerm,
@@ -268,6 +303,8 @@ const writeSessionData = (
   term: XTerm,
   data: string,
 ) => {
+  const flow = getFlowController(ctx, term);
+  flow.received(data.length);
   enqueueTerminalWrite(term, (done) => {
     const settings = ctx.terminalSettingsRef?.current ?? ctx.terminalSettings;
     const forcePromptNewLine = settings?.forcePromptNewLine ?? false;
@@ -301,6 +338,8 @@ const writeSessionData = (
         handleTerminalOutputAutoScroll(ctx, term);
       }
       done();
+      // Acknowledge the chunk so back-pressure can ease once xterm catches up.
+      flow.written(data.length);
     };
 
     term.write(displayData, afterWrite);
@@ -320,6 +359,8 @@ const attachSessionToTerminal = (
   },
 ) => {
   ctx.sessionRef.current = id;
+  // Clear any stale back-pressure accounting from a prior session on this term.
+  getFlowController(ctx, term).reset();
   ctx.onSessionAttached?.(id);
 
   ctx.disposeDataRef.current = ctx.terminalBackend.onSessionData(id, (chunk) => {
@@ -1204,6 +1245,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       });
 
       ctx.sessionRef.current = id;
+      getFlowController(ctx, term).reset();
       ctx.disposeDataRef.current = ctx.terminalBackend.onSessionData(id, (chunk) => {
         writeSessionData(ctx, term, chunk);
         if (!ctx.hasConnectedRef.current) {

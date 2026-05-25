@@ -73,6 +73,11 @@ export const useTerminalBackend = () => {
     bridge?.resizeSession?.(sessionId, cols, rows);
   }, []);
 
+  const setSessionFlowPaused = useCallback((sessionId: string, paused: boolean) => {
+    const bridge = netcattyBridge.get();
+    bridge?.setSessionFlowPaused?.(sessionId, paused);
+  }, []);
+
   const closeSession = useCallback((sessionId: string) => {
     const bridge = netcattyBridge.get();
     bridge?.closeSession?.(sessionId);
@@ -208,6 +213,7 @@ export const useTerminalBackend = () => {
       getServerStats,
       writeToSession,
       resizeSession,
+      setSessionFlowPaused,
       closeSession,
       setSessionEncoding,
       onSessionData,
@@ -240,6 +246,7 @@ export const useTerminalBackend = () => {
       getServerStats,
       writeToSession,
       resizeSession,
+      setSessionFlowPaused,
       closeSession,
       setSessionEncoding,
       onSessionData,

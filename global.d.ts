@@ -323,6 +323,7 @@ declare global {
     setSessionEncoding?(sessionId: string, encoding: string): Promise<{ ok: boolean; encoding: string }>;
     writeToSession(sessionId: string, data: string, options?: { automated?: boolean }): void;
     resizeSession(sessionId: string, cols: number, rows: number): void;
+    setSessionFlowPaused(sessionId: string, paused: boolean): void;
     closeSession(sessionId: string): void;
     // ZMODEM file transfer
     onZmodemEvent?(

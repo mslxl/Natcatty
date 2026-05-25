@@ -1550,6 +1550,31 @@ function writeToSession(event, payload) {
 }
 
 /**
+ * Pause or resume a session's source stream for output back-pressure.
+ * The renderer asks for this when its write backlog crosses a watermark, so a
+ * flooding source can't outrun the terminal renderer. Works across session
+ * kinds: ssh2 channel (stream), node-pty (proc), telnet socket, serial port —
+ * all expose pause()/resume().
+ */
+function setSessionFlowPaused(event, payload) {
+  const session = sessions.get(payload.sessionId);
+  if (!session) return;
+  const target = session.stream || session.proc || session.socket || session.serialPort;
+  if (!target) return;
+  try {
+    if (payload.paused) {
+      target.pause?.();
+    } else {
+      target.resume?.();
+    }
+  } catch (err) {
+    if (err?.code !== 'EPIPE' && err?.code !== 'ERR_STREAM_DESTROYED') {
+      console.warn("Flow control toggle failed", err);
+    }
+  }
+}
+
+/**
  * Resize a session terminal
  */
 function resizeSession(event, payload) {
@@ -1663,6 +1688,7 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:terminal:setEncoding", setSessionEncoding);
   ipcMain.on("netcatty:write", writeToSession);
   ipcMain.on("netcatty:resize", resizeSession);
+  ipcMain.on("netcatty:flow", setSessionFlowPaused);
   ipcMain.on("netcatty:close", closeSession);
 }
 
@@ -1848,6 +1874,7 @@ module.exports = {
   listSerialPorts,
   writeToSession,
   resizeSession,
+  setSessionFlowPaused,
   closeSession,
   cleanupAllSessions,
   getDefaultShell,

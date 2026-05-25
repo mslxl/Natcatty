@@ -669,6 +669,9 @@ const api = {
   resizeSession: (sessionId, cols, rows) => {
     ipcRenderer.send("netcatty:resize", { sessionId, cols, rows });
   },
+  setSessionFlowPaused: (sessionId, paused) => {
+    ipcRenderer.send("netcatty:flow", { sessionId, paused: Boolean(paused) });
+  },
   closeSession: (sessionId) => {
     ipcRenderer.send("netcatty:close", { sessionId });
   },
