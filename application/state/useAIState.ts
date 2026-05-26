@@ -15,6 +15,7 @@ import {
   STORAGE_KEY_AI_SESSIONS,
   STORAGE_KEY_AI_ACTIVE_SESSION_MAP,
   STORAGE_KEY_AI_AGENT_MODEL_MAP,
+  STORAGE_KEY_AI_AGENT_PROVIDER_MAP,
   STORAGE_KEY_AI_WEB_SEARCH,
 } from '../../infrastructure/config/storageKeys';
 import type {
@@ -61,16 +62,13 @@ function getAIBridge() {
   return (window as unknown as { netcatty?: AIBridge }).netcatty;
 }
 
-const AI_STATE_CHANGED_EVENT = 'netcatty:ai-state-changed';
+import { AI_STATE_CHANGED_EVENT, emitAIStateChanged } from './aiStateEvents';
+
 const AI_STATE_CHANGED_DRAFTS_BY_SCOPE = 'netcatty:ai-drafts-by-scope';
 const AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE = 'netcatty:ai-panel-view-by-scope';
 
 type DraftsByScope = Partial<Record<string, AIDraft>>;
 type PanelViewByScope = Partial<Record<string, AIPanelView>>;
-
-function emitAIStateChanged(key: string) {
-  window.dispatchEvent(new CustomEvent<{ key: string }>(AI_STATE_CHANGED_EVENT, { detail: { key } }));
-}
 
 function cleanupAcpSessions(sessionIds: string[]) {
   const bridge = getAIBridge();
@@ -326,6 +324,20 @@ export function useAIState() {
   const [agentModelMap, setAgentModelMapRaw] = useState<Record<string, string>>(() =>
     localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_AI_AGENT_MODEL_MAP) ?? {}
   );
+  // Per-agent provider override: remembers which provider config each agent
+  // should bind to. Falls back to the global `activeProviderId` when an agent
+  // has no entry. Used so that e.g. Catty Agent can stay on DeepSeek while
+  // a Claude/Codex run continues on its existing provider.
+  const [agentProviderMap, setAgentProviderMapRaw] = useState<Record<string, string>>(() =>
+    localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_AI_AGENT_PROVIDER_MAP) ?? {}
+  );
+  // Mirror for non-functional reads inside removeProvider — needed to know
+  // which agents were bound to the deleted provider so we can also drop
+  // their saved model ids (those ids belonged to the now-missing provider).
+  const agentProviderMapRef = useRef(agentProviderMap);
+  useEffect(() => {
+    agentProviderMapRef.current = agentProviderMap;
+  }, [agentProviderMap]);
 
   // ── Web Search Config ──
   const [webSearchConfig, setWebSearchConfigRaw] = useState<WebSearchConfig | null>(() =>
@@ -409,6 +421,21 @@ export function useAIState() {
     setAgentModelMapRaw(prev => {
       const next = { ...prev, [agentId]: modelId };
       localStorageAdapter.write(STORAGE_KEY_AI_AGENT_MODEL_MAP, next);
+      return next;
+    });
+  }, []);
+
+  const setAgentProvider = useCallback((agentId: string, providerId: string) => {
+    setAgentProviderMapRaw(prev => {
+      // Empty string clears the per-agent override and lets the agent fall
+      // back to the global `activeProviderId`.
+      const next = { ...prev };
+      if (providerId) {
+        next[agentId] = providerId;
+      } else {
+        delete next[agentId];
+      }
+      localStorageAdapter.write(STORAGE_KEY_AI_AGENT_PROVIDER_MAP, next);
       return next;
     });
   }, []);
@@ -599,6 +626,9 @@ export function useAIState() {
           }
           case STORAGE_KEY_AI_AGENT_MODEL_MAP:
             setAgentModelMapRaw(localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_AI_AGENT_MODEL_MAP) ?? {});
+            break;
+          case STORAGE_KEY_AI_AGENT_PROVIDER_MAP:
+            setAgentProviderMapRaw(localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_AI_AGENT_PROVIDER_MAP) ?? {});
             break;
           case STORAGE_KEY_AI_ACTIVE_SESSION_MAP: {
             const nextActiveSessionIdMap =
@@ -1080,6 +1110,41 @@ export function useAIState() {
       }
       return prevId;
     });
+    // Drop per-agent overrides pointing at this provider plus the saved
+    // model id for those agents — the id belonged to the now-missing
+    // provider, so feeding it to the fallback provider would just send
+    // a model name that target doesn't recognize.
+    const orphanedAgents = Object.keys(agentProviderMapRef.current)
+      .filter((agentId) => agentProviderMapRef.current[agentId] === id);
+    if (orphanedAgents.length > 0) {
+      setAgentProviderMapRaw(prev => {
+        const next: Record<string, string> = {};
+        let changed = false;
+        for (const agentId of Object.keys(prev)) {
+          if (prev[agentId] === id) {
+            changed = true;
+          } else {
+            next[agentId] = prev[agentId];
+          }
+        }
+        if (!changed) return prev;
+        localStorageAdapter.write(STORAGE_KEY_AI_AGENT_PROVIDER_MAP, next);
+        return next;
+      });
+      setAgentModelMapRaw(prev => {
+        let changed = false;
+        const next: Record<string, string> = { ...prev };
+        for (const agentId of orphanedAgents) {
+          if (agentId in next) {
+            delete next[agentId];
+            changed = true;
+          }
+        }
+        if (!changed) return prev;
+        localStorageAdapter.write(STORAGE_KEY_AI_AGENT_MODEL_MAP, next);
+        return next;
+      });
+    }
   }, [setProviders]);
 
   // ── Computed ──
@@ -1123,6 +1188,9 @@ export function useAIState() {
     // Per-agent model memory
     agentModelMap,
     setAgentModel,
+    // Per-agent provider override (falls back to activeProviderId when unset)
+    agentProviderMap,
+    setAgentProvider,
 
     // Web search
     webSearchConfig,

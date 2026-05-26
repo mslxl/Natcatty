@@ -146,6 +146,8 @@ interface AIChatSidePanelProps {
   setExternalAgents?: (value: ExternalAgentConfig[] | ((prev: ExternalAgentConfig[]) => ExternalAgentConfig[])) => void;
   agentModelMap: Record<string, string>;
   setAgentModel: (agentId: string, modelId: string) => void;
+  agentProviderMap: Record<string, string>;
+  setAgentProvider: (agentId: string, providerId: string) => void;
 
   // Safety
   globalPermissionMode: AIPermissionMode;
@@ -226,6 +228,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   setExternalAgents,
   agentModelMap,
   setAgentModel,
+  agentProviderMap,
+  setAgentProvider,
   globalPermissionMode,
   setGlobalPermissionMode,
   commandBlocklist,
@@ -562,8 +566,67 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     [providers, activeProviderId],
   );
 
-  const providerDisplayName = activeProvider?.name ?? '';
-  const modelDisplayName = activeModelId || activeProvider?.defaultModel || '';
+  // Catty Agent honors a per-agent provider/model override from
+  // `agentProviderMap` / `agentModelMap`, falling back to the global active
+  // selection. External ACP agents (Claude/Codex/Copilot) keep their
+  // existing provider plumbing — the user picks them inside the ACP CLI
+  // itself, so a per-agent provider override doesn't apply.
+  const cattyAgentProvider = useMemo(() => {
+    const overrideId = agentProviderMap['catty'];
+    if (overrideId) {
+      const p = providers.find((cfg) => cfg.id === overrideId);
+      if (p) return p;
+      // Override exists but points to a deleted provider — fall through
+      // to the global active selection.
+    }
+    return activeProvider;
+  }, [agentProviderMap, providers, activeProvider]);
+
+  const cattyAgentModelId = useMemo(() => {
+    // Whitespace-only model ids are treated as "no model" everywhere
+    // (picker, send guard, SDK) — normalize at the resolution boundary
+    // so a stored "   " never slips through downstream checks.
+    const trim = (s: string | undefined | null): string => (s ?? '').trim();
+    const overrideId = agentProviderMap['catty'];
+    const overrideProvider = overrideId
+      ? providers.find((cfg) => cfg.id === overrideId)
+      : undefined;
+    if (overrideProvider) {
+      // Override intact — prefer the per-agent saved model, then the
+      // override provider's defaultModel. Never reach for the global
+      // `activeModelId` here: that id belongs to whichever provider
+      // was globally active, not the one Catty is bound to now.
+      return trim(agentModelMap['catty']) || trim(overrideProvider.defaultModel);
+    }
+    // No override, OR a stale override (the bound provider was deleted):
+    // in either case the saved model id is no longer trustworthy as a
+    // Catty pick, so consult the global active selection instead.
+    return trim(cattyAgentProvider?.defaultModel) || trim(activeModelId);
+  }, [agentModelMap, agentProviderMap, providers, cattyAgentProvider, activeModelId]);
+
+  const effectiveActiveProvider = currentAgentId === 'catty' ? cattyAgentProvider : activeProvider;
+  const effectiveActiveModelId = currentAgentId === 'catty' ? cattyAgentModelId : activeModelId;
+
+  // Catty Agent surfaces its provider picker in the chat input. The list
+  // mirrors what Settings → AI → Providers shows — every configured
+  // provider, regardless of the per-provider `enabled` toggle, so the
+  // user can swap between everything they've set up without first going
+  // back into Settings to flip a switch.
+  const cattyConfiguredProviders = useMemo(
+    () => (currentAgentId === 'catty' ? providers : []),
+    [currentAgentId, providers],
+  );
+
+  const handleAgentProviderModelSelect = useCallback(
+    (providerId: string, modelId: string) => {
+      setAgentProvider(currentAgentId, providerId);
+      setAgentModel(currentAgentId, modelId);
+    },
+    [currentAgentId, setAgentProvider, setAgentModel],
+  );
+
+  const providerDisplayName = effectiveActiveProvider?.name ?? '';
+  const modelDisplayName = effectiveActiveModelId || effectiveActiveProvider?.defaultModel || '';
 
   // Agent model presets for the current external agent
   const currentAgentConfig = useMemo(
@@ -859,10 +922,33 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
 
       const isExternalAgent = sendAgentId !== 'catty';
 
+      // Catty Agent picks up the per-agent provider/model override. External
+      // ACP agents continue to ride the global selection (they wire their
+      // own provider through the CLI).
+      const sendActiveProvider = isExternalAgent ? activeProvider : effectiveActiveProvider;
+      const sendActiveModelId = isExternalAgent ? activeModelId : effectiveActiveModelId;
+
       // No provider configured for built-in agent
-      if (!isExternalAgent && !activeProvider) {
+      if (!isExternalAgent && !sendActiveProvider) {
         addMessageToSession(sessionId, { id: generateId(), role: 'user', content: trimmed, timestamp: Date.now() });
         addMessageToSession(sessionId, { id: generateId(), role: 'assistant', content: t('ai.chat.noProvider'), timestamp: Date.now() });
+        if (currentPanelView.mode === 'session') {
+          clearScopeDraft();
+          showScopeSessionView(sessionId);
+        }
+        return;
+      }
+
+      // Catty needs a concrete model id — the SDK would otherwise dispatch
+      // an empty string and surface a vague backend error. The chat-input
+      // chip already disables provider rows with no defaultModel, but a
+      // stale binding (e.g. user emptied the provider's defaultModel after
+      // selecting it) can still land here. Trim before checking so
+      // whitespace-only ids (which the picker also treats as empty) don't
+      // sneak past either.
+      if (!isExternalAgent && !sendActiveModelId.trim()) {
+        addMessageToSession(sessionId, { id: generateId(), role: 'user', content: trimmed, timestamp: Date.now() });
+        addMessageToSession(sessionId, { id: generateId(), role: 'assistant', content: t('ai.chat.noProviderModel'), timestamp: Date.now() });
         if (currentPanelView.mode === 'session') {
           clearScopeDraft();
           showScopeSessionView(sessionId);
@@ -887,8 +973,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         id: assistantMsgId, role: 'assistant', content: '', timestamp: Date.now(),
         model: isExternalAgent
           ? (selectedAgentModel || agentConfig?.name || 'external')
-          : (activeModelId || activeProvider?.defaultModel || ''),
-        providerId: isExternalAgent ? undefined : activeProvider?.providerId,
+          : (sendActiveModelId || sendActiveProvider?.defaultModel || ''),
+        providerId: isExternalAgent ? undefined : sendActiveProvider?.providerId,
       });
 
       const abortController = new AbortController();
@@ -928,8 +1014,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           label: scopeLabel,
         } as const;
         await sendToCattyAgent(sessionId, sendScopeKey, trimmed, abortController, currentSession ?? undefined, assistantMsgId, {
-          activeProvider,
-          activeModelId,
+          activeProvider: sendActiveProvider,
+          activeModelId: sendActiveModelId,
           scopeType,
           scopeTargetId,
           scopeLabel,
@@ -948,7 +1034,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       }
     }
   }, [
-    isStreaming, activeProvider, scopeKey, currentAgentId,
+    isStreaming, activeProvider, effectiveActiveProvider, effectiveActiveModelId, scopeKey, currentAgentId,
     activeModelId, externalAgents,
     createSession, addMessageToSession, updateMessageById, updateLastMessage,
     setStreamingForScope,
@@ -1127,6 +1213,16 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
             modelPresets={agentModelPresets}
             selectedModelId={selectedAgentModel}
             onModelSelect={handleAgentModelSelect}
+            providerSwitcher={
+              currentAgentId === 'catty' && cattyConfiguredProviders.length > 0
+                ? {
+                    providers: cattyConfiguredProviders,
+                    selectedProviderId: effectiveActiveProvider?.id,
+                    selectedModelId: effectiveActiveModelId || undefined,
+                    onSelect: handleAgentProviderModelSelect,
+                  }
+                : undefined
+            }
             files={files}
             onAddFiles={addFiles}
             onRemoveFile={removeFile}

@@ -20,12 +20,37 @@ import {
 } from '../ai-elements/prompt-input';
 import type { PromptInputStatus } from '../ai-elements/prompt-input';
 import { formatThinkingLabel } from '../../infrastructure/ai/types';
-import type { AgentModelPreset, AIPermissionMode, UploadedFile } from '../../infrastructure/ai/types';
+import type { AgentModelPreset, AIPermissionMode, ProviderConfig, UploadedFile } from '../../infrastructure/ai/types';
+import { ProviderIconBadge } from '../settings/tabs/ai/ProviderIconBadge';
 import { ScrollArea } from '../ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 
 // Keep in sync with the popover's Tailwind max-width below.
 const MODEL_PICKER_MAX_WIDTH = 360;
+// Slightly wider for the provider picker so the per-row default-model
+// caption doesn't truncate.
+const PROVIDER_PICKER_MAX_WIDTH = 320;
+
+/**
+ * Provider picker payload used by Catty Agent. When set, the model chip
+ * switches to a flat provider list (provider icon + name + the provider's
+ * configured default model as caption) in place of the generic Cpu glyph
+ * + model-preset dropdown. Each provider exposes a single model — its
+ * `defaultModel` — so a two-level menu would be empty noise; picking a
+ * provider implicitly picks its model.
+ */
+export interface ProviderSwitcherConfig {
+  /** Every configured provider — Settings-level visibility, not the
+   *  `enabled` toggle, since the user expects to swap between everything
+   *  they've set up. */
+  providers: ProviderConfig[];
+  /** Currently bound provider id (falls back to providers[0] when missing). */
+  selectedProviderId?: string;
+  /** Currently bound model id under the selected provider. */
+  selectedModelId?: string;
+  /** Fires when the user picks a (providerId, modelId) pair. */
+  onSelect: (providerId: string, modelId: string) => void;
+}
 
 interface ChatInputProps {
   value: string;
@@ -64,6 +89,13 @@ interface ChatInputProps {
   permissionMode?: AIPermissionMode;
   /** Callback when user changes permission mode */
   onPermissionModeChange?: (mode: AIPermissionMode) => void;
+  /**
+   * Provider→model two-level picker payload. When provided, replaces the
+   * single-list model dropdown with a provider-aware picker. Used for the
+   * Catty Agent only — external ACP agents (Claude/Codex) keep the
+   * `modelPresets` dropdown because their provider is wired inside the CLI.
+   */
+  providerSwitcher?: ProviderSwitcherConfig;
 }
 
 const ChatInput: React.FC<ChatInputProps> = ({
@@ -90,6 +122,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
   onRemoveUserSkill,
   permissionMode,
   onPermissionModeChange,
+  providerSwitcher,
 }) => {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
@@ -355,10 +388,31 @@ const ChatInput: React.FC<ChatInputProps> = ({
     return { selectedPreset: undefined, selectedThinking: undefined };
   })();
   const selectedBaseModelId = selectedPreset?.id;
-  const modelLabel = selectedPreset
-    ? selectedPreset.name + (selectedThinking ? ` / ${formatThinkingLabel(selectedThinking)}` : '')
-    : modelName || providerName || t('ai.chat.noModel');
-  const hasModelPicker = modelPresets.length > 0 && onModelSelect;
+  // Provider switcher mode (Catty Agent): two-column popover, chip carries
+  // the provider's icon + name + model name. Falls back to the existing
+  // single-list model dropdown for ACP agents.
+  const hasProviderSwitcher = !!providerSwitcher && providerSwitcher.providers.length > 0;
+  // Resolve to the actually-bound provider only — no `?? providers[0]`
+  // fallback, since a provider that isn't really bound will still hit the
+  // `!sendActiveProvider` guard at send time. Faking a selection in the
+  // chip would lie about a state the rest of the system treats as empty.
+  const selectedSwitcherProvider = hasProviderSwitcher
+    ? providerSwitcher!.providers.find((p) => p.id === providerSwitcher!.selectedProviderId)
+    : undefined;
+  const providerSwitcherChipLabel = hasProviderSwitcher
+    ? (selectedSwitcherProvider
+        ? (providerSwitcher!.selectedModelId
+            ? `${selectedSwitcherProvider.name} · ${providerSwitcher!.selectedModelId}`
+            : selectedSwitcherProvider.name)
+        : t('ai.chat.selectProvider'))
+    : '';
+  const modelLabel = hasProviderSwitcher
+    ? providerSwitcherChipLabel
+    : (selectedPreset
+        ? selectedPreset.name + (selectedThinking ? ` / ${formatThinkingLabel(selectedThinking)}` : '')
+        : modelName || providerName || t('ai.chat.noModel'));
+  const hasModelPicker = hasProviderSwitcher || (modelPresets.length > 0 && !!onModelSelect);
+  const popoverMaxWidth = hasProviderSwitcher ? PROVIDER_PICKER_MAX_WIDTH : MODEL_PICKER_MAX_WIDTH;
   const chipClassName =
     'inline-flex h-6 items-center gap-1 rounded-full px-1.5 text-[10.5px] text-foreground/72';
   const selectedSkillChipClassName =
@@ -655,7 +709,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                     // Clamp so the popover stays inside the viewport when
                     // the chip is near the right edge of a narrow AI side
                     // panel.
-                    const left = Math.max(8, Math.min(rect.left, window.innerWidth - MODEL_PICKER_MAX_WIDTH - 8));
+                    const left = Math.max(8, Math.min(rect.left, window.innerWidth - popoverMaxWidth - 8));
                     setMenuPos({ left, bottom: window.innerHeight - rect.top + 6 });
                   }
                   setActiveMenu('model');
@@ -664,11 +718,15 @@ const ChatInput: React.FC<ChatInputProps> = ({
                 }
               }}
               className={`${chipClassName} ${hasModelPicker ? 'cursor-pointer hover:bg-muted/24 transition-colors' : ''}`}
-              aria-label="Select model"
+              aria-label={hasProviderSwitcher ? 'Select provider and model' : 'Select model'}
               aria-expanded={showModelPicker}
             >
-              <Cpu size={11} className="text-muted-foreground/64" />
-              <span className="truncate max-w-[82px]">{modelLabel}</span>
+              {hasProviderSwitcher && selectedSwitcherProvider ? (
+                <ProviderIconBadge provider={selectedSwitcherProvider} size="xs" />
+              ) : (
+                <Cpu size={11} className="text-muted-foreground/64" />
+              )}
+              <span className={`truncate ${hasProviderSwitcher ? 'max-w-[180px]' : 'max-w-[82px]'}`}>{modelLabel}</span>
               {hasModelPicker && <ChevronDown size={9} className="text-muted-foreground/50" />}
             </button>
             {showModelPicker && hasModelPicker && menuPos && createPortal(
@@ -677,12 +735,58 @@ const ChatInput: React.FC<ChatInputProps> = ({
             <div className="fixed inset-0 z-[999] cursor-default" onClick={closeAllMenus} />
             <div
               role="listbox"
-                  aria-label="Select model"
+                  aria-label={hasProviderSwitcher ? 'Select provider and model' : 'Select model'}
                   className="fixed z-[1000] w-max min-w-[160px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
-                  style={{ left: menuPos.left, bottom: menuPos.bottom, maxWidth: MODEL_PICKER_MAX_WIDTH }}
+                  style={{ left: menuPos.left, bottom: menuPos.bottom, maxWidth: popoverMaxWidth }}
                   onMouseLeave={() => setHoveredModelId(null)}
                 >
-                  {modelPresets.map(preset => {
+                  {hasProviderSwitcher ? (
+                    <div className="min-w-[260px] max-h-[320px] overflow-y-auto">
+                      {providerSwitcher!.providers.map((p) => {
+                        const isSelected = providerSwitcher!.selectedProviderId === p.id;
+                        const defaultModel = p.defaultModel?.trim() ?? '';
+                        const hasModel = defaultModel.length > 0;
+                        // Rows without a defaultModel are inert — picking
+                        // one would save a binding with an empty model id
+                        // and produce a confusing model error at send time.
+                        // User has to set a defaultModel in Settings first.
+                        const disabled = !hasModel;
+                        const modelCaption = hasModel
+                          ? defaultModel
+                          : t('ai.chat.noProviderModel');
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            role="option"
+                            aria-selected={isSelected}
+                            aria-disabled={disabled}
+                            disabled={disabled}
+                            title={disabled ? t('ai.chat.noProviderModel') : undefined}
+                            onClick={() => {
+                              if (disabled) return;
+                              providerSwitcher!.onSelect(p.id, defaultModel);
+                              closeAllMenus();
+                            }}
+                            className={`w-full flex items-center gap-2.5 px-2.5 py-2 text-left transition-colors ${
+                              disabled
+                                ? 'opacity-55 cursor-not-allowed'
+                                : 'hover:bg-muted/30 cursor-pointer'
+                            }`}
+                          >
+                            <ProviderIconBadge provider={p} size="md" />
+                            <div className="flex-1 min-w-0">
+                              <div className="truncate text-[12px] text-foreground/85">{p.name}</div>
+                              <div className={`truncate text-[10.5px] ${hasModel ? 'text-muted-foreground/70 font-mono' : 'text-muted-foreground/55 italic'}`}>
+                                {modelCaption}
+                              </div>
+                            </div>
+                            {isSelected && <Check size={12} className="text-primary shrink-0" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : modelPresets.map(preset => {
                     const isSelected = preset.id === selectedBaseModelId;
                     const hasThinking = preset.thinkingLevels && preset.thinkingLevels.length > 0;
                     return (

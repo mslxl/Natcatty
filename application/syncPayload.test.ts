@@ -120,6 +120,7 @@ test("buildSyncPayload includes AI configuration settings", () => {
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_COMMAND_TIMEOUT, "120");
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_MAX_ITERATIONS, "10");
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_AGENT_MODEL_MAP, JSON.stringify({ codex: "gpt-test" }));
+  localStorage.setItem(storageKeys.STORAGE_KEY_AI_AGENT_PROVIDER_MAP, JSON.stringify({ catty: "openai-main" }));
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_WEB_SEARCH, JSON.stringify(webSearch));
 
   const payload = buildSyncPayload(vault([]));
@@ -135,6 +136,7 @@ test("buildSyncPayload includes AI configuration settings", () => {
     commandTimeout: 120,
     maxIterations: 10,
     agentModelMap: { codex: "gpt-test" },
+    agentProviderMap: { catty: "openai-main" },
     webSearchConfig: webSearch,
   });
 });
@@ -201,6 +203,7 @@ test("applySyncPayload restores AI configuration settings", async () => {
         commandTimeout: 30,
         maxIterations: 5,
         agentModelMap: { claude: "claude-test" },
+        agentProviderMap: { catty: "anthropic-main" },
         webSearchConfig: webSearch,
       },
     },
@@ -219,7 +222,102 @@ test("applySyncPayload restores AI configuration settings", async () => {
   assert.equal(localStorage.getItem(storageKeys.STORAGE_KEY_AI_COMMAND_TIMEOUT), "30");
   assert.equal(localStorage.getItem(storageKeys.STORAGE_KEY_AI_MAX_ITERATIONS), "5");
   assert.deepEqual(JSON.parse(localStorage.getItem(storageKeys.STORAGE_KEY_AI_AGENT_MODEL_MAP)!), { claude: "claude-test" });
+  assert.deepEqual(JSON.parse(localStorage.getItem(storageKeys.STORAGE_KEY_AI_AGENT_PROVIDER_MAP)!), { catty: "anthropic-main" });
   assert.deepEqual(JSON.parse(localStorage.getItem(storageKeys.STORAGE_KEY_AI_WEB_SEARCH)!), webSearch);
+});
+
+test("applySyncPayload dispatches a same-window AI-state-changed event so the open chat panel rehydrates", async () => {
+  // Without this nudge, the apply path writes to localStorage but
+  // `useAIState` (listening for `storage` events) never sees the changes
+  // in the calling window — mounted UI keeps showing pre-sync data.
+  const dispatched: Array<{ type: string; detail: unknown }> = [];
+  const fakeWindow = {
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent(event: Event) {
+      dispatched.push({
+        type: event.type,
+        detail: (event as CustomEvent).detail,
+      });
+      return true;
+    },
+  };
+  Object.defineProperty(globalThis, "window", { value: fakeWindow, configurable: true });
+  try {
+    localStorage.setItem(storageKeys.STORAGE_KEY_AI_AGENT_PROVIDER_MAP, JSON.stringify({ catty: "deepseek-local" }));
+    localStorage.setItem(storageKeys.STORAGE_KEY_AI_AGENT_MODEL_MAP, JSON.stringify({ catty: "deepseek-v4-flash" }));
+
+    const payload: SyncPayload = {
+      hosts: [],
+      keys: [],
+      identities: [],
+      snippets: [],
+      customGroups: [],
+      settings: {
+        ai: {
+          providers: [{ id: "openai-main", providerId: "openai", name: "OpenAI", enabled: true }],
+        },
+      },
+      syncedAt: 1,
+    } as SyncPayload;
+
+    await applySyncPayload(payload, { importVaultData: () => {} });
+
+    const events = dispatched.filter((e) => e.type === "netcatty:ai-state-changed");
+    const keys = events.map((e) => (e.detail as { key?: string })?.key);
+    assert.ok(keys.includes(storageKeys.STORAGE_KEY_AI_PROVIDERS), "providers nudge");
+    assert.ok(keys.includes(storageKeys.STORAGE_KEY_AI_AGENT_PROVIDER_MAP), "agentProviderMap nudge");
+    assert.ok(keys.includes(storageKeys.STORAGE_KEY_AI_AGENT_MODEL_MAP), "agentModelMap nudge");
+  } finally {
+    delete (globalThis as { window?: unknown }).window;
+  }
+});
+
+test("applySyncPayload prunes per-agent bindings that reference providers absent from the synced set", async () => {
+  // Local state has Catty bound to a provider the incoming sync no longer
+  // ships — both the per-agent provider override and the saved model should
+  // be cleared so we don't dispatch a ghost provider id (or its now-orphan
+  // model name) to the wrong endpoint.
+  localStorage.setItem(storageKeys.STORAGE_KEY_AI_AGENT_PROVIDER_MAP, JSON.stringify({
+    catty: "deepseek-local",
+    codex: "openai-main",
+  }));
+  localStorage.setItem(storageKeys.STORAGE_KEY_AI_AGENT_MODEL_MAP, JSON.stringify({
+    catty: "deepseek-v4-flash",
+    codex: "gpt-test",
+  }));
+
+  const syncedProviders = [
+    { id: "openai-main", providerId: "openai", name: "OpenAI", enabled: true },
+  ];
+
+  const payload: SyncPayload = {
+    hosts: [],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+    settings: {
+      ai: {
+        providers: syncedProviders,
+        // Intentionally omit agentProviderMap — exercises the reconcile path.
+      },
+    },
+    syncedAt: 1,
+  } as SyncPayload;
+
+  await applySyncPayload(payload, { importVaultData: () => {} });
+
+  assert.deepEqual(
+    JSON.parse(localStorage.getItem(storageKeys.STORAGE_KEY_AI_AGENT_PROVIDER_MAP)!),
+    { codex: "openai-main" },
+  );
+  // Catty's saved model belonged to the now-missing deepseek-local — drop it.
+  // Codex's binding stays, so its saved model stays.
+  assert.deepEqual(
+    JSON.parse(localStorage.getItem(storageKeys.STORAGE_KEY_AI_AGENT_MODEL_MAP)!),
+    { codex: "gpt-test" },
+  );
 });
 
 test("applySyncPayload preserves local externalAgents and ignores legacy payload field", async () => {
