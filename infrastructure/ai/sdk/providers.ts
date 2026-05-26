@@ -1,7 +1,8 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import type { ProviderConfig } from '../types';
+import type { ProviderConfig, ProviderStyle } from '../types';
+import { resolveProviderStyle } from '../types';
 import {
   applyOpenAIChatContinuationToBody,
   extractProviderContinuationFromRawChunk,
@@ -405,6 +406,35 @@ export function createBridgeFetchForSDK(
  * process replaces the placeholder with the real decrypted key before
  * making the HTTP request.
  */
+/**
+ * Apply per-vendor URL and apiKey quirks on top of the style-based
+ * wire-protocol routing. Exported so it can be unit-tested without spinning
+ * up the Vercel AI SDK clients.
+ *
+ * The URL fallback fires regardless of style — the user picked this
+ * providerId for a reason, even if they overrode the wire format. The
+ * ollama `'ollama'` throwaway apiKey is style-specific: it's only meaningful
+ * to the OpenAI-compat client, since Anthropic/Google clients need a real
+ * key on their own URL.
+ */
+export function resolveProviderEndpoint(
+  config: ProviderConfig,
+  style: ProviderStyle,
+  safeApiKey: string | undefined,
+): { baseURL: string | undefined; apiKey: string | undefined } {
+  let baseURL = config.baseURL;
+  let apiKey = safeApiKey;
+  if (config.providerId === 'ollama') {
+    baseURL = baseURL || 'http://localhost:11434/v1';
+    if (style === 'openai') {
+      apiKey = 'ollama';
+    }
+  } else if (config.providerId === 'openrouter') {
+    baseURL = baseURL || 'https://openrouter.ai/api/v1';
+  }
+  return { baseURL, apiKey };
+}
+
 export function createModelFromConfig(
   config: ProviderConfig,
   requestContext?: ProviderRequestContext,
@@ -413,57 +443,35 @@ export function createModelFromConfig(
   const safeApiKey = config.apiKey ? API_KEY_PLACEHOLDER : undefined;
   const customFetch = createBridgeFetchForSDK(config.id, requestContext);
   const modelId = config.defaultModel || '';
+  const style = resolveProviderStyle(config);
+  const { baseURL, apiKey } = resolveProviderEndpoint(config, style, safeApiKey);
 
-  switch (config.providerId) {
+  switch (style) {
     case 'openai':
       // Use .chat() to force Chat Completions API (not Responses API)
       return createOpenAI({
-        apiKey: safeApiKey,
-        baseURL: config.baseURL,
+        apiKey,
+        baseURL,
         fetch: customFetch,
       }).chat(modelId);
 
     case 'anthropic':
       return createAnthropic({
-        apiKey: safeApiKey,
-        baseURL: config.baseURL,
+        apiKey,
+        baseURL,
         fetch: customFetch,
       })(modelId);
 
     case 'google':
       return createGoogleGenerativeAI({
-        apiKey: safeApiKey,
-        baseURL: config.baseURL,
+        apiKey,
+        baseURL,
         fetch: customFetch,
       })(modelId);
 
-    case 'ollama':
-      // Ollama uses OpenAI-compatible Chat Completions API
-      return createOpenAI({
-        apiKey: 'ollama',
-        baseURL: config.baseURL || 'http://localhost:11434/v1',
-        fetch: customFetch,
-      }).chat(modelId);
-
-    case 'openrouter':
-      // OpenRouter uses OpenAI-compatible Chat Completions API
-      return createOpenAI({
-        apiKey: safeApiKey,
-        baseURL: config.baseURL || 'https://openrouter.ai/api/v1',
-        fetch: customFetch,
-      }).chat(modelId);
-
-    case 'custom':
-      // Custom providers use OpenAI-compatible Chat Completions API
-      return createOpenAI({
-        apiKey: safeApiKey,
-        baseURL: config.baseURL,
-        fetch: customFetch,
-      }).chat(modelId);
-
     default: {
-      const _exhaustive: never = config.providerId;
-      throw new Error(`Unsupported provider: ${_exhaustive}`);
+      const _exhaustive: never = style;
+      throw new Error(`Unsupported provider style: ${_exhaustive}`);
     }
   }
 }
