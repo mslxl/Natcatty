@@ -14,6 +14,7 @@ import {
   type ToolExecResult,
 } from '../shared/toolExecutors';
 import { requestApproval } from '../shared/approvalGate';
+import { reserveSessionSlot } from '../shared/sessionExecutionQueue';
 
 /** Unwrap a shared ToolExecResult into the shape expected by Vercel AI SDK tool results. */
 function unwrap<T>(r: ToolExecResult<T>): T | { error: string } {
@@ -49,15 +50,67 @@ export function createCattyTools(
         command: z.string().describe('The shell command to execute in the target session.'),
       }),
       // No needsApproval — approval is handled inside execute via the approval gate.
-      execute: async ({ sessionId, command }, { toolCallId }) => {
-        // In confirm mode, await user approval before executing
-        if (permissionMode === 'confirm') {
-          const approved = await requestApproval(toolCallId, 'terminal_execute', { sessionId, command }, chatSessionId);
-          if (!approved) {
-            return { error: 'User denied command execution.' };
+      execute: async ({ sessionId, command }, { toolCallId, abortSignal }) => {
+        // Snap our place in the per-session execution queue *first*,
+        // synchronously, so the eventual command-run order matches the
+        // LLM's tool_use emission order regardless of how long each
+        // call's approval prompt takes to settle. Vercel AI SDK
+        // dispatches every tool_use block in a turn through
+        // `Promise.all(...)`, so the three executes for "A then B then
+        // C" all start at the same instant; if we deferred slot
+        // reservation until after approval, B's approval could land
+        // first and run B before A. Reserving up front fixes that.
+        //
+        // The bridge-side mutex (mcpServerBridge.reserveSessionExecution)
+        // stays as defense-in-depth for non-LLM IPC paths
+        // (terminal_start, MCP, etc.) — this queue just keeps the
+        // renderer-side LLM path from racing into it.
+        const queueKey = `${chatSessionId ?? 'global'}:${sessionId}`;
+        const slot = reserveSessionSlot(queueKey);
+        try {
+          // In confirm mode, await user approval. Approvals run *while*
+          // the slot is held but before the serialized work, so multiple
+          // parallel tool_use blocks each surface their own approval
+          // card immediately and the user can approve/deny in any
+          // order — the queue still drains in reservation order.
+          if (permissionMode === 'confirm') {
+            const approved = await requestApproval(toolCallId, 'terminal_execute', { sessionId, command }, chatSessionId);
+            if (!approved) {
+              return { error: 'User denied command execution.' };
+            }
           }
+          if (abortSignal?.aborted) {
+            return { error: 'Command cancelled before it could start.' };
+          }
+          await slot.ready;
+          if (abortSignal?.aborted) {
+            return { error: 'Command cancelled before it could start.' };
+          }
+          // There's a tiny race between this check and the main-process
+          // `mcpServerBridge.reserveSessionExecution` registering the new
+          // exec into the cancellation tracker: `handleStop` issues a
+          // cancel IPC and the user's abort signal fires, but if our
+          // `aiExec` IPC was already in transit, the cancel may run
+          // before the exec has registered — and find nothing to
+          // cancel. Re-issue the cancel from the abort listener so a
+          // duplicate `aiCattyCancelExec` lands once the registration
+          // is complete. The cancel is idempotent (it only acts on
+          // entries it finds in `activePtyExecs`), so issuing twice is
+          // harmless.
+          const cancelOnAbort = () => {
+            if (chatSessionId) {
+              void bridge.aiCattyCancelExec?.(chatSessionId);
+            }
+          };
+          abortSignal?.addEventListener('abort', cancelOnAbort, { once: true });
+          try {
+            return unwrap(await executeTerminalExecute(deps, { sessionId, command }));
+          } finally {
+            abortSignal?.removeEventListener('abort', cancelOnAbort);
+          }
+        } finally {
+          slot.release();
         }
-        return unwrap(await executeTerminalExecute(deps, { sessionId, command }));
       },
     }),
 

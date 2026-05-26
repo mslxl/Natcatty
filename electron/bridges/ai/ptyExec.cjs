@@ -912,7 +912,36 @@ function execViaChannel(sshClient, command, options) {
   } = options || {};
 
   return new Promise((resolve) => {
-    sshClient.exec(command, (err, execStream) => {
+    // Register a *pending* cancellation marker synchronously, before
+    // `sshClient.exec` opens the channel. Without this, a cancel that
+    // arrives while we're still waiting on `sshClient.exec`'s callback
+    // finds nothing in `activePtyExecs` to act on — the channel then
+    // opens, the real marker registers, and the command runs to
+    // completion despite the user already cancelling. The pending
+    // marker latches `cancelled = true`; when the callback fires we
+    // check the latch and short-circuit instead of starting work.
+    const pendingMarker = `__NCMCP_CH_PENDING_${Date.now().toString(36)}_${crypto.randomBytes(8).toString('hex')}__`;
+    let cancelled = false;
+    if (trackForCancellation) {
+      trackForCancellation.set(pendingMarker, {
+        chatSessionId: chatSessionId || null,
+        cancel: () => { cancelled = true; },
+        cleanup: () => { /* nothing pending to clean up before channel opens */ },
+      });
+    }
+
+    try {
+      sshClient.exec(command, (err, execStream) => {
+      if (trackForCancellation) {
+        trackForCancellation.delete(pendingMarker);
+      }
+      if (cancelled) {
+        if (execStream) {
+          try { execStream.close(); } catch { /* ignore */ }
+        }
+        resolve({ ok: false, stdout: "", stderr: "", exitCode: -1, error: "Cancelled" });
+        return;
+      }
       if (err) {
         resolve({ ok: false, error: err.message });
         return;
@@ -963,6 +992,18 @@ function execViaChannel(sshClient, command, options) {
         }
       });
     });
+    } catch (err) {
+      // Rare path: `sshClient.exec` itself synchronously throws (e.g.
+      // because the underlying ssh2 client was destroyed between the
+      // session lookup and now). Drop the pending marker so it doesn't
+      // leak in `activePtyExecs`, and resolve as a normal failure
+      // result instead of letting the Promise reject — the tool layer
+      // expects `{ ok, error }` shape, not a thrown error.
+      if (trackForCancellation) {
+        trackForCancellation.delete(pendingMarker);
+      }
+      resolve({ ok: false, error: err?.message || String(err) });
+    }
   });
 }
 
