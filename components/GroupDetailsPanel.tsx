@@ -50,6 +50,7 @@ import { Card } from "./ui/card";
 import { Combobox } from "./ui/combobox";
 import { Dropdown, DropdownContent, DropdownTrigger } from "./ui/dropdown";
 import { Input } from "./ui/input";
+import { Textarea } from "./ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { TerminalFontSelect } from "./settings/TerminalFontSelect";
@@ -861,12 +862,14 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
               onToggle={() => update("agentForwarding", !form.agentForwarding)}
             />
 
-            {/* Startup Command */}
-            <Input
+            {/* Startup Command — Textarea so multi-line sequences are typeable
+                here just like on the per-host details panel (#1083 follow-up). */}
+            <Textarea
               placeholder={t("hostDetails.startupCommand.placeholder")}
               value={form.startupCommand || ""}
               onChange={(e) => update("startupCommand", e.target.value || undefined)}
-              className="h-10"
+              className="min-h-[80px] font-mono text-sm"
+              rows={3}
             />
 
             {/* Legacy Algorithms */}
