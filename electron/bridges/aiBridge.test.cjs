@@ -147,6 +147,10 @@ function loadBridgeWithMocks(options = {}) {
         typeof options.prepareCommandForSpawn === "function"
           ? options.prepareCommandForSpawn(...args)
           : prepareCommandForSpawn(...args),
+      normalizeClaudeCodeExecutableEnvForAcp: (env) =>
+        typeof options.normalizeClaudeCodeExecutableEnvForAcp === "function"
+          ? options.normalizeClaudeCodeExecutableEnvForAcp(env)
+          : env,
       isPlausibleCliVersionOutput: (value) =>
         typeof options.isPlausibleCliVersionOutput === "function"
           ? options.isPlausibleCliVersionOutput(value)
@@ -1143,6 +1147,74 @@ test("ACP stream passes the configured system Claude executable to claude-agent-
     assert.equal(
       providerCreationArgs[0].env.CLAUDE_CODE_EXECUTABLE,
       "/opt/homebrew/bin/claude",
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("ACP stream rewrites Windows Claude cmd shim env before creating claude-agent-acp", async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-claude-cmd-env-"));
+  t.after(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  const acpScriptPath = path.join(tempDir, "acp-index.js");
+  fs.writeFileSync(acpScriptPath, "process.exit(0);\n", "utf8");
+
+  const cmdPath = "D:\\ProgramData\\develop-cache\\node-global\\claude.cmd";
+  const cliPath = "D:\\ProgramData\\develop-cache\\node-global\\node_modules\\@anthropic-ai\\claude-code\\cli.js";
+  const { bridge, providerCreationArgs, restore } = loadBridgeWithMocks({
+    resolveClaudeAcpBinaryPath: () => ({
+      command: process.execPath,
+      prependArgs: [acpScriptPath],
+    }),
+    normalizeClaudeCodeExecutableEnvForAcp: (env) => ({
+      ...env,
+      CLAUDE_CODE_EXECUTABLE: env.CLAUDE_CODE_EXECUTABLE === cmdPath
+        ? cliPath
+        : env.CLAUDE_CODE_EXECUTABLE,
+    }),
+    createACPProvider: () => ({
+      tools: {},
+      languageModel() {
+        return { id: "fake-model" };
+      },
+      async initSession() {},
+      getSessionId() {
+        return "claude-session";
+      },
+      cleanup() {},
+    }),
+    streamText: () => createEmptyStreamResult(),
+  });
+  const ipcMain = createIpcMainStub();
+
+  bridge.init({
+    sessions: new Map(),
+    sftpClients: new Map(),
+    electronModule: { app: { getPath: () => process.cwd() } },
+  });
+  bridge.registerHandlers(ipcMain);
+
+  try {
+    const streamHandler = ipcMain.handlers.get("netcatty:ai:acp:stream");
+    assert.equal(typeof streamHandler, "function");
+
+    await streamHandler({ sender: { id: 1 } }, {
+      requestId: "req-claude-cmd-env",
+      chatSessionId: "chat-claude-cmd-env",
+      acpCommand: "claude-agent-acp",
+      acpArgs: [],
+      prompt: "hello",
+      historyMessages: [],
+      toolIntegrationMode: "mcp",
+      agentEnv: { CLAUDE_CODE_EXECUTABLE: cmdPath },
+    });
+
+    assert.equal(
+      providerCreationArgs[0].env.CLAUDE_CODE_EXECUTABLE,
+      cliPath,
     );
   } finally {
     restore();

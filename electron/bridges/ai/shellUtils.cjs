@@ -7,7 +7,7 @@
 "use strict";
 
 const { execFileSync } = require("node:child_process");
-const { existsSync, statSync } = require("node:fs");
+const { existsSync, readFileSync, statSync } = require("node:fs");
 const path = require("node:path");
 
 // ── ANSI / URL regexes ──
@@ -214,6 +214,53 @@ function prepareCommandForSpawn(command, args) {
     command: buildWindowsShellCommandLine(command, spawnArgs),
     args: [],
     shell: true,
+  };
+}
+
+function resolveClaudeCodeExecutableForAcp(claudeExecutablePath, platform = process.platform) {
+  const normalized = String(claudeExecutablePath || "").trim();
+  if (!normalized) return null;
+  if (platform !== "win32") return normalized;
+
+  const ext = path.extname(normalized).toLowerCase();
+  if (ext && ext !== ".cmd" && ext !== ".bat") return normalized;
+
+  const baseDir = path.dirname(normalized);
+  const packageCliPath = path.join(baseDir, "node_modules", "@anthropic-ai", "claude-code", "cli.js");
+  if (existsSync(packageCliPath)) {
+    return packageCliPath;
+  }
+
+  const shimCandidates = [normalized];
+  if (!ext) {
+    shimCandidates.push(`${normalized}.cmd`, `${normalized}.bat`);
+  }
+
+  for (const shimPath of shimCandidates) {
+    try {
+      if (!existsSync(shimPath)) continue;
+      const contents = readFileSync(shimPath, "utf8");
+      if (!/node_modules[\\/]+@anthropic-ai[\\/]+claude-code[\\/]+cli\.js/i.test(contents)) {
+        continue;
+      }
+      if (existsSync(packageCliPath)) {
+        return packageCliPath;
+      }
+    } catch {
+      // Fall back to the original executable path below.
+    }
+  }
+
+  return normalized;
+}
+
+function normalizeClaudeCodeExecutableEnvForAcp(env, platform = process.platform) {
+  if (!env?.CLAUDE_CODE_EXECUTABLE) return env;
+  const resolved = resolveClaudeCodeExecutableForAcp(env.CLAUDE_CODE_EXECUTABLE, platform);
+  if (!resolved || resolved === env.CLAUDE_CODE_EXECUTABLE) return env;
+  return {
+    ...env,
+    CLAUDE_CODE_EXECUTABLE: resolved,
   };
 }
 
@@ -433,6 +480,8 @@ module.exports = {
   quoteWindowsShellArg,
   buildWindowsShellCommandLine,
   prepareCommandForSpawn,
+  resolveClaudeCodeExecutableForAcp,
+  normalizeClaudeCodeExecutableEnvForAcp,
   resolveCliFromPath,
   resolveClaudeAcpBinaryPath,
   toUnpackedAsarPath,

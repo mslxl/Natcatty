@@ -9,8 +9,12 @@ const {
   isPlausibleCliVersionOutput,
   looksLikeIdleAutoLogout,
   prepareCommandForSpawn,
+  resolveClaudeCodeExecutableForAcp,
   trackSessionIdlePrompt,
 } = require("./shellUtils.cjs");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 test("extracts a trailing PowerShell idle prompt", () => {
   assert.equal(
@@ -100,6 +104,48 @@ test("prepareCommandForSpawn wraps Windows cmd shims as a single shell command",
       args: ["--version"],
       shell: false,
     });
+  }
+});
+
+test("resolveClaudeCodeExecutableForAcp maps Windows npm cmd shim to Claude Code cli.js", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-claude-shim-"));
+  try {
+    const shimPath = path.join(tmp, "claude.cmd");
+    const scriptPath = path.join(tmp, "node_modules", "@anthropic-ai", "claude-code", "cli.js");
+    fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
+    fs.writeFileSync(scriptPath, "", "utf8");
+    fs.writeFileSync(
+      shimPath,
+      '@ECHO off\r\nnode "%basedir%\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*\r\n',
+      "utf8",
+    );
+
+    assert.equal(resolveClaudeCodeExecutableForAcp(shimPath, "win32"), scriptPath);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("resolveClaudeCodeExecutableForAcp leaves non-Windows Claude paths unchanged", () => {
+  assert.equal(
+    resolveClaudeCodeExecutableForAcp("/usr/local/bin/claude", "darwin"),
+    "/usr/local/bin/claude",
+  );
+});
+
+test("resolveClaudeCodeExecutableForAcp keeps Windows cmd shim when Claude Code cli.js is missing", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-claude-missing-cli-"));
+  try {
+    const shimPath = path.join(tmp, "claude.cmd");
+    fs.writeFileSync(
+      shimPath,
+      '@ECHO off\r\nnode "%basedir%\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*\r\n',
+      "utf8",
+    );
+
+    assert.equal(resolveClaudeCodeExecutableForAcp(shimPath, "win32"), shimPath);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
 

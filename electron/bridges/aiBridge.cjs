@@ -27,6 +27,7 @@ const {
   stripAnsi,
   normalizeCliPathForPlatform,
   prepareCommandForSpawn,
+  normalizeClaudeCodeExecutableEnvForAcp,
   resolveCliFromPath,
   resolveClaudeAcpBinaryPath,
   isPlausibleCliVersionOutput,
@@ -2375,7 +2376,10 @@ function registerHandlers(ipcMain) {
         }
       }
 
-      const agentEnv = withCliDiscoveryEnv({ ...shellEnv, ...normalizeAgentEnv(requestedAgentEnv) });
+      let agentEnv = withCliDiscoveryEnv({ ...shellEnv, ...normalizeAgentEnv(requestedAgentEnv) });
+      if (isClaudeAgent) {
+        agentEnv = normalizeClaudeCodeExecutableEnvForAcp(agentEnv);
+      }
       if (isCodexAgent && apiKey) {
         agentEnv.CODEX_API_KEY = apiKey;
       }
@@ -2699,7 +2703,10 @@ function registerHandlers(ipcMain) {
           );
         cleanupAcpProvider(chatSessionId);
 
-        const agentEnv = withCliDiscoveryEnv({ ...shellEnv, ...normalizeAgentEnv(requestedAgentEnv) });
+        let agentEnv = withCliDiscoveryEnv({ ...shellEnv, ...normalizeAgentEnv(requestedAgentEnv) });
+        if (isClaudeAgent) {
+          agentEnv = normalizeClaudeCodeExecutableEnvForAcp(agentEnv);
+        }
         if (isCodexAgent && apiKey) {
           agentEnv.CODEX_API_KEY = apiKey;
         }
@@ -2822,11 +2829,14 @@ function registerHandlers(ipcMain) {
             ? [...fallbackClaudeAcp.prependArgs, ...(acpArgs || [])]
             : acpArgs || [],
           env: (() => {
-            const fallbackEnv = withCliDiscoveryEnv(
+            let fallbackEnv = withCliDiscoveryEnv(
               isCodexAgent && apiKey
                 ? { ...shellEnv, ...normalizeAgentEnv(requestedAgentEnv), CODEX_API_KEY: apiKey }
                 : { ...shellEnv, ...normalizeAgentEnv(requestedAgentEnv) },
             );
+            if (isClaudeAgent) {
+              fallbackEnv = normalizeClaudeCodeExecutableEnvForAcp(fallbackEnv);
+            }
             if (isCodexAgent && resolvedProvider?.provider?.baseURL) {
               fallbackEnv.OPENAI_BASE_URL = resolvedProvider.provider.baseURL;
             }
