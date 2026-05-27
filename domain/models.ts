@@ -278,6 +278,42 @@ export const parseKeyCombo = (keyStr: string): { modifiers: string[]; key: strin
   return { modifiers: parts, key };
 };
 
+const PHYSICAL_SHORTCUT_KEY_NAMES: Record<string, string> = {
+  Backquote: '`',
+  Minus: '-',
+  Equal: '=',
+  BracketLeft: '[',
+  BracketRight: ']',
+  Backslash: '\\',
+  Semicolon: ';',
+  Quote: "'",
+  Comma: ',',
+  Period: '.',
+  Slash: '/',
+};
+
+const physicalShortcutKeyName = (e: KeyboardEvent): string | null => {
+  const code = e.code;
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+  return PHYSICAL_SHORTCUT_KEY_NAMES[code] ?? null;
+};
+
+const LATIN_SHORTCUT_KEY_PATTERN = /^\p{Script=Latin}$/u;
+const ASCII_SHORTCUT_KEY_PATTERN = /^[A-Za-z]$/;
+const PRINTABLE_NON_LETTER_SHORTCUT_KEY_PATTERN = /^[^\p{Letter}\p{Number}\s]$/u;
+
+const shortcutEventKey = (e: KeyboardEvent): string => {
+  const physicalKey = physicalShortcutKeyName(e);
+  if (
+    LATIN_SHORTCUT_KEY_PATTERN.test(e.key) ||
+    PRINTABLE_NON_LETTER_SHORTCUT_KEY_PATTERN.test(e.key)
+  ) {
+    return e.key;
+  }
+  return physicalKey ?? e.key;
+};
+
 // Convert keyboard event to a key string
 export const keyEventToString = (e: KeyboardEvent, isMac: boolean): string => {
   const parts: string[] = [];
@@ -295,7 +331,7 @@ export const keyEventToString = (e: KeyboardEvent, isMac: boolean): string => {
   }
 
   // Get the key name
-  let keyName = e.key;
+  let keyName = shortcutEventKey(e);
   // Normalize special keys
   if (keyName === ' ') keyName = 'Space';
   else if (keyName === 'ArrowUp') keyName = '↑';
@@ -307,7 +343,7 @@ export const keyEventToString = (e: KeyboardEvent, isMac: boolean): string => {
   else if (keyName === 'Delete') keyName = 'Del';
   else if (keyName === 'Enter') keyName = '↵';
   else if (keyName === 'Tab') keyName = '⇥';
-  else if (keyName.length === 1) keyName = keyName.toUpperCase();
+  else if (ASCII_SHORTCUT_KEY_PATTERN.test(keyName)) keyName = keyName.toUpperCase();
 
   // Don't include modifier keys themselves
   if (['Meta', 'Control', 'Alt', 'Shift'].includes(e.key)) {
@@ -325,11 +361,19 @@ export const matchesKeyBinding = (e: KeyboardEvent, keyStr: string, isMac: boole
   // Handle range patterns like "[1...9]"
   if (keyStr.includes('[1...9]')) {
     const basePattern = keyStr.replace('[1...9]', '');
-    const key = e.key;
+    const key = physicalShortcutKeyName(e) ?? shortcutEventKey(e);
     if (!/^[1-9]$/.test(key)) return false;
     // Check modifiers match the base pattern
     const testStr = basePattern + key;
-    return matchesKeyBinding(e, testStr.trim(), isMac);
+    const physicalDigitEvent = {
+      key,
+      code: e.code,
+      metaKey: e.metaKey,
+      ctrlKey: e.ctrlKey,
+      altKey: e.altKey,
+      shiftKey: e.shiftKey,
+    } as KeyboardEvent;
+    return matchesKeyBinding(physicalDigitEvent, testStr.trim(), isMac);
   }
 
   // Handle arrow key patterns like "arrows"
@@ -398,7 +442,7 @@ export const matchesKeyBinding = (e: KeyboardEvent, keyStr: string, isMac: boole
     return normalizedKey;
   };
 
-  const eventKey = normalizeKey(e.key);
+  const eventKey = normalizeKey(shortcutEventKey(e));
   const parsedKey = normalizeKey(key);
 
   return eventKey.toLowerCase() === parsedKey.toLowerCase();
