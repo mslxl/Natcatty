@@ -1,6 +1,8 @@
 import {
   Check,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   Eye,
   EyeOff,
   FileKey,
@@ -34,6 +36,8 @@ import {
   SSHKey,
 } from "../types";
 import ThemeSelectPanel from "./ThemeSelectPanel";
+import { AlgorithmOverridesPanel } from "./host-details/AlgorithmOverridesPanel";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import {
   ChainPanel,
   EnvVarsPanel,
@@ -113,7 +117,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
     c.protocol === 'ssh' ||
     c.port !== undefined || !!c.username || !!c.password || !!c.identityFileId ||
     c.agentForwarding !== undefined || c.authMethod !== undefined || !!c.identityId ||
-    !!c.proxyProfileId || !!c.proxyConfig || !!c.hostChain || !!c.startupCommand || c.legacyAlgorithms !== undefined || c.backspaceBehavior !== undefined ||
+    !!c.proxyProfileId || !!c.proxyConfig || !!c.hostChain || !!c.startupCommand || c.legacyAlgorithms !== undefined || c.skipEcdsaHostKey !== undefined || c.algorithms !== undefined || c.backspaceBehavior !== undefined ||
     (c.environmentVariables && c.environmentVariables.length > 0) ||
     c.moshEnabled !== undefined || !!c.moshServerPath ||
     (c.identityFilePaths && c.identityFilePaths.length > 0);
@@ -129,6 +133,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
   // Password visibility state
   const [showPassword, setShowPassword] = useState(false);
   const [showTelnetPassword, setShowTelnetPassword] = useState(false);
+  const [showAlgorithmOverrides, setShowAlgorithmOverrides] = useState(false);
   const [addProtocolOpen, setAddProtocolOpen] = useState(false);
 
   // Credential selection state
@@ -173,6 +178,8 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
       delete next.agentForwarding;
       delete next.startupCommand;
       delete next.legacyAlgorithms;
+      delete next.skipEcdsaHostKey;
+      delete next.algorithms;
       delete next.backspaceBehavior;
       delete next.proxyProfileId;
       delete next.proxyConfig;
@@ -314,6 +321,36 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
     if (!parentGroup || groupConfigs.length === 0) return terminalThemeId;
     return resolveGroupTerminalThemeId(resolveGroupDefaults(parentGroup, groupConfigs), terminalThemeId);
   }, [groupConfigs, parentGroup, terminalThemeId]);
+
+  // Effective `legacyAlgorithms` for this group, considering inheritance
+  // from the parent chain. Used by the algorithm-overrides editor so the
+  // seed reflects what hosts in this group would actually advertise — if
+  // the parent group already turned legacy mode on, the editor should
+  // include legacy algorithms in its default list even when this group
+  // itself hasn't set the flag.
+  const inheritedLegacyAlgorithms = useMemo(() => {
+    if (!parentGroup || groupConfigs.length === 0) return false;
+    return !!resolveGroupDefaults(parentGroup, groupConfigs).legacyAlgorithms;
+  }, [groupConfigs, parentGroup]);
+
+  // Same idea for the algorithm-override lists themselves: surface what
+  // this group would inherit from its parent so the editor can warn that
+  // a local Reset falls back to the parent's lists, not NetCatty's
+  // defaults.
+  const inheritedAlgorithmOverrides = useMemo(() => {
+    if (!parentGroup || groupConfigs.length === 0) return undefined;
+    return resolveGroupDefaults(parentGroup, groupConfigs).algorithms;
+  }, [groupConfigs, parentGroup]);
+
+  // And for the per-flag toggles below — if the parent already turned
+  // a flag on, the runtime applies it to hosts in this group via
+  // `applyGroupDefaults`, so the local toggle must reflect that. Without
+  // this, a child group would show the flag as off while connections
+  // still negotiated with it.
+  const inheritedSkipEcdsaHostKey = useMemo(() => {
+    if (!parentGroup || groupConfigs.length === 0) return false;
+    return !!resolveGroupDefaults(parentGroup, groupConfigs).skipEcdsaHostKey;
+  }, [groupConfigs, parentGroup]);
   const effectiveThemeId = form.themeOverride === false
     ? inheritedThemeId
     : (form.theme || inheritedThemeId);
@@ -362,6 +399,8 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
         ...(form.agentForwarding !== undefined && { agentForwarding: form.agentForwarding }),
         ...(form.startupCommand !== undefined && { startupCommand: form.startupCommand }),
         ...(form.legacyAlgorithms !== undefined && { legacyAlgorithms: form.legacyAlgorithms }),
+        ...(form.skipEcdsaHostKey !== undefined && { skipEcdsaHostKey: form.skipEcdsaHostKey }),
+        ...(form.algorithms !== undefined && { algorithms: form.algorithms }),
         ...(form.backspaceBehavior !== undefined && { backspaceBehavior: form.backspaceBehavior }),
         ...(form.proxyProfileId !== undefined && { proxyProfileId: form.proxyProfileId }),
         ...(normalizedProxyConfig !== undefined && { proxyConfig: normalizedProxyConfig }),
@@ -872,29 +911,59 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
               rows={3}
             />
 
-            {/* Legacy Algorithms */}
+            {/* Display the *effective* value (this group's field falling
+                back to the resolved parent default). Same rationale as
+                in HostDetailsPanel — without the fallback, a child group
+                that inherits a flag from a parent would show "off" in
+                the UI while connections still applied it. */}
             <ToggleRow
               label={t("hostDetails.legacyAlgorithms")}
-              enabled={!!form.legacyAlgorithms}
-              onToggle={() => update("legacyAlgorithms", !form.legacyAlgorithms)}
+              enabled={!!(form.legacyAlgorithms ?? inheritedLegacyAlgorithms)}
+              onToggle={() => update(
+                "legacyAlgorithms",
+                !(form.legacyAlgorithms ?? inheritedLegacyAlgorithms),
+              )}
             />
 
-            {/* Backspace behavior */}
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-xs text-muted-foreground">{t("hostDetails.backspaceBehavior")}</p>
-              <Select
-                value={form.backspaceBehavior ?? "default"}
-                onValueChange={(v) => update("backspaceBehavior", v === "default" ? undefined : v)}
-              >
-                <SelectTrigger className="h-8 w-auto text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="default">{t("hostDetails.backspaceBehavior.default")}</SelectItem>
-                  <SelectItem value="ctrl-h">^H (0x08)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            <ToggleRow
+              label={t("hostDetails.skipEcdsaHostKey")}
+              enabled={!!(form.skipEcdsaHostKey ?? inheritedSkipEcdsaHostKey)}
+              onToggle={() => update(
+                "skipEcdsaHostKey",
+                !(form.skipEcdsaHostKey ?? inheritedSkipEcdsaHostKey),
+              )}
+            />
+            <p className="text-xs text-muted-foreground break-words">
+              {t("hostDetails.skipEcdsaHostKey.desc")}
+            </p>
+            <Collapsible open={showAlgorithmOverrides} onOpenChange={setShowAlgorithmOverrides}>
+              <CollapsibleTrigger asChild>
+                <Button
+                  variant="ghost"
+                  className="w-full justify-between h-8 px-2 hover:bg-accent/50"
+                >
+                  <span className="text-xs font-medium text-muted-foreground">
+                    {t("hostDetails.algorithms.advanced")}
+                    {form.algorithms && Object.keys(form.algorithms).length > 0 && (
+                      <span className="ml-1.5 text-[10px] text-yellow-600 dark:text-yellow-400">
+                        ({t("hostDetails.algorithms.customized")})
+                      </span>
+                    )}
+                  </span>
+                  {showAlgorithmOverrides
+                    ? <ChevronUp size={14} className="text-muted-foreground" />
+                    : <ChevronDown size={14} className="text-muted-foreground" />}
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-2">
+                <AlgorithmOverridesPanel
+                  value={form.algorithms}
+                  legacyEnabled={!!(form.legacyAlgorithms ?? inheritedLegacyAlgorithms)}
+                  inheritedFromGroup={inheritedAlgorithmOverrides}
+                  onChange={(next) => update("algorithms", next)}
+                />
+              </CollapsibleContent>
+            </Collapsible>
 
             {/* Proxy */}
             <button
@@ -980,6 +1049,25 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
                 className="h-10"
               />
             )}
+
+            {/* Backspace behavior — terminal input mapping, lives at the
+                bottom of the SSH section so it doesn't get visually
+                grouped with the algorithm controls above. */}
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-muted-foreground">{t("hostDetails.backspaceBehavior")}</p>
+              <Select
+                value={form.backspaceBehavior ?? "default"}
+                onValueChange={(v) => update("backspaceBehavior", v === "default" ? undefined : v)}
+              >
+                <SelectTrigger className="h-8 w-auto text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">{t("hostDetails.backspaceBehavior.default")}</SelectItem>
+                  <SelectItem value="ctrl-h">^H (0x08)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </Card>
         )}
 

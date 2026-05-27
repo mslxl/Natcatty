@@ -918,7 +918,21 @@ async function connectThroughChainForSftp(event, options, jumpHosts, targetHost,
         keepaliveCountMax: hopCountMaxEffective,
         // Enable keyboard-interactive authentication (required for 2FA/MFA)
         tryKeyboard: true,
-        algorithms: buildSftpAlgorithms(options.legacyAlgorithms),
+        // Per-hop algorithm settings, mirroring sshBridge.cjs:
+        //   - `legacyAlgorithms` falls back to the target's setting
+        //     (append-only — safe to widen the hop's offer for chain
+        //     convenience).
+        //   - `skipEcdsaHostKey` and `algorithmOverrides` are strictly
+        //     per-host. They *narrow* the offered list (drop ecdsa-* or
+        //     replace a category), so propagating the leaf's setting
+        //     would break an ECDSA-required or Ed25519-only bastion.
+        algorithms: buildSftpAlgorithms(
+          jump.legacyAlgorithms ?? options.legacyAlgorithms,
+          {
+            skipEcdsaHostKey: jump.skipEcdsaHostKey,
+            algorithmOverrides: jump.algorithmOverrides,
+          },
+        ),
       };
 
       // Auth - support agent (certificate), key, and password fallback
@@ -1430,7 +1444,10 @@ async function openSftp(event, options) {
     keepaliveCountMax: options.keepaliveInterval == null
       ? 3
       : (options.keepaliveInterval > 0 ? (options.keepaliveCountMax ?? 3) : 0),
-    algorithms: buildSftpAlgorithms(options.legacyAlgorithms),
+    algorithms: buildSftpAlgorithms(options.legacyAlgorithms, {
+      skipEcdsaHostKey: options.skipEcdsaHostKey,
+      algorithmOverrides: options.algorithmOverrides,
+    }),
   };
 
   // Use the tunneled socket if we have one

@@ -745,6 +745,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         identityFilePaths: jumpIdentityFilePaths,
         keepaliveInterval: hopKeepalive.interval,
         keepaliveCountMax: hopKeepalive.countMax,
+        legacyAlgorithms: jumpHost.legacyAlgorithms,
+        skipEcdsaHostKey: jumpHost.skipEcdsaHostKey,
+        algorithmOverrides: jumpHost.algorithms,
       };
     });
 
@@ -900,6 +903,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           x11Forwarding: ctx.host.x11Forwarding,
           x11Display: ctx.terminalSettings?.x11Display,
           legacyAlgorithms: ctx.host.legacyAlgorithms,
+          skipEcdsaHostKey: ctx.host.skipEcdsaHostKey,
+          algorithmOverrides: ctx.host.algorithms,
           cols: term.cols,
           rows: term.rows,
           charset: ctx.host.charset,

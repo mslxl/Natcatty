@@ -428,13 +428,38 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         keepaliveCountMax: hopInterval > 0 ? hopCountMax : 0,
         // Enable keyboard-interactive authentication (required for 2FA/MFA)
         tryKeyboard: true,
-        algorithms: buildAlgorithms(options.legacyAlgorithms),
+        // Per-hop algorithm settings. Two distinct semantics:
+        //
+        // - `legacyAlgorithms` is *append-only* — it widens the offered
+        //   list — so falling back to the target's setting when the hop
+        //   didn't override is safe and matches the historic chain-wide
+        //   behavior (a user with a single old leaf only needs to flip
+        //   the toggle on the leaf).
+        //
+        // - `skipEcdsaHostKey` and `algorithmOverrides` *narrow* the
+        //   offered list (the first removes every `ecdsa-sha2-*`, the
+        //   second replaces a category outright). Propagating those to
+        //   a bastion that doesn't need them can lock the hop to
+        //   algorithms it doesn't accept — e.g. an Ed25519-only bastion
+        //   would still negotiate while ECDSA was offered, but breaks
+        //   when the leaf's ECDSA skip is applied to it. Treat both as
+        //   strictly per-host: an unset hop value uses the hop's default
+        //   offer, not the leaf's narrower setting.
+        algorithms: buildAlgorithms(
+          jump.legacyAlgorithms ?? options.legacyAlgorithms,
+          {
+            skipEcdsaHostKey: jump.skipEcdsaHostKey,
+            algorithmOverrides: jump.algorithmOverrides,
+          },
+        ),
       };
       attachSshDebugLogger(connOpts);
       logSshAlgorithms("Jump host", connOpts.algorithms, {
         hostname: jump.hostname,
         port: jump.port || 22,
-        legacyAlgorithms: !!options.legacyAlgorithms,
+        legacyAlgorithms: !!(jump.legacyAlgorithms ?? options.legacyAlgorithms),
+        skipEcdsaHostKey: !!jump.skipEcdsaHostKey,
+        hasAlgorithmOverrides: !!jump.algorithmOverrides,
       });
 
       // Auth - support agent (certificate), key, password, and default key fallback
@@ -712,13 +737,18 @@ async function startSSHSession(event, options) {
       keepaliveCountMax: options.keepaliveInterval > 0 ? (options.keepaliveCountMax ?? 10) : 0,
       // Enable keyboard-interactive authentication (required for 2FA/MFA)
       tryKeyboard: true,
-      algorithms: buildAlgorithms(options.legacyAlgorithms),
+      algorithms: buildAlgorithms(options.legacyAlgorithms, {
+        skipEcdsaHostKey: options.skipEcdsaHostKey,
+        algorithmOverrides: options.algorithmOverrides,
+      }),
     };
     attachSshDebugLogger(connectOpts);
     logSshAlgorithms("Target host", connectOpts.algorithms, {
       hostname: options.hostname,
       port: options.port || 22,
       legacyAlgorithms: !!options.legacyAlgorithms,
+      skipEcdsaHostKey: !!options.skipEcdsaHostKey,
+      hasAlgorithmOverrides: !!options.algorithmOverrides,
     });
 
     connectOpts.hostVerifier = hostKeyVerifier.createHostVerifier({
@@ -1715,6 +1745,15 @@ async function execCommand(event, payload) {
       username: payload.username,
       readyTimeout: enableKeyboardInteractive ? Math.max(timeoutMs, 120000) : timeoutMs,
       keepaliveInterval: 0,
+      // Honor the host's algorithm settings so one-off commands (e.g. the
+      // keychain "export public key to host" flow) negotiate with the same
+      // KEX / cipher / host-key set as the interactive terminal. Without
+      // this, a host that needs the ECDSA skip or legacy algorithms would
+      // connect in the terminal but still fail the same handshake here.
+      algorithms: buildAlgorithms(payload.legacyAlgorithms, {
+        skipEcdsaHostKey: payload.skipEcdsaHostKey,
+        algorithmOverrides: payload.algorithmOverrides,
+      }),
     };
 
     let authAgent = null;

@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   Check,
   ChevronDown,
+  ChevronUp,
   Eye,
   EyeOff,
   FolderLock,
@@ -55,6 +56,8 @@ import { EnvVar, GroupConfig, Host, Identity, ManagedSource, ProxyConfig, ProxyP
 import { DISTRO_COLORS, DISTRO_LOGOS } from "./DistroAvatar";
 import { DistroAvatar } from "./DistroAvatar";
 import ThemeSelectPanel from "./ThemeSelectPanel";
+import { AlgorithmOverridesPanel } from "./host-details/AlgorithmOverridesPanel";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import {
   AsidePanel,
   AsidePanelContent,
@@ -213,6 +216,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
 
   // Password visibility state
   const [showPassword, setShowPassword] = useState(false);
+  const [showAlgorithmOverrides, setShowAlgorithmOverrides] = useState(false);
 
   // Local key file path input state
   const [newKeyFilePath, setNewKeyFilePath] = useState("");
@@ -1797,21 +1801,30 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
         </Card>
         )}
 
-        {/* Legacy Algorithms */}
+        {/* SSH Algorithms */}
         <Card className="p-3 space-y-2 bg-card border-border/80">
           <div className="flex items-center gap-2">
             <ShieldAlert size={14} className="text-muted-foreground" />
-            <p className="text-xs font-semibold">{t("hostDetails.section.legacyAlgorithms")}</p>
+            <p className="text-xs font-semibold">{t("hostDetails.section.sshAlgorithms")}</p>
           </div>
+          {/* Display the *effective* value of these toggles (host field
+              falling back to the resolved group default). Without the
+              fallback a host that inherits the flag from its group would
+              show "off" while the runtime applied it anyway, and the
+              toggle's onToggle handler would compute the wrong "next"
+              value from the raw host field. */}
           <ToggleRow
             label={t("hostDetails.legacyAlgorithms")}
-            enabled={!!form.legacyAlgorithms}
-            onToggle={() => update("legacyAlgorithms", !form.legacyAlgorithms)}
+            enabled={!!(form.legacyAlgorithms ?? effectiveGroupDefaults?.legacyAlgorithms)}
+            onToggle={() => update(
+              "legacyAlgorithms",
+              !(form.legacyAlgorithms ?? effectiveGroupDefaults?.legacyAlgorithms),
+            )}
           />
           <p className="text-xs text-muted-foreground break-words">
             {t("hostDetails.legacyAlgorithms.desc")}
           </p>
-          {form.legacyAlgorithms && (
+          {(form.legacyAlgorithms ?? effectiveGroupDefaults?.legacyAlgorithms) && (
             <div className="flex items-start gap-2 p-2 rounded-md bg-yellow-500/10 border border-yellow-500/20">
               <AlertTriangle size={14} className="text-yellow-500 mt-0.5 flex-shrink-0" />
               <p className="text-xs text-yellow-600 dark:text-yellow-400 break-words">
@@ -1819,6 +1832,61 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
               </p>
             </div>
           )}
+          <ToggleRow
+            label={t("hostDetails.skipEcdsaHostKey")}
+            enabled={!!(form.skipEcdsaHostKey ?? effectiveGroupDefaults?.skipEcdsaHostKey)}
+            onToggle={() => update(
+              "skipEcdsaHostKey",
+              !(form.skipEcdsaHostKey ?? effectiveGroupDefaults?.skipEcdsaHostKey),
+            )}
+          />
+          <p className="text-xs text-muted-foreground break-words">
+            {t("hostDetails.skipEcdsaHostKey.desc")}
+          </p>
+          <Collapsible open={showAlgorithmOverrides} onOpenChange={setShowAlgorithmOverrides}>
+            <CollapsibleTrigger asChild>
+              <Button
+                variant="ghost"
+                className="w-full justify-between h-8 px-2 hover:bg-accent/50"
+              >
+                <span className="text-xs font-medium text-muted-foreground">
+                  {t("hostDetails.algorithms.advanced")}
+                  {form.algorithms && Object.keys(form.algorithms).length > 0 && (
+                    <span className="ml-1.5 text-[10px] text-yellow-600 dark:text-yellow-400">
+                      ({t("hostDetails.algorithms.customized")})
+                    </span>
+                  )}
+                </span>
+                {showAlgorithmOverrides
+                  ? <ChevronUp size={14} className="text-muted-foreground" />
+                  : <ChevronDown size={14} className="text-muted-foreground" />}
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-2">
+              <AlgorithmOverridesPanel
+                value={form.algorithms}
+                /* Use the effective legacy flag (host value falling back to
+                   the currently selected group's default) so the seed
+                   reflects what the host would actually advertise. We
+                   read from `effectiveGroupDefaults` (re-resolved on
+                   every form.group change), not the `groupDefaults` prop
+                   — otherwise switching the host into a different group
+                   without saving first would seed from the original
+                   group's flag and silently mis-populate the override. */
+                legacyEnabled={!!(form.legacyAlgorithms ?? effectiveGroupDefaults?.legacyAlgorithms)}
+                inheritedFromGroup={effectiveGroupDefaults?.algorithms}
+                onChange={(next) => update("algorithms", next)}
+              />
+            </CollapsibleContent>
+          </Collapsible>
+        </Card>
+
+        {/* Terminal Behavior — input/output key mappings (backspace, etc.) */}
+        <Card className="p-3 space-y-2 bg-card border-border/80">
+          <div className="flex items-center gap-2">
+            <TerminalSquare size={14} className="text-muted-foreground" />
+            <p className="text-xs font-semibold">{t("hostDetails.section.terminalBehavior")}</p>
+          </div>
           <div className="flex items-center justify-between gap-2">
             <p className="text-xs text-muted-foreground">{t("hostDetails.backspaceBehavior")}</p>
             <Select

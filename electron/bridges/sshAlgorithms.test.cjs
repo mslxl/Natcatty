@@ -214,3 +214,164 @@ test("Comware legacy group-exchange requests OpenSSH 6.4-sized DH groups", () =>
     { min: 1024, preferred: 1024, max: 8192 },
   );
 });
+
+// --- skipEcdsaHostKey toggle (#1027) ---------------------------------------
+// Some old Huawei / Cisco SSH stacks negotiate an ECDSA host key but produce
+// signatures that ssh2's strict RFC verification rejects ("Handshake failed:
+// signature verification failed"). Forcing the client to drop all
+// ecdsa-sha2-* from its host key advertisement makes the negotiation fall
+// back to ssh-rsa / ssh-dss / ssh-ed25519, which those stacks implement
+// correctly.
+
+for (const [label, buildAlgorithms] of [
+  ["SSH", sshBridge.buildAlgorithms],
+  ["SFTP", sftpBridge.buildSftpAlgorithms],
+]) {
+  test(`${label} skipEcdsaHostKey removes every ecdsa-sha2-* from serverHostKey (legacy on)`, () => {
+    withAlgorithmRuntime({}, () => {
+      const algorithms = buildAlgorithms(true, { skipEcdsaHostKey: true });
+      assert.ok(algorithms.serverHostKey, "legacy mode must populate serverHostKey");
+      for (const algo of algorithms.serverHostKey) {
+        assert.ok(!algo.startsWith("ecdsa-sha2-"), `${algo} should be filtered out`);
+      }
+      // Non-ECDSA legacy host key algos must remain available.
+      assert.ok(algorithms.serverHostKey.includes("ssh-rsa"));
+      assert.ok(algorithms.serverHostKey.includes("ssh-dss"));
+      assert.ok(algorithms.serverHostKey.includes("ssh-ed25519"));
+    });
+  });
+
+  test(`${label} skipEcdsaHostKey also filters serverHostKey when legacy is off`, () => {
+    withAlgorithmRuntime({}, () => {
+      const algorithms = buildAlgorithms(false, { skipEcdsaHostKey: true });
+      // Modern (non-legacy) mode delegates serverHostKey to ssh2 defaults
+      // unless we explicitly populate the field. When the skip toggle is on,
+      // we must populate it with the ssh2 defaults minus ecdsa-sha2-*.
+      assert.ok(algorithms.serverHostKey, "skip toggle must populate serverHostKey");
+      for (const algo of algorithms.serverHostKey) {
+        assert.ok(!algo.startsWith("ecdsa-sha2-"), `${algo} should be filtered out`);
+      }
+    });
+  });
+
+  test(`${label} skipEcdsaHostKey leaves other algorithm categories untouched`, () => {
+    withAlgorithmRuntime({}, () => {
+      const reference = buildAlgorithms(true);
+      const filtered = buildAlgorithms(true, { skipEcdsaHostKey: true });
+      assert.deepEqual(filtered.kex, reference.kex);
+      assert.deepEqual(filtered.cipher, reference.cipher);
+      assert.deepEqual(filtered.hmac, reference.hmac);
+      assert.deepEqual(filtered.compress, reference.compress);
+    });
+  });
+}
+
+// --- algorithmOverrides (per-host custom lists) ----------------------------
+// Expert users can fully replace any individual algorithm category with their
+// own ordered list. An empty / missing override leaves the category at the
+// default (base ∪ legacy if enabled). Overrides apply BEFORE skipEcdsaHostKey
+// so the skip toggle remains an unconditional kill switch.
+
+for (const [label, buildAlgorithms] of [
+  ["SSH", sshBridge.buildAlgorithms],
+  ["SFTP", sftpBridge.buildSftpAlgorithms],
+]) {
+  test(`${label} algorithmOverrides.serverHostKey replaces the host-key list verbatim`, () => {
+    withAlgorithmRuntime({}, () => {
+      const algorithms = buildAlgorithms(true, {
+        algorithmOverrides: { serverHostKey: ["ssh-rsa", "ssh-dss"] },
+      });
+      assert.deepEqual(algorithms.serverHostKey, ["ssh-rsa", "ssh-dss"]);
+    });
+  });
+
+  test(`${label} algorithmOverrides apply to every category independently`, () => {
+    withAlgorithmRuntime({}, () => {
+      const algorithms = buildAlgorithms(false, {
+        algorithmOverrides: {
+          kex: ["curve25519-sha256"],
+          cipher: ["aes256-ctr"],
+          hmac: ["hmac-sha2-512"],
+          serverHostKey: ["ssh-ed25519"],
+          compress: ["none"],
+        },
+      });
+      assert.deepEqual(algorithms.kex, ["curve25519-sha256"]);
+      assert.deepEqual(algorithms.cipher, ["aes256-ctr"]);
+      assert.deepEqual(algorithms.hmac, ["hmac-sha2-512"]);
+      assert.deepEqual(algorithms.serverHostKey, ["ssh-ed25519"]);
+      assert.deepEqual(algorithms.compress, ["none"]);
+    });
+  });
+
+  test(`${label} empty or missing algorithmOverrides leave defaults intact`, () => {
+    withAlgorithmRuntime({}, () => {
+      const reference = buildAlgorithms(true);
+      const withEmpty = buildAlgorithms(true, {
+        algorithmOverrides: { kex: [], cipher: undefined },
+      });
+      assert.deepEqual(withEmpty.kex, reference.kex);
+      assert.deepEqual(withEmpty.cipher, reference.cipher);
+    });
+  });
+
+  test(`${label} skipEcdsaHostKey wins over algorithmOverrides that include ECDSA`, () => {
+    withAlgorithmRuntime({}, () => {
+      const algorithms = buildAlgorithms(false, {
+        skipEcdsaHostKey: true,
+        algorithmOverrides: {
+          serverHostKey: ["ssh-ed25519", "ecdsa-sha2-nistp256", "ssh-rsa"],
+        },
+      });
+      assert.deepEqual(algorithms.serverHostKey, ["ssh-ed25519", "ssh-rsa"]);
+    });
+  });
+
+  test(`${label} HMAC override drops MD5 entries when the runtime disables MD5`, () => {
+    // Mirrors the KEX-override-runtime-filter test above: a user might
+    // seed an HMAC override from the legacy default list (which includes
+    // hmac-md5) on a FIPS-disabled MD5 runtime. ssh2's
+    // generateAlgorithmList() throws "Unsupported algorithm" synchronously
+    // for hmac-md5 in that case, so the override path must apply the same
+    // md5Supported() gate that applyLegacyHmacAlgorithms uses.
+    withAlgorithmRuntime({ hashes: ["sha1", "sha256", "sha512"] }, () => {
+      const algorithms = buildAlgorithms(true, {
+        algorithmOverrides: {
+          hmac: [
+            "hmac-sha2-256",
+            "hmac-md5",
+            "hmac-sha1",
+            "hmac-md5-96",
+          ],
+        },
+      });
+      assert.ok(algorithms.hmac.includes("hmac-sha2-256"));
+      assert.ok(algorithms.hmac.includes("hmac-sha1"));
+      assert.equal(algorithms.hmac.includes("hmac-md5"), false);
+      assert.equal(algorithms.hmac.includes("hmac-md5-96"), false);
+    });
+  });
+
+  test(`${label} KEX override is filtered against the runtime's fixed-DH support`, () => {
+    // On Electron/BoringSSL where modp2 (the prime backing
+    // diffie-hellman-group1-sha1) is not available, the default builder
+    // already drops group1-sha1. An advanced user's KEX override that
+    // includes it must go through the same filter — otherwise the
+    // override silently re-introduces an algorithm ssh2 will throw
+    // "Unknown DH group" on mid-handshake.
+    withAlgorithmRuntime({ unsupportedGroups: new Set(["modp2"]) }, () => {
+      const algorithms = buildAlgorithms(true, {
+        algorithmOverrides: {
+          kex: [
+            "diffie-hellman-group14-sha1",
+            "diffie-hellman-group1-sha1",
+            "diffie-hellman-group-exchange-sha1",
+          ],
+        },
+      });
+      assert.ok(algorithms.kex.includes("diffie-hellman-group14-sha1"));
+      assert.ok(algorithms.kex.includes("diffie-hellman-group-exchange-sha1"));
+      assert.equal(algorithms.kex.includes("diffie-hellman-group1-sha1"), false);
+    });
+  });
+}
