@@ -382,6 +382,10 @@ export function useTerminalAutocomplete(
    * Clear popup/ghost state. Skips re-render if already empty.
    */
   const clearState = useCallback(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
     ghostAddonRef.current?.hide();
     // Bump version to invalidate any in-flight async completions
     fetchVersionRef.current++;
@@ -744,6 +748,8 @@ export function useTerminalAutocomplete(
       const { position, cursorLineTop, cursorLineBottom, expandUpward } = calculatePopupPosition(term, completions.length);
       startTransition(() => {
         setState((prev) => {
+          if (version !== fetchVersionRef.current) return prev;
+
           const nextState: AutocompleteState = {
             suggestions: completions,
             selectedIndex: -1,
@@ -993,10 +999,12 @@ export function useTerminalAutocomplete(
       if (isFastTyping) {
         // Still debounce, but with a longer delay to wait for typing to pause
         debounceTimerRef.current = setTimeout(() => {
+          debounceTimerRef.current = null;
           fetchSuggestions();
         }, settingsRef.current.debounceMs * 3);
       } else {
         debounceTimerRef.current = setTimeout(() => {
+          debounceTimerRef.current = null;
           fetchSuggestions();
         }, settingsRef.current.debounceMs);
       }
