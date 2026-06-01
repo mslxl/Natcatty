@@ -34,6 +34,17 @@ function registerAcpHandlers(ctx) {
         }
       }
 
+      // Codebuddy pre-flight: if CODEBUDDY_API_KEY is not set anywhere,
+      // surface a targeted error instead of spawning and letting it fail
+      // with an opaque auth error.
+      if (isCodebuddyAgent) {
+        const normalizedReqEnv = normalizeAgentEnv(requestedAgentEnv);
+        const hasApiKey = Boolean(shellEnv.CODEBUDDY_API_KEY || normalizedReqEnv.CODEBUDDY_API_KEY);
+        if (!hasApiKey) {
+          return { ok: false, models: [], error: "CODEBUDDY_API_KEY is not set. Configure it in Settings -> AI -> CodeBuddy Code, or export it in your shell environment." };
+        }
+      }
+
       let agentEnv = withCliDiscoveryEnv({ ...shellEnv, ...normalizeAgentEnv(requestedAgentEnv) });
       if (isClaudeAgent) {
         agentEnv = normalizeClaudeCodeExecutableEnvForAcp(agentEnv);
@@ -127,9 +138,11 @@ function registerAcpHandlers(ctx) {
       return { ok: false, error: "Unauthorized IPC sender" };
     }
     let abortController = null;
-    // Hoisted so the catch block can reference them for Claude-specific error handling.
+    // Hoisted so the catch block can reference them for agent-specific error handling.
     let isClaudeAgent = false;
+    let isCodebuddyAgent = false;
     let claudeAuthPresence = null;
+    let codebuddyAuthPresence = null;
     try {
       const existingRun = acpChatRuns.get(chatSessionId);
       if (existingRun && existingRun.requestId !== requestId) {
@@ -184,12 +197,18 @@ function registerAcpHandlers(ctx) {
       const isCodexAgent = matchesAgentCommand(acpCommand, "codex-acp");
       isClaudeAgent = matchesAgentCommand(acpCommand, "claude-agent-acp");
       const isCopilotAgent = matchesAgentCommand(acpCommand, "copilot");
-      const isCodebuddyAgent = matchesAgentCommand(acpCommand, "codebuddy");
+      isCodebuddyAgent = matchesAgentCommand(acpCommand, "codebuddy");
       // For Claude: detect whether any auth is reachable so we can turn an
       // opaque "-32603 Internal error" into actionable guidance on failure.
       // Heuristic only (macOS may keep creds in Keychain) — never hard-block.
       claudeAuthPresence = isClaudeAgent
         ? detectClaudeAuthPresence({ ...shellEnv, ...normalizeAgentEnv(requestedAgentEnv) })
+        : null;
+      // For Codebuddy: check if CODEBUDDY_API_KEY is present in env.
+      // Without it, the agent will fail immediately with an auth error.
+      const normalizedAgentEnv = normalizeAgentEnv(requestedAgentEnv);
+      codebuddyAuthPresence = isCodebuddyAgent
+        ? (Boolean(shellEnv.CODEBUDDY_API_KEY || normalizedAgentEnv.CODEBUDDY_API_KEY) ? "present" : "missing")
         : null;
       const agentLabel = isCodexAgent ? "codex" : isClaudeAgent ? "claude" : isCopilotAgent ? "copilot" : isCodebuddyAgent ? "codebuddy" : acpCommand;
       const effectiveToolIntegrationMode = normalizeToolIntegrationMode(toolIntegrationMode);
@@ -230,6 +249,17 @@ function registerAcpHandlers(ctx) {
           error: preflightError,
         });
         return { ok: false, error: `Missing env var ${codexCustomConfig.envKey}` };
+      }
+
+      // Codebuddy pre-flight: fail early if CODEBUDDY_API_KEY is missing
+      // so the user gets a clear, actionable error instead of an opaque
+      // auth failure from the spawned process.
+      if (isCodebuddyAgent && codebuddyAuthPresence === "missing") {
+        safeSend(event.sender, "netcatty:ai:acp:error", {
+          requestId,
+          error: "CODEBUDDY_API_KEY is not set. Configure it in Settings -> AI -> CodeBuddy Code, or export it in your shell environment.",
+        });
+        return { ok: false, error: "CODEBUDDY_API_KEY not set" };
       }
 
       if (isCodexAgent && !apiKey && !codexCustomConfig) {
@@ -788,6 +818,10 @@ function registerAcpHandlers(ctx) {
       } else if (isClaudeAgent) {
         // #4: always reap the Claude provider/process tree on error.
         cleanupAcpProvider(chatSessionId);
+      } else if (isCodebuddyAgent) {
+        // Same as Claude: reap the Codebuddy provider/process tree on error
+        // to avoid leaking stale processes when auth or config fails.
+        cleanupAcpProvider(chatSessionId);
       }
 
       safeSend(event.sender, "netcatty:ai:acp:error", {
@@ -796,7 +830,9 @@ function registerAcpHandlers(ctx) {
           ? `Authentication failed. Connect Codex in Settings -> AI, or configure an enabled OpenAI provider API key.\n\nDetails: ${errMsg}`
           : isClaudeAgent && claudeAuthPresence === "none"
             ? `${CLAUDE_AUTH_HELP_MESSAGE}\n\nDetails: ${errMsg}`
-            : errMsg,
+            : isCodebuddyAgent && codebuddyAuthPresence === "missing"
+              ? `Authentication failed. Set CODEBUDDY_API_KEY in Settings -> AI -> CodeBuddy Code, or export it in your shell environment.\n\nDetails: ${errMsg}`
+              : errMsg,
       });
     } finally {
       acpActiveStreams.delete(requestId);

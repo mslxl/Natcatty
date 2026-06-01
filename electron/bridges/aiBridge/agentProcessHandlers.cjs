@@ -6,6 +6,7 @@ function registerAgentProcessHandlers(ctx) {
     "claude",
     "codex", "codex-acp",
     "copilot",
+    "codebuddy",
   ]);
 
   ipcMain.handle("netcatty:ai:agent:spawn", async (event, { agentId, command, args, env, closeStdin }) => {
