@@ -90,7 +90,7 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
             </Tooltip>
           </div>
 
-          <div className={cn("space-y-1", sidebarCollapsed ? "px-1.5" : "px-3")}>
+          <div className={cn("space-y-1", sidebarCollapsed ? "px-1.5" : "px-2.5")}>
             <Tooltip>
               <TooltipTrigger asChild>
                 <RippleButton
@@ -228,7 +228,7 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
             </Tooltip>
           </div>
 
-          <div className={cn("mt-auto pb-4 space-y-2", sidebarCollapsed ? "px-1.5" : "px-3")}>
+          <div className={cn("mt-auto pb-4 space-y-2", sidebarCollapsed ? "px-1.5" : "px-2.5")}>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
