@@ -63,8 +63,8 @@ const CodeTextarea = React.forwardRef<HTMLTextAreaElement, CodeTextareaProps>(
     return (
       <div
         className={cn(
-          "flex w-full overflow-hidden rounded-md border border-input bg-background",
-          "focus-within:ring-1 focus-within:ring-ring",
+          "flex w-full overflow-hidden rounded-md border border-input bg-background transition-colors",
+          "focus-within:border-ring",
           wrapperClassName,
         )}
       >
