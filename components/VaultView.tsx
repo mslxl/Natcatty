@@ -370,37 +370,27 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     [isSearchQuickConnect, handleConnectClick],
   );
 
-  // Check if host has multiple protocols enabled (using effective/resolved host)
-  const hasMultipleProtocols = useCallback((host: Host) => {
-    const effective = host.group
-      ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigs, { validProxyProfileIds: proxyProfileIdSet }), { validProxyProfileIds: proxyProfileIdSet })
-      : applyGroupDefaults(host, {}, { validProxyProfileIds: proxyProfileIdSet });
-    let count = 0;
-    // SSH is always available as base protocol (unless explicitly set to something else)
-    if (effective.protocol === "ssh" || !effective.protocol) count++;
-    // Mosh adds another option
-    if (effective.moshEnabled) count++;
-    // Telnet adds another option
-    if (effective.telnetEnabled) count++;
-    // If protocol is explicitly telnet (not ssh), count it
-    if (effective.protocol === "telnet" && !effective.telnetEnabled) count++;
-    return count > 1;
-  }, [groupConfigs, proxyProfileIdSet]);
-
-  // Handle host connect with protocol selection
+  // Handle host connect. Resolution order:
+  //   Telnet set as default (protocol === 'telnet')  -> connect Telnet
+  //   Telnet enabled but not the default             -> ask (protocol picker)
+  //   Mosh enabled                                   -> connect Mosh
+  //   otherwise                                      -> connect SSH
   const handleHostConnect = useCallback(
     (host: Host) => {
-      if (hasMultipleProtocols(host)) {
-        // Pass effective host to protocol dialog so it shows correct ports/protocols
-        const effective = host.group
-          ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigs, { validProxyProfileIds: proxyProfileIdSet }), { validProxyProfileIds: proxyProfileIdSet })
-          : applyGroupDefaults(host, {}, { validProxyProfileIds: proxyProfileIdSet });
+      const effective = host.group
+        ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigs, { validProxyProfileIds: proxyProfileIdSet }), { validProxyProfileIds: proxyProfileIdSet })
+        : applyGroupDefaults(host, {}, { validProxyProfileIds: proxyProfileIdSet });
+      // Only prompt when Telnet is available but isn't the host's default protocol.
+      if (effective.telnetEnabled && effective.protocol !== "telnet") {
         setProtocolSelectHost(effective);
+      } else if (effective.protocol === "telnet") {
+        // Telnet-as-default wins over a stray moshEnabled flag.
+        onConnect({ ...host, moshEnabled: false });
       } else {
         onConnect(host);
       }
     },
-    [hasMultipleProtocols, onConnect, groupConfigs, proxyProfileIdSet],
+    [onConnect, groupConfigs, proxyProfileIdSet],
   );
 
   // Handle protocol selection
@@ -586,6 +576,17 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     clearHostSelection();
     toast.success(t("vault.hosts.deleteMultiple.success", { count: selectedHostIds.size }));
   }, [selectedHostIds, hosts, onUpdateHosts, clearHostSelection, t]);
+
+  const connectSelectedHosts = useCallback(() => {
+    if (selectedHostIds.size === 0) return;
+    // Connect each selected host in list order with its default protocol.
+    // We call onConnect directly (not handleHostConnect) so multi-protocol hosts
+    // connect with their configured protocol instead of opening a per-host dialog.
+    const targets = hosts.filter(h => selectedHostIds.has(h.id));
+    targets.forEach(host => onConnect(host));
+    clearHostSelection();
+    toast.success(t("vault.hosts.connectMultiple.success", { count: targets.length }));
+  }, [selectedHostIds, hosts, onConnect, clearHostSelection, t]);
   const { handleImportFileSelected } = useVaultImportHandlers({
     customGroups,
     hosts,
@@ -941,7 +942,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
-  return <VaultViewLayout ctx={{ Activity, allGroupPaths, allTags, AppLogo, Array, Badge, BookMarked, Boolean, Button, CheckSquare, ChevronDown, clearHostSelection, ClipboardCopy, Clock, cn, connectionLogs, ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger, Copy, currentSection, customGroups, deleteGroupPath, deleteGroupWithHosts, deleteSelectedHosts, deleteTargetPath, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, displayedGroups, displayedHosts, DistroAvatar, Download, Dropdown, DropdownContent, DropdownTrigger, Edit2, editingGroupPath, editingHost, editingHostGroupDefaults, FileCode, FileSymlink, FolderPlus, FolderTree, getDropTargetClasses, getEffectiveHostDistro, Globe, groupConfigs, GroupDetailsPanel, groupedDisplayHosts, handleConnectClick, handleCopyCredentials, handleDeleteTag, handleDuplicateHost, handleEditGroupConfig, handleEditHost, handleEditTag, handleExportHosts, handleHostConnect, handleImportFileSelected, handleNewHost, handleProtocolSelect, handleQuickConnect, handleQuickConnectSaveHost, handleSaveGroupConfig, handleSearchKeyDown, handleUnmanageGroup, hasHostsSidePanel, HostDetailsPanel, hostListScrollRef, hosts, HostTreeView, hotkeyScheme, identities, ImportVaultDialog, Input, isDeleteGroupOpen, isGroupPanelOpen, isHostPanelOpen, isHostsSectionActive, isImportOpen, isMultiSelectMode, isNewFolderOpen, isQuickConnectOpen, isRenameGroupOpen, isSearchQuickConnect, isSerialModalOpen, Key, keyBindings, KeychainManager, keys, knownHostsManagerElement, Label, lastPinnedId, LayoutGrid, LazyConnectionLogsManager, LazyProtocolSelectDialog, List, managedGroupPaths, managedSources, moveGroup, moveHostToGroup, Network, newFolderName, newHostGroupPath, onClearUnsavedConnectionLogs, onConnectSerial, onCreateLocalTerminal, onDeleteConnectionLog, onDeleteHost, onImportOrReuseKey, onOpenLogView, onOpenSettings, onRunSnippet, onToggleConnectionLogSaved, onUpdateCustomGroups, onUpdateGroupConfigs, onUpdateHosts, onUpdateIdentities, onUpdateKeys, onUpdateProxyProfiles, onUpdateSnippetPackages, onUpdateSnippets, Pin, pinnedHosts, pinnedRecentIds, Plug, Plus, PortForwarding, protocolSelectHost, proxyProfiles, ProxyProfilesManager, quickConnectTarget, quickConnectWarnings, QuickConnectWizard, recentHosts, renameGroupError, renameGroupName, renameTargetPath, RippleButton, rootRef, sanitizeHost, search, Search, selectedGroupPath, selectedHostIds, selectedTags, SerialConnectModal, SerialHostDetailsPanel, sessionCount, Set, setCurrentSection, setDeleteGroupWithHosts, setDeleteTargetPath, setDragOverDropTarget, setEditingGroupPath, setEditingHost, setGroupDragOverDropTarget, setIsDeleteGroupOpen, setIsGroupPanelOpen, setIsHostPanelOpen, setIsImportOpen, setIsMultiSelectMode, setIsNewFolderOpen, setIsQuickConnectOpen, setIsRenameGroupOpen, setIsSerialModalOpen, setLastPinnedId, setNewFolderName, setNewHostGroupPath, setProtocolSelectHost, setQuickConnectTarget, setQuickConnectWarnings, setRenameGroupError, setRenameGroupName, setRenameTargetPath, setSearch, setSelectedGroupPath, setSelectedHostIds, setSelectedTags, setSidebarCollapsed, setSortMode, setTargetParentPath, Settings, setViewMode, shellHistory, shouldHideEmptyRootHostsSection, showRecentHosts, sidebarCollapsed, snippetPackages, snippets, SnippetsManager, SortDropdown, sortMode, splitViewGridStyle, Square, Star, submitNewFolder, submitRenameGroup, Suspense, t, TagFilterDropdown, targetParentPath, terminalFontSize, terminalSettings, TerminalSquare, terminalThemeId, toggleHostPinned, toggleHostSelection, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, Trash2, treeExpandedState, treeViewGroupTree, treeViewHosts, Upload, upsertHostById, Usb, viewMode, visibleDisplayedHosts, X, Zap }} />;
+  return <VaultViewLayout ctx={{ Activity, allGroupPaths, allTags, AppLogo, Array, Badge, BookMarked, Boolean, Button, CheckSquare, ChevronDown, clearHostSelection, ClipboardCopy, Clock, cn, connectionLogs, connectSelectedHosts, ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger, Copy, currentSection, customGroups, deleteGroupPath, deleteGroupWithHosts, deleteSelectedHosts, deleteTargetPath, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, displayedGroups, displayedHosts, DistroAvatar, Download, Dropdown, DropdownContent, DropdownTrigger, Edit2, editingGroupPath, editingHost, editingHostGroupDefaults, FileCode, FileSymlink, FolderPlus, FolderTree, getDropTargetClasses, getEffectiveHostDistro, Globe, groupConfigs, GroupDetailsPanel, groupedDisplayHosts, handleConnectClick, handleCopyCredentials, handleDeleteTag, handleDuplicateHost, handleEditGroupConfig, handleEditHost, handleEditTag, handleExportHosts, handleHostConnect, handleImportFileSelected, handleNewHost, handleProtocolSelect, handleQuickConnect, handleQuickConnectSaveHost, handleSaveGroupConfig, handleSearchKeyDown, handleUnmanageGroup, hasHostsSidePanel, HostDetailsPanel, hostListScrollRef, hosts, HostTreeView, hotkeyScheme, identities, ImportVaultDialog, Input, isDeleteGroupOpen, isGroupPanelOpen, isHostPanelOpen, isHostsSectionActive, isImportOpen, isMultiSelectMode, isNewFolderOpen, isQuickConnectOpen, isRenameGroupOpen, isSearchQuickConnect, isSerialModalOpen, Key, keyBindings, KeychainManager, keys, knownHostsManagerElement, Label, lastPinnedId, LayoutGrid, LazyConnectionLogsManager, LazyProtocolSelectDialog, List, managedGroupPaths, managedSources, moveGroup, moveHostToGroup, Network, newFolderName, newHostGroupPath, onClearUnsavedConnectionLogs, onConnectSerial, onCreateLocalTerminal, onDeleteConnectionLog, onDeleteHost, onImportOrReuseKey, onOpenLogView, onOpenSettings, onRunSnippet, onToggleConnectionLogSaved, onUpdateCustomGroups, onUpdateGroupConfigs, onUpdateHosts, onUpdateIdentities, onUpdateKeys, onUpdateProxyProfiles, onUpdateSnippetPackages, onUpdateSnippets, Pin, pinnedHosts, pinnedRecentIds, Plug, Plus, PortForwarding, protocolSelectHost, proxyProfiles, ProxyProfilesManager, quickConnectTarget, quickConnectWarnings, QuickConnectWizard, recentHosts, renameGroupError, renameGroupName, renameTargetPath, RippleButton, rootRef, sanitizeHost, search, Search, selectedGroupPath, selectedHostIds, selectedTags, SerialConnectModal, SerialHostDetailsPanel, sessionCount, Set, setCurrentSection, setDeleteGroupWithHosts, setDeleteTargetPath, setDragOverDropTarget, setEditingGroupPath, setEditingHost, setGroupDragOverDropTarget, setIsDeleteGroupOpen, setIsGroupPanelOpen, setIsHostPanelOpen, setIsImportOpen, setIsMultiSelectMode, setIsNewFolderOpen, setIsQuickConnectOpen, setIsRenameGroupOpen, setIsSerialModalOpen, setLastPinnedId, setNewFolderName, setNewHostGroupPath, setProtocolSelectHost, setQuickConnectTarget, setQuickConnectWarnings, setRenameGroupError, setRenameGroupName, setRenameTargetPath, setSearch, setSelectedGroupPath, setSelectedHostIds, setSelectedTags, setSidebarCollapsed, setSortMode, setTargetParentPath, Settings, setViewMode, shellHistory, shouldHideEmptyRootHostsSection, showRecentHosts, sidebarCollapsed, snippetPackages, snippets, SnippetsManager, SortDropdown, sortMode, splitViewGridStyle, Square, Star, submitNewFolder, submitRenameGroup, Suspense, t, TagFilterDropdown, targetParentPath, terminalFontSize, terminalSettings, TerminalSquare, terminalThemeId, toggleHostPinned, toggleHostSelection, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, Trash2, treeExpandedState, treeViewGroupTree, treeViewHosts, Upload, upsertHostById, Usb, viewMode, visibleDisplayedHosts, X, Zap }} />;
 };
 
 // Only re-render when data props change - isActive is now managed internally via store subscription

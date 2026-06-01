@@ -34,6 +34,7 @@ export const NETWORK_DEVICE_OPTIONS = [
   'fortinet',
   'paloalto',
   'zyxel',
+  'ruijie',
 ] as const;
 
 export type NetworkDeviceVendor = typeof NETWORK_DEVICE_OPTIONS[number];
@@ -117,6 +118,9 @@ export const detectVendorFromSshVersion = (softwareVersion?: string): '' | Netwo
 
   // ZyXEL ZyWALL
   if (/^Zyxel\s*SSH/i.test(s)) return 'zyxel';
+
+  // Ruijie RGOS
+  if (/^RGOS_SSH\b/i.test(s)) return 'ruijie';
 
   return '';
 };
@@ -254,11 +258,13 @@ export const sanitizeHost = (host: Host): Host => {
         ? 'auto'
         : undefined;
   const migrated = migrateDeprecatedFontOverride(host);
+  const cleanNotes = host.notes?.trim() || undefined;
   return {
     ...migrated,
     hostname: cleanHostname,
     distro: cleanDistro,
     distroMode: cleanDistroMode,
     manualDistro: cleanManualDistro || undefined,
+    notes: cleanNotes,
   };
 };

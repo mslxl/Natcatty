@@ -1,5 +1,7 @@
 import {
   Check,
+  Eye,
+  EyeOff,
   FolderPlus,
   Plus,
   Settings2,
@@ -39,6 +41,7 @@ import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { Combobox, ComboboxOption, MultiCombobox } from "./ui/combobox";
 import { Input } from "./ui/input";
+import { Switch } from "./ui/switch";
 import { toast } from "./ui/toast";
 
 import {
@@ -47,6 +50,7 @@ import {
   EnvVarsPanel,
   ProxyPanel,
 } from "./host-details";
+import { HostNotesEditor } from "./host/HostNotesEditor";
 
 type CredentialType = "sshid" | "key" | "certificate" | "localKeyFile" | null;
 type SubPanel =
@@ -132,6 +136,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   const [identitySuggestionsOpen, setIdentitySuggestionsOpen] = useState(false);
 
   const [showPassword, setShowPassword] = useState(false);
+  const [showTelnetPassword, setShowTelnetPassword] = useState(false);
   const [showAlgorithmOverrides, setShowAlgorithmOverrides] = useState(false);
 
   const [newKeyFilePath, setNewKeyFilePath] = useState("");
@@ -162,6 +167,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
       setGroupInputValue(initialData.group || "");
       setPendingReferenceKeyPath(null);
       setShowPassword(false);
+      setShowTelnetPassword(false);
     }
   }, [initialData]);
 
@@ -388,6 +394,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
       label: finalLabel,
       group: finalGroup,
       tags: form.tags || [],
+      notes: form.notes?.trim() || undefined,
       port: finalPort,
       password: form.savePassword === false ? undefined : form.password,
       managedSourceId: finalManagedSourceId,
@@ -759,6 +766,12 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
               triggerClassName="flex-1 min-h-10"
             />
           </div>
+
+          <HostNotesEditor
+            panelKey={form.id}
+            value={form.notes ?? ""}
+            onChange={(notes) => update("notes", notes)}
+          />
         </Card>
 
         <HostDetailsConnectionSections
@@ -848,6 +861,14 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
               )}
             </div>
 
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs text-muted-foreground">{t("hostDetails.telnet.setDefault")}</span>
+              <Switch
+                checked={form.protocol === "telnet"}
+                onCheckedChange={(checked) => update("protocol", checked ? "telnet" : "ssh")}
+              />
+            </div>
+
             <p className="text-xs font-semibold">{t("hostDetails.telnet.credentials")}</p>
 	            <Input
 	              placeholder={t("hostDetails.telnet.username")}
@@ -857,15 +878,24 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
 	              }
               className="h-10"
             />
-            <Input
-	              placeholder={t("hostDetails.telnet.password")}
-	              type="password"
-	              value={effectiveTelnetPassword}
-	              onChange={(e) =>
-	                update("telnetPassword" as keyof Host, e.target.value)
-              }
-              className="h-10"
-            />
+            <div className="relative">
+              <Input
+                placeholder={t("hostDetails.telnet.password")}
+                type={showTelnetPassword ? "text" : "password"}
+                value={effectiveTelnetPassword}
+                onChange={(e) =>
+                  update("telnetPassword" as keyof Host, e.target.value)
+                }
+                className="h-10 pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setShowTelnetPassword(!showTelnetPassword)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {showTelnetPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
 
             <Input
               placeholder={groupDefaults?.charset || t("hostDetails.charset.placeholder")}
