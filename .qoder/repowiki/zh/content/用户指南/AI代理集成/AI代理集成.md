@@ -17,6 +17,12 @@
 - [ProviderConfigForm.tsx](file://components/settings/tabs/ai/ProviderConfigForm.tsx)
 - [ProviderCard.tsx](file://components/settings/tabs/ai/ProviderCard.tsx)
 - [useAgentDiscovery.ts](file://application/state/useAgentDiscovery.ts)
+- [SettingsAITab.tsx](file://components/settings/tabs/SettingsAITab.tsx)
+- [CodebuddyCard.tsx](file://components/settings/tabs/ai/CodebuddyCard.tsx)
+- [codebuddyConfigEnv.ts](file://components/settings/tabs/ai/codebuddyConfigEnv.ts)
+- [acpHandlers.cjs](file://electron/bridges/aiBridge/acpHandlers.cjs)
+- [agentDiscoveryHandlers.cjs](file://electron/bridges/aiBridge/agentDiscoveryHandlers.cjs)
+- [ai.ts](file://application/i18n/locales/zh-CN/ai.ts)
 </cite>
 
 ## 目录
@@ -34,7 +40,7 @@
 ## 简介
 本指南面向使用者与运维人员，系统讲解 Netcatty 中的 AI 代理集成功能，涵盖以下主题：
 - AI 聊天面板的使用：对话界面、消息历史、会话管理
-- AI 代理选择与配置：内置 Catty Agent 与外部 ACP 代理（如 Claude、Codex 等）
+- AI 代理选择与配置：内置 Catty Agent 与外部 ACP 代理（如 Claude、Codex、CodeBuddy、Copilot 等）
 - 自然语言交互模式：多主机操作指令、任务执行、上下文理解
 - AI 工具调用：终端命令执行、工作区信息查询、网络搜索、URL 抓取
 - 会话历史管理：查看、导出、删除
@@ -42,7 +48,7 @@
 - 常见问题与故障排除
 
 ## 项目结构
-AI 集成由“侧边栏聊天面板 + 设置页 + SDK 适配层 + 主进程桥接”构成，UI 层负责输入、渲染与交互；SDK 层负责将请求路由到主进程桥接以规避跨域；主进程桥接再转发至具体大模型或外部 ACP 代理。
+AI 集成由"侧边栏聊天面板 + 设置页 + SDK 适配层 + 主进程桥接"构成，UI 层负责输入、渲染与交互；SDK 层负责将请求路由到主进程桥接以规避跨域；主进程桥接再转发至具体大模型或外部 ACP 代理。
 
 ```mermaid
 graph TB
@@ -67,6 +73,8 @@ end
 subgraph "设置页"
 ProvForm["ProviderConfigForm.tsx"]
 ProvCard["ProviderCard.tsx"]
+CodebuddyCard["CodebuddyCard.tsx"]
+SettingsAITab["SettingsAITab.tsx"]
 end
 Panel --> Content
 Content --> MsgList
@@ -81,6 +89,7 @@ Panel --> Types
 Panel --> ViewState
 ProvForm --> Types
 ProvCard --> Types
+SettingsAITab --> CodebuddyCard
 ```
 
 **图表来源**
@@ -98,6 +107,8 @@ ProvCard --> Types
 - [systemPrompt.ts:1-142](file://infrastructure/ai/cattyAgent/systemPrompt.ts#L1-L142)
 - [ProviderConfigForm.tsx:1-461](file://components/settings/tabs/ai/ProviderConfigForm.tsx#L1-L461)
 - [ProviderCard.tsx:1-105](file://components/settings/tabs/ai/ProviderCard.tsx#L1-L105)
+- [SettingsAITab.tsx:629-657](file://components/settings/tabs/SettingsAITab.tsx#L629-L657)
+- [CodebuddyCard.tsx:1-186](file://components/settings/tabs/ai/CodebuddyCard.tsx#L1-L186)
 
 **章节来源**
 - [AIChatSidePanel.tsx:48-909](file://components/AIChatSidePanel.tsx#L48-L909)
@@ -114,6 +125,7 @@ ProvCard --> Types
 - SDK 适配：通过桥接发起流式/非流式请求，规范化响应
 - 工具集：终端执行、工作区信息、网络搜索、URL 抓取
 - 系统提示：根据作用域、主机、权限模式构建系统提示
+- **新增** CodeBuddy 代理：第四种受支持的外部 ACP 代理，通过 `codebuddy --acp` 协议工作
 
 **章节来源**
 - [AIChatPanelContent.tsx:69-249](file://components/AIChatPanelContent.tsx#L69-L249)
@@ -164,7 +176,7 @@ Panel-->>Content : 渲染消息与工具结果
 - 消息类型：用户消息、助手回复、工具调用、思考块、状态文本、错误信息
 - 工具调用显示：在最后一条助手消息后渲染待处理/已批准/已拒绝的工具调用
 - 图片/附件：支持图片缩放预览、拖拽/粘贴上传
-- 流式渲染：支持“思考中”动画与打字机效果
+- 流式渲染：支持"思考中"动画与打字机效果
 
 ```mermaid
 flowchart TD
@@ -220,7 +232,7 @@ Input-->>U : 渲染输入区状态
 
 ### 代理选择与外部 ACP 代理
 - 内置代理：Catty Agent（终端自动化助手）
-- 外部代理：通过系统发现与启用，支持 ACP 协议（如 Claude、Codex）
+- 外部代理：通过系统发现与启用，支持 ACP 协议（如 Claude、Codex、CodeBuddy、Copilot）
 - 发现机制：启动时扫描系统 PATH，过滤已配置代理，支持重新扫描
 - 启用流程：将发现的代理转换为可启用的 ExternalAgentConfig 并自动选择
 
@@ -244,6 +256,38 @@ Hook-->>UI : 返回ExternalAgentConfig并选中
 **章节来源**
 - [AgentSelector.tsx:118-300](file://components/ai/AgentSelector.tsx#L118-L300)
 - [useAgentDiscovery.ts:12-108](file://application/state/useAgentDiscovery.ts#L12-L108)
+
+### CodeBuddy 代理配置与集成
+**新增** CodeBuddy 作为第四种受支持的外部 ACP 代理，通过 `codebuddy --acp` 协议工作：
+
+- **发现与识别**：在代理发现列表中识别 `codebuddy` 命令，支持通过 PATH 自动检测或手动指定路径
+- **配置界面**：提供专门的 CodeBuddyCard 组件，支持 API Key、网络环境和自定义环境变量配置
+- **环境变量管理**：支持 CODEBUDDY_API_KEY 和 CODEBUDDY_INTERNET_ENVIRONMENT 等关键环境变量
+- **ACP 协议支持**：通过 `codebuddy --acp` 启动 ACP 服务器，与其他 ACP 代理（Claude、Codex、Copilot）兼容
+
+```mermaid
+flowchart TD
+Codebuddy["CodeBuddy 代理"] --> Detect["自动检测 PATH"]
+Detect --> Found{"找到可执行文件?"}
+Found --> |是| Card["显示配置卡片"]
+Found --> |否| Manual["手动指定路径"]
+Manual --> Card
+Card --> Config["配置 API Key/网络环境"]
+Config --> Env["设置环境变量"]
+Env --> ACP["启动 ACP 服务器"]
+ACP --> Ready["就绪，可选择使用"]
+```
+
+**图表来源**
+- [agentDiscoveryHandlers.cjs:36-44](file://electron/bridges/aiBridge/agentDiscoveryHandlers.cjs#L36-L44)
+- [CodebuddyCard.tsx:16-186](file://components/settings/tabs/ai/CodebuddyCard.tsx#L16-L186)
+- [codebuddyConfigEnv.ts:8-67](file://components/settings/tabs/ai/codebuddyConfigEnv.ts#L8-L67)
+
+**章节来源**
+- [SettingsAITab.tsx:629-657](file://components/settings/tabs/SettingsAITab.tsx#L629-L657)
+- [CodebuddyCard.tsx:16-186](file://components/settings/tabs/ai/CodebuddyCard.tsx#L16-L186)
+- [codebuddyConfigEnv.ts:8-67](file://components/settings/tabs/ai/codebuddyConfigEnv.ts#L8-L67)
+- [agentDiscoveryHandlers.cjs:36-44](file://electron/bridges/aiBridge/agentDiscoveryHandlers.cjs#L36-L44)
 
 ### 会话历史与导出
 - 历史抽屉：列出按匹配度排序的历史会话，支持选择与删除
@@ -274,7 +318,7 @@ ChooseFmt --> Save["保存文件"]
 
 ### AI 工具调用与系统提示
 - 工具集：终端执行、工作区信息、网络搜索、URL 抓取
-- 审批与串行化：工具调用在“确认”模式下触发审批；同一会话内串行排队，保证顺序一致性
+- 审批与串行化：工具调用在"确认"模式下触发审批；同一会话内串行排队，保证顺序一致性
 - 系统提示：根据作用域（单会话/工作区/全局）、主机列表、权限模式、是否启用网络搜索、用户技能上下文动态构建
 
 ```mermaid
@@ -353,6 +397,7 @@ ProviderConfigForm --> ProviderConfig : "编辑/保存"
 - 外部依赖
   - Electron 主进程桥接：aiChatStream/aiFetch/aiCattyCancelExec 等
   - Vercel AI SDK：统一 OpenAI/Anthropic/Google 客户端与流式处理
+  - **新增** ACP 协议支持：通过 @mcpc-tech/acp-ai-provider 库支持多种 ACP 代理
 - 数据流
   - 输入 -> 校验 -> SDK -> 桥接 -> 代理 -> 工具 -> 结果回传 -> 渲染
 
@@ -384,23 +429,26 @@ SidePanel --> MsgList["ChatMessageList.tsx"]
 - 工具串行化：同一会话内串行执行，避免并发冲突
 - 会话标题自动命名：首条用户消息截断命名，提升可读性
 - 无状态渲染优化：消息列表使用 memo 化比较，降低重渲染
-
-[本节为通用指导，无需特定文件引用]
+- **新增** CodeBuddy 代理支持：通过 ACP 协议提供高性能的代码辅助能力
 
 ## 故障排除指南
 - 无法连接/无响应
   - 检查提供商 API Key 是否正确、Base URL 是否可达
-  - 若使用自签名证书，可在提供商配置中开启“跳过 TLS 校验”
-  - 查看错误信息中的“可重试”标记，必要时重试
+  - 若使用自签名证书，可在提供商配置中开启"跳过 TLS 校验"
+  - 查看错误信息中的"可重试"标记，必要时重试
 - 工具调用被阻断
-  - 在“确认”模式下，工具调用会弹出审批；在“观察者”模式下只允许只读工具
+  - 在"确认"模式下，工具调用会弹出审批；在"观察者"模式下只允许只读工具
   - 检查命令是否命中阻断清单（如危险命令）
 - 会话历史为空
   - 新建会话后需至少一条消息才会出现在历史中
   - 删除会话后不可恢复，请谨慎操作
 - 外部代理未出现
-  - 使用“重新扫描”刷新发现列表
+  - 使用"重新扫描"刷新发现列表
   - 确认代理已在设置中启用并生效
+- **新增** CodeBuddy 代理问题
+  - 确认已正确安装 codebuddy 并可通过 PATH 访问
+  - 检查 API Key 和网络环境配置是否正确
+  - 验证 ACP 服务器是否正常启动（查看代理状态指示）
 
 **章节来源**
 - [ChatMessageList.tsx:280-292](file://components/ai/ChatMessageList.tsx#L280-L292)
@@ -408,9 +456,7 @@ SidePanel --> MsgList["ChatMessageList.tsx"]
 - [useAgentDiscovery.ts:19-32](file://application/state/useAgentDiscovery.ts#L19-L32)
 
 ## 结论
-Netcatty 的 AI 代理集成功能以清晰的分层设计实现了从 UI 到 SDK、再到主进程桥接与外部代理的完整链路。内置 Catty Agent 提供安全可控的终端自动化能力，外部 ACP 代理（如 Claude、Codex）扩展了模型与生态。配合完善的工具调用、会话历史与导出能力，用户可以高效地进行多主机操作与任务执行。
-
-[本节为总结，无需特定文件引用]
+Netcatty 的 AI 代理集成功能以清晰的分层设计实现了从 UI 到 SDK、再到主进程桥接与外部代理的完整链路。内置 Catty Agent 提供安全可控的终端自动化能力，外部 ACP 代理（如 Claude、Codex、CodeBuddy、Copilot）扩展了模型与生态。**新增的 CodeBuddy 代理**进一步丰富了代码辅助选项，通过 ACP 协议提供高性能的编程助手能力。配合完善的工具调用、会话历史与导出能力，用户可以高效地进行多主机操作与任务执行。
 
 ## 附录：最佳实践与常见问题
 
@@ -425,15 +471,21 @@ Netcatty 的 AI 代理集成功能以清晰的分层设计实现了从 UI 到 SD
 - 结果验证
   - 对写操作（如文件修改）建议先做只读验证（如查看差异）
   - 使用网络搜索验证事实性陈述
+- **新增** CodeBuddy 使用建议
+  - 根据网络环境选择合适的 CODEBUDDY_INTERNET_ENVIRONMENT
+  - 合理配置 API Key 和自定义环境变量
+  - 利用 ACP 协议的优势，享受更快的响应速度
 
 ### 常见问题
 - Q：为什么工具调用需要审批？
-  - A：在“确认”模式下，系统会弹出审批卡片，确保用户对潜在风险操作知情
+  - A：在"确认"模式下，系统会弹出审批卡片，确保用户对潜在风险操作知情
 - Q：如何切换模型或供应商？
   - A：在输入区点击模型芯片，选择供应商/模型；或在设置页配置提供商
 - Q：如何导出会话？
   - A：点击导出按钮，选择 Markdown/JSON/纯文本格式保存
 - Q：如何删除历史会话？
   - A：在历史抽屉中点击删除按钮，确认后移除
-
-[本节为通用指导，无需特定文件引用]
+- **新增** Q：CodeBuddy 代理如何配置？
+  - A：在设置页的 AI 代理配置中，找到 CodeBuddy Code 卡片，配置 API Key、网络环境和自定义环境变量后即可使用
+- **新增** Q：CodeBuddy 与其它 ACP 代理有什么区别？
+  - A：CodeBuddy 专注于代码辅助和编程场景，支持通过 ACP 协议提供本地化的编程助手体验

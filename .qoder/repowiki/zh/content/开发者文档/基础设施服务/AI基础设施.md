@@ -13,6 +13,7 @@
 - [systemPrompt.ts](file://infrastructure/ai/cattyAgent/systemPrompt.ts)
 - [safety.ts](file://infrastructure/ai/cattyAgent/safety.ts)
 - [acpHandlers.cjs](file://electron/bridges/aiBridge/acpHandlers.cjs)
+- [agentDiscoveryHandlers.cjs](file://electron/bridges/aiBridge/agentDiscoveryHandlers.cjs)
 - [providerHandlers.cjs](file://electron/bridges/aiBridge/providerHandlers.cjs)
 - [mcpServerBridge.cjs](file://electron/bridges/mcpServerBridge.cjs)
 - [logger.ts](file://lib/logger.ts)
@@ -35,6 +36,8 @@
 ## 简介
 本文件面向Netcatty的AI基础设施，系统化阐述AI代理管理器的设计与实现，覆盖代理发现与匹配、生命周期与并发控制、AI SDK集成（Claude、OpenAI等）、共享服务（会话执行队列、工具执行器、安全控制、输出解析）以及端到端的AI服务架构。文档同时提供关键流程的时序图与类图，帮助读者快速理解从用户请求到AI响应的全链路。
 
+**更新** 本版本新增了对CodeBuddy Code AI代理的支持，包括代理发现机制、命令识别和元数据管理。
+
 ## 项目结构
 Netcatty的AI基础设施主要由以下层次构成：
 - 基础设施层（infrastructure/ai）
@@ -44,6 +47,7 @@ Netcatty的AI基础设施主要由以下层次构成：
   - 类型与提示：统一的类型定义、系统提示构建、命令安全策略。
 - 主进程桥接层（electron/bridges）
   - ACP处理器：负责启动/取消ACP流、模型枚举、会话复用与清理。
+  - 代理发现处理器：扫描系统中的外部AI代理，包括CodeBuddy、Claude、Codex、Copilot等。
   - 提供商处理器：配置同步、主机白名单、密钥注入与临时放行。
   - MCP服务器桥接：CLI发现文件写入、会话互斥与命令阻断。
 - 日志与错误分类（lib/logger.ts, infrastructure/ai/errorClassifier.ts）
@@ -61,21 +65,23 @@ F["ACP 代理适配器<br/>acpAgentAdapter.ts"]
 end
 subgraph "主进程桥接"
 G["ACP 处理器<br/>acpHandlers.cjs"]
-H["提供商处理器<br/>providerHandlers.cjs"]
-I["MCP 服务器桥接<br/>mcpServerBridge.cjs"]
+H["代理发现处理器<br/>agentDiscoveryHandlers.cjs"]
+I["提供商处理器<br/>providerHandlers.cjs"]
+J["MCP 服务器桥接<br/>mcpServerBridge.cjs"]
 end
-J["类型与提示<br/>types.ts / systemPrompt.ts / safety.ts"]
+K["类型与提示<br/>types.ts / systemPrompt.ts / safety.ts"]
 A --> G
 B --> E
 C --> B
 D --> B
-E --> I
+E --> J
 F --> G
-G --> I
-H --> A
-J --> A
-J --> B
-J --> F
+G --> J
+H --> G
+I --> A
+K --> A
+K --> B
+K --> F
 ```
 
 **图表来源**
@@ -86,6 +92,7 @@ J --> F
 - [toolExecutors.ts:1-240](file://infrastructure/ai/shared/toolExecutors.ts#L1-L240)
 - [acpAgentAdapter.ts:1-323](file://infrastructure/ai/acpAgentAdapter.ts#L1-L323)
 - [acpHandlers.cjs:1-200](file://electron/bridges/aiBridge/acpHandlers.cjs#L1-L200)
+- [agentDiscoveryHandlers.cjs:1-200](file://electron/bridges/aiBridge/agentDiscoveryHandlers.cjs#L1-L200)
 - [providerHandlers.cjs:1-200](file://electron/bridges/aiBridge/providerHandlers.cjs#L1-L200)
 - [mcpServerBridge.cjs:235-269](file://electron/bridges/mcpServerBridge.cjs#L235-L269)
 - [types.ts:1-348](file://infrastructure/ai/types.ts#L1-L348)
@@ -100,6 +107,7 @@ J --> F
 - [toolExecutors.ts:1-240](file://infrastructure/ai/shared/toolExecutors.ts#L1-L240)
 - [acpAgentAdapter.ts:1-323](file://infrastructure/ai/acpAgentAdapter.ts#L1-L323)
 - [acpHandlers.cjs:1-200](file://electron/bridges/aiBridge/acpHandlers.cjs#L1-L200)
+- [agentDiscoveryHandlers.cjs:1-200](file://electron/bridges/aiBridge/agentDiscoveryHandlers.cjs#L1-L200)
 - [providerHandlers.cjs:1-200](file://electron/bridges/aiBridge/providerHandlers.cjs#L1-L200)
 - [mcpServerBridge.cjs:235-269](file://electron/bridges/mcpServerBridge.cjs#L235-L269)
 - [types.ts:1-348](file://infrastructure/ai/types.ts#L1-L348)
@@ -110,10 +118,13 @@ J --> F
 - ACP代理适配器：在渲染进程中通过桥接接口启动ACP流、监听事件、处理中止与错误，并将事件映射为统一的回调。
 - SDK适配层：提供fetch桥接以绕过CORS限制，封装流式与非流式请求，统一工具调用的输入/输出格式。
 - 工具执行器：封装终端执行、工作区信息查询、Web搜索与URL抓取等能力，统一返回结果结构。
-- 会话执行队列：按会话键串行化工具调用，避免PTTY并发冲突导致的“部分失败”问题。
+- 会话执行队列：按会话键串行化工具调用，避免PTTY并发冲突导致的"部分失败"问题。
 - 审批门控：统一的工具执行审批系统，支持超时自动拒绝与跨会话清理。
 - 安全与提示：命令安全检查（防ReDoS与阻断列表），系统提示构建（权限模式、范围、设备差异）。
-- 主进程桥接：ACP流控制、提供商配置同步与主机白名单、MCP会话互斥与CLI发现。
+- 主进程桥接：ACP流控制、代理发现与配置同步、提供商配置同步与主机白名单、MCP会话互斥与CLI发现。
+- **代理发现与管理**：支持多种外部AI代理的自动发现、命令识别与元数据管理，包括新增的CodeBuddy代理。
+
+**更新** 新增了对CodeBuddy Code AI代理的完整支持，包括代理发现、命令识别和元数据管理。
 
 **章节来源**
 - [acpAgentAdapter.ts:1-323](file://infrastructure/ai/acpAgentAdapter.ts#L1-L323)
@@ -132,7 +143,7 @@ J --> F
 sequenceDiagram
 participant U as "用户"
 participant R as "渲染进程<br/>AI SDK 适配器"
-participant P as "主进程桥接<br/>ACP/提供商处理器"
+participant P as "主进程桥接<br/>ACP/代理发现处理器"
 participant M as "主进程<br/>MCP 服务器桥接"
 participant T as "工具执行器<br/>终端/搜索/URL"
 U->>R : 发送消息/附件/思考块
@@ -325,6 +336,7 @@ Skills --> Prompt
   - 模型枚举与流式启动：根据代理命令解析二进制路径与环境变量，初始化会话并返回模型列表。
   - 会话复用与中断：同一chatSessionId下，若已有活跃流则中止旧流并复用会话，保持对话连续性。
   - 清理策略：瞬时模型枚举实例在完成后清理，Copilot专用COPILOT_HOME临时目录清理。
+  - **命令识别增强**：新增对CodeBuddy代理的命令识别支持，通过`matchesAgentCommand(acpCommand, "codebuddy")`进行精确匹配。
 - 提供商处理器
   - 配置同步：加密密钥与baseURL动态重建主机白名单。
   - 临时放行：为设置面板模型拉取临时添加主机/端口白名单，定时清理。
@@ -360,15 +372,30 @@ AH->>MS : 中止/清理
 - 管理代理元数据：内置codex/claude/copilot/codebuddy的命令名与ACP命令映射。
 - 命令基名匹配：支持以命令基名为准的匹配，兼容不同发行版本命名。
 - 存储路径获取：优先选择带路径且匹配主命令的已发现代理，否则回退到匹配项。
+- **新增CodeBuddy支持**：在代理发现配置中新增CodeBuddy代理条目，包括命令名称、ACP命令、参数和描述信息。
+
+**更新** 新增了对CodeBuddy Code AI代理的完整支持，包括代理发现、命令识别和元数据管理。
 
 **章节来源**
 - [managedAgents.ts:1-78](file://infrastructure/ai/managedAgents.ts#L1-L78)
+- [agentDiscoveryHandlers.cjs:36-44](file://electron/bridges/aiBridge/agentDiscoveryHandlers.cjs#L36-L44)
+
+### 代理发现处理器
+- **代理扫描**：扫描系统中的外部AI代理，包括CodeBuddy、Claude、Codex、Copilot等。
+- **路径解析**：解析CLI二进制路径，支持自动检测或自定义路径配置。
+- **版本探测**：探测代理版本信息，验证代理可用性。
+- **配置管理**：管理代理的可用性状态、版本信息和配置选项。
+
+**更新** 新增了对CodeBuddy代理的发现和配置支持。
+
+**章节来源**
+- [agentDiscoveryHandlers.cjs:4-141](file://electron/bridges/aiBridge/agentDiscoveryHandlers.cjs#L4-L141)
 
 ## 依赖关系分析
 - 渲染进程内部耦合
   - SDK适配器依赖桥接接口与类型系统；工具封装依赖会话执行队列与审批门控；工具执行器依赖MCP桥接与安全策略。
 - 主进程桥接
-  - ACP处理器依赖MCP服务器桥接与CLI发现文件；提供商处理器依赖密钥解密与主机白名单。
+  - ACP处理器依赖MCP服务器桥接与CLI发现文件；提供商处理器依赖密钥解密与主机白名单；**代理发现处理器依赖shell环境与CLI探测**。
 - 外部依赖
   - Vercel AI SDK（OpenAI/Anthropic/Google客户端）、@mcpc-tech/acp-ai-provider、ai包的streamText与step计数。
 
@@ -381,6 +408,7 @@ Tools --> Approve["approvalGate.ts"]
 ACP["acpAgentAdapter.ts"] --> Types
 ACP --> Handlers["acpHandlers.cjs"]
 Handlers --> MCP["mcpServerBridge.cjs"]
+Handlers --> Discovery["agentDiscoveryHandlers.cjs"]
 ProvHandlers["providerHandlers.cjs"] --> Handlers
 ```
 
@@ -392,6 +420,7 @@ ProvHandlers["providerHandlers.cjs"] --> Handlers
 - [approvalGate.ts:1-261](file://infrastructure/ai/shared/approvalGate.ts#L1-L261)
 - [acpAgentAdapter.ts:1-323](file://infrastructure/ai/acpAgentAdapter.ts#L1-L323)
 - [acpHandlers.cjs:1-200](file://electron/bridges/aiBridge/acpHandlers.cjs#L1-L200)
+- [agentDiscoveryHandlers.cjs:1-200](file://electron/bridges/aiBridge/agentDiscoveryHandlers.cjs#L1-L200)
 - [mcpServerBridge.cjs:235-269](file://electron/bridges/mcpServerBridge.cjs#L235-L269)
 - [providerHandlers.cjs:1-200](file://electron/bridges/aiBridge/providerHandlers.cjs#L1-L200)
 - [types.ts:1-348](file://infrastructure/ai/types.ts#L1-L348)
@@ -404,6 +433,7 @@ ProvHandlers["providerHandlers.cjs"] --> Handlers
 - [approvalGate.ts:1-261](file://infrastructure/ai/shared/approvalGate.ts#L1-L261)
 - [acpAgentAdapter.ts:1-323](file://infrastructure/ai/acpAgentAdapter.ts#L1-L323)
 - [acpHandlers.cjs:1-200](file://electron/bridges/aiBridge/acpHandlers.cjs#L1-L200)
+- [agentDiscoveryHandlers.cjs:1-200](file://electron/bridges/aiBridge/agentDiscoveryHandlers.cjs#L1-L200)
 - [mcpServerBridge.cjs:235-269](file://electron/bridges/mcpServerBridge.cjs#L235-L269)
 - [providerHandlers.cjs:1-200](file://electron/bridges/aiBridge/providerHandlers.cjs#L1-L200)
 - [types.ts:1-348](file://infrastructure/ai/types.ts#L1-L348)
@@ -413,14 +443,15 @@ ProvHandlers["providerHandlers.cjs"] --> Handlers
   - 使用SSE包装与TextEncoder，减少内存拷贝；仅在事件到达时enqueue，避免提前缓冲。
   - 对OpenAI流进行工具调用ID规范化，降低SDK解析开销与重试成本。
 - 并发与串行化
-  - 会话级执行队列避免PTTY并发冲突，减少“部分失败”与重试风暴。
+  - 会话级执行队列避免PTTY并发冲突，减少"部分失败"与重试风暴。
   - 预占位槽位确保LLM发射顺序与执行顺序一致，提升一致性体验。
 - 缓存与预编译
   - 默认阻断列表预编译，用户自定义规则缓存，降低正则匹配成本。
 - 主机白名单与临时放行
   - 提供商配置变更后重建白名单，临时条目定时清理，避免长期膨胀。
+- **代理发现优化**：代理扫描结果缓存，避免重复探测相同路径。
 
-[本节为通用性能建议，无需特定文件引用]
+**更新** 新增了代理发现的性能优化考虑。
 
 ## 故障排查指南
 - 错误分类
@@ -433,6 +464,9 @@ ProvHandlers["providerHandlers.cjs"] --> Handlers
   - 工具调用被拒：检查权限模式与审批门控；确认会话ID有效且在当前作用域内。
   - 命令被阻断：核对阻断列表与正则安全性；网络设备会话跳过Shell阻断列表。
   - ACP流中断：确认主进程未提前销毁会话；必要时重新发起请求并等待会话复用。
+  - **CodeBuddy代理问题**：检查codebuddy命令是否在PATH中，验证代理版本和配置。
+
+**更新** 新增了CodeBuddy代理相关的故障排查指导。
 
 **章节来源**
 - [errorClassifier.ts:121-156](file://infrastructure/ai/errorClassifier.ts#L121-L156)
@@ -441,12 +475,17 @@ ProvHandlers["providerHandlers.cjs"] --> Handlers
 - [safety.ts:76-99](file://infrastructure/ai/cattyAgent/safety.ts#L76-L99)
 
 ## 结论
-Netcatty的AI基础设施通过“渲染进程SDK适配 + 主进程桥接 + 共享服务”的分层设计，在保证安全与合规的前提下，提供了高扩展性的AI代理与工具调用能力。ACP适配器与SDK桥接共同实现了跨提供商的统一流式体验；会话执行队列与审批门控确保了并发安全与用户体验；系统提示与安全策略则在语义层面强化了任务导向与边界控制。整体架构既满足现有Claude、OpenAI、Google等提供商的集成需求，也为新提供商接入与自定义工具开发预留了清晰的扩展路径。
+Netcatty的AI基础设施通过"渲染进程SDK适配 + 主进程桥接 + 共享服务"的分层设计，在保证安全与合规的前提下，提供了高扩展性的AI代理与工具调用能力。ACP适配器与SDK桥接共同实现了跨提供商的统一流式体验；会话执行队列与审批门控确保了并发安全与用户体验；系统提示与安全策略则在语义层面强化了任务导向与边界控制。
+
+**更新** 本版本新增了对CodeBuddy Code AI代理的完整支持，包括代理发现、命令识别、元数据管理和配置界面。代理发现处理器能够自动扫描系统中的CodeBuddy代理，命令识别机制支持精确的代理匹配，而管理代理元数据则提供了完整的代理配置信息。
+
+整体架构既满足现有Claude、OpenAI、Google等提供商的集成需求，也为新提供商接入与自定义工具开发预留了清晰的扩展路径。新增的CodeBuddy支持进一步丰富了Netcatty的AI代理生态系统，为用户提供了更多样化的编程助手选择。
 
 ## 附录
 - 扩展性设计要点
   - 新提供商接入：通过ProviderStyle与resolveProviderEndpoint扩展端点与apiKey策略；在SDK适配器中新增对应客户端分支。
   - 自定义工具开发：遵循ToolExecResult规范，复用会话执行队列与审批门控；在工具封装中声明参数Schema与描述。
   - 插件化架构：通过外部代理（ACP）与MCP桥接，允许第三方CLI以统一协议接入，无需修改核心逻辑。
+  - **代理扩展**：新增代理支持时，需要在代理发现配置、命令识别逻辑和管理元数据中相应更新。
 
-[本节为概念性总结，无需特定文件引用]
+**更新** 新增了代理扩展的相关设计要点。

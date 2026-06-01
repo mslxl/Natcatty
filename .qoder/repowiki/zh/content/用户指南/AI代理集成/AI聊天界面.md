@@ -16,6 +16,14 @@
 - [aiChatStreamingSupport.ts](file://components/ai/hooks/aiChatStreamingSupport.ts)
 - [types.ts](file://infrastructure/ai/types.ts)
 - [aiPanelViewState.ts](file://components/ai/aiPanelViewState.ts)
+- [AgentIconBadge.tsx](file://components/ai/AgentIconBadge.tsx)
+- [AgentSelector.tsx](file://components/ai/AgentSelector.tsx)
+- [CodebuddyCard.tsx](file://components/settings/tabs/ai/CodebuddyCard.tsx)
+- [codebuddyConfigEnv.ts](file://components/settings/tabs/ai/codebuddyConfigEnv.ts)
+- [SettingsAITab.tsx](file://components/settings/tabs/SettingsAITab.tsx)
+- [agentDiscoveryHandlers.cjs](file://electron/bridges/aiBridge/agentDiscoveryHandlers.cjs)
+- [useAgentDiscovery.ts](file://application/state/useAgentDiscovery.ts)
+- [ai.ts](file://application/i18n/locales/zh-CN/ai.ts)
 </cite>
 
 ## 目录
@@ -33,14 +41,18 @@
 ## 简介
 本技术文档围绕AI聊天界面的完整实现进行深入解析，涵盖聊天面板的整体架构、消息列表渲染、输入区域与发送控制、实时流式响应机制、思考状态可视化、以及界面交互最佳实践。文档以代码级细节为基础，结合架构图与流程图，帮助开发者快速理解并扩展该功能。
 
+**更新** 新增CodeBuddy Code AI代理支持，包括代理识别、模型预设处理以及在AgentIconBadge中的视觉标识。
+
 ## 项目结构
-AI聊天界面由“侧边栏聊天面板”和“聊天内容面板”两大部分组成，配合AI流式处理钩子与消息元素组件共同完成端到端的交互体验。
+AI聊天界面由"侧边栏聊天面板"和"聊天内容面板"两大部分组成，配合AI流式处理钩子与消息元素组件共同完成端到端的交互体验。新增的CodeBuddy代理通过AgentSelector和AgentIconBadge组件集成到现有架构中。
 
 ```mermaid
 graph TB
 subgraph "侧边栏聊天面板"
 SidePanel["AIChatSidePanel.tsx"]
 PanelContent["AIChatPanelContent.tsx"]
+AgentSelector["AgentSelector.tsx"]
+AgentIconBadge["AgentIconBadge.tsx"]
 end
 subgraph "聊天内容面板"
 MsgList["ChatMessageList.tsx"]
@@ -54,12 +66,21 @@ ToolCall["tool-call.tsx"]
 PromptInput["prompt-input.tsx"]
 CodeHL["streamdownCodeHighlighter.ts"]
 end
-subgraph "流式处理"
+subgraph "AI流式处理"
 Hook["useAIChatStreaming.ts"]
 Support["aiChatStreamingSupport.ts"]
 Types["types.ts"]
 end
+subgraph "CodeBuddy集成"
+CodebuddyCard["CodebuddyCard.tsx"]
+CodebuddyEnv["codebuddyConfigEnv.ts"]
+SettingsAITab["SettingsAITab.tsx"]
+AgentDiscovery["agentDiscoveryHandlers.cjs"]
+UseAgentDiscovery["useAgentDiscovery.ts"]
+end
 SidePanel --> PanelContent
+SidePanel --> AgentSelector
+AgentSelector --> AgentIconBadge
 PanelContent --> MsgList
 PanelContent --> Input
 MsgList --> Thinking
@@ -71,22 +92,22 @@ PanelContent --> Conv
 SidePanel --> Hook
 Hook --> Support
 Hook --> Types
+SettingsAITab --> CodebuddyCard
+CodebuddyCard --> CodebuddyEnv
+AgentDiscovery --> AgentSelector
+UseAgentDiscovery --> AgentSelector
 ```
 
 **图表来源**
 - [AIChatSidePanel.tsx:48-909](file://components/AIChatSidePanel.tsx#L48-L909)
 - [AIChatPanelContent.tsx:1-249](file://components/AIChatPanelContent.tsx#L1-L249)
-- [ChatMessageList.tsx:1-468](file://components/ai/ChatMessageList.tsx#L1-L468)
-- [ChatInput.tsx:1-955](file://components/ai/ChatInput.tsx#L1-L955)
-- [ThinkingBlock.tsx:1-139](file://components/ai/ThinkingBlock.tsx#L1-L139)
-- [conversation.tsx:1-55](file://components/ai-elements/conversation.tsx#L1-L55)
-- [message.tsx:1-86](file://components/ai-elements/message.tsx#L1-L86)
-- [tool-call.tsx:1-315](file://components/ai-elements/tool-call.tsx#L1-L315)
-- [prompt-input.tsx:1-215](file://components/ai-elements/prompt-input.tsx#L1-L215)
-- [streamdownCodeHighlighter.ts:1-78](file://components/ai-elements/streamdownCodeHighlighter.ts#L1-L78)
-- [useAIChatStreaming.ts:1-927](file://components/ai/hooks/useAIChatStreaming.ts#L1-L927)
-- [aiChatStreamingSupport.ts:1-206](file://components/ai/hooks/aiChatStreamingSupport.ts#L1-L206)
-- [types.ts:1-344](file://infrastructure/ai/types.ts#L1-L344)
+- [AgentSelector.tsx:1-300](file://components/ai/AgentSelector.tsx#L1-L300)
+- [AgentIconBadge.tsx:1-242](file://components/ai/AgentIconBadge.tsx#L1-L242)
+- [CodebuddyCard.tsx:1-186](file://components/settings/tabs/ai/CodebuddyCard.tsx#L1-L186)
+- [codebuddyConfigEnv.ts:1-67](file://components/settings/tabs/ai/codebuddyConfigEnv.ts#L1-L67)
+- [SettingsAITab.tsx:629-657](file://components/settings/tabs/SettingsAITab.tsx#L629-L657)
+- [agentDiscoveryHandlers.cjs:1-52](file://electron/bridges/aiBridge/agentDiscoveryHandlers.cjs#L1-L52)
+- [useAgentDiscovery.ts:1-42](file://application/state/useAgentDiscovery.ts#L1-L42)
 
 **章节来源**
 - [AIChatSidePanel.tsx:48-909](file://components/AIChatSidePanel.tsx#L48-L909)
@@ -97,28 +118,33 @@ Hook --> Types
 - 聊天内容面板：负责消息列表渲染、输入区、历史抽屉、导出对话等。
 - 消息渲染层：基于Streamdown的Markdown渲染、代码高亮、工具调用卡片、思考块等。
 - 流式处理钩子：统一处理Catty内置代理与外部代理（ACP/原生进程）的流式输出、错误分类与上报、文本增量合并、思考内容与工具调用的解析与更新。
+- **新增** 代理选择器：支持内置代理（Catty）和外部代理（CodeBuddy、Copilot、Claude等）的选择与管理。
+- **新增** CodeBuddy集成：完整的CodeBuddy Code AI代理支持，包括检测、配置和环境变量管理。
 
 **章节来源**
 - [AIChatSidePanel.tsx:48-909](file://components/AIChatSidePanel.tsx#L48-L909)
 - [AIChatPanelContent.tsx:1-249](file://components/AIChatPanelContent.tsx#L1-L249)
 - [ChatMessageList.tsx:1-468](file://components/ai/ChatMessageList.tsx#L1-L468)
 - [useAIChatStreaming.ts:1-927](file://components/ai/hooks/useAIChatStreaming.ts#L1-L927)
+- [AgentSelector.tsx:1-300](file://components/ai/AgentSelector.tsx#L1-L300)
+- [CodebuddyCard.tsx:1-186](file://components/settings/tabs/ai/CodebuddyCard.tsx#L1-L186)
 
 ## 架构总览
-聊天界面采用“视图组件 + 流式处理钩子 + 类型定义”的分层设计。侧边栏面板作为控制器，调度流式钩子；消息列表作为渲染器，消费消息与流式增量；输入区负责构建请求上下文（含附件、用户技能、终端会话等）。
+聊天界面采用"视图组件 + 流式处理钩子 + 类型定义"的分层设计。侧边栏面板作为控制器，调度流式钩子；消息列表作为渲染器，消费消息与流式增量；输入区负责构建请求上下文（含附件、用户技能、终端会话等）。新增的代理系统通过AgentSelector组件实现统一的代理管理。
 
 ```mermaid
 sequenceDiagram
 participant U as "用户"
 participant SP as "AIChatSidePanel.tsx"
+participant AS as "AgentSelector.tsx"
 participant PC as "AIChatPanelContent.tsx"
 participant MSG as "ChatMessageList.tsx"
 participant IN as "ChatInput.tsx"
 participant HOOK as "useAIChatStreaming.ts"
 participant SUP as "aiChatStreamingSupport.ts"
-U->>IN : 输入文本/附件/技能
-IN->>SP : 触发发送回调
-SP->>HOOK : 发送至Catty或外部代理
+U->>AS : 选择CodeBuddy代理
+AS->>SP : 更新当前代理ID
+SP->>HOOK : 使用CodeBuddy代理发送消息
 HOOK->>SUP : 构建消息历史/工具上下文
 HOOK-->>MSG : 增量更新消息文本/思考/工具
 MSG-->>U : 实时渲染最新内容
@@ -128,6 +154,7 @@ SP->>HOOK : 中止当前流
 ```
 
 **图表来源**
+- [AgentSelector.tsx:118-190](file://components/ai/AgentSelector.tsx#L118-L190)
 - [AIChatSidePanel.tsx:647-798](file://components/AIChatSidePanel.tsx#L647-L798)
 - [AIChatPanelContent.tsx:174-178](file://components/AIChatPanelContent.tsx#L174-L178)
 - [ChatMessageList.tsx:37-514](file://components/ai/ChatMessageList.tsx#L37-L514)
@@ -143,7 +170,7 @@ SP->>HOOK : 中止当前流
 - 支持思考块（ThinkingBlock）的展开/折叠、时长统计、滚动同步。
 - 渲染工具调用卡片（ToolCall），支持审批状态、加载态、中断态、结果态。
 - 图片预览弹窗：拖拽平移、缩放、滚轮缩放、重置。
-- 空态提示与“正在输入”动画（无内容且未开始时显示）。
+- 空态提示与"正在输入"动画（无内容且未开始时显示）。
 - 通过React.memo浅比较优化渲染性能。
 
 消息类型与渲染策略
@@ -188,7 +215,7 @@ RenderMsg --> End(["结束"])
 功能特性
 - 文本输入区：支持多行展开、最大长度限制、粘贴/拖拽文件。
 - 文件附件：以芯片形式展示，支持移除；支持图片/文件两类图标。
-- 用户技能：支持“/技能”触发器与下拉选择，插入技能令牌。
+- 用户技能：支持"/技能"触发器与下拉选择，插入技能令牌。
 - @主机提及：在有可用终端会话时，支持@触发与键盘导航。
 - 模型/提供商选择：内置模型下拉或两层提供商→模型选择（Catty专用）。
 - 底部工具栏：包含附件菜单、模型选择、权限模式（已移除）、发送/停止按钮。
@@ -221,9 +248,9 @@ IN-->>SP : 调用handleSend
 
 ### 思考状态可视化（ThinkingBlock）
 工作原理
-- 展示“思考中”标签与时间戳，支持闪烁效果。
+- 展示"思考中"标签与时间戳，支持闪烁效果。
 - 流式期间自动展开并滚动到底部，便于观察中间过程。
-- 结束后自动折叠为“思考了X秒”，点击展开查看全文。
+- 结束后自动折叠为"思考了X秒"，点击展开查看全文。
 - 预览模式：截断过长内容，折叠时显示简要预览。
 
 用户体验优化
@@ -270,6 +297,91 @@ ReadLoop --> Done(["流结束/取消"])
 - [useAIChatStreaming.ts:1-927](file://components/ai/hooks/useAIChatStreaming.ts#L1-L927)
 - [aiChatStreamingSupport.ts:1-206](file://components/ai/hooks/aiChatStreamingSupport.ts#L1-L206)
 
+### 代理选择与管理
+
+#### AgentSelector组件
+AgentSelector提供统一的代理选择界面，支持内置代理和外部代理的管理：
+
+- **内置代理**：Catty Agent（内置）
+- **外部代理**：CodeBuddy Code、GitHub Copilot、Claude Code等
+- **代理发现**：自动扫描系统中可用的外部代理
+- **代理启用**：支持一键启用新发现的代理
+- **代理配置**：为每个代理提供独立的配置界面
+
+```mermaid
+flowchart TD
+Start(["AgentSelector启动"]) --> LoadAgents["加载内置和外部代理"]
+LoadAgents --> ShowBuiltin["显示内置代理(Catty)"]
+LoadAgents --> ShowExternal["显示已启用外部代理"]
+LoadAgents --> ShowDiscovered["显示未配置的发现代理"]
+ShowDiscovered --> EnableAgent["启用新代理"]
+EnableAgent --> UpdateCurrent["更新当前代理"]
+ShowExternal --> SelectAgent["用户选择代理"]
+SelectAgent --> UpdateCurrent
+UpdateCurrent --> CloseDropdown["关闭下拉菜单"]
+```
+
+**图表来源**
+- [AgentSelector.tsx:118-190](file://components/ai/AgentSelector.tsx#L118-L190)
+- [AgentSelector.tsx:237-284](file://components/ai/AgentSelector.tsx#L237-L284)
+
+#### AgentIconBadge组件
+AgentIconBadge为不同类型的代理提供统一的视觉标识：
+
+- **内置代理**：Catty使用紫色主题
+- **外部代理**：CodeBuddy使用靛蓝色主题
+- **第三方代理**：Copilot使用白色主题，Claude使用橙色主题等
+- **动态识别**：根据代理名称、命令或图标自动匹配合适的视觉样式
+
+**章节来源**
+- [AgentSelector.tsx:1-300](file://components/ai/AgentSelector.tsx#L1-L300)
+- [AgentIconBadge.tsx:1-242](file://components/ai/AgentIconBadge.tsx#L1-L242)
+
+### CodeBuddy Code AI代理集成
+
+#### CodeBuddyCard组件
+CodeBuddy Card提供完整的CodeBuddy Code代理配置界面：
+
+- **代理检测**：自动检测系统中可用的CodeBuddy安装
+- **路径配置**：支持自定义可执行文件路径
+- **认证配置**：支持API Key配置
+- **网络环境**：支持Internal、IOA等受限网络环境配置
+- **环境变量**：支持额外的环境变量配置
+
+```mermaid
+flowchart TD
+Start(["CodeBuddyCard初始化"]) --> DetectAgent["检测CodeBuddy代理"]
+DetectAgent --> Found{"代理已找到?"}
+Found --> |是| ShowPath["显示代理路径和版本"]
+Found --> |否| ShowPathInput["显示路径输入框"]
+ShowPath --> ConfigSection["显示配置部分"]
+ShowPathInput --> ConfigSection
+ConfigSection --> ApiKey["API Key配置"]
+ConfigSection --> InternetEnv["网络环境配置"]
+ConfigSection --> EnvVars["环境变量配置"]
+ApiKey --> SaveConfig["保存配置"]
+InternetEnv --> SaveConfig
+EnvVars --> SaveConfig
+SaveConfig --> UpdateExternalAgents["更新外部代理配置"]
+```
+
+**图表来源**
+- [CodebuddyCard.tsx:61-173](file://components/settings/tabs/ai/CodebuddyCard.tsx#L61-L173)
+- [SettingsAITab.tsx:172-206](file://components/settings/tabs/SettingsAITab.tsx#L172-L206)
+
+#### CodeBuddy环境变量管理
+codebuddyConfigEnv模块提供环境变量的解析和序列化功能：
+
+- **API Key管理**：CODEBUDDY_API_KEY的提取和设置
+- **网络环境管理**：CODEBUDDY_INTERNET_ENVIRONMENT的配置
+- **环境变量解析**：支持多行KEY=VALUE格式的解析
+- **配置合并**：将用户配置与现有配置合并
+
+**章节来源**
+- [CodebuddyCard.tsx:1-186](file://components/settings/tabs/ai/CodebuddyCard.tsx#L1-L186)
+- [codebuddyConfigEnv.ts:1-67](file://components/settings/tabs/ai/codebuddyConfigEnv.ts#L1-L67)
+- [SettingsAITab.tsx:629-657](file://components/settings/tabs/SettingsAITab.tsx#L629-L657)
+
 ### 数据模型与类型
 关键类型
 - ProviderConfig/ProviderStyle：提供商配置与协议族。
@@ -277,10 +389,12 @@ ReadLoop --> Done(["流结束/取消"])
 - AISession/AISessionScope：会话与作用域（终端/工作区/全局）。
 - AIPermissionMode/AIToolIntegrationMode：权限模式与工具集成模式。
 - StreamChunk：流式事件联合类型（text、reasoning、tool-call、tool-result、error、raw等）。
+- **新增** ExternalAgentConfig：外部代理配置，包括命令、参数、ACPI命令等。
 
 用途
 - 统一跨组件的消息与流式事件类型，保证渲染与处理的一致性。
 - 为工具调用与思考内容提供结构化存储与渲染入口。
+- **新增** 支持外部代理的统一配置和管理。
 
 **章节来源**
 - [types.ts:1-344](file://infrastructure/ai/types.ts#L1-L344)
@@ -300,8 +414,10 @@ ReadLoop --> Done(["流结束/取消"])
 graph LR
 SP["AIChatSidePanel.tsx"] --> Hook["useAIChatStreaming.ts"]
 SP --> PC["AIChatPanelContent.tsx"]
+SP --> AgentSelector["AgentSelector.tsx"]
 PC --> MsgList["ChatMessageList.tsx"]
 PC --> Input["ChatInput.tsx"]
+AgentSelector --> AgentIconBadge["AgentIconBadge.tsx"]
 MsgList --> Thinking["ThinkingBlock.tsx"]
 MsgList --> MsgElem["message.tsx"]
 MsgList --> ToolCall["tool-call.tsx"]
@@ -309,21 +425,21 @@ MsgElem --> CodeHL["streamdownCodeHighlighter.ts"]
 Input --> Prompt["prompt-input.tsx"]
 Hook --> Support["aiChatStreamingSupport.ts"]
 Hook --> Types["types.ts"]
+SettingsAITab["SettingsAITab.tsx"] --> CodebuddyCard["CodebuddyCard.tsx"]
+CodebuddyCard --> CodebuddyEnv["codebuddyConfigEnv.ts"]
+AgentDiscovery["agentDiscoveryHandlers.cjs"] --> AgentSelector
+UseAgentDiscovery["useAgentDiscovery.ts"] --> AgentSelector
 ```
 
 **图表来源**
 - [AIChatSidePanel.tsx:48-909](file://components/AIChatSidePanel.tsx#L48-L909)
 - [AIChatPanelContent.tsx:1-249](file://components/AIChatPanelContent.tsx#L1-L249)
-- [ChatMessageList.tsx:1-468](file://components/ai/ChatMessageList.tsx#L1-L468)
-- [ChatInput.tsx:1-955](file://components/ai/ChatInput.tsx#L1-L955)
-- [ThinkingBlock.tsx:1-139](file://components/ai/ThinkingBlock.tsx#L1-L139)
-- [message.tsx:1-86](file://components/ai-elements/message.tsx#L1-L86)
-- [tool-call.tsx:1-315](file://components/ai-elements/tool-call.tsx#L1-L315)
-- [prompt-input.tsx:1-215](file://components/ai-elements/prompt-input.tsx#L1-L215)
-- [streamdownCodeHighlighter.ts:1-78](file://components/ai-elements/streamdownCodeHighlighter.ts#L1-L78)
-- [useAIChatStreaming.ts:1-927](file://components/ai/hooks/useAIChatStreaming.ts#L1-L927)
-- [aiChatStreamingSupport.ts:1-206](file://components/ai/hooks/aiChatStreamingSupport.ts#L1-L206)
-- [types.ts:1-344](file://infrastructure/ai/types.ts#L1-L344)
+- [AgentSelector.tsx:1-300](file://components/ai/AgentSelector.tsx#L1-L300)
+- [AgentIconBadge.tsx:1-242](file://components/ai/AgentIconBadge.tsx#L1-L242)
+- [CodebuddyCard.tsx:1-186](file://components/settings/tabs/ai/CodebuddyCard.tsx#L1-L186)
+- [codebuddyConfigEnv.ts:1-67](file://components/settings/tabs/ai/codebuddyConfigEnv.ts#L1-L67)
+- [agentDiscoveryHandlers.cjs:1-52](file://electron/bridges/aiBridge/agentDiscoveryHandlers.cjs#L1-L52)
+- [useAgentDiscovery.ts:1-42](file://application/state/useAgentDiscovery.ts#L1-L42)
 
 **章节来源**
 - [AIChatSidePanel.tsx:48-909](file://components/AIChatSidePanel.tsx#L48-L909)
@@ -337,8 +453,7 @@ Hook --> Types["types.ts"]
 - 滚动行为：StickToBottom自动保持底部对齐，避免频繁滚动计算；思考块在流式时自动滚动到底部。
 - 代码高亮：安全高亮器支持语言检测与降级，避免不支持语言导致的异常渲染。
 - 图片预览：缩放与拖拽使用transform与指针事件，避免布局抖动。
-
-[本节为通用指导，无需特定文件引用]
+- **新增** 代理选择优化：AgentSelector使用React.memo避免不必要的重渲染。
 
 ## 故障排查指南
 常见问题与定位
@@ -347,21 +462,22 @@ Hook --> Types["types.ts"]
 - 工具调用未显示：确认tool-call与tool-result配对；检查executionStatus是否正确流转。
 - 错误信息不清晰：使用reportStreamError生成的标准化错误对象，查看errorInfo字段。
 - 思考块不滚动：确认ThinkingBlock在流式期间isExpanded为true，并监听content变化自动滚动。
+- **新增** CodeBuddy代理问题：检查代理检测状态、路径配置和环境变量设置。
 
 定位方法
 - 在useAIChatStreaming中打印关键事件（text、reasoning、tool-call、tool-result、error）。
 - 在ChatMessageList中检查pendingApprovals与resolvedApprovals映射是否一致。
 - 在ChatInput中验证@与/触发器的光标位置与弹窗定位。
+- **新增** 在AgentSelector中检查代理发现和配置状态。
 
 **章节来源**
 - [useAIChatStreaming.ts:212-237](file://components/ai/hooks/useAIChatStreaming.ts#L212-L237)
 - [ChatMessageList.tsx:43-74](file://components/ai/ChatMessageList.tsx#L43-L74)
 - [ChatInput.tsx:187-218](file://components/ai/ChatInput.tsx#L187-L218)
+- [AgentSelector.tsx:192-195](file://components/ai/AgentSelector.tsx#L192-L195)
 
 ## 结论
-AI聊天界面通过清晰的分层设计与强类型的流式处理，实现了从输入、流式渲染到工具调用与思考状态可视化的完整闭环。组件间低耦合、高内聚，既保证了可维护性，也为后续扩展（如更多模型、代理与工具）提供了稳定基础。
-
-[本节为总结性内容，无需特定文件引用]
+AI聊天界面通过清晰的分层设计与强类型的流式处理，实现了从输入、流式渲染到工具调用与思考状态可视化的完整闭环。新增的CodeBuddy Code AI代理支持进一步增强了系统的灵活性和功能性。组件间低耦合、高内聚，既保证了可维护性，也为后续扩展（如更多模型、代理与工具）提供了稳定基础。
 
 ## 附录
 
@@ -370,5 +486,11 @@ AI聊天界面通过清晰的分层设计与强类型的流式处理，实现了
 - 焦点管理：输入框获得初始焦点；待审批工具调用卡片自动展开并聚焦批准按钮。
 - 响应式设计：输入区支持多行展开与最大高度限制；图片预览弹窗自适应窗口尺寸。
 - 可访问性：为思考块、工具调用卡片提供aria属性；键盘导航支持上下箭头与Enter/Escape。
+- **新增** 代理选择：AgentSelector提供直观的代理切换界面，支持一键启用新代理。
 
-[本节为通用指导，无需特定文件引用]
+### CodeBuddy代理配置最佳实践
+- **代理检测**：优先使用系统PATH中的CodeBuddy安装，确保ACP功能正常。
+- **认证配置**：在受保护环境中使用API Key进行身份验证。
+- **网络环境**：根据实际网络条件选择合适的Internet Environment配置。
+- **环境变量**：谨慎添加额外的环境变量，避免与代理配置冲突。
+- **配置管理**：定期检查代理配置的有效性，及时更新版本信息。

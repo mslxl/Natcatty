@@ -514,7 +514,13 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         [currentAgentId]: runtimePresets,
       }));
       const storedModelId = agentModelMapRef.current[currentAgentId];
-      if (result.currentModelId && (!storedModelId || !modelPresetsContainId(runtimePresets, storedModelId))) {
+      // Validate against both runtime and static presets so that static
+      // options like CodeBuddy's "auto" are not overwritten on refresh.
+      const staticPresets = getAgentModelPresets(currentAgentConfig?.command);
+      const validationPresets = staticPresets.length > 0
+        ? [...staticPresets, ...runtimePresets]
+        : runtimePresets;
+      if (result.currentModelId && (!storedModelId || !modelPresetsContainId(validationPresets, storedModelId))) {
         setAgentModel(currentAgentId, result.currentModelId);
       }
     }).catch((err) => {
