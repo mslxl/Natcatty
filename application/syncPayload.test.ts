@@ -41,7 +41,9 @@ const {
   applySyncPayload,
   buildLocalVaultPayload,
   buildSyncPayload,
+  hasCloudSyncEntityData,
   hasMeaningfulCloudSyncData,
+  shouldPromptCloudVaultRecovery,
 } = await import("./syncPayload.ts");
 const storageKeys = await import("../infrastructure/config/storageKeys.ts");
 
@@ -530,6 +532,38 @@ test("hasMeaningfulCloudSyncData ignores legacy cloud known hosts", () => {
       knownHosts: [knownHost("kh-only")],
       syncedAt: 1,
     }),
+    false,
+  );
+});
+
+test("hasCloudSyncEntityData ignores settings-only payloads for empty-vault recovery", () => {
+  assert.equal(
+    hasCloudSyncEntityData({
+      hosts: [],
+      keys: [],
+      identities: [],
+      snippets: [],
+      customGroups: [],
+      settings: { theme: "system", terminalTheme: "default" },
+      syncedAt: 1,
+    }),
+    false,
+  );
+});
+
+test("shouldPromptCloudVaultRecovery ignores settings-only remote payloads", () => {
+  const settingsOnlyPayload: SyncPayload = {
+    hosts: [],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+    settings: { theme: "system", terminalTheme: "default" },
+    syncedAt: 1,
+  };
+
+  assert.equal(
+    shouldPromptCloudVaultRecovery(settingsOnlyPayload, settingsOnlyPayload),
     false,
   );
 });

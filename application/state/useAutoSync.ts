@@ -23,6 +23,7 @@ import {
   collectSyncableSettings,
   getEffectivePortForwardingRulesForSync,
   hasMeaningfulCloudSyncData,
+  shouldPromptCloudVaultRecovery,
 } from '../syncPayload';
 import { readInterruptedVaultApply } from '../localVaultBackups';
 import {
@@ -482,13 +483,11 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       const remoteFile = inspection.remoteFile;
       const remotePayload = inspection.payload;
       const localPayload = buildPayloadRef.current();
-      const localIsEmpty = !hasMeaningfulCloudSyncData(localPayload);
-      const remoteHasData = hasMeaningfulCloudSyncData(remotePayload);
 
       // If local vault is empty but cloud has data, this almost certainly
       // means the user's data was lost (update, storage corruption, etc.).
       // Pause and ask the user what to do instead of silently merging.
-      if (localIsEmpty && remoteHasData) {
+      if (shouldPromptCloudVaultRecovery(localPayload, remotePayload)) {
         const userAction = await new Promise<'restore' | 'keep-empty'>((resolve) => {
           emptyVaultResolveRef.current = resolve;
           setEmptyVaultConflict({

@@ -189,13 +189,28 @@ export function handleStorageEventImpl(this: any, event: StorageEvent): void {
     if (key === SYNC_STORAGE_KEYS.MASTER_KEY_CONFIG) {
       const nextConfig = this.safeJsonParse<MasterKeyConfig>(event.newValue);
 
-      if (nextConfig && !this.state.masterKeyConfig) {
-        // Master key was set up in another window - update our state
+      if (nextConfig) {
+        const currentConfig = this.state.masterKeyConfig as MasterKeyConfig | null;
+        const configChanged = !currentConfig
+          || currentConfig.verificationHash !== nextConfig.verificationHash
+          || currentConfig.salt !== nextConfig.salt
+          || currentConfig.kdf !== nextConfig.kdf
+          || currentConfig.kdfIterations !== nextConfig.kdfIterations;
+
+        if (!configChanged) return;
+
+        // Master key was set up or changed in another window. Lock this
+        // window so it cannot keep syncing with the stale in-memory password.
+        this.bumpSyncSecurityGeneration?.();
         this.state.masterKeyConfig = nextConfig;
         this.state.securityState = 'LOCKED';
+        this.state.unlockedKey = null;
+        this.masterPassword = null;
+        this.stopAutoSync();
         this.notifyStateChange();
-      } else if (!nextConfig && this.state.masterKeyConfig) {
+      } else if (this.state.masterKeyConfig) {
         // Master key was removed in another window
+        this.bumpSyncSecurityGeneration?.();
         this.state.masterKeyConfig = null;
         this.state.securityState = 'NO_KEY';
         this.state.unlockedKey = null;
@@ -373,6 +388,7 @@ export async function setupMasterKeyImpl(this: any,password: string): Promise<vo
 
     const config = await EncryptionService.createMasterKeyConfig(password);
 
+    this.bumpSyncSecurityGeneration?.();
     this.state.masterKeyConfig = config;
     this.state.securityState = 'LOCKED';
 
@@ -421,6 +437,7 @@ export function lockImpl(this: any): void {
     }
 
     // Clear sensitive data from memory
+    this.bumpSyncSecurityGeneration?.();
     this.state.unlockedKey = null;
     this.masterPassword = null;
     this.state.securityState = 'LOCKED';
@@ -446,6 +463,7 @@ export async function changeMasterKeyImpl(this: any,oldPassword: string, newPass
       return false;
     }
 
+    this.bumpSyncSecurityGeneration?.();
     this.state.masterKeyConfig = newConfig;
     this.state.securityState = 'UNLOCKED';
     this.masterPassword = newPassword;
