@@ -11,7 +11,6 @@ import type {
   DiscoveredAgent,
 } from '../infrastructure/ai/types';
 import type { ExecutorContext } from '../infrastructure/ai/cattyAgent/executor';
-import { getAgentModelPresets } from '../infrastructure/ai/types';
 import { matchesManagedAgentConfig } from '../infrastructure/ai/managedAgents';
 import { useAgentDiscovery } from '../application/state/useAgentDiscovery';
 import {
@@ -514,13 +513,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         [currentAgentId]: runtimePresets,
       }));
       const storedModelId = agentModelMapRef.current[currentAgentId];
-      // Validate against both runtime and static presets so that static
-      // options like CodeBuddy's "auto" are not overwritten on refresh.
-      const staticPresets = getAgentModelPresets(currentAgentConfig?.command);
-      const validationPresets = staticPresets.length > 0
-        ? [...staticPresets, ...runtimePresets]
-        : runtimePresets;
-      if (result.currentModelId && (!storedModelId || !modelPresetsContainId(validationPresets, storedModelId))) {
+      if (result.currentModelId && (!storedModelId || !modelPresetsContainId(runtimePresets, storedModelId))) {
         setAgentModel(currentAgentId, result.currentModelId);
       }
     }).catch((err) => {
@@ -547,19 +540,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       }
       return [];
     }
-    const staticPresets = getAgentModelPresets(currentAgentConfig?.command);
-    if (runtimePresets) {
-      // For Codebuddy, ensure the static "auto" preset always appears first
-      // even when dynamic ACP models are available
-      if (isCodebuddyManagedAgent && staticPresets.length > 0) {
-        const staticIds = new Set(staticPresets.map((p) => p.id));
-        const filtered = runtimePresets.filter((p) => !staticIds.has(p.id));
-        return [...staticPresets, ...filtered];
-      }
-      return runtimePresets;
-    }
-    return staticPresets;
-  }, [currentAgentConfig?.command, currentAgentId, runtimeAgentModelPresets, hasCodexCustomConfig, codexConfigModel, isCodebuddyManagedAgent]);
+    return runtimePresets ?? [];
+  }, [currentAgentId, runtimeAgentModelPresets, hasCodexCustomConfig, codexConfigModel]);
 
   const selectedAgentModel = useMemo(() => {
     const stored = agentModelMap[currentAgentId];
