@@ -5,6 +5,7 @@ import type { useCloudSync } from '../../application/state/useCloudSync';
 import { isProviderReadyForSync } from '../../domain/sync';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger } from '../ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { GoogleDriveIcon, OneDriveIcon, ProviderCard, Toggle } from './CloudSyncControls';
@@ -173,6 +174,56 @@ export const CloudSyncDashboardTabs: React.FC<CloudSyncDashboardTabsProps> = ({
                                 disabled={!sync.hasAnyConnectedProvider}
                             />
                         </div>
+                    </div>
+
+                    <div className="p-4 rounded-lg border bg-card space-y-3">
+                        <div>
+                            <div className="text-sm font-medium">{t('cloudSync.strategy.title')}</div>
+                            <div className="text-xs text-muted-foreground">
+                                {t('cloudSync.strategy.desc')}
+                            </div>
+                        </div>
+                        <Select
+                            value={sync.syncStrategy}
+                            onValueChange={(value) => sync.setSyncStrategy(value as typeof sync.syncStrategy)}
+                        >
+                            <SelectTrigger
+                                aria-label={t('cloudSync.strategy.title')}
+                                className="h-10"
+                            >
+                                {sync.syncStrategy === 'preferCloud'
+                                    ? t('cloudSync.strategy.preferCloud')
+                                    : sync.syncStrategy === 'preferLocal'
+                                        ? t('cloudSync.strategy.preferLocal')
+                                        : t('cloudSync.strategy.smartMerge')}
+                            </SelectTrigger>
+                            <SelectContent className="max-w-[min(520px,var(--radix-select-trigger-width))]">
+                                <SelectItem value="smartMerge" className="items-start py-2">
+                                    <div className="space-y-0.5">
+                                        <div>{t('cloudSync.strategy.smartMerge')}</div>
+                                        <div className="text-xs text-muted-foreground leading-snug">
+                                            {t('cloudSync.strategy.smartMergeDesc')}
+                                        </div>
+                                    </div>
+                                </SelectItem>
+                                <SelectItem value="preferCloud" className="items-start py-2">
+                                    <div className="space-y-0.5">
+                                        <div>{t('cloudSync.strategy.preferCloud')}</div>
+                                        <div className="text-xs text-muted-foreground leading-snug">
+                                            {t('cloudSync.strategy.preferCloudDesc')}
+                                        </div>
+                                    </div>
+                                </SelectItem>
+                                <SelectItem value="preferLocal" className="items-start py-2">
+                                    <div className="space-y-0.5">
+                                        <div>{t('cloudSync.strategy.preferLocal')}</div>
+                                        <div className="text-xs text-muted-foreground leading-snug">
+                                            {t('cloudSync.strategy.preferLocalDesc')}
+                                        </div>
+                                    </div>
+                                </SelectItem>
+                            </SelectContent>
+                        </Select>
                     </div>
 
                     {sync.hasAnyConnectedProvider && (

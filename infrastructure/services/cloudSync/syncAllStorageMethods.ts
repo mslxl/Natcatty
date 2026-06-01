@@ -8,6 +8,7 @@ import packageJson from '../../../package.json';
 import { EncryptionService } from '../EncryptionService';
 import { mergeSyncPayloads } from '../../../domain/syncMerge';
 import { detectSuspiciousShrink, type ShrinkFinding } from '../../../domain/syncGuards';
+import { resolveCloudSyncConflictAction, type CloudSyncConflictAction } from '../../../domain/syncStrategy';
 import type { CloudAdapter } from '../adapters';
 import type {
   CloudProvider,
@@ -17,11 +18,30 @@ import type {
   SyncResult,
 } from '../../../domain/sync';
 
+async function downloadRemoteForSyncAllImpl(this: any,
+  provider: CloudProvider,
+  remoteFile: SyncedFile,
+): Promise<SyncResult> {
+  const payload = await EncryptionService.decryptPayload(remoteFile, this.masterPassword);
+  this.updateProviderStatus(provider, 'connected');
+
+  const result: SyncResult = {
+    success: true,
+    provider,
+    action: 'download',
+    version: remoteFile.meta.version,
+    mergedPayload: payload,
+    remoteFile,
+  };
+  this.emit({ type: 'SYNC_COMPLETED', provider, result });
+  return result;
+}
+
 const SYNC_HISTORY_STORAGE_KEY = 'netcatty_sync_history_v1';
 
 export async function syncAllProvidersImpl(this: any,
   inputPayload?: SyncPayload,
-  opts: { overrideShrink?: boolean } = {},
+  opts: { overrideShrink?: boolean; conflictActionOverride?: CloudSyncConflictAction } = {},
 ): Promise<Map<CloudProvider, SyncResult>> {
     const results = new Map<CloudProvider, SyncResult>();
     let payload = inputPayload;
@@ -137,80 +157,131 @@ export async function syncAllProvidersImpl(this: any,
     }
 
     if (conflicts.length > 0) {
-      // Three-way merge: incorporate remote data from every conflicting provider
-      try {
-        let merged = payload;
-        for (const c of conflicts) {
-          const providerBase = await this.loadSyncBase(c.provider as CloudProvider);
-          const remotePayload = await EncryptionService.decryptPayload(
-            c.check!.remoteFile!,
-            this.masterPassword,
+      const conflictAction = opts.conflictActionOverride
+        ?? resolveCloudSyncConflictAction(this.state.syncStrategy, {
+          hasConflict: true,
+          hasRemoteFile: true,
+        });
+
+      if (conflictAction === 'download-remote') {
+        const newestConflict = conflicts.reduce((latest, entry) => {
+          const latestUpdatedAt = latest.check?.remoteFile?.meta.updatedAt ?? 0;
+          const entryUpdatedAt = entry.check?.remoteFile?.meta.updatedAt ?? 0;
+          return entryUpdatedAt > latestUpdatedAt ? entry : latest;
+        });
+        try {
+          const remoteResult = await downloadRemoteForSyncAllImpl.call(
+            this,
+            newestConflict.provider as CloudProvider,
+            newestConflict.check!.remoteFile!,
           );
-          const result = mergeSyncPayloads(providerBase, merged, remotePayload);
-          merged = result.payload;
+          const sourceProvider = newestConflict.provider as CloudProvider;
+          results.set(sourceProvider, remoteResult);
+          payload = remoteResult.mergedPayload ?? payload;
+
+          for (const r of checkResults) {
+            const provider = r.provider as CloudProvider;
+            if (provider === sourceProvider) continue;
+            if (r.check) {
+              r.check.conflict = false;
+            }
+          }
+        } catch (error) {
+          const msg = String(error);
+          this.state.syncState = 'ERROR';
+          this.state.lastError = msg;
+          this.updateProviderStatus(newestConflict.provider as CloudProvider, 'error', msg);
+          this.emit({ type: 'SYNC_ERROR', provider: newestConflict.provider as CloudProvider, error: msg });
+          results.set(newestConflict.provider as CloudProvider, {
+            success: false,
+            provider: newestConflict.provider as CloudProvider,
+            action: 'none',
+            error: msg,
+          });
+          return results;
         }
-        const mergeResult = { payload: merged };
+      }
 
-        console.info('[CloudSyncManager] syncAll: three-way merge completed');
-
-        // Replace payload with merged payload for upload to all providers
-        payload = mergeResult.payload;
-        wasMerged = true;
-
-        // Re-classify: all providers (including the conflicting one) should now upload
-        // Clear the conflict check result so all go through the upload path
+      if (conflictAction === 'upload-local') {
         for (const r of checkResults) {
           if (r.check) r.check.conflict = false;
         }
-      } catch (mergeError) {
-        // Merge failed — fall back to conflict UI
-        console.error('[CloudSyncManager] syncAll: merge failed', mergeError);
-        const { provider, check } = conflicts[0];
-        const remoteFile = check!.remoteFile!;
-
-        this.state.syncState = 'CONFLICT';
-        this.state.currentConflict = {
-          provider: provider as CloudProvider,
-          localVersion: this.state.localVersion,
-          localUpdatedAt: this.state.localUpdatedAt,
-          localDeviceName: this.state.deviceName,
-          remoteVersion: remoteFile.meta.version,
-          remoteUpdatedAt: remoteFile.meta.updatedAt,
-          remoteDeviceName: remoteFile.meta.deviceName,
-        };
-
-        this.emit({
-          type: 'CONFLICT_DETECTED',
-          conflict: this.state.currentConflict,
-        });
-
-        for (const r of checkResults) {
-          if (r.error) {
-            results.set(r.provider as CloudProvider, {
-              success: false,
-              provider: r.provider as CloudProvider,
-              action: 'none',
-              error: r.error,
-            });
-            this.updateProviderStatus(r.provider as CloudProvider, 'error', r.error);
-            this.emit({ type: 'SYNC_ERROR', provider: r.provider as CloudProvider, error: r.error });
-          } else if (r.provider === conflicts[0].provider) {
-            results.set(r.provider as CloudProvider, {
-              success: false,
-              provider: r.provider as CloudProvider,
-              action: 'none',
-              conflictDetected: true,
-            });
-          } else {
-            this.updateProviderStatus(r.provider as CloudProvider, 'connected');
-            results.set(r.provider as CloudProvider, {
-              success: true,
-              provider: r.provider as CloudProvider,
-              action: 'none',
-            });
+      } else if (conflictAction === 'smart-merge') {
+        // Three-way merge: incorporate remote data from every conflicting provider
+        try {
+          let merged = payload;
+          for (const c of conflicts) {
+            const providerBase = await this.loadSyncBase(c.provider as CloudProvider);
+            const remotePayload = await EncryptionService.decryptPayload(
+              c.check!.remoteFile!,
+              this.masterPassword,
+            );
+            const result = mergeSyncPayloads(providerBase, merged, remotePayload);
+            merged = result.payload;
           }
+          const mergeResult = { payload: merged };
+
+          console.info('[CloudSyncManager] syncAll: three-way merge completed');
+
+          // Replace payload with merged payload for upload to all providers
+          payload = mergeResult.payload;
+          wasMerged = true;
+
+          // Re-classify: all providers (including the conflicting one) should now upload
+          // Clear the conflict check result so all go through the upload path
+          for (const r of checkResults) {
+            if (r.check) r.check.conflict = false;
+          }
+        } catch (mergeError) {
+          // Merge failed — fall back to conflict UI
+          console.error('[CloudSyncManager] syncAll: merge failed', mergeError);
+          const { provider, check } = conflicts[0];
+          const remoteFile = check!.remoteFile!;
+
+          this.state.syncState = 'CONFLICT';
+          this.state.currentConflict = {
+            provider: provider as CloudProvider,
+            localVersion: this.state.localVersion,
+            localUpdatedAt: this.state.localUpdatedAt,
+            localDeviceName: this.state.deviceName,
+            remoteVersion: remoteFile.meta.version,
+            remoteUpdatedAt: remoteFile.meta.updatedAt,
+            remoteDeviceName: remoteFile.meta.deviceName,
+          };
+
+          this.emit({
+            type: 'CONFLICT_DETECTED',
+            conflict: this.state.currentConflict,
+          });
+
+          for (const r of checkResults) {
+            if (r.error) {
+              results.set(r.provider as CloudProvider, {
+                success: false,
+                provider: r.provider as CloudProvider,
+                action: 'none',
+                error: r.error,
+              });
+              this.updateProviderStatus(r.provider as CloudProvider, 'error', r.error);
+              this.emit({ type: 'SYNC_ERROR', provider: r.provider as CloudProvider, error: r.error });
+            } else if (r.provider === conflicts[0].provider) {
+              results.set(r.provider as CloudProvider, {
+                success: false,
+                provider: r.provider as CloudProvider,
+                action: 'none',
+                conflictDetected: true,
+              });
+            } else {
+              this.updateProviderStatus(r.provider as CloudProvider, 'connected');
+              results.set(r.provider as CloudProvider, {
+                success: true,
+                provider: r.provider as CloudProvider,
+                action: 'none',
+              });
+            }
+          }
+          return results;
         }
-        return results;
       }
     }
 
@@ -326,13 +397,19 @@ export async function syncAllProvidersImpl(this: any,
           this.emit({ type: 'SYNC_ERROR', provider: r.provider as CloudProvider, error: r.error });
         }
       });
-      this.state.syncState = 'ERROR';
+      if (Array.from(results.values()).some((r) => r.success)) {
+        this.exitBlockedState();
+        this.state.syncState = 'IDLE';
+      } else {
+        this.state.syncState = 'ERROR';
+      }
+      this.notifyStateChange();
       return results;
     }
 
     // Use the highest version as base: either local or any remote that was merged
     let baseVersion = this.state.localVersion;
-    if (wasMerged) {
+    if (wasMerged || (this.state.syncStrategy !== 'smartMerge' && conflicts.length > 0)) {
       for (const c of conflicts) {
         const rv = c.check?.remoteFile?.meta?.version ?? 0;
         if (rv > baseVersion) baseVersion = rv;
@@ -472,6 +549,7 @@ export function saveSyncConfigImpl(this: any): void {
       localUpdatedAt: this.state.localUpdatedAt,
       remoteVersion: this.state.remoteVersion,
       remoteUpdatedAt: this.state.remoteUpdatedAt,
+      syncStrategy: this.state.syncStrategy,
     });
   }
 
@@ -509,8 +587,9 @@ export async function saveSyncBaseImpl(this: any,payload: SyncPayload, provider?
         binary += String.fromCharCode(...combined.subarray(i, i + CHUNK));
       }
       this.saveToStorage(this.syncBaseKey(provider), btoa(binary));
-    } catch {
-      console.warn('[CloudSyncManager] Failed to save sync base');
+    } catch (error) {
+      console.warn('[CloudSyncManager] Failed to save sync base', error);
+      throw error;
     }
   }
 
