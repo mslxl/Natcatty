@@ -32,6 +32,7 @@ import type {
   UserSkillsStatusResult,
 } from "./ai/types";
 import {
+  AGENT_DEFAULTS,
   getBridge,
   normalizeCodexBridgeError,
 } from "./ai/types";
@@ -180,13 +181,32 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
 
   const updateCodebuddyEnv = useCallback(
     (nextApiKey: string, nextInternetEnv: string, nextEnvText: string) => {
-      setExternalAgents((prev) =>
-        prev.map((a) =>
-          a.id === "discovered_codebuddy"
-            ? { ...a, env: buildCodebuddyEnv(a.env, nextApiKey, nextInternetEnv, nextEnvText) }
-            : a,
-        ),
-      );
+      setExternalAgents((prev) => {
+        const existingIndex = prev.findIndex((a) => a.id === "discovered_codebuddy");
+        const newEnv = buildCodebuddyEnv(undefined, nextApiKey, nextInternetEnv, nextEnvText);
+
+        if (existingIndex >= 0) {
+          // Update existing entry
+          return prev.map((a, i) =>
+            i === existingIndex ? { ...a, env: buildCodebuddyEnv(a.env, nextApiKey, nextInternetEnv, nextEnvText) } : a,
+          );
+        }
+
+        // Create new managed entry if not detected yet (allows pre-configuration)
+        const defaults = AGENT_DEFAULTS.codebuddy;
+        const newEntry: ExternalAgentConfig = {
+          id: "discovered_codebuddy",
+          command: "codebuddy",
+          name: defaults.name,
+          args: defaults.args,
+          icon: defaults.icon,
+          acpCommand: defaults.acpCommand,
+          acpArgs: defaults.acpArgs,
+          enabled: false, // Disabled until CLI is detected
+          ...(newEnv ? { env: newEnv } : {}),
+        };
+        return [...prev, newEntry];
+      });
     },
     [setExternalAgents],
   );
