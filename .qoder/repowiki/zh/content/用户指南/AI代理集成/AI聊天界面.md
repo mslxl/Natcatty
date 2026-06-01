@@ -4,6 +4,8 @@
 **本文档引用的文件**
 - [AIChatPanelContent.tsx](file://components/AIChatPanelContent.tsx)
 - [AIChatSidePanel.tsx](file://components/AIChatSidePanel.tsx)
+- [AIChatSidePanelHelpers.ts](file://components/AIChatSidePanelHelpers.ts)
+- [AIChatSidePanel.types.ts](file://components/AIChatSidePanel.types.ts)
 - [ChatMessageList.tsx](file://components/ai/ChatMessageList.tsx)
 - [ChatInput.tsx](file://components/ai/ChatInput.tsx)
 - [ThinkingBlock.tsx](file://components/ai/ThinkingBlock.tsx)
@@ -26,6 +28,12 @@
 - [ai.ts](file://application/i18n/locales/zh-CN/ai.ts)
 </cite>
 
+## 更新摘要
+**变更内容**
+- 修复了AI聊天侧边面板组件中的模型验证和持久化bug
+- 新增了双重验证机制，确保静态模型预设（如CodeBuddy的'auto'设置）在组件刷新时得到正确保留
+- 避免不必要的模型覆盖，提升用户体验稳定性
+
 ## 目录
 1. [简介](#简介)
 2. [项目结构](#项目结构)
@@ -41,7 +49,7 @@
 ## 简介
 本技术文档围绕AI聊天界面的完整实现进行深入解析，涵盖聊天面板的整体架构、消息列表渲染、输入区域与发送控制、实时流式响应机制、思考状态可视化、以及界面交互最佳实践。文档以代码级细节为基础，结合架构图与流程图，帮助开发者快速理解并扩展该功能。
 
-**更新** 新增CodeBuddy Code AI代理支持，包括代理识别、模型预设处理以及在AgentIconBadge中的视觉标识。
+**更新** 新增CodeBuddy Code AI代理支持，包括代理识别、模型预设处理以及在AgentIconBadge中的视觉标识。**新增** 修复了模型验证和持久化bug，确保静态模型预设在组件刷新时得到正确保留。
 
 ## 项目结构
 AI聊天界面由"侧边栏聊天面板"和"聊天内容面板"两大部分组成，配合AI流式处理钩子与消息元素组件共同完成端到端的交互体验。新增的CodeBuddy代理通过AgentSelector和AgentIconBadge组件集成到现有架构中。
@@ -297,6 +305,39 @@ ReadLoop --> Done(["流结束/取消"])
 - [useAIChatStreaming.ts:1-927](file://components/ai/hooks/useAIChatStreaming.ts#L1-L927)
 - [aiChatStreamingSupport.ts:1-206](file://components/ai/hooks/aiChatStreamingSupport.ts#L1-L206)
 
+### 模型验证与持久化机制
+
+#### 双重验证机制（新增）
+**更新** 修复了模型验证和持久化bug，确保静态模型预设在组件刷新时得到正确保留
+
+AIChatSidePanel组件中新增了双重验证机制，专门用于处理外部代理（特别是CodeBuddy）的模型预设验证：
+
+```mermaid
+flowchart TD
+Start(["加载外部代理模型"]) --> LoadRuntime["获取运行时模型预设"]
+LoadRuntime --> CheckStatic["获取静态模型预设"]
+CheckStatic --> CombinePresets["合并静态和运行时预设"]
+CombinePresets --> CheckStored["检查已保存的模型ID"]
+CheckStored --> Validate{"验证模型ID"}
+Validate --> |有效| KeepModel["保持现有模型"]
+Validate --> |无效| SetCurrent["设置为当前模型"]
+KeepModel --> End(["完成"])
+SetCurrent --> End
+```
+
+**图表来源**
+- [AIChatSidePanel.tsx:517-525](file://components/AIChatSidePanel.tsx#L517-L525)
+
+关键改进：
+- **静态预设优先**：对于CodeBuddy等代理，静态预设（如'auto'）始终优先于运行时预设
+- **双重验证**：同时验证静态和运行时模型预设，避免不必要的覆盖
+- **兼容性处理**：当静态预设存在时，运行时预设会被过滤掉重复项
+- **用户体验**：确保用户在组件刷新时不会丢失自定义的模型选择
+
+**章节来源**
+- [AIChatSidePanel.tsx:517-525](file://components/AIChatSidePanel.tsx#L517-L525)
+- [types.ts:331-342](file://infrastructure/ai/types.ts#L331-L342)
+
 ### 代理选择与管理
 
 #### AgentSelector组件
@@ -397,7 +438,7 @@ codebuddyConfigEnv模块提供环境变量的解析和序列化功能：
 - **新增** 支持外部代理的统一配置和管理。
 
 **章节来源**
-- [types.ts:1-344](file://infrastructure/ai/types.ts#L1-L344)
+- [types.ts:1-348](file://infrastructure/ai/types.ts#L1-L348)
 
 ### 会话视图与状态管理（aiPanelViewState）
 职责
@@ -454,6 +495,7 @@ UseAgentDiscovery["useAgentDiscovery.ts"] --> AgentSelector
 - 代码高亮：安全高亮器支持语言检测与降级，避免不支持语言导致的异常渲染。
 - 图片预览：缩放与拖拽使用transform与指针事件，避免布局抖动。
 - **新增** 代理选择优化：AgentSelector使用React.memo避免不必要的重渲染。
+- **新增** 模型验证优化：双重验证机制避免重复的模型设置操作，提升组件响应速度。
 
 ## 故障排查指南
 常见问题与定位
@@ -463,21 +505,24 @@ UseAgentDiscovery["useAgentDiscovery.ts"] --> AgentSelector
 - 错误信息不清晰：使用reportStreamError生成的标准化错误对象，查看errorInfo字段。
 - 思考块不滚动：确认ThinkingBlock在流式期间isExpanded为true，并监听content变化自动滚动。
 - **新增** CodeBuddy代理问题：检查代理检测状态、路径配置和环境变量设置。
+- **新增** 模型预设丢失：检查双重验证机制是否正确执行，确认静态预设（如'auto'）是否被正确保留。
 
 定位方法
 - 在useAIChatStreaming中打印关键事件（text、reasoning、tool-call、tool-result、error）。
 - 在ChatMessageList中检查pendingApprovals与resolvedApprovals映射是否一致。
 - 在ChatInput中验证@与/触发器的光标位置与弹窗定位。
-- **新增** 在AgentSelector中检查代理发现和配置状态。
+- **新增** 在AIChatSidePanel中检查模型验证逻辑，确认双重验证是否按预期工作。
+- **新增** 检查agentModelMap中是否存在意外的模型覆盖。
 
 **章节来源**
 - [useAIChatStreaming.ts:212-237](file://components/ai/hooks/useAIChatStreaming.ts#L212-L237)
 - [ChatMessageList.tsx:43-74](file://components/ai/ChatMessageList.tsx#L43-L74)
 - [ChatInput.tsx:187-218](file://components/ai/ChatInput.tsx#L187-L218)
 - [AgentSelector.tsx:192-195](file://components/ai/AgentSelector.tsx#L192-L195)
+- [AIChatSidePanel.tsx:517-525](file://components/AIChatSidePanel.tsx#L517-L525)
 
 ## 结论
-AI聊天界面通过清晰的分层设计与强类型的流式处理，实现了从输入、流式渲染到工具调用与思考状态可视化的完整闭环。新增的CodeBuddy Code AI代理支持进一步增强了系统的灵活性和功能性。组件间低耦合、高内聚，既保证了可维护性，也为后续扩展（如更多模型、代理与工具）提供了稳定基础。
+AI聊天界面通过清晰的分层设计与强类型的流式处理，实现了从输入、流式渲染到工具调用与思考状态可视化的完整闭环。新增的CodeBuddy Code AI代理支持进一步增强了系统的灵活性和功能性。**新增的双重验证机制**确保了模型预设的稳定性和一致性，特别是在组件刷新场景下保护用户的自定义配置。组件间低耦合、高内聚，既保证了可维护性，也为后续扩展（如更多模型、代理与工具）提供了稳定基础。
 
 ## 附录
 
@@ -487,6 +532,7 @@ AI聊天界面通过清晰的分层设计与强类型的流式处理，实现了
 - 响应式设计：输入区支持多行展开与最大高度限制；图片预览弹窗自适应窗口尺寸。
 - 可访问性：为思考块、工具调用卡片提供aria属性；键盘导航支持上下箭头与Enter/Escape。
 - **新增** 代理选择：AgentSelector提供直观的代理切换界面，支持一键启用新代理。
+- **新增** 模型选择：双重验证机制确保模型预设的稳定性，避免意外覆盖。
 
 ### CodeBuddy代理配置最佳实践
 - **代理检测**：优先使用系统PATH中的CodeBuddy安装，确保ACP功能正常。
@@ -494,3 +540,4 @@ AI聊天界面通过清晰的分层设计与强类型的流式处理，实现了
 - **网络环境**：根据实际网络条件选择合适的Internet Environment配置。
 - **环境变量**：谨慎添加额外的环境变量，避免与代理配置冲突。
 - **配置管理**：定期检查代理配置的有效性，及时更新版本信息。
+- **模型预设**：利用'auto'静态预设获得最佳的自动模型选择体验。
