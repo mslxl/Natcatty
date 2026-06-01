@@ -148,8 +148,11 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-w-md" onKeyDown={handleKeyDown}>
-        <DialogHeader>
+      <DialogContent
+        className="max-w-md max-h-[min(90vh,720px)] flex flex-col overflow-hidden"
+        onKeyDown={handleKeyDown}
+      >
+        <DialogHeader className="shrink-0">
           <DialogTitle>
             {t(editing ? 'snippets.panel.editTitle' : 'snippets.panel.newTitle')}
           </DialogTitle>
@@ -158,7 +161,7 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3">
+        <div className="min-h-0 space-y-3 overflow-y-auto pr-1">
           <div className="space-y-1.5">
             <Label htmlFor="quick-add-snippet-label" className="text-xs">
               {t('snippets.field.description')}
@@ -198,7 +201,7 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
           </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           <Button variant="outline" onClick={() => setOpen(false)}>
             {t('common.cancel')}
           </Button>
