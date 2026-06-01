@@ -4,6 +4,8 @@ import { cn } from "@/lib/utils.ts";
 export interface CodeTextareaProps
   extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "spellCheck"> {
   showLineNumbers?: boolean;
+  /** Applied to the outer bordered container when line numbers are shown. */
+  wrapperClassName?: string;
 }
 
 function countLines(value: string): number {
@@ -12,7 +14,7 @@ function countLines(value: string): number {
 }
 
 const CodeTextarea = React.forwardRef<HTMLTextAreaElement, CodeTextareaProps>(
-  ({ className, value, showLineNumbers = true, onScroll, ...props }, ref) => {
+  ({ className, wrapperClassName, value, showLineNumbers = true, onScroll, ...props }, ref) => {
     const gutterRef = React.useRef<HTMLDivElement>(null);
     const text = typeof value === "string" ? value : String(value ?? "");
     const lineCount = countLines(text);
@@ -61,8 +63,9 @@ const CodeTextarea = React.forwardRef<HTMLTextAreaElement, CodeTextareaProps>(
     return (
       <div
         className={cn(
-          "flex w-full overflow-hidden rounded-md border border-input bg-background",
-          "focus-within:ring-1 focus-within:ring-ring",
+          "flex w-full overflow-hidden rounded-md border border-input bg-background transition-colors",
+          "focus-within:border-ring",
+          wrapperClassName,
         )}
       >
         <div

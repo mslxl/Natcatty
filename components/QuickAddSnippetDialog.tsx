@@ -24,7 +24,7 @@ import {
 } from './ui/dialog';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
-import { CodeTextarea } from './ui/code-textarea';
+import { SnippetScriptEditor } from './snippets/SnippetScriptEditor';
 
 export interface QuickAddSnippetDialogProps {
   snippets: Snippet[];
@@ -148,8 +148,11 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-w-md" onKeyDown={handleKeyDown}>
-        <DialogHeader>
+      <DialogContent
+        className="max-w-md max-h-[min(90vh,720px)] flex flex-col overflow-hidden"
+        onKeyDown={handleKeyDown}
+      >
+        <DialogHeader className="shrink-0">
           <DialogTitle>
             {t(editing ? 'snippets.panel.editTitle' : 'snippets.panel.newTitle')}
           </DialogTitle>
@@ -158,7 +161,7 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3">
+        <div className="min-h-0 space-y-3 overflow-y-auto pr-1">
           <div className="space-y-1.5">
             <Label htmlFor="quick-add-snippet-label" className="text-xs">
               {t('snippets.field.description')}
@@ -174,18 +177,13 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
             />
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="quick-add-snippet-command" className="text-xs">
-              {t('snippets.field.scriptRequired')}
-            </Label>
-            <CodeTextarea
-              id="quick-add-snippet-command"
-              value={command}
-              onChange={(e) => setCommand(e.target.value)}
-              placeholder="echo hello"
-              className="min-h-[120px]"
-            />
-          </div>
+          <SnippetScriptEditor
+            id="quick-add-snippet-command"
+            label={t('snippets.field.scriptRequired')}
+            value={command}
+            onChange={setCommand}
+            placeholder="echo hello"
+          />
 
           <div className="space-y-1.5">
             <Label className="text-xs flex items-center gap-1.5">
@@ -203,7 +201,7 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
           </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           <Button variant="outline" onClick={() => setOpen(false)}>
             {t('common.cancel')}
           </Button>
