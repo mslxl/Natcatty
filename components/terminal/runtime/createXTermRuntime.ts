@@ -50,6 +50,7 @@ import { handleSerialLineModeInput } from "./serialLineInput";
 import {
   nextTerminalFontSizeForAction,
   nextTerminalFontSizeForWheel,
+  terminalFontSizeWheelListenerOptions,
 } from "./terminalFontZoom";
 import {
   markExpectedTerminalCursorPositionReport,
@@ -526,7 +527,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     event.stopPropagation();
     applyTerminalFontSize(nextFontSize);
   };
-  ctx.container.addEventListener("wheel", handleFontSizeWheel, { passive: false });
+  ctx.container.addEventListener(
+    "wheel",
+    handleFontSizeWheel,
+    terminalFontSizeWheelListenerOptions,
+  );
 
   term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
     // Preserve mouse selection across keystrokes when enabled. xterm.js
@@ -984,7 +989,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     keywordHighlighter,
     clearTextureAtlas: clearWebglTextureAtlas,
     dispose: () => {
-      ctx.container.removeEventListener("wheel", handleFontSizeWheel);
+      ctx.container.removeEventListener(
+        "wheel",
+        handleFontSizeWheel,
+        terminalFontSizeWheelListenerOptions,
+      );
       cleanupMiddleClick?.();
       stopDprWatch();
       keywordHighlighter.dispose();

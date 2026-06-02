@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   nextTerminalFontSizeForAction,
   nextTerminalFontSizeForWheel,
+  terminalFontSizeWheelListenerOptions,
 } from './terminalFontZoom.ts';
 
 test('terminal font size actions step and reset within bounds', () => {
@@ -24,4 +25,9 @@ test('wheel adjusts terminal font size with the platform modifier only', () => {
   assert.equal(nextTerminalFontSizeForWheel({ ctrlKey: true, metaKey: false, deltaY: -1 }, 14, true), null);
   assert.equal(nextTerminalFontSizeForWheel({ ctrlKey: false, metaKey: false, deltaY: -1 }, 14, false), null);
   assert.equal(nextTerminalFontSizeForWheel({ ctrlKey: true, metaKey: false, deltaY: 0 }, 14, false), null);
+});
+
+test('wheel font-size listener runs before xterm consumes terminal scrolling', () => {
+  assert.equal(terminalFontSizeWheelListenerOptions.capture, true);
+  assert.equal(terminalFontSizeWheelListenerOptions.passive, false);
 });
