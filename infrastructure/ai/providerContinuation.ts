@@ -408,3 +408,99 @@ export function applyOpenAIChatContinuationToBody(
   if (!changed) return body;
   return JSON.stringify({ ...parsed, messages });
 }
+
+function messageHasAssistantContent(message: Record<string, unknown>): boolean {
+  const content = message.content;
+  if (typeof content === 'string') return content.trim().length > 0;
+  if (Array.isArray(content)) return content.length > 0;
+  return content !== undefined && content !== null;
+}
+
+/**
+ * OpenAI-compatible chat APIs reject a request when an assistant message
+ * contains tool_calls that are not immediately answered by matching tool
+ * messages. This can happen when a prior Catty tool loop was interrupted
+ * mid-flight. Repair the outgoing history instead of letting one broken
+ * turn permanently brick the chat session.
+ */
+export function repairOpenAIChatToolResultPairsInBody(body: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return body;
+  }
+
+  if (!isRecord(parsed) || !Array.isArray(parsed.messages)) return body;
+
+  let changed = false;
+  const repairedMessages: unknown[] = [];
+  const messages = parsed.messages;
+
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (!isRecord(message)) {
+      repairedMessages.push(message);
+      continue;
+    }
+
+    if (message.role === 'tool') {
+      changed = true;
+      continue;
+    }
+
+    if (message.role !== 'assistant' || !Array.isArray(message.tool_calls) || message.tool_calls.length === 0) {
+      repairedMessages.push(message);
+      continue;
+    }
+
+    const followingToolMessages: Record<string, unknown>[] = [];
+    let lookahead = index + 1;
+    while (lookahead < messages.length) {
+      const nextMessage = messages[lookahead];
+      if (!isRecord(nextMessage) || nextMessage.role !== 'tool') break;
+      followingToolMessages.push(nextMessage);
+      lookahead += 1;
+    }
+
+    const toolMessagesById = new Map<string, Record<string, unknown>>();
+    for (const toolMessage of followingToolMessages) {
+      const toolCallId = toolMessage.tool_call_id;
+      if (typeof toolCallId === 'string' && !toolMessagesById.has(toolCallId)) {
+        toolMessagesById.set(toolCallId, toolMessage);
+      }
+    }
+
+    const validToolCalls = message.tool_calls.filter((toolCall) => {
+      if (!isRecord(toolCall)) return false;
+      const toolCallId = toolCall.id;
+      return typeof toolCallId === 'string' && toolMessagesById.has(toolCallId);
+    });
+
+    if (validToolCalls.length !== message.tool_calls.length || validToolCalls.length !== followingToolMessages.length) {
+      changed = true;
+    }
+
+    if (validToolCalls.length > 0) {
+      repairedMessages.push({
+        ...message,
+        tool_calls: validToolCalls,
+      });
+
+      for (const toolCall of validToolCalls) {
+        if (!isRecord(toolCall) || typeof toolCall.id !== 'string') continue;
+        const toolMessage = toolMessagesById.get(toolCall.id);
+        if (toolMessage) repairedMessages.push(toolMessage);
+      }
+    } else if (messageHasAssistantContent(message)) {
+      const { tool_calls: _toolCalls, ...messageWithoutToolCalls } = message;
+      void _toolCalls;
+      repairedMessages.push(messageWithoutToolCalls);
+    }
+
+    index = lookahead - 1;
+  }
+
+  if (!changed) return body;
+  return JSON.stringify({ ...parsed, messages: repairedMessages });
+}
