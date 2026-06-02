@@ -8,6 +8,7 @@ import {
   extractProviderContinuationFromRawChunk,
   mergeProviderContinuation,
   rawOpenAIChatChunkHasToolCalls,
+  repairOpenAIChatToolResultPairsInBody,
   type OpenAIChatAssistantFields,
 } from '../providerContinuation';
 
@@ -330,10 +331,10 @@ export function createBridgeFetchForSDK(
     const body =
       resolvedInit?.body != null ? String(resolvedInit.body) : undefined;
     const requestBody = body != null
-      ? applyOpenAIChatContinuationToBody(
+      ? repairOpenAIChatToolResultPairsInBody(applyOpenAIChatContinuationToBody(
           body,
           requestContext?.getOpenAIChatAssistantFields?.() ?? [],
-        )
+        ))
       : undefined;
 
     // Streaming path
