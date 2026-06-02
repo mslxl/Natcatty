@@ -170,6 +170,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
             protocol: session.protocol ?? host.protocol,
             port: session.port ?? host.port,
             moshEnabled: session.moshEnabled ?? host.moshEnabled,
+            etEnabled: session.etEnabled ?? host.etEnabled,
           }
         : {
             // Quick Connect / temporary session — build minimal host from session data
@@ -518,11 +519,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         const protocol = session.protocol ?? existingHost.protocol;
         const port = session.port ?? existingHost.port;
         const moshEnabled = session.moshEnabled ?? existingHost.moshEnabled;
+        const etEnabled = session.etEnabled ?? existingHost.etEnabled;
 
         if (
           protocol === existingHost.protocol &&
           port === existingHost.port &&
           moshEnabled === existingHost.moshEnabled
+          && etEnabled === existingHost.etEnabled
         ) {
           map.set(session.id, existingHost);
         } else {
@@ -531,6 +534,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
             protocol,
             port,
             moshEnabled,
+            etEnabled,
           });
         }
       } else {
@@ -555,6 +559,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
           tags: [],
           protocol: fallbackProtocol,
           moshEnabled: session.moshEnabled,
+          etEnabled: session.etEnabled,
           charset: session.charset,
           localShell: session.localShell,
           localShellArgs: session.localShellArgs,
