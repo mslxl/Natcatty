@@ -8,6 +8,7 @@
 import React, { useEffect, useRef, useState, memo } from "react";
 import { Folder, File, Link } from "lucide-react";
 import type { CompletionSuggestion, SuggestionSource } from "./completionEngine";
+import { computeAutocompletePopupPlacement } from "./terminalAutocompleteLayout";
 
 export interface AutocompleteThemeColors {
   background: string;
@@ -195,10 +196,17 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
 
   const bg = themeColors?.background ?? "#1e1e2e";
   const fg = themeColors?.foreground ?? "#cdd6f4";
+  // Accent comes from the active terminal theme's cursor/selection colors,
+  // which already track the user's accent setting (custom accent rewrites them
+  // in applyCustomAccentToTerminalTheme). Falling back to selection, then a
+  // neutral fg-mix, keeps older/partial theme payloads working. This is what
+  // makes the popup's highlight follow the accent instead of a hardcoded blue.
+  const accent = themeColors?.cursor || themeColors?.selection || fg;
   const popupBg = `color-mix(in srgb, ${bg} 92%, ${fg} 8%)`;
   const popupBorder = `color-mix(in srgb, ${bg} 75%, ${fg} 25%)`;
-  const selectedBg = `color-mix(in srgb, ${bg} 78%, ${fg} 22%)`;
-  const hoverBg = `color-mix(in srgb, ${bg} 85%, ${fg} 15%)`;
+  const selectedBg = `color-mix(in srgb, ${accent} 26%, ${bg} 74%)`;
+  const selectedBorderAccent = `color-mix(in srgb, ${accent} 60%, ${bg} 40%)`;
+  const hoverBg = `color-mix(in srgb, ${accent} 12%, ${bg} 88%)`;
   const textColor = fg;
   const dimTextColor = `color-mix(in srgb, ${fg} 50%, ${bg} 50%)`;
 
@@ -206,6 +214,14 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
   const detailIndex = hoveredIndex >= 0 ? hoveredIndex : selectedIndex;
   const detailItem = detailIndex >= 0 ? suggestions[detailIndex] : null;
   const showDetail = detailItem?.description && detailItem.description.length > 0;
+
+  // Whether ANY item in the current set can open the detail tooltip (non-path
+  // row with a description). Placement reserves space from this set-level flag
+  // rather than the hovered item, so moving the mouse between rows can't change
+  // totalWidth/height and shift the popup out from under the pointer.
+  const setMayShowDetailPanel = suggestions.some(
+    (s) => s.source !== "path" && Boolean(s.description && s.description.length > 0),
+  );
 
   // Calculate fixed viewport position from container rect + relative cursor position.
   // containerRef already has top offset for toolbar/search bar, so don't add it again.
@@ -219,34 +235,48 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
   const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 800;
   const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 1200;
   const estimatedPopupHeight = Math.min(maxHeight, suggestions.length * 28 + 8);
-  const estimatedDetailHeight = showDetail && detailItem && detailItem.source !== "path" ? 96 : 0;
-  const desiredContentHeight = Math.min(
+  // Reserve the detail height for the whole set (not the hovered row) so the
+  // chosen direction/height stays stable while hovering.
+  const estimatedDetailHeight = setMayShowDetailPanel ? 96 : 0;
+  const desiredContentHeight = Math.max(estimatedPopupHeight, estimatedDetailHeight);
+
+  // Total horizontal extent so the WHOLE assembly is clamped inside the
+  // viewport — not just the main list. Mirrors the rendered maxWidths:
+  // main list (400) + each cascading sub-dir panel (240) + the detail
+  // tooltip (280), separated by the flex gap (4). Without this, expanding a
+  // directory near the right edge pushed the sub-panels off-screen (#1202).
+  const FLEX_GAP = 4;
+  const MAIN_LIST_MAX_WIDTH = 400;
+  const SUBDIR_PANEL_MAX_WIDTH = 240;
+  const DETAIL_PANEL_MAX_WIDTH = 280;
+  const totalWidth =
+    MAIN_LIST_MAX_WIDTH +
+    subDirPanels.length * (FLEX_GAP + SUBDIR_PANEL_MAX_WIDTH) +
+    (setMayShowDetailPanel ? FLEX_GAP + DETAIL_PANEL_MAX_WIDTH : 0);
+
+  const placement = computeAutocompletePopupPlacement({
+    anchorTop: fixedLineTop,
+    anchorBottom: fixedLineBottom,
+    anchorLeft: fixedLeft,
+    viewportWidth,
+    viewportHeight,
+    desiredHeight: desiredContentHeight,
+    totalWidth,
     maxHeight,
-    Math.max(estimatedPopupHeight, estimatedDetailHeight),
-  );
-  const spaceAbove = Math.max(0, fixedLineTop - viewportPadding - anchorGap);
-  const spaceBelow = Math.max(0, viewportHeight - fixedLineBottom - viewportPadding - anchorGap);
-  const canFullyRenderAbove = spaceAbove >= desiredContentHeight;
-  const canFullyRenderBelow = spaceBelow >= desiredContentHeight;
-  const renderUpward = canFullyRenderBelow
-    ? false
-    : canFullyRenderAbove
-      ? true
-      : expandUpward
-        ? spaceAbove >= Math.min(spaceBelow, 80)
-        : spaceAbove > spaceBelow;
-  const availableVerticalSpace = renderUpward ? spaceAbove : spaceBelow;
-  const effectiveMaxHeight = Math.max(0, Math.min(maxHeight, availableVerticalSpace));
-  const contentHeightForPlacement = Math.min(
-    effectiveMaxHeight,
-    desiredContentHeight,
-  );
-  const anchoredTop = renderUpward
-    ? Math.max(viewportPadding, fixedLineTop - anchorGap - contentHeightForPlacement)
-    : Math.min(fixedLineBottom + anchorGap, viewportHeight - viewportPadding - contentHeightForPlacement);
-  const clampedLeft = Math.max(viewportPadding, Math.min(fixedLeft, viewportWidth - viewportPadding - 400));
+    anchorGap,
+    viewportPadding,
+    expandUpwardHint: expandUpward,
+  });
+  const renderUpward = placement.renderUpward;
+  const effectiveMaxHeight = placement.maxHeight;
+  const anchoredTop = placement.top;
+  const clampedLeft = placement.left;
 
   const sharedBoxStyle = {
+    // border-box so each panel's maxWidth is its true outer width (padding +
+    // border included). The horizontal clamp's totalWidth sums these maxWidths,
+    // so this keeps the off-screen math exact even for the padded detail panel.
+    boxSizing: "border-box" as const,
     backgroundColor: popupBg,
     border: `1px solid ${popupBorder}`,
     borderRadius: "6px",
@@ -306,6 +336,9 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
                 padding: "5px 10px",
                 cursor: "pointer",
                 backgroundColor: isSelected ? selectedBg : isHovered ? hoverBg : "transparent",
+                // Accent rail on the active row so the highlight reads as the
+                // theme accent. Inset shadow avoids shifting row layout.
+                boxShadow: isSelected ? `inset 2px 0 0 0 ${selectedBorderAccent}` : undefined,
                 gap: "8px",
                 lineHeight: "1.4",
               }}
@@ -435,6 +468,7 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
                   backgroundColor: isSubSelected ? selectedBg
                     : (idx === panel.selectedIndex && level < subDirFocusLevel) ? hoverBg
                     : "transparent",
+                  boxShadow: isSubSelected ? `inset 2px 0 0 0 ${selectedBorderAccent}` : undefined,
                   gap: "8px",
                   lineHeight: "1.4",
                 }}
@@ -467,6 +501,10 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
             padding: "10px 12px",
             maxWidth: "280px",
             minWidth: "160px",
+            // Bound the tooltip too: a long multi-line snippet description must
+            // scroll, not push the panel past the viewport edge (#1202).
+            maxHeight: `${effectiveMaxHeight}px`,
+            overflowY: "auto",
             alignSelf: renderUpward ? "flex-end" : "flex-start",
           }}
         >
