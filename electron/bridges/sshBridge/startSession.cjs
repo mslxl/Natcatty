@@ -49,6 +49,15 @@ function createStartSessionApi(ctx) {
         // additional exec channels. See domain/host.ts
         // `detectVendorFromSshVersion`.
         remoteSshVersion: (conn && typeof conn._remoteVer === 'string') ? conn._remoteVer : '',
+        // The actual SSH target this connection authenticated to. Used to make
+        // sure a "Copy Tab" reuse opens its channel on a connection going to the
+        // *same* host — a saved host edited after the source connected must not
+        // silently run commands on the old machine (issue #1204 review).
+        _reuseEndpoint: {
+          hostname: options.hostname || '',
+          port: options.port || 22,
+          username: options.username || 'root',
+        },
       };
       sessions.set(sessionId, session);
 
@@ -297,51 +306,61 @@ function createStartSessionApi(ctx) {
         };
         conn.once("error", onConnError);
 
-        conn.shell(
-          {
-            term: "xterm-256color",
-            cols,
-            rows,
-          },
-          shellOptions,
-          (err, stream) => {
-            conn.removeListener("error", onConnError);
-            if (settled) {
-              // Connection already failed; close any channel that still opened
-              // and drop the hold (failReuse already released, so guard with the
-              // settled check above means we only get here post-failure).
-              if (stream) { try { stream.close(); } catch { /* ignore */ } }
-              return;
+        try {
+          conn.shell(
+            {
+              term: "xterm-256color",
+              cols,
+              rows,
+            },
+            shellOptions,
+            (err, stream) => {
+              conn.removeListener("error", onConnError);
+              if (settled) {
+                // Connection already failed; close any channel that still opened
+                // and drop the hold (failReuse already released, so guard with the
+                // settled check above means we only get here post-failure).
+                if (stream) { try { stream.close(); } catch { /* ignore */ } }
+                return;
+              }
+              if (err) {
+                log("reused shell open failed", { sessionId, hostname: options.hostname, error: err.message });
+                sendProgress('error', `Failed to open shell: ${err.message}`);
+                failReuse(err);
+                return;
+              }
+
+              sendProgress('connected');
+
+              // Hand the up-front ref hold over to the real session: detach it from
+              // the temporary holder (without ending the transport) and attach the
+              // descriptor to the session. The count already includes this channel.
+              refHolder.connRef = null;
+              setupShellSession({
+                conn,
+                stream,
+                options: { ...options, _connRef: connRef },
+                sessionId,
+                event,
+                log,
+                detachX11Forwarding: null,
+                chainConnections: [],
+                isReused: true,
+              });
+
+              settled = true;
+              resolve({ sessionId });
             }
-            if (err) {
-              log("reused shell open failed", { sessionId, hostname: options.hostname, error: err.message });
-              sendProgress('error', `Failed to open shell: ${err.message}`);
-              failReuse(err);
-              return;
-            }
-
-            sendProgress('connected');
-
-            // Hand the up-front ref hold over to the real session: detach it from
-            // the temporary holder (without ending the transport) and attach the
-            // descriptor to the session. The count already includes this channel.
-            refHolder.connRef = null;
-            setupShellSession({
-              conn,
-              stream,
-              options: { ...options, _connRef: connRef },
-              sessionId,
-              event,
-              log,
-              detachX11Forwarding: null,
-              chainConnections: [],
-              isReused: true,
-            });
-
-            settled = true;
-            resolve({ sessionId });
-          }
-        );
+          );
+        } catch (syncErr) {
+          // ssh2 can throw synchronously (e.g. "Not connected") if the borrowed
+          // transport dropped between findReusableSession and conn.shell(). Make
+          // sure we drop the listener and release the up-front ref so the count
+          // isn't leaked, then fall back to a fresh connection.
+          conn.removeListener("error", onConnError);
+          log("reused shell threw synchronously", { sessionId, hostname: options.hostname, error: syncErr?.message });
+          failReuse(syncErr);
+        }
       });
     }
 
@@ -363,7 +382,11 @@ function createStartSessionApi(ctx) {
       // X11. For X11 hosts we deliberately skip reuse and make a fresh
       // connection so the duplicate keeps working X11 forwarding.
       if (options.sourceSessionId && !options.x11Forwarding) {
-        const sourceSession = findReusableSession(sessions, options.sourceSessionId);
+        const sourceSession = findReusableSession(sessions, options.sourceSessionId, {
+          hostname: options.hostname,
+          port: options.port || 22,
+          username: options.username || "root",
+        });
         if (sourceSession) {
           try {
             return await reuseShellSession(event, options, sourceSession, sessionId, log);

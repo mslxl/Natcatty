@@ -108,15 +108,24 @@ function releaseConnectionRef(session) {
  * host an additional shell channel. Used to satisfy a reuse request from a
  * duplicated tab.
  *
- * Returns null when the source session is gone, has no usable connection, or is
- * not an interactive SSH shell session (e.g. SFTP-only or local sessions), so
- * the caller can safely fall back to establishing a fresh connection.
+ * Returns null when the source session is gone, has no usable connection, is
+ * not an interactive SSH shell session (e.g. SFTP-only or local sessions), or
+ * authenticated to a *different* target than the one now requested, so the
+ * caller can safely fall back to establishing a fresh connection.
+ *
+ * The target check matters because a saved host can be edited after the source
+ * tab connected; the duplicate would then carry the new hostname/port/username
+ * while the source connection still points at the old machine. Reusing it would
+ * silently run commands on the wrong host, so we require an exact endpoint match.
  *
  * @param {Map} sessions - the shared sessions Map
  * @param {string} sourceSessionId - id of the session to reuse
+ * @param {{ hostname: string, port?: number, username?: string }} [requestedTarget]
+ *   the endpoint the duplicate wants to connect to; when provided, the source's
+ *   recorded endpoint must match it
  * @returns {object|null} the reusable source session, or null
  */
-function findReusableSession(sessions, sourceSessionId) {
+function findReusableSession(sessions, sourceSessionId, requestedTarget) {
   if (!sessions || !sourceSessionId) return null;
   const source = sessions.get(sourceSessionId);
   if (!source) return null;
@@ -130,6 +139,17 @@ function findReusableSession(sessions, sourceSessionId) {
   // underlying socket when ssh2 exposes one.
   const sock = source.conn._sock;
   if (sock && sock.destroyed) return null;
+
+  if (requestedTarget) {
+    const ep = source._reuseEndpoint;
+    // No recorded endpoint -> can't prove it's the same target, so don't reuse.
+    if (!ep) return null;
+    const sameHost = ep.hostname === (requestedTarget.hostname || '');
+    const samePort = (ep.port || 22) === (requestedTarget.port || 22);
+    const sameUser = (ep.username || 'root') === (requestedTarget.username || 'root');
+    if (!sameHost || !samePort || !sameUser) return null;
+  }
+
   return source;
 }
 

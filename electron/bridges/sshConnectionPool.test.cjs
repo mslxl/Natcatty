@@ -137,3 +137,52 @@ test("findReusableSession handles missing inputs gracefully", () => {
   assert.equal(findReusableSession(new Map(), ""), null);
   assert.equal(findReusableSession(new Map(), "absent"), null);
 });
+
+test("findReusableSession enforces an exact target endpoint match", () => {
+  const sessions = new Map();
+  const source = {
+    conn: { _sock: { destroyed: false } },
+    stream: {},
+    connRef: { count: 1 },
+    _reuseEndpoint: { hostname: "10.0.0.1", port: 22, username: "alice" },
+  };
+  sessions.set("src", source);
+
+  // Exact match -> reusable.
+  assert.equal(
+    findReusableSession(sessions, "src", { hostname: "10.0.0.1", port: 22, username: "alice" }),
+    source,
+  );
+  // Omitted port defaults to 22 and still matches.
+  assert.equal(
+    findReusableSession(sessions, "src", { hostname: "10.0.0.1", username: "alice" }),
+    source,
+  );
+  // Different host / port / user -> not reusable.
+  assert.equal(findReusableSession(sessions, "src", { hostname: "10.0.0.2", port: 22, username: "alice" }), null);
+  assert.equal(findReusableSession(sessions, "src", { hostname: "10.0.0.1", port: 2222, username: "alice" }), null);
+  assert.equal(findReusableSession(sessions, "src", { hostname: "10.0.0.1", port: 22, username: "bob" }), null);
+
+  // A root source matches a request that omits the username (defaults to root).
+  sessions.set("root-src", {
+    conn: { _sock: { destroyed: false } },
+    stream: {},
+    connRef: { count: 1 },
+    _reuseEndpoint: { hostname: "10.0.0.9", port: 22, username: "root" },
+  });
+  assert.ok(findReusableSession(sessions, "root-src", { hostname: "10.0.0.9" }));
+});
+
+test("findReusableSession refuses reuse when the source has no recorded endpoint", () => {
+  const sessions = new Map();
+  sessions.set("src", {
+    conn: { _sock: { destroyed: false } },
+    stream: {},
+    connRef: { count: 1 },
+    // no _reuseEndpoint
+  });
+  // With a requested target we can't prove same-host, so refuse.
+  assert.equal(findReusableSession(sessions, "src", { hostname: "10.0.0.1" }), null);
+  // Without a requested target (legacy callers), endpoint check is skipped.
+  assert.ok(findReusableSession(sessions, "src"));
+});

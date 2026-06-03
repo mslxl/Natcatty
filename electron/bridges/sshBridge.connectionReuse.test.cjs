@@ -113,6 +113,27 @@ function makeDeferredShellConn() {
   return conn;
 }
 
+// Build a live source session as if it had connected normally, including the
+// reference-counted descriptor and the recorded endpoint used for reuse target
+// matching.
+function makeSourceSession(conn, endpoint) {
+  return {
+    conn,
+    stream: makeStream(),
+    chainConnections: [],
+    connRef: { count: 1, conn, chainConnections: [] },
+    webContentsId: 1,
+    zmodemSentry: { cancel() {} },
+    hostname: endpoint.hostname,
+    username: endpoint.username,
+    _reuseEndpoint: {
+      hostname: endpoint.hostname,
+      port: endpoint.port || 22,
+      username: endpoint.username,
+    },
+  };
+}
+
 function registerStartHandler(bridge, sessions) {
   bridge.init({ sessions, electronModule: {} });
   const ipcMain = {
@@ -128,19 +149,9 @@ test("Copy Tab reuses the source connection instead of dialing fresh", async (t)
   const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
   const sessions = new Map();
   const sourceConn = makeReusableConn();
-  const sourceStream = makeStream();
 
-  // Seed a live source session as if it had connected normally, including the
-  // reference-counted descriptor the owner session carries.
-  sessions.set("source", {
-    conn: sourceConn,
-    stream: sourceStream,
-    chainConnections: [],
-    connRef: { count: 1, conn: sourceConn, chainConnections: [] },
-    webContentsId: 1,
-    hostname: "10.0.0.1",
-    username: "alice",
-  });
+  // Seed a live source session as if it had connected normally.
+  sessions.set("source", makeSourceSession(sourceConn, { hostname: "10.0.0.1", username: "alice" }));
 
   const start = registerStartHandler(bridge, sessions);
   const sender = makeSender();
@@ -176,14 +187,9 @@ test("closing the reused channel keeps the source connection alive", async (t) =
   const { bridge } = loadBridgeWithMockedSsh2(t);
   const sessions = new Map();
   const sourceConn = makeReusableConn();
-  const connRef = { count: 1, conn: sourceConn, chainConnections: [] };
-  sessions.set("source", {
-    conn: sourceConn,
-    stream: makeStream(),
-    chainConnections: [],
-    connRef,
-    webContentsId: 1,
-  });
+  const source = makeSourceSession(sourceConn, { hostname: "10.0.0.1", username: "alice" });
+  const connRef = source.connRef;
+  sessions.set("source", source);
 
   const start = registerStartHandler(bridge, sessions);
   await start(
@@ -212,13 +218,7 @@ test("skips reuse for X11-forwarding hosts and connects fresh", async (t) => {
   const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
   const sessions = new Map();
   const sourceConn = makeReusableConn();
-  sessions.set("source", {
-    conn: sourceConn,
-    stream: makeStream(),
-    chainConnections: [],
-    connRef: { count: 1, conn: sourceConn, chainConnections: [] },
-    webContentsId: 1,
-  });
+  sessions.set("source", makeSourceSession(sourceConn, { hostname: "10.0.0.1", username: "alice" }));
 
   const start = registerStartHandler(bridge, sessions);
 
@@ -245,15 +245,8 @@ test("source closed while reused shell is pending keeps the connection alive", a
   const terminalBridge = require("./terminalBridge.cjs");
   const sessions = new Map();
   const conn = makeDeferredShellConn();
-  const connRef = { count: 1, conn, chainConnections: [] };
-  const source = {
-    conn,
-    stream: makeStream(),
-    chainConnections: [],
-    connRef,
-    zmodemSentry: { cancel() {} },
-    webContentsId: 1,
-  };
+  const source = makeSourceSession(conn, { hostname: "10.0.0.1", username: "alice" });
+  const connRef = source.connRef;
   sessions.set("source", source);
 
   terminalBridge.init({ sessions, electronModule: {} });
@@ -286,6 +279,55 @@ test("source closed while reused shell is pending keeps the connection alive", a
   // Closing the copy (last holder) finally ends the connection.
   terminalBridge.closeSession({ sender: {} }, { sessionId: "copy" });
   assert.equal(conn.ended, 1);
+});
+
+test("does not reuse when the source endpoint differs from the requested target", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
+  const sessions = new Map();
+  const sourceConn = makeReusableConn();
+  // Source connected to the OLD host; the saved host was then edited.
+  sessions.set("source", makeSourceSession(sourceConn, { hostname: "10.0.0.1", username: "alice" }));
+
+  const start = registerStartHandler(bridge, sessions);
+
+  // The duplicate now targets a DIFFERENT hostname. Reusing the old connection
+  // would run commands on the wrong machine, so it must connect fresh instead.
+  await assert.rejects(
+    () => start(
+      { sender: makeSender() },
+      {
+        sessionId: "copy",
+        hostname: "10.0.0.2", // different host
+        username: "alice",
+        sourceSessionId: "source",
+      },
+    ),
+  );
+  assert.equal(sourceConn.openedShells.length, 0, "must not reuse a mismatched connection");
+  assert.equal(getClientConstructCount(), 1, "should dial a fresh connection to the new host");
+});
+
+test("synchronous shell failure releases the ref and falls back to fresh", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
+  const sessions = new Map();
+  const sourceConn = makeReusableConn();
+  // Make conn.shell throw synchronously, as ssh2 does when the transport just
+  // dropped (e.g. "Not connected").
+  sourceConn.shell = () => { throw new Error("Not connected"); };
+  const source = makeSourceSession(sourceConn, { hostname: "10.0.0.1", username: "alice" });
+  const connRef = source.connRef;
+  sessions.set("source", source);
+
+  const start = registerStartHandler(bridge, sessions);
+  await assert.rejects(
+    () => start(
+      { sender: makeSender() },
+      { sessionId: "copy", hostname: "10.0.0.1", username: "alice", sourceSessionId: "source" },
+    ),
+  );
+  // The up-front ref hold must be released so the source's count isn't leaked.
+  assert.equal(connRef.count, 1, "ref count restored after synchronous shell failure");
+  assert.equal(getClientConstructCount(), 1, "should fall back to a fresh connection");
 });
 
 test("falls back to a fresh connection when the source is gone", async (t) => {
