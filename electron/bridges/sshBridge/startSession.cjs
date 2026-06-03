@@ -887,6 +887,13 @@ function createStartSessionApi(ctx) {
           // through releaseConnectionRef so the last channel — not whichever
           // channel happens to close first — ends the connection + chain.
           let connRef = null;
+          // Session-log stream token for THIS connection's owner channel,
+          // captured in the closure so the connection-level error/timeout/close
+          // handlers stop only this connection's stream. Reading it back off the
+          // session map would risk stopping a *newer* same-sessionId stream
+          // after a reconnect (the token guard from #916). Stays null until the
+          // owner shell opens.
+          let ownerLogStreamToken = null;
 
           // End the shared transport directly when we fail *before* a session
           // (and its connRef) exists; once connRef exists, teardown goes through
@@ -1001,6 +1008,10 @@ function createStartSessionApi(ctx) {
                   isReused: false,
                 });
                 connRef = createConnectionRef(ownerSession, conn, chainConnections);
+                // Capture this connection's log stream token in the closure so
+                // the connection-level handlers below stop the right stream even
+                // after a same-sessionId reconnect (#916).
+                ownerLogStreamToken = ownerSession._logStreamToken;
 
                 settled = true;
                 resolve({ sessionId });
@@ -1078,7 +1089,7 @@ function createStartSessionApi(ctx) {
 
             sendProgress(totalHops, totalHops, options.hostname, 'error', err.message);
             safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: err.message, reason: "error" });
-            sessionLogStreamManager.stopStream(sessionId, sessions.get(sessionId)?._logStreamToken);
+            sessionLogStreamManager.stopStream(sessionId, ownerLogStreamToken);
             if (detachX11Forwarding) {
               detachX11Forwarding();
               detachX11Forwarding = null;
@@ -1102,7 +1113,7 @@ function createStartSessionApi(ctx) {
             const contents = event.sender;
             sendProgress(totalHops, totalHops, options.hostname, 'error', err.message);
             safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: err.message, reason: "timeout" });
-            sessionLogStreamManager.stopStream(sessionId, sessions.get(sessionId)?._logStreamToken);
+            sessionLogStreamManager.stopStream(sessionId, ownerLogStreamToken);
             sessions.get(sessionId)?.zmodemSentry?.cancel();
             sessions.delete(sessionId);
             sessionEncodings.delete(sessionId);
@@ -1139,7 +1150,9 @@ function createStartSessionApi(ctx) {
               } else {
                 safeSend(contents, "netcatty:exit", { sessionId, exitCode: 0, reason: "closed" });
               }
-              sessionLogStreamManager.stopStream(sessionId, session?._logStreamToken);
+              // Use this connection's captured token so a late close from an
+              // old transport can't stop a newer same-sessionId stream (#916).
+              sessionLogStreamManager.stopStream(sessionId, ownerLogStreamToken);
               session?.zmodemSentry?.cancel();
               // Release the owner's hold on the shared connection. The transport
               // is already closing, but this decrements the reference count and,
@@ -1152,9 +1165,9 @@ function createStartSessionApi(ctx) {
               sessionDecoders.delete(sessionId);
             } else {
               // Owner already cleaned up (e.g. its stream closed first). Ensure
-              // the log stream is stopped defensively; chain teardown was/will
-              // be handled by releaseConnectionRef on the last channel.
-              sessionLogStreamManager.stopStream(sessionId);
+              // this connection's log stream is stopped defensively, scoped by
+              // the captured token so a reconnect's fresh stream is left alone.
+              sessionLogStreamManager.stopStream(sessionId, ownerLogStreamToken);
             }
             if (!settled) {
               settled = true;
