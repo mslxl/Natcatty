@@ -867,9 +867,29 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           jumpHostsWithUnavailableCredentials.push(jumpHost.label || jumpHost.hostname);
         }
 
+        // Mirror startSSH: a reference key lives on disk, so forward its path as
+        // an IdentityFile instead of dropping it (privateKey is undefined for
+        // reference keys). Without this, ET jump-host key auth silently falls
+        // back to defaults even when a valid key is selected.
+        const jumpAllowsLocalIdentityFallback = !jumpAuth.keyId;
+        const jumpReferenceKeyPath = jumpAuth.authMethod === "password"
+          ? undefined
+          : jumpKey?.source === 'reference' ? jumpKey.filePath : undefined;
+        const jumpIdentityFilePaths = jumpAuth.authMethod === "password"
+          ? undefined
+          : jumpReferenceKeyPath
+            ? [jumpReferenceKeyPath]
+            : jumpAllowsLocalIdentityFallback
+              ? jumpHost.identityFilePaths
+              : undefined;
+
         return {
           hostname: jumpHost.hostname,
           port: jumpHost.port || 22,
+          // ET server port on this bastion: the bridge tunnels the ET socket to
+          // the jumphost's etserver, so a custom etPort must be forwarded or it
+          // defaults to 2022 and the connection fails.
+          etPort: jumpHost.etPort,
           username: jumpAuth.username || "root",
           password: jumpPassword,
           privateKey: jumpKey?.source === 'reference' ? undefined : jumpPrivateKey,
@@ -878,7 +898,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           keyId: jumpAuth.keyId,
           keySource: jumpKey?.source,
           label: jumpHost.label,
-          identityFilePaths: jumpHost.identityFilePaths,
+          identityFilePaths: jumpIdentityFilePaths,
         };
       });
 

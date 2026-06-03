@@ -133,6 +133,8 @@ test("startEt connects with a single resolved jump host", async () => {
       label: "Jump",
       hostname: "jump.example.test",
       username: "jumper",
+      // key auth with no saved key reference → local identity file fallback
+      authMethod: "key",
       identityFilePaths: ["/Users/alice/.ssh/jump_ed25519"],
     }],
     backend,
@@ -146,6 +148,63 @@ test("startEt connects with a single resolved jump host", async () => {
   const jumpHosts = captured.jumpHosts as Array<Record<string, unknown>>;
   assert.equal(jumpHosts.length, 1);
   assert.equal(jumpHosts[0]?.hostname, "jump.example.test");
+  // Local identity file fallback is forwarded for the hop.
+  assert.deepEqual(jumpHosts[0]?.identityFilePaths, ["/Users/alice/.ssh/jump_ed25519"]);
+});
+
+test("startEt forwards a jump host's custom ET port", async () => {
+  let captured: Record<string, unknown> | null = null;
+  const backend = makeBackend((options) => { captured = options; });
+  const ctx = makeCtx(
+    { hostChain: { hostIds: ["jump-1"] } },
+    [{
+      id: "jump-1",
+      label: "Jump",
+      hostname: "jump.example.test",
+      username: "jumper",
+      etPort: 9022,
+    }],
+    backend,
+  );
+
+  await createTerminalSessionStarters(ctx as never).startEt(term as never);
+
+  const jumpHosts = (captured as Record<string, unknown>).jumpHosts as Array<Record<string, unknown>>;
+  assert.equal(jumpHosts[0]?.etPort, 9022);
+});
+
+test("startEt forwards a jump host reference key path as an identity file", async () => {
+  let captured: Record<string, unknown> | null = null;
+  const backend = makeBackend((options) => { captured = options; });
+  const ctx = {
+    ...makeCtx(
+      { hostChain: { hostIds: ["jump-1"] } },
+      [{
+        id: "jump-1",
+        label: "Jump",
+        hostname: "jump.example.test",
+        username: "jumper",
+        authMethod: "key",
+        identityFileId: "ref-key",
+      }],
+      backend,
+    ),
+    keys: [{
+      id: "ref-key",
+      label: "Reference key",
+      source: "reference",
+      filePath: "/Users/alice/.ssh/jump_reference_ed25519",
+      // reference keys carry no inline privateKey material
+    }],
+  };
+
+  await createTerminalSessionStarters(ctx as never).startEt(term as never);
+
+  const jumpHosts = (captured as Record<string, unknown>).jumpHosts as Array<Record<string, unknown>>;
+  // privateKey must be omitted for a reference key, and the on-disk path
+  // forwarded as an IdentityFile instead of being dropped.
+  assert.equal(jumpHosts[0]?.privateKey, undefined);
+  assert.deepEqual(jumpHosts[0]?.identityFilePaths, ["/Users/alice/.ssh/jump_reference_ed25519"]);
 });
 
 test("startEt connects directly when no jump host is configured", async () => {
