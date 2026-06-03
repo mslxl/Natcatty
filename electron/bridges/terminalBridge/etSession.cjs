@@ -100,6 +100,12 @@ main();
       return path.resolve(String(targetPath)).replace(/\\/g, "/");
     }
 
+    // POSIX single-quote a string so it is safe to embed verbatim in a /bin/sh
+    // script (handles spaces and embedded single quotes in e.g. an .app path).
+    function shellSingleQuote(value) {
+      return `'${String(value).replace(/'/g, "'\\''")}'`;
+    }
+
     function createPasswordPromptMatchers({ hostname, username, port }) {
       const values = new Set();
       const addHostVariant = (hostValue) => {
@@ -159,14 +165,26 @@ main();
         };
       }
 
+      // Unix: ssh execs SSH_ASKPASS directly, so the helper must be runnable
+      // without relying on a `node` on PATH. The `.cjs` shebang (#!/usr/bin/env
+      // node) breaks in packaged builds because Electron does not put a `node`
+      // binary on the user's PATH. Mirror the Windows .cmd wrapper: run the
+      // script through Electron's own executable with ELECTRON_RUN_AS_NODE=1.
+      const askpassWrapperPath = path.join(sshDir, "netcatty-et-askpass.sh");
+      const electronExec = shellSingleQuote(process.execPath);
+      writeSecureFile(
+        askpassWrapperPath,
+        `#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec ${electronExec} "$(dirname "$0")/netcatty-et-askpass.cjs" "$@"\n`,
+        0o700,
+      );
       return {
         env: {
-          SSH_ASKPASS: askpassScriptPath,
+          SSH_ASKPASS: askpassWrapperPath,
           SSH_ASKPASS_REQUIRE: "force",
           DISPLAY: process.env.DISPLAY || "netcatty:0",
           NETCATTY_ET_ASKPASS_MAP: askpassMapPath,
         },
-        artifacts: [askpassMapPath, askpassScriptPath],
+        artifacts: [askpassMapPath, askpassScriptPath, askpassWrapperPath],
       };
     }
 
@@ -299,38 +317,65 @@ main();
         configLines.push("PubkeyAcceptedAlgorithms +ssh-rsa,ssh-dss");
       }
 
-      // Jump host — use ProxyCommand with explicit ssh options for full auth control
-      // ProxyCommand contains spaces → config file only
+      // Jump host — route through ET's own --jumphost/--jport so the ET TCP
+      // socket connects to the jumphost's etserver and the destination is
+      // reached over the SSH tunnel ET sets up with `ssh -J jumphost dest`.
+      // (A bare ssh ProxyCommand only fixes the SSH bootstrap; ET would still
+      // open its socket straight at the unreachable destination etserver.)
+      //
+      // ET passes the destination's --ssh-option values via `ssh -o`, which
+      // OpenSSH applies to the final hop only. The jump hop is configured by
+      // OpenSSH from ssh_config, so the jump's per-hop credentials/settings go
+      // into a `Host <jumphost>` block in the config file. To keep the
+      // destination's auth from leaking onto the jump hop, scope the
+      // destination's comma/space config lines under a `Host <dest>` block too
+      // whenever a jump host is present.
       const jumpHosts = Array.isArray(options.jumpHosts) ? options.jumpHosts : [];
       if (jumpHosts.length > 1) {
         throw new Error("EternalTerminal currently supports at most one jump host in Netcatty.");
       }
 
+      let etJumpArgs = [];
+      const jumpConfigLines = [];
       if (jumpHosts[0]) {
         const jump = jumpHosts[0];
         const jumpUser = jump.username || os.userInfo().username;
         const jumpHost = jump.hostname;
         const jumpPort = jump.port || 22;
+        // ET server port on the jumphost. ET's own default is 2022; honor an
+        // explicit override if the jump host model ever carries one.
+        const jumpEtPort = jump.etPort || 2022;
 
-        const proxyParts = ["ssh"];
+        // Tell ET to tunnel through the jumphost. ET opens its ET socket to
+        // <jumphost>:<jport> and adds `ssh -J <jumpUser@jumpHost>` for the
+        // bootstrap; we feed the destination via the positional host as usual.
+        etJumpArgs = ["--jumphost", `${jumpUser}@${jumpHost}`, "--jport", String(jumpEtPort)];
+
+        // Per-hop jump settings live in a `Host <jumpHost>` block so they apply
+        // to the ProxyJump connection only (not the destination).
+        jumpConfigLines.push(`Host ${jumpHost}`);
+        jumpConfigLines.push(`  HostName ${jumpHost}`);
+        jumpConfigLines.push(`  User ${jumpUser}`);
+        jumpConfigLines.push(`  Port ${jumpPort}`);
 
         // Jump host key
         if (jump.privateKey) {
           const jumpKeyPath = path.join(sshDir, `${safeId}-jump-key`);
           writeSecureFile(jumpKeyPath, jump.privateKey, 0o600);
-          proxyParts.push("-i", normalizeSshConfigPath(jumpKeyPath));
-          proxyParts.push("-o", "IdentitiesOnly=yes");
+          jumpConfigLines.push(`  IdentityFile ${normalizeSshConfigPath(jumpKeyPath)}`);
+          jumpConfigLines.push("  IdentitiesOnly yes");
           if (jump.passphrase) {
             const jumpPassPath = path.join(sshDir, `${safeId}-jump-passphrase.txt`);
             writeSecureFile(jumpPassPath, `${jump.passphrase}\n`, 0o600);
             addAskpassEntry(askpassEntries, "passphrase", createPassphrasePromptMatchers(jumpKeyPath), jumpPassPath);
           }
         } else if (Array.isArray(jump.identityFilePaths)) {
-          for (const idPath of jump.identityFilePaths) {
-            if (idPath) proxyParts.push("-i", normalizeSshConfigPath(idPath));
+          const jumpIdentityPaths = jump.identityFilePaths.filter(Boolean);
+          for (const idPath of jumpIdentityPaths) {
+            jumpConfigLines.push(`  IdentityFile ${normalizeSshConfigPath(idPath)}`);
           }
-          if (jump.identityFilePaths.filter(Boolean).length > 0) {
-            proxyParts.push("-o", "IdentitiesOnly=yes");
+          if (jumpIdentityPaths.length > 0) {
+            jumpConfigLines.push("  IdentitiesOnly yes");
           }
         }
 
@@ -338,7 +383,7 @@ main();
         if (jump.certificate) {
           const jumpCertPath = path.join(sshDir, `${safeId}-jump-cert.pub`);
           writeSecureFile(jumpCertPath, jump.certificate, 0o600);
-          proxyParts.push("-o", `CertificateFile=${normalizeSshConfigPath(jumpCertPath)}`);
+          jumpConfigLines.push(`  CertificateFile ${normalizeSshConfigPath(jumpCertPath)}`);
         }
 
         // Jump host password
@@ -355,28 +400,43 @@ main();
         // Share known_hosts with the jump connection and apply the same
         // non-interactive host-key handling as the target hop — the jump's
         // ssh is just as unable to answer a yes/no prompt via SSH_ASKPASS.
-        proxyParts.push("-o", `UserKnownHostsFile=${normalizeSshConfigPath(knownHostsPath)}`);
-        proxyParts.push("-o", "StrictHostKeyChecking=accept-new");
-        proxyParts.push("-o", "LogLevel=ERROR");
-
-        proxyParts.push("-o", "KbdInteractiveAuthentication=yes");
-        proxyParts.push("-o", "NumberOfPasswordPrompts=1");
+        jumpConfigLines.push(`  UserKnownHostsFile ${normalizeSshConfigPath(knownHostsPath)}`);
+        jumpConfigLines.push("  StrictHostKeyChecking accept-new");
+        jumpConfigLines.push("  LogLevel ERROR");
+        jumpConfigLines.push("  KbdInteractiveAuthentication yes");
+        jumpConfigLines.push("  NumberOfPasswordPrompts 1");
 
         if (options.legacyAlgorithms) {
-          proxyParts.push("-o", "KexAlgorithms=+diffie-hellman-group14-sha1,diffie-hellman-group1-sha1");
-          proxyParts.push("-o", "Ciphers=+aes128-cbc,aes256-cbc,3des-cbc");
-          proxyParts.push("-o", "HostKeyAlgorithms=+ssh-rsa,ssh-dss");
-          proxyParts.push("-o", "PubkeyAcceptedAlgorithms=+ssh-rsa,ssh-dss");
+          jumpConfigLines.push("  KexAlgorithms +diffie-hellman-group14-sha1,diffie-hellman-group1-sha1");
+          jumpConfigLines.push("  Ciphers +aes128-cbc,aes256-cbc,3des-cbc");
+          jumpConfigLines.push("  HostKeyAlgorithms +ssh-rsa,ssh-dss");
+          jumpConfigLines.push("  PubkeyAcceptedAlgorithms +ssh-rsa,ssh-dss");
         }
-
-        proxyParts.push("-W", "%h:%p", "-p", String(jumpPort), `${jumpUser}@${jumpHost}`);
-        configLines.push(`ProxyCommand ${proxyParts.join(" ")}`);
       }
 
-      // Write config file with comma/space-containing options (if any)
-      if (configLines.length > 0) {
+      // Write config file. When a jump host is present, scope the destination's
+      // comma/space options under `Host <dest>` so they don't bleed onto the
+      // jump hop, add `ProxyJump <jumpHost>` there so the standalone `ssh`
+      // used by execOnEtSession also tunnels through the jump (ET's own
+      // command-line -J overrides this for the interactive session, resolving
+      // to the same single hop), then append the `Host <jumpHost>` block.
+      const configFileLines = [];
+      if (jumpConfigLines.length > 0) {
+        const jump = jumpHosts[0];
+        configFileLines.push(`Host ${options.hostname}`);
+        configFileLines.push(`  ProxyJump ${jump.hostname}`);
+        for (const line of configLines) {
+          configFileLines.push(`  ${line}`);
+        }
+        configFileLines.push(...jumpConfigLines);
+      } else {
+        configFileLines.push(...configLines);
+      }
+
+      const writesConfigFile = configFileLines.length > 0;
+      if (writesConfigFile) {
         const configPath = path.join(sshDir, "config");
-        writeSecureFile(configPath, configLines.join("\n") + "\n", 0o600);
+        writeSecureFile(configPath, configFileLines.join("\n") + "\n", 0o600);
       }
 
       // Create askpass artifacts
@@ -387,9 +447,10 @@ main();
       return {
         userHost,
         sshOptions,
+        etJumpArgs,
         env: {
           // Set HOME/USERPROFILE so ssh finds .ssh/config for comma-containing options
-          ...(configLines.length > 0 ? { HOME: tempDir, USERPROFILE: tempDir } : {}),
+          ...(writesConfigFile ? { HOME: tempDir, USERPROFILE: tempDir } : {}),
           ...askpass.env,
         },
         artifacts: [tempDir, ...askpass.artifacts],
@@ -527,6 +588,13 @@ main();
       // Pass all SSH options inline via --ssh-option (bypasses config file lookup)
       for (const opt of sshEnvironment.sshOptions) {
         args.push("--ssh-option", opt);
+      }
+
+      // Route through a jump host via ET's own --jumphost/--jport when set, so
+      // ET's TCP socket targets the jumphost and the destination is reached
+      // over the SSH tunnel rather than a direct (often unreachable) etserver.
+      if (Array.isArray(sshEnvironment.etJumpArgs) && sshEnvironment.etJumpArgs.length > 0) {
+        args.push(...sshEnvironment.etJumpArgs);
       }
 
       args.push(sshEnvironment.userHost);

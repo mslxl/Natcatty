@@ -97,6 +97,31 @@ test("prepareEtSshEnvironment writes an askpass map + sets SSH_ASKPASS for passw
   assert.equal(fs.readFileSync(map[0].secretFile, "utf8").trim(), "s3cret");
 });
 
+test(
+  "prepareEtSshEnvironment points SSH_ASKPASS at an Electron wrapper on Unix",
+  { skip: process.platform === "win32" ? "Unix-only askpass wrapper" : false },
+  (t) => {
+    const { api } = makeApi(t);
+    const env = api.prepareEtSshEnvironment("sess1", { hostname: "h", username: "u", password: "s3cret" });
+
+    // In a packaged build there is no `node` on PATH, so the helper must run
+    // through Electron's own binary (process.execPath) with ELECTRON_RUN_AS_NODE
+    // rather than relying on the .cjs `#!/usr/bin/env node` shebang.
+    assert.match(env.env.SSH_ASKPASS, /\.sh$/);
+    const wrapper = fs.readFileSync(env.env.SSH_ASKPASS, "utf8");
+    assert.match(wrapper, /^#!\/bin\/sh/);
+    assert.match(wrapper, /ELECTRON_RUN_AS_NODE=1/);
+    assert.ok(
+      wrapper.includes(process.execPath),
+      "wrapper should exec the current Electron/node executable verbatim",
+    );
+    assert.match(wrapper, /netcatty-et-askpass\.cjs/);
+    // The wrapper must be executable so ssh can exec it directly.
+    const mode = fs.statSync(env.env.SSH_ASKPASS).mode;
+    assert.ok(mode & 0o100, "wrapper should be owner-executable");
+  },
+);
+
 test("prepareEtSshEnvironment writes a private key + IdentityFile option and a passphrase askpass entry", (t) => {
   const { api } = makeApi(t);
   const env = api.prepareEtSshEnvironment("sess1", {
@@ -128,7 +153,7 @@ test("prepareEtSshEnvironment writes legacy algorithms to the ssh config file", 
   assert.match(config, /Ciphers \+aes128-cbc/);
 });
 
-test("prepareEtSshEnvironment writes a ProxyCommand for a single jump host", (t) => {
+test("prepareEtSshEnvironment routes a single jump host through ET --jumphost/--jport", (t) => {
   const { api } = makeApi(t);
   const env = api.prepareEtSshEnvironment("sess1", {
     hostname: "h",
@@ -136,10 +161,84 @@ test("prepareEtSshEnvironment writes a ProxyCommand for a single jump host", (t)
     jumpHosts: [{ hostname: "jump.example", username: "ops", port: 2200 }],
   });
 
+  // ET drives the jump itself: socket connects to the jumphost's etserver,
+  // destination is reached over the SSH tunnel. --jport defaults to 2022.
+  assert.deepEqual(env.etJumpArgs, [
+    "--jumphost",
+    "ops@jump.example",
+    "--jport",
+    "2022",
+  ]);
+
+  // Per-hop jump settings live in a `Host <jumphost>` block (SSH port = 2200),
+  // and the destination block adds a ProxyJump so a standalone ssh (distro
+  // detection) also tunnels through the jump.
   const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
-  assert.match(config, /ProxyCommand ssh /);
-  assert.match(config, /ops@jump\.example/);
-  assert.match(config, /StrictHostKeyChecking=accept-new/);
+  assert.match(config, /Host jump\.example/);
+  assert.match(config, /\n {2}User ops/);
+  assert.match(config, /\n {2}Port 2200/);
+  assert.match(config, /Host h\n {2}ProxyJump jump\.example/);
+  assert.match(config, /StrictHostKeyChecking accept-new/);
+  // No ProxyCommand anymore — ET owns the jump routing.
+  assert.doesNotMatch(config, /ProxyCommand/);
+});
+
+test("prepareEtSshEnvironment honors an explicit jump host etPort for --jport", (t) => {
+  const { api } = makeApi(t);
+  const env = api.prepareEtSshEnvironment("sess1", {
+    hostname: "h",
+    username: "u",
+    jumpHosts: [{ hostname: "jump.example", username: "ops", port: 2200, etPort: 9999 }],
+  });
+  assert.deepEqual(env.etJumpArgs, [
+    "--jumphost",
+    "ops@jump.example",
+    "--jport",
+    "9999",
+  ]);
+});
+
+test("prepareEtSshEnvironment writes jump-host key + passphrase askpass into the Host block", (t) => {
+  const { api } = makeApi(t);
+  const env = api.prepareEtSshEnvironment("sess1", {
+    hostname: "h",
+    username: "u",
+    jumpHosts: [{
+      hostname: "jump.example",
+      username: "ops",
+      privateKey: "-----BEGIN KEY-----\njump\n-----END KEY-----",
+      passphrase: "jpp",
+    }],
+  });
+
+  const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
+  // IdentityFile/IdentitiesOnly belong to the jump Host block only.
+  assert.match(config, /Host jump\.example[\s\S]*\n {2}IdentityFile /);
+  assert.match(config, /\n {2}IdentitiesOnly yes/);
+  // The jump passphrase is answerable via the shared SSH_ASKPASS map.
+  const map = JSON.parse(fs.readFileSync(env.env.NETCATTY_ET_ASKPASS_MAP, "utf8"));
+  assert.ok(map.some((e) => e.type === "passphrase"));
+});
+
+test("prepareEtSshEnvironment scopes destination config under Host <dest> when a jump host is present", (t) => {
+  const { api } = makeApi(t);
+  const env = api.prepareEtSshEnvironment("sess1", {
+    hostname: "dest.example",
+    username: "u",
+    legacyAlgorithms: true,
+    jumpHosts: [{ hostname: "jump.example", username: "ops" }],
+  });
+
+  const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
+  // The destination's legacy-algorithm lines must sit inside the `Host dest`
+  // stanza (indented) so they don't leak onto the jump hop.
+  assert.match(config, /Host dest\.example\n(?: {2}.*\n)*? {2}KexAlgorithms \+diffie-hellman-group14-sha1/);
+});
+
+test("prepareEtSshEnvironment returns no etJumpArgs without a jump host", (t) => {
+  const { api } = makeApi(t);
+  const env = api.prepareEtSshEnvironment("sess1", { hostname: "h", username: "u" });
+  assert.deepEqual(env.etJumpArgs, []);
 });
 
 test("prepareEtSshEnvironment rejects more than one jump host", (t) => {
