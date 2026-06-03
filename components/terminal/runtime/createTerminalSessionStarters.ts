@@ -760,11 +760,32 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         return;
       }
 
-      if (ctx.resolvedChainHosts.length > 1) {
+      // Enforce the "at most one jump host" rule on the *configured* chain, not
+      // just the resolved list. A second hop whose host ID fails to resolve
+      // would otherwise slip past a resolved-length check and silently drop to
+      // a single (or zero) hop.
+      const configuredChainHostCount = ctx.host.hostChain?.hostIds?.length ?? 0;
+      if (configuredChainHostCount > 1 || ctx.resolvedChainHosts.length > 1) {
         stopEt(tr(
           "terminal.et.multiJumpUnsupported",
           "EternalTerminal currently supports at most one jump host in Netcatty.",
         ));
+        return;
+      }
+
+      // Mirror startSSH: if a configured jump host could not be resolved (its
+      // host ID is missing/invalid), fail loudly instead of silently falling
+      // back to a direct connection that may reach the wrong target.
+      const missingChainHostIds = getMissingChainHostIds(ctx.host, ctx.resolvedChainHosts);
+      if (missingChainHostIds.length > 0) {
+        const base = tr(
+          "terminal.auth.jumpHostMissing",
+          "A configured jump host is missing. Open host settings and repair the jump host chain.",
+        );
+        const suffix = missingChainHostIds.length > 2
+          ? ` +${missingChainHostIds.length - 2}`
+          : "";
+        stopEt(`${base} (${missingChainHostIds.slice(0, 2).join(", ")}${suffix})`);
         return;
       }
 
