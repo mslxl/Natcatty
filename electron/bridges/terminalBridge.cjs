@@ -810,6 +810,10 @@ function closeSession(event, payload) {
       }
     } else if (session.proc) {
       session.proc.kill();
+      // Mosh sessions may also carry a companion ssh2 connection opened
+      // lazily for host-info stats (issue #1198), stored on moshStatsConn so
+      // it stays separate from session.conn. Close it here to avoid leaking it.
+      session.moshStatsConn?.end();
     } else if (session.socket) {
       session.socket.destroy();
     } else if (session.serialPort) {
@@ -943,6 +947,9 @@ function cleanupAllSessions() {
         } catch (e) {
           // Ignore errors during cleanup
         }
+        // Tear down a Mosh stats companion ssh2 connection if one was opened
+        // (issue #1198) — it lives on moshStatsConn, separate from session.conn.
+        try { session.moshStatsConn?.end(); } catch (e) { /* ignore */ }
       } else if (session.socket) {
         session.socket.destroy();
       } else if (session.serialPort) {
