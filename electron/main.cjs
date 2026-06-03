@@ -124,6 +124,7 @@ const getAiBridge = createLazyModule("./bridges/aiBridge.cjs");
 const getWindowManager = createLazyModule("./bridges/windowManager.cjs");
 const getVaultBackupBridge = createLazyModule("./bridges/vaultBackupBridge.cjs");
 const ptyProcessTree = require("./bridges/ptyProcessTree.cjs");
+const { queryDirtyEditors } = require("./bridges/dirtyEditorGuard.cjs");
 
 // GPU settings
 // NOTE: Do not disable Chromium sandbox by default.
@@ -726,6 +727,14 @@ if (!gotLock) {
     // app.quit() re-fired before-quit. Let it through.
     if (quitConfirmed) return;
 
+    // NOTE: an update install (quitAndInstall) intentionally still runs the
+    // dirty-editor check below. setQuittingForUpdate(true) only bypasses
+    // close-to-tray (so the window actually closes and Squirrel.Mac's ShipIt
+    // can swap the bundle); it must NOT skip the unsaved-work guard, or
+    // clicking "Restart Now" with a dirty SFTP editor would silently lose
+    // edits (#1215 review). If the user cancels to save, the quit is aborted
+    // and autoUpdateBridge's watchdog clears the quitting-for-update flags.
+
     // A check is already in flight — swallow this event; the in-flight handler
     // will issue commitQuit() when it completes if appropriate.
     if (quitGuardChannelBusy) {
@@ -769,57 +778,40 @@ if (!gotLock) {
     quitGuardChannelBusy = true;
     event.preventDefault();
 
-    // The response and the timeout race against each other; whichever
-    // one fires first wins. A naive `clearTimeout` is not enough — once
-    // the timer has already been queued for the next tick, clearTimeout
-    // is a no-op and the timeout callback runs even after the response
-    // arrived, which would commit the quit even on a `hasDirty=true`
-    // reply (i.e. silently override the user's "save first" intent).
-    let settled = false;
-    let timeoutId = null;
-    const settle = (decision) => {
-      if (settled) return;
-      settled = true;
-      if (timeoutId !== null) {
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      }
-      _ipcMain.removeListener("app:dirty-editors-result", onResult);
-      quitGuardChannelBusy = false;
-      if (decision === "commit") commitQuit();
-      // decision === "stay": renderer showed a toast for dirty editors.
-      // Do not touch isQuitting so tray / close-to-tray gating keeps working.
-    };
-    function onResult(evt, payload) {
-      // Defence in depth: this channel is queried with a specific
-      // webContents in mind. A reply from any other window (e.g. a
-      // misbehaving extension or a future bug that wires the channel
-      // elsewhere) is silently ignored so it can't decide the quit.
-      // We use `.on` (not `.once`) so a rogue reply doesn't consume
-      // the listener slot and let the real reply fall through. Reject
-      // strictly: a missing/falsy sender is anomalous in real IPC and
-      // is treated the same as a wrong-window reply.
-      if (evt?.sender !== wc) return;
-      const hasDirty = payload && payload.hasDirty === true;
-      settle(hasDirty ? "stay" : "commit");
-    }
-    _ipcMain.on("app:dirty-editors-result", onResult);
-
-    // Timeout fallback: if the renderer never replies (crash, unhandled
-    // exception in the listener, etc.) we'd otherwise be stuck with
-    // quitGuardChannelBusy=true and the app un-quittable.
-    timeoutId = setTimeout(() => settle("commit"), QUIT_GUARD_TIMEOUT_MS);
-
-    try {
-      wc.send("app:query-dirty-editors");
-    } catch (err) {
-      // `webContents.send` can throw if the renderer was destroyed
-      // between our `isCrashed?.()` check and this call (a real race
-      // when the GPU process is dying). Tear the listener/timer down
-      // synchronously so we don't strand quitGuardChannelBusy=true.
-      console.warn("[Main] Failed to query renderer for dirty editors:", err);
-      settle("commit");
-    }
+    // Ask the renderer whether any editor tab has unsaved changes. The same
+    // round-trip is used by the auto-update install handler (#1215); both go
+    // through queryDirtyEditors so the request/reply/timeout handling stays in
+    // one place. It fails open (resolves false) on timeout / dead renderer, so
+    // a hung renderer can never strand the quit.
+    queryDirtyEditors(wc, QUIT_GUARD_TIMEOUT_MS, { ipcMain: _ipcMain })
+      .then((hasDirty) => {
+        quitGuardChannelBusy = false;
+        if (!hasDirty) {
+          commitQuit();
+          return;
+        }
+        // hasDirty: the renderer showed a toast for dirty editors and the user
+        // is saving instead of quitting.
+        //
+        // A normal quit never sets isQuitting before commitQuit, so there is
+        // nothing to undo. But an update install (quitAndInstall) calls
+        // setQuittingForUpdate(true) — which also flips isQuitting=true to
+        // bypass close-to-tray — BEFORE this dirty check runs. If the user
+        // cancels to save, clear it NOW instead of waiting up to 10s for
+        // autoUpdateBridge's watchdog; otherwise close-to-tray and other
+        // !isQuitting-gated behavior stay bypassed while the app keeps running
+        // (#1215 review).
+        const wm = getWindowManager();
+        if (wm.isQuittingForUpdate?.()) wm.setQuittingForUpdate(false);
+      })
+      .catch((err) => {
+        // queryDirtyEditors is written to never reject, but guard anyway: a
+        // throw here would leave quitGuardChannelBusy=true and wedge the app
+        // un-quittable. Fail open and let the quit through.
+        console.warn("[Main] dirty-editor quit guard failed:", err);
+        quitGuardChannelBusy = false;
+        commitQuit();
+      });
   });
 
   // Cleanup all PTY sessions and port forwarding tunnels before quitting
