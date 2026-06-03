@@ -18,6 +18,7 @@ export const DISTRO_LOGOS: Record<string, string> = {
   oracle: "/distro/oracle.svg",
   kali: "/distro/kali.svg",
   almalinux: "/distro/almalinux.svg",
+  alinux: "/distro/alinux.svg",
   // OS-level logos (used by local terminal tab icons)
   macos: "/distro/macos.svg",
   windows: "/distro/windows.svg",
@@ -48,6 +49,7 @@ export const DISTRO_COLORS: Record<string, string> = {
   oracle: "bg-[#C74634]",
   kali: "bg-[#0F6DB3]",
   almalinux: "bg-[#173B66]",
+  alinux: "bg-[#FF6A00]",
   // OS-level colors
   macos: "bg-[#333333]",
   windows: "bg-[#0078D4]",
