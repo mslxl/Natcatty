@@ -273,6 +273,10 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
   const clampedLeft = placement.left;
 
   const sharedBoxStyle = {
+    // border-box so each panel's maxWidth is its true outer width (padding +
+    // border included). The horizontal clamp's totalWidth sums these maxWidths,
+    // so this keeps the off-screen math exact even for the padded detail panel.
+    boxSizing: "border-box" as const,
     backgroundColor: popupBg,
     border: `1px solid ${popupBorder}`,
     borderRadius: "6px",
