@@ -215,6 +215,14 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
   const detailItem = detailIndex >= 0 ? suggestions[detailIndex] : null;
   const showDetail = detailItem?.description && detailItem.description.length > 0;
 
+  // Whether ANY item in the current set can open the detail tooltip (non-path
+  // row with a description). Placement reserves space from this set-level flag
+  // rather than the hovered item, so moving the mouse between rows can't change
+  // totalWidth/height and shift the popup out from under the pointer.
+  const setMayShowDetailPanel = suggestions.some(
+    (s) => s.source !== "path" && Boolean(s.description && s.description.length > 0),
+  );
+
   // Calculate fixed viewport position from container rect + relative cursor position.
   // containerRef already has top offset for toolbar/search bar, so don't add it again.
   const containerRect = containerRef?.current?.getBoundingClientRect();
@@ -227,7 +235,9 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
   const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 800;
   const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 1200;
   const estimatedPopupHeight = Math.min(maxHeight, suggestions.length * 28 + 8);
-  const estimatedDetailHeight = showDetail && detailItem && detailItem.source !== "path" ? 96 : 0;
+  // Reserve the detail height for the whole set (not the hovered row) so the
+  // chosen direction/height stays stable while hovering.
+  const estimatedDetailHeight = setMayShowDetailPanel ? 96 : 0;
   const desiredContentHeight = Math.max(estimatedPopupHeight, estimatedDetailHeight);
 
   // Total horizontal extent so the WHOLE assembly is clamped inside the
@@ -239,11 +249,10 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
   const MAIN_LIST_MAX_WIDTH = 400;
   const SUBDIR_PANEL_MAX_WIDTH = 240;
   const DETAIL_PANEL_MAX_WIDTH = 280;
-  const hasDetailPanel = Boolean(showDetail && detailItem && detailItem.source !== "path");
   const totalWidth =
     MAIN_LIST_MAX_WIDTH +
     subDirPanels.length * (FLEX_GAP + SUBDIR_PANEL_MAX_WIDTH) +
-    (hasDetailPanel ? FLEX_GAP + DETAIL_PANEL_MAX_WIDTH : 0);
+    (setMayShowDetailPanel ? FLEX_GAP + DETAIL_PANEL_MAX_WIDTH : 0);
 
   const placement = computeAutocompletePopupPlacement({
     anchorTop: fixedLineTop,
