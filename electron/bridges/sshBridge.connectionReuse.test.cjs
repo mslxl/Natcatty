@@ -88,6 +88,31 @@ function makeReusableConn() {
   return conn;
 }
 
+// A reusable connection whose shell callback is held until released, so a test
+// can simulate the source tab closing while conn.shell() is still pending.
+function makeDeferredShellConn() {
+  const conn = new EventEmitter();
+  conn._sock = { destroyed: false };
+  conn._remoteVer = "OpenSSH_9.0";
+  conn.ended = 0;
+  conn.openedShells = [];
+  conn._pending = [];
+  conn.end = () => { conn.ended += 1; };
+  conn.destroy = () => {};
+  conn.shell = (_opts, _shellOpts, cb) => {
+    conn._pending.push(cb);
+  };
+  conn.flushShell = () => {
+    const cbs = conn._pending.splice(0);
+    for (const cb of cbs) {
+      const stream = makeStream();
+      conn.openedShells.push(stream);
+      cb(null, stream);
+    }
+  };
+  return conn;
+}
+
 function registerStartHandler(bridge, sessions) {
   bridge.init({ sessions, electronModule: {} });
   const ipcMain = {
@@ -213,6 +238,54 @@ test("skips reuse for X11-forwarding hosts and connects fresh", async (t) => {
   );
   assert.equal(sourceConn.openedShells.length, 0, "must not reuse the source connection");
   assert.equal(getClientConstructCount(), 1, "should dial a fresh connection for X11");
+});
+
+test("source closed while reused shell is pending keeps the connection alive", async (t) => {
+  const { bridge } = loadBridgeWithMockedSsh2(t);
+  const terminalBridge = require("./terminalBridge.cjs");
+  const sessions = new Map();
+  const conn = makeDeferredShellConn();
+  const connRef = { count: 1, conn, chainConnections: [] };
+  const source = {
+    conn,
+    stream: makeStream(),
+    chainConnections: [],
+    connRef,
+    zmodemSentry: { cancel() {} },
+    webContentsId: 1,
+  };
+  sessions.set("source", source);
+
+  terminalBridge.init({ sessions, electronModule: {} });
+  const start = registerStartHandler(bridge, sessions);
+
+  // Begin the copy; conn.shell() is deferred, so the reuse path has acquired the
+  // ref (count -> 2) but not yet attached the session.
+  const startPromise = start(
+    { sender: makeSender() },
+    { sessionId: "copy", hostname: "10.0.0.1", username: "alice", sourceSessionId: "source" },
+  );
+  await new Promise((r) => setImmediate(r));
+  assert.equal(connRef.count, 2, "reuse pins the connection before opening the shell");
+
+  // Close the source tab while the copy's shell is still opening.
+  terminalBridge.closeSession({ sender: {} }, { sessionId: "source" });
+  assert.equal(conn.ended, 0, "connection must survive for the pending copy");
+  assert.equal(connRef.count, 1);
+
+  // Now let the copy's shell open.
+  conn.flushShell();
+  const result = await startPromise;
+  assert.equal(result.sessionId, "copy");
+  assert.equal(conn.ended, 0, "connection still alive for the active copy");
+  const copy = sessions.get("copy");
+  assert.ok(copy);
+  assert.equal(copy.connRef, connRef);
+  assert.equal(connRef.count, 1, "count reflects exactly the one remaining channel");
+
+  // Closing the copy (last holder) finally ends the connection.
+  terminalBridge.closeSession({ sender: {} }, { sessionId: "copy" });
+  assert.equal(conn.ended, 1);
 });
 
 test("falls back to a fresh connection when the source is gone", async (t) => {

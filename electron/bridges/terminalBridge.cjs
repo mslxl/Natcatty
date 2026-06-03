@@ -782,15 +782,22 @@ function closeSession(event, payload) {
     session.zmodemSentry?.cancel();
     session.flushPendingData?.();
     if (session.stream) {
+      // Snapshot multiplexing state *before* closing the channel: closing the
+      // stream can synchronously fire its "close" handler, which nulls
+      // session.connRef (and may already release the shared connection). Reading
+      // session.connRef afterwards would then wrongly fall into the legacy path
+      // and end the shared connection a second time.
+      const isMultiplexed = !!session.connRef;
       // Always close this session's own shell channel.
       session.stream.close();
-      if (session.connRef) {
+      if (isMultiplexed) {
         // Multiplexed SSH shell (issue #1204): several tabs may share one
         // authenticated connection. Closing this tab must only tear the shared
         // transport (and jump-host chain) down once the last channel is gone,
         // so route teardown through the reference-counted descriptor instead of
-        // ending the connection directly. releaseConnectionRef ends the chain
-        // connections itself when the count reaches zero.
+        // ending the connection directly. releaseConnectionRef is idempotent and
+        // ends the chain connections itself when the count reaches zero — so it
+        // is safe even if the stream "close" handler above already released.
         releaseConnectionRef(session);
       } else {
         // Legacy / non-multiplexed path: this session owns its connection.

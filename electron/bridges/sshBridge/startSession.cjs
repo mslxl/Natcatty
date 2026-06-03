@@ -52,15 +52,13 @@ function createStartSessionApi(ctx) {
       };
       sessions.set(sessionId, session);
 
-      // Register this channel against the shared connection's reference count.
-      // The fresh-connection caller passes a `connRef` it created for the owner
-      // session; the reuse caller passes the source session's existing connRef.
+      // Attach the shared connection descriptor to this session. The caller owns
+      // the reference *count*: the fresh-connection path calls createConnectionRef
+      // after this returns; the reuse path calls acquireConnectionRef *before*
+      // issuing the async shell request (so the connection can't be released out
+      // from under a pending channel open). We only record the descriptor here.
       if (options._connRef) {
-        if (isReused) {
-          acquireConnectionRef(session, options._connRef);
-        } else {
-          session.connRef = options._connRef;
-        }
+        session.connRef = options._connRef;
       }
 
       // Start real-time session log stream if configured. The token is stored
@@ -266,8 +264,28 @@ function createStartSessionApi(ctx) {
         },
       };
 
+      // Pin the shared connection *before* issuing the async shell request.
+      // Otherwise, if the source tab is closed while conn.shell() is pending,
+      // releaseConnectionRef could drop the count to zero and end the connection
+      // out from under the channel we're opening. We hold a temporary session
+      // object as the ref holder, then hand the ref over to the real session
+      // once the channel opens. On any failure we release this hold so the count
+      // is restored.
+      const connRef = sourceSession.connRef;
+      const refHolder = {};
+      acquireConnectionRef(refHolder, connRef);
+
       return new Promise((resolve, reject) => {
         let settled = false;
+
+        const failReuse = (err) => {
+          if (settled) return;
+          settled = true;
+          // Release the hold we took up-front so the source's reference count is
+          // not leaked when we fall back to a fresh connection.
+          releaseConnectionRef(refHolder);
+          reject(err);
+        };
 
         // If the borrowed connection dies before the channel opens, surface it
         // as a normal failure so the caller's catch can fall back to a fresh
@@ -275,9 +293,7 @@ function createStartSessionApi(ctx) {
         // listener on the shared connection (the owner's own error handler stays
         // responsible thereafter).
         const onConnError = (connErr) => {
-          if (settled) return;
-          settled = true;
-          reject(connErr);
+          failReuse(connErr);
         };
         conn.once("error", onConnError);
 
@@ -291,26 +307,29 @@ function createStartSessionApi(ctx) {
           (err, stream) => {
             conn.removeListener("error", onConnError);
             if (settled) {
-              // Connection already failed; close any channel that still opened.
+              // Connection already failed; close any channel that still opened
+              // and drop the hold (failReuse already released, so guard with the
+              // settled check above means we only get here post-failure).
               if (stream) { try { stream.close(); } catch { /* ignore */ } }
               return;
             }
             if (err) {
               log("reused shell open failed", { sessionId, hostname: options.hostname, error: err.message });
               sendProgress('error', `Failed to open shell: ${err.message}`);
-              settled = true;
-              reject(err);
+              failReuse(err);
               return;
             }
 
             sendProgress('connected');
 
-            // Share the source session's reference-counted connection so the
-            // transport is only torn down after every channel is closed.
+            // Hand the up-front ref hold over to the real session: detach it from
+            // the temporary holder (without ending the transport) and attach the
+            // descriptor to the session. The count already includes this channel.
+            refHolder.connRef = null;
             setupShellSession({
               conn,
               stream,
-              options: { ...options, _connRef: sourceSession.connRef },
+              options: { ...options, _connRef: connRef },
               sessionId,
               event,
               log,
