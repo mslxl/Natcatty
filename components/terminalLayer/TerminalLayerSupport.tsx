@@ -686,6 +686,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         sessionId={session.id}
         startupCommand={session.startupCommand}
         noAutoRun={session.noAutoRun}
+        reuseConnectionFromSessionId={session.reuseConnectionFromSessionId}
         serialConfig={session.serialConfig}
         hotkeyScheme={hotkeyScheme}
         keyBindings={keyBindings}

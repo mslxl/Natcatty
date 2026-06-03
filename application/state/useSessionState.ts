@@ -806,6 +806,17 @@ export const useSessionState = () => {
         ? options?.localShellType
         : session.shellType;
 
+      // Reuse the source connection only for plain (non-mosh) SSH shell
+      // sessions that are actually connected. ssh2 multiplexes multiple shell
+      // channels over one authenticated connection, so the copy can skip a
+      // second MFA prompt (issue #1204). Local/serial/telnet/mosh sessions have
+      // no such reusable channel concept, and reusing a still-connecting or
+      // disconnected source would be pointless, so they connect fresh.
+      const isReusableSshSource =
+        (session.protocol === 'ssh' || session.protocol === undefined) &&
+        !session.moshEnabled &&
+        session.status === 'connected';
+
       const newSession: TerminalSession = {
         id: newSessionId,
         hostId: session.hostId,
@@ -823,6 +834,7 @@ export const useSessionState = () => {
         localShellArgs: session.localShellArgs,
         localShellName: session.localShellName,
         localShellIcon: session.localShellIcon,
+        reuseConnectionFromSessionId: isReusableSshSource ? sessionId : undefined,
       };
 
       // Schedule the activeTab + tabOrder updates only when creation

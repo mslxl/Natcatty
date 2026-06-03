@@ -372,6 +372,11 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           sshDebugLogEnabled: ctx.sshDebugLogEnabled,
           identityFilePaths: attempt.password ? undefined : targetIdentityFilePaths,
           knownHosts: ctx.knownHosts,
+          // Ask the bridge to reuse the source tab's authenticated connection
+          // (issue #1204). Only honored on the very first connect attempt; the
+          // bridge silently falls back to a fresh connection if the source is
+          // gone, so reconnect/retry after the source closed still works.
+          sourceSessionId: ctx.reuseConnectionFromSessionId,
         });
       };
 
