@@ -85,6 +85,10 @@ export interface TerminalProps {
   sessionId: string;
   startupCommand?: string;
   noAutoRun?: boolean;
+  // When this tab was created via "Copy Tab" on a connected SSH session, the id
+  // of the source session whose authenticated connection should be reused for a
+  // new shell channel — skipping a second MFA prompt (issue #1204).
+  reuseConnectionFromSessionId?: string;
   serialConfig?: SerialConfig;
   hotkeyScheme?: "disabled" | "mac" | "pc";
   keyBindings?: KeyBinding[];

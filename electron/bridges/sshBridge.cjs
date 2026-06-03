@@ -442,6 +442,12 @@ function resolveLangFromCharset(charset) {
 }
 
 const { safeSend } = require("./ipcUtils.cjs");
+const {
+  createConnectionRef,
+  acquireConnectionRef,
+  releaseConnectionRef,
+  findReusableSession,
+} = require("./sshConnectionPool.cjs");
 
 const zmodemOverwritePending = new Map(); // requestId -> (decision) => void
 
@@ -784,6 +790,7 @@ const startSessionApi = createStartSessionApi({
   shouldLogSshDebugMessage, log, createSshDiagnosticLogger,
   buildAlgorithms, randomUUID, findDefaultPrivateKey, findAllDefaultPrivateKeys,
   preparePrivateKeyForAuth, loadFirstIdentityFileForAuth, createKeyboardInteractiveHandler,
+  createConnectionRef, acquireConnectionRef, releaseConnectionRef, findReusableSession,
   get probeReceiveConflicts() { return probeReceiveConflicts; },
   get removeRemoteFiles() { return removeRemoteFiles; },
   get restoreRemoteModes() { return restoreRemoteModes; },
