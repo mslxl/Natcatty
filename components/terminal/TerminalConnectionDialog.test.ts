@@ -132,3 +132,22 @@ test("fills both progress segments for disconnected states", () => {
   const fullSegments = markup.match(/style="width:100%"/g) ?? [];
   assert.equal(fullSegments.length >= 2, true);
 });
+
+test("shows the ET server port (not the SSH port) for an ET host with a custom etPort", () => {
+  const markup = renderDialog({
+    host: { ...host, etEnabled: true, port: 22, etPort: 9022 },
+  });
+
+  // ET connectivity hinges on the etserver port, so the dialog must show it.
+  assert.match(markup, /10\.2\.0\.32:9022/);
+  assert.equal(markup.includes("10.2.0.32:22"), false);
+});
+
+test("defaults the displayed ET port to 2022 when no etPort is set", () => {
+  const markup = renderDialog({
+    host: { ...host, etEnabled: true, port: 22 },
+  });
+
+  assert.match(markup, /10\.2\.0\.32:2022/);
+  assert.equal(markup.includes("10.2.0.32:22"), false);
+});
