@@ -131,6 +131,7 @@ test('buildManagedAgentState preserves pre-configured env when CLI is unavailabl
   assert.equal(state.agents.length, 1);
   assert.equal(state.agents[0].id, 'discovered_codebuddy');
   assert.equal(state.agents[0].enabled, false);
+  assert.equal(state.agents[0].autoDisabledUntilAvailable, true);
   assert.deepEqual(state.agents[0].env, {
     CODEBUDDY_AUTH_TOKEN: 'some-token',
     CODEBUDDY_INTERNET_ENVIRONMENT: 'HTTP_PROXY=http://proxy:8080',
@@ -169,8 +170,90 @@ test('buildManagedAgentState preserves pre-configured env when CLI is temporaril
     ['custom-agent', 'discovered_codebuddy'],
   );
   assert.equal(state.agents[1].enabled, false);
+  assert.equal(state.agents[1].autoDisabledUntilAvailable, true);
   assert.deepEqual(state.agents[1].env, { CODEBUDDY_AUTH_TOKEN: 'tok-123' });
   assert.equal(state.defaultAgentId, 'catty');
+});
+
+test('buildManagedAgentState re-enables auto-disabled CodeBuddy after CLI becomes available', () => {
+  const agents: ExternalAgentConfig[] = [
+    {
+      id: 'discovered_codebuddy',
+      name: 'CodeBuddy Code',
+      command: 'codebuddy',
+      enabled: false,
+      acpCommand: 'codebuddy',
+      acpArgs: ['--acp'],
+      env: { CODEBUDDY_AUTH_TOKEN: 'tok-123' },
+      autoDisabledUntilAvailable: true,
+    },
+  ];
+
+  const state = buildManagedAgentState(
+    agents,
+    'catty',
+    'codebuddy',
+    { path: '/usr/local/bin/codebuddy', version: '1.2.3', available: true },
+  );
+
+  assert.equal(state.agents.length, 1);
+  assert.equal(state.agents[0].id, 'discovered_codebuddy');
+  assert.equal(state.agents[0].command, '/usr/local/bin/codebuddy');
+  assert.equal(state.agents[0].acpCommand, '/usr/local/bin/codebuddy');
+  assert.equal(state.agents[0].enabled, true);
+  assert.equal(state.agents[0].autoDisabledUntilAvailable, undefined);
+  assert.deepEqual(state.agents[0].env, { CODEBUDDY_AUTH_TOKEN: 'tok-123' });
+});
+
+test('buildManagedAgentState re-enables preconfigured CodeBuddy env from older state without marker', () => {
+  const agents: ExternalAgentConfig[] = [
+    {
+      id: 'discovered_codebuddy',
+      name: 'CodeBuddy Code',
+      command: 'codebuddy',
+      enabled: false,
+      acpCommand: 'codebuddy',
+      acpArgs: ['--acp'],
+      env: { CODEBUDDY_AUTH_TOKEN: 'tok-123' },
+    },
+  ];
+
+  const state = buildManagedAgentState(
+    agents,
+    'catty',
+    'codebuddy',
+    { path: '/usr/local/bin/codebuddy', version: '1.2.3', available: true },
+  );
+
+  assert.equal(state.agents.length, 1);
+  assert.equal(state.agents[0].command, '/usr/local/bin/codebuddy');
+  assert.equal(state.agents[0].enabled, true);
+  assert.equal(state.agents[0].autoDisabledUntilAvailable, undefined);
+});
+
+test('buildManagedAgentState keeps manually disabled managed agents disabled after detection', () => {
+  const agents: ExternalAgentConfig[] = [
+    {
+      id: 'discovered_codebuddy',
+      name: 'CodeBuddy Code',
+      command: '/usr/local/bin/codebuddy',
+      enabled: false,
+      acpCommand: '/usr/local/bin/codebuddy',
+      acpArgs: ['--acp'],
+      env: { CODEBUDDY_AUTH_TOKEN: 'tok-123' },
+    },
+  ];
+
+  const state = buildManagedAgentState(
+    agents,
+    'catty',
+    'codebuddy',
+    { path: '/usr/local/bin/codebuddy', version: '1.2.3', available: true },
+  );
+
+  assert.equal(state.agents.length, 1);
+  assert.equal(state.agents[0].enabled, false);
+  assert.equal(state.agents[0].autoDisabledUntilAvailable, undefined);
 });
 
 test('buildManagedAgentState only rewrites settings-managed discovered agents', () => {

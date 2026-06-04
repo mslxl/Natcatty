@@ -203,6 +203,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
           acpCommand: defaults.acpCommand,
           acpArgs: defaults.acpArgs,
           enabled: false, // Disabled until CLI is detected
+          autoDisabledUntilAvailable: true,
           ...(newEnv ? { env: newEnv } : {}),
         };
         return [...prev, newEntry];

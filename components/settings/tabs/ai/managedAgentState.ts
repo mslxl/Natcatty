@@ -46,7 +46,7 @@ export function buildManagedAgentState(
     const hasUserEnvConfig = Boolean(existingManaged?.env && Object.keys(existingManaged.env).length > 0);
     if (hasUserEnvConfig && existingManaged) {
       return {
-        agents: [...otherAgents, { ...existingManaged, enabled: false }],
+        agents: [...otherAgents, { ...existingManaged, enabled: false, autoDisabledUntilAvailable: true }],
         defaultAgentId: managedAgents.some((agent) => agent.id === defaultAgentId)
           ? "catty"
           : defaultAgentId,
@@ -61,6 +61,7 @@ export function buildManagedAgentState(
   }
 
   const existingManaged = managedAgents.find((agent) => agent.id === managedId);
+  const { autoDisabledUntilAvailable: _autoDisabledUntilAvailable, ...existingManagedBase } = existingManaged ?? {};
   const defaults = AGENT_DEFAULTS[agentKey];
   const managedEnv = agentKey === "claude"
     ? { ...(existingManaged?.env ?? {}), CLAUDE_CODE_EXECUTABLE: pathInfo.path }
@@ -72,14 +73,24 @@ export function buildManagedAgentState(
   const resolvedAcpCommand = defaults.acpCommand === agentKey
     ? pathInfo.path
     : defaults.acpCommand;
+  const hasExistingEnvConfig = Boolean(existingManaged?.env && Object.keys(existingManaged.env).length > 0);
+  const isPreconfiguredUndetectedAgent = Boolean(
+    hasExistingEnvConfig
+    && existingManaged
+    && !isPathLikeCommand(existingManaged.command),
+  );
+  const shouldEnableManagedAgent = managedAgents.length === 0
+    || existingManaged?.autoDisabledUntilAvailable === true
+    || isPreconfiguredUndetectedAgent
+    || managedAgents.some((agent) => agent.enabled);
   const nextManagedAgent: ExternalAgentConfig = {
-    ...existingManaged,
+    ...existingManagedBase,
     ...defaults,
     id: managedId,
     command: pathInfo.path,
     acpCommand: resolvedAcpCommand,
     ...(managedEnv ? { env: managedEnv } : {}),
-    enabled: managedAgents.length === 0 ? true : managedAgents.some((agent) => agent.enabled),
+    enabled: shouldEnableManagedAgent,
   };
 
   return {

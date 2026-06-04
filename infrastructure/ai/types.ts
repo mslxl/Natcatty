@@ -212,6 +212,8 @@ export interface ExternalAgentConfig {
   /** ACP command (e.g. 'codex-acp', 'claude-agent-acp', 'gemini --experimental-acp') */
   acpCommand?: string;
   acpArgs?: string[];
+  /** Internal: disabled only because the managed CLI was unavailable. */
+  autoDisabledUntilAvailable?: boolean;
 }
 
 // Discovered agent from system PATH
