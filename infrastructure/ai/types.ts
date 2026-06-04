@@ -66,7 +66,7 @@ export interface ChatMessageAttachment {
   base64Data: string;
   mediaType: string;
   filename?: string;
-  filePath?: string;    // original filesystem path (for ACP agents to read directly)
+  filePath?: string;    // original filesystem path, when available
 }
 
 export interface UploadedFile {
@@ -200,7 +200,7 @@ export interface AgentInfo {
   available: boolean;
 }
 
-// External Agent (ACP) config
+// External agent config. Managed agents route through official SDK backends.
 export interface ExternalAgentConfig {
   id: string;
   name: string;
@@ -209,8 +209,11 @@ export interface ExternalAgentConfig {
   env?: Record<string, string>;
   icon?: string;
   enabled: boolean;
-  /** ACP command (e.g. 'codex-acp', 'claude-agent-acp', 'gemini --experimental-acp') */
+  /** SDK backend key for managed agents (claude|codex|copilot). */
+  sdkBackend?: string;
+  /** @deprecated Legacy persisted field from the pre-SDK migration. Read only for compatibility. */
   acpCommand?: string;
+  /** @deprecated Legacy persisted field from the pre-SDK migration. */
   acpArgs?: string[];
 }
 
@@ -224,9 +227,16 @@ export interface DiscoveredAgent {
   path: string;
   version: string;
   available: boolean;
-  /** ACP command if agent supports ACP protocol */
+  /** @deprecated Legacy discovery field from the pre-SDK migration. */
   acpCommand?: string;
   acpArgs?: string[];
+  /** SDK backend key (claude|codex|copilot) — the post-migration routing value. */
+  sdkBackend?: 'claude' | 'codex' | 'copilot';
+  /** Absolute resolved CLI path (preferred over `path`). */
+  binPath?: string;
+  installed?: boolean;
+  authenticated?: boolean;
+  authSource?: string | null;
 }
 
 // Web Search types
@@ -318,14 +328,17 @@ export const CLAUDE_MODEL_PRESETS: AgentModelPreset[] = [
   { id: 'haiku', name: 'Haiku 4.5', description: 'Fastest' },
 ];
 
+// Curated codex model list (codex-sdk has no enumeration API). Mirrors the
+// craft agent's `openai-codex` set. The codex driver splits "<id>/<effort>"
+// into model + modelReasoningEffort, so thinkingLevels work via codex-sdk.
 export const CODEX_MODEL_PRESETS: AgentModelPreset[] = [
-  { id: 'gpt-5.4', name: 'GPT 5.4', description: 'Latest', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.3-codex', name: 'Codex 5.3', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.2-codex', name: 'Codex 5.2', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.1-codex-max', name: 'Codex 5.1 Max', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.1-codex-mini', name: 'Codex 5.1 Mini', description: 'Fast', thinkingLevels: ['medium', 'high'] },
-  { id: 'o3', name: 'o3', description: 'Reasoning' },
+  { id: 'gpt-5.5', name: 'GPT-5.5', description: 'Latest', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
+  { id: 'gpt-5.2', name: 'GPT-5.2', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
+  { id: 'gpt-5.1', name: 'GPT-5.1', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
+  { id: 'gpt-5', name: 'GPT-5', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
   { id: 'o4-mini', name: 'o4-mini', description: 'Fast reasoning' },
+  { id: 'o3', name: 'o3', description: 'Reasoning' },
+  { id: 'gpt-4o', name: 'GPT-4o' },
 ];
 
 export function getAgentModelPresets(agentCommand?: string): AgentModelPreset[] {

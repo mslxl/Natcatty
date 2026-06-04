@@ -39,6 +39,7 @@ const authenticatedSockets = new WeakSet();
 // Per-scope metadata: chatSessionId → { sessionIds: string[], metadata: Map<sessionId, meta> }
 // Each chat session only sees the hosts registered for its scope.
 const scopedMetadata = new Map();
+const scopedAttachments = new Map(); // chatSessionId -> Map<filePath, attachment>
 
 // Command safety checking (reuse from aiBridge)
 let commandBlocklist = [];
@@ -68,7 +69,7 @@ const BACKGROUND_JOB_RETENTION_MS = 10 * 60 * 1000;
 const MAX_BACKGROUND_JOB_OUTPUT_CHARS = 256 * 1024;
 let activeSftpOpSeq = 0;
 
-// ── Approval gate (for confirm mode with ACP/MCP agents) ──
+// ── Approval gate (for confirm mode with SDK/MCP agents) ──
 let getMainWindowFn = null; // () => BrowserWindow | null
 const pendingApprovals = new Map(); // approvalId → { resolve, chatSessionId }
 let approvalIdCounter = 0;
@@ -83,7 +84,7 @@ function setMainWindowGetter(fn) {
  * Sends an IPC event and returns a Promise<boolean> that resolves
  * when the user approves/rejects in the UI, or auto-denies after timeout.
  */
-// External ACP agents (for example Codex) may give up on MCP tool calls after
+// External SDK agents (for example Codex) may give up on MCP tool calls after
 // about 120 seconds; see openai/codex#6127 ("timed out awaiting tools/call
 // after 120s"). Keep the Netcatty-side approval window below that with a small
 // buffer so a stale approval cannot still be accepted after the agent has
@@ -101,7 +102,7 @@ function requestApprovalFromRenderer(toolName, args, chatSessionId) {
     }
     const approvalId = `mcp_approval_${++approvalIdCounter}_${Date.now()}`;
 
-    // Auto-deny after timeout so ACP/MCP tool calls don't hang indefinitely
+    // Auto-deny after timeout so SDK/MCP tool calls don't hang indefinitely
     const timerId = setTimeout(() => {
       if (pendingApprovals.has(approvalId)) {
         pendingApprovals.delete(approvalId);
@@ -289,6 +290,7 @@ function shutdownHost({ preserveScopedMetadata = false } = {}) {
   pendingSessionWriteApprovals.clear();
   if (!preserveScopedMetadata) {
     scopedMetadata.clear();
+    scopedAttachments.clear();
   }
   for (const [, job] of backgroundJobs) {
     try {
@@ -429,6 +431,134 @@ function updateSessionMetadata(sessionList, chatSessionId) {
   if (chatSessionId) {
     scopedMetadata.set(chatSessionId, { sessionIds: ids, metadata: metaMap });
   }
+}
+
+function normalizeAttachmentEntry(attachment) {
+  if (!attachment || typeof attachment !== "object") return null;
+  const filename = String(attachment.filename || "attachment").trim() || "attachment";
+  const mediaType = String(attachment.mediaType || "application/octet-stream").trim() || "application/octet-stream";
+  const base64Data = typeof attachment.base64Data === "string" ? attachment.base64Data : "";
+  const filePathValue = typeof attachment.filePath === "string" ? attachment.filePath.trim() : "";
+  if (!base64Data && !filePathValue) return null;
+  let resolvedPath = filePathValue;
+  if (filePathValue) {
+    try {
+      resolvedPath = path.resolve(filePathValue);
+    } catch {
+      resolvedPath = filePathValue;
+    }
+  }
+  const sizeBytes = base64Data ? Buffer.byteLength(base64Data, "base64") : undefined;
+  return {
+    filename,
+    mediaType,
+    filePath: resolvedPath,
+    base64Data,
+    sizeBytes,
+  };
+}
+
+function updateAttachmentMetadata(attachments, chatSessionId) {
+  if (!chatSessionId || !Array.isArray(attachments)) return;
+  const existing = scopedAttachments.get(chatSessionId) || new Map();
+  for (const attachment of attachments) {
+    const normalized = normalizeAttachmentEntry(attachment);
+    if (!normalized) continue;
+    const key = normalized.filePath || normalized.filename;
+    existing.set(key, normalized);
+  }
+  scopedAttachments.set(chatSessionId, existing);
+}
+
+function getScopedAttachments(chatSessionId) {
+  if (!chatSessionId) return [];
+  return Array.from(scopedAttachments.get(chatSessionId)?.values() || []);
+}
+
+function attachmentSummary(attachment) {
+  return {
+    filename: attachment.filename,
+    mediaType: attachment.mediaType,
+    filePath: attachment.filePath || undefined,
+    sizeBytes: attachment.sizeBytes,
+  };
+}
+
+function handleListAttachments(params) {
+  const chatSessionId = params?.chatSessionId;
+  if (!chatSessionId || typeof chatSessionId !== "string") {
+    return { ok: false, error: "chatSessionId is required." };
+  }
+  return {
+    ok: true,
+    attachments: getScopedAttachments(chatSessionId).map(attachmentSummary),
+  };
+}
+
+const TEXT_ATTACHMENT_EXTENSIONS = new Set([
+  ".txt", ".md", ".markdown", ".json", ".jsonc", ".jsonl", ".yaml", ".yml",
+  ".toml", ".ini", ".csv", ".tsv", ".xml", ".html", ".css", ".js", ".jsx",
+  ".ts", ".tsx", ".mjs", ".cjs", ".py", ".sh", ".bash", ".zsh", ".fish",
+  ".rs", ".go", ".java", ".kt", ".rb", ".php", ".sql", ".log", ".conf",
+  ".cfg", ".env", ".gitignore",
+]);
+
+function isLikelyTextAttachment(mediaType, filename) {
+  return /^text\//i.test(mediaType)
+    || /^(application\/(json|xml|javascript|x-javascript|typescript|yaml|x-yaml|toml|csv|x-ndjson|ndjson))$/i.test(mediaType)
+    || /\+(json|xml)$/i.test(mediaType)
+    || TEXT_ATTACHMENT_EXTENSIONS.has(path.extname(filename || "").toLowerCase());
+}
+
+function findRegisteredAttachment(params) {
+  const chatSessionId = params?.chatSessionId;
+  if (!chatSessionId || typeof chatSessionId !== "string") {
+    return { error: "chatSessionId is required." };
+  }
+  const attachments = getScopedAttachments(chatSessionId);
+  const requestedPath = typeof params.filePath === "string" && params.filePath.trim()
+    ? path.resolve(params.filePath.trim())
+    : "";
+  const requestedName = typeof params.filename === "string" ? params.filename.trim() : "";
+  if (!requestedPath && !requestedName) {
+    return { error: "filePath or filename is required." };
+  }
+  const attachment = attachments.find((entry) => (
+    (requestedPath && entry.filePath === requestedPath)
+    || (requestedName && entry.filename === requestedName)
+  ));
+  if (!attachment) {
+    return { error: "Attachment is not registered for this chat session." };
+  }
+  return { attachment };
+}
+
+function handleReadAttachment(params) {
+  const found = findRegisteredAttachment(params);
+  if (found.error) return { ok: false, error: found.error };
+  const attachment = found.attachment;
+  let base64Data = attachment.base64Data;
+  if (!base64Data && attachment.filePath) {
+    try {
+      base64Data = fs.readFileSync(attachment.filePath).toString("base64");
+    } catch (err) {
+      return { ok: false, error: err?.message || "Failed to read attachment." };
+    }
+  }
+  if (!base64Data) return { ok: false, error: "Attachment content is unavailable." };
+  const buffer = Buffer.from(base64Data, "base64");
+  const result = {
+    ok: true,
+    filename: attachment.filename,
+    mediaType: attachment.mediaType,
+    filePath: attachment.filePath || undefined,
+    sizeBytes: buffer.length,
+    base64Data,
+  };
+  if (isLikelyTextAttachment(attachment.mediaType, attachment.filename)) {
+    result.text = buffer.toString("utf8");
+  }
+  return result;
 }
 
 /**
@@ -710,11 +840,11 @@ async function dispatch(method, params) {
     };
   }
 
-  // netcatty/jobStop must remain callable after ACP cancel so users can stop
-  // a long-running terminal_start job (which intentionally survives ACP Stop)
+  // netcatty/jobStop must remain callable after SDK agent cancel so users can stop
+  // a long-running terminal_start job (which intentionally survives SDK Stop)
   // even from a chat session whose write methods are otherwise blocked.
   if (WRITE_METHODS.has(method) && method !== "netcatty/jobStop" && isChatSessionCancelled(params?.chatSessionId)) {
-    return { ok: false, error: "Operation cancelled: the ACP session was stopped." };
+    return { ok: false, error: "Operation cancelled: the SDK agent session was stopped." };
   }
 
   // Validate session scope *first* so out-of-scope callers cannot infer the
@@ -758,6 +888,10 @@ async function dispatch(method, params) {
         return handleGetContext(params);
       case "netcatty/getStatus":
         return handleGetStatus();
+      case "netcatty/listAttachments":
+        return handleListAttachments(params);
+      case "netcatty/readAttachment":
+        return handleReadAttachment(params);
       case "netcatty/exec":
         return handleExec(params);
       case "netcatty/sftp/list":
@@ -957,7 +1091,7 @@ const configAndCleanupApi = createConfigAndCleanupApi({
   get authToken() { return authToken; },
   get permissionMode() { return permissionMode; },
   process, existsSync, path, __dirname, toUnpackedAsarPath, DEBUG_MCP,
-  getScopedSessionIds, scopedMetadata, cancelledChatSessions, cancelBackgroundJobsForSession,
+  getScopedSessionIds, scopedMetadata, scopedAttachments, cancelledChatSessions, cancelBackgroundJobsForSession,
   clearPendingApprovals, cancelSftpOpsForSession, sftpBridge,
 });
 const { resolveMcpServerRuntimeCommand, buildMcpServerConfig, cleanupScopedMetadata } = configAndCleanupApi;
@@ -978,6 +1112,9 @@ module.exports = {
   setChatSessionCancelled,
   checkCommandSafety,
   updateSessionMetadata,
+  updateAttachmentMetadata,
+  handleListAttachments,
+  handleReadAttachment,
   getScopedSessionIds,
   getOrCreateHost,
   buildMcpServerConfig,

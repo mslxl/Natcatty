@@ -24,6 +24,7 @@ import { TabsContent } from "../../ui/tabs";
 import { Button } from "../../ui/button";
 import { Select, SettingRow } from "../settings-ui";
 import { AgentIconBadge } from "../../ai/AgentIconBadge";
+import { canSendWithAgent } from "../../ai/agentSendEligibility";
 
 import type {
   AgentPathInfo,
@@ -131,17 +132,18 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     () => externalAgents.find((a) => a.id === "discovered_claude")?.env,
     [externalAgents],
   );
-  const { configDir: claudeConfigDir, envText: claudeEnvText } = useMemo(
-    () => splitClaudeEnv(claudeManagedEnv),
-    [claudeManagedEnv],
-  );
+  const {
+    configDir: claudeConfigDir,
+    settingsPath: claudeSettingsPath,
+    envText: claudeEnvText,
+  } = useMemo(() => splitClaudeEnv(claudeManagedEnv), [claudeManagedEnv]);
 
   const updateClaudeEnv = useCallback(
-    (nextConfigDir: string, nextEnvText: string) => {
+    (nextConfigDir: string, nextSettingsPath: string, nextEnvText: string) => {
       setExternalAgents((prev) =>
         prev.map((a) =>
           a.id === "discovered_claude"
-            ? { ...a, env: buildClaudeEnv(a.env, nextConfigDir, nextEnvText) }
+            ? { ...a, env: buildClaudeEnv(a.env, nextConfigDir, nextSettingsPath, nextEnvText) }
             : a,
         ),
       );
@@ -276,9 +278,15 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   const agentOptions = useMemo(() => [
     { value: "catty", label: t('ai.defaultAgent.catty'), icon: <AgentIconBadge agent={{ id: "catty", type: "builtin" }} size="xs" variant="plain" /> },
     ...externalAgents
-      .filter((a) => a.enabled)
+      .filter((a) => canSendWithAgent(a.id, externalAgents))
       .map((a) => ({ value: a.id, label: a.name, icon: <AgentIconBadge agent={a} size="xs" variant="plain" /> })),
   ], [externalAgents, t]);
+
+  useEffect(() => {
+    if (!agentOptions.some((option) => option.value === defaultAgentId)) {
+      setDefaultAgentId("catty");
+    }
+  }, [agentOptions, defaultAgentId, setDefaultAgentId]);
 
   const refreshCodexIntegration = useCallback(async (opts?: { refreshShellEnv?: boolean }) => {
     const bridge = getBridge();
@@ -567,9 +575,11 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               onCustomPathChange={setClaudeCustomPath}
               onRecheckPath={() => void handleCheckCustomPath("claude")}
               configDir={claudeConfigDir}
-              onConfigDirChange={(v) => updateClaudeEnv(v, claudeEnvText)}
+              onConfigDirChange={(v) => updateClaudeEnv(v, claudeSettingsPath, claudeEnvText)}
+              settingsPath={claudeSettingsPath}
+              onSettingsPathChange={(v) => updateClaudeEnv(claudeConfigDir, v, claudeEnvText)}
               envText={claudeEnvText}
-              onEnvTextChange={(v) => updateClaudeEnv(claudeConfigDir, v)}
+              onEnvTextChange={(v) => updateClaudeEnv(claudeConfigDir, claudeSettingsPath, v)}
             />
           </div>
 
