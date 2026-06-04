@@ -11,7 +11,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { streamText, stepCountIs, type ModelMessage } from 'ai';
+import { generateText, pruneMessages, streamText, stepCountIs, type ModelMessage } from 'ai';
 import type {
   AIPermissionMode,
   AIToolIntegrationMode,
@@ -25,6 +25,16 @@ import type {
 } from '../../../infrastructure/ai/types';
 import { isWebSearchReady } from '../../../infrastructure/ai/types';
 import { buildSystemPrompt } from '../../../infrastructure/ai/cattyAgent/systemPrompt';
+import {
+  CONTEXT_COMPACTION_SYSTEM_PROMPT,
+  DEFAULT_CONTEXT_WINDOW_TOKENS,
+  DEFAULT_PROTECT_RECENT_MESSAGES,
+  formatMessagesForCompaction,
+  estimateUnknownTokens,
+  keepRecentContextMessages,
+  prepareContextCompaction,
+  resolveContextWindow,
+} from '../../../infrastructure/ai/contextCompaction';
 import { createModelFromConfig } from '../../../infrastructure/ai/sdk/providers';
 import { createCattyTools } from '../../../infrastructure/ai/sdk/tools';
 import type { ExecutorContext } from '../../../infrastructure/ai/cattyAgent/executor';
@@ -39,6 +49,7 @@ import {
   mergeProviderContinuation,
   normalizeProviderContinuationOptions,
   withProviderContinuationSource,
+  type OpenAIChatAssistantFields,
   type ProviderContinuation,
 } from '../../../infrastructure/ai/providerContinuation';
 
@@ -67,6 +78,11 @@ export type { DefaultTargetSessionHint } from './aiChatStreamingSupport';
 const sharedStreamingSessionIds = new Set<string>();
 const sharedAbortControllers = new Map<string, AbortController>();
 const streamingSubscribers = new Set<() => void>();
+const OPENAI_CHAT_ASSISTANT_FIELDS = Symbol('netcatty.openAIChatAssistantFields');
+
+type ModelMessageWithOpenAIChatFields = ModelMessage & {
+  [OPENAI_CHAT_ASSISTANT_FIELDS]?: OpenAIChatAssistantFields;
+};
 
 function emitStreamingStoreChange(): void {
   streamingSubscribers.forEach(listener => {
@@ -76,6 +92,45 @@ function emitStreamingStoreChange(): void {
       console.error('[AIChatStreaming] Failed to notify streaming subscriber:', err);
     }
   });
+}
+
+function rememberOpenAIChatAssistantFields(
+  message: ModelMessage,
+  fields: OpenAIChatAssistantFields | undefined,
+  fieldsByMessage: Map<ModelMessage, OpenAIChatAssistantFields | undefined>,
+): void {
+  fieldsByMessage.set(message, fields);
+  (message as ModelMessageWithOpenAIChatFields)[OPENAI_CHAT_ASSISTANT_FIELDS] = fields;
+}
+
+function getRememberedOpenAIChatAssistantFields(
+  message: ModelMessage,
+  fieldsByMessage: Map<ModelMessage, OpenAIChatAssistantFields | undefined>,
+): OpenAIChatAssistantFields | undefined {
+  if (fieldsByMessage.has(message)) return fieldsByMessage.get(message);
+  return (message as ModelMessageWithOpenAIChatFields)[OPENAI_CHAT_ASSISTANT_FIELDS];
+}
+
+function modelMessageHasToolCall(message: ModelMessage): boolean {
+  if (message.role !== 'assistant' || !Array.isArray(message.content)) return false;
+  return message.content.some((part) => part && typeof part === 'object' && (part as { type?: string }).type === 'tool-call');
+}
+
+function collectOpenAIChatAssistantFieldsForMessages(
+  messages: ModelMessage[],
+  fieldsByMessage: Map<ModelMessage, OpenAIChatAssistantFields | undefined>,
+): Array<OpenAIChatAssistantFields | undefined> {
+  const fields: Array<OpenAIChatAssistantFields | undefined> = [];
+  let previousMessageWasTool = false;
+  for (const message of messages) {
+    const needsContinuationFields = message.role === 'assistant'
+      && (modelMessageHasToolCall(message) || previousMessageWasTool);
+    if (needsContinuationFields) {
+      fields.push(getRememberedOpenAIChatAssistantFields(message, fieldsByMessage));
+    }
+    previousMessageWasTool = message.role === 'tool';
+  }
+  return fields;
 }
 
 // -------------------------------------------------------------------
@@ -738,6 +793,7 @@ export function useAIChatStreaming({
       };
 
       const sdkMessages: Array<ModelMessage> = [];
+      const openAIChatAssistantFieldsByMessage = new Map<ModelMessage, OpenAIChatAssistantFields | undefined>();
       let previousHistoryMessageWasToolResult = false;
       for (const m of allMessages) {
         const currentMessageFollowsToolResult = previousHistoryMessageWasToolResult;
@@ -802,9 +858,10 @@ export function useAIChatStreaming({
             }
             // If all tool calls were orphaned, just include the text content
             if (contentParts.length > 0) {
-              sdkMessages.push({ role: 'assistant', content: toAssistantModelContent(contentParts) });
+              const message: ModelMessage = { role: 'assistant', content: toAssistantModelContent(contentParts) };
+              sdkMessages.push(message);
               if (resolvedCalls.length > 0) {
-                continuationContext.openAIChatAssistantFields.push(openAIChatAssistantFields);
+                rememberOpenAIChatAssistantFields(message, openAIChatAssistantFields, openAIChatAssistantFieldsByMessage);
               }
             }
           } else if (m.content) {
@@ -822,12 +879,13 @@ export function useAIChatStreaming({
               text: m.content,
               ...(activeContinuation?.textProviderOptions ? { providerOptions: activeContinuation.textProviderOptions } : {}),
             });
-            sdkMessages.push({
+            const message: ModelMessage = {
               role: 'assistant',
               content: toAssistantModelContent(contentParts),
-            });
+            };
+            sdkMessages.push(message);
             if (currentMessageFollowsToolResult) {
-              continuationContext.openAIChatAssistantFields.push(openAIChatAssistantFields);
+              rememberOpenAIChatAssistantFields(message, openAIChatAssistantFields, openAIChatAssistantFieldsByMessage);
             }
           }
         } else if (m.role === 'tool' && m.toolResults?.length) {
@@ -879,12 +937,64 @@ export function useAIChatStreaming({
         return;
       }
 
+      const contextWindow = resolveContextWindow({
+        provider: context.activeProvider,
+        modelId: activeModelId,
+        defaultContextWindow: DEFAULT_CONTEXT_WINDOW_TOKENS,
+      });
+      const outputReserveTokens = Math.min(4096, Math.ceil(contextWindow * 0.05));
+      const requestReserveTokens = outputReserveTokens + estimateUnknownTokens({
+        systemPrompt,
+        toolNames: Object.keys(tools),
+        openAIChatAssistantFields: Array.from(openAIChatAssistantFieldsByMessage.values()),
+      });
+
+      let messagesForStream = sdkMessages;
+      try {
+        const compacted = await prepareContextCompaction({
+          messages: sdkMessages,
+          contextWindow,
+          reservedTokens: requestReserveTokens,
+          protectRecentMessages: DEFAULT_PROTECT_RECENT_MESSAGES,
+          summarize: async (messagesToSummarize) => {
+            updateLastMessage(sessionId, msg => ({ ...msg, statusText: 'Compacting earlier context...' }));
+            const result = await generateText({
+              model,
+              system: CONTEXT_COMPACTION_SYSTEM_PROMPT,
+              messages: [{
+                role: 'user',
+                content: `Summarize this earlier conversation context for the next model turn:\n\n${formatMessagesForCompaction(messagesToSummarize)}`,
+              }],
+              abortSignal: abortController.signal,
+              maxOutputTokens: 1600,
+              temperature: 0,
+            });
+            return result.text;
+          },
+        });
+        messagesForStream = compacted.messages;
+      } catch (err) {
+        if (abortController.signal.aborted) throw err;
+        console.warn('[Catty] Context compaction failed; falling back to recent messages only:', err);
+        messagesForStream = keepRecentContextMessages(sdkMessages, DEFAULT_PROTECT_RECENT_MESSAGES);
+      }
+
+      messagesForStream = pruneMessages({
+        messages: messagesForStream,
+        reasoning: 'all',
+        emptyMessages: 'remove',
+      });
+      continuationContext.openAIChatAssistantFields = collectOpenAIChatAssistantFieldsForMessages(
+        messagesForStream,
+        openAIChatAssistantFieldsByMessage,
+      );
+
       await processCattyStream(
         sessionId,
         model,
         systemPrompt,
         tools,
-        sdkMessages,
+        messagesForStream,
         abortController.signal,
         assistantMsgId,
         context.activeProvider?.advancedParams,
