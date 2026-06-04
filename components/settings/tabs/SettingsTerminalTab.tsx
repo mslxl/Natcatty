@@ -12,6 +12,7 @@ import { customThemeStore, useCustomThemes } from "../../../application/state/cu
 import { parseItermcolors } from "../../../infrastructure/parsers/itermcolorsParser";
 import { cn } from "../../../lib/utils";
 import { useDiscoveredShells } from "../../../lib/useDiscoveredShells";
+import { parseShellArgs, formatShellArgs } from "../../../domain/shellArgs";
 import { Button } from "../../ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../../ui/dialog";
 import { Input } from "../../ui/input";
@@ -85,12 +86,21 @@ export default function SettingsTerminalTab(props: {
   });
   const [customShellModalOpen, setCustomShellModalOpen] = useState(false);
   const [customShellDraft, setCustomShellDraft] = useState("");
+  const [customArgsDraft, setCustomArgsDraft] = useState("");
 
   // Update showCustomShellInput once discovered shells load
   useEffect(() => {
     if (!terminalSettings.localShell) return;
     setShowCustomShellInput(!discoveredShells.some(s => s.id === terminalSettings.localShell));
   }, [discoveredShells, terminalSettings.localShell]);
+
+  // Seed the drafts from current settings and open the custom-shell editor.
+  // Used both when picking "Custom…" and when re-editing an existing custom shell.
+  const openCustomShellModal = useCallback(() => {
+    setCustomShellDraft(terminalSettings.localShell || "");
+    setCustomArgsDraft(formatShellArgs(terminalSettings.localShellArgs ?? []));
+    setCustomShellModalOpen(true);
+  }, [terminalSettings.localShell, terminalSettings.localShellArgs]);
   const [themeModalOpen, setThemeModalOpen] = useState(false);
   const [themeModalSlot, setThemeModalSlot] = useState<'dark' | 'light' | null>(null);
 
@@ -682,14 +692,17 @@ export default function SettingsTerminalTab(props: {
               }
               onValueChange={(value) => {
                 if (value === "__custom__") {
-                  setCustomShellDraft(terminalSettings.localShell || "");
-                  setCustomShellModalOpen(true);
+                  openCustomShellModal();
                 } else if (value === "__default__") {
                   setShowCustomShellInput(false);
                   updateTerminalSetting("localShell", "");
+                  // Custom args only apply to a custom path; clear them so a stale
+                  // value can't leak into a discovered/default shell launch (#1221).
+                  updateTerminalSetting("localShellArgs", []);
                 } else {
                   setShowCustomShellInput(false);
                   updateTerminalSetting("localShell", value);
+                  updateTerminalSetting("localShellArgs", []);
                 }
               }}
             >
@@ -710,9 +723,18 @@ export default function SettingsTerminalTab(props: {
               </SelectContent>
             </ShadcnSelect>
             {showCustomShellInput && (
-              <span className="text-xs text-muted-foreground truncate max-w-48">
-                {terminalSettings.localShell}
-              </span>
+              <button
+                type="button"
+                onClick={openCustomShellModal}
+                title={t("common.edit")}
+                className="flex items-center gap-1 text-xs text-muted-foreground max-w-48 hover:text-foreground"
+              >
+                <Pencil size={11} className="shrink-0" />
+                <span className="truncate">
+                  {terminalSettings.localShell}
+                  {terminalSettings.localShellArgs?.length ? ` ${formatShellArgs(terminalSettings.localShellArgs)}` : ""}
+                </span>
+              </button>
             )}
             {!showCustomShellInput && defaultShell && !terminalSettings.localShell && (
               <span className="text-xs text-muted-foreground">
@@ -930,6 +952,16 @@ export default function SettingsTerminalTab(props: {
                 </span>
               )}
             </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{t("settings.terminal.localShell.shell.customArgs")}</label>
+              <Input
+                value={customArgsDraft}
+                placeholder={t("settings.terminal.localShell.shell.customArgs.placeholder")}
+                onChange={(e) => setCustomArgsDraft(e.target.value)}
+                className="w-full"
+              />
+              <span className="text-xs text-muted-foreground">{t("settings.terminal.localShell.shell.customArgs.desc")}</span>
+            </div>
             <div className="space-y-1.5">
               <label className="text-xs text-muted-foreground">{t("settings.terminal.localShell.shell.commonPaths")}</label>
               <div className="flex flex-wrap gap-1.5">
@@ -958,6 +990,7 @@ export default function SettingsTerminalTab(props: {
               type="button"
               onClick={() => {
                 updateTerminalSetting("localShell", customShellDraft);
+                updateTerminalSetting("localShellArgs", parseShellArgs(customArgsDraft));
                 setShowCustomShellInput(true);
                 setCustomShellModalOpen(false);
               }}

@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import type { Host } from "./models.ts";
 import {
   detectVendorFromSshVersion,
+  normalizeDistroId,
   normalizePrimaryTelnetState,
   resolveHostKeepalive,
   resolveTelnetPort,
@@ -168,6 +169,29 @@ test("detectVendorFromSshVersion recognizes legacy Huawei VRP dash banner", () =
 test("detectVendorFromSshVersion recognizes Ruijie RGOS banner", () => {
   assert.equal(detectVendorFromSshVersion("RGOS_SSH"), "ruijie");
   assert.equal(detectVendorFromSshVersion("SSH-2.0-RGOS_SSH"), "ruijie");
+});
+
+test("normalizeDistroId maps Alibaba Cloud Linux os-release ID to alinux", () => {
+  // /etc/os-release ID="alinux" — the canonical signal from Alibaba Cloud
+  // Linux 3 (issue #1200). Regression guard: 'alinux'.includes('linux') is
+  // true, so without a dedicated branch this would fall through to the
+  // generic 'linux' icon (the bug the issue reports).
+  assert.equal(normalizeDistroId("alinux"), "alinux");
+  assert.notEqual(normalizeDistroId("alinux"), "linux");
+});
+
+test("normalizeDistroId maps legacy Aliyun Linux IDs to alinux", () => {
+  // Older releases branded the distro as "Aliyun Linux" with ID=aliyun.
+  assert.equal(normalizeDistroId("aliyun"), "alinux");
+});
+
+test("normalizeDistroId matches Alibaba Cloud Linux PRETTY_NAME/NAME fallback", () => {
+  // When ID is absent the detector falls back to NAME / PRETTY_NAME text.
+  assert.equal(normalizeDistroId("Alibaba Cloud Linux"), "alinux");
+  assert.equal(
+    normalizeDistroId("Alibaba Cloud Linux 3.2104 U13.1 (OpenAnolis Edition)"),
+    "alinux",
+  );
 });
 
 test("shouldProbeSessionCwd allows the probe on a plain Linux host", () => {

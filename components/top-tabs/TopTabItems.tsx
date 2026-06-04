@@ -165,14 +165,14 @@ export const WindowControls: React.FC = memo(() => {
     <div className="flex items-center app-drag h-full">
       <button
         onClick={handleMinimize}
-        className="h-full w-10 flex items-center justify-center transition-all duration-150 app-no-drag"
+        className="h-full w-10 flex items-center justify-center hover:bg-foreground/10 transition-all duration-150 app-no-drag"
         style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
       >
         <Minus size={16} />
       </button>
       <button
         onClick={handleMaximize}
-        className="h-full w-10 flex items-center justify-center transition-all duration-150 app-no-drag"
+        className="h-full w-10 flex items-center justify-center hover:bg-foreground/10 transition-all duration-150 app-no-drag"
         style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
       >
         {isMaximized ? (

@@ -1,9 +1,9 @@
 /**
  * Netcatty MCP Server (stdio transport)
  *
- * Spawned by codex-acp (or other ACP agents) as a child process.
+ * Spawned by managed SDK agents as a child process.
  * Communicates with the Netcatty main process via TCP (JSON-RPC over newline-delimited JSON).
- * Exposes Netcatty terminal tools so ACP agents can operate on scoped sessions.
+ * Exposes Netcatty terminal tools so external agents can operate on scoped sessions.
  */
 "use strict";
 
@@ -230,6 +230,42 @@ server.tool(
         text: JSON.stringify(ctx, null, 2),
       }],
     };
+  },
+);
+
+server.tool(
+  "list_attachments",
+  "List local files explicitly attached by the user in this Netcatty AI chat. Use this before read_attachment when the user asks about a pasted, dropped, or uploaded local file.",
+  {},
+  async () => {
+    const result = await rpcCall("netcatty/listAttachments", scopeParams);
+    if (!result.ok) {
+      return { content: [{ type: "text", text: `Error: ${result.error || "Failed to list attachments"}` }], isError: true };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(result.attachments || [], null, 2) }] };
+  },
+);
+
+server.tool(
+  "read_attachment",
+  "Read a local file explicitly attached by the user in this Netcatty AI chat. This tool only accepts file paths or filenames that were registered from user attachments; it cannot read arbitrary local files.",
+  {
+    filePath: z.string().optional().describe("Exact local attachment path shown in the prompt or returned by list_attachments."),
+    filename: z.string().optional().describe("Attachment filename returned by list_attachments. Use filePath when available."),
+  },
+  async ({ filePath, filename }) => {
+    const result = await rpcCall("netcatty/readAttachment", { ...scopeParams, filePath, filename });
+    if (!result.ok) {
+      return { content: [{ type: "text", text: `Error: ${result.error || "Failed to read attachment"}` }], isError: true };
+    }
+    const payload = {
+      filename: result.filename,
+      mediaType: result.mediaType,
+      filePath: result.filePath,
+      sizeBytes: result.sizeBytes,
+      ...(result.text != null ? { text: result.text } : { base64Data: result.base64Data }),
+    };
+    return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
   },
 );
 

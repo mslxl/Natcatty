@@ -161,6 +161,17 @@ export const ruCoreMessages: Messages = {
   'settings.sessionLogs.formatHtml': 'HTML (.html)',
   'settings.sessionLogs.hint': 'Журналы сессий сохраняют весь вывод терминала для диагностики и аудита.',
 
+  // Settings > SSH Debug Logs
+  'settings.sshDebugLogs.title': 'Отладочные журналы SSH',
+  'settings.sshDebugLogs.enable': 'Включить отладочные журналы SSH',
+  'settings.sshDebugLogs.enableDesc': 'Записывать подключение, аутентификацию, рукопожатие, отключение и причины ошибок без вывода терминала.',
+  'settings.sshDebugLogs.location': 'Расположение журнала',
+  'settings.sshDebugLogs.status': 'Статус',
+  'settings.sshDebugLogs.statusOn': 'Включено',
+  'settings.sshDebugLogs.statusOff': 'Отключено',
+  'settings.sshDebugLogs.size': 'Размер',
+  'settings.sshDebugLogs.hint': 'Когда включено, новые SSH-подключения записывают диагностические события для разбора бастионов, аутентификации и неожиданных отключений.',
+
   // Settings > Global Hotkey (Quake Mode)
   'settings.globalHotkey.title': 'Глобальная горячая клавиша',
   'settings.globalHotkey.toggleWindow': 'Переключение окна',
@@ -227,6 +238,8 @@ export const ruCoreMessages: Messages = {
   'update.restartNow': 'Перезапустить сейчас',
   'update.downloadFailed.title': 'Ошибка обновления',
   'update.downloadFailed.message': 'Не удалось скачать обновление. Вы можете скачать его вручную.',
+  'update.needsSave.title': 'Несохранённые изменения',
+  'update.needsSave.message': 'Сначала сохраните открытые редакторы, затем снова нажмите «Перезапустить сейчас», чтобы установить обновление.',
   'update.openReleases': 'Открыть релизы',
   'update.remindLater': 'Напомнить позже',
   'update.skipVersion': 'Пропустить эту версию',
@@ -394,6 +407,9 @@ export const ruCoreMessages: Messages = {
   'settings.terminal.localShell.shell.default': 'Системная по умолчанию',
   'settings.terminal.localShell.shell.custom': 'Пользовательская...',
   'settings.terminal.localShell.shell.customPath': 'Путь к исполняемому файлу оболочки',
+  'settings.terminal.localShell.shell.customArgs': 'Аргументы запуска',
+  'settings.terminal.localShell.shell.customArgs.placeholder': 'напр. --login -i',
+  'settings.terminal.localShell.shell.customArgs.desc': 'Аргументы, передаваемые оболочке. Некоторым оболочкам они необходимы — например, msys2 bash требует --login -i для загрузки окружения.',
   'settings.terminal.localShell.shell.commonPaths': 'Частые пути',
   'settings.terminal.localShell.shell.pathValid': 'Путь корректен',
   'settings.terminal.localShell.startDir': 'Начальный каталог',

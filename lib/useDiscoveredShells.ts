@@ -37,26 +37,36 @@ export function useDiscoveredShells(): DiscoveredShell[] {
  * Resolve a localShell setting value to shell command and args.
  * The value can be a discovered shell id (e.g., "wsl-ubuntu", "pwsh")
  * or a custom path/command (e.g., "/usr/local/bin/fish" or "fish").
- * Returns { command, args } or null when discovery hasn't loaded yet
- * and the value might be a shell ID that can't be resolved yet.
+ * `customArgs` are the user-configured launch args (e.g. ["--login", "-i"] for
+ * msys2 bash). When present, they take precedence over discovered shell defaults
+ * so custom commands like "bash" or "fish" can collide with discovered IDs
+ * without losing the user's explicit args. Returns { command, args } or null
+ * when discovery hasn't loaded yet and the value might be a shell ID that can't
+ * be resolved yet.
  */
 export function resolveShellSetting(
   localShell: string,
-  discoveredShells: DiscoveredShell[]
+  discoveredShells: DiscoveredShell[],
+  customArgs?: string[]
 ): { command: string; args?: string[] } | null {
   if (!localShell) return null;
 
-  // Try to match as a discovered shell id
+  // Try to match as a discovered shell id. Discovered shells provide their own
+  // args (e.g. WSL "-d Ubuntu"), unless the user explicitly configured custom
+  // args for a command/path that happens to share the same value as an ID.
   const shell = discoveredShells.find(s => s.id === localShell);
   if (shell) {
-    return { command: shell.command, args: shell.args };
+    return { command: shell.command, args: customArgs?.length ? customArgs : shell.args };
   }
 
   // No ID match — treat as a custom shell path/command and pass through.
   // This handles both custom executables (e.g., "/usr/local/bin/fish", "pwsh-preview")
   // and stale/synced IDs that no longer exist on this machine (graceful fallback
   // to whatever the OS resolves the name to, or a spawn error the user can see).
-  return { command: localShell };
+  // Omit args when none are configured so the bridge's getLocalShellArgs fallback
+  // (login flags, PowerShell -NoLogo) still applies — only override it when the
+  // user has explicitly set launch args (#1221).
+  return { command: localShell, args: customArgs?.length ? customArgs : undefined };
 }
 
 const DISTRO_ICONS = new Set([

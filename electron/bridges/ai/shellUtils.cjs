@@ -217,7 +217,7 @@ function prepareCommandForSpawn(command, args) {
   };
 }
 
-function resolveClaudeCodeExecutableForAcp(claudeExecutablePath, platform = process.platform) {
+function resolveClaudeCodeExecutableForSdk(claudeExecutablePath, platform = process.platform) {
   const normalized = String(claudeExecutablePath || "").trim();
   if (!normalized) return null;
   if (platform !== "win32") return normalized;
@@ -254,9 +254,9 @@ function resolveClaudeCodeExecutableForAcp(claudeExecutablePath, platform = proc
   return normalized;
 }
 
-function normalizeClaudeCodeExecutableEnvForAcp(env, platform = process.platform) {
+function normalizeClaudeCodeExecutableEnvForSdk(env, platform = process.platform) {
   if (!env?.CLAUDE_CODE_EXECUTABLE) return env;
-  const resolved = resolveClaudeCodeExecutableForAcp(env.CLAUDE_CODE_EXECUTABLE, platform);
+  const resolved = resolveClaudeCodeExecutableForSdk(env.CLAUDE_CODE_EXECUTABLE, platform);
   if (!resolved || resolved === env.CLAUDE_CODE_EXECUTABLE) return env;
   return {
     ...env,
@@ -311,6 +311,51 @@ function isPlausibleCliVersionOutput(value) {
 
 let _cachedShellEnv = null;
 
+/**
+ * Run the user's login shell once to print its PATH. Used as a fallback when
+ * the main `-ilc env` capture in getShellEnv fails (layer-0 fix-path).
+ */
+function defaultRunLoginShellPath() {
+  let shell = process.env.SHELL || "/bin/zsh";
+  if (!path.isAbsolute(shell) || !existsSync(shell)) {
+    shell = "/bin/zsh";
+  }
+  return execFileSync(shell, ["-ilc", 'echo -n "$PATH"'], {
+    encoding: "utf8",
+    timeout: 4000,
+    stdio: ["ignore", "pipe", "ignore"],
+    env: { ...process.env, HOME: process.env.HOME || "" },
+  });
+}
+
+/**
+ * Union a login-shell PATH ahead of basePath and de-duplicate, so a GUI launch
+ * (Finder/Dock) with a stripped PATH still discovers user-installed CLIs.
+ * Returns basePath unchanged on win32 or if the login-shell probe fails.
+ */
+function mergeLoginShellPath({
+  basePath,
+  runLoginShellPath = defaultRunLoginShellPath,
+  platform = process.platform,
+  delimiter = path.delimiter,
+}) {
+  if (platform === "win32") return basePath;
+  let shellPath = "";
+  try {
+    shellPath = String(runLoginShellPath() || "").trim();
+  } catch {
+    return basePath;
+  }
+  if (!shellPath) return basePath;
+  const seen = new Set();
+  const out = [];
+  for (const part of [...shellPath.split(delimiter), ...String(basePath || "").split(delimiter)]) {
+    const p = part.trim();
+    if (p && !seen.has(p)) { seen.add(p); out.push(p); }
+  }
+  return out.join(delimiter);
+}
+
 async function getShellEnv() {
   if (_cachedShellEnv) return _cachedShellEnv;
 
@@ -350,15 +395,21 @@ async function getShellEnv() {
       }
     }
     const shellPath = envMap.PATH || "";
+    const mergedPath = [...extraPaths, shellPath, process.env.PATH || ""].join(path.delimiter);
+    // Layer-0 fix-path: front-load + de-duplicate the login-shell PATH we just
+    // captured (reuse the `-ilc env` result above — no second shell spawn).
     _cachedShellEnv = {
       ...envMap,
       ...process.env,
-      PATH: [...extraPaths, shellPath, process.env.PATH || ""].join(path.delimiter),
+      PATH: mergeLoginShellPath({ basePath: mergedPath, runLoginShellPath: () => shellPath }),
     };
   } catch {
+    // `-ilc env` failed — try a lighter login-shell PATH probe as a fallback so
+    // GUI-launch PATH stripping still doesn't break CLI discovery (layer-0).
+    const basePath = [...extraPaths, process.env.PATH || ""].join(path.delimiter);
     _cachedShellEnv = {
       ...process.env,
-      PATH: [...extraPaths, process.env.PATH || ""].join(path.delimiter),
+      PATH: mergeLoginShellPath({ basePath }),
     };
   }
   return _cachedShellEnv;
@@ -371,123 +422,6 @@ async function getShellEnv() {
  */
 function invalidateShellEnvCache() {
   _cachedShellEnv = null;
-}
-
-// ── Claude Code ACP binary resolution ──
-
-/**
- * Resolve the Claude ACP binary, returning { command, prependArgs, env }.
- *
- * `@zed-industries/claude-agent-acp`'s `dist/index.js` is shipped as a Node
- * script (`#!/usr/bin/env node`). We bundle it with the app, but the user's
- * machine may not have `node` on PATH — Windows doesn't honour the shebang at
- * all, and on macOS/Linux the shebang only works when `node` is installed.
- *
- * To make the bundled copy self-sufficient, packaged builds run the script
- * with the Electron binary itself (via `ELECTRON_RUN_AS_NODE=1`). Dev mode
- * still prefers a PATH-resolved `claude-agent-acp` wrapper since `node` is
- * almost always available there.
- */
-function resolveClaudeAcpBinaryPath(shellEnv, electronModule) {
-  const binaryName = "claude-agent-acp";
-
-  // Dev mode: prefer system PATH (npm creates platform-appropriate wrappers)
-  const isPackaged = electronModule?.app?.isPackaged;
-  if (!isPackaged && shellEnv) {
-    const systemPath = resolveCliFromPath(binaryName, shellEnv);
-    if (systemPath) return { command: systemPath, prependArgs: [], env: {} };
-  }
-
-  // Packaged build (or dev fallback): run the npm-bundled JS via process.execPath.
-  // In packaged Electron `process.execPath` is the app binary (e.g. Netcatty.exe);
-  // setting `ELECTRON_RUN_AS_NODE=1` makes it behave as the embedded Node so we
-  // don't depend on the user having `node` installed.  When `process.execPath`
-  // is already a real `node` (e.g. during tests), no env var is needed.
-  try {
-    const resolved = require.resolve("@agentclientprotocol/claude-agent-acp/dist/index.js");
-    const scriptPath = toUnpackedAsarPath(resolved);
-
-    const runtime = process.execPath;
-    if (runtime && existsSync(runtime)) {
-      const runtimeBase = path.basename(runtime).toLowerCase();
-      const isNodeBinary = runtimeBase === "node" || runtimeBase.startsWith("node.");
-      const env = isNodeBinary ? {} : { ELECTRON_RUN_AS_NODE: "1" };
-      return { command: runtime, prependArgs: [scriptPath], env };
-    }
-
-    // Last resort: try a system `node`, then the bare command name.
-    const nodePath = shellEnv ? resolveCliFromPath("node", shellEnv) : null;
-    if (nodePath) {
-      return { command: nodePath, prependArgs: [scriptPath], env: {} };
-    }
-    return { command: binaryName, prependArgs: [], env: {} };
-  } catch {
-    return { command: binaryName, prependArgs: [], env: {} };
-  }
-}
-
-// ── Stream chunk serialization ──
-
-function serializeStreamChunk(chunk) {
-  if (!chunk || !chunk.type) return null;
-  switch (chunk.type) {
-    case "text-delta":
-      return { type: "text-delta", textDelta: chunk.text ?? chunk.textDelta ?? "" };
-    case "reasoning-delta":
-      return { type: "reasoning-delta", delta: chunk.text ?? chunk.delta ?? "" };
-    case "reasoning-start":
-      return { type: "reasoning-start", id: chunk.id ?? undefined };
-    case "reasoning-end":
-      return { type: "reasoning-end", id: chunk.id ?? undefined };
-    case "tool-call": {
-      // ACP wraps all tools as "acp.acp_provider_agent_dynamic_tool".
-      // The real tool name and args are inside chunk.input — which the
-      // @mcpc-tech/acp-ai-provider emits as a JSON.stringified payload
-      // (see index.cjs, every controller.enqueue({ type: "tool-call", ...
-      // input: JSON.stringify({ toolCallId, toolName, args }) })). AI SDK
-      // may or may not pre-parse it before we see the chunk, so handle
-      // both string and object shapes.
-      const isAcpWrapper = chunk.toolName === "acp.acp_provider_agent_dynamic_tool";
-      let acpInput = null;
-      if (isAcpWrapper) {
-        const raw = chunk.input ?? chunk.args;
-        if (typeof raw === "string") {
-          try { acpInput = JSON.parse(raw); } catch { acpInput = null; }
-        } else if (raw && typeof raw === "object") {
-          acpInput = raw;
-        }
-      }
-      let realToolName = isAcpWrapper ? (acpInput?.toolName || chunk.toolName) : chunk.toolName;
-      const realArgs = isAcpWrapper ? (acpInput?.args || chunk.args || chunk.input) : (chunk.input ?? chunk.args);
-      const realToolCallId = isAcpWrapper ? (acpInput?.toolCallId || chunk.toolCallId) : chunk.toolCallId;
-      // Simplify MCP tool names: "mcp__netcatty-remote-hosts__get_environment" → "get_environment"
-      if (realToolName && realToolName.includes("__")) {
-        realToolName = realToolName.split("__").pop();
-      }
-      return {
-        type: "tool-call",
-        toolCallId: realToolCallId,
-        toolName: realToolName,
-        args: realArgs,
-      };
-    }
-    case "tool-result":
-      return {
-        type: "tool-result",
-        toolCallId: chunk.toolCallId,
-        toolName: chunk.toolName,
-        result: chunk.result,
-        output: chunk.output,
-      };
-    case "error":
-      return { type: "error", error: chunk.error };
-    default:
-      try {
-        return JSON.parse(JSON.stringify(chunk));
-      } catch {
-        return { type: chunk.type };
-      }
-  }
 }
 
 module.exports = {
@@ -504,13 +438,12 @@ module.exports = {
   quoteWindowsShellArg,
   buildWindowsShellCommandLine,
   prepareCommandForSpawn,
-  resolveClaudeCodeExecutableForAcp,
-  normalizeClaudeCodeExecutableEnvForAcp,
+  resolveClaudeCodeExecutableForSdk,
+  normalizeClaudeCodeExecutableEnvForSdk,
   resolveCliFromPath,
-  resolveClaudeAcpBinaryPath,
   toUnpackedAsarPath,
   isPlausibleCliVersionOutput,
+  mergeLoginShellPath,
   getShellEnv,
   invalidateShellEnvCache,
-  serializeStreamChunk,
 };

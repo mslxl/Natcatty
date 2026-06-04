@@ -8,6 +8,7 @@ import {
   mergeProviderContinuation,
   normalizeProviderContinuationOptions,
   rawOpenAIChatChunkHasToolCalls,
+  repairOpenAIChatToolResultPairsInBody,
   withProviderContinuationSource,
 } from './providerContinuation';
 
@@ -353,4 +354,75 @@ test('leaves invalid or unchanged OpenAI-compatible request bodies alone', () =>
 
   const body = JSON.stringify({ stream: true, messages: [{ role: 'user', content: 'hi' }] });
   assert.equal(applyOpenAIChatContinuationToBody(body, [{ reasoning_content: 'unused' }]), body);
+});
+
+test('leaves complete OpenAI-compatible tool result pairs unchanged', () => {
+  const body = JSON.stringify({
+    stream: true,
+    messages: [
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          { id: 'call_1', type: 'function', function: { name: 'terminal_execute', arguments: '{}' } },
+          { id: 'call_2', type: 'function', function: { name: 'terminal_execute', arguments: '{}' } },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'call_1', content: 'one' },
+      { role: 'tool', tool_call_id: 'call_2', content: 'two' },
+      { role: 'user', content: 'continue' },
+    ],
+  });
+
+  assert.equal(repairOpenAIChatToolResultPairsInBody(body), body);
+});
+
+test('repairs partial OpenAI-compatible tool result pairs before sending history', () => {
+  const body = JSON.stringify({
+    stream: true,
+    messages: [
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          { id: 'call_1', type: 'function', function: { name: 'terminal_execute', arguments: '{}' } },
+          { id: 'call_2', type: 'function', function: { name: 'terminal_execute', arguments: '{}' } },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'call_2', content: 'two' },
+      { role: 'user', content: 'continue' },
+    ],
+  });
+
+  const repaired = JSON.parse(repairOpenAIChatToolResultPairsInBody(body));
+
+  assert.deepEqual(
+    repaired.messages[0].tool_calls.map((toolCall: { id: string }) => toolCall.id),
+    ['call_2'],
+  );
+  assert.equal(repaired.messages[1].role, 'tool');
+  assert.equal(repaired.messages[1].tool_call_id, 'call_2');
+  assert.equal(repaired.messages[2].role, 'user');
+});
+
+test('drops orphaned OpenAI-compatible tool calls that have no results', () => {
+  const body = JSON.stringify({
+    stream: true,
+    messages: [
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          { id: 'call_1', type: 'function', function: { name: 'terminal_execute', arguments: '{}' } },
+        ],
+      },
+      { role: 'user', content: 'are you there?' },
+    ],
+  });
+
+  const repaired = JSON.parse(repairOpenAIChatToolResultPairsInBody(body));
+
+  assert.deepEqual(repaired.messages, [
+    { role: 'user', content: 'are you there?' },
+  ]);
 });

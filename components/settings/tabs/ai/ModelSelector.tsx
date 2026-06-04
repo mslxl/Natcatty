@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, RefreshCw } from "lucide-react";
 import type { AIProviderId, ProviderStyle } from "../../../../infrastructure/ai/types";
 import { resolveProviderStyle } from "../../../../infrastructure/ai/types";
@@ -9,6 +9,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../../../ui/tooltip";
 import { cn } from "../../../../lib/utils";
 import type { FetchedModel } from "./types";
 import { getFetchBridge } from "./types";
+import { parseFetchedModels } from "./modelMetadata";
 
 export const ModelSelector: React.FC<{
   value: string;
@@ -21,7 +22,8 @@ export const ModelSelector: React.FC<{
   /** Optional protocol-family override; falls back to `providerId` via {@link resolveProviderStyle}. */
   style?: ProviderStyle;
   skipTLSVerify?: boolean;
-}> = ({ value, onChange, baseURL, modelsEndpoint, placeholder, apiKey, providerId, style, skipTLSVerify }) => {
+  onModelMetadata?: (model: FetchedModel) => void;
+}> = ({ value, onChange, baseURL, modelsEndpoint, placeholder, apiKey, providerId, style, skipTLSVerify, onModelMetadata }) => {
   const { t } = useI18n();
   const [models, setModels] = useState<FetchedModel[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -39,11 +41,28 @@ export const ModelSelector: React.FC<{
   // Ollama runs locally without auth; all other providers need an API key to list models
   const needsApiKey = providerId !== "ollama";
   const canFetch = !!effectiveModelsEndpoint && (!needsApiKey || !!apiKey);
+  const discoveryKey = JSON.stringify({
+    baseURL,
+    effectiveModelsEndpoint,
+    apiKey,
+    resolvedStyle,
+    skipTLSVerify,
+  });
+  const discoveryKeyRef = useRef(discoveryKey);
+
+  useEffect(() => {
+    discoveryKeyRef.current = discoveryKey;
+    setModels([]);
+    setHasFetched(false);
+    setError(null);
+    setIsLoading(false);
+  }, [discoveryKey]);
 
   const fetchModels = useCallback(async () => {
     if (!effectiveModelsEndpoint) return;
     const bridge = getFetchBridge();
     if (!bridge?.aiFetch) return;
+    const requestKey = discoveryKey;
 
     setIsLoading(true);
     setError(null);
@@ -57,23 +76,23 @@ export const ModelSelector: React.FC<{
       const headers = buildModelDiscoveryHeaders(resolvedStyle, apiKey);
       const result = await bridge.aiFetch(url, "GET", headers, undefined, undefined, undefined, undefined, skipTLSVerify);
       if (!result.ok) {
+        if (discoveryKeyRef.current !== requestKey) return;
         setError(`Failed to fetch models (${result.error || "unknown error"})`);
         return;
       }
       const parsed = JSON.parse(result.data);
-      const list: FetchedModel[] = (parsed.data || parsed.models || []).map((m: { id: string; name?: string }) => ({
-        id: m.id,
-        name: m.name,
-      }));
+      const list = parseFetchedModels(parsed);
       list.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+      if (discoveryKeyRef.current !== requestKey) return;
       setModels(list);
       setHasFetched(true);
     } catch (err) {
+      if (discoveryKeyRef.current !== requestKey) return;
       setError(err instanceof Error ? err.message : "Failed to parse response");
     } finally {
-      setIsLoading(false);
+      if (discoveryKeyRef.current === requestKey) setIsLoading(false);
     }
-  }, [baseURL, effectiveModelsEndpoint, apiKey, resolvedStyle, skipTLSVerify]);
+  }, [baseURL, effectiveModelsEndpoint, apiKey, resolvedStyle, skipTLSVerify, discoveryKey]);
 
   // Auto-fetch when dropdown first opens
   useEffect(() => {
@@ -163,6 +182,7 @@ export const ModelSelector: React.FC<{
                   onMouseDown={(e) => {
                     e.preventDefault();
                     onChange(m.id);
+                    onModelMetadata?.(m);
                     setIsOpen(false);
                   }}
                   className={cn(

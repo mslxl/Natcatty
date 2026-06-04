@@ -78,6 +78,8 @@ export interface ProviderFormState {
   apiKey: string;
   baseURL: string;
   defaultModel: string;
+  contextWindow: string;
+  modelContextWindows: Record<string, number>;
   skipTLSVerify: boolean;
   advancedParams: ProviderAdvancedParams;
   style: ProviderStyle | "";  // "" means inherit-from-providerId
@@ -88,6 +90,7 @@ export interface ProviderFormState {
 export interface FetchedModel {
   id: string;
   name?: string;
+  contextWindow?: number;
 }
 
 export interface FetchBridge {
@@ -113,22 +116,19 @@ export const AGENT_DEFAULTS: Record<string, Omit<ExternalAgentConfig, "id" | "co
     name: "Codex CLI",
     args: ["exec", "--full-auto", "--json", "{prompt}"],
     icon: "openai",
-    acpCommand: "codex-acp",
-    acpArgs: [],
+    sdkBackend: "codex",
   },
   claude: {
     name: "Claude Code",
     args: ["-p", "--output-format", "text", "{prompt}"],
     icon: "claude",
-    acpCommand: "claude-agent-acp",
-    acpArgs: [],
+    sdkBackend: "claude",
   },
   copilot: {
     name: "GitHub Copilot CLI",
     args: ["-p", "{prompt}"],
     icon: "copilot",
-    acpCommand: "copilot",
-    acpArgs: ["--acp", "--stdio"],
+    sdkBackend: "copilot",
   },
 };
 

@@ -35,6 +35,17 @@ let handlersRegistered = false; // Prevent duplicate IPC handler registration
 let menuDeps = null;
 let electronApp = null; // Reference to Electron app for userData path
 let isQuitting = false;
+// Set right before electron-updater's quitAndInstall() drives app.quit() for a
+// macOS/Windows in-place update. The install only succeeds if the app process
+// exits cleanly: Squirrel.Mac's ShipIt helper waits on the parent PID to die
+// before swapping the bundle. Two normal-quit behaviors would otherwise keep
+// the process alive and strand the installer (see #1215):
+//   1. close-to-tray hides the window instead of closing it, and
+//   2. the before-quit dirty-editor guard preventDefault()s the quit for a
+//      5s renderer round-trip.
+// This flag lets both paths recognize an update install and let the quit
+// through immediately.
+let quittingForUpdate = false;
 const rendererReadyCallbacksByWebContentsId = new Map();
 const rendererReadySeenByWebContentsId = new Set();
 const rendererReadyWaitersByWebContentsId = new Map();
@@ -43,6 +54,7 @@ const DEBUG_WINDOWS = process.env.NETCATTY_DEBUG_WINDOWS === "1";
 const OAUTH_DEFAULT_WIDTH = 600;
 const OAUTH_DEFAULT_HEIGHT = 700;
 const OAUTH_OVERLAY_ID = "__netcatty_oauth_loading__";
+const WINDOW_COMMAND_CLOSE_CHANNEL = "netcatty:window:command-close";
 // The OAuth callback port is chosen dynamically by oauthBridge (prefers
 // 45678, falls back to an OS-assigned free port if that is in use, #823),
 // so the in-app popup allow-list has to consult the bridge at popup-open
@@ -68,6 +80,50 @@ function debugLog(...args) {
 
 function setIsQuitting(nextValue) {
   isQuitting = Boolean(nextValue);
+}
+
+function shouldCloseWindowFromInput(input) {
+  return Boolean(
+    input?.type === "keyDown" &&
+    input?.meta &&
+    !input?.control &&
+    !input?.alt &&
+    !input?.shift &&
+    String(input?.key || "").toLowerCase() === "w",
+  );
+}
+
+/**
+ * Read the generic "app is quitting" flag. Window close handlers gate
+ * close-to-tray / settings-window hiding on this; exposed so the update-quit
+ * rollback can be verified.
+ */
+function getIsQuitting() {
+  return isQuitting;
+}
+
+/**
+ * Mark that the app is quitting to install a downloaded update. Mirrors the
+ * generic isQuitting flag so the main-window close handler bypasses
+ * close-to-tray. Call this right before electron-updater's quitAndInstall().
+ *
+ * Passing false rolls BOTH flags back — used when a quitAndInstall never
+ * actually quits the app (throw / Squirrel follow-up error / stale download).
+ * Without resetting isQuitting too, close-to-tray and settings-window hiding
+ * would stay disabled for the rest of the session (#1215 review).
+ */
+function setQuittingForUpdate(nextValue) {
+  quittingForUpdate = Boolean(nextValue);
+  isQuitting = quittingForUpdate;
+}
+
+/**
+ * True when quitAndInstall() initiated the current quit. The before-quit guard
+ * checks this to skip the dirty-editor round-trip and let the app exit so the
+ * updater's installer can run.
+ */
+function isQuittingForUpdate() {
+  return quittingForUpdate;
 }
 
 /**
@@ -184,8 +240,8 @@ function getWindowBoundsState(win, overrideBounds) {
 }
 
 const MENU_LABELS = {
-  en: { edit: "Edit", view: "View", window: "Window", reload: "Reload" },
-  "zh-CN": { edit: "编辑", view: "视图", window: "窗口", reload: "重新加载" },
+  en: { edit: "Edit", view: "View", window: "Window", reload: "Reload", closeWindow: "Close Window" },
+  "zh-CN": { edit: "编辑", view: "视图", window: "窗口", reload: "重新加载", closeWindow: "关闭窗口" },
 };
 
 function tMenu(language, key) {
@@ -213,6 +269,28 @@ function getWindowForIpcEvent(event) {
     // ignore
   }
   return mainWindow;
+}
+
+function closeBrowserWindow(win) {
+  if (!win || win.isDestroyed?.()) return false;
+  try {
+    win.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function requestWindowCommandClose(win) {
+  if (!win || win.isDestroyed?.()) return false;
+  try {
+    const webContents = win.webContents;
+    if (!webContents || webContents.isDestroyed?.()) return closeBrowserWindow(win);
+    webContents.send(WINDOW_COMMAND_CLOSE_CHANNEL);
+    return true;
+  } catch {
+    return closeBrowserWindow(win);
+  }
 }
 
 function broadcastLanguageChanged() {
@@ -638,6 +716,8 @@ const mainWindowApi = createMainWindowApi({
   createAppWindowOpenHandler,
   attachOAuthLoadingOverlay,
   registerWindowHandlers,
+  requestWindowCommandClose,
+  shouldCloseWindowFromInput,
   closeSettingsWindow: (...args) => closeSettingsWindow(...args),
   hideSettingsWindow: (...args) => hideSettingsWindow(...args),
 });
@@ -858,6 +938,16 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
 function buildAppMenu(Menu, app, isMac, language = currentLanguage) {
   // Save deps so later language changes can rebuild the menu.
   menuDeps = { Menu, app, isMac };
+  const closeFocusedWindow = (_menuItem, browserWindow) => {
+    // 只有主窗口/设置窗口会接收 command-close；其他 BrowserWindow 直接关闭。
+    if (browserWindow && browserWindow !== mainWindow && browserWindow !== settingsWindow) {
+      closeBrowserWindow(browserWindow);
+      return;
+    }
+
+    // macOS 的 Cmd+W 先交给渲染层关闭标签页；没有标签页时渲染层再关闭窗口。
+    requestWindowCommandClose(browserWindow) || requestWindowCommandClose(mainWindow);
+  };
   const template = [
     ...(isMac
       ? [
@@ -907,7 +997,15 @@ function buildAppMenu(Menu, app, isMac, language = currentLanguage) {
         { role: "minimize" },
         { role: "zoom" },
         ...(isMac
-          ? [{ type: "separator" }, { role: "front" }]
+          ? [
+            { type: "separator" },
+            {
+              label: tMenu(language, "closeWindow"),
+              accelerator: "CommandOrControl+W",
+              click: closeFocusedWindow,
+            },
+            { role: "front" },
+          ]
           : [{ role: "close" }]),
       ],
     },
@@ -941,8 +1039,14 @@ module.exports = {
   isWindowUsable,
   registerWindowHandlers,
   restoreWindowInputFocus,
+  requestWindowCommandClose,
+  shouldCloseWindowFromInput,
+  WINDOW_COMMAND_CLOSE_CHANNEL,
   waitForRendererReady,
   setIsQuitting,
+  getIsQuitting,
+  setQuittingForUpdate,
+  isQuittingForUpdate,
   openFallbackBrowser,
   tryOpenExternalWithFallback,
   resolveSettingsWindowBounds,
