@@ -289,7 +289,15 @@ async function main(argv = process.argv.slice(2), env = process.env) {
 
   let release = env.ET_BIN_RELEASE;
   if (!release && argv.includes("--resolve-release")) {
-    release = await resolveEtBinRelease(env);
+    try {
+      release = await resolveEtBinRelease(env);
+    } catch (err) {
+      if (argv.includes("--host")) {
+        warn(`could not resolve an et binary release (${err.message}) - skipping host et fetch.`);
+        return 0;
+      }
+      throw err;
+    }
   }
   if (!release) {
     log("ET_BIN_RELEASE is unset - skipping. Set it (e.g. et-bin-6.2.10-1) to bundle et into the package.");

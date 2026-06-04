@@ -39,10 +39,23 @@ function matchesPrompt(entry, prompt) {
   return matchers.some((matcher) => prompt.includes(String(matcher || "").toLowerCase()));
 }
 
+function promptMatchScore(entry, prompt) {
+  const matchers = Array.isArray(entry.matchers) ? entry.matchers : [];
+  let score = 0;
+  for (const matcher of matchers) {
+    const value = String(matcher || "").toLowerCase();
+    if (value && prompt.includes(value)) score = Math.max(score, value.length);
+  }
+  return score;
+}
+
 function pickEntry(entries, prompt) {
   const wantsPassphrase = prompt.includes("passphrase");
   const scoped = entries.filter((entry) => entry.type === (wantsPassphrase ? "passphrase" : "password"));
-  const matched = scoped.find((entry) => matchesPrompt(entry, prompt));
+  const matched = scoped
+    .map((entry, index) => ({ entry, index, score: promptMatchScore(entry, prompt) }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)[0]?.entry;
   if (matched) return matched;
   if (scoped.length === 1) return scoped[0];
   return null;
@@ -98,6 +111,11 @@ main();
 
     function normalizeSshConfigPath(targetPath) {
       return path.resolve(String(targetPath)).replace(/\\/g, "/");
+    }
+
+    function quoteSshConfigValue(value) {
+      const normalized = normalizeSshConfigPath(value);
+      return `"${normalized.replace(/(["\\])/g, "\\$1")}"`;
     }
 
     // POSIX single-quote a string so it is safe to embed verbatim in a /bin/sh
@@ -205,6 +223,11 @@ main();
      * commas/spaces are written to a config file under HOME/.ssh/config.
      */
     function prepareEtSshEnvironment(sessionId, options) {
+      const jumpHosts = Array.isArray(options.jumpHosts) ? options.jumpHosts : [];
+      if (jumpHosts.length > 1) {
+        throw new Error("EternalTerminal currently supports at most one jump host in Netcatty.");
+      }
+
       const tempDir = tempDirBridge.getTempFilePath(`et-ssh-home-${sessionId}`);
       const sshDir = path.join(tempDir, ".ssh");
       fs.mkdirSync(sshDir, { recursive: true });
@@ -217,11 +240,12 @@ main();
       const askpassEntries = [];
 
       // Copy known_hosts from real ~/.ssh so already-trusted hosts verify
-      // silently. Always point ssh at this private file (created on demand)
-      // so StrictHostKeyChecking=accept-new can persist a first-seen key here.
+      // silently. Always point ssh at the persistent user file so
+      // StrictHostKeyChecking=accept-new records a first-seen key for later
+      // mismatch detection instead of trusting it again on every ET session.
       const realSshDir = path.join(os.homedir(), ".ssh");
-      const knownHostsPath = path.join(sshDir, "known_hosts");
-      copyIfExists(path.join(realSshDir, "known_hosts"), knownHostsPath);
+      fs.mkdirSync(realSshDir, { recursive: true });
+      const knownHostsPath = path.join(realSshDir, "known_hosts");
       sshOptions.push(`UserKnownHostsFile=${normalizeSshConfigPath(knownHostsPath)}`);
 
       // et drives ssh itself and feeds credentials through SSH_ASKPASS, which
@@ -330,11 +354,6 @@ main();
       // destination's auth from leaking onto the jump hop, scope the
       // destination's comma/space config lines under a `Host <dest>` block too
       // whenever a jump host is present.
-      const jumpHosts = Array.isArray(options.jumpHosts) ? options.jumpHosts : [];
-      if (jumpHosts.length > 1) {
-        throw new Error("EternalTerminal currently supports at most one jump host in Netcatty.");
-      }
-
       let etJumpArgs = [];
       const jumpConfigLines = [];
       if (jumpHosts[0]) {
@@ -362,7 +381,7 @@ main();
         if (jump.privateKey) {
           const jumpKeyPath = path.join(sshDir, `${safeId}-jump-key`);
           writeSecureFile(jumpKeyPath, jump.privateKey, 0o600);
-          jumpConfigLines.push(`  IdentityFile ${normalizeSshConfigPath(jumpKeyPath)}`);
+          jumpConfigLines.push(`  IdentityFile ${quoteSshConfigValue(jumpKeyPath)}`);
           jumpConfigLines.push("  IdentitiesOnly yes");
           if (jump.passphrase) {
             const jumpPassPath = path.join(sshDir, `${safeId}-jump-passphrase.txt`);
@@ -372,7 +391,7 @@ main();
         } else if (Array.isArray(jump.identityFilePaths)) {
           const jumpIdentityPaths = jump.identityFilePaths.filter(Boolean);
           for (const idPath of jumpIdentityPaths) {
-            jumpConfigLines.push(`  IdentityFile ${normalizeSshConfigPath(idPath)}`);
+            jumpConfigLines.push(`  IdentityFile ${quoteSshConfigValue(idPath)}`);
           }
           if (jumpIdentityPaths.length > 0) {
             jumpConfigLines.push("  IdentitiesOnly yes");
@@ -383,7 +402,7 @@ main();
         if (jump.certificate) {
           const jumpCertPath = path.join(sshDir, `${safeId}-jump-cert.pub`);
           writeSecureFile(jumpCertPath, jump.certificate, 0o600);
-          jumpConfigLines.push(`  CertificateFile ${normalizeSshConfigPath(jumpCertPath)}`);
+          jumpConfigLines.push(`  CertificateFile ${quoteSshConfigValue(jumpCertPath)}`);
         }
 
         // Jump host password
@@ -400,7 +419,7 @@ main();
         // Share known_hosts with the jump connection and apply the same
         // non-interactive host-key handling as the target hop — the jump's
         // ssh is just as unable to answer a yes/no prompt via SSH_ASKPASS.
-        jumpConfigLines.push(`  UserKnownHostsFile ${normalizeSshConfigPath(knownHostsPath)}`);
+        jumpConfigLines.push(`  UserKnownHostsFile ${quoteSshConfigValue(knownHostsPath)}`);
         jumpConfigLines.push("  StrictHostKeyChecking accept-new");
         jumpConfigLines.push("  LogLevel ERROR");
         jumpConfigLines.push("  KbdInteractiveAuthentication yes");
@@ -467,7 +486,7 @@ main();
         if (!fs.existsSync(tempDir)) return;
         const entries = fs.readdirSync(tempDir);
         for (const entry of entries) {
-          if (!entry.includes("et-ssh-home-")) continue;
+          if (!entry.startsWith("et-ssh-home-")) continue;
           try {
             fs.rmSync(path.join(tempDir, entry), { recursive: true, force: true });
           } catch {

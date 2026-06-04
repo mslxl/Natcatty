@@ -890,6 +890,7 @@ const sessionOpsApi = createSessionOpsApi({
   fs, path, os, exec, randomUUID, iconv, Buffer, process, console, setTimeout, clearTimeout,
   getSessionDecoder, resetSessionDecoders, sessionEncodings, resolveLangFromCharset, safeSend,
   quoteShellArg, log,
+  execOnEtSession: (...args) => require("./terminalBridge.cjs").execOnEtSession(...args),
   getServerStats: undefined,
 });
 const {

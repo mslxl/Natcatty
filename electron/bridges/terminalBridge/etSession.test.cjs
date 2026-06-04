@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 
 const { createEtSessionApi } = require("./etSession.cjs");
 
@@ -95,6 +96,27 @@ test("prepareEtSshEnvironment writes an askpass map + sets SSH_ASKPASS for passw
   assert.equal(map[0].type, "password");
   // The secret is written to its own file referenced by the map entry.
   assert.equal(fs.readFileSync(map[0].secretFile, "utf8").trim(), "s3cret");
+});
+
+test("prepareEtSshEnvironment askpass prefers the most specific matching password prompt", (t) => {
+  const { api } = makeApi(t);
+  const env = api.prepareEtSshEnvironment("sess1", {
+    hostname: "app",
+    username: "alice",
+    password: "target-secret",
+    jumpHosts: [{
+      hostname: "app-bastion",
+      username: "ops",
+      password: "jump-secret",
+    }],
+  });
+
+  const output = execFileSync(env.env.SSH_ASKPASS, ["ops@app-bastion's password:"], {
+    env: { ...process.env, ...env.env },
+    encoding: "utf8",
+  });
+
+  assert.equal(output.trim(), "jump-secret");
 });
 
 test(
@@ -220,6 +242,27 @@ test("prepareEtSshEnvironment writes jump-host key + passphrase askpass into the
   assert.ok(map.some((e) => e.type === "passphrase"));
 });
 
+test("prepareEtSshEnvironment quotes ssh config paths that contain spaces", (t) => {
+  const { api, base } = makeApi(t);
+  const keyPath = path.join(base, "My Keys", "jump key");
+  fs.mkdirSync(path.dirname(keyPath), { recursive: true });
+  fs.writeFileSync(keyPath, "key");
+
+  const env = api.prepareEtSshEnvironment("sess1", {
+    hostname: "dest.example",
+    username: "u",
+    jumpHosts: [{
+      hostname: "jump.example",
+      username: "ops",
+      identityFilePaths: [keyPath],
+    }],
+  });
+
+  const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
+  assert.match(config, new RegExp(`IdentityFile "${keyPath.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}"`));
+  assert.match(config, /UserKnownHostsFile ".*known_hosts"/);
+});
+
 test("prepareEtSshEnvironment scopes destination config under Host <dest> when a jump host is present", (t) => {
   const { api } = makeApi(t);
   const env = api.prepareEtSshEnvironment("sess1", {
@@ -251,4 +294,45 @@ test("prepareEtSshEnvironment rejects more than one jump host", (t) => {
     }),
     /at most one jump host/,
   );
+});
+
+test("prepareEtSshEnvironment leaves no temp credential files when validation fails", (t) => {
+  const { api, base } = makeApi(t);
+
+  assert.throws(
+    () => api.prepareEtSshEnvironment("sess1", {
+      hostname: "h",
+      username: "u",
+      password: "target-secret",
+      jumpHosts: [{ hostname: "j1" }, { hostname: "j2" }],
+    }),
+    /at most one jump host/,
+  );
+
+  assert.equal(fs.existsSync(path.join(base, "et-ssh-home-sess1")), false);
+});
+
+test("prepareEtSshEnvironment uses a persistent user known_hosts file", (t) => {
+  const { api, base } = makeApi(t);
+  const env = api.prepareEtSshEnvironment("sess1", { hostname: "host.example", username: "alice" });
+
+  const knownHostsOption = env.sshOptions.find((option) => option.startsWith("UserKnownHostsFile="));
+  assert.equal(
+    knownHostsOption,
+    `UserKnownHostsFile=${path.join(base, "home", ".ssh", "known_hosts").replace(/\\/g, "/")}`,
+  );
+  assert.equal(fs.existsSync(path.join(base, "et-ssh-home-sess1", ".ssh", "known_hosts")), false);
+});
+
+test("cleanupStaleEtTempDirs only removes Netcatty ET temp directories by prefix", (t) => {
+  const { api, base } = makeApi(t);
+  const staleEtDir = path.join(base, "et-ssh-home-old-session");
+  const unrelatedDir = path.join(base, "cache-et-ssh-home-keep");
+  fs.mkdirSync(staleEtDir, { recursive: true });
+  fs.mkdirSync(unrelatedDir, { recursive: true });
+
+  api.cleanupStaleEtTempDirs();
+
+  assert.equal(fs.existsSync(staleEtDir), false);
+  assert.equal(fs.existsSync(unrelatedDir), true);
 });

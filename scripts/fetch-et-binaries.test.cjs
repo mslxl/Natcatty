@@ -150,6 +150,30 @@ test("fetch-et-binaries skips when ET_BIN_RELEASE is unset", async (t) => {
   assert.equal(fs.existsSync(resDir), false);
 });
 
+test("fetch-et-binaries host dev mode skips when release resolution is unavailable", async (t) => {
+  const resDir = path.join(makeTmp(t), "resources", "et");
+  const apiBase = await serveAssets(t, {});
+
+  const { stderr } = await execFileAsync(
+    process.execPath,
+    [script, "--host", "--resolve-release", "--platform=linux", "--arch=x64"],
+    {
+      env: {
+        ...process.env,
+        ET_BIN_RELEASE: "",
+        ET_BIN_RES_DIR: resDir,
+        GITHUB_API_URL: apiBase,
+        GITHUB_REPOSITORY: "owner/project",
+        CI: "true",
+      },
+      stdio: "pipe",
+    },
+  );
+
+  assert.match(stderr, /could not resolve an et binary release/i);
+  assert.equal(fs.existsSync(resDir), false);
+});
+
 test("fetch-et-binaries unpacks the Linux tarball", async (t) => {
   const resDir = path.join(makeTmp(t), "resources", "et");
   const tar = makeTarGz(t, { et: "binary" });
