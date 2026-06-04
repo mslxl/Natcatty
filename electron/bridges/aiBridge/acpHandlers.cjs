@@ -34,17 +34,6 @@ function registerAcpHandlers(ctx) {
         }
       }
 
-      // Codebuddy pre-flight: if CODEBUDDY_API_KEY is not set anywhere,
-      // surface a targeted error instead of spawning and letting it fail
-      // with an opaque auth error.
-      if (isCodebuddyAgent) {
-        const normalizedReqEnv = normalizeAgentEnv(requestedAgentEnv);
-        const hasApiKey = Boolean(shellEnv.CODEBUDDY_API_KEY || normalizedReqEnv.CODEBUDDY_API_KEY);
-        if (!hasApiKey) {
-          return { ok: false, models: [], error: "CODEBUDDY_API_KEY is not set. Configure it in Settings -> AI -> CodeBuddy Code, or export it in your shell environment." };
-        }
-      }
-
       let agentEnv = withCliDiscoveryEnv({ ...shellEnv, ...normalizeAgentEnv(requestedAgentEnv) });
       if (isClaudeAgent) {
         agentEnv = normalizeClaudeCodeExecutableEnvForAcp(agentEnv);
@@ -204,11 +193,12 @@ function registerAcpHandlers(ctx) {
       claudeAuthPresence = isClaudeAgent
         ? detectClaudeAuthPresence({ ...shellEnv, ...normalizeAgentEnv(requestedAgentEnv) })
         : null;
-      // For Codebuddy: check if CODEBUDDY_API_KEY is present in env.
-      // Without it, the agent will fail immediately with an auth error.
+      // For Codebuddy: check whether CODEBUDDY_AUTH_TOKEN or
+      // ~/.codebuddy/settings.json is reachable. Used only for soft
+      // error messaging — never hard-blocks (the CLI owns its own auth).
       const normalizedAgentEnv = normalizeAgentEnv(requestedAgentEnv);
       codebuddyAuthPresence = isCodebuddyAgent
-        ? (Boolean(shellEnv.CODEBUDDY_API_KEY || normalizedAgentEnv.CODEBUDDY_API_KEY) ? "present" : "missing")
+        ? detectCodebuddyAuthPresence({ ...shellEnv, ...normalizedAgentEnv })
         : null;
       const agentLabel = isCodexAgent ? "codex" : isClaudeAgent ? "claude" : isCopilotAgent ? "copilot" : isCodebuddyAgent ? "codebuddy" : acpCommand;
       const effectiveToolIntegrationMode = normalizeToolIntegrationMode(toolIntegrationMode);
@@ -249,17 +239,6 @@ function registerAcpHandlers(ctx) {
           error: preflightError,
         });
         return { ok: false, error: `Missing env var ${codexCustomConfig.envKey}` };
-      }
-
-      // Codebuddy pre-flight: fail early if CODEBUDDY_API_KEY is missing
-      // so the user gets a clear, actionable error instead of an opaque
-      // auth failure from the spawned process.
-      if (isCodebuddyAgent && codebuddyAuthPresence === "missing") {
-        safeSend(event.sender, "netcatty:ai:acp:error", {
-          requestId,
-          error: "CODEBUDDY_API_KEY is not set. Configure it in Settings -> AI -> CodeBuddy Code, or export it in your shell environment.",
-        });
-        return { ok: false, error: "CODEBUDDY_API_KEY not set" };
       }
 
       if (isCodexAgent && !apiKey && !codexCustomConfig) {
@@ -830,8 +809,8 @@ function registerAcpHandlers(ctx) {
           ? `Authentication failed. Connect Codex in Settings -> AI, or configure an enabled OpenAI provider API key.\n\nDetails: ${errMsg}`
           : isClaudeAgent && claudeAuthPresence === "none"
             ? `${CLAUDE_AUTH_HELP_MESSAGE}\n\nDetails: ${errMsg}`
-            : isCodebuddyAgent && codebuddyAuthPresence === "missing"
-              ? `Authentication failed. Set CODEBUDDY_API_KEY in Settings -> AI -> CodeBuddy Code, or export it in your shell environment.\n\nDetails: ${errMsg}`
+            : isCodebuddyAgent && codebuddyAuthPresence === "none"
+              ? `${CODEBUDDY_AUTH_HELP_MESSAGE}\n\nDetails: ${errMsg}`
               : errMsg,
       });
     } finally {
