@@ -50,6 +50,14 @@ const getProtocolInfo = (host: Host): { i18nKey: string; showPort: boolean; port
     if (host.moshEnabled) {
         return { i18nKey: 'terminal.connection.protocol.mosh', showPort: true, port: host.port || 22 };
     }
+    // ET likewise uses protocol: "ssh" with etEnabled: true. Show the ET
+    // server port (default 2022) rather than the SSH port: ET connectivity
+    // hinges on the etserver port, so surfacing the SSH port (22) here is
+    // misleading when troubleshooting a connection that is actually stuck on
+    // the ET port.
+    if (host.etEnabled) {
+        return { i18nKey: 'terminal.connection.protocol.et', showPort: true, port: host.etPort || 2022 };
+    }
     const protocol = host.protocol || 'ssh';
     switch (protocol) {
         case 'local':

@@ -50,6 +50,9 @@ declare global {
     label?: string; // Display label for UI
     proxy?: NetcattyProxyConfig;
     identityFilePaths?: string[];
+    // ET server port on this hop, used only when ET tunnels through it as a
+    // jump host (--jport). Defaults to 2022 in the bridge when omitted.
+    etPort?: number;
     // Resolved keepalive for THIS hop (caller has already applied host
     // override / global fallback). interval in seconds, 0 = disabled.
     keepaliveInterval?: number;
