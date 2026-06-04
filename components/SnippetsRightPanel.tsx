@@ -7,7 +7,7 @@ import { AsidePanel, AsidePanelContent, AsidePanelFooter } from './ui/aside-pane
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Input } from './ui/input';
-import { CodeTextarea } from './ui/code-textarea';
+import { SnippetScriptEditor } from './snippets/SnippetScriptEditor';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { Combobox } from './ui/combobox';
 import { DistroAvatar } from './DistroAvatar';
@@ -165,12 +165,11 @@ export const SnippetsRightPanel: React.FC<SnippetsRightPanelProps> = ({
 
             {/* Script */}
             <Card className="p-3 space-y-2 bg-card border-border/80">
-              <p className="text-xs font-semibold text-muted-foreground">{t('snippets.field.scriptRequired')}</p>
-              <CodeTextarea
+              <SnippetScriptEditor
+                label={t('snippets.field.scriptRequired')}
                 placeholder="ls -l"
-                className="min-h-[120px]"
                 value={editingSnippet.command || ''}
-                onChange={(e) => setEditingSnippet({ ...editingSnippet, command: e.target.value })}
+                onChange={(command) => setEditingSnippet({ ...editingSnippet, command })}
               />
               <p className="text-[11px] text-muted-foreground leading-relaxed">
                 {t('snippets.field.variablesHelp')}

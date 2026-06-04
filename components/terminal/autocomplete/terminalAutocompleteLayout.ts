@@ -116,6 +116,112 @@ export function areSubDirPanelsEqual(left: SubDirPanel[], right: SubDirPanel[]):
   return true;
 }
 
+export interface PopupPlacementInput {
+  /** Anchor (current input line) top edge, in viewport coordinates. */
+  anchorTop: number;
+  /** Anchor (current input line) bottom edge, in viewport coordinates. */
+  anchorBottom: number;
+  /** Desired left edge (cursor column), in viewport coordinates. */
+  anchorLeft: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  /** Natural height the popup wants if unconstrained (main list or detail). */
+  desiredHeight: number;
+  /**
+   * Total horizontal extent of the popup including any cascading sub-directory
+   * panels and the detail tooltip — used so the whole assembly is clamped
+   * inside the viewport, not just the main list.
+   */
+  totalWidth: number;
+  /** Hard cap on rendered height (matches the list's maxHeight prop). */
+  maxHeight: number;
+  /** Gap between the anchor line and the popup. */
+  anchorGap: number;
+  /** Minimum distance to keep from the viewport edges. */
+  viewportPadding: number;
+  /**
+   * Direction hint from the cursor-cell based calculation. Only used to break
+   * ties when neither side can fully fit the desired height.
+   */
+  expandUpwardHint: boolean;
+}
+
+export interface PopupPlacement {
+  /** Whether the popup renders above the anchor line (flipped up). */
+  renderUpward: boolean;
+  /** Final top edge, in viewport coordinates (already clamped). */
+  top: number;
+  /** Final left edge, in viewport coordinates (already clamped). */
+  left: number;
+  /** Height budget for the rendered content (drives scrolling). */
+  maxHeight: number;
+}
+
+/**
+ * Decide where to place the autocomplete popup so it never spills past the
+ * viewport edges. Pure and deterministic so the boundary math is unit-tested
+ * independently of React/DOM.
+ *
+ * Vertical: prefer downward, but flip upward when the space below the input
+ * line can't fit the desired height and the space above is a better fit. The
+ * height is then clamped to whatever the chosen side actually offers so the
+ * list scrolls instead of overflowing.
+ *
+ * Horizontal: clamp the left edge using the popup's *total* width (main list +
+ * cascading sub-dir panels + detail tooltip), not just the main list, so wide
+ * assemblies near the right edge slide left instead of overflowing. When the
+ * assembly is wider than the viewport it pins to the left padding so the
+ * primary list stays visible.
+ */
+export function computeAutocompletePopupPlacement(
+  input: PopupPlacementInput,
+): PopupPlacement {
+  const {
+    anchorTop,
+    anchorBottom,
+    anchorLeft,
+    viewportWidth,
+    viewportHeight,
+    desiredHeight,
+    totalWidth,
+    maxHeight,
+    anchorGap,
+    viewportPadding,
+    expandUpwardHint,
+  } = input;
+
+  const cappedDesiredHeight = Math.min(maxHeight, Math.max(0, desiredHeight));
+  const spaceAbove = Math.max(0, anchorTop - viewportPadding - anchorGap);
+  const spaceBelow = Math.max(0, viewportHeight - anchorBottom - viewportPadding - anchorGap);
+  const canFullyRenderAbove = spaceAbove >= cappedDesiredHeight;
+  const canFullyRenderBelow = spaceBelow >= cappedDesiredHeight;
+  const renderUpward = canFullyRenderBelow
+    ? false
+    : canFullyRenderAbove
+      ? true
+      : expandUpwardHint
+        ? spaceAbove >= Math.min(spaceBelow, 80)
+        : spaceAbove > spaceBelow;
+
+  const availableVerticalSpace = renderUpward ? spaceAbove : spaceBelow;
+  const effectiveMaxHeight = Math.max(0, Math.min(maxHeight, availableVerticalSpace));
+  const contentHeightForPlacement = Math.min(effectiveMaxHeight, cappedDesiredHeight);
+  const top = renderUpward
+    ? Math.max(viewportPadding, anchorTop - anchorGap - contentHeightForPlacement)
+    : Math.min(
+        anchorBottom + anchorGap,
+        viewportHeight - viewportPadding - contentHeightForPlacement,
+      );
+
+  // Right edge that keeps the whole assembly inside the viewport. When the
+  // assembly is wider than the available room this goes below viewportPadding,
+  // so the final clamp pins the popup to the left padding (primary list wins).
+  const maxLeft = viewportWidth - viewportPadding - Math.max(0, totalWidth);
+  const left = Math.max(viewportPadding, Math.min(anchorLeft, maxLeft));
+
+  return { renderUpward, top, left, maxHeight: effectiveMaxHeight };
+}
+
 /**
  * Calculate popup position based on terminal cursor.
  */

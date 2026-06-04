@@ -88,6 +88,9 @@ export type TerminalSessionStartersContext = {
   knownHosts?: KnownHost[];
   resolvedChainHosts: Host[];
   sessionId: string;
+  // Source session id to reuse an authenticated SSH connection from when this
+  // tab is a "Copy Tab" duplicate (issue #1204).
+  reuseConnectionFromSessionId?: string;
   startupCommand?: string;
   noAutoRun?: boolean;
   terminalSettings?: TerminalSettings;
@@ -95,6 +98,7 @@ export type TerminalSessionStartersContext = {
   terminalBackend: TerminalBackendApi;
   serialConfig?: SerialConfig;
   sessionLog?: SessionLogConfig;
+  sshDebugLogEnabled?: boolean;
   isVisibleRef?: RefObject<boolean>;
   pendingOutputScrollRef?: RefObject<boolean>;
 

@@ -2,8 +2,10 @@
 import {
   SYNC_CONSTANTS,
   SYNC_STORAGE_KEYS,
+  cleanOneDriveErrorMessage,
   generateDeviceId,
   getDefaultDeviceName,
+  isOneDriveReauthRequiredMessage,
 } from '../../../domain/sync';
 import {
   DEFAULT_CLOUD_SYNC_STRATEGY,
@@ -373,13 +375,112 @@ export async function getConnectedAdapterImpl(this: any,provider: CloudProvider)
 
     const existing = this.adapters.get(provider);
     if (existing?.isAuthenticated) {
+      attachTokenRefreshPersistence.call(this, provider, existing);
       return existing;
     }
 
     const adapter = await createAdapter(provider, tokens, connection.resourceId, config);
+    attachTokenRefreshPersistence.call(this, provider, adapter);
     this.adapters.set(provider, adapter);
     return adapter;
   }
+
+/**
+ * Wire an OAuth adapter's token-refresh callback so silently refreshed tokens
+ * are persisted. Without this, an adapter that refreshes its access token only
+ * updates memory and the next launch loads a stale token and is forced to
+ * reconnect — OneDrive's rotating refresh tokens go stale after the first
+ * in-session refresh (#1189), and Google's refreshed access token is likewise
+ * lost on restart. OneDrive and Google expose setOnTokensRefreshed; adapters
+ * without it (GitHub, WebDAV, S3) are no-ops.
+ */
+export function attachTokenRefreshPersistence(
+  this: any,
+  provider: CloudProvider,
+  adapter: CloudAdapter,
+): void {
+  const setCallback = (adapter as {
+    setOnTokensRefreshed?: (cb: (tokens: import('../../../domain/sync').OAuthTokens) => void) => void;
+  }).setOnTokensRefreshed;
+  if (typeof setCallback !== 'function') return;
+  setCallback.call(adapter, (tokens) => {
+    persistRefreshedProviderTokensImpl.call(this, provider, tokens);
+  });
+}
+
+/**
+ * Persist tokens that an adapter refreshed mid-session into provider state and
+ * encrypted storage. Bumps the decrypt sequence so a concurrent stale decrypt
+ * (startup / cross-window) can't clobber the rotated tokens; preserves the live
+ * status/account/resource fields. saveProviderConnection manages its own write
+ * sequence to serialize the encrypted persist.
+ */
+export function persistRefreshedProviderTokensImpl(
+  this: any,
+  provider: CloudProvider,
+  tokens: import('../../../domain/sync').OAuthTokens,
+): void {
+  const existing = this.state.providers[provider];
+  // Provider may have been disconnected during the async refresh — don't
+  // resurrect a connection that no longer has credentials.
+  if (!existing?.tokens) return;
+
+  // Invalidate any in-flight decrypt (startup / cross-window) so it cannot
+  // overwrite the rotated tokens we are about to commit.
+  ++this.providerDecryptSeq[provider];
+  this.state.providers[provider] = {
+    ...existing,
+    tokens,
+  };
+  void this.saveProviderConnection(provider, this.state.providers[provider]);
+  this.notifyStateChange();
+}
+
+/**
+ * Handle a sync error that means OneDrive's refresh token is dead. Clears the
+ * now-useless tokens and tears down the adapter so the provider drops to a real
+ * "reconnect" (disconnected) state instead of staying `error`-with-tokens —
+ * which `isProviderReadyForSync` keeps treating as ready, so auto-sync would
+ * otherwise retry the dead token forever and never surface a reconnect prompt.
+ *
+ * Returns true when it handled a reauth-required OneDrive error so the caller
+ * can preserve a clean status message. No-op (returns false) for any other
+ * provider or error.
+ */
+export function handleProviderReauthRequiredImpl(
+  this: any,
+  provider: CloudProvider,
+  error: unknown,
+): boolean {
+  if (provider !== 'onedrive') return false;
+  const message = error instanceof Error ? error.message : String(error);
+  if (!isOneDriveReauthRequiredMessage(message)) return false;
+
+  // Idempotent: this error can surface on multiple paths in one sync (preflight
+  // inspection + the operation's own catch). Once the credentials are already
+  // cleared there is nothing more to do, but still report handled so callers
+  // skip the generic error status that would re-add the raw marker message.
+  const current = this.state.providers[provider];
+  if (!current?.tokens && !current?.config) return true;
+
+  const adapter = this.adapters.get(provider);
+  if (adapter) {
+    adapter.signOut();
+    this.adapters.delete(provider);
+  }
+
+  // Bump decrypt seq so a stale in-flight decrypt cannot resurrect the tokens.
+  ++this.providerDecryptSeq[provider];
+  this.state.providers[provider] = {
+    provider,
+    status: 'error',
+    account: current?.account,
+    error: cleanOneDriveErrorMessage(message),
+  };
+  void this.saveProviderConnection(provider, this.state.providers[provider]);
+  this.notifyStateChange();
+  return true;
+}
 
 export async function setupMasterKeyImpl(this: any,password: string): Promise<void> {
     if (this.state.masterKeyConfig) {

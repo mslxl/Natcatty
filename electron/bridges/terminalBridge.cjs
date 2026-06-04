@@ -27,26 +27,14 @@ const { createTelnetAutoLogin } = require("./telnetAutoLogin.cjs");
 const telnetProtocol = require("./telnetProtocol.cjs");
 const { createPtyOutputBuffer } = require("./ptyOutputBuffer.cjs");
 const { enableTcpNoDelay } = require("./tcpNoDelay.cjs");
+const { releaseConnectionRef } = require("./sshConnectionPool.cjs");
+const { normalizeTerminalEncoding, encodeTerminalInput } = require("./terminalEncoding.cjs");
 
 const execFileAsync = promisify(execFile);
 
 // Shared references
 let sessions = null;
 let electronModule = null;
-
-// Normalize user-facing charset names into an iconv-lite encoding identifier.
-// iconv-lite accepts a wide range of aliases directly ("utf-8", "gbk", etc.),
-// so mostly this just lowercases + collapses non-alphanumerics and maps a few
-// obvious GB* variants to gb18030 which is the superset we ship the encoding
-// switcher with. Anything iconv doesn't recognize falls back to utf-8.
-function normalizeTerminalEncoding(charset) {
-  if (!charset) return 'utf-8';
-  const raw = String(charset).trim().toLowerCase();
-  const normalized = raw.replace(/[^a-z0-9]/g, '');
-  if (['utf8', 'utf-8'].includes(normalized)) return 'utf-8';
-  if (normalized === 'gb18030' || normalized === 'gbk' || normalized === 'gb2312') return 'gb18030';
-  return iconv.encodingExists(raw) ? raw : 'utf-8';
-}
 
 const DEFAULT_UTF8_LOCALE = "en_US.UTF-8";
 const LOGIN_SHELLS = new Set(["bash", "zsh", "fish", "ksh"]);
@@ -678,26 +666,35 @@ function writeToSession(event, payload) {
       session.autoLogin?.handleUserInput();
     }
 
+    // Encode keystrokes with the SAME charset the output path decodes with so
+    // input and output stay symmetric on non-UTF-8 devices (issue #1216).
+    // session.encoding is the normalized iconv identifier; it is only set on
+    // sessions whose output is iconv-decoded (SSH / telnet / serial). Mosh and
+    // local PTY leave it unset, so encodeTerminalInput returns the original
+    // UTF-8 string for them. For UTF-8 it also returns the string unchanged, so
+    // the transport's native string serialization keeps handling that case.
+    const outgoing = encodeTerminalInput(payload.data, session.encoding);
+
     if (session.stream) {
-      session.stream.write(payload.data);
+      session.stream.write(outgoing);
     } else if (session.proc) {
-      session.proc.write(payload.data);
+      session.proc.write(outgoing);
     } else if (session.socket) {
       // Telnet only: any 0xFF byte going out the wire must be doubled, or
       // the peer will treat it as the start of an IAC command sequence and
       // eat the next byte (RFC 854 §"Data Stream"). UTF-8 keyboard input
       // never produces 0xFF, but paste of binary content and some legacy
       // encodings do. Cheap no-op when there is no 0xFF.
-      let outgoing = payload.data;
+      let wireData = outgoing;
       if (session.type === 'telnet-native' && session.telnetProtocolActive) {
-        if (typeof outgoing === 'string') {
-          outgoing = Buffer.from(outgoing, 'utf8');
+        if (typeof wireData === 'string') {
+          wireData = Buffer.from(wireData, 'utf8');
         }
-        outgoing = telnetProtocol.escapeIacForWire(outgoing);
+        wireData = telnetProtocol.escapeIacForWire(wireData);
       }
-      session.socket.write(outgoing);
+      session.socket.write(wireData);
     } else if (session.serialPort) {
-      session.serialPort.write(payload.data);
+      session.serialPort.write(outgoing);
     }
   } catch (err) {
     if (err.code !== 'EPIPE' && err.code !== 'ERR_STREAM_DESTROYED') {
@@ -781,16 +778,44 @@ function closeSession(event, payload) {
     session.zmodemSentry?.cancel();
     session.flushPendingData?.();
     if (session.stream) {
+      // Snapshot multiplexing state *before* closing the channel: closing the
+      // stream can synchronously fire its "close" handler, which nulls
+      // session.connRef (and may already release the shared connection). Reading
+      // session.connRef afterwards would then wrongly fall into the legacy path
+      // and end the shared connection a second time.
+      const isMultiplexed = !!session.connRef;
+      // Always close this session's own shell channel.
       session.stream.close();
-      session.conn?.end();
+      if (isMultiplexed) {
+        // Multiplexed SSH shell (issue #1204): several tabs may share one
+        // authenticated connection. Closing this tab must only tear the shared
+        // transport (and jump-host chain) down once the last channel is gone,
+        // so route teardown through the reference-counted descriptor instead of
+        // ending the connection directly. releaseConnectionRef is idempotent and
+        // ends the chain connections itself when the count reaches zero — so it
+        // is safe even if the stream "close" handler above already released.
+        releaseConnectionRef(session);
+      } else {
+        // Legacy / non-multiplexed path: this session owns its connection.
+        session.conn?.end();
+        if (session.chainConnections) {
+          for (const c of session.chainConnections) {
+            try { c.end(); } catch {}
+          }
+        }
+      }
     } else if (session.proc) {
       session.proc.kill();
+      // Mosh sessions may also carry a companion ssh2 connection opened
+      // lazily for host-info stats (issue #1198), stored on moshStatsConn so
+      // it stays separate from session.conn. Close it here to avoid leaking it.
+      session.moshStatsConn?.end();
     } else if (session.socket) {
       session.socket.destroy();
     } else if (session.serialPort) {
       session.serialPort.close();
-    }
-    if (session.chainConnections) {
+    } else if (session.chainConnections) {
+      // Non-stream session still carrying a jump-host chain (defensive).
       for (const c of session.chainConnections) {
         try { c.end(); } catch {}
       }
@@ -918,6 +943,9 @@ function cleanupAllSessions() {
         } catch (e) {
           // Ignore errors during cleanup
         }
+        // Tear down a Mosh stats companion ssh2 connection if one was opened
+        // (issue #1198) — it lives on moshStatsConn, separate from session.conn.
+        try { session.moshStatsConn?.end(); } catch (e) { /* ignore */ }
       } else if (session.socket) {
         session.socket.destroy();
       } else if (session.serialPort) {
@@ -957,6 +985,7 @@ module.exports = {
   startSerialSession,
   listSerialPorts,
   writeToSession,
+  setSessionEncoding,
   resizeSession,
   setSessionFlowPaused,
   closeSession,

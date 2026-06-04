@@ -369,8 +369,14 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           keepaliveInterval: keepalive.interval,
           keepaliveCountMax: keepalive.countMax,
           sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
+          sshDebugLogEnabled: ctx.sshDebugLogEnabled,
           identityFilePaths: attempt.password ? undefined : targetIdentityFilePaths,
           knownHosts: ctx.knownHosts,
+          // Ask the bridge to reuse the source tab's authenticated connection
+          // (issue #1204). Only honored on the very first connect attempt; the
+          // bridge silently falls back to a fresh connection if the source is
+          // gone, so reconnect/retry after the source closed still works.
+          sourceSessionId: ctx.reuseConnectionFromSessionId,
         });
       };
 
@@ -711,6 +717,16 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         port: ctx.host.port || 22,
         moshServerPath: ctx.host.moshServerPath,
         agentForwarding: ctx.host.agentForwarding,
+        // Forwarded for the host-info stats companion SSH connection (#1198):
+        // Mosh's own handshake uses the system ssh (which reads ~/.ssh/config),
+        // but Netcatty's ssh2 companion needs these to match the host's
+        // negotiation on legacy / ECDSA-restricted servers.
+        legacyAlgorithms: ctx.host.legacyAlgorithms,
+        skipEcdsaHostKey: ctx.host.skipEcdsaHostKey,
+        algorithmOverrides: ctx.host.algorithms,
+        // Lets the stats companion verify the host key before sending a saved
+        // password (#1198), so it never discloses it to an unvetted host.
+        knownHosts: ctx.knownHosts,
         cols: term.cols,
         rows: term.rows,
         charset: ctx.host.charset,

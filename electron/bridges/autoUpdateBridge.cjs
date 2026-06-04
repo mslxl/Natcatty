@@ -221,6 +221,116 @@ function cancelAutoCheck() {
   }
 }
 
+/**
+ * Flip the windowManager "quitting for update" flag, swallowing the case where
+ * the window manager module isn't available. Used by the install handler to
+ * commit the app to a clean quit before quitAndInstall, and to roll back if the
+ * install never actually quits (#1215).
+ */
+function setQuittingForUpdate(enabled) {
+  try {
+    const windowManager = require("./windowManager.cjs");
+    windowManager.setQuittingForUpdate(!!enabled);
+  } catch {
+    // ignore — window manager may not be available
+  }
+}
+
+/**
+ * The webContents of the main window, or null if there's no usable main window
+ * to talk to. Used by the install handler to (a) ask the renderer about unsaved
+ * editors before committing to a quit, and (b) tell it to surface a "save
+ * first" notice. Targets the main window specifically (not getAllWindows()[0])
+ * so we never query the tray panel / settings window, whose renderers don't
+ * participate in the dirty-editor protocol.
+ */
+function getMainWebContents() {
+  try {
+    const windowManager = require("./windowManager.cjs");
+    const win = windowManager.getMainWindow?.();
+    if (!win || win.isDestroyed?.()) return null;
+    const wc = win.webContents;
+    if (!wc || wc.isDestroyed?.() || wc.isCrashed?.()) return null;
+    return wc;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Tell the renderer that the update can't install yet because there are unsaved
+ * editors. The renderer surfaces a toast asking the user to save, then click
+ * "Restart Now" again.
+ *
+ * Broadcast to ALL windows, not just the main one: the install can be triggered
+ * from the Settings window's "Restart to Update" button, and that's the focused
+ * window the user is looking at. Sending only to the (possibly hidden/behind)
+ * main window would make the click appear to do nothing (#1215 review). The
+ * unsaved editors live in the main window, but every window surfaces the same
+ * "save first" notice so it lands wherever the user is.
+ */
+function notifyNeedsSave() {
+  broadcastToAllWindows("netcatty:update:needs-save");
+}
+
+/** Max time to wait for the renderer's unsaved-editors reply before the install
+ *  fails open and proceeds (matches the before-quit guard timeout). */
+const INSTALL_DIRTY_CHECK_TIMEOUT_MS = 5000;
+
+/**
+ * Ask the main-window renderer whether it has unsaved editor changes, reusing
+ * the shared dirty-editor round-trip. Resolves false (fail open) if the helper
+ * is unavailable, so a missing module can never block an install. `ipcMain` is
+ * the instance passed to registerHandlers; the helper needs it to listen for
+ * the reply.
+ */
+function queryDirtyEditorsSafe(webContents, ipcMain) {
+  try {
+    const { queryDirtyEditors } = require("./dirtyEditorGuard.cjs");
+    return queryDirtyEditors(webContents, INSTALL_DIRTY_CHECK_TIMEOUT_MS, { ipcMain });
+  } catch (err) {
+    console.warn("[AutoUpdate] dirty-editor guard unavailable:", err?.message || err);
+    return Promise.resolve(false);
+  }
+}
+
+/**
+ * If quitAndInstall doesn't lead to the app actually quitting (it returns
+ * without app.quit(), e.g. on a Squirrel.Mac follow-up error or a stale
+ * downloaded file), the quitting-for-update flags would stay set and
+ * permanently bypass close-to-tray + the dirty-editor quit guard. This
+ * watchdog clears them if we're still running after a grace period.
+ *
+ * The grace period is deliberately long. On macOS quitAndInstall() can return
+ * while Squirrel.Mac is still pulling the already-downloaded ZIP from the local
+ * update server before it actually closes the windows; for a large/slow update
+ * that second stage can take well over 10s. If the watchdog cleared isQuitting
+ * during that window, the eventual native quit would hit a *non*-quitting
+ * close-to-tray handler and get stranded again — the exact #1215 failure. So we
+ * only roll back after a window long enough that the app is realistically stuck,
+ * not merely slow. The cost of waiting longer is just that close-to-tray stays
+ * bypassed a bit longer in the rare genuine-failure case (#1215 review).
+ */
+let _quittingForUpdateWatchdog = null;
+const QUITTING_FOR_UPDATE_WATCHDOG_MS = 60000;
+
+function scheduleQuittingForUpdateWatchdog() {
+  if (_quittingForUpdateWatchdog) {
+    clearTimeout(_quittingForUpdateWatchdog);
+  }
+  _quittingForUpdateWatchdog = setTimeout(() => {
+    _quittingForUpdateWatchdog = null;
+    // Still alive after the grace period — the install did not quit the app.
+    console.warn("[AutoUpdate] App still running after quitAndInstall; clearing quitting-for-update state");
+    setQuittingForUpdate(false);
+  }, QUITTING_FOR_UPDATE_WATCHDOG_MS);
+  // Don't let the watchdog keep the event loop (and thus the process) alive —
+  // if the app is otherwise ready to quit, the timer must not block it.
+  if (typeof _quittingForUpdateWatchdog.unref === "function") {
+    _quittingForUpdateWatchdog.unref();
+  }
+}
+
 function init(deps) {
   _deps = deps;
   setupGlobalListeners();
@@ -362,9 +472,43 @@ function registerHandlers(ipcMain) {
   });
 
   // ---- Install (quit & install) ------------------------------------------
-  ipcMain.handle("netcatty:update:install", () => {
+  ipcMain.handle("netcatty:update:install", async () => {
     const updater = getAutoUpdater();
     if (!updater) return;
+
+    // Check for unsaved editors BEFORE committing to a quit (#1215 review).
+    //
+    // On macOS quitAndInstall() closes windows first and only then fires
+    // before-quit. Once setQuittingForUpdate(true) lets the main window
+    // actually close (instead of hiding to tray), the before-quit dirty-editor
+    // guard can run after the window is already gone — isReachableByUser is
+    // false, so it commits the quit and silently drops unsaved SFTP edits.
+    //
+    // So we ask the renderer here, while the window and renderer are still
+    // alive. If there's unsaved work, abort the install (don't touch the
+    // quitting flags, don't quitAndInstall) and tell the renderer to prompt the
+    // user to save; they can click "Restart Now" again afterwards. If the main
+    // window isn't reachable (no window / crashed renderer) there's no user to
+    // ask, so we install directly — matching the before-quit fail-open path.
+    const mainWc = getMainWebContents();
+    if (mainWc) {
+      const hasDirty = await queryDirtyEditorsSafe(mainWc, ipcMain);
+      if (hasDirty) {
+        // Broadcast so the notice reaches whichever window the user clicked
+        // from (main or Settings), not just the main window we queried.
+        notifyNeedsSave();
+        return;
+      }
+    }
+
+    // Commit the app to a real quit BEFORE quitAndInstall fires app.quit().
+    // Without this the in-place install silently fails (#1215): the main-window
+    // close handler hides to tray when close-to-tray is on, so the process
+    // stays alive and Squirrel.Mac's ShipIt helper — which waits on the parent
+    // PID to die before swapping the bundle — ends up in launchd "pending
+    // spawn" limbo and never installs. setQuittingForUpdate(true) sets
+    // isQuitting so close-to-tray is bypassed and the window actually closes.
+    setQuittingForUpdate(true);
 
     // On macOS, the system tray keeps the app process alive even after all
     // windows are closed, which prevents quitAndInstall from completing.
@@ -377,7 +521,24 @@ function registerHandlers(ipcMain) {
       // ignore — bridge may not be available
     }
 
-    updater.quitAndInstall(false, true);
+    try {
+      updater.quitAndInstall(false, true);
+    } catch (err) {
+      // quitAndInstall threw synchronously — the app will NOT quit. Roll back
+      // the quitting-for-update flags so later closes/quits behave normally
+      // instead of permanently bypassing close-to-tray + the dirty-editor
+      // guard (#1215 review).
+      console.error("[AutoUpdate] quitAndInstall failed:", err?.message || err);
+      setQuittingForUpdate(false);
+      return;
+    }
+
+    // quitAndInstall can also fail to quit asynchronously (e.g. Squirrel.Mac's
+    // follow-up check errors, or a stale/missing downloaded file) — it returns
+    // without app.quit() ever firing. A watchdog clears the flags if we're
+    // still alive shortly after, so the app doesn't get stuck in a state where
+    // every window close bypasses close-to-tray and the dirty-editor guard.
+    scheduleQuittingForUpdateWatchdog();
   });
 
   // ---- Get auto-update preference -----------------------------------------

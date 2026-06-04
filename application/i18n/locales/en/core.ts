@@ -161,6 +161,17 @@ export const enCoreMessages: Messages = {
   'settings.sessionLogs.formatHtml': 'HTML (.html)',
   'settings.sessionLogs.hint': 'Session logs capture all terminal output for troubleshooting and auditing purposes.',
 
+  // Settings > SSH Debug Logs
+  'settings.sshDebugLogs.title': 'SSH Debug Logs',
+  'settings.sshDebugLogs.enable': 'Enable SSH debug logs',
+  'settings.sshDebugLogs.enableDesc': 'Record connection, auth, handshake, disconnect, and error reasons without saving terminal output.',
+  'settings.sshDebugLogs.location': 'Log Location',
+  'settings.sshDebugLogs.status': 'Status',
+  'settings.sshDebugLogs.statusOn': 'On',
+  'settings.sshDebugLogs.statusOff': 'Off',
+  'settings.sshDebugLogs.size': 'Size',
+  'settings.sshDebugLogs.hint': 'When enabled, newly started SSH connections write diagnostic events for bastion, auth, and unexpected disconnect troubleshooting.',
+
   // Settings > Global Hotkey (Quake Mode)
   'settings.globalHotkey.title': 'Global Hotkey',
   'settings.globalHotkey.toggleWindow': 'Toggle Window',
@@ -227,6 +238,8 @@ export const enCoreMessages: Messages = {
   'update.restartNow': 'Restart Now',
   'update.downloadFailed.title': 'Update Failed',
   'update.downloadFailed.message': 'Failed to download update. You can download it manually.',
+  'update.needsSave.title': 'Unsaved Changes',
+  'update.needsSave.message': 'Save your open editors first, then click Restart Now again to install the update.',
   'update.openReleases': 'Open Releases',
   'update.remindLater': 'Remind Later',
   'update.skipVersion': 'Skip This Version',
@@ -394,6 +407,9 @@ export const enCoreMessages: Messages = {
   'settings.terminal.localShell.shell.default': 'System Default',
   'settings.terminal.localShell.shell.custom': 'Custom...',
   'settings.terminal.localShell.shell.customPath': 'Shell executable path',
+  'settings.terminal.localShell.shell.customArgs': 'Launch arguments',
+  'settings.terminal.localShell.shell.customArgs.placeholder': 'e.g. --login -i',
+  'settings.terminal.localShell.shell.customArgs.desc': 'Arguments passed to the shell. Some shells need them to work — e.g. msys2 bash requires --login -i to load the environment.',
   'settings.terminal.localShell.shell.commonPaths': 'Common paths',
   'settings.terminal.localShell.shell.pathValid': 'Path valid',
   'settings.terminal.localShell.startDir': 'Starting directory',

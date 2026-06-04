@@ -1,36 +1,453 @@
 /* eslint-disable no-undef */
 function createStartSessionApi(ctx) {
   with (ctx) {
-    async function startSSHSession(event, options) {
-      const sessionId = options.sessionId || randomUUID();
-    
+    /**
+     * Wire up a freshly-opened shell channel (PTY stream) for a session:
+     * output buffering, ZMODEM handling, encoding, exit/close reporting and
+     * teardown. Shared by both the fresh-connection path and the connection
+     * reuse path (issue #1204) so duplicated tabs behave identically to the
+     * original tab once their channel is open.
+     *
+     * `isReused` only affects diagnostics/log labelling; lifecycle correctness
+     * is governed entirely by the reference-counted connection descriptor
+     * (sshConnectionPool.cjs). The stream "close"/transport handlers always
+     * release this session's hold via releaseConnectionRef, which tears the
+     * shared transport down only when the last channel is gone.
+     */
+    function setupShellSession({
+      conn,
+      stream,
+      options,
+      sessionId,
+      event,
+      log,
+      detachX11Forwarding,
+      chainConnections,
+      isReused,
+    }) {
+      const session = {
+        conn,
+        stream,
+        // Only the owning (fresh) session is responsible for the jump-host
+        // chain; reused channels share it via the connRef descriptor and must
+        // not carry their own copy (otherwise closing a reused tab would end
+        // the chain out from under its siblings).
+        chainConnections: isReused ? [] : chainConnections,
+        webContentsId: event.sender.id,
+        // Store connection info for MCP host discovery
+        hostname: options.host || options.hostname || '',
+        username: options.username || '',
+        label: options.label || '',
+        lastIdlePrompt: '',
+        lastIdlePromptAt: 0,
+        _promptTrackTail: '',
+        // SSH server identification string (the `software` part of
+        // `SSH-2.0-<software>`). ssh2 captures this during the header
+        // exchange and stores it on the client as `_remoteVer` — it
+        // is available by the time 'ready' fires, so the renderer can
+        // use it to detect network-device vendors without running any
+        // additional exec channels. See domain/host.ts
+        // `detectVendorFromSshVersion`.
+        remoteSshVersion: (conn && typeof conn._remoteVer === 'string') ? conn._remoteVer : '',
+        // The actual SSH target this connection authenticated to. Used to make
+        // sure a "Copy Tab" reuse opens its channel on a connection going to the
+        // *same* host — a saved host edited after the source connected must not
+        // silently run commands on the old machine (issue #1204 review).
+        _reuseEndpoint: {
+          hostname: options.hostname || '',
+          port: options.port || 22,
+          username: options.username || 'root',
+        },
+      };
+      sessions.set(sessionId, session);
+
+      // Attach the shared connection descriptor to this session. The caller owns
+      // the reference *count*: the fresh-connection path calls createConnectionRef
+      // after this returns; the reuse path calls acquireConnectionRef *before*
+      // issuing the async shell request (so the connection can't be released out
+      // from under a pending channel open). We only record the descriptor here.
+      if (options._connRef) {
+        session.connRef = options._connRef;
+      }
+
+      // Start real-time session log stream if configured. The token is stored
+      // on the session so the connection-level error/timeout/close handlers can
+      // stop the stream when they clean up the owner session directly.
+      let logStreamToken = null;
+      if (options.sessionLog?.enabled && options.sessionLog?.directory) {
+        logStreamToken = sessionLogStreamManager.startStream(sessionId, {
+          hostLabel: options.hostLabel || options.hostname || '',
+          hostname: options.hostname || '',
+          directory: options.sessionLog.directory,
+          format: options.sessionLog.format || 'txt',
+          startTime: Date.now(),
+        });
+      }
+      session._logStreamToken = logStreamToken;
+
+      // Coalesce shell output and deliver it to the renderer on the next
+      // event-loop turn (see ptyOutputBuffer) rather than on a fixed timer,
+      // so interactive echo isn't held back by the batch interval. A size
+      // cap still forces an immediate flush for bursts of output.
+      const { bufferData, flush: flushBuffer } = createPtyOutputBuffer((data) => {
+        const contents = event.sender;
+        safeSend(contents, "netcatty:data", { sessionId, data });
+      });
+
+      const sshZmodemSentry = createZmodemSentry({
+        sessionId,
+        onData(buf) {
+          const decoder = getSessionDecoder(sessionId, "stdout");
+          const decoded = decoder.write(buf);
+          trackSessionIdlePrompt(session, decoded);
+          bufferData(decoded);
+          sessionLogStreamManager.appendData(sessionId, decoded);
+        },
+        writeToRemote(buf) {
+          try { return stream.write(buf); } catch { return true; /* ignore */ }
+        },
+        interruptRemote() {
+          try { stream.signal?.("INT"); } catch { /* ignore */ }
+        },
+        probeReceiveConflicts(names) {
+          return probeReceiveConflicts(sessions.get(sessionId), names);
+        },
+        removeRemoteFiles(paths) {
+          return removeRemoteFiles(sessions.get(sessionId), paths);
+        },
+        restoreRemoteModes(entries) {
+          return restoreRemoteModes(sessions.get(sessionId), entries);
+        },
+        requestOverwriteDecision(filename) {
+          return new Promise((resolve) => {
+            const requestId = randomUUID();
+            const timer = setTimeout(() => {
+              zmodemOverwritePending.delete(requestId);
+              resolve({ action: "skip", applyToRest: false });
+            }, 120000);
+            zmodemOverwritePending.set(requestId, (payload) => {
+              clearTimeout(timer);
+              resolve({ action: payload.action, applyToRest: !!payload.applyToRest });
+            });
+            safeSend(event.sender, "netcatty:zmodem:overwrite-request", {
+              sessionId, requestId, filename,
+            });
+          });
+        },
+        getWebContents() {
+          return event.sender;
+        },
+        label: "SSH",
+      });
+      session.zmodemSentry = sshZmodemSentry;
+
+      stream.on("data", (data) => {
+        // data is Buffer from ssh2 — feed raw bytes to ZMODEM sentry.
+        // In normal mode, sentry's onData callback handles decoding and buffering.
+        sshZmodemSentry.consume(data);
+      });
+
+      stream.stderr?.on("data", (data) => {
+        // stderr is not used for ZMODEM — decode normally
+        const decoder = getSessionDecoder(sessionId, "stderr");
+        const decoded = decoder.write(data);
+        bufferData(decoded);
+        sessionLogStreamManager.appendData(sessionId, decoded);
+      });
+
+      // Capture the real exit code from the remote process.
+      // "exit" fires when the remote shell/process exits normally;
+      // "close" fires whenever the channel closes (could be network drop).
+      // Only treat it as user-initiated exit if "exit" fired with a numeric
+      // code and no signal. Signal terminations (e.g. server kill, idle
+      // timeout) have code=null and signal set — those are not user exits.
+      let streamExitCode = 0;
+      let streamExited = false;
+      stream.on("exit", (code, signal) => {
+        log("shell exit", { sessionId, hostname: options.hostname, code, signal, reused: !!isReused });
+        streamExitCode = typeof code === "number" ? code : 0;
+        streamExited = typeof code === "number" && !signal;
+      });
+
+      stream.on("close", () => {
+        log("shell stream closed", {
+          sessionId,
+          hostname: options.hostname,
+          streamExitCode,
+          streamExited,
+          reused: !!isReused,
+          transportError: sessions.get(sessionId)?._transportError,
+        });
+        // Always flush buffered data regardless of session state.
+        // flushBuffer() cancels any pending scheduled flush internally.
+        flushBuffer();
+        sessionLogStreamManager.stopStream(sessionId, logStreamToken);
+        if (detachX11Forwarding) {
+          detachX11Forwarding();
+          detachX11Forwarding = null;
+        }
+
+        // Only send exit if session hasn't already been cleaned up by
+        // conn.once("close") — which fires before stream.on("close")
+        // in ssh2 when the transport drops.
+        if (sessions.has(sessionId)) {
+          const contents = event.sender;
+          const liveSession = sessions.get(sessionId);
+          const transportError = liveSession?._transportError;
+          if (transportError) {
+            safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: transportError, reason: "error" });
+          } else {
+            // A shell TMOUT auto-logout is a clean exit (numeric code, no
+            // signal) — identical to a user-typed `exit` by code/signal —
+            // so detect it via the banner the shell prints just before
+            // exiting and report it as a timeout. That keeps the tab open
+            // for reconnect instead of auto-closing it (#1062 / #977).
+            const idleTimedOut = streamExited && looksLikeIdleAutoLogout(liveSession?._promptTrackTail);
+            const reason = idleTimedOut ? "timeout" : (streamExited ? "exited" : "closed");
+            safeSend(contents, "netcatty:exit", { sessionId, exitCode: streamExitCode, reason });
+          }
+          liveSession?.zmodemSentry?.cancel();
+          // Release this channel's hold on the shared connection. The transport
+          // (and any jump-host chain) is only ended once the last channel is
+          // gone, so closing a reused tab — or the original tab while a copy is
+          // still open — leaves the siblings connected.
+          releaseConnectionRef(liveSession);
+          sessions.delete(sessionId);
+          sessionEncodings.delete(sessionId);
+          sessionDecoders.delete(sessionId);
+        }
+      });
+
+      // Pre-seed encoding from host charset if it's a GB variant. Seed BOTH the
+      // output decoder (sessionEncodings) and the terminal input encoder
+      // (session.encoding, read by terminalBridge.writeToSession) so they agree
+      // from the first byte — otherwise a GB18030 host decoded output as GB18030
+      // while encoding keystrokes as UTF-8 until the user re-picked the encoding
+      // (issue #1216). The gate matches the renderer's two-value encoding state
+      // (Terminal.tsx) so behavior for other/arbitrary charsets is unchanged:
+      // the renderer pushes the effective encoding via setEncoding on attach,
+      // and that handler keeps both halves in sync.
+      const gbCharset = options.charset && /^gb/i.test(String(options.charset).trim());
+      if (gbCharset) {
+        sessionEncodings.set(sessionId, "gb18030");
+        session.encoding = "gb18030";
+      }
+
+      // Run startup command if specified. Encode it with the same charset the
+      // interactive input path uses (issue #1216) so a startup command with
+      // non-ASCII characters reaches a GB18030 host correctly too.
+      if (options.startupCommand) {
+        setTimeout(() => {
+          stream.write(encodeTerminalInput(`${options.startupCommand}\n`, session.encoding));
+        }, 300);
+      }
+
+      return session;
+    }
+
+    /**
+     * Open a new interactive shell channel on an already-authenticated SSH
+     * connection borrowed from `sourceSession`, instead of dialing a fresh
+     * connection. This is what makes "Copy Tab" skip a second MFA prompt
+     * (issue #1204): the SSH transport and its authentication are reused; only
+     * a new session channel is requested.
+     *
+     * Resolves with `{ sessionId }` on success. Throws on failure so the caller
+     * can fall back to a normal fresh connection.
+     */
+    function reuseShellSession(event, options, sourceSession, sessionId, log) {
       const cols = options.cols || 80;
       const rows = options.rows || 24;
       const sender = event.sender;
-    
+      const conn = sourceSession.conn;
+
+      log("reusing existing connection for new shell channel", {
+        sessionId,
+        sourceSessionId: options.sourceSessionId,
+        hostname: options.hostname,
+      });
+
+      const sendProgress = (status, error) => {
+        if (!sender.isDestroyed()) {
+          sender.send("netcatty:chain:progress", {
+            sessionId, hop: 1, total: 1, label: options.hostname, status, error,
+          });
+        }
+      };
+
+      sendProgress('shell');
+
+      const shellOptions = {
+        env: {
+          LANG: resolveLangFromCharset(options.charset),
+          COLORTERM: "truecolor",
+          ...(options.env || {}),
+        },
+      };
+
+      // Pin the shared connection *before* issuing the async shell request.
+      // Otherwise, if the source tab is closed while conn.shell() is pending,
+      // releaseConnectionRef could drop the count to zero and end the connection
+      // out from under the channel we're opening. We hold a temporary session
+      // object as the ref holder, then hand the ref over to the real session
+      // once the channel opens. On any failure we release this hold so the count
+      // is restored.
+      const connRef = sourceSession.connRef;
+      const refHolder = {};
+      acquireConnectionRef(refHolder, connRef);
+
+      return new Promise((resolve, reject) => {
+        let settled = false;
+
+        const failReuse = (err) => {
+          if (settled) return;
+          settled = true;
+          // Release the hold we took up-front so the source's reference count is
+          // not leaked when we fall back to a fresh connection.
+          releaseConnectionRef(refHolder);
+          reject(err);
+        };
+
+        // If the borrowed connection dies before the channel opens, surface it
+        // as a normal failure so the caller's catch can fall back to a fresh
+        // connection. Removed once the channel opens so we don't leave a stray
+        // listener on the shared connection (the owner's own error handler stays
+        // responsible thereafter).
+        const onConnError = (connErr) => {
+          failReuse(connErr);
+        };
+        conn.once("error", onConnError);
+
+        try {
+          conn.shell(
+            {
+              term: "xterm-256color",
+              cols,
+              rows,
+            },
+            shellOptions,
+            (err, stream) => {
+              conn.removeListener("error", onConnError);
+              if (settled) {
+                // Connection already failed; close any channel that still opened
+                // and drop the hold (failReuse already released, so guard with the
+                // settled check above means we only get here post-failure).
+                if (stream) { try { stream.close(); } catch { /* ignore */ } }
+                return;
+              }
+              if (err) {
+                log("reused shell open failed", { sessionId, hostname: options.hostname, error: err.message });
+                sendProgress('error', `Failed to open shell: ${err.message}`);
+                failReuse(err);
+                return;
+              }
+
+              sendProgress('connected');
+
+              // Hand the up-front ref hold over to the real session: detach it from
+              // the temporary holder (without ending the transport) and attach the
+              // descriptor to the session. The count already includes this channel.
+              refHolder.connRef = null;
+              setupShellSession({
+                conn,
+                stream,
+                options: { ...options, _connRef: connRef },
+                sessionId,
+                event,
+                log,
+                detachX11Forwarding: null,
+                chainConnections: [],
+                isReused: true,
+              });
+
+              settled = true;
+              resolve({ sessionId });
+            }
+          );
+        } catch (syncErr) {
+          // ssh2 can throw synchronously (e.g. "Not connected") if the borrowed
+          // transport dropped between findReusableSession and conn.shell(). Make
+          // sure we drop the listener and release the up-front ref so the count
+          // isn't leaked, then fall back to a fresh connection.
+          conn.removeListener("error", onConnError);
+          log("reused shell threw synchronously", { sessionId, hostname: options.hostname, error: syncErr?.message });
+          failReuse(syncErr);
+        }
+      });
+    }
+
+    async function startSSHSession(event, options) {
+      const sessionId = options.sessionId || randomUUID();
+      const log = createSshDiagnosticLogger(
+        !!options.sshDebugLogEnabled || process.env.NETCATTY_SSH_DEBUG === "1",
+      );
+
+      // Connection reuse (issue #1204): when a tab is duplicated we try to open
+      // a new shell channel on the source tab's already-authenticated
+      // connection. This skips key exchange + authentication entirely, so an
+      // MFA-protected host does not prompt for a second factor. Only applies to
+      // a live, interactive SSH shell source; anything else falls through to a
+      // normal fresh connection below.
+      //
+      // X11 forwarding is negotiated per shell channel using a fresh fake
+      // cookie wired up at connection time, so a reused channel would not carry
+      // X11. For X11 hosts we deliberately skip reuse and make a fresh
+      // connection so the duplicate keeps working X11 forwarding.
+      if (options.sourceSessionId && !options.x11Forwarding) {
+        const sourceSession = findReusableSession(sessions, options.sourceSessionId, {
+          hostname: options.hostname,
+          port: options.port || 22,
+          username: options.username || "root",
+        });
+        if (sourceSession) {
+          try {
+            return await reuseShellSession(event, options, sourceSession, sessionId, log);
+          } catch (reuseErr) {
+            log("connection reuse failed, falling back to fresh connection", {
+              sessionId,
+              sourceSessionId: options.sourceSessionId,
+              error: reuseErr?.message,
+            });
+            // Fall through to establish a fresh connection.
+          }
+        } else {
+          log("connection reuse requested but source not reusable, connecting fresh", {
+            sessionId,
+            sourceSessionId: options.sourceSessionId,
+          });
+        }
+      }
+
+      const cols = options.cols || 80;
+      const rows = options.rows || 24;
+      const sender = event.sender;
+
       const sendProgress = (hop, total, label, status, error) => {
         if (!sender.isDestroyed()) {
           sender.send("netcatty:chain:progress", { sessionId, hop, total, label, status, error });
         }
       };
-    
+
       try {
+        log("session starting", {
+          sessionId,
+          hostname: options.hostname,
+          port: options.port || 22,
+          username: options.username || "root",
+          hostLabel: options.hostLabel || options.label,
+          hasJumpHosts: (options.jumpHosts || []).length > 0,
+          hasProxy: !!options.proxy,
+        });
         const conn = new SSHClient();
         let chainConnections = [];
         let connectionSocket = null;
-        // Token returned by sessionLogStreamManager.startStream when (and if)
-        // a real-time log stream is opened. Captured here so every close /
-        // error / timeout handler below can pass it back to stopStream and
-        // avoid tearing down a stream that a subsequent reconnect on the same
-        // sessionId may have already started (issue #916).
-        let logStreamToken = null;
-    
+
         // Determine if we have jump hosts
         const jumpHosts = options.jumpHosts || [];
         const hasJumpHosts = jumpHosts.length > 0;
         const hasProxy = !!options.proxy;
         const totalHops = jumpHosts.length + 1; // +1 for final target
-    
+
         // Build base connection options for final target
         const connectOpts = {
           host: options.hostname,
@@ -50,15 +467,15 @@ function createStartSessionApi(ctx) {
             algorithmOverrides: options.algorithmOverrides,
           }),
         };
-        attachSshDebugLogger(connectOpts);
+        attachSshDebugLogger(connectOpts, log);
         logSshAlgorithms("Target host", connectOpts.algorithms, {
           hostname: options.hostname,
           port: options.port || 22,
           legacyAlgorithms: !!options.legacyAlgorithms,
           skipEcdsaHostKey: !!options.skipEcdsaHostKey,
           hasAlgorithmOverrides: !!options.algorithmOverrides,
-        });
-    
+        }, log);
+
         connectOpts.hostVerifier = hostKeyVerifier.createHostVerifier({
           sender,
           sessionId,
@@ -66,11 +483,11 @@ function createStartSessionApi(ctx) {
           port: options.port || 22,
           knownHosts: options.knownHosts,
         });
-    
+
         // Authentication for final target
         const hasCertificate = typeof options.certificate === "string" && options.certificate.trim().length > 0;
         const effectivePassphrase = options.passphrase;
-    
+
         console.log("[SSH] Auth configuration:", {
           hasCertificate,
           keySource: options.keySource,
@@ -79,14 +496,14 @@ function createStartSessionApi(ctx) {
           hasPassword: !!options.password,
           hasEffectivePassphrase: !!effectivePassphrase,
         });
-    
+
         log("Auth configuration", {
           hasCertificate,
           keySource: options.keySource,
           hasPublicKey: !!options.publicKey,
           hasPrivateKey: !!options.privateKey,
         });
-    
+
         let authAgent = null;
         const identityFile = !options.privateKey
           ? await loadFirstIdentityFileForAuth({
@@ -116,7 +533,7 @@ function createStartSessionApi(ctx) {
           : null;
         const effectivePrivateKey = inlineKey?.privateKey || identityFile?.privateKey;
         const effectiveIdentityPassphrase = inlineKey?.passphrase || identityFile?.passphrase;
-    
+
         if (hasCertificate) {
           authAgent = new NetcattyAgent({
             mode: "certificate",
@@ -135,11 +552,11 @@ function createStartSessionApi(ctx) {
             connectOpts.passphrase = effectiveIdentityPassphrase;
           }
         }
-    
+
         if (options.password && typeof options.password === "string" && options.password.trim().length > 0) {
           connectOpts.password = options.password;
         }
-    
+
         // Always try to find default SSH keys for fallback authentication
         // This allows fallback even when password auth fails
         let defaultKeyInfo = null;
@@ -152,7 +569,7 @@ function createStartSessionApi(ctx) {
         }
         // Also find ALL default keys for comprehensive fallback
         allDefaultKeys = await findAllDefaultPrivateKeys();
-    
+
         // Use unlocked encrypted keys if provided (from retry after auth failure)
         // These are passed via _unlockedEncryptedKeys from startSSHSessionWrapper
         const unlockedEncryptedKeys = options._unlockedEncryptedKeys || [];
@@ -162,17 +579,17 @@ function createStartSessionApi(ctx) {
             keyNames: unlockedEncryptedKeys.map(k => k.keyName)
           });
         }
-    
+
         // If no primary auth method configured, try ssh-agent first, then ALL default keys
         if (!connectOpts.privateKey && !connectOpts.password && !connectOpts.agent) {
           // First, try to use ssh-agent if available (this is what regular SSH does)
           const sshAgentSocket = await getAvailableAgentSocket();
-    
+
           if (sshAgentSocket) {
             log("No auth method configured, trying ssh-agent first", { agentSocket: sshAgentSocket });
             connectOpts.agent = sshAgentSocket;
           }
-    
+
           // Mark that we need to try all default keys (handled in authMethods below)
           if (allDefaultKeys.length > 0) {
             log("Will try all default SSH keys as fallback", { count: allDefaultKeys.length, keyNames: allDefaultKeys.map(k => k.keyName) });
@@ -183,14 +600,14 @@ function createStartSessionApi(ctx) {
             log("No default SSH key found in ~/.ssh directory");
           }
         }
-    
+
         log("Final auth configuration", {
           hasPrivateKey: !!connectOpts.privateKey,
           hasPassword: !!connectOpts.password,
           hasAgent: !!connectOpts.agent,
           hasDefaultKeyFallback: !!defaultKeyInfo,
         });
-    
+
         // Agent forwarding
         if (options.agentForwarding) {
           if (!connectOpts.agent) {
@@ -203,16 +620,16 @@ function createStartSessionApi(ctx) {
             log("Agent forwarding requested but no agent available, skipping");
           }
         }
-    
+
         // Build authentication handler with fallback support
         // ssh2 authHandler can be a function that returns the next auth method to try
-    
+
         // Check if we have a cached successful auth method for this host
         const cachedMethod = getCachedAuthMethod(connectOpts.username, options.hostname, options.port);
-    
+
         // Track which method succeeded for caching
         let lastTriedMethod = null;
-    
+
         if (authAgent) {
           const order = ["none", "agent"];
           if (connectOpts.password) order.push("password");
@@ -228,22 +645,22 @@ function createStartSessionApi(ctx) {
         } else {
           // Build dynamic auth handler for fallback support
           const authMethods = [];
-    
+
           // First try user-configured key if available (explicit user choice)
           if (connectOpts.privateKey && !usedDefaultKeyAsPrimary) {
             authMethods.push({ type: "publickey", key: connectOpts.privateKey, passphrase: connectOpts.passphrase, id: "publickey-user" });
           }
-    
+
           // Then try agent if configured (try agent before password since it's usually faster)
           if (connectOpts.agent) {
             authMethods.push({ type: "agent", id: "agent" });
           }
-    
+
           // Then try password if available (explicit user choice)
           if (connectOpts.password) {
             authMethods.push({ type: "password", id: "password" });
           }
-    
+
           // Then try ALL default SSH keys as fallback (not just the first one!)
           // This is critical because different servers may have different keys in authorized_keys
           if (usedDefaultKeyAsPrimary && allDefaultKeys.length > 0) {
@@ -259,7 +676,7 @@ function createStartSessionApi(ctx) {
             // Single default key fallback (when user has configured other auth methods)
             authMethods.push({ type: "publickey", key: defaultKeyInfo.privateKey, isDefault: true, id: "publickey-default" });
           }
-    
+
           // Add unlocked encrypted default keys (user provided passphrases for these)
           for (const keyInfo of unlockedEncryptedKeys) {
             authMethods.push({
@@ -270,16 +687,16 @@ function createStartSessionApi(ctx) {
               id: `publickey-encrypted-${keyInfo.keyName}`
             });
           }
-    
+
           // Finally try keyboard-interactive
           authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
-    
+
           log("Auth methods configured", {
             methods: authMethods.map(m => ({ type: m.type, id: m.id, isDefault: m.isDefault || false })),
             cachedMethod,
             usedDefaultKeyAsPrimary
           });
-    
+
           // Reorder methods based on cached successful method
           if (cachedMethod) {
             const cachedIndex = authMethods.findIndex(m => m.id === cachedMethod);
@@ -291,7 +708,7 @@ function createStartSessionApi(ctx) {
               });
             }
           }
-    
+
           // Always use dynamic authHandler to ensure consistent "none" probing
           // and auth method logging regardless of how many methods are configured
           if (authMethods.length >= 1) {
@@ -304,15 +721,15 @@ function createStartSessionApi(ctx) {
             let firstSuccessfulMethod = null;
             // Track if we've gone through a partialSuccess flow (multi-step auth)
             let hadPartialSuccess = false;
-    
+
             connectOpts.authHandler = (methodsLeft, partialSuccess, callback) => {
               log("authHandler called", { methodsLeft, partialSuccess, authIndex, attemptedMethodIds: Array.from(attemptedMethodIds) });
-    
+
               // Log rejection of previous method
               if (lastTriedMethod && !partialSuccess) {
                 sendProgress(totalHops, totalHops, options.hostname, 'auth-attempt', `${lastTriedMethod} rejected`);
               }
-    
+
               // On the very first call (methodsLeft === null), try "none" auth.
               // Per RFC 4252, the "none" request is how the client discovers which
               // methods the server supports.  It also allows passwordless login on
@@ -323,11 +740,11 @@ function createStartSessionApi(ctx) {
                 sendProgress(totalHops, totalHops, options.hostname, 'auth-attempt', 'none (no credentials)');
                 return callback("none");
               }
-    
+
               // methodsLeft can be null on first call (before server responds with available methods)
               // Include "agent" for SSH agent-based auth (used with agentForwarding)
               const availableMethods = methodsLeft || ["publickey", "password", "keyboard-interactive", "agent"];
-    
+
               // Handle partialSuccess case (e.g., password succeeded but server requires additional auth like MFA)
               // When partialSuccess is true, we should try the remaining methods the server is asking for
               if (partialSuccess && methodsLeft && methodsLeft.length > 0) {
@@ -342,9 +759,9 @@ function createStartSessionApi(ctx) {
                   attemptedMethodIds.add(lastTriedMethod);
                   log("Marked method as attempted (partial success)", { method: lastTriedMethod });
                 }
-    
+
                 log("Partial success - server requires additional auth", { methodsLeft, attemptedMethodIds: Array.from(attemptedMethodIds) });
-    
+
                 // Find a method from our list that matches what the server wants
                 // Skip methods that have already been attempted
                 for (const serverMethod of methodsLeft) {
@@ -357,13 +774,13 @@ function createStartSessionApi(ctx) {
                     if (serverMethod === "publickey" && (m.type === "publickey" || m.type === "agent")) return true;
                     return false;
                   });
-    
+
                   if (matchingMethod) {
                     log("Found matching method for partial success", { serverMethod, matchingMethod: matchingMethod.id });
                     // Mark as attempted BEFORE returning to prevent re-use on failure
                     attemptedMethodIds.add(matchingMethod.id);
                     lastTriedMethod = matchingMethod.id;
-    
+
                     if (matchingMethod.type === "keyboard-interactive") {
                       log("Trying keyboard-interactive auth (partial success)", { id: matchingMethod.id });
                       return callback("keyboard-interactive");
@@ -393,17 +810,17 @@ function createStartSessionApi(ctx) {
                 log("No matching method found for partial success requirements", { methodsLeft });
                 return callback(false);
               }
-    
+
               while (authIndex < authMethods.length) {
                 const method = authMethods[authIndex];
                 authIndex++;
-    
+
                 // Skip methods that have already been attempted (e.g., during partial success handling)
                 if (attemptedMethodIds.has(method.id)) {
                   log("Skipping already attempted method", { method: method.id });
                   continue;
                 }
-    
+
                 // Check if this method is still available on server
                 // Note: "agent" uses "publickey" as the underlying method type
                 const methodName = method.type === "password" ? "password" :
@@ -413,11 +830,11 @@ function createStartSessionApi(ctx) {
                   log("Auth method not available on server, skipping", { method: method.id });
                   continue;
                 }
-    
+
                 // Mark as attempted BEFORE returning
                 attemptedMethodIds.add(method.id);
                 lastTriedMethod = method.id;
-    
+
                 if (method.type === "agent") {
                   // Only log safe identifier, not the full agent object which may contain private keys
                   const agentType = typeof connectOpts.agent === "string" ? "path" : "NetcattyAgent";
@@ -458,12 +875,12 @@ function createStartSessionApi(ctx) {
                   return callback("keyboard-interactive");
                 }
               }
-    
+
               log("All auth methods exhausted");
               sendProgress(totalHops, totalHops, options.hostname, 'auth-attempt', 'all methods exhausted');
               return callback(false);
             };
-    
+
             // Store method reference for success callback
             // For multi-step auth (partialSuccess), cache the first successful method, not the last
             // This ensures next connection starts with the correct first factor
@@ -476,12 +893,13 @@ function createStartSessionApi(ctx) {
             };
           }
         }
-    
+
         // Handle chain/proxy connections
         if (hasJumpHosts) {
           // Pass fetched keys to chain connection to avoid re-reading files
           options._defaultKeys = allDefaultKeys;
-    
+          options._sshDiagnosticLogger = log;
+
           const chainResult = await connectThroughChain(
             event,
             options,
@@ -492,11 +910,11 @@ function createStartSessionApi(ctx) {
           );
           connectionSocket = chainResult.socket;
           chainConnections = chainResult.connections;
-    
+
           connectOpts.sock = connectionSocket;
           delete connectOpts.host;
           delete connectOpts.port;
-    
+
           sendProgress(totalHops, totalHops, options.hostname, 'connecting');
         } else if (hasProxy) {
           sendProgress(1, 1, options.hostname, 'connecting');
@@ -512,23 +930,53 @@ function createStartSessionApi(ctx) {
           // Direct connection (no jump hosts, no proxy)
           sendProgress(1, 1, options.hostname, 'connecting');
         }
-    
+
         return new Promise((resolve, reject) => {
           const logPrefix = hasJumpHosts ? '[Chain]' : '[SSH]';
           let settled = false;
           let detachX11Forwarding = null;
-    
+          // Reference-counted descriptor for this connection. Created when the
+          // shell channel opens; shared with any tabs that later reuse this
+          // connection (issue #1204). Tearing the transport down is funneled
+          // through releaseConnectionRef so the last channel — not whichever
+          // channel happens to close first — ends the connection + chain.
+          let connRef = null;
+          // Session-log stream token for THIS connection's owner channel,
+          // captured in the closure so the connection-level error/timeout/close
+          // handlers stop only this connection's stream. Reading it back off the
+          // session map would risk stopping a *newer* same-sessionId stream
+          // after a reconnect (the token guard from #916). Stays null until the
+          // owner shell opens.
+          let ownerLogStreamToken = null;
+
+          // End the shared transport directly when we fail *before* a session
+          // (and its connRef) exists; once connRef exists, teardown goes through
+          // releaseConnectionRef via the stream close handler instead.
+          const teardownTransport = () => {
+            if (connRef) return;
+            try { conn.end(); } catch { }
+            for (const c of chainConnections) {
+              try { c.end(); } catch { }
+            }
+          };
+
           conn.once("connect", () => enableSshNoDelay(conn));
           if (connectOpts.sock) enableTcpNoDelay(connectOpts.sock);
-    
+
           conn.once("handshake", () => {
             console.log(`${logPrefix} ${options.hostname} handshake complete`);
+            log("target handshake complete", { sessionId, hostname: options.hostname });
             sendProgress(totalHops, totalHops, options.hostname, 'authenticating');
           });
-    
+
           conn.once("ready", () => {
             console.log(`${logPrefix} ${options.hostname} ready`);
-    
+            log("target ready", {
+              sessionId,
+              hostname: options.hostname,
+              remoteSshVersion: (conn && typeof conn._remoteVer === 'string') ? conn._remoteVer : '',
+            });
+
             // Cache the successful auth method
             if (connectOpts._lastTriedMethodRef) {
               const successMethod = connectOpts._lastTriedMethodRef();
@@ -536,18 +984,18 @@ function createStartSessionApi(ctx) {
                 setCachedAuthMethod(connectOpts.username, options.hostname, options.port, successMethod);
               }
             }
-    
+
             sendProgress(totalHops, totalHops, options.hostname, 'authenticated');
             sendProgress(totalHops, totalHops, options.hostname, 'shell');
-    
+
             const sendTerminalMessage = (data) => {
               safeSend(event.sender, "netcatty:data", { sessionId, data });
             };
-    
+
             const x11FakeCookie = options.x11Forwarding
               ? crypto.randomBytes(16).toString("hex")
               : null;
-    
+
             if (options.x11Forwarding) {
               detachX11Forwarding = attachX11Forwarding(conn, {
                 display: options.x11Display,
@@ -555,7 +1003,7 @@ function createStartSessionApi(ctx) {
                 sendMessage: sendTerminalMessage,
               });
             }
-    
+
             const shellOptions = {
               env: {
                 LANG: resolveLangFromCharset(options.charset),
@@ -563,7 +1011,7 @@ function createStartSessionApi(ctx) {
                 ...(options.env || {}),
               },
             };
-    
+
             if (options.x11Forwarding) {
               shellOptions.x11 = {
                 protocol: "MIT-MAGIC-COOKIE-1",
@@ -572,7 +1020,7 @@ function createStartSessionApi(ctx) {
                 single: false,
               };
             }
-    
+
             conn.shell(
               {
                 term: "xterm-256color",
@@ -582,6 +1030,7 @@ function createStartSessionApi(ctx) {
               shellOptions,
               (err, stream) => {
                 if (err) {
+                  log("shell open failed", { sessionId, hostname: options.hostname, error: err.message });
                   if (detachX11Forwarding) detachX11Forwarding();
                   settled = true;
                   conn.end();
@@ -595,184 +1044,35 @@ function createStartSessionApi(ctx) {
                   reject(err);
                   return;
                 }
-    
+
                 sendProgress(totalHops, totalHops, options.hostname, 'connected');
-    
-                const session = {
+
+                // Create the shared reference-counted descriptor for this
+                // connection now that the owning channel is open, then wire the
+                // shell up through the shared helper.
+                const ownerSession = setupShellSession({
                   conn,
                   stream,
-                  chainConnections,
-                  webContentsId: event.sender.id,
-                  // Store connection info for MCP host discovery
-                  hostname: options.host || options.hostname || '',
-                  username: options.username || '',
-                  label: options.label || '',
-                  lastIdlePrompt: '',
-                  lastIdlePromptAt: 0,
-                  _promptTrackTail: '',
-                  // SSH server identification string (the `software` part of
-                  // `SSH-2.0-<software>`). ssh2 captures this during the header
-                  // exchange and stores it on the client as `_remoteVer` — it
-                  // is available by the time 'ready' fires, so the renderer can
-                  // use it to detect network-device vendors without running any
-                  // additional exec channels. See domain/host.ts
-                  // `detectVendorFromSshVersion`.
-                  remoteSshVersion: (conn && typeof conn._remoteVer === 'string') ? conn._remoteVer : '',
-                };
-                sessions.set(sessionId, session);
-    
-                // Start real-time session log stream if configured
-                if (options.sessionLog?.enabled && options.sessionLog?.directory) {
-                  logStreamToken = sessionLogStreamManager.startStream(sessionId, {
-                    hostLabel: options.hostLabel || options.hostname || '',
-                    hostname: options.hostname || '',
-                    directory: options.sessionLog.directory,
-                    format: options.sessionLog.format || 'txt',
-                    startTime: Date.now(),
-                  });
-                }
-    
-                // Coalesce shell output and deliver it to the renderer on the next
-                // event-loop turn (see ptyOutputBuffer) rather than on a fixed timer,
-                // so interactive echo isn't held back by the batch interval. A size
-                // cap still forces an immediate flush for bursts of output.
-                const { bufferData, flush: flushBuffer } = createPtyOutputBuffer((data) => {
-                  const contents = event.sender;
-                  safeSend(contents, "netcatty:data", { sessionId, data });
-                });
-    
-                const sshZmodemSentry = createZmodemSentry({
+                  options,
                   sessionId,
-                  onData(buf) {
-                    const decoder = getSessionDecoder(sessionId, "stdout");
-                    const decoded = decoder.write(buf);
-                    trackSessionIdlePrompt(session, decoded);
-                    bufferData(decoded);
-                    sessionLogStreamManager.appendData(sessionId, decoded);
-                  },
-                  writeToRemote(buf) {
-                    try { return stream.write(buf); } catch { return true; /* ignore */ }
-                  },
-                  interruptRemote() {
-                    try { stream.signal?.("INT"); } catch { /* ignore */ }
-                  },
-                  probeReceiveConflicts(names) {
-                    return probeReceiveConflicts(sessions.get(sessionId), names);
-                  },
-                  removeRemoteFiles(paths) {
-                    return removeRemoteFiles(sessions.get(sessionId), paths);
-                  },
-                  restoreRemoteModes(entries) {
-                    return restoreRemoteModes(sessions.get(sessionId), entries);
-                  },
-                  requestOverwriteDecision(filename) {
-                    return new Promise((resolve) => {
-                      const requestId = randomUUID();
-                      const timer = setTimeout(() => {
-                        zmodemOverwritePending.delete(requestId);
-                        resolve({ action: "skip", applyToRest: false });
-                      }, 120000);
-                      zmodemOverwritePending.set(requestId, (payload) => {
-                        clearTimeout(timer);
-                        resolve({ action: payload.action, applyToRest: !!payload.applyToRest });
-                      });
-                      safeSend(event.sender, "netcatty:zmodem:overwrite-request", {
-                        sessionId, requestId, filename,
-                      });
-                    });
-                  },
-                  getWebContents() {
-                    return event.sender;
-                  },
-                  label: "SSH",
+                  event,
+                  log,
+                  detachX11Forwarding,
+                  chainConnections,
+                  isReused: false,
                 });
-                session.zmodemSentry = sshZmodemSentry;
-    
-                stream.on("data", (data) => {
-                  // data is Buffer from ssh2 — feed raw bytes to ZMODEM sentry.
-                  // In normal mode, sentry's onData callback handles decoding and buffering.
-                  sshZmodemSentry.consume(data);
-                });
-    
-                stream.stderr?.on("data", (data) => {
-                  // stderr is not used for ZMODEM — decode normally
-                  const decoder = getSessionDecoder(sessionId, "stderr");
-                  const decoded = decoder.write(data);
-                  bufferData(decoded);
-                  sessionLogStreamManager.appendData(sessionId, decoded);
-                });
-    
-                // Capture the real exit code from the remote process.
-                // "exit" fires when the remote shell/process exits normally;
-                // "close" fires whenever the channel closes (could be network drop).
-                // Only treat it as user-initiated exit if "exit" fired with a numeric
-                // code and no signal. Signal terminations (e.g. server kill, idle
-                // timeout) have code=null and signal set — those are not user exits.
-                let streamExitCode = 0;
-                let streamExited = false;
-                stream.on("exit", (code, signal) => {
-                  streamExitCode = typeof code === "number" ? code : 0;
-                  streamExited = typeof code === "number" && !signal;
-                });
-    
-                stream.on("close", () => {
-                  // Always flush buffered data regardless of session state.
-                  // flushBuffer() cancels any pending scheduled flush internally.
-                  flushBuffer();
-                  sessionLogStreamManager.stopStream(sessionId, logStreamToken);
-                  if (detachX11Forwarding) {
-                    detachX11Forwarding();
-                    detachX11Forwarding = null;
-                  }
-    
-                  // Only send exit if session hasn't already been cleaned up by
-                  // conn.once("close") — which fires before stream.on("close")
-                  // in ssh2 when the transport drops.
-                  if (sessions.has(sessionId)) {
-                    const contents = event.sender;
-                    const session = sessions.get(sessionId);
-                    const transportError = session?._transportError;
-                    if (transportError) {
-                      safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: transportError, reason: "error" });
-                    } else {
-                      // A shell TMOUT auto-logout is a clean exit (numeric code, no
-                      // signal) — identical to a user-typed `exit` by code/signal —
-                      // so detect it via the banner the shell prints just before
-                      // exiting and report it as a timeout. That keeps the tab open
-                      // for reconnect instead of auto-closing it (#1062 / #977).
-                      const idleTimedOut = streamExited && looksLikeIdleAutoLogout(session?._promptTrackTail);
-                      const reason = idleTimedOut ? "timeout" : (streamExited ? "exited" : "closed");
-                      safeSend(contents, "netcatty:exit", { sessionId, exitCode: streamExitCode, reason });
-                    }
-                    sessions.get(sessionId)?.zmodemSentry?.cancel();
-                    sessions.delete(sessionId);
-                    sessionEncodings.delete(sessionId);
-                    sessionDecoders.delete(sessionId);
-                  }
-                  conn.end();
-                  for (const c of chainConnections) {
-                    try { c.end(); } catch { }
-                  }
-                });
-    
-                // Pre-seed encoding from host charset if it's a GB variant
-                if (options.charset && /^gb/i.test(String(options.charset).trim())) {
-                  sessionEncodings.set(sessionId, "gb18030");
-                }
-    
-                // Run startup command if specified
-                if (options.startupCommand) {
-                  setTimeout(() => {
-                    stream.write(`${options.startupCommand}\n`);
-                  }, 300);
-                }
-    
+                connRef = createConnectionRef(ownerSession, conn, chainConnections);
+                // Capture this connection's log stream token in the closure so
+                // the connection-level handlers below stop the right stream even
+                // after a same-sessionId reconnect (#916).
+                ownerLogStreamToken = ownerSession._logStreamToken;
+
                 settled = true;
                 resolve({ sessionId });
               }
             );
           });
-    
+
           conn.on("error", (err) => {
             // After the promise is settled, we can't reject again. But if the
             // session was already established (resolved), we still need to notify
@@ -782,25 +1082,49 @@ function createStartSessionApi(ctx) {
             // any buffered data first and then send exit with this error info.
             if (settled) {
               console.warn(`${logPrefix} ${options.hostname} post-settle error:`, err.message);
-              // Store the error so the close handler can include it in the exit event
+              log("post-connect transport error", {
+                sessionId,
+                hostname: options.hostname,
+                error: err.message,
+                code: err.code,
+                level: err.level,
+              });
+              // Store the error so the close handler can include it in the exit event.
+              // ssh2 closes every channel when the transport errors, so each
+              // affected session (the owner and any reused siblings) gets the
+              // flag and reports the error via its own stream close handler.
               if (sessions.has(sessionId)) {
                 const session = sessions.get(sessionId);
                 if (session) session._transportError = err.message;
               }
+              if (connRef) {
+                for (const sibling of sessions.values()) {
+                  if (sibling !== sessions.get(sessionId) && sibling.connRef === connRef) {
+                    sibling._transportError = err.message;
+                  }
+                }
+              }
               return;
             }
-    
+
             const contents = event.sender;
-    
+
             const isAuthError = err.message?.toLowerCase().includes('authentication') ||
               err.message?.toLowerCase().includes('auth') ||
               err.message?.toLowerCase().includes('password') ||
               err.level === 'client-authentication';
-    
+
             // Clear cached auth method on auth failure so next attempt tries all methods
             if (isAuthError) {
               clearCachedAuthMethod(connectOpts.username, options.hostname, options.port);
               console.log(`${logPrefix} ${options.hostname} auth failed:`, err.message);
+              log("authentication failed", {
+                sessionId,
+                hostname: options.hostname,
+                error: err.message,
+                code: err.code,
+                level: err.level,
+              });
               safeSend(contents, "netcatty:auth:failed", {
                 sessionId,
                 error: err.message,
@@ -808,11 +1132,18 @@ function createStartSessionApi(ctx) {
               });
             } else {
               console.error(`${logPrefix} ${options.hostname} error:`, err.message);
+              log("connection error", {
+                sessionId,
+                hostname: options.hostname,
+                error: err.message,
+                code: err.code,
+                level: err.level,
+              });
             }
-    
+
             sendProgress(totalHops, totalHops, options.hostname, 'error', err.message);
             safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: err.message, reason: "error" });
-            sessionLogStreamManager.stopStream(sessionId, logStreamToken);
+            sessionLogStreamManager.stopStream(sessionId, ownerLogStreamToken);
             if (detachX11Forwarding) {
               detachX11Forwarding();
               detachX11Forwarding = null;
@@ -821,43 +1152,49 @@ function createStartSessionApi(ctx) {
             sessions.delete(sessionId);
             sessionEncodings.delete(sessionId);
             sessionDecoders.delete(sessionId);
-            for (const c of chainConnections) {
-              try { c.end(); } catch { }
-            }
+            teardownTransport();
             // Destroy the connection to prevent further socket errors from leaking
             // as uncaught exceptions (e.g. ECONNRESET on embedded devices).
             try { conn.destroy(); } catch { }
             settled = true;
             reject(err);
           });
-    
+
           conn.once("timeout", () => {
             console.error(`${logPrefix} ${options.hostname} connection timeout`);
             const err = new Error(`Connection timeout to ${options.hostname}`);
+            log("connection timeout", { sessionId, hostname: options.hostname, error: err.message });
             const contents = event.sender;
             sendProgress(totalHops, totalHops, options.hostname, 'error', err.message);
             safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: err.message, reason: "timeout" });
-            sessionLogStreamManager.stopStream(sessionId, logStreamToken);
+            sessionLogStreamManager.stopStream(sessionId, ownerLogStreamToken);
             sessions.get(sessionId)?.zmodemSentry?.cancel();
             sessions.delete(sessionId);
             sessionEncodings.delete(sessionId);
             sessionDecoders.delete(sessionId);
-            for (const c of chainConnections) {
-              try { c.end(); } catch { }
-            }
+            teardownTransport();
             try { conn.destroy(); } catch { }
             settled = true;
             reject(err);
           });
-    
+
           conn.once("close", () => {
             const contents = event.sender;
+            log("connection closed", {
+              sessionId,
+              hostname: options.hostname,
+              settled,
+              transportError: sessions.get(sessionId)?._transportError,
+            });
             if (!settled) {
               sendProgress(totalHops, totalHops, options.hostname, 'error', `Connection to ${options.hostname} closed unexpectedly`);
             }
-            // Only send exit if the session hasn't already been cleaned up by the
-            // error handler (avoids sending a misleading exitCode:0 "closed" after
-            // a real transport error was already reported).
+            // This handler owns teardown for the *owner* session only. ssh2
+            // fires conn "close" before the owner's stream "close" on a
+            // transport drop, so we clean the owner up here; the owner's stream
+            // close then no-ops because the session is already gone. Reused
+            // sibling channels each clean themselves up via their own stream
+            // "close" (ssh2 closes every channel when the transport drops).
             if (sessions.has(sessionId)) {
               const session = sessions.get(sessionId);
               const transportError = session?._transportError;
@@ -867,21 +1204,31 @@ function createStartSessionApi(ctx) {
               } else {
                 safeSend(contents, "netcatty:exit", { sessionId, exitCode: 0, reason: "closed" });
               }
-            }
-            sessionLogStreamManager.stopStream(sessionId, logStreamToken);
-            sessions.get(sessionId)?.zmodemSentry?.cancel();
-            sessions.delete(sessionId);
-            sessionEncodings.delete(sessionId);
-            sessionDecoders.delete(sessionId);
-            for (const c of chainConnections) {
-              try { c.end(); } catch { }
+              // Use this connection's captured token so a late close from an
+              // old transport can't stop a newer same-sessionId stream (#916).
+              sessionLogStreamManager.stopStream(sessionId, ownerLogStreamToken);
+              session?.zmodemSentry?.cancel();
+              // Release the owner's hold on the shared connection. The transport
+              // is already closing, but this decrements the reference count and,
+              // when it is the last holder, ends the jump-host chain. Reused
+              // siblings (if any) keep the count above zero until their own
+              // stream close handlers run.
+              releaseConnectionRef(session);
+              sessions.delete(sessionId);
+              sessionEncodings.delete(sessionId);
+              sessionDecoders.delete(sessionId);
+            } else {
+              // Owner already cleaned up (e.g. its stream closed first). Ensure
+              // this connection's log stream is stopped defensively, scoped by
+              // the captured token so a reconnect's fresh stream is left alone.
+              sessionLogStreamManager.stopStream(sessionId, ownerLogStreamToken);
             }
             if (!settled) {
               settled = true;
               reject(new Error(`Connection to ${options.hostname} closed unexpectedly`));
             }
           });
-    
+
           // Handle keyboard-interactive authentication (2FA/MFA). Uses the shared
           // factory so PAM-wrapped single-password prompts get auto-filled from
           // the saved host password (#969) — same path the chain/SFTP/port-
@@ -902,8 +1249,8 @@ function createStartSessionApi(ctx) {
               totalHops, totalHops, options.hostname, 'auth-attempt', 'user responded',
             ),
           }));
-    
-    
+
+
           // Enable keyboard-interactive authentication in authHandler
           // Note: If authHandler is a function (for fallback support), keyboard-interactive
           // is already included in the auth methods list
@@ -926,10 +1273,10 @@ function createStartSessionApi(ctx) {
             log("Using simple array authHandler", { authMethods, usedDefaultKeyAsPrimary });
           }
           // If authHandler is a function, it already handles keyboard-interactive
-    
+
           // Increase timeout to allow for keyboard-interactive auth
           connectOpts.readyTimeout = 120000; // 2 minutes for 2FA input
-    
+
           console.log(`${logPrefix} Connecting to ${options.hostname}...`);
           conn.connect(connectOpts);
         });

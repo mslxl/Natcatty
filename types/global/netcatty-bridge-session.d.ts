@@ -29,6 +29,15 @@ declare global {
       moshServerPath?: string;
       moshClientPath?: string;
       agentForwarding?: boolean;
+      // Algorithm settings, forwarded so the host-info stats companion SSH
+      // connection (issue #1198) negotiates the same KEX / cipher / host-key
+      // set the interactive session would.
+      legacyAlgorithms?: boolean;
+      skipEcdsaHostKey?: boolean;
+      algorithmOverrides?: import("../../domain/models").HostAlgorithmOverrides;
+      // Known hosts, used to verify the host key before the stats companion
+      // connection (issue #1198) sends a saved password.
+      knownHosts?: import("../../domain/models").KnownHost[];
       cols?: number;
       rows?: number;
       charset?: string;
@@ -111,6 +120,10 @@ declare global {
     /** Get server stats (CPU, Memory, Disk, Network) from an active SSH session */
     getServerStats?(sessionId: string): Promise<{
       success: boolean;
+      // Transient "not ready yet" (e.g. a Mosh session whose SSH handshake is
+      // still in progress, #1198). Callers should keep polling and NOT count
+      // this toward any consecutive-failure give-up.
+      pending?: boolean;
       error?: string;
       stats?: {
         cpu: number | null;           // CPU usage percentage (0-100)

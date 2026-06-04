@@ -99,6 +99,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   sessionId,
   startupCommand,
   noAutoRun,
+  reuseConnectionFromSessionId,
   serialConfig,
   hotkeyScheme = "disabled",
   keyBindings = [],
@@ -126,6 +127,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   onBroadcastInput,
   onSnippetExecutorChange,
   sessionLog,
+  sshDebugLogEnabled,
 }) => {
   // Timeout for connection - increased to 120s to allow time for keyboard-interactive (2FA) authentication
   const CONNECTION_TIMEOUT = 120000;
@@ -568,6 +570,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     knownHosts,
     resolvedChainHosts,
     sessionId,
+    reuseConnectionFromSessionId,
     startupCommand,
     noAutoRun,
     terminalSettings,
@@ -629,6 +632,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onOsDetected,
     onCommandExecuted,
     sessionLog,
+    sshDebugLogEnabled,
   });
   sessionStartersRef.current = sessionStarters;
 

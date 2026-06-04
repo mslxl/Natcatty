@@ -64,6 +64,7 @@ export interface TerminalSettings {
 
   // Local Shell Configuration
   localShell: string; // Path to shell executable (empty = system default)
+  localShellArgs: string[]; // Launch args for a custom local shell (e.g. ["--login", "-i"] for msys2 bash); ignored for discovered shells
   localStartDir: string; // Starting directory for local terminal (empty = home directory)
 
   // SSH Connection
@@ -258,6 +259,7 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   keywordHighlightEnabled: true,
   keywordHighlightRules: DEFAULT_KEYWORD_HIGHLIGHT_RULES,
   localShell: '', // Empty = use system default
+  localShellArgs: [], // Launch args for a custom local shell (empty = bridge default args)
   localStartDir: '', // Empty = use home directory
   // Cloud-friendly defaults: 30s interval keeps NAT/LB state tables alive,
   // and 10 unanswered keepalives provides headroom for brief network glitches
@@ -335,4 +337,11 @@ export interface TerminalSession {
   localShellArgs?: string[]; // Shell args for local terminals (from discovery)
   localShellName?: string;   // Display name for local shell (e.g., "Zsh", "Ubuntu (WSL)")
   localShellIcon?: string;   // Icon identifier for local shell (e.g., "zsh", "ubuntu")
+  // For tabs created via "Copy Tab" on an SSH session: the id of the source
+  // session whose already-authenticated connection should be reused so the
+  // duplicate does not trigger a second MFA prompt (issue #1204). The bridge
+  // reuses the source connection when it is still live, otherwise it falls back
+  // to a fresh connection — so this also applies on reconnect: a reconnect
+  // reuses the source again if still connected, else dials fresh.
+  reuseConnectionFromSessionId?: string;
 }

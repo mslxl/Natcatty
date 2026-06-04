@@ -483,12 +483,36 @@ function createSessionOpsApi(ctx) {
     async function getServerStats(event, payload) {
       const { sessionId } = payload;
       const session = sessions.get(sessionId);
-    
-      if (!session || !session.conn) {
+
+      if (!session) {
         return { success: false, error: 'Session not found or not connected' };
       }
-    
-      const conn = session.conn;
+
+      // Mosh sessions run over UDP via a local mosh-client PTY and have no
+      // ssh2 connection of their own. Lazily open a best-effort companion SSH
+      // connection (reusing the handshake credentials) so the host-info bar
+      // works for Mosh too (issue #1198). The companion lives on
+      // session.moshStatsConn — deliberately NOT session.conn — so it stays
+      // invisible to other bridges (getSessionPwd / SFTP / MCP exec) that key
+      // off session.conn as the interactive connection. This is a no-op for
+      // real SSH sessions, which already carry session.conn.
+      if (!session.conn && !session.moshStatsConn && typeof ensureMoshStatsConnection === 'function') {
+        await ensureMoshStatsConnection(session, sessionId, event?.sender);
+      }
+
+      const conn = session.conn || session.moshStatsConn;
+      if (!conn) {
+        // A Mosh session can be marked "connected" (and start polling) from
+        // the SSH bootstrap's visible output before swapToMoshClient stores
+        // moshStatsAuth. During that window there is nothing to connect with
+        // yet — report it as `pending` (not a hard failure) so the renderer's
+        // give-up-after-N-failures counter doesn't permanently disable stats
+        // before the handshake finishes and credentials become available.
+        if (session.type === 'mosh' && !session.moshStatsAuth && !session.moshStatsConnFailed) {
+          return { success: false, pending: true, error: 'Mosh handshake in progress' };
+        }
+        return { success: false, error: 'Session not found or not connected' };
+      }
     
       // macOS stats command: uses sysctl, vm_stat, top, ps, df, netstat
       // CPU reported as direct percentage (top computes delta internally)
@@ -872,6 +896,11 @@ function createSessionOpsApi(ctx) {
         return { ok: false, encoding: enc };
       }
       sessionEncodings.set(sessionId, enc);
+      // Mirror onto the session record so the terminal input path
+      // (terminalBridge.writeToSession) encodes keystrokes with the same
+      // charset the output decoder now uses — keeping input/output symmetric
+      // on non-UTF-8 devices (issue #1216).
+      session.encoding = enc;
       // Reset stateful decoders so new data uses the updated encoding
       resetSessionDecoders(sessionId);
       return { ok: true, encoding: enc };

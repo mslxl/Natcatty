@@ -27,6 +27,8 @@ const {
   findAllDefaultPrivateKeys: findAllDefaultPrivateKeysFromHelper,
   getSshAgentSocket,
   readFileNoFollow,
+  expandIdentityFilePath,
+  isAutoFillablePasswordChallenge,
   preparePrivateKeyForAuth,
   loadIdentityFileForAuth,
   loadFirstIdentityFileForAuth,
@@ -36,6 +38,7 @@ const {
 const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
 const { trackSessionIdlePrompt, looksLikeIdleAutoLogout } = require("./ai/shellUtils.cjs");
 const { createZmodemSentry } = require("./zmodemHelper.cjs");
+const tempDirBridge = require("./tempDirBridge.cjs");
 const {
   buildAlgorithms,
   _resetAlgorithmSupportCacheForTests,
@@ -256,41 +259,116 @@ async function getAvailableAgentSocket() {
   return getSshAgentSocket();
 }
 
-const DEBUG_SSH = process.env.NETCATTY_SSH_DEBUG === "1";
+const SSH_DEBUG_REDACTED_KEYS = new Set([
+  "password",
+  "passphrase",
+  "privateKey",
+  "key",
+  "certificate",
+]);
+let sshDebugLoggingEnabled = process.env.NETCATTY_SSH_DEBUG === "1";
+let sshDebugLogFilePath = tempDirBridge.getTempFilePath("netcatty-ssh.log");
 
-// Debug logger (disabled by default)
-const logFile = DEBUG_SSH
-  ? path.join(require("os").tmpdir(), "netcatty-ssh.log")
-  : null;
-const log = (msg, data) => {
-  if (!DEBUG_SSH) return;
-  const line = `[${new Date().toISOString()}] ${msg} ${data ? JSON.stringify(data) : ""}\n`;
-  try { fs.appendFileSync(logFile, line); } catch { }
-  console.log("[SSH]", msg, data ? JSON.stringify(data, null, 2) : "");
-};
+function sanitizeSshDebugValue(value, key = "") {
+  if (SSH_DEBUG_REDACTED_KEYS.has(key)) return "[redacted]";
+  if (Array.isArray(value)) return value.map((item) => sanitizeSshDebugValue(item));
+  if (value && typeof value === "object") {
+    const result = {};
+    for (const [entryKey, entryValue] of Object.entries(value)) {
+      result[entryKey] = sanitizeSshDebugValue(entryValue, entryKey);
+    }
+    return result;
+  }
+  return value;
+}
+
+function setSshDebugLoggingEnabled(enabled, options = {}) {
+  sshDebugLoggingEnabled = !!enabled;
+  if (typeof options.logFilePath === "string" && options.logFilePath.trim()) {
+    sshDebugLogFilePath = options.logFilePath;
+  }
+}
+
+function isSshDebugLoggingEnabled() {
+  return sshDebugLoggingEnabled;
+}
+
+function getSshDebugLogFilePath() {
+  return sshDebugLogFilePath;
+}
+
+function appendSshDiagnosticLog(msg, data, options = {}) {
+  const enabled = Object.prototype.hasOwnProperty.call(options, "enabled")
+    ? !!options.enabled
+    : isSshDebugLoggingEnabled();
+  if (!enabled) return;
+  const safeData = data ? sanitizeSshDebugValue(data) : undefined;
+  const line = `[${new Date().toISOString()}] ${msg} ${safeData ? JSON.stringify(safeData) : ""}\n`;
+  try { fs.appendFileSync(sshDebugLogFilePath, line); } catch { }
+  console.log("[SSH]", msg, safeData ? JSON.stringify(safeData, null, 2) : "");
+}
+
+const log = appendSshDiagnosticLog;
+log.isEnabled = isSshDebugLoggingEnabled;
+
+function createSshDiagnosticLogger(enabled) {
+  const isEnabled = !!enabled;
+  const logger = (msg, data) => appendSshDiagnosticLog(msg, data, { enabled: isEnabled });
+  logger.isEnabled = () => isEnabled;
+  return logger;
+}
 
 function shouldLogSshDebugMessage(msg) {
   if (typeof msg !== "string") return false;
   return /auth|publickey|keyboard|handshake|kex|newkeys|dh gex/i.test(msg);
 }
 
-function attachSshDebugLogger(connectOpts) {
-  if (!DEBUG_SSH) return;
+function attachSshDebugLogger(connectOpts, logger = log) {
+  if (typeof logger.isEnabled === "function" && !logger.isEnabled()) return;
   connectOpts.debug = (msg) => {
     if (shouldLogSshDebugMessage(msg)) {
-      log("ssh2 debug", { msg });
+      logger("ssh2 debug", { msg });
     }
   };
 }
 
-function logSshAlgorithms(label, algorithms, extra = {}) {
-  log(`${label} algorithm configuration`, {
+function logSshAlgorithms(label, algorithms, extra = {}, logger = log) {
+  logger(`${label} algorithm configuration`, {
     ...extra,
     kex: algorithms.kex,
     cipher: algorithms.cipher,
     hmac: algorithms.hmac,
     serverHostKey: algorithms.serverHostKey,
   });
+}
+
+async function getSshDebugLogInfo() {
+  let size = 0;
+  let exists = false;
+  try {
+    const stat = await fs.promises.stat(sshDebugLogFilePath);
+    exists = stat.isFile();
+    size = stat.size;
+  } catch {
+    exists = false;
+  }
+  return {
+    enabled: isSshDebugLoggingEnabled(),
+    path: sshDebugLogFilePath,
+    exists,
+    size,
+  };
+}
+
+async function openSshDebugLogDir() {
+  if (!electronModule?.shell?.openPath) return { success: false, error: "shell unavailable" };
+  try {
+    await fs.promises.mkdir(path.dirname(sshDebugLogFilePath), { recursive: true });
+    const error = await electronModule.shell.openPath(path.dirname(sshDebugLogFilePath));
+    return error ? { success: false, error } : { success: true };
+  } catch (err) {
+    return { success: false, error: err?.message || String(err) };
+  }
 }
 
 // Session storage - shared reference passed from main
@@ -308,6 +386,7 @@ const sessionEncodings = new Map();
 // Per-session stateful iconv decoders (keyed by sessionId, value: { stdout, stderr })
 const sessionDecoders = new Map();
 const iconv = require("iconv-lite");
+const { encodeTerminalInput } = require("./terminalEncoding.cjs");
 
 function getSessionDecoder(sessionId, stream) {
   let decoders = sessionDecoders.get(sessionId);
@@ -366,6 +445,12 @@ function resolveLangFromCharset(charset) {
 }
 
 const { safeSend } = require("./ipcUtils.cjs");
+const {
+  createConnectionRef,
+  acquireConnectionRef,
+  releaseConnectionRef,
+  findReusableSession,
+} = require("./sshConnectionPool.cjs");
 
 const zmodemOverwritePending = new Map(); // requestId -> (decision) => void
 
@@ -383,6 +468,7 @@ function init(deps) {
 async function connectThroughChain(event, options, jumpHosts, targetHost, targetPort, sessionId) {
   const sender = event.sender;
   const connections = options?._connectionsRef || [];
+  const sshDiagnosticLogger = options?._sshDiagnosticLogger || log;
   let currentSocket = null;
 
   const sendProgress = (hop, total, label, status, error) => {
@@ -453,14 +539,14 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           },
         ),
       };
-      attachSshDebugLogger(connOpts);
+      attachSshDebugLogger(connOpts, sshDiagnosticLogger);
       logSshAlgorithms("Jump host", connOpts.algorithms, {
         hostname: jump.hostname,
         port: jump.port || 22,
         legacyAlgorithms: !!(jump.legacyAlgorithms ?? options.legacyAlgorithms),
         skipEcdsaHostKey: !!jump.skipEcdsaHostKey,
         hasAlgorithmOverrides: !!jump.algorithmOverrides,
-      });
+      }, sshDiagnosticLogger);
 
       // Auth - support agent (certificate), key, password, and default key fallback
       const hasCertificate =
@@ -701,12 +787,13 @@ const startSessionApi = createStartSessionApi({
   fs, path, os, net, crypto, Buffer, process, console, setTimeout, clearTimeout,
   createProxySocket, attachX11Forwarding, createPtyOutputBuffer, sessionLogStreamManager,
   trackSessionIdlePrompt, looksLikeIdleAutoLogout, createZmodemSentry, enableSshNoDelay, enableTcpNoDelay,
-  iconv, getSessionDecoder, resetSessionDecoders, sessionEncodings, sessionDecoders,
+  iconv, getSessionDecoder, resetSessionDecoders, sessionEncodings, sessionDecoders, encodeTerminalInput,
   connectThroughChain, getAvailableAgentSocket, getCachedAuthMethod, setCachedAuthMethod, clearCachedAuthMethod,
   attachSshDebugLogger, logSshAlgorithms, resolveLangFromCharset, safeSend, zmodemOverwritePending,
-  shouldLogSshDebugMessage, log,
+  shouldLogSshDebugMessage, log, createSshDiagnosticLogger,
   buildAlgorithms, randomUUID, findDefaultPrivateKey, findAllDefaultPrivateKeys,
   preparePrivateKeyForAuth, loadFirstIdentityFileForAuth, createKeyboardInteractiveHandler,
+  createConnectionRef, acquireConnectionRef, releaseConnectionRef, findReusableSession,
   get probeReceiveConflicts() { return probeReceiveConflicts; },
   get removeRemoteFiles() { return removeRemoteFiles; },
   get restoreRemoteModes() { return restoreRemoteModes; },
@@ -883,13 +970,34 @@ async function startSSHSessionWrapper(event, options) {
  * classify network devices from the banner without running any additional
  * exec channels.
  */
+// Companion stats connection for Mosh sessions (issue #1198). Mosh runs over
+// UDP and has no ssh2 connection, so getServerStats cannot open an exec
+// channel. This helper lazily establishes a best-effort, non-interactive
+// SSH connection reusing the handshake credentials and assigns it to
+// session.conn so the existing stats path works unchanged.
+const { createSystemKnownHostsApi } = require("./sshBridge/systemKnownHosts.cjs");
+// Lets the Mosh stats companion trust a host whose key is already recorded in
+// the user's system OpenSSH known_hosts (the trust source the Mosh handshake's
+// system `ssh` actually uses), in addition to Netcatty's in-app vault.
+const { isHostKeyTrustedBySystem } = createSystemKnownHostsApi({
+  fs, path, os, crypto, log,
+});
+
+const { createMoshStatsConnectionApi } = require("./sshBridge/moshStatsConnection.cjs");
+const { ensureMoshStatsConnection } = createMoshStatsConnectionApi({
+  get sessions() { return sessions; },
+  SSHClient, sshUtils, NetcattyAgent, buildAlgorithms, getSshAgentSocket,
+  readFileNoFollow, expandIdentityFilePath, isAutoFillablePasswordChallenge,
+  hostKeyVerifier, isHostKeyTrustedBySystem, log,
+});
+
 const { createSessionOpsApi } = require("./sshBridge/sessionOps.cjs");
 const sessionOpsApi = createSessionOpsApi({
   get sessions() { return sessions; },
   get electronModule() { return electronModule; },
   fs, path, os, exec, randomUUID, iconv, Buffer, process, console, setTimeout, clearTimeout,
   getSessionDecoder, resetSessionDecoders, sessionEncodings, resolveLangFromCharset, safeSend,
-  quoteShellArg, log,
+  quoteShellArg, log, ensureMoshStatsConnection,
   getServerStats: undefined,
 });
 const {
@@ -917,6 +1025,8 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:ssh:stats", getServerStats);
   ipcMain.handle("netcatty:key:generate", generateKeyPair);
   ipcMain.handle("netcatty:ssh:setEncoding", setSessionEncoding);
+  ipcMain.handle("netcatty:sshDebugLog:info", getSshDebugLogInfo);
+  ipcMain.handle("netcatty:sshDebugLog:openDir", openSshDebugLogDir);
   ipcMain.handle("netcatty:ssh:check-agent", async () => {
     return await checkWindowsSshAgent();
   });
@@ -955,5 +1065,9 @@ module.exports = {
   connectThroughChain,
   buildAlgorithms,
   _resetAlgorithmSupportCacheForTests,
+  _appendSshDiagnosticLog: appendSshDiagnosticLog,
+  _createSshDiagnosticLogger: createSshDiagnosticLogger,
+  _getSshDebugLogFilePath: getSshDebugLogFilePath,
+  _setSshDebugLoggingEnabled: setSshDebugLoggingEnabled,
   _shouldLogSshDebugMessage: shouldLogSshDebugMessage,
 };

@@ -6,6 +6,11 @@ import {
 
 type WheelLike = Pick<WheelEvent, "ctrlKey" | "metaKey" | "deltaY">;
 
+export const terminalFontSizeWheelListenerOptions = {
+  passive: false,
+  capture: true,
+} as const satisfies AddEventListenerOptions;
+
 export const clampTerminalFontSize = (fontSize: number): number =>
   Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, fontSize));
 
