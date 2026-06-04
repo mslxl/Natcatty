@@ -37,6 +37,21 @@ export function buildManagedAgentState(
   const otherAgents = prevAgents.filter((agent) => agent.id !== managedId);
 
   if (!pathInfo?.available || !pathInfo.path) {
+    // If the user has pre-configured env vars (e.g. CODEBUDDY_AUTH_TOKEN)
+    // before the CLI is installed, preserve the entry as disabled so their
+    // settings survive until the CLI becomes available. Without this, a
+    // failed "Check" or a temporarily-missing PATH would silently wipe
+    // the user's configuration.
+    const existingManaged = managedAgents.find((agent) => agent.id === managedId);
+    const hasUserEnvConfig = Boolean(existingManaged?.env && Object.keys(existingManaged.env).length > 0);
+    if (hasUserEnvConfig && existingManaged) {
+      return {
+        agents: [...otherAgents, { ...existingManaged, enabled: false }],
+        defaultAgentId: managedAgents.some((agent) => agent.id === defaultAgentId)
+          ? "catty"
+          : defaultAgentId,
+      };
+    }
     return {
       agents: otherAgents,
       defaultAgentId: managedAgents.some((agent) => agent.id === defaultAgentId)

@@ -271,7 +271,7 @@ function registerAcpHandlers(ctx) {
           // process spawned with the old env.
           ? JSON.stringify(normalizeAgentEnv(requestedAgentEnv))
         : isCodebuddyAgent
-          // Same rationale as Claude: Codebuddy auth/config (API key, internet
+          // Same rationale as Claude: Codebuddy auth/config (auth token, internet
           // environment) is carried entirely in agentEnv, so a change must
           // invalidate the cached provider to avoid serving stale credentials.
           ? JSON.stringify(normalizeAgentEnv(requestedAgentEnv))
@@ -734,7 +734,7 @@ function registerAcpHandlers(ctx) {
         if (!isActiveAcpRun(chatSessionId, requestId)) {
           return { ok: true };
         }
-        if (isClaudeAgent) {
+        if (isClaudeAgent || isCodebuddyAgent) {
           // Reap the persistent agent process so a failed turn doesn't leak
           // node.exe processes (provider uses persistSession:true).
           cleanupAcpProvider(chatSessionId);
@@ -745,6 +745,8 @@ function registerAcpHandlers(ctx) {
             ? "Codex returned an empty response. Connect Codex in Settings -> AI, or configure an enabled OpenAI provider API key."
             : isClaudeAgent && claudeAuthPresence === "none"
               ? CLAUDE_AUTH_HELP_MESSAGE
+              : isCodebuddyAgent && codebuddyAuthPresence === "none"
+                ? CODEBUDDY_AUTH_HELP_MESSAGE
               : "Agent returned an empty response.",
         });
       } else {

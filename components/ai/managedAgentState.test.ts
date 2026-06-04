@@ -106,6 +106,73 @@ test('buildManagedAgentState does not remove user-created matching agents', () =
   assert.equal(state.defaultAgentId, 'my-claude-wrapper');
 });
 
+test('buildManagedAgentState preserves pre-configured env when CLI is unavailable', () => {
+  const agents: ExternalAgentConfig[] = [
+    {
+      id: 'discovered_codebuddy',
+      name: 'CodeBuddy Code',
+      command: 'codebuddy',
+      enabled: true,
+      acpCommand: 'codebuddy',
+      acpArgs: ['--acp'],
+      env: { CODEBUDDY_AUTH_TOKEN: 'some-token', CODEBUDDY_INTERNET_ENVIRONMENT: 'HTTP_PROXY=http://proxy:8080' },
+    },
+  ];
+
+  // CLI not found — path detection fails
+  const state = buildManagedAgentState(
+    agents,
+    'discovered_codebuddy',
+    'codebuddy',
+    { path: '', version: null, available: false },
+  );
+
+  // Entry should be preserved (disabled) so user's env config survives
+  assert.equal(state.agents.length, 1);
+  assert.equal(state.agents[0].id, 'discovered_codebuddy');
+  assert.equal(state.agents[0].enabled, false);
+  assert.deepEqual(state.agents[0].env, {
+    CODEBUDDY_AUTH_TOKEN: 'some-token',
+    CODEBUDDY_INTERNET_ENVIRONMENT: 'HTTP_PROXY=http://proxy:8080',
+  });
+  assert.equal(state.defaultAgentId, 'catty');
+});
+
+test('buildManagedAgentState preserves pre-configured env when CLI is temporarily missing (path=null)', () => {
+  const agents: ExternalAgentConfig[] = [
+    {
+      id: 'discovered_codebuddy',
+      name: 'CodeBuddy Code',
+      command: '/usr/local/bin/codebuddy',
+      enabled: true,
+      acpCommand: '/usr/local/bin/codebuddy',
+      acpArgs: ['--acp'],
+      env: { CODEBUDDY_AUTH_TOKEN: 'tok-123' },
+    },
+    {
+      id: 'custom-agent',
+      name: 'Custom',
+      command: 'custom',
+      enabled: true,
+    },
+  ];
+
+  const state = buildManagedAgentState(
+    agents,
+    'discovered_codebuddy',
+    'codebuddy',
+    null,
+  );
+
+  assert.deepEqual(
+    state.agents.map((agent) => agent.id),
+    ['custom-agent', 'discovered_codebuddy'],
+  );
+  assert.equal(state.agents[1].enabled, false);
+  assert.deepEqual(state.agents[1].env, { CODEBUDDY_AUTH_TOKEN: 'tok-123' });
+  assert.equal(state.defaultAgentId, 'catty');
+});
+
 test('buildManagedAgentState only rewrites settings-managed discovered agents', () => {
   const agents: ExternalAgentConfig[] = [
     {

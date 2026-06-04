@@ -94,6 +94,7 @@ function writeFakeClaudeVersion(filePath, version = "2.1.145 (Claude Code)") {
 function loadBridgeWithMocks(options = {}) {
   const streamCalls = [];
   const safeSendCalls = [];
+  let cleanupCallCount = 0;
   let providerCreationCount = 0;
   const providerCreationArgs = [];
 
@@ -106,7 +107,9 @@ function loadBridgeWithMocks(options = {}) {
     getSessionId() {
       return "fresh-session";
     },
-    cleanup() {},
+    cleanup() {
+      cleanupCallCount += 1;
+    },
   };
 
   const mocks = {
@@ -192,6 +195,12 @@ function loadBridgeWithMocks(options = {}) {
       getCodexValidationCache: () => null,
       setCodexValidationCache() {},
     },
+    "./ai/codebuddyAuth.cjs": {
+      detectCodebuddyAuthPresence: (...args) =>
+        typeof options.detectCodebuddyAuthPresence === "function"
+          ? options.detectCodebuddyAuthPresence(...args)
+          : "none",
+    },
     "./ai/ptyExec.cjs": {
       execViaPty: async () => {
         throw new Error("execViaPty should not be called in this test");
@@ -232,7 +241,9 @@ function loadBridgeWithMocks(options = {}) {
             getSessionId() {
               return "stale-session";
             },
-            cleanup() {},
+            cleanup() {
+              cleanupCallCount += 1;
+            },
           };
         }
         return fallbackProvider;
@@ -271,6 +282,7 @@ function loadBridgeWithMocks(options = {}) {
       streamCalls,
       safeSendCalls,
       providerCreationArgs,
+      getCleanupCallCount: () => cleanupCallCount,
       restore() {
         try {
           bridge.cleanup();
@@ -607,6 +619,44 @@ test("ACP stream rewrites Windows Claude cmd shim env before creating claude-age
   }
 });
 
+test("ACP stream shows CodeBuddy auth guidance and cleans up provider after empty response", async () => {
+  const { bridge, safeSendCalls, getCleanupCallCount, restore } = loadBridgeWithMocks({
+    detectCodebuddyAuthPresence: () => "none",
+    createACPProvider: ({ fallbackProvider }) => fallbackProvider,
+    streamText: () => createEmptyStreamResult(),
+  });
+  const ipcMain = createIpcMainStub();
+
+  bridge.init({
+    sessions: new Map(),
+    sftpClients: new Map(),
+    electronModule: { app: { getPath: () => process.cwd() } },
+  });
+  bridge.registerHandlers(ipcMain);
+
+  try {
+    const streamHandler = ipcMain.handlers.get("netcatty:ai:acp:stream");
+    assert.equal(typeof streamHandler, "function");
+
+    await streamHandler({ sender: { id: 1 } }, {
+      requestId: "req-codebuddy-empty",
+      chatSessionId: "chat-codebuddy-empty",
+      acpCommand: "codebuddy",
+      acpArgs: ["--acp"],
+      prompt: "hello",
+      historyMessages: [],
+      toolIntegrationMode: "mcp",
+      agentEnv: {},
+    });
+
+    const errorEvent = safeSendCalls.find((call) => call.channel === "netcatty:ai:acp:error");
+    assert.match(errorEvent?.payload?.error || "", /CodeBuddy has no usable authentication/);
+    assert.equal(getCleanupCallCount(), 1);
+  } finally {
+    restore();
+  }
+});
+
 test("replays fallback history only after creating a fresh ACP session when the recovered turn fails", async () => {
   const { bridge, streamCalls, providerCreationArgs, restore } = loadBridgeWithMocks();
   const ipcMain = createIpcMainStub();
@@ -679,4 +729,3 @@ test("replays fallback history only after creating a fresh ACP session when the 
   assert.equal("existingSessionId" in providerCreationArgs[1], false);
   assert.equal("existingSessionId" in providerCreationArgs[2], false);
 });
-
