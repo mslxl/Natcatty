@@ -41,9 +41,13 @@ const {
 } = require("./ai/shellUtils.cjs");
 
 const { detectClaudeAuthPresence, expandHomePath } = require("./ai/claudeAuth.cjs");
+const { detectCodebuddyAuthPresence } = require("./ai/codebuddyAuth.cjs");
 
 const CLAUDE_AUTH_HELP_MESSAGE =
   "Claude Code has no usable authentication. Open Settings -> AI -> Claude Code and set a Config directory (point it at a folder where you've run `claude` login) or add an ANTHROPIC_API_KEY under Environment variables. Alternatively, run `claude` in a terminal to log in.";
+
+const CODEBUDDY_AUTH_HELP_MESSAGE =
+  "CodeBuddy has no usable authentication. Set CODEBUDDY_AUTH_TOKEN in Settings -> AI -> CodeBuddy Code, export it in your shell environment, or create ~/.codebuddy/settings.json with your credentials.";
 
 const {
   codexLoginSessions,
@@ -834,8 +838,10 @@ function createHandlerContext(ipcMain) {
     serializeStreamChunk,
     toUnpackedAsarPath,
     detectClaudeAuthPresence,
+    detectCodebuddyAuthPresence,
     expandHomePath,
     CLAUDE_AUTH_HELP_MESSAGE,
+    CODEBUDDY_AUTH_HELP_MESSAGE,
     codexLoginSessions,
     resolveCodexAcpBinaryPath,
     appendCodexLoginOutput,

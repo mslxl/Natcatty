@@ -174,21 +174,21 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     () => externalAgents.find((a) => a.id === "discovered_codebuddy")?.env,
     [externalAgents],
   );
-  const { apiKey: codebuddyApiKey, internetEnv: codebuddyInternetEnv, envText: codebuddyEnvText } = useMemo(
+  const { internetEnv: codebuddyInternetEnv, envText: codebuddyEnvText } = useMemo(
     () => splitCodebuddyEnv(codebuddyManagedEnv),
     [codebuddyManagedEnv],
   );
 
   const updateCodebuddyEnv = useCallback(
-    (nextApiKey: string, nextInternetEnv: string, nextEnvText: string) => {
+    (nextInternetEnv: string, nextEnvText: string) => {
       setExternalAgents((prev) => {
         const existingIndex = prev.findIndex((a) => a.id === "discovered_codebuddy");
-        const newEnv = buildCodebuddyEnv(undefined, nextApiKey, nextInternetEnv, nextEnvText);
+        const newEnv = buildCodebuddyEnv(undefined, nextInternetEnv, nextEnvText);
 
         if (existingIndex >= 0) {
           // Update existing entry
           return prev.map((a, i) =>
-            i === existingIndex ? { ...a, env: buildCodebuddyEnv(a.env, nextApiKey, nextInternetEnv, nextEnvText) } : a,
+            i === existingIndex ? { ...a, env: buildCodebuddyEnv(a.env, nextInternetEnv, nextEnvText) } : a,
           );
         }
 
@@ -659,12 +659,10 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               customPath={codebuddyCustomPath}
               onCustomPathChange={setCodebuddyCustomPath}
               onRecheckPath={() => void handleCheckCustomPath("codebuddy")}
-              apiKey={codebuddyApiKey}
-              onApiKeyChange={(v) => updateCodebuddyEnv(v, codebuddyInternetEnv, codebuddyEnvText)}
               internetEnv={codebuddyInternetEnv}
-              onInternetEnvChange={(v) => updateCodebuddyEnv(codebuddyApiKey, v, codebuddyEnvText)}
+              onInternetEnvChange={(v) => updateCodebuddyEnv(v, codebuddyEnvText)}
               envText={codebuddyEnvText}
-              onEnvTextChange={(v) => updateCodebuddyEnv(codebuddyApiKey, codebuddyInternetEnv, v)}
+              onEnvTextChange={(v) => updateCodebuddyEnv(codebuddyInternetEnv, v)}
             />
           </div>
 

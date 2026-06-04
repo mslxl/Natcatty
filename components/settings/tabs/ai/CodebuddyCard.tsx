@@ -19,8 +19,6 @@ export const CodebuddyCard: React.FC<{
   customPath: string;
   onCustomPathChange: (path: string) => void;
   onRecheckPath: () => void;
-  apiKey: string;
-  onApiKeyChange: (value: string) => void;
   internetEnv: string;
   onInternetEnvChange: (value: string) => void;
   envText: string;
@@ -31,8 +29,6 @@ export const CodebuddyCard: React.FC<{
   customPath,
   onCustomPathChange,
   onRecheckPath,
-  apiKey,
-  onApiKeyChange,
   internetEnv,
   onInternetEnvChange,
   envText,
@@ -43,7 +39,7 @@ export const CodebuddyCard: React.FC<{
   // Collapsed by default; auto-expand when the user already has config so it
   // isn't hidden. Local UI state — not persisted.
   const [configOpen, setConfigOpen] = useState(
-    () => Boolean(apiKey.trim() || internetEnv.trim() || envText.trim()),
+    () => Boolean(internetEnv.trim() || envText.trim()),
   );
 
   // The env editor keeps the raw text the user types. Persisting parses it into
@@ -138,18 +134,6 @@ export const CodebuddyCard: React.FC<{
         </button>
         {configOpen && (
           <div className="space-y-3 mt-3">
-            <div className="space-y-1.5">
-              <label htmlFor="codebuddy-api-key" className="text-xs text-muted-foreground">{t('ai.codebuddy.apiKey')}</label>
-              <input
-                id="codebuddy-api-key"
-                type="password"
-                value={apiKey}
-                onChange={(e) => onApiKeyChange(e.target.value)}
-                placeholder={t('ai.codebuddy.apiKey.placeholder')}
-                className="w-full h-8 rounded-md border border-input bg-background px-3 text-sm font-mono placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              />
-              <p className="text-[11px] text-muted-foreground leading-4">{t('ai.codebuddy.apiKey.hint')}</p>
-            </div>
             <div className="space-y-1.5">
               <label htmlFor="codebuddy-internet-env" className="text-xs text-muted-foreground">{t('ai.codebuddy.internetEnv')}</label>
               <select

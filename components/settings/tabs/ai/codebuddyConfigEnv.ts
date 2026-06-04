@@ -3,11 +3,15 @@
  * The managed CodeBuddy agent stores everything in its
  * ExternalAgentConfig.env; this splits that into the editable pieces and
  * recombines them.
+ *
+ * NOTE: CodeBuddy CLI does NOT use CODEBUDDY_API_KEY. Only
+ * CODEBUDDY_INTERNET_ENVIRONMENT is managed as a first-class field.
+ * Users who need CODEBUDDY_AUTH_TOKEN should set it in the free-text
+ * environment editor or in their shell profile.
  */
 
-const API_KEY_VAR = "CODEBUDDY_API_KEY";
 const INTERNET_ENV_VAR = "CODEBUDDY_INTERNET_ENVIRONMENT";
-const MANAGED_KEYS = new Set([API_KEY_VAR, INTERNET_ENV_VAR]);
+const MANAGED_KEYS = new Set([INTERNET_ENV_VAR]);
 
 export function parseEnvLines(text: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -31,28 +35,23 @@ export function serializeEnvLines(env: Record<string, string>): string {
 
 export function splitCodebuddyEnv(
   env: Record<string, string> | undefined,
-): { apiKey: string; internetEnv: string; envText: string } {
-  if (!env) return { apiKey: "", internetEnv: "", envText: "" };
-  const apiKey = env[API_KEY_VAR] ?? "";
+): { internetEnv: string; envText: string } {
+  if (!env) return { internetEnv: "", envText: "" };
   const internetEnv = env[INTERNET_ENV_VAR] ?? "";
   const rest: Record<string, string> = {};
   for (const [k, v] of Object.entries(env)) {
     if (MANAGED_KEYS.has(k)) continue;
     rest[k] = v;
   }
-  return { apiKey, internetEnv, envText: serializeEnvLines(rest) };
+  return { internetEnv, envText: serializeEnvLines(rest) };
 }
 
 export function buildCodebuddyEnv(
   prevEnv: Record<string, string> | undefined,
-  apiKey: string,
   internetEnv: string,
   envText: string,
 ): Record<string, string> | undefined {
   const next: Record<string, string> = {};
-
-  const trimmedApiKey = String(apiKey || "").trim();
-  if (trimmedApiKey) next[API_KEY_VAR] = trimmedApiKey;
 
   const trimmedInternetEnv = String(internetEnv || "").trim();
   if (trimmedInternetEnv) next[INTERNET_ENV_VAR] = trimmedInternetEnv;
