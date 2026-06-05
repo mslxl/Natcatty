@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import type { Host, ProxyProfile } from "./models.ts";
 import {
+  formatProxyConfigEndpoint,
+  formatProxyConfigType,
   isCompleteProxyConfig,
   normalizeManualProxyConfig,
   materializeHostProxyProfile,
@@ -119,5 +121,30 @@ test("isCompleteProxyConfig accepts a non-empty command proxy", () => {
       command: "cloudflared access ssh --hostname %h",
     }),
     true,
+  );
+});
+
+test("formatProxyConfigEndpoint hides command proxy contents in summaries", () => {
+  assert.equal(
+    formatProxyConfigEndpoint({
+      type: "command",
+      host: "",
+      port: 0,
+      command: "cloudflared access ssh --hostname %h --token secret",
+    }),
+    "ProxyCommand",
+  );
+});
+
+test("formatProxyConfigType labels command proxies without uppercasing", () => {
+  assert.equal(formatProxyConfigType({ type: "http", host: "proxy.example.com", port: 3128 }), "HTTP");
+  assert.equal(
+    formatProxyConfigType({
+      type: "command",
+      host: "",
+      port: 0,
+      command: "cloudflared access ssh --hostname %h",
+    }),
+    "ProxyCommand",
   );
 });

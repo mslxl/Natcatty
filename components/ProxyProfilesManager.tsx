@@ -107,12 +107,13 @@ const proxyProtocolMeta = {
     iconClassName: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
   },
   command: {
-    label: "Command",
+    labelKey: "hostDetails.proxyPanel.command",
     Icon: SquareTerminal,
     iconClassName: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
   },
 } satisfies Record<ProxyConfig["type"], {
-  label: string;
+  label?: string;
+  labelKey?: string;
   Icon: React.ComponentType<{ size?: number; className?: string }>;
   iconClassName: string;
 }>;
@@ -141,9 +142,10 @@ const ProxyProfileCard: React.FC<ProxyProfileCardProps> = ({
   const { t } = useI18n();
   const usageLabel = t("proxyProfiles.usage", { count: usageCount });
   const protocol = proxyProtocolMeta[profile.config.type];
+  const protocolLabel = protocol.labelKey ? t(protocol.labelKey) : protocol.label;
   const ProtocolIcon = protocol.Icon;
   const endpoint = formatProxyConfigEndpoint(profile.config);
-  const accessibleLabel = `${profile.label}, ${protocol.label}, ${endpoint}, ${usageLabel}`;
+  const accessibleLabel = `${profile.label}, ${protocolLabel}, ${endpoint}, ${usageLabel}`;
 
   return (
     <ContextMenu>
@@ -166,7 +168,7 @@ const ProxyProfileCard: React.FC<ProxyProfileCardProps> = ({
                 "h-11 w-11 rounded-xl flex items-center justify-center",
                 protocol.iconClassName,
               )}
-              title={protocol.label}
+              title={protocolLabel}
             >
               <ProtocolIcon size={18} />
             </div>
@@ -176,7 +178,7 @@ const ProxyProfileCard: React.FC<ProxyProfileCardProps> = ({
               </div>
               <div className="text-[11px] font-mono text-muted-foreground truncate">
                 {endpoint} -{" "}
-                {protocol.label}
+                {protocolLabel}
               </div>
             </div>
           </div>

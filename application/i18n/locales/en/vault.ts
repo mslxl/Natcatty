@@ -553,7 +553,7 @@ export const enVaultMessages: Messages = {
   'hostDetails.proxy.configure': 'Configure Proxy',
   'hostDetails.proxyPanel.title': 'Proxy via HTTP/SOCKS5/Command',
   'hostDetails.proxyPanel.hostPlaceholder': 'Proxy host',
-  'hostDetails.proxyPanel.command': 'Command',
+  'hostDetails.proxyPanel.command': 'ProxyCommand',
   'hostDetails.proxyPanel.commandPlaceholder': 'cloudflared access ssh --hostname %h',
   'hostDetails.proxyPanel.commandHelp': 'Use %h for the target host, %p for the target port, and %% for a literal percent.',
   'hostDetails.proxyPanel.credentials': 'Credentials',

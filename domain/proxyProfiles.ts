@@ -50,8 +50,14 @@ export const hasUsableProxyConfig = (config: ProxyConfig | undefined): boolean =
 
 export const formatProxyConfigEndpoint = (config: ProxyConfig | undefined): string => {
   if (!config) return "";
-  if (isProxyCommandConfig(config)) return config.command?.trim() || "";
+  if (isProxyCommandConfig(config)) return "ProxyCommand";
   return `${config.host}:${config.port}`;
+};
+
+export const formatProxyConfigType = (config: ProxyConfig | undefined): string => {
+  if (!config) return "";
+  if (isProxyCommandConfig(config)) return "ProxyCommand";
+  return config.type.toUpperCase();
 };
 
 export function findProxyProfile(

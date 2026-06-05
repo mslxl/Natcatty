@@ -5,7 +5,7 @@
 import { Check, Globe, KeyRound, SquareTerminal, Trash2 } from 'lucide-react';
 import React, { useCallback, useMemo } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
-import { formatProxyConfigEndpoint, isProxyCommandConfig, isValidProxyPort } from '../../domain/proxyProfiles';
+import { formatProxyConfigEndpoint, formatProxyConfigType, isProxyCommandConfig, isValidProxyPort } from '../../domain/proxyProfiles';
 import { cn } from '../../lib/utils';
 import { ProxyConfig, ProxyProfile } from '../../types';
 import { AsidePanel, AsidePanelContent, type AsidePanelLayout } from '../ui/aside-panel';
@@ -107,7 +107,7 @@ export const ProxyPanel: React.FC<ProxyPanelProps> = ({
                             <div className="min-w-0 rounded-md bg-secondary/50 p-2 text-sm">
                                 <div className="flex min-w-0 items-center gap-2">
                                     <Badge variant="secondary" className="text-xs shrink-0">
-                                        {selectedProfile.config.type.toUpperCase()}
+                                        {formatProxyConfigType(selectedProfile.config)}
                                     </Badge>
                                     <span className="truncate">
                                         {formatProxyConfigEndpoint(selectedProfile.config)}

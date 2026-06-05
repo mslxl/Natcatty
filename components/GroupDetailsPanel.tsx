@@ -15,6 +15,7 @@ import { customThemeStore } from "../application/state/customThemeStore";
 import { resolveGroupDefaults, resolveGroupTerminalThemeId } from "../domain/groupConfig";
 import {
   formatProxyConfigEndpoint,
+  formatProxyConfigType,
   isCompleteProxyConfig,
   normalizeManualProxyConfig,
 } from "../domain/proxyProfiles";
@@ -142,7 +143,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
     ? t("hostDetails.proxyPanel.missingSaved")
     : selectedProxyProfile
       ? selectedProxyProfile.label
-      : `${form.proxyConfig?.type?.toUpperCase()} ${formatProxyConfigEndpoint(form.proxyConfig)}`;
+      : `${formatProxyConfigType(form.proxyConfig)} ${formatProxyConfigEndpoint(form.proxyConfig)}`;
 
   const update = <K extends keyof GroupConfig>(key: K, value: GroupConfig[K] | undefined) => {
     setForm((prev) => ({ ...prev, [key]: value }));

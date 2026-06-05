@@ -19,15 +19,26 @@ test("substituteProxyCommand replaces OpenSSH-style host and port tokens for POS
   );
 });
 
-test("substituteProxyCommand replaces OpenSSH-style host and port tokens for Windows cmd.exe", () => {
+test("substituteProxyCommand quotes safe OpenSSH-style host and port tokens for Windows cmd.exe", () => {
   assert.equal(
     substituteProxyCommand(
       "cloudflared access ssh --hostname %h --port %p --literal %%",
-      'server "quoted" %USERPROFILE%.example.com',
+      "server.example.com",
       2222,
       { platform: "win32" },
     ),
-    'cloudflared access ssh --hostname "server \\"quoted\\" ^%USERPROFILE^%.example.com" --port "2222" --literal %',
+    'cloudflared access ssh --hostname "server.example.com" --port "2222" --literal %',
+  );
+});
+
+test("substituteProxyCommand rejects unsafe Windows cmd.exe placeholder values", () => {
+  assert.throws(
+    () => substituteProxyCommand("proxy --host %h", 'server" & whoami & "', 22, { platform: "win32" }),
+    /cannot be safely substituted/,
+  );
+  assert.throws(
+    () => substituteProxyCommand("proxy --host %h", "%USERPROFILE%.example.com", 22, { platform: "win32" }),
+    /cannot be safely substituted/,
   );
 });
 

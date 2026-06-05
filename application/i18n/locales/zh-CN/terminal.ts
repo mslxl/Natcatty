@@ -348,7 +348,7 @@ export const zhCNTerminalMessages: Messages = {
   // Host Details (sub-panels)
   'hostDetails.proxyPanel.title': '通过 HTTP/SOCKS5/命令代理',
   'hostDetails.proxyPanel.hostPlaceholder': '代理主机',
-  'hostDetails.proxyPanel.command': '命令',
+  'hostDetails.proxyPanel.command': 'ProxyCommand',
   'hostDetails.proxyPanel.commandPlaceholder': 'cloudflared access ssh --hostname %h',
   'hostDetails.proxyPanel.commandHelp': '使用 %h 表示目标主机，%p 表示目标端口，%% 表示字面百分号。',
   'hostDetails.proxyPanel.credentials': '凭据',

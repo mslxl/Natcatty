@@ -13,11 +13,11 @@ function quotePosixShellArg(value) {
 }
 
 function quoteWindowsCmdArg(value) {
-    const escaped = String(value)
-        .replace(/(\\*)"/g, '$1$1\\"')
-        .replace(/\\+$/g, "$&$&")
-        .replace(/%/g, "^%");
-    return `"${escaped}"`;
+    const text = String(value);
+    if (/[\0\r\n"%!]/.test(text)) {
+        throw new Error("ProxyCommand target contains characters that cannot be safely substituted on Windows");
+    }
+    return `"${text}"`;
 }
 
 function quoteShellArg(value, platform = process.platform) {

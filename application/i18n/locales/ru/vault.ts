@@ -585,7 +585,7 @@ export const ruVaultMessages: Messages = {
   'hostDetails.proxy.configure': 'Настроить прокси',
   'hostDetails.proxyPanel.title': 'Прокси через HTTP/SOCKS5/Command',
   'hostDetails.proxyPanel.hostPlaceholder': 'Прокси-хост',
-  'hostDetails.proxyPanel.command': 'Command',
+  'hostDetails.proxyPanel.command': 'ProxyCommand',
   'hostDetails.proxyPanel.commandPlaceholder': 'cloudflared access ssh --hostname %h',
   'hostDetails.proxyPanel.commandHelp': 'Используйте %h для целевого хоста, %p для целевого порта и %% для символа процента.',
   'hostDetails.proxyPanel.credentials': 'Учётные данные',
