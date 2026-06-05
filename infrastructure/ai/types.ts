@@ -2,7 +2,19 @@
 import defaultCommandBlocklist from '../../lib/commandBlocklist.json';
 import type { ProviderContinuation } from './providerContinuation';
 
-export type AIProviderId = 'openai' | 'anthropic' | 'google' | 'ollama' | 'openrouter' | 'custom';
+export type AIProviderId =
+  | 'openai'
+  | 'anthropic'
+  | 'google'
+  | 'ollama'
+  | 'openrouter'
+  | 'qwen'
+  | 'deepseek'
+  | 'kimi'
+  | 'zhipu'
+  | 'doubao'
+  | 'mimo'
+  | 'custom';
 
 /**
  * Wire-protocol family for a provider. Three are supported because every
@@ -307,13 +319,95 @@ export const DEFAULT_AI_SETTINGS: AISettings = {
   maxIterations: 20,
 };
 
+export interface ProviderPreset {
+  name: string;
+  defaultBaseURL: string;
+  modelsEndpoint?: string;
+  defaultModels?: readonly string[];
+}
+
 // Provider presets for quick setup
-export const PROVIDER_PRESETS: Record<AIProviderId, { name: string; defaultBaseURL: string; modelsEndpoint?: string }> = {
+export const PROVIDER_PRESETS: Record<AIProviderId, ProviderPreset> = {
   openai: { name: 'OpenAI', defaultBaseURL: 'https://api.openai.com/v1', modelsEndpoint: '/models' },
   anthropic: { name: 'Anthropic', defaultBaseURL: 'https://api.anthropic.com', modelsEndpoint: '/v1/models' },
   google: { name: 'Google AI', defaultBaseURL: 'https://generativelanguage.googleapis.com/v1beta' },
   ollama: { name: 'Ollama', defaultBaseURL: 'http://localhost:11434/v1', modelsEndpoint: '/models' },
   openrouter: { name: 'OpenRouter', defaultBaseURL: 'https://openrouter.ai/api/v1', modelsEndpoint: '/models' },
+  qwen: {
+    name: 'Qwen',
+    defaultBaseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    modelsEndpoint: '/models',
+    defaultModels: [
+      'qwen3.7-plus',
+      'qwen3.7-max',
+      'qwen3.6-plus',
+      'qwen3.6-flash',
+      'qwen3.6-max-preview',
+      'qwen3.5-plus',
+      'qwen3-coder-plus',
+      'qwen3-coder-flash',
+      'qwen-plus',
+      'qwen-plus-latest',
+    ],
+  },
+  deepseek: {
+    name: 'DeepSeek',
+    defaultBaseURL: 'https://api.deepseek.com/v1',
+    modelsEndpoint: '/models',
+    defaultModels: [
+      'deepseek-v4-flash',
+      'deepseek-v4-pro',
+      'deepseek-chat',
+      'deepseek-reasoner',
+    ],
+  },
+  kimi: {
+    name: 'Kimi',
+    defaultBaseURL: 'https://api.moonshot.ai/v1',
+    modelsEndpoint: '/models',
+    defaultModels: [
+      'kimi-k2.6',
+      'kimi-k2.5',
+      'moonshot-v1-128k',
+      'moonshot-v1-32k',
+      'moonshot-v1-8k',
+    ],
+  },
+  zhipu: {
+    name: 'Zhipu',
+    defaultBaseURL: 'https://open.bigmodel.cn/api/paas/v4',
+    modelsEndpoint: '/models',
+    defaultModels: [
+      'glm-5.1',
+      'glm-5',
+      'glm-5-turbo',
+      'glm-4.7',
+      'glm-4.7-flash',
+      'glm-4.6',
+      'glm-4.5',
+      'glm-4.5-air',
+    ],
+  },
+  doubao: {
+    name: 'Doubao',
+    defaultBaseURL: 'https://ark.cn-beijing.volces.com/api/v3',
+    modelsEndpoint: '/models',
+    defaultModels: [
+      'doubao-seed-2-0-pro-260215',
+      'doubao-seed-2-0-lite-260215',
+      'doubao-seed-2-0-mini-260215',
+      'doubao-seed-2-0-code-preview-260215',
+    ],
+  },
+  mimo: {
+    name: 'Xiaomi MiMo',
+    defaultBaseURL: 'https://api.xiaomimimo.com/v1',
+    modelsEndpoint: '/models',
+    defaultModels: [
+      'mimo-v2.5-pro',
+      'mimo-v2.5',
+    ],
+  },
   custom: { name: 'Custom', defaultBaseURL: '' },
 };
 

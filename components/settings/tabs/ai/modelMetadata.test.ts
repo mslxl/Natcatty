@@ -5,6 +5,7 @@ import {
   mergeModelContextWindow,
   parseFetchedModels,
 } from "./modelMetadata.ts";
+import { buildModelSuggestions } from "./ModelSelector.tsx";
 
 test("parseFetchedModels reads common context window fields from model list responses", () => {
   assert.deepEqual(
@@ -31,5 +32,32 @@ test("mergeModelContextWindow stores valid discovered model windows only", () =>
   assert.deepEqual(
     mergeModelContextWindow({ old: 8192 }, "qwen", undefined),
     { old: 8192 },
+  );
+});
+
+test("buildModelSuggestions uses provider presets before fetched model discovery", () => {
+  assert.deepEqual(
+    buildModelSuggestions({
+      presetModels: ["qwen3.6-plus", "qwen3.6-flash"],
+      fetchedModels: [],
+      hasFetched: false,
+      value: "plus",
+    }),
+    [{ id: "qwen3.6-plus" }],
+  );
+});
+
+test("buildModelSuggestions merges fetched and preset models without duplicates", () => {
+  assert.deepEqual(
+    buildModelSuggestions({
+      presetModels: ["kimi-k2.6", "moonshot-v1-128k"],
+      fetchedModels: [
+        { id: "kimi-k2.6", name: "Kimi K2.6" },
+        { id: "moonshot-v1-8k", name: "Moonshot 8K" },
+      ],
+      hasFetched: true,
+      value: "",
+    }).map((model) => model.id),
+    ["kimi-k2.6", "moonshot-v1-128k", "moonshot-v1-8k"],
   );
 });

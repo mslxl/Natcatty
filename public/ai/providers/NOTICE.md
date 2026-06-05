@@ -8,6 +8,13 @@ configuration UI.
 - `anthropic.svg`, `openai.svg`, `google.svg`, `ollama.svg`, `openrouter.svg`,
   `custom.svg` — netcatty.
 
+## From [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Xiaomi_logo_(2021-).svg)
+
+- `xiaomi.svg` — Xiaomi 2021 logo glyph, adapted for monochrome UI display.
+  Wikimedia marks this glyph as public domain because it is simple geometry,
+  while also noting that it may still be protected as a trademark in some
+  jurisdictions.
+
 ## From [lobehub/lobe-icons](https://github.com/lobehub/lobe-icons) (MIT)
 
 Copyright (c) 2023 LobeHub. Used under the MIT License. The full text is

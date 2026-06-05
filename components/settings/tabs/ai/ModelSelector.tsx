@@ -11,11 +11,80 @@ import type { FetchedModel } from "./types";
 import { getFetchBridge } from "./types";
 import { parseFetchedModels } from "./modelMetadata";
 
+export function buildModelSuggestions({
+  presetModels,
+  fetchedModels,
+  hasFetched,
+  value,
+}: {
+  presetModels?: readonly string[];
+  fetchedModels: FetchedModel[];
+  hasFetched: boolean;
+  value: string;
+}): FetchedModel[] {
+  const byId = new Map<string, FetchedModel>();
+  for (const modelId of presetModels ?? []) {
+    const id = modelId.trim();
+    if (id) byId.set(id, { id });
+  }
+  if (hasFetched) {
+    for (const model of fetchedModels) {
+      byId.set(model.id, model);
+    }
+  }
+
+  const allSuggestions = Array.from(byId.values());
+  if (!value.trim()) return allSuggestions;
+  const q = value.toLowerCase();
+  return allSuggestions.filter((m) =>
+    m.id.toLowerCase().includes(q) || (m.name && m.name.toLowerCase().includes(q)),
+  );
+}
+
+export function getModelSuggestionsPresentation({
+  suggestionsLength,
+  isLoading,
+  error,
+  hasFetched,
+  hasPresetModels,
+}: {
+  suggestionsLength: number;
+  isLoading: boolean;
+  error: string | null;
+  hasFetched: boolean;
+  hasPresetModels: boolean;
+}): {
+  showSuggestions: boolean;
+  emptyState: "loading" | "error" | "noMatches" | "loadPrompt" | null;
+  footerState: "loading" | "error" | null;
+} {
+  if (suggestionsLength > 0) {
+    return {
+      showSuggestions: true,
+      emptyState: null,
+      footerState: isLoading ? "loading" : error ? "error" : null,
+    };
+  }
+
+  if (isLoading) {
+    return { showSuggestions: false, emptyState: "loading", footerState: null };
+  }
+  if (error) {
+    return { showSuggestions: false, emptyState: "error", footerState: null };
+  }
+  return {
+    showSuggestions: false,
+    emptyState: hasFetched || hasPresetModels ? "noMatches" : "loadPrompt",
+    footerState: null,
+  };
+}
+
 export const ModelSelector: React.FC<{
   value: string;
   onChange: (value: string) => void;
   baseURL: string;
   modelsEndpoint?: string;
+  presetModels?: readonly string[];
   placeholder?: string;
   apiKey?: string;
   providerId?: AIProviderId;
@@ -23,7 +92,7 @@ export const ModelSelector: React.FC<{
   style?: ProviderStyle;
   skipTLSVerify?: boolean;
   onModelMetadata?: (model: FetchedModel) => void;
-}> = ({ value, onChange, baseURL, modelsEndpoint, placeholder, apiKey, providerId, style, skipTLSVerify, onModelMetadata }) => {
+}> = ({ value, onChange, baseURL, modelsEndpoint, presetModels, placeholder, apiKey, providerId, style, skipTLSVerify, onModelMetadata }) => {
   const { t } = useI18n();
   const [models, setModels] = useState<FetchedModel[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -41,6 +110,8 @@ export const ModelSelector: React.FC<{
   // Ollama runs locally without auth; all other providers need an API key to list models
   const needsApiKey = providerId !== "ollama";
   const canFetch = !!effectiveModelsEndpoint && (!needsApiKey || !!apiKey);
+  const hasPresetModels = (presetModels?.length ?? 0) > 0;
+  const canSuggest = canFetch || hasPresetModels;
   const discoveryKey = JSON.stringify({
     baseURL,
     effectiveModelsEndpoint,
@@ -101,17 +172,24 @@ export const ModelSelector: React.FC<{
     }
   }, [isOpen, canFetch, hasFetched, isLoading, fetchModels]);
 
-  // Filter models by current input value (inline autocomplete)
+  // Filter preset and discovered models by current input value (inline autocomplete).
   const suggestions = useMemo(() => {
-    if (!hasFetched || models.length === 0) return [];
-    if (!value.trim()) return models;
-    const q = value.toLowerCase();
-    return models.filter((m) =>
-      m.id.toLowerCase().includes(q) || (m.name && m.name.toLowerCase().includes(q)),
-    );
-  }, [models, value, hasFetched]);
+    return buildModelSuggestions({
+      presetModels,
+      fetchedModels: models,
+      hasFetched,
+      value,
+    });
+  }, [models, presetModels, value, hasFetched]);
 
-  const showSuggestions = isOpen && canFetch;
+  const showSuggestions = isOpen && canSuggest;
+  const presentation = getModelSuggestionsPresentation({
+    suggestionsLength: suggestions.length,
+    isLoading,
+    error,
+    hasFetched,
+    hasPresetModels,
+  });
 
   return (
     <div className="relative">
@@ -122,17 +200,17 @@ export const ModelSelector: React.FC<{
             value={value}
             onChange={(e) => {
               onChange(e.target.value);
-              if (canFetch && hasFetched && !isOpen) setIsOpen(true);
+              if (canSuggest && !isOpen) setIsOpen(true);
             }}
-            onFocus={() => { if (canFetch) setIsOpen(true); }}
+            onFocus={() => { if (canSuggest) setIsOpen(true); }}
             onBlur={() => { setIsOpen(false); }}
-            placeholder={placeholder ?? (canFetch ? t('ai.providers.searchModel') : t('ai.providers.defaultModel.placeholder'))}
+            placeholder={placeholder ?? (canSuggest ? t('ai.providers.searchModel') : t('ai.providers.defaultModel.placeholder'))}
             className={cn(
               "w-full h-8 rounded-md border border-input bg-background px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-              canFetch && "pr-8",
+              canSuggest && "pr-8",
             )}
           />
-          {canFetch && (
+          {canSuggest && (
             <button
               type="button"
               onMouseDown={(e) => { e.preventDefault(); setIsOpen(!isOpen); }}
@@ -164,16 +242,20 @@ export const ModelSelector: React.FC<{
       {showSuggestions && (
         <div className="absolute top-full left-0 right-0 mt-1 z-[101] rounded-md border border-border bg-popover shadow-md">
           <div className="max-h-60 overflow-y-auto">
-            {isLoading ? (
+            {!presentation.showSuggestions ? (
               <div className="px-3 py-3 text-center text-xs text-muted-foreground">
-                <RefreshCw size={14} className="animate-spin inline mr-1.5" />
-                {t('ai.providers.loadingModels')}
-              </div>
-            ) : error ? (
-              <div className="px-3 py-3 text-center text-xs text-destructive">{error}</div>
-            ) : suggestions.length === 0 ? (
-              <div className="px-3 py-3 text-center text-xs text-muted-foreground">
-                {hasFetched ? t('ai.providers.noMatchingModels') : t('ai.providers.clickToLoadModels')}
+                {presentation.emptyState === "loading" ? (
+                  <>
+                    <RefreshCw size={14} className="animate-spin inline mr-1.5" />
+                    {t('ai.providers.loadingModels')}
+                  </>
+                ) : presentation.emptyState === "error" ? (
+                  <span className="text-destructive">{error}</span>
+                ) : presentation.emptyState === "noMatches" ? (
+                  t('ai.providers.noMatchingModels')
+                ) : (
+                  t('ai.providers.clickToLoadModels')
+                )}
               </div>
             ) : (
               suggestions.slice(0, 100).map((m) => (
@@ -194,6 +276,21 @@ export const ModelSelector: React.FC<{
                   {m.id === value && <Check size={12} className="text-primary shrink-0" />}
                 </button>
               ))
+            )}
+            {presentation.footerState && (
+              <div className={cn(
+                "px-3 py-2 text-center text-[10px] border-t border-border/40",
+                presentation.footerState === "error" ? "text-destructive" : "text-muted-foreground",
+              )}>
+                {presentation.footerState === "loading" ? (
+                  <>
+                    <RefreshCw size={12} className="animate-spin inline mr-1" />
+                    {t('ai.providers.loadingModels')}
+                  </>
+                ) : (
+                  error
+                )}
+              </div>
             )}
             {suggestions.length > 100 && (
               <div className="px-3 py-2 text-center text-[10px] text-muted-foreground border-t border-border/40">
