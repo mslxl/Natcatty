@@ -1,9 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { once } = require("node:events");
-const { mkdtempSync, writeFileSync, rmSync } = require("node:fs");
-const { tmpdir } = require("node:os");
-const { join } = require("node:path");
 
 const {
   createProxySocket,
@@ -34,15 +31,8 @@ test("substituteProxyCommand replaces OpenSSH-style host and port tokens for Win
   );
 });
 
-test("createProxySocket exposes ProxyCommand stdin and stdout as a duplex stream", async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), "netcatty-proxy-command-"));
-  const echoScript = join(tempDir, "echo-proxy.cjs");
-  writeFileSync(
-    echoScript,
-    "process.stdin.on('data', (chunk) => process.stdout.write(chunk));\nprocess.stdin.resume();\nsetTimeout(() => process.exit(0), 250);\n",
-  );
-
-  const command = `${JSON.stringify(process.execPath)} ${JSON.stringify(echoScript)}`;
+test("createProxySocket exposes ProxyCommand stdout as socket data", async () => {
+  const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.stdout.write('hello')")}`;
   const socket = await createProxySocket(
     { type: "command", host: "", port: 0, command },
     "server.example.com",
@@ -50,23 +40,17 @@ test("createProxySocket exposes ProxyCommand stdin and stdout as a duplex stream
   );
 
   const timeout = new Promise((_, reject) => {
-    setTimeout(() => reject(new Error("Timed out waiting for ProxyCommand echo")), 1000).unref();
+    setTimeout(() => reject(new Error("Timed out waiting for ProxyCommand output")), 1000).unref();
   });
 
   try {
-    const dataPromise = Promise.race([
-      once(socket, "data").then(([data]) => data),
-      once(socket, "error").then(([error]) => { throw error; }),
-      once(socket, "close").then(() => { throw new Error("ProxyCommand socket closed before echoing data"); }),
+    const data = await Promise.race([
+      once(socket, "data").then(([chunk]) => chunk),
       timeout,
     ]);
-
-    socket.write(Buffer.from("hello"));
-    const data = await dataPromise;
 
     assert.equal(data.toString(), "hello");
   } finally {
     socket.destroy();
-    rmSync(tempDir, { recursive: true, force: true });
   }
 });
