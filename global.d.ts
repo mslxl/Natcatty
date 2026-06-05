@@ -18,9 +18,10 @@ declare module 'react' {
 declare global {
   // Proxy configuration for SSH connections
   interface NetcattyProxyConfig {
-    type: 'http' | 'socks5';
+    type: 'http' | 'socks5' | 'command';
     host: string;
     port: number;
+    command?: string;
     username?: string;
     password?: string;
   }

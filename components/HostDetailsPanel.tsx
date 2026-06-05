@@ -17,7 +17,11 @@ import {
   getEffectiveHostDistro,
   normalizePrimaryTelnetState,
 } from "../domain/host";
-import { isCompleteProxyConfig, normalizeManualProxyConfig } from "../domain/proxyProfiles";
+import {
+  formatProxyConfigEndpoint,
+  isCompleteProxyConfig,
+  normalizeManualProxyConfig,
+} from "../domain/proxyProfiles";
 import { customThemeStore } from "../application/state/customThemeStore";
 import {
   hasHostFontSizeOverride,
@@ -259,12 +263,12 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
     ? t("hostDetails.proxyPanel.missingSaved")
     : selectedProxyProfile
       ? selectedProxyProfile.label
-      : `${form.proxyConfig?.host}:${form.proxyConfig?.port}`;
+      : formatProxyConfigEndpoint(form.proxyConfig);
   const proxySummaryTooltip = hasMissingProxyProfile
     ? t("hostDetails.proxyPanel.missingSaved")
     : selectedProxyProfile
-      ? `${selectedProxyProfile.label} - ${selectedProxyProfile.config.host}:${selectedProxyProfile.config.port}`
-      : `${form.proxyConfig?.type?.toUpperCase()} ${form.proxyConfig?.host}:${form.proxyConfig?.port}`;
+      ? `${selectedProxyProfile.label} - ${formatProxyConfigEndpoint(selectedProxyProfile.config)}`
+      : `${form.proxyConfig?.type?.toUpperCase()} ${formatProxyConfigEndpoint(form.proxyConfig)}`;
 
   const handleDistroModeChange = useCallback((mode: "auto" | "manual") => {
     setForm((prev) => ({

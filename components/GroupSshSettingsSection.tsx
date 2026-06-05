@@ -449,7 +449,7 @@ export const GroupSshSettingsSection: React.FC<GroupSshSettingsSectionProps> = (
                 <span className="text-sm">{t("hostDetails.proxy")}</span>
               </div>
               <div className="flex min-w-0 items-center gap-2">
-                {(form.proxyConfig?.host || form.proxyProfileId) && (
+                {(form.proxyConfig?.host || form.proxyConfig?.command || form.proxyProfileId) && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <div className="min-w-0 cursor-default">

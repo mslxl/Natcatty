@@ -346,8 +346,11 @@ export const zhCNTerminalMessages: Messages = {
   'settings.shortcuts.binding.sftp-new-folder': '新建文件夹',
 
   // Host Details (sub-panels)
-  'hostDetails.proxyPanel.title': '通过 HTTP/SOCKS5 代理',
+  'hostDetails.proxyPanel.title': '通过 HTTP/SOCKS5/命令代理',
   'hostDetails.proxyPanel.hostPlaceholder': '代理主机',
+  'hostDetails.proxyPanel.command': '命令',
+  'hostDetails.proxyPanel.commandPlaceholder': 'cloudflared access ssh --hostname %h',
+  'hostDetails.proxyPanel.commandHelp': '使用 %h 表示目标主机，%p 表示目标端口，%% 表示字面百分号。',
   'hostDetails.proxyPanel.credentials': '凭据',
   'hostDetails.proxyPanel.usernamePlaceholder': '用户名',
   'hostDetails.proxyPanel.passwordPlaceholder': '密码',
@@ -358,7 +361,7 @@ export const zhCNTerminalMessages: Messages = {
   'hostDetails.proxyPanel.customProxy': '自定义代理',
   'hostDetails.proxyPanel.missing': '缺失',
   'hostDetails.proxyPanel.missingSaved': '保存的代理不存在',
-  'hostDetails.proxyPanel.error.required': '代理主机和端口不能为空。',
+  'hostDetails.proxyPanel.error.required': '代理主机和端口，或 ProxyCommand 不能为空。',
   'hostDetails.envVars.title': '环境变量',
   'hostDetails.envVars.desc': '为 {host} 设置环境变量。',
   'hostDetails.envVars.note': '部分 SSH 服务器默认只允许以 LC_ 和 LANG_ 为前缀的变量。',

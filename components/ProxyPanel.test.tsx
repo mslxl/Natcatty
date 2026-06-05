@@ -78,3 +78,20 @@ test("ProxyPanel disables saving invalid manual proxy ports", () => {
   assert.match(markup, /Port must be between 1 and 65535/);
   assert.match(markup, /disabled=""/);
 });
+
+test("ProxyPanel supports custom ProxyCommand settings", () => {
+  const markup = renderPanel({
+    proxyConfig: {
+      type: "command",
+      host: "",
+      port: 0,
+      command: "cloudflared access ssh --hostname %h",
+    },
+  });
+
+  assert.match(markup, /Command/);
+  assert.match(markup, /cloudflared access ssh --hostname %h/);
+  assert.match(markup, /Use %h for the target host/);
+  assert.doesNotMatch(markup, /Proxy host/);
+  assert.doesNotMatch(markup, /Credentials/);
+});
