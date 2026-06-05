@@ -33,7 +33,7 @@ export const AddProviderDropdown: React.FC<{
           {/* Backdrop */}
           <div className="fixed inset-0 z-[100]" onClick={() => setIsOpen(false)} />
           {/* Menu */}
-          <div className="absolute top-full left-0 mt-1 z-[101] min-w-[200px] rounded-md border border-border bg-popover shadow-md py-1">
+          <div className="absolute top-full right-0 mt-1 z-[101] min-w-[220px] max-w-[calc(100vw-2rem)] rounded-md border border-border bg-popover shadow-md py-1">
             {providerIds.map((pid) => (
               <button
                 key={pid}
