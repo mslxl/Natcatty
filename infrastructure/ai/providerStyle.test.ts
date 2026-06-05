@@ -32,7 +32,8 @@ test("domestic provider presets include editable OpenAI-compatible base URLs", (
 });
 
 test("domestic provider presets expose provider-specific model suggestions", () => {
-  assert.ok(PROVIDER_PRESETS.qwen.defaultModels?.includes("qwen3.6-plus"));
+  assert.equal(PROVIDER_PRESETS.qwen.defaultModels?.[0], "qwen3.7-plus");
+  assert.ok(PROVIDER_PRESETS.qwen.defaultModels?.includes("qwen3.7-max"));
   assert.equal(PROVIDER_PRESETS.deepseek.defaultModels?.[0], "deepseek-v4-flash");
   assert.ok(PROVIDER_PRESETS.kimi.defaultModels?.includes("kimi-k2.6"));
   assert.ok(PROVIDER_PRESETS.zhipu.defaultModels?.includes("glm-5.1"));

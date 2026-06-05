@@ -41,6 +41,44 @@ export function buildModelSuggestions({
   );
 }
 
+export function getModelSuggestionsPresentation({
+  suggestionsLength,
+  isLoading,
+  error,
+  hasFetched,
+  hasPresetModels,
+}: {
+  suggestionsLength: number;
+  isLoading: boolean;
+  error: string | null;
+  hasFetched: boolean;
+  hasPresetModels: boolean;
+}): {
+  showSuggestions: boolean;
+  emptyState: "loading" | "error" | "noMatches" | "loadPrompt" | null;
+  footerState: "loading" | "error" | null;
+} {
+  if (suggestionsLength > 0) {
+    return {
+      showSuggestions: true,
+      emptyState: null,
+      footerState: isLoading ? "loading" : error ? "error" : null,
+    };
+  }
+
+  if (isLoading) {
+    return { showSuggestions: false, emptyState: "loading", footerState: null };
+  }
+  if (error) {
+    return { showSuggestions: false, emptyState: "error", footerState: null };
+  }
+  return {
+    showSuggestions: false,
+    emptyState: hasFetched || hasPresetModels ? "noMatches" : "loadPrompt",
+    footerState: null,
+  };
+}
+
 export const ModelSelector: React.FC<{
   value: string;
   onChange: (value: string) => void;
@@ -145,6 +183,13 @@ export const ModelSelector: React.FC<{
   }, [models, presetModels, value, hasFetched]);
 
   const showSuggestions = isOpen && canSuggest;
+  const presentation = getModelSuggestionsPresentation({
+    suggestionsLength: suggestions.length,
+    isLoading,
+    error,
+    hasFetched,
+    hasPresetModels,
+  });
 
   return (
     <div className="relative">
@@ -197,17 +242,19 @@ export const ModelSelector: React.FC<{
       {showSuggestions && (
         <div className="absolute top-full left-0 right-0 mt-1 z-[101] rounded-md border border-border bg-popover shadow-md">
           <div className="max-h-60 overflow-y-auto">
-            {suggestions.length === 0 ? (
+            {!presentation.showSuggestions ? (
               <div className="px-3 py-3 text-center text-xs text-muted-foreground">
-                {isLoading ? (
+                {presentation.emptyState === "loading" ? (
                   <>
                     <RefreshCw size={14} className="animate-spin inline mr-1.5" />
                     {t('ai.providers.loadingModels')}
                   </>
-                ) : error ? (
+                ) : presentation.emptyState === "error" ? (
                   <span className="text-destructive">{error}</span>
+                ) : presentation.emptyState === "noMatches" ? (
+                  t('ai.providers.noMatchingModels')
                 ) : (
-                  hasFetched || hasPresetModels ? t('ai.providers.noMatchingModels') : t('ai.providers.clickToLoadModels')
+                  t('ai.providers.clickToLoadModels')
                 )}
               </div>
             ) : (
@@ -230,12 +277,12 @@ export const ModelSelector: React.FC<{
                 </button>
               ))
             )}
-            {suggestions.length > 0 && (isLoading || error) && (
+            {presentation.footerState && (
               <div className={cn(
                 "px-3 py-2 text-center text-[10px] border-t border-border/40",
-                error ? "text-destructive" : "text-muted-foreground",
+                presentation.footerState === "error" ? "text-destructive" : "text-muted-foreground",
               )}>
-                {isLoading ? (
+                {presentation.footerState === "loading" ? (
                   <>
                     <RefreshCw size={12} className="animate-spin inline mr-1" />
                     {t('ai.providers.loadingModels')}

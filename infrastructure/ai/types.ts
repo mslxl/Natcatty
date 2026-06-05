@@ -338,6 +338,8 @@ export const PROVIDER_PRESETS: Record<AIProviderId, ProviderPreset> = {
     defaultBaseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     modelsEndpoint: '/models',
     defaultModels: [
+      'qwen3.7-plus',
+      'qwen3.7-max',
       'qwen3.6-plus',
       'qwen3.6-flash',
       'qwen3.6-max-preview',
