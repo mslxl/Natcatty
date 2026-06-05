@@ -8,15 +8,28 @@ const { spawn } = require("node:child_process");
 const { Duplex } = require("node:stream");
 const { enableTcpNoDelay } = require("./tcpNoDelay.cjs");
 
-function quoteShellArg(value) {
+function quotePosixShellArg(value) {
     return "'" + String(value).replace(/'/g, "'\\''") + "'";
 }
 
-function substituteProxyCommand(command, targetHost, targetPort) {
+function quoteWindowsCmdArg(value) {
+    const escaped = String(value)
+        .replace(/(\\*)"/g, '$1$1\\"')
+        .replace(/\\+$/g, "$&$&")
+        .replace(/%/g, "^%");
+    return `"${escaped}"`;
+}
+
+function quoteShellArg(value, platform = process.platform) {
+    return platform === "win32" ? quoteWindowsCmdArg(value) : quotePosixShellArg(value);
+}
+
+function substituteProxyCommand(command, targetHost, targetPort, options = {}) {
+    const platform = options.platform || process.platform;
     return String(command || "").replace(/%%|%h|%p/g, (token) => {
         if (token === "%%") return "%";
-        if (token === "%h") return quoteShellArg(targetHost);
-        if (token === "%p") return quoteShellArg(targetPort);
+        if (token === "%h") return quoteShellArg(targetHost, platform);
+        if (token === "%p") return quoteShellArg(targetPort, platform);
         return token;
     });
 }
@@ -64,7 +77,7 @@ function createProcessSocket(child) {
 }
 
 function createProxyCommandSocket(proxy, targetHost, targetPort, options = {}) {
-    const command = substituteProxyCommand(proxy.command, targetHost, targetPort).trim();
+    const command = substituteProxyCommand(proxy.command, targetHost, targetPort, { platform: process.platform }).trim();
     if (!command) return Promise.reject(new Error("ProxyCommand is required"));
 
     const child = spawn(command, {
