@@ -197,16 +197,18 @@ export const ModelSelector: React.FC<{
       {showSuggestions && (
         <div className="absolute top-full left-0 right-0 mt-1 z-[101] rounded-md border border-border bg-popover shadow-md">
           <div className="max-h-60 overflow-y-auto">
-            {isLoading ? (
+            {suggestions.length === 0 ? (
               <div className="px-3 py-3 text-center text-xs text-muted-foreground">
-                <RefreshCw size={14} className="animate-spin inline mr-1.5" />
-                {t('ai.providers.loadingModels')}
-              </div>
-            ) : error ? (
-              <div className="px-3 py-3 text-center text-xs text-destructive">{error}</div>
-            ) : suggestions.length === 0 ? (
-              <div className="px-3 py-3 text-center text-xs text-muted-foreground">
-                {hasFetched || hasPresetModels ? t('ai.providers.noMatchingModels') : t('ai.providers.clickToLoadModels')}
+                {isLoading ? (
+                  <>
+                    <RefreshCw size={14} className="animate-spin inline mr-1.5" />
+                    {t('ai.providers.loadingModels')}
+                  </>
+                ) : error ? (
+                  <span className="text-destructive">{error}</span>
+                ) : (
+                  hasFetched || hasPresetModels ? t('ai.providers.noMatchingModels') : t('ai.providers.clickToLoadModels')
+                )}
               </div>
             ) : (
               suggestions.slice(0, 100).map((m) => (
@@ -227,6 +229,21 @@ export const ModelSelector: React.FC<{
                   {m.id === value && <Check size={12} className="text-primary shrink-0" />}
                 </button>
               ))
+            )}
+            {suggestions.length > 0 && (isLoading || error) && (
+              <div className={cn(
+                "px-3 py-2 text-center text-[10px] border-t border-border/40",
+                error ? "text-destructive" : "text-muted-foreground",
+              )}>
+                {isLoading ? (
+                  <>
+                    <RefreshCw size={12} className="animate-spin inline mr-1" />
+                    {t('ai.providers.loadingModels')}
+                  </>
+                ) : (
+                  error
+                )}
+              </div>
             )}
             {suggestions.length > 100 && (
               <div className="px-3 py-2 text-center text-[10px] text-muted-foreground border-t border-border/40">
