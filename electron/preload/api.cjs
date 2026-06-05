@@ -197,9 +197,9 @@ function createPreloadApi(ctx) {
     return () => passphraseAuthFailedListeners.delete(cb);
   },
   openSftp: async (options) => {
-    const result = await ipcRenderer.invoke("netcatty:sftp:open", options);
-    return result.sftpId;
-  },
+      const result = await ipcRenderer.invoke("netcatty:sftp:open", options);
+      return result.sftpId;
+    },
   listSftp: async (sftpId, path, encoding) => {
     return ipcRenderer.invoke("netcatty:sftp:list", { sftpId, path, encoding });
   },
