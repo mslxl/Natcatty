@@ -11,6 +11,9 @@ configuration UI.
 ## From [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Xiaomi_logo_(2021-).svg)
 
 - `xiaomi.svg` — Xiaomi 2021 logo glyph, adapted for monochrome UI display.
+  Wikimedia marks this glyph as public domain because it is simple geometry,
+  while also noting that it may still be protected as a trademark in some
+  jurisdictions.
 
 ## From [lobehub/lobe-icons](https://github.com/lobehub/lobe-icons) (MIT)
 

@@ -353,6 +353,8 @@ export const PROVIDER_PRESETS: Record<AIProviderId, ProviderPreset> = {
     defaultBaseURL: 'https://api.deepseek.com/v1',
     modelsEndpoint: '/models',
     defaultModels: [
+      'deepseek-v4-flash',
+      'deepseek-v4-pro',
       'deepseek-chat',
       'deepseek-reasoner',
     ],
@@ -389,11 +391,10 @@ export const PROVIDER_PRESETS: Record<AIProviderId, ProviderPreset> = {
     defaultBaseURL: 'https://ark.cn-beijing.volces.com/api/v3',
     modelsEndpoint: '/models',
     defaultModels: [
-      'doubao-seed-2.0-pro',
-      'doubao-seed-2.0-lite',
-      'doubao-seed-2.0-code',
-      'doubao-seed-1.6',
-      'ep-xxxxxxxxxxxxxxxx',
+      'doubao-seed-2-0-pro-260215',
+      'doubao-seed-2-0-lite-260215',
+      'doubao-seed-2-0-mini-260215',
+      'doubao-seed-2-0-code-preview-260215',
     ],
   },
   mimo: {

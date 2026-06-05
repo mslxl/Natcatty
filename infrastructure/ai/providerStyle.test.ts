@@ -33,10 +33,11 @@ test("domestic provider presets include editable OpenAI-compatible base URLs", (
 
 test("domestic provider presets expose provider-specific model suggestions", () => {
   assert.ok(PROVIDER_PRESETS.qwen.defaultModels?.includes("qwen3.6-plus"));
-  assert.ok(PROVIDER_PRESETS.deepseek.defaultModels?.includes("deepseek-chat"));
+  assert.equal(PROVIDER_PRESETS.deepseek.defaultModels?.[0], "deepseek-v4-flash");
   assert.ok(PROVIDER_PRESETS.kimi.defaultModels?.includes("kimi-k2.6"));
   assert.ok(PROVIDER_PRESETS.zhipu.defaultModels?.includes("glm-5.1"));
-  assert.ok(PROVIDER_PRESETS.doubao.defaultModels?.includes("doubao-seed-2.0-pro"));
+  assert.ok(PROVIDER_PRESETS.doubao.defaultModels?.includes("doubao-seed-2-0-pro-260215"));
+  assert.ok(!PROVIDER_PRESETS.doubao.defaultModels?.some((model) => model.startsWith("ep-")));
   assert.ok(PROVIDER_PRESETS.mimo.defaultModels?.includes("mimo-v2.5-pro"));
   assert.equal(PROVIDER_PRESETS.custom.defaultModels, undefined);
 });
