@@ -313,7 +313,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
             <RefreshCw
               size={14}
               className={
-                pane.loading || pane.reconnecting ? "animate-spin" : ""
+                pane.loading && !pane.connection?.reusedConnection && !pane.reconnecting ? "animate-spin" : ""
               }
             />
           </Button>
@@ -414,7 +414,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
       >
         <RefreshCw
           size={14}
-          className={cn("shrink-0", (pane.loading || pane.reconnecting) && "animate-spin")}
+          className={cn("shrink-0", pane.loading && !pane.connection?.reusedConnection && !pane.reconnecting && "animate-spin")}
         />
         {t("common.refresh")}
       </button>

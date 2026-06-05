@@ -207,6 +207,11 @@ export const useSftpConnections = ({
           isLocal: false,
           status: "connecting",
           currentPath: cachedStartPath,
+          // Suppress loading animation when connection reuse is requested.
+          // If the backend falls back to a fresh connection, the pane stays
+          // non-interactive (loading=true) with stale cached files visible —
+          // no worse than the previous UX of always showing a spinner.
+          reusedConnection: !!options?.sourceSessionId,
         };
 
         updateTab(side, activeTabId, (prev) => ({
@@ -455,6 +460,7 @@ export const useSftpConnections = ({
                   status: "connected",
                   currentPath: startPath,
                   homeDir,
+                  reusedConnection: undefined,
                 }
               : null,
             files,
