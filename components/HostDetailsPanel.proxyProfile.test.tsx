@@ -6,6 +6,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { I18nProvider } from "../application/i18n/I18nProvider.tsx";
 import type { Host } from "../types.ts";
 import HostDetailsPanel, { parseOptionalPortInput } from "./HostDetailsPanel.tsx";
+import {
+  resolvePrimaryProtocolSavePort,
+  resolvePrimaryProtocolSwitchPort,
+} from "./HostDetailsPanel.helpers.ts";
 import { TooltipProvider } from "./ui/tooltip.tsx";
 
 const hostWithMissingProxyProfile: Host = {
@@ -239,6 +243,21 @@ test("HostDetailsPanel displays inherited telnet credentials", () => {
 test("parseOptionalPortInput clears empty port values", () => {
   assert.equal(parseOptionalPortInput(""), undefined);
   assert.equal(parseOptionalPortInput("2325"), 2325);
+});
+
+test("resolvePrimaryProtocolSwitchPort only migrates opposite protocol defaults", () => {
+  assert.equal(resolvePrimaryProtocolSwitchPort(22, "telnet"), 23);
+  assert.equal(resolvePrimaryProtocolSwitchPort(23, "ssh"), 22);
+  assert.equal(resolvePrimaryProtocolSwitchPort(2222, "telnet"), 2222);
+  assert.equal(resolvePrimaryProtocolSwitchPort(2323, "ssh"), 2323);
+  assert.equal(resolvePrimaryProtocolSwitchPort(undefined, "telnet"), undefined);
+});
+
+test("resolvePrimaryProtocolSavePort falls back to telnet default for primary telnet", () => {
+  assert.equal(resolvePrimaryProtocolSavePort("telnet", undefined, false), 23);
+  assert.equal(resolvePrimaryProtocolSavePort("telnet", 2323, false), 2323);
+  assert.equal(resolvePrimaryProtocolSavePort("ssh", undefined, false), 22);
+  assert.equal(resolvePrimaryProtocolSavePort("ssh", undefined, true), undefined);
 });
 
 test("HostDetailsPanel does not offer to disable telnet when telnet is the primary protocol", () => {

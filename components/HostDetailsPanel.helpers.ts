@@ -5,6 +5,24 @@ import { LINUX_DISTRO_OPTIONS, NETWORK_DEVICE_OPTIONS } from "../domain/host";
 export const parseOptionalPortInput = (value: string): number | undefined =>
   value ? Number(value) : undefined;
 
+export const resolvePrimaryProtocolSwitchPort = (
+  currentPort: number | undefined,
+  nextProtocol: "ssh" | "telnet",
+): number | undefined => {
+  if (nextProtocol === "telnet" && currentPort === 22) return 23;
+  if (nextProtocol === "ssh" && currentPort === 23) return 22;
+  return currentPort;
+};
+
+export const resolvePrimaryProtocolSavePort = (
+  protocol: Host["protocol"],
+  currentPort: number | undefined,
+  hasGroupSshPortDefault: boolean,
+): number | undefined => {
+  if (protocol === "telnet") return currentPort ?? 23;
+  return currentPort ?? (hasGroupSshPortDefault ? undefined : 22);
+};
+
 export const resolveDetailsTelnetPort = (
   host: Host,
   groupDefaults?: Partial<GroupConfig>,

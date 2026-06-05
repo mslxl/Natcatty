@@ -36,7 +36,15 @@ import {
 } from "./ui/aside-panel";
 import { HostDetailsAdvancedSections } from "./HostDetailsAdvancedSections";
 import { HostDetailsConnectionSections } from "./HostDetailsConnectionSections";
-import { LINUX_DISTRO_OPTION_IDS, parseOptionalPortInput, resolveDetailsTelnetPassword, resolveDetailsTelnetPort, resolveDetailsTelnetUsername } from "./HostDetailsPanel.helpers";
+import {
+  LINUX_DISTRO_OPTION_IDS,
+  parseOptionalPortInput,
+  resolveDetailsTelnetPassword,
+  resolveDetailsTelnetPort,
+  resolveDetailsTelnetUsername,
+  resolvePrimaryProtocolSavePort,
+  resolvePrimaryProtocolSwitchPort,
+} from "./HostDetailsPanel.helpers";
 export { parseOptionalPortInput } from "./HostDetailsPanel.helpers";
 import { Button } from "./ui/button";
 import { Combobox, ComboboxOption, MultiCombobox } from "./ui/combobox";
@@ -385,10 +393,11 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
     }
 
     const { proxyConfig: _draftProxyConfig, ...formWithoutProxyDraft } = form;
-    const finalPort =
-      form.protocol === "telnet"
-        ? form.port
-        : form.port ?? (groupDefaults?.port ? undefined : 22);
+    const finalPort = resolvePrimaryProtocolSavePort(
+      form.protocol,
+      form.port,
+      Boolean(groupDefaults?.port),
+    );
     let cleaned: Host = {
       ...formWithoutProxyDraft,
       ...(normalizedProxyConfig && { proxyConfig: normalizedProxyConfig }),
@@ -873,7 +882,14 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
               <span className="text-xs text-muted-foreground">{t("hostDetails.telnet.setDefault")}</span>
               <Switch
                 checked={form.protocol === "telnet"}
-                onCheckedChange={(checked) => update("protocol", checked ? "telnet" : "ssh")}
+                onCheckedChange={(checked) => {
+                  const nextProtocol = checked ? "telnet" : "ssh";
+                  setForm((prev) => ({
+                    ...prev,
+                    protocol: nextProtocol,
+                    port: resolvePrimaryProtocolSwitchPort(prev.port, nextProtocol),
+                  }));
+                }}
               />
             </div>
 
