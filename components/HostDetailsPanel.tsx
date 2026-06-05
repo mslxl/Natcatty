@@ -888,7 +888,12 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
                   setForm((prev) => ({
                     ...prev,
                     protocol: nextProtocol,
-                    port: resolvePrimaryProtocolSwitchPort(prev.port, nextProtocol),
+                    port: resolvePrimaryProtocolSwitchPort(
+                      prev.port,
+                      nextProtocol,
+                      Boolean(groupDefaults?.telnetPort),
+                      Boolean(groupDefaults?.port),
+                    ),
                   }));
                 }}
               />

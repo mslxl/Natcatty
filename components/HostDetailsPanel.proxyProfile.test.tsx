@@ -246,11 +246,14 @@ test("parseOptionalPortInput clears empty port values", () => {
 });
 
 test("resolvePrimaryProtocolSwitchPort only migrates opposite protocol defaults", () => {
-  assert.equal(resolvePrimaryProtocolSwitchPort(22, "telnet"), 23);
-  assert.equal(resolvePrimaryProtocolSwitchPort(23, "ssh"), 22);
-  assert.equal(resolvePrimaryProtocolSwitchPort(2222, "telnet"), 2222);
-  assert.equal(resolvePrimaryProtocolSwitchPort(2323, "ssh"), 2323);
-  assert.equal(resolvePrimaryProtocolSwitchPort(undefined, "telnet"), undefined);
+  assert.equal(resolvePrimaryProtocolSwitchPort(22, "telnet", false, false), 23);
+  assert.equal(resolvePrimaryProtocolSwitchPort(23, "ssh", false, false), 22);
+  assert.equal(resolvePrimaryProtocolSwitchPort(2222, "telnet", false, false), 2222);
+  assert.equal(resolvePrimaryProtocolSwitchPort(2323, "ssh", false, false), 2323);
+  assert.equal(resolvePrimaryProtocolSwitchPort(undefined, "telnet", false, false), 23);
+  assert.equal(resolvePrimaryProtocolSwitchPort(undefined, "ssh", false, false), 22);
+  assert.equal(resolvePrimaryProtocolSwitchPort(22, "telnet", false, true), 22);
+  assert.equal(resolvePrimaryProtocolSwitchPort(22, "telnet", true, false), 22);
 });
 
 test("resolvePrimaryProtocolSavePort falls back to telnet default for primary telnet", () => {

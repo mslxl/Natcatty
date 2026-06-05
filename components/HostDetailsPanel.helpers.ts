@@ -8,9 +8,20 @@ export const parseOptionalPortInput = (value: string): number | undefined =>
 export const resolvePrimaryProtocolSwitchPort = (
   currentPort: number | undefined,
   nextProtocol: "ssh" | "telnet",
+  hasGroupTelnetPortDefault: boolean,
+  hasGroupSshPortDefault: boolean,
 ): number | undefined => {
-  if (nextProtocol === "telnet" && currentPort === 22) return 23;
-  if (nextProtocol === "ssh" && currentPort === 23) return 22;
+  if (nextProtocol === "telnet") {
+    // Don't override if group provides a Telnet default
+    if (hasGroupTelnetPortDefault || hasGroupSshPortDefault) return currentPort;
+    if (currentPort === 22 || currentPort === undefined) return 23;
+    return currentPort;
+  }
+  if (nextProtocol === "ssh") {
+    if (hasGroupSshPortDefault) return currentPort;
+    if (currentPort === 23 || currentPort === undefined) return 22;
+    return currentPort;
+  }
   return currentPort;
 };
 
