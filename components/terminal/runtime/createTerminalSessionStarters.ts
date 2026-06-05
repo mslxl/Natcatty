@@ -18,6 +18,7 @@ import {
   resolveTelnetPort,
   resolveTelnetUsername,
 } from "../../../domain/host";
+import { hasUsableProxyConfig } from "../../../domain/proxyProfiles";
 
 export const getMissingChainHostIds = (
   host: Host,
@@ -114,6 +115,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         type: ctx.host.proxyConfig.type,
         host: ctx.host.proxyConfig.host,
         port: ctx.host.proxyConfig.port,
+        command: ctx.host.proxyConfig.command,
         username: ctx.host.proxyConfig.username,
         password: sanitizeCredentialValue(rawProxyPassword),
       }
@@ -156,7 +158,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const hasJumpKeyMaterial = Boolean(jumpPrivateKey || jumpIdentityFilePaths?.length);
       const hasConfiguredJumpProxyEndpoint =
         index === 0 &&
-        !!(jumpHost.proxyConfig?.host && jumpHost.proxyConfig?.port);
+        hasUsableProxyConfig(jumpHost.proxyConfig);
       const hasEncryptedJumpProxyCredential =
         hasConfiguredJumpProxyEndpoint &&
         Boolean(jumpHost.proxyConfig?.username) &&
@@ -188,11 +190,12 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         keyId: jumpAuth.keyId,
         keySource: jumpKey?.source,
         label: jumpHost.label,
-        proxy: jumpHost.proxyConfig?.host && jumpHost.proxyConfig?.port
+        proxy: hasUsableProxyConfig(jumpHost.proxyConfig)
           ? {
             type: jumpHost.proxyConfig.type,
             host: jumpHost.proxyConfig.host,
             port: jumpHost.proxyConfig.port,
+            command: jumpHost.proxyConfig.command,
             username: jumpHost.proxyConfig.username,
             password: sanitizeCredentialValue(jumpHost.proxyConfig.password),
           }
@@ -507,7 +510,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       return;
     }
 
-    if (ctx.host.proxyConfig?.host && ctx.host.proxyConfig?.port) {
+    if (hasUsableProxyConfig(ctx.host.proxyConfig)) {
       const message = "Telnet does not support proxy connections. Use SSH for this host or remove the proxy from this connection.";
       ctx.setError(message);
       writeTerminalLine(ctx, term, `\r\n[${message}]`);
@@ -644,8 +647,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       }
 
       const hasConfiguredProxy =
-        Boolean(ctx.host.proxyConfig?.host && ctx.host.proxyConfig?.port) ||
-        ctx.resolvedChainHosts.some((jumpHost) => Boolean(jumpHost.proxyConfig?.host && jumpHost.proxyConfig?.port));
+        hasUsableProxyConfig(ctx.host.proxyConfig) ||
+        ctx.resolvedChainHosts.some((jumpHost) => hasUsableProxyConfig(jumpHost.proxyConfig));
       if (hasConfiguredProxy) {
         stopMosh("Mosh does not support proxy connections. Use SSH for this host or remove the proxy from this connection.");
         return;
@@ -768,7 +771,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         return;
       }
 
-      if (ctx.host.proxyConfig?.host && ctx.host.proxyConfig?.port) {
+      if (hasUsableProxyConfig(ctx.host.proxyConfig)) {
         stopEt(tr(
           "terminal.et.proxyUnsupported",
           "EternalTerminal does not currently support Netcatty proxy settings. Use SSH or remove the proxy for this host.",
@@ -871,7 +874,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         const jumpPrivateKey = sanitizeCredentialValue(rawJumpPrivateKey);
         const jumpPassphrase = sanitizeCredentialValue(rawJumpPassphrase);
 
-        if (jumpHost.proxyConfig?.host && jumpHost.proxyConfig?.port) {
+        if (hasUsableProxyConfig(jumpHost.proxyConfig)) {
           unsupportedJumpProxies.push(jumpHost.label || jumpHost.hostname);
         }
 

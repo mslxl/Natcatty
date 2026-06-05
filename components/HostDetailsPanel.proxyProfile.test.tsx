@@ -71,6 +71,24 @@ test("HostDetailsPanel shows a missing saved proxy without undefined fields", ()
   assert.doesNotMatch(markup, /undefined:undefined/);
 });
 
+test("HostDetailsPanel labels command proxy summaries consistently", () => {
+  const markup = renderHostDetails({
+    ...hostWithMissingProxyProfile,
+    proxyProfileId: undefined,
+    proxyConfig: {
+      type: "command",
+      host: "",
+      port: 0,
+      command: "cloudflared access ssh --hostname %h --token secret",
+    },
+  });
+
+  assert.match(markup, /ProxyCommand/);
+  assert.doesNotMatch(markup, /COMMAND/);
+  assert.doesNotMatch(markup, /cloudflared access ssh/);
+  assert.doesNotMatch(markup, /secret/);
+});
+
 test("HostDetailsPanel keeps explicitly cleared telnet credentials empty", () => {
   const markup = renderHostDetails({
     ...hostWithMissingProxyProfile,

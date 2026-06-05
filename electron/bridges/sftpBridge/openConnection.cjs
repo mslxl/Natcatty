@@ -1,6 +1,12 @@
 /* eslint-disable no-undef */
 function createOpenConnectionApi(ctx) {
   with (ctx) {
+    const hasUsableProxy = (proxy) => {
+      if (!proxy) return false;
+      if (proxy.type === "command") return !!proxy.command?.trim();
+      return !!(proxy.host && proxy.port);
+    };
+
     async function connectThroughChainForSftp(event, options, jumpHosts, targetHost, targetPort, connId, agentSocket) {
       const sender = event.sender;
       const connections = [];
@@ -171,7 +177,7 @@ function createOpenConnectionApi(ctx) {
           applyAuthToConnOpts(connOpts, authConfig);
     
           // If first hop and proxy is configured, connect through proxy
-          const hasUsableJumpProxy = !!(jump.proxy?.host && jump.proxy?.port);
+          const hasUsableJumpProxy = hasUsableProxy(jump.proxy);
           const effectiveHopProxy = isFirst ? ((hasUsableJumpProxy ? jump.proxy : null) || options.proxy) : null;
           if (effectiveHopProxy) {
             currentSocket = await createProxySocket(effectiveHopProxy, jump.hostname, jump.port || 22);
@@ -563,7 +569,7 @@ function createOpenConnectionApi(ctx) {
       // Check if we need to connect through jump hosts
       const jumpHosts = options.jumpHosts || [];
       const hasJumpHosts = jumpHosts.length > 0;
-      const hasProxy = !!options.proxy;
+      const hasProxy = hasUsableProxy(options.proxy);
     
       let chainConnections = [];
       let connectionSocket = null;

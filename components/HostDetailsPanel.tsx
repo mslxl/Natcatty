@@ -17,7 +17,12 @@ import {
   getEffectiveHostDistro,
   normalizePrimaryTelnetState,
 } from "../domain/host";
-import { isCompleteProxyConfig, normalizeManualProxyConfig } from "../domain/proxyProfiles";
+import {
+  formatProxyConfigEndpoint,
+  formatProxyConfigType,
+  isCompleteProxyConfig,
+  normalizeManualProxyConfig,
+} from "../domain/proxyProfiles";
 import { customThemeStore } from "../application/state/customThemeStore";
 import {
   hasHostFontSizeOverride,
@@ -254,17 +259,17 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   const hasMissingProxyProfile = Boolean(form.proxyProfileId && !selectedProxyProfile);
   const proxySummaryType = hasMissingProxyProfile
     ? t("hostDetails.proxyPanel.missing")
-    : (selectedProxyProfile?.config.type || form.proxyConfig?.type || "http").toUpperCase();
+    : formatProxyConfigType(selectedProxyProfile?.config || form.proxyConfig) || "HTTP";
   const proxySummaryLabel = hasMissingProxyProfile
     ? t("hostDetails.proxyPanel.missingSaved")
     : selectedProxyProfile
       ? selectedProxyProfile.label
-      : `${form.proxyConfig?.host}:${form.proxyConfig?.port}`;
+      : formatProxyConfigEndpoint(form.proxyConfig);
   const proxySummaryTooltip = hasMissingProxyProfile
     ? t("hostDetails.proxyPanel.missingSaved")
     : selectedProxyProfile
-      ? `${selectedProxyProfile.label} - ${selectedProxyProfile.config.host}:${selectedProxyProfile.config.port}`
-      : `${form.proxyConfig?.type?.toUpperCase()} ${form.proxyConfig?.host}:${form.proxyConfig?.port}`;
+      ? `${selectedProxyProfile.label} - ${formatProxyConfigEndpoint(selectedProxyProfile.config)}`
+      : `${formatProxyConfigType(form.proxyConfig)} ${formatProxyConfigEndpoint(form.proxyConfig)}`;
 
   const handleDistroModeChange = useCallback((mode: "auto" | "manual") => {
     setForm((prev) => ({

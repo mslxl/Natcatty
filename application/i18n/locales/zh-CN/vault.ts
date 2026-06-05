@@ -140,7 +140,7 @@ export const zhCNVaultMessages: Messages = {
   'hostDetails.jumpHosts.hops': '{count} 跳',
   'hostDetails.jumpHosts.direct': '直连',
   'hostDetails.jumpHosts.configure': '配置代理主机',
-  'hostDetails.proxy': '通过 HTTP/SOCKS5 代理',
+  'hostDetails.proxy': '通过 HTTP/SOCKS5/命令代理',
   'hostDetails.proxy.none': '无',
   'hostDetails.proxy.edit': '编辑代理',
   'hostDetails.proxy.configure': '配置代理',

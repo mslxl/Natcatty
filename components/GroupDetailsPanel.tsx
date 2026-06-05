@@ -13,7 +13,12 @@ import React, { useCallback, useMemo, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { customThemeStore } from "../application/state/customThemeStore";
 import { resolveGroupDefaults, resolveGroupTerminalThemeId } from "../domain/groupConfig";
-import { isCompleteProxyConfig, normalizeManualProxyConfig } from "../domain/proxyProfiles";
+import {
+  formatProxyConfigEndpoint,
+  formatProxyConfigType,
+  isCompleteProxyConfig,
+  normalizeManualProxyConfig,
+} from "../domain/proxyProfiles";
 import {
   EnvVar,
   GroupConfig,
@@ -138,7 +143,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
     ? t("hostDetails.proxyPanel.missingSaved")
     : selectedProxyProfile
       ? selectedProxyProfile.label
-      : `${form.proxyConfig?.type?.toUpperCase()} ${form.proxyConfig?.host}:${form.proxyConfig?.port}`;
+      : `${formatProxyConfigType(form.proxyConfig)} ${formatProxyConfigEndpoint(form.proxyConfig)}`;
 
   const update = <K extends keyof GroupConfig>(key: K, value: GroupConfig[K] | undefined) => {
     setForm((prev) => ({ ...prev, [key]: value }));

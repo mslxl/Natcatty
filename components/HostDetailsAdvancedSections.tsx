@@ -522,7 +522,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
           title={t("hostDetails.proxy")}
           className="overflow-hidden"
         >
-          {form.proxyConfig?.host || form.proxyProfileId ? (
+          {form.proxyConfig?.host || form.proxyConfig?.command || form.proxyProfileId ? (
             <div className="w-full min-w-0 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1">
               <button
                 type="button"

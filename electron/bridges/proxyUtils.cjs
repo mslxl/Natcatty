@@ -4,7 +4,125 @@
  */
 
 const net = require("node:net");
+const { spawn } = require("node:child_process");
+const { Duplex } = require("node:stream");
 const { enableTcpNoDelay } = require("./tcpNoDelay.cjs");
+
+function quotePosixShellArg(value) {
+    return "'" + String(value).replace(/'/g, "'\\''") + "'";
+}
+
+function quoteWindowsCmdArg(value) {
+    const text = String(value);
+    if (/[\0\r\n"%!]/.test(text)) {
+        throw new Error("ProxyCommand target contains characters that cannot be safely substituted on Windows");
+    }
+    return `"${text}"`;
+}
+
+function quoteShellArg(value, platform = process.platform) {
+    return platform === "win32" ? quoteWindowsCmdArg(value) : quotePosixShellArg(value);
+}
+
+function substituteProxyCommand(command, targetHost, targetPort, options = {}) {
+    const platform = options.platform || process.platform;
+    return String(command || "").replace(/%%|%h|%p/g, (token) => {
+        if (token === "%%") return "%";
+        if (token === "%h") return quoteShellArg(targetHost, platform);
+        if (token === "%p") return quoteShellArg(targetPort, platform);
+        return token;
+    });
+}
+
+function createProcessSocket(child) {
+    const socket = new Duplex({
+        read() {
+            child.stdout.resume();
+        },
+        write(chunk, encoding, callback) {
+            if (!child.stdin.writable) {
+                callback(new Error("ProxyCommand stdin is not writable"));
+                return;
+            }
+            if (child.stdin.write(chunk, encoding)) {
+                callback();
+            } else {
+                child.stdin.once("drain", callback);
+            }
+        },
+        final(callback) {
+            child.stdin.end(callback);
+        },
+        destroy(error, callback) {
+            try { child.stdin.destroy(); } catch { /* ignore */ }
+            try { child.stdout.destroy(); } catch { /* ignore */ }
+            if (!child.killed) {
+                try { child.kill(); } catch { /* ignore */ }
+            }
+            callback(error);
+        },
+    });
+    socket.setNoDelay = () => socket;
+    socket.setKeepAlive = () => socket;
+    socket.setTimeout = () => socket;
+
+    child.stdout.on("data", (chunk) => {
+        if (!socket.push(chunk)) child.stdout.pause();
+    });
+    child.stdout.on("end", () => socket.push(null));
+    child.stdout.on("error", (err) => socket.destroy(err));
+    child.stdin.on("error", (err) => socket.destroy(err));
+
+    return socket;
+}
+
+function createProxyCommandSocket(proxy, targetHost, targetPort, options = {}) {
+    const command = substituteProxyCommand(proxy.command, targetHost, targetPort, { platform: process.platform }).trim();
+    if (!command) return Promise.reject(new Error("ProxyCommand is required"));
+
+    const child = spawn(command, {
+        shell: true,
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+    });
+    const socket = createProcessSocket(child);
+    let settled = false;
+    let stderr = "";
+
+    child.stderr?.on("data", (chunk) => {
+        stderr = (stderr + chunk.toString()).slice(-4096);
+    });
+
+    return new Promise((resolve, reject) => {
+        child.once("error", (err) => {
+            if (settled) {
+                socket.destroy(err);
+                return;
+            }
+            settled = true;
+            reject(err);
+        });
+        child.once("spawn", () => {
+            settled = true;
+            try { options.onSocket?.(socket); } catch { /* ignore */ }
+            resolve(socket);
+        });
+        child.once("close", (code, signal) => {
+            if (code === 0 || socket.destroyed) return;
+            const detail = stderr.trim() ? `: ${stderr.trim()}` : "";
+            const err = new Error(`ProxyCommand exited ${signal ? `with signal ${signal}` : `with code ${code}`}${detail}`);
+            if (!settled) {
+                settled = true;
+                reject(err);
+            } else {
+                socket.destroy(err);
+            }
+        });
+    }).catch((err) => {
+        try { child.kill(); } catch { /* ignore */ }
+        throw err;
+    });
+}
 
 /**
  * Create a socket through a proxy (HTTP CONNECT or SOCKS5)
@@ -22,6 +140,9 @@ const { enableTcpNoDelay } = require("./tcpNoDelay.cjs");
  */
 function createProxySocket(proxy, targetHost, targetPort, options = {}) {
     const { onSocket } = options;
+    if (proxy.type === 'command') {
+        return createProxyCommandSocket(proxy, targetHost, targetPort, options);
+    }
     return new Promise((resolve, reject) => {
         if (proxy.type === 'http') {
             // HTTP CONNECT proxy
@@ -142,4 +263,5 @@ function createProxySocket(proxy, targetHost, targetPort, options = {}) {
 
 module.exports = {
     createProxySocket,
+    substituteProxyCommand,
 };

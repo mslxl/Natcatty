@@ -2,7 +2,7 @@ import type { SftpFilenameEncoding } from './sftp';
 import type { KeywordHighlightRule } from './terminal';
 
 // Proxy configuration for SSH connections
-type ProxyType = 'http' | 'socks5';
+type ProxyType = 'http' | 'socks5' | 'command';
 // UI locale identifier, stored in settings and used for i18n (e.g., "en", "zh-CN").
 export type UILanguage = string;
 
@@ -10,6 +10,7 @@ export interface ProxyConfig {
   type: ProxyType;
   host: string;
   port: number;
+  command?: string;
   username?: string;
   password?: string;
 }
