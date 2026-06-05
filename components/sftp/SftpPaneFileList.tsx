@@ -680,7 +680,7 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
     </div>
 
     {/* Loading overlay - covers entire pane when navigating or reconnecting */}
-    {pane.loading && sortedDisplayFiles.length > 0 && !pane.reconnecting && (
+    {pane.loading && !pane.connection?.reusedConnection && sortedDisplayFiles.length > 0 && !pane.reconnecting && (
       <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/40 backdrop-blur-[1px] z-10">
         <Loader2 size={24} className="animate-spin text-muted-foreground" />
         {pane.connectionLogs.length > 0 && (

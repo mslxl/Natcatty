@@ -207,6 +207,7 @@ export const useSftpConnections = ({
           isLocal: false,
           status: "connecting",
           currentPath: cachedStartPath,
+          reusedConnection: !!options?.sourceSessionId,
         };
 
         updateTab(side, activeTabId, (prev) => ({
