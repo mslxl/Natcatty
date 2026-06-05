@@ -5,6 +5,9 @@ const {
   resolveEffectiveShellKind,
   execViaChannel,
 } = require("./ptyExec.cjs");
+const {
+  buildWrappedCommand,
+} = require("./ptyExecHelpers.cjs");
 
 test("uses PowerShell wrapping when a session with no confirmed shell sees a PowerShell prompt", () => {
   // SSH sessions don't set shellKind (sshBridge never assigns one), which
@@ -107,6 +110,12 @@ test("falls back to posix when neither shell kind nor prompt is informative", ()
 test("does not misclassify command output that happens to contain 'PS'", () => {
   assert.equal(resolveEffectiveShellKind(undefined, "PSO>"), "posix");
   assert.equal(resolveEffectiveShellKind(undefined, "ZIPS>"), "posix");
+});
+
+test("cmd wrapper uses interactive cmd variable expansion", () => {
+  const wrapped = buildWrappedCommand("ipconfig /all", "cmd", "__NCMCP_TEST__");
+  assert.match(wrapped, /"%__NCMCP_TEST___CMD%"/);
+  assert.doesNotMatch(wrapped, /"%%__NCMCP_TEST___CMD%%"/);
 });
 
 test("execViaChannel registers a pending-cancel marker before the SSH channel opens", () => {
