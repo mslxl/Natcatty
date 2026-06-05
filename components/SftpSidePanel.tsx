@@ -455,7 +455,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         tabConnectionKeyMapRef.current.set(tabId, connectionKey);
       },
     });
-  }, [activeHost, hasActiveWork]); // Re-evaluate when work finishes so deferred switch can proceed
+  }, [activeHost, activeSessionId, hasActiveWork]);
 
   // Clear the remembered connection key when the pane disconnects or the
   // session is lost, so re-opening SFTP for the same terminal reconnects.
