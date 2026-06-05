@@ -456,6 +456,7 @@ export const useSftpConnections = ({
                   status: "connected",
                   currentPath: startPath,
                   homeDir,
+                  reusedConnection: undefined,
                 }
               : null,
             files,
