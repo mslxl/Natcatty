@@ -402,6 +402,7 @@ export const ProviderConfigForm: React.FC<{
           }}
           baseURL={form.baseURL || preset?.defaultBaseURL || ""}
           modelsEndpoint={preset?.modelsEndpoint}
+          presetModels={preset?.defaultModels}
           apiKey={form.apiKey}
           providerId={provider.providerId}
           style={resolvedStyle}

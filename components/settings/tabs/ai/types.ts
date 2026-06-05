@@ -166,6 +166,12 @@ export const SETTINGS_ICON_PATHS: Record<SettingsIconId, string> = {
   google: "/ai/providers/google.svg",
   ollama: "/ai/providers/ollama.svg",
   openrouter: "/ai/providers/openrouter.svg",
+  qwen: "/ai/providers/qwen.svg",
+  deepseek: "/ai/providers/deepseek.svg",
+  kimi: "/ai/providers/kimi.svg",
+  zhipu: "/ai/providers/zhipu.svg",
+  doubao: "/ai/providers/doubao.svg",
+  mimo: "/ai/providers/xiaomi.svg",
   custom: "/ai/providers/custom.svg",
 };
 
@@ -177,6 +183,12 @@ export const SETTINGS_ICON_COLORS: Record<SettingsIconId, string> = {
   google: "bg-blue-600",
   ollama: "bg-purple-600",
   openrouter: "bg-pink-600",
+  qwen: "bg-[#615CED]",
+  deepseek: "bg-[#4D6BFE]",
+  kimi: "bg-zinc-800",
+  zhipu: "bg-[#3859FF]",
+  doubao: "bg-[#0066FF]",
+  mimo: "bg-[#FF6900]",
   custom: "bg-zinc-600",
 };
 
@@ -210,6 +222,7 @@ export const BUILTIN_PROVIDER_ICONS: BuiltinProviderIcon[] = [
   { id: "qwen", label: "Qwen / 通义", name: "Qwen", path: "/ai/providers/qwen.svg", bgColor: "bg-[#615CED]" },
   { id: "zhipu", label: "Zhipu / 智谱", name: "Zhipu", path: "/ai/providers/zhipu.svg", bgColor: "bg-[#3859FF]" },
   { id: "doubao", label: "Doubao / 豆包", name: "Doubao", path: "/ai/providers/doubao.svg", bgColor: "bg-[#0066FF]" },
+  { id: "xiaomi", label: "Xiaomi / 小米", name: "Xiaomi MiMo", path: "/ai/providers/xiaomi.svg", bgColor: "bg-[#FF6900]" },
   { id: "mistral", label: "Mistral", name: "Mistral", path: "/ai/providers/mistral.svg", bgColor: "bg-[#FA520F]" },
   { id: "cohere", label: "Cohere", name: "Cohere", path: "/ai/providers/cohere.svg", bgColor: "bg-[#39594D]" },
   { id: "grok", label: "Grok / xAI", name: "Grok", path: "/ai/providers/grok.svg", bgColor: "bg-zinc-900" },
