@@ -49,6 +49,8 @@ interface SftpSidePanelProps {
   sftpDefaultViewMode: "list" | "tree";
   /** The host to connect to (follows focused terminal) */
   activeHost: Host | null;
+  /** The terminal session id whose SSH connection can be reused for SFTP */
+  activeSessionId?: string | null;
   initialLocation?: { hostId: string; path: string } | null;
   onInitialLocationApplied?: (location: { hostId: string; path: string }) => void;
   showWorkspaceHostHeader?: boolean;
@@ -83,6 +85,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   updateHosts,
   sftpDefaultViewMode,
   activeHost,
+  activeSessionId,
   initialLocation,
   onInitialLocationApplied,
   showWorkspaceHostHeader = false,
@@ -446,6 +449,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     connectedKeyRef.current = connectionKey;
     connectedHostObjRef.current = activeHost;
     s.connect("left", activeHost, {
+      sourceSessionId: activeSessionId ?? undefined,
       ...(needsNewTab ? { forceNewTab: true } : undefined),
       onTabCreated: (tabId) => {
         tabConnectionKeyMapRef.current.set(tabId, connectionKey);
