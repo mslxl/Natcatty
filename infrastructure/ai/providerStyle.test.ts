@@ -31,6 +31,12 @@ test("domestic provider presets include editable OpenAI-compatible base URLs", (
   assert.equal(PROVIDER_PRESETS.mimo.defaultBaseURL, "https://api.xiaomimimo.com/v1");
 });
 
+test("openrouter keeps dynamic model discovery instead of a static preset list", () => {
+  assert.equal(PROVIDER_PRESETS.openrouter.defaultBaseURL, "https://openrouter.ai/api/v1");
+  assert.equal(PROVIDER_PRESETS.openrouter.modelsEndpoint, "/models");
+  assert.equal(PROVIDER_PRESETS.openrouter.defaultModels, undefined);
+});
+
 test("domestic provider presets expose provider-specific model suggestions", () => {
   assert.equal(PROVIDER_PRESETS.qwen.defaultModels?.[0], "qwen3.7-plus");
   assert.ok(PROVIDER_PRESETS.qwen.defaultModels?.includes("qwen3.7-max"));
