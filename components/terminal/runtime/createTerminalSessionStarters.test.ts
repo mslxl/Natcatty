@@ -16,8 +16,10 @@ const prepareSudoPrompt = (
   command = "sudo whoami",
 ): string => {
   const prepared = autofill?.prepareCommand(command);
-  assert.equal(prepared, command);
-  return "[sudo] password for alice: ";
+  assert.ok(prepared);
+  const prompt = prepared.match(/\s-p '([^']*)'/)?.[1];
+  assert.ok(prompt);
+  return prompt.replace("%p", "alice");
 };
 
 const createTermStub = () => ({

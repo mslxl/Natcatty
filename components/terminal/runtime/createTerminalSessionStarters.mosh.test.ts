@@ -12,8 +12,10 @@ const prepareSudoPrompt = (
   autofill: { prepareCommand: (command: string) => string | null } | null,
 ): string => {
   const prepared = autofill?.prepareCommand("sudo whoami");
-  assert.equal(prepared, "sudo whoami");
-  return "[sudo] password for alice: ";
+  assert.ok(prepared);
+  const prompt = prepared.match(/\s-p '([^']*)'/)?.[1];
+  assert.ok(prompt);
+  return prompt.replace("%p", "alice");
 };
 
 test("startMosh enables sudo autofill with the host saved password", async () => {

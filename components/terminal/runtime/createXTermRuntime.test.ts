@@ -8,6 +8,9 @@ import {
 import { recordTerminalCommandExecution } from "./terminalCommandExecution";
 import { createPromptLineBreakState } from "./promptLineBreak";
 
+const TEST_MARKER = "__NETCATTY_SUDO_test__";
+const TEST_PREPARED_SUDO_WHOAMI = `sudo -p '[sudo] password for %p: ${TEST_MARKER}' whoami`;
+
 function createFakeTerm(lineText = "$ echo ok", cursorX = lineText.length) {
   return {
     buffer: {
@@ -52,27 +55,42 @@ function createWrappedFakeTerm(rows: string[], cursorY: number, cursorX: number,
   };
 }
 
-test("sudo autofill input preparation keeps submitted sudo commands visible as typed", () => {
+test("sudo autofill input preparation rewrites submitted sudo commands for the remote side", () => {
   const autofill = createSudoPasswordAutofill({
     password: "secret",
+    createPromptMarker: () => TEST_MARKER,
     write: () => {},
   });
 
   assert.equal(
     prepareSudoAutofillInput("\r", "sudo whoami", autofill),
-    "\r",
+    `\x15${TEST_PREPARED_SUDO_WHOAMI}\r`,
   );
 });
 
-test("sudo autofill input preparation keeps single-line pasted sudo commands unchanged", () => {
+test("sudo autofill input preparation rewrites single-line pasted sudo commands", () => {
   const autofill = createSudoPasswordAutofill({
     password: "secret",
+    createPromptMarker: () => TEST_MARKER,
     write: () => {},
   });
 
   assert.equal(
     prepareSudoAutofillInput("sudo whoami\n", null, autofill),
-    "sudo whoami\n",
+    `\x15${TEST_PREPARED_SUDO_WHOAMI}\n`,
+  );
+});
+
+test("sudo autofill input preparation preserves bracketed pasted sudo commands", () => {
+  const autofill = createSudoPasswordAutofill({
+    password: "secret",
+    createPromptMarker: () => TEST_MARKER,
+    write: () => {},
+  });
+
+  assert.equal(
+    prepareSudoAutofillInput("\x1b[200~sudo whoami\n\x1b[201~", null, autofill),
+    "\x1b[200~sudo whoami\n\x1b[201~",
   );
 });
 

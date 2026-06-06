@@ -34,8 +34,11 @@ export const isSudoPasswordPrompt = (
   data: string,
   expectedPrompt?: string,
 ): boolean => {
+  if (expectedPrompt) {
+    if (!data.includes(expectedPrompt)) return false;
+    return isSudoPasswordPrompt(data.replaceAll(expectedPrompt, ""));
+  }
   if (hasTerminalControlSequences(data)) return false;
-  if (expectedPrompt) return data.endsWith(expectedPrompt);
   const text = stripTerminalControlSequences(data);
   return SUDO_PROMPT_PATTERN.test(text);
 };
@@ -45,7 +48,7 @@ export const shouldArmSudoPasswordAutofill = (command: string): boolean =>
 
 export type SudoPasswordAutofill = {
   prepareCommand: (command: string) => string | null;
-  handleOutput: (data: string) => void;
+  handleOutput: (data: string) => string;
   updatePassword: (password?: string) => void;
 };
 
@@ -55,13 +58,18 @@ export const prepareSudoAutofillInput = (
   sudoAutofill: SudoPasswordAutofill | null | undefined,
 ): string => {
   if (data !== "\r" && data !== "\n") {
+    if (data.startsWith(BRACKETED_PASTE_START) && data.endsWith(BRACKETED_PASTE_END)) {
+      return data;
+    }
     const pastedCommand = getSinglePastedCommand(data);
     if (!pastedCommand) return data;
-    sudoAutofill?.prepareCommand(pastedCommand.command);
-    return data;
+    const preparedCommand = sudoAutofill?.prepareCommand(pastedCommand.command);
+    if (!preparedCommand) return data;
+    return `\x15${preparedCommand}${pastedCommand.lineEnding}`;
   }
   if (recordedCommand) {
-    sudoAutofill?.prepareCommand(recordedCommand);
+    const preparedCommand = sudoAutofill?.prepareCommand(recordedCommand);
+    if (preparedCommand) return `\x15${preparedCommand}${data}`;
   }
   return data;
 };
@@ -92,6 +100,12 @@ const unwrapBracketedPaste = (data: string): string => {
   }
   return data;
 };
+
+const shellQuote = (value: string): string =>
+  `'${value.replaceAll("'", "'\\''")}'`;
+
+const createDefaultSudoPromptMarker = (): string =>
+  `__NETCATTY_SUDO_${Math.random().toString(36).slice(2, 14)}__`;
 
 const splitShellWords = (input: string): string[] => {
   const words: string[] = [];
@@ -164,49 +178,141 @@ const hasSudoPromptOption = (command: string): boolean => {
   return false;
 };
 
+const buildSudoCommandWithPrompt = (
+  command: string,
+  prompt: string,
+): string | null => {
+  if (hasSudoPromptOption(command)) return null;
+  const match = command.match(SUDO_COMMAND_HEAD_PATTERN);
+  if (!match) return null;
+  return `${match[1]} -p ${shellQuote(prompt)}${match[2]}`;
+};
+
+const isPotentialPreparedCommandPrefix = (
+  data: string,
+  preparedCommand?: string | null,
+): boolean =>
+  Boolean(preparedCommand && data && (
+    preparedCommand.startsWith(data) || data.startsWith(preparedCommand)
+  ));
+
+const hasExpectedMarkerPrefix = (data: string, marker?: string | null): boolean => {
+  if (!data || !marker) return false;
+  const maxPrefixLength = Math.min(data.length, marker.length - 1);
+  for (let length = maxPrefixLength; length > 0; length -= 1) {
+    if (data.endsWith(marker.slice(0, length))) return true;
+  }
+  return false;
+};
+
 export const createSudoPasswordAutofill = (_options: {
   password?: string;
   write: (data: string) => void;
   now?: () => number;
+  createPromptMarker?: () => string;
 }): SudoPasswordAutofill => {
   const options = {
     now: () => Date.now(),
+    createPromptMarker: createDefaultSudoPromptMarker,
     ..._options,
   };
   let password = options.password ?? "";
   const cooldownMs = 3_000;
   const armWindowMs = 30_000;
   let tail = "";
+  let expectedPromptMarker: string | null = null;
+  let originalCommand: string | null = null;
+  let preparedCommand: string | null = null;
+  let outputSanitizePending = "";
   let lastSentAt = Number.NEGATIVE_INFINITY;
   let armedUntil = Number.NEGATIVE_INFINITY;
   const disarm = () => {
     armedUntil = Number.NEGATIVE_INFINITY;
     tail = "";
+    outputSanitizePending = "";
+  };
+  const applyOutputSanitizers = (data: string): string => {
+    let nextData = data;
+    if (preparedCommand && originalCommand) {
+      nextData = nextData.replaceAll(preparedCommand, originalCommand);
+    }
+    if (expectedPromptMarker) {
+      nextData = nextData.replaceAll(expectedPromptMarker, "");
+    }
+    return nextData;
+  };
+  const sanitizeOutput = (data: string, opts: { final?: boolean } = {}): string => {
+    if (!preparedCommand && !expectedPromptMarker && !outputSanitizePending) return data;
+
+    outputSanitizePending += data;
+    const lastLineBreakIndex = Math.max(
+      outputSanitizePending.lastIndexOf("\n"),
+      outputSanitizePending.lastIndexOf("\r"),
+    );
+    if (!opts.final && lastLineBreakIndex < 0) {
+      return "";
+    }
+
+    const readyLength = opts.final
+      ? outputSanitizePending.length
+      : lastLineBreakIndex + 1;
+    const readyData = outputSanitizePending.slice(0, readyLength);
+    outputSanitizePending = outputSanitizePending.slice(readyLength);
+    return applyOutputSanitizers(readyData);
   };
 
   return {
     prepareCommand: (command: string) => {
       if (!password || !shouldArmSudoPasswordAutofill(command)) return null;
-      if (hasSudoPromptOption(command)) return null;
+      const promptMarker = options.createPromptMarker();
+      const prompt = `[sudo] password for %p: ${promptMarker}`;
+      const nextPreparedCommand = buildSudoCommandWithPrompt(command, prompt);
+      if (!nextPreparedCommand) return null;
+      expectedPromptMarker = promptMarker;
+      originalCommand = command;
+      preparedCommand = nextPreparedCommand;
       armedUntil = options.now() + armWindowMs;
       tail = "";
-      return command;
+      return nextPreparedCommand;
     },
     handleOutput: (data: string) => {
-      if (!password || armedUntil === Number.NEGATIVE_INFINITY) return;
+      const sanitizedData = sanitizeOutput(data);
+      if (!password || armedUntil === Number.NEGATIVE_INFINITY) {
+        if (
+          !sanitizedData &&
+          outputSanitizePending &&
+          !isPotentialPreparedCommandPrefix(outputSanitizePending, preparedCommand) &&
+          !hasExpectedMarkerPrefix(outputSanitizePending, expectedPromptMarker)
+        ) {
+          return sanitizeOutput("", { final: true });
+        }
+        return sanitizedData;
+      }
       tail = `${tail}${data}`.slice(-1024);
       const currentTime = options.now();
       if (currentTime > armedUntil) {
+        const finalSanitizedData = sanitizedData + sanitizeOutput("", { final: true });
         disarm();
-        return;
+        return finalSanitizedData;
       }
-      if (currentTime - lastSentAt < cooldownMs) return;
+      if (currentTime - lastSentAt < cooldownMs) return sanitizedData;
       const lastLine = tail.split(/[\r\n]/).pop() ?? tail;
-      if (!isSudoPasswordPrompt(lastLine)) return;
+      if (!expectedPromptMarker || !isSudoPasswordPrompt(lastLine, expectedPromptMarker)) {
+        if (
+          lastLine &&
+          !isPotentialPreparedCommandPrefix(lastLine, preparedCommand) &&
+          !hasExpectedMarkerPrefix(lastLine, expectedPromptMarker)
+        ) {
+          return sanitizedData + sanitizeOutput("", { final: true });
+        }
+        return sanitizedData;
+      }
 
       options.write(`${password}\n`);
       lastSentAt = currentTime;
+      const finalSanitizedData = sanitizedData + sanitizeOutput("", { final: true });
       disarm();
+      return finalSanitizedData;
     },
     updatePassword: (nextPassword?: string) => {
       password = nextPassword ?? "";
