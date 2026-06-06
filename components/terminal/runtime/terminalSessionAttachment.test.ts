@@ -102,3 +102,120 @@ test("attachSessionToTerminal resets timestamp state for a reused terminal", () 
   assert.equal((writes[1].match(/\[\d{2}:\d{2}:\d{2}\]/g) ?? []).length, 1);
   assert.ok(writes[1].endsWith("] \x1b[22;39mfresh"));
 });
+
+test("attachSessionToTerminal auto-fills sudo password prompts when configured", () => {
+  const { term } = createFakeTerm();
+  const sent: Array<{ id: string; data: string; automated?: boolean }> = [];
+  let onData: ((data: string) => void) | null = null;
+  const sudoAutofillRef = { current: null };
+  const ctx = {
+    ...createContext(false),
+    sessionId: "session-1",
+    sessionRef: { current: null },
+    hasConnectedRef: { current: true },
+    hasRunStartupCommandRef: { current: false },
+    disposeDataRef: { current: null },
+    disposeExitRef: { current: null },
+    fitAddonRef: { current: null },
+    serializeAddonRef: { current: null },
+    pendingAuthRef: { current: null },
+    sudoAutofillRef,
+    terminalBackend: {
+      onSessionData: (_id: string, cb: (data: string) => void) => {
+        onData = cb;
+        return () => {};
+      },
+      onSessionExit: () => () => {},
+      writeToSession: (id: string, data: string, options?: { automated?: boolean }) => {
+        sent.push({ id, data, automated: options?.automated });
+      },
+    },
+    updateStatus: () => {},
+    setError: () => {},
+    onSessionExit: () => {},
+  };
+
+  attachSessionToTerminal(ctx as never, term, "session-1", {
+    sudoAutofillPassword: "secret",
+  });
+  const prepared = sudoAutofillRef.current?.prepareCommand("sudo whoami");
+  assert.equal(prepared, "sudo whoami");
+  onData?.("[sudo] password for alice: ");
+
+  assert.deepEqual(sent, [{ id: "session-1", data: "secret\n", automated: true }]);
+});
+
+test("attachSessionToTerminal does not auto-fill unarmed sudo-looking output", () => {
+  const { term } = createFakeTerm();
+  const sent: string[] = [];
+  let onData: ((data: string) => void) | null = null;
+  const ctx = {
+    ...createContext(false),
+    sessionId: "session-1",
+    sessionRef: { current: null },
+    hasConnectedRef: { current: true },
+    hasRunStartupCommandRef: { current: false },
+    disposeDataRef: { current: null },
+    disposeExitRef: { current: null },
+    fitAddonRef: { current: null },
+    serializeAddonRef: { current: null },
+    pendingAuthRef: { current: null },
+    sudoAutofillRef: { current: null },
+    terminalBackend: {
+      onSessionData: (_id: string, cb: (data: string) => void) => {
+        onData = cb;
+        return () => {};
+      },
+      onSessionExit: () => () => {},
+      writeToSession: (_id: string, data: string) => {
+        sent.push(data);
+      },
+    },
+    updateStatus: () => {},
+    setError: () => {},
+    onSessionExit: () => {},
+  };
+
+  attachSessionToTerminal(ctx as never, term, "session-1", {
+    sudoAutofillPassword: "secret",
+  });
+  onData?.("[sudo] password for alice: ");
+
+  assert.deepEqual(sent, []);
+});
+
+test("attachSessionToTerminal leaves sudo prompts alone without an autofill password", () => {
+  const { term } = createFakeTerm();
+  const sent: string[] = [];
+  let onData: ((data: string) => void) | null = null;
+  const ctx = {
+    ...createContext(false),
+    sessionId: "session-1",
+    sessionRef: { current: null },
+    hasConnectedRef: { current: true },
+    hasRunStartupCommandRef: { current: false },
+    disposeDataRef: { current: null },
+    disposeExitRef: { current: null },
+    fitAddonRef: { current: null },
+    serializeAddonRef: { current: null },
+    pendingAuthRef: { current: null },
+    terminalBackend: {
+      onSessionData: (_id: string, cb: (data: string) => void) => {
+        onData = cb;
+        return () => {};
+      },
+      onSessionExit: () => () => {},
+      writeToSession: (_id: string, data: string) => {
+        sent.push(data);
+      },
+    },
+    updateStatus: () => {},
+    setError: () => {},
+    onSessionExit: () => {},
+  };
+
+  attachSessionToTerminal(ctx as never, term, "session-1");
+  onData?.("[sudo] password for alice: ");
+
+  assert.deepEqual(sent, []);
+});

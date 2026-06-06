@@ -62,6 +62,12 @@ import {
   type PromptLineBreakState,
 } from "./promptLineBreak";
 import { recordTerminalCommandExecution } from "./terminalCommandExecution";
+import {
+  getSingleBracketedPasteLine,
+  getSinglePastedCommand,
+  prepareSudoAutofillInput,
+  type SudoPasswordAutofill,
+} from "./terminalSudoAutofill";
 import type {
   Host,
   KeyBinding,
@@ -133,6 +139,7 @@ export type CreateXTermRuntimeContext = {
   ) => void;
   commandBufferRef: RefObject<string>;
   promptLineBreakStateRef?: RefObject<PromptLineBreakState>;
+  sudoAutofillRef?: RefObject<SudoPasswordAutofill | null>;
   setIsSearchOpen: Dispatch<SetStateAction<boolean>>;
 
   // Serial-specific options
@@ -755,10 +762,49 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
   term.onData((data) => {
     const id = ctx.sessionRef.current;
+    let dataToWrite = data;
+    let handledSubmittedInput = false;
+    const onBroadcastInput = ctx.onBroadcastInputRef.current;
+    const broadcastDataBeforeSudo = (data === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") ? "\x08" : data;
+    const willBroadcastInput = !!id && shouldBroadcastTerminalUserInput(term, broadcastDataBeforeSudo, {
+      isBroadcastEnabled: ctx.isBroadcastEnabledRef.current,
+      hasBroadcastInputHandler: !!onBroadcastInput,
+    });
+    if (ctx.statusRef.current === "connected" && (data === "\r" || data === "\n")) {
+      const recordedCommand = recordTerminalCommandExecution(ctx.commandBufferRef.current, ctx, term);
+      handledSubmittedInput = true;
+      if (!willBroadcastInput) {
+        dataToWrite = prepareSudoAutofillInput(
+          data,
+          recordedCommand,
+          ctx.sudoAutofillRef?.current,
+        );
+      }
+    } else if (ctx.statusRef.current === "connected" && !willBroadcastInput) {
+      const pastedCommand = getSinglePastedCommand(data);
+      if (pastedCommand) {
+        const recordedCommand = recordTerminalCommandExecution(
+          `${ctx.commandBufferRef.current}${pastedCommand.command}`,
+          ctx,
+          term,
+        );
+        handledSubmittedInput = true;
+        if (recordedCommand) {
+          const submittedCommand = `${recordedCommand}${pastedCommand.lineEnding}`;
+          const preparedInput = prepareSudoAutofillInput(
+            submittedCommand,
+            null,
+            ctx.sudoAutofillRef?.current,
+          );
+          dataToWrite = preparedInput === submittedCommand ? data : preparedInput;
+        }
+      }
+    }
+
     if (id) {
       // Serial line mode: buffer input and send on Enter
       if (ctx.host.protocol === "serial" && ctx.serialLineMode && ctx.serialLineBufferRef) {
-        handleSerialLineModeInput(data, {
+        handleSerialLineModeInput(dataToWrite, {
           bufferRef: ctx.serialLineBufferRef,
           localEcho: ctx.serialLocalEcho,
           writeToSession: (nextData) => ctx.terminalBackend.writeToSession(id, nextData),
@@ -767,33 +813,29 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       } else {
         // Character mode (default): send immediately
         // When backspaceBehavior is configured, remap the Backspace key output
-        let outData = data;
-        if (data === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") {
+        let outData = dataToWrite;
+        if (dataToWrite === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") {
           outData = "\x08";
         }
         ctx.terminalBackend.writeToSession(id, outData);
 
         // Local echo for serial connections only when explicitly enabled
         if (ctx.host.protocol === "serial" && ctx.serialLocalEcho) {
-          if (data === "\r") {
+          if (dataToWrite === "\r") {
             writeLocalTerminalData("\r\n");
-          } else if (data === "\x7f" || data === "\b") {
+          } else if (dataToWrite === "\x7f" || dataToWrite === "\b") {
             writeLocalTerminalData("\b \b");
-          } else if (data === "\x03") {
+          } else if (dataToWrite === "\x03") {
             writeLocalTerminalData("^C");
-          } else if (data.charCodeAt(0) >= 32 || data.length > 1) {
-            writeLocalTerminalData(data);
+          } else if (dataToWrite.charCodeAt(0) >= 32 || dataToWrite.length > 1) {
+            writeLocalTerminalData(dataToWrite);
           }
         }
       }
 
-      const onBroadcastInput = ctx.onBroadcastInputRef.current;
       // Use remapped data so broadcast peers also receive the correct byte
-      const broadcastData = (data === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") ? "\x08" : data;
-      if (shouldBroadcastTerminalUserInput(term, broadcastData, {
-        isBroadcastEnabled: ctx.isBroadcastEnabledRef.current,
-        hasBroadcastInputHandler: !!onBroadcastInput,
-      })) {
+      const broadcastData = (dataToWrite === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") ? "\x08" : data;
+      if (willBroadcastInput) {
         onBroadcastInput?.(broadcastData, ctx.sessionId);
       }
 
@@ -805,8 +847,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       ctx.onAutocompleteInput?.(data);
 
       if (ctx.statusRef.current === "connected") {
-        if (data === "\r" || data === "\n") {
-          recordTerminalCommandExecution(ctx.commandBufferRef.current, ctx, term);
+        if (handledSubmittedInput || data === "\r" || data === "\n") {
+          // Command recording and sudo command preparation happen before the
+          // input is written so sudo can receive a one-time prompt marker.
         } else if (data === "\x7f" || data === "\b") {
           ctx.commandBufferRef.current = ctx.commandBufferRef.current.slice(0, -1);
         } else if (data === "\x03") {
@@ -817,6 +860,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           ctx.commandBufferRef.current += data;
         } else if (data.length > 1 && !data.startsWith("\x1b")) {
           ctx.commandBufferRef.current += data;
+        } else {
+          const pastedLine = getSingleBracketedPasteLine(data);
+          if (pastedLine) {
+            ctx.commandBufferRef.current += pastedLine;
+          }
         }
       }
     }

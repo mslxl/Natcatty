@@ -44,6 +44,21 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     return translated;
   };
 
+  const resolveSavedSudoAutofillPassword = (): string | undefined => {
+    const isSudoAutofillEnabled = ctx.sudoAutofillEnabledRef
+      ? ctx.sudoAutofillEnabledRef.current
+      : ctx.host.terminalSudoAutoFill;
+    if (!isSudoAutofillEnabled) return undefined;
+    if (ctx.sudoAutofillPasswordRef) {
+      return sanitizeCredentialValue(ctx.sudoAutofillPasswordRef.current);
+    }
+    const pendingAuth = ctx.pendingAuthRef.current;
+    if (pendingAuth?.savedToHost && pendingAuth.password) {
+      return sanitizeCredentialValue(pendingAuth.password);
+    }
+    return sanitizeCredentialValue(ctx.sudoAutofillPassword);
+  };
+
   const startSSH = async (term: XTerm) => {
     if (!ctx.terminalBackend.backendAvailable()) {
       ctx.setError("Native SSH bridge unavailable. Launch via Electron app.");
@@ -457,6 +472,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         onConnected: () => ctx.setChainProgress(null),
         onExitMessage: (evt) =>
           `\r\n[session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
+        sudoAutofillPassword: resolveSavedSudoAutofillPassword(),
       });
 
       scheduleStartupCommand(ctx, term, id);
@@ -747,6 +763,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       attachSessionToTerminal(ctx, term, id, {
         onExitMessage: (evt) =>
           `\r\n[Mosh session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
+        sudoAutofillPassword: resolveSavedSudoAutofillPassword(),
       });
 
       scheduleStartupCommand(ctx, term, id);
@@ -978,6 +995,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       attachSessionToTerminal(ctx, term, id, {
         onExitMessage: (evt) =>
           `\r\n[EternalTerminal session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
+        sudoAutofillPassword: resolveSavedSudoAutofillPassword(),
       });
 
       scheduleStartupCommand(ctx, term, id);

@@ -3,6 +3,7 @@ import type { SerializeAddon } from "@xterm/addon-serialize";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import type { Host, Identity, KnownHost, SerialConfig, SSHKey, TerminalSession, TerminalSettings } from "../../../types";
 import type { PromptLineBreakState } from "./promptLineBreak";
+import type { SudoPasswordAutofill } from "./terminalSudoAutofill";
 
 export type TerminalBackendApi = {
   backendAvailable: () => boolean;
@@ -74,6 +75,7 @@ export type PendingAuth = {
   password?: string;
   keyId?: string;
   passphrase?: string;
+  savedToHost?: boolean;
 } | null;
 
 type ChainProgressState = {
@@ -107,6 +109,9 @@ export type TerminalSessionStartersContext = {
   serialConfig?: SerialConfig;
   sessionLog?: SessionLogConfig;
   sshDebugLogEnabled?: boolean;
+  sudoAutofillPassword?: string;
+  sudoAutofillEnabledRef?: RefObject<boolean>;
+  sudoAutofillPasswordRef?: RefObject<string | undefined>;
   isVisibleRef?: RefObject<boolean>;
   pendingOutputScrollRef?: RefObject<boolean>;
 
@@ -119,6 +124,7 @@ export type TerminalSessionStartersContext = {
   serializeAddonRef: RefObject<SerializeAddon | null>;
   pendingAuthRef: RefObject<PendingAuth>;
   promptLineBreakStateRef?: RefObject<PromptLineBreakState>;
+  sudoAutofillRef?: RefObject<SudoPasswordAutofill | null>;
 
   updateStatus: (next: TerminalSession["status"]) => void;
   setStatus: Dispatch<SetStateAction<TerminalSession["status"]>>;

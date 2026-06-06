@@ -130,6 +130,7 @@ export interface TerminalProps {
   ) => void;
   sessionLog?: { enabled: boolean; directory: string; format: string; timestampsEnabled?: boolean };
   sshDebugLogEnabled?: boolean;
+  sudoAutofillPassword?: string;
   onAddSelectionToAI?: (sessionId: string, selection: string) => void;
 }
 

@@ -203,7 +203,7 @@ export function handleKeyboardInteractiveSubmitImpl(getCtx: AppContextGetter, re
         if (session?.hostId && (!request.hostname || request.hostname === session.hostname)) {
           const host = hosts.find(h => h.id === session.hostId);
           if (host) {
-            updateHosts(hosts.map(h => h.id === host.id ? { ...h, password: savePassword } : h));
+            updateHosts(hosts.map(h => h.id === host.id ? { ...h, password: savePassword, savePassword: true } : h));
           }
         }
       }
