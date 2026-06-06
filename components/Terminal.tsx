@@ -56,7 +56,14 @@ import {
   createPromptLineBreakState,
   type PromptLineBreakState,
 } from "./terminal/runtime/promptLineBreak";
-import { recordTerminalCommandExecution } from "./terminal/runtime/terminalCommandExecution";
+import {
+  prepareSudoAutofillInput,
+  type SudoPasswordAutofill,
+} from "./terminal/runtime/terminalSudoAutofill";
+import {
+  recordTerminalCommandExecution,
+  shouldRecordShellHistory,
+} from "./terminal/runtime/terminalCommandExecution";
 import { shouldPreserveTerminalFocusOnMouseDown } from "./terminal/toolbarFocus";
 import { preserveTerminalViewportInScrollback } from "./terminal/clearTerminalViewport";
 import { XTERM_PERFORMANCE_CONFIG } from "../infrastructure/config/xtermPerformance";
@@ -130,6 +137,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   onSnippetExecutorChange,
   sessionLog,
   sshDebugLogEnabled,
+  sudoAutofillPassword,
   onAddSelectionToAI,
 }) => {
   // Timeout for connection - increased to 120s to allow time for keyboard-interactive (2FA) authentication
@@ -239,6 +247,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   const statusRef = useRef<TerminalSession["status"]>(status);
   statusRef.current = status;
+  const sudoAutofillRef = useRef<SudoPasswordAutofill | null>(null);
+  const sudoAutofillEnabledRef = useRef(Boolean(host.terminalSudoAutoFill));
+  const sudoAutofillPasswordRef = useRef(sudoAutofillPassword);
+  sudoAutofillEnabledRef.current = Boolean(host.terminalSudoAutoFill);
+  sudoAutofillPasswordRef.current = sudoAutofillPassword;
 
   const [chainProgress, setChainProgress] = useState<{
     currentHop: number;
@@ -273,11 +286,37 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     handleCloseSearch,
   } = terminalSearch;
 
+  const prepareProgrammaticSudoInput = useCallback((data: string): string => {
+    if (
+      statusRef.current !== "connected" ||
+      (isBroadcastEnabledRef.current && onBroadcastInputRef.current)
+    ) {
+      return data;
+    }
+    const pastedCommand = data.match(/^([^\r\n]+)(\r\n|\r|\n)$/);
+    if (!pastedCommand || !shouldRecordShellHistory(pastedCommand[1], termRef.current)) {
+      return data;
+    }
+    return prepareSudoAutofillInput(data, null, sudoAutofillRef.current);
+  }, []);
+
   // Terminal autocomplete — onAcceptText writes directly to session (no CustomEvent)
   const autocompleteAcceptTextRef = useRef<((text: string) => void) | undefined>(undefined);
   autocompleteAcceptTextRef.current = (text: string) => {
     const id = sessionRef.current;
     if (id && text) {
+      let textToWrite = text;
+      let handledSubmittedInput = false;
+      if (
+        host.protocol !== "serial" &&
+        statusRef.current === "connected" &&
+        !(isBroadcastEnabledRef.current && onBroadcastInputRef.current)
+      ) {
+        const preparedText = prepareProgrammaticSudoInput(text);
+        handledSubmittedInput = preparedText !== text;
+        textToWrite = preparedText;
+      }
+
       // Serial line mode: buffer text and handle local echo instead of direct send
       if (host.protocol === "serial" && serialConfig?.lineMode) {
         for (const ch of text) {
@@ -305,7 +344,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         // (fall through to shared bookkeeping below — don't return early)
       } else if (host.protocol === "serial" && serialConfig?.localEcho) {
         // Serial character mode with local echo: echo accepted text locally
-        terminalBackend.writeToSession(id, text);
+        terminalBackend.writeToSession(id, textToWrite);
         for (const ch of text) {
           if (ch === "\r") {
             writeLocalTerminalData("\r\n");
@@ -314,7 +353,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           }
         }
       } else {
-        terminalBackend.writeToSession(id, text);
+        terminalBackend.writeToSession(id, textToWrite);
       }
 
       // Broadcast to other sessions if broadcast mode is enabled
@@ -324,7 +363,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
       // Update command buffer for onCommandExecuted tracking
       for (const ch of text) {
-        if (ch === "\r" || ch === "\n") {
+        if (handledSubmittedInput) {
+          commandBufferRef.current = "";
+          break;
+        } else if (ch === "\r" || ch === "\n") {
           const rawCommand = commandBufferRef.current;
           recordTerminalCommandExecution(rawCommand, {
             host,
@@ -419,6 +461,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const zmodemToastedRef = useRef(false);
 
   const pendingAuthRef = useRef<PendingAuth>(null);
+  useEffect(() => {
+    sudoAutofillRef.current?.updatePassword(sudoAutofillPassword);
+  }, [sudoAutofillPassword]);
   const sessionStartersRef = useRef<ReturnType<typeof createTerminalSessionStarters> | null>(null);
   const auth = useTerminalAuthState({
     host,
@@ -597,6 +642,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     serializeAddonRef,
     pendingAuthRef,
     promptLineBreakStateRef,
+    sudoAutofillRef,
     updateStatus,
     setStatus,
     setError,
@@ -643,6 +689,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onCommandExecuted,
     sessionLog,
     sshDebugLogEnabled,
+    sudoAutofillPassword,
+    sudoAutofillEnabledRef,
+    sudoAutofillPasswordRef,
   });
   sessionStartersRef.current = sessionStarters;
 
@@ -742,7 +791,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }
   }, []);
 
-  const executeSnippetCommand = useCallback((command: string, noAutoRun?: boolean) => {
+  const executeSnippetCommand = useCallback((
+    command: string,
+    noAutoRun?: boolean,
+    options?: { broadcast?: boolean },
+  ) => {
     const term = termRef.current;
     const id = sessionRef.current;
     if (!term || !id) return;
@@ -764,14 +817,15 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     // without re-wrapping. Without broadcasting at all, accepting a snippet in
     // broadcast mode would clear peer input (the clear keystrokes already go
     // through the broadcast-aware path) but never send the command.
-    if (isBroadcastEnabledRef.current && onBroadcastInputRef.current) {
+    if (options?.broadcast !== false && isBroadcastEnabledRef.current && onBroadcastInputRef.current) {
       onBroadcastInputRef.current(data, sessionId);
     }
 
+    data = prepareProgrammaticSudoInput(data);
     terminalBackend.writeToSession(id, data);
     scrollToBottomAfterProgrammaticInput(data);
     term.focus();
-  }, [scrollToBottomAfterProgrammaticInput, terminalBackend, sessionId]);
+  }, [prepareProgrammaticSudoInput, scrollToBottomAfterProgrammaticInput, terminalBackend, sessionId]);
 
   const executeSnippet = useCallback(async (snippet: Snippet) => {
     const command = await resolveSnippetCommand(snippet);
@@ -1029,7 +1083,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     ['--terminal-ui-toolbar-btn-active' as never]: `var(--terminal-preview-toolbar-btn-active, color-mix(in srgb, ${effectiveTheme.colors.cursor} 78%, ${effectiveTheme.colors.background} 22%))`,
   }), [effectiveTheme.colors.background, effectiveTheme.colors.cursor, effectiveTheme.colors.foreground]);
 
-  useTerminalEffects({ CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, host, hotkeySchemeRef, identities, inWorkspace, isBroadcastEnabledRef, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, onBroadcastInputRef, onCommandExecuted, onHotkeyActionRef, onSnippetShortkeyRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalFontSizeChange, pendingAuthRef, pendingOutputScrollRef, prevIsResizingRef, primaryFontFamily, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, setIsSearchOpen, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, snippetsRef, status, statusRef, t, teardown, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef });
+  useTerminalEffects({ CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, host, hotkeySchemeRef, identities, inWorkspace, isBroadcastEnabledRef, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, onBroadcastInputRef, onCommandExecuted, onHotkeyActionRef, onSnippetShortkeyRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalFontSizeChange, pendingAuthRef, pendingOutputScrollRef, prevIsResizingRef, primaryFontFamily, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, setIsSearchOpen, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, snippetsRef, status, statusRef, sudoAutofillRef, t, teardown, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef });
 
   return <TerminalView ctx={{ ArrowDownToLine, ArrowUpFromLine, Button, Copy, Cpu, HardDrive, HoverCard, HoverCardContent, HoverCardTrigger, Maximize2, MemoryStick, Radio, Sparkles, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, chainProgress, cn, containerRef, effectiveTheme, error, executeSnippet, executeSnippetCommand, formatNetSpeed, handleAddSelectionToAI, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleRetry, handleSearch, handleTopOverlayMouseDownCapture, hasMouseTracking, hasSelection, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen, isDraggingOver, isFocusMode, isLocalConnection, isSearchOpen, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onAddSelectionToAI, onBroadcastInput, onCloseSession, onExpandToFocus, onSplitHorizontal, onSplitVertical, onToggleBroadcast, osc52ReadPromptVisible, pendingHostKeyInfo, progressLogs, progressValue, renderControls, scrollToBottomAfterProgrammaticInput, searchMatchCount, selectionOverlayPosition, serverStats, sessionId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, snippets, status, statusDotTone, t, termRef, terminalBackend, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem }} />;
 };

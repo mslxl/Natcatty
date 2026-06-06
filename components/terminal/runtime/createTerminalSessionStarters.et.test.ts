@@ -5,6 +5,14 @@ import { createTerminalSessionStarters } from "./createTerminalSessionStarters";
 
 const noop = () => undefined;
 
+const prepareSudoPrompt = (
+  autofill: { prepareCommand: (command: string) => string | null } | null,
+): string => {
+  const prepared = autofill?.prepareCommand("sudo whoami");
+  assert.equal(prepared, "sudo whoami");
+  return "[sudo] password for alice: ";
+};
+
 const makeBackend = (
   onStartEt: (options: Record<string, unknown>) => void = noop,
 ) => ({
@@ -77,6 +85,33 @@ const term = {
   writeln: noop,
   scrollToBottom: noop,
 };
+
+test("startEt enables sudo autofill with the host saved password", async () => {
+  let onData: ((data: string) => void) | null = null;
+  const sent: string[] = [];
+  const backend = {
+    ...makeBackend(),
+    onSessionData: (_id: string, cb: (data: string) => void) => {
+      onData = cb;
+      return noop;
+    },
+    writeToSession: (_id: string, data: string) => sent.push(data),
+  };
+  const sudoAutofillRef = { current: null };
+  const ctx = {
+    ...makeCtx({
+      password: "saved-secret",
+      terminalSudoAutoFill: true,
+    }, [], backend),
+    sudoAutofillRef,
+    sudoAutofillPassword: "saved-secret",
+  };
+
+  await createTerminalSessionStarters(ctx as never).startEt(term as never);
+  onData?.(prepareSudoPrompt(sudoAutofillRef.current));
+
+  assert.deepEqual(sent, ["saved-secret\n"]);
+});
 
 test("startEt fails loudly when a configured jump host cannot be resolved", async () => {
   let started = false;

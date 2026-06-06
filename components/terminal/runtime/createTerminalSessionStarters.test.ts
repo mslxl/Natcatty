@@ -11,6 +11,58 @@ import { pasteTextIntoTerminal } from "./terminalUserPaste";
 const noop = () => undefined;
 const ENCRYPTED_CREDENTIAL_PLACEHOLDER = "enc:v1:djEwAAAA";
 
+const prepareSudoPrompt = (
+  autofill: { prepareCommand: (command: string) => string | null } | null,
+  command = "sudo whoami",
+): string => {
+  const prepared = autofill?.prepareCommand(command);
+  assert.equal(prepared, command);
+  return "[sudo] password for alice: ";
+};
+
+const createTermStub = () => ({
+  cols: 120,
+  rows: 32,
+  write: (_data: string, callback?: () => void) => callback?.(),
+  writeln: noop,
+  scrollToBottom: noop,
+});
+
+const createStarterContext = (overrides: Record<string, unknown> = {}) => ({
+  host: {
+    id: "host-1",
+    label: "Target",
+    hostname: "target.example.test",
+    username: "alice",
+  },
+  keys: [],
+  identities: [],
+  knownHosts: [],
+  resolvedChainHosts: [],
+  sessionId: "session-1",
+  terminalSettings: {},
+  sessionRef: { current: null },
+  hasConnectedRef: { current: true },
+  hasRunStartupCommandRef: { current: false },
+  disposeDataRef: { current: null },
+  disposeExitRef: { current: null },
+  fitAddonRef: { current: null },
+  serializeAddonRef: { current: null },
+  pendingAuthRef: { current: null },
+  promptLineBreakStateRef: { current: createPromptLineBreakState() },
+  sudoAutofillRef: { current: null },
+  updateStatus: noop,
+  setStatus: noop,
+  setError: noop,
+  setNeedsAuth: noop,
+  setAuthRetryMessage: noop,
+  setAuthPassword: noop,
+  setProgressLogs: noop,
+  setProgressValue: noop,
+  setChainProgress: noop,
+  ...overrides,
+});
+
 test("getMissingChainHostIds reports unresolved jump hosts", () => {
   assert.deepEqual(
     getMissingChainHostIds(
@@ -107,6 +159,285 @@ test("startSSH forwards custom ProxyCommand to the SSH bridge", async () => {
     username: undefined,
     password: undefined,
   });
+});
+
+test("startSSH enables sudo autofill only with the host saved password", async () => {
+  let onData: ((data: string) => void) | null = null;
+  const sent: string[] = [];
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => "ssh-session",
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: (_id: string, cb: (data: string) => void) => {
+      onData = cb;
+      return noop;
+    },
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: (_id: string, data: string) => sent.push(data),
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      password: "saved-secret",
+      terminalSudoAutoFill: true,
+    },
+    terminalBackend,
+    sudoAutofillPassword: "saved-secret",
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+  onData?.(prepareSudoPrompt(ctx.sudoAutofillRef.current));
+
+  assert.deepEqual(sent, ["saved-secret\n"]);
+});
+
+test("startSSH does not use unsaved retry passwords for sudo autofill", async () => {
+  let onData: ((data: string) => void) | null = null;
+  const sent: string[] = [];
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => "ssh-session",
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: (_id: string, cb: (data: string) => void) => {
+      onData = cb;
+      return noop;
+    },
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: (_id: string, data: string) => sent.push(data),
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      terminalSudoAutoFill: true,
+    },
+    pendingAuthRef: {
+      current: {
+        authMethod: "password",
+        username: "alice",
+        password: "temporary-secret",
+        savedToHost: false,
+      },
+    },
+    terminalBackend,
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+  assert.equal(ctx.sudoAutofillRef.current?.prepareCommand("sudo whoami"), null);
+  onData?.("[sudo] password for alice: ");
+
+  assert.deepEqual(sent, []);
+});
+
+test("startSSH prefers latest sudo autofill password state over pending saved auth", async () => {
+  let onData: ((data: string) => void) | null = null;
+  const sent: string[] = [];
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => "ssh-session",
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: (_id: string, cb: (data: string) => void) => {
+      onData = cb;
+      return noop;
+    },
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: (_id: string, data: string) => sent.push(data),
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      terminalSudoAutoFill: true,
+    },
+    pendingAuthRef: {
+      current: {
+        authMethod: "password",
+        username: "alice",
+        password: "pending-secret",
+        savedToHost: true,
+      },
+    },
+    terminalBackend,
+    sudoAutofillEnabledRef: { current: true },
+    sudoAutofillPasswordRef: { current: undefined },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+  assert.equal(ctx.sudoAutofillRef.current?.prepareCommand("sudo whoami"), null);
+  onData?.("[sudo] password for alice: ");
+
+  assert.deepEqual(sent, []);
+});
+
+test("startSSH does not use merged group default passwords for sudo autofill", async () => {
+  let onData: ((data: string) => void) | null = null;
+  const sent: string[] = [];
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => "ssh-session",
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: (_id: string, cb: (data: string) => void) => {
+      onData = cb;
+      return noop;
+    },
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: (_id: string, data: string) => sent.push(data),
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      password: "group-default-secret",
+      terminalSudoAutoFill: true,
+    },
+    terminalBackend,
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+  assert.equal(ctx.sudoAutofillRef.current?.prepareCommand("sudo whoami"), null);
+  onData?.("[sudo] password for alice: ");
+
+  assert.deepEqual(sent, []);
+});
+
+test("startSSH uses the provided sudo autofill password", async () => {
+  let onData: ((data: string) => void) | null = null;
+  const sent: string[] = [];
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => "ssh-session",
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: (_id: string, cb: (data: string) => void) => {
+      onData = cb;
+      return noop;
+    },
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: (_id: string, data: string) => sent.push(data),
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      terminalSudoAutoFill: true,
+    },
+    terminalBackend,
+    sudoAutofillPassword: "host-secret",
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+  onData?.(prepareSudoPrompt(ctx.sudoAutofillRef.current));
+
+  assert.deepEqual(sent, ["host-secret\n"]);
+});
+
+test("startSSH leaves sudo autofill disabled when the host switch is off", async () => {
+  let onData: ((data: string) => void) | null = null;
+  const sent: string[] = [];
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => "ssh-session",
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: (_id: string, cb: (data: string) => void) => {
+      onData = cb;
+      return noop;
+    },
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: (_id: string, data: string) => sent.push(data),
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      password: "saved-secret",
+      terminalSudoAutoFill: false,
+    },
+    terminalBackend,
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+  assert.equal(ctx.sudoAutofillRef.current?.prepareCommand("sudo whoami"), null);
+  onData?.("[sudo] password for alice: ");
+
+  assert.deepEqual(sent, []);
 });
 
 test("startSerial captures direct connected banner in terminal log data", async () => {

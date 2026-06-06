@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import {
+  createSudoPasswordAutofill,
+  prepareSudoAutofillInput,
+} from "./terminalSudoAutofill";
 import { recordTerminalCommandExecution } from "./terminalCommandExecution";
 import { createPromptLineBreakState } from "./promptLineBreak";
 
@@ -48,11 +52,46 @@ function createWrappedFakeTerm(rows: string[], cursorY: number, cursorX: number,
   };
 }
 
+test("sudo autofill input preparation keeps submitted sudo commands visible as typed", () => {
+  const autofill = createSudoPasswordAutofill({
+    password: "secret",
+    write: () => {},
+  });
+
+  assert.equal(
+    prepareSudoAutofillInput("\r", "sudo whoami", autofill),
+    "\r",
+  );
+});
+
+test("sudo autofill input preparation keeps single-line pasted sudo commands unchanged", () => {
+  const autofill = createSudoPasswordAutofill({
+    password: "secret",
+    write: () => {},
+  });
+
+  assert.equal(
+    prepareSudoAutofillInput("sudo whoami\n", null, autofill),
+    "sudo whoami\n",
+  );
+});
+
+test("sudo autofill input preparation leaves ordinary commands unchanged", () => {
+  const autofill = createSudoPasswordAutofill({
+    password: "secret",
+    write: () => {},
+  });
+
+  assert.equal(prepareSudoAutofillInput("\r", "echo ok", autofill), "\r");
+  assert.equal(prepareSudoAutofillInput("x", "sudo whoami", autofill), "x");
+  assert.equal(prepareSudoAutofillInput("sudo whoami\nsudo id\n", null, autofill), "sudo whoami\nsudo id\n");
+});
+
 test("command execution arms prompt line break even without command history callback", () => {
   const promptState = createPromptLineBreakState();
   const commandBufferRef = { current: "echo ok" };
 
-  recordTerminalCommandExecution("echo ok", {
+  const recordedCommand = recordTerminalCommandExecution("echo ok", {
     host: {
       id: "host-1",
       label: "Host",
@@ -63,6 +102,7 @@ test("command execution arms prompt line break even without command history call
   });
 
   assert.equal(commandBufferRef.current, "");
+  assert.equal(recordedCommand, "echo ok");
   assert.equal(promptState.pendingCommand, true);
 });
 
@@ -118,7 +158,7 @@ test("command execution does not write interactive program input to shell histor
     const promptState = createPromptLineBreakState();
     const recorded: string[] = [];
 
-    recordTerminalCommandExecution(command, {
+    const recordedCommand = recordTerminalCommandExecution(command, {
       host: {
         id: "host-1",
         label: "Host",
@@ -132,6 +172,7 @@ test("command execution does not write interactive program input to shell histor
     }, createFakeTerm(lineText) as never);
 
     assert.deepEqual(recorded, [], lineText);
+    assert.equal(recordedCommand, null, lineText);
     assert.equal(commandBufferRef.current, "", lineText);
     assert.equal(promptState.lastPromptText, "", lineText);
     assert.equal(promptState.pendingCommand, true, lineText);

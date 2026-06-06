@@ -17,6 +17,7 @@ import {
   createTerminalOutputTimestampPrefixer,
   type TerminalOutputTimestampPrefixer,
 } from "./terminalOutputTimestamps";
+import { createSudoPasswordAutofill } from "./terminalSudoAutofill";
 
 export const buildTermEnv = (host: Host, terminalSettings?: TerminalSettings) => {
   const env: Record<string, string> = {
@@ -221,6 +222,7 @@ export const attachSessionToTerminal = (
     onExit?: (evt: { exitCode?: number; signal?: number; error?: string; reason?: string }) => void;
     // For serial: convert lone LF to CRLF to avoid "staircase effect"
     convertLfToCrlf?: boolean;
+    sudoAutofillPassword?: string;
   },
 ) => {
   ctx.sessionRef.current = id;
@@ -228,6 +230,13 @@ export const attachSessionToTerminal = (
   getFlowController(ctx, term).reset();
   resetTerminalOutputTimestamps(term);
   ctx.onSessionAttached?.(id);
+  const sudoAutofill = createSudoPasswordAutofill({
+    password: opts?.sudoAutofillPassword,
+    write: (data) => ctx.terminalBackend.writeToSession(id, data, { automated: true }),
+  });
+  if (ctx.sudoAutofillRef) {
+    ctx.sudoAutofillRef.current = sudoAutofill;
+  }
 
   ctx.disposeDataRef.current = ctx.terminalBackend.onSessionData(id, (chunk) => {
     let data = chunk;
@@ -237,6 +246,7 @@ export const attachSessionToTerminal = (
       // Replace \n that is not preceded by \r with \r\n
       data = data.replace(/(?<!\r)\n/g, "\r\n");
     }
+    sudoAutofill?.handleOutput(data);
     writeSessionData(ctx, term, data);
     if (!ctx.hasConnectedRef.current) {
       ctx.updateStatus("connected");
@@ -278,6 +288,9 @@ export const attachSessionToTerminal = (
     clearConnectionToken(ctx.sessionId);
 
     opts?.onExit?.(evt);
+    if (ctx.sudoAutofillRef) {
+      ctx.sudoAutofillRef.current = null;
+    }
     ctx.onSessionExit?.(ctx.sessionId, evt);
   });
 };

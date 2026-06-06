@@ -46,7 +46,11 @@ export type PendingSftpUpload = {
   entries: DropEntry[];
 };
 
-export type SnippetExecutor = (command: string, noAutoRun?: boolean) => void;
+export type SnippetExecutor = (
+  command: string,
+  noAutoRun?: boolean,
+  options?: { broadcast?: boolean },
+) => void;
 
 export type PendingTerminalSelectionForAI = {
   requestId: string;
@@ -480,6 +484,7 @@ interface TerminalPaneProps {
   session: TerminalSession;
   host: Host;
   chainHosts?: Host[];
+  sudoAutofillPassword?: string;
   workspaceById: Map<string, Workspace>;
   workspaceRectsById: Map<string, Record<string, WorkspaceRect>>;
   isTerminalLayerVisible: boolean;
@@ -549,6 +554,7 @@ const terminalPanePropsAreEqual = (
   prev.session === next.session &&
   prev.host === next.host &&
   prev.chainHosts === next.chainHosts &&
+  prev.sudoAutofillPassword === next.sudoAutofillPassword &&
   prev.workspaceById === next.workspaceById &&
   prev.workspaceRectsById === next.workspaceRectsById &&
   prev.isTerminalLayerVisible === next.isTerminalLayerVisible &&
@@ -601,6 +607,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   session,
   host,
   chainHosts,
+  sudoAutofillPassword,
   workspaceById,
   workspaceRectsById,
   isTerminalLayerVisible,
@@ -773,6 +780,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         onSnippetExecutorChange={onSnippetExecutorChange}
         sessionLog={sessionLog}
         sshDebugLogEnabled={sshDebugLogEnabled}
+        sudoAutofillPassword={sudoAutofillPassword}
         onAddSelectionToAI={onAddSelectionToAI}
       />
     </div>
@@ -784,6 +792,7 @@ interface TerminalPanesHostProps {
   sessions: TerminalSession[];
   sessionHostsMap: Map<string, Host>;
   sessionChainHostsMap: Map<string, Host[]>;
+  sessionSudoAutofillPasswordsMap: Map<string, string | undefined>;
   workspaceById: Map<string, Workspace>;
   workspaceRectsById: Map<string, Record<string, WorkspaceRect>>;
   isTerminalLayerVisible: boolean;
@@ -839,6 +848,7 @@ export const TerminalPanesHost: React.FC<TerminalPanesHostProps> = memo(({
   sessions,
   sessionHostsMap,
   sessionChainHostsMap,
+  sessionSudoAutofillPasswordsMap,
   ...sharedProps
 }) => (
   <>
@@ -851,6 +861,7 @@ export const TerminalPanesHost: React.FC<TerminalPanesHostProps> = memo(({
           session={session}
           host={host}
           chainHosts={sessionChainHostsMap.get(session.id)}
+          sudoAutofillPassword={sessionSudoAutofillPasswordsMap.get(session.id)}
           {...sharedProps}
         />
       );
