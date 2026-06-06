@@ -580,7 +580,7 @@ function createStartSessionApi(ctx) {
         // preferred default key — identical to what a separate
         // findDefaultPrivateKey() scan would return — so derive it here instead
         // of walking ~/.ssh a second time. (Pinned by
-        // sshAuthHelper.defaultKeyEquivalence.test.cjs.)
+        // sshBridge.defaultKeyEquivalence.test.cjs.)
         let usedDefaultKeyAsPrimary = false;
         const allDefaultKeys = await defaultKeysPromise;
         const defaultKeyInfo = allDefaultKeys[0] ?? null;

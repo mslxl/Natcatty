@@ -2,11 +2,14 @@
 
 // Characterization test pinning the property that `startSession.cjs` relies on
 // after the connection-startup optimization: the single preferred default key
-// returned by `findDefaultPrivateKey()` is exactly `findAllDefaultPrivateKeys()[0]`.
-// Both scan ~/.ssh with identical filtering/sorting/encrypted-skipping, so the
-// hot path can derive the default from the (already-needed) full list instead of
-// scanning the directory a second time. This test locks that equivalence so the
-// dedupe refactor cannot silently change auth behavior.
+// equals `findAllDefaultPrivateKeys()[0]`, so the connect path can derive it
+// from the (already-needed) full list instead of scanning ~/.ssh a second time.
+//
+// These are the *local* sshBridge functions actually wired into startSession via
+// `with(ctx)` (sshBridge.cjs passes its own findDefaultPrivateKey /
+// findAllDefaultPrivateKeys into createStartSessionApi), exposed here as
+// `_findDefaultPrivateKey` / `_findAllDefaultPrivateKeys`. Testing the helper's
+// copy would prove nothing about the path the change runs on.
 
 const test = require("node:test");
 const assert = require("node:assert");
@@ -14,7 +17,10 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const sshAuthHelper = require("./sshAuthHelper.cjs");
+const {
+  _findDefaultPrivateKey: findDefaultPrivateKey,
+  _findAllDefaultPrivateKeys: findAllDefaultPrivateKeys,
+} = require("./sshBridge.cjs");
 
 const UNENCRYPTED = (tag) =>
   `-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAK${tag}fakebody\n-----END RSA PRIVATE KEY-----\n`;
@@ -40,8 +46,8 @@ async function withFakeSshDir(files, run) {
 
 // The refactor replaces `await findDefaultPrivateKey()` with `allDefaultKeys[0] ?? null`.
 async function assertEquivalent() {
-  const single = await sshAuthHelper.findDefaultPrivateKey();
-  const all = await sshAuthHelper.findAllDefaultPrivateKeys();
+  const single = await findDefaultPrivateKey();
+  const all = await findAllDefaultPrivateKeys();
   assert.deepStrictEqual(single, all[0] ?? null);
   return { single, all };
 }
