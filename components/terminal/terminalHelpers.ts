@@ -130,6 +130,7 @@ export interface TerminalProps {
   ) => void;
   sessionLog?: { enabled: boolean; directory: string; format: string; timestampsEnabled?: boolean };
   sshDebugLogEnabled?: boolean;
+  onAddSelectionToAI?: (sessionId: string, selection: string) => void;
 }
 
 export function formatNetSpeed(bytesPerSec: number): string {

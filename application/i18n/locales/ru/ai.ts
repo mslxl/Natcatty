@@ -238,6 +238,8 @@ export const ruAiMessages: Messages = {
   'topTabs.openSettings': 'Открыть настройки',
   'ai.chat.sessionHistory': 'История сессий',
   'ai.chat.attach': 'Прикрепить',
+  'ai.chat.terminalSelectionAttachment': 'Выделение терминала',
+  'ai.chat.terminalSelectionLines': 'строк: {count}',
   'ai.chat.collapse': 'Свернуть',
   'ai.chat.expand': 'Развернуть',
   'ai.chat.enableAgent': 'Включить {name}',

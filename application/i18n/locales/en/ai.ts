@@ -238,6 +238,8 @@ export const enAiMessages: Messages = {
   'topTabs.openSettings': 'Open Settings',
   'ai.chat.sessionHistory': 'Session history',
   'ai.chat.attach': 'Attach',
+  'ai.chat.terminalSelectionAttachment': 'Terminal selection',
+  'ai.chat.terminalSelectionLines': 'lines: {count}',
   'ai.chat.collapse': 'Collapse',
   'ai.chat.expand': 'Expand',
   'ai.chat.enableAgent': 'Enable {name}',

@@ -6,6 +6,7 @@ import {
   ClipboardPaste,
   Copy,
   RefreshCcw,
+  Sparkles,
   SplitSquareHorizontal,
   SplitSquareVertical,
   Terminal as TerminalIcon,
@@ -41,6 +42,7 @@ export interface TerminalContextMenuProps {
   onReconnect?: () => void;
   onClose?: () => void;
   onSelectWord?: () => void;
+  onAddSelectionToAI?: () => void;
 }
 
 export const shouldShowReconnectAction = ({
@@ -77,6 +79,7 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
   onReconnect,
   onClose,
   onSelectWord,
+  onAddSelectionToAI,
 }) => {
   const { t } = useI18n();
   const isMac = hotkeyScheme === 'mac';
@@ -168,6 +171,12 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
             {t('terminal.menu.paste')}
             <ContextMenuShortcut>{pasteShortcut}</ContextMenuShortcut>
           </ContextMenuItem>
+          {onAddSelectionToAI && (
+            <ContextMenuItem onClick={onAddSelectionToAI} disabled={!hasSelection}>
+              <Sparkles size={14} className="mr-2" />
+              {t('terminal.menu.addSelectionToAI')}
+            </ContextMenuItem>
+          )}
           {onPasteSelection && (
             <ContextMenuItem onClick={onPasteSelection} disabled={!hasSelection}>
               <ClipboardPaste size={14} className="mr-2" />

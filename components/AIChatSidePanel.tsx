@@ -31,6 +31,10 @@ import {
 } from './ai/draftSendGate';
 import { getSessionScopeMatchRank } from './ai/sessionScopeMatch';
 import { selectDraftForAgentSwitch } from '../application/state/aiDraftState';
+import {
+  buildPromptWithTerminalSelectionAttachments,
+  isTerminalSelectionAttachment,
+} from '../application/state/terminalSelectionAttachment';
 import type { CodexIntegrationStatus } from './settings/tabs/ai/types';
 import {
   useAIChatStreaming,
@@ -650,18 +654,24 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     const currentSessionView = activeSessionRef.current;
     const trimmed = draft?.text.trim() ?? '';
     const sendScopeKey = scopeKey;
-    if (!trimmed || isStreaming) return;
-    const sendAgentId = currentSessionView?.agentId ?? draft?.agentId ?? currentAgentId;
-    const agentConfig = sendAgentId !== 'catty' ? findEnabledExternalAgent(externalAgents, sendAgentId) : undefined;
-    if (sendAgentId !== 'catty' && !agentConfig) return;
-
-    const selectedSkillSlugs = draft?.selectedUserSkillSlugs ?? [];
     const attachments = (draft?.attachments ?? []).map((file) => ({
       base64Data: file.base64Data,
       mediaType: file.mediaType,
       filename: file.filename,
       filePath: file.filePath,
+      terminalSelection: file.terminalSelection,
+      previewText: file.previewText,
+      lineCount: file.lineCount,
     }));
+    const hasTerminalSelectionAttachments = attachments.some(isTerminalSelectionAttachment);
+    if ((!trimmed && !hasTerminalSelectionAttachments) || isStreaming) return;
+    const sendAgentId = currentSessionView?.agentId ?? draft?.agentId ?? currentAgentId;
+    const agentConfig = sendAgentId !== 'catty' ? findEnabledExternalAgent(externalAgents, sendAgentId) : undefined;
+    if (sendAgentId !== 'catty' && !agentConfig) return;
+
+    const selectedSkillSlugs = draft?.selectedUserSkillSlugs ?? [];
+    const modelPrompt = buildPromptWithTerminalSelectionAttachments(trimmed, attachments);
+    const modelAttachments = attachments.filter((attachment) => !isTerminalSelectionAttachment(attachment));
     const isDraftMode = currentPanelView.mode === 'draft';
 
     if (isDraftMode && !tryBeginDraftSend(draftSendInFlightRef)) {
@@ -691,7 +701,11 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       const sendActiveModelId = isExternalAgent ? activeModelId : effectiveActiveModelId;
 
       if (!isExternalAgent && !sendActiveProvider) {
-        addMessageToSession(sessionId, { id: generateId(), role: 'user', content: trimmed, timestamp: Date.now() });
+        addMessageToSession(sessionId, {
+          id: generateId(), role: 'user', content: trimmed,
+          ...(attachments.length > 0 ? { attachments } : {}),
+          timestamp: Date.now(),
+        });
         addMessageToSession(sessionId, { id: generateId(), role: 'assistant', content: t('ai.chat.noProvider'), timestamp: Date.now() });
         if (currentPanelView.mode === 'session') {
           clearScopeDraft();
@@ -701,7 +715,11 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       }
 
       if (!isExternalAgent && !sendActiveModelId.trim()) {
-        addMessageToSession(sessionId, { id: generateId(), role: 'user', content: trimmed, timestamp: Date.now() });
+        addMessageToSession(sessionId, {
+          id: generateId(), role: 'user', content: trimmed,
+          ...(attachments.length > 0 ? { attachments } : {}),
+          timestamp: Date.now(),
+        });
         addMessageToSession(sessionId, { id: generateId(), role: 'assistant', content: t('ai.chat.noProviderModel'), timestamp: Date.now() });
         if (currentPanelView.mode === 'session') {
           clearScopeDraft();
@@ -741,7 +759,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         }
         try {
           const existingExternalSessionId = currentSession?.externalSessionId;
-          await sendToExternalAgent(sessionId, trimmed, agentConfig, abortController, attachments, {
+          await sendToExternalAgent(sessionId, modelPrompt, agentConfig, abortController, modelAttachments, {
             existingSessionId: existingExternalSessionId,
             updateExternalSessionId: updateSessionExternalSessionId,
             historyMessages: buildExternalAgentHistoryMessagesForBridge(currentSession?.messages ?? [], existingExternalSessionId),
@@ -765,7 +783,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           targetId: scopeTargetId,
           label: scopeLabel,
         } as const;
-        await sendToCattyAgent(sessionId, sendScopeKey, trimmed, abortController, currentSession ?? undefined, assistantMsgId, {
+        await sendToCattyAgent(sessionId, sendScopeKey, modelPrompt, abortController, currentSession ?? undefined, assistantMsgId, {
           activeProvider: sendActiveProvider,
           activeModelId: sendActiveModelId,
           scopeType,
@@ -778,7 +796,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           getExecutorContext: () => buildExecutorContextForScope(toolScope),
           autoTitleSession,
           selectedUserSkillSlugs: selectedSkillSlugs,
-        }, attachments.length > 0 ? attachments : undefined);
+          titleText: trimmed,
+        }, modelAttachments.length > 0 ? modelAttachments : undefined);
       }
     } finally {
       if (isDraftMode) {

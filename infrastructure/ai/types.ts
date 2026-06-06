@@ -83,6 +83,9 @@ export interface ChatMessageAttachment {
   mediaType: string;
   filename?: string;
   filePath?: string;    // original filesystem path, when available
+  terminalSelection?: boolean;
+  previewText?: string;
+  lineCount?: number;
 }
 
 export interface UploadedFile {
@@ -92,6 +95,9 @@ export interface UploadedFile {
   base64Data: string;
   mediaType: string;
   filePath?: string;
+  terminalSelection?: boolean;
+  previewText?: string;
+  lineCount?: number;
 }
 
 export interface AIDraft {

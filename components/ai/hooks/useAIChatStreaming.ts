@@ -43,6 +43,10 @@ import { runSdkAgentTurn } from '../../../infrastructure/ai/sdkAgentAdapter';
 import { classifyError } from '../../../infrastructure/ai/errorClassifier';
 import { isSdkStreamStateError } from '../../../infrastructure/ai/shared/streamStateErrors';
 import {
+  buildPromptWithTerminalSelectionAttachments,
+  isTerminalSelectionAttachment,
+} from '../../../application/state/terminalSelectionAttachment';
+import {
   extractProviderContinuationFromRawChunk,
   getOpenAIChatAssistantFieldsForHistoryMessage,
   isProviderContinuationForSource,
@@ -204,6 +208,7 @@ export interface SendToCattyContext {
   webSearchConfig?: WebSearchConfig | null;
   getExecutorContext?: () => ExecutorContext;
   autoTitleSession: (sessionId: string, text: string) => void;
+  titleText?: string;
   selectedUserSkillSlugs?: string[];
 }
 
@@ -800,10 +805,16 @@ export function useAIChatStreaming({
         if (m.role === 'user') {
           // Build multimodal content when attachments are present (fallback to legacy `images` field)
           const messageAttachments = m.attachments ?? m.images;
-          if (messageAttachments?.length) {
+          const modelText = messageAttachments?.length
+            ? buildPromptWithTerminalSelectionAttachments(m.content, messageAttachments)
+            : m.content;
+          const modelAttachments = messageAttachments?.filter(
+            (attachment) => !isTerminalSelectionAttachment(attachment),
+          );
+          if (modelAttachments?.length) {
             const parts: Array<{ type: 'text'; text: string } | { type: 'image'; image: string; mediaType?: string } | { type: 'file'; data: string; mediaType: string; filename?: string }> = [];
-            parts.push({ type: 'text', text: m.content });
-            for (const att of messageAttachments) {
+            parts.push({ type: 'text', text: modelText });
+            for (const att of modelAttachments) {
               if (att.mediaType.startsWith('image/')) {
                 parts.push({ type: 'image', image: att.base64Data, mediaType: att.mediaType });
               } else {
@@ -812,7 +823,7 @@ export function useAIChatStreaming({
             }
             sdkMessages.push({ role: 'user', content: parts });
           } else {
-            sdkMessages.push({ role: 'user', content: m.content });
+            sdkMessages.push({ role: 'user', content: modelText });
           }
         } else if (m.role === 'assistant') {
           const activeContinuation = isProviderContinuationForSource(
@@ -1008,7 +1019,7 @@ export function useAIChatStreaming({
       updateLastMessage(sessionId, msg => msg.statusText ? { ...msg, statusText: '' } : msg);
       setStreamingForScope(sessionId, false);
       abortControllersRef.current.delete(sessionId);
-      context.autoTitleSession(sessionId, trimmed);
+      context.autoTitleSession(sessionId, context.titleText ?? trimmed);
     }
   }, [
     processCattyStream, reportStreamError, setStreamingForScope,
