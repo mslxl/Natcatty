@@ -1077,4 +1077,8 @@ module.exports = {
   _getSshDebugLogFilePath: getSshDebugLogFilePath,
   _setSshDebugLoggingEnabled: setSshDebugLoggingEnabled,
   _shouldLogSshDebugMessage: shouldLogSshDebugMessage,
+  // Exposed for the default-key dedupe characterization test (the connect path
+  // derives the preferred default key from findAllDefaultPrivateKeys()[0]).
+  _findDefaultPrivateKey: findDefaultPrivateKey,
+  _findAllDefaultPrivateKeys: findAllDefaultPrivateKeys,
 };
