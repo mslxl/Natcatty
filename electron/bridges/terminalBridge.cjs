@@ -396,6 +396,7 @@ function startLocalSession(event, payload) {
       hostname: "localhost",
       directory: payload.sessionLog.directory,
       format: payload.sessionLog.format || "txt",
+      timestampsEnabled: Boolean(payload.sessionLog.timestampsEnabled),
       startTime: Date.now(),
     });
   }
@@ -613,6 +614,7 @@ async function startSerialSession(event, options) {
             hostname: portPath,
             directory: options.sessionLog.directory,
             format: options.sessionLog.format || "txt",
+            timestampsEnabled: Boolean(options.sessionLog.timestampsEnabled),
             startTime: Date.now(),
           });
         }

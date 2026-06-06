@@ -417,6 +417,7 @@ export interface TerminalLayerProps {
   sessionLogsEnabled?: boolean;
   sessionLogsDir?: string;
   sessionLogsFormat?: string;
+  sessionLogsTimestampsEnabled?: boolean;
   sshDebugLogsEnabled?: boolean;
   toggleScriptsSidePanelRef?: React.MutableRefObject<(() => void) | null>;
   toggleSidePanelRef?: React.MutableRefObject<(() => void) | null>;

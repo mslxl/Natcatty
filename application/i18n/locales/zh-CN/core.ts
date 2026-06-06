@@ -143,6 +143,8 @@ export const zhCNCoreMessages: Messages = {
   'settings.sessionLogs.formatTxt': '纯文本 (.txt)',
   'settings.sessionLogs.formatRaw': '原始格式 (.log)',
   'settings.sessionLogs.formatHtml': 'HTML (.html)',
+  'settings.sessionLogs.timestamps': '添加时间戳',
+  'settings.sessionLogs.timestampsDesc': '为纯文本和 HTML 日志的每一行添加本地时间。',
   'settings.sessionLogs.hint': '会话日志用于记录终端输出，便于故障排查和审计。',
 
   // Settings > SSH Debug Logs

@@ -164,6 +164,91 @@ test("startStream host directory preserves valid Unicode labels and replaces pat
   }
 });
 
+test("txt stream timestamps complete lines without duplicating split chunks", async () => {
+  const directory = path.join(TEMP_ROOT, `stream-timestamps-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const sessionId = `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const times = [
+    new Date(2026, 0, 2, 3, 4, 5).getTime(),
+    new Date(2026, 0, 2, 3, 4, 6).getTime(),
+    new Date(2026, 0, 2, 3, 4, 7).getTime(),
+  ];
+
+  try {
+    startStream(sessionId, {
+      hostLabel: "host",
+      hostname: "host.example",
+      directory,
+      format: "txt",
+      startTime: Date.UTC(2026, 0, 2, 3, 4, 5),
+      timestampsEnabled: true,
+      timestampProvider: () => times.shift(),
+    });
+    appendData(sessionId, "first ");
+    appendData(sessionId, "line\nsecond line\npartial");
+
+    const filePath = await stopStream(sessionId);
+
+    assert.equal(
+      fs.readFileSync(filePath, "utf8"),
+      "[2026-01-02 03:04:05] first line\n[2026-01-02 03:04:06] second line\n[2026-01-02 03:04:07] partial",
+    );
+  } finally {
+    await stopStream(sessionId);
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("html stream includes line timestamps in rendered content", async () => {
+  const directory = path.join(TEMP_ROOT, `stream-html-timestamps-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const sessionId = `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  try {
+    startStream(sessionId, {
+      hostLabel: "host",
+      hostname: "host.example",
+      directory,
+      format: "html",
+      startTime: Date.UTC(2026, 0, 2, 3, 4, 5),
+      timestampsEnabled: true,
+      timestampProvider: () => new Date(2026, 0, 2, 3, 4, 5).getTime(),
+    });
+    appendData(sessionId, "line\n");
+
+    const filePath = await stopStream(sessionId);
+    const html = fs.readFileSync(filePath, "utf8");
+
+    assert.match(html, /\[2026-01-02 03:04:05\] line/);
+  } finally {
+    await stopStream(sessionId);
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("raw stream keeps original bytes when timestamps are enabled", async () => {
+  const directory = path.join(TEMP_ROOT, `stream-raw-timestamps-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const sessionId = `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  try {
+    startStream(sessionId, {
+      hostLabel: "host",
+      hostname: "host.example",
+      directory,
+      format: "raw",
+      startTime: Date.UTC(2026, 0, 2, 3, 4, 5),
+      timestampsEnabled: true,
+      timestampProvider: () => new Date(2026, 0, 2, 3, 4, 5).getTime(),
+    });
+    appendData(sessionId, "line\n");
+
+    const filePath = await stopStream(sessionId);
+
+    assert.equal(fs.readFileSync(filePath, "utf8"), "line\n");
+  } finally {
+    await stopStream(sessionId);
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 async function waitForFileContent(directory, expectedContent) {
   const deadline = Date.now() + 3000;
   let lastContent = "";

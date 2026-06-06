@@ -21,6 +21,39 @@ const FLUSH_INTERVAL = 500;
 // Max buffer size before immediate flush (bytes)
 const MAX_BUFFER_SIZE = 64 * 1024;
 
+function formatLogTimestamp(timestamp = Date.now()) {
+  const date = new Date(timestamp);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function createLineTimestampPrefixer(opts = {}) {
+  const timestampProvider = typeof opts.timestampProvider === "function"
+    ? opts.timestampProvider
+    : Date.now;
+  let atLineStart = true;
+
+  return (chunk) => {
+    if (!chunk) return "";
+
+    let output = "";
+    for (const char of chunk) {
+      if (atLineStart) {
+        const timestamp = timestampProvider() ?? Date.now();
+        output += `[${formatLogTimestamp(timestamp)}] `;
+        atLineStart = false;
+      }
+
+      output += char;
+      if (char === "\n") {
+        atLineStart = true;
+      }
+    }
+
+    return output;
+  };
+}
+
 /**
  * Start a log stream for a session.
  * Creates the log file and opens a write stream.
@@ -34,7 +67,7 @@ const MAX_BUFFER_SIZE = 64 * 1024;
  * calls kill the new log file. See issue #916.
  *
  * @param {string} sessionId
- * @param {{ hostLabel: string, hostname: string, directory: string, format: string, startTime?: number }} opts
+ * @param {{ hostLabel: string, hostname: string, directory: string, format: string, startTime?: number, timestampsEnabled?: boolean, timestampProvider?: () => number }} opts
  * @returns {symbol|null} Token identifying this stream, or null if no
  *   stream was started (e.g. missing directory).
  */
@@ -90,6 +123,9 @@ function startStream(sessionId, opts) {
       isRaw,
       isHtml,
       renderer: isRaw ? null : createTerminalTextRenderer(),
+      timestampPrefixer: !isRaw && opts.timestampsEnabled
+        ? createLineTimestampPrefixer({ timestampProvider: opts.timestampProvider })
+        : null,
       hostLabel: hostLabel || hostname || "unknown",
       startTime: startTime || Date.now(),
       buffer: "",
@@ -189,7 +225,10 @@ function appendData(sessionId, dataChunk) {
   const entry = activeStreams.get(sessionId);
   if (!entry || entry.disabled) return;
 
-  entry.buffer += dataChunk;
+  const data = entry.timestampPrefixer
+    ? entry.timestampPrefixer(dataChunk)
+    : dataChunk;
+  entry.buffer += data;
 
   // Immediate flush if buffer is large
   if (entry.buffer.length >= MAX_BUFFER_SIZE) {

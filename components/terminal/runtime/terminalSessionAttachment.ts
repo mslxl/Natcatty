@@ -13,6 +13,10 @@ import {
 import { createOutputFlowController, type OutputFlowController } from "./outputFlowController";
 import type { TerminalSessionStartersContext } from "./createTerminalSessionStarters.types";
 import { clearConnectionToken } from "./terminalDistroDetection";
+import {
+  createTerminalOutputTimestampPrefixer,
+  type TerminalOutputTimestampPrefixer,
+} from "./terminalOutputTimestamps";
 
 export const buildTermEnv = (host: Host, terminalSettings?: TerminalSettings) => {
   const env: Record<string, string> = {
@@ -53,6 +57,7 @@ type TerminalWriteQueue = {
 };
 
 const terminalWriteQueues = new WeakMap<XTerm, TerminalWriteQueue>();
+const terminalOutputTimestampPrefixers = new WeakMap<XTerm, TerminalOutputTimestampPrefixer>();
 
 const scheduleNextTerminalWrite = (term: XTerm, queue: TerminalWriteQueue) => {
   const next = queue.pending.shift();
@@ -93,6 +98,28 @@ const FLOW_HIGH_WATER_MARK = 256 * 1024; // pause the source above ~256KB backlo
 const FLOW_LOW_WATER_MARK = 64 * 1024; // resume once drained to ~64KB
 
 const terminalFlowControllers = new WeakMap<XTerm, OutputFlowController>();
+
+const getTerminalOutputTimestampPrefixer = (term: XTerm): TerminalOutputTimestampPrefixer => {
+  let prefixer = terminalOutputTimestampPrefixers.get(term);
+  if (!prefixer) {
+    prefixer = createTerminalOutputTimestampPrefixer();
+    terminalOutputTimestampPrefixers.set(term, prefixer);
+  }
+  return prefixer;
+};
+
+const applyTerminalOutputTimestamps = (
+  term: XTerm,
+  data: string,
+  enabled: boolean,
+): string => {
+  const prefixer = getTerminalOutputTimestampPrefixer(term);
+  if (!enabled) {
+    prefixer.reset();
+    return data;
+  }
+  return prefixer.append(data);
+};
 
 export const getFlowController = (
   ctx: TerminalSessionStartersContext,
@@ -138,6 +165,8 @@ export const writeSessionData = (
   flow.received(data.length);
   enqueueTerminalWrite(term, (done) => {
     const settings = ctx.terminalSettingsRef?.current ?? ctx.terminalSettings;
+    const timestampsEnabled = settings?.showLineTimestamps === true &&
+      (term.buffer.active as { type?: string }).type !== "alternate";
     const forcePromptNewLine = settings?.forcePromptNewLine ?? false;
     if (!forcePromptNewLine && ctx.promptLineBreakStateRef?.current) {
       ctx.promptLineBreakStateRef.current.pendingCommand = false;
@@ -150,6 +179,7 @@ export const writeSessionData = (
       ctx.promptLineBreakStateRef?.current,
       forcePromptNewLine,
     );
+    const finalDisplayData = applyTerminalOutputTimestamps(term, displayData, timestampsEnabled);
     ctx.onTerminalLogData?.(pasteDisplayData);
     const clearPasteResidualAndCapture = () => {
       const cleanupData = clearPasteResidualAfterTerminalWrite(term);
@@ -173,7 +203,7 @@ export const writeSessionData = (
       flow.written(data.length);
     };
 
-    term.write(displayData, afterWrite);
+    term.write(finalDisplayData, afterWrite);
   });
 };
 

@@ -137,6 +137,7 @@ function createTelnetSessionApi(ctx) {
               hostname,
               directory: options.sessionLog.directory,
               format: options.sessionLog.format || "txt",
+              timestampsEnabled: Boolean(options.sessionLog.timestampsEnabled),
               startTime: Date.now(),
             });
           }

@@ -119,7 +119,7 @@ declare global {
     // Use sudo for SFTP server
     sudo?: boolean;
     // Session log configuration for real-time streaming
-    sessionLog?: { enabled: boolean; directory: string; format: string };
+    sessionLog?: { enabled: boolean; directory: string; format: string; timestampsEnabled?: boolean };
     // SSH connection diagnostics. Does not capture terminal output.
     sshDebugLogEnabled?: boolean;
     // Local SSH key file paths (from SSH config IdentityFile)

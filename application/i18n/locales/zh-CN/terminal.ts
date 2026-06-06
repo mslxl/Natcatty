@@ -286,6 +286,8 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.rendering.renderer': '渲染器',
   'settings.terminal.rendering.renderer.desc': '选择终端渲染技术。自动模式会在低内存设备上使用 DOM 渲染。更改将在新终端会话中生效。',
   'settings.terminal.rendering.auto': '自动',
+  'settings.terminal.rendering.lineTimestamps': '给输出加时间戳',
+  'settings.terminal.rendering.lineTimestamps.desc': '在终端输出行前插入本地时间，时间戳会成为终端可见内容的一部分。',
 
   // Settings > Terminal > Autocomplete
   'settings.terminal.section.autocomplete': '自动补全',

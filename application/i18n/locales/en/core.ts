@@ -159,6 +159,8 @@ export const enCoreMessages: Messages = {
   'settings.sessionLogs.formatTxt': 'Plain Text (.txt)',
   'settings.sessionLogs.formatRaw': 'Raw with ANSI (.log)',
   'settings.sessionLogs.formatHtml': 'HTML (.html)',
+  'settings.sessionLogs.timestamps': 'Add timestamps',
+  'settings.sessionLogs.timestampsDesc': 'Prefix each line in plain text and HTML logs with the local time.',
   'settings.sessionLogs.hint': 'Session logs capture all terminal output for troubleshooting and auditing purposes.',
 
   // Settings > SSH Debug Logs
@@ -437,6 +439,8 @@ export const enCoreMessages: Messages = {
   'settings.terminal.rendering.renderer': 'Renderer',
   'settings.terminal.rendering.renderer.desc': 'Choose the terminal rendering technology. Auto will use DOM on low-memory devices. Changes take effect on new terminal sessions.',
   'settings.terminal.rendering.auto': 'Auto',
+  'settings.terminal.rendering.lineTimestamps': 'Prefix output with timestamps',
+  'settings.terminal.rendering.lineTimestamps.desc': 'Insert local time before terminal output lines. The timestamp becomes part of the visible terminal content.',
 
   // Settings > Terminal > Workspace Focus Indicator
   'settings.terminal.section.workspaceFocus': 'Workspace Focus Indicator',
