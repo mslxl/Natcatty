@@ -31,6 +31,7 @@ import {
   STORAGE_KEY_SESSION_LOGS_ENABLED,
   STORAGE_KEY_SESSION_LOGS_DIR,
   STORAGE_KEY_SESSION_LOGS_FORMAT,
+  STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED,
   STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED,
   STORAGE_KEY_TOGGLE_WINDOW_HOTKEY,
   STORAGE_KEY_CLOSE_TO_TRAY,
@@ -69,6 +70,7 @@ import {
   DEFAULT_LIGHT_UI_THEME,
   DEFAULT_SESSION_LOGS_ENABLED,
   DEFAULT_SESSION_LOGS_FORMAT,
+  DEFAULT_SESSION_LOGS_TIMESTAMPS_ENABLED,
   DEFAULT_SFTP_AUTO_OPEN_SIDEBAR,
   DEFAULT_SFTP_AUTO_SYNC,
   DEFAULT_SFTP_DEFAULT_VIEW_MODE,
@@ -241,6 +243,10 @@ export const useSettingsState = () => {
     const stored = readStoredString(STORAGE_KEY_SESSION_LOGS_FORMAT);
     if (stored === 'txt' || stored === 'raw' || stored === 'html') return stored;
     return DEFAULT_SESSION_LOGS_FORMAT;
+  });
+  const [sessionLogsTimestampsEnabled, setSessionLogsTimestampsEnabled] = useState<boolean>(() => {
+    const stored = readStoredString(STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED);
+    return stored === 'true' ? true : DEFAULT_SESSION_LOGS_TIMESTAMPS_ENABLED;
   });
   const [sshDebugLogsEnabled, setSshDebugLogsEnabled] = useState<boolean>(() => {
     const stored = readStoredString(STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED);
@@ -564,6 +570,7 @@ export const useSettingsState = () => {
     setSessionLogsEnabled,
     setSessionLogsDir,
     setSessionLogsFormat,
+    setSessionLogsTimestampsEnabled,
     setSshDebugLogsEnabled,
     setHotkeyScheme,
     applyIncomingCustomKeyBindings,
@@ -600,7 +607,7 @@ export const useSettingsState = () => {
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpDefaultViewMode,
     showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab,
-    editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sshDebugLogsEnabled,
+    editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled,
     globalHotkeyEnabled, autoUpdateEnabled,
     setTheme, setLightUiThemeId, setDarkUiThemeId, setAccentMode, setCustomAccent,
     setCustomCSS, setUiFontFamilyId, setHotkeyScheme, setUiLanguage,
@@ -609,7 +616,7 @@ export const useSettingsState = () => {
     setSftpDoubleClickBehavior, setSftpAutoSync, setSftpShowHiddenFiles,
     setSftpUseCompressedUpload, setSftpAutoOpenSidebar, setSftpDefaultViewMode,
     setShowRecentHostsState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState,
-    setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSshDebugLogsEnabled,
+    setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled,
     setGlobalHotkeyEnabled, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
     setSftpTransferConcurrencyState, applyIncomingCustomKeyBindings, mergeIncomingTerminalSettings,
   });
@@ -793,6 +800,12 @@ export const useSettingsState = () => {
   }, [sessionLogsFormat, notifySettingsChanged]);
 
   useEffect(() => {
+    localStorageAdapter.writeString(STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED, sessionLogsTimestampsEnabled ? 'true' : 'false');
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED, sessionLogsTimestampsEnabled);
+  }, [sessionLogsTimestampsEnabled, notifySettingsChanged]);
+
+  useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED, sshDebugLogsEnabled ? 'true' : 'false');
     if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED, sshDebugLogsEnabled);
@@ -959,6 +972,8 @@ export const useSettingsState = () => {
     setSessionLogsDir,
     sessionLogsFormat,
     setSessionLogsFormat,
+    sessionLogsTimestampsEnabled,
+    setSessionLogsTimestampsEnabled,
     sshDebugLogsEnabled,
     setSshDebugLogsEnabled,
     // Global Toggle Window (Quake Mode)
@@ -984,7 +999,7 @@ export const useSettingsState = () => {
       customKeyBindings, editorWordWrap,
       sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpDefaultViewMode,
       showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab,
-      customThemes, workspaceFocusStyle, sshDebugLogsEnabled,
+      customThemes, workspaceFocusStyle, sessionLogsTimestampsEnabled, sshDebugLogsEnabled,
     ]),
   };
 };

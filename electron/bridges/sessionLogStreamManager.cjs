@@ -21,6 +21,43 @@ const FLUSH_INTERVAL = 500;
 // Max buffer size before immediate flush (bytes)
 const MAX_BUFFER_SIZE = 64 * 1024;
 
+function formatLogTimestamp(timestamp = Date.now()) {
+  const date = new Date(timestamp);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function createRenderedLineTimestampPrefixer(opts = {}) {
+  const timestampProvider = typeof opts.timestampProvider === "function"
+    ? opts.timestampProvider
+    : Date.now;
+  const timestampsByLine = [];
+  const contentByLine = [];
+
+  return (content) => {
+    if (!content) return "";
+
+    const lines = content.split("\n");
+    timestampsByLine.length = lines.length;
+    contentByLine.length = lines.length;
+
+    return lines.map((line, index) => {
+      if (line.length === 0 && index === lines.length - 1 && content.endsWith("\n")) {
+        return line;
+      }
+
+      if (contentByLine[index] !== line) {
+        contentByLine[index] = line;
+        timestampsByLine[index] = timestampProvider() ?? Date.now();
+      }
+
+      return line.length === 0
+        ? line
+        : `[${formatLogTimestamp(timestampsByLine[index])}] ${line}`;
+    }).join("\n");
+  };
+}
+
 /**
  * Start a log stream for a session.
  * Creates the log file and opens a write stream.
@@ -34,7 +71,7 @@ const MAX_BUFFER_SIZE = 64 * 1024;
  * calls kill the new log file. See issue #916.
  *
  * @param {string} sessionId
- * @param {{ hostLabel: string, hostname: string, directory: string, format: string, startTime?: number }} opts
+ * @param {{ hostLabel: string, hostname: string, directory: string, format: string, startTime?: number, timestampsEnabled?: boolean, timestampProvider?: () => number }} opts
  * @returns {symbol|null} Token identifying this stream, or null if no
  *   stream was started (e.g. missing directory).
  */
@@ -90,6 +127,9 @@ function startStream(sessionId, opts) {
       isRaw,
       isHtml,
       renderer: isRaw ? null : createTerminalTextRenderer(),
+      renderedTimestampPrefixer: !isRaw && opts.timestampsEnabled
+        ? createRenderedLineTimestampPrefixer({ timestampProvider: opts.timestampProvider })
+        : null,
       hostLabel: hostLabel || hostname || "unknown",
       startTime: startTime || Date.now(),
       buffer: "",
@@ -143,9 +183,15 @@ function flushBuffer(entry) {
 function renderSnapshotContent(entry, { finalize = false } = {}) {
   if (finalize) entry.renderer.finish();
   const renderOptions = finalize ? undefined : { includePendingClearedScreen: true };
-  return entry.isHtml
-    ? wrapTerminalHtmlContent(entry.renderer.toHtmlContent(renderOptions), entry.hostLabel, entry.startTime)
+  const renderedContent = entry.isHtml
+    ? entry.renderer.toHtmlContent(renderOptions)
     : entry.renderer.toString(renderOptions);
+  const content = entry.renderedTimestampPrefixer
+    ? entry.renderedTimestampPrefixer(renderedContent)
+    : renderedContent;
+  return entry.isHtml
+    ? wrapTerminalHtmlContent(content, entry.hostLabel, entry.startTime)
+    : content;
 }
 
 function scheduleSnapshot(entry) {

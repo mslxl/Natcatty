@@ -417,6 +417,7 @@ export interface TerminalLayerProps {
   sessionLogsEnabled?: boolean;
   sessionLogsDir?: string;
   sessionLogsFormat?: string;
+  sessionLogsTimestampsEnabled?: boolean;
   sshDebugLogsEnabled?: boolean;
   toggleScriptsSidePanelRef?: React.MutableRefObject<(() => void) | null>;
   toggleSidePanelRef?: React.MutableRefObject<(() => void) | null>;
@@ -449,7 +450,7 @@ interface TerminalPaneProps {
   keyBindings?: KeyBinding[];
   isResizing: boolean;
   isComposeBarOpen: boolean;
-  sessionLog?: { enabled: true; directory: string; format: string };
+  sessionLog?: { enabled: true; directory: string; format: string; timestampsEnabled?: boolean };
   sshDebugLogEnabled?: boolean;
   onHotkeyAction?: (action: string, event: KeyboardEvent) => void;
   onTerminalFontSizeChange?: (sessionId: string, fontSize: number) => void;
@@ -749,7 +750,7 @@ interface TerminalPanesHostProps {
   keyBindings?: KeyBinding[];
   isResizing: boolean;
   isComposeBarOpen: boolean;
-  sessionLog?: { enabled: true; directory: string; format: string };
+  sessionLog?: { enabled: true; directory: string; format: string; timestampsEnabled?: boolean };
   sshDebugLogEnabled?: boolean;
   onHotkeyAction?: (action: string, event: KeyboardEvent) => void;
   onTerminalFontSizeChange?: TerminalPaneProps['onTerminalFontSizeChange'];

@@ -120,6 +120,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   sessionLogsEnabled,
   sessionLogsDir,
   sessionLogsFormat,
+  sessionLogsTimestampsEnabled,
   sshDebugLogsEnabled,
   toggleScriptsSidePanelRef,
   toggleSidePanelRef,
@@ -975,9 +976,9 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const sessionLogConfig = useMemo(
     () =>
       sessionLogsEnabled && sessionLogsDir
-        ? { enabled: true as const, directory: sessionLogsDir, format: sessionLogsFormat || 'txt' }
+        ? { enabled: true as const, directory: sessionLogsDir, format: sessionLogsFormat || 'txt', timestampsEnabled: sessionLogsTimestampsEnabled }
         : undefined,
-    [sessionLogsDir, sessionLogsEnabled, sessionLogsFormat],
+    [sessionLogsDir, sessionLogsEnabled, sessionLogsFormat, sessionLogsTimestampsEnabled],
   );
   const { renderFocusModeSidebar } = useTerminalFocusSidebar({
     activeWorkspace,

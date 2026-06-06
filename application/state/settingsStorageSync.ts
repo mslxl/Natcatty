@@ -14,6 +14,7 @@ import {
   STORAGE_KEY_SESSION_LOGS_DIR,
   STORAGE_KEY_SESSION_LOGS_ENABLED,
   STORAGE_KEY_SESSION_LOGS_FORMAT,
+  STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED,
   STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED,
   STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR,
   STORAGE_KEY_SFTP_AUTO_SYNC,
@@ -74,6 +75,7 @@ interface UseSettingsStorageSyncParams {
   sessionLogsEnabled: boolean;
   sessionLogsDir: string;
   sessionLogsFormat: SessionLogFormat;
+  sessionLogsTimestampsEnabled: boolean;
   sshDebugLogsEnabled: boolean;
   globalHotkeyEnabled: boolean;
   autoUpdateEnabled: boolean;
@@ -105,6 +107,7 @@ interface UseSettingsStorageSyncParams {
   setSessionLogsEnabled: Dispatch<SetStateAction<boolean>>;
   setSessionLogsDir: Dispatch<SetStateAction<string>>;
   setSessionLogsFormat: Dispatch<SetStateAction<SessionLogFormat>>;
+  setSessionLogsTimestampsEnabled: Dispatch<SetStateAction<boolean>>;
   setSshDebugLogsEnabled: Dispatch<SetStateAction<boolean>>;
   setGlobalHotkeyEnabled: Dispatch<SetStateAction<boolean>>;
   setAutoUpdateEnabled: Dispatch<SetStateAction<boolean>>;
@@ -121,7 +124,7 @@ export function useSettingsStorageSync({
   sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
   sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpDefaultViewMode,
   showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab,
-  editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sshDebugLogsEnabled,
+  editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled,
   globalHotkeyEnabled, autoUpdateEnabled,
   setTheme, setLightUiThemeId, setDarkUiThemeId, setAccentMode, setCustomAccent,
   setCustomCSS, setUiFontFamilyId, setHotkeyScheme, setUiLanguage,
@@ -130,7 +133,7 @@ export function useSettingsStorageSync({
   setSftpDoubleClickBehavior, setSftpAutoSync, setSftpShowHiddenFiles,
   setSftpUseCompressedUpload, setSftpAutoOpenSidebar, setSftpDefaultViewMode,
   setShowRecentHostsState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState,
-  setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSshDebugLogsEnabled,
+  setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled,
   setGlobalHotkeyEnabled, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
   setSftpTransferConcurrencyState, applyIncomingCustomKeyBindings, mergeIncomingTerminalSettings,
 }: UseSettingsStorageSyncParams) {
@@ -144,7 +147,7 @@ export function useSettingsStorageSync({
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpDefaultViewMode,
     showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab,
-    editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sshDebugLogsEnabled,
+    editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled,
     globalHotkeyEnabled, autoUpdateEnabled,
   });
   settingsSnapshotRef.current = {
@@ -154,7 +157,7 @@ export function useSettingsStorageSync({
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpDefaultViewMode,
     showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab,
-    editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sshDebugLogsEnabled,
+    editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled,
     globalHotkeyEnabled, autoUpdateEnabled,
   };
 
@@ -305,6 +308,12 @@ export function useSettingsStorageSync({
           setSessionLogsFormat(e.newValue);
         }
       }
+      if (e.key === STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED && e.newValue !== null) {
+        const newValue = e.newValue === 'true';
+        if (newValue !== s.sessionLogsTimestampsEnabled) {
+          setSessionLogsTimestampsEnabled(newValue);
+        }
+      }
       if (e.key === STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED && e.newValue !== null) {
         const newValue = e.newValue === 'true';
         if (newValue !== s.sshDebugLogsEnabled) {
@@ -396,6 +405,7 @@ export function useSettingsStorageSync({
     setSessionLogsDir,
     setSessionLogsEnabled,
     setSessionLogsFormat,
+    setSessionLogsTimestampsEnabled,
     setSshDebugLogsEnabled,
     setSftpAutoOpenSidebar,
     setSftpAutoSync,

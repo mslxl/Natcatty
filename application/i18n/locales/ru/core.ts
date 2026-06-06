@@ -159,6 +159,8 @@ export const ruCoreMessages: Messages = {
   'settings.sessionLogs.formatTxt': 'Обычный текст (.txt)',
   'settings.sessionLogs.formatRaw': 'Сырые данные с ANSI (.log)',
   'settings.sessionLogs.formatHtml': 'HTML (.html)',
+  'settings.sessionLogs.timestamps': 'Добавлять метки времени',
+  'settings.sessionLogs.timestampsDesc': 'Добавлять локальное время в начало каждой строки в текстовых и HTML-журналах.',
   'settings.sessionLogs.hint': 'Журналы сессий сохраняют весь вывод терминала для диагностики и аудита.',
 
   // Settings > SSH Debug Logs
@@ -437,6 +439,8 @@ export const ruCoreMessages: Messages = {
   'settings.terminal.rendering.renderer': 'Рендерер',
   'settings.terminal.rendering.renderer.desc': 'Выберите технологию рендеринга терминала. В режиме "Авто" на устройствах с малым объёмом памяти будет использоваться DOM. Изменения применяются к новым терминальным сессиям.',
   'settings.terminal.rendering.auto': 'Авто',
+  'settings.terminal.rendering.lineTimestamps': 'Добавлять время к выводу',
+  'settings.terminal.rendering.lineTimestamps.desc': 'Вставлять локальное время перед строками вывода терминала. Метка времени становится частью видимого содержимого терминала.',
 
   // Settings > Terminal > Workspace Focus Indicator
   'settings.terminal.section.workspaceFocus': 'Индикатор фокуса рабочей области',

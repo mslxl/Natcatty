@@ -15,6 +15,7 @@ import {
   STORAGE_KEY_SESSION_LOGS_DIR,
   STORAGE_KEY_SESSION_LOGS_ENABLED,
   STORAGE_KEY_SESSION_LOGS_FORMAT,
+  STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED,
   STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED,
   STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR,
   STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE,
@@ -52,6 +53,7 @@ interface UseSettingsIpcSyncParams {
   setSessionLogsEnabled: Dispatch<SetStateAction<boolean>>;
   setSessionLogsDir: Dispatch<SetStateAction<string>>;
   setSessionLogsFormat: Dispatch<SetStateAction<SessionLogFormat>>;
+  setSessionLogsTimestampsEnabled: Dispatch<SetStateAction<boolean>>;
   setSshDebugLogsEnabled: Dispatch<SetStateAction<boolean>>;
   setHotkeyScheme: Dispatch<SetStateAction<HotkeyScheme>>;
   applyIncomingCustomKeyBindings: (incoming: { bindings: CustomKeyBindings; version: number; origin: string }) => void;
@@ -80,6 +82,7 @@ export function useSettingsIpcSync({
   setSessionLogsEnabled,
   setSessionLogsDir,
   setSessionLogsFormat,
+  setSessionLogsTimestampsEnabled,
   setSshDebugLogsEnabled,
   setHotkeyScheme,
   applyIncomingCustomKeyBindings,
@@ -167,6 +170,9 @@ export function useSettingsIpcSync({
       ) {
         setSessionLogsFormat((prev) => (prev === value ? prev : value));
       }
+      if (key === STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED && typeof value === 'boolean') {
+        setSessionLogsTimestampsEnabled((prev) => (prev === value ? prev : value));
+      }
       if (key === STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED && typeof value === 'boolean') {
         setSshDebugLogsEnabled((prev) => (prev === value ? prev : value));
       }
@@ -222,6 +228,7 @@ export function useSettingsIpcSync({
     setSessionLogsDir,
     setSessionLogsEnabled,
     setSessionLogsFormat,
+    setSessionLogsTimestampsEnabled,
     setSshDebugLogsEnabled,
     setSftpAutoOpenSidebar,
     setSftpDefaultViewMode,

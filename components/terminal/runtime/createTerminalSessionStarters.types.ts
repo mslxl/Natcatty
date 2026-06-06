@@ -86,6 +86,7 @@ export type SessionLogConfig = {
   enabled: boolean;
   directory: string;
   format: string;
+  timestampsEnabled?: boolean;
 };
 
 export type TerminalSessionStartersContext = {
