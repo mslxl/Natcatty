@@ -20,6 +20,9 @@ const activeStreams = new Map();
 const FLUSH_INTERVAL = 500;
 // Max buffer size before immediate flush (bytes)
 const MAX_BUFFER_SIZE = 64 * 1024;
+const SUDO_AUTOFILL_MARKER_PATTERN = /__NETCATTY_SUDO_[a-z0-9_]+__/gi;
+const SUDO_AUTOFILL_REWRITE_PATTERN =
+  /\x15?((?:builtin\s+|command\s+)?sudo)\s+-p\s+'\[sudo\] password for %p: (__NETCATTY_SUDO_[a-z0-9_]+__)'([^\r\n]*)(?:\r\n|\r|\n|$)/i;
 
 function formatLogTimestamp(timestamp = Date.now()) {
   const date = new Date(timestamp);
@@ -56,6 +59,72 @@ function createRenderedLineTimestampPrefixer(opts = {}) {
         : `[${formatLogTimestamp(timestampsByLine[index])}] ${line}`;
     }).join("\n");
   };
+}
+
+function parseSudoAutofillRewrite(input) {
+  if (!input || typeof input !== "string") return null;
+  const match = input.match(SUDO_AUTOFILL_REWRITE_PATTERN);
+  if (!match) return null;
+  return {
+    marker: match[2],
+    preparedCommand: `${match[1]} -p '[sudo] password for %p: ${match[2]}'${match[3]}`,
+    originalCommand: `${match[1]}${match[3]}`,
+  };
+}
+
+function applySudoAutofillRewrites(entry, data) {
+  if (!data || !entry.sudoAutofillRewrites?.length) return data;
+  let nextData = data;
+  for (const rewrite of entry.sudoAutofillRewrites) {
+    nextData = nextData.replaceAll(rewrite.preparedCommand, rewrite.originalCommand);
+    nextData = nextData.replaceAll(rewrite.marker, "");
+  }
+  return nextData.replace(SUDO_AUTOFILL_MARKER_PATTERN, "");
+}
+
+function isPotentialSudoAutofillCommandPending(entry, data) {
+  if (!data) return true;
+  return (entry.sudoAutofillRewrites ?? []).some((rewrite) =>
+    rewrite.preparedCommand.startsWith(data) || data.startsWith(rewrite.preparedCommand)
+  );
+}
+
+function hasSudoAutofillMarkerPrefix(entry, data) {
+  if (!data) return false;
+  return (entry.sudoAutofillRewrites ?? []).some((rewrite) => {
+    const maxPrefixLength = Math.min(data.length, rewrite.marker.length - 1);
+    for (let length = maxPrefixLength; length > 0; length -= 1) {
+      if (data.endsWith(rewrite.marker.slice(0, length))) return true;
+    }
+    return false;
+  });
+}
+
+function sanitizeSudoAutofillLogData(entry, dataChunk, { final = false } = {}) {
+  if (!entry.sudoAutofillRewrites?.length) return dataChunk;
+  entry.sudoAutofillPending += dataChunk;
+  const lastLineBreakIndex = Math.max(
+    entry.sudoAutofillPending.lastIndexOf("\n"),
+    entry.sudoAutofillPending.lastIndexOf("\r"),
+  );
+  if (!final && lastLineBreakIndex < 0) {
+    if (
+      isPotentialSudoAutofillCommandPending(entry, entry.sudoAutofillPending) ||
+      hasSudoAutofillMarkerPrefix(entry, entry.sudoAutofillPending)
+    ) {
+      return "";
+    }
+    const pending = entry.sudoAutofillPending;
+    const sanitizedPending = applySudoAutofillRewrites(entry, pending);
+    entry.sudoAutofillPending = "";
+    return sanitizedPending;
+  }
+  const readyLength = final
+    ? entry.sudoAutofillPending.length
+    : lastLineBreakIndex + 1;
+  const readyData = entry.sudoAutofillPending.slice(0, readyLength);
+  entry.sudoAutofillPending = entry.sudoAutofillPending.slice(readyLength);
+  return applySudoAutofillRewrites(entry, readyData);
 }
 
 /**
@@ -133,6 +202,8 @@ function startStream(sessionId, opts) {
       hostLabel: hostLabel || hostname || "unknown",
       startTime: startTime || Date.now(),
       buffer: "",
+      sudoAutofillRewrites: [],
+      sudoAutofillPending: "",
       flushTimer: null,
       snapshotPromise: null,
       snapshotRequested: false,
@@ -178,6 +249,15 @@ function flushBuffer(entry) {
     console.error("[SessionLogStream] Flush error:", err.message);
     entry.disabled = true;
   }
+}
+
+function registerSudoAutofillInput(sessionId, input) {
+  const entry = activeStreams.get(sessionId);
+  if (!entry || entry.disabled) return;
+  const rewrite = parseSudoAutofillRewrite(input);
+  if (!rewrite) return;
+  entry.sudoAutofillRewrites.unshift(rewrite);
+  entry.sudoAutofillRewrites = entry.sudoAutofillRewrites.slice(0, 8);
 }
 
 function renderSnapshotContent(entry, { finalize = false } = {}) {
@@ -235,10 +315,10 @@ function appendData(sessionId, dataChunk) {
   const entry = activeStreams.get(sessionId);
   if (!entry || entry.disabled) return;
 
-  entry.buffer += dataChunk;
+  entry.buffer += sanitizeSudoAutofillLogData(entry, dataChunk);
 
   // Immediate flush if buffer is large
-  if (entry.buffer.length >= MAX_BUFFER_SIZE) {
+  if (entry.buffer.length + entry.sudoAutofillPending.length >= MAX_BUFFER_SIZE) {
     flushBuffer(entry);
   }
 }
@@ -278,6 +358,7 @@ async function stopStream(sessionId, expectedToken) {
   }
 
   // Flush remaining buffer
+  entry.buffer += sanitizeSudoAutofillLogData(entry, "", { final: true });
   flushBuffer(entry);
   await waitForSnapshotIdle(entry);
 
@@ -323,6 +404,7 @@ async function cleanupAll() {
 module.exports = {
   startStream,
   appendData,
+  registerSudoAutofillInput,
   stopStream,
   hasStream,
   cleanupAll,

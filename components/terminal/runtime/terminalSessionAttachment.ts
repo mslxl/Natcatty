@@ -246,7 +246,7 @@ export const attachSessionToTerminal = (
       // Replace \n that is not preceded by \r with \r\n
       data = data.replace(/(?<!\r)\n/g, "\r\n");
     }
-    sudoAutofill?.handleOutput(data);
+    data = sudoAutofill?.handleOutput(data) ?? data;
     writeSessionData(ctx, term, data);
     if (!ctx.hasConnectedRef.current) {
       ctx.updateStatus("connected");

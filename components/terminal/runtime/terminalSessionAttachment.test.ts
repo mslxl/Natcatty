@@ -38,6 +38,13 @@ const createContext = (showLineTimestamps: boolean) => ({
   promptLineBreakStateRef: { current: undefined },
 });
 
+const extractSudoPromptFromPrepared = (prepared: string | null | undefined): string => {
+  assert.ok(prepared);
+  const prompt = prepared.match(/\s-p '([^']*)'/)?.[1];
+  assert.ok(prompt);
+  return prompt.replace("%p", "alice");
+};
+
 test("writeSessionData prefixes terminal output lines when enabled", () => {
   const { term, writes } = createFakeTerm();
   writeSessionData(createContext(true) as never, term, "hello\r\nnext");
@@ -104,7 +111,7 @@ test("attachSessionToTerminal resets timestamp state for a reused terminal", () 
 });
 
 test("attachSessionToTerminal auto-fills sudo password prompts when configured", () => {
-  const { term } = createFakeTerm();
+  const { term, writes } = createFakeTerm();
   const sent: Array<{ id: string; data: string; automated?: boolean }> = [];
   let onData: ((data: string) => void) | null = null;
   const sudoAutofillRef = { current: null };
@@ -139,10 +146,14 @@ test("attachSessionToTerminal auto-fills sudo password prompts when configured",
     sudoAutofillPassword: "secret",
   });
   const prepared = sudoAutofillRef.current?.prepareCommand("sudo whoami");
-  assert.equal(prepared, "sudo whoami");
-  onData?.("[sudo] password for alice: ");
+  const prompt = extractSudoPromptFromPrepared(prepared);
+  onData?.(`${prepared ?? ""}\r\n`);
+  onData?.(prompt);
 
   assert.deepEqual(sent, [{ id: "session-1", data: "secret\n", automated: true }]);
+  assert.equal(writes[0], "sudo whoami\r\n");
+  assert.equal(writes[1], "[sudo] password for alice: ");
+  assert.ok(!writes.join("").includes("NETCATTY_SUDO"));
 });
 
 test("attachSessionToTerminal does not auto-fill unarmed sudo-looking output", () => {
