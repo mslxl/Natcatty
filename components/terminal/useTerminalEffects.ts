@@ -2,8 +2,51 @@
 
 type TerminalEffectsContext = Record<string, any>;
 
+type SelectionOverlayPosition = {
+  left: number;
+  top: number;
+} | null;
+
+export function resolveSelectionOverlayPosition(term: any, container: HTMLElement | null): SelectionOverlayPosition {
+  if (!container || !term?.getSelectionPosition || !term.getSelection()) return null;
+
+  const range = term.getSelectionPosition();
+  if (!range) return null;
+
+  const start = range.start;
+  const end = range.end;
+  const startsBeforeEnd =
+    start.y < end.y
+    || (start.y === end.y && start.x <= end.x);
+  const top = startsBeforeEnd ? start : end;
+  const bottom = startsBeforeEnd ? end : start;
+  const viewportY = term.buffer?.active?.viewportY ?? 0;
+  const row = top.y - viewportY;
+  const rows = Math.max(1, term.rows ?? 1);
+  const cols = Math.max(1, term.cols ?? 1);
+
+  if (row < 0 || row >= rows) return null;
+
+  const screen = container.querySelector<HTMLElement>(".xterm-screen") ?? container;
+  const screenRect = screen.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  const cellWidth = screen.clientWidth / cols;
+  const cellHeight = screen.clientHeight / rows;
+  const spansRows = top.y !== bottom.y;
+  const rightCol = spansRows ? cols : Math.max(top.x, bottom.x);
+  const containerOffsetLeft = container.offsetLeft ?? 0;
+  const containerOffsetTop = container.offsetTop ?? 0;
+  const selectionRight = containerOffsetLeft + screenRect.left - containerRect.left + Math.min(cols, rightCol) * cellWidth;
+  const selectionTop = containerOffsetTop + screenRect.top - containerRect.top + row * cellHeight;
+
+  return {
+    left: Math.max(140, Math.min(selectionRight + 8, container.clientWidth - 8)),
+    top: Math.max(36, Math.min(selectionTop - 8, container.clientHeight - 8)),
+  };
+}
+
 export function useTerminalEffects(ctx: TerminalEffectsContext) {
-  const { CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, host, hotkeySchemeRef, identities, inWorkspace, isBroadcastEnabledRef, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, onBroadcastInputRef, onCommandExecuted, onHotkeyActionRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalFontSizeChange, pendingAuthRef, pendingOutputScrollRef, prevIsResizingRef, primaryFontFamily, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, setIsSearchOpen, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, onSnippetShortkeyRef, snippetsRef, status, statusRef, t, teardown, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef } = ctx;
+  const { CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, host, hotkeySchemeRef, identities, inWorkspace, isBroadcastEnabledRef, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, onBroadcastInputRef, onCommandExecuted, onHotkeyActionRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalFontSizeChange, pendingAuthRef, pendingOutputScrollRef, prevIsResizingRef, primaryFontFamily, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, setIsSearchOpen, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, onSnippetShortkeyRef, snippetsRef, status, statusRef, t, teardown, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef } = ctx;
 
 
   useEffect(() => {
@@ -626,10 +669,17 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     const term = termRef.current;
     if (!term) return;
 
+    const updateSelectionOverlayPosition = () => {
+      setSelectionOverlayPosition?.(
+        resolveSelectionOverlayPosition(term, containerRef.current),
+      );
+    };
+
     const onSelectionChange = () => {
       const selection = term.getSelection();
       const hasText = !!selection && selection.length > 0;
       setHasSelection(hasText);
+      updateSelectionOverlayPosition();
 
       if (hasText && terminalSettings?.copyOnSelect && !isRestoringSelectionRef.current) {
         navigator.clipboard.writeText(selection).catch((err) => {
@@ -638,9 +688,23 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       }
     };
 
-    const disposable = term.onSelectionChange(onSelectionChange);
-    return () => disposable.dispose();
-  }, [terminalSettings?.copyOnSelect]);
+    const selectionDisposable = term.onSelectionChange(onSelectionChange);
+    const scrollDisposable = term.onScroll?.(updateSelectionOverlayPosition);
+    const resizeDisposable = term.onResize?.(updateSelectionOverlayPosition);
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(updateSelectionOverlayPosition);
+    if (containerRef.current) {
+      resizeObserver?.observe(containerRef.current);
+    }
+    updateSelectionOverlayPosition();
+    return () => {
+      selectionDisposable.dispose();
+      scrollDisposable?.dispose();
+      resizeDisposable?.dispose();
+      resizeObserver?.disconnect();
+    };
+  }, [terminalSettings?.copyOnSelect, isSearchOpen, isVisible, isResizing]);
 
 
   // Track whether the terminal application has enabled mouse tracking

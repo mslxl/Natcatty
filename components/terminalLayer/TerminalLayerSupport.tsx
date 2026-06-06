@@ -2,6 +2,7 @@ import React, { Suspense, createContext, lazy, memo, useCallback, useContext, us
 
 import { activeTabStore } from '../../application/state/activeTabStore';
 import type { TerminalSessionExitEvent } from '../../application/state/resolveTerminalSessionExitIntent';
+import { createTerminalSelectionAttachment } from '../../application/state/terminalSelectionAttachment';
 import { useAIState } from '../../application/state/useAIState';
 import { SplitDirection } from '../../domain/workspace';
 import { KeyBinding, TerminalSettings } from '../../domain/models';
@@ -46,6 +47,12 @@ export type PendingSftpUpload = {
 };
 
 export type SnippetExecutor = (command: string, noAutoRun?: boolean) => void;
+
+export type PendingTerminalSelectionForAI = {
+  requestId: string;
+  tabId: string;
+  text: string;
+};
 
 export function hexToHslToken(hex: string): string {
   const normalized = hex.startsWith('#') ? hex : `#${hex}`;
@@ -235,6 +242,8 @@ interface AIChatPanelsHostProps {
     targetId?: string;
     label?: string;
   }) => ExecutorContext;
+  pendingTerminalSelection?: PendingTerminalSelectionForAI | null;
+  onPendingTerminalSelectionConsumed?: (requestId: string) => void;
 }
 
 interface AIStateMaintenanceHostProps {
@@ -280,12 +289,56 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
   activeSidePanelTab,
   contextsByTabId,
   resolveExecutorContext,
+  pendingTerminalSelection,
+  onPendingTerminalSelectionConsumed,
 }) => {
   const aiState = useContext(AIStateContext);
 
   if (!aiState) {
     throw new Error('AIChatPanelsHost must be rendered inside AIStateProvider');
   }
+  const {
+    activeSessionIdMap,
+    defaultAgentId,
+    panelViewByScope,
+    showDraftView,
+    updateDraft,
+  } = aiState;
+
+  useEffect(() => {
+    if (!pendingTerminalSelection) return;
+
+    const context = contextsByTabId.get(pendingTerminalSelection.tabId);
+    if (!context) return;
+
+    const attachment = createTerminalSelectionAttachment(pendingTerminalSelection.text);
+    if (!attachment) {
+      onPendingTerminalSelectionConsumed?.(pendingTerminalSelection.requestId);
+      return;
+    }
+
+    const scopeKey = `${context.scopeType}:${context.scopeTargetId ?? ''}`;
+    const isSessionView =
+      panelViewByScope[scopeKey]?.mode === 'session'
+      || activeSessionIdMap[scopeKey] != null;
+    if (!isSessionView) {
+      showDraftView(scopeKey);
+    }
+    updateDraft(scopeKey, defaultAgentId, (draft) => ({
+      ...draft,
+      attachments: [...draft.attachments, attachment],
+    }));
+    onPendingTerminalSelectionConsumed?.(pendingTerminalSelection.requestId);
+  }, [
+    activeSessionIdMap,
+    contextsByTabId,
+    defaultAgentId,
+    onPendingTerminalSelectionConsumed,
+    panelViewByScope,
+    pendingTerminalSelection,
+    showDraftView,
+    updateDraft,
+  ]);
 
   return (
     <>
@@ -480,6 +533,7 @@ interface TerminalPaneProps {
     sessionId: string,
     executor: SnippetExecutor | null,
   ) => void;
+  onAddSelectionToAI?: (sessionId: string, selection: string) => void;
 }
 
 const getPaneThemePreviewId = (props: TerminalPaneProps): string | null => (
@@ -539,7 +593,8 @@ const terminalPanePropsAreEqual = (
   prev.isBroadcastEnabled === next.isBroadcastEnabled &&
   prev.onBroadcastInput === next.onBroadcastInput &&
   prev.onToggleWorkspaceComposeBar === next.onToggleWorkspaceComposeBar &&
-  prev.onSnippetExecutorChange === next.onSnippetExecutorChange
+  prev.onSnippetExecutorChange === next.onSnippetExecutorChange &&
+  prev.onAddSelectionToAI === next.onAddSelectionToAI
 );
 
 const TerminalPane: React.FC<TerminalPaneProps> = memo(({
@@ -591,6 +646,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   onBroadcastInput,
   onToggleWorkspaceComposeBar,
   onSnippetExecutorChange,
+  onAddSelectionToAI,
 }) => {
   const getPaneSnapshot = useCallback(
     () => getTerminalPaneSnapshot({
@@ -717,6 +773,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         onSnippetExecutorChange={onSnippetExecutorChange}
         sessionLog={sessionLog}
         sshDebugLogEnabled={sshDebugLogEnabled}
+        onAddSelectionToAI={onAddSelectionToAI}
       />
     </div>
   );
@@ -775,6 +832,7 @@ interface TerminalPanesHostProps {
     sessionId: string,
     executor: SnippetExecutor | null,
   ) => void;
+  onAddSelectionToAI?: (sessionId: string, selection: string) => void;
 }
 
 export const TerminalPanesHost: React.FC<TerminalPanesHostProps> = memo(({

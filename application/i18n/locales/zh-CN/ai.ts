@@ -238,6 +238,8 @@ export const zhCNAiMessages: Messages = {
   'topTabs.openSettings': '打开设置',
   'ai.chat.sessionHistory': '会话历史',
   'ai.chat.attach': '附件',
+  'ai.chat.terminalSelectionAttachment': '终端选区',
+  'ai.chat.terminalSelectionLines': '{count} 行',
   'ai.chat.collapse': '收起',
   'ai.chat.expand': '展开',
   'ai.chat.enableAgent': '启用 {name}',

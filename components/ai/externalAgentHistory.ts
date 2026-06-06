@@ -1,4 +1,5 @@
 import type { ChatMessage } from "../../infrastructure/ai/types.ts";
+import { buildPromptWithTerminalSelectionAttachments } from "../../application/state/terminalSelectionAttachment.ts";
 
 type ExternalAgentHistoryMessage = { role: "user" | "assistant"; content: string };
 type RawHistoryMessage = ExternalAgentHistoryMessage & { sourceId: string };
@@ -57,6 +58,14 @@ function isImportantText(value: string): boolean {
 
 function isDurableConstraintText(value: string): boolean {
   return DURABLE_CONSTRAINT_PATTERNS.some((pattern) => pattern.test(value));
+}
+
+function getUserHistoryContent(message: ChatMessage): string {
+  if (message.role !== "user") return message.content || "";
+  return buildPromptWithTerminalSelectionAttachments(
+    message.content || "",
+    message.attachments ?? [],
+  );
 }
 
 function isTrivialUserMessage(value: string): boolean {
@@ -142,9 +151,10 @@ function summarizeMessage(
   if (message.role === "tool") return summarizeToolMessage(message, toolCallIndex);
 
   const lines: string[] = [];
-  if (message.content && isImportantText(message.content)) {
+  const content = getUserHistoryContent(message);
+  if (content && isImportantText(content)) {
     const label = message.role === "user" ? "User" : "Assistant";
-    lines.push(`${label}: ${truncateText(normalizeWhitespace(message.content), MAX_TOOL_SUMMARY_CHARS)}`);
+    lines.push(`${label}: ${truncateText(normalizeWhitespace(content), MAX_TOOL_SUMMARY_CHARS)}`);
   }
 
   if (message.role === "assistant" && message.toolCalls?.length) {
@@ -159,9 +169,11 @@ function summarizeMessage(
 }
 
 function summarizeDurableUserMessage(message: ChatMessage): string | null {
-  if (message.role !== "user" || !message.content) return null;
-  if (isTrivialUserMessage(message.content)) return null;
-  return `User request: ${truncateText(normalizeWhitespace(message.content), MAX_DURABLE_USER_MESSAGE_CHARS)}`;
+  if (message.role !== "user") return null;
+  const content = getUserHistoryContent(message);
+  if (!content) return null;
+  if (isTrivialUserMessage(content)) return null;
+  return `User request: ${truncateText(normalizeWhitespace(content), MAX_DURABLE_USER_MESSAGE_CHARS)}`;
 }
 
 function summarizeDurableAssistantMessage(message: ChatMessage): string | null {
@@ -217,8 +229,9 @@ function toRawHistoryMessage(
   toolCallIndex: Map<string, ToolCallInfo>,
 ): RawHistoryMessage[] {
   if (message.role === "user") {
-    return message.content
-      ? [{ sourceId: message.id, role: "user", content: truncateText(message.content, MAX_RAW_MESSAGE_CHARS) }]
+    const content = getUserHistoryContent(message);
+    return content
+      ? [{ sourceId: message.id, role: "user", content: truncateText(content, MAX_RAW_MESSAGE_CHARS) }]
       : [];
   }
 
@@ -290,7 +303,7 @@ function buildCompactContext(
       durableUserCandidates.push({
         line: durableUserLine,
         messageIndex,
-        priority: getDurableUserPriority(message.content || ""),
+        priority: getDurableUserPriority(getUserHistoryContent(message)),
       });
     }
     const durableAssistantLine = summarizeDurableAssistantMessage(message);

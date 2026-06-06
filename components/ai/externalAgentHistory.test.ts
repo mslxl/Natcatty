@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { ChatMessage } from "../../infrastructure/ai/types.ts";
+import { createTerminalSelectionAttachment } from "../../application/state/terminalSelectionAttachment.ts";
 import {
   buildExternalAgentHistoryMessages,
   buildExternalAgentHistoryMessagesForBridge,
@@ -72,6 +73,24 @@ test("buildExternalAgentHistoryMessagesForBridge keeps fallback history availabl
     buildExternalAgentHistoryMessagesForBridge(messages, "sdk-session-1"),
     buildExternalAgentHistoryMessages(messages),
   );
+});
+
+test("buildExternalAgentHistoryMessages expands terminal selection attachments", () => {
+  const terminalSelection = createTerminalSelectionAttachment("docker ps -a\npermission denied");
+  assert.ok(terminalSelection);
+  const messages: ChatMessage[] = [
+    message("u1", "user", "", {
+      attachments: [terminalSelection],
+    }),
+  ];
+
+  const result = buildExternalAgentHistoryMessages(messages);
+
+  assert.equal(result.length, 1);
+  assert.equal(result[0].role, "user");
+  assert.match(result[0].content, /\[Terminal selection:/);
+  assert.match(result[0].content, /docker ps -a/);
+  assert.match(result[0].content, /permission denied/);
 });
 
 test("buildExternalAgentHistoryMessages preserves older substantive user instructions outside the recent raw window", () => {

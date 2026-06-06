@@ -6,7 +6,7 @@
  * and a bottom toolbar with muted controls + subtle send button.
  */
 
-import { AtSign, Check, ChevronDown, ChevronRight, Cpu, Expand, Eye, FileText, ImageIcon, Package, Plus, ShieldCheck, X, Zap } from 'lucide-react';
+import { AtSign, Check, ChevronDown, ChevronRight, Cpu, Expand, Eye, FileText, ImageIcon, Package, Plus, ShieldCheck, SquareTerminal, X, Zap } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { createPortal } from 'react-dom';
@@ -125,6 +125,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
   providerSwitcher,
 }) => {
   const { t } = useI18n();
+  const hasTerminalSelectionAttachment = files.some((file) => file.terminalSelection);
   const [expanded, setExpanded] = useState(false);
   // Consolidate menu state into a single discriminated union to prevent multiple menus open simultaneously
   type ActiveMenu = 'model' | 'attach' | 'atMention' | 'slashSkill' | 'perm' | null;
@@ -430,18 +431,32 @@ const ChatInput: React.FC<ChatInputProps> = ({
             {files.map((file) => (
               <div
                 key={file.id}
-                className="inline-flex items-center gap-1 h-6 pl-1.5 pr-1 rounded-md bg-muted/30 border border-border/30 text-[11px] text-foreground/70 group"
+                className={[
+                  "inline-flex items-center gap-1 pl-1.5 pr-1 rounded-md bg-muted/30 border border-border/30 text-[11px] text-foreground/70 group",
+                  file.terminalSelection ? "h-6 max-w-[260px]" : "h-6",
+                ].join(" ")}
               >
-                {file.mediaType.startsWith('image/') ? (
+                {file.terminalSelection ? (
+                  <SquareTerminal size={12} className="text-muted-foreground/70 shrink-0" />
+                ) : file.mediaType.startsWith('image/') ? (
                   <ImageIcon size={11} className="text-muted-foreground/60 shrink-0" />
                 ) : (
                   <FileText size={11} className="text-muted-foreground/60 shrink-0" />
                 )}
-                <span className="truncate max-w-[80px]">{file.filename}</span>
+                {file.terminalSelection ? (
+                  <span className="min-w-0">
+                    <span className="block truncate max-w-[210px] text-foreground/82">
+                      {t('ai.chat.terminalSelectionAttachment')}
+                      {file.lineCount ? ` · ${t('ai.chat.terminalSelectionLines').replace('{count}', String(file.lineCount))}` : ''}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="truncate max-w-[80px]">{file.filename}</span>
+                )}
                 <button
                   type="button"
                   onClick={() => onRemoveFile?.(file.id)}
-                  className="h-3.5 w-3.5 rounded-sm flex items-center justify-center opacity-50 hover:opacity-100 hover:bg-muted/50 transition-opacity cursor-pointer"
+                  className="h-3.5 w-3.5 rounded-sm flex items-center justify-center opacity-50 hover:opacity-100 hover:bg-muted/50 transition-opacity cursor-pointer shrink-0"
                 >
                   <X size={8} />
                 </button>
@@ -941,7 +956,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
             <PromptInputSubmit
               status={status}
               onStop={onStop}
-              disabled={!value.trim() || disabled}
+              disabled={(!value.trim() && !hasTerminalSelectionAttachment) || disabled}
             />
           </div>
         </PromptInputFooter>
