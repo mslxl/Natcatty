@@ -24,7 +24,7 @@ import { buildCacheKey } from '../application/state/sftp/sharedRemoteHostCache';
 import type { DropEntry } from '../lib/sftpFileUtils';
 import { Host, KnownHost, TerminalSession } from '../types';
 import { resolveGroupDefaults, applyGroupDefaults } from '../domain/groupConfig';
-import { sanitizeCredentialValue } from '../domain/credentials';
+import { resolveHostAutofillPassword } from '../domain/sshAuth';
 import { materializeHostProxyProfile } from '../domain/proxyProfiles';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { useI18n } from '../application/i18n/I18nProvider';
@@ -65,11 +65,6 @@ import {
   type SnippetExecutor,
   type TerminalLayerProps,
 } from './terminalLayer/TerminalLayerSupport';
-
-const resolveHostSudoAutofillPassword = (host: Host): string | undefined => {
-  if (host.savePassword === false) return undefined;
-  return sanitizeCredentialValue(host.password) || undefined;
-};
 
 const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   hosts,
@@ -614,11 +609,14 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     for (const session of sessions) {
       const rawHost = hostMap.get(session.hostId);
       if (rawHost) {
-        map.set(session.id, resolveHostSudoAutofillPassword(rawHost));
+        // Resolve through identity references too (host.identityId), not just
+        // host.password, so a password stored in a Keychain identity is filled
+        // (issue #1284) — same resolution SSH login uses.
+        map.set(session.id, resolveHostAutofillPassword({ host: rawHost, keys, identities }));
       }
     }
     return map;
-  }, [hostMap, sessions]);
+  }, [hostMap, sessions, keys, identities]);
 
   const handleTerminalFontSizeChange = useCallback((sessionId: string, nextFontSize: number) => {
     const sessionHost = sessionHostsMapRef.current.get(sessionId);
