@@ -100,14 +100,15 @@ test("startEt enables sudo autofill with the host saved password", async () => {
   const ctx = {
     ...makeCtx({
       password: "saved-secret",
-      terminalSudoAutoFill: true,
     }, [], backend),
     sudoAutofillRef,
     sudoAutofillPassword: "saved-secret",
+    onSudoHint: () => true,
   };
 
   await createTerminalSessionStarters(ctx as never).startEt(term as never);
   onData?.(armSudoPrompt(sudoAutofillRef.current));
+  sudoAutofillRef.current?.confirmFill();
 
   assert.deepEqual(sent, ["saved-secret\n"]);
 });

@@ -57,10 +57,12 @@ test("sudo autofill input preparation arms on a submitted sudo command without a
   const autofill = createSudoPasswordAutofill({
     password: "secret",
     write: (data) => writes.push(data),
+    onHint: () => true,
   });
 
   assert.equal(prepareSudoAutofillInput("\r", "sudo whoami", autofill), "\r");
   autofill.handleOutput("[sudo] password for alice: ");
+  autofill.confirmFill();
   assert.deepEqual(writes, ["secret\n"]);
 });
 
@@ -69,10 +71,12 @@ test("sudo autofill input preparation arms on a single-line pasted sudo command"
   const autofill = createSudoPasswordAutofill({
     password: "secret",
     write: (data) => writes.push(data),
+    onHint: () => true,
   });
 
   assert.equal(prepareSudoAutofillInput("sudo whoami\n", null, autofill), "sudo whoami\n");
   autofill.handleOutput("[sudo] password for alice: ");
+  autofill.confirmFill();
   assert.deepEqual(writes, ["secret\n"]);
 });
 
