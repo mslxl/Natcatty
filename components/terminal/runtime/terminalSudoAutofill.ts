@@ -20,8 +20,9 @@ const SUDO_PROMPT_PATTERN =
 // prompts this way, so we hint on it WITHOUT requiring an arm — keeping the hint
 // reliable even when command recording (arming) didn't fire for a manually
 // typed command (#1284; manual typing's recordedCommand is flaky).
+// Match [sudo] or [sudo: ...] variants (e.g. Chinese locale: [sudo: authenticate] 密码：, #1286).
 const EXPLICIT_SUDO_PROMPT_PATTERN =
-  /(?:^|[\r\n])[^\r\n]*?\[sudo\][^\r\n]*?(?:\bpassword\b|密\s*码|口\s*令)[^\r\n:：]*[:：]\s*$/i;
+  /(?:^|[\r\n])[^\r\n]*?\[sudo[^\]]*\][^\r\n]*?(?:\bpassword\b|密\s*码|口\s*令)[^\r\n:：]*[:：]\s*$/i;
 const SUDO_COMMAND_PATTERN = /^\s*(?:builtin\s+|command\s+)?sudo(?:\s|$)/;
 
 export const stripTerminalControlSequences = (data: string): string =>
