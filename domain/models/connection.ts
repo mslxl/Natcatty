@@ -2,7 +2,7 @@ import type { SftpFilenameEncoding } from './sftp';
 import type { KeywordHighlightRule } from './terminal';
 
 // Proxy configuration for SSH connections
-type ProxyType = 'http' | 'socks5';
+type ProxyType = 'http' | 'socks5' | 'command';
 // UI locale identifier, stored in settings and used for i18n (e.g., "en", "zh-CN").
 export type UILanguage = string;
 
@@ -10,6 +10,7 @@ export interface ProxyConfig {
   type: ProxyType;
   host: string;
   port: number;
+  command?: string;
   username?: string;
   password?: string;
 }
@@ -46,7 +47,7 @@ export interface EnvVar {
 }
 
 // Protocol type for connections
-export type HostProtocol = 'ssh' | 'telnet' | 'mosh' | 'local' | 'serial';
+export type HostProtocol = 'ssh' | 'telnet' | 'mosh' | 'et' | 'local' | 'serial';
 
 // Serial port configuration
 export type SerialParity = 'none' | 'even' | 'odd' | 'mark' | 'space';
@@ -70,6 +71,8 @@ interface ProtocolConfig {
   enabled: boolean;
   // Mosh-specific
   moshServerPath?: string;
+  // EternalTerminal-specific
+  etPort?: number;
   // Protocol-specific theme override
   theme?: string;
 }
@@ -114,6 +117,8 @@ export interface Host {
   charset?: string;
   moshEnabled?: boolean;
   moshServerPath?: string; // Custom mosh-server path (e.g., /usr/local/bin/mosh-server)
+  etEnabled?: boolean;
+  etPort?: number; // EternalTerminal server port (default: 2022)
   theme?: string;
   themeOverride?: boolean; // Explicitly override the global terminal theme for this host
   fontFamily?: string; // Terminal font family for this host
@@ -261,6 +266,8 @@ export interface GroupConfig {
   charset?: string;
   moshEnabled?: boolean;
   moshServerPath?: string;
+  etEnabled?: boolean;
+  etPort?: number;
   telnetEnabled?: boolean;
   telnetPort?: number;
   telnetUsername?: string;

@@ -14,6 +14,7 @@ import {
   STORAGE_KEY_SESSION_LOGS_DIR,
   STORAGE_KEY_SESSION_LOGS_ENABLED,
   STORAGE_KEY_SESSION_LOGS_FORMAT,
+  STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED,
   STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED,
   STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR,
   STORAGE_KEY_SFTP_AUTO_SYNC,
@@ -38,8 +39,10 @@ import {
   STORAGE_KEY_UI_THEME_DARK,
   STORAGE_KEY_UI_THEME_LIGHT,
   STORAGE_KEY_WORKSPACE_FOCUS_STYLE,
+  STORAGE_KEY_WINDOW_OPACITY,
 } from '../../infrastructure/config/storageKeys';
 import {
+  clampWindowOpacity,
   isValidHslToken,
   isValidTheme,
   isValidUiFontId,
@@ -74,9 +77,11 @@ interface UseSettingsStorageSyncParams {
   sessionLogsEnabled: boolean;
   sessionLogsDir: string;
   sessionLogsFormat: SessionLogFormat;
+  sessionLogsTimestampsEnabled: boolean;
   sshDebugLogsEnabled: boolean;
   globalHotkeyEnabled: boolean;
   autoUpdateEnabled: boolean;
+  windowOpacity: number;
   setTheme: Dispatch<SetStateAction<'dark' | 'light' | 'system'>>;
   setLightUiThemeId: Dispatch<SetStateAction<string>>;
   setDarkUiThemeId: Dispatch<SetStateAction<string>>;
@@ -105,8 +110,10 @@ interface UseSettingsStorageSyncParams {
   setSessionLogsEnabled: Dispatch<SetStateAction<boolean>>;
   setSessionLogsDir: Dispatch<SetStateAction<string>>;
   setSessionLogsFormat: Dispatch<SetStateAction<SessionLogFormat>>;
+  setSessionLogsTimestampsEnabled: Dispatch<SetStateAction<boolean>>;
   setSshDebugLogsEnabled: Dispatch<SetStateAction<boolean>>;
   setGlobalHotkeyEnabled: Dispatch<SetStateAction<boolean>>;
+  setWindowOpacity: Dispatch<SetStateAction<number>>;
   setAutoUpdateEnabled: Dispatch<SetStateAction<boolean>>;
   setWorkspaceFocusStyleState: Dispatch<SetStateAction<'dim' | 'border'>>;
   setSftpTransferConcurrencyState: Dispatch<SetStateAction<number>>;
@@ -121,8 +128,8 @@ export function useSettingsStorageSync({
   sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
   sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpDefaultViewMode,
   showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab,
-  editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sshDebugLogsEnabled,
-  globalHotkeyEnabled, autoUpdateEnabled,
+  editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled,
+  globalHotkeyEnabled, autoUpdateEnabled, windowOpacity,
   setTheme, setLightUiThemeId, setDarkUiThemeId, setAccentMode, setCustomAccent,
   setCustomCSS, setUiFontFamilyId, setHotkeyScheme, setUiLanguage,
   setTerminalThemeId, setTerminalThemeDarkId, setTerminalThemeLightId,
@@ -130,8 +137,8 @@ export function useSettingsStorageSync({
   setSftpDoubleClickBehavior, setSftpAutoSync, setSftpShowHiddenFiles,
   setSftpUseCompressedUpload, setSftpAutoOpenSidebar, setSftpDefaultViewMode,
   setShowRecentHostsState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState,
-  setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSshDebugLogsEnabled,
-  setGlobalHotkeyEnabled, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
+  setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled,
+  setGlobalHotkeyEnabled, setWindowOpacity, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
   setSftpTransferConcurrencyState, applyIncomingCustomKeyBindings, mergeIncomingTerminalSettings,
 }: UseSettingsStorageSyncParams) {
   // Fix 4: Keep a ref snapshot of current settings so the storage event handler
@@ -144,8 +151,8 @@ export function useSettingsStorageSync({
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpDefaultViewMode,
     showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab,
-    editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sshDebugLogsEnabled,
-    globalHotkeyEnabled, autoUpdateEnabled,
+    editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled,
+    globalHotkeyEnabled, autoUpdateEnabled, windowOpacity,
   });
   settingsSnapshotRef.current = {
     theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent,
@@ -154,8 +161,8 @@ export function useSettingsStorageSync({
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpDefaultViewMode,
     showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab,
-    editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sshDebugLogsEnabled,
-    globalHotkeyEnabled, autoUpdateEnabled,
+    editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled,
+    globalHotkeyEnabled, autoUpdateEnabled, windowOpacity,
   };
 
   // Listen for storage changes from other windows (cross-window sync)
@@ -305,6 +312,12 @@ export function useSettingsStorageSync({
           setSessionLogsFormat(e.newValue);
         }
       }
+      if (e.key === STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED && e.newValue !== null) {
+        const newValue = e.newValue === 'true';
+        if (newValue !== s.sessionLogsTimestampsEnabled) {
+          setSessionLogsTimestampsEnabled(newValue);
+        }
+      }
       if (e.key === STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED && e.newValue !== null) {
         const newValue = e.newValue === 'true';
         if (newValue !== s.sshDebugLogsEnabled) {
@@ -363,6 +376,12 @@ export function useSettingsStorageSync({
           setAutoUpdateEnabled(newValue);
         }
       }
+      if (e.key === STORAGE_KEY_WINDOW_OPACITY && e.newValue !== null) {
+        const newValue = clampWindowOpacity(e.newValue);
+        if (newValue !== s.windowOpacity) {
+          setWindowOpacity(newValue);
+        }
+      }
       // Sync workspace focus style from other windows
       if (e.key === STORAGE_KEY_WORKSPACE_FOCUS_STYLE && e.newValue !== null) {
         if (e.newValue === 'dim' || e.newValue === 'border') {
@@ -391,11 +410,13 @@ export function useSettingsStorageSync({
     setEditorWordWrapState,
     setFollowAppTerminalThemeState,
     setGlobalHotkeyEnabled,
+    setWindowOpacity,
     setHotkeyScheme,
     setLightUiThemeId,
     setSessionLogsDir,
     setSessionLogsEnabled,
     setSessionLogsFormat,
+    setSessionLogsTimestampsEnabled,
     setSshDebugLogsEnabled,
     setSftpAutoOpenSidebar,
     setSftpAutoSync,

@@ -2,6 +2,7 @@ import { useCallback, useRef, useMemo, useState } from "react";
 import { FileConflict, FileConflictAction, TransferStatus, SftpFilenameEncoding } from "../../../domain/models";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { logger } from "../../../lib/logger";
+import { notify } from "../../notification";
 import { joinPath } from "./utils";
 import { createUploadTaskCallbacks } from "./uploadTaskCallbacks";
 import {
@@ -178,27 +179,24 @@ export const useSftpExternalOperations = (
     [getPaneByConnectionId, sftpSessionsRef],
   );
 
-  const downloadToTempAndOpen = useCallback(
+  const downloadToTemp = useCallback(
     async (
       side: "left" | "right",
       remotePath: string,
       fileName: string,
-      appPath: string,
-      options?: { enableWatch?: boolean }
-    ): Promise<{ localTempPath: string; watchId?: string }> => {
+    ): Promise<{ localTempPath: string; sftpId: string; externalTransferId?: string }> => {
       const pane = getActivePane(side);
       if (!pane?.connection) {
         throw new Error("No connection available");
       }
 
       const bridge = netcattyBridge.get();
-      if (!bridge?.downloadSftpToTemp || !bridge?.openWithApplication) {
-        throw new Error("System app opening not supported");
+      if (!bridge?.downloadSftpToTemp) {
+        throw new Error("SFTP temp download not supported");
       }
 
       if (pane.connection.isLocal) {
-        await bridge.openWithApplication(remotePath, appPath);
-        return { localTempPath: remotePath };
+        throw new Error("Temp download is only available for remote files");
       }
 
       const sftpId = sftpSessionsRef.current.get(pane.connection.id);
@@ -287,12 +285,12 @@ export const useSftpExternalOperations = (
           if (localTempPath && bridge.deleteTempFile) {
             bridge.deleteTempFile(localTempPath).catch(() => {});
           }
-          return { localTempPath: "" };
+          return { localTempPath: "", sftpId, externalTransferId };
         }
 
         if (isLocalTempDownloadCancelled()) {
           await cleanupTempDownload(localTempPath);
-          return { localTempPath: "" };
+          return { localTempPath: "", sftpId, externalTransferId };
         }
 
         updateExternalUpload(externalTransferId, {
@@ -311,7 +309,7 @@ export const useSftpExternalOperations = (
 
       if (isLocalTempDownloadCancelled()) {
         await cleanupTempDownload(localTempPath);
-        return { localTempPath: "" };
+        return { localTempPath: "", sftpId, externalTransferId };
       }
 
       if (bridge.registerTempFile) {
@@ -322,11 +320,44 @@ export const useSftpExternalOperations = (
         }
       }
 
+      return { localTempPath, sftpId, externalTransferId };
+    },
+    [getActivePane, sftpSessionsRef, addExternalUpload, updateExternalUpload, isTransferCancelled],
+  );
+
+  const downloadToTempAndOpen = useCallback(
+    async (
+      side: "left" | "right",
+      remotePath: string,
+      fileName: string,
+      appPath: string,
+      options?: { enableWatch?: boolean }
+    ): Promise<{ localTempPath: string; watchId?: string }> => {
+      const pane = getActivePane(side);
+      if (!pane?.connection) {
+        throw new Error("No connection available");
+      }
+
+      const bridge = netcattyBridge.get();
+      if (!bridge?.openWithApplication) {
+        throw new Error("System app opening not supported");
+      }
+
+      if (pane.connection.isLocal) {
+        await bridge.openWithApplication(remotePath, appPath);
+        return { localTempPath: remotePath };
+      }
+
+      const { localTempPath, sftpId, externalTransferId } = await downloadToTemp(side, remotePath, fileName);
+      if (!localTempPath) {
+        return { localTempPath: "" };
+      }
+
       try {
         await bridge.openWithApplication(localTempPath, appPath);
       } catch (err) {
         if (externalTransferId) {
-          updateExternalUpload(externalTransferId, {
+          updateExternalUpload?.(externalTransferId, {
             status: "failed" as TransferStatus,
             endTime: Date.now(),
             error: err instanceof Error ? err.message : String(err),
@@ -354,7 +385,67 @@ export const useSftpExternalOperations = (
 
       return { localTempPath, watchId };
     },
-    [getActivePane, sftpSessionsRef, addExternalUpload, updateExternalUpload, isTransferCancelled],
+    [downloadToTemp, getActivePane, updateExternalUpload],
+  );
+
+  const openWithSystemDefault = useCallback(
+    async (
+      side: "left" | "right",
+      remotePath: string,
+      fileName: string,
+      options?: { enableWatch?: boolean }
+    ): Promise<void> => {
+      try {
+        const pane = getActivePane(side);
+        if (!pane?.connection) {
+          throw new Error("No connection available");
+        }
+
+        const bridge = netcattyBridge.get();
+        if (!bridge?.openWithSystemDefault) {
+          throw new Error("System default opening not supported");
+        }
+
+        const bridgeMethods = bridge;
+
+        const { localTempPath, sftpId, externalTransferId } = pane.connection.isLocal
+          ? { localTempPath: remotePath, sftpId: "", externalTransferId: undefined }
+          : await downloadToTemp(side, remotePath, fileName);
+
+        if (!localTempPath) return;
+
+        const result = await bridgeMethods.openWithSystemDefault(localTempPath);
+        if (!result.success) {
+          if (externalTransferId) {
+            updateExternalUpload?.(externalTransferId, {
+              status: "failed" as TransferStatus,
+              endTime: Date.now(),
+              error: result.error || "Failed to open file",
+              speed: 0,
+            });
+          }
+          throw new Error(result.error || "Failed to open file");
+        }
+
+        // Start file watch for remote SFTP auto-sync (mirrors downloadToTempAndOpen behavior)
+        if (options?.enableWatch && !pane.connection.isLocal && bridgeMethods.startFileWatch) {
+          try {
+            await bridgeMethods.startFileWatch(
+              localTempPath,
+              remotePath,
+              sftpId,
+              pane.filenameEncoding,
+            );
+            activeFileWatchCountRef.current += 1;
+          } catch (err) {
+            console.warn("[SFTP] Failed to start file watch for default app open:", err);
+          }
+        }
+      } catch (err) {
+        notify.error(err instanceof Error ? err.message : String(err), "SFTP");
+      }
+    },
+    [downloadToTemp, getActivePane, updateExternalUpload],
   );
 
   // Create upload callbacks that translate to TransferTask updates
@@ -914,6 +1005,7 @@ export const useSftpExternalOperations = (
     writeTextFile,
     writeTextFileByConnection,
     downloadToTempAndOpen,
+    openWithSystemDefault,
     uploadExternalFiles,
     uploadExternalFileList,
     uploadExternalFolderPath,

@@ -18,9 +18,10 @@ declare module 'react' {
 declare global {
   // Proxy configuration for SSH connections
   interface NetcattyProxyConfig {
-    type: 'http' | 'socks5';
+    type: 'http' | 'socks5' | 'command';
     host: string;
     port: number;
+    command?: string;
     username?: string;
     password?: string;
   }
@@ -50,6 +51,9 @@ declare global {
     label?: string; // Display label for UI
     proxy?: NetcattyProxyConfig;
     identityFilePaths?: string[];
+    // ET server port on this hop, used only when ET tunnels through it as a
+    // jump host (--jport). Defaults to 2022 in the bridge when omitted.
+    etPort?: number;
     // Resolved keepalive for THIS hop (caller has already applied host
     // override / global fallback). interval in seconds, 0 = disabled.
     keepaliveInterval?: number;
@@ -115,7 +119,7 @@ declare global {
     // Use sudo for SFTP server
     sudo?: boolean;
     // Session log configuration for real-time streaming
-    sessionLog?: { enabled: boolean; directory: string; format: string };
+    sessionLog?: { enabled: boolean; directory: string; format: string; timestampsEnabled?: boolean };
     // SSH connection diagnostics. Does not capture terminal output.
     sshDebugLogEnabled?: boolean;
     // Local SSH key file paths (from SSH config IdentityFile)

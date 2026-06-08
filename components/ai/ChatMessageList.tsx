@@ -6,7 +6,7 @@
  * No avatars. Thinking blocks are collapsible.
  */
 
-import { AlertCircle, FileText, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { AlertCircle, FileText, RotateCcw, SquareTerminal, X, ZoomIn, ZoomOut } from 'lucide-react';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import type { ChatMessage } from '../../infrastructure/ai/types';
@@ -234,7 +234,15 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
                 {isUser && (message.attachments ?? message.images)?.length && (
                   <div className="flex gap-1.5 flex-wrap mb-1">
                     {(message.attachments ?? message.images)!.map((att, i) => (
-                      att.mediaType.startsWith('image/') ? (
+                      att.terminalSelection ? (
+                        <div
+                          key={att.filename ? `${att.filename}-${i}` : `att-${message.id}-${i}`}
+                          className="inline-flex items-center gap-1.5 h-7 px-2 rounded-md bg-muted/20 border border-border/20 text-[11px] text-foreground/70"
+                        >
+                          <SquareTerminal size={12} className="text-muted-foreground/60 shrink-0" />
+                          <span className="truncate max-w-[150px]">{att.filename || 'terminal selection'}</span>
+                        </div>
+                      ) : att.mediaType.startsWith('image/') ? (
                         <img
                           key={att.filename ? `${att.filename}-${i}` : `att-${message.id}-${i}`}
                           src={`data:${att.mediaType};base64,${att.base64Data}`}
@@ -367,7 +375,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
           );
         })()}
 
-        {/* Standalone MCP/ACP approval requests (not tied to SDK tool calls) */}
+        {/* Standalone MCP/SDK approval requests (not tied to SDK tool calls) */}
         {Array.from(pendingApprovals.entries())
           .filter(([id, req]) => id.startsWith('mcp_approval_') && (!activeSessionId || req.chatSessionId === activeSessionId))
           .map(([id, req]) => {

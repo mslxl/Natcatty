@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import type { Host, ProxyProfile } from "./models.ts";
 import {
+  formatProxyConfigEndpoint,
+  formatProxyConfigType,
   isCompleteProxyConfig,
   normalizeManualProxyConfig,
   materializeHostProxyProfile,
@@ -84,8 +86,65 @@ test("normalizeManualProxyConfig clears empty proxy drafts", () => {
   );
 });
 
+test("normalizeManualProxyConfig trims command proxy drafts", () => {
+  assert.deepEqual(
+    normalizeManualProxyConfig({
+      type: "command",
+      host: "ignored.example.com",
+      port: 8080,
+      command: "  cloudflared access ssh --hostname %h  ",
+      username: "ignored",
+      password: "ignored",
+    }),
+    {
+      type: "command",
+      host: "",
+      port: 0,
+      command: "cloudflared access ssh --hostname %h",
+    },
+  );
+});
+
 test("isCompleteProxyConfig requires host and a valid port", () => {
   assert.equal(isCompleteProxyConfig({ type: "http", host: "", port: 8080 }), false);
   assert.equal(isCompleteProxyConfig({ type: "http", host: "proxy.example.com", port: 0 }), false);
   assert.equal(isCompleteProxyConfig({ type: "http", host: "proxy.example.com", port: 3128 }), true);
+});
+
+test("isCompleteProxyConfig accepts a non-empty command proxy", () => {
+  assert.equal(isCompleteProxyConfig({ type: "command", host: "", port: 0, command: "" }), false);
+  assert.equal(
+    isCompleteProxyConfig({
+      type: "command",
+      host: "",
+      port: 0,
+      command: "cloudflared access ssh --hostname %h",
+    }),
+    true,
+  );
+});
+
+test("formatProxyConfigEndpoint hides command proxy contents in summaries", () => {
+  assert.equal(
+    formatProxyConfigEndpoint({
+      type: "command",
+      host: "",
+      port: 0,
+      command: "cloudflared access ssh --hostname %h --token secret",
+    }),
+    "ProxyCommand",
+  );
+});
+
+test("formatProxyConfigType labels command proxies without uppercasing", () => {
+  assert.equal(formatProxyConfigType({ type: "http", host: "proxy.example.com", port: 3128 }), "HTTP");
+  assert.equal(
+    formatProxyConfigType({
+      type: "command",
+      host: "",
+      port: 0,
+      command: "cloudflared access ssh --hostname %h",
+    }),
+    "ProxyCommand",
+  );
 });

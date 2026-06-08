@@ -143,6 +143,8 @@ export const zhCNCoreMessages: Messages = {
   'settings.sessionLogs.formatTxt': '纯文本 (.txt)',
   'settings.sessionLogs.formatRaw': '原始格式 (.log)',
   'settings.sessionLogs.formatHtml': 'HTML (.html)',
+  'settings.sessionLogs.timestamps': '添加时间戳',
+  'settings.sessionLogs.timestampsDesc': '为纯文本和 HTML 日志的每一行添加本地时间。',
   'settings.sessionLogs.hint': '会话日志用于记录终端输出，便于故障排查和审计。',
 
   // Settings > SSH Debug Logs
@@ -246,14 +248,15 @@ export const zhCNCoreMessages: Messages = {
   'settings.appearance.themeColor.dark': '深色主题',
   'settings.appearance.customCss': '自定义 CSS',
   'settings.appearance.customCss.desc':
-    '使用自定义 CSS 个性化界面，修改会立即生效。主要 UI 区块都暴露了 [data-section="..."] 属性供你定位，比如：snippets-panel、host-details-panel、group-details-panel、serial-host-details-panel、ai-chat-panel、vault-sidebar、vault-main、vault-hosts-header、vault-host-list、vault-view、terminal-workspace、terminal-workspace-sidebar、top-tabs。',
+    '使用自定义 CSS 个性化界面，修改会立即生效。主要 UI 区块都暴露了 [data-section="..."] 属性供你定位，比如：snippets-panel、host-details-panel、group-details-panel、serial-host-details-panel、ai-chat-panel、vault-sidebar、vault-main、vault-hosts-header、vault-host-list、vault-view、terminal-workspace、terminal-workspace-sidebar（Focus 模式终端列表）、terminal-side-panel（SFTP/脚本/主题/AI 侧栏）、terminal-sftp-panel、terminal-split-pane、terminal-split-resizer、top-tabs。',
   'settings.appearance.customCss.placeholder':
-    '/* 示例 — 由于 Tailwind 优先级较高，需要使用 !important */\n\n/* 放大代码片段侧边栏字号 */\n[data-section="snippets-panel"] {\n  font-size: 14px !important;\n}\n\n/* 自定义终端背景色 */\n.terminal { background: #1a1a2e !important; }\n\n/* 调整全局圆角 */\n:root { --radius: 0.25rem; }',
+    '/* 示例 — 由于 Tailwind 优先级较高，需要使用 !important */\n\n/* SFTP / 操作侧栏边框（不是 Focus 模式终端列表） */\n[data-section="terminal-side-panel"] {\n  border: 2px solid #00c851 !important;\n  border-radius: 6px !important;\n}\n\n/* 加粗分屏分割线 */\n[data-section="terminal-split-resizer-bar"] {\n  background-color: hsl(var(--primary)) !important;\n  transform: scale(2) !important;\n}\n\n/* 高亮当前聚焦的分屏 */\n[data-section="terminal-split-pane"][data-focused="true"] {\n  outline: 2px solid hsl(var(--primary)) !important;\n  outline-offset: -2px;\n}\n\n/* 也可在 设置 → 终端 → 工作区聚焦指示 → 聚焦窗格显示边框 */',
   'settings.appearance.language': '语言',
   'settings.appearance.language.desc': '选择界面语言',
   'settings.appearance.uiFont': '界面字体',
   'settings.appearance.uiFont.desc': '选择软件界面使用的字体',
-
+  'settings.appearance.windowOpacity': '窗口透明度',
+  'settings.appearance.windowOpacity.desc': '调节整个应用窗口的透明度，方便叠在其他内容上方。较低时终端文字也会变淡；部分 Linux 桌面环境可能不支持。',
   // Context menus / common actions
   'action.newHost': '新建主机',
   'action.newSubfolder': '新建文件夹',
@@ -349,12 +352,12 @@ export const zhCNCoreMessages: Messages = {
   'proxyProfiles.section.proxies': '代理',
   'proxyProfiles.count.items': '{count} 项',
   'proxyProfiles.empty.title': '暂无代理',
-  'proxyProfiles.empty.desc': '创建可复用的 HTTP 或 SOCKS5 代理，然后在主机详情里选择。',
+  'proxyProfiles.empty.desc': '创建可复用的 HTTP、SOCKS5 或命令代理，然后在主机详情里选择。',
   'proxyProfiles.usage': '已关联 {count} 处',
   'proxyProfiles.copyName': '{name} 副本',
   'proxyProfiles.panel.newTitle': '新建代理',
   'proxyProfiles.field.name': '代理名称',
-  'proxyProfiles.error.required': '名称、主机和端口不能为空。',
+  'proxyProfiles.error.required': '名称和代理详情不能为空。',
   'proxyProfiles.error.port': '端口必须在 1 到 65535 之间。',
   'proxyProfiles.viewMode': '代理显示方式',
   'proxyProfiles.delete.title': '删除代理？',

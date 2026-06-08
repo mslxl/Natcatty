@@ -2,6 +2,7 @@ import React, { Suspense, createContext, lazy, memo, useCallback, useContext, us
 
 import { activeTabStore } from '../../application/state/activeTabStore';
 import type { TerminalSessionExitEvent } from '../../application/state/resolveTerminalSessionExitIntent';
+import { createTerminalSelectionAttachment } from '../../application/state/terminalSelectionAttachment';
 import { useAIState } from '../../application/state/useAIState';
 import { SplitDirection } from '../../domain/workspace';
 import { KeyBinding, TerminalSettings } from '../../domain/models';
@@ -45,7 +46,17 @@ export type PendingSftpUpload = {
   entries: DropEntry[];
 };
 
-export type SnippetExecutor = (command: string, noAutoRun?: boolean) => void;
+export type SnippetExecutor = (
+  command: string,
+  noAutoRun?: boolean,
+  options?: { broadcast?: boolean },
+) => void;
+
+export type PendingTerminalSelectionForAI = {
+  requestId: string;
+  tabId: string;
+  text: string;
+};
 
 export function hexToHslToken(hex: string): string {
   const normalized = hex.startsWith('#') ? hex : `#${hex}`;
@@ -218,9 +229,9 @@ export const buildAITerminalSessionInfo = (
     username: host?.username || session?.username,
     protocol,
     shellType: session?.shellType && session.shellType !== 'unknown' ? session.shellType : undefined,
-    // Suppress deviceType for Mosh sessions — Mosh requires a shell-backed PTY
-    // and cannot connect to vendor CLIs, so network device mode doesn't apply.
-    deviceType: (session?.moshEnabled || host?.moshEnabled) ? undefined : host?.deviceType,
+    // Suppress deviceType for Mosh / ET sessions — both require a shell-backed
+    // PTY and cannot connect to vendor CLIs, so network device mode doesn't apply.
+    deviceType: (session?.moshEnabled || host?.moshEnabled || session?.etEnabled || host?.etEnabled) ? undefined : host?.deviceType,
     connected: session?.status === 'connected',
   };
 };
@@ -235,6 +246,8 @@ interface AIChatPanelsHostProps {
     targetId?: string;
     label?: string;
   }) => ExecutorContext;
+  pendingTerminalSelection?: PendingTerminalSelectionForAI | null;
+  onPendingTerminalSelectionConsumed?: (requestId: string) => void;
 }
 
 interface AIStateMaintenanceHostProps {
@@ -280,12 +293,56 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
   activeSidePanelTab,
   contextsByTabId,
   resolveExecutorContext,
+  pendingTerminalSelection,
+  onPendingTerminalSelectionConsumed,
 }) => {
   const aiState = useContext(AIStateContext);
 
   if (!aiState) {
     throw new Error('AIChatPanelsHost must be rendered inside AIStateProvider');
   }
+  const {
+    activeSessionIdMap,
+    defaultAgentId,
+    panelViewByScope,
+    showDraftView,
+    updateDraft,
+  } = aiState;
+
+  useEffect(() => {
+    if (!pendingTerminalSelection) return;
+
+    const context = contextsByTabId.get(pendingTerminalSelection.tabId);
+    if (!context) return;
+
+    const attachment = createTerminalSelectionAttachment(pendingTerminalSelection.text);
+    if (!attachment) {
+      onPendingTerminalSelectionConsumed?.(pendingTerminalSelection.requestId);
+      return;
+    }
+
+    const scopeKey = `${context.scopeType}:${context.scopeTargetId ?? ''}`;
+    const isSessionView =
+      panelViewByScope[scopeKey]?.mode === 'session'
+      || activeSessionIdMap[scopeKey] != null;
+    if (!isSessionView) {
+      showDraftView(scopeKey);
+    }
+    updateDraft(scopeKey, defaultAgentId, (draft) => ({
+      ...draft,
+      attachments: [...draft.attachments, attachment],
+    }));
+    onPendingTerminalSelectionConsumed?.(pendingTerminalSelection.requestId);
+  }, [
+    activeSessionIdMap,
+    contextsByTabId,
+    defaultAgentId,
+    onPendingTerminalSelectionConsumed,
+    panelViewByScope,
+    pendingTerminalSelection,
+    showDraftView,
+    updateDraft,
+  ]);
 
   return (
     <>
@@ -417,6 +474,7 @@ export interface TerminalLayerProps {
   sessionLogsEnabled?: boolean;
   sessionLogsDir?: string;
   sessionLogsFormat?: string;
+  sessionLogsTimestampsEnabled?: boolean;
   sshDebugLogsEnabled?: boolean;
   toggleScriptsSidePanelRef?: React.MutableRefObject<(() => void) | null>;
   toggleSidePanelRef?: React.MutableRefObject<(() => void) | null>;
@@ -426,6 +484,7 @@ interface TerminalPaneProps {
   session: TerminalSession;
   host: Host;
   chainHosts?: Host[];
+  sudoAutofillPassword?: string;
   workspaceById: Map<string, Workspace>;
   workspaceRectsById: Map<string, Record<string, WorkspaceRect>>;
   isTerminalLayerVisible: boolean;
@@ -449,7 +508,7 @@ interface TerminalPaneProps {
   keyBindings?: KeyBinding[];
   isResizing: boolean;
   isComposeBarOpen: boolean;
-  sessionLog?: { enabled: true; directory: string; format: string };
+  sessionLog?: { enabled: true; directory: string; format: string; timestampsEnabled?: boolean };
   sshDebugLogEnabled?: boolean;
   onHotkeyAction?: (action: string, event: KeyboardEvent) => void;
   onTerminalFontSizeChange?: (sessionId: string, fontSize: number) => void;
@@ -479,6 +538,7 @@ interface TerminalPaneProps {
     sessionId: string,
     executor: SnippetExecutor | null,
   ) => void;
+  onAddSelectionToAI?: (sessionId: string, selection: string) => void;
 }
 
 const getPaneThemePreviewId = (props: TerminalPaneProps): string | null => (
@@ -494,6 +554,7 @@ const terminalPanePropsAreEqual = (
   prev.session === next.session &&
   prev.host === next.host &&
   prev.chainHosts === next.chainHosts &&
+  prev.sudoAutofillPassword === next.sudoAutofillPassword &&
   prev.workspaceById === next.workspaceById &&
   prev.workspaceRectsById === next.workspaceRectsById &&
   prev.isTerminalLayerVisible === next.isTerminalLayerVisible &&
@@ -538,13 +599,15 @@ const terminalPanePropsAreEqual = (
   prev.isBroadcastEnabled === next.isBroadcastEnabled &&
   prev.onBroadcastInput === next.onBroadcastInput &&
   prev.onToggleWorkspaceComposeBar === next.onToggleWorkspaceComposeBar &&
-  prev.onSnippetExecutorChange === next.onSnippetExecutorChange
+  prev.onSnippetExecutorChange === next.onSnippetExecutorChange &&
+  prev.onAddSelectionToAI === next.onAddSelectionToAI
 );
 
 const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   session,
   host,
   chainHosts,
+  sudoAutofillPassword,
   workspaceById,
   workspaceRectsById,
   isTerminalLayerVisible,
@@ -590,6 +653,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   onBroadcastInput,
   onToggleWorkspaceComposeBar,
   onSnippetExecutorChange,
+  onAddSelectionToAI,
 }) => {
   const getPaneSnapshot = useCallback(
     () => getTerminalPaneSnapshot({
@@ -655,6 +719,8 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   return (
     <div
       data-session-id={session.id}
+      data-section="terminal-split-pane"
+      data-focused={isFocusedPane ? 'true' : undefined}
       className={cn(
         "absolute bg-background",
         inActiveWorkspace && "workspace-pane",
@@ -716,6 +782,8 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         onSnippetExecutorChange={onSnippetExecutorChange}
         sessionLog={sessionLog}
         sshDebugLogEnabled={sshDebugLogEnabled}
+        sudoAutofillPassword={sudoAutofillPassword}
+        onAddSelectionToAI={onAddSelectionToAI}
       />
     </div>
   );
@@ -726,6 +794,7 @@ interface TerminalPanesHostProps {
   sessions: TerminalSession[];
   sessionHostsMap: Map<string, Host>;
   sessionChainHostsMap: Map<string, Host[]>;
+  sessionSudoAutofillPasswordsMap: Map<string, string | undefined>;
   workspaceById: Map<string, Workspace>;
   workspaceRectsById: Map<string, Record<string, WorkspaceRect>>;
   isTerminalLayerVisible: boolean;
@@ -749,7 +818,7 @@ interface TerminalPanesHostProps {
   keyBindings?: KeyBinding[];
   isResizing: boolean;
   isComposeBarOpen: boolean;
-  sessionLog?: { enabled: true; directory: string; format: string };
+  sessionLog?: { enabled: true; directory: string; format: string; timestampsEnabled?: boolean };
   sshDebugLogEnabled?: boolean;
   onHotkeyAction?: (action: string, event: KeyboardEvent) => void;
   onTerminalFontSizeChange?: TerminalPaneProps['onTerminalFontSizeChange'];
@@ -774,12 +843,14 @@ interface TerminalPanesHostProps {
     sessionId: string,
     executor: SnippetExecutor | null,
   ) => void;
+  onAddSelectionToAI?: (sessionId: string, selection: string) => void;
 }
 
 export const TerminalPanesHost: React.FC<TerminalPanesHostProps> = memo(({
   sessions,
   sessionHostsMap,
   sessionChainHostsMap,
+  sessionSudoAutofillPasswordsMap,
   ...sharedProps
 }) => (
   <>
@@ -792,6 +863,7 @@ export const TerminalPanesHost: React.FC<TerminalPanesHostProps> = memo(({
           session={session}
           host={host}
           chainHosts={sessionChainHostsMap.get(session.id)}
+          sudoAutofillPassword={sessionSudoAutofillPasswordsMap.get(session.id)}
           {...sharedProps}
         />
       );

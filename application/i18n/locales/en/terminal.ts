@@ -1,6 +1,7 @@
 import type { Messages } from '../types';
 
 export const enTerminalMessages: Messages = {
+  'terminal.sudoHint.pressEnter': 'Press Enter to paste sudo password',
   // Terminal toolbar / search / context menu / auth
   'terminal.toolbar.openSftp': 'Open SFTP',
   'terminal.toolbar.availableAfterConnect': 'Available after connect',
@@ -70,6 +71,7 @@ export const enTerminalMessages: Messages = {
   'terminal.search.nextMatch': 'Next match (Enter)',
   'terminal.menu.copy': 'Copy',
   'terminal.menu.paste': 'Paste',
+  'terminal.menu.addSelectionToAI': 'Add to Conversation',
   'terminal.menu.pasteSelection': 'Paste Selection',
   'terminal.menu.selectAll': 'Select All',
   'terminal.menu.reconnect': 'Reconnect',
@@ -77,6 +79,8 @@ export const enTerminalMessages: Messages = {
   'terminal.menu.splitVertical': 'Split Vertical',
   'terminal.menu.clearBuffer': 'Clear Buffer',
   'terminal.menu.closeTerminal': 'Close terminal',
+  'terminal.selection.addToAI': 'Add to Conversation',
+  'terminal.selection.addToAIDesc': 'Attach selected terminal output to the AI draft',
   'terminal.auth.password': 'Password',
   'terminal.auth.sshKey': 'SSH Key',
   'terminal.auth.username': 'Username',
@@ -104,6 +108,9 @@ export const enTerminalMessages: Messages = {
   'terminal.connection.protocol.ssh': 'SSH',
   'terminal.connection.protocol.telnet': 'Telnet',
   'terminal.connection.protocol.mosh': 'Mosh',
+  'terminal.connection.protocol.et': 'EternalTerminal',
+  'terminal.et.proxyUnsupported': 'EternalTerminal does not currently support Netcatty proxy settings. Use SSH or remove the proxy for this host.',
+  'terminal.et.multiJumpUnsupported': 'EternalTerminal currently supports at most one jump host in Netcatty.',
   'terminal.connection.protocol.serial': 'Serial',
   'terminal.connection.protocol.local': 'Local Shell',
   'terminal.hostKey.unknownTitle': 'Confirm this host key',
@@ -489,6 +496,8 @@ export const enTerminalMessages: Messages = {
   'tabs.logPrefix': 'Log:',
   'tabs.logLocal': 'Local',
   'tabs.copyTab': 'Copy Tab',
+  'tabs.copyTabToNewWindow': 'Copy Tab to New Window',
+  'tabs.copyTabToNewWindowFailed': 'Failed to open tab in a new window',
   'tabs.closeOthers': 'Close Others',
   'tabs.closeToRight': 'Close Tabs to the Right',
   'tabs.closeAll': 'Close All',

@@ -236,3 +236,47 @@ test("telnet auto-login avoids common non-prompt login text", () => {
 
   assert.deepEqual(writes, []);
 });
+
+test("telnet auto-login works with Kylin-style prompts without trailing colon", () => {
+  // Kylin Professional prompts may lack trailing colon or angle-bracket (#1293)
+  const writes = [];
+  const autoLogin = createTelnetAutoLogin({
+    username: "admin",
+    password: "secret",
+    write: (data) => writes.push(data),
+  });
+
+  autoLogin.handleText("Username");
+  autoLogin.handleText("\r\nPassword");
+
+  assert.deepEqual(writes, ["admin\r", "secret\r"]);
+});
+
+test("telnet auto-login works with Kylin-style Chinese prompts without trailing colon", () => {
+  const writes = [];
+  const autoLogin = createTelnetAutoLogin({
+    username: "admin",
+    password: "secret",
+    write: (data) => writes.push(data),
+  });
+
+  autoLogin.handleText("用户名");
+  autoLogin.handleText("\r\n密码");
+
+  assert.deepEqual(writes, ["admin\r", "secret\r"]);
+});
+
+test("telnet auto-login works with Kylin V10 Input Password prompt from issue #1293", () => {
+  // Screenshot: "lybing-pc login: lybing" then "Input Password" (no trailing colon)
+  const writes = [];
+  const autoLogin = createTelnetAutoLogin({
+    username: "lybing",
+    password: "secret",
+    write: (data) => writes.push(data),
+  });
+
+  autoLogin.handleText("Kylin V10 SP1\r\nlybing-pc login: ");
+  autoLogin.handleText("Input Password");
+
+  assert.deepEqual(writes, ["lybing\r", "secret\r"]);
+});

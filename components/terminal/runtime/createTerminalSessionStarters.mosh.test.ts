@@ -8,6 +8,89 @@ import {
 const noop = () => undefined;
 const ENCRYPTED_CREDENTIAL_PLACEHOLDER = "enc:v1:djEwAAAA";
 
+const armSudoPrompt = (
+  autofill: { armForCommand: (command: string) => void } | null,
+): string => {
+  autofill?.armForCommand("sudo whoami");
+  return "[sudo] password for alice: ";
+};
+
+test("startMosh enables sudo autofill with the host saved password", async () => {
+  let onData: ((data: string) => void) | null = null;
+  const sent: string[] = [];
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => "ssh-session",
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: (_id: string, cb: (data: string) => void) => {
+      onData = cb;
+      return noop;
+    },
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: (_id: string, data: string) => sent.push(data),
+    resizeSession: noop,
+  };
+  const sudoAutofillRef = { current: null };
+  const ctx = {
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      password: "saved-secret",
+    },
+    keys: [],
+    identities: [],
+    resolvedChainHosts: [],
+    sessionId: "session-1",
+    terminalSettings: {},
+    terminalBackend,
+    sudoAutofillPassword: "saved-secret",
+    onSudoHint: () => true,
+    sessionRef: { current: null },
+    hasConnectedRef: { current: true },
+    hasRunStartupCommandRef: { current: false },
+    disposeDataRef: { current: null },
+    disposeExitRef: { current: null },
+    fitAddonRef: { current: null },
+    serializeAddonRef: { current: null },
+    pendingAuthRef: { current: null },
+    sudoAutofillRef,
+    updateStatus: noop,
+    setStatus: noop,
+    setError: noop,
+    setNeedsAuth: noop,
+    setAuthRetryMessage: noop,
+    setAuthPassword: noop,
+    setProgressLogs: noop,
+    setProgressValue: noop,
+    setChainProgress: noop,
+  };
+  const term = {
+    cols: 120,
+    rows: 32,
+    write: noop,
+    writeln: noop,
+    scrollToBottom: noop,
+  };
+
+  await createTerminalSessionStarters(ctx as never).startMosh(term as never);
+  onData?.(armSudoPrompt(sudoAutofillRef.current));
+  sudoAutofillRef.current?.confirmFill();
+
+  assert.deepEqual(sent, ["saved-secret\n"]);
+});
+
 test("startSSH accepts jump host local identity file paths with unreadable saved passwords", async () => {
   let capturedOptions: Record<string, unknown> | null = null;
   let error = "";
@@ -953,4 +1036,3 @@ test("startMosh rejects jump host chains instead of connecting directly", async 
   assert.equal(started, false);
   assert.match(error, /Mosh does not support jump host chains/);
 });
-

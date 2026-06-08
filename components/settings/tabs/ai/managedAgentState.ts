@@ -37,21 +37,6 @@ export function buildManagedAgentState(
   const otherAgents = prevAgents.filter((agent) => agent.id !== managedId);
 
   if (!pathInfo?.available || !pathInfo.path) {
-    // If the user has pre-configured env vars (e.g. CODEBUDDY_AUTH_TOKEN)
-    // before the CLI is installed, preserve the entry as disabled so their
-    // settings survive until the CLI becomes available. Without this, a
-    // failed "Check" or a temporarily-missing PATH would silently wipe
-    // the user's configuration.
-    const existingManaged = managedAgents.find((agent) => agent.id === managedId);
-    const hasUserEnvConfig = Boolean(existingManaged?.env && Object.keys(existingManaged.env).length > 0);
-    if (hasUserEnvConfig && existingManaged) {
-      return {
-        agents: [...otherAgents, { ...existingManaged, enabled: false, autoDisabledUntilAvailable: true }],
-        defaultAgentId: managedAgents.some((agent) => agent.id === defaultAgentId)
-          ? "catty"
-          : defaultAgentId,
-      };
-    }
     return {
       agents: otherAgents,
       defaultAgentId: managedAgents.some((agent) => agent.id === defaultAgentId)
@@ -61,36 +46,25 @@ export function buildManagedAgentState(
   }
 
   const existingManaged = managedAgents.find((agent) => agent.id === managedId);
-  const { autoDisabledUntilAvailable: _autoDisabledUntilAvailable, ...existingManagedBase } = existingManaged ?? {};
+  const {
+    acpCommand: _legacyCommand,
+    acpArgs: _legacyArgs,
+    ...existingManagedWithoutLegacy
+  } = existingManaged ?? {};
   const defaults = AGENT_DEFAULTS[agentKey];
-  const managedEnv = agentKey === "claude"
-    ? { ...(existingManaged?.env ?? {}), CLAUDE_CODE_EXECUTABLE: pathInfo.path }
-    : existingManaged?.env;
-  // When the ACP command is the same binary as the agent CLI (e.g. codebuddy,
-  // copilot), use the resolved path so custom installations not on PATH still work.
-  // Agents with a separate ACP binary (e.g. codex-acp, claude-agent-acp) keep their
-  // literal acpCommand unchanged.
-  const resolvedAcpCommand = defaults.acpCommand === agentKey
-    ? pathInfo.path
-    : defaults.acpCommand;
-  const hasExistingEnvConfig = Boolean(existingManaged?.env && Object.keys(existingManaged.env).length > 0);
-  const isPreconfiguredUndetectedAgent = Boolean(
-    hasExistingEnvConfig
-    && existingManaged
-    && !isPathLikeCommand(existingManaged.command),
-  );
-  const shouldEnableManagedAgent = managedAgents.length === 0
-    || existingManaged?.autoDisabledUntilAvailable === true
-    || isPreconfiguredUndetectedAgent
-    || managedAgents.some((agent) => agent.enabled);
+  const managedEnv =
+    agentKey === "claude"
+      ? { ...(existingManaged?.env ?? {}), CLAUDE_CODE_EXECUTABLE: pathInfo.path }
+      : agentKey === "codebuddy"
+        ? { ...(existingManaged?.env ?? {}), CODEBUDDY_CODE_PATH: pathInfo.path }
+        : existingManaged?.env;
   const nextManagedAgent: ExternalAgentConfig = {
-    ...existingManagedBase,
+    ...existingManagedWithoutLegacy,
     ...defaults,
     id: managedId,
     command: pathInfo.path,
-    acpCommand: resolvedAcpCommand,
     ...(managedEnv ? { env: managedEnv } : {}),
-    enabled: shouldEnableManagedAgent,
+    enabled: managedAgents.length === 0 ? true : managedAgents.some((agent) => agent.enabled),
   };
 
   return {

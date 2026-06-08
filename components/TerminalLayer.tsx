@@ -1,6 +1,7 @@
 import { FolderTree, MessageSquare, PanelLeft, PanelRight, Palette, X, Zap } from 'lucide-react';
 import React, { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { useActiveTabId } from '../application/state/activeTabStore';
+import { canReuseTerminalConnection } from '../application/state/terminalConnectionReuse';
 import { resolveTerminalSessionExitIntent, type TerminalSessionExitEvent } from '../application/state/resolveTerminalSessionExitIntent';
 import {
   getSessionActivityIdsToClear,
@@ -23,6 +24,7 @@ import { buildCacheKey } from '../application/state/sftp/sharedRemoteHostCache';
 import type { DropEntry } from '../lib/sftpFileUtils';
 import { Host, KnownHost, TerminalSession } from '../types';
 import { resolveGroupDefaults, applyGroupDefaults } from '../domain/groupConfig';
+import { resolveHostAutofillPassword } from '../domain/sshAuth';
 import { materializeHostProxyProfile } from '../domain/proxyProfiles';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { useI18n } from '../application/i18n/I18nProvider';
@@ -58,6 +60,7 @@ import {
   filterTabsMap,
   hasNotifiableTerminalOutput,
   type PendingSftpUpload,
+  type PendingTerminalSelectionForAI,
   type SidePanelTab,
   type SnippetExecutor,
   type TerminalLayerProps,
@@ -119,6 +122,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   sessionLogsEnabled,
   sessionLogsDir,
   sessionLogsFormat,
+  sessionLogsTimestampsEnabled,
   sshDebugLogsEnabled,
   toggleScriptsSidePanelRef,
   toggleSidePanelRef,
@@ -172,6 +176,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
             protocol: session.protocol ?? host.protocol,
             port: session.port ?? host.port,
             moshEnabled: session.moshEnabled ?? host.moshEnabled,
+            etEnabled: session.etEnabled ?? host.etEnabled,
           }
         : {
             // Quick Connect / temporary session — build minimal host from session data
@@ -335,6 +340,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const [sftpPendingUploadsForTab, setSftpPendingUploadsForTab] = useState<
     Map<string, PendingSftpUpload>
   >(new Map());
+  const [pendingTerminalSelectionForAI, setPendingTerminalSelectionForAI] =
+    useState<PendingTerminalSelectionForAI | null>(null);
   const sftpHostForTabRef = useRef(sftpHostForTab);
   sftpHostForTabRef.current = sftpHostForTab;
 
@@ -520,11 +527,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         const protocol = session.protocol ?? existingHost.protocol;
         const port = session.port ?? existingHost.port;
         const moshEnabled = session.moshEnabled ?? existingHost.moshEnabled;
+        const etEnabled = session.etEnabled ?? existingHost.etEnabled;
 
         if (
           protocol === existingHost.protocol &&
           port === existingHost.port &&
           moshEnabled === existingHost.moshEnabled
+          && etEnabled === existingHost.etEnabled
         ) {
           map.set(session.id, existingHost);
         } else {
@@ -533,6 +542,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
             protocol,
             port,
             moshEnabled,
+            etEnabled,
           });
         }
       } else {
@@ -557,6 +567,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
           tags: [],
           protocol: fallbackProtocol,
           moshEnabled: session.moshEnabled,
+          etEnabled: session.etEnabled,
           charset: session.charset,
           localShell: session.localShell,
           localShellArgs: session.localShellArgs,
@@ -593,6 +604,20 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   }, [sessions, sessionHostsMap, hostMap, groupConfigs, proxyProfileIdSet, proxyProfiles]);
   const sessionHostsMapRef = useRef(sessionHostsMap);
   sessionHostsMapRef.current = sessionHostsMap;
+  const sessionSudoAutofillPasswordsMap = useMemo(() => {
+    const map = new Map<string, string | undefined>();
+    for (const session of sessions) {
+      const rawHost = hostMap.get(session.hostId);
+      if (rawHost) {
+        // Resolve through identity references too (host.identityId), not just
+        // host.password, so a password stored in a Keychain identity is filled
+        // (issue #1284) — same resolution SSH login uses.
+        map.set(session.id, resolveHostAutofillPassword({ host: rawHost, keys, identities }));
+      }
+    }
+    return map;
+  }, [hostMap, sessions, keys, identities]);
+
   const handleTerminalFontSizeChange = useCallback((sessionId: string, nextFontSize: number) => {
     const sessionHost = sessionHostsMapRef.current.get(sessionId);
     if (!sessionHost) return;
@@ -658,6 +683,21 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     }
     return sftpHostForTab.get(activeTabId) ?? null;
   }, [isSftpOpenForCurrentTab, activeTabId, activeWorkspace, activeSession, focusedSessionId, sessionHostsMap, sftpHostForTab]);
+
+  const activeTerminalSessionIdForSftp = useMemo((): string | null => {
+    if (!isSftpOpenForCurrentTab || !sftpActiveHost) return null;
+    const sessionId = activeWorkspace ? focusedSessionId : activeSession?.id;
+    if (!sessionId) return null;
+    const session = sessions.find((candidate) => candidate.id === sessionId);
+    if (!session || !canReuseTerminalConnection(session)) return null;
+    const sessionHost = sessionHostsMap.get(session.id);
+    if (!sessionHost) return null;
+    const sameEndpoint =
+      sessionHost.hostname === sftpActiveHost.hostname &&
+      (sessionHost.port || 22) === (sftpActiveHost.port || 22) &&
+      (sessionHost.username || "root") === (sftpActiveHost.username || "root");
+    return sameEndpoint ? session.id : null;
+  }, [activeSession?.id, activeWorkspace, focusedSessionId, isSftpOpenForCurrentTab, sessions, sessionHostsMap, sftpActiveHost]);
 
   const mountedSftpTabIds = useMemo(
     () => Array.from(sftpHostForTab.keys()),
@@ -848,6 +888,32 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     handleSwitchSidePanelTab('ai');
   }, [handleSwitchSidePanelTab]);
 
+  const handleAddSelectionToAI = useCallback((sourceSessionId: string, selection: string) => {
+    const text = selection.trim();
+    if (!text) return;
+
+    const tabId = activeTabIdRef.current;
+    if (!tabId) return;
+
+    const ws = activeWorkspaceRef.current;
+    if (ws && ws.focusedSessionId !== sourceSessionId) {
+      onSetWorkspaceFocusedSessionRef.current?.(ws.id, sourceSessionId);
+    }
+
+    setPendingTerminalSelectionForAI({
+      requestId: crypto.randomUUID(),
+      tabId,
+      text,
+    });
+    handleSwitchSidePanelTab('ai');
+  }, [handleSwitchSidePanelTab]);
+
+  const handlePendingTerminalSelectionConsumed = useCallback((requestId: string) => {
+    setPendingTerminalSelectionForAI((current) => (
+      current?.requestId === requestId ? null : current
+    ));
+  }, []);
+
   // Toggle the AI chat side panel from the top-bar button: open it (or switch
   // to it from another sub-panel), and close the side panel when AI is already
   // the open sub-panel. Unlike handleOpenAI (the rail switch), a second click
@@ -954,9 +1020,9 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const sessionLogConfig = useMemo(
     () =>
       sessionLogsEnabled && sessionLogsDir
-        ? { enabled: true as const, directory: sessionLogsDir, format: sessionLogsFormat || 'txt' }
+        ? { enabled: true as const, directory: sessionLogsDir, format: sessionLogsFormat || 'txt', timestampsEnabled: sessionLogsTimestampsEnabled }
         : undefined,
-    [sessionLogsDir, sessionLogsEnabled, sessionLogsFormat],
+    [sessionLogsDir, sessionLogsEnabled, sessionLogsFormat, sessionLogsTimestampsEnabled],
   );
   const { renderFocusModeSidebar } = useTerminalFocusSidebar({
     activeWorkspace,
@@ -985,7 +1051,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         .filter(s => s.workspaceId === activeWorkspace.id)
         .map(s => s.id);
       for (const sid of allSessionIds) {
-        terminalBackend.writeToSession(sid, payload);
+        const executor = snippetExecutorsRef.current.get(sid);
+        if (executor) {
+          executor(text, false, { broadcast: false });
+        } else {
+          terminalBackend.writeToSession(sid, payload);
+        }
       }
     } else {
       // Validate focusedSessionId is a live session, then fallback to first available
@@ -995,7 +1066,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         : undefined;
       const targetId = validFocusedId ?? workspaceSessions[0]?.id;
       if (targetId) {
-        terminalBackend.writeToSession(targetId, payload);
+        const executor = snippetExecutorsRef.current.get(targetId);
+        if (executor) {
+          executor(text, false);
+        } else {
+          terminalBackend.writeToSession(targetId, payload);
+        }
       }
     }
   }, [activeWorkspace, focusedSessionId, sessions, terminalBackend, isBroadcastEnabled]);
@@ -1004,7 +1080,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const prevFocusedSessionIdRef = useRef<string | undefined>(undefined);
 
   useTerminalLayerEffects({ activeSidePanelTab, activeTabId, activeTabIdRef, activeTopTabsThemeId, activeWorkspace, activityTrackedSessions, appliedPreviewSessionRef, applyTerminalPreviewVars, applyTopTabsPreviewVars, cancelAnimationFrame, ChunkedEscapeFilter, clearTerminalPreviewVars, clearTimeout, clearTopTabsPreviewVars, document, dropHint, filterTabsMap, focusedSessionId, followAppTerminalTheme, getSessionActivityIdsToClear, handleToggleAiFromTopBar, handleToggleScriptsSidePanel, handleToggleSidePanel, hasNotifiableTerminalOutput, isFocusMode, isTerminalLayerVisible, lastSidePanelTabRef, Map, Math, onSessionData, onSplitSessionRef, onToggleBroadcastRef, onToggleWorkspaceViewModeRef, onUpdateSplitSizes, prevFocusedSessionIdRef, previewTargetSessionId, requestAnimationFrame, ResizeObserver, resizing, sessionActivityStore, sessions, Set, setDropHint, setResizing, setSftpHostForTab, setSftpInitialLocationForTab, setSftpPendingUploadsForTab, setSidePanelOpenTabs, setThemePreview, setTimeout, setupMcpApprovalBridge, setWorkspaceArea, sftpActiveHost, sftpHostForTab, shouldMarkSessionActivity, sidePanelOpenTabs, splitHorizontalHandlersRef, splitVerticalHandlersRef, terminalRendererCwdBySessionRef, themeCommitTimerRef, themePreview, toggleScriptsSidePanelRef, toggleSidePanelRef, validAIScopeTargetIds, validSessionActivityIds, visibleFocusedThemeId, window, workspaceBroadcastHandlersRef, workspaceFocusHandlersRef, workspaceInnerRef, workspaces });
-  return <TerminalLayerView ctx={{ accentMode, activeResizers, activeSidePanelTab, activeTabId, activeWorkspace, AIChatPanelsHost, aiContextsByTabId, AIStateMaintenanceHost, AIStateProvider, Array, Button, cn, composeBarThemeColors, computeSplitHint, customAccent, draggingSessionId, dropHint, editorWordWrap, effectiveHosts, findSplitNode, focusedFontFamilyId, focusedFontFamilyOverridden, focusedFontSize, focusedFontSizeOverridden, focusedFontWeight, focusedFontWeightOverridden, focusedSessionId, focusedThemeOverridden, FolderTree, followAppTerminalTheme, fontSize, getTerminalCwd, handleAddKnownHost, handleBroadcastInput, handleCloseSession, handleCloseSidePanel, handleCommandExecuted, handleComposeSend, handleFontFamilyChangeForFocusedSession, handleFontFamilyResetForFocusedSession, handleFontSizeChangeForFocusedSession, handleFontSizeResetForFocusedSession, handleFontWeightChangeForFocusedSession, handleFontWeightResetForFocusedSession, handleOpenAI, handleOpenScripts, handleOpenSftp, handleOpenTheme, handleOsDetected, handlePendingUploadHandled, handleSessionExit, handleSftpInitialLocationApplied, handleSidePanelResizeStart, handleSnippetClickForFocusedSession, handleSnippetFromPanel, handleSnippetExecutorChange, handleStatusChange, handleTerminalCwdChange, handleTerminalDataCapture, handleTerminalFontSizeChange, handleThemeChangeForFocusedSession, handleThemeResetForFocusedSession, handleToggleSftpFromBar, handleToggleWorkspaceComposeBar, handleUpdateHost, handleWorkspaceDrop, hosts, hotkeyScheme, identities, isBroadcastEnabled, isComposeBarOpen, isFocusMode, isSidePanelOpenForCurrentTab, isTerminalLayerVisible, keyBindings, keys, knownHosts, MessageSquare, mountedAiTabIds, mountedSftpTabIds, onHotkeyAction, onSetWorkspaceFocusedSession, onSplitSession, Palette, PanelLeft, PanelRight, previewedOrVisibleThemeId, refocusActiveTerminalSession, refocusTerminalSession, renderFocusModeSidebar, resizing, resolveAIExecutorContext, resolvedPreviewTheme, ScriptsSidePanel, sessionChainHostsMap, sessionHostsMap, sessionLogConfig, sessions, setDropHint, setEditorWordWrap, setIsComposeBarOpen, setResizing, setSidePanelPosition, sftpActiveHost, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior, sftpInitialLocationForTab, sftpPendingUploadsForTab, sftpShowHiddenFiles, SftpSidePanel, sftpUseCompressedUpload, sidePanelPosition, sidePanelWidth, snippetPackages, snippets, splitHorizontalHandlersRef, splitVerticalHandlersRef, sshDebugLogsEnabled, t, TerminalComposeBar, terminalFontFamilyId, TerminalPanesHost, terminalSettings, terminalTheme, themePreview, ThemeSidePanel, Tooltip, TooltipContent, TooltipTrigger, updateHosts, validAIScopeTargetIds, workspaceBroadcastHandlersRef, workspaceById, workspaceFocusHandlersRef, workspaceInnerRef, workspaceOuterRef, workspaceOverlayRef, workspaceRectsById, X, Zap }} />;
+  return <TerminalLayerView ctx={{ accentMode, activeResizers, activeSidePanelTab, activeTabId, activeTerminalSessionIdForSftp, activeWorkspace, AIChatPanelsHost, aiContextsByTabId, AIStateMaintenanceHost, AIStateProvider, Array, Button, cn, composeBarThemeColors, computeSplitHint, customAccent, draggingSessionId, dropHint, editorWordWrap, effectiveHosts, findSplitNode, focusedFontFamilyId, focusedFontFamilyOverridden, focusedFontSize, focusedFontSizeOverridden, focusedFontWeight, focusedFontWeightOverridden, focusedSessionId, focusedThemeOverridden, FolderTree, followAppTerminalTheme, fontSize, getTerminalCwd, handleAddKnownHost, handleAddSelectionToAI, handleBroadcastInput, handleCloseSession, handleCloseSidePanel, handleCommandExecuted, handleComposeSend, handleFontFamilyChangeForFocusedSession, handleFontFamilyResetForFocusedSession, handleFontSizeChangeForFocusedSession, handleFontSizeResetForFocusedSession, handleFontWeightChangeForFocusedSession, handleFontWeightResetForFocusedSession, handleOpenAI, handleOpenScripts, handleOpenSftp, handleOpenTheme, handleOsDetected, handlePendingTerminalSelectionConsumed, handlePendingUploadHandled, handleSessionExit, handleSftpInitialLocationApplied, handleSidePanelResizeStart, handleSnippetClickForFocusedSession, handleSnippetFromPanel, handleSnippetExecutorChange, handleStatusChange, handleTerminalCwdChange, handleTerminalDataCapture, handleTerminalFontSizeChange, handleThemeChangeForFocusedSession, handleThemeResetForFocusedSession, handleToggleSftpFromBar, handleToggleWorkspaceComposeBar, handleUpdateHost, handleWorkspaceDrop, hosts, hotkeyScheme, identities, isBroadcastEnabled, isComposeBarOpen, isFocusMode, isSidePanelOpenForCurrentTab, isTerminalLayerVisible, keyBindings, keys, knownHosts, MessageSquare, mountedAiTabIds, mountedSftpTabIds, onHotkeyAction, onSetWorkspaceFocusedSession, onSplitSession, Palette, PanelLeft, PanelRight, pendingTerminalSelectionForAI, previewedOrVisibleThemeId, refocusActiveTerminalSession, refocusTerminalSession, renderFocusModeSidebar, resizing, resolveAIExecutorContext, resolvedPreviewTheme, ScriptsSidePanel, sessionChainHostsMap, sessionHostsMap, sessionLogConfig, sessionSudoAutofillPasswordsMap, sessions, setDropHint, setEditorWordWrap, setIsComposeBarOpen, setResizing, setSidePanelPosition, sftpActiveHost, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior, sftpInitialLocationForTab, sftpPendingUploadsForTab, sftpShowHiddenFiles, SftpSidePanel, sftpUseCompressedUpload, sidePanelPosition, sidePanelWidth, snippetPackages, snippets, splitHorizontalHandlersRef, splitVerticalHandlersRef, sshDebugLogsEnabled, t, TerminalComposeBar, terminalFontFamilyId, TerminalPanesHost, terminalSettings, terminalTheme, themePreview, ThemeSidePanel, Tooltip, TooltipContent, TooltipTrigger, updateHosts, validAIScopeTargetIds, workspaceBroadcastHandlersRef, workspaceById, workspaceFocusHandlersRef, workspaceInnerRef, workspaceOuterRef, workspaceOverlayRef, workspaceRectsById, X, Zap }} />;
 };
 
 export const TerminalLayer = memo(TerminalLayerInner, terminalLayerAreEqual);

@@ -3,7 +3,7 @@
  *
  * Handles:
  * - Catty agent streaming via Vercel AI SDK `streamText`
- * - External agent streaming (ACP and raw process)
+ * - External agent streaming through official SDK backends
  * - Text-delta batching via requestAnimationFrame
  * - Abort controller management
  * - Stream state tracking (per-session)
@@ -11,7 +11,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { streamText, stepCountIs, type ModelMessage } from 'ai';
+import { generateText, pruneMessages, streamText, stepCountIs, type ModelMessage } from 'ai';
 import type {
   AIPermissionMode,
   AIToolIntegrationMode,
@@ -25,13 +25,27 @@ import type {
 } from '../../../infrastructure/ai/types';
 import { isWebSearchReady } from '../../../infrastructure/ai/types';
 import { buildSystemPrompt } from '../../../infrastructure/ai/cattyAgent/systemPrompt';
+import {
+  CONTEXT_COMPACTION_SYSTEM_PROMPT,
+  DEFAULT_CONTEXT_WINDOW_TOKENS,
+  DEFAULT_PROTECT_RECENT_MESSAGES,
+  formatMessagesForCompaction,
+  estimateUnknownTokens,
+  keepRecentContextMessages,
+  prepareContextCompaction,
+  resolveContextWindow,
+} from '../../../infrastructure/ai/contextCompaction';
 import { createModelFromConfig } from '../../../infrastructure/ai/sdk/providers';
 import { createCattyTools } from '../../../infrastructure/ai/sdk/tools';
 import type { ExecutorContext } from '../../../infrastructure/ai/cattyAgent/executor';
-import { runExternalAgentTurn } from '../../../infrastructure/ai/externalAgentAdapter';
-import { runAcpAgentTurn } from '../../../infrastructure/ai/acpAgentAdapter';
+import { getExternalAgentSdkBackend } from '../../../infrastructure/ai/managedAgents';
+import { runSdkAgentTurn } from '../../../infrastructure/ai/sdkAgentAdapter';
 import { classifyError } from '../../../infrastructure/ai/errorClassifier';
 import { isSdkStreamStateError } from '../../../infrastructure/ai/shared/streamStateErrors';
+import {
+  buildPromptWithTerminalSelectionAttachments,
+  isTerminalSelectionAttachment,
+} from '../../../application/state/terminalSelectionAttachment';
 import {
   extractProviderContinuationFromRawChunk,
   getOpenAIChatAssistantFieldsForHistoryMessage,
@@ -39,6 +53,7 @@ import {
   mergeProviderContinuation,
   normalizeProviderContinuationOptions,
   withProviderContinuationSource,
+  type OpenAIChatAssistantFields,
   type ProviderContinuation,
 } from '../../../infrastructure/ai/providerContinuation';
 
@@ -67,6 +82,11 @@ export type { DefaultTargetSessionHint } from './aiChatStreamingSupport';
 const sharedStreamingSessionIds = new Set<string>();
 const sharedAbortControllers = new Map<string, AbortController>();
 const streamingSubscribers = new Set<() => void>();
+const OPENAI_CHAT_ASSISTANT_FIELDS = Symbol('netcatty.openAIChatAssistantFields');
+
+type ModelMessageWithOpenAIChatFields = ModelMessage & {
+  [OPENAI_CHAT_ASSISTANT_FIELDS]?: OpenAIChatAssistantFields;
+};
 
 function emitStreamingStoreChange(): void {
   streamingSubscribers.forEach(listener => {
@@ -76,6 +96,45 @@ function emitStreamingStoreChange(): void {
       console.error('[AIChatStreaming] Failed to notify streaming subscriber:', err);
     }
   });
+}
+
+function rememberOpenAIChatAssistantFields(
+  message: ModelMessage,
+  fields: OpenAIChatAssistantFields | undefined,
+  fieldsByMessage: Map<ModelMessage, OpenAIChatAssistantFields | undefined>,
+): void {
+  fieldsByMessage.set(message, fields);
+  (message as ModelMessageWithOpenAIChatFields)[OPENAI_CHAT_ASSISTANT_FIELDS] = fields;
+}
+
+function getRememberedOpenAIChatAssistantFields(
+  message: ModelMessage,
+  fieldsByMessage: Map<ModelMessage, OpenAIChatAssistantFields | undefined>,
+): OpenAIChatAssistantFields | undefined {
+  if (fieldsByMessage.has(message)) return fieldsByMessage.get(message);
+  return (message as ModelMessageWithOpenAIChatFields)[OPENAI_CHAT_ASSISTANT_FIELDS];
+}
+
+function modelMessageHasToolCall(message: ModelMessage): boolean {
+  if (message.role !== 'assistant' || !Array.isArray(message.content)) return false;
+  return message.content.some((part) => part && typeof part === 'object' && (part as { type?: string }).type === 'tool-call');
+}
+
+function collectOpenAIChatAssistantFieldsForMessages(
+  messages: ModelMessage[],
+  fieldsByMessage: Map<ModelMessage, OpenAIChatAssistantFields | undefined>,
+): Array<OpenAIChatAssistantFields | undefined> {
+  const fields: Array<OpenAIChatAssistantFields | undefined> = [];
+  let previousMessageWasTool = false;
+  for (const message of messages) {
+    const needsContinuationFields = message.role === 'assistant'
+      && (modelMessageHasToolCall(message) || previousMessageWasTool);
+    if (needsContinuationFields) {
+      fields.push(getRememberedOpenAIChatAssistantFields(message, fieldsByMessage));
+    }
+    previousMessageWasTool = message.role === 'tool';
+  }
+  return fields;
 }
 
 // -------------------------------------------------------------------
@@ -123,13 +182,13 @@ export interface UseAIChatStreamingReturn {
     context: SendToCattyContext,
     attachments?: ChatMessageAttachment[],
   ) => Promise<void>;
-  /** Send a message to an external agent (ACP or raw process). */
+  /** Send a message to an external SDK agent. */
   sendToExternalAgent: (
     sessionId: string,
     trimmed: string,
     agentConfig: ExternalAgentConfig,
     abortController: AbortController,
-    attachedImages: Array<{ base64Data: string; mediaType: string; filename?: string }>,
+    attachedImages: Array<{ base64Data: string; mediaType: string; filename?: string; filePath?: string }>,
     context: SendToExternalContext,
   ) => Promise<void>;
   /** Report a streaming error to the chat. */
@@ -149,6 +208,7 @@ export interface SendToCattyContext {
   webSearchConfig?: WebSearchConfig | null;
   getExecutorContext?: () => ExecutorContext;
   autoTitleSession: (sessionId: string, text: string) => void;
+  titleText?: string;
   selectedUserSkillSlugs?: string[];
 }
 
@@ -522,7 +582,7 @@ export function useAIChatStreaming({
     trimmed: string,
     agentConfig: ExternalAgentConfig,
     abortController: AbortController,
-    attachedImages: Array<{ base64Data: string; mediaType: string; filename?: string }>,
+    attachedImages: Array<{ base64Data: string; mediaType: string; filename?: string; filePath?: string }>,
     context: SendToExternalContext,
   ) => {
     const bridge = getNetcattyBridge();
@@ -532,8 +592,9 @@ export function useAIChatStreaming({
       context.selectedUserSkillSlugs,
     );
 
-    if (agentConfig.acpCommand && bridge) {
-      const requestId = `acp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const sdkBackend = getExternalAgentSdkBackend(agentConfig);
+    if (sdkBackend && bridge) {
+      const requestId = `sdk_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
       // Push terminal session metadata to MCP bridge
       if (bridge?.aiMcpUpdateSessions) {
@@ -552,7 +613,7 @@ export function useAIChatStreaming({
         }
       };
 
-      await runAcpAgentTurn(
+      await runSdkAgentTurn(
         bridge,
         requestId,
         sessionId,
@@ -594,7 +655,7 @@ export function useAIChatStreaming({
               if (msg.role !== 'assistant' || msg.executionStatus !== 'running') return msg;
               // Only patch tool call name if the existing name is missing/generic
               // (don't overwrite a good name from onToolCall with a wrapper name from tool-result)
-              const updatedToolCalls = toolName && !toolName.includes('acp_provider_agent_dynamic_tool') && msg.toolCalls
+              const updatedToolCalls = toolName && !toolName.includes('sdk_agent_dynamic_tool') && msg.toolCalls
                 ? msg.toolCalls.map(tc => tc.id === toolCallId && !tc.name ? { ...tc, name: toolName } : tc)
                 : msg.toolCalls;
               return { ...msg, toolCalls: updatedToolCalls, executionStatus: 'completed', statusText: undefined };
@@ -621,7 +682,7 @@ export function useAIChatStreaming({
           onDone: () => {},
         },
         abortController.signal,
-        // Managed ACP agents (codex, claude) must resolve auth from their own
+        // Managed SDK agents (codex, claude) must resolve auth from their own
         // CLI config/login state, so we deliberately pass no providerId here.
         // See issue #705 for Codex; same reasoning for Claude.
         undefined,
@@ -634,23 +695,13 @@ export function useAIChatStreaming({
         userSkillsContext,
       );
     } else {
-      // Fallback: spawn as raw process
-      await runExternalAgentTurn(
-        agentConfig,
-        userSkillsContext ? `${userSkillsContext}\n\nUser request:\n${trimmed}` : trimmed,
-        {
-          onTextDelta: (text: string) => {
-            updateLastMessage(sessionId, msg => ({ ...msg, content: msg.content + text }));
-          },
-          onError: (error: string) => {
-            reportStreamError(sessionId, abortController.signal, error);
-            setStreamingForScope(sessionId, false);
-          },
-          onDone: () => {},
-        },
-        bridge as unknown as Parameters<typeof runExternalAgentTurn>[3],
+      // Managed agents always route through the SDK path above.
+      reportStreamError(
+        sessionId,
         abortController.signal,
+        'This agent has no SDK backend configured. Re-discover it in Settings -> AI.',
       );
+      setStreamingForScope(sessionId, false);
     }
   }, [
     addMessageToSession, updateLastMessage, setStreamingForScope, reportStreamError,
@@ -747,16 +798,23 @@ export function useAIChatStreaming({
       };
 
       const sdkMessages: Array<ModelMessage> = [];
+      const openAIChatAssistantFieldsByMessage = new Map<ModelMessage, OpenAIChatAssistantFields | undefined>();
       let previousHistoryMessageWasToolResult = false;
       for (const m of allMessages) {
         const currentMessageFollowsToolResult = previousHistoryMessageWasToolResult;
         if (m.role === 'user') {
           // Build multimodal content when attachments are present (fallback to legacy `images` field)
           const messageAttachments = m.attachments ?? m.images;
-          if (messageAttachments?.length) {
+          const modelText = messageAttachments?.length
+            ? buildPromptWithTerminalSelectionAttachments(m.content, messageAttachments)
+            : m.content;
+          const modelAttachments = messageAttachments?.filter(
+            (attachment) => !isTerminalSelectionAttachment(attachment),
+          );
+          if (modelAttachments?.length) {
             const parts: Array<{ type: 'text'; text: string } | { type: 'image'; image: string; mediaType?: string } | { type: 'file'; data: string; mediaType: string; filename?: string }> = [];
-            parts.push({ type: 'text', text: m.content });
-            for (const att of messageAttachments) {
+            parts.push({ type: 'text', text: modelText });
+            for (const att of modelAttachments) {
               if (att.mediaType.startsWith('image/')) {
                 parts.push({ type: 'image', image: att.base64Data, mediaType: att.mediaType });
               } else {
@@ -765,7 +823,7 @@ export function useAIChatStreaming({
             }
             sdkMessages.push({ role: 'user', content: parts });
           } else {
-            sdkMessages.push({ role: 'user', content: m.content });
+            sdkMessages.push({ role: 'user', content: modelText });
           }
         } else if (m.role === 'assistant') {
           const activeContinuation = isProviderContinuationForSource(
@@ -811,9 +869,10 @@ export function useAIChatStreaming({
             }
             // If all tool calls were orphaned, just include the text content
             if (contentParts.length > 0) {
-              sdkMessages.push({ role: 'assistant', content: toAssistantModelContent(contentParts) });
+              const message: ModelMessage = { role: 'assistant', content: toAssistantModelContent(contentParts) };
+              sdkMessages.push(message);
               if (resolvedCalls.length > 0) {
-                continuationContext.openAIChatAssistantFields.push(openAIChatAssistantFields);
+                rememberOpenAIChatAssistantFields(message, openAIChatAssistantFields, openAIChatAssistantFieldsByMessage);
               }
             }
           } else if (m.content) {
@@ -831,12 +890,13 @@ export function useAIChatStreaming({
               text: m.content,
               ...(activeContinuation?.textProviderOptions ? { providerOptions: activeContinuation.textProviderOptions } : {}),
             });
-            sdkMessages.push({
+            const message: ModelMessage = {
               role: 'assistant',
               content: toAssistantModelContent(contentParts),
-            });
+            };
+            sdkMessages.push(message);
             if (currentMessageFollowsToolResult) {
-              continuationContext.openAIChatAssistantFields.push(openAIChatAssistantFields);
+              rememberOpenAIChatAssistantFields(message, openAIChatAssistantFields, openAIChatAssistantFieldsByMessage);
             }
           }
         } else if (m.role === 'tool' && m.toolResults?.length) {
@@ -888,12 +948,64 @@ export function useAIChatStreaming({
         return;
       }
 
+      const contextWindow = resolveContextWindow({
+        provider: context.activeProvider,
+        modelId: activeModelId,
+        defaultContextWindow: DEFAULT_CONTEXT_WINDOW_TOKENS,
+      });
+      const outputReserveTokens = Math.min(4096, Math.ceil(contextWindow * 0.05));
+      const requestReserveTokens = outputReserveTokens + estimateUnknownTokens({
+        systemPrompt,
+        toolNames: Object.keys(tools),
+        openAIChatAssistantFields: Array.from(openAIChatAssistantFieldsByMessage.values()),
+      });
+
+      let messagesForStream = sdkMessages;
+      try {
+        const compacted = await prepareContextCompaction({
+          messages: sdkMessages,
+          contextWindow,
+          reservedTokens: requestReserveTokens,
+          protectRecentMessages: DEFAULT_PROTECT_RECENT_MESSAGES,
+          summarize: async (messagesToSummarize) => {
+            updateLastMessage(sessionId, msg => ({ ...msg, statusText: 'Compacting earlier context...' }));
+            const result = await generateText({
+              model,
+              system: CONTEXT_COMPACTION_SYSTEM_PROMPT,
+              messages: [{
+                role: 'user',
+                content: `Summarize this earlier conversation context for the next model turn:\n\n${formatMessagesForCompaction(messagesToSummarize)}`,
+              }],
+              abortSignal: abortController.signal,
+              maxOutputTokens: 1600,
+              temperature: 0,
+            });
+            return result.text;
+          },
+        });
+        messagesForStream = compacted.messages;
+      } catch (err) {
+        if (abortController.signal.aborted) throw err;
+        console.warn('[Catty] Context compaction failed; falling back to recent messages only:', err);
+        messagesForStream = keepRecentContextMessages(sdkMessages, DEFAULT_PROTECT_RECENT_MESSAGES);
+      }
+
+      messagesForStream = pruneMessages({
+        messages: messagesForStream,
+        reasoning: 'all',
+        emptyMessages: 'remove',
+      });
+      continuationContext.openAIChatAssistantFields = collectOpenAIChatAssistantFieldsForMessages(
+        messagesForStream,
+        openAIChatAssistantFieldsByMessage,
+      );
+
       await processCattyStream(
         sessionId,
         model,
         systemPrompt,
         tools,
-        sdkMessages,
+        messagesForStream,
         abortController.signal,
         assistantMsgId,
         context.activeProvider?.advancedParams,
@@ -907,7 +1019,7 @@ export function useAIChatStreaming({
       updateLastMessage(sessionId, msg => msg.statusText ? { ...msg, statusText: '' } : msg);
       setStreamingForScope(sessionId, false);
       abortControllersRef.current.delete(sessionId);
-      context.autoTitleSession(sessionId, trimmed);
+      context.autoTitleSession(sessionId, context.titleText ?? trimmed);
     }
   }, [
     processCattyStream, reportStreamError, setStreamingForScope,

@@ -243,6 +243,23 @@ body {
   left: 3px !important;
 }
 
+/* Keep focused IME helper text from making the terminal content drift sideways. */
+.xterm,
+.xterm .xterm-screen,
+.xterm .xterm-viewport,
+.xterm .xterm-scrollable-element {
+  overflow-x: hidden !important;
+}
+
+@supports (overflow: clip) {
+  .xterm,
+  .xterm .xterm-screen,
+  .xterm .xterm-viewport,
+  .xterm .xterm-scrollable-element {
+    overflow-x: clip !important;
+  }
+}
+
 @keyframes shimmer {
   0% {
     transform: translateX(-100%);
@@ -431,6 +448,11 @@ body {
 .workspace-pane {
   outline: none;
   overflow: visible;
+}
+
+/* Focus-mode terminal list sidebar (split view uses terminal-split-pane). */
+[data-section="terminal-workspace-sidebar"] {
+  border-right: var(--terminal-workspace-sidebar-border, none);
 }
 
 /* Dim terminal text in unfocused workspace panes (default) */

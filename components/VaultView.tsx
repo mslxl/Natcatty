@@ -73,6 +73,7 @@ import {
   Snippet,
 } from "../types";
 import { AppLogo } from "./AppLogo";
+import { connectHostsStaggered } from "./connectHostsStaggered";
 import { DistroAvatar } from "./DistroAvatar";
 import GroupDetailsPanel from "./GroupDetailsPanel";
 import HostDetailsPanel from "./HostDetailsPanel";
@@ -430,9 +431,10 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
       if (protocolSelectHost) {
         const hostWithProtocol: Host = {
           ...protocolSelectHost,
-          protocol: protocol === "mosh" ? "ssh" : protocol,
+          protocol: (protocol === "mosh" || protocol === "et") ? "ssh" : protocol,
           port,
           moshEnabled: protocol === "mosh",
+          etEnabled: protocol === "et",
         };
         onConnect(hostWithProtocol);
         setProtocolSelectHost(null);
@@ -614,7 +616,10 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     // We call onConnect directly (not handleHostConnect) so multi-protocol hosts
     // connect with their configured protocol instead of opening a per-host dialog.
     const targets = hosts.filter(h => selectedHostIds.has(h.id));
-    targets.forEach(host => onConnect(host));
+    // Stagger the connects across frames so mounting N terminals (each creating
+    // a WebGL context) doesn't block one frame and freeze the UI. The first host
+    // still connects synchronously so its tab appears immediately.
+    connectHostsStaggered(targets, onConnect);
     clearHostSelection();
     toast.success(t("vault.hosts.connectMultiple.success", { count: targets.length }));
   }, [selectedHostIds, hosts, onConnect, clearHostSelection, t]);

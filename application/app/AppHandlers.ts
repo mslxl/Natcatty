@@ -73,7 +73,7 @@ export function handleTrayPanelConnectImpl(getCtx: AppContextGetter, hostId: str
       return;
     }
 
-    const protocol = effectiveHost.moshEnabled ? 'mosh' : (effectiveHost.protocol || 'ssh');
+    const protocol = effectiveHost.etEnabled ? 'et' : effectiveHost.moshEnabled ? 'mosh' : (effectiveHost.protocol || 'ssh');
     const resolvedAuth = resolveHostAuth({ host: effectiveHost, keys, identities });
     const sessionId = connectToHost(effectiveHost);
     addConnectionLog({
@@ -82,7 +82,7 @@ export function handleTrayPanelConnectImpl(getCtx: AppContextGetter, hostId: str
       hostLabel: host.label,
       hostname: host.hostname,
       username: resolvedAuth.username || 'root',
-      protocol: protocol as 'ssh' | 'telnet' | 'local' | 'mosh',
+      protocol: protocol as 'ssh' | 'telnet' | 'local' | 'mosh' | 'et',
       startTime: Date.now(),
       localUsername: username,
       localHostname: localHost,
@@ -203,7 +203,7 @@ export function handleKeyboardInteractiveSubmitImpl(getCtx: AppContextGetter, re
         if (session?.hostId && (!request.hostname || request.hostname === session.hostname)) {
           const host = hosts.find(h => h.id === session.hostId);
           if (host) {
-            updateHosts(hosts.map(h => h.id === host.id ? { ...h, password: savePassword } : h));
+            updateHosts(hosts.map(h => h.id === host.id ? { ...h, password: savePassword, savePassword: true } : h));
           }
         }
       }
@@ -316,6 +316,36 @@ export function copySessionWithCurrentShellImpl(getCtx: AppContextGetter, sessio
     return copySession(sessionId, {
       localShellType: classifyLocalShellType(resolved?.command || terminalSettings.localShell, navigator.userAgent),
     });
+  }
+}
+
+export async function copySessionToNewWindowWithCurrentShellImpl(getCtx: AppContextGetter, sessionId: string) {
+  const { classifyLocalShellType, discoveredShells, netcattyBridge, resolveShellSetting, sessions, terminalSettings, t, toast } = getCtx();
+{
+    const sourceSession = sessions.find((session: { id: string }) => session.id === sessionId);
+    if (!sourceSession) return false;
+
+    const resolved = resolveShellSetting(terminalSettings.localShell, discoveredShells);
+    const bridge = netcattyBridge.get();
+    if (!bridge?.openSessionInNewWindow) {
+      toast?.error?.(t?.('tabs.copyTabToNewWindowFailed') ?? 'Failed to open tab in a new window');
+      return false;
+    }
+
+    const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+    try {
+      const result = await bridge.openSessionInNewWindow({
+        title: sourceSession.hostLabel,
+        sourceSession,
+        localShellType: classifyLocalShellType(resolved?.command || terminalSettings.localShell, userAgent),
+      });
+      const success = result?.success === true;
+      if (!success) toast?.error?.(t?.('tabs.copyTabToNewWindowFailed') ?? 'Failed to open tab in a new window');
+      return success;
+    } catch {
+      toast?.error?.(t?.('tabs.copyTabToNewWindowFailed') ?? 'Failed to open tab in a new window');
+      return false;
+    }
   }
 }
 
@@ -686,7 +716,7 @@ export function handleConnectToHostImpl(getCtx: AppContextGetter, host: Host) {
       return;
     }
 
-    const protocol = effectiveHost.moshEnabled ? 'mosh' : (effectiveHost.protocol || 'ssh');
+    const protocol = effectiveHost.etEnabled ? 'et' : effectiveHost.moshEnabled ? 'mosh' : (effectiveHost.protocol || 'ssh');
     const resolvedAuth = resolveHostAuth({ host: effectiveHost, keys, identities });
     const sessionId = connectToHost(effectiveHost);
     addConnectionLog({
@@ -695,7 +725,7 @@ export function handleConnectToHostImpl(getCtx: AppContextGetter, host: Host) {
       hostLabel: host.label,
       hostname: host.hostname,
       username: resolvedAuth.username || 'root',
-      protocol: protocol as 'ssh' | 'telnet' | 'local' | 'mosh',
+      protocol: protocol as 'ssh' | 'telnet' | 'local' | 'mosh' | 'et',
       startTime: Date.now(),
       localUsername: username,
       localHostname: localHost,
@@ -766,9 +796,10 @@ export function handleProtocolSelectImpl(getCtx: AppContextGetter, protocol: Hos
     if (protocolSelectHost) {
       const hostWithProtocol: Host = {
         ...protocolSelectHost,
-        protocol: protocol === 'mosh' ? 'ssh' : protocol,
+        protocol: (protocol === 'mosh' || protocol === 'et') ? 'ssh' : protocol,
         port,
         moshEnabled: protocol === 'mosh',
+        etEnabled: protocol === 'et',
       };
       handleConnectToHost(hostWithProtocol);
       setProtocolSelectHost(null);

@@ -2,11 +2,11 @@ import type { DiscoveredAgent, ExternalAgentConfig } from './types';
 
 export type ManagedAgentKey = 'codex' | 'claude' | 'copilot' | 'codebuddy';
 
-const MANAGED_AGENT_META: Record<ManagedAgentKey, { commandNames: string[]; acpCommand: string }> = {
-  codex: { commandNames: ['codex', 'codex-acp'], acpCommand: 'codex-acp' },
-  claude: { commandNames: ['claude'], acpCommand: 'claude-agent-acp' },
-  copilot: { commandNames: ['copilot'], acpCommand: 'copilot' },
-  codebuddy: { commandNames: ['codebuddy'], acpCommand: 'codebuddy' },
+const MANAGED_AGENT_META: Record<ManagedAgentKey, { commandNames: string[]; sdkBackend: string }> = {
+  codex: { commandNames: ['codex'], sdkBackend: 'codex' },
+  claude: { commandNames: ['claude'], sdkBackend: 'claude' },
+  copilot: { commandNames: ['copilot'], sdkBackend: 'copilot' },
+  codebuddy: { commandNames: ['codebuddy'], sdkBackend: 'codebuddy' },
 };
 
 function getCommandBasename(command: string | undefined): string {
@@ -33,7 +33,7 @@ export function isSettingsManagedDiscoveredAgent(
 }
 
 export function matchesManagedAgentConfig(
-  agent: Pick<ExternalAgentConfig, 'id' | 'command' | 'acpCommand'>,
+  agent: Pick<ExternalAgentConfig, 'id' | 'command' | 'sdkBackend' | 'acpCommand'>,
   agentKey: ManagedAgentKey,
 ): boolean {
   const meta = MANAGED_AGENT_META[agentKey];
@@ -47,9 +47,15 @@ export function matchesManagedAgentConfig(
   }
   return (
     agent.id === `discovered_${agentKey}` ||
-    getCommandBasename(agent.acpCommand) === meta.acpCommand ||
+    getExternalAgentSdkBackend(agent) === meta.sdkBackend ||
     meta.commandNames.some((commandName) => basename === commandName || basename.startsWith(`${commandName}.`))
   );
+}
+
+export function getExternalAgentSdkBackend(
+  agent: Pick<ExternalAgentConfig, 'sdkBackend' | 'acpCommand'> | undefined,
+): string | undefined {
+  return agent?.sdkBackend || agent?.acpCommand || undefined;
 }
 
 export function getManagedAgentStoredPath(

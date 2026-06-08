@@ -4,7 +4,14 @@ import type { Host, SSHKey } from "../../../types";
 import type { TerminalSessionStartersContext } from "./createTerminalSessionStarters.types";
 export type { PendingAuth, SessionLogConfig, TerminalSessionStartersContext } from "./createTerminalSessionStarters.types";
 export { normalizeStartupCommandDelay, splitStartupCommandLines } from "./terminalStartupCommands";
-import { attachSessionToTerminal, buildTermEnv, getFlowController, writeSessionData, writeTerminalLine } from "./terminalSessionAttachment";
+import {
+  attachSessionToTerminal,
+  buildTermEnv,
+  getFlowController,
+  resetTerminalOutputTimestamps,
+  writeSessionData,
+  writeTerminalLine,
+} from "./terminalSessionAttachment";
 import { isConnectionTokenCurrent, registerConnectionToken, runDistroDetection } from "./terminalDistroDetection";
 import { scheduleStartupCommand } from "./terminalStartupCommands";
 import {
@@ -18,6 +25,7 @@ import {
   resolveTelnetPort,
   resolveTelnetUsername,
 } from "../../../domain/host";
+import { hasUsableProxyConfig } from "../../../domain/proxyProfiles";
 
 export const getMissingChainHostIds = (
   host: Host,
@@ -34,6 +42,17 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     const translated = ctx.t?.(key);
     if (!translated || translated === key) return fallback;
     return translated;
+  };
+
+  const resolveSavedSudoAutofillPassword = (): string | undefined => {
+    if (ctx.sudoAutofillPasswordRef) {
+      return sanitizeCredentialValue(ctx.sudoAutofillPasswordRef.current);
+    }
+    const pendingAuth = ctx.pendingAuthRef.current;
+    if (pendingAuth?.savedToHost && pendingAuth.password) {
+      return sanitizeCredentialValue(pendingAuth.password);
+    }
+    return sanitizeCredentialValue(ctx.sudoAutofillPassword);
   };
 
   const startSSH = async (term: XTerm) => {
@@ -114,6 +133,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         type: ctx.host.proxyConfig.type,
         host: ctx.host.proxyConfig.host,
         port: ctx.host.proxyConfig.port,
+        command: ctx.host.proxyConfig.command,
         username: ctx.host.proxyConfig.username,
         password: sanitizeCredentialValue(rawProxyPassword),
       }
@@ -156,7 +176,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const hasJumpKeyMaterial = Boolean(jumpPrivateKey || jumpIdentityFilePaths?.length);
       const hasConfiguredJumpProxyEndpoint =
         index === 0 &&
-        !!(jumpHost.proxyConfig?.host && jumpHost.proxyConfig?.port);
+        hasUsableProxyConfig(jumpHost.proxyConfig);
       const hasEncryptedJumpProxyCredential =
         hasConfiguredJumpProxyEndpoint &&
         Boolean(jumpHost.proxyConfig?.username) &&
@@ -188,11 +208,12 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         keyId: jumpAuth.keyId,
         keySource: jumpKey?.source,
         label: jumpHost.label,
-        proxy: jumpHost.proxyConfig?.host && jumpHost.proxyConfig?.port
+        proxy: hasUsableProxyConfig(jumpHost.proxyConfig)
           ? {
             type: jumpHost.proxyConfig.type,
             host: jumpHost.proxyConfig.host,
             port: jumpHost.proxyConfig.port,
+            command: jumpHost.proxyConfig.command,
             username: jumpHost.proxyConfig.username,
             password: sanitizeCredentialValue(jumpHost.proxyConfig.password),
           }
@@ -447,6 +468,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         onConnected: () => ctx.setChainProgress(null),
         onExitMessage: (evt) =>
           `\r\n[session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
+        sudoAutofillPassword: resolveSavedSudoAutofillPassword(),
       });
 
       scheduleStartupCommand(ctx, term, id);
@@ -507,7 +529,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       return;
     }
 
-    if (ctx.host.proxyConfig?.host && ctx.host.proxyConfig?.port) {
+    if (hasUsableProxyConfig(ctx.host.proxyConfig)) {
       const message = "Telnet does not support proxy connections. Use SSH for this host or remove the proxy from this connection.";
       ctx.setError(message);
       writeTerminalLine(ctx, term, `\r\n[${message}]`);
@@ -644,8 +666,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       }
 
       const hasConfiguredProxy =
-        Boolean(ctx.host.proxyConfig?.host && ctx.host.proxyConfig?.port) ||
-        ctx.resolvedChainHosts.some((jumpHost) => Boolean(jumpHost.proxyConfig?.host && jumpHost.proxyConfig?.port));
+        hasUsableProxyConfig(ctx.host.proxyConfig) ||
+        ctx.resolvedChainHosts.some((jumpHost) => hasUsableProxyConfig(jumpHost.proxyConfig));
       if (hasConfiguredProxy) {
         stopMosh("Mosh does not support proxy connections. Use SSH for this host or remove the proxy from this connection.");
         return;
@@ -737,6 +759,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       attachSessionToTerminal(ctx, term, id, {
         onExitMessage: (evt) =>
           `\r\n[Mosh session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
+        sudoAutofillPassword: resolveSavedSudoAutofillPassword(),
       });
 
       scheduleStartupCommand(ctx, term, id);
@@ -744,6 +767,248 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const message = err instanceof Error ? err.message : String(err);
       ctx.setError(message);
       writeTerminalLine(ctx, term, `\r\n[Failed to start Mosh: ${message}]`);
+      ctx.updateStatus("disconnected");
+    }
+  };
+
+  const startEt = async (term: XTerm) => {
+    if (!ctx.terminalBackend.etAvailable()) {
+      ctx.setError("EternalTerminal bridge unavailable. Please run the desktop build.");
+      writeTerminalLine(ctx, term, "\r\n[EternalTerminal bridge unavailable. Please run the desktop build.]");
+      ctx.updateStatus("disconnected");
+      return;
+    }
+
+    try {
+      const stopEt = (message: string) => {
+        ctx.setError(message);
+        writeTerminalLine(ctx, term, `\r\n[${message}]`);
+        ctx.updateStatus("disconnected");
+      };
+
+      if (ctx.host.proxyProfileId && !ctx.host.proxyConfig) {
+        stopEt(`Saved proxy for host "${ctx.host.label || ctx.host.hostname}" is missing. Open host settings and select a valid proxy.`);
+        return;
+      }
+
+      if (hasUsableProxyConfig(ctx.host.proxyConfig)) {
+        stopEt(tr(
+          "terminal.et.proxyUnsupported",
+          "EternalTerminal does not currently support Netcatty proxy settings. Use SSH or remove the proxy for this host.",
+        ));
+        return;
+      }
+
+      // Enforce the "at most one jump host" rule on the *configured* chain, not
+      // just the resolved list. A second hop whose host ID fails to resolve
+      // would otherwise slip past a resolved-length check and silently drop to
+      // a single (or zero) hop.
+      const configuredChainHostCount = ctx.host.hostChain?.hostIds?.length ?? 0;
+      if (configuredChainHostCount > 1 || ctx.resolvedChainHosts.length > 1) {
+        stopEt(tr(
+          "terminal.et.multiJumpUnsupported",
+          "EternalTerminal currently supports at most one jump host in Netcatty.",
+        ));
+        return;
+      }
+
+      // Mirror startSSH: if a configured jump host could not be resolved (its
+      // host ID is missing/invalid), fail loudly instead of silently falling
+      // back to a direct connection that may reach the wrong target.
+      const missingChainHostIds = getMissingChainHostIds(ctx.host, ctx.resolvedChainHosts);
+      if (missingChainHostIds.length > 0) {
+        const base = tr(
+          "terminal.auth.jumpHostMissing",
+          "A configured jump host is missing. Open host settings and repair the jump host chain.",
+        );
+        const suffix = missingChainHostIds.length > 2
+          ? ` +${missingChainHostIds.length - 2}`
+          : "";
+        stopEt(`${base} (${missingChainHostIds.slice(0, 2).join(", ")}${suffix})`);
+        return;
+      }
+
+      const pendingAuth = ctx.pendingAuthRef.current;
+      const resolvedAuth = resolveHostAuth({
+        host: ctx.host,
+        keys: ctx.keys,
+        identities: ctx.identities,
+        override: pendingAuth
+          ? {
+            authMethod: pendingAuth.authMethod,
+            username: pendingAuth.username,
+            password: pendingAuth.password,
+            keyId: pendingAuth.keyId,
+            passphrase: pendingAuth.passphrase,
+          }
+          : null,
+      });
+      const effectivePassword = sanitizeCredentialValue(resolvedAuth.password);
+      const effectivePassphrase = sanitizeCredentialValue(resolvedAuth.passphrase);
+      const authMethod = resolvedAuth.authMethod;
+      const key = authMethod === "password" ? undefined : resolvedAuth.key;
+      const hasEncryptedPrimaryPassword = isEncryptedCredentialPlaceholder(resolvedAuth.password);
+      const hasEncryptedPrimaryKey = isEncryptedCredentialPlaceholder(resolvedAuth.key?.privateKey);
+      const allowsLocalIdentityFallback = !resolvedAuth.keyId;
+      const etReferenceKeyPath = key?.source === 'reference' ? key.filePath : undefined;
+      const etIdentityFilePaths = authMethod === "password"
+        ? undefined
+        : etReferenceKeyPath
+          ? [etReferenceKeyPath]
+          : allowsLocalIdentityFallback
+            ? ctx.host.identityFilePaths
+            : undefined;
+      const hasKeyMaterial = (!!sanitizeCredentialValue(key?.privateKey) || !!etIdentityFilePaths?.length) && authMethod !== "password";
+      const hasPassword = !!effectivePassword;
+      const needsCredentialReentry =
+        (authMethod === "password" && hasEncryptedPrimaryPassword && !hasPassword) ||
+        (authMethod !== "password" && hasEncryptedPrimaryKey && !hasKeyMaterial && !hasPassword);
+
+      if (needsCredentialReentry) {
+        ctx.setError(null);
+        ctx.setNeedsAuth(true);
+        ctx.setAuthRetryMessage(
+          tr(
+            "terminal.auth.credentialsUnavailable",
+            "Saved credentials cannot be decrypted on this device. Please re-enter and save them again.",
+          ),
+        );
+        ctx.setAuthPassword("");
+        ctx.setStatus("connecting");
+        return;
+      }
+
+      const jumpHostsWithUnavailableCredentials: string[] = [];
+      const unsupportedJumpProxies: string[] = [];
+      const jumpHosts = ctx.resolvedChainHosts.map<NetcattyJumpHost>((jumpHost) => {
+        const jumpAuth = resolveHostAuth({
+          host: jumpHost,
+          keys: ctx.keys,
+          identities: ctx.identities,
+        });
+        const jumpKey = jumpAuth.key;
+        const rawJumpPassword = jumpAuth.password;
+        const rawJumpPrivateKey = jumpKey?.privateKey;
+        const rawJumpPassphrase = jumpAuth.passphrase || jumpKey?.passphrase;
+        const jumpPassword = sanitizeCredentialValue(rawJumpPassword);
+        const jumpPrivateKey = sanitizeCredentialValue(rawJumpPrivateKey);
+        const jumpPassphrase = sanitizeCredentialValue(rawJumpPassphrase);
+
+        if (hasUsableProxyConfig(jumpHost.proxyConfig)) {
+          unsupportedJumpProxies.push(jumpHost.label || jumpHost.hostname);
+        }
+
+        const hasEncryptedJumpCredential =
+          isEncryptedCredentialPlaceholder(rawJumpPassword) ||
+          isEncryptedCredentialPlaceholder(rawJumpPrivateKey) ||
+          isEncryptedCredentialPlaceholder(rawJumpPassphrase);
+        if (hasEncryptedJumpCredential && !jumpPassword && !jumpPrivateKey && !jumpPassphrase) {
+          jumpHostsWithUnavailableCredentials.push(jumpHost.label || jumpHost.hostname);
+        }
+
+        // Mirror startSSH: a reference key lives on disk, so forward its path as
+        // an IdentityFile instead of dropping it (privateKey is undefined for
+        // reference keys). Without this, ET jump-host key auth silently falls
+        // back to defaults even when a valid key is selected.
+        const jumpAllowsLocalIdentityFallback = !jumpAuth.keyId;
+        const jumpReferenceKeyPath = jumpAuth.authMethod === "password"
+          ? undefined
+          : jumpKey?.source === 'reference' ? jumpKey.filePath : undefined;
+        const jumpIdentityFilePaths = jumpAuth.authMethod === "password"
+          ? undefined
+          : jumpReferenceKeyPath
+            ? [jumpReferenceKeyPath]
+            : jumpAllowsLocalIdentityFallback
+              ? jumpHost.identityFilePaths
+              : undefined;
+
+        return {
+          hostname: jumpHost.hostname,
+          port: jumpHost.port || 22,
+          // ET server port on this bastion: the bridge tunnels the ET socket to
+          // the jumphost's etserver, so a custom etPort must be forwarded or it
+          // defaults to 2022 and the connection fails.
+          etPort: jumpHost.etPort,
+          username: jumpAuth.username || "root",
+          password: jumpPassword,
+          privateKey: jumpKey?.source === 'reference' ? undefined : jumpPrivateKey,
+          certificate: jumpKey?.certificate,
+          passphrase: jumpPassphrase,
+          keyId: jumpAuth.keyId,
+          keySource: jumpKey?.source,
+          label: jumpHost.label,
+          identityFilePaths: jumpIdentityFilePaths,
+        };
+      });
+
+      if (unsupportedJumpProxies.length > 0) {
+        stopEt(tr(
+          "terminal.et.proxyUnsupported",
+          "EternalTerminal does not currently support Netcatty proxy settings. Use SSH or remove the proxy for this host.",
+        ));
+        return;
+      }
+
+      if (jumpHostsWithUnavailableCredentials.length > 0) {
+        const jumpList = jumpHostsWithUnavailableCredentials.slice(0, 2).join(", ");
+        const suffix = jumpHostsWithUnavailableCredentials.length > 2
+          ? ` +${jumpHostsWithUnavailableCredentials.length - 2}`
+          : "";
+        const base = tr(
+          "terminal.auth.jumpCredentialsUnavailable",
+          "A jump host has saved credentials that cannot be decrypted on this device. Open host settings and re-enter them.",
+        );
+        stopEt(`${base} (${jumpList}${suffix})`);
+        return;
+      }
+
+      const etEnv = buildTermEnv(ctx.host, ctx.terminalSettings);
+      const id = await ctx.terminalBackend.startEtSession({
+        sessionId: ctx.sessionId,
+        hostname: ctx.host.hostname,
+        username: resolvedAuth.username || "root",
+        password: effectivePassword,
+        privateKey: key?.source === 'reference' ? undefined : sanitizeCredentialValue(key?.privateKey),
+        certificate: key?.certificate,
+        keyId: key?.id,
+        passphrase: key
+          ? (effectivePassphrase || sanitizeCredentialValue(key.passphrase))
+          : undefined,
+        authMethod,
+        identityFilePaths: etIdentityFilePaths,
+        port: ctx.host.port || 22,
+        etPort: ctx.host.etPort,
+        legacyAlgorithms: ctx.host.legacyAlgorithms,
+        jumpHosts: jumpHosts.length > 0 ? jumpHosts : undefined,
+        agentForwarding: ctx.host.agentForwarding,
+        cols: term.cols,
+        rows: term.rows,
+        charset: ctx.host.charset,
+        env: etEnv,
+        sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
+      });
+
+      attachSessionToTerminal(ctx, term, id, {
+        onExitMessage: (evt) =>
+          `\r\n[EternalTerminal session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
+        sudoAutofillPassword: resolveSavedSudoAutofillPassword(),
+      });
+
+      scheduleStartupCommand(ctx, term, id);
+
+      // ET sessions are full remote shells, so run OS detection like SSH for
+      // server stats / distro icons.
+      {
+        const connectionToken = registerConnectionToken(id);
+        setTimeout(() => {
+          if (!isConnectionTokenCurrent(id, connectionToken)) return;
+          void runDistroDetection(ctx, id, connectionToken);
+        }, 600);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      ctx.setError(message);
+      writeTerminalLine(ctx, term, `\r\n[Failed to start EternalTerminal: ${message}]`);
       ctx.updateStatus("disconnected");
     }
   };
@@ -785,6 +1050,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
 
       ctx.sessionRef.current = id;
       getFlowController(ctx, term).reset();
+      resetTerminalOutputTimestamps(term);
       ctx.disposeDataRef.current = ctx.terminalBackend.onSessionData(id, (chunk) => {
         writeSessionData(ctx, term, chunk);
         if (!ctx.hasConnectedRef.current) {
@@ -884,5 +1150,5 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     }
   };
 
-  return { startSSH, startTelnet, startMosh, startLocal, startSerial };
+  return { startSSH, startTelnet, startMosh, startEt, startLocal, startSerial };
 };

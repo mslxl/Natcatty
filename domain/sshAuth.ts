@@ -102,6 +102,22 @@ export const resolveHostAuth = (args: {
   };
 };
 
+/**
+ * Resolve the password to use for sudo autofill the same way SSH login does
+ * (through resolveHostAuth), so a password stored in a referenced Keychain
+ * identity (host.identityId) is found — not just host.password (issue #1284).
+ * Returns undefined when the host opts out of saving its password, or none is
+ * available (pure key auth, or an undecryptable placeholder).
+ */
+export const resolveHostAutofillPassword = (args: {
+  host: Host;
+  keys: SSHKey[];
+  identities?: Identity[];
+}): string | undefined => {
+  if (args.host.savePassword === false) return undefined;
+  return sanitizeCredentialValue(resolveHostAuth(args).password) || undefined;
+};
+
 export const resolveBridgeKeyAuth = (args: {
   key?: SSHKey | null;
   fallbackIdentityFilePaths?: string[];

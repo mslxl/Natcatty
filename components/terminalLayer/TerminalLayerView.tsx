@@ -4,7 +4,7 @@ import React from 'react';
 type TerminalLayerViewContext = Record<string, any>;
 
 export function TerminalLayerView({ ctx }: { ctx: TerminalLayerViewContext }) {
-  const { accentMode, activeResizers, activeSidePanelTab, activeTabId, activeWorkspace, AIChatPanelsHost, aiContextsByTabId, AIStateMaintenanceHost, AIStateProvider, Array, Button, cn, composeBarThemeColors, computeSplitHint, customAccent, draggingSessionId, dropHint, editorWordWrap, effectiveHosts, findSplitNode, focusedFontFamilyId, focusedFontFamilyOverridden, focusedFontSize, focusedFontSizeOverridden, focusedFontWeight, focusedFontWeightOverridden, focusedSessionId, focusedThemeOverridden, FolderTree, followAppTerminalTheme, fontSize, getTerminalCwd, handleAddKnownHost, handleBroadcastInput, handleCloseSession, handleCloseSidePanel, handleCommandExecuted, handleComposeSend, handleFontFamilyChangeForFocusedSession, handleFontFamilyResetForFocusedSession, handleFontSizeChangeForFocusedSession, handleFontSizeResetForFocusedSession, handleFontWeightChangeForFocusedSession, handleFontWeightResetForFocusedSession, handleOpenAI, handleOpenScripts, handleOpenSftp, handleOpenTheme, handleOsDetected, handlePendingUploadHandled, handleSessionExit, handleSftpInitialLocationApplied, handleSidePanelResizeStart, handleSnippetFromPanel, handleSnippetExecutorChange, handleStatusChange, handleTerminalCwdChange, handleTerminalDataCapture, handleTerminalFontSizeChange, handleThemeChangeForFocusedSession, handleThemeResetForFocusedSession, handleToggleSftpFromBar, handleToggleWorkspaceComposeBar, handleUpdateHost, handleWorkspaceDrop, hosts, hotkeyScheme, identities, isBroadcastEnabled, isComposeBarOpen, isFocusMode, isSidePanelOpenForCurrentTab, isTerminalLayerVisible, keyBindings, keys, knownHosts, MessageSquare, mountedAiTabIds, mountedSftpTabIds, onHotkeyAction, onSetWorkspaceFocusedSession, onSplitSession, Palette, PanelLeft, PanelRight, previewedOrVisibleThemeId, refocusActiveTerminalSession, refocusTerminalSession, renderFocusModeSidebar, resizing, resolveAIExecutorContext, resolvedPreviewTheme, ScriptsSidePanel, sessionChainHostsMap, sessionHostsMap, sessionLogConfig, sessions, setDropHint, setEditorWordWrap, setIsComposeBarOpen, setResizing, setSidePanelPosition, sftpActiveHost, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior, sftpInitialLocationForTab, sftpPendingUploadsForTab, sftpShowHiddenFiles, SftpSidePanel, sftpUseCompressedUpload, sidePanelPosition, sidePanelWidth, snippetPackages, snippets, splitHorizontalHandlersRef, splitVerticalHandlersRef, sshDebugLogsEnabled, t, TerminalComposeBar, terminalFontFamilyId, TerminalPanesHost, terminalSettings, terminalTheme, themePreview, ThemeSidePanel, Tooltip, TooltipContent, TooltipTrigger, updateHosts, validAIScopeTargetIds, workspaceBroadcastHandlersRef, workspaceById, workspaceFocusHandlersRef, workspaceInnerRef, workspaceOuterRef, workspaceOverlayRef, workspaceRectsById, X, Zap } = ctx;
+  const { accentMode, activeResizers, activeSidePanelTab, activeTabId, activeWorkspace, AIChatPanelsHost, aiContextsByTabId, AIStateMaintenanceHost, AIStateProvider, Array, Button, cn, composeBarThemeColors, computeSplitHint, customAccent, draggingSessionId, dropHint, editorWordWrap, effectiveHosts, findSplitNode, focusedFontFamilyId, focusedFontFamilyOverridden, focusedFontSize, focusedFontSizeOverridden, focusedFontWeight, focusedFontWeightOverridden, focusedSessionId, focusedThemeOverridden, FolderTree, followAppTerminalTheme, fontSize, getTerminalCwd, handleAddKnownHost, handleAddSelectionToAI, handleBroadcastInput, handleCloseSession, handleCloseSidePanel, handleCommandExecuted, handleComposeSend, handleFontFamilyChangeForFocusedSession, handleFontFamilyResetForFocusedSession, handleFontSizeChangeForFocusedSession, handleFontSizeResetForFocusedSession, handleFontWeightChangeForFocusedSession, handleFontWeightResetForFocusedSession, handleOpenAI, handleOpenScripts, handleOpenSftp, handleOpenTheme, handleOsDetected, handlePendingTerminalSelectionConsumed, handlePendingUploadHandled, handleSessionExit, handleSftpInitialLocationApplied, handleSidePanelResizeStart, handleSnippetFromPanel, handleSnippetExecutorChange, handleStatusChange, handleTerminalCwdChange, handleTerminalDataCapture, handleTerminalFontSizeChange, handleThemeChangeForFocusedSession, handleThemeResetForFocusedSession, handleToggleSftpFromBar, handleToggleWorkspaceComposeBar, handleUpdateHost, handleWorkspaceDrop, hosts, hotkeyScheme, identities, isBroadcastEnabled, isComposeBarOpen, isFocusMode, isSidePanelOpenForCurrentTab, isTerminalLayerVisible, keyBindings, keys, knownHosts, MessageSquare, mountedAiTabIds, mountedSftpTabIds, onHotkeyAction, onSetWorkspaceFocusedSession, onSplitSession, Palette, PanelLeft, PanelRight, pendingTerminalSelectionForAI, previewedOrVisibleThemeId, refocusActiveTerminalSession, refocusTerminalSession, renderFocusModeSidebar, resizing, resolveAIExecutorContext, resolvedPreviewTheme, ScriptsSidePanel, sessionChainHostsMap, sessionHostsMap, sessionLogConfig, sessionSudoAutofillPasswordsMap, sessions, setDropHint, setEditorWordWrap, setIsComposeBarOpen, setResizing, setSidePanelPosition, sftpActiveHost, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior, sftpInitialLocationForTab, sftpPendingUploadsForTab, sftpShowHiddenFiles, SftpSidePanel, sftpUseCompressedUpload, sidePanelPosition, sidePanelWidth, snippetPackages, snippets, splitHorizontalHandlersRef, splitVerticalHandlersRef, sshDebugLogsEnabled, t, TerminalComposeBar, terminalFontFamilyId, TerminalPanesHost, terminalSettings, terminalTheme, themePreview, ThemeSidePanel, Tooltip, TooltipContent, TooltipTrigger, updateHosts, validAIScopeTargetIds, workspaceBroadcastHandlersRef, workspaceById, workspaceFocusHandlersRef, workspaceInnerRef, workspaceOuterRef, workspaceOverlayRef, workspaceRectsById, X, Zap } = ctx;
   return (
     <AIStateProvider>
       <AIStateMaintenanceHost validAIScopeTargetIds={validAIScopeTargetIds} />
@@ -31,6 +31,8 @@ export function TerminalLayerView({ ctx }: { ctx: TerminalLayerViewContext }) {
                 "flex-shrink-0 h-full relative z-20",
                 sidePanelPosition === 'right' && "order-last",
               )}
+              data-section="terminal-side-panel-shell"
+              data-side-panel-position={sidePanelPosition}
             >
               {isSidePanelOpenForCurrentTab && (
                 <div
@@ -46,6 +48,8 @@ export function TerminalLayerView({ ctx }: { ctx: TerminalLayerViewContext }) {
                   "h-full flex flex-col overflow-hidden",
                   !isSidePanelOpenForCurrentTab && "pointer-events-none",
                 )}
+                data-section="terminal-side-panel"
+                data-side-panel-tab={isSidePanelOpenForCurrentTab ? (activeSidePanelTab ?? undefined) : undefined}
                 style={{
                     ['--terminal-sidepanel-bg' as never]: resolvedPreviewTheme.colors.background,
                     ['--terminal-sidepanel-fg' as never]: resolvedPreviewTheme.colors.foreground,
@@ -211,6 +215,7 @@ export function TerminalLayerView({ ctx }: { ctx: TerminalLayerViewContext }) {
                           updateHosts={updateHosts}
                           sftpDefaultViewMode={sftpDefaultViewMode}
                           activeHost={isVisibleSftpPanel ? sftpActiveHost : null}
+                          activeSessionId={isVisibleSftpPanel ? ctx.activeTerminalSessionIdForSftp : null}
                           initialLocation={
                             isVisibleSftpPanel
                               ? (sftpInitialLocationForTab.get(tabId) ?? null)
@@ -282,6 +287,8 @@ export function TerminalLayerView({ ctx }: { ctx: TerminalLayerViewContext }) {
                     activeSidePanelTab={activeSidePanelTab}
                     contextsByTabId={aiContextsByTabId}
                     resolveExecutorContext={resolveAIExecutorContext}
+                    pendingTerminalSelection={pendingTerminalSelectionForAI}
+                    onPendingTerminalSelectionConsumed={handlePendingTerminalSelectionConsumed}
                   />
 
                 </div>
@@ -336,6 +343,7 @@ export function TerminalLayerView({ ctx }: { ctx: TerminalLayerViewContext }) {
             sessions={sessions}
             sessionHostsMap={sessionHostsMap}
             sessionChainHostsMap={sessionChainHostsMap}
+            sessionSudoAutofillPasswordsMap={sessionSudoAutofillPasswordsMap}
             workspaceById={workspaceById}
             workspaceRectsById={workspaceRectsById}
             isTerminalLayerVisible={isTerminalLayerVisible}
@@ -381,6 +389,7 @@ export function TerminalLayerView({ ctx }: { ctx: TerminalLayerViewContext }) {
             onBroadcastInput={handleBroadcastInput}
             onToggleWorkspaceComposeBar={handleToggleWorkspaceComposeBar}
             onSnippetExecutorChange={handleSnippetExecutorChange}
+            onAddSelectionToAI={handleAddSelectionToAI}
           />
           {/* Only show resizers in split view mode, not in focus mode */}
           {!isFocusMode && activeResizers.map(handle => {
@@ -397,6 +406,8 @@ export function TerminalLayerView({ ctx }: { ctx: TerminalLayerViewContext }) {
               <div
                 key={handle.id}
                 className={cn("absolute group", isVertical ? "cursor-ew-resize" : "cursor-ns-resize")}
+                data-section="terminal-split-resizer"
+                data-split-direction={handle.direction}
                 style={{
                   left: `${left}px`,
                   top: `${top}px`,
@@ -426,6 +437,7 @@ export function TerminalLayerView({ ctx }: { ctx: TerminalLayerViewContext }) {
                 }}
               >
                 <div
+                  data-section="terminal-split-resizer-bar"
                   className={cn(
                     "absolute bg-border/70 group-hover:bg-primary/60 transition-colors",
                     isVertical ? "w-px h-full left-1/2 -translate-x-1/2" : "h-px w-full top-1/2 -translate-y-1/2"

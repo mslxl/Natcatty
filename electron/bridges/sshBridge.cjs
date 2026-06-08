@@ -54,6 +54,12 @@ function quoteShellArg(value) {
   return "'" + String(value).replace(/'/g, "'\\''") + "'";
 }
 
+function hasUsableProxy(proxy) {
+  if (!proxy) return false;
+  if (proxy.type === "command") return !!proxy.command?.trim();
+  return !!(proxy.host && proxy.port);
+}
+
 /**
  * Quick check if file content looks like an SSH private key.
  * Rejects non-key files that happen to match the id_* filename pattern.
@@ -652,7 +658,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
       applyAuthToConnOpts(connOpts, authConfig);
 
       // If first hop and proxy is configured, connect through proxy
-      const hasUsableJumpProxy = !!(jump.proxy?.host && jump.proxy?.port);
+      const hasUsableJumpProxy = hasUsableProxy(jump.proxy);
       const effectiveHopProxy = isFirst ? ((hasUsableJumpProxy ? jump.proxy : null) || options.proxy) : null;
       if (effectiveHopProxy) {
         currentSocket = await createProxySocket(effectiveHopProxy, jump.hostname, jump.port || 22, {
@@ -998,6 +1004,7 @@ const sessionOpsApi = createSessionOpsApi({
   fs, path, os, exec, randomUUID, iconv, Buffer, process, console, setTimeout, clearTimeout,
   getSessionDecoder, resetSessionDecoders, sessionEncodings, resolveLangFromCharset, safeSend,
   quoteShellArg, log, ensureMoshStatsConnection,
+  execOnEtSession: (...args) => require("./terminalBridge.cjs").execOnEtSession(...args),
   getServerStats: undefined,
 });
 const {
@@ -1070,4 +1077,8 @@ module.exports = {
   _getSshDebugLogFilePath: getSshDebugLogFilePath,
   _setSshDebugLoggingEnabled: setSshDebugLoggingEnabled,
   _shouldLogSshDebugMessage: shouldLogSshDebugMessage,
+  // Exposed for the default-key dedupe characterization test (the connect path
+  // derives the preferred default key from findAllDefaultPrivateKeys()[0]).
+  _findDefaultPrivateKey: findDefaultPrivateKey,
+  _findAllDefaultPrivateKeys: findAllDefaultPrivateKeys,
 };

@@ -5,6 +5,7 @@ declare global {
     // File opener helpers (for "Open With" feature)
     selectApplication?(): Promise<{ path: string; name: string } | null>;
     openWithApplication?(filePath: string, appPath: string): Promise<boolean>;
+    openWithSystemDefault?(filePath: string): Promise<{ success: boolean; error?: string }>;
     downloadSftpToTemp?(sftpId: string, remotePath: string, fileName: string, encoding?: SftpFilenameEncoding): Promise<string>;
     downloadSftpToTempWithProgress?(
       sftpId: string,
@@ -85,6 +86,8 @@ declare global {
     // Get file path from File object (for drag-and-drop, uses Electron's webUtils)
     getPathForFile?(file: File): string | undefined;
     readClipboardText?(): Promise<string>;
+    writeClipboardText?(text: string): Promise<boolean>;
+    readClipboardFiles?(): Promise<Array<{ path: string; name: string; isDirectory: boolean; size?: number }>>;
 
     // Credential encryption (field-level safeStorage for sensitive data at rest)
     credentialsAvailable?(): Promise<boolean>;

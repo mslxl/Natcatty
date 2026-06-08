@@ -449,7 +449,7 @@ export const GroupSshSettingsSection: React.FC<GroupSshSettingsSectionProps> = (
                 <span className="text-sm">{t("hostDetails.proxy")}</span>
               </div>
               <div className="flex min-w-0 items-center gap-2">
-                {(form.proxyConfig?.host || form.proxyProfileId) && (
+                {(form.proxyConfig?.host || form.proxyConfig?.command || form.proxyProfileId) && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <div className="min-w-0 cursor-default">
@@ -519,6 +519,25 @@ export const GroupSshSettingsSection: React.FC<GroupSshSettingsSectionProps> = (
                 placeholder={t("hostDetails.moshServerPath") || "mosh-server path"}
                 value={form.moshServerPath || ""}
                 onChange={(e) => update("moshServerPath", e.target.value || undefined)}
+                className="h-10"
+              />
+            )}
+
+            {/* EternalTerminal */}
+            <ToggleRow
+              label="EternalTerminal"
+              enabled={!!form.etEnabled}
+              onToggle={() => update("etEnabled", !form.etEnabled)}
+            />
+            {form.etEnabled && (
+              <Input
+                type="number"
+                placeholder={t("hostDetails.et.port") || "ET server port (2022)"}
+                value={form.etPort ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value.trim();
+                  update("etPort", v === "" ? undefined : Number(v));
+                }}
                 className="h-10"
               />
             )}

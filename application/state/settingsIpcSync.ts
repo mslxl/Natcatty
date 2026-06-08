@@ -15,6 +15,7 @@ import {
   STORAGE_KEY_SESSION_LOGS_DIR,
   STORAGE_KEY_SESSION_LOGS_ENABLED,
   STORAGE_KEY_SESSION_LOGS_FORMAT,
+  STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED,
   STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED,
   STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR,
   STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE,
@@ -32,9 +33,14 @@ import {
   STORAGE_KEY_UI_THEME_DARK,
   STORAGE_KEY_UI_THEME_LIGHT,
   STORAGE_KEY_WORKSPACE_FOCUS_STYLE,
+  STORAGE_KEY_WINDOW_OPACITY,
 } from '../../infrastructure/config/storageKeys';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
-import { isValidUiFontId, migrateIncomingTerminalFontId } from './settingsStateDefaults';
+import {
+  clampWindowOpacity,
+  isValidUiFontId,
+  migrateIncomingTerminalFontId,
+} from './settingsStateDefaults';
 
 interface UseSettingsIpcSyncParams {
   syncAppearanceFromStorage: () => void;
@@ -52,11 +58,13 @@ interface UseSettingsIpcSyncParams {
   setSessionLogsEnabled: Dispatch<SetStateAction<boolean>>;
   setSessionLogsDir: Dispatch<SetStateAction<string>>;
   setSessionLogsFormat: Dispatch<SetStateAction<SessionLogFormat>>;
+  setSessionLogsTimestampsEnabled: Dispatch<SetStateAction<boolean>>;
   setSshDebugLogsEnabled: Dispatch<SetStateAction<boolean>>;
   setHotkeyScheme: Dispatch<SetStateAction<HotkeyScheme>>;
   applyIncomingCustomKeyBindings: (incoming: { bindings: CustomKeyBindings; version: number; origin: string }) => void;
   setIsHotkeyRecordingState: Dispatch<SetStateAction<boolean>>;
   setGlobalHotkeyEnabled: Dispatch<SetStateAction<boolean>>;
+  setWindowOpacity: Dispatch<SetStateAction<number>>;
   setAutoUpdateEnabled: Dispatch<SetStateAction<boolean>>;
   setSftpAutoOpenSidebar: Dispatch<SetStateAction<boolean>>;
   setSftpDefaultViewMode: Dispatch<SetStateAction<'list' | 'tree'>>;
@@ -80,11 +88,13 @@ export function useSettingsIpcSync({
   setSessionLogsEnabled,
   setSessionLogsDir,
   setSessionLogsFormat,
+  setSessionLogsTimestampsEnabled,
   setSshDebugLogsEnabled,
   setHotkeyScheme,
   applyIncomingCustomKeyBindings,
   setIsHotkeyRecordingState,
   setGlobalHotkeyEnabled,
+  setWindowOpacity,
   setAutoUpdateEnabled,
   setSftpAutoOpenSidebar,
   setSftpDefaultViewMode,
@@ -167,6 +177,9 @@ export function useSettingsIpcSync({
       ) {
         setSessionLogsFormat((prev) => (prev === value ? prev : value));
       }
+      if (key === STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED && typeof value === 'boolean') {
+        setSessionLogsTimestampsEnabled((prev) => (prev === value ? prev : value));
+      }
       if (key === STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED && typeof value === 'boolean') {
         setSshDebugLogsEnabled((prev) => (prev === value ? prev : value));
       }
@@ -184,6 +197,10 @@ export function useSettingsIpcSync({
       }
       if (key === STORAGE_KEY_GLOBAL_HOTKEY_ENABLED && typeof value === 'boolean') {
         setGlobalHotkeyEnabled((prev) => (prev === value ? prev : value));
+      }
+      if (key === STORAGE_KEY_WINDOW_OPACITY && (typeof value === 'number' || typeof value === 'string')) {
+        const nextOpacity = clampWindowOpacity(value);
+        setWindowOpacity((prev) => (prev === nextOpacity ? prev : nextOpacity));
       }
       if (key === STORAGE_KEY_AUTO_UPDATE_ENABLED && typeof value === 'boolean') {
         setAutoUpdateEnabled((prev) => (prev === value ? prev : value));
@@ -217,11 +234,13 @@ export function useSettingsIpcSync({
     setEditorWordWrapState,
     setFollowAppTerminalThemeState,
     setGlobalHotkeyEnabled,
+    setWindowOpacity,
     setHotkeyScheme,
     setIsHotkeyRecordingState,
     setSessionLogsDir,
     setSessionLogsEnabled,
     setSessionLogsFormat,
+    setSessionLogsTimestampsEnabled,
     setSshDebugLogsEnabled,
     setSftpAutoOpenSidebar,
     setSftpDefaultViewMode,

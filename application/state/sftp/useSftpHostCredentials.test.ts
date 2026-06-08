@@ -52,6 +52,31 @@ test("buildSftpHostCredentials rejects missing saved proxy profiles on jump host
   );
 });
 
+test("buildSftpHostCredentials forwards custom ProxyCommand settings", () => {
+  const credentials = buildSftpHostCredentials({
+    host: host({
+      proxyConfig: {
+        type: "command",
+        host: "",
+        port: 0,
+        command: "cloudflared access ssh --hostname %h",
+      },
+    }),
+    hosts: [],
+    keys: [],
+    identities: [],
+  });
+
+  assert.deepEqual(credentials.proxy, {
+    type: "command",
+    host: "",
+    port: 0,
+    command: "cloudflared access ssh --hostname %h",
+    username: undefined,
+    password: undefined,
+  });
+});
+
 test("buildSftpHostCredentials passes reference keys as identity file paths", () => {
   const key: SSHKey = {
     id: "key-1",

@@ -106,6 +106,7 @@ export interface TerminalSettings {
 
   // Rendering
   rendererType: 'auto' | 'webgl' | 'dom'; // Terminal renderer: auto (detect based on hardware), webgl, or dom
+  showLineTimestamps: boolean; // Prefix terminal output lines with timestamps before rendering
 
   // Autocomplete
   autocompleteEnabled: boolean; // Enable terminal command autocomplete
@@ -278,6 +279,7 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   forcePromptNewLine: false, // Opt-in: keep the next shell prompt visually separated from unterminated final output lines
   osc52Clipboard: 'write-only', // OSC-52: allow remote programs to write clipboard by default
   rendererType: 'auto', // Auto-detect best renderer based on hardware
+  showLineTimestamps: false, // Opt-in: prefixes terminal output data before rendering
   autocompleteEnabled: true, // Autocomplete enabled by default
   autocompleteGhostText: false, // Mutually exclusive with popup menu
   autocompletePopupMenu: true, // Popup menu enabled by default
@@ -329,6 +331,7 @@ export interface TerminalSession {
   protocol?: 'ssh' | 'telnet' | 'local' | 'serial';
   port?: number;
   moshEnabled?: boolean;
+  etEnabled?: boolean;
   shellType?: 'posix' | 'fish' | 'powershell' | 'cmd' | 'unknown';
   charset?: string; // Connection-time charset override (e.g. for quick-connect serial)
   // Serial-specific connection settings
@@ -337,11 +340,11 @@ export interface TerminalSession {
   localShellArgs?: string[]; // Shell args for local terminals (from discovery)
   localShellName?: string;   // Display name for local shell (e.g., "Zsh", "Ubuntu (WSL)")
   localShellIcon?: string;   // Icon identifier for local shell (e.g., "zsh", "ubuntu")
-  // For tabs created via "Copy Tab" on an SSH session: the id of the source
-  // session whose already-authenticated connection should be reused so the
-  // duplicate does not trigger a second MFA prompt (issue #1204). The bridge
-  // reuses the source connection when it is still live, otherwise it falls back
-  // to a fresh connection — so this also applies on reconnect: a reconnect
-  // reuses the source again if still connected, else dials fresh.
+  // For sessions created from an existing SSH session: the id of the source
+  // session whose already-authenticated connection should be reused so the new
+  // shell channel does not trigger a second MFA prompt (issue #1204). The
+  // bridge reuses the source connection when it is still live, otherwise it
+  // falls back to a fresh connection — so this also applies on reconnect: a
+  // reconnect reuses the source again if still connected, else dials fresh.
   reuseConnectionFromSessionId?: string;
 }

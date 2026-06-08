@@ -4,6 +4,7 @@ declare global {
   interface NetcattyBridge {
     setTheme?(theme: 'light' | 'dark' | 'system'): Promise<boolean>;
     setBackgroundColor?(color: string): Promise<boolean>;
+    setWindowOpacity?(opacity: number): Promise<boolean>;
     setLanguage?(language: string): Promise<boolean>;
     // Window controls for custom title bar (Windows/Linux)
     windowMinimize?(): Promise<void>;
@@ -12,6 +13,18 @@ declare global {
     windowIsMaximized?(): Promise<boolean>;
     windowIsFullscreen?(): Promise<boolean>;
     windowFocus?(): Promise<boolean>;
+    setWindowTitle?(title: string): Promise<boolean>;
+    openSessionInNewWindow?(payload: {
+      title: string;
+      sourceSession: import("../../domain/models").TerminalSession;
+      localShellType?: import("../../domain/models").TerminalSession['shellType'];
+    }): Promise<{ success: boolean; error?: string }>;
+    onOpenSessionInNewWindow?(cb: (payload: {
+      title: string;
+      sourceSession: import("../../domain/models").TerminalSession;
+      localShellType?: import("../../domain/models").TerminalSession['shellType'];
+    }) => void): () => void;
+    onWindowCommandCloseRequested?(cb: () => void): () => void;
     onWindowFullScreenChanged?(cb: (isFullscreen: boolean) => void): () => void;
 
     // Settings window
@@ -150,6 +163,10 @@ declare global {
     // Chain progress listener for jump host connections
     // Callback receives: (sessionId: string, currentHop: number, totalHops: number, hostLabel: string, status: string, error?: string)
     onChainProgress?(cb: (sessionId: string, hop: number, total: number, label: string, status: string, error?: string) => void): () => void;
+
+    // Fired when a requested SSH connection reuse cannot be honored and the
+    // session falls back to a regular fresh connection.
+    onConnectionReuseFallback?(cb: (sessionId: string, sourceSessionId?: string) => void): () => void;
 
     // SFTP connection progress listener (auth method logs)
     onSftpConnectionProgress?(cb: (sessionId: string, label: string, status: string, detail?: string) => void): () => void;

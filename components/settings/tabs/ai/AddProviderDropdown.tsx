@@ -7,6 +7,9 @@ import { Button } from "../../../ui/button";
 import { cn } from "../../../../lib/utils";
 import { ProviderIconBadge } from "./ProviderIconBadge";
 
+export const ADD_PROVIDER_MENU_CLASS =
+  "absolute top-full right-0 mt-1 z-[101] min-w-[220px] max-w-[calc(100vw-2rem)] rounded-md border border-border bg-popover shadow-md py-1";
+
 export const AddProviderDropdown: React.FC<{
   onAdd: (providerId: AIProviderId) => void;
 }> = ({ onAdd }) => {
@@ -33,7 +36,7 @@ export const AddProviderDropdown: React.FC<{
           {/* Backdrop */}
           <div className="fixed inset-0 z-[100]" onClick={() => setIsOpen(false)} />
           {/* Menu */}
-          <div className="absolute top-full left-0 mt-1 z-[101] min-w-[200px] rounded-md border border-border bg-popover shadow-md py-1">
+          <div className={ADD_PROVIDER_MENU_CLASS}>
             {providerIds.map((pid) => (
               <button
                 key={pid}

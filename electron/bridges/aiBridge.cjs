@@ -22,42 +22,35 @@ const {
   toPublicUserSkillsStatus,
 } = require("./ai/userSkills.cjs");
 const { registerProviderHandlers } = require("./aiBridge/providerHandlers.cjs"), { registerCattyExecHandlers } = require("./aiBridge/cattyExecHandlers.cjs"), { createAgentCliHelpers } = require("./aiBridge/agentCliHelpers.cjs");
-const { registerAgentDiscoveryHandlers } = require("./aiBridge/agentDiscoveryHandlers.cjs"), { registerAgentProcessHandlers } = require("./aiBridge/agentProcessHandlers.cjs"), { registerAcpHandlers } = require("./aiBridge/acpHandlers.cjs");
+const { registerAgentDiscoveryHandlers } = require("./aiBridge/agentDiscoveryHandlers.cjs"), { registerAgentProcessHandlers } = require("./aiBridge/agentProcessHandlers.cjs"), { registerSdkStreamHandlers } = require("./aiBridge/sdk/sdkStreamHandlers.cjs");
+const { probeClaudeAuth, probeCopilotAuth, probeCodexAuth } = require("./aiBridge/agentAuthProbes.cjs");
 
 // ── Extracted modules ──
 const {
   stripAnsi,
   normalizeCliPathForPlatform,
   prepareCommandForSpawn,
-  normalizeClaudeCodeExecutableEnvForAcp,
+  normalizeClaudeCodeExecutableEnvForSdk,
   resolveCliFromPath,
-  resolveClaudeAcpBinaryPath,
   isPlausibleCliVersionOutput,
   getShellEnv,
   getFreshIdlePrompt,
   invalidateShellEnvCache,
-  serializeStreamChunk,
   toUnpackedAsarPath,
 } = require("./ai/shellUtils.cjs");
 
 const { detectClaudeAuthPresence, expandHomePath } = require("./ai/claudeAuth.cjs");
-const { detectCodebuddyAuthPresence } = require("./ai/codebuddyAuth.cjs");
 
 const CLAUDE_AUTH_HELP_MESSAGE =
   "Claude Code has no usable authentication. Open Settings -> AI -> Claude Code and set a Config directory (point it at a folder where you've run `claude` login) or add an ANTHROPIC_API_KEY under Environment variables. Alternatively, run `claude` in a terminal to log in.";
 
-const CODEBUDDY_AUTH_HELP_MESSAGE =
-  "CodeBuddy has no usable authentication. Set CODEBUDDY_AUTH_TOKEN in Settings -> AI -> CodeBuddy Code, export it in your shell environment, or create ~/.codebuddy/settings.json with your credentials.";
-
 const {
   codexLoginSessions,
-  resolveCodexAcpBinaryPath,
   appendCodexLoginOutput,
   toCodexLoginSessionResponse,
   getActiveCodexLoginSession,
   normalizeCodexIntegrationState,
   readCodexCustomProviderConfig,
-  getCodexAuthOverride,
   getCodexCustomConfigPreflightError,
   extractCodexError,
   isCodexAuthError,
@@ -67,7 +60,6 @@ const {
   getCodexValidationCache,
   setCodexValidationCache,
 } = require("./ai/codexHelpers.cjs");
-const { normalizeAcpSessionModels } = require("./ai/acpModels.cjs");
 
 const DEBUG_MCP = process.env.NETCATTY_MCP_DEBUG === "1";
 const NETCATTY_TOOL_SKILL_PATH = toUnpackedAsarPath(
@@ -88,7 +80,7 @@ function normalizeToolIntegrationMode(mode) {
 }
 
 function setToolIntegrationMode(mode) {
-  // Tool access mode is selected per ACP request. The TCP bridge host is shared
+  // Tool access mode is selected per SDK agent request. The TCP bridge host is shared
   // by both MCP and Skills + CLI, so changing the setting must not tear down
   // unrelated in-flight sessions, approvals, or background jobs.
   return normalizeToolIntegrationMode(mode);
@@ -166,6 +158,7 @@ function buildExternalAgentContextualPrompt({ mode, prompt, chatSessionId, defau
       `${scopeHint}` +
       `${defaultTargetHint}` +
       `Use Skills + CLI instead of the "netcatty-remote-hosts" MCP server for Netcatty session access. ` +
+      `Use the local shell only to invoke Netcatty CLI commands or inspect local attachments explicitly supplied by the user. Do not use local shell or filesystem tools for unrelated local-machine work. ` +
       `First classify the task: remote command execution tasks go through \`exec\`, while remote file or directory tasks go through \`sftp\`. If the user explicitly says to avoid shell or \`exec\`, do not use \`exec\`. Treat \`exec\` as the short-command path only: use it only for commands expected to finish within about 60 seconds. For builds, scans, watch mode, tail-following, ping, or anything likely to exceed that budget or stream output for an extended period, do not use plain \`exec\`; use the long-running job commands instead. ` +
       `${discoveryHint}` +
       `After choosing a target session ID, call \`${cliCommandPrefix} session --session <id> --json${chatSessionId ? ` --chat-session ${chatSessionId}` : ""}\` before executing anything. Do not infer protocol, shell type, device type, or connection readiness from the \`env\` result alone when you are about to run a command. ` +
@@ -191,6 +184,7 @@ function buildExternalAgentContextualPrompt({ mode, prompt, chatSessionId, defau
     `${userSkillsPreamble}` +
     `[Context: You are inside Netcatty, a multi-session terminal manager. ` +
     `Use the "netcatty-remote-hosts" MCP tools to operate only on the terminal sessions exposed by Netcatty. ` +
+    `For local files explicitly attached by the user, use the list_attachments and read_attachment tools. Do not use local shell or local filesystem tools for unrelated local-machine work. ` +
     `Those sessions may be remote hosts, a local terminal, or Mosh-backed shells. ` +
     `Call get_environment first to discover available sessions and their IDs. ` +
     `Use terminal_execute only for commands likely to finish within about 60 seconds. ` +
@@ -207,20 +201,10 @@ let sftpClients = null;
 let electronModule = null;
 let mainWebContentsId = null;
 let cliDiscoveryFilePath = null;
+let registeredContext = null;
 
 // Active streaming requests (for cancellation)
 const activeStreams = new Map();
-
-// External agent processes
-const agentProcesses = new Map();
-const MAX_CONCURRENT_AGENTS = 5;
-
-// ACP providers (module-level so cleanup() can access them)
-const acpProviders = new Map();
-const acpActiveStreams = new Map();
-const acpRequestSessions = new Map();
-const acpPendingCancelRequests = new Set();
-const acpChatRuns = new Map();
 
 // ── Provider registry (synced from renderer, keys stay encrypted) ──
 const ENC_PREFIX = "enc:v1:";
@@ -262,34 +246,6 @@ function resolveProviderApiKey(providerId) {
   };
 }
 
-function getAcpProviderAuthFingerprint(apiKey, provider, customConfig) {
-  const parts = [
-    typeof apiKey === "string" ? apiKey.trim() : "",
-    typeof provider?.id === "string" ? provider.id.trim() : "",
-    typeof provider?.providerId === "string" ? provider.providerId.trim() : "",
-    typeof provider?.baseURL === "string" ? provider.baseURL.trim() : "",
-    customConfig
-      ? [
-          "custom",
-          customConfig.providerName || "",
-          customConfig.baseUrl || "",
-          customConfig.envKey || "",
-          customConfig.envKeyPresent ? "1" : "0",
-          // authHash changes when the user rotates their hardcoded api_key
-          // or the env_key's resolved value; without it a cached ACP
-          // provider would keep serving the stale key.
-          customConfig.authHash || "",
-        ].join(":")
-      : "",
-  ].filter(Boolean);
-
-  if (parts.length === 0) {
-    return null;
-  }
-
-  return getCodexAuthFingerprint(parts.join("\n"));
-}
-
 /** Check if TLS verification should be skipped for a given provider. */
 function shouldSkipTLSVerify(providerId) {
   if (!providerId) return false;
@@ -325,53 +281,6 @@ function injectApiKeyIntoRequest(url, headers, providerId) {
   }
 
   return { url: patchedUrl, headers: patchedHeaders };
-}
-
-function cleanupAcpProvider(chatSessionId) {
-  // Clean up temporary COPILOT_HOME directory regardless of whether a
-  // provider entry exists — prepareCopilotHome may have succeeded before
-  // provider creation failed.
-  try {
-    const tempDirBridge = require("./tempDirBridge.cjs");
-    const tempCopilotHome = path.join(tempDirBridge.getTempDir(), `copilot-home-${chatSessionId}`);
-    if (existsSync(tempCopilotHome)) {
-      fs.rmSync(tempCopilotHome, { recursive: true, force: true });
-    }
-  } catch {
-    // Best-effort cleanup
-  }
-
-  const entry = acpProviders.get(chatSessionId);
-  if (!entry) return;
-  cleanupAcpProviderInstance(entry.provider, chatSessionId);
-  acpProviders.delete(chatSessionId);
-}
-
-function cleanupAcpProviderInstance(provider, chatSessionId = "transient") {
-  if (!provider) return;
-  const rootPid = provider?.model?.agentProcess?.pid;
-  const childPids = getChildProcessTreePids(rootPid);
-  try {
-    if (typeof provider.forceCleanup === "function") {
-      provider.forceCleanup();
-    } else if (typeof provider.cleanup === "function") {
-      provider.cleanup();
-    }
-  } catch (err) {
-    console.warn("[ACP] Provider cleanup failed for session", chatSessionId, err?.message || err);
-  }
-  killTrackedProcessTree(rootPid, childPids);
-}
-
-function isActiveAcpRun(chatSessionId, requestId) {
-  const activeRun = acpChatRuns.get(chatSessionId);
-  return Boolean(activeRun && activeRun.requestId === requestId);
-}
-
-function shouldRetryFreshSession(err) {
-  const message = String(err?.message || err || "").toLowerCase();
-  return (message.includes("method not found") && message.includes("session/load"))
-    || (message.includes("resource not found") && message.includes("session") && message.includes("not found"));
 }
 
 function getChildProcessTreePids(rootPid) {
@@ -518,42 +427,6 @@ function _validateSenderImpl(event, allowSettings) {
   }
 }
 
-function summarizeMcpServersForDebug(mcpServers) {
-  if (!Array.isArray(mcpServers)) return [];
-  return mcpServers.map((server) => ({
-    name: server?.name || "",
-    type: server?.type || "",
-    command: server?.command || "",
-    args: Array.isArray(server?.args) ? server.args : [],
-    hasEnv: Array.isArray(server?.env) ? server.env.length > 0 : false,
-    url: server?.url || "",
-  }));
-}
-
-function logAcpDebug(agentLabel, message, details) {
-  const prefix = `[ACP DEBUG][${agentLabel}]`;
-  if (details === undefined) {
-    console.log(prefix, message);
-    return;
-  }
-  try {
-    console.log(prefix, message, JSON.stringify(details));
-  } catch {
-    console.log(prefix, message, details);
-  }
-}
-
-function normalizeAgentCommandName(command) {
-  if (typeof command !== "string" || !command) return "";
-  return path.basename(command).toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, "");
-}
-
-function matchesAgentCommand(command, expectedName) {
-  if (typeof command !== "string" || typeof expectedName !== "string") return false;
-  if (command.toLowerCase() === expectedName.toLowerCase()) return true;
-  return normalizeAgentCommandName(command) === normalizeAgentCommandName(expectedName);
-}
-
 function envPairsToObject(entries) {
   if (!Array.isArray(entries)) return {};
   const result = {};
@@ -580,31 +453,6 @@ function normalizeAgentEnv(env) {
   return result;
 }
 
-function mapMcpServerToCopilotConfig(server) {
-  if (!server || typeof server !== "object" || !server.name) return null;
-
-  if (server.type === "stdio" || server.type === "local") {
-    return {
-      type: "local",
-      command: server.command || "",
-      args: Array.isArray(server.args) ? server.args : [],
-      env: envPairsToObject(server.env),
-      tools: ["*"],
-    };
-  }
-
-  if (server.type === "http" || server.type === "sse") {
-    return {
-      type: server.type,
-      url: server.url || "",
-      headers: envPairsToObject(server.headers),
-      tools: ["*"],
-    };
-  }
-
-  return null;
-}
-
 function safeReadJson(filePath) {
   try {
     if (!existsSync(filePath)) return null;
@@ -612,47 +460,6 @@ function safeReadJson(filePath) {
   } catch {
     return null;
   }
-}
-
-function prepareCopilotHome(shellEnv, mcpServers, chatSessionId) {
-  const tempDirBridge = require("./tempDirBridge.cjs");
-  const homeDir = shellEnv.HOME || process.env.HOME || process.env.USERPROFILE || "";
-  const realCopilotHome = shellEnv.COPILOT_HOME || path.join(homeDir, ".copilot");
-  const tempCopilotHome = path.join(tempDirBridge.getTempDir(), `copilot-home-${chatSessionId}`);
-
-  try {
-    fs.rmSync(tempCopilotHome, { recursive: true, force: true });
-  } catch {
-    // Ignore cleanup failures; mkdir/copy below will surface real issues if any.
-  }
-
-  fs.mkdirSync(tempCopilotHome, { recursive: true });
-
-  if (realCopilotHome && existsSync(realCopilotHome)) {
-    fs.cpSync(realCopilotHome, tempCopilotHome, { recursive: true });
-  }
-
-  const configPath = path.join(tempCopilotHome, "mcp-config.json");
-  const baseConfig = safeReadJson(configPath) || { mcpServers: {} };
-  const mergedServers = { ...(baseConfig.mcpServers || {}) };
-
-  for (const server of Array.isArray(mcpServers) ? mcpServers : []) {
-    const mapped = mapMcpServerToCopilotConfig(server);
-    if (!mapped) continue;
-    mergedServers[server.name] = mapped;
-  }
-
-  fs.writeFileSync(
-    configPath,
-    JSON.stringify({ ...baseConfig, mcpServers: mergedServers }, null, 2),
-    { mode: 0o600 },
-  );
-
-  return {
-    copilotHome: tempCopilotHome,
-    configPath,
-    serverNames: Object.keys(mergedServers),
-  };
 }
 
 /**
@@ -828,28 +635,25 @@ function createHandlerContext(ipcMain) {
     stripAnsi,
     normalizeCliPathForPlatform,
     prepareCommandForSpawn,
-    normalizeClaudeCodeExecutableEnvForAcp,
+    normalizeClaudeCodeExecutableEnvForSdk,
     resolveCliFromPath,
-    resolveClaudeAcpBinaryPath,
+    probeClaudeAuth,
+    probeCopilotAuth,
+    probeCodexAuth,
     isPlausibleCliVersionOutput,
     getShellEnv,
     getFreshIdlePrompt,
     invalidateShellEnvCache,
-    serializeStreamChunk,
     toUnpackedAsarPath,
     detectClaudeAuthPresence,
-    detectCodebuddyAuthPresence,
     expandHomePath,
     CLAUDE_AUTH_HELP_MESSAGE,
-    CODEBUDDY_AUTH_HELP_MESSAGE,
     codexLoginSessions,
-    resolveCodexAcpBinaryPath,
     appendCodexLoginOutput,
     toCodexLoginSessionResponse,
     getActiveCodexLoginSession,
     normalizeCodexIntegrationState,
     readCodexCustomProviderConfig,
-    getCodexAuthOverride,
     getCodexCustomConfigPreflightError,
     extractCodexError,
     isCodexAuthError,
@@ -858,7 +662,6 @@ function createHandlerContext(ipcMain) {
     invalidateCodexValidationCache,
     getCodexValidationCache,
     setCodexValidationCache,
-    normalizeAcpSessionModels,
     DEBUG_MCP,
     NETCATTY_TOOL_SKILL_PATH,
     NETCATTY_TOOL_LAUNCHER_PATH,
@@ -881,13 +684,6 @@ function createHandlerContext(ipcMain) {
     get cliDiscoveryFilePath() { return cliDiscoveryFilePath; },
     set cliDiscoveryFilePath(value) { cliDiscoveryFilePath = value; },
     activeStreams,
-    agentProcesses,
-    MAX_CONCURRENT_AGENTS,
-    acpProviders,
-    acpActiveStreams,
-    acpRequestSessions,
-    acpPendingCancelRequests,
-    acpChatRuns,
     get providerConfigs() { return providerConfigs; },
     set providerConfigs(value) { providerConfigs = value; },
     get webSearchApiHost() { return webSearchApiHost; },
@@ -896,30 +692,19 @@ function createHandlerContext(ipcMain) {
     set webSearchApiKeyEncrypted(value) { webSearchApiKeyEncrypted = value; },
     decryptApiKeyValue,
     resolveProviderApiKey,
-    getAcpProviderAuthFingerprint,
     shouldSkipTLSVerify,
     API_KEY_PLACEHOLDER,
     WEB_SEARCH_KEY_PLACEHOLDER,
     injectApiKeyIntoRequest,
-    cleanupAcpProvider,
-    cleanupAcpProviderInstance,
-    isActiveAcpRun,
-    shouldRetryFreshSession,
     getChildProcessTreePids,
     killTrackedProcessTree,
     safeSend,
     withCliDiscoveryEnv,
     validateSender,
     validateSenderOrSettings,
-    summarizeMcpServersForDebug,
-    logAcpDebug,
-    normalizeAgentCommandName,
-    matchesAgentCommand,
     envPairsToObject,
     normalizeAgentEnv,
-    mapMcpServerToCopilotConfig,
     safeReadJson,
-    prepareCopilotHome,
     streamRequest,
   };
 }
@@ -927,66 +712,28 @@ function createHandlerContext(ipcMain) {
 function registerHandlers(ipcMain) {
   const context = createHandlerContext(ipcMain);
   Object.assign(context, createAgentCliHelpers(context));
+  registeredContext = context;
 
   registerProviderHandlers(context);
   registerCattyExecHandlers(context);
   registerAgentDiscoveryHandlers(context);
   registerAgentProcessHandlers(context);
-  registerAcpHandlers(context);
-
-  ipcMain.handle("netcatty:ai:agent:kill", async (event, { agentId }) => {
-    if (!validateSender(event)) {
-      return { ok: false, error: "Unauthorized IPC sender" };
-    }
-    const proc = agentProcesses.get(agentId);
-    if (!proc) return { ok: false, error: "Agent not found" };
-    try {
-      proc.kill("SIGTERM");
-      // Wait for the process to exit, or force-kill after 5 seconds
-      await new Promise((resolve) => {
-        const timeout = setTimeout(() => {
-          if (agentProcesses.has(agentId)) {
-            try { proc.kill("SIGKILL"); } catch {}
-          }
-          resolve();
-        }, 5000);
-        proc.once("exit", () => {
-          clearTimeout(timeout);
-          resolve();
-        });
-      });
-      agentProcesses.delete(agentId);
-      return { ok: true };
-    } catch (err) {
-      return { ok: false, error: err?.message || String(err) };
-    }
-  });
+  registerSdkStreamHandlers(context);
 }
 
-// Cleanup all agent processes on shutdown
+// Abort active streams and child processes on shutdown
 function cleanup() {
-  for (const [id, proc] of agentProcesses) {
-    try {
-      proc.kill("SIGTERM");
-    } catch {}
-  }
-  agentProcesses.clear();
-
   for (const [id, controller] of activeStreams) {
     try { controller.abort(); } catch {}
   }
   activeStreams.clear();
 
-  // Abort active ACP streams
-  for (const [id, controller] of acpActiveStreams) {
-    try { controller.abort(); } catch {}
-  }
-  acpActiveStreams.clear();
-
-
-  // Cleanup ACP providers (kills codex-acp child processes)
-  for (const [id] of acpProviders) {
-    cleanupAcpProvider(id);
+  // Abort active SDK agent streams (set by registerSdkStreamHandlers on ctx).
+  if (registeredContext && registeredContext.sdkActiveStreams) {
+    for (const [, controller] of registeredContext.sdkActiveStreams) {
+      try { controller.abort(); } catch {}
+    }
+    registeredContext.sdkActiveStreams.clear();
   }
 
   for (const [id, session] of codexLoginSessions) {

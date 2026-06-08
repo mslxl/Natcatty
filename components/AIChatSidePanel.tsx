@@ -11,7 +11,8 @@ import type {
   DiscoveredAgent,
 } from '../infrastructure/ai/types';
 import type { ExecutorContext } from '../infrastructure/ai/cattyAgent/executor';
-import { matchesManagedAgentConfig } from '../infrastructure/ai/managedAgents';
+import { getAgentModelPresets } from '../infrastructure/ai/types';
+import { getExternalAgentSdkBackend, matchesManagedAgentConfig } from '../infrastructure/ai/managedAgents';
 import { useAgentDiscovery } from '../application/state/useAgentDiscovery';
 import {
   getReadyUserSkillOptions,
@@ -30,13 +31,17 @@ import {
 } from './ai/draftSendGate';
 import { getSessionScopeMatchRank } from './ai/sessionScopeMatch';
 import { selectDraftForAgentSwitch } from '../application/state/aiDraftState';
+import {
+  buildPromptWithTerminalSelectionAttachments,
+  isTerminalSelectionAttachment,
+} from '../application/state/terminalSelectionAttachment';
 import type { CodexIntegrationStatus } from './settings/tabs/ai/types';
 import {
   useAIChatStreaming,
   getNetcattyBridge,
   type DefaultTargetSessionHint,
 } from './ai/hooks/useAIChatStreaming';
-import { buildAcpHistoryMessagesForBridge } from './ai/acpHistory';
+import { buildExternalAgentHistoryMessagesForBridge } from './ai/externalAgentHistory';
 import { canSendWithAgent, findEnabledExternalAgent } from './ai/agentSendEligibility';
 import { clearAllPendingApprovals } from '../infrastructure/ai/shared/approvalGate';
 import { useConversationExport } from './ai/hooks/useConversationExport';
@@ -447,10 +452,6 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     () => currentAgentConfig ? matchesManagedAgentConfig(currentAgentConfig, 'claude') : false,
     [currentAgentConfig],
   );
-  const isCodebuddyManagedAgent = useMemo(
-    () => currentAgentConfig ? matchesManagedAgentConfig(currentAgentConfig, 'codebuddy') : false,
-    [currentAgentConfig],
-  );
 
   const [codexConfigModel, setCodexConfigModel] = useState<string | null>(null);
   const [codexCustomConfigResolved, setCodexCustomConfigResolved] = useState(false);
@@ -483,16 +484,16 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
   agentModelMapRef.current = agentModelMap;
 
   useEffect(() => {
-    if (!currentAgentConfig?.acpCommand) return;
-    if (!isCopilotExternalAgent && !isClaudeManagedAgent && !isCodexManagedAgent && !isCodebuddyManagedAgent) return;
+    const sdkBackend = getExternalAgentSdkBackend(currentAgentConfig);
+    if (!sdkBackend) return;
+    if (!isCopilotExternalAgent && !isClaudeManagedAgent && !isCodexManagedAgent) return;
 
     const bridge = getNetcattyBridge();
-    if (!bridge?.aiAcpListModels) return;
+    if (!bridge?.aiSdkAgentListModels) return;
 
     let cancelled = false;
-    void bridge.aiAcpListModels(
-      currentAgentConfig.acpCommand,
-      currentAgentConfig.acpArgs || [],
+    void bridge.aiSdkAgentListModels(
+      sdkBackend,
       undefined,
       undefined,
       `models_${currentAgentId}`,
@@ -518,14 +519,14 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       }
     }).catch((err) => {
       if (!cancelled) {
-        console.warn('[AIChatSidePanel] Failed to load ACP agent models:', err);
+        console.warn('[AIChatSidePanel] Failed to load SDK agent models:', err);
       }
     });
 
     return () => {
       cancelled = true;
     };
-  }, [currentAgentConfig, currentAgentId, isCopilotExternalAgent, isClaudeManagedAgent, isCodexManagedAgent, isCodebuddyManagedAgent, setAgentModel]);
+  }, [currentAgentConfig, currentAgentId, isCopilotExternalAgent, isClaudeManagedAgent, isCodexManagedAgent, setAgentModel]);
 
   const hasCodexCustomConfig = codexCustomConfigResolved && isCodexManagedAgent;
 
@@ -540,8 +541,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       }
       return [];
     }
-    return runtimePresets ?? [];
-  }, [currentAgentId, runtimeAgentModelPresets, hasCodexCustomConfig, codexConfigModel]);
+    return runtimePresets ?? getAgentModelPresets(currentAgentConfig?.command);
+  }, [currentAgentConfig?.command, currentAgentId, runtimeAgentModelPresets, hasCodexCustomConfig, codexConfigModel]);
 
   const selectedAgentModel = useMemo(() => {
     const stored = agentModelMap[currentAgentId];
@@ -653,18 +654,24 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     const currentSessionView = activeSessionRef.current;
     const trimmed = draft?.text.trim() ?? '';
     const sendScopeKey = scopeKey;
-    if (!trimmed || isStreaming) return;
-    const sendAgentId = currentSessionView?.agentId ?? draft?.agentId ?? currentAgentId;
-    const agentConfig = sendAgentId !== 'catty' ? findEnabledExternalAgent(externalAgents, sendAgentId) : undefined;
-    if (sendAgentId !== 'catty' && !agentConfig) return;
-
-    const selectedSkillSlugs = draft?.selectedUserSkillSlugs ?? [];
     const attachments = (draft?.attachments ?? []).map((file) => ({
       base64Data: file.base64Data,
       mediaType: file.mediaType,
       filename: file.filename,
       filePath: file.filePath,
+      terminalSelection: file.terminalSelection,
+      previewText: file.previewText,
+      lineCount: file.lineCount,
     }));
+    const hasTerminalSelectionAttachments = attachments.some(isTerminalSelectionAttachment);
+    if ((!trimmed && !hasTerminalSelectionAttachments) || isStreaming) return;
+    const sendAgentId = currentSessionView?.agentId ?? draft?.agentId ?? currentAgentId;
+    const agentConfig = sendAgentId !== 'catty' ? findEnabledExternalAgent(externalAgents, sendAgentId) : undefined;
+    if (sendAgentId !== 'catty' && !agentConfig) return;
+
+    const selectedSkillSlugs = draft?.selectedUserSkillSlugs ?? [];
+    const modelPrompt = buildPromptWithTerminalSelectionAttachments(trimmed, attachments);
+    const modelAttachments = attachments.filter((attachment) => !isTerminalSelectionAttachment(attachment));
     const isDraftMode = currentPanelView.mode === 'draft';
 
     if (isDraftMode && !tryBeginDraftSend(draftSendInFlightRef)) {
@@ -694,7 +701,11 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       const sendActiveModelId = isExternalAgent ? activeModelId : effectiveActiveModelId;
 
       if (!isExternalAgent && !sendActiveProvider) {
-        addMessageToSession(sessionId, { id: generateId(), role: 'user', content: trimmed, timestamp: Date.now() });
+        addMessageToSession(sessionId, {
+          id: generateId(), role: 'user', content: trimmed,
+          ...(attachments.length > 0 ? { attachments } : {}),
+          timestamp: Date.now(),
+        });
         addMessageToSession(sessionId, { id: generateId(), role: 'assistant', content: t('ai.chat.noProvider'), timestamp: Date.now() });
         if (currentPanelView.mode === 'session') {
           clearScopeDraft();
@@ -704,7 +715,11 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
       }
 
       if (!isExternalAgent && !sendActiveModelId.trim()) {
-        addMessageToSession(sessionId, { id: generateId(), role: 'user', content: trimmed, timestamp: Date.now() });
+        addMessageToSession(sessionId, {
+          id: generateId(), role: 'user', content: trimmed,
+          ...(attachments.length > 0 ? { attachments } : {}),
+          timestamp: Date.now(),
+        });
         addMessageToSession(sessionId, { id: generateId(), role: 'assistant', content: t('ai.chat.noProviderModel'), timestamp: Date.now() });
         if (currentPanelView.mode === 'session') {
           clearScopeDraft();
@@ -744,10 +759,10 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
         }
         try {
           const existingExternalSessionId = currentSession?.externalSessionId;
-          await sendToExternalAgent(sessionId, trimmed, agentConfig, abortController, attachments, {
+          await sendToExternalAgent(sessionId, modelPrompt, agentConfig, abortController, modelAttachments, {
             existingSessionId: existingExternalSessionId,
             updateExternalSessionId: updateSessionExternalSessionId,
-            historyMessages: buildAcpHistoryMessagesForBridge(currentSession?.messages ?? [], existingExternalSessionId),
+            historyMessages: buildExternalAgentHistoryMessagesForBridge(currentSession?.messages ?? [], existingExternalSessionId),
             terminalSessions,
             defaultTargetSession,
             providers,
@@ -768,7 +783,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           targetId: scopeTargetId,
           label: scopeLabel,
         } as const;
-        await sendToCattyAgent(sessionId, sendScopeKey, trimmed, abortController, currentSession ?? undefined, assistantMsgId, {
+        await sendToCattyAgent(sessionId, sendScopeKey, modelPrompt, abortController, currentSession ?? undefined, assistantMsgId, {
           activeProvider: sendActiveProvider,
           activeModelId: sendActiveModelId,
           scopeType,
@@ -781,7 +796,8 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
           getExecutorContext: () => buildExecutorContextForScope(toolScope),
           autoTitleSession,
           selectedUserSkillSlugs: selectedSkillSlugs,
-        }, attachments.length > 0 ? attachments : undefined);
+          titleText: trimmed,
+        }, modelAttachments.length > 0 ? modelAttachments : undefined);
       }
     } finally {
       if (isDraftMode) {
@@ -814,7 +830,7 @@ const AIChatSidePanelInner: React.FC<AIChatSidePanelProps> = ({
     clearAllPendingApprovals(activeSessionId);
     const bridge = getNetcattyBridge();
     bridge?.aiCattyCancelExec?.(activeSessionId);
-    bridge?.aiAcpCancel?.('', activeSessionId);
+    bridge?.aiSdkAgentCancel?.('', activeSessionId);
   }, [activeSessionId, setStreamingForScope, updateLastMessage, abortControllersRef]);
 
   const handleSelectSession = useCallback(

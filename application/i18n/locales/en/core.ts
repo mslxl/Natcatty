@@ -159,6 +159,8 @@ export const enCoreMessages: Messages = {
   'settings.sessionLogs.formatTxt': 'Plain Text (.txt)',
   'settings.sessionLogs.formatRaw': 'Raw with ANSI (.log)',
   'settings.sessionLogs.formatHtml': 'HTML (.html)',
+  'settings.sessionLogs.timestamps': 'Add timestamps',
+  'settings.sessionLogs.timestampsDesc': 'Prefix each line in plain text and HTML logs with the local time.',
   'settings.sessionLogs.hint': 'Session logs capture all terminal output for troubleshooting and auditing purposes.',
 
   // Settings > SSH Debug Logs
@@ -262,14 +264,15 @@ export const enCoreMessages: Messages = {
   'settings.appearance.themeColor.dark': 'Dark palette',
   'settings.appearance.customCss': 'Custom CSS',
   'settings.appearance.customCss.desc':
-    'Add custom CSS to personalize the app appearance. Changes apply immediately. Major UI regions expose a [data-section="..."] attribute you can target — e.g. snippets-panel, host-details-panel, group-details-panel, serial-host-details-panel, ai-chat-panel, vault-sidebar, vault-main, vault-hosts-header, vault-host-list, vault-view, terminal-workspace, terminal-workspace-sidebar, top-tabs.',
+    'Add custom CSS to personalize the app appearance. Changes apply immediately. Major UI regions expose a [data-section="..."] attribute you can target — e.g. snippets-panel, host-details-panel, group-details-panel, serial-host-details-panel, ai-chat-panel, vault-sidebar, vault-main, vault-hosts-header, vault-host-list, vault-view, terminal-workspace, terminal-workspace-sidebar (focus-mode terminal list), terminal-side-panel (SFTP/Scripts/Theme/AI panel), terminal-sftp-panel, terminal-split-pane, terminal-split-resizer, top-tabs.',
   'settings.appearance.customCss.placeholder':
-    '/* Examples — use !important to beat Tailwind utility specificity */\n\n/* Make snippet sidebar text larger */\n[data-section="snippets-panel"] {\n  font-size: 14px !important;\n}\n\n/* Custom terminal background */\n.terminal { background: #1a1a2e !important; }\n\n/* Tweak global border radius */\n:root { --radius: 0.25rem; }',
+    '/* Examples — use !important to beat Tailwind utility specificity */\n\n/* Border around the SFTP / side panel (not the focus-mode terminal list) */\n[data-section="terminal-side-panel"] {\n  border: 2px solid #00c851 !important;\n  border-radius: 6px !important;\n}\n\n/* Thicker split dividers */\n[data-section="terminal-split-resizer-bar"] {\n  background-color: hsl(var(--primary)) !important;\n  transform: scale(2) !important;\n}\n\n/* Highlight the focused split pane */\n[data-section="terminal-split-pane"][data-focused="true"] {\n  outline: 2px solid hsl(var(--primary)) !important;\n  outline-offset: -2px;\n}\n\n/* Or use Settings → Terminal → Workspace Focus Indicator → Border on focused pane */',
   'settings.appearance.language': 'Language',
   'settings.appearance.language.desc': 'Choose the UI language',
   'settings.appearance.uiFont': 'Interface Font',
   'settings.appearance.uiFont.desc': 'Choose the font for the application interface',
-
+  'settings.appearance.windowOpacity': 'Window Opacity',
+  'settings.appearance.windowOpacity.desc': 'Adjust the transparency of the entire application window. Lower values also fade terminal text. Some Linux desktop environments may not support this.',
   // Settings > Terminal
   'settings.terminal.section.theme': 'Terminal Theme',
   'settings.terminal.themeModal.title': 'Select Theme',
@@ -437,6 +440,8 @@ export const enCoreMessages: Messages = {
   'settings.terminal.rendering.renderer': 'Renderer',
   'settings.terminal.rendering.renderer.desc': 'Choose the terminal rendering technology. Auto will use DOM on low-memory devices. Changes take effect on new terminal sessions.',
   'settings.terminal.rendering.auto': 'Auto',
+  'settings.terminal.rendering.lineTimestamps': 'Prefix output with timestamps',
+  'settings.terminal.rendering.lineTimestamps.desc': 'Insert local time before terminal output lines. The timestamp becomes part of the visible terminal content.',
 
   // Settings > Terminal > Workspace Focus Indicator
   'settings.terminal.section.workspaceFocus': 'Workspace Focus Indicator',
@@ -573,12 +578,12 @@ export const enCoreMessages: Messages = {
   'proxyProfiles.section.proxies': 'Proxies',
   'proxyProfiles.count.items': '{count} items',
   'proxyProfiles.empty.title': 'No Proxies',
-  'proxyProfiles.empty.desc': 'Create reusable HTTP or SOCKS5 proxies and select them from host details.',
+  'proxyProfiles.empty.desc': 'Create reusable HTTP, SOCKS5, or command proxies and select them from host details.',
   'proxyProfiles.usage': '{count} linked',
   'proxyProfiles.copyName': '{name} Copy',
   'proxyProfiles.panel.newTitle': 'New Proxy',
   'proxyProfiles.field.name': 'Proxy name',
-  'proxyProfiles.error.required': 'Name, host, and port are required.',
+  'proxyProfiles.error.required': 'Name and proxy details are required.',
   'proxyProfiles.error.port': 'Port must be between 1 and 65535.',
   'proxyProfiles.viewMode': 'Proxy view mode',
   'proxyProfiles.delete.title': 'Delete proxy?',

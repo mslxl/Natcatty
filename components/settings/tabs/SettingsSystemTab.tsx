@@ -83,6 +83,8 @@ interface SettingsSystemTabProps {
   setSessionLogsDir: (dir: string) => void;
   sessionLogsFormat: SessionLogFormat;
   setSessionLogsFormat: (format: SessionLogFormat) => void;
+  sessionLogsTimestampsEnabled: boolean;
+  setSessionLogsTimestampsEnabled: (enabled: boolean) => void;
   sshDebugLogsEnabled: boolean;
   setSshDebugLogsEnabled: (enabled: boolean) => void;
   toggleWindowHotkey: string;
@@ -109,6 +111,8 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   setSessionLogsDir,
   sessionLogsFormat,
   setSessionLogsFormat,
+  sessionLogsTimestampsEnabled,
+  setSessionLogsTimestampsEnabled,
   sshDebugLogsEnabled,
   setSshDebugLogsEnabled,
   toggleWindowHotkey,
@@ -904,6 +908,17 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                   options={formatOptions}
                   onChange={(val) => setSessionLogsFormat(val as SessionLogFormat)}
                   className="w-44"
+                  disabled={!sessionLogsEnabled}
+                />
+              </SettingRow>
+
+              <SettingRow
+                label={t("settings.sessionLogs.timestamps")}
+                description={t("settings.sessionLogs.timestampsDesc")}
+              >
+                <Toggle
+                  checked={sessionLogsTimestampsEnabled}
+                  onChange={setSessionLogsTimestampsEnabled}
                   disabled={!sessionLogsEnabled}
                 />
               </SettingRow>

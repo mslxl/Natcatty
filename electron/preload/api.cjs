@@ -27,6 +27,10 @@ function createPreloadApi(ctx) {
     const result = await ipcRenderer.invoke("netcatty:mosh:start", options);
     return result.sessionId;
   },
+  startEtSession: async (options) => {
+    const result = await ipcRenderer.invoke("netcatty:et:start", options);
+    return result.sessionId;
+  },
   startLocalSession: async (options) => {
     const result = await ipcRenderer.invoke("netcatty:local:start", options || {});
     return result.sessionId;
@@ -193,9 +197,9 @@ function createPreloadApi(ctx) {
     return () => passphraseAuthFailedListeners.delete(cb);
   },
   openSftp: async (options) => {
-    const result = await ipcRenderer.invoke("netcatty:sftp:open", options);
-    return result.sftpId;
-  },
+      const result = await ipcRenderer.invoke("netcatty:sftp:open", options);
+      return result.sftpId;
+    },
   listSftp: async (sftpId, path, encoding) => {
     return ipcRenderer.invoke("netcatty:sftp:list", { sftpId, path, encoding });
   },
@@ -299,6 +303,9 @@ function createPreloadApi(ctx) {
   setBackgroundColor: async (color) => {
     return ipcRenderer.invoke("netcatty:setBackgroundColor", color);
   },
+  setWindowOpacity: async (opacity) => {
+    return ipcRenderer.invoke("netcatty:setWindowOpacity", opacity);
+  },
   setLanguage: async (language) => {
     return ipcRenderer.invoke("netcatty:setLanguage", language);
   },
@@ -350,6 +357,18 @@ function createPreloadApi(ctx) {
   windowIsMaximized: () => ipcRenderer.invoke("netcatty:window:isMaximized"),
   windowIsFullscreen: () => ipcRenderer.invoke("netcatty:window:isFullscreen"),
   windowFocus: () => ipcRenderer.invoke("netcatty:window:focus"),
+  setWindowTitle: (title) => ipcRenderer.invoke("netcatty:window:setTitle", title),
+  openSessionInNewWindow: (payload) => ipcRenderer.invoke("netcatty:window:openSession", payload),
+  onOpenSessionInNewWindow: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("netcatty:window:openSession", handler);
+    return () => ipcRenderer.removeListener("netcatty:window:openSession", handler);
+  },
+  onWindowCommandCloseRequested: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on("netcatty:window:command-close", handler);
+    return () => ipcRenderer.removeListener("netcatty:window:command-close", handler);
+  },
   onWindowFullScreenChanged: (cb) => {
     fullscreenChangeListeners.add(cb);
     return () => fullscreenChangeListeners.delete(cb);
@@ -488,6 +507,12 @@ function createPreloadApi(ctx) {
       chainProgressListeners.delete(id);
     };
   },
+  onConnectionReuseFallback: (cb) => {
+    connectionReuseFallbackListeners.add(cb);
+    return () => {
+      connectionReuseFallbackListeners.delete(cb);
+    };
+  },
   // SFTP connection progress listener (auth method logs)
   onSftpConnectionProgress: (cb) => {
     sftpConnectionProgressListeners.add(cb);
@@ -550,6 +575,8 @@ function createPreloadApi(ctx) {
     ipcRenderer.invoke("netcatty:selectApplication"),
   openWithApplication: (filePath, appPath) =>
     ipcRenderer.invoke("netcatty:openWithApplication", { filePath, appPath }),
+  openWithSystemDefault: (filePath) =>
+    ipcRenderer.invoke("netcatty:openWithSystemDefault", { filePath }),
   downloadSftpToTemp: (sftpId, remotePath, fileName, encoding) =>
     ipcRenderer.invoke("netcatty:sftp:downloadToTemp", { sftpId, remotePath, fileName, encoding }),
   downloadSftpToTempWithProgress: (sftpId, remotePath, fileName, encoding, transferId, onProgress, onComplete, onError, onCancelled) => {
@@ -711,6 +738,12 @@ function createPreloadApi(ctx) {
   readClipboardText: async () => {
     return ipcRenderer.invoke("netcatty:clipboard:readText");
   },
+  writeClipboardText: async (text) => {
+    return ipcRenderer.invoke("netcatty:clipboard:writeText", text);
+  },
+  readClipboardFiles: async () => {
+    return ipcRenderer.invoke("netcatty:clipboard:readFiles");
+  },
 
   // Credential encryption (field-level safeStorage)
   credentialsAvailable: () => ipcRenderer.invoke("netcatty:credentials:available"),
@@ -795,18 +828,6 @@ function createPreloadApi(ctx) {
   aiCodexLogout: async () => {
     return ipcRenderer.invoke("netcatty:ai:codex:logout");
   },
-  aiSpawnAgent: async (agentId, command, args, env, options) => {
-    return ipcRenderer.invoke("netcatty:ai:agent:spawn", { agentId, command, args, env, closeStdin: options?.closeStdin });
-  },
-  aiWriteToAgent: async (agentId, data) => {
-    return ipcRenderer.invoke("netcatty:ai:agent:write", { agentId, data });
-  },
-  aiCloseAgentStdin: async (agentId) => {
-    return ipcRenderer.invoke("netcatty:ai:agent:close-stdin", { agentId });
-  },
-  aiKillAgent: async (agentId) => {
-    return ipcRenderer.invoke("netcatty:ai:agent:kill", { agentId });
-  },
   // MCP Server session metadata
   aiMcpUpdateSessions: async (sessions, chatSessionId) => {
     return ipcRenderer.invoke("netcatty:ai:mcp:update-sessions", { sessions, chatSessionId });
@@ -850,39 +871,39 @@ function createPreloadApi(ctx) {
     ipcRenderer.on("netcatty:ai:mcp:approval-cleared", handler);
     return () => ipcRenderer.removeListener("netcatty:ai:mcp:approval-cleared", handler);
   },
-  // ACP streaming
-  aiAcpStream: async (requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, providerId, model, existingSessionId, historyMessages, images, toolIntegrationMode, defaultTargetSession, userSkillsContext, agentEnv) => {
-    return ipcRenderer.invoke("netcatty:ai:acp:stream", { requestId, chatSessionId, acpCommand, acpArgs, prompt, cwd, providerId, model, existingSessionId, historyMessages, images, toolIntegrationMode, defaultTargetSession, userSkillsContext, agentEnv });
+  // SDK external agent streaming
+  aiSdkAgentStream: async (requestId, chatSessionId, sdkBackend, prompt, cwd, providerId, model, existingSessionId, historyMessages, images, toolIntegrationMode, defaultTargetSession, userSkillsContext, agentEnv) => {
+    return ipcRenderer.invoke("netcatty:ai:sdk-agent:stream", { requestId, chatSessionId, sdkBackend, prompt, cwd, providerId, model, existingSessionId, historyMessages, images, toolIntegrationMode, defaultTargetSession, userSkillsContext, agentEnv });
   },
-  aiAcpListModels: async (acpCommand, acpArgs, cwd, providerId, chatSessionId, agentEnv) => {
-    return ipcRenderer.invoke("netcatty:ai:acp:list-models", { acpCommand, acpArgs, cwd, providerId, chatSessionId, agentEnv });
+  aiSdkAgentListModels: async (sdkBackend, cwd, providerId, chatSessionId, agentEnv) => {
+    return ipcRenderer.invoke("netcatty:ai:sdk-agent:list-models", { sdkBackend, cwd, providerId, chatSessionId, agentEnv });
   },
-  aiAcpCancel: async (requestId, chatSessionId) => {
-    return ipcRenderer.invoke("netcatty:ai:acp:cancel", { requestId, chatSessionId });
+  aiSdkAgentCancel: async (requestId, chatSessionId) => {
+    return ipcRenderer.invoke("netcatty:ai:sdk-agent:cancel", { requestId, chatSessionId });
   },
-  aiAcpCleanup: async (chatSessionId) => {
-    return ipcRenderer.invoke("netcatty:ai:acp:cleanup", { chatSessionId });
+  aiSdkAgentCleanup: async (chatSessionId) => {
+    return ipcRenderer.invoke("netcatty:ai:sdk-agent:cleanup", { chatSessionId });
   },
-  onAiAcpEvent: (requestId, cb) => {
+  onAiSdkAgentEvent: (requestId, cb) => {
     const handler = (_event, payload) => {
       if (payload.requestId === requestId) cb(payload.event);
     };
-    ipcRenderer.on("netcatty:ai:acp:event", handler);
-    return () => ipcRenderer.removeListener("netcatty:ai:acp:event", handler);
+    ipcRenderer.on("netcatty:ai:sdk-agent:event", handler);
+    return () => ipcRenderer.removeListener("netcatty:ai:sdk-agent:event", handler);
   },
-  onAiAcpDone: (requestId, cb) => {
+  onAiSdkAgentDone: (requestId, cb) => {
     const handler = (_event, payload) => {
       if (payload.requestId === requestId) cb();
     };
-    ipcRenderer.on("netcatty:ai:acp:done", handler);
-    return () => ipcRenderer.removeListener("netcatty:ai:acp:done", handler);
+    ipcRenderer.on("netcatty:ai:sdk-agent:done", handler);
+    return () => ipcRenderer.removeListener("netcatty:ai:sdk-agent:done", handler);
   },
-  onAiAcpError: (requestId, cb) => {
+  onAiSdkAgentError: (requestId, cb) => {
     const handler = (_event, payload) => {
       if (payload.requestId === requestId) cb(payload.error);
     };
-    ipcRenderer.on("netcatty:ai:acp:error", handler);
-    return () => ipcRenderer.removeListener("netcatty:ai:acp:error", handler);
+    ipcRenderer.on("netcatty:ai:sdk-agent:error", handler);
+    return () => ipcRenderer.removeListener("netcatty:ai:sdk-agent:error", handler);
   },
   onAiStreamData: (requestId, cb) => {
     const handler = (_event, payload) => {

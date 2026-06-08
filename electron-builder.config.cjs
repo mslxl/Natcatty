@@ -1,4 +1,5 @@
 const { moshExtraResources } = require('./scripts/mosh-extra-resources.cjs');
+const { etExtraResources } = require('./scripts/et-extra-resources.cjs');
 
 /**
  * @type {import('electron-builder').Configuration}
@@ -43,25 +44,31 @@ module.exports = {
         'skills/**/*',
         'public/**/*',
         'node_modules/**/*',
-        // @anthropic-ai/claude-agent-sdk@0.3.x bundles the native Claude Code
-        // CLI (~211MB per arch) as optional sibling packages. Netcatty is
-        // designed around the user's own Claude Code install — the wrapper
-        // honors `CLAUDE_CODE_EXECUTABLE` (set by useAgentDiscovery.ts) and
-        // only falls back to the bundled binary if that env var is empty.
-        // Excluding the sibling packages from the build keeps the installer
-        // ~150MB smaller and preserves the "bring your own Claude" design.
-        '!node_modules/@anthropic-ai/claude-agent-sdk-*/**/*'
+        // ── Exclude per-platform native agent binaries (~100s of MB each). ──
+        // Netcatty is "bring your own CLI": each SDK is pointed at the user's
+        // system-installed CLI via an absolute path override (claude
+        // pathToClaudeCodeExecutable / codex codexPathOverride / copilot cliPath).
+        // Only the SDKs' JS is bundled; the heavy per-arch binaries are dropped.
+        // NOTE: claude-agent-sdk vendors the `claude` binary as a NESTED package
+        // (claude-agent-sdk/node_modules/@anthropic-ai/claude-agent-sdk-<arch>),
+        // so this exclusion must match at any depth (**/), not just top-level.
+        // The codex/copilot exclusions target only the per-arch binary packages
+        // (codex-<arch> / copilot-<arch>) — NOT @openai/codex-sdk / copilot-sdk,
+        // whose JS we DO bundle. @github/copilot is the full ~288MB CLI (with
+        // per-platform prebuilds); netcatty uses the user's copilot via cliPath,
+        // so it is excluded entirely.
+        '!**/@anthropic-ai/claude-agent-sdk-*/**/*',
+        '!node_modules/@anthropic-ai/claude-code-*/**/*',
+        '!node_modules/@openai/codex-{darwin,linux,linuxmusl,win32}-*/**/*',
+        '!node_modules/@github/copilot-{darwin,linux,linuxmusl,win32}-*/**/*',
+        '!node_modules/@github/copilot/**/*'
     ],
     asarUnpack: [
         'node_modules/node-pty/**/*',
         'node_modules/ssh2/**/*',
         'node_modules/cpu-features/**/*',
         'node_modules/@vscode/windows-process-tree/**/*',
-        'node_modules/@agentclientprotocol/claude-agent-acp/**/*',
-        'node_modules/@agentclientprotocol/sdk/**/*',
         'node_modules/@anthropic-ai/claude-agent-sdk/**/*',
-        'node_modules/@zed-industries/codex-acp/**/*',
-        'node_modules/@zed-industries/codex-acp-*/**/*',
         'node_modules/@modelcontextprotocol/sdk/**/*',
         'lib/**/*.cjs',
         'lib/**/*.json',
@@ -98,7 +105,7 @@ module.exports = {
             NSMicrophoneUsageDescription: 'Netcatty may use the microphone for audio',
             NSLocalNetworkUsageDescription: 'Netcatty needs local network access for SSH connections'
         },
-        extraResources: moshExtraResources('darwin')
+        extraResources: [...moshExtraResources('darwin'), ...etExtraResources('darwin')]
     },
     dmg: {
         title: '${productName}',
@@ -125,7 +132,7 @@ module.exports = {
                 arch: ['x64', 'arm64']
             }
         ],
-        extraResources: moshExtraResources('win32')
+        extraResources: [...moshExtraResources('win32'), ...etExtraResources('win32')]
     },
     portable: {
         artifactName: '${productName}-${version}-portable-${os}-${arch}.${ext}',
@@ -146,7 +153,7 @@ module.exports = {
         icon: 'public/icon-win.png',
         target: ['AppImage', 'deb', 'rpm'],
         category: 'Development',
-        extraResources: moshExtraResources('linux')
+        extraResources: [...moshExtraResources('linux'), ...etExtraResources('linux')]
     },
     deb: {
         // Use gzip instead of default xz(lzma) for better compatibility with

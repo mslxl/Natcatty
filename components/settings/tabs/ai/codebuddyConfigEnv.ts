@@ -4,10 +4,10 @@
  * ExternalAgentConfig.env; this splits that into the editable pieces and
  * recombines them.
  *
- * NOTE: CodeBuddy CLI does NOT use CODEBUDDY_API_KEY. Only
- * CODEBUDDY_INTERNET_ENVIRONMENT is managed as a first-class field.
- * Users who need CODEBUDDY_AUTH_TOKEN should set it in the free-text
- * environment editor or in their shell profile.
+ * The SDK supports CODEBUDDY_API_KEY (via options.env), but the CLI itself
+ * does not. CODEBUDDY_INTERNET_ENVIRONMENT is managed as a first-class field.
+ * Users who need CODEBUDDY_API_KEY or CODEBUDDY_AUTH_TOKEN should set them
+ * in the free-text environment editor or in their shell profile.
  */
 
 const INTERNET_ENV_VAR = "CODEBUDDY_INTERNET_ENVIRONMENT";

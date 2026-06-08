@@ -39,6 +39,7 @@ export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
   openDeleteConfirm,
   onCopyToOtherPane,
   onReceiveFromOtherPane,
+  onOpenFileWithSystemDefault,
   onOpenFileWith,
   onEditFile,
   onDownloadFile,
@@ -180,6 +181,8 @@ export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
   onCopyToOtherPaneRef.current = onCopyToOtherPane;
   const onReceiveFromOtherPaneRef = useRef(onReceiveFromOtherPane);
   onReceiveFromOtherPaneRef.current = onReceiveFromOtherPane;
+  const onOpenFileWithSystemDefaultRef = useRef(onOpenFileWithSystemDefault);
+  onOpenFileWithSystemDefaultRef.current = onOpenFileWithSystemDefault;
   const onOpenFileWithRef = useRef(onOpenFileWith);
   onOpenFileWithRef.current = onOpenFileWith;
   const onEditFileRef = useRef(onEditFile);
@@ -826,6 +829,7 @@ export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
     tRef,
     onCopyToOtherPaneRef,
     onNavigateToRef,
+    onOpenFileWithSystemDefaultRef,
     onOpenFileWithRef,
     onEditFileRef,
     onDownloadFileRef,
@@ -938,7 +942,7 @@ export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
           onChange={handleUploadInputChange}
         />
       )}
-      {pane.loading && !pane.reconnecting && (
+      {pane.loading && !pane.connection?.reusedConnection && !pane.reconnecting && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/40 backdrop-blur-[1px] z-10 pointer-events-none">
           <Loader2 size={24} className="animate-spin text-muted-foreground" />
           {pane.connectionLogs.length > 0 && (

@@ -8,6 +8,12 @@ import { localStorageAdapter } from '../../infrastructure/persistence/localStora
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 
 export const DEFAULT_THEME: 'light' | 'dark' | 'system' = 'dark';
+export const DEFAULT_WINDOW_OPACITY = 1;
+export function clampWindowOpacity(opacity: unknown): number {
+  const value = Number(opacity);
+  if (!Number.isFinite(value)) return DEFAULT_WINDOW_OPACITY;
+  return Math.min(1, Math.max(0.5, value));
+}
 
 /** Resolve the current OS color scheme preference. */
 export const getSystemPreference = (): 'light' | 'dark' =>
@@ -63,6 +69,7 @@ export const DEFAULT_EDITOR_WORD_WRAP = false;
 // Session Logs defaults
 export const DEFAULT_SESSION_LOGS_ENABLED = false;
 export const DEFAULT_SESSION_LOGS_FORMAT: SessionLogFormat = 'txt';
+export const DEFAULT_SESSION_LOGS_TIMESTAMPS_ENABLED = false;
 export const DEFAULT_SSH_DEBUG_LOGS_ENABLED = false;
 
 export const readStoredString = (key: string): string | null => {

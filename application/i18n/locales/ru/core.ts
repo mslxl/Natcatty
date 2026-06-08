@@ -159,6 +159,8 @@ export const ruCoreMessages: Messages = {
   'settings.sessionLogs.formatTxt': 'Обычный текст (.txt)',
   'settings.sessionLogs.formatRaw': 'Сырые данные с ANSI (.log)',
   'settings.sessionLogs.formatHtml': 'HTML (.html)',
+  'settings.sessionLogs.timestamps': 'Добавлять метки времени',
+  'settings.sessionLogs.timestampsDesc': 'Добавлять локальное время в начало каждой строки в текстовых и HTML-журналах.',
   'settings.sessionLogs.hint': 'Журналы сессий сохраняют весь вывод терминала для диагностики и аудита.',
 
   // Settings > SSH Debug Logs
@@ -262,14 +264,15 @@ export const ruCoreMessages: Messages = {
   'settings.appearance.themeColor.dark': 'Палитра тёмной темы',
   'settings.appearance.customCss': 'Пользовательский CSS',
   'settings.appearance.customCss.desc':
-    'Добавьте пользовательский CSS, чтобы настроить внешний вид приложения. Изменения применяются сразу. Основные области интерфейса имеют атрибут [data-section="..."], который можно использовать для выбора элементов, например: snippets-panel, host-details-panel, group-details-panel, serial-host-details-panel, ai-chat-panel, vault-sidebar, vault-main, vault-hosts-header, vault-host-list, vault-view, terminal-workspace, terminal-workspace-sidebar, top-tabs.',
+    'Добавьте пользовательский CSS, чтобы настроить внешний вид приложения. Изменения применяются сразу. Основные области интерфейса имеют атрибут [data-section="..."], который можно использовать для выбора элементов, например: snippets-panel, host-details-panel, group-details-panel, serial-host-details-panel, ai-chat-panel, vault-sidebar, vault-main, vault-hosts-header, vault-host-list, vault-view, terminal-workspace, terminal-workspace-sidebar (список терминалов в режиме Focus), terminal-side-panel (панель SFTP/скриптов/темы/AI), terminal-sftp-panel, terminal-split-pane, terminal-split-resizer, top-tabs.',
   'settings.appearance.customCss.placeholder':
-    '/* Примеры — используйте !important, чтобы переопределить специфичность утилит Tailwind */\n\n/* Сделать текст в боковой панели сниппетов крупнее */\n[data-section="snippets-panel"] {\n  font-size: 14px !important;\n}\n\n/* Пользовательский фон терминала */\n.terminal { background: #1a1a2e !important; }\n\n/* Настройка глобального радиуса скругления */\n:root { --radius: 0.25rem; }',
+    '/* Примеры — используйте !important, чтобы переопределить специфичность утилит Tailwind */\n\n/* Рамка вокруг боковой панели SFTP (не список терминалов Focus) */\n[data-section="terminal-side-panel"] {\n  border: 2px solid #00c851 !important;\n  border-radius: 6px !important;\n}\n\n/* Более заметные разделители сплита */\n[data-section="terminal-split-resizer-bar"] {\n  background-color: hsl(var(--primary)) !important;\n  transform: scale(2) !important;\n}\n\n/* Подсветка активной панели сплита */\n[data-section="terminal-split-pane"][data-focused="true"] {\n  outline: 2px solid hsl(var(--primary)) !important;\n  outline-offset: -2px;\n}\n\n/* Или: Настройки → Терминал → Индикатор фокуса → Рамка вокруг активной панели */',
   'settings.appearance.language': 'Язык',
   'settings.appearance.language.desc': 'Выберите язык интерфейса',
   'settings.appearance.uiFont': 'Шрифт интерфейса',
   'settings.appearance.uiFont.desc': 'Выберите шрифт для интерфейса приложения',
-
+  'settings.appearance.windowOpacity': 'Прозрачность окна',
+  'settings.appearance.windowOpacity.desc': 'Настройте прозрачность всего окна приложения. При низких значениях текст терминала тоже бледнеет. В некоторых средах Linux это может не поддерживаться.',
   // Settings > Terminal
   'settings.terminal.section.theme': 'Тема терминала',
   'settings.terminal.themeModal.title': 'Выберите тему',
@@ -437,6 +440,8 @@ export const ruCoreMessages: Messages = {
   'settings.terminal.rendering.renderer': 'Рендерер',
   'settings.terminal.rendering.renderer.desc': 'Выберите технологию рендеринга терминала. В режиме "Авто" на устройствах с малым объёмом памяти будет использоваться DOM. Изменения применяются к новым терминальным сессиям.',
   'settings.terminal.rendering.auto': 'Авто',
+  'settings.terminal.rendering.lineTimestamps': 'Добавлять время к выводу',
+  'settings.terminal.rendering.lineTimestamps.desc': 'Вставлять локальное время перед строками вывода терминала. Метка времени становится частью видимого содержимого терминала.',
 
   // Settings > Terminal > Workspace Focus Indicator
   'settings.terminal.section.workspaceFocus': 'Индикатор фокуса рабочей области',
@@ -610,12 +615,12 @@ export const ruCoreMessages: Messages = {
   'proxyProfiles.section.proxies': 'Прокси',
   'proxyProfiles.count.items': 'Элементов: {count}',
   'proxyProfiles.empty.title': 'Нет прокси',
-  'proxyProfiles.empty.desc': 'Создавайте переиспользуемые HTTP- или SOCKS5-прокси и выбирайте их в настройках хоста.',
+  'proxyProfiles.empty.desc': 'Создавайте переиспользуемые HTTP-, SOCKS5- или командные прокси и выбирайте их в настройках хоста.',
   'proxyProfiles.usage': 'Связано: {count}',
   'proxyProfiles.copyName': '{name} Копия',
   'proxyProfiles.panel.newTitle': 'Новый прокси',
   'proxyProfiles.field.name': 'Имя прокси',
-  'proxyProfiles.error.required': 'Имя, хост и порт обязательны.',
+  'proxyProfiles.error.required': 'Имя и параметры прокси обязательны.',
   'proxyProfiles.error.port': 'Порт должен быть в диапазоне от 1 до 65535.',
   'proxyProfiles.viewMode': 'Режим просмотра прокси',
   'proxyProfiles.delete.title': 'Удалить прокси?',

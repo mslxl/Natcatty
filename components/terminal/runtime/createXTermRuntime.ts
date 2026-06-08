@@ -46,6 +46,7 @@ import { installUserCursorPreferenceGuard } from "./cursorPreference";
 import { terminalAltKeyOptions } from "./altKeyOptions";
 import { optionArrowWordJumpSequence } from "./optionArrowWordJump";
 import { watchDevicePixelRatio } from "./rendererDprWatch";
+import { shouldDeferWebglUntilVisible } from "./webglRendererPolicy";
 import { handleSerialLineModeInput } from "./serialLineInput";
 import {
   nextTerminalFontSizeForAction,
@@ -62,6 +63,12 @@ import {
   type PromptLineBreakState,
 } from "./promptLineBreak";
 import { recordTerminalCommandExecution } from "./terminalCommandExecution";
+import {
+  getSingleBracketedPasteLine,
+  getSinglePastedCommand,
+  prepareSudoAutofillInput,
+  type SudoPasswordAutofill,
+} from "./terminalSudoAutofill";
 import type {
   Host,
   KeyBinding,
@@ -94,12 +101,19 @@ export type XTermRuntime = {
    * fall into after font changes or device pixel ratio changes.
    */
   clearTextureAtlas: () => void;
+  /**
+   * Create the WebGL renderer if it was deferred (pane mounted hidden) and has
+   * not been created yet. Idempotent; a no-op when WebGL is disabled or already
+   * active. Called when a deferred pane first becomes visible.
+   */
+  ensureWebglRenderer: () => void;
 };
 
 export type CreateXTermRuntimeContext = {
   container: HTMLDivElement;
   host: Host;
   fontFamilyId: string;
+  resolvedFontFamily: string;
   fontSize: number;
   terminalTheme: TerminalTheme;
   terminalSettingsRef: RefObject<TerminalSettings | undefined>;
@@ -132,6 +146,7 @@ export type CreateXTermRuntimeContext = {
   ) => void;
   commandBufferRef: RefObject<string>;
   promptLineBreakStateRef?: RefObject<PromptLineBreakState>;
+  sudoAutofillRef?: RefObject<SudoPasswordAutofill | null>;
   setIsSearchOpen: Dispatch<SetStateAction<boolean>>;
 
   // Serial-specific options
@@ -154,6 +169,12 @@ export type CreateXTermRuntimeContext = {
   // Set to true while we're programmatically restoring a selection so that
   // copy-on-select listeners can suppress redundant clipboard writes.
   isRestoringSelectionRef?: RefObject<boolean>;
+
+  // Whether the pane is visible at creation time. When false, WebGL renderer
+  // creation is deferred until the pane first becomes visible (batch-connect
+  // background tabs) to avoid spinning up many WebGL contexts at once. Defaults
+  // to visible (immediate WebGL) when omitted.
+  initiallyVisible?: boolean;
 };
 
 const detectPlatform = (): XTermPlatform => {
@@ -225,7 +246,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   const hostFontId = resolveHostTerminalFontFamilyId(ctx.host, ctx.fontFamilyId) || "menlo";
   // Use fontStore for font lookup - guarantees non-empty result
   const fontObj = fontStore.getFontById(hostFontId);
-  const fontFamily = fontObj.family;
+  const fontFamily = ctx.resolvedFontFamily || fontObj.family;
 
   const effectiveFontSize = resolveHostTerminalFontSize(ctx.host, ctx.fontSize);
 
@@ -374,7 +395,12 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     __xtermRendererPreference?: string;
   };
 
-  if (performanceConfig.useWebGLAddon) {
+  // Idempotent: creates the WebGL renderer on first call and no-ops afterwards
+  // (or when WebGL is disabled for this device). Panes that mount hidden defer
+  // this until they first become visible — see shouldDeferWebglUntilVisible —
+  // so batch-connecting many hosts doesn't spin up every WebGL context at once.
+  const loadWebglRenderer = () => {
+    if (webglLoaded || !performanceConfig.useWebGLAddon) return;
     try {
       // WebglAddon constructor only accepts `preserveDrawingBuffer?: boolean`.
       // Passing an object here (legacy API assumption) unintentionally enables
@@ -392,10 +418,22 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         webglErr instanceof Error ? webglErr.message : webglErr,
       );
     }
-  } else {
+    scopedWindow.__xtermWebGLLoaded = webglLoaded;
+  };
+
+  if (!performanceConfig.useWebGLAddon) {
     logger.info(
       "[XTerm] Skipping WebGL addon (DOM preferred for low-memory devices)",
     );
+  } else if (
+    shouldDeferWebglUntilVisible({
+      useWebGLAddon: performanceConfig.useWebGLAddon,
+      initiallyVisible: ctx.initiallyVisible ?? true,
+    })
+  ) {
+    logger.info("[XTerm] Deferring WebGL addon until pane becomes visible");
+  } else {
+    loadWebglRenderer();
   }
 
   scopedWindow.__xtermWebGLLoaded = webglLoaded;
@@ -580,6 +618,28 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       return true;
     }
 
+    // Sudo password hint: while a hint is pending, Enter confirms (paste the
+    // saved password + submit); any other visible key dismisses it so the user
+    // can type the password manually. Checked before autocomplete so Enter
+    // pastes the password instead of submitting an empty line.
+    const sudoAutofill = ctx.sudoAutofillRef?.current;
+    if (sudoAutofill?.isPromptPending()) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        sudoAutofill.confirmFill();
+        return false;
+      }
+      if (e.key === "Escape" || e.key === "Backspace") {
+        e.preventDefault();
+        sudoAutofill.cancelHint();
+        return false; // dismiss without forwarding the byte to the no-echo prompt
+      }
+      if (e.key.length === 1) {
+        sudoAutofill.cancelHint();
+        // fall through: key becomes the first char of the manually typed password
+      }
+    }
+
     // Autocomplete key handler (must be checked before other handlers)
     if (ctx.onAutocompleteKeyEvent) {
       const consumed = ctx.onAutocompleteKeyEvent(e);
@@ -754,10 +814,43 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
   term.onData((data) => {
     const id = ctx.sessionRef.current;
+    let dataToWrite = data;
+    let handledSubmittedInput = false;
+    const onBroadcastInput = ctx.onBroadcastInputRef.current;
+    const broadcastDataBeforeSudo = (data === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") ? "\x08" : data;
+    const willBroadcastInput = !!id && shouldBroadcastTerminalUserInput(term, broadcastDataBeforeSudo, {
+      isBroadcastEnabled: ctx.isBroadcastEnabledRef.current,
+      hasBroadcastInputHandler: !!onBroadcastInput,
+    });
+    if (ctx.statusRef.current === "connected" && (data === "\r" || data === "\n")) {
+      const recordedCommand = recordTerminalCommandExecution(ctx.commandBufferRef.current, ctx, term);
+      handledSubmittedInput = true;
+      if (!willBroadcastInput) {
+        prepareSudoAutofillInput(data, recordedCommand, ctx.sudoAutofillRef?.current);
+      }
+    } else if (ctx.statusRef.current === "connected" && !willBroadcastInput) {
+      const pastedCommand = getSinglePastedCommand(data);
+      if (pastedCommand) {
+        const recordedCommand = recordTerminalCommandExecution(
+          `${ctx.commandBufferRef.current}${pastedCommand.command}`,
+          ctx,
+          term,
+        );
+        handledSubmittedInput = true;
+        if (recordedCommand) {
+          prepareSudoAutofillInput(
+            `${recordedCommand}${pastedCommand.lineEnding}`,
+            null,
+            ctx.sudoAutofillRef?.current,
+          );
+        }
+      }
+    }
+
     if (id) {
       // Serial line mode: buffer input and send on Enter
       if (ctx.host.protocol === "serial" && ctx.serialLineMode && ctx.serialLineBufferRef) {
-        handleSerialLineModeInput(data, {
+        handleSerialLineModeInput(dataToWrite, {
           bufferRef: ctx.serialLineBufferRef,
           localEcho: ctx.serialLocalEcho,
           writeToSession: (nextData) => ctx.terminalBackend.writeToSession(id, nextData),
@@ -766,33 +859,29 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       } else {
         // Character mode (default): send immediately
         // When backspaceBehavior is configured, remap the Backspace key output
-        let outData = data;
-        if (data === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") {
+        let outData = dataToWrite;
+        if (dataToWrite === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") {
           outData = "\x08";
         }
         ctx.terminalBackend.writeToSession(id, outData);
 
         // Local echo for serial connections only when explicitly enabled
         if (ctx.host.protocol === "serial" && ctx.serialLocalEcho) {
-          if (data === "\r") {
+          if (dataToWrite === "\r") {
             writeLocalTerminalData("\r\n");
-          } else if (data === "\x7f" || data === "\b") {
+          } else if (dataToWrite === "\x7f" || dataToWrite === "\b") {
             writeLocalTerminalData("\b \b");
-          } else if (data === "\x03") {
+          } else if (dataToWrite === "\x03") {
             writeLocalTerminalData("^C");
-          } else if (data.charCodeAt(0) >= 32 || data.length > 1) {
-            writeLocalTerminalData(data);
+          } else if (dataToWrite.charCodeAt(0) >= 32 || dataToWrite.length > 1) {
+            writeLocalTerminalData(dataToWrite);
           }
         }
       }
 
-      const onBroadcastInput = ctx.onBroadcastInputRef.current;
       // Use remapped data so broadcast peers also receive the correct byte
-      const broadcastData = (data === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") ? "\x08" : data;
-      if (shouldBroadcastTerminalUserInput(term, broadcastData, {
-        isBroadcastEnabled: ctx.isBroadcastEnabledRef.current,
-        hasBroadcastInputHandler: !!onBroadcastInput,
-      })) {
+      const broadcastData = (dataToWrite === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") ? "\x08" : data;
+      if (willBroadcastInput) {
         onBroadcastInput?.(broadcastData, ctx.sessionId);
       }
 
@@ -804,8 +893,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       ctx.onAutocompleteInput?.(data);
 
       if (ctx.statusRef.current === "connected") {
-        if (data === "\r" || data === "\n") {
-          recordTerminalCommandExecution(ctx.commandBufferRef.current, ctx, term);
+        if (handledSubmittedInput || data === "\r" || data === "\n") {
+          // Command recording and sudo command preparation happen before the
+          // input is written so sudo can receive a one-time prompt marker.
         } else if (data === "\x7f" || data === "\b") {
           ctx.commandBufferRef.current = ctx.commandBufferRef.current.slice(0, -1);
         } else if (data === "\x03") {
@@ -816,6 +906,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           ctx.commandBufferRef.current += data;
         } else if (data.length > 1 && !data.startsWith("\x1b")) {
           ctx.commandBufferRef.current += data;
+        } else {
+          const pastedLine = getSingleBracketedPasteLine(data);
+          if (pastedLine) {
+            ctx.commandBufferRef.current += pastedLine;
+          }
         }
       }
     }
@@ -988,6 +1083,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     searchAddon,
     keywordHighlighter,
     clearTextureAtlas: clearWebglTextureAtlas,
+    ensureWebglRenderer: loadWebglRenderer,
     dispose: () => {
       ctx.container.removeEventListener(
         "wheel",

@@ -71,7 +71,7 @@ export const useSftpConnections = ({
   const { listLocalFiles, listRemoteFiles } = useSftpDirectoryListing();
 
   const connect = useCallback(
-    async (side: "left" | "right", host: Host | "local", options?: { forceNewTab?: boolean; onTabCreated?: (tabId: string) => void }) => {
+    async (side: "left" | "right", host: Host | "local", options?: { forceNewTab?: boolean; onTabCreated?: (tabId: string) => void; sourceSessionId?: string }) => {
       const setTabs = side === "left" ? setLeftTabs : setRightTabs;
 
       let activeTabId: string | null = null;
@@ -207,6 +207,11 @@ export const useSftpConnections = ({
           isLocal: false,
           status: "connecting",
           currentPath: cachedStartPath,
+          // Suppress loading animation when connection reuse is requested.
+          // If the backend falls back to a fresh connection, the pane stays
+          // non-interactive (loading=true) with stale cached files visible —
+          // no worse than the previous UX of always showing a spinner.
+          reusedConnection: !!options?.sourceSessionId,
         };
 
         updateTab(side, activeTabId, (prev) => ({
@@ -292,6 +297,7 @@ export const useSftpConnections = ({
               const keyFirstCredentials = {
                 sessionId: `sftp-${connectionId}`,
                 ...credentials,
+                sourceSessionId: options?.sourceSessionId,
               };
               if (!credentials.sudo) {
                 keyFirstCredentials.password = undefined;
@@ -302,6 +308,7 @@ export const useSftpConnections = ({
                 sftpId = await openSftp({
                   sessionId: `sftp-${connectionId}`,
                   ...credentials,
+                  sourceSessionId: options?.sourceSessionId,
                   privateKey: undefined,
                   certificate: undefined,
                   publicKey: undefined,
@@ -317,6 +324,7 @@ export const useSftpConnections = ({
             sftpId = await openSftp({
               sessionId: `sftp-${connectionId}`,
               ...credentials,
+              sourceSessionId: options?.sourceSessionId,
             });
           }
 
@@ -452,6 +460,7 @@ export const useSftpConnections = ({
                   status: "connected",
                   currentPath: startPath,
                   homeDir,
+                  reusedConnection: undefined,
                 }
               : null,
             files,

@@ -3,11 +3,13 @@ import type { SerializeAddon } from "@xterm/addon-serialize";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import type { Host, Identity, KnownHost, SerialConfig, SSHKey, TerminalSession, TerminalSettings } from "../../../types";
 import type { PromptLineBreakState } from "./promptLineBreak";
+import type { SudoPasswordAutofill } from "./terminalSudoAutofill";
 
 export type TerminalBackendApi = {
   backendAvailable: () => boolean;
   telnetAvailable: () => boolean;
   moshAvailable: () => boolean;
+  etAvailable: () => boolean;
   localAvailable: () => boolean;
   serialAvailable: () => boolean;
   execAvailable: () => boolean;
@@ -17,6 +19,9 @@ export type TerminalBackendApi = {
   ) => Promise<string>;
   startMoshSession: (
     options: Parameters<NonNullable<NetcattyBridge["startMoshSession"]>>[0],
+  ) => Promise<string>;
+  startEtSession: (
+    options: Parameters<NonNullable<NetcattyBridge["startEtSession"]>>[0],
   ) => Promise<string>;
   startLocalSession: (
     options: Parameters<NonNullable<NetcattyBridge["startLocalSession"]>>[0],
@@ -55,6 +60,9 @@ export type TerminalBackendApi = {
   onChainProgress: (
     cb: (sessionId: string, hop: number, total: number, label: string, status: string, error?: string) => void,
   ) => (() => void) | undefined;
+  onConnectionReuseFallback?: (
+    cb: (sessionId: string, sourceSessionId?: string) => void,
+  ) => (() => void) | undefined;
   writeToSession: (sessionId: string, data: string, options?: { automated?: boolean }) => void;
   resizeSession: (sessionId: string, cols: number, rows: number) => void;
   /** Pause/resume the source stream for output back-pressure (optional). */
@@ -67,6 +75,7 @@ export type PendingAuth = {
   password?: string;
   keyId?: string;
   passphrase?: string;
+  savedToHost?: boolean;
 } | null;
 
 type ChainProgressState = {
@@ -79,6 +88,7 @@ export type SessionLogConfig = {
   enabled: boolean;
   directory: string;
   format: string;
+  timestampsEnabled?: boolean;
 };
 
 export type TerminalSessionStartersContext = {
@@ -89,7 +99,7 @@ export type TerminalSessionStartersContext = {
   resolvedChainHosts: Host[];
   sessionId: string;
   // Source session id to reuse an authenticated SSH connection from when this
-  // tab is a "Copy Tab" duplicate (issue #1204).
+  // terminal was created from an existing SSH session.
   reuseConnectionFromSessionId?: string;
   startupCommand?: string;
   noAutoRun?: boolean;
@@ -99,6 +109,9 @@ export type TerminalSessionStartersContext = {
   serialConfig?: SerialConfig;
   sessionLog?: SessionLogConfig;
   sshDebugLogEnabled?: boolean;
+  sudoAutofillPassword?: string;
+  sudoAutofillPasswordRef?: RefObject<string | undefined>;
+  onSudoHint?: (active: boolean) => boolean;
   isVisibleRef?: RefObject<boolean>;
   pendingOutputScrollRef?: RefObject<boolean>;
 
@@ -111,6 +124,7 @@ export type TerminalSessionStartersContext = {
   serializeAddonRef: RefObject<SerializeAddon | null>;
   pendingAuthRef: RefObject<PendingAuth>;
   promptLineBreakStateRef?: RefObject<PromptLineBreakState>;
+  sudoAutofillRef?: RefObject<SudoPasswordAutofill | null>;
 
   updateStatus: (next: TerminalSession["status"]) => void;
   setStatus: Dispatch<SetStateAction<TerminalSession["status"]>>;

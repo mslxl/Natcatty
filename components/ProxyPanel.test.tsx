@@ -49,6 +49,29 @@ test("ProxyPanel shows saved proxy selection when reusable profiles exist", () =
   assert.doesNotMatch(markup, /Proxy host/);
 });
 
+test("ProxyPanel labels saved ProxyCommand profiles without showing command contents", () => {
+  const commandProxy: ProxyProfile = {
+    id: "proxy-command-1",
+    label: "Cloudflare Access",
+    config: {
+      type: "command",
+      host: "",
+      port: 0,
+      command: "cloudflared access ssh --hostname %h --token secret",
+    },
+    createdAt: 1,
+  };
+  const markup = renderPanel({
+    proxyProfiles: [commandProxy],
+    selectedProxyProfileId: commandProxy.id,
+  });
+
+  assert.match(markup, /ProxyCommand/);
+  assert.doesNotMatch(markup, /COMMAND/);
+  assert.doesNotMatch(markup, /cloudflared access ssh/);
+  assert.doesNotMatch(markup, /secret/);
+});
+
 test("ProxyPanel keeps manual proxy fields available without a saved profile selection", () => {
   const markup = renderPanel({
     proxyProfiles: [proxyProfile],
@@ -77,4 +100,30 @@ test("ProxyPanel disables saving invalid manual proxy ports", () => {
 
   assert.match(markup, /Port must be between 1 and 65535/);
   assert.match(markup, /disabled=""/);
+});
+
+test("ProxyPanel supports custom ProxyCommand settings", () => {
+  const markup = renderPanel({
+    proxyConfig: {
+      type: "command",
+      host: "",
+      port: 0,
+      command: "cloudflared access ssh --hostname %h",
+    },
+  });
+
+  assert.match(markup, /Command/);
+  assert.match(markup, /cloudflared access ssh --hostname %h/);
+  assert.match(markup, /Use %h for the target host/);
+  assert.doesNotMatch(markup, /Proxy host/);
+  assert.doesNotMatch(markup, /Credentials/);
+});
+
+test("ProxyPanel uses a dropdown for proxy type selection", () => {
+  const markup = renderPanel({
+    proxyConfig: { type: "http", host: "manual-proxy.example.com", port: 3128 },
+  });
+
+  assert.match(markup, /role="combobox"/);
+  assert.match(markup, /aria-label="Type"/);
 });

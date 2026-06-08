@@ -1,6 +1,10 @@
 import type { Messages } from '../types';
 
 export const zhCNTerminalMessages: Messages = {
+  'terminal.sudoHint.pressEnter': '按 Enter 粘贴 sudo 密码',
+  'terminal.connection.protocol.et': 'EternalTerminal',
+  'terminal.et.proxyUnsupported': 'EternalTerminal 目前不支持 Netcatty 的代理设置。请改用 SSH，或移除该主机的代理。',
+  'terminal.et.multiJumpUnsupported': 'EternalTerminal 目前在 Netcatty 中最多支持一个跳板机。',
   // SFTP File Opener
   'sftp.context.copyPath': '复制文件路径',
   'sftp.context.openWith': '打开方式...',
@@ -283,6 +287,8 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.rendering.renderer': '渲染器',
   'settings.terminal.rendering.renderer.desc': '选择终端渲染技术。自动模式会在低内存设备上使用 DOM 渲染。更改将在新终端会话中生效。',
   'settings.terminal.rendering.auto': '自动',
+  'settings.terminal.rendering.lineTimestamps': '给输出加时间戳',
+  'settings.terminal.rendering.lineTimestamps.desc': '在终端输出行前插入本地时间，时间戳会成为终端可见内容的一部分。',
 
   // Settings > Terminal > Autocomplete
   'settings.terminal.section.autocomplete': '自动补全',
@@ -343,8 +349,11 @@ export const zhCNTerminalMessages: Messages = {
   'settings.shortcuts.binding.sftp-new-folder': '新建文件夹',
 
   // Host Details (sub-panels)
-  'hostDetails.proxyPanel.title': '通过 HTTP/SOCKS5 代理',
+  'hostDetails.proxyPanel.title': '通过 HTTP/SOCKS5/命令代理',
   'hostDetails.proxyPanel.hostPlaceholder': '代理主机',
+  'hostDetails.proxyPanel.command': 'ProxyCommand',
+  'hostDetails.proxyPanel.commandPlaceholder': 'cloudflared access ssh --hostname %h',
+  'hostDetails.proxyPanel.commandHelp': '使用 %h 表示目标主机，%p 表示目标端口，%% 表示字面百分号。',
   'hostDetails.proxyPanel.credentials': '凭据',
   'hostDetails.proxyPanel.usernamePlaceholder': '用户名',
   'hostDetails.proxyPanel.passwordPlaceholder': '密码',
@@ -355,7 +364,7 @@ export const zhCNTerminalMessages: Messages = {
   'hostDetails.proxyPanel.customProxy': '自定义代理',
   'hostDetails.proxyPanel.missing': '缺失',
   'hostDetails.proxyPanel.missingSaved': '保存的代理不存在',
-  'hostDetails.proxyPanel.error.required': '代理主机和端口不能为空。',
+  'hostDetails.proxyPanel.error.required': '代理主机和端口，或 ProxyCommand 不能为空。',
   'hostDetails.envVars.title': '环境变量',
   'hostDetails.envVars.desc': '为 {host} 设置环境变量。',
   'hostDetails.envVars.note': '部分 SSH 服务器默认只允许以 LC_ 和 LANG_ 为前缀的变量。',
@@ -473,6 +482,8 @@ export const zhCNTerminalMessages: Messages = {
   'tabs.logPrefix': '日志：',
   'tabs.logLocal': '本地',
   'tabs.copyTab': '复制标签页',
+  'tabs.copyTabToNewWindow': '复制标签页到新窗口',
+  'tabs.copyTabToNewWindowFailed': '无法在新窗口打开标签页',
   'tabs.closeOthers': '关闭其他标签',
   'tabs.closeToRight': '关闭右侧标签',
   'tabs.closeAll': '关闭所有标签',

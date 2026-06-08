@@ -10,6 +10,7 @@ const transferCompleteListeners = new Map();
 const transferErrorListeners = new Map();
 const transferCancelledListeners = new Map();
 const chainProgressListeners = new Map();
+const connectionReuseFallbackListeners = new Set();
 const zmodemListeners = new Map();
 const zmodemOverwriteListeners = new Map(); // sessionId -> Set<cb>
 const sftpConnectionProgressListeners = new Set();
@@ -46,6 +47,7 @@ function cleanupTransferListeners(transferId) {
 
 const _mcpLineBufs = new Map(); // sessionId -> trailing fragment string
 const _mcpFlushTimers = new Map(); // sessionId -> delayed-flush timer
+const _mcpDroppingWrappedLine = new Set(); // sessionIds with a split marker echo line in progress
 
 // Returns true if `s` ends with a non-empty prefix of "__NCMCP_"
 // (i.e. the next chunk might complete it into a marker-containing line).
@@ -71,13 +73,13 @@ function filterMcpChunk(sessionId, chunk) {
   _mcpLineBufs.delete(sessionId);
 
   // Fast path: nothing suspicious in the combined data
-  if (!data.includes("__NCMCP_") && !_endsWithMarkerPrefix(data)) {
+  if (!_mcpDroppingWrappedLine.has(sessionId) && !data.includes("__NCMCP_") && !_endsWithMarkerPrefix(data)) {
     return data;
   }
 
   // Slow path: scan line by line
   let result = "";
-  let droppedAny = false;
+  let droppedAny = _mcpDroppingWrappedLine.has(sessionId);
   let pos = 0;
   while (pos < data.length) {
     const nlIdx = data.indexOf("\n", pos);
@@ -90,16 +92,18 @@ function filterMcpChunk(sessionId, chunk) {
       const tail = data.slice(pos);
       if (droppedAny || tail.includes("__NCMCP_") || _endsWithMarkerPrefix(tail)) {
         _mcpLineBufs.set(sessionId, tail);
+        if (droppedAny) _mcpDroppingWrappedLine.add(sessionId);
       } else {
         result += tail; // safe to display immediately
       }
       break;
     }
     const line = data.slice(pos, nlIdx + 1); // includes the \n
-    if (!line.includes("__NCMCP_")) {
-      result += line;
+    if (droppedAny || line.includes("__NCMCP_")) {
+      droppedAny = false;
+      _mcpDroppingWrappedLine.delete(sessionId);
     } else {
-      droppedAny = true;
+      result += line;
     }
     pos = nlIdx + 1;
   }
@@ -171,6 +175,10 @@ ipcRenderer.on("netcatty:data", (_event, payload) => {
       const held = _mcpLineBufs.get(sid);
       _mcpLineBufs.delete(sid);
       _mcpFlushTimers.delete(sid);
+      if (_mcpDroppingWrappedLine.has(sid)) {
+        _mcpDroppingWrappedLine.delete(sid);
+        return;
+      }
       if (held) _deliverToListeners(sid, held);
     }, 80));
   }
@@ -199,6 +207,7 @@ ipcRenderer.on("netcatty:exit", (_event, payload) => {
     _mcpFlushTimers.delete(payload.sessionId);
   }
   _mcpLineBufs.delete(payload.sessionId); // clean up any held fragment
+  _mcpDroppingWrappedLine.delete(payload.sessionId);
 });
 
 // Chain progress events (for jump host connections)
@@ -210,6 +219,16 @@ ipcRenderer.on("netcatty:chain:progress", (_event, payload) => {
       cb(sessionId, hop, total, label, status, error);
     } catch (err) {
       console.error("Chain progress callback failed", err);
+    }
+  });
+});
+
+ipcRenderer.on("netcatty:connection-reuse:fallback", (_event, payload) => {
+  connectionReuseFallbackListeners.forEach((cb) => {
+    try {
+      cb(payload.sessionId, payload.sourceSessionId);
+    } catch (err) {
+      console.error("Connection reuse fallback callback failed", err);
     }
   });
 });
@@ -616,6 +635,7 @@ const api = createPreloadApi({
   transferErrorListeners,
   transferCancelledListeners,
   chainProgressListeners,
+  connectionReuseFallbackListeners,
   zmodemListeners,
   zmodemOverwriteListeners,
   sftpConnectionProgressListeners,

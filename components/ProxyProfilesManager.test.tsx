@@ -40,14 +40,17 @@ const installStorageStub = (viewMode: string | null = null) => {
   });
 };
 
-const renderManager = (viewMode: string | null = null) => {
+const renderManager = (
+  viewMode: string | null = null,
+  profiles: ProxyProfile[] = [proxyProfile],
+) => {
   installStorageStub(viewMode);
   return renderToStaticMarkup(
     React.createElement(
       I18nProvider,
       { locale: "en" },
       React.createElement(ProxyProfilesManager, {
-        proxyProfiles: [proxyProfile],
+        proxyProfiles: profiles,
         hosts: [],
         groupConfigs: [],
         onUpdateProxyProfiles: () => {},
@@ -82,4 +85,26 @@ test("ProxyProfilesManager validates proxy ports", () => {
   assert.equal(isValidProxyPort(0), false);
   assert.equal(isValidProxyPort(65536), false);
   assert.equal(isValidProxyPort(10.5), false);
+});
+
+test("ProxyProfilesManager hides ProxyCommand contents in profile summaries", () => {
+  const markup = renderManager(null, [
+    {
+      id: "proxy-command-1",
+      label: "Cloudflare Access",
+      config: {
+        type: "command",
+        host: "",
+        port: 0,
+        command: "cloudflared access ssh --hostname %h --token secret",
+      },
+      createdAt: 1,
+    },
+  ]);
+
+  assert.match(markup, /aria-label="Cloudflare Access, ProxyCommand, ProxyCommand, 0 linked"/);
+  assert.match(markup, /Cloudflare Access/);
+  assert.match(markup, /ProxyCommand/);
+  assert.doesNotMatch(markup, /cloudflared access ssh/);
+  assert.doesNotMatch(markup, /secret/);
 });

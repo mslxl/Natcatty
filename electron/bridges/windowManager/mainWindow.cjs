@@ -72,7 +72,11 @@ function createMainWindowApi(ctx) {
         },
       });
     
-      mainWindow = win;
+      if (typeof registerMainWindow === "function") {
+        registerMainWindow(win);
+      } else {
+        mainWindow = win;
+      }
     
       // Clear reference when the main window is destroyed
       win.on('closed', () => {
@@ -84,7 +88,11 @@ function createMainWindowApi(ctx) {
         } catch {
           // ignore
         }
-        if (mainWindow === win) mainWindow = null;
+        if (typeof unregisterMainWindow === "function") {
+          unregisterMainWindow(win);
+        } else if (mainWindow === win) {
+          mainWindow = null;
+        }
       });
     
       // Log renderer crashes for diagnostics (skip normal clean exits)
@@ -139,7 +147,13 @@ function createMainWindowApi(ctx) {
       // Terminal apps need these keys to pass through to the remote shell (e.g., byobu, tmux).
       // Using setIgnoreMenuShortcuts lets the keydown still reach the page (xterm.js)
       // while preventing Chromium's built-in shortcuts from triggering.
-      win.webContents.on("before-input-event", (_event, input) => {
+      win.webContents.on("before-input-event", (event, input) => {
+        if (isMac && shouldCloseWindowFromInput(input)) {
+          event.preventDefault();
+          requestWindowCommandClose(win);
+          return;
+        }
+
         if (input.alt && !input.control && !input.meta) {
           if (input.key === "ArrowLeft" || input.key === "ArrowRight") {
             win.webContents.setIgnoreMenuShortcuts(true);
@@ -163,6 +177,7 @@ function createMainWindowApi(ctx) {
       // Track window bounds for saving (use last non-maximized/non-fullscreen bounds)
       let lastNormalBounds = null;
       let saveStateTimer = null;
+      let thisWindowCloseRequested = false;
     
       const updateNormalBounds = () => {
         if (!win.isDestroyed() && !win.isMaximized() && !win.isFullScreen()) {
@@ -198,7 +213,8 @@ function createMainWindowApi(ctx) {
       // Save state when window is about to close
       win.on("close", (event) => {
         // Check if close-to-tray is enabled
-        if (!isQuitting && getGlobalShortcutBridge().handleWindowClose(event, win)) {
+        const trackedMainWindowCount = typeof getMainWindowCount === "function" ? getMainWindowCount() : 1;
+        if (trackedMainWindowCount <= 1 && !isQuitting && getGlobalShortcutBridge().handleWindowClose(event, win)) {
           // Window was hidden to tray - save state before returning
           if (saveStateTimer) clearTimeout(saveStateTimer);
           const state = getWindowBoundsState(win, lastNormalBounds);
@@ -207,10 +223,10 @@ function createMainWindowApi(ctx) {
           return;
         }
     
-        if (windowStateCloseRequested) {
+        if (thisWindowCloseRequested) {
           return;
         }
-        windowStateCloseRequested = true;
+        thisWindowCloseRequested = true;
         if (saveStateTimer) clearTimeout(saveStateTimer);
         const state = getWindowBoundsState(win, lastNormalBounds);
         if (pendingWindowStateWrite) {
@@ -263,6 +279,8 @@ function createMainWindowApi(ctx) {
       } catch {
         // ignore
       }
+
+      applyWindowOpacityToWindow(win);
     
       // Defer show until renderer is ready; use fallback timeout to avoid keeping window hidden forever.
       // Production gets a shorter timeout since the splash screen provides visual feedback.

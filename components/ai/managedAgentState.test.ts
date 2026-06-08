@@ -11,8 +11,7 @@ test('buildManagedAgentState removes stale managed agents when path detection fa
       name: 'Codex CLI',
       command: '/usr/local/bin/codex',
       enabled: true,
-      acpCommand: 'codex-acp',
-      acpArgs: [],
+      sdkBackend: 'codex',
     },
     {
       id: 'custom-agent',
@@ -43,8 +42,7 @@ test('buildManagedAgentState keeps unrelated defaults when removing stale manage
       name: 'Claude Code',
       command: '/usr/local/bin/claude',
       enabled: true,
-      acpCommand: 'claude-agent-acp',
-      acpArgs: [],
+      sdkBackend: 'claude',
     },
     {
       id: 'custom-agent',
@@ -68,7 +66,7 @@ test('buildManagedAgentState keeps unrelated defaults when removing stale manage
   assert.equal(state.defaultAgentId, 'custom-agent');
 });
 
-test('buildManagedAgentState stores the system Claude executable for ACP runs', () => {
+test('buildManagedAgentState stores the system Claude executable for SDK runs', () => {
   const state = buildManagedAgentState(
     [],
     'catty',
@@ -78,8 +76,44 @@ test('buildManagedAgentState stores the system Claude executable for ACP runs', 
 
   assert.equal(state.agents.length, 1);
   assert.equal(state.agents[0].command, '/opt/homebrew/bin/claude');
+  assert.equal(state.agents[0].sdkBackend, 'claude');
   assert.deepEqual(state.agents[0].env, {
     CLAUDE_CODE_EXECUTABLE: '/opt/homebrew/bin/claude',
+  });
+});
+
+test('buildManagedAgentState stores SDK backend keys for discovered managed agents', () => {
+  const codexState = buildManagedAgentState(
+    [],
+    'catty',
+    'codex',
+    { path: '/opt/homebrew/bin/codex', version: '1.0.0', available: true },
+  );
+  const copilotState = buildManagedAgentState(
+    [],
+    'catty',
+    'copilot',
+    { path: '/opt/homebrew/bin/copilot', version: '1.0.0', available: true },
+  );
+
+  assert.equal(codexState.agents[0].sdkBackend, 'codex');
+  assert.equal(copilotState.agents[0].sdkBackend, 'copilot');
+  assert.equal(copilotState.agents[0].acpArgs, undefined);
+});
+
+test('buildManagedAgentState stores CODEBUDDY_CODE_PATH for codebuddy', () => {
+  const state = buildManagedAgentState(
+    [],
+    'catty',
+    'codebuddy',
+    { path: '/opt/homebrew/bin/codebuddy', version: '0.1.0', available: true },
+  );
+
+  assert.equal(state.agents.length, 1);
+  assert.equal(state.agents[0].command, '/opt/homebrew/bin/codebuddy');
+  assert.equal(state.agents[0].sdkBackend, 'codebuddy');
+  assert.deepEqual(state.agents[0].env, {
+    CODEBUDDY_CODE_PATH: '/opt/homebrew/bin/codebuddy',
   });
 });
 
@@ -90,8 +124,7 @@ test('buildManagedAgentState does not remove user-created matching agents', () =
       name: 'My Claude Wrapper',
       command: '/usr/local/bin/claude',
       enabled: true,
-      acpCommand: 'claude-agent-acp',
-      acpArgs: [],
+      sdkBackend: 'claude',
     },
   ];
 
@@ -106,156 +139,6 @@ test('buildManagedAgentState does not remove user-created matching agents', () =
   assert.equal(state.defaultAgentId, 'my-claude-wrapper');
 });
 
-test('buildManagedAgentState preserves pre-configured env when CLI is unavailable', () => {
-  const agents: ExternalAgentConfig[] = [
-    {
-      id: 'discovered_codebuddy',
-      name: 'CodeBuddy Code',
-      command: 'codebuddy',
-      enabled: true,
-      acpCommand: 'codebuddy',
-      acpArgs: ['--acp'],
-      env: { CODEBUDDY_AUTH_TOKEN: 'some-token', CODEBUDDY_INTERNET_ENVIRONMENT: 'HTTP_PROXY=http://proxy:8080' },
-    },
-  ];
-
-  // CLI not found — path detection fails
-  const state = buildManagedAgentState(
-    agents,
-    'discovered_codebuddy',
-    'codebuddy',
-    { path: '', version: null, available: false },
-  );
-
-  // Entry should be preserved (disabled) so user's env config survives
-  assert.equal(state.agents.length, 1);
-  assert.equal(state.agents[0].id, 'discovered_codebuddy');
-  assert.equal(state.agents[0].enabled, false);
-  assert.equal(state.agents[0].autoDisabledUntilAvailable, true);
-  assert.deepEqual(state.agents[0].env, {
-    CODEBUDDY_AUTH_TOKEN: 'some-token',
-    CODEBUDDY_INTERNET_ENVIRONMENT: 'HTTP_PROXY=http://proxy:8080',
-  });
-  assert.equal(state.defaultAgentId, 'catty');
-});
-
-test('buildManagedAgentState preserves pre-configured env when CLI is temporarily missing (path=null)', () => {
-  const agents: ExternalAgentConfig[] = [
-    {
-      id: 'discovered_codebuddy',
-      name: 'CodeBuddy Code',
-      command: '/usr/local/bin/codebuddy',
-      enabled: true,
-      acpCommand: '/usr/local/bin/codebuddy',
-      acpArgs: ['--acp'],
-      env: { CODEBUDDY_AUTH_TOKEN: 'tok-123' },
-    },
-    {
-      id: 'custom-agent',
-      name: 'Custom',
-      command: 'custom',
-      enabled: true,
-    },
-  ];
-
-  const state = buildManagedAgentState(
-    agents,
-    'discovered_codebuddy',
-    'codebuddy',
-    null,
-  );
-
-  assert.deepEqual(
-    state.agents.map((agent) => agent.id),
-    ['custom-agent', 'discovered_codebuddy'],
-  );
-  assert.equal(state.agents[1].enabled, false);
-  assert.equal(state.agents[1].autoDisabledUntilAvailable, true);
-  assert.deepEqual(state.agents[1].env, { CODEBUDDY_AUTH_TOKEN: 'tok-123' });
-  assert.equal(state.defaultAgentId, 'catty');
-});
-
-test('buildManagedAgentState re-enables auto-disabled CodeBuddy after CLI becomes available', () => {
-  const agents: ExternalAgentConfig[] = [
-    {
-      id: 'discovered_codebuddy',
-      name: 'CodeBuddy Code',
-      command: 'codebuddy',
-      enabled: false,
-      acpCommand: 'codebuddy',
-      acpArgs: ['--acp'],
-      env: { CODEBUDDY_AUTH_TOKEN: 'tok-123' },
-      autoDisabledUntilAvailable: true,
-    },
-  ];
-
-  const state = buildManagedAgentState(
-    agents,
-    'catty',
-    'codebuddy',
-    { path: '/usr/local/bin/codebuddy', version: '1.2.3', available: true },
-  );
-
-  assert.equal(state.agents.length, 1);
-  assert.equal(state.agents[0].id, 'discovered_codebuddy');
-  assert.equal(state.agents[0].command, '/usr/local/bin/codebuddy');
-  assert.equal(state.agents[0].acpCommand, '/usr/local/bin/codebuddy');
-  assert.equal(state.agents[0].enabled, true);
-  assert.equal(state.agents[0].autoDisabledUntilAvailable, undefined);
-  assert.deepEqual(state.agents[0].env, { CODEBUDDY_AUTH_TOKEN: 'tok-123' });
-});
-
-test('buildManagedAgentState re-enables preconfigured CodeBuddy env from older state without marker', () => {
-  const agents: ExternalAgentConfig[] = [
-    {
-      id: 'discovered_codebuddy',
-      name: 'CodeBuddy Code',
-      command: 'codebuddy',
-      enabled: false,
-      acpCommand: 'codebuddy',
-      acpArgs: ['--acp'],
-      env: { CODEBUDDY_AUTH_TOKEN: 'tok-123' },
-    },
-  ];
-
-  const state = buildManagedAgentState(
-    agents,
-    'catty',
-    'codebuddy',
-    { path: '/usr/local/bin/codebuddy', version: '1.2.3', available: true },
-  );
-
-  assert.equal(state.agents.length, 1);
-  assert.equal(state.agents[0].command, '/usr/local/bin/codebuddy');
-  assert.equal(state.agents[0].enabled, true);
-  assert.equal(state.agents[0].autoDisabledUntilAvailable, undefined);
-});
-
-test('buildManagedAgentState keeps manually disabled managed agents disabled after detection', () => {
-  const agents: ExternalAgentConfig[] = [
-    {
-      id: 'discovered_codebuddy',
-      name: 'CodeBuddy Code',
-      command: '/usr/local/bin/codebuddy',
-      enabled: false,
-      acpCommand: '/usr/local/bin/codebuddy',
-      acpArgs: ['--acp'],
-      env: { CODEBUDDY_AUTH_TOKEN: 'tok-123' },
-    },
-  ];
-
-  const state = buildManagedAgentState(
-    agents,
-    'catty',
-    'codebuddy',
-    { path: '/usr/local/bin/codebuddy', version: '1.2.3', available: true },
-  );
-
-  assert.equal(state.agents.length, 1);
-  assert.equal(state.agents[0].enabled, false);
-  assert.equal(state.agents[0].autoDisabledUntilAvailable, undefined);
-});
-
 test('buildManagedAgentState only rewrites settings-managed discovered agents', () => {
   const agents: ExternalAgentConfig[] = [
     {
@@ -263,8 +146,7 @@ test('buildManagedAgentState only rewrites settings-managed discovered agents', 
       name: 'My Codex Wrapper',
       command: '/usr/local/bin/codex',
       enabled: true,
-      acpCommand: 'codex-acp',
-      acpArgs: [],
+      sdkBackend: 'codex',
     },
   ];
 
@@ -272,7 +154,7 @@ test('buildManagedAgentState only rewrites settings-managed discovered agents', 
     agents,
     'my-codex-wrapper',
     'codex',
-    { path: '/opt/netcatty/codex-acp', version: 'Bundled ACP', available: true },
+    { path: '/opt/netcatty/codex', version: 'Bundled legacy adapter', available: true },
   );
 
   assert.deepEqual(

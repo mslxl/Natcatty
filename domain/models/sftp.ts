@@ -24,6 +24,8 @@ export interface SftpConnection {
   error?: string;
   currentPath: string;
   homeDir?: string;
+  /** True when this SFTP connection reuses an existing terminal SSH session */
+  reusedConnection?: boolean;
 }
 
 export type TransferStatus = 'pending' | 'transferring' | 'completed' | 'failed' | 'cancelled';

@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronRight, Eye, EyeOff, Pencil, Upload, RotateCcw, X } from "lucide-react";
 import type { ProviderConfig, ProviderAdvancedParams, ProviderStyle } from "../../../../infrastructure/ai/types";
 import { PROVIDER_PRESETS, resolveProviderStyle } from "../../../../infrastructure/ai/types";
+import { sanitizeContextWindow } from "../../../../infrastructure/ai/contextCompaction";
 import { encryptField, decryptField } from "../../../../infrastructure/persistence/secureFieldAdapter";
 import { useI18n } from "../../../../application/i18n/I18nProvider";
 import { Button } from "../../../ui/button";
@@ -10,6 +11,7 @@ import type { BuiltinProviderIcon } from "./types";
 import { BUILTIN_PROVIDER_ICONS } from "./types";
 import type { ProviderFormState } from "./types";
 import { ModelSelector } from "./ModelSelector";
+import { mergeModelContextWindow } from "./modelMetadata";
 import { ProviderIconBadge } from "./ProviderIconBadge";
 
 const ICON_PIXEL_SIZE = 64;
@@ -60,6 +62,8 @@ export const ProviderConfigForm: React.FC<{
     apiKey: "",
     baseURL: provider.baseURL ?? PROVIDER_PRESETS[provider.providerId]?.defaultBaseURL ?? "",
     defaultModel: provider.defaultModel ?? "",
+    contextWindow: provider.contextWindow != null ? String(provider.contextWindow) : "",
+    modelContextWindows: provider.modelContextWindows ?? {},
     skipTLSVerify: provider.skipTLSVerify ?? false,
     advancedParams: provider.advancedParams ?? {},
     style: provider.style ?? "",
@@ -71,9 +75,28 @@ export const ProviderConfigForm: React.FC<{
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showIconPicker, setShowIconPicker] = useState(false);
   const [iconError, setIconError] = useState<string | null>(null);
+  const [contextWindowError, setContextWindowError] = useState<string | null>(null);
+  const [apiKeySourceVersion, setApiKeySourceVersion] = useState(0);
 
   const preset = PROVIDER_PRESETS[provider.providerId];
   const resolvedStyle: ProviderStyle = form.style || resolveProviderStyle({ providerId: provider.providerId });
+  const modelMetadataSourceKey = useMemo(() => JSON.stringify({
+    providerId: provider.providerId,
+    baseURL: form.baseURL || preset?.defaultBaseURL || "",
+    modelsEndpoint: preset?.modelsEndpoint ?? "",
+    apiKeySourceVersion,
+    style: resolvedStyle,
+    skipTLSVerify: form.skipTLSVerify,
+  }), [
+    provider.providerId,
+    form.baseURL,
+    apiKeySourceVersion,
+    form.skipTLSVerify,
+    preset?.defaultBaseURL,
+    preset?.modelsEndpoint,
+    resolvedStyle,
+  ]);
+  const modelMetadataSourceKeyRef = useRef<string | null>(null);
   const previewProvider: Pick<ProviderConfig, "providerId" | "name" | "iconId" | "iconDataUrl"> = {
     providerId: provider.providerId,
     name: form.name,
@@ -96,6 +119,19 @@ export const ProviderConfigForm: React.FC<{
         .finally(() => setIsDecrypting(false));
     }
   }, [provider.apiKey]);
+
+  useEffect(() => {
+    if (modelMetadataSourceKeyRef.current == null) {
+      modelMetadataSourceKeyRef.current = modelMetadataSourceKey;
+      return;
+    }
+    if (modelMetadataSourceKeyRef.current === modelMetadataSourceKey) return;
+
+    modelMetadataSourceKeyRef.current = modelMetadataSourceKey;
+    setForm((prev) => Object.keys(prev.modelContextWindows).length > 0
+      ? { ...prev, modelContextWindows: {} }
+      : prev);
+  }, [modelMetadataSourceKey]);
 
   const [advancedParamRaw, setAdvancedParamRaw] = useState<Record<string, string>>({});
   const handleAdvancedParam = useCallback((key: keyof ProviderAdvancedParams, raw: string) => {
@@ -139,6 +175,11 @@ export const ProviderConfigForm: React.FC<{
     setForm((prev) => ({ ...prev, iconId: "", iconDataUrl: "" }));
   }, []);
 
+  const handleApiKeyChange = useCallback((value: string) => {
+    setApiKeySourceVersion((version) => version + 1);
+    setForm((prev) => ({ ...prev, apiKey: value }));
+  }, []);
+
   const handleSave = useCallback(async () => {
     const cleanedParams: ProviderAdvancedParams = {};
     const ap = form.advancedParams;
@@ -150,11 +191,25 @@ export const ProviderConfigForm: React.FC<{
 
     const trimmedName = form.name.trim();
     const defaultName = PROVIDER_PRESETS[provider.providerId]?.name ?? "";
+    const rawContextWindow = form.contextWindow.trim();
+    const rawContextWindowNumber = Number(rawContextWindow);
+    if (rawContextWindow && (!Number.isInteger(rawContextWindowNumber) || rawContextWindowNumber <= 0)) {
+      setContextWindowError(t("ai.providers.contextWindow.error"));
+      return;
+    }
+    const manualContextWindow = rawContextWindow ? sanitizeContextWindow(rawContextWindow) : undefined;
+    if (rawContextWindow && manualContextWindow == null) {
+      setContextWindowError(t("ai.providers.contextWindow.error"));
+      return;
+    }
+    setContextWindowError(null);
 
     const updates: Partial<ProviderConfig> = {
       name: trimmedName || defaultName,
       baseURL: form.baseURL || undefined,
       defaultModel: form.defaultModel || undefined,
+      contextWindow: manualContextWindow,
+      modelContextWindows: Object.keys(form.modelContextWindows).length > 0 ? form.modelContextWindows : undefined,
       skipTLSVerify: form.skipTLSVerify || undefined,
       advancedParams: Object.keys(cleanedParams).length > 0 ? cleanedParams : undefined,
       style: form.style || undefined,
@@ -170,7 +225,7 @@ export const ProviderConfigForm: React.FC<{
     }
 
     onSave(updates);
-  }, [form, onSave, provider.providerId]);
+  }, [form, onSave, provider.providerId, t]);
 
   return (
     <div className="mt-3 space-y-3 border-t border-border/40 pt-3">
@@ -305,7 +360,7 @@ export const ProviderConfigForm: React.FC<{
             <input
               type={showApiKey ? "text" : "password"}
               value={isDecrypting ? "" : form.apiKey}
-              onChange={(e) => setForm((prev) => ({ ...prev, apiKey: e.target.value }))}
+              onChange={(e) => handleApiKeyChange(e.target.value)}
               placeholder={isDecrypting ? t('ai.providers.apiKey.decrypting') : t('ai.providers.apiKey.placeholder')}
               disabled={isDecrypting}
               className="w-full h-8 rounded-md border border-input bg-background px-3 pr-9 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
@@ -339,13 +394,46 @@ export const ProviderConfigForm: React.FC<{
         <ModelSelector
           value={form.defaultModel}
           onChange={(val) => setForm((prev) => ({ ...prev, defaultModel: val }))}
+          onModelMetadata={(model) => {
+            setForm((prev) => ({
+              ...prev,
+              modelContextWindows: mergeModelContextWindow(prev.modelContextWindows, model.id, model.contextWindow) ?? prev.modelContextWindows,
+            }));
+          }}
           baseURL={form.baseURL || preset?.defaultBaseURL || ""}
           modelsEndpoint={preset?.modelsEndpoint}
+          presetModels={preset?.defaultModels}
           apiKey={form.apiKey}
           providerId={provider.providerId}
           style={resolvedStyle}
           skipTLSVerify={form.skipTLSVerify}
         />
+      </div>
+
+      {/* Context window */}
+      <div className="space-y-1.5">
+        <label className="text-xs font-medium text-muted-foreground">{t('ai.providers.contextWindow')}</label>
+        <input
+          type="number"
+          min={1}
+          step={1}
+          value={form.contextWindow}
+          onChange={(e) => {
+            setContextWindowError(null);
+            setForm((prev) => ({ ...prev, contextWindow: e.target.value }));
+          }}
+          placeholder={
+            form.defaultModel && form.modelContextWindows[form.defaultModel]
+              ? String(form.modelContextWindows[form.defaultModel])
+              : t('ai.providers.contextWindow.placeholder')
+          }
+          className={cn(
+            "w-full h-8 rounded-md border border-input bg-background px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+            contextWindowError && "border-destructive focus-visible:ring-destructive",
+          )}
+        />
+        {contextWindowError && <p className="text-[11px] text-destructive">{contextWindowError}</p>}
+        <p className="text-[11px] text-muted-foreground/70">{t('ai.providers.contextWindow.help')}</p>
       </div>
 
       {/* Skip TLS Verification */}

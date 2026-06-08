@@ -28,9 +28,14 @@ const THEME_COLORS = {
 
 // State
 let mainWindow = null;
+const mainWindows = new Set();
+let lastFocusedMainWindow = null;
 let settingsWindow = null;
 let currentTheme = "light";
 let currentLanguage = "en";
+let currentWindowOpacity = 1;
+let cachedNativeTheme = null;
+
 let handlersRegistered = false; // Prevent duplicate IPC handler registration
 let menuDeps = null;
 let electronApp = null; // Reference to Electron app for userData path
@@ -54,6 +59,7 @@ const DEBUG_WINDOWS = process.env.NETCATTY_DEBUG_WINDOWS === "1";
 const OAUTH_DEFAULT_WIDTH = 600;
 const OAUTH_DEFAULT_HEIGHT = 700;
 const OAUTH_OVERLAY_ID = "__netcatty_oauth_loading__";
+const WINDOW_COMMAND_CLOSE_CHANNEL = "netcatty:window:command-close";
 // The OAuth callback port is chosen dynamically by oauthBridge (prefers
 // 45678, falls back to an OS-assigned free port if that is in use, #823),
 // so the in-app popup allow-list has to consult the bridge at popup-open
@@ -79,6 +85,17 @@ function debugLog(...args) {
 
 function setIsQuitting(nextValue) {
   isQuitting = Boolean(nextValue);
+}
+
+function shouldCloseWindowFromInput(input) {
+  return Boolean(
+    input?.type === "keyDown" &&
+    input?.meta &&
+    !input?.control &&
+    !input?.alt &&
+    !input?.shift &&
+    String(input?.key || "").toLowerCase() === "w",
+  );
 }
 
 /**
@@ -228,8 +245,8 @@ function getWindowBoundsState(win, overrideBounds) {
 }
 
 const MENU_LABELS = {
-  en: { edit: "Edit", view: "View", window: "Window", reload: "Reload" },
-  "zh-CN": { edit: "编辑", view: "视图", window: "窗口", reload: "重新加载" },
+  en: { edit: "Edit", view: "View", window: "Window", reload: "Reload", closeWindow: "Close Window" },
+  "zh-CN": { edit: "编辑", view: "视图", window: "窗口", reload: "重新加载", closeWindow: "关闭窗口" },
 };
 
 function tMenu(language, key) {
@@ -256,14 +273,119 @@ function getWindowForIpcEvent(event) {
   } catch {
     // ignore
   }
-  return mainWindow;
+  return getMainWindow();
+}
+
+function pruneMainWindows() {
+  for (const win of Array.from(mainWindows)) {
+    if (!win || win.isDestroyed?.()) {
+      mainWindows.delete(win);
+      if (lastFocusedMainWindow === win) lastFocusedMainWindow = null;
+      if (mainWindow === win) mainWindow = null;
+    }
+  }
+}
+
+function getMainWindowList() {
+  pruneMainWindows();
+  return Array.from(mainWindows).filter((win) => isWindowUsable(win));
+}
+
+function rememberMainWindow(win) {
+  if (!win || win.isDestroyed?.()) return;
+  lastFocusedMainWindow = win;
+  mainWindow = win;
+}
+
+function registerMainWindow(win) {
+  if (!win || win.isDestroyed?.()) return;
+  mainWindows.add(win);
+  rememberMainWindow(win);
+  try {
+    win.on("focus", () => rememberMainWindow(win));
+  } catch {
+    // ignore
+  }
+}
+
+function unregisterMainWindow(win) {
+  if (!win) return;
+  mainWindows.delete(win);
+  if (lastFocusedMainWindow === win) lastFocusedMainWindow = null;
+  if (mainWindow === win) mainWindow = null;
+  const fallback = getMainWindowList().at(-1) || null;
+  if (fallback) rememberMainWindow(fallback);
+}
+
+function forEachMainWindow(callback) {
+  for (const win of getMainWindowList()) {
+    try {
+      callback(win);
+    } catch {
+      // ignore per-window broadcast failures
+    }
+  }
+}
+
+function clampWindowOpacity(opacity) {
+  const value = Number(opacity);
+  if (!Number.isFinite(value)) return 1;
+  return Math.min(1, Math.max(0.5, value));
+}
+
+function applyWindowOpacityToWindow(win) {
+  if (!win || win.isDestroyed?.()) return;
+  try {
+    win.setOpacity?.(currentWindowOpacity);
+  } catch {
+    // ignore
+  }
+}
+
+function applyWindowOpacity(opacity) {
+  currentWindowOpacity = clampWindowOpacity(opacity);
+  forEachMainWindow(applyWindowOpacityToWindow);
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    applyWindowOpacityToWindow(settingsWindow);
+  }
+  return currentWindowOpacity;
+}
+
+function getMainWindowCount() {
+  return getMainWindowList().length;
+}
+
+function isMainWindow(win) {
+  if (!win || win.isDestroyed?.()) return false;
+  pruneMainWindows();
+  return mainWindows.has(win);
+}
+
+function closeBrowserWindow(win) {
+  if (!win || win.isDestroyed?.()) return false;
+  try {
+    win.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function requestWindowCommandClose(win) {
+  if (!win || win.isDestroyed?.()) return false;
+  try {
+    const webContents = win.webContents;
+    if (!webContents || webContents.isDestroyed?.()) return closeBrowserWindow(win);
+    webContents.send(WINDOW_COMMAND_CLOSE_CHANNEL);
+    return true;
+  } catch {
+    return closeBrowserWindow(win);
+  }
 }
 
 function broadcastLanguageChanged() {
   try {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents?.send?.("netcatty:languageChanged", currentLanguage);
-    }
+    forEachMainWindow((win) => win.webContents?.send?.("netcatty:languageChanged", currentLanguage));
     if (settingsWindow && !settingsWindow.isDestroyed()) {
       settingsWindow.webContents?.send?.("netcatty:languageChanged", currentLanguage);
     }
@@ -639,6 +761,33 @@ function waitForRendererReady(win, { timeoutMs = 15000 } = {}) {
 }
 
 /**
+ * Wait for a freshly created window's renderer to report ready, then deliver an
+ * IPC message to it. The renderer only registers its IPC listeners (and reports
+ * ready) after React mounts, and Electron does not queue messages for listeners
+ * that do not exist yet. So if readiness times out we must NOT send — the
+ * message would be silently dropped, leaving the window blank while the caller
+ * still saw "success". Returning a failure here lets the caller surface the
+ * existing error path instead.
+ */
+async function sendWhenRendererReady(win, channel, payload, options = {}) {
+  const { timeoutMs = 8000, waitForReady = waitForRendererReady } = options;
+  try {
+    await waitForReady(win, { timeoutMs });
+  } catch (err) {
+    return {
+      success: false,
+      error: "New window did not become ready in time",
+      reason: err?.message || String(err),
+    };
+  }
+  if (win?.isDestroyed?.() || win?.webContents?.isDestroyed?.()) {
+    return { success: false, error: "Window closed before message could be delivered" };
+  }
+  win.webContents.send(channel, payload);
+  return { success: true };
+}
+
+/**
  * Create the main application window
  */
 const { createMainWindowApi } = require("./windowManager/mainWindow.cjs");
@@ -682,6 +831,12 @@ const mainWindowApi = createMainWindowApi({
   createAppWindowOpenHandler,
   attachOAuthLoadingOverlay,
   registerWindowHandlers,
+  requestWindowCommandClose,
+  shouldCloseWindowFromInput,
+  registerMainWindow,
+  unregisterMainWindow,
+  getMainWindowCount,
+  applyWindowOpacityToWindow,
   closeSettingsWindow: (...args) => closeSettingsWindow(...args),
   hideSettingsWindow: (...args) => hideSettingsWindow(...args),
 });
@@ -725,6 +880,7 @@ const settingsWindowApi = createSettingsWindowApi({
   createAppWindowOpenHandler,
   createExternalOnlyWindowOpenHandler,
   getDevRendererBaseUrl,
+  applyWindowOpacityToWindow,
 });
 const {
   restoreWindowInputFocus,
@@ -747,6 +903,7 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
     return;
   }
   handlersRegistered = true;
+  cachedNativeTheme = nativeTheme;
 
   ipcMain.handle("netcatty:window:minimize", (event) => {
     const win = getWindowForIpcEvent(event);
@@ -805,6 +962,18 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
     return restoreWindowInputFocus(win);
   });
 
+  ipcMain.handle("netcatty:window:setTitle", (event, title) => {
+    const win = getWindowForIpcEvent(event);
+    if (!win || win.isDestroyed()) return false;
+    const value = typeof title === "string" ? title.trim() : "";
+    try {
+      win.setTitle(value || "Netcatty");
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
   ipcMain.handle("netcatty:setTheme", (_event, theme) => {
     currentTheme = theme;
     nativeTheme.themeSource = theme;
@@ -812,10 +981,7 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
       ? (nativeTheme?.shouldUseDarkColors ? "dark" : "light")
       : theme;
     const themeConfig = THEME_COLORS[effectiveTheme] || THEME_COLORS.light;
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setBackgroundColor(themeConfig.background);
-    }
-    // Also update settings window if open
+    forEachMainWindow((win) => win.setBackgroundColor(themeConfig.background));
     if (settingsWindow && !settingsWindow.isDestroyed()) {
       settingsWindow.setBackgroundColor(themeConfig.background);
     }
@@ -825,12 +991,15 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
   ipcMain.handle("netcatty:setBackgroundColor", (_event, color) => {
     const normalized = normalizeBackgroundColor(color);
     if (!normalized) return false;
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setBackgroundColor(normalized);
-    }
+    forEachMainWindow((win) => win.setBackgroundColor(normalized));
     if (settingsWindow && !settingsWindow.isDestroyed()) {
       settingsWindow.setBackgroundColor(normalized);
     }
+    return true;
+  });
+
+  ipcMain.handle("netcatty:setWindowOpacity", (_event, opacity) => {
+    applyWindowOpacity(opacity);
     return true;
   });
 
@@ -877,9 +1046,11 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
     // Notify all windows except the sender
     // Check both isDestroyed() and webContents.isDestroyed() to handle HMR refresh
     try {
-      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed() && mainWindow.webContents.id !== senderId) {
-        mainWindow.webContents.send("netcatty:settings:changed", payload);
-      }
+      forEachMainWindow((win) => {
+        if (!win.webContents.isDestroyed() && win.webContents.id !== senderId) {
+          win.webContents.send("netcatty:settings:changed", payload);
+        }
+      });
       if (settingsWindow && !settingsWindow.isDestroyed() && !settingsWindow.webContents.isDestroyed() && settingsWindow.webContents.id !== senderId) {
         settingsWindow.webContents.send("netcatty:settings:changed", payload);
       }
@@ -902,6 +1073,16 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
 function buildAppMenu(Menu, app, isMac, language = currentLanguage) {
   // Save deps so later language changes can rebuild the menu.
   menuDeps = { Menu, app, isMac };
+  const closeFocusedWindow = (_menuItem, browserWindow) => {
+    // 只有主窗口/设置窗口会接收 command-close；其他 BrowserWindow 直接关闭。
+    if (browserWindow && !isMainWindow(browserWindow) && browserWindow !== settingsWindow) {
+      closeBrowserWindow(browserWindow);
+      return;
+    }
+
+    // macOS 的 Cmd+W 先交给渲染层关闭标签页；没有标签页时渲染层再关闭窗口。
+    requestWindowCommandClose(browserWindow) || requestWindowCommandClose(getMainWindow());
+  };
   const template = [
     ...(isMac
       ? [
@@ -951,7 +1132,15 @@ function buildAppMenu(Menu, app, isMac, language = currentLanguage) {
         { role: "minimize" },
         { role: "zoom" },
         ...(isMac
-          ? [{ type: "separator" }, { role: "front" }]
+          ? [
+            { type: "separator" },
+            {
+              label: tMenu(language, "closeWindow"),
+              accelerator: "CommandOrControl+W",
+              click: closeFocusedWindow,
+            },
+            { role: "front" },
+          ]
           : [{ role: "close" }]),
       ],
     },
@@ -964,7 +1153,14 @@ function buildAppMenu(Menu, app, isMac, language = currentLanguage) {
  * Get the main window instance
  */
 function getMainWindow() {
-  return mainWindow;
+  const candidates = getMainWindowList();
+  if (lastFocusedMainWindow && candidates.includes(lastFocusedMainWindow)) {
+    return lastFocusedMainWindow;
+  }
+  if (mainWindow && candidates.includes(mainWindow)) {
+    return mainWindow;
+  }
+  return candidates.at(-1) || null;
 }
 
 /**
@@ -981,11 +1177,20 @@ module.exports = {
   prewarmSettingsWindow,
   buildAppMenu,
   getMainWindow,
+  getMainWindows: getMainWindowList,
+  getMainWindowCount,
+  isMainWindow,
+  registerMainWindow,
+  unregisterMainWindow,
   getSettingsWindow,
   isWindowUsable,
   registerWindowHandlers,
   restoreWindowInputFocus,
+  requestWindowCommandClose,
+  shouldCloseWindowFromInput,
+  WINDOW_COMMAND_CLOSE_CHANNEL,
   waitForRendererReady,
+  sendWhenRendererReady,
   setIsQuitting,
   getIsQuitting,
   setQuittingForUpdate,
@@ -994,4 +1199,7 @@ module.exports = {
   tryOpenExternalWithFallback,
   resolveSettingsWindowBounds,
   THEME_COLORS,
+  clampWindowOpacity,
+  applyWindowOpacity,
+  applyWindowOpacityToWindow,
 };

@@ -13,7 +13,7 @@ declare global {
       rows?: number;
       charset?: string;
       env?: Record<string, string>;
-      sessionLog?: { enabled: boolean; directory: string; format: string };
+      sessionLog?: { enabled: boolean; directory: string; format: string; timestampsEnabled?: boolean };
     }): Promise<string>;
     startMoshSession?(options: {
       sessionId?: string;
@@ -42,9 +42,31 @@ declare global {
       rows?: number;
       charset?: string;
       env?: Record<string, string>;
-      sessionLog?: { enabled: boolean; directory: string; format: string };
+      sessionLog?: { enabled: boolean; directory: string; format: string; timestampsEnabled?: boolean };
     }): Promise<string>;
-    startLocalSession?(options: { sessionId?: string; cols?: number; rows?: number; shell?: string; shellArgs?: string[]; cwd?: string; env?: Record<string, string>; sessionLog?: { enabled: boolean; directory: string; format: string } }): Promise<string>;
+    startEtSession?(options: {
+      sessionId?: string;
+      hostname: string;
+      username?: string;
+      password?: string;
+      privateKey?: string;
+      certificate?: string;
+      keyId?: string;
+      passphrase?: string;
+      authMethod?: 'password' | 'key' | 'certificate';
+      identityFilePaths?: string[];
+      port?: number;
+      etPort?: number;
+      legacyAlgorithms?: boolean;
+      jumpHosts?: NetcattyJumpHost[];
+      agentForwarding?: boolean;
+      cols?: number;
+      rows?: number;
+      charset?: string;
+      env?: Record<string, string>;
+      sessionLog?: { enabled: boolean; directory: string; format: string; timestampsEnabled?: boolean };
+    }): Promise<string>;
+    startLocalSession?(options: { sessionId?: string; cols?: number; rows?: number; shell?: string; shellArgs?: string[]; cwd?: string; env?: Record<string, string>; sessionLog?: { enabled: boolean; directory: string; format: string; timestampsEnabled?: boolean } }): Promise<string>;
     startSerialSession?(options: {
       sessionId?: string;
       path: string;
@@ -54,7 +76,7 @@ declare global {
       parity?: 'none' | 'even' | 'odd' | 'mark' | 'space';
       flowControl?: 'none' | 'xon/xoff' | 'rts/cts';
       charset?: string;
-      sessionLog?: { enabled: boolean; directory: string; format: string };
+      sessionLog?: { enabled: boolean; directory: string; format: string; timestampsEnabled?: boolean };
     }): Promise<string>;
     listSerialPorts?(): Promise<Array<{
       path: string;

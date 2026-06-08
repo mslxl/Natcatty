@@ -80,6 +80,7 @@ function createStartSessionApi(ctx) {
           hostname: options.hostname || '',
           directory: options.sessionLog.directory,
           format: options.sessionLog.format || 'txt',
+          timestampsEnabled: Boolean(options.sessionLog.timestampsEnabled),
           startTime: Date.now(),
         });
       }
@@ -378,9 +379,18 @@ function createStartSessionApi(ctx) {
 
     async function startSSHSession(event, options) {
       const sessionId = options.sessionId || randomUUID();
+      const sender = event.sender;
       const log = createSshDiagnosticLogger(
         !!options.sshDebugLogEnabled || process.env.NETCATTY_SSH_DEBUG === "1",
       );
+      const sendConnectionReuseFallback = () => {
+        if (!sender.isDestroyed()) {
+          sender.send("netcatty:connection-reuse:fallback", {
+            sessionId,
+            sourceSessionId: options.sourceSessionId,
+          });
+        }
+      };
 
       // Connection reuse (issue #1204): when a tab is duplicated we try to open
       // a new shell channel on the source tab's already-authenticated
@@ -408,6 +418,7 @@ function createStartSessionApi(ctx) {
               sourceSessionId: options.sourceSessionId,
               error: reuseErr?.message,
             });
+            sendConnectionReuseFallback();
             // Fall through to establish a fresh connection.
           }
         } else {
@@ -415,12 +426,12 @@ function createStartSessionApi(ctx) {
             sessionId,
             sourceSessionId: options.sourceSessionId,
           });
+          sendConnectionReuseFallback();
         }
       }
 
       const cols = options.cols || 80;
       const rows = options.rows || 24;
-      const sender = event.sender;
 
       const sendProgress = (hop, total, label, status, error) => {
         if (!sender.isDestroyed()) {
@@ -505,6 +516,12 @@ function createStartSessionApi(ctx) {
         });
 
         let authAgent = null;
+        // Kick off the default-key scan now so it overlaps the identity-file /
+        // inline-key preparation below instead of running serially after it.
+        // findAllDefaultPrivateKeys swallows its own fs errors and never rejects,
+        // so leaving this promise briefly unawaited cannot surface an unhandled
+        // rejection even if the key prep throws first.
+        const defaultKeysPromise = findAllDefaultPrivateKeys();
         const identityFile = !options.privateKey
           ? await loadFirstIdentityFileForAuth({
             sender,
@@ -557,18 +574,19 @@ function createStartSessionApi(ctx) {
           connectOpts.password = options.password;
         }
 
-        // Always try to find default SSH keys for fallback authentication
-        // This allows fallback even when password auth fails
-        let defaultKeyInfo = null;
-        let allDefaultKeys = [];
+        // Always try to find default SSH keys for fallback authentication.
+        // This allows fallback even when password auth fails. The full list is
+        // scanned exactly once (kicked off above); its first entry is the
+        // preferred default key — identical to what a separate
+        // findDefaultPrivateKey() scan would return — so derive it here instead
+        // of walking ~/.ssh a second time. (Pinned by
+        // sshBridge.defaultKeyEquivalence.test.cjs.)
         let usedDefaultKeyAsPrimary = false;
-        const defaultKey = await findDefaultPrivateKey();
-        if (defaultKey) {
-          defaultKeyInfo = defaultKey;
-          log("Found default SSH key for fallback", { keyPath: defaultKey.keyPath, keyName: defaultKey.keyName });
+        const allDefaultKeys = await defaultKeysPromise;
+        const defaultKeyInfo = allDefaultKeys[0] ?? null;
+        if (defaultKeyInfo) {
+          log("Found default SSH key for fallback", { keyPath: defaultKeyInfo.keyPath, keyName: defaultKeyInfo.keyName });
         }
-        // Also find ALL default keys for comprehensive fallback
-        allDefaultKeys = await findAllDefaultPrivateKeys();
 
         // Use unlocked encrypted keys if provided (from retry after auth failure)
         // These are passed via _unlockedEncryptedKeys from startSSHSessionWrapper

@@ -1,6 +1,7 @@
 import type { Messages } from '../types';
 
 export const ruTerminalMessages: Messages = {
+  'terminal.sudoHint.pressEnter': 'Нажмите Enter, чтобы вставить пароль sudo',
   // Connection logs
   'logs.table.date': 'Дата',
   'logs.table.user': 'Пользователь',
@@ -91,6 +92,7 @@ export const ruTerminalMessages: Messages = {
   'terminal.search.nextMatch': 'Следующее совпадение (Enter)',
   'terminal.menu.copy': 'Копировать',
   'terminal.menu.paste': 'Вставить',
+  'terminal.menu.addSelectionToAI': 'Добавить в чат',
   'terminal.menu.pasteSelection': 'Вставить выделенное',
   'terminal.menu.selectAll': 'Выбрать всё',
   'terminal.menu.reconnect': 'Переподключиться',
@@ -98,6 +100,8 @@ export const ruTerminalMessages: Messages = {
   'terminal.menu.splitVertical': 'Разделить по вертикали',
   'terminal.menu.clearBuffer': 'Очистить буфер',
   'terminal.menu.closeTerminal': 'Закрыть терминал',
+  'terminal.selection.addToAI': 'Добавить в чат',
+  'terminal.selection.addToAIDesc': 'Прикрепить выбранный вывод терминала к черновику AI',
   'terminal.auth.password': 'Пароль',
   'terminal.auth.sshKey': 'SSH-ключ',
   'terminal.auth.username': 'Имя пользователя',
@@ -507,6 +511,8 @@ export const ruTerminalMessages: Messages = {
   'tabs.logPrefix': 'Журнал:',
   'tabs.logLocal': 'Локальный',
   'tabs.copyTab': 'Копировать вкладку',
+  'tabs.copyTabToNewWindow': 'Копировать вкладку в новое окно',
+  'tabs.copyTabToNewWindowFailed': 'Не удалось открыть вкладку в новом окне',
   'tabs.closeOthers': 'Закрыть остальные',
   'tabs.closeToRight': 'Закрыть вкладки справа',
   'tabs.closeAll': 'Закрыть все',

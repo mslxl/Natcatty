@@ -17,7 +17,12 @@ import {
   getEffectiveHostDistro,
   normalizePrimaryTelnetState,
 } from "../domain/host";
-import { isCompleteProxyConfig, normalizeManualProxyConfig } from "../domain/proxyProfiles";
+import {
+  formatProxyConfigEndpoint,
+  formatProxyConfigType,
+  isCompleteProxyConfig,
+  normalizeManualProxyConfig,
+} from "../domain/proxyProfiles";
 import { customThemeStore } from "../application/state/customThemeStore";
 import {
   hasHostFontSizeOverride,
@@ -36,7 +41,15 @@ import {
 } from "./ui/aside-panel";
 import { HostDetailsAdvancedSections } from "./HostDetailsAdvancedSections";
 import { HostDetailsConnectionSections } from "./HostDetailsConnectionSections";
-import { LINUX_DISTRO_OPTION_IDS, parseOptionalPortInput, resolveDetailsTelnetPassword, resolveDetailsTelnetPort, resolveDetailsTelnetUsername } from "./HostDetailsPanel.helpers";
+import {
+  LINUX_DISTRO_OPTION_IDS,
+  parseOptionalPortInput,
+  resolveDetailsTelnetPassword,
+  resolveDetailsTelnetPort,
+  resolveDetailsTelnetUsername,
+  resolvePrimaryProtocolSavePort,
+  resolvePrimaryProtocolSwitchPort,
+} from "./HostDetailsPanel.helpers";
 export { parseOptionalPortInput } from "./HostDetailsPanel.helpers";
 import { Button } from "./ui/button";
 import { Combobox, ComboboxOption, MultiCombobox } from "./ui/combobox";
@@ -246,17 +259,17 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   const hasMissingProxyProfile = Boolean(form.proxyProfileId && !selectedProxyProfile);
   const proxySummaryType = hasMissingProxyProfile
     ? t("hostDetails.proxyPanel.missing")
-    : (selectedProxyProfile?.config.type || form.proxyConfig?.type || "http").toUpperCase();
+    : formatProxyConfigType(selectedProxyProfile?.config || form.proxyConfig) || "HTTP";
   const proxySummaryLabel = hasMissingProxyProfile
     ? t("hostDetails.proxyPanel.missingSaved")
     : selectedProxyProfile
       ? selectedProxyProfile.label
-      : `${form.proxyConfig?.host}:${form.proxyConfig?.port}`;
+      : formatProxyConfigEndpoint(form.proxyConfig);
   const proxySummaryTooltip = hasMissingProxyProfile
     ? t("hostDetails.proxyPanel.missingSaved")
     : selectedProxyProfile
-      ? `${selectedProxyProfile.label} - ${selectedProxyProfile.config.host}:${selectedProxyProfile.config.port}`
-      : `${form.proxyConfig?.type?.toUpperCase()} ${form.proxyConfig?.host}:${form.proxyConfig?.port}`;
+      ? `${selectedProxyProfile.label} - ${formatProxyConfigEndpoint(selectedProxyProfile.config)}`
+      : `${formatProxyConfigType(form.proxyConfig)} ${formatProxyConfigEndpoint(form.proxyConfig)}`;
 
   const handleDistroModeChange = useCallback((mode: "auto" | "manual") => {
     setForm((prev) => ({
@@ -385,10 +398,12 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
     }
 
     const { proxyConfig: _draftProxyConfig, ...formWithoutProxyDraft } = form;
-    const finalPort =
-      form.protocol === "telnet"
-        ? form.port
-        : form.port ?? (groupDefaults?.port ? undefined : 22);
+    const finalPort = resolvePrimaryProtocolSavePort(
+      form.protocol,
+      form.port,
+      Boolean(groupDefaults?.port),
+      Boolean(groupDefaults?.telnetPort),
+    );
     let cleaned: Host = {
       ...formWithoutProxyDraft,
       ...(normalizedProxyConfig && { proxyConfig: normalizedProxyConfig }),
@@ -443,7 +458,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
       cleaned.fontSize = initialData?.fontSize;
     }
 
-    if ((cleaned.protocol && cleaned.protocol !== "ssh") || cleaned.moshEnabled) {
+    if ((cleaned.protocol && cleaned.protocol !== "ssh") || cleaned.moshEnabled || cleaned.etEnabled) {
       delete cleaned.x11Forwarding;
     }
     onSave(cleaned);
@@ -873,7 +888,19 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
               <span className="text-xs text-muted-foreground">{t("hostDetails.telnet.setDefault")}</span>
               <Switch
                 checked={form.protocol === "telnet"}
-                onCheckedChange={(checked) => update("protocol", checked ? "telnet" : "ssh")}
+                onCheckedChange={(checked) => {
+                  const nextProtocol = checked ? "telnet" : "ssh";
+                  setForm((prev) => ({
+                    ...prev,
+                    protocol: nextProtocol,
+                    port: resolvePrimaryProtocolSwitchPort(
+                      prev.port,
+                      nextProtocol,
+                      Boolean(groupDefaults?.telnetPort),
+                      Boolean(groupDefaults?.port),
+                    ),
+                  }));
+                }}
               />
             </div>
 

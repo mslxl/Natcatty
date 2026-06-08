@@ -106,6 +106,7 @@ export const STORAGE_KEY_EDITOR_WORD_WRAP = 'netcatty_editor_word_wrap_v1';
 export const STORAGE_KEY_SESSION_LOGS_ENABLED = 'netcatty_session_logs_enabled_v1';
 export const STORAGE_KEY_SESSION_LOGS_DIR = 'netcatty_session_logs_dir_v1';
 export const STORAGE_KEY_SESSION_LOGS_FORMAT = 'netcatty_session_logs_format_v1';
+export const STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED = 'netcatty_session_logs_timestamps_enabled_v1';
 export const STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED = 'netcatty_ssh_debug_logs_enabled_v1';
 
 // Archived legacy key records that are no longer supported by the app (e.g. biometric/WebAuthn/FIDO2 experiments).
@@ -118,7 +119,7 @@ export const STORAGE_KEY_MANAGED_SOURCES = 'netcatty_managed_sources_v1';
 export const STORAGE_KEY_TOGGLE_WINDOW_HOTKEY = 'netcatty_toggle_window_hotkey_v1';
 export const STORAGE_KEY_CLOSE_TO_TRAY = 'netcatty_close_to_tray_v1';
 export const STORAGE_KEY_GLOBAL_HOTKEY_ENABLED = 'netcatty_global_hotkey_enabled_v1';
-
+export const STORAGE_KEY_WINDOW_OPACITY = 'netcatty_window_opacity_v1';
 // Custom Terminal Themes
 export const STORAGE_KEY_CUSTOM_THEMES = 'netcatty_custom_themes_v1';
 

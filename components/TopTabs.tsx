@@ -12,6 +12,7 @@ import { Button } from './ui/button';
 import { ContextMenuItem, ContextMenuSeparator } from './ui/context-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { SyncStatusButton } from './SyncStatusButton';
+import { WindowOpacityButton } from './WindowOpacityButton';
 import {
   ActiveTabAutoScroller,
   EditorTopTab,
@@ -41,6 +42,7 @@ interface TopTabsProps {
   onCloseSession: (sessionId: string, e?: React.MouseEvent) => void;
   onRenameSession: (sessionId: string) => void;
   onCopySession: (sessionId: string) => void;
+  onCopySessionToNewWindow: (sessionId: string) => void;
   onRenameWorkspace: (workspaceId: string) => void;
   onCloseWorkspace: (workspaceId: string) => void;
   onCloseLogView: (logViewId: string) => void;
@@ -48,6 +50,8 @@ interface TopTabsProps {
   onOpenQuickSwitcher: () => void;
   onToggleTheme: () => void;
   onOpenSettings: () => void;
+  windowOpacity: number;
+  setWindowOpacity: (opacity: number) => void;
   onSyncNow?: () => Promise<void>;
   isImmersiveActive?: boolean;
   onStartSessionDrag: (sessionId: string) => void;
@@ -73,6 +77,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   onCloseSession,
   onRenameSession,
   onCopySession,
+  onCopySessionToNewWindow,
   onRenameWorkspace,
   onCloseWorkspace,
   onCloseLogView,
@@ -80,6 +85,8 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   onOpenQuickSwitcher,
   onToggleTheme,
   onOpenSettings,
+  windowOpacity,
+  setWindowOpacity,
   onSyncNow,
   isImmersiveActive,
   onStartSessionDrag,
@@ -407,6 +414,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             onCloseSession={onCloseSession}
             onRenameSession={onRenameSession}
             onCopySession={onCopySession}
+            onCopySessionToNewWindow={onCopySessionToNewWindow}
             renderBulkCloseItems={renderBulkCloseItems}
             t={t}
           />
@@ -588,14 +596,17 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
           </Tooltip>
         )}
 
-        {/* Fixed right controls */}
-        <div className="flex-shrink-0 flex items-center gap-2 app-drag self-center" style={dragRegionStyle}>
+        {/* Fixed right controls — utility icons + window controls share one row */}
+        <div
+          className="flex-shrink-0 flex items-center gap-0.5 app-drag self-end h-7"
+          style={dragRegionStyle}
+        >
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-6 w-6 app-no-drag"
+                className="h-7 w-7 shrink-0 app-no-drag"
                 style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
                 onClick={() => window.dispatchEvent(new CustomEvent('netcatty:toggle-ai-panel'))}
               >
@@ -604,13 +615,24 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             </TooltipTrigger>
             <TooltipContent>{t('topTabs.aiAssistant')}</TooltipContent>
           </Tooltip>
-          <SyncStatusButton onOpenSettings={onOpenSettings} onSyncNow={onSyncNow} />
+          <WindowOpacityButton
+            windowOpacity={windowOpacity}
+            setWindowOpacity={setWindowOpacity}
+            className="h-7 w-7 shrink-0"
+            style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
+          />
+          <SyncStatusButton
+            onOpenSettings={onOpenSettings}
+            onSyncNow={onSyncNow}
+            className="h-7 w-7 shrink-0"
+            style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
+          />
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-6 w-6 app-no-drag"
+                className="h-7 w-7 shrink-0 app-no-drag"
                 style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
                 onClick={onToggleTheme}
                 disabled={isImmersiveActive && !followAppTerminalTheme}
@@ -620,15 +642,12 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             </TooltipTrigger>
             <TooltipContent>{t('topTabs.toggleTheme')}</TooltipContent>
           </Tooltip>
-        </div>
-        {/* Settings gear button - sits to the left of WindowControls on win/linux, at the right edge on mac */}
-        <div className="self-stretch flex items-center px-2 app-drag" style={dragRegionStyle}>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-6 w-6 app-no-drag"
+                className="h-7 w-7 shrink-0 app-no-drag"
                 style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
                 onClick={onOpenSettings}
               >
@@ -637,11 +656,10 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             </TooltipTrigger>
             <TooltipContent>{t('topTabs.openSettings')}</TooltipContent>
           </Tooltip>
+          {!isMacClient && <WindowControls />}
         </div>
-        {/* Custom window controls for Windows/Linux */}
-        {!isMacClient && <div className="self-stretch flex items-stretch"><WindowControls /></div>}
         {/* Small drag shim to the right edge (macOS only – on Windows the close button should touch the edge) */}
-        {isMacClient && <div className="w-2 h-9 app-drag flex-shrink-0" />}
+        {isMacClient && <div className="w-2 h-9 app-drag flex-shrink-0 self-end" />}
       </div>
     </div>
   );
@@ -659,7 +677,11 @@ const topTabsAreEqual = (prev: TopTabsProps, next: TopTabsProps): boolean => {
     prev.logViews === next.logViews &&
     prev.draggingSessionId === next.draggingSessionId &&
     prev.isMacClient === next.isMacClient &&
+    prev.onCopySession === next.onCopySession &&
+    prev.onCopySessionToNewWindow === next.onCopySessionToNewWindow &&
     prev.onOpenSettings === next.onOpenSettings &&
+    prev.windowOpacity === next.windowOpacity &&
+    prev.setWindowOpacity === next.setWindowOpacity &&
     prev.onSyncNow === next.onSyncNow &&
     prev.onToggleTheme === next.onToggleTheme &&
     prev.followAppTerminalTheme === next.followAppTerminalTheme &&

@@ -2,6 +2,7 @@
 
 let bridgesRegistered = false;
 let cloudSyncSessionPassword = null;
+const { readClipboardFiles } = require("../bridges/clipboardFiles.cjs");
 
 function createBridgeRegistrar(context) {
   const {
@@ -298,6 +299,52 @@ function createBridgeRegistrar(context) {
         return false;
       }
     });
+
+    ipcMain.handle("netcatty:window:openSession", async (_event, payload) => {
+      try {
+        if (!payload || typeof payload !== "object" || !payload.sourceSession) {
+          return { success: false, error: "Invalid session payload" };
+        }
+        const title = typeof payload.title === "string" && payload.title.trim()
+          ? payload.title.trim()
+          : "Netcatty";
+        const win = await getWindowManager().createWindow(electronModule, {
+          preload,
+          devServerUrl: effectiveDevServerUrl,
+          isDev,
+          appIcon,
+          isMac,
+          electronDir,
+          onRegisterBridge: registerBridges,
+        });
+        try {
+          win.setTitle(title);
+        } catch {
+          // ignore
+        }
+        const delivery = await getWindowManager().sendWhenRendererReady(
+          win,
+          "netcatty:window:openSession",
+          {
+            title,
+            sourceSession: payload.sourceSession,
+            localShellType: payload.localShellType,
+          },
+          { timeoutMs: 8000 },
+        );
+        if (!delivery.success) {
+          console.warn(
+            "[Main] New session window could not receive the duplicated tab:",
+            delivery.reason || delivery.error,
+          );
+          return { success: false, error: delivery.error || "Failed to open new window" };
+        }
+        return { success: true };
+      } catch (err) {
+        console.error("[Main] Failed to open session in new window:", err);
+        return { success: false, error: err?.message || "Failed to open new window" };
+      }
+    });
   
     // Cloud sync master password (stored in-memory + persisted via safeStorage)
     ipcMain.handle("netcatty:cloudSync:session:setPassword", async (_event, password) => {
@@ -400,6 +447,20 @@ function createBridgeRegistrar(context) {
       } catch {
         return "";
       }
+    });
+
+    ipcMain.handle("netcatty:clipboard:writeText", async (_event, text) => {
+      try {
+        if (typeof clipboard?.writeText !== "function") return false;
+        clipboard.writeText(typeof text === "string" ? text : "");
+        return true;
+      } catch {
+        return false;
+      }
+    });
+
+    ipcMain.handle("netcatty:clipboard:readFiles", async () => {
+      return readClipboardFiles({ clipboard, fsImpl: fs, pathImpl: path });
     });
   
     // Select an application from system file picker
@@ -508,6 +569,21 @@ function createBridgeRegistrar(context) {
       } catch (err) {
         console.error(`[Main] Error opening file with application:`, err);
         throw err;
+      }
+    });
+
+    // Open a file with the system default application
+    ipcMain.handle("netcatty:openWithSystemDefault", async (_event, { filePath }) => {
+      const { shell } = require("electron");
+
+      try {
+        const error = await shell.openPath(filePath);
+        if (error) {
+          return { success: false, error };
+        }
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: err instanceof Error ? err.message : String(err) };
       }
     });
   

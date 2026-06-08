@@ -17,6 +17,10 @@ SplitHint,
 updateWorkspaceSplitSizes,
 } from '../../domain/workspace';
 import { activeTabStore } from './activeTabStore';
+import {
+  createCopiedTerminalSessionClone,
+  createSplitTerminalSessionClone,
+} from './terminalConnectionReuse';
 
 
 export const useSessionState = () => {
@@ -286,6 +290,7 @@ export const useSessionState = () => {
         protocol: host.protocol,
         port: host.port,
         moshEnabled: host.moshEnabled,
+        etEnabled: host.etEnabled,
         charset: host.charset,
       };
     });
@@ -372,6 +377,7 @@ export const useSessionState = () => {
         protocol: host.protocol,
         port: host.port,
         moshEnabled: host.moshEnabled,
+        etEnabled: host.etEnabled,
         charset: host.charset,
       };
     });
@@ -475,6 +481,7 @@ export const useSessionState = () => {
       protocol: host.protocol,
       port: host.port,
       moshEnabled: host.moshEnabled,
+      etEnabled: host.etEnabled,
       charset: host.charset,
       workspaceId,
     };
@@ -574,31 +581,15 @@ export const useSessionState = () => {
 	    setSessions(prevSessions => {
       const session = prevSessions.find(s => s.id === sessionId);
       if (!session) return prevSessions;
-      const nextShellType = session.protocol === 'local'
-        ? options?.localShellType
-        : session.shellType;
       
       // If session is already in a workspace, split within that workspace
       if (session.workspaceId) {
         // Create a new session with the same host
-        const newSession: TerminalSession = {
+        const newSession = createSplitTerminalSessionClone(session, {
           id: crypto.randomUUID(),
-          hostId: session.hostId,
-          hostLabel: session.hostLabel,
-          hostname: session.hostname,
-          username: session.username,
-          status: 'connecting',
+          localShellType: options?.localShellType,
           workspaceId: session.workspaceId,
-          protocol: session.protocol,
-          port: session.port,
-          moshEnabled: session.moshEnabled,
-          shellType: nextShellType,
-          charset: session.charset,
-          localShell: session.localShell,
-          localShellArgs: session.localShellArgs,
-          localShellName: session.localShellName,
-          localShellIcon: session.localShellIcon,
-        };
+        });
 
         // Add pane to existing workspace
         const hint: SplitHint = {
@@ -618,23 +609,10 @@ export const useSessionState = () => {
       }
       
       // Session is standalone - create a new workspace
-      const newSession: TerminalSession = {
+      const newSession = createSplitTerminalSessionClone(session, {
         id: crypto.randomUUID(),
-        hostId: session.hostId,
-        hostLabel: session.hostLabel,
-        hostname: session.hostname,
-        username: session.username,
-        status: 'connecting',
-        protocol: session.protocol,
-        port: session.port,
-        moshEnabled: session.moshEnabled,
-        shellType: nextShellType,
-        charset: session.charset,
-        localShell: session.localShell,
-        localShellArgs: session.localShellArgs,
-        localShellName: session.localShellName,
-        localShellIcon: session.localShellIcon,
-      };
+        localShellType: options?.localShellType,
+      });
 
       const hint: SplitHint = {
         direction,
@@ -802,40 +780,10 @@ export const useSessionState = () => {
       // update running; in that case skip entirely — do NOT switch the
       // active tab or insert into tabOrder, which would leave dangling ids.
       if (!session) return prevSessions;
-      const nextShellType = session.protocol === 'local'
-        ? options?.localShellType
-        : session.shellType;
-
-      // Reuse the source connection only for plain (non-mosh) SSH shell
-      // sessions that are actually connected. ssh2 multiplexes multiple shell
-      // channels over one authenticated connection, so the copy can skip a
-      // second MFA prompt (issue #1204). Local/serial/telnet/mosh sessions have
-      // no such reusable channel concept, and reusing a still-connecting or
-      // disconnected source would be pointless, so they connect fresh.
-      const isReusableSshSource =
-        (session.protocol === 'ssh' || session.protocol === undefined) &&
-        !session.moshEnabled &&
-        session.status === 'connected';
-
-      const newSession: TerminalSession = {
+      const newSession = createCopiedTerminalSessionClone(session, {
         id: newSessionId,
-        hostId: session.hostId,
-        hostLabel: session.hostLabel,
-        hostname: session.hostname,
-        username: session.username,
-        status: 'connecting',
-        protocol: session.protocol,
-        port: session.port,
-        moshEnabled: session.moshEnabled,
-        shellType: nextShellType,
-        charset: session.charset,
-        serialConfig: session.serialConfig,
-        localShell: session.localShell,
-        localShellArgs: session.localShellArgs,
-        localShellName: session.localShellName,
-        localShellIcon: session.localShellIcon,
-        reuseConnectionFromSessionId: isReusableSshSource ? sessionId : undefined,
-      };
+        localShellType: options?.localShellType,
+      });
 
       // Schedule the activeTab + tabOrder updates only when creation
       // actually happens. These nested setStates are idempotent, so
@@ -871,6 +819,25 @@ export const useSessionState = () => {
       return [...prevSessions, newSession];
     });
   }, [orphanSessions, workspaces, logViews, setActiveTabId]);
+
+  const createSessionFromCloneSource = useCallback((sourceSession: TerminalSession, options?: {
+    localShellType?: TerminalSession['shellType'];
+  }) => {
+    const newSessionId = crypto.randomUUID();
+    const newSession = createCopiedTerminalSessionClone(sourceSession, {
+      id: newSessionId,
+      localShellType: options?.localShellType,
+    });
+    delete newSession.workspaceId;
+
+    setSessions(prevSessions => {
+      if (prevSessions.some(session => session.id === newSessionId)) return prevSessions;
+      return [...prevSessions, newSession];
+    });
+    setTabOrder(prevTabOrder => [...prevTabOrder, newSessionId]);
+    setActiveTabId(newSessionId);
+    return newSessionId;
+  }, [setActiveTabId]);
 
   // Toggle broadcast mode for a workspace
   const toggleBroadcast = useCallback((workspaceId: string) => {
@@ -998,5 +965,6 @@ export const useSessionState = () => {
     closeLogView,
     // Copy session
     copySession,
+    createSessionFromCloneSource,
   };
 };

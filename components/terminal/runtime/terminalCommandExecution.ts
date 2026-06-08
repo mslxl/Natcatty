@@ -24,7 +24,7 @@ type TerminalCommandExecutionContext = {
   promptLineBreakStateRef?: RefObject<PromptLineBreakState>;
 };
 
-const shouldRecordShellHistory = (
+export const shouldRecordShellHistory = (
   command: string,
   term?: XTerm | null,
 ): boolean => {
@@ -47,11 +47,15 @@ export const recordTerminalCommandExecution = (
   command: string,
   ctx: TerminalCommandExecutionContext,
   term?: XTerm | null,
-) => {
+): string | null => {
   const cmd = command.trim();
   if (cmd && shouldRecordShellHistory(cmd, term)) {
     ctx.onCommandExecuted?.(cmd, ctx.host.id, ctx.host.label, ctx.sessionId);
+    ctx.commandBufferRef.current = "";
+    markPromptLineBreakCommandPending(ctx.promptLineBreakStateRef, term, command);
+    return cmd;
   }
   ctx.commandBufferRef.current = "";
   markPromptLineBreakCommandPending(ctx.promptLineBreakStateRef, term, command);
+  return null;
 };

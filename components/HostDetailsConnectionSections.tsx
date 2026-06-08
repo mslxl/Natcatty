@@ -45,7 +45,8 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
   distroOptions,
   effectiveFormDistro,
   getDistroOptionLabel,
-}) => (
+}) => {
+  return (
   <>
         <HostDetailsSection
           icon={<MapPin size={14} className="text-muted-foreground" />}
@@ -732,4 +733,5 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
           </HostDetailsSection>
         )}
   </>
-);
+  );
+};

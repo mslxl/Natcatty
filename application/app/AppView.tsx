@@ -33,7 +33,7 @@ type AppViewContext = Record<string, any>;
 export function AppView({ ctx }: { ctx: AppViewContext }) {
   const {
     accentMode, activeTabId, activeTerminalTheme, addShellHistoryEntry, addSessionToWorkspace, addToWorkspaceDialog, appendHostToWorkspace, appendLocalTerminalToWorkspace,
-    clearAndRemoveSource, clearAndRemoveSources, clearUnsavedConnectionLogs, closeLogView, closeSession, closeTabsBatch, closeWorkspace, copySessionWithCurrentShell,
+    clearAndRemoveSource, clearAndRemoveSources, clearUnsavedConnectionLogs, closeLogView, closeSession, closeTabsBatch, closeWorkspace, copySessionToNewWindowWithCurrentShell, copySessionWithCurrentShell,
     connectionLogs, convertKnownHostToHost, createWorkspaceFromSessions, createWorkspaceFromTargets, createWorkspaceWithHosts, customAccent,
     customGroups, currentTerminalTheme, deleteConnectionLog, draggingSessionId, effectiveKnownHosts, editorTabs, editorWordWrap, emptyVaultConflict,
     followAppTerminalTheme, groupConfigs, handleAddKnownHost, handleConnectSerial, handleConnectToHost, handleCreateLocalTerminal, handleDeleteHost,
@@ -43,7 +43,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
     hostById, hosts, hotkeyScheme, identities, importOrReuseKey, isBroadcastEnabled, isCreateWorkspaceOpen, isMacClient, isQuickSwitcherOpen,
     keyBindings, keyboardInteractiveQueue, keys, logViews, managedSources, navigateToSection, openLogView, orderedTabsWithEditors, orphanSessions,
     passphraseQueue, protocolSelectHost, proxyProfiles, quickResults, quickSearch, reorderTabs, reorderWorkspaceSessions, resetSessionRename,
-    resetWorkspaceRename, resolveEmptyVaultConflict, resolvedTheme, runSnippet, sessionLogsDir, sessionLogsEnabled, sessionLogsFormat, sessionRenameTarget, sshDebugLogsEnabled,
+    resetWorkspaceRename, resolveEmptyVaultConflict, resolvedTheme, runSnippet, sessionLogsDir, sessionLogsEnabled, sessionLogsFormat, sessionLogsTimestampsEnabled, sessionRenameTarget, sshDebugLogsEnabled,
     sessionRenameValue, sessions, setActiveTabId, setAddToWorkspaceDialog, setDraggingSessionId, setEditorWordWrap, setIsCreateWorkspaceOpen, setIsQuickSwitcherOpen,
     setNavigateToSection, setProtocolSelectHost, setQuickSearch, setSessionRenameValue, setTerminalFontFamilyId, setTerminalFontSize, setTerminalThemeId,
     setWorkspaceFocusedSession, setWorkspaceRenameValue, settings, sftpAutoOpenSidebar, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior,
@@ -72,31 +72,34 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
         };
 
         // Real dirty-confirm close handler.
-        const handleRequestCloseEditorTab = async (id: string) => {
+        const handleRequestCloseEditorTab = async (id: string): Promise<boolean> => {
           const tab = editorTabStore.getTab(id);
-          if (!tab) return;
+          if (!tab) return false;
           const dirty = tab.content !== tab.baselineContent;
           if (!dirty) {
             closeEditorAndActivateNeighbor(id);
-            return;
+            return true;
           }
           const choice = await prompt(tab.fileName);
-          if (choice === 'cancel') return;
+          if (choice === 'cancel') return false;
           if (choice === 'discard') {
             closeEditorAndActivateNeighbor(id);
-            return;
+            return true;
           }
           if (choice === 'save') {
             const ok = await saveEditorTab(id);
             if (!ok) {
               const msg = editorTabStore.getTab(id)?.saveError ?? 'Save failed';
               toast.error(msg, 'SFTP');
-              return;
+              return false;
             }
             const latest = editorTabStore.getTab(id);
-            if (!latest || latest.content !== latest.baselineContent) return;
+            if (!latest || latest.content !== latest.baselineContent) return false;
             closeEditorAndActivateNeighbor(id);
+            return true;
           }
+
+          return false;
         };
 
         // Expose to the hotkey dispatcher (Cmd/Ctrl+W).
@@ -118,6 +121,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
         onCloseSession={closeSession}
         onRenameSession={startSessionRename}
         onCopySession={copySessionWithCurrentShell}
+        onCopySessionToNewWindow={copySessionToNewWindowWithCurrentShell}
         onRenameWorkspace={startWorkspaceRename}
         onCloseWorkspace={closeWorkspace}
         onCloseLogView={closeLogView}
@@ -125,6 +129,8 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
         onOpenQuickSwitcher={handleOpenQuickSwitcher}
         onToggleTheme={handleToggleTheme}
         onOpenSettings={handleOpenSettings}
+        windowOpacity={settings.windowOpacity}
+        setWindowOpacity={settings.setWindowOpacity}
         onSyncNow={handleSyncNowManual}
         isImmersiveActive={activeTerminalTheme !== null}
         onStartSessionDrag={setDraggingSessionId}
@@ -269,6 +275,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
           sessionLogsEnabled={sessionLogsEnabled}
           sessionLogsDir={sessionLogsDir}
           sessionLogsFormat={sessionLogsFormat}
+          sessionLogsTimestampsEnabled={sessionLogsTimestampsEnabled}
           sshDebugLogsEnabled={sshDebugLogsEnabled}
           toggleScriptsSidePanelRef={toggleScriptsSidePanelRef}
           toggleSidePanelRef={toggleSidePanelRef}

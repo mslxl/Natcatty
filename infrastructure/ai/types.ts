@@ -2,7 +2,19 @@
 import defaultCommandBlocklist from '../../lib/commandBlocklist.json';
 import type { ProviderContinuation } from './providerContinuation';
 
-export type AIProviderId = 'openai' | 'anthropic' | 'google' | 'ollama' | 'openrouter' | 'custom';
+export type AIProviderId =
+  | 'openai'
+  | 'anthropic'
+  | 'google'
+  | 'ollama'
+  | 'openrouter'
+  | 'qwen'
+  | 'deepseek'
+  | 'kimi'
+  | 'zhipu'
+  | 'doubao'
+  | 'mimo'
+  | 'custom';
 
 /**
  * Wire-protocol family for a provider. Three are supported because every
@@ -36,6 +48,10 @@ export interface ProviderConfig {
   customHeaders?: Record<string, string>;
   enabled: boolean;
   skipTLSVerify?: boolean;   // skip TLS certificate verification (for self-signed certs)
+  /** User override for the model context window, in tokens. Wins over discovered model metadata. */
+  contextWindow?: number;
+  /** Context windows discovered from provider model-list metadata, keyed by model id. */
+  modelContextWindows?: Record<string, number>;
   advancedParams?: ProviderAdvancedParams;
 }
 
@@ -66,7 +82,10 @@ export interface ChatMessageAttachment {
   base64Data: string;
   mediaType: string;
   filename?: string;
-  filePath?: string;    // original filesystem path (for ACP agents to read directly)
+  filePath?: string;    // original filesystem path, when available
+  terminalSelection?: boolean;
+  previewText?: string;
+  lineCount?: number;
 }
 
 export interface UploadedFile {
@@ -76,6 +95,9 @@ export interface UploadedFile {
   base64Data: string;
   mediaType: string;
   filePath?: string;
+  terminalSelection?: boolean;
+  previewText?: string;
+  lineCount?: number;
 }
 
 export interface AIDraft {
@@ -200,7 +222,7 @@ export interface AgentInfo {
   available: boolean;
 }
 
-// External Agent (ACP) config
+// External agent config. Managed agents route through official SDK backends.
 export interface ExternalAgentConfig {
   id: string;
   name: string;
@@ -209,8 +231,11 @@ export interface ExternalAgentConfig {
   env?: Record<string, string>;
   icon?: string;
   enabled: boolean;
-  /** ACP command (e.g. 'codex-acp', 'claude-agent-acp', 'gemini --experimental-acp') */
+  /** SDK backend key for managed agents (claude|codex|copilot). */
+  sdkBackend?: string;
+  /** @deprecated Legacy persisted field from the pre-SDK migration. Read only for compatibility. */
   acpCommand?: string;
+  /** @deprecated Legacy persisted field from the pre-SDK migration. */
   acpArgs?: string[];
   /** Internal: disabled only because the managed CLI was unavailable. */
   autoDisabledUntilAvailable?: boolean;
@@ -226,9 +251,16 @@ export interface DiscoveredAgent {
   path: string;
   version: string;
   available: boolean;
-  /** ACP command if agent supports ACP protocol */
+  /** @deprecated Legacy discovery field from the pre-SDK migration. */
   acpCommand?: string;
   acpArgs?: string[];
+  /** SDK backend key (claude|codex|copilot) — the post-migration routing value. */
+  sdkBackend?: 'claude' | 'codex' | 'copilot';
+  /** Absolute resolved CLI path (preferred over `path`). */
+  binPath?: string;
+  installed?: boolean;
+  authenticated?: boolean;
+  authSource?: string | null;
 }
 
 // Web Search types
@@ -295,13 +327,95 @@ export const DEFAULT_AI_SETTINGS: AISettings = {
   maxIterations: 20,
 };
 
+export interface ProviderPreset {
+  name: string;
+  defaultBaseURL: string;
+  modelsEndpoint?: string;
+  defaultModels?: readonly string[];
+}
+
 // Provider presets for quick setup
-export const PROVIDER_PRESETS: Record<AIProviderId, { name: string; defaultBaseURL: string; modelsEndpoint?: string }> = {
+export const PROVIDER_PRESETS: Record<AIProviderId, ProviderPreset> = {
   openai: { name: 'OpenAI', defaultBaseURL: 'https://api.openai.com/v1', modelsEndpoint: '/models' },
   anthropic: { name: 'Anthropic', defaultBaseURL: 'https://api.anthropic.com', modelsEndpoint: '/v1/models' },
   google: { name: 'Google AI', defaultBaseURL: 'https://generativelanguage.googleapis.com/v1beta' },
   ollama: { name: 'Ollama', defaultBaseURL: 'http://localhost:11434/v1', modelsEndpoint: '/models' },
   openrouter: { name: 'OpenRouter', defaultBaseURL: 'https://openrouter.ai/api/v1', modelsEndpoint: '/models' },
+  qwen: {
+    name: 'Qwen',
+    defaultBaseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    modelsEndpoint: '/models',
+    defaultModels: [
+      'qwen3.7-plus',
+      'qwen3.7-max',
+      'qwen3.6-plus',
+      'qwen3.6-flash',
+      'qwen3.6-max-preview',
+      'qwen3.5-plus',
+      'qwen3-coder-plus',
+      'qwen3-coder-flash',
+      'qwen-plus',
+      'qwen-plus-latest',
+    ],
+  },
+  deepseek: {
+    name: 'DeepSeek',
+    defaultBaseURL: 'https://api.deepseek.com/v1',
+    modelsEndpoint: '/models',
+    defaultModels: [
+      'deepseek-v4-flash',
+      'deepseek-v4-pro',
+      'deepseek-chat',
+      'deepseek-reasoner',
+    ],
+  },
+  kimi: {
+    name: 'Kimi',
+    defaultBaseURL: 'https://api.moonshot.ai/v1',
+    modelsEndpoint: '/models',
+    defaultModels: [
+      'kimi-k2.6',
+      'kimi-k2.5',
+      'moonshot-v1-128k',
+      'moonshot-v1-32k',
+      'moonshot-v1-8k',
+    ],
+  },
+  zhipu: {
+    name: 'Zhipu',
+    defaultBaseURL: 'https://open.bigmodel.cn/api/paas/v4',
+    modelsEndpoint: '/models',
+    defaultModels: [
+      'glm-5.1',
+      'glm-5',
+      'glm-5-turbo',
+      'glm-4.7',
+      'glm-4.7-flash',
+      'glm-4.6',
+      'glm-4.5',
+      'glm-4.5-air',
+    ],
+  },
+  doubao: {
+    name: 'Doubao',
+    defaultBaseURL: 'https://ark.cn-beijing.volces.com/api/v3',
+    modelsEndpoint: '/models',
+    defaultModels: [
+      'doubao-seed-2-0-pro-260215',
+      'doubao-seed-2-0-lite-260215',
+      'doubao-seed-2-0-mini-260215',
+      'doubao-seed-2-0-code-preview-260215',
+    ],
+  },
+  mimo: {
+    name: 'Xiaomi MiMo',
+    defaultBaseURL: 'https://api.xiaomimimo.com/v1',
+    modelsEndpoint: '/models',
+    defaultModels: [
+      'mimo-v2.5-pro',
+      'mimo-v2.5',
+    ],
+  },
   custom: { name: 'Custom', defaultBaseURL: '' },
 };
 
@@ -320,14 +434,17 @@ export const CLAUDE_MODEL_PRESETS: AgentModelPreset[] = [
   { id: 'haiku', name: 'Haiku 4.5', description: 'Fastest' },
 ];
 
+// Curated codex model list (codex-sdk has no enumeration API). Mirrors the
+// craft agent's `openai-codex` set. The codex driver splits "<id>/<effort>"
+// into model + modelReasoningEffort, so thinkingLevels work via codex-sdk.
 export const CODEX_MODEL_PRESETS: AgentModelPreset[] = [
-  { id: 'gpt-5.4', name: 'GPT 5.4', description: 'Latest', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.3-codex', name: 'Codex 5.3', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.2-codex', name: 'Codex 5.2', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.1-codex-max', name: 'Codex 5.1 Max', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.1-codex-mini', name: 'Codex 5.1 Mini', description: 'Fast', thinkingLevels: ['medium', 'high'] },
-  { id: 'o3', name: 'o3', description: 'Reasoning' },
+  { id: 'gpt-5.5', name: 'GPT-5.5', description: 'Latest', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
+  { id: 'gpt-5.2', name: 'GPT-5.2', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
+  { id: 'gpt-5.1', name: 'GPT-5.1', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
+  { id: 'gpt-5', name: 'GPT-5', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
   { id: 'o4-mini', name: 'o4-mini', description: 'Fast reasoning' },
+  { id: 'o3', name: 'o3', description: 'Reasoning' },
+  { id: 'gpt-4o', name: 'GPT-4o' },
 ];
 
 export function getAgentModelPresets(agentCommand?: string): AgentModelPreset[] {

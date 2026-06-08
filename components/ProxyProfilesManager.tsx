@@ -1,6 +1,5 @@
 import {
   AlertTriangle,
-  Check,
   ChevronDown,
   Copy,
   Globe,
@@ -11,12 +10,18 @@ import {
   Plus,
   Route,
   Settings2,
+  SquareTerminal,
   Trash2,
 } from "lucide-react";
 import React, { useMemo, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useStoredViewMode } from "../application/state/useStoredViewMode";
-import { isValidProxyPort, removeProxyProfileReferences } from "../domain/proxyProfiles";
+import {
+  formatProxyConfigEndpoint,
+  isProxyCommandConfig,
+  isValidProxyPort,
+  removeProxyProfileReferences,
+} from "../domain/proxyProfiles";
 import {
   STORAGE_KEY_VAULT_PROXY_PROFILES_VIEW_MODE,
 } from "../infrastructure/config/storageKeys";
@@ -47,6 +52,7 @@ import {
 } from "./ui/dialog";
 import { Dropdown, DropdownContent, DropdownTrigger } from "./ui/dropdown";
 import { Input } from "./ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { toast } from "./ui/toast";
 import {
   VaultHeaderSearch,
@@ -100,8 +106,14 @@ const proxyProtocolMeta = {
     Icon: Route,
     iconClassName: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
   },
+  command: {
+    labelKey: "hostDetails.proxyPanel.command",
+    Icon: SquareTerminal,
+    iconClassName: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
+  },
 } satisfies Record<ProxyConfig["type"], {
-  label: string;
+  label?: string;
+  labelKey?: string;
   Icon: React.ComponentType<{ size?: number; className?: string }>;
   iconClassName: string;
 }>;
@@ -130,8 +142,10 @@ const ProxyProfileCard: React.FC<ProxyProfileCardProps> = ({
   const { t } = useI18n();
   const usageLabel = t("proxyProfiles.usage", { count: usageCount });
   const protocol = proxyProtocolMeta[profile.config.type];
+  const protocolLabel = protocol.labelKey ? t(protocol.labelKey) : protocol.label;
   const ProtocolIcon = protocol.Icon;
-  const accessibleLabel = `${profile.label}, ${protocol.label}, ${profile.config.host}:${profile.config.port}, ${usageLabel}`;
+  const endpoint = formatProxyConfigEndpoint(profile.config);
+  const accessibleLabel = `${profile.label}, ${protocolLabel}, ${endpoint}, ${usageLabel}`;
 
   return (
     <ContextMenu>
@@ -154,7 +168,7 @@ const ProxyProfileCard: React.FC<ProxyProfileCardProps> = ({
                 "h-11 w-11 rounded-xl flex items-center justify-center",
                 protocol.iconClassName,
               )}
-              title={protocol.label}
+              title={protocolLabel}
             >
               <ProtocolIcon size={18} />
             </div>
@@ -163,8 +177,8 @@ const ProxyProfileCard: React.FC<ProxyProfileCardProps> = ({
                 <div className="text-sm font-semibold truncate">{profile.label}</div>
               </div>
               <div className="text-[11px] font-mono text-muted-foreground truncate">
-                {profile.config.host}:{profile.config.port} -{" "}
-                {protocol.label}
+                {endpoint} -{" "}
+                {protocolLabel}
               </div>
             </div>
           </div>
@@ -222,6 +236,7 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
     return proxyProfiles.filter((profile) =>
       profile.label.toLowerCase().includes(q) ||
       profile.config.host.toLowerCase().includes(q) ||
+      (profile.config.command || "").toLowerCase().includes(q) ||
       profile.config.type.toLowerCase().includes(q),
     );
   }, [proxyProfiles, search]);
@@ -269,11 +284,13 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
     if (!draft) return;
     const label = draft.label.trim();
     const host = draft.config.host.trim();
-    if (!label || !host || !draft.config.port) {
+    const command = draft.config.command?.trim() || "";
+    const isCommand = isProxyCommandConfig(draft.config);
+    if (!label || (isCommand ? !command : (!host || !draft.config.port))) {
       toast.error(t("proxyProfiles.error.required"));
       return;
     }
-    if (!isValidProxyPort(draft.config.port)) {
+    if (!isCommand && !isValidProxyPort(draft.config.port)) {
       toast.error(t("proxyProfiles.error.port"));
       return;
     }
@@ -281,13 +298,20 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
     const saved: ProxyProfile = {
       ...draft,
       label,
-      config: {
-        ...draft.config,
-        host,
-        port: Number(draft.config.port),
-        username: draft.config.username?.trim() || undefined,
-        password: draft.config.password || undefined,
-      },
+      config: isCommand
+        ? {
+          type: "command",
+          host: "",
+          port: 0,
+          command,
+        }
+        : {
+          ...draft.config,
+          host,
+          port: Number(draft.config.port),
+          username: draft.config.username?.trim() || undefined,
+          password: draft.config.password || undefined,
+        },
       updatedAt: Date.now(),
     };
 
@@ -446,56 +470,64 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
             </Card>
 
             <Card className="p-3 space-y-3 bg-card border-border/80">
-              <div className="flex items-center justify-between gap-3">
+              <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <Globe size={14} className="text-muted-foreground" />
                   <p className="text-xs font-semibold">{t("field.type")}</p>
                 </div>
-                <div className="flex gap-2">
-                  <Button
-                    variant={draft.config.type === "http" ? "secondary" : "ghost"}
-                    size="sm"
-                    className={cn("h-8", draft.config.type === "http" && "bg-primary/15")}
-                    onClick={() => updateDraftConfig("type", "http")}
-                  >
-                    <Check size={14} className={cn("mr-1", draft.config.type !== "http" && "opacity-0")} />
-                    HTTP
-                  </Button>
-                  <Button
-                    variant={draft.config.type === "socks5" ? "secondary" : "ghost"}
-                    size="sm"
-                    className={cn("h-8", draft.config.type === "socks5" && "bg-primary/15")}
-                    onClick={() => updateDraftConfig("type", "socks5")}
-                  >
-                    <Check size={14} className={cn("mr-1", draft.config.type !== "socks5" && "opacity-0")} />
-                    SOCKS5
-                  </Button>
-                </div>
+                <Select
+                  value={draft.config.type}
+                  onValueChange={(value) => updateDraftConfig("type", value as ProxyConfig["type"])}
+                >
+                  <SelectTrigger aria-label={t("field.type")} className="h-10">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="http">HTTP</SelectItem>
+                    <SelectItem value="socks5">SOCKS5</SelectItem>
+                    <SelectItem value="command">{t("hostDetails.proxyPanel.command")}</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
-              <div className="flex gap-2">
-                <Input
-                  aria-label={t("hostDetails.proxyPanel.hostPlaceholder")}
-                  value={draft.config.host}
-                  onChange={(event) => updateDraftConfig("host", event.target.value)}
-                  placeholder={t("hostDetails.proxyPanel.hostPlaceholder")}
-                  className="h-10 flex-1"
-                />
-                <Input
-                  aria-label={t("hostDetails.port")}
-                  type="number"
-                  value={draft.config.port || ""}
-                  onChange={(event) => updateDraftConfig("port", event.target.value === "" ? 0 : Number(event.target.value))}
-                  placeholder="3128"
-                  min={1}
-                  max={65535}
-                  step={1}
-                  className="h-10 w-24 text-center"
-                />
-              </div>
+              {isProxyCommandConfig(draft.config) ? (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">
+                    {t("hostDetails.proxyPanel.commandHelp")}
+                  </p>
+                  <Input
+                    aria-label={t("hostDetails.proxyPanel.commandPlaceholder")}
+                    value={draft.config.command || ""}
+                    onChange={(event) => updateDraftConfig("command", event.target.value)}
+                    placeholder={t("hostDetails.proxyPanel.commandPlaceholder")}
+                    className="h-10 font-mono text-xs"
+                  />
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <Input
+                    aria-label={t("hostDetails.proxyPanel.hostPlaceholder")}
+                    value={draft.config.host}
+                    onChange={(event) => updateDraftConfig("host", event.target.value)}
+                    placeholder={t("hostDetails.proxyPanel.hostPlaceholder")}
+                    className="h-10 flex-1"
+                  />
+                  <Input
+                    aria-label={t("hostDetails.port")}
+                    type="number"
+                    value={draft.config.port || ""}
+                    onChange={(event) => updateDraftConfig("port", event.target.value === "" ? 0 : Number(event.target.value))}
+                    placeholder="3128"
+                    min={1}
+                    max={65535}
+                    step={1}
+                    className="h-10 w-24 text-center"
+                  />
+                </div>
+              )}
             </Card>
 
-            <Card className="p-3 space-y-3 bg-card border-border/80">
+            {!isProxyCommandConfig(draft.config) && <Card className="p-3 space-y-3 bg-card border-border/80">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <KeyRound size={14} className="text-muted-foreground" />
@@ -518,7 +550,7 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
                 placeholder={t("hostDetails.proxyPanel.passwordPlaceholder")}
                 className="h-10"
               />
-            </Card>
+            </Card>}
           </AsidePanelContent>
           <AsidePanelFooter>
             <Button className="w-full" onClick={saveDraft}>

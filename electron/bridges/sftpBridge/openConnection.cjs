@@ -1,6 +1,12 @@
 /* eslint-disable no-undef */
 function createOpenConnectionApi(ctx) {
   with (ctx) {
+    const hasUsableProxy = (proxy) => {
+      if (!proxy) return false;
+      if (proxy.type === "command") return !!proxy.command?.trim();
+      return !!(proxy.host && proxy.port);
+    };
+
     async function connectThroughChainForSftp(event, options, jumpHosts, targetHost, targetPort, connId, agentSocket) {
       const sender = event.sender;
       const connections = [];
@@ -171,7 +177,7 @@ function createOpenConnectionApi(ctx) {
           applyAuthToConnOpts(connOpts, authConfig);
     
           // If first hop and proxy is configured, connect through proxy
-          const hasUsableJumpProxy = !!(jump.proxy?.host && jump.proxy?.port);
+          const hasUsableJumpProxy = hasUsableProxy(jump.proxy);
           const effectiveHopProxy = isFirst ? ((hasUsableJumpProxy ? jump.proxy : null) || options.proxy) : null;
           if (effectiveHopProxy) {
             currentSocket = await createProxySocket(effectiveHopProxy, jump.hostname, jump.port || 22);
@@ -510,8 +516,52 @@ function createOpenConnectionApi(ctx) {
      * Supports jump host connections when options.jumpHosts is provided
      */
     async function openSftp(event, options) {
-      const client = new SftpClient();
       const connId = options.sessionId || randomUUID();
+
+      if (options.sourceSessionId && !options.sudo) {
+        const sourceSession = findReusableSession?.(sessions, options.sourceSessionId, {
+          hostname: options.hostname,
+          port: options.port || 22,
+          username: options.username || "root",
+        });
+        if (sourceSession?.conn && sourceSession?.connRef) {
+          const refHolder = {
+            id: connId,
+            conn: sourceSession.conn,
+            stream: null,
+            webContentsId: event.sender?.id,
+          };
+          acquireConnectionRef?.(refHolder, sourceSession.connRef);
+          const reusedClient = createSessionBackedSftpClient(
+            connId,
+            sourceSession.conn,
+            { refHolder, sourceSessionId: options.sourceSessionId },
+          );
+          try {
+            sendSftpProgress(event.sender, connId, options.hostname, 'connecting', 'reusing terminal connection');
+            await requireSftpChannel(reusedClient);
+            reusedClient.__netcattySudoMode = false;
+            sftpClients.set(connId, reusedClient);
+            sendSftpProgress(event.sender, connId, options.hostname, 'connected', 'reused terminal connection');
+            console.log(`[SFTP] Reused terminal SSH connection ${options.sourceSessionId} for ${connId}`);
+            return { sftpId: connId };
+          } catch (reuseErr) {
+            console.warn(
+              `[SFTP] Failed to reuse terminal SSH connection ${options.sourceSessionId} for ${connId}; falling back to fresh connection:`,
+              reuseErr?.message || String(reuseErr),
+            );
+            try {
+              await reusedClient.end();
+            } catch {
+              // Ignore cleanup errors while falling back to a fresh SFTP connection.
+            }
+          }
+        } else {
+          console.log(`[SFTP] Reuse requested for ${connId} but source session is not reusable; connecting fresh`);
+        }
+      }
+
+      const client = new SftpClient();
     
       // Get default keys early to use for both chain and target
       const defaultKeys = await findAllDefaultPrivateKeysFromHelper();
@@ -519,7 +569,7 @@ function createOpenConnectionApi(ctx) {
       // Check if we need to connect through jump hosts
       const jumpHosts = options.jumpHosts || [];
       const hasJumpHosts = jumpHosts.length > 0;
-      const hasProxy = !!options.proxy;
+      const hasProxy = hasUsableProxy(options.proxy);
     
       let chainConnections = [];
       let connectionSocket = null;

@@ -24,6 +24,7 @@ import { TabsContent } from "../../ui/tabs";
 import { Button } from "../../ui/button";
 import { Select, SettingRow } from "../settings-ui";
 import { AgentIconBadge } from "../../ai/AgentIconBadge";
+import { canSendWithAgent } from "../../ai/agentSendEligibility";
 
 import type {
   AgentPathInfo,
@@ -32,7 +33,6 @@ import type {
   UserSkillsStatusResult,
 } from "./ai/types";
 import {
-  AGENT_DEFAULTS,
   getBridge,
   normalizeCodexBridgeError,
 } from "./ai/types";
@@ -134,17 +134,18 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     () => externalAgents.find((a) => a.id === "discovered_claude")?.env,
     [externalAgents],
   );
-  const { configDir: claudeConfigDir, envText: claudeEnvText } = useMemo(
-    () => splitClaudeEnv(claudeManagedEnv),
-    [claudeManagedEnv],
-  );
+  const {
+    configDir: claudeConfigDir,
+    settingsPath: claudeSettingsPath,
+    envText: claudeEnvText,
+  } = useMemo(() => splitClaudeEnv(claudeManagedEnv), [claudeManagedEnv]);
 
   const updateClaudeEnv = useCallback(
-    (nextConfigDir: string, nextEnvText: string) => {
+    (nextConfigDir: string, nextSettingsPath: string, nextEnvText: string) => {
       setExternalAgents((prev) =>
         prev.map((a) =>
           a.id === "discovered_claude"
-            ? { ...a, env: buildClaudeEnv(a.env, nextConfigDir, nextEnvText) }
+            ? { ...a, env: buildClaudeEnv(a.env, nextConfigDir, nextSettingsPath, nextEnvText) }
             : a,
         ),
       );
@@ -174,44 +175,22 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     () => externalAgents.find((a) => a.id === "discovered_codebuddy")?.env,
     [externalAgents],
   );
-  const { internetEnv: codebuddyInternetEnv, envText: codebuddyEnvText } = useMemo(
-    () => splitCodebuddyEnv(codebuddyManagedEnv),
-    [codebuddyManagedEnv],
-  );
-
+  const {
+    internetEnv: codebuddyInternetEnv,
+    envText: codebuddyEnvText,
+  } = useMemo(() => splitCodebuddyEnv(codebuddyManagedEnv), [codebuddyManagedEnv]);
   const updateCodebuddyEnv = useCallback(
     (nextInternetEnv: string, nextEnvText: string) => {
-      setExternalAgents((prev) => {
-        const existingIndex = prev.findIndex((a) => a.id === "discovered_codebuddy");
-        const newEnv = buildCodebuddyEnv(undefined, nextInternetEnv, nextEnvText);
-
-        if (existingIndex >= 0) {
-          // Update existing entry
-          return prev.map((a, i) =>
-            i === existingIndex ? { ...a, env: buildCodebuddyEnv(a.env, nextInternetEnv, nextEnvText) } : a,
-          );
-        }
-
-        // Create new managed entry if not detected yet (allows pre-configuration)
-        const defaults = AGENT_DEFAULTS.codebuddy;
-        const newEntry: ExternalAgentConfig = {
-          id: "discovered_codebuddy",
-          command: "codebuddy",
-          name: defaults.name,
-          args: defaults.args,
-          icon: defaults.icon,
-          acpCommand: defaults.acpCommand,
-          acpArgs: defaults.acpArgs,
-          enabled: false, // Disabled until CLI is detected
-          autoDisabledUntilAvailable: true,
-          ...(newEnv ? { env: newEnv } : {}),
-        };
-        return [...prev, newEntry];
-      });
+      setExternalAgents((prev) =>
+        prev.map((a) =>
+          a.id === "discovered_codebuddy"
+            ? { ...a, env: buildCodebuddyEnv(a.env, nextInternetEnv, nextEnvText) }
+            : a,
+        ),
+      );
     },
     [setExternalAgents],
   );
-
   const [userSkillsStatus, setUserSkillsStatus] = useState<UserSkillsStatusResult | null>(null);
   const [isLoadingUserSkills, setIsLoadingUserSkills] = useState(false);
 
@@ -334,9 +313,15 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   const agentOptions = useMemo(() => [
     { value: "catty", label: t('ai.defaultAgent.catty'), icon: <AgentIconBadge agent={{ id: "catty", type: "builtin" }} size="xs" variant="plain" /> },
     ...externalAgents
-      .filter((a) => a.enabled)
+      .filter((a) => canSendWithAgent(a.id, externalAgents))
       .map((a) => ({ value: a.id, label: a.name, icon: <AgentIconBadge agent={a} size="xs" variant="plain" /> })),
   ], [externalAgents, t]);
+
+  useEffect(() => {
+    if (!agentOptions.some((option) => option.value === defaultAgentId)) {
+      setDefaultAgentId("catty");
+    }
+  }, [agentOptions, defaultAgentId, setDefaultAgentId]);
 
   const refreshCodexIntegration = useCallback(async (opts?: { refreshShellEnv?: boolean }) => {
     const bridge = getBridge();
@@ -625,9 +610,11 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               onCustomPathChange={setClaudeCustomPath}
               onRecheckPath={() => void handleCheckCustomPath("claude")}
               configDir={claudeConfigDir}
-              onConfigDirChange={(v) => updateClaudeEnv(v, claudeEnvText)}
+              onConfigDirChange={(v) => updateClaudeEnv(v, claudeSettingsPath, claudeEnvText)}
+              settingsPath={claudeSettingsPath}
+              onSettingsPathChange={(v) => updateClaudeEnv(claudeConfigDir, v, claudeEnvText)}
               envText={claudeEnvText}
-              onEnvTextChange={(v) => updateClaudeEnv(claudeConfigDir, v)}
+              onEnvTextChange={(v) => updateClaudeEnv(claudeConfigDir, claudeSettingsPath, v)}
             />
           </div>
 
@@ -647,7 +634,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
             />
           </div>
 
-          {/* -- CodeBuddy Section -- */}
+          {/* -- CodeBuddy Code Section -- */}
           <div className="space-y-4">
             <div className="flex items-center gap-2">
               <ProviderIconBadge providerId="codebuddy" size="sm" />

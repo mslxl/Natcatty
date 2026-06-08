@@ -63,6 +63,7 @@ export const useTerminalAuthState = ({
     (opts?: { saveToHost?: boolean }) => {
       if (!isValid) return;
 
+      const shouldSave = opts?.saveToHost ?? saveCredentials;
       pendingAuthRef.current = {
         authMethod,
         username: authUsername,
@@ -75,15 +76,16 @@ export const useTerminalAuthState = ({
           authMethod === "key" || authMethod === "certificate"
             ? authPassphrase || undefined
             : undefined,
+        savedToHost: shouldSave && Boolean(onUpdateHost),
       };
 
-      const shouldSave = opts?.saveToHost ?? saveCredentials;
       if (shouldSave && onUpdateHost) {
         const updatedHost: Host = {
           ...host,
           username: authUsername,
           authMethod: authMethod,
           password: authMethod === "password" ? authPassword : undefined,
+          savePassword: authMethod === "password" ? true : host.savePassword,
           identityFileId:
             authMethod === "key" || authMethod === "certificate"
               ? (authKeyId ?? undefined)

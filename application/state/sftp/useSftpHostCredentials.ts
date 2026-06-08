@@ -3,6 +3,7 @@ import type { Host, Identity, SSHKey, TerminalSettings } from "../../../domain/m
 import { isEncryptedCredentialPlaceholder, sanitizeCredentialValue } from "../../../domain/credentials";
 import { resolveBridgeKeyAuth, resolveHostAuth } from "../../../domain/sshAuth";
 import { resolveHostKeepalive } from "../../../domain/host";
+import { hasUsableProxyConfig } from "../../../domain/proxyProfiles";
 
 // Fallback used when no global TerminalSettings are wired through (older
 // call sites or tests). Matches DEFAULT_TERMINAL_SETTINGS so behavior is
@@ -36,6 +37,7 @@ export const buildSftpHostCredentials = ({
       type: host.proxyConfig.type,
       host: host.proxyConfig.host,
       port: host.proxyConfig.port,
+      command: host.proxyConfig.command,
       username: host.proxyConfig.username,
       password: sanitizeCredentialValue(host.proxyConfig.password),
     }
@@ -69,7 +71,7 @@ export const buildSftpHostCredentials = ({
       const hasJumpKeyMaterial = Boolean(jumpKeyAuth.privateKey || jumpKeyAuth.identityFilePaths?.length);
       const hasConfiguredJumpProxyEndpoint =
         index === 0 &&
-        !!(jumpHost.proxyConfig?.host && jumpHost.proxyConfig?.port);
+        hasUsableProxyConfig(jumpHost.proxyConfig);
       if (
         hasConfiguredJumpProxyEndpoint &&
         jumpHost.proxyConfig?.username &&
@@ -101,11 +103,12 @@ export const buildSftpHostCredentials = ({
         keyId: jumpAuth.keyId,
         keySource: jumpKey?.source,
         label: jumpHost.label,
-        proxy: jumpHost.proxyConfig?.host && jumpHost.proxyConfig?.port
+        proxy: hasUsableProxyConfig(jumpHost.proxyConfig)
           ? {
             type: jumpHost.proxyConfig.type,
             host: jumpHost.proxyConfig.host,
             port: jumpHost.proxyConfig.port,
+            command: jumpHost.proxyConfig.command,
             username: jumpHost.proxyConfig.username,
             password: sanitizeCredentialValue(jumpHost.proxyConfig.password),
           }

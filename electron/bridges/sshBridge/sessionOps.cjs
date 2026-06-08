@@ -29,6 +29,12 @@ function createSessionOpsApi(ctx) {
     async function getSessionDistroInfo(_event, payload) {
       const { sessionId } = payload || {};
       const session = sessions.get(sessionId);
+      if (session?.type === "et") {
+        if (typeof execOnEtSession !== "function") {
+          return { success: false, error: "ET command executor unavailable" };
+        }
+        return execOnEtSession(session, "cat /etc/os-release 2>/dev/null || uname -a", 5000);
+      }
       if (!session || !session.conn) {
         return { success: false, error: 'Session not found or not connected' };
       }
@@ -486,6 +492,10 @@ function createSessionOpsApi(ctx) {
 
       if (!session) {
         return { success: false, error: 'Session not found or not connected' };
+      }
+
+      if (session.type === "et") {
+        return { success: false, error: "Server stats are not supported for EternalTerminal sessions" };
       }
 
       // Mosh sessions run over UDP via a local mosh-client PTY and have no
