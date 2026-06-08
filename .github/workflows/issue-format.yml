@@ -1,0 +1,139 @@
+name: issue-format
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  issues: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    # Skip issues opened by bots (e.g. dependabot) and maintainers fixing format
+    if: >-
+      github.event.issue.user.type != 'Bot' &&
+      !contains(github.event.issue.labels.*.name, 'format-exempt')
+    steps:
+      - name: Validate title and body
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const title = issue.title.trim();
+            const body = (issue.body || '').trim();
+            const errors = [];
+
+            const modernTitle = /^\[(Bug|Feature)\] .{8,}/.test(title);
+            const legacyAppTitle = /^Bug:\s*.{5,}/i.test(title);
+            if (!modernTitle && !legacyAppTitle) {
+              errors.push(
+                'Title must start with `[Bug]` or `[Feature]` followed by a short summary (at least 8 characters after the prefix). Legacy app links using `Bug: ...` are also accepted. Example: `[Bug] SFTP upload fails on Windows`'
+              );
+            }
+
+            if (body.length < 120) {
+              errors.push(
+                'Body is too short. Please use the Bug Report or Feature Request template and fill in all required fields.'
+              );
+            }
+
+            const templateMarkers = [
+              'Steps to reproduce',
+              'Expected behavior',
+              'Actual behavior',
+              'Describe the problem',
+              'Problem / pain point',
+              'Proposed solution',
+              'Operating system',
+            ];
+            const hasTemplateStructure = templateMarkers.some((marker) =>
+              body.includes(marker)
+            );
+            if (!hasTemplateStructure) {
+              errors.push(
+                'Body does not look like it came from an issue template. Choose **Bug Report** or **Feature Request** when opening an issue.'
+              );
+            }
+
+            const labels = new Set(
+              (issue.labels || []).map((label) =>
+                typeof label === 'string' ? label : label.name
+              )
+            );
+
+            if (errors.length === 0) {
+              if (
+                issue.state === 'closed' &&
+                labels.has('invalid-format')
+              ) {
+                labels.delete('invalid-format');
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  state: 'open',
+                  labels: [...labels],
+                });
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  body: '<!-- issue-format-bot --> Format looks good now. Reopening this issue.',
+                });
+              }
+              core.info('Issue format OK');
+              return;
+            }
+
+            const issueNumber = issue.number;
+            const marker = '<!-- issue-format-bot -->';
+            const bodyText = [
+              marker,
+              '## Issue format check failed',
+              '',
+              'This issue was closed automatically because it does not follow the required format.',
+              '',
+              ...errors.map((e) => `- ${e}`),
+              '',
+              '### How to resubmit',
+              '',
+              '1. Go to [New Issue](https://github.com/binaricat/Netcatty/issues/new/choose)',
+              '2. Pick **Bug Report** or **Feature Request**',
+              '3. Fill in every required field',
+              '4. Keep the `[Bug]` or `[Feature]` prefix in the title and add a clear summary after it (older app versions may use `Bug: ...`)',
+              '',
+              'For questions and open-ended discussion, use [GitHub Discussions](https://github.com/binaricat/Netcatty/discussions) instead.',
+              '',
+              'If you believe this was a mistake, reply here after fixing the title/body and a maintainer can reopen.',
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            const alreadyNotified = comments.some((c) =>
+              (c.body || '').includes(marker)
+            );
+
+            if (!alreadyNotified) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: bodyText,
+              });
+            }
+
+            labels.add('invalid-format');
+
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              state: 'closed',
+              state_reason: 'not_planned',
+              labels: [...labels],
+            });

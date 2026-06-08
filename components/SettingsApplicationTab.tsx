@@ -16,28 +16,49 @@ type AppInfo = {
 };
 
 const REPO_URL = "https://github.com/binaricat/Netcatty";
+const BUG_REPORT_TEMPLATE = "bug_report.yml";
 
-const buildIssueUrl = (appInfo: AppInfo) => {
-  const title = "Bug: ";
-  const bodyLines = [
-    "## Describe the problem",
-    "",
-    "## Steps to reproduce",
-    "1.",
-    "",
-    "## Expected behavior",
-    "",
-    "## Actual behavior",
-    "",
-    "## Environment",
-    `- App: ${appInfo.name} ${appInfo.version}`,
-    `- Platform: ${appInfo.platform || "unknown"}`,
-    `- UA: ${typeof navigator !== "undefined" ? navigator.userAgent : "unknown"}`,
-  ];
+const mapIssuePlatform = (platform?: string) => {
+  switch (platform) {
+    case "darwin":
+      return "macOS";
+    case "win32":
+      return "Windows";
+    case "linux":
+      return "Linux";
+    default:
+      return undefined;
+  }
+};
+
+/** Opens GitHub's Bug Report issue form with fields prefilled from the running app. */
+export const buildIssueUrl = (appInfo: AppInfo) => {
   const params = new URLSearchParams({
-    title,
-    body: bodyLines.join("\n"),
+    template: BUG_REPORT_TEMPLATE,
+    title: "[Bug] ",
   });
+
+  if (appInfo.version) {
+    params.set("version", appInfo.version);
+  }
+
+  const platform = mapIssuePlatform(appInfo.platform);
+  if (platform) {
+    params.set("platform", platform);
+  }
+
+  const installSource =
+    appInfo.version === "0.0.0"
+      ? "Built from source (npm run dev / pack)"
+      : "GitHub Release (.dmg / .exe / .AppImage / .deb)";
+  params.set("install_source", installSource);
+
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent : "unknown";
+  params.set(
+    "logs",
+    `Reported from Netcatty Settings (${appInfo.name} ${appInfo.version || "unknown"}).\n\nUser-Agent: ${ua}`,
+  );
+
   return `${REPO_URL}/issues/new?${params.toString()}`;
 };
 
