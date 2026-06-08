@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   createSudoPasswordAutofill,
   getSingleBracketedPasteLine,
+  isExplicitSudoPrompt,
   isSudoPasswordPrompt,
   shouldArmSudoPasswordAutofill,
 } from "./terminalSudoAutofill";
@@ -21,6 +22,19 @@ test("isSudoPasswordPrompt detects localized prompts", () => {
   assert.equal(isSudoPasswordPrompt("[sudo] alice 的密码："), true);
   assert.equal(isSudoPasswordPrompt("密码："), true);
   assert.equal(isSudoPasswordPrompt("请输入密码: "), true);
+});
+
+test("isSudoPasswordPrompt matches Kylin-style prompts without trailing colon", () => {
+  // Kylin Professional: sudo prompt has no [sudo] tag and no trailing colon (#1293)
+  assert.equal(isSudoPasswordPrompt("密码"), true);
+  assert.equal(isSudoPasswordPrompt("用户 的密码"), true);
+  assert.equal(isSudoPasswordPrompt("密码 "), true);
+});
+
+test("isExplicitSudoPrompt matches Kylin-style prompts", () => {
+  // Kylin-style [sudo] prompt without trailing colon
+  assert.equal(isExplicitSudoPrompt("[sudo] 密码"), true);
+  assert.equal(isExplicitSudoPrompt("[sudo] password for alice"), true);
 });
 
 test("isSudoPasswordPrompt detects color-wrapped prompts", () => {

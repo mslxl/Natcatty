@@ -11,18 +11,21 @@ const OSC_PATTERN = new RegExp(
 // output as a real prompt so a remote can't disguise a fake prompt and trick the
 // user into revealing the password.
 const CONCEAL_PATTERN = new RegExp(`${ESCAPE_SEQUENCE}\\[(?:[0-9]+;)*8(?:;[0-9]+)*m`);
-// A line that ends in a colon and mentions password/密码/口令. Intentionally
-// broad: filling requires the user to confirm (press Enter), so over-matching
-// only shows a dismissable hint and never leaks a password to a child program.
+// A line that mentions password/密码/口令 and optionally ends in a colon.
+// Intentionally broad: filling requires the user to confirm (press Enter), so
+// over-matching only shows a dismissable hint and never leaks a password to a
+// child program.  The colon is optional because Kylin's sudo prompt doesn't
+// use one (#1293).
 const SUDO_PROMPT_PATTERN =
-  /(?:^|[\r\n])[^\r\n]*?(?:\bpassword\b|密\s*码|口\s*令)[^\r\n:：]*[:：]\s*$/i;
+  /(?:^|[\r\n])[^\r\n]*?(?:\bpassword\b|密\s*码|口\s*令)[^\r\n:：]*(?:[:：]\s*)?$/i;
 // An explicit sudo prompt carries the sudo-specific "[sudo]" tag. No other tool
 // prompts this way, so we hint on it WITHOUT requiring an arm — keeping the hint
 // reliable even when command recording (arming) didn't fire for a manually
 // typed command (#1284; manual typing's recordedCommand is flaky).
 // Match [sudo] or [sudo: ...] variants (e.g. Chinese locale: [sudo: authenticate] 密码：, #1286).
+// Colon is optional for Kylin (#1293).
 const EXPLICIT_SUDO_PROMPT_PATTERN =
-  /(?:^|[\r\n])[^\r\n]*?\[sudo[^\]]*\][^\r\n]*?(?:\bpassword\b|密\s*码|口\s*令)[^\r\n:：]*[:：]\s*$/i;
+  /(?:^|[\r\n])[^\r\n]*?\[sudo[^\]]*\][^\r\n]*?(?:\bpassword\b|密\s*码|口\s*令)[^\r\n:：]*(?:[:：]\s*)?$/i;
 const SUDO_COMMAND_PATTERN = /^\s*(?:builtin\s+|command\s+)?sudo(?:\s|$)/;
 
 export const stripTerminalControlSequences = (data: string): string =>
@@ -146,7 +149,16 @@ export const createSudoPasswordAutofill = (_options: {
       // Fast path for bulk output: a prompt line ends in a colon, so a chunk
       // with no colon can't be completing one. Skip the regex work unless a hint
       // is pending (then we must keep watching for the prompt moving on).
-      if (!pending && !data.includes(":") && !data.includes("：")) return data;
+      // Also check for Chinese password keywords because Kylin's sudo prompt
+      // doesn't end with a colon (#1293).
+      if (
+        !pending &&
+        !data.includes(":") &&
+        !data.includes("：") &&
+        !/密码|口令/.test(data)
+      ) {
+        return data;
+      }
       const lastLine = tail.split(/[\r\n]/).pop() ?? tail;
       const armActive =
         armedUntil !== Number.NEGATIVE_INFINITY && options.now() <= armedUntil;
