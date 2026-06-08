@@ -632,8 +632,15 @@ function createTray() {
       tray.on("right-click", () => {
         toggleTrayPanel();
       });
+    } else if (process.platform === "linux") {
+      // Linux: GtkStatusIcon left-click can toggle the custom panel; StatusNotifier
+      // activation shows the native context menu set via setContextMenu() (there is
+      // no right-click / popUpContextMenu API on Linux — see Electron Tray docs).
+      tray.on("click", () => {
+        toggleTrayPanel();
+      });
     } else {
-      // macOS/Linux: Click toggles custom tray panel
+      // macOS: Click toggles custom tray panel
       tray.on("click", () => {
         toggleTrayPanel();
       });
@@ -746,10 +753,16 @@ function buildTrayMenuTemplate() {
  */
 function updateTrayMenu() {
   if (!tray) return;
-  // Avoid showing a context menu on left-click; we toggle our custom panel instead.
-  // On macOS, right-click may still show a menu if one is set, so we don't set any.
   try {
-    tray.setContextMenu(null);
+    if (process.platform === "linux") {
+      const { Menu } = electronModule;
+      const menu = Menu.buildFromTemplate(buildTrayMenuTemplate());
+      tray.setContextMenu(menu);
+    } else {
+      // Avoid showing a context menu on left-click; we toggle our custom panel instead.
+      // On macOS, right-click may still show a menu if one is set, so we don't set any.
+      tray.setContextMenu(null);
+    }
   } catch {
     // ignore
   }
