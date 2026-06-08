@@ -113,6 +113,8 @@ export type TerminalSessionStartersContext = {
   sudoAutofillPasswordRef?: RefObject<string | undefined>;
   onSudoHint?: (active: boolean) => boolean;
   isVisibleRef?: RefObject<boolean>;
+  /** False after unmount/teardown so in-flight session starts skip attach. */
+  isBootActiveRef?: RefObject<boolean>;
   pendingOutputScrollRef?: RefObject<boolean>;
 
   sessionRef: RefObject<string | null>;

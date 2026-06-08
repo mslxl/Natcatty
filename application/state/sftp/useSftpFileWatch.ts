@@ -1,18 +1,21 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import type { FileWatchErrorEvent, FileWatchSyncedEvent, SftpStateOptions } from "./types";
 
 export const useSftpFileWatch = (options?: SftpStateOptions) => {
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+
   useEffect(() => {
     const bridge = netcattyBridge.get();
     if (!bridge?.onFileWatchSynced || !bridge?.onFileWatchError) return;
 
     const unsubscribeSynced = bridge.onFileWatchSynced((payload: FileWatchSyncedEvent) => {
-      options?.onFileWatchSynced?.(payload);
+      optionsRef.current?.onFileWatchSynced?.(payload);
     });
 
     const unsubscribeError = bridge.onFileWatchError((payload: FileWatchErrorEvent) => {
-      options?.onFileWatchError?.(payload);
+      optionsRef.current?.onFileWatchError?.(payload);
     });
 
     return () => {
@@ -23,5 +26,5 @@ export const useSftpFileWatch = (options?: SftpStateOptions) => {
         // ignore cleanup errors
       }
     };
-  }, [options]);
+  }, []);
 };

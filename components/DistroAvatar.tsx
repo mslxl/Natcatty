@@ -71,7 +71,8 @@ type DistroAvatarProps = {
   host: Host;
   fallback: string;
   className?: string;
-  size?: "sm" | "md" | "lg";
+  /** xs matches top tab bar icons (h-4 rounded rect) */
+  size?: "xs" | "sm" | "md" | "lg";
 };
 
 const DistroAvatarInner: React.FC<DistroAvatarProps> = ({
@@ -85,16 +86,18 @@ const DistroAvatarInner: React.FC<DistroAvatarProps> = ({
   const [errored, setErrored] = React.useState(false);
   const bg = DISTRO_COLORS[distro] || DISTRO_COLORS.default;
 
-  // Size variants - all use rounded corners for consistency
+  // Size variants — rounded rects (same corner style as SessionTabIcon in TopTabItems)
   const sizeClasses = {
-    sm: "h-6 w-6 rounded",
-    md: "h-11 w-11 rounded-lg",
-    lg: "h-14 w-14 rounded-xl",
+    xs: "h-4 w-4 rounded",
+    sm: "h-5 w-5 rounded",
+    md: "h-8 w-8 rounded",
+    lg: "h-11 w-11 rounded",
   };
   const iconSizes = {
-    sm: "h-3.5 w-3.5",
-    md: "h-5 w-5",
-    lg: "h-6 w-6",
+    xs: "h-2.5 w-2.5",
+    sm: "h-3 w-3",
+    md: "h-4 w-4",
+    lg: "h-5 w-5",
   };
 
   const containerClass = sizeClasses[size];
@@ -105,8 +108,8 @@ const DistroAvatarInner: React.FC<DistroAvatarProps> = ({
     return (
       <div
         className={cn(
+          "shrink-0 rounded flex items-center justify-center bg-amber-500/15 text-amber-500",
           containerClass,
-          "flex items-center justify-center bg-amber-500/15 text-amber-500",
           className,
         )}
       >
@@ -119,8 +122,8 @@ const DistroAvatarInner: React.FC<DistroAvatarProps> = ({
     return (
       <div
         className={cn(
+          "shrink-0 rounded flex items-center justify-center overflow-hidden",
           containerClass,
-          "flex items-center justify-center overflow-hidden",
           bg,
           className,
         )}
@@ -138,8 +141,8 @@ const DistroAvatarInner: React.FC<DistroAvatarProps> = ({
   return (
     <div
       className={cn(
+        "shrink-0 rounded flex items-center justify-center bg-primary/15 text-primary",
         containerClass,
-        "flex items-center justify-center bg-primary/15 text-primary",
         className,
       )}
     >

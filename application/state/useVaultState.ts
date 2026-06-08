@@ -109,6 +109,29 @@ const safeParse = <T,>(value: string | null): T | null => {
   }
 };
 
+/**
+ * Strip the bulky `terminalData` replay buffer from transient (unsaved)
+ * connection logs before persisting. `terminalData` is the full terminal
+ * scrollback for a session; with up to 500 logs it grew the
+ * `netcatty_connection_logs_v1` localStorage blob to ~11 MB, and every
+ * add/update re-serialized + wrote the whole thing synchronously
+ * (50–73 ms on the main thread), causing freezes on connect/disconnect.
+ *
+ * The full `terminalData` stays in the in-memory React state (so in-session
+ * replay still works); only explicitly *saved* logs keep it on disk. This
+ * keeps the persisted blob small and writes fast.
+ */
+const pruneConnectionLogsForStorage = (logs: ConnectionLog[]): ConnectionLog[] => {
+  let changed = false;
+  const next = logs.map((log) => {
+    if (log.saved || log.terminalData === undefined) return log;
+    changed = true;
+    const { terminalData: _omitted, ...rest } = log;
+    return rest;
+  });
+  return changed ? next : logs;
+};
+
 export const useVaultState = () => {
   const [isInitialized, setIsInitialized] = useState(false);
   const [hosts, setHosts] = useState<Host[]>([]);
@@ -318,7 +341,7 @@ export const useVaultState = () => {
         const final = [...updated, ...savedLogs].sort(
           (a, b) => b.startTime - a.startTime
         );
-        localStorageAdapter.write(STORAGE_KEY_CONNECTION_LOGS, final);
+        localStorageAdapter.write(STORAGE_KEY_CONNECTION_LOGS, pruneConnectionLogsForStorage(final));
         return final;
       });
       return newLog.id;
@@ -332,7 +355,7 @@ export const useVaultState = () => {
         const updated = prev.map((log) =>
           log.id === id ? { ...log, ...updates } : log
         );
-        localStorageAdapter.write(STORAGE_KEY_CONNECTION_LOGS, updated);
+        localStorageAdapter.write(STORAGE_KEY_CONNECTION_LOGS, pruneConnectionLogsForStorage(updated));
         return updated;
       });
     },
@@ -360,7 +383,7 @@ export const useVaultState = () => {
   const clearUnsavedConnectionLogs = useCallback(() => {
     setConnectionLogs((prev) => {
       const saved = prev.filter((log) => log.saved);
-      localStorageAdapter.write(STORAGE_KEY_CONNECTION_LOGS, saved);
+      localStorageAdapter.write(STORAGE_KEY_CONNECTION_LOGS, pruneConnectionLogsForStorage(saved));
       return saved;
     });
   }, []);

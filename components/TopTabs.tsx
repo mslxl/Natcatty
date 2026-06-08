@@ -1,13 +1,19 @@
-import { Folder, FolderLock, Moon, MoreHorizontal, Plus, Settings, Sparkles, Sun } from 'lucide-react';
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fromEditorTabId, isEditorTabId } from '../application/state/activeTabStore';
+import { Folder, FolderLock, Menu, Moon, MoreHorizontal, Plus, Settings, Sparkles, Sun } from 'lucide-react';
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { fromEditorTabId, isEditorTabId, useActiveTabId } from '../application/state/activeTabStore';
 import type { EditorTab } from '../application/state/editorTabStore';
 import { buildWorkspaceActivityMap } from '../application/state/sessionActivity';
 import { useSessionActivityMap } from '../application/state/sessionActivityStore';
+import {
+  useTerminalHostTreeLayoutWidth,
+  useTerminalHostTreeOpen,
+  useToggleTerminalHostTree,
+} from '../application/state/terminalHostTreeStore';
 import type { LogView } from '../application/state/logViewState';
 import { useWindowControls } from '../application/state/useWindowControls';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { Host, TerminalSession, Workspace } from '../types';
+import { cn } from '../lib/utils';
 import { Button } from './ui/button';
 import { ContextMenuItem, ContextMenuSeparator } from './ui/context-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
@@ -22,6 +28,7 @@ import {
   WindowControls,
   WorkspaceTopTab,
 } from './top-tabs/TopTabItems';
+import { useTopTabLifecycleAnimations } from './top-tabs/useTopTabLifecycleAnimations';
 
 // Helper styles for Electron drag regions (use type assertion to include non-standard WebkitAppRegion)
 const dragRegionStyle = { WebkitAppRegion: 'drag' } as React.CSSProperties;
@@ -100,6 +107,14 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   const { t } = useI18n();
   const { maximize, isFullscreen, onFullscreenChanged } = useWindowControls();
   const sessionActivityMap = useSessionActivityMap();
+  const isHostTreeOpen = useTerminalHostTreeOpen();
+  const hostTreeLayoutWidth = useTerminalHostTreeLayoutWidth();
+  const toggleHostTree = useToggleTerminalHostTree();
+  const activeTabId = useActiveTabId();
+  const { getTabAnimationClass } = useTopTabLifecycleAnimations(orderedTabs);
+  const [hostTreeTogglePop, setHostTreeTogglePop] = useState(false);
+  const hostTreeToggleSlotRef = useRef<HTMLDivElement>(null);
+  const [hostTreeTabGutter, setHostTreeTabGutter] = useState(0);
 
   // Tab reorder drag state
   const [dropIndicator, setDropIndicator] = useState<{ tabId: string; position: 'before' | 'after' } | null>(null);
@@ -203,6 +218,55 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
     }
     return counts;
   }, [sessions]);
+
+  const hasTerminalOrWorkspaceTabs = sessions.length > 0 || workspaces.length > 0;
+  const isActiveTerminalOrWorkspaceTab = orphanSessionMap.has(activeTabId) || workspaceMap.has(activeTabId);
+  const showHostTreeToggle = hasTerminalOrWorkspaceTabs && isActiveTerminalOrWorkspaceTab;
+
+  const updateHostTreeTabGutter = useCallback(() => {
+    if (!showHostTreeToggle || hostTreeLayoutWidth <= 0) {
+      setHostTreeTabGutter(0);
+      return;
+    }
+    const root = tabsContainerRef.current?.closest('[data-top-tabs-root]') as HTMLElement | null;
+    const toggleSlot = hostTreeToggleSlotRef.current;
+    if (!root || !toggleSlot) {
+      setHostTreeTabGutter(Math.max(0, hostTreeLayoutWidth));
+      return;
+    }
+    const rootLeft = root.getBoundingClientRect().left;
+    const toggleRight = toggleSlot.getBoundingClientRect().right - rootLeft;
+    setHostTreeTabGutter(Math.max(0, hostTreeLayoutWidth - toggleRight));
+  }, [hostTreeLayoutWidth, showHostTreeToggle]);
+
+  useLayoutEffect(() => {
+    updateHostTreeTabGutter();
+    const root = tabsContainerRef.current?.closest('[data-top-tabs-root]') as HTMLElement | null;
+    if (!root) return;
+    const ro = new ResizeObserver(() => updateHostTreeTabGutter());
+    ro.observe(root);
+    if (tabsContainerRef.current) ro.observe(tabsContainerRef.current);
+    if (hostTreeToggleSlotRef.current) ro.observe(hostTreeToggleSlotRef.current);
+    window.addEventListener('resize', updateHostTreeTabGutter);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', updateHostTreeTabGutter);
+    };
+  }, [
+    updateHostTreeTabGutter,
+    orderedTabs.length,
+    showSftpTab,
+    isWindowFullscreen,
+    showHostTreeToggle,
+    isHostTreeOpen,
+  ]);
+
+  useEffect(() => {
+    if (!showHostTreeToggle) return;
+    setHostTreeTogglePop(true);
+    const timer = window.setTimeout(() => setHostTreeTogglePop(false), 360);
+    return () => window.clearTimeout(timer);
+  }, [showHostTreeToggle]);
 
   const handleTabDragStart = useCallback((e: React.DragEvent, tabId: string) => {
     e.dataTransfer.effectAllowed = 'move';
@@ -383,6 +447,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             host={host}
             suffix={suffix}
             onRequestCloseEditorTab={onRequestCloseEditorTab}
+            tabAnimationClass={getTabAnimationClass(tabId)}
           />
         );
       }
@@ -417,6 +482,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             onCopySessionToNewWindow={onCopySessionToNewWindow}
             renderBulkCloseItems={renderBulkCloseItems}
             t={t}
+            tabAnimationClass={getTabAnimationClass(session.id)}
           />
         );
       }
@@ -450,6 +516,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             onCloseWorkspace={onCloseWorkspace}
             renderBulkCloseItems={renderBulkCloseItems}
             t={t}
+            tabAnimationClass={getTabAnimationClass(workspace.id)}
           />
         );
       }
@@ -463,6 +530,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             logView={logView}
             onCloseLogView={onCloseLogView}
             t={t}
+            tabAnimationClass={getTabAnimationClass(logView.id)}
           />
         );
       }
@@ -509,6 +577,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             label="Vaults"
             icon={<FolderLock size={14} />}
             className="rounded"
+            compact={showHostTreeToggle}
           />
           {showSftpTab && (
             <RootTopTab
@@ -516,6 +585,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
               label="SFTP"
               icon={<Folder size={14} />}
               className="rounded-t-md"
+              compact={showHostTreeToggle}
             />
           )}
         </div>
@@ -547,6 +617,47 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             className="flex items-end gap-0 overflow-x-auto scrollbar-none app-drag max-w-full"
             style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
           >
+            {hasTerminalOrWorkspaceTabs && (
+              <div
+                ref={hostTreeToggleSlotRef}
+                className="top-tab-host-tree-toggle-slot mb-0"
+                data-visible={showHostTreeToggle ? 'true' : 'false'}
+              >
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      data-tab-type="host-tree-toggle"
+                      data-state={isHostTreeOpen ? 'active' : 'inactive'}
+                      className={cn(
+                        'h-7 w-7 flex-shrink-0 app-no-drag rounded-none hover:bg-transparent',
+                        hostTreeTogglePop && showHostTreeToggle && 'top-tab-host-tree-toggle-pop',
+                      )}
+                      style={{
+                        color: isHostTreeOpen
+                          ? 'var(--top-tabs-fg, hsl(var(--foreground)))'
+                          : 'var(--top-tabs-muted, hsl(var(--muted-foreground)))',
+                        pointerEvents: showHostTreeToggle ? 'auto' : 'none',
+                      }}
+                      onClick={toggleHostTree}
+                    >
+                      <Menu size={14} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {isHostTreeOpen ? t('terminal.layer.hostTree.collapse') : t('terminal.layer.hostTree.expand')}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            )}
+            {showHostTreeToggle && (
+              <div
+                className="top-tab-host-tree-gutter flex-shrink-0"
+                style={{ width: hostTreeTabGutter }}
+                aria-hidden
+              />
+            )}
             {renderOrderedTabs()}
             {/* Add new tab button - follows last tab when not overflowing */}
             {!hasOverflow && (

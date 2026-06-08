@@ -238,9 +238,9 @@ export const editorTabStore = new EditorTabStore();
 const getTabsSnapshot = () => editorTabStore.getTabs();
 
 export const useEditorTabs = (): readonly EditorTab[] =>
-  useSyncExternalStore(editorTabStore.subscribe, getTabsSnapshot);
+  useSyncExternalStore(editorTabStore.subscribe, getTabsSnapshot, getTabsSnapshot);
 
 export const useEditorTab = (id: EditorTabId): EditorTab | undefined => {
   const getSnapshot = useCallback(() => editorTabStore.getTab(id), [id]);
-  return useSyncExternalStore(editorTabStore.subscribe, getSnapshot);
+  return useSyncExternalStore(editorTabStore.subscribe, getSnapshot, getSnapshot);
 };

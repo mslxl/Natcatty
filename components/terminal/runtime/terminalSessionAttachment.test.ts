@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { Terminal as XTerm } from "@xterm/xterm";
 
-import { attachSessionToTerminal, writeSessionData } from "./terminalSessionAttachment.ts";
+import {
+  attachSessionToTerminal,
+  tryAttachSessionToTerminal,
+  writeSessionData,
+} from "./terminalSessionAttachment.ts";
 
 const createFakeTerm = (activeType = "normal") => {
   const writes: string[] = [];
@@ -229,4 +233,43 @@ test("attachSessionToTerminal leaves sudo prompts alone without an autofill pass
   onData?.("[sudo] password for alice: ");
 
   assert.deepEqual(sent, []);
+});
+
+test("tryAttachSessionToTerminal closes orphan sessions after unmount", () => {
+  const { term } = createFakeTerm();
+  const closed: string[] = [];
+  let dataSubscribed = false;
+  const ctx = {
+    ...createContext(false),
+    sessionId: "session-1",
+    sessionRef: { current: null },
+    hasConnectedRef: { current: false },
+    hasRunStartupCommandRef: { current: false },
+    disposeDataRef: { current: null },
+    disposeExitRef: { current: null },
+    fitAddonRef: { current: null },
+    serializeAddonRef: { current: null },
+    pendingAuthRef: { current: null },
+    isBootActiveRef: { current: false },
+    terminalBackend: {
+      closeSession: (id: string) => {
+        closed.push(id);
+      },
+      onSessionData: () => {
+        dataSubscribed = true;
+        return () => {};
+      },
+      onSessionExit: () => () => {},
+    },
+    updateStatus: () => {},
+    setError: () => {},
+    onSessionExit: () => {},
+  };
+
+  const attached = tryAttachSessionToTerminal(ctx as never, term, "backend-session");
+
+  assert.equal(attached, false);
+  assert.deepEqual(closed, ["backend-session"]);
+  assert.equal(dataSubscribed, false);
+  assert.equal(ctx.sessionRef.current, null);
 });

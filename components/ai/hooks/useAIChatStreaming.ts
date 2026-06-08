@@ -82,6 +82,11 @@ export type { DefaultTargetSessionHint } from './aiChatStreamingSupport';
 const sharedStreamingSessionIds = new Set<string>();
 const sharedAbortControllers = new Map<string, AbortController>();
 const streamingSubscribers = new Set<() => void>();
+
+/** Whether a chat session still has an active stream (used to keep panel mounted while hidden). */
+export function isAIChatSessionStreaming(sessionId: string | null | undefined): boolean {
+  return !!sessionId && sharedStreamingSessionIds.has(sessionId);
+}
 const OPENAI_CHAT_ASSISTANT_FIELDS = Symbol('netcatty.openAIChatAssistantFields');
 
 type ModelMessageWithOpenAIChatFields = ModelMessage & {

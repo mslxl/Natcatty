@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { localStorageAdapter } from "../../infrastructure/persistence/localStorageAdapter";
 
 export const useTreeExpandedState = (storageKey: string) => {
@@ -20,28 +20,40 @@ export const useTreeExpandedState = (storageKey: string) => {
     localStorageAdapter.writeString(storageKey, JSON.stringify(pathsArray));
   }, [storageKey, expandedPaths]);
 
-  const togglePath = (path: string) => {
-    const newExpanded = new Set(expandedPaths);
-    if (newExpanded.has(path)) {
-      newExpanded.delete(path);
-    } else {
-      newExpanded.add(path);
-    }
-    setExpandedPaths(newExpanded);
-  };
+  const togglePath = useCallback((path: string) => {
+    setExpandedPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  }, []);
 
-  const expandAll = (allPaths: string[]) => {
+  const expandAll = useCallback((allPaths: string[]) => {
     setExpandedPaths(new Set(allPaths));
-  };
+  }, []);
 
-  const collapseAll = () => {
+  const collapseAll = useCallback(() => {
     setExpandedPaths(new Set());
-  };
+  }, []);
+
+  const ensurePathExpanded = useCallback((path: string) => {
+    setExpandedPaths((current) => {
+      if (current.has(path)) return current;
+      const next = new Set(current);
+      next.add(path);
+      return next;
+    });
+  }, []);
 
   return {
     expandedPaths,
     togglePath,
     expandAll,
     collapseAll,
+    ensurePathExpanded,
   };
 };

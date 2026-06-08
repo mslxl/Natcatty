@@ -1,7 +1,26 @@
-import { type DragEvent, useCallback, useMemo, useRef, useState } from 'react';
+import { type DragEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { terminalLayoutSuppressStore } from '../../application/state/terminalLayoutSuppressStore';
 import type { TerminalSession, Workspace, WorkspaceNode } from '../../types';
 import type { ResizerHandle, SplitHint, WorkspaceRect } from './TerminalLayerSupport';
+import {
+  computeSplitSizesFromDelta,
+  patchWorkspaceSplitSizes,
+  type WorkspaceResizeSession,
+} from './workspaceSplitResize';
+
+// Pure recursive lookup — module-level so its identity is stable across renders
+// (it was previously recreated every render, churning the workspace-section memo).
+function findSplitNode(node: WorkspaceNode, splitId: string): WorkspaceNode | null {
+  if (node.type === 'split') {
+    if (node.id === splitId) return node;
+    for (const child of node.children) {
+      const found = findSplitNode(child, splitId);
+      if (found) return found;
+    }
+  }
+  return null;
+}
 
 interface UseTerminalWorkspaceLayoutOptions {
   activeSession: TerminalSession | undefined;
@@ -10,6 +29,7 @@ interface UseTerminalWorkspaceLayoutOptions {
   onAddSessionToWorkspace: (workspaceId: string, sessionId: string, hint: Exclude<SplitHint, null>) => void;
   onCreateWorkspaceFromSessions: (baseSessionId: string, joiningSessionId: string, hint: Exclude<SplitHint, null>) => void;
   onSetDraggingSessionId: (id: string | null) => void;
+  onUpdateSplitSizes: (workspaceId: string, splitId: string, sizes: number[]) => void;
   sessions: TerminalSession[];
   workspaces: Workspace[];
 }
@@ -21,6 +41,7 @@ export function useTerminalWorkspaceLayout({
   onAddSessionToWorkspace,
   onCreateWorkspaceFromSessions,
   onSetDraggingSessionId,
+  onUpdateSplitSizes,
   sessions,
   workspaces,
 }: UseTerminalWorkspaceLayoutOptions) {
@@ -34,15 +55,49 @@ export function useTerminalWorkspaceLayout({
   
   const [dropHint, setDropHint] = useState<SplitHint>(null);
   
-  const [resizing, setResizing] = useState<{
-      workspaceId: string;
-      splitId: string;
-      index: number;
-      direction: 'vertical' | 'horizontal';
-      startSizes: number[];
-      startArea: { w: number; h: number };
-      startClient: { x: number; y: number };
-    } | null>(null);
+  const [resizing, setResizing] = useState<WorkspaceResizeSession | null>(null);
+  const [resizePreviewDelta, setResizePreviewDelta] = useState(0);
+  const resizePreviewDeltaRef = useRef(0);
+
+  useEffect(() => {
+    if (!resizing) return;
+
+    terminalLayoutSuppressStore.begin();
+    resizePreviewDeltaRef.current = 0;
+    setResizePreviewDelta(0);
+
+    let rafId: number | null = null;
+    const onMove = (e: MouseEvent) => {
+      const delta = resizing.direction === 'vertical'
+        ? e.clientX - resizing.startClient.x
+        : e.clientY - resizing.startClient.y;
+      if (rafId !== null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        resizePreviewDeltaRef.current = delta;
+        setResizePreviewDelta(delta);
+      });
+    };
+    const onUp = () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      const finalSizes = computeSplitSizesFromDelta(resizing, resizePreviewDeltaRef.current);
+      onUpdateSplitSizes(resizing.workspaceId, resizing.splitId, finalSizes);
+      setResizing(null);
+    };
+
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = resizing.direction === 'vertical' ? 'ew-resize' : 'ns-resize';
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      terminalLayoutSuppressStore.end();
+    };
+  }, [resizing, onUpdateSplitSizes]);
   
   const computeWorkspaceRects = useCallback((workspace?: Workspace, size?: { width: number; height: number }): Record<string, WorkspaceRect> => {
       if (!workspace) return {} as Record<string, WorkspaceRect>;
@@ -71,15 +126,64 @@ export function useTerminalWorkspaceLayout({
       return rects;
     }, []);
   
+  const workspaceForLayout = useCallback((workspace: Workspace): Workspace => {
+    if (!resizing || resizing.workspaceId !== workspace.id) return workspace;
+    const previewSizes = computeSplitSizesFromDelta(resizing, resizePreviewDelta);
+    return patchWorkspaceSplitSizes(workspace, resizing.splitId, previewSizes);
+  }, [resizePreviewDelta, resizing]);
+
+  const workspaceRectsCacheRef = useRef(new Map<string, {
+    root: Workspace['root'];
+    previewKey: string;
+    width: number;
+    height: number;
+    rects: Record<string, WorkspaceRect>;
+  }>());
+
   const workspaceRectsById = useMemo(
       () => {
         const map = new Map<string, Record<string, WorkspaceRect>>();
-        for (const workspace of workspaces) {
-          map.set(workspace.id, computeWorkspaceRects(workspace, workspaceArea));
+        const previewKey = resizing
+          ? `${resizing.workspaceId}:${resizing.splitId}:${resizePreviewDelta}`
+          : 'still';
+        const liveWorkspaceIds = new Set(workspaces.map((workspace) => workspace.id));
+        for (const workspaceId of workspaceRectsCacheRef.current.keys()) {
+          if (!liveWorkspaceIds.has(workspaceId)) {
+            workspaceRectsCacheRef.current.delete(workspaceId);
+          }
         }
+
+        // Hidden workspaces do not need fresh geometry. Recomputing every
+        // workspace on a side-panel width change makes tab switches fan out to
+        // panes that cannot currently be seen.
+        if (!activeWorkspace) return map;
+
+        const workspace = workspaces.find((candidate) => candidate.id === activeWorkspace.id) ?? activeWorkspace;
+        const layoutWorkspace = workspaceForLayout(workspace);
+        const cached = workspaceRectsCacheRef.current.get(workspace.id);
+        if (
+          cached
+          && cached.root === layoutWorkspace.root
+          && cached.previewKey === previewKey
+          && cached.width === workspaceArea.width
+          && cached.height === workspaceArea.height
+        ) {
+          map.set(workspace.id, cached.rects);
+          return map;
+        }
+
+        const rects = computeWorkspaceRects(layoutWorkspace, workspaceArea);
+        workspaceRectsCacheRef.current.set(workspace.id, {
+          root: layoutWorkspace.root,
+          previewKey,
+          width: workspaceArea.width,
+          height: workspaceArea.height,
+          rects,
+        });
+        map.set(workspace.id, rects);
         return map;
       },
-      [computeWorkspaceRects, workspaceArea, workspaces],
+      [activeWorkspace, computeWorkspaceRects, resizePreviewDelta, resizing, workspaceArea, workspaceForLayout, workspaces],
     );
   
   const activeWorkspaceRects = useMemo<Record<string, WorkspaceRect>>(
@@ -123,9 +227,15 @@ export function useTerminalWorkspaceLayout({
       return resizers;
     }, []);
   
-  const activeResizers = useMemo(() => collectResizers(activeWorkspace, workspaceArea), [activeWorkspace, workspaceArea, collectResizers]);
+  const activeResizers = useMemo(
+    () => collectResizers(
+      activeWorkspace ? workspaceForLayout(activeWorkspace) : undefined,
+      workspaceArea,
+    ),
+    [activeWorkspace, workspaceArea, collectResizers, workspaceForLayout],
+  );
   
-  const computeSplitHint = (e: DragEvent): SplitHint => {
+  const computeSplitHint = useCallback((e: DragEvent): SplitHint => {
       if (isFocusMode) return null;
       const surface = workspaceOverlayRef.current || workspaceInnerRef.current || workspaceOuterRef.current;
       if (!surface || !workspaceArea.width || !workspaceArea.height) return null;
@@ -175,9 +285,9 @@ export function useTerminalWorkspaceLayout({
         targetSessionId,
         rect: previewRect,
       };
-    };
-  
-  const handleWorkspaceDrop = (e: DragEvent) => {
+    }, [isFocusMode, workspaceArea, activeWorkspaceRects, workspaceOverlayRef, workspaceInnerRef, workspaceOuterRef]);
+
+  const handleWorkspaceDrop = useCallback((e: DragEvent) => {
       if (isFocusMode) return;
       const draggedSessionId = e.dataTransfer.getData('session-id');
       if (!draggedSessionId) return;
@@ -197,18 +307,7 @@ export function useTerminalWorkspaceLayout({
       if (activeSession) {
         onCreateWorkspaceFromSessions(activeSession.id, draggedSessionId, hint);
       }
-    };
-  
-  const findSplitNode = (node: WorkspaceNode, splitId: string): WorkspaceNode | null => {
-      if (node.type === 'split') {
-        if (node.id === splitId) return node;
-        for (const child of node.children) {
-          const found = findSplitNode(child, splitId);
-          if (found) return found;
-        }
-      }
-      return null;
-    };
+    }, [isFocusMode, computeSplitHint, setDropHint, onSetDraggingSessionId, activeWorkspace, sessions, onAddSessionToWorkspace, activeSession, onCreateWorkspaceFromSessions]);
 
   return {
     activeResizers,

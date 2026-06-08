@@ -1,0 +1,288 @@
+import { Check, Expand, FolderPlus, Minimize2, Search, Tag, TerminalSquare, X } from 'lucide-react';
+import React, { useEffect, useRef } from 'react';
+
+import { useI18n } from '../../application/i18n/I18nProvider';
+import { cn } from '../../lib/utils';
+import { Button } from '../ui/button';
+import { Input } from '../ui/input';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
+
+export type HostTreeToolbarPanel = 'search' | 'tags' | null;
+
+type ToolbarTheme = {
+  termFg: string;
+  mutedFg: string;
+  separator: string;
+  rowHoverBg: string;
+};
+
+interface TerminalHostTreeToolbarProps {
+  theme: ToolbarTheme;
+  expandedPanel: HostTreeToolbarPanel;
+  onExpandedPanelChange: (panel: HostTreeToolbarPanel) => void;
+  search: string;
+  onSearchChange: (value: string) => void;
+  allTags: string[];
+  selectedTags: string[];
+  onSelectedTagsChange: (tags: string[]) => void;
+  onNewRootGroup: () => void;
+  canNewGroup?: boolean;
+  onCreateLocalTerminal: () => void;
+  canCreateLocalTerminal?: boolean;
+  onExpandAll: () => void;
+  onCollapseAll: () => void;
+  canExpandCollapse?: boolean;
+  onCollapse: () => void;
+}
+
+const iconButtonClass = 'netcatty-tab h-7 w-7 shrink-0 rounded-md p-0 hover:bg-transparent';
+
+export const TerminalHostTreeToolbar: React.FC<TerminalHostTreeToolbarProps> = ({
+  theme,
+  expandedPanel,
+  onExpandedPanelChange,
+  search,
+  onSearchChange,
+  allTags,
+  selectedTags,
+  onSelectedTagsChange,
+  onNewRootGroup,
+  canNewGroup = true,
+  onCreateLocalTerminal,
+  canCreateLocalTerminal = true,
+  onExpandAll,
+  onCollapseAll,
+  canExpandCollapse = true,
+  onCollapse,
+}) => {
+  const { t } = useI18n();
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const togglePanel = (panel: Exclude<HostTreeToolbarPanel, null>) => {
+    onExpandedPanelChange(expandedPanel === panel ? null : panel);
+  };
+
+  const hasTagFilters = selectedTags.length > 0;
+  const hasSearch = search.trim().length > 0;
+
+  useEffect(() => {
+    if (expandedPanel !== 'search') return;
+    const frame = requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [expandedPanel]);
+
+  const toggleTag = (tag: string) => {
+    if (selectedTags.includes(tag)) {
+      onSelectedTagsChange(selectedTags.filter((item) => item !== tag));
+    } else {
+      onSelectedTagsChange([...selectedTags, tag]);
+    }
+  };
+
+  return (
+    <div className="flex-shrink-0">
+      <div
+        className="flex h-9 shrink-0 items-center gap-1 px-1.5 py-1"
+        style={{ borderBottom: `1px solid ${theme.separator}` }}
+      >
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={iconButtonClass}
+              style={{ color: expandedPanel === 'search' || hasSearch ? theme.termFg : theme.mutedFg }}
+              onClick={() => togglePanel('search')}
+            >
+              <Search size={14} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{t('terminal.layer.hostTree.searchButton')}</TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={iconButtonClass}
+              style={{ color: expandedPanel === 'tags' || hasTagFilters ? theme.termFg : theme.mutedFg }}
+              onClick={() => togglePanel('tags')}
+            >
+              <Tag size={14} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{t('terminal.layer.hostTree.tagsButton')}</TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={iconButtonClass}
+              style={{ color: theme.mutedFg }}
+              disabled={!canNewGroup}
+              onClick={onNewRootGroup}
+            >
+              <FolderPlus size={14} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{t('terminal.layer.hostTree.newGroup')}</TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={iconButtonClass}
+              style={{ color: theme.mutedFg }}
+              disabled={!canCreateLocalTerminal}
+              onClick={onCreateLocalTerminal}
+            >
+              <TerminalSquare size={14} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{t('terminal.layer.hostTree.localShell')}</TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={iconButtonClass}
+              style={{ color: theme.mutedFg }}
+              disabled={!canExpandCollapse}
+              onClick={onExpandAll}
+            >
+              <Expand size={14} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{t('vault.tree.expandAll')}</TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={iconButtonClass}
+              style={{ color: theme.mutedFg }}
+              disabled={!canExpandCollapse}
+              onClick={onCollapseAll}
+            >
+              <Minimize2 size={14} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{t('vault.tree.collapseAll')}</TooltipContent>
+        </Tooltip>
+
+        <div className="flex-1 min-w-0" />
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={iconButtonClass}
+              style={{ color: theme.mutedFg }}
+              onClick={onCollapse}
+            >
+              <X size={15} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{t('terminal.layer.hostTree.collapse')}</TooltipContent>
+        </Tooltip>
+      </div>
+
+      <div
+        className={cn(
+          'overflow-hidden transition-[max-height,opacity] duration-200 ease-out',
+          expandedPanel === 'search' ? 'max-h-9 opacity-100' : 'max-h-0 opacity-0',
+        )}
+        style={{ borderBottom: expandedPanel === 'search' ? `1px solid ${theme.separator}` : undefined }}
+      >
+        <div className="h-9 flex items-center px-1.5">
+          <div className="relative flex-1 min-w-0">
+            <Search
+              size={12}
+              className="absolute left-1 top-1/2 -translate-y-1/2 pointer-events-none"
+              style={{ color: theme.mutedFg }}
+            />
+            <Input
+              ref={searchInputRef}
+              value={search}
+              onChange={(event) => onSearchChange(event.target.value)}
+              placeholder={t('terminal.layer.hostTree.search')}
+              className="h-7 pl-6 pr-1 text-xs bg-transparent border-0 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+              style={{ color: theme.termFg }}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div
+        className={cn(
+          'overflow-hidden transition-[max-height,opacity] duration-200 ease-out',
+          expandedPanel === 'tags' ? 'max-h-40 opacity-100' : 'max-h-0 opacity-0',
+        )}
+        style={{ borderBottom: expandedPanel === 'tags' ? `1px solid ${theme.separator}` : undefined }}
+      >
+        <div
+          className="max-h-40 overflow-y-auto overflow-x-hidden py-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {allTags.length === 0 ? (
+            <div className="px-3 py-3 text-center text-xs" style={{ color: theme.mutedFg }}>
+              {t('terminal.layer.hostTree.tagsEmpty')}
+            </div>
+          ) : (
+            <>
+              {hasTagFilters && (
+                <button
+                  type="button"
+                  className="w-full px-3 py-1.5 text-left text-xs"
+                  style={{ color: theme.mutedFg }}
+                  onClick={() => onSelectedTagsChange([])}
+                >
+                  {t('terminal.layer.hostTree.clearTags')}
+                </button>
+              )}
+              {allTags.map((tag) => {
+                const isSelected = selectedTags.includes(tag);
+                return (
+                  <button
+                    key={tag}
+                    type="button"
+                    className="flex w-full min-w-0 items-center gap-2 px-3 py-1.5 text-left text-xs"
+                    style={{ color: theme.termFg }}
+                    onMouseEnter={(event) => {
+                      event.currentTarget.style.backgroundColor = theme.rowHoverBg;
+                    }}
+                    onMouseLeave={(event) => {
+                      event.currentTarget.style.backgroundColor = '';
+                    }}
+                    onClick={() => toggleTag(tag)}
+                  >
+                    <span
+                      className={cn(
+                        'h-2.5 w-2.5 shrink-0 rounded-full border',
+                        isSelected ? 'bg-current border-current' : 'border-current opacity-50',
+                      )}
+                      style={{ color: theme.termFg }}
+                    />
+                    <span className="min-w-0 flex-1 truncate">{tag}</span>
+                    {isSelected && <Check size={12} className="shrink-0" />}
+                  </button>
+                );
+              })}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};

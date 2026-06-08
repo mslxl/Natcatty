@@ -5,10 +5,12 @@ import type { TerminalSessionStartersContext } from "./createTerminalSessionStar
 export type { PendingAuth, SessionLogConfig, TerminalSessionStartersContext } from "./createTerminalSessionStarters.types";
 export { normalizeStartupCommandDelay, splitStartupCommandLines } from "./terminalStartupCommands";
 import {
-  attachSessionToTerminal,
   buildTermEnv,
+  closeOrphanBackendSession,
   getFlowController,
+  isTerminalBootActive,
   resetTerminalOutputTimestamps,
+  tryAttachSessionToTerminal,
   writeSessionData,
   writeTerminalLine,
 } from "./terminalSessionAttachment";
@@ -42,6 +44,12 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     const translated = ctx.t?.(key);
     if (!translated || translated === key) return fallback;
     return translated;
+  };
+
+  const abortSessionStartAfterUnmount = () => {
+    ctx.updateStatus("disconnected");
+    ctx.setProgressValue(0);
+    ctx.setChainProgress(null);
   };
 
   const resolveSavedSudoAutofillPassword = (): string | undefined => {
@@ -464,12 +472,15 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
 
       if (unsubscribeChainProgress) unsubscribeChainProgress();
 
-      attachSessionToTerminal(ctx, term, id, {
+      if (!tryAttachSessionToTerminal(ctx, term, id, {
         onConnected: () => ctx.setChainProgress(null),
         onExitMessage: (evt) =>
           `\r\n[session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
         sudoAutofillPassword: resolveSavedSudoAutofillPassword(),
-      });
+      })) {
+        abortSessionStartAfterUnmount();
+        return;
+      }
 
       scheduleStartupCommand(ctx, term, id);
 
@@ -609,11 +620,15 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       });
       telnetSessionId = id;
 
-      attachSessionToTerminal(ctx, term, id, {
+      if (!tryAttachSessionToTerminal(ctx, term, id, {
         onExitMessage: (evt) =>
           `\r\n[Telnet session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
         onExit: cleanupTelnetStartupWait,
-      });
+      })) {
+        cleanupTelnetStartupWait();
+        abortSessionStartAfterUnmount();
+        return;
+      }
       const disposeTelnetExit = ctx.disposeExitRef.current;
       ctx.disposeExitRef.current = () => {
         cleanupTelnetStartupWait();
@@ -756,11 +771,14 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
       });
 
-      attachSessionToTerminal(ctx, term, id, {
+      if (!tryAttachSessionToTerminal(ctx, term, id, {
         onExitMessage: (evt) =>
           `\r\n[Mosh session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
         sudoAutofillPassword: resolveSavedSudoAutofillPassword(),
-      });
+      })) {
+        abortSessionStartAfterUnmount();
+        return;
+      }
 
       scheduleStartupCommand(ctx, term, id);
     } catch (err) {
@@ -988,11 +1006,14 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
       });
 
-      attachSessionToTerminal(ctx, term, id, {
+      if (!tryAttachSessionToTerminal(ctx, term, id, {
         onExitMessage: (evt) =>
           `\r\n[EternalTerminal session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
         sudoAutofillPassword: resolveSavedSudoAutofillPassword(),
-      });
+      })) {
+        abortSessionStartAfterUnmount();
+        return;
+      }
 
       scheduleStartupCommand(ctx, term, id);
 
@@ -1047,6 +1068,11 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         },
         sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
       });
+
+      if (!isTerminalBootActive(ctx)) {
+        closeOrphanBackendSession(ctx, id);
+        return;
+      }
 
       ctx.sessionRef.current = id;
       getFlowController(ctx, term).reset();
@@ -1130,18 +1156,20 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
       });
 
-      // Serial connection is established immediately when session starts
-      // Update status right away since serial ports don't require handshake
-      ctx.updateStatus("connected");
-      ctx.setProgressValue(100);
-      writeTerminalLine(ctx, term, `[Connected to ${ctx.serialConfig.path} at ${ctx.serialConfig.baudRate} baud]`);
-
-      attachSessionToTerminal(ctx, term, id, {
+      if (!tryAttachSessionToTerminal(ctx, term, id, {
         onExitMessage: (evt) =>
           `\r\n[serial port closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
         // Convert lone LF to CRLF to prevent "staircase effect" in serial terminals
         convertLfToCrlf: true,
-      });
+      })) {
+        abortSessionStartAfterUnmount();
+        return;
+      }
+
+      // Serial connection is established once the session is attached to the terminal.
+      ctx.updateStatus("connected");
+      ctx.setProgressValue(100);
+      writeTerminalLine(ctx, term, `[Connected to ${ctx.serialConfig.path} at ${ctx.serialConfig.baudRate} baud]`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       ctx.setError(message);

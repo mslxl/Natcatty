@@ -224,9 +224,10 @@ interface RootTopTabProps {
   label: string;
   icon: React.ReactNode;
   className?: string;
+  compact?: boolean;
 }
 
-export const RootTopTab: React.FC<RootTopTabProps> = memo(({ tabId, label, icon, className }) => {
+export const RootTopTab: React.FC<RootTopTabProps> = memo(({ tabId, label, icon, className, compact = false }) => {
   const isActive = useIsTabActive(tabId);
   // The Vaults tab is the app's persistent "home", so keep its selected state
   // visually flat — no active background fill (the label/icon still brighten to
@@ -252,7 +253,8 @@ export const RootTopTab: React.FC<RootTopTabProps> = memo(({ tabId, label, icon,
       data-state={isActive ? 'active' : 'inactive'}
       onClick={handleClick}
       className={cn(
-        "netcatty-tab relative h-7 px-3 overflow-hidden text-xs font-semibold cursor-pointer flex items-center gap-2 app-no-drag",
+        "netcatty-tab relative h-7 overflow-hidden text-xs font-semibold cursor-pointer flex items-center app-no-drag transition-[padding,gap] duration-300 ease-out",
+        compact ? "px-2 gap-0" : "px-3 gap-2",
         className,
       )}
       style={{
@@ -276,7 +278,10 @@ export const RootTopTab: React.FC<RootTopTabProps> = memo(({ tabId, label, icon,
         }
       }}
     >
-      {icon} {label}
+      {icon}
+      <span className={cn('top-tab-root-label', compact && 'top-tab-root-label-compact')}>
+        {label}
+      </span>
     </div>
   );
 });
@@ -288,6 +293,7 @@ interface EditorTopTabProps {
   host: Host | undefined;
   suffix: string;
   onRequestCloseEditorTab: (editorTabId: string) => void;
+  tabAnimationClass?: string;
 }
 
 export const EditorTopTab: React.FC<EditorTopTabProps> = memo(({
@@ -296,6 +302,7 @@ export const EditorTopTab: React.FC<EditorTopTabProps> = memo(({
   host,
   suffix,
   onRequestCloseEditorTab,
+  tabAnimationClass,
 }) => {
   const isActive = useIsTabActive(tabId);
   const dirty = editorTab.content !== editorTab.baselineContent;
@@ -319,7 +326,10 @@ export const EditorTopTab: React.FC<EditorTopTabProps> = memo(({
           onClick={handleClick}
           onMouseDown={handleTabMiddleMouseDown}
           onAuxClick={(e) => handleTabMiddleClickClose(e, () => onRequestCloseEditorTab(editorTab.id))}
-          className="netcatty-tab relative h-7 pl-3 pr-2 min-w-[140px] max-w-[240px] rounded-t-md overflow-hidden text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0"
+          className={cn(
+            "netcatty-tab relative h-7 pl-3 pr-2 min-w-[140px] max-w-[240px] rounded-t-md overflow-hidden text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0",
+            tabAnimationClass,
+          )}
           style={{
             backgroundColor: isActive
               ? 'var(--top-tabs-active-bg, hsl(var(--background)))'
@@ -388,6 +398,7 @@ interface SessionTopTabProps {
   onCopySessionToNewWindow: (sessionId: string) => void;
   renderBulkCloseItems: RenderBulkCloseItems;
   t: TranslateFn;
+  tabAnimationClass?: string;
 }
 
 export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
@@ -410,6 +421,7 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
   onCopySessionToNewWindow,
   renderBulkCloseItems,
   t,
+  tabAnimationClass,
 }) => {
   const isActive = useIsTabActive(session.id);
   const handleClick = useCallback(() => {
@@ -435,7 +447,8 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
           className={cn(
             "netcatty-tab relative h-7 pl-3 pr-2 min-w-[140px] max-w-[240px] rounded-t-md overflow-hidden text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0",
             "transition-transform duration-150",
-            isBeingDragged && isDraggingForReorder ? "opacity-40 scale-95" : ""
+            isBeingDragged && isDraggingForReorder ? "opacity-40 scale-95" : "",
+            tabAnimationClass,
           )}
           style={{
             ...shiftStyle,
@@ -523,6 +536,7 @@ interface WorkspaceTopTabProps {
   onCloseWorkspace: (workspaceId: string) => void;
   renderBulkCloseItems: RenderBulkCloseItems;
   t: TranslateFn;
+  tabAnimationClass?: string;
 }
 
 export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
@@ -543,6 +557,7 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
   onCloseWorkspace,
   renderBulkCloseItems,
   t,
+  tabAnimationClass,
 }) => {
   const isActive = useIsTabActive(workspace.id);
   const handleClick = useCallback(() => {
@@ -568,7 +583,8 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
           className={cn(
             "netcatty-tab relative h-7 pl-3 pr-2 min-w-[150px] max-w-[260px] rounded-t-md overflow-hidden text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0",
             "transition-transform duration-150",
-            isBeingDragged && isDraggingForReorder ? "opacity-40 scale-95" : ""
+            isBeingDragged && isDraggingForReorder ? "opacity-40 scale-95" : "",
+            tabAnimationClass,
           )}
           style={{
             ...shiftStyle,
@@ -644,12 +660,14 @@ interface LogViewTopTabProps {
   logView: LogView;
   onCloseLogView: (logViewId: string) => void;
   t: TranslateFn;
+  tabAnimationClass?: string;
 }
 
 export const LogViewTopTab: React.FC<LogViewTopTabProps> = memo(({
   logView,
   onCloseLogView,
   t,
+  tabAnimationClass,
 }) => {
   const isActive = useIsTabActive(logView.id);
   const isLocal = logView.log.protocol === 'local' || logView.log.hostname === 'localhost';
@@ -669,7 +687,10 @@ export const LogViewTopTab: React.FC<LogViewTopTabProps> = memo(({
       onClick={handleClick}
       onMouseDown={handleTabMiddleMouseDown}
       onAuxClick={(e) => handleTabMiddleClickClose(e, () => onCloseLogView(logView.id))}
-      className="netcatty-tab relative h-7 pl-3 pr-2 min-w-[140px] max-w-[240px] rounded-t-md overflow-hidden text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0"
+      className={cn(
+        "netcatty-tab relative h-7 pl-3 pr-2 min-w-[140px] max-w-[240px] rounded-t-md overflow-hidden text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0",
+        tabAnimationClass,
+      )}
       style={{
         backgroundColor: isActive
           ? 'var(--top-tabs-active-bg, hsl(var(--background)))'

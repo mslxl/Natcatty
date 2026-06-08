@@ -1,3 +1,4 @@
+import { activeTabStore } from "../application/state/activeTabStore";
 import type { Workspace } from "../types";
 
 export const HIDDEN_TERMINAL_PANE_SNAPSHOT = "hidden";
@@ -5,8 +6,10 @@ export const HIDDEN_TERMINAL_PANE_SNAPSHOT = "hidden";
 export type TerminalPaneSnapshot =
   | typeof HIDDEN_TERMINAL_PANE_SNAPSHOT
   | `solo|${string}`
-  | `workspace|split|${string}|${string}`
+  | `workspace|split|${string}`
   | `workspace|focus|${string}|${string}`;
+
+export type TerminalPaneFocusSnapshot = "na" | "focused" | "unfocused";
 
 interface GetTerminalPaneSnapshotOptions {
   activeTabId: string | null;
@@ -40,7 +43,7 @@ export function getTerminalPaneSnapshot({
         : HIDDEN_TERMINAL_PANE_SNAPSHOT;
     }
 
-    return `workspace|split|${activeWorkspace.id}|${focusedSessionId}`;
+    return `workspace|split|${activeWorkspace.id}`;
   }
 
   return activeTabId === sessionId
@@ -73,10 +76,79 @@ export function parseTerminalPaneSnapshot(snapshot: TerminalPaneSnapshot): {
     };
   }
 
+  if (parts[1] === "focus") {
+    return {
+      isVisible: true,
+      mode: "focus",
+      workspaceId: parts[2] || null,
+      focusedSessionId: parts[3] || null,
+    };
+  }
+
   return {
     isVisible: true,
-    mode: parts[1] === "focus" ? "focus" : "split",
+    mode: "split",
     workspaceId: parts[2] || null,
-    focusedSessionId: parts[3] || null,
+    focusedSessionId: null,
+  };
+}
+
+export function getTerminalPaneFocusSnapshot({
+  activeTabId: activeTabIdOverride,
+  sessionId,
+  sessionWorkspaceId,
+  workspaceById,
+}: {
+  activeTabId?: string | null;
+  sessionId: string;
+  sessionWorkspaceId?: string;
+  workspaceById: Map<string, Workspace>;
+}): TerminalPaneFocusSnapshot {
+  const activeTabId = activeTabIdOverride ?? activeTabStore.getActiveTabId();
+  if (!activeTabId) return "na";
+
+  const activeWorkspace = workspaceById.get(activeTabId);
+  if (!activeWorkspace || activeWorkspace.viewMode === "focus") return "na";
+  if (sessionWorkspaceId !== activeWorkspace.id) return "na";
+
+  return activeWorkspace.focusedSessionId === sessionId ? "focused" : "unfocused";
+}
+
+/** Combined visibility + focus snapshot for a single useSyncExternalStore subscription. */
+export function getTerminalPaneRenderSnapshot(
+  options: GetTerminalPaneSnapshotOptions,
+): string {
+  const pane = getTerminalPaneSnapshot(options);
+  if (pane === HIDDEN_TERMINAL_PANE_SNAPSHOT) {
+    return HIDDEN_TERMINAL_PANE_SNAPSHOT;
+  }
+  const focus = getTerminalPaneFocusSnapshot({
+    activeTabId: options.activeTabId,
+    sessionId: options.sessionId,
+    sessionWorkspaceId: options.sessionWorkspaceId,
+    workspaceById: options.workspaceById,
+  });
+  return `${pane}|${focus}`;
+}
+
+export function parseTerminalPaneRenderSnapshot(snapshot: string): {
+  paneState: ReturnType<typeof parseTerminalPaneSnapshot>;
+  isFocusedPane: boolean;
+} {
+  if (snapshot === HIDDEN_TERMINAL_PANE_SNAPSHOT) {
+    return {
+      paneState: parseTerminalPaneSnapshot(HIDDEN_TERMINAL_PANE_SNAPSHOT),
+      isFocusedPane: false,
+    };
+  }
+
+  const focusSep = snapshot.lastIndexOf("|");
+  const focusToken = snapshot.slice(focusSep + 1);
+  const paneSnapshot = snapshot.slice(0, focusSep) as TerminalPaneSnapshot;
+  const paneState = parseTerminalPaneSnapshot(paneSnapshot);
+
+  return {
+    paneState,
+    isFocusedPane: focusToken === "focused",
   };
 }

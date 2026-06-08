@@ -74,5 +74,6 @@ export const useSessionActivityMap = () => {
   return useSyncExternalStore(
     sessionActivityStore.subscribe,
     sessionActivityStore.getSnapshot,
+    sessionActivityStore.getSnapshot,
   );
 };

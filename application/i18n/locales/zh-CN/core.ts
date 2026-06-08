@@ -368,6 +368,7 @@ export const zhCNCoreMessages: Messages = {
   'vault.groups.hostsCount': '{count} 台主机',
   'vault.groups.newSubgroup': '新建子分组',
   'vault.groups.rename': '重命名分组',
+  'vault.groups.unnamed': '未命名分组',
   'vault.groups.delete': '删除分组',
   'vault.groups.createSubfolder': '创建子分组',
   'vault.groups.createRoot': '创建根分组',

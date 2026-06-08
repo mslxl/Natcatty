@@ -5,6 +5,7 @@ import { terminalLayerAreEqual } from "./terminalLayerMemo.ts";
 
 const baseProps = {
   hosts: [],
+  customGroups: [],
   groupConfigs: [],
   proxyProfiles: [],
   keys: [],
@@ -41,6 +42,7 @@ const baseProps = {
   isBroadcastEnabled: () => false,
   onToggleBroadcast: () => {},
   onSplitSession: () => {},
+  onConnectToHost: () => {},
   toggleScriptsSidePanelRef: { current: null },
 };
 

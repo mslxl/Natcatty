@@ -594,6 +594,7 @@ export const enCoreMessages: Messages = {
   'vault.groups.hostsCount': '{count} Hosts',
   'vault.groups.newSubgroup': 'New Subgroup',
   'vault.groups.rename': 'Rename Group',
+  'vault.groups.unnamed': 'Unnamed Group',
   'vault.groups.delete': 'Delete Group',
   'vault.groups.createSubfolder': 'Create Subfolder',
   'vault.groups.createRoot': 'Create Root Group',

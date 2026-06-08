@@ -2,6 +2,7 @@
 import React, { Suspense, lazy } from 'react';
 import { AlertTriangle, Download, Trash2 } from 'lucide-react';
 import { activeTabStore, toEditorTabId } from '../state/activeTabStore';
+import { useImmersiveActive } from '../state/immersiveStore';
 import { editorTabStore } from '../state/editorTabStore';
 import { releaseEditorTabSaveCoordinator, saveEditorTab } from '../state/editorTabSave';
 import { TopTabs } from '../../components/TopTabs';
@@ -32,7 +33,7 @@ type AppViewContext = Record<string, any>;
 
 export function AppView({ ctx }: { ctx: AppViewContext }) {
   const {
-    accentMode, activeTabId, activeTerminalTheme, addShellHistoryEntry, addSessionToWorkspace, addToWorkspaceDialog, appendHostToWorkspace, appendLocalTerminalToWorkspace,
+    accentMode, addShellHistoryEntry, addSessionToWorkspace, addToWorkspaceDialog, appendHostToWorkspace, appendLocalTerminalToWorkspace,
     clearAndRemoveSource, clearAndRemoveSources, clearUnsavedConnectionLogs, closeLogView, closeSession, closeTabsBatch, closeWorkspace, copySessionToNewWindowWithCurrentShell, copySessionWithCurrentShell,
     connectionLogs, convertKnownHostToHost, createWorkspaceFromSessions, createWorkspaceFromTargets, createWorkspaceWithHosts, customAccent,
     customGroups, currentTerminalTheme, deleteConnectionLog, draggingSessionId, effectiveKnownHosts, editorTabs, editorWordWrap, emptyVaultConflict,
@@ -54,6 +55,12 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
     updateProxyProfiles, updateSnippetPackages, updateSnippets, updateSplitSizes, updateTerminalSetting, workspaceRenameTarget, workspaceRenameValue, workspaces,
     VaultViewContainer, SftpViewMount, TerminalLayerMount, LogViewWrapper,
   } = ctx;
+
+  // Immersive flag from store (not ctx) so toggling it doesn't re-render <App>.
+  // Note: we intentionally do NOT subscribe to the active tab id here — editor
+  // tab visibility self-subscribes inside TextEditorTabView — so plain tab
+  // switches don't re-render AppView/App at all.
+  const isImmersive = useImmersiveActive();
 
   return (
     <SnippetExecutionProvider>
@@ -106,7 +113,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
         handleRequestCloseEditorTabRef.current = handleRequestCloseEditorTab;
 
         return (
-    <div className={cn("flex flex-col h-screen text-foreground font-sans netcatty-shell", activeTerminalTheme && "immersive-transition")} onContextMenu={handleRootContextMenu}>
+    <div className={cn("flex flex-col h-screen text-foreground font-sans netcatty-shell", isImmersive && "immersive-transition")} onContextMenu={handleRootContextMenu}>
       <TopTabs
         theme={resolvedTheme}
         followAppTerminalTheme={followAppTerminalTheme}
@@ -132,7 +139,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
         windowOpacity={settings.windowOpacity}
         setWindowOpacity={settings.setWindowOpacity}
         onSyncNow={handleSyncNowManual}
-        isImmersiveActive={activeTerminalTheme !== null}
+        isImmersiveActive={isImmersive}
         onStartSessionDrag={setDraggingSessionId}
         onEndSessionDrag={handleEndSessionDrag}
         onReorderTabs={reorderTabs}
@@ -217,6 +224,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
 
         <TerminalLayerMount
           hosts={hosts}
+          customGroups={customGroups}
           groupConfigs={groupConfigs}
           proxyProfiles={proxyProfiles}
           keys={keys}
@@ -261,6 +269,8 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
           onSetWorkspaceFocusedSession={setWorkspaceFocusedSession}
           onReorderWorkspaceSessions={reorderWorkspaceSessions}
           onSplitSession={splitSessionWithCurrentShell}
+          onConnectToHost={handleConnectToHost}
+          onCreateLocalTerminal={handleCreateLocalTerminal}
           isBroadcastEnabled={isBroadcastEnabled}
           onToggleBroadcast={toggleBroadcast}
           updateHosts={updateHosts}
@@ -304,7 +314,6 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
           <TextEditorTabView
             key={tab.id}
             tabId={tab.id}
-            isVisible={activeTabId === toEditorTabId(tab.id)}
             hotkeyScheme={hotkeyScheme}
             keyBindings={keyBindings}
             hostById={hostById}

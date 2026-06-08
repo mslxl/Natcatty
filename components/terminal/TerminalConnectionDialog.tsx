@@ -155,7 +155,7 @@ export const TerminalConnectionDialog: React.FC<TerminalConnectionDialogProps> =
             >
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                        <DistroAvatar host={host} fallback={host.label.slice(0, 2).toUpperCase()} className="h-8 w-8 rounded-md shrink-0" />
+                        <DistroAvatar host={host} fallback={host.label.slice(0, 2).toUpperCase()} size="md" className="shrink-0" />
                         <div className="min-w-0">
                             {chainProgress ? (
                                 <>

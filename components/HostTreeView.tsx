@@ -1,6 +1,11 @@
-import { CheckSquare, ChevronRight, Edit2, FileSymlink, Folder, FolderOpen, Monitor, Server, Square, Expand, Minimize2 } from 'lucide-react';
-import React, { useMemo } from 'react';
+import { CheckSquare, ChevronRight, Edit2, FileSymlink, Folder, FolderOpen, Server, Square, Expand, Minimize2 } from 'lucide-react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
+import {
+  hostTreeInlineGroupEditStore,
+  useHostTreeInlineGroupEdit,
+} from '../application/state/hostTreeInlineGroupEditStore';
+import { useVaultHostTreeActions } from '../application/state/vaultHostTreeActionsStore';
 import { useTreeExpandedState } from '../application/state/useTreeExpandedState';
 import { applyGroupDefaults, resolveGroupDefaults } from '../domain/groupConfig';
 import { resolveTelnetPort, resolveTelnetUsername, sanitizeHost } from '../domain/host';
@@ -8,7 +13,9 @@ import { STORAGE_KEY_VAULT_HOSTS_TREE_EXPANDED } from '../infrastructure/config/
 import { cn } from '../lib/utils';
 import { GroupConfig, GroupNode, Host } from '../types';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from './ui/context-menu';
+import { HostTreeGroupContextMenuContent, HostTreeHostContextMenuContent } from './host/HostTreeContextMenus';
+import { HostTreeGroupInlineRenameInput } from './host/HostTreeGroupInlineRenameInput';
+import { ContextMenu, ContextMenuTrigger } from './ui/context-menu';
 import { DistroAvatar } from './DistroAvatar';
 import { HostNotesIndicator } from './host/HostNotesIndicator';
 import { Button } from './ui/button';
@@ -26,12 +33,14 @@ interface HostTreeViewProps {
   onDuplicateHost: (host: Host) => void;
   onDeleteHost: (host: Host) => void;
   onCopyCredentials: (host: Host) => void;
-  onNewHost: (groupPath?: string) => void;
   onNewGroup: (parentPath?: string) => void;
+  onRenameGroup: (groupPath: string) => void;
   onEditGroup: (groupPath: string) => void;
   onDeleteGroup: (groupPath: string) => void;
   moveHostToGroup: (hostId: string, groupPath: string | null) => void;
-  moveGroup: (sourcePath: string, targetPath: string) => void;
+  moveGroup: (sourcePath: string, targetParent: string | null) => void;
+  commitInlineGroupRename?: (name: string) => void;
+  cancelInlineGroupEdit?: () => void;
   managedGroupPaths?: Set<string>;
   onUnmanageGroup?: (groupPath: string) => void;
 
@@ -54,12 +63,14 @@ interface TreeNodeProps {
   onDuplicateHost: (host: Host) => void;
   onDeleteHost: (host: Host) => void;
   onCopyCredentials: (host: Host) => void;
-  onNewHost: (groupPath?: string) => void;
   onNewGroup: (parentPath?: string) => void;
+  onRenameGroup: (groupPath: string) => void;
   onEditGroup: (groupPath: string) => void;
   onDeleteGroup: (groupPath: string) => void;
   moveHostToGroup: (hostId: string, groupPath: string | null) => void;
-  moveGroup: (sourcePath: string, targetPath: string) => void;
+  moveGroup: (sourcePath: string, targetParent: string | null) => void;
+  commitInlineGroupRename?: (name: string) => void;
+  cancelInlineGroupEdit?: () => void;
   managedGroupPaths?: Set<string>;
   onUnmanageGroup?: (groupPath: string) => void;
 
@@ -83,14 +94,16 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   onDuplicateHost,
   onDeleteHost,
   onCopyCredentials,
-  onNewHost,
   onNewGroup,
+  onRenameGroup,
   onEditGroup,
   onDeleteGroup,
   moveHostToGroup,
   moveGroup,
   managedGroupPaths,
   onUnmanageGroup,
+  commitInlineGroupRename,
+  cancelInlineGroupEdit,
 
   isMultiSelectMode,
   selectedHostIds,
@@ -99,8 +112,22 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   setDragOverDropTarget,
   groupConfigs,
 }) => {
-  const { t } = useI18n();
+  const inlineEdit = useHostTreeInlineGroupEdit();
+  const vaultTreeActions = useVaultHostTreeActions();
+  const commitRename = commitInlineGroupRename ?? vaultTreeActions?.commitInlineGroupRename;
+  const cancelRename = cancelInlineGroupEdit ?? vaultTreeActions?.cancelInlineGroupEdit;
+  const isInlineEditing = inlineEdit?.groupPath === node.path;
+  const groupRowRef = useRef<HTMLDivElement>(null);
   const isExpanded = expandedPaths.has(node.path);
+
+  useEffect(() => {
+    if (!isInlineEditing || !inlineEdit?.shouldScrollIntoView) return;
+    const frame = requestAnimationFrame(() => {
+      groupRowRef.current?.scrollIntoView({ block: 'nearest' });
+      hostTreeInlineGroupEditStore.markScrollHandled();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [inlineEdit?.groupPath, inlineEdit?.shouldScrollIntoView, isInlineEditing]);
   const hasChildren = node.children && Object.keys(node.children).length > 0;
   const paddingLeft = `${depth * 20 + 12}px`;
   const isManaged = managedGroupPaths?.has(node.path) ?? false;
@@ -149,6 +176,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
           <ContextMenuTrigger>
             <CollapsibleTrigger asChild>
               <div
+                ref={groupRowRef}
                 className={cn(
                   "flex items-center py-2 pr-3 text-sm font-medium cursor-pointer transition-colors select-none group hover:bg-secondary/60 rounded-lg",
                   getDropTargetClasses?.(node.path),
@@ -188,7 +216,16 @@ const TreeNode: React.FC<TreeNodeProps> = ({
                 <div className="mr-3 text-primary/80 group-hover:text-primary transition-colors">
                   {isExpanded ? <FolderOpen size={18} /> : <Folder size={18} />}
                 </div>
-                <span className="truncate flex-1 font-semibold">{node.name}</span>
+                {isInlineEditing && commitRename && cancelRename ? (
+                  <HostTreeGroupInlineRenameInput
+                    initialName={inlineEdit.initialName}
+                    onCommit={commitRename}
+                    onCancel={cancelRename}
+                    className="flex-1 font-semibold"
+                  />
+                ) : (
+                  <span className="truncate flex-1 font-semibold">{node.name}</span>
+                )}
                 {isManaged && (
                   <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-primary/15 text-primary shrink-0 mr-1.5">
                     <FileSymlink size={10} />
@@ -212,28 +249,14 @@ const TreeNode: React.FC<TreeNodeProps> = ({
               </div>
             </CollapsibleTrigger>
           </ContextMenuTrigger>
-          <ContextMenuContent>
-            <ContextMenuItem onClick={() => onNewHost(node.path)}>
-              <Server className="mr-2 h-4 w-4" /> {t("vault.hosts.newHost")}
-            </ContextMenuItem>
-            <ContextMenuItem onClick={() => onNewGroup(node.path)}>
-              <Folder className="mr-2 h-4 w-4" /> {t("vault.hosts.newGroup")}
-            </ContextMenuItem>
-            <ContextMenuItem onClick={() => onEditGroup(node.path)}>
-              <FolderOpen className="mr-2 h-4 w-4" /> {t("vault.groups.rename")}
-            </ContextMenuItem>
-            <ContextMenuItem 
-              onClick={() => onDeleteGroup(node.path)}
-              className="text-destructive focus:text-destructive"
-            >
-              <FolderOpen className="mr-2 h-4 w-4" /> {t("vault.groups.delete")}
-            </ContextMenuItem>
-            {isManaged && onUnmanageGroup && (
-              <ContextMenuItem onClick={() => onUnmanageGroup(node.path)}>
-                <FileSymlink className="mr-2 h-4 w-4" /> {t("vault.managedSource.unmanage")}
-              </ContextMenuItem>
-            )}
-          </ContextMenuContent>
+          <HostTreeGroupContextMenuContent
+            groupPath={node.path}
+            isManaged={isManaged}
+            onNewGroup={onNewGroup}
+            onRenameGroup={onRenameGroup}
+            onDeleteGroup={onDeleteGroup}
+            onUnmanageGroup={onUnmanageGroup}
+          />
         </ContextMenu>
 
         <CollapsibleContent>
@@ -251,14 +274,16 @@ const TreeNode: React.FC<TreeNodeProps> = ({
               onDuplicateHost={onDuplicateHost}
               onDeleteHost={onDeleteHost}
               onCopyCredentials={onCopyCredentials}
-              onNewHost={onNewHost}
               onNewGroup={onNewGroup}
+              onRenameGroup={onRenameGroup}
               onEditGroup={onEditGroup}
               onDeleteGroup={onDeleteGroup}
               moveHostToGroup={moveHostToGroup}
               moveGroup={moveGroup}
               managedGroupPaths={managedGroupPaths}
               onUnmanageGroup={onUnmanageGroup}
+              commitInlineGroupRename={commitInlineGroupRename}
+              cancelInlineGroupEdit={cancelInlineGroupEdit}
 
 	              isMultiSelectMode={isMultiSelectMode}
 	              selectedHostIds={selectedHostIds}
@@ -334,7 +359,7 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
   depth,
   onConnect,
   onEditHost,
-  onDuplicateHost,
+  onDuplicateHost: _onDuplicateHost,
   onDeleteHost,
   onCopyCredentials,
   moveHostToGroup: _moveHostToGroup,
@@ -344,7 +369,6 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
   toggleHostSelection,
   groupConfigs,
 }) => {
-  const { t } = useI18n();
   const paddingLeft = `${depth * 20 + 12}px`;
   const safeHost = sanitizeHost(host);
   const tags = host.tags || [];
@@ -390,7 +414,7 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
           )}
           {!isMultiSelectMode && <div className="mr-2 flex-shrink-0 w-4 h-4" />}
           <div className="mr-3 flex-shrink-0">
-            <DistroAvatar host={host} fallback={(host.os || "L")[0].toUpperCase()} size="sm" />
+            <DistroAvatar host={host} fallback={(host.os || "L")[0].toUpperCase()} size="xs" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="font-medium truncate flex items-center gap-1.5">
@@ -425,26 +449,12 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
           </div>
         </div>
       </ContextMenuTrigger>
-      <ContextMenuContent>
-        <ContextMenuItem onClick={() => onConnect(safeHost)}>
-          <Monitor className="mr-2 h-4 w-4" /> {t("vault.hosts.connect")}
-        </ContextMenuItem>
-        <ContextMenuItem onClick={() => onEditHost(host)}>
-          <Server className="mr-2 h-4 w-4" /> {t("action.edit")}
-        </ContextMenuItem>
-        <ContextMenuItem onClick={() => onDuplicateHost(host)}>
-          <Server className="mr-2 h-4 w-4" /> {t("action.duplicate")}
-        </ContextMenuItem>
-        <ContextMenuItem onClick={() => onCopyCredentials(host)}>
-          <Server className="mr-2 h-4 w-4" /> {t("vault.hosts.copyCredentials")}
-        </ContextMenuItem>
-        <ContextMenuItem
-          onClick={() => onDeleteHost(host)}
-          className="text-destructive focus:text-destructive"
-        >
-          <Server className="mr-2 h-4 w-4" /> {t("action.delete")}
-        </ContextMenuItem>
-      </ContextMenuContent>
+      <HostTreeHostContextMenuContent
+        host={host}
+        onConnect={onConnect}
+        onCopyCredentials={onCopyCredentials}
+        onDeleteHost={onDeleteHost}
+      />
     </ContextMenu>
   );
 };
@@ -462,14 +472,16 @@ export const HostTreeView: React.FC<HostTreeViewProps> = ({
   onDuplicateHost,
   onDeleteHost,
   onCopyCredentials,
-  onNewHost,
   onNewGroup,
+  onRenameGroup,
   onEditGroup,
   onDeleteGroup,
   moveHostToGroup,
   moveGroup,
   managedGroupPaths,
   onUnmanageGroup,
+  commitInlineGroupRename,
+  cancelInlineGroupEdit,
 
   isMultiSelectMode,
   selectedHostIds,
@@ -589,14 +601,16 @@ export const HostTreeView: React.FC<HostTreeViewProps> = ({
           onDuplicateHost={onDuplicateHost}
           onDeleteHost={onDeleteHost}
           onCopyCredentials={onCopyCredentials}
-          onNewHost={onNewHost}
           onNewGroup={onNewGroup}
+          onRenameGroup={onRenameGroup}
           onEditGroup={onEditGroup}
           onDeleteGroup={onDeleteGroup}
           moveHostToGroup={moveHostToGroup}
           moveGroup={moveGroup}
           managedGroupPaths={managedGroupPaths}
           onUnmanageGroup={onUnmanageGroup}
+          commitInlineGroupRename={commitInlineGroupRename}
+          cancelInlineGroupEdit={cancelInlineGroupEdit}
           isMultiSelectMode={isMultiSelectMode}
           selectedHostIds={selectedHostIds}
           toggleHostSelection={toggleHostSelection}

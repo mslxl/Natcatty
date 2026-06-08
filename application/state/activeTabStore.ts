@@ -1,5 +1,7 @@
 import { useCallback, useSyncExternalStore } from 'react';
 
+import { terminalLayoutSuppressStore } from './terminalLayoutSuppressStore';
+
 // Simple store for active tab that allows fine-grained subscriptions
 type Listener = () => void;
 
@@ -18,19 +20,35 @@ export const fromEditorTabId = (tabId: string): string => tabId.slice(EDITOR_PRE
 class ActiveTabStore {
   private activeTabId: string = 'vault';
   private listeners = new Set<Listener>();
-  private pendingNotify = false;
+  private notifyRafId: number | null = null;
 
   getActiveTabId = () => this.activeTabId;
 
+  private scheduleNotify = () => {
+    if (this.notifyRafId !== null) return;
+    const schedule = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame
+      : (cb: () => void) => window.setTimeout(cb, 0) as unknown as number;
+    this.notifyRafId = schedule(() => {
+      this.notifyRafId = null;
+      this.listeners.forEach((listener) => listener());
+    });
+  };
+
   setActiveTabId = (id: string) => {
     if (this.activeTabId !== id) {
+      terminalLayoutSuppressStore.begin();
       this.activeTabId = id;
-      // Defer listener notification to avoid "setState during render" if called from a render phase
-      if (this.pendingNotify) return;
-      this.pendingNotify = true;
-      Promise.resolve().then(() => {
-        this.pendingNotify = false;
-        this.listeners.forEach(listener => listener());
+      // Coalesce rapid tab switches into one notification per frame and avoid
+      // "setState during render" if called from a render phase.
+      this.scheduleNotify();
+      const schedule = typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame
+        : (cb: () => void) => window.setTimeout(cb, 0) as unknown as number;
+      schedule(() => {
+        schedule(() => {
+          terminalLayoutSuppressStore.end();
+        });
       });
     }
   };
@@ -47,7 +65,8 @@ export const activeTabStore = new ActiveTabStore();
 export const useActiveTabId = () => {
   return useSyncExternalStore(
     activeTabStore.subscribe,
-    activeTabStore.getActiveTabId
+    activeTabStore.getActiveTabId,
+    activeTabStore.getActiveTabId,
   );
 };
 
@@ -59,7 +78,7 @@ export const useSetActiveTabId = () => {
 // Check if a specific tab is active - only re-renders when this specific tab's active state changes
 export const useIsTabActive = (tabId: string) => {
   const getSnapshot = useCallback(() => activeTabStore.getActiveTabId() === tabId, [tabId]);
-  return useSyncExternalStore(activeTabStore.subscribe, getSnapshot);
+  return useSyncExternalStore(activeTabStore.subscribe, getSnapshot, getSnapshot);
 };
 
 // Stable snapshot functions - defined once outside components
@@ -70,7 +89,8 @@ const getIsSftpActive = () => activeTabStore.getActiveTabId() === 'sftp';
 export const useIsVaultActive = () => {
   return useSyncExternalStore(
     activeTabStore.subscribe,
-    getIsVaultActive
+    getIsVaultActive,
+    getIsVaultActive,
   );
 };
 
@@ -78,7 +98,8 @@ export const useIsVaultActive = () => {
 export const useIsSftpActive = () => {
   return useSyncExternalStore(
     activeTabStore.subscribe,
-    getIsSftpActive
+    getIsSftpActive,
+    getIsSftpActive,
   );
 };
 
@@ -86,7 +107,7 @@ export const useIsSftpActive = () => {
 export const useIsEditorTabActive = (tabId: string): boolean => {
   const editorTopId = toEditorTabId(tabId);
   const getSnapshot = useCallback(() => activeTabStore.getActiveTabId() === editorTopId, [editorTopId]);
-  return useSyncExternalStore(activeTabStore.subscribe, getSnapshot);
+  return useSyncExternalStore(activeTabStore.subscribe, getSnapshot, getSnapshot);
 };
 
 // Check if terminal layer should be visible
@@ -98,5 +119,5 @@ export const useIsTerminalLayerVisible = (draggingSessionId: string | null) => {
     return isTerminalTab || !!draggingSessionId;
   }, [draggingSessionId]);
 
-  return useSyncExternalStore(activeTabStore.subscribe, getSnapshot);
+  return useSyncExternalStore(activeTabStore.subscribe, getSnapshot, getSnapshot);
 };

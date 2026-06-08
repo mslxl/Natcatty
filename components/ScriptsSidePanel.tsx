@@ -18,9 +18,16 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from './ui/context-menu';
+import { FixedSizeVirtualList } from './ui/FixedSizeVirtualList';
 import { Input } from './ui/input';
-import { ScrollArea } from './ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
+
+const SCRIPT_ROW_HEIGHT = 34;
+
+const isRootPackagePath = (path: string): boolean => {
+  const body = path.startsWith('/') ? path.slice(1) : path;
+  return body.length > 0 && !body.includes('/');
+};
 
 interface ScriptsSidePanelProps {
   snippets: Snippet[];
@@ -69,6 +76,7 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
   // Normalize the package list + derive ancestor packages implied by each path
   // (e.g. package "a/b/c" implies roots "a" and "a/b" even when not listed).
   const normalizedPackages = useMemo(() => {
+    if (!isVisible) return new Set<string>();
     const set = new Set<string>();
     const addWithAncestors = (raw: string) => {
       const path = raw.trim();
@@ -87,7 +95,7 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
       if (s.package) addWithAncestors(s.package);
     });
     return set;
-  }, [packages, snippets]);
+  }, [packages, snippets, isVisible]);
 
   // Track every package we've ever observed so we can tell "new" from
   // "previously-seen-but-user-collapsed". Without this, any unrelated refresh
@@ -99,6 +107,7 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
   // everything without drilling in. After that, respect the user's collapse
   // choices across unrelated refreshes.
   useEffect(() => {
+    if (!isVisible) return;
     const seen = seenPackagesRef.current;
     const newlySeen: string[] = [];
     normalizedPackages.forEach((p) => {
@@ -110,10 +119,53 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
     if (newlySeen.length === 0) return;
     setExpandedPaths((prev) => {
       const next = new Set(prev);
-      newlySeen.forEach((p) => next.add(p));
+      // Only auto-expand root packages on first sight — expanding the full
+      // tree upfront was freezing the panel on large snippet libraries.
+      newlySeen.filter(isRootPackagePath).forEach((p) => next.add(p));
       return next;
     });
-  }, [normalizedPackages]);
+  }, [normalizedPackages, isVisible]);
+
+  const snippetIndex = useMemo(() => {
+    if (!isVisible) {
+      return {
+        snippetsByPackage: new Map<string, Snippet[]>(),
+        descendantCountByPackage: new Map<string, number>(),
+      };
+    }
+    const snippetsByPackage = new Map<string, Snippet[]>();
+    const descendantCountByPackage = new Map<string, number>();
+
+    const bumpCount = (path: string) => {
+      descendantCountByPackage.set(path, (descendantCountByPackage.get(path) ?? 0) + 1);
+    };
+
+    for (const snippet of snippets) {
+      const pkg = snippet.package || '';
+      const bucket = snippetsByPackage.get(pkg);
+      if (bucket) bucket.push(snippet);
+      else snippetsByPackage.set(pkg, [snippet]);
+
+      if (pkg === '') {
+        bumpCount('');
+        continue;
+      }
+
+      let path = pkg;
+      while (true) {
+        bumpCount(path);
+        const slash = path.lastIndexOf('/');
+        if (slash < 0) break;
+        path = path.slice(0, slash);
+      }
+    }
+
+    for (const bucket of snippetsByPackage.values()) {
+      bucket.sort((a, b) => a.label.localeCompare(b.label));
+    }
+
+    return { snippetsByPackage, descendantCountByPackage };
+  }, [snippets, isVisible]);
 
   const togglePackage = useCallback((path: string) => {
     setExpandedPaths((prev) => {
@@ -126,6 +178,7 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
 
   // When search is active, flatten everything (no tree, no packages).
   const searchMatches = useMemo(() => {
+    if (!isVisible) return null;
     const q = search.trim().toLowerCase();
     if (!q) return null;
     return snippets.filter(
@@ -133,9 +186,10 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
         s.label.toLowerCase().includes(q) ||
         s.command.toLowerCase().includes(q),
     );
-  }, [snippets, search]);
+  }, [snippets, search, isVisible]);
 
   const rows = useMemo<TreeRow[]>(() => {
+    if (!isVisible) return [];
     if (searchMatches !== null) return [];
 
     const out: TreeRow[] = [];
@@ -159,15 +213,7 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
     };
 
     const snippetsIn = (pkg: string | null): Snippet[] =>
-      snippets
-        .filter((s) => (s.package || '') === (pkg ?? ''))
-        .sort((a, b) => a.label.localeCompare(b.label));
-
-    const countDescendants = (pkg: string): number =>
-      snippets.filter((s) => {
-        const sp = s.package || '';
-        return sp === pkg || sp.startsWith(pkg + '/');
-      }).length;
+      snippetIndex.snippetsByPackage.get(pkg ?? '') ?? [];
 
     const walk = (pkg: string, depth: number) => {
       const children = childPackagesOf(pkg);
@@ -181,7 +227,7 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
         path: pkg,
         name: pkgDisplayName(pkg),
         depth,
-        count: countDescendants(pkg),
+        count: snippetIndex.descendantCountByPackage.get(pkg) ?? 0,
         hasChildren,
         isExpanded,
       });
@@ -200,7 +246,38 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
     childPackagesOf(null).forEach((root) => walk(root, 0));
 
     return out;
-  }, [normalizedPackages, snippets, expandedPaths, searchMatches]);
+  }, [normalizedPackages, snippetIndex, expandedPaths, searchMatches, isVisible]);
+
+  type ScriptsListItem =
+    | { key: string; kind: 'search'; snippet: Snippet }
+    | { key: string; kind: 'package'; row: Extract<TreeRow, { type: 'package' }>; countLabel: string }
+    | { key: string; kind: 'snippet'; row: Extract<TreeRow, { type: 'snippet' }> };
+
+  const listItems = useMemo((): ScriptsListItem[] => {
+    if (!isVisible) return [];
+    if (searchMatches !== null) {
+      return searchMatches.map((snippet) => ({
+        key: `search:${snippet.id}`,
+        kind: 'search',
+        snippet,
+      }));
+    }
+    return rows.flatMap((row): ScriptsListItem[] => {
+      if (row.type === 'package') {
+        return [{
+          key: `pkg:${row.id}`,
+          kind: 'package',
+          row,
+          countLabel: t('snippets.package.count', { count: row.count }),
+        }];
+      }
+      return [{
+        key: `snip:${row.id}`,
+        kind: 'snippet',
+        row,
+      }];
+    });
+  }, [rows, searchMatches, t, isVisible]);
 
   const handleSnippetClick = useCallback(
     (snippet: Snippet) => {
@@ -265,62 +342,62 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
       </div>
 
       {/* Content */}
-      <ScrollArea className="flex-1">
-        <div className="py-1">
-          {!hasAnyContent && (
-            <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-              <Zap size={24} className="opacity-40 mb-2" />
-              <span className="text-xs">{t('terminal.toolbar.noSnippets')}</span>
-            </div>
-          )}
-
-          {/* Search flat list */}
-          {searchMatches !== null && searchMatches.length > 0 &&
-            searchMatches.map((s) => (
-              <SnippetRow
-                key={s.id}
-                snippet={s}
-                depth={0}
-                subtitle={s.package || t('terminal.toolbar.library')}
-                onClick={() => handleSnippetClick(s)}
-                onEdit={() => handleEditSnippet(s)}
-                onDelete={() => handleDeleteSnippet(s.id)}
-                editLabel={t('action.edit')}
-                deleteLabel={t('action.delete')}
-              />
-            ))}
-
-          {/* Tree */}
-          {searchMatches === null &&
-            rows.map((row) =>
-              row.type === 'package' ? (
-                <PackageRow
-                  key={`pkg:${row.id}`}
-                  row={row}
-                  countLabel={t('snippets.package.count', { count: row.count })}
-                  onToggle={() => togglePackage(row.path)}
-                />
-              ) : (
+      <div className="flex-1 min-h-0">
+        {!hasAnyContent ? (
+          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+            <Zap size={24} className="opacity-40 mb-2" />
+            <span className="text-xs">{t('terminal.toolbar.noSnippets')}</span>
+          </div>
+        ) : hasAnyContent && searchMatches !== null && searchMatches.length === 0 ? (
+          <div className="px-3 py-4 text-xs text-muted-foreground italic text-center">
+            {t('common.noResultsFound')}
+          </div>
+        ) : (
+          <FixedSizeVirtualList
+            className="h-full"
+            contentClassName="py-1"
+            items={listItems}
+            itemHeight={SCRIPT_ROW_HEIGHT}
+            getItemKey={(item) => item.key}
+            renderItem={(item) => {
+              if (item.kind === 'search') {
+                return (
+                  <SnippetRow
+                    snippet={item.snippet}
+                    depth={0}
+                    subtitle={item.snippet.package || t('terminal.toolbar.library')}
+                    onClick={() => handleSnippetClick(item.snippet)}
+                    onEdit={() => handleEditSnippet(item.snippet)}
+                    onDelete={() => handleDeleteSnippet(item.snippet.id)}
+                    editLabel={t('action.edit')}
+                    deleteLabel={t('action.delete')}
+                  />
+                );
+              }
+              if (item.kind === 'package') {
+                return (
+                  <PackageRow
+                    row={item.row}
+                    countLabel={item.countLabel}
+                    onToggle={() => togglePackage(item.row.path)}
+                  />
+                );
+              }
+              return (
                 <SnippetRow
-                  key={`snip:${row.id}`}
-                  snippet={row.snippet}
-                  depth={row.depth}
-                  onClick={() => handleSnippetClick(row.snippet)}
-                  onEdit={() => handleEditSnippet(row.snippet)}
-                  onDelete={() => handleDeleteSnippet(row.snippet.id)}
+                  snippet={item.row.snippet}
+                  depth={item.row.depth}
+                  onClick={() => handleSnippetClick(item.row.snippet)}
+                  onEdit={() => handleEditSnippet(item.row.snippet)}
+                  onDelete={() => handleDeleteSnippet(item.row.snippet.id)}
                   editLabel={t('action.edit')}
                   deleteLabel={t('action.delete')}
                 />
-              ),
-            )}
-
-          {hasAnyContent && searchMatches !== null && searchMatches.length === 0 && (
-            <div className="px-3 py-4 text-xs text-muted-foreground italic text-center">
-              {t('common.noResultsFound')}
-            </div>
-          )}
-        </div>
-      </ScrollArea>
+              );
+            }}
+          />
+        )}
+      </div>
     </div>
     </TooltipProvider>
   );
@@ -332,7 +409,7 @@ interface PackageRowProps {
   onToggle: () => void;
 }
 
-const PackageRow: React.FC<PackageRowProps> = ({ row, countLabel, onToggle }) => (
+const PackageRow = memo<PackageRowProps>(({ row, countLabel, onToggle }) => (
   <button
     type="button"
     onClick={onToggle}
@@ -351,7 +428,8 @@ const PackageRow: React.FC<PackageRowProps> = ({ row, countLabel, onToggle }) =>
     <span className="flex-1 min-w-0 truncate text-xs font-medium">{row.name}</span>
     <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">{countLabel}</span>
   </button>
-);
+));
+PackageRow.displayName = 'PackageRow';
 
 interface SnippetRowProps {
   snippet: Snippet;
@@ -364,7 +442,7 @@ interface SnippetRowProps {
   deleteLabel: string;
 }
 
-const SnippetRow: React.FC<SnippetRowProps> = ({
+const SnippetRow = memo<SnippetRowProps>(({
   snippet,
   depth,
   subtitle,
@@ -415,7 +493,8 @@ const SnippetRow: React.FC<SnippetRowProps> = ({
       </ContextMenuItem>
     </ContextMenuContent>
   </ContextMenu>
-);
+));
+SnippetRow.displayName = 'SnippetRow';
 
 export const ScriptsSidePanel = memo(ScriptsSidePanelInner);
 ScriptsSidePanel.displayName = 'ScriptsSidePanel';
