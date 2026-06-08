@@ -571,6 +571,7 @@ interface TerminalPaneProps {
   onUpdateHost: (host: Host) => void;
   onAddKnownHost?: (knownHost: KnownHost) => void;
   onCommandExecuted?: (command: string, hostId: string, hostLabel: string, sessionId: string) => void;
+  onCommandSubmitted?: (command: string, hostId: string, hostLabel: string, sessionId: string) => void;
   onSetWorkspaceFocusedSession?: (workspaceId: string, sessionId: string) => void;
   onSplitSession?: (sessionId: string, direction: SplitDirection) => void;
   isBroadcastEnabled?: (workspaceId: string) => boolean;
@@ -657,6 +658,7 @@ const terminalPanePropsAreEqual = (
   prev.onUpdateHost === next.onUpdateHost &&
   prev.onAddKnownHost === next.onAddKnownHost &&
   prev.onCommandExecuted === next.onCommandExecuted &&
+  prev.onCommandSubmitted === next.onCommandSubmitted &&
   prev.onSetWorkspaceFocusedSession === next.onSetWorkspaceFocusedSession &&
   prev.onSplitSession === next.onSplitSession &&
   prev.isBroadcastEnabled === next.isBroadcastEnabled &&
@@ -710,6 +712,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   onUpdateHost,
   onAddKnownHost,
   onCommandExecuted,
+  onCommandSubmitted,
   onSetWorkspaceFocusedSession,
   onSplitSession,
   isBroadcastEnabled,
@@ -883,6 +886,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         onUpdateHost={onUpdateHost}
         onAddKnownHost={onAddKnownHost}
         onCommandExecuted={onCommandExecuted}
+        onCommandSubmitted={onCommandSubmitted}
         onExpandToFocus={inActiveWorkspace && !isFocusMode ? workspaceFocusHandler : undefined}
         onSplitHorizontal={onSplitSession ? splitHorizontalHandler : undefined}
         onSplitVertical={onSplitSession ? splitVerticalHandler : undefined}
@@ -946,6 +950,7 @@ interface TerminalPanesHostProps {
   onUpdateHost: (host: Host) => void;
   onAddKnownHost?: (knownHost: KnownHost) => void;
   onCommandExecuted?: (command: string, hostId: string, hostLabel: string, sessionId: string) => void;
+  onCommandSubmitted?: (command: string, hostId: string, hostLabel: string, sessionId: string) => void;
   onSetWorkspaceFocusedSession?: (workspaceId: string, sessionId: string) => void;
   onSplitSession?: (sessionId: string, direction: SplitDirection) => void;
   isBroadcastEnabled?: (workspaceId: string) => boolean;
@@ -1004,6 +1009,7 @@ const terminalPanesHostPropsAreEqual = (
   if (prev.onUpdateHost !== next.onUpdateHost) return false;
   if (prev.onAddKnownHost !== next.onAddKnownHost) return false;
   if (prev.onCommandExecuted !== next.onCommandExecuted) return false;
+  if (prev.onCommandSubmitted !== next.onCommandSubmitted) return false;
   if (prev.onSetWorkspaceFocusedSession !== next.onSetWorkspaceFocusedSession) return false;
   if (prev.onSplitSession !== next.onSplitSession) return false;
   if (prev.isBroadcastEnabled !== next.isBroadcastEnabled) return false;

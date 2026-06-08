@@ -59,6 +59,7 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
     handleUpdateHost,
     handleAddKnownHost,
     handleCommandExecuted,
+    handleCommandSubmitted,
     onSetWorkspaceFocusedSession,
     onSplitSession,
     isBroadcastEnabled,
@@ -157,6 +158,7 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
           onUpdateHost={handleUpdateHost}
           onAddKnownHost={handleAddKnownHost}
           onCommandExecuted={handleCommandExecuted}
+          onCommandSubmitted={handleCommandSubmitted}
           onSetWorkspaceFocusedSession={onSetWorkspaceFocusedSession}
           onSplitSession={onSplitSession}
           isBroadcastEnabled={isBroadcastEnabled}

@@ -554,9 +554,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const sessionHostsMapRef = useRef(sessionHostsMap);
   sessionHostsMapRef.current = sessionHostsMap;
 
-  const handleCommandExecuted = useCallback((command: string, hostId: string, hostLabel: string, sessionId: string) => {
-    onCommandExecuted?.(command, hostId, hostLabel, sessionId);
-
+  const handleCommandSubmitted = useCallback((_command: string, _hostId: string, _hostLabel: string, sessionId: string) => {
     const tabId = activeTabIdRef.current;
     if (!sftpFollowTerminalCwdRef.current || !tabId || sidePanelOpenTabsRef.current.get(tabId) !== 'sftp') return;
 
@@ -593,7 +591,11 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       },
     });
     cwdProbeCancelersRef.current.set(sessionId, cancelProbe);
-  }, [handleTerminalCwdChange, onCommandExecuted, terminalBackend]);
+  }, [handleTerminalCwdChange, terminalBackend]);
+
+  const handleCommandExecuted = useCallback((command: string, hostId: string, hostLabel: string, sessionId: string) => {
+    onCommandExecuted?.(command, hostId, hostLabel, sessionId);
+  }, [onCommandExecuted]);
 
   useEffect(() => () => {
     for (const cancel of cwdProbeCancelersRef.current.values()) {
@@ -1019,6 +1021,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     handleCloseSession,
     handleCloseSidePanel,
     handleCommandExecuted,
+    handleCommandSubmitted,
     handleComposeSend,
     handleOpenSftp,
     handleOpenScripts,

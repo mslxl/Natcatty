@@ -279,6 +279,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     handleCloseSession: s.handleCloseSession,
     handleCloseSidePanel: s.handleCloseSidePanel,
     handleCommandExecuted: s.handleCommandExecuted,
+    handleCommandSubmitted: s.handleCommandSubmitted,
     handleComposeSend: s.handleComposeSend,
     handleFontFamilyChangeForFocusedSession: themeState.handleFontFamilyChangeForFocusedSession,
     handleFontFamilyResetForFocusedSession: themeState.handleFontFamilyResetForFocusedSession,

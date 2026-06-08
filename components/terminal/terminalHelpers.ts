@@ -110,6 +110,12 @@ export interface TerminalProps {
     hostLabel: string,
     sessionId: string,
   ) => void;
+  onCommandSubmitted?: (
+    command: string,
+    hostId: string,
+    hostLabel: string,
+    sessionId: string,
+  ) => void;
   onSplitHorizontal?: () => void;
   onSplitVertical?: () => void;
   onOpenSftp?: (

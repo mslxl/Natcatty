@@ -245,6 +245,7 @@ const WORKSPACE_CTX_KEYS = [
   'handleUpdateHost',
   'handleAddKnownHost',
   'handleCommandExecuted',
+  'handleCommandSubmitted',
   'onSetWorkspaceFocusedSession',
   'onSplitSession',
   'isBroadcastEnabled',

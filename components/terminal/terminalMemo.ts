@@ -52,6 +52,7 @@ export const terminalPropsAreEqual = (
   && prev.onAddKnownHost === next.onAddKnownHost
   && prev.onExpandToFocus === next.onExpandToFocus
   && prev.onCommandExecuted === next.onCommandExecuted
+  && prev.onCommandSubmitted === next.onCommandSubmitted
   && prev.onSplitHorizontal === next.onSplitHorizontal
   && prev.onSplitVertical === next.onSplitVertical
   && prev.onOpenSftp === next.onOpenSftp
