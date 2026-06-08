@@ -885,7 +885,7 @@ export default function SettingsTerminalTab(props: {
       </div>
       {/* Autocomplete */}
       <SectionHeader title={t("settings.terminal.section.workspaceFocus")} />
-      <div className="space-y-1">
+      <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
         <SettingRow
           label={t("settings.terminal.workspaceFocus.style")}
           description={t("settings.terminal.workspaceFocus.style.desc")}
@@ -897,6 +897,7 @@ export default function SettingsTerminalTab(props: {
               { value: 'dim', label: t("settings.terminal.workspaceFocus.dim") },
               { value: 'border', label: t("settings.terminal.workspaceFocus.border") },
             ]}
+            className="w-40"
           />
         </SettingRow>
       </div>

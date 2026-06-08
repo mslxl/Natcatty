@@ -1,10 +1,10 @@
 import React, { useCallback, useState } from "react";
-import { Plus, Shield, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import type { AIPermissionMode } from "../../../../infrastructure/ai/types";
 import { DEFAULT_COMMAND_BLOCKLIST } from "../../../../infrastructure/ai/types";
 import { useI18n } from "../../../../application/i18n/I18nProvider";
 import { Button } from "../../../ui/button";
-import { Select, SettingRow } from "../../settings-ui";
+import { Select, SettingCard, SettingRow, SettingsSection } from "../../settings-ui";
 
 export const SafetySettings: React.FC<{
   globalPermissionMode: AIPermissionMode;
@@ -68,13 +68,9 @@ export const SafetySettings: React.FC<{
   ];
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Shield size={18} className="text-muted-foreground" />
-        <h3 className="text-base font-medium">{t('ai.safety.title')}</h3>
-      </div>
-
-      <div className="bg-muted/30 rounded-lg p-4 space-y-1">
+    <SettingsSection title={t('ai.safety.title')}>
+      <div className="flex flex-col gap-4">
+        <SettingCard divided>
         <SettingRow
           label={t('ai.safety.permissionMode')}
           description={t('ai.safety.permissionMode.description')}
@@ -123,10 +119,10 @@ export const SafetySettings: React.FC<{
             className="w-20 h-9 rounded-md border border-input bg-background px-3 text-sm text-right focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           />
         </SettingRow>
-      </div>
+        </SettingCard>
 
       {/* Command Blocklist */}
-      <div className="bg-muted/30 rounded-lg p-4 space-y-3">
+      <SettingCard padded className="space-y-3">
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm font-medium">{t('ai.safety.blocklist')}</p>
@@ -194,11 +190,12 @@ export const SafetySettings: React.FC<{
           <Plus size={14} className="mr-1" />
           {t('ai.safety.blocklist.add')}
         </Button>
-      </div>
+      </SettingCard>
 
-      <p className="text-xs text-muted-foreground">
-        {t('ai.safety.note')}
-      </p>
-    </div>
+        <p className="text-xs text-muted-foreground">
+          {t('ai.safety.note')}
+        </p>
+      </div>
+    </SettingsSection>
   );
 };

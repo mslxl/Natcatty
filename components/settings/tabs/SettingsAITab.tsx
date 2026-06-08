@@ -7,7 +7,7 @@
  *   - CodexConnectionCard, ClaudeCodeCard
  *   - SafetySettings
  */
-import { AlertTriangle, Bot, FolderOpen, Globe, Link, Package, RefreshCcw } from "lucide-react";
+import { AlertTriangle, Bot, FolderOpen, RefreshCcw } from "lucide-react";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AIPermissionMode,
@@ -20,9 +20,8 @@ import type {
 import type { ManagedAgentKey } from "../../../infrastructure/ai/managedAgents";
 import { PROVIDER_PRESETS } from "../../../infrastructure/ai/types";
 import { useI18n } from "../../../application/i18n/I18nProvider";
-import { TabsContent } from "../../ui/tabs";
 import { Button } from "../../ui/button";
-import { Select, SettingRow } from "../settings-ui";
+import { Select, SettingCard, SettingsSection, SettingsTabContent, SettingRow } from "../settings-ui";
 import { AgentIconBadge } from "../../ai/AgentIconBadge";
 import { canSendWithAgent } from "../../ai/agentSendEligibility";
 
@@ -454,30 +453,11 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   }, []);
 
   return (
-    <TabsContent
-      value="ai"
-      className="data-[state=inactive]:hidden h-full flex flex-col"
-    >
-      <div className="flex-1 overflow-y-auto overflow-x-hidden px-8 py-6">
-        <div className="max-w-2xl space-y-8">
-          {/* Header */}
-          <div>
-            <h2 className="text-xl font-semibold">{t('ai.title')}</h2>
-            <p className="text-sm text-muted-foreground mt-1">
-              {t('ai.description')}
-            </p>
-          </div>
-
-          {/* -- Providers Section -- */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Globe size={18} className="text-muted-foreground" />
-                <h3 className="text-base font-medium">{t('ai.providers')}</h3>
-              </div>
-              <AddProviderDropdown onAdd={handleAddProvider} />
-            </div>
-
+    <SettingsTabContent value="ai">
+          <SettingsSection
+            title={t('ai.providers')}
+            actions={<AddProviderDropdown onAdd={handleAddProvider} />}
+          >
             {providers.length === 0 ? (
               <div className="rounded-lg border border-dashed border-border/60 p-6 text-center">
                 <Bot size={24} className="mx-auto text-muted-foreground mb-2" />
@@ -534,15 +514,12 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
                 ))}
               </div>
             )}
-          </div>
+          </SettingsSection>
 
-          {/* -- Codex Section -- */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <ProviderIconBadge providerId="openai" size="sm" />
-              <h3 className="text-base font-medium">{t('ai.codex')}</h3>
-            </div>
-
+          <SettingsSection
+            title={t('ai.codex')}
+            leading={<ProviderIconBadge providerId="openai" size="sm" />}
+          >
             <CodexConnectionCard
               pathInfo={codexPathInfo}
               isResolvingPath={isResolvingCodex}
@@ -559,15 +536,12 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               onOpenUrl={handleOpenCodexLoginUrl}
               onLogout={() => void handleCodexLogout()}
             />
-          </div>
+          </SettingsSection>
 
-          {/* -- Claude Code Section -- */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <ProviderIconBadge providerId="claude" size="sm" />
-              <h3 className="text-base font-medium">{t('ai.claude.title')}</h3>
-            </div>
-
+          <SettingsSection
+            title={t('ai.claude.title')}
+            leading={<ProviderIconBadge providerId="claude" size="sm" />}
+          >
             <ClaudeCodeCard
               pathInfo={claudePathInfo}
               isResolvingPath={isResolvingClaude}
@@ -581,15 +555,12 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               envText={claudeEnvText}
               onEnvTextChange={(v) => updateClaudeEnv(claudeConfigDir, claudeSettingsPath, v)}
             />
-          </div>
+          </SettingsSection>
 
-          {/* -- GitHub Copilot CLI Section -- */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <ProviderIconBadge providerId="copilot" size="sm" />
-              <h3 className="text-base font-medium">{t('ai.copilot.title')}</h3>
-            </div>
-
+          <SettingsSection
+            title={t('ai.copilot.title')}
+            leading={<ProviderIconBadge providerId="copilot" size="sm" />}
+          >
             <CopilotCliCard
               pathInfo={copilotPathInfo}
               isResolvingPath={isResolvingCopilot}
@@ -597,21 +568,12 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               onCustomPathChange={setCopilotCustomPath}
               onRecheckPath={() => void handleCheckCustomPath("copilot")}
             />
-          </div>
+          </SettingsSection>
 
-          {/* -- Default Agent Section -- */}
           {agentOptions.length > 1 && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <Bot size={18} className="text-muted-foreground" />
-                <h3 className="text-base font-medium">{t('ai.defaultAgent')}</h3>
-              </div>
-
-              <div className="bg-muted/30 rounded-lg p-4">
-                <SettingRow
-                  label={t('ai.defaultAgent')}
-                  description={t('ai.defaultAgent.description')}
-                >
+            <SettingsSection title={t('ai.defaultAgent')}>
+              <SettingCard>
+                <SettingRow description={t('ai.defaultAgent.description')}>
                   <Select
                     value={defaultAgentId}
                     options={agentOptions}
@@ -619,21 +581,13 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
                     className="w-64"
                   />
                 </SettingRow>
-              </div>
-            </div>
+              </SettingCard>
+            </SettingsSection>
           )}
 
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <Link size={18} className="text-muted-foreground" />
-              <h3 className="text-base font-medium">{t('ai.toolAccess.title')}</h3>
-            </div>
-
-            <div className="bg-muted/30 rounded-lg p-4">
-              <SettingRow
-                label={t('ai.toolAccess.mode')}
-                description={t('ai.toolAccess.description')}
-              >
+          <SettingsSection title={t('ai.toolAccess.title')}>
+            <SettingCard>
+              <SettingRow description={t('ai.toolAccess.description')}>
                 <Select
                   value={toolIntegrationMode}
                   options={[
@@ -644,16 +598,13 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
                   className="w-48"
                 />
               </SettingRow>
-            </div>
-          </div>
+            </SettingCard>
+          </SettingsSection>
 
-          <div className="space-y-4">
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-2">
-                <Package size={18} className="text-muted-foreground" />
-                <h3 className="text-base font-medium">{t('ai.userSkills.title')}</h3>
-              </div>
-              <div className="flex items-center gap-2">
+          <SettingsSection
+            title={t('ai.userSkills.title')}
+            actions={(
+              <>
                 <Button
                   variant="outline"
                   size="sm"
@@ -672,10 +623,10 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
                   <FolderOpen size={14} className="mr-2" />
                   {t('ai.userSkills.openFolder')}
                 </Button>
-              </div>
-            </div>
-
-            <div className="rounded-lg bg-muted/30 p-4 space-y-4">
+              </>
+            )}
+          >
+            <SettingCard padded className="space-y-4">
               <div className="space-y-1">
                 <p className="text-sm text-muted-foreground">
                   {t('ai.userSkills.description')}
@@ -744,10 +695,9 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
                   {t('ai.userSkills.empty')}
                 </div>
               ) : null}
-            </div>
-          </div>
+            </SettingCard>
+          </SettingsSection>
 
-          {/* -- Web Search Section -- */}
           <WebSearchSettings
             webSearchConfig={webSearchConfig}
             setWebSearchConfig={setWebSearchConfig}
@@ -764,9 +714,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
             maxIterations={maxIterations}
             setMaxIterations={setMaxIterations}
           />
-        </div>
-      </div>
-    </TabsContent>
+    </SettingsTabContent>
   );
 };
 
