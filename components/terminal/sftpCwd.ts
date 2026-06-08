@@ -7,6 +7,8 @@ type ResolvePreferredTerminalCwdOptions = {
   rendererCwd?: string | null;
   sessionId?: string | null;
   getSessionPwd: (sessionId: string) => Promise<SessionPwdResult>;
+  /** When true, always probe the backend instead of trusting renderer cwd. */
+  preferFreshBackend?: boolean;
 };
 
 const normalizeCwd = (cwd?: string | null): string | null => {
@@ -39,9 +41,12 @@ export const resolvePreferredTerminalCwd = async ({
   rendererCwd,
   sessionId,
   getSessionPwd,
+  preferFreshBackend = false,
 }: ResolvePreferredTerminalCwdOptions): Promise<string | null> => {
-  const knownCwd = normalizeCwd(rendererCwd);
-  if (knownCwd) return knownCwd;
+  if (!preferFreshBackend) {
+    const knownCwd = normalizeCwd(rendererCwd);
+    if (knownCwd) return knownCwd;
+  }
   if (!sessionId) return null;
 
   try {
@@ -50,4 +55,50 @@ export const resolvePreferredTerminalCwd = async ({
   } catch {
     return null;
   }
+};
+
+export const PROBE_SESSION_CWD_AFTER_COMMAND_MS = 150;
+
+export type ProbeBackendSessionCwdAfterCommandOptions = {
+  sessionId: string;
+  cwdRevisionAtCommand: number;
+  getCwdRevision: () => number;
+  getSessionPwd: (sessionId: string) => Promise<SessionPwdResult>;
+  canProbe?: () => boolean | Promise<boolean>;
+};
+
+/** Probe backend pwd when OSC 7 did not update cwd after a command. */
+export const probeBackendSessionCwdAfterCommand = async ({
+  sessionId,
+  cwdRevisionAtCommand,
+  getCwdRevision,
+  getSessionPwd,
+  canProbe = () => true,
+}: ProbeBackendSessionCwdAfterCommandOptions): Promise<string | null> => {
+  if (getCwdRevision() !== cwdRevisionAtCommand) return null;
+  const allowed = await canProbe();
+  if (!allowed || getCwdRevision() !== cwdRevisionAtCommand) return null;
+
+  try {
+    const result = await getSessionPwd(sessionId);
+    if (getCwdRevision() !== cwdRevisionAtCommand) return null;
+    return result.success ? normalizeCwd(result.cwd) : null;
+  } catch {
+    return null;
+  }
+};
+
+export const scheduleBackendCwdProbeAfterCommand = (
+  options: ProbeBackendSessionCwdAfterCommandOptions & {
+    onProbedCwd: (cwd: string) => void;
+    delayMs?: number;
+  },
+): (() => void) => {
+  const delayMs = options.delayMs ?? PROBE_SESSION_CWD_AFTER_COMMAND_MS;
+  const timeoutId = setTimeout(() => {
+    void probeBackendSessionCwdAfterCommand(options).then((cwd) => {
+      if (cwd) options.onProbedCwd(cwd);
+    });
+  }, delayMs);
+  return () => clearTimeout(timeoutId);
 };

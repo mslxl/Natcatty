@@ -3,8 +3,26 @@ import assert from "node:assert/strict";
 
 import {
   createTerminalCwdTracker,
+  probeBackendSessionCwdAfterCommand,
   resolvePreferredTerminalCwd,
 } from "./sftpCwd";
+
+test("resolvePreferredTerminalCwd prefers fresh backend pwd when requested", async () => {
+  let backendCalls = 0;
+
+  const cwd = await resolvePreferredTerminalCwd({
+    rendererCwd: "/srv/app/current",
+    sessionId: "session-1",
+    preferFreshBackend: true,
+    getSessionPwd: async () => {
+      backendCalls += 1;
+      return { success: true, cwd: "/lost+found" };
+    },
+  });
+
+  assert.equal(cwd, "/lost+found");
+  assert.equal(backendCalls, 1);
+});
 
 test("resolvePreferredTerminalCwd returns the renderer cwd without probing the backend", async () => {
   let backendCalls = 0;
@@ -58,4 +76,34 @@ test("terminal cwd tracker clears stale renderer cwd before falling back to back
   });
 
   assert.equal(cwd, "/home/fresh-session");
+});
+
+test("probeBackendSessionCwdAfterCommand skips when cwd revision already advanced", async () => {
+  let backendCalls = 0;
+  const cwd = await probeBackendSessionCwdAfterCommand({
+    sessionId: "session-1",
+    cwdRevisionAtCommand: 1,
+    getCwdRevision: () => 2,
+    getSessionPwd: async () => {
+      backendCalls += 1;
+      return { success: true, cwd: "/tmp" };
+    },
+  });
+
+  assert.equal(cwd, null);
+  assert.equal(backendCalls, 0);
+});
+
+test("probeBackendSessionCwdAfterCommand probes backend when revision is unchanged", async () => {
+  const cwd = await probeBackendSessionCwdAfterCommand({
+    sessionId: "session-1",
+    cwdRevisionAtCommand: 3,
+    getCwdRevision: () => 3,
+    getSessionPwd: async (sessionId) => {
+      assert.equal(sessionId, "session-1");
+      return { success: true, cwd: "/var/log" };
+    },
+  });
+
+  assert.equal(cwd, "/var/log");
 });

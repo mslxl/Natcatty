@@ -1,5 +1,5 @@
 import { FolderTree, MessageSquare, PanelLeft, PanelRight, Palette, X, Zap } from 'lucide-react';
-import React, { memo, useCallback, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useActiveTabId } from '../application/state/activeTabStore';
 import { canReuseTerminalConnection } from '../application/state/terminalConnectionReuse';
 import { resolveTerminalSessionExitIntent, type TerminalSessionExitEvent } from '../application/state/resolveTerminalSessionExitIntent';
@@ -47,7 +47,8 @@ import { useTerminalFocusSidebar } from './terminalLayer/useTerminalFocusSidebar
 import { useTerminalWorkspaceLayout } from './terminalLayer/useTerminalWorkspaceLayout';
 import { useTerminalThemePanelState } from './terminalLayer/useTerminalThemePanelState';
 import { useTerminalAiContexts } from './terminalLayer/useTerminalAiContexts';
-import { resolvePreferredTerminalCwd } from './terminal/sftpCwd';
+import { resolvePreferredTerminalCwd, scheduleBackendCwdProbeAfterCommand } from './terminal/sftpCwd';
+import { classifyDistroId, shouldProbeSessionCwd } from '../domain/host';
 
 import {
   AIChatPanelsHost,
@@ -117,6 +118,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   sftpShowHiddenFiles,
   sftpUseCompressedUpload,
   sftpAutoOpenSidebar,
+  sftpFollowTerminalCwd,
+  setSftpFollowTerminalCwd,
   editorWordWrap,
   setEditorWordWrap,
   sessionLogsEnabled,
@@ -134,6 +137,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const isSftpActive = activeTabId === 'sftp';
   const isVisible = (!isVaultActive && !isSftpActive) || !!draggingSessionId;
   const terminalRendererCwdBySessionRef = useRef<Map<string, string>>(new Map());
+  const terminalCwdRevisionRef = useRef(0);
+  const [terminalCwdRevision, setTerminalCwdRevision] = useState(0);
+  const cwdProbeCancelersRef = useRef<Map<string, () => void>>(new Map());
+  const cwdProbeGenerationRef = useRef<Map<string, number>>(new Map());
 
   const handleTerminalCwdChange = useCallback((sessionId: string, cwd: string | null) => {
     if (cwd && cwd.trim().length > 0) {
@@ -141,6 +148,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     } else {
       terminalRendererCwdBySessionRef.current.delete(sessionId);
     }
+    terminalCwdRevisionRef.current += 1;
+    setTerminalCwdRevision(terminalCwdRevisionRef.current);
   }, []);
 
   // Stable callback references for Terminal components
@@ -150,6 +159,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
   const sftpAutoOpenSidebarRef = useRef(sftpAutoOpenSidebar);
   sftpAutoOpenSidebarRef.current = sftpAutoOpenSidebar;
+  const sftpFollowTerminalCwdRef = useRef(sftpFollowTerminalCwd);
+  sftpFollowTerminalCwdRef.current = sftpFollowTerminalCwd;
 
   const handleStatusChange = useCallback((sessionId: string, status: TerminalSession['status']) => {
     onUpdateSessionStatus(sessionId, status);
@@ -221,10 +232,6 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const handleAddKnownHost = useCallback((knownHost: KnownHost) => {
     onAddKnownHost?.(knownHost);
   }, [onAddKnownHost]);
-
-  const handleCommandExecuted = useCallback((command: string, hostId: string, hostLabel: string, sessionId: string) => {
-    onCommandExecuted?.(command, hostId, hostLabel, sessionId);
-  }, [onCommandExecuted]);
 
   const handleTerminalDataCapture = useCallback((sessionId: string, data: string) => {
     onTerminalDataCapture?.(sessionId, data);
@@ -331,6 +338,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const activeSidePanelTab = activeTabId ? sidePanelOpenTabs.get(activeTabId) ?? null : null;
   // Legacy compatibility helpers for SFTP-specific logic
   const isSftpOpenForCurrentTab = activeSidePanelTab === 'sftp';
+  const isSftpOpenForCurrentTabRef = useRef(isSftpOpenForCurrentTab);
+  isSftpOpenForCurrentTabRef.current = isSftpOpenForCurrentTab;
 
   // The host to pass to the SFTP panel - stored when the user opens SFTP
   const [sftpHostForTab, setSftpHostForTab] = useState<Map<string, Host>>(new Map());
@@ -604,6 +613,53 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   }, [sessions, sessionHostsMap, hostMap, groupConfigs, proxyProfileIdSet, proxyProfiles]);
   const sessionHostsMapRef = useRef(sessionHostsMap);
   sessionHostsMapRef.current = sessionHostsMap;
+
+  const handleCommandExecuted = useCallback((command: string, hostId: string, hostLabel: string, sessionId: string) => {
+    onCommandExecuted?.(command, hostId, hostLabel, sessionId);
+
+    if (!sftpFollowTerminalCwdRef.current || !isSftpOpenForCurrentTabRef.current) return;
+
+    const session = sessionsRef.current.find((candidate) => candidate.id === sessionId);
+    if (!session || !canReuseTerminalConnection(session)) return;
+
+    const revisionAtCommand = terminalCwdRevisionRef.current;
+    const probeGeneration = (cwdProbeGenerationRef.current.get(sessionId) ?? 0) + 1;
+    cwdProbeGenerationRef.current.set(sessionId, probeGeneration);
+    cwdProbeCancelersRef.current.get(sessionId)?.();
+    const cancelProbe = scheduleBackendCwdProbeAfterCommand({
+      sessionId,
+      cwdRevisionAtCommand: revisionAtCommand,
+      getCwdRevision: () => terminalCwdRevisionRef.current,
+      getSessionPwd: (id) => terminalBackend.getSessionPwd(id),
+      canProbe: async () => {
+        if (cwdProbeGenerationRef.current.get(sessionId) !== probeGeneration) return false;
+        const host = sessionHostsMapRef.current.get(sessionId);
+        if (!host) return false;
+        const detectedDeviceClass = classifyDistroId(host.distro);
+        const isNetworkDevice =
+          host.deviceType === 'network' || detectedDeviceClass === 'network-device';
+        const info = await terminalBackend.getSessionRemoteInfo?.(sessionId);
+        return shouldProbeSessionCwd({
+          isNetworkDevice,
+          remoteSshVersion: info?.remoteSshVersion,
+        });
+      },
+      onProbedCwd: (cwd) => {
+        if (cwdProbeGenerationRef.current.get(sessionId) !== probeGeneration) return;
+        const existing = terminalRendererCwdBySessionRef.current.get(sessionId);
+        if (existing === cwd) return;
+        handleTerminalCwdChange(sessionId, cwd);
+      },
+    });
+    cwdProbeCancelersRef.current.set(sessionId, cancelProbe);
+  }, [handleTerminalCwdChange, onCommandExecuted, terminalBackend]);
+
+  useEffect(() => () => {
+    for (const cancel of cwdProbeCancelersRef.current.values()) {
+      cancel();
+    }
+    cwdProbeCancelersRef.current.clear();
+  }, []);
   const sessionSudoAutofillPasswordsMap = useMemo(() => {
     const map = new Map<string, string | undefined>();
     for (const session of sessions) {
@@ -699,6 +755,25 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     return sameEndpoint ? session.id : null;
   }, [activeSession?.id, activeWorkspace, focusedSessionId, isSftpOpenForCurrentTab, sessions, sessionHostsMap, sftpActiveHost]);
 
+  const linkedTerminalSessionId = useMemo((): string | null => {
+    if (!isSftpOpenForCurrentTab) return null;
+    if (activeTerminalSessionIdForSftp) return activeTerminalSessionIdForSftp;
+    return activeWorkspace ? (focusedSessionId ?? null) : (activeSession?.id ?? null);
+  }, [
+    activeSession?.id,
+    activeTerminalSessionIdForSftp,
+    activeWorkspace,
+    focusedSessionId,
+    isSftpOpenForCurrentTab,
+  ]);
+
+  const activeTerminalCwd = useMemo(() => {
+    if (!linkedTerminalSessionId) return null;
+    return terminalRendererCwdBySessionRef.current.get(linkedTerminalSessionId) ?? null;
+    // terminalCwdRevision bumps when any session cwd changes so linked SFTP can react.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedTerminalSessionId, terminalCwdRevision]);
+
   const mountedSftpTabIds = useMemo(
     () => Array.from(sftpHostForTab.keys()),
     [sftpHostForTab],
@@ -729,14 +804,15 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   }, [activeWorkspace, onSetWorkspaceFocusedSession]);
 
   // Get the focused terminal's current working directory
-  const getTerminalCwd = useCallback(async (): Promise<string | null> => {
-    const sessionId = getActiveTerminalSessionId();
+  const getTerminalCwd = useCallback(async (options?: { preferFreshBackend?: boolean }): Promise<string | null> => {
+    const sessionId = linkedTerminalSessionId ?? getActiveTerminalSessionId();
     return resolvePreferredTerminalCwd({
       rendererCwd: sessionId ? terminalRendererCwdBySessionRef.current.get(sessionId) : undefined,
       sessionId,
       getSessionPwd: (id) => terminalBackend.getSessionPwd(id),
+      preferFreshBackend: options?.preferFreshBackend,
     });
-  }, [getActiveTerminalSessionId, terminalBackend]);
+  }, [getActiveTerminalSessionId, linkedTerminalSessionId, terminalBackend]);
 
   const refocusTerminalSession = useCallback((sessionId?: string | null) => {
     focusTerminalSessionInput(sessionId);
@@ -1080,7 +1156,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const prevFocusedSessionIdRef = useRef<string | undefined>(undefined);
 
   useTerminalLayerEffects({ activeSidePanelTab, activeTabId, activeTabIdRef, activeTopTabsThemeId, activeWorkspace, activityTrackedSessions, appliedPreviewSessionRef, applyTerminalPreviewVars, applyTopTabsPreviewVars, cancelAnimationFrame, ChunkedEscapeFilter, clearTerminalPreviewVars, clearTimeout, clearTopTabsPreviewVars, document, dropHint, filterTabsMap, focusedSessionId, followAppTerminalTheme, getSessionActivityIdsToClear, handleToggleAiFromTopBar, handleToggleScriptsSidePanel, handleToggleSidePanel, hasNotifiableTerminalOutput, isFocusMode, isTerminalLayerVisible, lastSidePanelTabRef, Map, Math, onSessionData, onSplitSessionRef, onToggleBroadcastRef, onToggleWorkspaceViewModeRef, onUpdateSplitSizes, prevFocusedSessionIdRef, previewTargetSessionId, requestAnimationFrame, ResizeObserver, resizing, sessionActivityStore, sessions, Set, setDropHint, setResizing, setSftpHostForTab, setSftpInitialLocationForTab, setSftpPendingUploadsForTab, setSidePanelOpenTabs, setThemePreview, setTimeout, setupMcpApprovalBridge, setWorkspaceArea, sftpActiveHost, sftpHostForTab, shouldMarkSessionActivity, sidePanelOpenTabs, splitHorizontalHandlersRef, splitVerticalHandlersRef, terminalRendererCwdBySessionRef, themeCommitTimerRef, themePreview, toggleScriptsSidePanelRef, toggleSidePanelRef, validAIScopeTargetIds, validSessionActivityIds, visibleFocusedThemeId, window, workspaceBroadcastHandlersRef, workspaceFocusHandlersRef, workspaceInnerRef, workspaces });
-  return <TerminalLayerView ctx={{ accentMode, activeResizers, activeSidePanelTab, activeTabId, activeTerminalSessionIdForSftp, activeWorkspace, AIChatPanelsHost, aiContextsByTabId, AIStateMaintenanceHost, AIStateProvider, Array, Button, cn, composeBarThemeColors, computeSplitHint, customAccent, draggingSessionId, dropHint, editorWordWrap, effectiveHosts, findSplitNode, focusedFontFamilyId, focusedFontFamilyOverridden, focusedFontSize, focusedFontSizeOverridden, focusedFontWeight, focusedFontWeightOverridden, focusedSessionId, focusedThemeOverridden, FolderTree, followAppTerminalTheme, fontSize, getTerminalCwd, handleAddKnownHost, handleAddSelectionToAI, handleBroadcastInput, handleCloseSession, handleCloseSidePanel, handleCommandExecuted, handleComposeSend, handleFontFamilyChangeForFocusedSession, handleFontFamilyResetForFocusedSession, handleFontSizeChangeForFocusedSession, handleFontSizeResetForFocusedSession, handleFontWeightChangeForFocusedSession, handleFontWeightResetForFocusedSession, handleOpenAI, handleOpenScripts, handleOpenSftp, handleOpenTheme, handleOsDetected, handlePendingTerminalSelectionConsumed, handlePendingUploadHandled, handleSessionExit, handleSftpInitialLocationApplied, handleSidePanelResizeStart, handleSnippetClickForFocusedSession, handleSnippetFromPanel, handleSnippetExecutorChange, handleStatusChange, handleTerminalCwdChange, handleTerminalDataCapture, handleTerminalFontSizeChange, handleThemeChangeForFocusedSession, handleThemeResetForFocusedSession, handleToggleSftpFromBar, handleToggleWorkspaceComposeBar, handleUpdateHost, handleWorkspaceDrop, hosts, hotkeyScheme, identities, isBroadcastEnabled, isComposeBarOpen, isFocusMode, isSidePanelOpenForCurrentTab, isTerminalLayerVisible, keyBindings, keys, knownHosts, MessageSquare, mountedAiTabIds, mountedSftpTabIds, onHotkeyAction, onSetWorkspaceFocusedSession, onSplitSession, Palette, PanelLeft, PanelRight, pendingTerminalSelectionForAI, previewedOrVisibleThemeId, refocusActiveTerminalSession, refocusTerminalSession, renderFocusModeSidebar, resizing, resolveAIExecutorContext, resolvedPreviewTheme, ScriptsSidePanel, sessionChainHostsMap, sessionHostsMap, sessionLogConfig, sessionSudoAutofillPasswordsMap, sessions, setDropHint, setEditorWordWrap, setIsComposeBarOpen, setResizing, setSidePanelPosition, sftpActiveHost, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior, sftpInitialLocationForTab, sftpPendingUploadsForTab, sftpShowHiddenFiles, SftpSidePanel, sftpUseCompressedUpload, sidePanelPosition, sidePanelWidth, snippetPackages, snippets, splitHorizontalHandlersRef, splitVerticalHandlersRef, sshDebugLogsEnabled, t, TerminalComposeBar, terminalFontFamilyId, TerminalPanesHost, terminalSettings, terminalTheme, themePreview, ThemeSidePanel, Tooltip, TooltipContent, TooltipTrigger, updateHosts, validAIScopeTargetIds, workspaceBroadcastHandlersRef, workspaceById, workspaceFocusHandlersRef, workspaceInnerRef, workspaceOuterRef, workspaceOverlayRef, workspaceRectsById, X, Zap }} />;
+  return <TerminalLayerView ctx={{ accentMode, activeResizers, activeSidePanelTab, activeTabId, activeTerminalCwd, activeTerminalSessionIdForSftp, activeWorkspace, AIChatPanelsHost, aiContextsByTabId, AIStateMaintenanceHost, AIStateProvider, Array, Button, cn, composeBarThemeColors, computeSplitHint, customAccent, draggingSessionId, dropHint, editorWordWrap, effectiveHosts, findSplitNode, focusedFontFamilyId, focusedFontFamilyOverridden, focusedFontSize, focusedFontSizeOverridden, focusedFontWeight, focusedFontWeightOverridden, focusedSessionId, focusedThemeOverridden, FolderTree, followAppTerminalTheme, fontSize, getTerminalCwd, handleAddKnownHost, handleAddSelectionToAI, handleBroadcastInput, handleCloseSession, handleCloseSidePanel, handleCommandExecuted, handleComposeSend, handleFontFamilyChangeForFocusedSession, handleFontFamilyResetForFocusedSession, handleFontSizeChangeForFocusedSession, handleFontSizeResetForFocusedSession, handleFontWeightChangeForFocusedSession, handleFontWeightResetForFocusedSession, handleOpenAI, handleOpenScripts, handleOpenSftp, handleOpenTheme, handleOsDetected, handlePendingTerminalSelectionConsumed, handlePendingUploadHandled, handleSessionExit, handleSftpInitialLocationApplied, handleSidePanelResizeStart, handleSnippetClickForFocusedSession, handleSnippetFromPanel, handleSnippetExecutorChange, handleStatusChange, handleTerminalCwdChange, handleTerminalDataCapture, handleTerminalFontSizeChange, handleThemeChangeForFocusedSession, handleThemeResetForFocusedSession, handleToggleSftpFromBar, handleToggleWorkspaceComposeBar, handleUpdateHost, handleWorkspaceDrop, hosts, hotkeyScheme, identities, isBroadcastEnabled, isComposeBarOpen, isFocusMode, isSidePanelOpenForCurrentTab, isTerminalLayerVisible, keyBindings, keys, knownHosts, MessageSquare, mountedAiTabIds, mountedSftpTabIds, onHotkeyAction, onSetWorkspaceFocusedSession, onSplitSession, Palette, PanelLeft, PanelRight, pendingTerminalSelectionForAI, previewedOrVisibleThemeId, refocusActiveTerminalSession, refocusTerminalSession, renderFocusModeSidebar, resizing, resolveAIExecutorContext, resolvedPreviewTheme, ScriptsSidePanel, sessionChainHostsMap, sessionHostsMap, sessionLogConfig, sessionSudoAutofillPasswordsMap, sessions, setDropHint, setEditorWordWrap, setIsComposeBarOpen, setResizing, setSidePanelPosition, setSftpFollowTerminalCwd, sftpActiveHost, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior, sftpFollowTerminalCwd, sftpInitialLocationForTab, sftpPendingUploadsForTab, sftpShowHiddenFiles, SftpSidePanel, sftpUseCompressedUpload, sidePanelPosition, sidePanelWidth, snippetPackages, snippets, splitHorizontalHandlersRef, splitVerticalHandlersRef, sshDebugLogsEnabled, t, TerminalComposeBar, terminalFontFamilyId, TerminalPanesHost, terminalSettings, terminalTheme, themePreview, ThemeSidePanel, Tooltip, TooltipContent, TooltipTrigger, updateHosts, validAIScopeTargetIds, workspaceBroadcastHandlersRef, workspaceById, workspaceFocusHandlersRef, workspaceInnerRef, workspaceOuterRef, workspaceOverlayRef, workspaceRectsById, X, Zap }} />;
 };
 
 export const TerminalLayer = memo(TerminalLayerInner, terminalLayerAreEqual);

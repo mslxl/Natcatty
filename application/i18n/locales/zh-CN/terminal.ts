@@ -80,6 +80,11 @@ export const zhCNTerminalMessages: Messages = {
   'settings.sftp.autoOpenSidebar.enable': '启用自动打开侧栏',
   'settings.sftp.autoOpenSidebar.enableDesc': '当终端会话连接到远程主机时，SFTP 侧栏将自动打开',
 
+  'settings.sftp.followTerminalCwd': '追随终端目录',
+  'settings.sftp.followTerminalCwd.desc': '在侧栏 SFTP 中自动跟随终端当前工作目录变化（可在工具栏切换）',
+  'settings.sftp.followTerminalCwd.enable': '默认开启追随终端目录',
+  'settings.sftp.followTerminalCwd.enableDesc': '打开侧栏 SFTP 时默认启用追随模式，终端执行 cd 后文件浏览器会自动跳转',
+
   'settings.sftp.defaultViewMode': '默认视图模式',
   'settings.sftp.defaultViewMode.desc': '选择打开新 SFTP 标签页时的默认视图模式。每个主机的偏好设置会覆盖此全局设置。',
   'settings.sftp.defaultViewMode.list': '列表视图',

@@ -39,6 +39,7 @@ import { useSftpKeyboardShortcuts } from "./sftp/hooks/useSftpKeyboardShortcuts"
 import { sftpFocusStore } from "./sftp/hooks/useSftpFocusedPane";
 import { keepOnlyPaneSelections } from "./sftp/hooks/selectionScope";
 import { KeyBinding, HotkeyScheme } from "../domain/models";
+import { shouldFollowTerminalCwdNavigate } from "./sftp/sftpFollowTerminalCwd";
 
 interface SftpSidePanelProps {
   hosts: Host[];
@@ -72,7 +73,10 @@ interface SftpSidePanelProps {
   keyBindings: KeyBinding[];
   editorWordWrap: boolean;
   setEditorWordWrap: (value: boolean) => void;
-  onGetTerminalCwd?: () => Promise<string | null>;
+  onGetTerminalCwd?: (options?: { preferFreshBackend?: boolean }) => Promise<string | null>;
+  activeTerminalCwd?: string | null;
+  sftpFollowTerminalCwd?: boolean;
+  onSftpFollowTerminalCwdChange?: (enabled: boolean) => void;
   onRequestTerminalFocus?: () => void;
   terminalSettings?: { keepaliveInterval: number; keepaliveCountMax: number };
 }
@@ -102,6 +106,9 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   editorWordWrap,
   setEditorWordWrap,
   onGetTerminalCwd,
+  activeTerminalCwd = null,
+  sftpFollowTerminalCwd = false,
+  onSftpFollowTerminalCwdChange,
   onRequestTerminalFocus,
   terminalSettings,
 }) => {
@@ -340,11 +347,19 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   // Navigate SFTP to the terminal's current working directory
   const handleGoToTerminalCwd = useCallback(async () => {
     if (!onGetTerminalCwd) return;
-    const cwd = await onGetTerminalCwd();
+    const cwd = await onGetTerminalCwd({ preferFreshBackend: true });
     if (cwd) {
       sftpRef.current.navigateTo("left", cwd);
     }
   }, [onGetTerminalCwd]);
+
+  const canFollowTerminalCwd = useMemo(() => {
+    if (!onGetTerminalCwd || !activeHost) return false;
+    const proto = activeHost.protocol;
+    if (proto === "local" || proto === "serial") return false;
+    if (activeHost.id?.startsWith("local-") || activeHost.id?.startsWith("serial-")) return false;
+    return true;
+  }, [activeHost, onGetTerminalCwd]);
 
   // Track whether there's active work that should block connection switching.
   // Computed outside the effect so it can be in the dependency array.
@@ -355,6 +370,57 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   // independent of the active tab, and forceNewTab preserves old connections.
   const hasActiveWork = showTextEditor || !!permissionsState || showFileOpenerDialog
     || (sftp.activeFileWatchCountRef?.current ?? 0) > 0;
+
+  const syncFollowToTerminalCwd = useCallback(async () => {
+    if (!onGetTerminalCwd || !sftpFollowTerminalCwd || !canFollowTerminalCwd) {
+      return;
+    }
+
+    let terminalCwd = activeTerminalCwd;
+    if (!terminalCwd) {
+      terminalCwd = await onGetTerminalCwd({ preferFreshBackend: true });
+    }
+
+    const connection = sftpRef.current.leftPane.connection;
+    if (!shouldFollowTerminalCwdNavigate({
+      followEnabled: sftpFollowTerminalCwd,
+      isVisible,
+      terminalCwd,
+      currentPath: connection?.currentPath,
+      hasActiveWork,
+      isConnected: Boolean(connection && !connection.isLocal && connection.status === "connected"),
+    })) {
+      return;
+    }
+
+    await sftpRef.current.navigateTo("left", terminalCwd!);
+  }, [
+    activeTerminalCwd,
+    canFollowTerminalCwd,
+    hasActiveWork,
+    isVisible,
+    onGetTerminalCwd,
+    sftpFollowTerminalCwd,
+  ]);
+
+  const handleToggleFollowTerminalCwd = useCallback(() => {
+    onSftpFollowTerminalCwdChange?.(!sftpFollowTerminalCwd);
+  }, [onSftpFollowTerminalCwdChange, sftpFollowTerminalCwd]);
+
+  useEffect(() => {
+    if (!sftpFollowTerminalCwd || !canFollowTerminalCwd || !isVisible || hasActiveWork) return;
+    void syncFollowToTerminalCwd();
+  }, [
+    activeTerminalCwd,
+    canFollowTerminalCwd,
+    hasActiveWork,
+    isVisible,
+    sftpFollowTerminalCwd,
+    sftp.leftPane.connection?.currentPath,
+    sftp.leftPane.connection?.status,
+    sftp.leftPane.connection?.isLocal,
+    syncFollowToTerminalCwd,
+  ]);
 
   useEffect(() => {
     if (!activeHost) return;
@@ -736,6 +802,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
                   forceActive
                   onToggleShowHiddenFiles={() => handleToggleHiddenFiles(pane.id)}
                   onGoToTerminalCwd={onGetTerminalCwd ? handleGoToTerminalCwd : undefined}
+                  followTerminalCwd={canFollowTerminalCwd ? sftpFollowTerminalCwd : undefined}
+                  onToggleFollowTerminalCwd={canFollowTerminalCwd ? handleToggleFollowTerminalCwd : undefined}
                 />
               </div>
             );
@@ -822,6 +890,9 @@ const sidePanelAreEqual = (prev: SftpSidePanelProps, next: SftpSidePanelProps): 
   prev.editorWordWrap === next.editorWordWrap &&
   prev.setEditorWordWrap === next.setEditorWordWrap &&
   prev.onGetTerminalCwd === next.onGetTerminalCwd &&
+  prev.activeTerminalCwd === next.activeTerminalCwd &&
+  prev.sftpFollowTerminalCwd === next.sftpFollowTerminalCwd &&
+  prev.onSftpFollowTerminalCwdChange === next.onSftpFollowTerminalCwdChange &&
   prev.onRequestTerminalFocus === next.onRequestTerminalFocus &&
   prev.initialLocation?.hostId === next.initialLocation?.hostId &&
   prev.initialLocation?.path === next.initialLocation?.path &&

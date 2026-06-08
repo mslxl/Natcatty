@@ -56,6 +56,7 @@ import {
   STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES,
   STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD,
   STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR,
+  STORAGE_KEY_SFTP_FOLLOW_TERMINAL_CWD,
   STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE,
   STORAGE_KEY_SFTP_GLOBAL_BOOKMARKS,
   STORAGE_KEY_CUSTOM_THEMES,
@@ -220,6 +221,7 @@ export const SYNCABLE_SETTING_STORAGE_KEYS = [
   STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES,
   STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD,
   STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR,
+  STORAGE_KEY_SFTP_FOLLOW_TERMINAL_CWD,
   STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE,
   STORAGE_KEY_SFTP_GLOBAL_BOOKMARKS,
   STORAGE_KEY_SHOW_RECENT_HOSTS,
@@ -386,6 +388,8 @@ export function collectSyncableSettings(): SyncPayload['settings'] {
   if (compress === 'true' || compress === 'false') settings.sftpUseCompressedUpload = compress === 'true';
   const autoOpenSidebar = localStorageAdapter.readString(STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR);
   if (autoOpenSidebar === 'true' || autoOpenSidebar === 'false') settings.sftpAutoOpenSidebar = autoOpenSidebar === 'true';
+  const followTerminalCwd = localStorageAdapter.readString(STORAGE_KEY_SFTP_FOLLOW_TERMINAL_CWD);
+  if (followTerminalCwd === 'true' || followTerminalCwd === 'false') settings.sftpFollowTerminalCwd = followTerminalCwd === 'true';
   const defaultViewMode = localStorageAdapter.readString(STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE);
   if (defaultViewMode === 'list' || defaultViewMode === 'tree') settings.sftpDefaultViewMode = defaultViewMode;
 
@@ -512,6 +516,7 @@ function applySyncableSettings(settings: NonNullable<SyncPayload['settings']>): 
   if (settings.sftpShowHiddenFiles != null) localStorageAdapter.writeString(STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES, String(settings.sftpShowHiddenFiles));
   if (settings.sftpUseCompressedUpload != null) localStorageAdapter.writeString(STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD, String(settings.sftpUseCompressedUpload));
   if (settings.sftpAutoOpenSidebar != null) localStorageAdapter.writeString(STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR, String(settings.sftpAutoOpenSidebar));
+  if (settings.sftpFollowTerminalCwd != null) localStorageAdapter.writeString(STORAGE_KEY_SFTP_FOLLOW_TERMINAL_CWD, String(settings.sftpFollowTerminalCwd));
   if (settings.sftpDefaultViewMode != null) {
     localStorageAdapter.writeString(STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE, settings.sftpDefaultViewMode);
   }

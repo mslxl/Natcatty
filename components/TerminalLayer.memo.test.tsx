@@ -28,6 +28,8 @@ const baseProps = {
   sftpShowHiddenFiles: false,
   sftpUseCompressedUpload: false,
   sftpAutoOpenSidebar: false,
+  sftpFollowTerminalCwd: false,
+  setSftpFollowTerminalCwd: () => {},
   editorWordWrap: false,
   sshDebugLogsEnabled: false,
   setEditorWordWrap: () => {},

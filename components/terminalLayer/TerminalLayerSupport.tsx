@@ -468,6 +468,8 @@ export interface TerminalLayerProps {
   sftpShowHiddenFiles: boolean;
   sftpUseCompressedUpload: boolean;
   sftpAutoOpenSidebar: boolean;
+  sftpFollowTerminalCwd: boolean;
+  setSftpFollowTerminalCwd: (enabled: boolean) => void;
   editorWordWrap: boolean;
   setEditorWordWrap: (value: boolean) => void;
   // Session log settings for real-time streaming

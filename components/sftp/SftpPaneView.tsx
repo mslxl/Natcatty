@@ -77,6 +77,8 @@ interface SftpPaneViewProps {
   showEmptyHeader?: boolean;
   onToggleShowHiddenFiles?: () => void;
   onGoToTerminalCwd?: () => void;
+  followTerminalCwd?: boolean;
+  onToggleFollowTerminalCwd?: () => void;
   /** When true, treat this pane as always active (used by SftpSidePanel which manages visibility itself) */
   forceActive?: boolean;
 }
@@ -91,6 +93,8 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   showEmptyHeader = true,
   onToggleShowHiddenFiles,
   onGoToTerminalCwd,
+  followTerminalCwd,
+  onToggleFollowTerminalCwd,
   forceActive,
 }) => {
   const activeTabId = useActiveTabId(side);
@@ -523,6 +527,8 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
         showHiddenFiles={pane.showHiddenFiles}
         onToggleShowHiddenFiles={onToggleShowHiddenFiles}
         onGoToTerminalCwd={onGoToTerminalCwd}
+        followTerminalCwd={followTerminalCwd}
+        onToggleFollowTerminalCwd={onToggleFollowTerminalCwd}
         viewMode={viewMode}
         onSetViewMode={handleSetViewMode}
         onListDrives={callbacks.onListDrives}
@@ -685,6 +691,10 @@ const sftpPaneViewAreEqual = (
   if (prev.showHeader !== next.showHeader) return false;
   if (prev.showEmptyHeader !== next.showEmptyHeader) return false;
   if (prev.sftpDefaultViewMode !== next.sftpDefaultViewMode) return false;
+  if (prev.followTerminalCwd !== next.followTerminalCwd) return false;
+  if (prev.onToggleFollowTerminalCwd !== next.onToggleFollowTerminalCwd) return false;
+  if (prev.onGoToTerminalCwd !== next.onGoToTerminalCwd) return false;
+  if (prev.onToggleShowHiddenFiles !== next.onToggleShowHiddenFiles) return false;
 
   return true;
 };
