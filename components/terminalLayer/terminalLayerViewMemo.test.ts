@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import type { Workspace } from "../../types";
 import {
+  terminalLayerSidePanelCtxEqual,
   terminalLayerViewCtxEqual,
   terminalLayerWorkspaceCtxEqual,
 } from "./terminalLayerViewMemo.ts";
@@ -91,6 +92,52 @@ test("terminal layer memo re-renders when active workspace root changes", () => 
     terminalLayerViewCtxEqual(
       { activeWorkspace: prevWorkspace },
       { activeWorkspace: nextWorkspace },
+    ),
+    false,
+  );
+});
+
+test("terminal layer side panel re-renders when linked terminal cwd changes", () => {
+  const baseCtx = {
+    mountedSftpTabIds: ["workspace-1"],
+    activeTerminalCwd: "/home/user",
+    sftpFollowTerminalCwd: true,
+  };
+
+  assert.equal(
+    terminalLayerSidePanelCtxEqual(
+      baseCtx,
+      { ...baseCtx, activeTerminalCwd: "/home/user/project" },
+    ),
+    false,
+  );
+  assert.equal(
+    terminalLayerViewCtxEqual(
+      baseCtx,
+      { ...baseCtx, activeTerminalCwd: "/home/user/project" },
+    ),
+    false,
+  );
+});
+
+test("terminal layer side panel re-renders when follow terminal cwd setting changes", () => {
+  const baseCtx = {
+    mountedSftpTabIds: ["workspace-1"],
+    activeTerminalCwd: "/home/user",
+    sftpFollowTerminalCwd: false,
+  };
+
+  assert.equal(
+    terminalLayerSidePanelCtxEqual(
+      baseCtx,
+      { ...baseCtx, sftpFollowTerminalCwd: true },
+    ),
+    false,
+  );
+  assert.equal(
+    terminalLayerViewCtxEqual(
+      baseCtx,
+      { ...baseCtx, sftpFollowTerminalCwd: true },
     ),
     false,
   );
