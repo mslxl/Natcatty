@@ -603,90 +603,94 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             }
           }}
         >
-          {/* Left fade mask */}
-          {canScrollLeft && (
+          {hasTerminalOrWorkspaceTabs && (
             <div
-              className="absolute left-0 top-0 bottom-0 w-8 pointer-events-none z-10"
-              style={{ background: 'linear-gradient(to right, var(--top-tabs-bg, hsl(var(--secondary))), transparent)' }}
-            />
-          )}
-
-          {/* Scrollable container */}
-          <div
-            ref={tabsContainerRef}
-            className="flex items-end gap-0 overflow-x-auto scrollbar-none app-drag max-w-full"
-            style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-          >
-            {hasTerminalOrWorkspaceTabs && (
-              <div
-                ref={hostTreeToggleSlotRef}
-                className="top-tab-host-tree-toggle-slot mb-0"
-                data-visible={showHostTreeToggle ? 'true' : 'false'}
-              >
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      data-tab-type="host-tree-toggle"
-                      data-state={isHostTreeOpen ? 'active' : 'inactive'}
-                      className={cn(
-                        'h-7 w-7 flex-shrink-0 app-no-drag rounded-none hover:bg-transparent',
-                        hostTreeTogglePop && showHostTreeToggle && 'top-tab-host-tree-toggle-pop',
-                      )}
-                      style={{
-                        color: isHostTreeOpen
-                          ? 'var(--top-tabs-fg, hsl(var(--foreground)))'
-                          : 'var(--top-tabs-muted, hsl(var(--muted-foreground)))',
-                        pointerEvents: showHostTreeToggle ? 'auto' : 'none',
-                      }}
-                      onClick={toggleHostTree}
-                    >
-                      <Menu size={14} />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {isHostTreeOpen ? t('terminal.layer.hostTree.collapse') : t('terminal.layer.hostTree.expand')}
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-            )}
-            {showHostTreeToggle && (
-              <div
-                className="top-tab-host-tree-gutter flex-shrink-0"
-                style={{ width: hostTreeTabGutter }}
-                aria-hidden
-              />
-            )}
-            {renderOrderedTabs()}
-            {/* Add new tab button - follows last tab when not overflowing */}
-            {!hasOverflow && (
+              ref={hostTreeToggleSlotRef}
+              className="top-tab-host-tree-toggle-slot mb-0 flex-shrink-0 self-end"
+              data-visible={showHostTreeToggle ? 'true' : 'false'}
+            >
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 flex-shrink-0 app-no-drag mb-0 rounded-none"
-                    style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
-                    onClick={onOpenQuickSwitcher}
+                    data-tab-type="host-tree-toggle"
+                    data-state={isHostTreeOpen ? 'active' : 'inactive'}
+                    className={cn(
+                      'h-7 w-7 flex-shrink-0 app-no-drag rounded-none hover:bg-transparent',
+                      hostTreeTogglePop && showHostTreeToggle && 'top-tab-host-tree-toggle-pop',
+                    )}
+                    style={{
+                      color: isHostTreeOpen
+                        ? 'var(--top-tabs-fg, hsl(var(--foreground)))'
+                        : 'var(--top-tabs-muted, hsl(var(--muted-foreground)))',
+                      pointerEvents: showHostTreeToggle ? 'auto' : 'none',
+                    }}
+                    onClick={toggleHostTree}
                   >
-                    <Plus size={14} />
+                    <Menu size={14} />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>{t('topTabs.openQuickSwitcher')}</TooltipContent>
+                <TooltipContent>
+                  {isHostTreeOpen ? t('terminal.layer.hostTree.collapse') : t('terminal.layer.hostTree.expand')}
+                </TooltipContent>
               </Tooltip>
-            )}
-            {/* Draggable spacer - fixed width handle at the end */}
-            <div className="min-w-[20px] h-7 app-drag flex-shrink-0" style={dragRegionStyle} />
-          </div>
-
-          {/* Right fade mask */}
-          {canScrollRight && (
+            </div>
+          )}
+          {showHostTreeToggle && (
             <div
-              className="absolute right-0 top-0 bottom-0 w-8 pointer-events-none z-10"
-              style={{ background: 'linear-gradient(to left, var(--top-tabs-bg, hsl(var(--secondary))), transparent)' }}
+              className="top-tab-host-tree-gutter flex-shrink-0"
+              style={{ width: hostTreeTabGutter }}
+              aria-hidden
             />
           )}
+
+          <div className="relative min-w-0 flex-1 flex app-drag" style={dragRegionStyle}>
+            {/* Left fade mask */}
+            {canScrollLeft && (
+              <div
+                className="absolute left-0 top-0 bottom-0 w-8 pointer-events-none z-10"
+                style={{ background: 'linear-gradient(to right, var(--top-tabs-bg, hsl(var(--secondary))), transparent)' }}
+              />
+            )}
+
+            {/* Scrollable container */}
+            <div
+              ref={tabsContainerRef}
+              className="flex items-end gap-0 overflow-x-auto scrollbar-none app-drag max-w-full"
+              style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+            >
+              {renderOrderedTabs()}
+              {/* Add new tab button - follows last tab when not overflowing */}
+              {!hasOverflow && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 flex-shrink-0 app-no-drag mb-0 rounded-none"
+                      style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
+                      onClick={onOpenQuickSwitcher}
+                    >
+                      <Plus size={14} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('topTabs.openQuickSwitcher')}</TooltipContent>
+                </Tooltip>
+              )}
+              {/* Draggable spacer - fixed width handle at the end */}
+              <div className="min-w-[20px] h-7 app-drag flex-shrink-0" style={dragRegionStyle} />
+            </div>
+
+            {/* Right fade mask */}
+            {canScrollRight && (
+              <div
+                className="absolute right-0 top-0 bottom-0 w-8 pointer-events-none z-10"
+                style={{ background: 'linear-gradient(to left, var(--top-tabs-bg, hsl(var(--secondary))), transparent)' }}
+              />
+            )}
+          </div>
+
         </div>
 
         {/* More tabs button - only when overflowing */}
