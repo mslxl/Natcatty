@@ -1,11 +1,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { buildSdkTurnPrompt, resolveBackendKey } = require("./sdkStreamHandlers.cjs");
+const { buildSdkTurnPrompt, resolveBackendKey, resolveSdkBackendBinPath } = require("./sdkStreamHandlers.cjs");
 
 test("resolveBackendKey maps backend command/value to registry key", () => {
   assert.equal(resolveBackendKey("claude"), "claude");
   assert.equal(resolveBackendKey("codex"), "codex");
   assert.equal(resolveBackendKey("copilot"), "copilot");
+  assert.equal(resolveBackendKey("codebuddy"), "codebuddy");
 });
 
 test("resolveBackendKey returns null for unknown", () => {
@@ -59,4 +60,39 @@ test("buildSdkTurnPrompt stages attachments as local file hints", () => {
     filePath: "/tmp/screen.png",
     base64Data: Buffer.from("img").toString("base64"),
   }]);
+});
+
+test("resolveSdkBackendBinPath prefers configured CodeBuddy path", () => {
+  const out = resolveSdkBackendBinPath({
+    backendKey: "codebuddy",
+    shellEnv: { PATH: "/usr/bin" },
+    env: { CODEBUDDY_CODE_PATH: "/shim/bin/codebuddy" },
+    resolveCliFromPath: () => "/usr/bin/codebuddy",
+    normalizeCliPathForPlatform: (value) => value,
+    realpath: () => "/opt/codebuddy/bin/codebuddy",
+  });
+  assert.equal(out, "/opt/codebuddy/bin/codebuddy");
+});
+
+test("resolveSdkBackendBinPath falls back to PATH when CodeBuddy path is invalid", () => {
+  const out = resolveSdkBackendBinPath({
+    backendKey: "codebuddy",
+    shellEnv: { PATH: "/usr/bin" },
+    env: { CODEBUDDY_CODE_PATH: "/missing/codebuddy" },
+    resolveCliFromPath: () => "/usr/bin/codebuddy",
+    normalizeCliPathForPlatform: () => null,
+  });
+  assert.equal(out, "/usr/bin/codebuddy");
+});
+
+test("resolveSdkBackendBinPath realpaths CodeBuddy PATH discovery fallback", () => {
+  const out = resolveSdkBackendBinPath({
+    backendKey: "codebuddy",
+    shellEnv: { PATH: "/usr/bin" },
+    env: {},
+    resolveCliFromPath: () => "/shim/bin/codebuddy",
+    normalizeCliPathForPlatform: () => null,
+    realpath: () => "/opt/codebuddy/bin/codebuddy",
+  });
+  assert.equal(out, "/opt/codebuddy/bin/codebuddy");
 });

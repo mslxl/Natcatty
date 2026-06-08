@@ -447,11 +447,29 @@ export const CODEX_MODEL_PRESETS: AgentModelPreset[] = [
   { id: 'gpt-4o', name: 'GPT-4o' },
 ];
 
+// CodeBuddy's SDK model enumeration can be empty depending on CLI/account
+// state; keep a CLI-supported fallback list so users can still pass --model.
+export const CODEBUDDY_MODEL_PRESETS: AgentModelPreset[] = [
+  { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro' },
+  { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' },
+  { id: 'deepseek-v3-2-volc', name: 'DeepSeek V3.2' },
+  { id: 'glm-5.1', name: 'GLM 5.1' },
+  { id: 'glm-5.0', name: 'GLM 5.0' },
+  { id: 'glm-5.0-turbo', name: 'GLM 5.0 Turbo' },
+  { id: 'glm-5v-turbo', name: 'GLM 5V Turbo' },
+  { id: 'glm-4.7', name: 'GLM 4.7' },
+  { id: 'minimax-m3-pay', name: 'MiniMax M3' },
+  { id: 'minimax-m2.7', name: 'MiniMax M2.7' },
+  { id: 'kimi-k2.6', name: 'Kimi K2.6' },
+  { id: 'hy3-preview', name: 'Hy3 Preview' },
+];
+
 export function getAgentModelPresets(agentCommand?: string): AgentModelPreset[] {
   if (!agentCommand) return [];
   const basename = agentCommand.split('/').pop()?.toLowerCase() ?? '';
   if (basename.startsWith('claude')) return CLAUDE_MODEL_PRESETS;
   if (basename.startsWith('codex')) return CODEX_MODEL_PRESETS;
+  if (basename.startsWith('codebuddy')) return CODEBUDDY_MODEL_PRESETS;
   return [];
 }
 

@@ -4,6 +4,7 @@ const { getDriver, listBackends } = require("./index.cjs");
 const { buildSdkAgentEnv } = require("./env.cjs");
 const { buildInjectedMcpServers } = require("./injectMcp.cjs");
 const { createStreamEmitter } = require("./emit.cjs");
+const { realpathSync } = require("node:fs");
 
 const VALID_BACKENDS = new Set(listBackends());
 
@@ -37,6 +38,22 @@ function normalizeHistoryMessages(historyMessages) {
       content: String(msg.content || "").trim(),
     }))
     .filter((msg) => msg.content.length > 0);
+}
+
+function resolveRealCliPath(cliPath, realpath = realpathSync) {
+  if (!cliPath) return cliPath;
+  try { return realpath(cliPath); } catch { return cliPath; }
+}
+
+function resolveSdkBackendBinPath({
+  backendKey, shellEnv, env, resolveCliFromPath, normalizeCliPathForPlatform, realpath = realpathSync,
+}) {
+  if (backendKey === "codebuddy") {
+    const configuredPath = normalizeCliPathForPlatform?.(env?.CODEBUDDY_CODE_PATH);
+    if (configuredPath) return resolveRealCliPath(configuredPath, realpath);
+  }
+  const resolvedPath = resolveCliFromPath(backendKey, shellEnv) || undefined;
+  return backendKey === "codebuddy" ? resolveRealCliPath(resolvedPath, realpath) : resolvedPath;
 }
 
 function defaultWriteAttachmentToTemp(attachment) {
@@ -163,8 +180,13 @@ function registerSdkStreamHandlers(ctx) {
             normalizeClaudeCodeExecutableEnv: normalizeClaudeCodeExecutableEnvForSdk,
           });
 
-          // Resolve absolute CLI path for the backend (claude needs absolute).
-          const binPath = resolveCliFromPath(backendKey, shellEnv) || undefined;
+          const binPath = resolveSdkBackendBinPath({
+            backendKey,
+            shellEnv,
+            env,
+            resolveCliFromPath,
+            normalizeCliPathForPlatform,
+          });
 
           const hasInMemorySession = sdkSessionIds.has(chatSessionId);
           const resumeSessionId = sdkSessionIds.get(chatSessionId) || existingSessionId || undefined;
@@ -236,12 +258,18 @@ function registerSdkStreamHandlers(ctx) {
           return { ok: true, currentModelId: null, models: [] };
         }
         const shellEnv = await getShellEnv();
-        const binPath = resolveCliFromPath(backendKey, shellEnv) || undefined;
         const env = buildSdkAgentEnv({
           shellEnv,
           requestedAgentEnv: normalizeAgentEnv(requestedAgentEnv),
           withCliDiscoveryEnv,
           normalizeClaudeCodeExecutableEnv: normalizeClaudeCodeExecutableEnvForSdk,
+        });
+        const binPath = resolveSdkBackendBinPath({
+          backendKey,
+          shellEnv,
+          env,
+          resolveCliFromPath,
+          normalizeCliPathForPlatform,
         });
         const raw = await withTimeout(driver.listModels({ binPath, env }), MODEL_LIST_TIMEOUT_MS);
         const models = Array.isArray(raw) ? raw.filter((m) => m && m.id) : [];
@@ -287,6 +315,7 @@ function registerSdkStreamHandlers(ctx) {
 module.exports = {
   registerSdkStreamHandlers,
   resolveBackendKey,
+  resolveSdkBackendBinPath,
   normalizeHistoryMessages,
   buildSdkTurnPrompt,
 };

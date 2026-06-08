@@ -105,13 +105,20 @@ function buildCodebuddyQueryOptions({
   cwd, model, env, injectedMcpServers, abortController,
   resume, pathToCodebuddyCode, toolIntegrationMode, thinking,
 }) {
+  const builtinTools = codebuddyBuiltinTools(toolIntegrationMode);
   const options = {
     cwd,
     includePartialMessages: true,
     permissionMode: "bypassPermissions",
+    allowDangerouslySkipPermissions: true,
+    extraArgs: { "dangerously-skip-permissions": null },
     mcpServers: toSdkMcpServers(injectedMcpServers),
-    allowedTools: codebuddyBuiltinTools(toolIntegrationMode),
+    tools: builtinTools,
+    allowedTools: builtinTools,
     disallowedTools: [...UI_DISALLOWED_TOOLS],
+    // The SDK does not load filesystem settings by default. Include the user
+    // settings layer so CLI login state under ~/.codebuddy is honored.
+    settingSources: ["user"],
     env,
   };
   if (model) options.model = model;
@@ -146,7 +153,7 @@ function buildCodebuddyQueryOptions({
  * Without includePartialMessages (fallback):
  * - Text arrives as complete TextBlock within assistant messages.
  */
-function translateCodebuddyMessage(message, emitter) {
+function translateCodebuddyMessage(message, emitter, opts = {}) {
   if (!message || typeof message !== "object") return;
   const type = message.type;
 
@@ -173,8 +180,9 @@ function translateCodebuddyMessage(message, emitter) {
       if (!block || typeof block !== "object") continue;
       if (block.type === "tool_use") {
         emitter.toolCall(block.name, block.input || {}, block.id);
+      } else if (!opts.skipAssistantText && block.type === "text" && block.text) {
+        emitter.text(block.text);
       }
-      // text blocks intentionally skipped (already streamed via stream_event).
     }
     return;
   }
@@ -282,6 +290,7 @@ async function runCodebuddyTurn({ prompt, attachments, options, emitter, queryFn
 
   let sessionId = null;
   let hasContent = false;
+  let hasStreamedText = false;
   let queryRef = null;
   try {
     queryRef = query({ prompt: promptInput, options });
@@ -301,7 +310,15 @@ async function runCodebuddyTurn({ prompt, attachments, options, emitter, queryFn
       ) {
         hasContent = true;
       }
-      translateCodebuddyMessage(message, emitter);
+      translateCodebuddyMessage(message, emitter, { skipAssistantText: hasStreamedText });
+      if (
+        message?.type === "stream_event" &&
+        message.event?.type === "content_block_delta" &&
+        message.event?.delta?.type === "text_delta" &&
+        message.event.delta.text
+      ) {
+        hasStreamedText = true;
+      }
     }
     if (!hasContent && !options.abortController?.signal?.aborted) {
       emitter.emitError(

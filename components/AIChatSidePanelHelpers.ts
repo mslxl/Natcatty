@@ -26,6 +26,11 @@ export function isCopilotAgentConfig(agent?: ExternalAgentConfig): boolean {
   return tokens.some((token) => token.includes('copilot'));
 }
 
+export function shouldLoadSdkRuntimeModels(agent?: ExternalAgentConfig): boolean {
+  const sdkBackend = getExternalAgentSdkBackend(agent);
+  return sdkBackend === 'claude' || sdkBackend === 'copilot' || sdkBackend === 'codebuddy';
+}
+
 export function generateId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
