@@ -112,8 +112,67 @@ export const SectionHeader: React.FC<{ title: string; className?: string }> = ({
   className,
 }) => <h3 className={cn("text-sm font-semibold text-foreground mb-3", className)}>{title}</h3>;
 
+/** Section title row → content gap (shared across settings pages). */
+export const settingsSectionGapClassName = "gap-2";
+
+/** Groups a section title (optional icon/actions) with its content at a uniform gap. */
+export const SettingsSection: React.FC<{
+  title?: string;
+  leading?: React.ReactNode;
+  actions?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+}> = ({ title, leading, actions, children, className }) => (
+  <section className={cn("flex flex-col", settingsSectionGapClassName, className)}>
+    {(title || leading || actions) && (
+      <div
+        className={cn(
+          "flex min-h-8 items-center gap-2",
+          actions && "justify-between gap-4",
+        )}
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          {leading}
+          {title ? <h3 className="text-sm font-semibold text-foreground">{title}</h3> : null}
+        </div>
+        {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
+      </div>
+    )}
+    {children}
+  </section>
+);
+
+export const settingCardClassName = "rounded-lg border bg-card";
+
+interface SettingCardProps {
+  children: React.ReactNode;
+  className?: string;
+  /** Row list with dividers; vertical spacing comes from SettingRow. */
+  divided?: boolean;
+  /** Free-form content; apply even padding on all sides. */
+  padded?: boolean;
+}
+
+export const SettingCard: React.FC<SettingCardProps> = ({
+  children,
+  className,
+  divided = false,
+  padded = false,
+}) => (
+  <div
+    className={cn(
+      settingCardClassName,
+      padded ? "p-4" : "px-4",
+      divided && "space-y-0 divide-y divide-border",
+      className,
+    )}
+  >
+    {children}
+  </div>
+);
+
 interface SettingRowProps {
-  label: string;
+  label?: string;
   description?: string;
   children: React.ReactNode;
 }
@@ -121,8 +180,10 @@ interface SettingRowProps {
 export const SettingRow: React.FC<SettingRowProps> = ({ label, description, children }) => (
   <div className="flex items-center justify-between py-3 gap-4">
     <div className="flex-1 min-w-0">
-      <div className="text-sm font-medium">{label}</div>
-      {description && <div className="text-xs text-muted-foreground mt-0.5">{description}</div>}
+      {label && <div className="text-sm font-medium">{label}</div>}
+      {description && (
+        <div className={cn("text-xs text-muted-foreground", label && "mt-0.5")}>{description}</div>
+      )}
     </div>
     <div className="shrink-0">{children}</div>
   </div>

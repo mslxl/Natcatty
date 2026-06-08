@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Globe, Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import type { WebSearchConfig, WebSearchProviderId } from "../../../../infrastructure/ai/types";
 import { WEB_SEARCH_PROVIDER_PRESETS } from "../../../../infrastructure/ai/types";
 import { encryptField, decryptField } from "../../../../infrastructure/persistence/secureFieldAdapter";
 import { useI18n } from "../../../../application/i18n/I18nProvider";
-import { Select, SettingRow } from "../../settings-ui";
+import { Select, SettingCard, SettingRow, SettingsSection, Toggle } from "../../settings-ui";
 
 const SEARCH_ICON_PATHS: Record<WebSearchProviderId, string> = {
   tavily: "/ai/search/tavily.svg",
@@ -114,27 +114,16 @@ export const WebSearchSettings: React.FC<{
   }, [apiKeyInput, updateConfig]);
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Globe size={18} className="text-muted-foreground" />
-        <h3 className="text-base font-medium">{t("ai.webSearch.title")}</h3>
-      </div>
-
-      <div className="bg-muted/30 rounded-lg p-4 space-y-1">
-        {/* Enable/Disable */}
+    <SettingsSection title={t("ai.webSearch.title")}>
+      <SettingCard divided>
         <SettingRow
           label={t("ai.webSearch.enable")}
           description={t("ai.webSearch.enable.description")}
         >
-          <label className="relative inline-flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              checked={config.enabled}
-              onChange={(e) => updateConfig({ enabled: e.target.checked })}
-              className="sr-only peer"
-            />
-            <div className="w-9 h-5 bg-muted-foreground/20 peer-focus-visible:ring-2 peer-focus-visible:ring-ring rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:border-gray-300 after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary" />
-          </label>
+          <Toggle
+            checked={config.enabled}
+            onChange={(enabled) => updateConfig({ enabled })}
+          />
         </SettingRow>
 
         {/* Provider */}
@@ -214,7 +203,7 @@ export const WebSearchSettings: React.FC<{
             className="w-20 h-9 rounded-md border border-input bg-background px-3 text-sm text-right focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           />
         </SettingRow>
-      </div>
-    </div>
+      </SettingCard>
+    </SettingsSection>
   );
 };

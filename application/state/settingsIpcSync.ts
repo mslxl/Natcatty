@@ -18,6 +18,7 @@ import {
   STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED,
   STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED,
   STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR,
+  STORAGE_KEY_SFTP_FOLLOW_TERMINAL_CWD,
   STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE,
   STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY,
   STORAGE_KEY_TERM_FOLLOW_APP_THEME,
@@ -67,6 +68,7 @@ interface UseSettingsIpcSyncParams {
   setWindowOpacity: Dispatch<SetStateAction<number>>;
   setAutoUpdateEnabled: Dispatch<SetStateAction<boolean>>;
   setSftpAutoOpenSidebar: Dispatch<SetStateAction<boolean>>;
+  setSftpFollowTerminalCwd: Dispatch<SetStateAction<boolean>>;
   setSftpDefaultViewMode: Dispatch<SetStateAction<'list' | 'tree'>>;
   setWorkspaceFocusStyleState: Dispatch<SetStateAction<'dim' | 'border'>>;
   setSftpTransferConcurrencyState: Dispatch<SetStateAction<number>>;
@@ -97,6 +99,7 @@ export function useSettingsIpcSync({
   setWindowOpacity,
   setAutoUpdateEnabled,
   setSftpAutoOpenSidebar,
+  setSftpFollowTerminalCwd,
   setSftpDefaultViewMode,
   setWorkspaceFocusStyleState,
   setSftpTransferConcurrencyState,
@@ -208,6 +211,9 @@ export function useSettingsIpcSync({
       if (key === STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR && typeof value === 'boolean') {
         setSftpAutoOpenSidebar((prev) => (prev === value ? prev : value));
       }
+      if (key === STORAGE_KEY_SFTP_FOLLOW_TERMINAL_CWD && typeof value === 'boolean') {
+        setSftpFollowTerminalCwd((prev) => (prev === value ? prev : value));
+      }
       if (key === STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE && typeof value === 'string') {
         if (value === 'list' || value === 'tree') {
           setSftpDefaultViewMode((prev) => (prev === value ? prev : value));
@@ -243,6 +249,7 @@ export function useSettingsIpcSync({
     setSessionLogsTimestampsEnabled,
     setSshDebugLogsEnabled,
     setSftpAutoOpenSidebar,
+    setSftpFollowTerminalCwd,
     setSftpDefaultViewMode,
     setSftpTransferConcurrencyState,
     setTerminalFontFamilyId,

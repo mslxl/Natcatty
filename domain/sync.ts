@@ -240,6 +240,7 @@ export interface SyncPayload {
     sftpShowHiddenFiles?: boolean;
     sftpUseCompressedUpload?: boolean;
     sftpAutoOpenSidebar?: boolean;
+    sftpFollowTerminalCwd?: boolean;
     sftpDefaultViewMode?: 'list' | 'tree';
     sftpGlobalBookmarks?: import('./models').SftpBookmark[];
     // Immersive mode

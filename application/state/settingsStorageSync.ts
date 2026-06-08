@@ -17,6 +17,7 @@ import {
   STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED,
   STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED,
   STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR,
+  STORAGE_KEY_SFTP_FOLLOW_TERMINAL_CWD,
   STORAGE_KEY_SFTP_AUTO_SYNC,
   STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE,
   STORAGE_KEY_SFTP_DOUBLE_CLICK_BEHAVIOR,
@@ -69,6 +70,7 @@ interface UseSettingsStorageSyncParams {
   sftpShowHiddenFiles: boolean;
   sftpUseCompressedUpload: boolean;
   sftpAutoOpenSidebar: boolean;
+  sftpFollowTerminalCwd: boolean;
   sftpDefaultViewMode: 'list' | 'tree';
   showRecentHosts: boolean;
   showOnlyUngroupedHostsInRoot: boolean;
@@ -102,6 +104,7 @@ interface UseSettingsStorageSyncParams {
   setSftpShowHiddenFiles: Dispatch<SetStateAction<boolean>>;
   setSftpUseCompressedUpload: Dispatch<SetStateAction<boolean>>;
   setSftpAutoOpenSidebar: Dispatch<SetStateAction<boolean>>;
+  setSftpFollowTerminalCwd: Dispatch<SetStateAction<boolean>>;
   setSftpDefaultViewMode: Dispatch<SetStateAction<'list' | 'tree'>>;
   setShowRecentHostsState: Dispatch<SetStateAction<boolean>>;
   setShowOnlyUngroupedHostsInRootState: Dispatch<SetStateAction<boolean>>;
@@ -126,7 +129,7 @@ export function useSettingsStorageSync({
   customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage,
   terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
   sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
-  sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpDefaultViewMode,
+  sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
   showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab,
   editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled,
   globalHotkeyEnabled, autoUpdateEnabled, windowOpacity,
@@ -135,7 +138,7 @@ export function useSettingsStorageSync({
   setTerminalThemeId, setTerminalThemeDarkId, setTerminalThemeLightId,
   setFollowAppTerminalThemeState, setTerminalFontFamilyId, setTerminalFontSize,
   setSftpDoubleClickBehavior, setSftpAutoSync, setSftpShowHiddenFiles,
-  setSftpUseCompressedUpload, setSftpAutoOpenSidebar, setSftpDefaultViewMode,
+  setSftpUseCompressedUpload, setSftpAutoOpenSidebar, setSftpFollowTerminalCwd, setSftpDefaultViewMode,
   setShowRecentHostsState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState,
   setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled,
   setGlobalHotkeyEnabled, setWindowOpacity, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
@@ -149,7 +152,7 @@ export function useSettingsStorageSync({
     customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage,
     terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
-    sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpDefaultViewMode,
+    sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
     showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab,
     editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled,
     globalHotkeyEnabled, autoUpdateEnabled, windowOpacity,
@@ -159,7 +162,7 @@ export function useSettingsStorageSync({
     customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage,
     terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
-    sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpDefaultViewMode,
+    sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
     showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab,
     editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled,
     globalHotkeyEnabled, autoUpdateEnabled, windowOpacity,
@@ -338,6 +341,12 @@ export function useSettingsStorageSync({
           setSftpAutoOpenSidebar(newValue);
         }
       }
+      if (e.key === STORAGE_KEY_SFTP_FOLLOW_TERMINAL_CWD && e.newValue !== null) {
+        const newValue = e.newValue === 'true';
+        if (newValue !== s.sftpFollowTerminalCwd) {
+          setSftpFollowTerminalCwd(newValue);
+        }
+      }
       // Sync SFTP default view mode from other windows
       if (e.key === STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE && e.newValue) {
         if ((e.newValue === 'list' || e.newValue === 'tree') && e.newValue !== s.sftpDefaultViewMode) {
@@ -419,6 +428,7 @@ export function useSettingsStorageSync({
     setSessionLogsTimestampsEnabled,
     setSshDebugLogsEnabled,
     setSftpAutoOpenSidebar,
+    setSftpFollowTerminalCwd,
     setSftpAutoSync,
     setSftpDefaultViewMode,
     setSftpDoubleClickBehavior,

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Bookmark, Check, Eye, EyeOff, FilePlus, Folder, FolderPlus, Globe, Home, Languages, List, ListTree, MoreHorizontal, RefreshCw, Search, TerminalSquare, Trash2, X } from "lucide-react";
+import { Bookmark, Check, Eye, EyeOff, FilePlus, Folder, FolderPlus, FolderSync, Globe, Home, Languages, List, ListTree, MoreHorizontal, RefreshCw, Search, TerminalSquare, Trash2, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "../ui/popover";
@@ -53,6 +53,8 @@ interface SftpPaneToolbarProps {
   showHiddenFiles: boolean;
   onToggleShowHiddenFiles?: () => void;
   onGoToTerminalCwd?: () => void;
+  followTerminalCwd?: boolean;
+  onToggleFollowTerminalCwd?: () => void;
   viewMode: 'list' | 'tree';
   onSetViewMode: (mode: 'list' | 'tree') => void;
   onListDrives?: () => Promise<string[]>;
@@ -104,6 +106,8 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
   showHiddenFiles,
   onToggleShowHiddenFiles,
   onGoToTerminalCwd,
+  followTerminalCwd,
+  onToggleFollowTerminalCwd,
   viewMode,
   onSetViewMode,
   onListDrives,
@@ -172,6 +176,25 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
             </Button>
           </TooltipTrigger>
           <TooltipContent>{t("sftp.goToTerminalCwd")}</TooltipContent>
+        </Tooltip>
+      )}
+      {onToggleFollowTerminalCwd && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn("h-6 w-6", followTerminalCwd && "bg-secondary text-primary")}
+              aria-pressed={!!followTerminalCwd}
+              aria-label={t("sftp.followTerminalCwd")}
+              onClick={onToggleFollowTerminalCwd}
+            >
+              <FolderSync size={14} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {followTerminalCwd ? t("sftp.followTerminalCwd.disable") : t("sftp.followTerminalCwd.enable")}
+          </TooltipContent>
         </Tooltip>
       )}
       <Tooltip>

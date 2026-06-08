@@ -1,17 +1,16 @@
 /**
  * Settings System Tab - System information, temp file management, session logs, and global hotkey
  */
-import { AlertTriangle, ChevronDown, ChevronRight, Download, ExternalLink, FileText, FolderOpen, HardDrive, Keyboard, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, ExternalLink, FolderOpen, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import React, { useCallback, useEffect, useState } from "react";
 import { useI18n } from "../../../application/i18n/I18nProvider";
 import { getCredentialProtectionAvailability } from "../../../infrastructure/services/credentialProtection";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import type { UpdateState } from '../../../application/state/useUpdateCheck';
 import { SessionLogFormat, keyEventToString } from "../../../domain/models";
-import { TabsContent } from "../../ui/tabs";
 import { Button } from "../../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
-import { Toggle, Select, SettingRow } from "../settings-ui";
+import { Toggle, Select, SettingRow, SectionHeader, SettingCard, SettingsTabContent } from "../settings-ui";
 import { cn } from "../../../lib/utils";
 
 interface CrashLogFile {
@@ -392,27 +391,9 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   ];
 
   return (
-    <TabsContent
-      value="system"
-      className="data-[state=inactive]:hidden h-full flex flex-col"
-    >
-      <div className="flex-1 overflow-y-auto overflow-x-hidden px-8 py-6">
-        <div className="max-w-2xl space-y-8">
-          {/* Header */}
-          <div>
-            <h2 className="text-xl font-semibold">{t("settings.system.title")}</h2>
-            <p className="text-sm text-muted-foreground mt-1">
-              {t("settings.system.description")}
-            </p>
-          </div>
-
-          {/* Software Update Section */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <Download size={18} className="text-muted-foreground" />
-              <h3 className="text-base font-medium">{t('settings.update.title')}</h3>
-            </div>
-            <div className="rounded-lg border border-border/60 p-4 space-y-3">
+    <SettingsTabContent value="system">
+          <SectionHeader title={t('settings.update.title')} />
+            <SettingCard className="space-y-3 py-4">
               {/* Current version */}
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">
@@ -525,16 +506,16 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                   </Button>
                 )}
               </div>
-            </div>
-            <SettingRow
-              label={t('settings.update.autoUpdateEnabled')}
-              description={t('settings.update.autoUpdateEnabledDesc')}
-            >
-              <Toggle
-                checked={autoUpdateEnabled}
-                onChange={setAutoUpdateEnabled}
-              />
-            </SettingRow>
+              <SettingRow
+                label={t('settings.update.autoUpdateEnabled')}
+                description={t('settings.update.autoUpdateEnabledDesc')}
+              >
+                <Toggle
+                  checked={autoUpdateEnabled}
+                  onChange={setAutoUpdateEnabled}
+                />
+              </SettingRow>
+            </SettingCard>
             <p className="text-xs text-muted-foreground">
               {updateState.lastCheckedAt && (
                 <span>
@@ -545,16 +526,9 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
               )}
               {t('settings.update.hint')}
             </p>
-          </div>
 
-          {/* Credential Protection Section */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <HardDrive size={18} className="text-muted-foreground" />
-              <h3 className="text-base font-medium">{t("settings.system.credentials.title")}</h3>
-            </div>
-
-            <div className="bg-muted/30 rounded-lg p-4 space-y-3">
+          <SectionHeader title={t("settings.system.credentials.title")} />
+            <SettingCard className="space-y-3 py-4">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-sm text-muted-foreground">
@@ -597,17 +571,10 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
               <p className="text-xs text-muted-foreground">
                 {t("settings.system.credentials.portabilityHint")}
               </p>
-            </div>
-          </div>
+            </SettingCard>
 
-          {/* Crash Logs Section */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <AlertTriangle size={18} className="text-muted-foreground" />
-              <h3 className="text-base font-medium">{t("settings.system.crashLogs.title")}</h3>
-            </div>
-
-            <div className="bg-muted/30 rounded-lg p-4 space-y-3">
+          <SectionHeader title={t("settings.system.crashLogs.title")} />
+            <SettingCard className="space-y-3 py-4">
               <p className="text-sm text-muted-foreground">
                 {t("settings.system.crashLogs.description")}
               </p>
@@ -744,21 +711,14 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                   {t("settings.system.crashLogs.cleared").replace("{count}", String(crashLogClearResult.deletedCount))}
                 </p>
               )}
-            </div>
+            </SettingCard>
 
             <p className="text-xs text-muted-foreground">
               {t("settings.system.crashLogs.hint")}
             </p>
-          </div>
 
-          {/* Temp Directory Section */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <HardDrive size={18} className="text-muted-foreground" />
-              <h3 className="text-base font-medium">{t("settings.system.tempDirectory")}</h3>
-            </div>
-
-            <div className="bg-muted/30 rounded-lg p-4 space-y-3">
+          <SectionHeader title={t("settings.system.tempDirectory")} />
+            <SettingCard className="space-y-3 py-4">
               {/* Path */}
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
@@ -832,21 +792,14 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                   })}
                 </p>
               )}
-            </div>
+            </SettingCard>
 
             <p className="text-xs text-muted-foreground">
               {t("settings.system.tempDirectoryHint")}
             </p>
-          </div>
 
-          {/* Session Logs Section */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <FileText size={18} className="text-muted-foreground" />
-              <h3 className="text-base font-medium">{t("settings.sessionLogs.title")}</h3>
-            </div>
-
-            <div className="bg-muted/30 rounded-lg p-4 space-y-4">
+          <SectionHeader title={t("settings.sessionLogs.title")} />
+            <SettingCard className="space-y-4 py-4">
               {/* Enable Toggle */}
               <SettingRow
                 label={t("settings.sessionLogs.enableAutoSave")}
@@ -922,21 +875,14 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                   disabled={!sessionLogsEnabled}
                 />
               </SettingRow>
-            </div>
+            </SettingCard>
 
             <p className="text-xs text-muted-foreground">
               {t("settings.sessionLogs.hint")}
             </p>
-          </div>
 
-          {/* SSH Debug Logs Section */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <FileText size={18} className="text-muted-foreground" />
-              <h3 className="text-base font-medium">{t("settings.sshDebugLogs.title")}</h3>
-            </div>
-
-            <div className="bg-muted/30 rounded-lg p-4 space-y-4">
+          <SectionHeader title={t("settings.sshDebugLogs.title")} />
+            <SettingCard className="space-y-4 py-4">
               <SettingRow
                 label={t("settings.sshDebugLogs.enable")}
                 description={t("settings.sshDebugLogs.enableDesc")}
@@ -989,21 +935,14 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                   </span>
                 </div>
               </div>
-            </div>
+            </SettingCard>
 
             <p className="text-xs text-muted-foreground">
               {t("settings.sshDebugLogs.hint")}
             </p>
-          </div>
 
-          {/* Global Toggle Window Section (Quake Mode) */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <Keyboard size={18} className="text-muted-foreground" />
-              <h3 className="text-base font-medium">{t("settings.globalHotkey.title")}</h3>
-            </div>
-
-            <div className="bg-muted/30 rounded-lg p-4 space-y-4">
+          <SectionHeader title={t("settings.globalHotkey.title")} />
+            <SettingCard className="space-y-4 py-4">
               {/* Enable/Disable Global Hotkey */}
               <SettingRow
                 label={t('settings.globalHotkey.enabled')}
@@ -1068,15 +1007,12 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                   onChange={setCloseToTray}
                 />
               </SettingRow>
-            </div>
+            </SettingCard>
 
             <p className="text-xs text-muted-foreground">
               {t("settings.globalHotkey.hint")}
             </p>
-          </div>
-        </div>
-      </div>
-    </TabsContent>
+    </SettingsTabContent>
   );
 };
 

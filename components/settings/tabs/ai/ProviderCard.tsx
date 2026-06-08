@@ -25,7 +25,7 @@ export const ProviderCard: React.FC<{
     <div
       className={cn(
         "rounded-lg border p-4 transition-colors",
-        isActive ? "border-primary/50 bg-primary/5" : "border-border/60 bg-muted/20",
+        isActive ? "border-primary/50 bg-primary/5" : "border-border bg-card",
       )}
     >
       <div className="flex items-center gap-3">
