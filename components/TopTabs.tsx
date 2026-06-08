@@ -25,6 +25,7 @@ import {
   LogViewTopTab,
   RootTopTab,
   SessionTopTab,
+  scrollTopTabIntoComfortView,
   WindowControls,
   WorkspaceTopTab,
 } from './top-tabs/TopTabItems';
@@ -326,6 +327,14 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
     setDropIndicator(null);
     setIsDraggingForReorder(false);
   }, [dropIndicator, onReorderTabs]);
+
+  const handleScrollableTabClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('button')) return;
+    const tab = target.closest('[data-tab-id]') as HTMLElement | null;
+    if (!tab || !e.currentTarget.contains(tab)) return;
+    scrollTopTabIntoComfortView(e.currentTarget, tab, 'smooth');
+  }, []);
 
   // Pre-compute tab shift styles for all tabs to avoid recalculation during render
   const tabShiftStyles = useMemo(() => {
@@ -659,6 +668,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
               ref={tabsContainerRef}
               className="flex items-end gap-0 overflow-x-auto scrollbar-none app-drag max-w-full"
               style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+              onClick={handleScrollableTabClick}
             >
               {renderOrderedTabs()}
               {/* Add new tab button - follows last tab when not overflowing */}

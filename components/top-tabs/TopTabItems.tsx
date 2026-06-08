@@ -184,6 +184,41 @@ WindowControls.displayName = 'WindowControls';
 type TranslateFn = ReturnType<typeof useI18n>['t'];
 type RenderBulkCloseItems = (anchorId: string) => React.ReactNode;
 
+const TOP_TAB_COMFORT_EDGE_RATIO = 0.22;
+const TOP_TAB_COMFORT_EDGE_MIN = 72;
+const TOP_TAB_COMFORT_EDGE_MAX = 160;
+
+export function scrollTopTabIntoComfortView(
+  container: HTMLDivElement | null,
+  tab: HTMLElement | null,
+  behavior: ScrollBehavior = 'smooth',
+) {
+  if (!container || !tab) return;
+  if (container.scrollWidth <= container.clientWidth) return;
+
+  const containerRect = container.getBoundingClientRect();
+  const tabRect = tab.getBoundingClientRect();
+  const edgeBuffer = Math.min(
+    TOP_TAB_COMFORT_EDGE_MAX,
+    Math.max(TOP_TAB_COMFORT_EDGE_MIN, containerRect.width * TOP_TAB_COMFORT_EDGE_RATIO),
+  );
+  const isNearLeft = tabRect.left < containerRect.left + edgeBuffer;
+  const isNearRight = tabRect.right > containerRect.right - edgeBuffer;
+
+  if (!isNearLeft && !isNearRight) return;
+
+  const tabCenter =
+    tabRect.left - containerRect.left + container.scrollLeft + tabRect.width / 2;
+  const maxScrollLeft = container.scrollWidth - container.clientWidth;
+  const targetLeft = Math.max(
+    0,
+    Math.min(maxScrollLeft, tabCenter - container.clientWidth / 2),
+  );
+
+  if (Math.abs(container.scrollLeft - targetLeft) < 1) return;
+  container.scrollTo({ left: targetLeft, behavior });
+}
+
 interface ActiveTabAutoScrollerProps {
   tabsContainerRef: React.RefObject<HTMLDivElement | null>;
   updateScrollState: () => void;
@@ -201,18 +236,9 @@ export const ActiveTabAutoScroller: React.FC<ActiveTabAutoScrollerProps> = memo(
     if (!container) return;
 
     const activeTabElement = container.querySelector(`[data-tab-id="${activeTabId}"]`) as HTMLElement | null;
-    if (activeTabElement) {
-      const containerRect = container.getBoundingClientRect();
-      const tabRect = activeTabElement.getBoundingClientRect();
+    scrollTopTabIntoComfortView(container, activeTabElement, 'smooth');
 
-      if (tabRect.left < containerRect.left) {
-        container.scrollLeft -= (containerRect.left - tabRect.left + 8);
-      } else if (tabRect.right > containerRect.right) {
-        container.scrollLeft += (tabRect.right - containerRect.right + 8);
-      }
-    }
-
-    setTimeout(updateScrollState, 100);
+    setTimeout(updateScrollState, 260);
   }, [activeTabId, tabsContainerRef, updateScrollState]);
 
   return null;
