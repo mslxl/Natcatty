@@ -860,15 +860,15 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onAddSelectionToAI?.(sessionId, selection);
   }, [onAddSelectionToAI, sessionId]);
 
-  const handleSetTerminalEncoding = (encoding: 'utf-8' | 'gb18030') => {
+  const handleSetTerminalEncoding = useCallback((encoding: 'utf-8' | 'gb18030') => {
     setTerminalEncoding(encoding);
     userPickedEncodingRef.current = true;
     if (sessionRef.current) {
       setSessionEncoding(sessionRef.current, encoding);
     }
-  };
+  }, [setSessionEncoding]);
 
-  const handleOpenSFTP = async () => {
+  const handleOpenSFTP = useCallback(async () => {
     if (onOpenSftp) {
       // Delegate to parent (TerminalLayer) for shared SFTP side panel
       const initialPath = await resolveSftpInitialPath();
@@ -882,7 +882,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       return;
     }
     setShowSFTP(true);
-  };
+  }, [host, onOpenSftp, resolveSftpInitialPath, sessionId, showSFTP]);
 
   const handleCancelConnect = () => {
     if (pendingHostKeyRequestId) {
