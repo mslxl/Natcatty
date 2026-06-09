@@ -168,6 +168,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   const [hostTreeChromeReady, setHostTreeChromeReady] = useState(false);
   const [hostTreeGutterExiting, setHostTreeGutterExiting] = useState(false);
   const [rootTabsCompact, setRootTabsCompact] = useState(false);
+  const showWindowControls = !isMacClient;
 
   // Tab reorder drag state
   const [dropIndicator, setDropIndicator] = useState<{ tabId: string; position: 'before' | 'after' } | null>(null);
@@ -767,8 +768,12 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
       {/* Always-on drag stripe so the window can be moved even when tabs fill the bar */}
       <div className="absolute inset-x-0 top-0 h-1 app-drag pointer-events-auto z-10" style={dragRegionStyle} aria-hidden />
       <div
-        className="h-9 flex items-end gap-0 app-drag"
-        style={{ ...dragRegionStyle, paddingLeft: isMacClient && !isWindowFullscreen ? 76 : 12, paddingRight: isMacClient ? 12 : 0 }}
+        className="h-9 flex items-end gap-0 app-drag overflow-visible"
+        style={{
+          ...dragRegionStyle,
+          paddingLeft: isMacClient && !isWindowFullscreen ? 76 : 12,
+          paddingRight: showWindowControls ? 0 : 12,
+        }}
       >
         {/* Fixed left tabs: Vaults and SFTP */}
         <div ref={fixedLeftTabsRef} className="flex items-end gap-0 flex-shrink-0 app-drag">
@@ -917,9 +922,9 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
           </Tooltip>
         )}
 
-        {/* Fixed right controls — utility icons + window controls share one row */}
+        {/* Fixed right controls — utility icons + window controls share one h-7 row */}
         <div
-          className="flex-shrink-0 flex items-center gap-0.5 app-drag self-end h-7"
+          className="flex-shrink-0 flex items-center gap-0.5 app-drag self-end h-7 overflow-visible"
           style={dragRegionStyle}
         >
           <Tooltip>
@@ -927,7 +932,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7 shrink-0 app-no-drag"
+                className="h-7 w-7 shrink-0 app-no-drag top-tab-utility-btn"
                 style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
                 onClick={() => window.dispatchEvent(new CustomEvent('netcatty:toggle-ai-panel'))}
               >
@@ -939,13 +944,13 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
           <WindowOpacityButton
             windowOpacity={windowOpacity}
             setWindowOpacity={setWindowOpacity}
-            className="h-7 w-7 shrink-0"
+            className="h-7 w-7 shrink-0 top-tab-utility-btn"
             style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
           />
           <SyncStatusButton
             onOpenSettings={onOpenSettings}
             onSyncNow={onSyncNow}
-            className="h-7 w-7 shrink-0"
+            className="h-7 w-7 shrink-0 top-tab-utility-btn"
             style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
           />
           <Tooltip>
@@ -953,7 +958,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7 shrink-0 app-no-drag"
+                className="h-7 w-7 shrink-0 app-no-drag top-tab-utility-btn"
                 style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
                 onClick={onToggleTheme}
               >
@@ -967,7 +972,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7 shrink-0 app-no-drag"
+                className="h-7 w-7 shrink-0 app-no-drag top-tab-utility-btn"
                 style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
                 onClick={onOpenSettings}
               >
@@ -976,10 +981,12 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             </TooltipTrigger>
             <TooltipContent>{t('topTabs.openSettings')}</TooltipContent>
           </Tooltip>
-          {!isMacClient && <WindowControls />}
+          {showWindowControls && <WindowControls />}
         </div>
         {/* Small drag shim to the right edge (macOS only – on Windows the close button should touch the edge) */}
-        {isMacClient && <div className="w-2 h-9 app-drag flex-shrink-0 self-end" />}
+        {isMacClient && !showWindowControls && (
+          <div className="w-2 h-9 app-drag flex-shrink-0 self-end" />
+        )}
       </div>
     </div>
   );

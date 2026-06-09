@@ -164,19 +164,18 @@ export const WindowControls: React.FC = memo(() => {
     close();
   };
 
-  const controlStyle = { color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' };
-  const controlClassName =
-    'h-7 w-10 flex items-center justify-center rounded-none hover:bg-foreground/10 transition-colors app-no-drag';
+  const controlClassName = 'window-control-btn app-no-drag';
+  const closeControlClassName = 'window-control-btn window-control-btn--close app-no-drag';
 
   return (
-    <div className="ml-2 flex items-center h-7">
-      <button type="button" className={controlClassName} style={controlStyle} onClick={handleMinimize}>
+    <div className="ml-2 flex items-center h-7 overflow-visible app-no-drag">
+      <button type="button" className={controlClassName} onClick={handleMinimize}>
         <Minus size={16} />
       </button>
-      <button type="button" className={controlClassName} style={controlStyle} onClick={handleMaximize}>
+      <button type="button" className={controlClassName} onClick={handleMaximize}>
         {isMaximized ? <Copy size={14} /> : <Square size={14} />}
       </button>
-      <button type="button" className={controlClassName} style={controlStyle} onClick={handleClose}>
+      <button type="button" className={closeControlClassName} onClick={handleClose}>
         <X size={16} />
       </button>
     </div>
