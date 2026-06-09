@@ -303,6 +303,10 @@ const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
     ['--terminal-panel-active' as never]: 'color-mix(in srgb, var(--terminal-panel-fg) 16%, var(--terminal-panel-bg) 84%)',
   } as React.CSSProperties;
 
+  if (!isVisible) {
+    return null;
+  }
+
   return (
     <>
       <div

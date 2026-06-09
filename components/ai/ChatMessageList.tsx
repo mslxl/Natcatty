@@ -7,7 +7,7 @@
  */
 
 import { AlertCircle, FileText, RotateCcw, SquareTerminal, X, ZoomIn, ZoomOut } from 'lucide-react';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import type { ChatMessage } from '../../infrastructure/ai/types';
 import { Dialog, DialogContent, DialogTitle } from '../ui/dialog';
@@ -34,6 +34,9 @@ interface ChatMessageListProps {
   /** Active chat session ID — used to filter standalone MCP approval blocks */
   activeSessionId?: string | null;
 }
+
+const MESSAGE_RENDER_BATCH = 50;
+const MESSAGE_RENDER_STEP = 50;
 
 const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming, activeSessionId }) => {
   // Track pending approvals from the approval gate
@@ -138,9 +141,24 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
     dragStart.current = null;
   }, []);
   const { t } = useI18n();
-  const visibleMessages = messages.filter(m => m.role !== 'system');
+  const [renderedTailCount, setRenderedTailCount] = useState(MESSAGE_RENDER_BATCH);
+
+  useEffect(() => {
+    setRenderedTailCount(MESSAGE_RENDER_BATCH);
+  }, [activeSessionId]);
+
+  const visibleMessages = useMemo(
+    () => messages.filter((message) => message.role !== 'system'),
+    [messages],
+  );
+
+  const hiddenMessageCount = Math.max(0, visibleMessages.length - renderedTailCount);
+  const displayedMessages = hiddenMessageCount > 0
+    ? visibleMessages.slice(-renderedTailCount)
+    : visibleMessages;
+
   const resolvedToolCallIds = new Set(
-    visibleMessages
+    displayedMessages
       .filter((m) => m.role === 'tool')
       .flatMap((m) => m.toolResults?.map((tr) => tr.toolCallId) ?? []),
   );
@@ -148,7 +166,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
   // Build maps from toolCallId → toolName / toolArgs for display
   const toolCallNames = new Map<string, string>();
   const toolCallArgs = new Map<string, Record<string, unknown>>();
-  for (const m of visibleMessages) {
+  for (const m of displayedMessages) {
     if (m.role === 'assistant' && m.toolCalls) {
       for (const tc of m.toolCalls) {
         toolCallNames.set(tc.id, tc.name);
@@ -167,7 +185,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
     );
   }
 
-  const lastAssistantMessage = visibleMessages.findLast(m => m.role === 'assistant');
+  const lastAssistantMessage = displayedMessages.findLast(m => m.role === 'assistant');
 
   return (
     <>

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Trash2, X } from 'lucide-react';
 import type { AISession } from '../infrastructure/ai/types';
 import { useI18n } from '../application/i18n/I18nProvider';
@@ -19,6 +19,9 @@ interface SessionHistoryDrawerProps {
   onClose: () => void;
 }
 
+const SESSION_RENDER_BATCH = 80;
+const SESSION_RENDER_STEP = 60;
+
 export const SessionHistoryDrawer: React.FC<SessionHistoryDrawerProps> = ({
   sessions,
   activeSessionId,
@@ -27,6 +30,15 @@ export const SessionHistoryDrawer: React.FC<SessionHistoryDrawerProps> = ({
   onClose,
 }) => {
   const { t } = useI18n();
+  const [renderCount, setRenderCount] = useState(SESSION_RENDER_BATCH);
+
+  useEffect(() => {
+    setRenderCount(SESSION_RENDER_BATCH);
+  }, [sessions]);
+
+  const displayedSessions = sessions.slice(0, renderCount);
+  const hiddenSessionCount = Math.max(0, sessions.length - renderCount);
+
   return (
     <div className="flex-1 flex flex-col min-h-0">
       <div className="px-4 py-2.5 flex items-center justify-between shrink-0 border-b border-border/30">
@@ -47,7 +59,17 @@ export const SessionHistoryDrawer: React.FC<SessionHistoryDrawerProps> = ({
               </p>
             </div>
           ) : (
-            sessions.map((session) => {
+            <>
+            {hiddenSessionCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setRenderCount((count) => count + SESSION_RENDER_STEP)}
+                className="w-full py-2 text-center text-[12px] text-muted-foreground/50 hover:text-muted-foreground transition-colors cursor-pointer"
+              >
+                {t('ai.chat.loadMoreSessions').replace('{n}', String(hiddenSessionCount))}
+              </button>
+            )}
+            {displayedSessions.map((session) => {
               const isActive = session.id === activeSessionId;
               const time = new Date(session.updatedAt);
               const timeStr = formatRelativeTime(time, t);
@@ -85,7 +107,8 @@ export const SessionHistoryDrawer: React.FC<SessionHistoryDrawerProps> = ({
                   </div>
                 </div>
               );
-            })
+            })}
+            </>
           )}
         </div>
       </ScrollArea>

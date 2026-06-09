@@ -98,8 +98,8 @@
     "@withfig/autocomplete-types": "^1.31.0",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
-    "electron": "^40.8.5",
-    "electron-builder": "^26.0.12",
+    "electron": "^42.3.3",
+    "electron-builder": "^26.15.2",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-unused-imports": "^4.3.0",
@@ -118,6 +118,8 @@
   },
   "overrides": {
     "cpu-features": "npm:empty-npm-package@1.0.0",
-    "axios": "1.13.5"
+    "axios": "1.13.5",
+    "node-abi": "4.31.0",
+    "@electron/asar": "4.2.0"
   }
 }

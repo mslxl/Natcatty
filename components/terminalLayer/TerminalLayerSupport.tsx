@@ -1,6 +1,7 @@
-import React, { Suspense, createContext, lazy, memo, useCallback, useContext, useEffect, useSyncExternalStore } from 'react';
+import React, { createContext, memo, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { activeTabStore } from '../../application/state/activeTabStore';
+import { useTerminalLayoutSuppressActive } from '../../application/state/terminalLayoutSuppressStore';
 import type { TerminalSessionExitEvent } from '../../application/state/resolveTerminalSessionExitIntent';
 import { createTerminalSelectionAttachment } from '../../application/state/terminalSelectionAttachment';
 import { useAIState } from '../../application/state/useAIState';
@@ -10,14 +11,15 @@ import { cn } from '../../lib/utils';
 import type { DropEntry } from '../../lib/sftpFileUtils';
 import type { GroupConfig, Host, Identity, KnownHost, ProxyProfile, SSHKey, Snippet, TerminalSession, TerminalTheme, Workspace } from '../../types';
 import type { ExecutorContext } from '../../infrastructure/ai/cattyAgent/executor';
+import { AIChatSidePanel } from '../AIChatSidePanel';
 import Terminal from '../Terminal';
-import { getTerminalPaneSnapshot, parseTerminalPaneSnapshot } from '../terminalPaneVisibility';
+import { removePaneVisible, setPaneVisible } from '../terminal/paneVisibilityStore';
+import {
+  getTerminalPaneRenderSnapshot,
+  parseTerminalPaneRenderSnapshot,
+} from '../terminalPaneVisibility';
 
 export type SidePanelTab = 'sftp' | 'scripts' | 'theme' | 'ai';
-
-const LazyAIChatSidePanel = lazy(() =>
-  import('../AIChatSidePanel').then((m) => ({ default: m.AIChatSidePanel })),
-);
 
 export type WorkspaceRect = { x: number; y: number; w: number; h: number };
 
@@ -287,6 +289,45 @@ const AIStateMaintenanceHostInner: React.FC<AIStateMaintenanceHostProps> = ({
 export const AIStateMaintenanceHost = memo(AIStateMaintenanceHostInner);
 AIStateMaintenanceHost.displayName = 'AIStateMaintenanceHost';
 
+interface AISidePanelStateRootProps {
+  validAIScopeTargetIds: Set<string>;
+  children: React.ReactNode;
+}
+
+const AISidePanelStateRootInner: React.FC<AISidePanelStateRootProps> = ({
+  validAIScopeTargetIds,
+  children,
+}) => (
+  <AIStateProvider>
+    <AIStateMaintenanceHost validAIScopeTargetIds={validAIScopeTargetIds} />
+    {children}
+  </AIStateProvider>
+);
+
+export const AISidePanelStateRoot = memo(AISidePanelStateRootInner);
+AISidePanelStateRoot.displayName = 'AISidePanelStateRoot';
+
+function aiChatPanelsHostAreEqual(
+  prev: AIChatPanelsHostProps,
+  next: AIChatPanelsHostProps,
+): boolean {
+  if (prev.mountedTabIds !== next.mountedTabIds) return false;
+  if (prev.contextsByTabId !== next.contextsByTabId) return false;
+  if (prev.activeSidePanelTab !== next.activeSidePanelTab) return false;
+  if (prev.pendingTerminalSelection !== next.pendingTerminalSelection) return false;
+  if (prev.onPendingTerminalSelectionConsumed !== next.onPendingTerminalSelectionConsumed) return false;
+  if (prev.resolveExecutorContext !== next.resolveExecutorContext) return false;
+  if (prev.activeTabId === next.activeTabId) return true;
+
+  for (let i = 0; i < prev.mountedTabIds.length; i += 1) {
+    const tabId = prev.mountedTabIds[i];
+    const prevAiVisible = prev.activeTabId === tabId && prev.activeSidePanelTab === 'ai';
+    const nextAiVisible = next.activeTabId === tabId && next.activeSidePanelTab === 'ai';
+    if (prevAiVisible !== nextAiVisible) return false;
+  }
+  return true;
+}
+
 const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
   mountedTabIds,
   activeTabId,
@@ -357,9 +398,7 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
             key={tabId}
             className={cn("absolute inset-0 z-10", !isVisible && "hidden")}
           >
-            {isVisible && (
-              <Suspense fallback={null}>
-                <LazyAIChatSidePanel
+            <AIChatSidePanel
                   sessions={aiState.sessions}
                   activeSessionIdMap={aiState.activeSessionIdMap}
                   draftsByScope={aiState.draftsByScope}
@@ -403,8 +442,6 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
                   resolveExecutorContext={resolveExecutorContext}
                   isVisible={isVisible}
                 />
-              </Suspense>
-            )}
           </div>
         );
       })}
@@ -412,11 +449,12 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
   );
 };
 
-export const AIChatPanelsHost = memo(AIChatPanelsHostInner);
+export const AIChatPanelsHost = memo(AIChatPanelsHostInner, aiChatPanelsHostAreEqual);
 AIChatPanelsHost.displayName = 'AIChatPanelsHost';
 
 export interface TerminalLayerProps {
   hosts: Host[];
+  customGroups: string[];
   groupConfigs: GroupConfig[];
   proxyProfiles: ProxyProfile[];
   keys: SSHKey[];
@@ -457,6 +495,8 @@ export interface TerminalLayerProps {
   onSetWorkspaceFocusedSession?: (workspaceId: string, sessionId: string) => void;
   onReorderWorkspaceSessions?: (workspaceId: string, draggedSessionId: string, targetSessionId: string, position: 'before' | 'after') => void;
   onSplitSession?: (sessionId: string, direction: SplitDirection) => void;
+  onConnectToHost: (host: Host) => void;
+  onCreateLocalTerminal?: () => void;
   // Broadcast mode
   isBroadcastEnabled?: (workspaceId: string) => boolean;
   onToggleBroadcast?: (workspaceId: string) => void;
@@ -531,6 +571,7 @@ interface TerminalPaneProps {
   onUpdateHost: (host: Host) => void;
   onAddKnownHost?: (knownHost: KnownHost) => void;
   onCommandExecuted?: (command: string, hostId: string, hostLabel: string, sessionId: string) => void;
+  onCommandSubmitted?: (command: string, hostId: string, hostLabel: string, sessionId: string) => void;
   onSetWorkspaceFocusedSession?: (workspaceId: string, sessionId: string) => void;
   onSplitSession?: (sessionId: string, direction: SplitDirection) => void;
   isBroadcastEnabled?: (workspaceId: string) => boolean;
@@ -549,6 +590,27 @@ const getPaneThemePreviewId = (props: TerminalPaneProps): string | null => (
     : null
 );
 
+const getPaneWorkspaceRect = (props: Pick<TerminalPaneProps, 'session' | 'workspaceRectsById'>): WorkspaceRect | null => {
+  const workspaceId = props.session.workspaceId;
+  if (!workspaceId) return null;
+  return props.workspaceRectsById.get(workspaceId)?.[props.session.id] ?? null;
+};
+
+const getPaneActiveWorkspaceRect = (props: Pick<TerminalPaneProps, 'session' | 'workspaceById' | 'workspaceRectsById'>): WorkspaceRect | null => {
+  const workspaceId = props.session.workspaceId;
+  if (!workspaceId) return null;
+  if (activeTabStore.getActiveTabId() !== workspaceId) return null;
+  const workspace = props.workspaceById.get(workspaceId);
+  if (!workspace || workspace.viewMode === 'focus') return null;
+  return props.workspaceRectsById.get(workspaceId)?.[props.session.id] ?? null;
+};
+
+const workspaceRectsEqual = (a: WorkspaceRect | null, b: WorkspaceRect | null): boolean => {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+};
+
 const terminalPanePropsAreEqual = (
   prev: TerminalPaneProps,
   next: TerminalPaneProps,
@@ -558,7 +620,7 @@ const terminalPanePropsAreEqual = (
   prev.chainHosts === next.chainHosts &&
   prev.sudoAutofillPassword === next.sudoAutofillPassword &&
   prev.workspaceById === next.workspaceById &&
-  prev.workspaceRectsById === next.workspaceRectsById &&
+  workspaceRectsEqual(getPaneActiveWorkspaceRect(prev), getPaneActiveWorkspaceRect(next)) &&
   prev.isTerminalLayerVisible === next.isTerminalLayerVisible &&
   prev.workspaceFocusHandlersRef === next.workspaceFocusHandlersRef &&
   prev.workspaceBroadcastHandlersRef === next.workspaceBroadcastHandlersRef &&
@@ -596,6 +658,7 @@ const terminalPanePropsAreEqual = (
   prev.onUpdateHost === next.onUpdateHost &&
   prev.onAddKnownHost === next.onAddKnownHost &&
   prev.onCommandExecuted === next.onCommandExecuted &&
+  prev.onCommandSubmitted === next.onCommandSubmitted &&
   prev.onSetWorkspaceFocusedSession === next.onSetWorkspaceFocusedSession &&
   prev.onSplitSession === next.onSplitSession &&
   prev.isBroadcastEnabled === next.isBroadcastEnabled &&
@@ -649,6 +712,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   onUpdateHost,
   onAddKnownHost,
   onCommandExecuted,
+  onCommandSubmitted,
   onSetWorkspaceFocusedSession,
   onSplitSession,
   isBroadcastEnabled,
@@ -657,8 +721,11 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   onSnippetExecutorChange,
   onAddSelectionToAI,
 }) => {
-  const getPaneSnapshot = useCallback(
-    () => getTerminalPaneSnapshot({
+  const layoutSuppressActive = useTerminalLayoutSuppressActive();
+  const deferPaneLayoutUpdate = isResizing || layoutSuppressActive;
+
+  const getRenderSnapshot = useCallback(
+    () => getTerminalPaneRenderSnapshot({
       activeTabId: activeTabStore.getActiveTabId(),
       sessionId: session.id,
       sessionWorkspaceId: session.workspaceId,
@@ -667,14 +734,21 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
     }),
     [isTerminalLayerVisible, session.id, session.workspaceId, workspaceById],
   );
-  const paneSnapshot = useSyncExternalStore(activeTabStore.subscribe, getPaneSnapshot);
-  const paneState = parseTerminalPaneSnapshot(paneSnapshot);
+  const renderSnapshot = useSyncExternalStore(activeTabStore.subscribe, getRenderSnapshot, getRenderSnapshot);
+  const { paneState, isFocusedPane } = parseTerminalPaneRenderSnapshot(renderSnapshot);
   const activeWorkspaceId = paneState.workspaceId;
   const isVisible = paneState.isVisible;
+
+  // Publish visibility to the per-session store so TerminalServerStats /
+  // TerminalAutocomplete can self-subscribe — keeping isVisible out of the
+  // TerminalView ctx so visibility toggles don't re-render TerminalView.
+  useEffect(() => {
+    setPaneVisible(session.id, isVisible);
+  }, [session.id, isVisible]);
+  useEffect(() => () => removePaneVisible(session.id), [session.id]);
   const inActiveWorkspace = !!activeWorkspaceId;
   const isFocusMode = paneState.mode === 'focus';
   const isSplitViewVisible = paneState.mode === 'split';
-  const isFocusedPane = inActiveWorkspace && !isFocusMode && session.id === paneState.focusedSessionId;
   const rect = activeWorkspaceId && isSplitViewVisible
     ? workspaceRectsById.get(activeWorkspaceId)?.[session.id] ?? null
     : null;
@@ -686,6 +760,44 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
       height: `${rect.h}px`,
     }
     : { left: 0, top: 0, width: '100%', height: '100%' };
+  const livePaneLayoutKey = isSplitViewVisible && rect
+    ? `${Math.round(rect.w)}x${Math.round(rect.h)}`
+    : 'full';
+  const paneLayoutKeyRef = useRef(livePaneLayoutKey);
+  const [, bumpPaneLayoutKeyVersion] = useState(0);
+  const shouldCommitLayoutImmediately =
+    !deferPaneLayoutUpdate && (!isSplitViewVisible || isFocusMode || isFocusedPane);
+  if (shouldCommitLayoutImmediately && paneLayoutKeyRef.current !== livePaneLayoutKey) {
+    paneLayoutKeyRef.current = livePaneLayoutKey;
+  }
+  useEffect(() => {
+    if (deferPaneLayoutUpdate || !isVisible || !isSplitViewVisible || isFocusMode || isFocusedPane) return;
+    if (paneLayoutKeyRef.current === livePaneLayoutKey) return;
+
+    let cancelled = false;
+    const commitDeferredLayout = () => {
+      if (cancelled || !isVisible) return;
+      if (paneLayoutKeyRef.current === livePaneLayoutKey) return;
+      paneLayoutKeyRef.current = livePaneLayoutKey;
+      bumpPaneLayoutKeyVersion((version) => version + 1);
+    };
+
+    if (typeof requestIdleCallback === 'function') {
+      const idleId = requestIdleCallback(commitDeferredLayout, { timeout: 500 });
+      return () => {
+        cancelled = true;
+        cancelIdleCallback(idleId);
+      };
+    }
+
+    const timerId = setTimeout(commitDeferredLayout, 350);
+    return () => {
+      cancelled = true;
+      clearTimeout(timerId);
+    };
+  }, [deferPaneLayoutUpdate, isFocusedPane, isFocusMode, isSplitViewVisible, isVisible, livePaneLayoutKey]);
+
+  const paneLayoutKey = paneLayoutKeyRef.current;
   const style: React.CSSProperties = { ...layoutStyle };
 
   if (!isVisible) {
@@ -741,6 +853,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         themePreviewId={themePreviewId}
         knownHosts={knownHosts}
         isVisible={isVisible}
+        paneLayoutKey={paneLayoutKey}
         inWorkspace={inActiveWorkspace}
         isResizing={isResizing}
         isFocusMode={isFocusMode}
@@ -773,6 +886,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         onUpdateHost={onUpdateHost}
         onAddKnownHost={onAddKnownHost}
         onCommandExecuted={onCommandExecuted}
+        onCommandSubmitted={onCommandSubmitted}
         onExpandToFocus={inActiveWorkspace && !isFocusMode ? workspaceFocusHandler : undefined}
         onSplitHorizontal={onSplitSession ? splitHorizontalHandler : undefined}
         onSplitVertical={onSplitSession ? splitVerticalHandler : undefined}
@@ -836,6 +950,7 @@ interface TerminalPanesHostProps {
   onUpdateHost: (host: Host) => void;
   onAddKnownHost?: (knownHost: KnownHost) => void;
   onCommandExecuted?: (command: string, hostId: string, hostLabel: string, sessionId: string) => void;
+  onCommandSubmitted?: (command: string, hostId: string, hostLabel: string, sessionId: string) => void;
   onSetWorkspaceFocusedSession?: (workspaceId: string, sessionId: string) => void;
   onSplitSession?: (sessionId: string, direction: SplitDirection) => void;
   isBroadcastEnabled?: (workspaceId: string) => boolean;
@@ -847,6 +962,76 @@ interface TerminalPanesHostProps {
   ) => void;
   onAddSelectionToAI?: (sessionId: string, selection: string) => void;
 }
+
+const terminalPanesHostPropsAreEqual = (
+  prev: TerminalPanesHostProps,
+  next: TerminalPanesHostProps,
+): boolean => {
+  if (prev.sessions !== next.sessions) return false;
+  if (prev.sessionHostsMap !== next.sessionHostsMap) return false;
+  if (prev.sessionChainHostsMap !== next.sessionChainHostsMap) return false;
+  if (prev.sessionSudoAutofillPasswordsMap !== next.sessionSudoAutofillPasswordsMap) return false;
+  if (prev.workspaceById !== next.workspaceById) return false;
+  if (prev.isTerminalLayerVisible !== next.isTerminalLayerVisible) return false;
+  if (prev.workspaceFocusHandlersRef !== next.workspaceFocusHandlersRef) return false;
+  if (prev.workspaceBroadcastHandlersRef !== next.workspaceBroadcastHandlersRef) return false;
+  if (prev.splitHorizontalHandlersRef !== next.splitHorizontalHandlersRef) return false;
+  if (prev.splitVerticalHandlersRef !== next.splitVerticalHandlersRef) return false;
+  if (prev.themePreview !== next.themePreview) return false;
+  if (prev.keys !== next.keys) return false;
+  if (prev.identities !== next.identities) return false;
+  if (prev.snippets !== next.snippets) return false;
+  if (prev.knownHosts !== next.knownHosts) return false;
+  if (prev.terminalFontFamilyId !== next.terminalFontFamilyId) return false;
+  if (prev.fontSize !== next.fontSize) return false;
+  if (prev.terminalTheme !== next.terminalTheme) return false;
+  if (prev.followAppTerminalTheme !== next.followAppTerminalTheme) return false;
+  if (prev.accentMode !== next.accentMode) return false;
+  if (prev.customAccent !== next.customAccent) return false;
+  if (prev.terminalSettings !== next.terminalSettings) return false;
+  if (prev.hotkeyScheme !== next.hotkeyScheme) return false;
+  if (prev.keyBindings !== next.keyBindings) return false;
+  if (prev.isResizing !== next.isResizing) return false;
+  if (prev.isComposeBarOpen !== next.isComposeBarOpen) return false;
+  if (prev.sessionLog !== next.sessionLog) return false;
+  if (prev.sshDebugLogEnabled !== next.sshDebugLogEnabled) return false;
+  if (prev.onHotkeyAction !== next.onHotkeyAction) return false;
+  if (prev.onTerminalFontSizeChange !== next.onTerminalFontSizeChange) return false;
+  if (prev.onOpenSftp !== next.onOpenSftp) return false;
+  if (prev.onTerminalCwdChange !== next.onTerminalCwdChange) return false;
+  if (prev.onOpenScripts !== next.onOpenScripts) return false;
+  if (prev.onOpenTheme !== next.onOpenTheme) return false;
+  if (prev.onCloseSession !== next.onCloseSession) return false;
+  if (prev.onStatusChange !== next.onStatusChange) return false;
+  if (prev.onSessionExit !== next.onSessionExit) return false;
+  if (prev.onTerminalDataCapture !== next.onTerminalDataCapture) return false;
+  if (prev.onOsDetected !== next.onOsDetected) return false;
+  if (prev.onUpdateHost !== next.onUpdateHost) return false;
+  if (prev.onAddKnownHost !== next.onAddKnownHost) return false;
+  if (prev.onCommandExecuted !== next.onCommandExecuted) return false;
+  if (prev.onCommandSubmitted !== next.onCommandSubmitted) return false;
+  if (prev.onSetWorkspaceFocusedSession !== next.onSetWorkspaceFocusedSession) return false;
+  if (prev.onSplitSession !== next.onSplitSession) return false;
+  if (prev.isBroadcastEnabled !== next.isBroadcastEnabled) return false;
+  if (prev.onBroadcastInput !== next.onBroadcastInput) return false;
+  if (prev.onToggleWorkspaceComposeBar !== next.onToggleWorkspaceComposeBar) return false;
+  if (prev.onSnippetExecutorChange !== next.onSnippetExecutorChange) return false;
+  if (prev.onAddSelectionToAI !== next.onAddSelectionToAI) return false;
+
+  if (prev.workspaceRectsById === next.workspaceRectsById) return true;
+
+  const activeTabId = activeTabStore.getActiveTabId();
+  const activeWorkspace = activeTabId ? next.workspaceById.get(activeTabId) : undefined;
+  if (!activeWorkspace || activeWorkspace.viewMode === 'focus') return true;
+
+  return prev.sessions.every((session) => {
+    if (session.workspaceId !== activeWorkspace.id) return true;
+    return workspaceRectsEqual(
+      getPaneWorkspaceRect({ session, workspaceRectsById: prev.workspaceRectsById }),
+      getPaneWorkspaceRect({ session, workspaceRectsById: next.workspaceRectsById }),
+    );
+  });
+};
 
 export const TerminalPanesHost: React.FC<TerminalPanesHostProps> = memo(({
   sessions,
@@ -871,5 +1056,5 @@ export const TerminalPanesHost: React.FC<TerminalPanesHostProps> = memo(({
       );
     })}
   </>
-));
+), terminalPanesHostPropsAreEqual);
 TerminalPanesHost.displayName = 'TerminalPanesHost';

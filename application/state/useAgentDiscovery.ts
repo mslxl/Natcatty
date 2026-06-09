@@ -13,7 +13,9 @@ function getBridge(): NetcattyBridge | undefined {
 export function useAgentDiscovery(
   externalAgents: ExternalAgentConfig[],
   setExternalAgents?: (value: ExternalAgentConfig[] | ((prev: ExternalAgentConfig[]) => ExternalAgentConfig[])) => void,
+  options?: { enabled?: boolean },
 ) {
+  const enabled = options?.enabled ?? true;
   const [discoveredAgents, setDiscoveredAgents] = useState<DiscoveredAgent[]>([]);
   const [isDiscovering, setIsDiscovering] = useState(false);
 
@@ -32,10 +34,28 @@ export function useAgentDiscovery(
     }
   }, []);
 
-  // Discover on mount
   useEffect(() => {
-    discover();
-  }, [discover]);
+    if (!enabled) return;
+
+    let cancelled = false;
+    const runDiscover = () => {
+      if (!cancelled) void discover();
+    };
+
+    if (typeof requestIdleCallback === 'function') {
+      const idleId = requestIdleCallback(runDiscover, { timeout: 2000 });
+      return () => {
+        cancelled = true;
+        cancelIdleCallback(idleId);
+      };
+    }
+
+    const timeoutId = setTimeout(runDiscover, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [discover, enabled]);
 
   // Auto-update args for already-configured discovered agents when
   // the canonical args from discovery change (e.g. after an app update).

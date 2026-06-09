@@ -882,7 +882,7 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
             </p>
 
           <SectionHeader title={t("settings.sshDebugLogs.title")} />
-            <SettingCard className="space-y-4 py-4">
+            <SettingCard className="min-w-0 max-w-full overflow-hidden space-y-4 py-4">
               <SettingRow
                 label={t("settings.sshDebugLogs.enable")}
                 description={t("settings.sshDebugLogs.enableDesc")}
@@ -895,9 +895,12 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
 
               <div className="space-y-2">
                 <span className="text-sm font-medium">{t("settings.sshDebugLogs.location")}</span>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 min-w-0">
-                    <div className="bg-background border border-input rounded-md px-3 py-2 text-sm font-mono truncate">
+                <div className="grid w-full min-w-0 max-w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
+                  <div className="min-w-0 overflow-hidden">
+                    <div
+                      className="w-full min-w-0 overflow-hidden truncate rounded-md border border-input bg-background px-3 py-2 font-mono text-sm"
+                      title={isLoadingSshDebugLogInfo ? "..." : (sshDebugLogInfo?.path || "-")}
+                    >
                       {isLoadingSshDebugLogInfo ? "..." : (sshDebugLogInfo?.path || "-")}
                     </div>
                   </div>

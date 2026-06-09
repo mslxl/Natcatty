@@ -212,6 +212,40 @@ export const writeSessionData = (
   });
 };
 
+export const isTerminalBootActive = (ctx: TerminalSessionStartersContext): boolean =>
+  !ctx.isBootActiveRef || ctx.isBootActiveRef.current;
+
+export const closeOrphanBackendSession = (
+  ctx: TerminalSessionStartersContext,
+  sessionBackendId: string,
+) => {
+  try {
+    ctx.terminalBackend.closeSession(sessionBackendId);
+  } catch (err) {
+    logger.warn("Failed to close orphan session after terminal unmount", err);
+  }
+};
+
+export const tryAttachSessionToTerminal = (
+  ctx: TerminalSessionStartersContext,
+  term: XTerm,
+  id: string,
+  opts?: {
+    onExitMessage?: (evt: { exitCode?: number; signal?: number; error?: string; reason?: string }) => string;
+    onConnected?: () => void;
+    onExit?: (evt: { exitCode?: number; signal?: number; error?: string; reason?: string }) => void;
+    convertLfToCrlf?: boolean;
+    sudoAutofillPassword?: string;
+  },
+): boolean => {
+  if (!isTerminalBootActive(ctx)) {
+    closeOrphanBackendSession(ctx, id);
+    return false;
+  }
+  attachSessionToTerminal(ctx, term, id, opts);
+  return true;
+};
+
 export const attachSessionToTerminal = (
   ctx: TerminalSessionStartersContext,
   term: XTerm,
@@ -225,6 +259,11 @@ export const attachSessionToTerminal = (
     sudoAutofillPassword?: string;
   },
 ) => {
+  if (!isTerminalBootActive(ctx)) {
+    closeOrphanBackendSession(ctx, id);
+    return;
+  }
+
   ctx.sessionRef.current = id;
   // Clear any stale back-pressure accounting from a prior session on this term.
   getFlowController(ctx, term).reset();

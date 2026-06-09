@@ -72,7 +72,8 @@ export const localStorageAdapter = {
     return safeParse<T>(localStorage.getItem(key));
   },
   write<T>(key: string, value: T): boolean {
-    return safeSetItem(key, JSON.stringify(value));
+    const json = JSON.stringify(value);
+    return safeSetItem(key, json);
   },
   readString(key: string): string | null {
     return localStorage.getItem(key);

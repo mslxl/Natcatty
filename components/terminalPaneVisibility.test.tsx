@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getTerminalPaneSnapshot, HIDDEN_TERMINAL_PANE_SNAPSHOT } from "./terminalPaneVisibility";
+import {
+  getTerminalPaneRenderSnapshot,
+  getTerminalPaneSnapshot,
+  HIDDEN_TERMINAL_PANE_SNAPSHOT,
+  parseTerminalPaneRenderSnapshot,
+} from "./terminalPaneVisibility";
 import type { Workspace } from "../types";
 
 const createWorkspace = (
@@ -77,7 +82,7 @@ test("terminal pane snapshot distinguishes solo, split workspace, and focus work
       workspaceById,
       isTerminalLayerVisible: true,
     }),
-    "workspace|split|ws-split|s-1",
+    "workspace|split|ws-split",
   );
   assert.equal(
     getTerminalPaneSnapshot({
@@ -99,4 +104,36 @@ test("terminal pane snapshot distinguishes solo, split workspace, and focus work
     }),
     "workspace|focus|ws-focus|f-2",
   );
+});
+
+test("terminal pane render snapshot combines visibility and focus in one token", () => {
+  const workspaceById = new Map<string, Workspace>([
+    ["ws-split", createWorkspace("ws-split", ["s-1", "s-2"], { focusedSessionId: "s-1" })],
+  ]);
+
+  assert.equal(
+    getTerminalPaneRenderSnapshot({
+      activeTabId: "ws-split",
+      sessionId: "s-1",
+      sessionWorkspaceId: "ws-split",
+      workspaceById,
+      isTerminalLayerVisible: true,
+    }),
+    "workspace|split|ws-split|focused",
+  );
+  assert.equal(
+    getTerminalPaneRenderSnapshot({
+      activeTabId: "ws-split",
+      sessionId: "s-2",
+      sessionWorkspaceId: "ws-split",
+      workspaceById,
+      isTerminalLayerVisible: true,
+    }),
+    "workspace|split|ws-split|unfocused",
+  );
+
+  const parsed = parseTerminalPaneRenderSnapshot("workspace|split|ws-split|focused");
+  assert.equal(parsed.paneState.isVisible, true);
+  assert.equal(parsed.paneState.mode, "split");
+  assert.equal(parsed.isFocusedPane, true);
 });

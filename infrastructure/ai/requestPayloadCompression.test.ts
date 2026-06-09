@@ -1,0 +1,74 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import type { ModelMessage } from "ai";
+
+import {
+  compressMessagesForRequestTooLargeRetry,
+  compressVerboseText,
+  truncateTextWithHeadAndTail,
+} from "./requestPayloadCompression.ts";
+
+test("compressVerboseText collapses repeated blank lines and duplicate runs", () => {
+  const input = "line1\n\n\n\n\nline2\nsame\nsame\nsame\nsame\nline3";
+  const output = compressVerboseText(input);
+  assert.match(output, /line1\n\n\nline2/);
+  assert.ok(output.split("\nsame\n").length <= 3);
+});
+
+test("truncateTextWithHeadAndTail keeps both ends of long terminal output", () => {
+  const value = `${"A".repeat(500)}${"B".repeat(20_000)}${"C".repeat(500)}`;
+  const truncated = truncateTextWithHeadAndTail(value, 2_000);
+  assert.ok(truncated.startsWith("AAA"));
+  assert.ok(truncated.includes("[... output truncated for request size ...]"));
+  assert.ok(truncated.endsWith("CCC"));
+  assert.ok(truncated.length <= 2_000);
+});
+
+test("compressMessagesForRequestTooLargeRetry compresses messages without enforcing a byte budget", () => {
+  const messages: ModelMessage[] = [
+    { role: "user", content: "run build" },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "terminal_execute",
+        output: { type: "text", value: "X".repeat(200_000) },
+      }],
+    },
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "please inspect this image" },
+        { type: "image", image: "A".repeat(1_000_000), mediaType: "image/png" },
+      ],
+    },
+  ];
+
+  const result = compressMessagesForRequestTooLargeRetry(messages);
+
+  assert.equal(result.didAdjust, true);
+  assert.deepEqual(Object.keys(result).sort(), ["didAdjust", "messages"]);
+  assert.equal(result.messages.length, messages.length);
+
+  const toolContent = result.messages[1].content;
+  assert.ok(Array.isArray(toolContent));
+  const toolPart = toolContent[0] as { output?: { value?: string } };
+  assert.ok((toolPart.output?.value?.length ?? 0) < 5_000);
+
+  const userContent = result.messages[2].content;
+  assert.ok(Array.isArray(userContent));
+  assert.deepEqual(userContent[1], {
+    type: "text",
+    text: "[image attachment omitted to keep the AI request small: mediaType=image/png, 1000000 chars]",
+  });
+});
+
+test("compressMessagesForRequestTooLargeRetry reports no adjustment for compact messages", () => {
+  const messages: ModelMessage[] = [{ role: "user", content: "hello" }];
+
+  const result = compressMessagesForRequestTooLargeRetry(messages);
+
+  assert.equal(result.didAdjust, false);
+  assert.deepEqual(result.messages, messages);
+});

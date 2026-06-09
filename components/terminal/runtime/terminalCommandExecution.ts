@@ -20,6 +20,12 @@ type TerminalCommandExecutionContext = {
     hostLabel: string,
     sessionId: string,
   ) => void;
+  onCommandSubmitted?: (
+    command: string,
+    hostId: string,
+    hostLabel: string,
+    sessionId: string,
+  ) => void;
   commandBufferRef: RefObject<string>;
   promptLineBreakStateRef?: RefObject<PromptLineBreakState>;
 };
@@ -49,6 +55,9 @@ export const recordTerminalCommandExecution = (
   term?: XTerm | null,
 ): string | null => {
   const cmd = command.trim();
+  if (cmd) {
+    ctx.onCommandSubmitted?.(cmd, ctx.host.id, ctx.host.label, ctx.sessionId);
+  }
   if (cmd && shouldRecordShellHistory(cmd, term)) {
     ctx.onCommandExecuted?.(cmd, ctx.host.id, ctx.host.label, ctx.sessionId);
     ctx.commandBufferRef.current = "";

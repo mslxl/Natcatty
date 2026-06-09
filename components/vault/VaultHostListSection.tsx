@@ -16,7 +16,7 @@ const isRelatedTargetInside = (
 };
 
 export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext }) {
-  const { Badge, Boolean, Button, CheckSquare, ClipboardCopy, Clock, cn, ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger, Copy, displayedGroups, displayedHosts, DistroAvatar, Edit2, FileSymlink, FolderPlus, FolderTree, getDropTargetClasses, getEffectiveHostDistro, groupConfigs, groupedDisplayHosts, handleCopyCredentials, handleDuplicateHost, handleEditGroupConfig, handleEditHost, handleHostConnect, handleUnmanageGroup, hasHostsSidePanel, hostListScrollRef, HostTreeView, isHostsSectionActive, isMultiSelectMode, lastPinnedId, LayoutGrid, managedGroupPaths, moveGroup, moveHostToGroup, onDeleteHost, Pin, pinnedHosts, pinnedRecentIds, Plug, recentHosts, sanitizeHost, selectedGroupPath, selectedHostIds, sessionCount, setDeleteTargetPath, setDragOverDropTarget, setEditingHost, setGroupDragOverDropTarget, setIsDeleteGroupOpen, setIsHostPanelOpen, setIsNewFolderOpen, setLastPinnedId, setNewFolderName, setNewHostGroupPath, setSelectedGroupPath, setTargetParentPath, shouldHideEmptyRootHostsSection, showRecentHosts, sortMode, splitViewGridStyle, Square, Star, t, toggleHostPinned, toggleHostSelection, Trash2, treeExpandedState, treeViewGroupTree, treeViewHosts, viewMode, visibleDisplayedHosts } = ctx;
+  const { Badge, Boolean, Button, cancelInlineGroupEdit, CheckSquare, ClipboardCopy, Clock, cn, commitInlineGroupRename, ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger, Copy, displayedGroups, displayedHosts, DistroAvatar, Edit2, FileSymlink, FolderPlus, FolderTree, getDropTargetClasses, getEffectiveHostDistro, groupConfigs, groupedDisplayHosts, handleCopyCredentials, handleDuplicateHost, handleEditGroupConfig, handleEditHost, handleHostConnect, handleUnmanageGroup, hasHostsSidePanel, hostListScrollRef, HostTreeView, isHostsSectionActive, isMultiSelectMode, lastPinnedId, LayoutGrid, managedGroupPaths, moveGroup, moveHostToGroup, onDeleteHost, Pin, pinnedHosts, pinnedRecentIds, Plug, recentHosts, sanitizeHost, selectedGroupPath, selectedHostIds, sessionCount, setDeleteTargetPath, setDragOverDropTarget, setGroupDragOverDropTarget, setIsDeleteGroupOpen, setIsNewFolderOpen, setLastPinnedId, setNewFolderName, setSelectedGroupPath, setTargetParentPath, shouldHideEmptyRootHostsSection, showRecentHosts, sortMode, splitViewGridStyle, Square, Star, startInlineDeleteGroup, startInlineNewGroup, startInlineRenameGroup, t, toggleHostPinned, toggleHostSelection, Trash2, treeExpandedState, treeViewGroupTree, treeViewHosts, viewMode, visibleDisplayedHosts } = ctx;
   return <div
           ref={hostListScrollRef}
           className={cn(
@@ -484,21 +484,12 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                       onDeleteHost={(host) => onDeleteHost(host.id)}
                       onCopyCredentials={handleCopyCredentials}
 
-                      onNewHost={(groupPath) => {
-                        setEditingHost(null);
-                        setNewHostGroupPath(groupPath || null);
-                        setIsHostPanelOpen(true);
-                      }}
-                      onNewGroup={(parentPath) => {
-                        setTargetParentPath(parentPath || null);
-                        setNewFolderName("");
-                        setIsNewFolderOpen(true);
-                      }}
+                      onNewGroup={startInlineNewGroup}
+                      onRenameGroup={startInlineRenameGroup}
                       onEditGroup={(groupPath) => handleEditGroupConfig(groupPath)}
-                      onDeleteGroup={(groupPath) => {
-                        setDeleteTargetPath(groupPath);
-                        setIsDeleteGroupOpen(true);
-                      }}
+                      commitInlineGroupRename={commitInlineGroupRename}
+                      cancelInlineGroupEdit={cancelInlineGroupEdit}
+                      onDeleteGroup={startInlineDeleteGroup}
                       moveHostToGroup={moveHostToGroup}
                       moveGroup={moveGroup}
                       managedGroupPaths={managedGroupPaths}

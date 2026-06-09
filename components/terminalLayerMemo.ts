@@ -3,6 +3,7 @@ export const terminalLayerAreEqual = (
   next: Record<string, unknown>,
 ): boolean => (
   prev.hosts === next.hosts &&
+  prev.customGroups === next.customGroups &&
   prev.groupConfigs === next.groupConfigs &&
   prev.proxyProfiles === next.proxyProfiles &&
   prev.keys === next.keys &&
@@ -37,6 +38,8 @@ export const terminalLayerAreEqual = (
   prev.onSetWorkspaceFocusedSession === next.onSetWorkspaceFocusedSession &&
   prev.onReorderWorkspaceSessions === next.onReorderWorkspaceSessions &&
   prev.onSplitSession === next.onSplitSession &&
+  prev.onConnectToHost === next.onConnectToHost &&
+  prev.onCreateLocalTerminal === next.onCreateLocalTerminal &&
   prev.isBroadcastEnabled === next.isBroadcastEnabled &&
   prev.onToggleBroadcast === next.onToggleBroadcast &&
   prev.toggleScriptsSidePanelRef === next.toggleScriptsSidePanelRef &&

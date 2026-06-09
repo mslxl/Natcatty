@@ -199,7 +199,11 @@ test("initializing an empty skills directory creates only an instructions file",
   });
 });
 
-test("unreadable SKILL.md becomes a warning instead of aborting the entire scan", async () => {
+test("unreadable SKILL.md becomes a warning instead of aborting the entire scan", {
+  skip: typeof process.getuid === "function" && process.getuid() === 0
+    ? "chmod-based unreadable file checks are not enforceable when running as root"
+    : false,
+}, async () => {
   await withUserSkills(
     [
       {

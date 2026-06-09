@@ -10,6 +10,7 @@ import React, { useCallback } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { saveEditorTab } from '../../application/state/editorTabSave';
 import { editorTabStore, useEditorTab, type EditorTabId } from '../../application/state/editorTabStore';
+import { useIsEditorTabActive } from '../../application/state/activeTabStore';
 import type { HotkeyScheme, KeyBinding } from '../../domain/models';
 import type { Host } from '../../types';
 import { toast } from '../ui/toast';
@@ -17,8 +18,6 @@ import { TextEditorPane } from './TextEditorPane';
 
 export interface TextEditorTabViewProps {
   tabId: EditorTabId;
-  /** When false the view is hidden via display:none so the Monaco instance persists. */
-  isVisible: boolean;
   hotkeyScheme: HotkeyScheme;
   keyBindings: KeyBinding[];
   /** Host lookup for building the `host:remotePath` subtitle next to the filename. */
@@ -30,7 +29,6 @@ export interface TextEditorTabViewProps {
 
 export const TextEditorTabView: React.FC<TextEditorTabViewProps> = ({
   tabId,
-  isVisible,
   hotkeyScheme,
   keyBindings,
   hostById,
@@ -38,6 +36,9 @@ export const TextEditorTabView: React.FC<TextEditorTabViewProps> = ({
 }) => {
   const { t } = useI18n();
   const tab = useEditorTab(tabId);
+  // Self-subscribe visibility so switching tabs only re-renders this editor
+  // instance, not AppView/App.
+  const isVisible = useIsEditorTabActive(tabId);
 
   const handleContentChange = useCallback(
     (content: string, viewState: Monaco.editor.ICodeEditorViewState | null) => {

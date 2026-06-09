@@ -7,6 +7,7 @@ import {
   type AutocompleteSettings,
 } from "./autocomplete";
 import type { Snippet } from "../../domain/models";
+import { usePaneVisible } from "./paneVisibilityStore";
 
 type PopupProps = ComponentProps<typeof AutocompletePopup>;
 
@@ -24,8 +25,6 @@ interface TerminalAutocompleteProps {
   onAcceptText: (text: string) => void;
   snippets?: Snippet[];
   onAcceptSnippet?: (snippet: Snippet) => void;
-  /** Whether this terminal tab is the visible one. */
-  visible: boolean;
   themeColors: PopupProps["themeColors"];
   containerRef: PopupProps["containerRef"];
   searchBarOffset: number;
@@ -61,7 +60,6 @@ export function TerminalAutocomplete({
   onAcceptText,
   snippets,
   onAcceptSnippet,
-  visible,
   themeColors,
   containerRef,
   searchBarOffset,
@@ -72,6 +70,9 @@ export function TerminalAutocomplete({
   sudoHintRef,
   sudoHintText,
 }: TerminalAutocompleteProps) {
+  // Self-subscribe to this pane's visibility so toggling it doesn't have to
+  // flow through (and re-render) the TerminalView ctx.
+  const visible = usePaneVisible(sessionId);
   const autocomplete = useTerminalAutocomplete({
     termRef,
     sessionId,

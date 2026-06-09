@@ -71,6 +71,8 @@ export interface TerminalProps {
   themePreviewId?: string;
   knownHosts?: KnownHost[];
   isVisible: boolean;
+  /** Changes when split-pane bounds update; triggers xterm refit after tab switches. */
+  paneLayoutKey?: string;
   inWorkspace?: boolean;
   isResizing?: boolean;
   isFocusMode?: boolean;
@@ -103,6 +105,12 @@ export interface TerminalProps {
   onAddKnownHost?: (knownHost: KnownHost) => void;
   onExpandToFocus?: () => void;
   onCommandExecuted?: (
+    command: string,
+    hostId: string,
+    hostLabel: string,
+    sessionId: string,
+  ) => void;
+  onCommandSubmitted?: (
     command: string,
     hostId: string,
     hostLabel: string,

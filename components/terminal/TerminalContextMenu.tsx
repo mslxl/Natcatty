@@ -160,7 +160,7 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
         {children}
       </ContextMenuTrigger>
       {!shouldSuppressMouseTrackingContextMenu({ isAlternateScreen, showReconnectAction }) && (
-        <ContextMenuContent className="w-56">
+        <ContextMenuContent className="w-max">
           <ContextMenuItem onClick={onCopy} disabled={!hasSelection}>
             <Copy size={14} className="mr-2" />
             {t('terminal.menu.copy')}

@@ -892,13 +892,15 @@ export const useSftpKeyboardShortcuts = ({
   );
 
   useEffect(() => {
+    if (!isActive) return;
     // Use capture phase to intercept before other handlers
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [handleKeyDown]);
+  }, [handleKeyDown, isActive]);
 
   useEffect(() => {
+    if (!isActive) return;
     window.addEventListener("paste", handlePaste, true);
     return () => window.removeEventListener("paste", handlePaste, true);
-  }, [handlePaste]);
+  }, [handlePaste, isActive]);
 };

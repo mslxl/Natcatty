@@ -65,10 +65,17 @@ function createElectronStub() {
   class FakeTray {
     constructor() {
       this.handlers = new Map();
+      this.contextMenu = null;
+      this.contextMenuPopped = false;
     }
 
     setToolTip() {}
-    setContextMenu() {}
+    setContextMenu(menu) {
+      this.contextMenu = menu;
+    }
+    popUpContextMenu() {
+      this.contextMenuPopped = true;
+    }
     destroy() {}
 
     on(eventName, handler) {
@@ -78,7 +85,11 @@ function createElectronStub() {
 
   return {
     Tray: FakeTray,
-    Menu: {},
+    Menu: {
+      buildFromTemplate(template) {
+        return { template };
+      },
+    },
     BrowserWindow: {
       getAllWindows() {
         return [];
@@ -496,22 +507,50 @@ test("tray icon event registration is platform-dependent", async () => {
   // Test win32 platform
   await withPlatform("win32", async () => {
     const bridge = loadBridge();
-    const { electronModule } = await enableCloseToTray(bridge);
+    await enableCloseToTray(bridge);
     const trayInstance = bridge.getTray();
     assert.ok(trayInstance, "Tray instance should be created");
     assert.ok(trayInstance.handlers.has("click"), "win32 tray should have click handler");
     assert.ok(trayInstance.handlers.has("right-click"), "win32 tray should have right-click handler");
+    assert.equal(trayInstance.contextMenu, null, "win32 tray should not set a context menu");
+    bridge.cleanup();
+  });
+
+  // Test Linux platform
+  await withPlatform("linux", async () => {
+    const bridge = loadBridge();
+    const { ipcMain } = await enableCloseToTray(bridge);
+    const trayInstance = bridge.getTray();
+    assert.ok(trayInstance, "Tray instance should be created");
+    assert.ok(trayInstance.handlers.has("click"), "linux tray should have click handler");
+    assert.ok(!trayInstance.handlers.has("right-click"), "linux tray should not use right-click handler");
+    assert.ok(trayInstance.contextMenu, "linux tray should have a native context menu");
+    const labels = trayInstance.contextMenu.template.map((item) => item.label);
+    assert.ok(labels.includes("Open Main Window"), "linux context menu should include Open Main Window");
+    assert.ok(labels.includes("Quit"), "linux context menu should include Quit");
+
+    await ipcMain.handlers.get("netcatty:tray:updateMenuData")(null, {
+      sessions: [{ id: "s1", label: "dev", hostLabel: "dev.example", status: "connected" }],
+    });
+    const updatedLabels = trayInstance.contextMenu.template
+      .map((item) => item.label)
+      .filter(Boolean);
+    assert.ok(
+      updatedLabels.some((label) => label.includes("dev.example")),
+      "linux context menu should rebuild when tray menu data changes",
+    );
     bridge.cleanup();
   });
 
   // Test other platform (darwin)
   await withPlatform("darwin", async () => {
     const bridge = loadBridge();
-    const { electronModule } = await enableCloseToTray(bridge);
+    await enableCloseToTray(bridge);
     const trayInstance = bridge.getTray();
     assert.ok(trayInstance, "Tray instance should be created");
     assert.ok(trayInstance.handlers.has("click"), "darwin tray should have click handler");
     assert.ok(!trayInstance.handlers.has("right-click"), "darwin tray should not have right-click handler");
+    assert.equal(trayInstance.contextMenu, null, "darwin tray should not set a context menu");
     bridge.cleanup();
   });
 });

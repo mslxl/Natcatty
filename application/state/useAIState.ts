@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import {
   STORAGE_KEY_AI_PROVIDERS,
@@ -941,7 +941,7 @@ export function useAIState() {
   // ── Computed ──
   const activeProvider = providers.find(p => p.id === activeProviderId) ?? null;
 
-  return {
+  return useMemo(() => ({
     providers,
     setProviders,
     addProvider,
@@ -996,5 +996,60 @@ export function useAIState() {
     updateMessageById,
     clearSessionMessages,
     cleanupOrphanedSessions,
-  };
+  }), [
+    providers,
+    setProviders,
+    addProvider,
+    updateProvider,
+    removeProvider,
+    activeProviderId,
+    setActiveProviderId,
+    activeModelId,
+    setActiveModelId,
+    activeProvider,
+    globalPermissionMode,
+    setGlobalPermissionMode,
+    toolIntegrationMode,
+    setToolIntegrationMode,
+    hostPermissions,
+    setHostPermissions,
+    externalAgents,
+    setExternalAgents,
+    defaultAgentId,
+    setDefaultAgentId,
+    commandBlocklist,
+    setCommandBlocklist,
+    commandTimeout,
+    setCommandTimeout,
+    maxIterations,
+    setMaxIterations,
+    agentModelMap,
+    setAgentModel,
+    agentProviderMap,
+    setAgentProvider,
+    webSearchConfig,
+    setWebSearchConfig,
+    sessions,
+    activeSessionIdMap,
+    draftsByScope,
+    panelViewByScope,
+    setActiveSessionId,
+    ensureDraftForScope,
+    updateDraft,
+    showDraftView,
+    showSessionView,
+    clearDraftForScope,
+    addDraftFiles,
+    removeDraftFile,
+    createSession,
+    deleteSession,
+    deleteSessionsByTarget,
+    updateSessionTitle,
+    updateSessionExternalSessionId,
+    addMessageToSession,
+    updateLastMessage,
+    updateMessageById,
+    clearSessionMessages,
+    cleanupOrphanedSessions,
+  ]);
 }

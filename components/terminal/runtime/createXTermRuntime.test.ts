@@ -229,6 +229,32 @@ test("command execution does not record interactive input before echo appears", 
   }
 });
 
+test("command execution publishes submitted commands even when history recording is skipped", () => {
+  const commandBufferRef = { current: "cd /srv/app" };
+  const history: string[] = [];
+  const submitted: string[] = [];
+
+  const recordedCommand = recordTerminalCommandExecution("cd /srv/app", {
+    host: {
+      id: "host-1",
+      label: "Host",
+    },
+    sessionId: "session-1",
+    commandBufferRef,
+    onCommandExecuted(nextCommand) {
+      history.push(nextCommand);
+    },
+    onCommandSubmitted(nextCommand) {
+      submitted.push(nextCommand);
+    },
+  }, createFakeTerm("sftp> cd /srv/app") as never);
+
+  assert.deepEqual(history, []);
+  assert.deepEqual(submitted, ["cd /srv/app"]);
+  assert.equal(recordedCommand, null);
+  assert.equal(commandBufferRef.current, "");
+});
+
 test("command execution does not record wrapped interactive program input", () => {
   const cases = [
     { rows: ["Atlas a [primary]", " reporting> db.stats()"], command: "db.stats()" },
