@@ -53,3 +53,37 @@ test("asarUnpack keeps MCP server runtime deps unpacked", () => {
   // @modelcontextprotocol/sdk is now a direct dep and the MCP server hard-requires it.
   assert.ok(config.asarUnpack.includes("node_modules/@modelcontextprotocol/sdk/**/*"));
 });
+
+test("linux packaging uses multi-size build/icons instead of a single 1024px override", async () => {
+  assert.equal(
+    config.linux.icon,
+    "icons",
+    "linux.icon must point at build/icons so electron-builder installs hicolor/* sizes",
+  );
+  assert.equal(config.directories.buildResources, "build");
+
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const iconsDir = path.join(__dirname, "..", "build", "icons");
+  for (const size of [16, 32, 48, 64, 128, 256, 512]) {
+    const file = path.join(iconsDir, `${size}x${size}.png`);
+    assert.ok(fs.existsSync(file), `expected Linux icon: build/icons/${size}x${size}.png`);
+  }
+
+  const { convertIcon } = require("app-builder-lib/out/util/iconConverter");
+  const projectDir = path.join(__dirname, "..");
+  const buildResources = path.join(projectDir, config.directories.buildResources);
+  const sources = [config.linux.icon, config.mac?.icon ?? config.icon].filter(Boolean);
+  const result = await convertIcon({
+    sources,
+    fallbackSources: [buildResources],
+    roots: [buildResources, projectDir],
+    format: "set",
+    outDir: path.join(projectDir, "release", ".icon-config-test"),
+  });
+  const sizes = result.icons.map((icon) => icon.size);
+  assert.ok(
+    sizes.includes(48) && sizes.includes(256) && !sizes.every((size) => size === 1024),
+    `expected standard hicolor sizes, got: ${sizes.join(", ")}`,
+  );
+});
