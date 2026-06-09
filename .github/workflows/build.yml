@@ -348,6 +348,7 @@ jobs:
             release/*.AppImage
             release/*.deb
             release/*.rpm
+            release/*.pacman
             release/*.tar.gz
             release/*.yml
             release/*.blockmap
@@ -410,6 +411,9 @@ jobs:
       - name: Install deps
         run: npm ci
 
+      - name: Install pacman packaging dependencies
+        run: sudo apt-get update && sudo apt-get install -y libarchive-tools
+
       - name: Set version
         shell: bash
         run: |
@@ -457,6 +461,7 @@ jobs:
             release/*.AppImage
             release/*.deb
             release/*.rpm
+            release/*.pacman
             release/*.yml
             release/*.blockmap
           if-no-files-found: ignore
@@ -510,6 +515,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y curl build-essential python3 git libfuse2 file rpm \
+            libarchive-tools \
             libglib2.0-0 libgtk-3-0 libnss3 libxss1 libxtst6 libasound2 \
             libatk-bridge2.0-0 libdrm2 libgbm1 libx11-xcb1 libxcb-dri3-0
           curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
@@ -568,6 +574,7 @@ jobs:
             release/*.AppImage
             release/*.deb
             release/*.rpm
+            release/*.pacman
             release/*.yml
             release/*.blockmap
           if-no-files-found: ignore
@@ -673,6 +680,7 @@ jobs:
             artifacts/*.AppImage
             artifacts/*.deb
             artifacts/*.rpm
+            artifacts/*.pacman
             artifacts/*.yml
             artifacts/*.blockmap
           generate_release_notes: true

@@ -22,3 +22,25 @@ test("build workflow no longer installs removed legacy agent binaries", () => {
     );
   }
 });
+
+test("build workflow uploads and releases Arch pacman artifacts", () => {
+  const releaseUploadPatterns = buildWorkflow.match(/release\/\*\.pacman/g) ?? [];
+  assert.equal(
+    releaseUploadPatterns.length,
+    3,
+    "mac/windows aggregate upload plus both Linux jobs must include release/*.pacman",
+  );
+  assert.ok(
+    buildWorkflow.includes("artifacts/*.pacman"),
+    "GitHub release file list must include downloaded pacman artifacts",
+  );
+});
+
+test("build workflow installs bsdtar for Arch pacman packaging", () => {
+  const installMentions = buildWorkflow.match(/libarchive-tools/g) ?? [];
+  assert.equal(
+    installMentions.length,
+    2,
+    "both Linux package jobs must install libarchive-tools for pacman metadata generation",
+  );
+});

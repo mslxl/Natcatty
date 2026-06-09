@@ -154,7 +154,7 @@ module.exports = {
         // installs only hicolor/1024x1024 and launchers miss the icon (#274,
         // #1340). Do NOT set linux.icon to a single 1024px PNG either.
         icon: 'icons',
-        target: ['AppImage', 'deb', 'rpm'],
+        target: ['AppImage', 'deb', 'rpm', 'pacman'],
         category: 'Development',
         extraResources: [...moshExtraResources('linux'), ...etExtraResources('linux')]
     },

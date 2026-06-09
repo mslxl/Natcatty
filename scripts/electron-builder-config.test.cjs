@@ -87,3 +87,11 @@ test("linux packaging uses multi-size build/icons instead of a single 1024px ove
     `expected standard hicolor sizes, got: ${sizes.join(", ")}`,
   );
 });
+
+test("linux packaging includes an Arch Linux pacman package target", () => {
+  assert.deepEqual(
+    config.linux.target,
+    ["AppImage", "deb", "rpm", "pacman"],
+    "linux package builds must publish AppImage, Debian, RPM, and Arch pacman artifacts",
+  );
+});
