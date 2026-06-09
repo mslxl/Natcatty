@@ -15,7 +15,7 @@ import {
 } from '../shared/toolExecutors';
 import { requestApproval } from '../shared/approvalGate';
 import { reserveSessionSlot } from '../shared/sessionExecutionQueue';
-import { truncateTextWithHeadAndTail } from '../requestPayloadBudget';
+import { truncateTextWithHeadAndTail } from '../requestPayloadCompression';
 
 const MAX_LIVE_TERMINAL_STDOUT_CHARS = 24_000;
 const MAX_LIVE_TERMINAL_STDERR_CHARS = 12_000;

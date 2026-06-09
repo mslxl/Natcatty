@@ -112,9 +112,14 @@ function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {
 export function buildHistoricalToolResultReplayText(
   result: ToolResult,
   toolCall?: ToolCall,
+  {
+    preserveTerminalOutput = false,
+  }: {
+    preserveTerminalOutput?: boolean;
+  } = {},
 ): string {
   const toolName = toolCall?.name ?? "unknown";
-  if (!isTerminalToolName(toolName)) {
+  if (!isTerminalToolName(toolName) || preserveTerminalOutput) {
     return result.content;
   }
 

@@ -91,6 +91,23 @@ test("buildHistoricalToolResultReplayText keeps non-terminal tool results intact
   assert.equal(buildHistoricalToolResultReplayText(result, toolCall), "search result summary");
 });
 
+test("buildHistoricalToolResultReplayText can preserve terminal output for 413 retries", () => {
+  const toolCall: ToolCall = {
+    id: "call-1",
+    name: "terminal_execute",
+    arguments: { command: "npm test" },
+  };
+  const result: ToolResult = {
+    toolCallId: "call-1",
+    content: "real terminal output",
+  };
+
+  assert.equal(
+    buildHistoricalToolResultReplayText(result, toolCall, { preserveTerminalOutput: true }),
+    "real terminal output",
+  );
+});
+
 test("buildHistoricalToolReplayMaps pairs reused tool ids with the nearest preceding call", () => {
   const messages: ChatMessage[] = [
     {
