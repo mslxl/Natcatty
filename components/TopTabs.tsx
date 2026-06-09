@@ -36,6 +36,10 @@ const dragRegionStyle = { WebkitAppRegion: 'drag' } as React.CSSProperties;
 const dragRegionNoSelect = { WebkitAppRegion: 'drag', userSelect: 'none' } as React.CSSProperties;
 const emptyTabStyle: React.CSSProperties = {};
 
+export function computeHostTreeTabGutter(hostTreeLayoutWidth: number, toggleRight: number): number {
+  return Math.max(0, hostTreeLayoutWidth - toggleRight);
+}
+
 interface TopTabsProps {
   theme: 'dark' | 'light';
   followAppTerminalTheme?: boolean;
@@ -114,6 +118,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   const activeTabId = useActiveTabId();
   const { getTabAnimationClass } = useTopTabLifecycleAnimations(orderedTabs);
   const [hostTreeTogglePop, setHostTreeTogglePop] = useState(false);
+  const fixedLeftTabsRef = useRef<HTMLDivElement>(null);
   const hostTreeToggleSlotRef = useRef<HTMLDivElement>(null);
   const [hostTreeTabGutter, setHostTreeTabGutter] = useState(0);
 
@@ -237,19 +242,23 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
     }
     const rootLeft = root.getBoundingClientRect().left;
     const toggleRight = toggleSlot.getBoundingClientRect().right - rootLeft;
-    setHostTreeTabGutter(Math.max(0, hostTreeLayoutWidth - toggleRight));
+    setHostTreeTabGutter(computeHostTreeTabGutter(hostTreeLayoutWidth, toggleRight));
   }, [hostTreeLayoutWidth, showHostTreeToggle]);
 
   useLayoutEffect(() => {
     updateHostTreeTabGutter();
+    const rafId = window.requestAnimationFrame(updateHostTreeTabGutter);
+    const settleTimer = window.setTimeout(updateHostTreeTabGutter, 320);
     const root = tabsContainerRef.current?.closest('[data-top-tabs-root]') as HTMLElement | null;
-    if (!root) return;
     const ro = new ResizeObserver(() => updateHostTreeTabGutter());
-    ro.observe(root);
+    if (root) ro.observe(root);
+    if (fixedLeftTabsRef.current) ro.observe(fixedLeftTabsRef.current);
     if (tabsContainerRef.current) ro.observe(tabsContainerRef.current);
     if (hostTreeToggleSlotRef.current) ro.observe(hostTreeToggleSlotRef.current);
     window.addEventListener('resize', updateHostTreeTabGutter);
     return () => {
+      window.cancelAnimationFrame(rafId);
+      window.clearTimeout(settleTimer);
       ro.disconnect();
       window.removeEventListener('resize', updateHostTreeTabGutter);
     };
@@ -580,7 +589,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
         style={{ ...dragRegionStyle, paddingLeft: isMacClient && !isWindowFullscreen ? 76 : 12, paddingRight: isMacClient ? 12 : 0 }}
       >
         {/* Fixed left tabs: Vaults and SFTP */}
-        <div className="flex items-end gap-0 flex-shrink-0 app-drag">
+        <div ref={fixedLeftTabsRef} className="flex items-end gap-0 flex-shrink-0 app-drag">
           <RootTopTab
             tabId="vault"
             label="Vaults"
