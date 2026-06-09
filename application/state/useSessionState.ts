@@ -16,6 +16,7 @@ SplitDirection,
 SplitHint,
 updateWorkspaceSplitSizes,
 } from '../../domain/workspace';
+import { buildOrderedWorkTabIds } from '../app/workTabSurface';
 import { activeTabStore } from './activeTabStore';
 import {
   createCopiedTerminalSessionClone,
@@ -857,31 +858,33 @@ export const useSessionState = () => {
     return broadcastWorkspaceIds.has(workspaceId);
   }, [broadcastWorkspaceIds]);
 
-  // Get ordered tabs: combines orphan sessions, workspaces, and log views in the custom order
-  const orderedTabs = useMemo(() => {
-    const allTabIds = [
-      ...orphanSessions.map(s => s.id),
-      ...workspaces.map(w => w.id),
-      ...logViews.map(lv => lv.id),
-    ];
-    const allTabIdSet = new Set(allTabIds);
-    // Filter tabOrder to only include existing tabs, then add any new tabs at the end
-    const orderedIds = tabOrder.filter(id => allTabIdSet.has(id));
-    const orderedIdSet = new Set(orderedIds);
-    const newIds = allTabIds.filter(id => !orderedIdSet.has(id));
-    return [...orderedIds, ...newIds];
-  }, [orphanSessions, workspaces, logViews, tabOrder]);
+  const baseWorkTabIds = useMemo(() => [
+    ...orphanSessions.map(s => s.id),
+    ...workspaces.map(w => w.id),
+    ...logViews.map(lv => lv.id),
+  ], [orphanSessions, workspaces, logViews]);
 
-  const reorderTabs = useCallback((draggedId: string, targetId: string, position: 'before' | 'after' = 'before') => {
+  const getOrderedWorkTabs = useCallback((additionalTabIds: readonly string[] = []) => {
+    const allTabIds = [...baseWorkTabIds, ...additionalTabIds];
+    return buildOrderedWorkTabIds(tabOrder, allTabIds);
+  }, [baseWorkTabIds, tabOrder]);
+
+  // Get ordered tabs: combines orphan sessions, workspaces, and log views in the custom order
+  const orderedTabs = useMemo(
+    () => getOrderedWorkTabs(),
+    [getOrderedWorkTabs],
+  );
+
+  const reorderTabs = useCallback((
+    draggedId: string,
+    targetId: string,
+    position: 'before' | 'after' = 'before',
+    additionalTabIds: readonly string[] = [],
+  ) => {
     if (draggedId === targetId) return;
     
     setTabOrder(prevTabOrder => {
-      // Get all current tab IDs (orphan sessions + workspaces + log views)
-      const allTabIds = [
-        ...orphanSessions.map(s => s.id),
-        ...workspaces.map(w => w.id),
-        ...logViews.map(lv => lv.id),
-      ];
+      const allTabIds = [...baseWorkTabIds, ...additionalTabIds];
       const allTabIdSet = new Set(allTabIds);
       
       // Build current effective order: existing order + new tabs at end
@@ -913,7 +916,7 @@ export const useSessionState = () => {
       
       return currentOrder;
     });
-  }, [orphanSessions, workspaces, logViews]);
+  }, [baseWorkTabIds]);
 
   return {
     sessions,
@@ -958,6 +961,7 @@ export const useSessionState = () => {
     toggleBroadcast,
     isBroadcastEnabled,
     orderedTabs,
+    getOrderedWorkTabs,
     reorderTabs,
     // Log views
     logViews,

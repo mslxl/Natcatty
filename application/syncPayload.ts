@@ -527,7 +527,6 @@ function applySyncableSettings(settings: NonNullable<SyncPayload['settings']>): 
   // SFTP Bookmarks (global only)
   if (settings.sftpGlobalBookmarks != null) localStorageAdapter.write(STORAGE_KEY_SFTP_GLOBAL_BOOKMARKS, settings.sftpGlobalBookmarks);
 
-  // Immersive mode (legacy — always enabled, ignore incoming value)
   if (settings.showRecentHosts != null) localStorageAdapter.writeBoolean(STORAGE_KEY_SHOW_RECENT_HOSTS, settings.showRecentHosts);
   if (settings.showOnlyUngroupedHostsInRoot != null) {
     localStorageAdapter.writeBoolean(

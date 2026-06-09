@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
+
+import { runThemeTransition } from './themeTransition';
 import { SyncConfig, TerminalSettings, HotkeyScheme, CustomKeyBindings, DEFAULT_KEY_BINDINGS, KeyBinding, UILanguage, SessionLogFormat, normalizeTerminalSettings } from '../../domain/models';
 import {
   STORAGE_KEY_COLOR,
@@ -447,7 +449,9 @@ export const useSettingsState = () => {
 
     const effective = nextTheme === 'system' ? getSystemPreference() : nextTheme;
     const tokens = getUiThemeById(effective, effective === 'dark' ? nextDarkId : nextLightId).tokens;
-    applyThemeTokens(nextTheme, effective, tokens, nextAccentMode, nextAccent);
+    runThemeTransition(() => {
+      applyThemeTokens(nextTheme, effective, tokens, nextAccentMode, nextAccent);
+    });
   }, [theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent]);
 
   const syncCustomCssFromStorage = useCallback(() => {
@@ -542,7 +546,12 @@ export const useSettingsState = () => {
 
   useLayoutEffect(() => {
     const tokens = getUiThemeById(resolvedTheme, resolvedTheme === 'dark' ? darkUiThemeId : lightUiThemeId).tokens;
-    applyThemeTokens(theme, resolvedTheme, tokens, accentMode, customAccent);
+    const apply = () => applyThemeTokens(theme, resolvedTheme, tokens, accentMode, customAccent);
+    if (persistMountedRef.current) {
+      runThemeTransition(apply);
+    } else {
+      apply();
+    }
     localStorageAdapter.writeString(STORAGE_KEY_THEME, theme);
     localStorageAdapter.writeString(STORAGE_KEY_UI_THEME_LIGHT, lightUiThemeId);
     localStorageAdapter.writeString(STORAGE_KEY_UI_THEME_DARK, darkUiThemeId);
@@ -939,8 +948,7 @@ export const useSettingsState = () => {
     setTerminalSettings(prev => ({ ...prev, [key]: value }));
   }, [setTerminalSettings]);
 
-  /** Re-apply the current UI theme tokens (used to restore after immersive mode override). */
-  const reapplyCurrentTheme = useCallback(() => {
+  const applyAppTheme = useCallback(() => {
     const tokens = getUiThemeById(resolvedTheme, resolvedTheme === 'dark' ? darkUiThemeId : lightUiThemeId).tokens;
     applyThemeTokens(theme, resolvedTheme, tokens, accentMode, customAccent);
   }, [theme, resolvedTheme, lightUiThemeId, darkUiThemeId, accentMode, customAccent]);
@@ -1045,7 +1053,7 @@ export const useSettingsState = () => {
     windowOpacity,
     setWindowOpacity,
     rehydrateAllFromStorage,
-    reapplyCurrentTheme,
+    applyAppTheme,
     workspaceFocusStyle,
     setWorkspaceFocusStyle,
     // Opaque version that changes when any synced setting changes, used by useAutoSync.

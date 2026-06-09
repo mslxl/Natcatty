@@ -5,14 +5,10 @@ import {
   isEditorTabId,
   useActiveTabId,
 } from '../state/activeTabStore';
-import { setImmersiveActive } from '../state/immersiveStore';
-import { useImmersiveMode } from '../state/useImmersiveMode';
+import { updateActiveChromeThemeDeps } from '../state/activeChromeThemeSync';
+import { useActiveChromeTheme } from '../state/useActiveChromeTheme';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
-import {
-  applyCustomAccentToTerminalTheme,
-  resolveHostTerminalThemeId,
-} from '../../domain/terminalAppearance';
-import { collectSessionIds } from '../../domain/workspace';
+import { resolveActiveChromeTheme } from './activeChromeTheme';
 import type {
   Host,
   TerminalSession,
@@ -25,15 +21,15 @@ import type { EditorTab } from '../state/editorTabStore';
 interface AppActiveTabChromeProps {
   showSftpTab: boolean;
   setActiveTabId: (id: string) => void;
+  applyAppTheme: () => void;
   hostById: Map<string, Host>;
   sessionById: Map<string, TerminalSession>;
-  workspaceById: Map<string, Workspace>;
   themeById: Map<string, TerminalTheme>;
+  workspaceById: Map<string, Workspace>;
   currentTerminalTheme: TerminalTheme;
   followAppTerminalTheme: boolean;
   accentMode: 'theme' | 'custom';
   customAccent: string;
-  reapplyCurrentTheme: () => void;
   editorTabs: readonly EditorTab[];
   logViews: readonly LogView[];
   t: (key: string) => string;
@@ -41,27 +37,24 @@ interface AppActiveTabChromeProps {
 
 /**
  * Owns the `activeTabId` subscription and the purely side-effectful "chrome"
- * work derived from it: immersive-mode theming, window title, and the
- * SFTP-tab guard. Extracted out of <App> so that switching top tabs only
+ * work derived from it: window title and the SFTP-tab guard.
+ * Extracted out of <App> so that switching top tabs only
  * re-renders this null-rendering component (and the self-subscribing leaves)
  * instead of forcing the entire App tree (which holds all vault/session/
  * settings state and rebuilds the giant AppView ctx) to re-render.
- *
- * Renders nothing; publishes "immersive active" to immersiveStore so AppView
- * and TopTabs can read it without re-rendering App.
  */
 export function AppActiveTabChrome({
   showSftpTab,
   setActiveTabId,
+  applyAppTheme,
   hostById,
   sessionById,
-  workspaceById,
   themeById,
+  workspaceById,
   currentTerminalTheme,
   followAppTerminalTheme,
   accentMode,
   customAccent,
-  reapplyCurrentTheme,
   editorTabs,
   logViews,
   t,
@@ -74,55 +67,43 @@ export function AppActiveTabChrome({
     }
   }, [showSftpTab, activeTabId, setActiveTabId]);
 
-  const activeTerminalTheme = useMemo<TerminalTheme | null>(() => {
-    if (activeTabId === 'vault' || activeTabId === 'sftp') return null;
+  const chromeThemeDeps = useMemo(() => ({
+    accentMode,
+    applyAppTheme,
+    currentTerminalTheme,
+    customAccent,
+    editorTabs,
+    followAppTerminalTheme,
+    hostById,
+    logViews,
+    sessionById,
+    themeById,
+    workspaceById,
+  }), [
+    accentMode,
+    applyAppTheme,
+    currentTerminalTheme,
+    customAccent,
+    editorTabs,
+    followAppTerminalTheme,
+    hostById,
+    logViews,
+    sessionById,
+    themeById,
+    workspaceById,
+  ]);
 
-    const resolveTheme = (s: TerminalSession): TerminalTheme => {
-      let baseTheme: TerminalTheme;
-      if (followAppTerminalTheme) {
-        baseTheme = currentTerminalTheme;
-      } else {
-        const host = hostById.get(s.hostId) ?? null;
-        const themeId = resolveHostTerminalThemeId(host, currentTerminalTheme.id);
-        baseTheme = themeById.get(themeId) || currentTerminalTheme;
-      }
-      return applyCustomAccentToTerminalTheme(baseTheme, accentMode, customAccent);
-    };
+  updateActiveChromeThemeDeps(chromeThemeDeps);
 
-    const workspace = workspaceById.get(activeTabId);
-    if (workspace) {
-      if (workspace.viewMode === 'focus') {
-        const wsSessionIds = collectSessionIds(workspace.root);
-        const focused = (workspace.focusedSessionId
-          ? sessionById.get(workspace.focusedSessionId)
-          : null)
-          ?? wsSessionIds.map((id) => sessionById.get(id)).find(Boolean);
-        return focused ? resolveTheme(focused) : null;
-      }
-      const sessionIds = collectSessionIds(workspace.root);
-      const wsSessions = sessionIds
-        .map((id) => sessionById.get(id))
-        .filter(Boolean) as TerminalSession[];
-      if (wsSessions.length === 0) return null;
-      const firstTheme = resolveTheme(wsSessions[0]);
-      const allSame = wsSessions.every((s) => resolveTheme(s).id === firstTheme.id);
-      return allSame ? firstTheme : null;
-    }
-
-    const session = sessionById.get(activeTabId);
-    if (!session) return null;
-    return resolveTheme(session);
-  }, [accentMode, activeTabId, currentTerminalTheme, customAccent, followAppTerminalTheme, hostById, sessionById, themeById, workspaceById]);
-
-  useImmersiveMode({
+  const activeChromeTheme = useMemo(() => resolveActiveChromeTheme({
+    ...chromeThemeDeps,
     activeTabId,
-    activeTerminalTheme,
-    restoreOriginalTheme: reapplyCurrentTheme,
-  });
+  }), [chromeThemeDeps, activeTabId]);
 
-  useEffect(() => {
-    setImmersiveActive(activeTerminalTheme !== null);
-  }, [activeTerminalTheme]);
+  useActiveChromeTheme({
+    activeTheme: activeChromeTheme,
+    applyAppTheme,
+  });
 
   const editorTabFileNameCounts = useMemo(() => {
     const counts = new Map<string, number>();

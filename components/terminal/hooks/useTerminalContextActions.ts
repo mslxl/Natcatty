@@ -1,6 +1,7 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { useCallback } from "react";
 import type { RefObject } from "react";
+import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { logger } from "../../../lib/logger";
 import { pasteTextIntoTerminal } from "../runtime/terminalUserPaste";
 import { clearTerminalViewport } from "../clearTerminalViewport";
@@ -69,7 +70,7 @@ export const useTerminalContextActions = ({
     const term = termRef.current;
     if (!term) return;
     try {
-      const readClipboardFiles = window.netcatty?.readClipboardFiles;
+      const readClipboardFiles = netcattyBridge.get()?.readClipboardFiles;
       if (readClipboardFiles) {
         const files = await readClipboardFiles();
         if (files.length > 0 && isLocalConnection && sessionRef.current) {

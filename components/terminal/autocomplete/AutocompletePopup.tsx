@@ -8,7 +8,10 @@
 import React, { useEffect, useRef, useState, memo } from "react";
 import { Folder, File, Link } from "lucide-react";
 import type { CompletionSuggestion, SuggestionSource } from "./completionEngine";
-import { computeAutocompletePopupPlacement } from "./terminalAutocompleteLayout";
+import {
+  computeAutocompletePopupPlacement,
+  resolveAutocompleteClampViewport,
+} from "./terminalAutocompleteLayout";
 
 export interface AutocompleteThemeColors {
   background: string;
@@ -31,11 +34,8 @@ export interface SubDirPanel {
 interface AutocompletePopupProps {
   suggestions: CompletionSuggestion[];
   selectedIndex: number;
-  /** Position relative to the terminal container (not viewport) */
-  position: { x: number; y: number };
-  /** Current input line bounds relative to the terminal container */
-  cursorLineTop: number;
-  cursorLineBottom: number;
+  /** Cursor anchor in viewport coordinates */
+  anchorViewport: { left: number; top: number; bottom: number };
   visible: boolean;
   expandUpward?: boolean;
   themeColors?: AutocompleteThemeColors;
@@ -122,9 +122,7 @@ const KeyCap: React.FC<{ label: string; color: string; bg: string }> = ({ label,
 const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
   suggestions,
   selectedIndex,
-  position,
-  cursorLineTop,
-  cursorLineBottom,
+  anchorViewport,
   visible,
   expandUpward = false,
   themeColors,
@@ -223,17 +221,13 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
     (s) => s.source !== "path" && Boolean(s.description && s.description.length > 0),
   );
 
-  // Calculate fixed viewport position from container rect + relative cursor position.
-  // containerRef already has top offset for toolbar/search bar, so don't add it again.
-  const containerRect = containerRef?.current?.getBoundingClientRect();
-  const fixedLeft = (containerRect?.left ?? 0) + position.x;
-  const fixedLineTop = (containerRect?.top ?? 0) + cursorLineTop;
-  const fixedLineBottom = (containerRect?.top ?? 0) + cursorLineBottom;
+  const fixedLeft = anchorViewport.left;
+  const fixedLineTop = anchorViewport.top;
+  const fixedLineBottom = anchorViewport.bottom;
 
   const viewportPadding = 8;
   const anchorGap = 8;
-  const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 800;
-  const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 1200;
+  const clampViewport = resolveAutocompleteClampViewport(containerRef?.current ?? null);
   const estimatedPopupHeight = Math.min(maxHeight, suggestions.length * 28 + 8);
   // Reserve the detail height for the whole set (not the hovered row) so the
   // chosen direction/height stays stable while hovering.
@@ -253,15 +247,20 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
     MAIN_LIST_MAX_WIDTH +
     subDirPanels.length * (FLEX_GAP + SUBDIR_PANEL_MAX_WIDTH) +
     (setMayShowDetailPanel ? FLEX_GAP + DETAIL_PANEL_MAX_WIDTH : 0);
+  const clampWidth =
+    MAIN_LIST_MAX_WIDTH +
+    subDirPanels.length * (FLEX_GAP + SUBDIR_PANEL_MAX_WIDTH);
 
   const placement = computeAutocompletePopupPlacement({
     anchorTop: fixedLineTop,
     anchorBottom: fixedLineBottom,
     anchorLeft: fixedLeft,
-    viewportWidth,
-    viewportHeight,
+    viewportWidth: clampViewport.width,
+    viewportHeight: clampViewport.height,
+    clampViewport,
     desiredHeight: desiredContentHeight,
     totalWidth,
+    clampWidth,
     maxHeight,
     anchorGap,
     viewportPadding,

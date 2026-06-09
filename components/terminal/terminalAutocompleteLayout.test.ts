@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   computeAutocompletePopupPlacement,
+  resolveAutocompleteAnchorInViewport,
+  resolveAutocompleteCursorColumn,
   type PopupPlacementInput,
 } from "./autocomplete/terminalAutocompleteLayout.ts";
 
@@ -130,4 +132,185 @@ test("does not shift left when the popup already fits at the cursor", () => {
     totalWidth: 400,
   });
   assert.equal(p.left, 200);
+});
+
+test("does not shift left for detail tooltips when clampWidth excludes them", () => {
+  const withDetailClamp = computeAutocompletePopupPlacement({
+    ...baseInput,
+    anchorLeft: 750,
+    totalWidth: 684,
+    clampWidth: 400,
+  });
+  const withFullClamp = computeAutocompletePopupPlacement({
+    ...baseInput,
+    anchorLeft: 750,
+    totalWidth: 684,
+  });
+  assert.equal(withDetailClamp.left, 750);
+  assert.ok(withFullClamp.left < withDetailClamp.left);
+});
+
+test("clamps within a split terminal pane instead of the full window", () => {
+  const pane = { left: 700, top: 80, width: 680, height: 520 };
+  const p = computeAutocompletePopupPlacement({
+    ...baseInput,
+    anchorLeft: 1180,
+    totalWidth: 1100,
+    clampWidth: 400,
+    clampViewport: pane,
+    viewportWidth: pane.width,
+    viewportHeight: pane.height,
+  });
+  assert.ok(p.left >= pane.left + baseInput.viewportPadding);
+  assert.ok(p.left + 400 <= pane.left + pane.width - baseInput.viewportPadding + 0.001);
+});
+
+test("resolveAutocompleteAnchorInViewport uses the xterm screen rect in split panes", () => {
+  const cellWidth = 5;
+  const cellHeight = 200 / 24;
+  const screen = {
+    clientWidth: 400,
+    clientHeight: 200,
+    getBoundingClientRect: () => ({
+      left: 120,
+      top: 260,
+      right: 520,
+      bottom: 460,
+      width: 400,
+      height: 200,
+      x: 120,
+      y: 260,
+      toJSON: () => ({}),
+    }),
+  };
+  const container = {
+    querySelector: (selector: string) => (selector === ".xterm-screen" ? screen : null),
+  } as unknown as HTMLElement;
+
+  const term = {
+    element: {
+      querySelector: () => null,
+    },
+    cols: 80,
+    rows: 24,
+    buffer: {
+      active: {
+        cursorX: 10,
+        cursorY: 20,
+        baseY: 0,
+        getLine: () => ({ isWrapped: false }),
+      },
+    },
+    _core: {
+      _renderService: {
+        dimensions: {
+          css: {
+            cell: { width: cellWidth, height: cellHeight },
+          },
+        },
+      },
+    },
+  };
+
+  const anchor = resolveAutocompleteAnchorInViewport(term as never, container, 5, 10);
+  assert.equal(anchor.anchorLeft, 120 + cellWidth * 10);
+  assert.equal(anchor.anchorTop, 260 + cellHeight * 20);
+  assert.equal(anchor.anchorBottom, 260 + cellHeight * 21);
+});
+
+test("resolveAutocompleteCursorColumn prefers prompt-aligned column when xterm lags", () => {
+  const term = {
+    buffer: {
+      active: {
+        cursorX: 0,
+        cursorY: 22,
+        baseY: 0,
+        getLine: () => ({
+          isWrapped: false,
+          translateToString: () => "root@host:~# d",
+        }),
+      },
+    },
+  };
+
+  const column = resolveAutocompleteCursorColumn(term as never, {
+    promptText: "root@host:~# ",
+    userInput: "d",
+  });
+  assert.equal(column, "root@host:~# ".length + 1);
+});
+
+test("resolveAutocompleteAnchorInViewport ignores the helper textarea horizontal position", () => {
+  const cellWidth = 9;
+  const cellHeight = 17;
+  const screen = {
+    clientWidth: 720,
+    clientHeight: 408,
+    getBoundingClientRect: () => ({
+      left: 640,
+      top: 180,
+      right: 1360,
+      bottom: 588,
+      width: 720,
+      height: 408,
+      x: 640,
+      y: 180,
+      toJSON: () => ({}),
+    }),
+  };
+  const textarea = {
+    getBoundingClientRect: () => ({
+      left: 640,
+      top: 500,
+      right: 1360,
+      bottom: 517,
+      width: 720,
+      height: 17,
+      x: 640,
+      y: 500,
+      toJSON: () => ({}),
+    }),
+  };
+  const container = {
+    querySelector: (selector: string) => {
+      if (selector === ".xterm-screen") return screen;
+      if (selector === "textarea.xterm-helper-textarea") return textarea;
+      return null;
+    },
+  } as unknown as HTMLElement;
+
+  const cursorColumn = "root@RainYun-0tWTeTRw:~# ".length + 1;
+  const term = {
+    element: {
+      querySelector: () => null,
+    },
+    cols: 80,
+    rows: 24,
+    buffer: {
+      active: {
+        cursorX: 0,
+        cursorY: 22,
+        baseY: 0,
+        getLine: () => ({ isWrapped: false }),
+      },
+    },
+    _core: {
+      _renderService: {
+        dimensions: {
+          css: {
+            cell: { width: cellWidth, height: cellHeight },
+          },
+        },
+      },
+    },
+  };
+
+  const anchor = resolveAutocompleteAnchorInViewport(
+    term as never,
+    container,
+    5,
+    cursorColumn,
+  );
+  assert.equal(anchor.anchorLeft, 640 + cellWidth * cursorColumn);
+  assert.notEqual(anchor.anchorLeft, textarea.getBoundingClientRect().left);
 });

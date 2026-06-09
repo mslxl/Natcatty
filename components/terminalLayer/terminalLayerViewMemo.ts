@@ -275,16 +275,6 @@ export function terminalLayerWorkspaceCtxEqual(prev: Ctx, next: Ctx): boolean {
   return true;
 }
 
-export function terminalLayerHostTreePropsEqual(prev: Ctx, next: Ctx): boolean {
-  return eq(prev, next, 'showHostTreeSidebar')
-    && eq(prev, next, 'hosts')
-    && eq(prev, next, 'customGroups')
-    && eq(prev, next, 'resolvedPreviewTheme')
-    && eq(prev, next, 'activeHostIdForSidebar')
-    && eq(prev, next, 'onConnectToHost')
-    && eq(prev, next, 'onCreateLocalTerminal');
-}
-
 export function terminalLayerViewCtxEqual(prev: Ctx, next: Ctx): boolean {
   if (prev.isTerminalLayerVisible !== next.isTerminalLayerVisible) return false;
   if (prev.isComposeBarOpen !== next.isComposeBarOpen) return false;
@@ -296,8 +286,7 @@ export function terminalLayerViewCtxEqual(prev: Ctx, next: Ctx): boolean {
   if (prev.isBroadcastEnabled !== next.isBroadcastEnabled) return false;
   if (prev.composeBarThemeColors !== next.composeBarThemeColors) return false;
   if (prev.workspaceOuterRef !== next.workspaceOuterRef) return false;
-  return terminalLayerHostTreePropsEqual(prev, next)
-    && terminalLayerSidePanelCtxEqual(prev, next)
+  return terminalLayerSidePanelCtxEqual(prev, next)
     && terminalLayerFocusSidebarPropsEqual(prev, next)
     && terminalLayerWorkspaceCtxEqual(prev, next);
 }

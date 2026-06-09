@@ -23,7 +23,7 @@ const workspace = (sessionIds: string[], viewMode?: Workspace["viewMode"]): Work
 
 const resolveThemeFrom = (themes: Record<string, string>) => (sessionId: string) => themes[sessionId] ?? null;
 
-test("top tabs use root immersive theme for normal single-session tab switching", () => {
+test("top tabs use the focused session theme for solo work tabs", () => {
   assert.equal(
     getScopedTopTabsThemeId({
       activeSidePanelTab: null,
@@ -35,7 +35,7 @@ test("top tabs use root immersive theme for normal single-session tab switching"
       previewedOrVisibleThemeId: "tokyo-night",
       resolveSessionThemeId: resolveThemeFrom({ s1: "tokyo-night" }),
     }),
-    null,
+    "tokyo-night",
   );
 });
 
@@ -55,7 +55,7 @@ test("top tabs are scoped while previewing a terminal theme", () => {
   );
 });
 
-test("top tabs use root immersive theme for same-theme workspace splits", () => {
+test("top tabs avoid scoped theme for same-theme workspace splits", () => {
   assert.equal(
     getScopedTopTabsThemeId({
       activeSidePanelTab: null,

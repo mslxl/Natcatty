@@ -49,13 +49,43 @@ import { useConversationExport } from './ai/hooks/useConversationExport';
 import type { AIChatSidePanelProps } from './AIChatSidePanel.types';
 import { generateId, isCopilotAgentConfig, modelPresetsContainId } from './AIChatSidePanelHelpers';
 import { AIChatPanelContent } from './AIChatPanelContent';
+import {
+  getAIPanelProfilerProps,
+  profileAIPanelCalculation,
+} from './ai/aiPanelDiagnostics';
 
-function shouldKeepAIChatSidePanelMounted(props: AIChatSidePanelProps): boolean {
+export function hasAIChatSidePanelRetainedContent(props: Pick<
+  AIChatSidePanelProps,
+  'activeSessionIdMap' | 'draftsByScope' | 'sessions' | 'scopeTargetId' | 'scopeType'
+>): boolean {
+  const scopeKey = `${props.scopeType}:${props.scopeTargetId ?? ''}`;
+  const sessionId = props.activeSessionIdMap[scopeKey] ?? null;
+  const activeSession = sessionId
+    ? props.sessions.find((session) => session.id === sessionId)
+    : null;
+  if (activeSession && activeSession.messages.length > 0) {
+    return true;
+  }
+  const draft = props.draftsByScope[scopeKey] ?? null;
+  return Boolean(
+    draft
+    && (
+      draft.text.trim().length > 0
+      || draft.attachments.length > 0
+      || draft.selectedUserSkillSlugs.length > 0
+    ),
+  );
+}
+
+export function shouldKeepAIChatSidePanelMounted(props: AIChatSidePanelProps): boolean {
   if (props.isVisible ?? true) {
     return true;
   }
   const scopeKey = `${props.scopeType}:${props.scopeTargetId ?? ''}`;
   const sessionId = props.activeSessionIdMap[scopeKey] ?? null;
+  if (hasAIChatSidePanelRetainedContent(props)) {
+    return true;
+  }
   return isAIChatSessionStreaming(sessionId);
 }
 
@@ -146,12 +176,15 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
 
   const deferredSessions = useDeferredValue(sessions);
   const historySessions = useMemo(
-    () => getScopedHistorySessions(
-      deferredSessions,
-      scopeType,
-      scopeTargetId,
-      scopeHostIds,
-      activeTerminalSessionIds,
+    () => profileAIPanelCalculation(
+      'AIChatSidePanel.historySessions',
+      () => getScopedHistorySessions(
+        deferredSessions,
+        scopeType,
+        scopeTargetId,
+        scopeHostIds,
+        activeTerminalSessionIds,
+      ),
     ),
     [deferredSessions, scopeType, scopeTargetId, scopeHostIds, activeTerminalSessionIds],
   );
@@ -877,52 +910,54 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
 
 
   return (
-    <AIChatPanelContent
-      t={t}
-      currentAgentId={currentAgentId}
-      externalAgents={externalAgents}
-      discoveredAgents={discoveredAgents}
-      isDiscovering={isDiscovering}
-      handleAgentChange={handleAgentChange}
-      handleEnableDiscoveredAgent={handleEnableDiscoveredAgent}
-      rediscover={rediscover}
-      handleOpenSettings={handleOpenSettings}
-      activeSession={activeSession}
-      handleExport={handleExport}
-      showHistory={showHistory}
-      setShowHistory={setShowHistory}
-      handleNewChat={handleNewChat}
-      historySessions={historySessions}
-      activeSessionId={activeSessionId}
-      handleSelectSession={handleSelectSession}
-      handleDeleteSession={handleDeleteSession}
-      messages={messages}
-      isStreaming={isStreaming}
-      inputValue={inputValue}
-      setInputValue={setInputValue}
-      handleSend={handleSend}
-      handleStop={handleStop}
-      canSendCurrentAgent={canSendCurrentAgent}
-      providerDisplayName={providerDisplayName}
-      modelDisplayName={modelDisplayName}
-      agentModelPresets={agentModelPresets}
-      selectedAgentModel={selectedAgentModel}
-      handleAgentModelSelect={handleAgentModelSelect}
-      cattyConfiguredProviders={cattyConfiguredProviders}
-      effectiveActiveProvider={effectiveActiveProvider}
-      effectiveActiveModelId={effectiveActiveModelId}
-      handleAgentProviderModelSelect={handleAgentProviderModelSelect}
-      files={files}
-      addFiles={addFiles}
-      removeFile={removeFile}
-      terminalSessions={terminalSessions}
-      selectedUserSkills={selectedUserSkills}
-      userSkillOptions={userSkillOptions}
-      addSelectedUserSkill={addSelectedUserSkill}
-      removeSelectedUserSkill={removeSelectedUserSkill}
-      globalPermissionMode={globalPermissionMode}
-      setGlobalPermissionMode={setGlobalPermissionMode}
-    />
+    <React.Profiler {...getAIPanelProfilerProps('AIChatSidePanel.Active')}>
+      <AIChatPanelContent
+        t={t}
+        currentAgentId={currentAgentId}
+        externalAgents={externalAgents}
+        discoveredAgents={discoveredAgents}
+        isDiscovering={isDiscovering}
+        handleAgentChange={handleAgentChange}
+        handleEnableDiscoveredAgent={handleEnableDiscoveredAgent}
+        rediscover={rediscover}
+        handleOpenSettings={handleOpenSettings}
+        activeSession={activeSession}
+        handleExport={handleExport}
+        showHistory={showHistory}
+        setShowHistory={setShowHistory}
+        handleNewChat={handleNewChat}
+        historySessions={historySessions}
+        activeSessionId={activeSessionId}
+        handleSelectSession={handleSelectSession}
+        handleDeleteSession={handleDeleteSession}
+        messages={messages}
+        isStreaming={isStreaming}
+        inputValue={inputValue}
+        setInputValue={setInputValue}
+        handleSend={handleSend}
+        handleStop={handleStop}
+        canSendCurrentAgent={canSendCurrentAgent}
+        providerDisplayName={providerDisplayName}
+        modelDisplayName={modelDisplayName}
+        agentModelPresets={agentModelPresets}
+        selectedAgentModel={selectedAgentModel}
+        handleAgentModelSelect={handleAgentModelSelect}
+        cattyConfiguredProviders={cattyConfiguredProviders}
+        effectiveActiveProvider={effectiveActiveProvider}
+        effectiveActiveModelId={effectiveActiveModelId}
+        handleAgentProviderModelSelect={handleAgentProviderModelSelect}
+        files={files}
+        addFiles={addFiles}
+        removeFile={removeFile}
+        terminalSessions={terminalSessions}
+        selectedUserSkills={selectedUserSkills}
+        userSkillOptions={userSkillOptions}
+        addSelectedUserSkill={addSelectedUserSkill}
+        removeSelectedUserSkill={removeSelectedUserSkill}
+        globalPermissionMode={globalPermissionMode}
+        setGlobalPermissionMode={setGlobalPermissionMode}
+      />
+    </React.Profiler>
   );
 };
 
@@ -992,14 +1027,10 @@ function aiChatSidePanelPropsAreEqual(
 }
 
 const AIChatSidePanel = React.memo(function AIChatSidePanel(props: AIChatSidePanelProps) {
-  // Keep every mounted AI panel alive — the parent (AIChatPanelsHost) only hides
-  // inactive tabs via CSS, mirroring the SFTP/Scripts/Theme panels. Returning
-  // null here used to tear down the whole subtree on each top-tab switch, which
-  // forced the Streamdown-backed message list to re-parse + re-highlight up to
-  // 50 messages synchronously on every switch (the source of the jank). Effects
-  // inside AIChatSidePanelActive are gated by `isVisible`, and re-renders for
-  // hidden, non-streaming panels are skipped by `aiChatSidePanelPropsAreEqual`,
-  // so staying mounted is cheap while eliminating the remount cost.
+  if (!shouldKeepAIChatSidePanelMounted(props)) return null;
+  // Keep hidden panels alive only when they contain real work (messages, draft
+  // content, or an active stream). Empty hidden panels can drop their heavy
+  // input/agent-picker subtree and remount cheaply when shown again.
   return <AIChatSidePanelActive {...props} />;
 }, aiChatSidePanelPropsAreEqual);
 AIChatSidePanel.displayName = 'AIChatSidePanel';
