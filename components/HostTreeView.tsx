@@ -359,7 +359,7 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
   depth,
   onConnect,
   onEditHost,
-  onDuplicateHost: _onDuplicateHost,
+  onDuplicateHost,
   onDeleteHost,
   onCopyCredentials,
   moveHostToGroup: _moveHostToGroup,
@@ -452,6 +452,7 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
       <HostTreeHostContextMenuContent
         host={host}
         onConnect={onConnect}
+        onDuplicateHost={onDuplicateHost}
         onCopyCredentials={onCopyCredentials}
         onDeleteHost={onDeleteHost}
       />

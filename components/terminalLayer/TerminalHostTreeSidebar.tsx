@@ -231,6 +231,7 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
         <HostTreeHostContextMenuContent
           host={row.host}
           onConnect={onConnect}
+          onDuplicateHost={menuActions.onDuplicateHost}
           onCopyCredentials={menuActions.onCopyCredentials}
           onDeleteHost={menuActions.onDeleteHost}
         />

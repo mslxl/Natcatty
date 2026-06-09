@@ -4,6 +4,7 @@ import type { Host } from '../../types';
 
 export interface VaultHostTreeActions {
   onDeleteHost: (host: Host) => void;
+  onDuplicateHost: (host: Host) => void;
   onCopyCredentials: (host: Host) => void;
   onNewGroup: (parentPath?: string) => void;
   onRenameGroup: (groupPath: string) => void;

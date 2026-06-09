@@ -1,4 +1,4 @@
-import { FileSymlink, Folder, FolderOpen, Monitor, Server } from 'lucide-react';
+import { Copy, FileSymlink, Folder, FolderOpen, Monitor, Server } from 'lucide-react';
 import React from 'react';
 
 import { useI18n } from '../../application/i18n/I18nProvider';
@@ -8,6 +8,7 @@ import { ContextMenuContent, ContextMenuItem } from '../ui/context-menu';
 
 export interface HostTreeHostContextMenuHandlers {
   onConnect: (host: Host) => void;
+  onDuplicateHost: (host: Host) => void;
   onCopyCredentials: (host: Host) => void;
   onDeleteHost: (host: Host) => void;
 }
@@ -17,6 +18,7 @@ export const HostTreeHostContextMenuContent: React.FC<
 > = ({
   host,
   onConnect,
+  onDuplicateHost,
   onCopyCredentials,
   onDeleteHost,
 }) => {
@@ -27,6 +29,9 @@ export const HostTreeHostContextMenuContent: React.FC<
     <ContextMenuContent>
       <ContextMenuItem onClick={() => onConnect(safeHost)}>
         <Monitor className="mr-2 h-4 w-4" /> {t('vault.hosts.connect')}
+      </ContextMenuItem>
+      <ContextMenuItem onClick={() => onDuplicateHost(host)}>
+        <Copy className="mr-2 h-4 w-4" /> {t('action.duplicate')}
       </ContextMenuItem>
       <ContextMenuItem onClick={() => onCopyCredentials(host)}>
         <Server className="mr-2 h-4 w-4" /> {t('vault.hosts.copyCredentials')}

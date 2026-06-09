@@ -9,6 +9,7 @@ import type { Host } from '../../types';
 
 type RegisterVaultHostTreeActionsParams = {
   handleCopyCredentials: (host: Host) => void;
+  handleDuplicateHost: (host: Host) => void;
   onDeleteHost: (hostId: string) => void;
   handleUnmanageGroup?: (groupPath: string) => void;
   moveHostToGroup: (hostId: string, groupPath: string | null) => void;
@@ -34,6 +35,7 @@ function withVaultFocus<T extends (...args: never[]) => void>(fn: T): T {
 
 export function useRegisterVaultHostTreeActions({
   handleCopyCredentials,
+  handleDuplicateHost,
   onDeleteHost,
   handleUnmanageGroup,
   moveHostToGroup,
@@ -48,6 +50,7 @@ export function useRegisterVaultHostTreeActions({
   useEffect(() => {
     const actions: VaultHostTreeActions = {
       onCopyCredentials: handleCopyCredentials,
+      onDuplicateHost: withVaultFocus(handleDuplicateHost),
       onDeleteHost: (host) => onDeleteHost(host.id),
       onNewGroup: startInlineNewGroup,
       onRenameGroup: startInlineRenameGroup,
@@ -68,6 +71,7 @@ export function useRegisterVaultHostTreeActions({
     cancelInlineGroupEdit,
     commitInlineGroupRename,
     handleCopyCredentials,
+    handleDuplicateHost,
     handleUnmanageGroup,
     managedGroupPaths,
     moveGroup,

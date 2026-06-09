@@ -482,6 +482,9 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   }, []);
 
   const handleDuplicateHost = useCallback((host: Host) => {
+    setCurrentSection("hosts");
+    setIsGroupPanelOpen(false);
+    setEditingGroupPath(null);
     // Create a copy of the host with a new ID and modified label
     const duplicatedHost: Host = {
       ...host,
@@ -964,6 +967,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
 
   useRegisterVaultHostTreeActions({
     handleCopyCredentials,
+    handleDuplicateHost,
     onDeleteHost,
     handleUnmanageGroup,
     moveHostToGroup,
