@@ -146,9 +146,9 @@
   max-width: 4.5rem;
   opacity: 1;
   transition:
-    max-width 280ms cubic-bezier(0.4, 0, 0.2, 1),
+    max-width 220ms cubic-bezier(0.4, 0, 0.2, 1),
     opacity 220ms ease,
-    margin 280ms cubic-bezier(0.4, 0, 0.2, 1);
+    margin 220ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .top-tab-root-label-compact {
@@ -162,7 +162,7 @@
   flex-shrink: 0;
   overflow: hidden;
   transition:
-    width 280ms cubic-bezier(0.4, 0, 0.2, 1),
+    width 220ms cubic-bezier(0.4, 0, 0.2, 1),
     opacity 220ms ease;
   width: 0;
   opacity: 0;
@@ -174,37 +174,11 @@
 }
 
 .top-tab-host-tree-gutter {
-  transition: width 280ms cubic-bezier(0.4, 0, 0.2, 1);
   pointer-events: none;
 }
 
-.top-tab-host-tree-gutter[data-instant='true'] {
-  transition: none;
-}
-
-.top-tab-host-tree-toggle-pop {
-  animation: pop-in 320ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
-}
-
-@keyframes pop-in {
-  0% {
-    opacity: 0;
-    transform: scale(0.82) translateY(6px);
-  }
-  45% {
-    opacity: 1;
-    transform: scale(1.06) translateY(-2px);
-  }
-  72% {
-    transform: scale(0.97) translateY(1px);
-  }
-  88% {
-    transform: scale(1.01);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
+.top-tab-host-tree-gutter-exit {
+  transition: width 220ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 @keyframes ripple {
@@ -257,11 +231,33 @@ body {
   color: hsl(var(--foreground));
 }
 
-[data-instant-theme-switch="true"],
-[data-instant-theme-switch="true"] *,
-[data-instant-theme-switch="true"] *::before,
-[data-instant-theme-switch="true"] *::after {
-  transition: none !important;
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 220ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html[data-theme-transition],
+html[data-theme-transition] *,
+html[data-theme-transition] *::before,
+html[data-theme-transition] *::after {
+  transition-property: background-color, color, border-color, outline-color, fill, stroke, text-decoration-color;
+  transition-duration: 220ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 0.01ms;
+  }
+
+  html[data-theme-transition],
+  html[data-theme-transition] *,
+  html[data-theme-transition] *::before,
+  html[data-theme-transition] *::after {
+    transition-duration: 0.01ms;
+  }
 }
 
 .dark {
@@ -271,25 +267,6 @@ body {
 .dark body {
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
-}
-
-/* Immersive mode: fade-out overlay for smooth theme restoration */
-.immersive-fade-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  pointer-events: none;
-  opacity: 1;
-  transition: opacity 200ms ease-out;
-}
-.immersive-fade-overlay.fade-out {
-  opacity: 0;
-}
-
-/* Immersive mode: override agent icon badge colors to follow the theme */
-:root[data-immersive-theme] [data-agent-badge] {
-  border-color: hsl(var(--primary) / 0.2) !important;
-  background-color: hsl(var(--primary) / 0.1) !important;
 }
 
 .netcatty-shell {

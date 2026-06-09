@@ -42,9 +42,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
   s.activeSessionRef.current = activeSession;
   s.focusedSessionIdRef.current = focusedSessionId;
 
-  const isVaultActive = activeTabId === 'vault';
-  const isSftpActive = activeTabId === 'sftp';
-  const isVisible = (!isVaultActive && !isSftpActive) || !!s.draggingSessionId;
+  const isVisible = Boolean(activeSession || activeWorkspace || s.draggingSessionId);
   const isTerminalLayerVisible = isVisible || !!s.draggingSessionId;
 
   const {

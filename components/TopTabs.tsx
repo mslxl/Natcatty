@@ -1,8 +1,8 @@
 import { Folder, FolderLock, Menu, Moon, MoreHorizontal, Plus, Settings, Sparkles, Sun } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { fromEditorTabId, isEditorTabId, useActiveTabId } from '../application/state/activeTabStore';
+import { isHostTreeWorkTabSurface } from '../application/app/workTabSurface';
 import type { EditorTab } from '../application/state/editorTabStore';
-import { useImmersiveActive } from '../application/state/immersiveStore';
 import { buildWorkspaceActivityMap } from '../application/state/sessionActivity';
 import { useSessionActivityMap } from '../application/state/sessionActivityStore';
 import {
@@ -30,6 +30,11 @@ import {
   WindowControls,
   WorkspaceTopTab,
 } from './top-tabs/TopTabItems';
+import { TERMINAL_HOST_TREE_ANIMATION_MS } from '../application/state/terminalHostTreeAnimation';
+import {
+  scheduleAfterInstantThemeSwitch,
+  scheduleChromeLayoutAnimation,
+} from '../application/state/useActiveChromeTheme';
 import { useTopTabLifecycleAnimations } from './top-tabs/useTopTabLifecycleAnimations';
 
 // Helper styles for Electron drag regions (use type assertion to include non-standard WebkitAppRegion)
@@ -45,24 +50,40 @@ export function computeHostTreeTabGutter(hostTreeLayoutWidth: number, toggleRigh
 export function shouldShowHostTreeToggle({
   enabled,
   activeTabId,
+  logViewIds,
   orderedTabs,
   sessionIds,
   workspaceIds,
 }: {
   enabled: boolean;
   activeTabId: string;
+  logViewIds?: ReadonlySet<string>;
   orderedTabs: readonly string[];
   sessionIds: ReadonlySet<string>;
   workspaceIds: ReadonlySet<string>;
 }): boolean {
-  if (!enabled) return false;
-  if (activeTabId === 'vault' || activeTabId === 'sftp') return false;
-  return orderedTabs.includes(activeTabId) || isEditorTabId(activeTabId) || sessionIds.has(activeTabId) || workspaceIds.has(activeTabId);
+  return isHostTreeWorkTabSurface({
+    enabled,
+    activeTabId,
+    logViewIds,
+    orderedTabs,
+    sessionIds,
+    workspaceIds,
+  });
+}
+
+export function shouldKeepHostTreeToggleSurface({
+  enabled,
+  activeWorkTabCount,
+}: {
+  enabled: boolean;
+  activeWorkTabCount: number;
+}): boolean {
+  return enabled && activeWorkTabCount > 0;
 }
 
 interface TopTabsProps {
   theme: 'dark' | 'light';
-  followAppTerminalTheme?: boolean;
   hosts: Host[];
   sessions: TerminalSession[];
   orphanSessions: TerminalSession[];
@@ -85,7 +106,6 @@ interface TopTabsProps {
   windowOpacity: number;
   setWindowOpacity: (opacity: number) => void;
   onSyncNow?: () => Promise<void>;
-  isImmersiveActive?: boolean;
   onStartSessionDrag: (sessionId: string) => void;
   onEndSessionDrag: () => void;
   onReorderTabs: (draggedId: string, targetId: string, position: 'before' | 'after') => void;
@@ -98,7 +118,6 @@ interface TopTabsProps {
 
 const TopTabsInner: React.FC<TopTabsProps> = ({
   theme,
-  followAppTerminalTheme = false,
   hosts,
   sessions,
   orphanSessions,
@@ -121,7 +140,6 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   windowOpacity,
   setWindowOpacity,
   onSyncNow,
-  isImmersiveActive,
   onStartSessionDrag,
   onEndSessionDrag,
   onReorderTabs,
@@ -133,19 +151,23 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
 }) => {
   const { t } = useI18n();
   const { maximize, isFullscreen, onFullscreenChanged } = useWindowControls();
-  const immersiveActiveFromStore = useImmersiveActive();
-  const effectiveImmersiveActive = isImmersiveActive ?? immersiveActiveFromStore;
   const sessionActivityMap = useSessionActivityMap();
   const isHostTreeOpen = useTerminalHostTreeOpen();
   const hostTreeLayoutWidth = useTerminalHostTreeLayoutWidth();
   const toggleHostTree = useToggleTerminalHostTree();
   const activeTabId = useActiveTabId();
   const { getTabAnimationClass } = useTopTabLifecycleAnimations(orderedTabs);
-  const [hostTreeTogglePop, setHostTreeTogglePop] = useState(false);
   const fixedLeftTabsRef = useRef<HTMLDivElement>(null);
   const hostTreeToggleSlotRef = useRef<HTMLDivElement>(null);
   const suppressHostTreeToggleClickRef = useRef(false);
+  const hostTreeGutterCloseRafRef = useRef<number | null>(null);
+  const cancelHostTreeChromeReadyRef = useRef<(() => void) | null>(null);
+  const cancelRootTabsCompactRef = useRef<(() => void) | null>(null);
+  const cancelChromeExitRef = useRef<(() => void) | null>(null);
   const [hostTreeTabGutter, setHostTreeTabGutter] = useState(0);
+  const [hostTreeChromeReady, setHostTreeChromeReady] = useState(false);
+  const [hostTreeGutterExiting, setHostTreeGutterExiting] = useState(false);
+  const [rootTabsCompact, setRootTabsCompact] = useState(false);
 
   // Tab reorder drag state
   const [dropIndicator, setDropIndicator] = useState<{ tabId: string; position: 'before' | 'after' } | null>(null);
@@ -254,16 +276,94 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   const showHostTreeToggle = shouldShowHostTreeToggle({
     enabled: showHostTreeSidebar,
     activeTabId,
+    logViewIds: new Set(logViewMap.keys()),
     orderedTabs,
     sessionIds: new Set(orphanSessionMap.keys()),
     workspaceIds: new Set(workspaceMap.keys()),
   });
-  const hasHostTreeToggleSurface = showHostTreeSidebar && activeWorkTabCount > 0;
+  const hasHostTreeToggleSurface = shouldKeepHostTreeToggleSurface({
+    enabled: showHostTreeSidebar,
+    activeWorkTabCount,
+  });
+  const effectiveShowHostTreeToggle = hostTreeChromeReady;
 
-  const updateHostTreeTabGutter = useCallback(() => {
-    if (!showHostTreeToggle || hostTreeLayoutWidth <= 0) {
+  useEffect(() => {
+    cancelHostTreeChromeReadyRef.current?.();
+    cancelHostTreeChromeReadyRef.current = null;
+    cancelRootTabsCompactRef.current?.();
+    cancelRootTabsCompactRef.current = null;
+    cancelChromeExitRef.current?.();
+    cancelChromeExitRef.current = null;
+
+    if (!showHostTreeToggle) {
+      if (hostTreeChromeReady) {
+        setRootTabsCompact(false);
+        setHostTreeGutterExiting(true);
+        const gutterRaf = window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => setHostTreeTabGutter(0));
+        });
+        const timer = window.setTimeout(() => {
+          cancelChromeExitRef.current = null;
+          setHostTreeChromeReady(false);
+          setHostTreeGutterExiting(false);
+        }, TERMINAL_HOST_TREE_ANIMATION_MS);
+        cancelChromeExitRef.current = () => {
+          window.cancelAnimationFrame(gutterRaf);
+          window.clearTimeout(timer);
+        };
+      } else {
+        setHostTreeChromeReady(false);
+        setHostTreeGutterExiting(false);
+        setRootTabsCompact(false);
+      }
+      return () => {
+        cancelChromeExitRef.current?.();
+        cancelChromeExitRef.current = null;
+      };
+    }
+
+    if (!hostTreeChromeReady) {
+      cancelHostTreeChromeReadyRef.current = scheduleAfterInstantThemeSwitch(() => {
+        cancelHostTreeChromeReadyRef.current = null;
+        setHostTreeChromeReady(true);
+      });
+    }
+
+    if (!rootTabsCompact) {
+      cancelRootTabsCompactRef.current = scheduleChromeLayoutAnimation(() => {
+        cancelRootTabsCompactRef.current = null;
+        setRootTabsCompact(true);
+      });
+    }
+
+    return () => {
+      cancelHostTreeChromeReadyRef.current?.();
+      cancelHostTreeChromeReadyRef.current = null;
+      cancelRootTabsCompactRef.current?.();
+      cancelRootTabsCompactRef.current = null;
+    };
+  }, [hostTreeChromeReady, rootTabsCompact, showHostTreeToggle]);
+
+  const updateHostTreeTabGutter = useCallback((options?: { deferClose?: boolean }) => {
+    if (hostTreeGutterExiting) return;
+
+    if (!effectiveShowHostTreeToggle || hostTreeLayoutWidth <= 0) {
+      if (!effectiveShowHostTreeToggle && options?.deferClose) {
+        if (hostTreeGutterCloseRafRef.current !== null) {
+          window.cancelAnimationFrame(hostTreeGutterCloseRafRef.current);
+        }
+        hostTreeGutterCloseRafRef.current = window.requestAnimationFrame(() => {
+          hostTreeGutterCloseRafRef.current = null;
+          setHostTreeTabGutter(0);
+        });
+        return;
+      }
       setHostTreeTabGutter(0);
       return;
+    }
+    if (hostTreeGutterCloseRafRef.current !== null) {
+      window.cancelAnimationFrame(hostTreeGutterCloseRafRef.current);
+      hostTreeGutterCloseRafRef.current = null;
     }
     const root = tabsContainerRef.current?.closest('[data-top-tabs-root]') as HTMLElement | null;
     const toggleSlot = hostTreeToggleSlotRef.current;
@@ -274,40 +374,44 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
     const rootLeft = root.getBoundingClientRect().left;
     const toggleRight = toggleSlot.getBoundingClientRect().right - rootLeft;
     setHostTreeTabGutter(computeHostTreeTabGutter(hostTreeLayoutWidth, toggleRight));
-  }, [hostTreeLayoutWidth, showHostTreeToggle]);
+  }, [effectiveShowHostTreeToggle, hostTreeGutterExiting, hostTreeLayoutWidth]);
+
+  const updateHostTreeTabGutterRef = useRef(updateHostTreeTabGutter);
+  updateHostTreeTabGutterRef.current = updateHostTreeTabGutter;
 
   useLayoutEffect(() => {
-    updateHostTreeTabGutter();
-    const rafId = window.requestAnimationFrame(updateHostTreeTabGutter);
-    const settleTimer = window.setTimeout(updateHostTreeTabGutter, 320);
+    updateHostTreeTabGutter({ deferClose: true });
+  }, [hostTreeLayoutWidth, updateHostTreeTabGutter]);
+
+  useLayoutEffect(() => {
+    const syncGutter = () => updateHostTreeTabGutterRef.current();
+    syncGutter({ deferClose: true });
+    const rafId = window.requestAnimationFrame(() => syncGutter());
+    const settleTimer = window.setTimeout(syncGutter, 320);
     const root = tabsContainerRef.current?.closest('[data-top-tabs-root]') as HTMLElement | null;
-    const ro = new ResizeObserver(() => updateHostTreeTabGutter());
+    const ro = new ResizeObserver(() => syncGutter());
     if (root) ro.observe(root);
     if (fixedLeftTabsRef.current) ro.observe(fixedLeftTabsRef.current);
     if (tabsContainerRef.current) ro.observe(tabsContainerRef.current);
     if (hostTreeToggleSlotRef.current) ro.observe(hostTreeToggleSlotRef.current);
-    window.addEventListener('resize', updateHostTreeTabGutter);
+    window.addEventListener('resize', syncGutter);
     return () => {
       window.cancelAnimationFrame(rafId);
+      if (hostTreeGutterCloseRafRef.current !== null) {
+        window.cancelAnimationFrame(hostTreeGutterCloseRafRef.current);
+        hostTreeGutterCloseRafRef.current = null;
+      }
       window.clearTimeout(settleTimer);
       ro.disconnect();
-      window.removeEventListener('resize', updateHostTreeTabGutter);
+      window.removeEventListener('resize', syncGutter);
     };
   }, [
-    updateHostTreeTabGutter,
     orderedTabs.length,
     showSftpTab,
     isWindowFullscreen,
-    showHostTreeToggle,
+    effectiveShowHostTreeToggle,
     isHostTreeOpen,
   ]);
-
-  useEffect(() => {
-    if (!showHostTreeToggle) return;
-    setHostTreeTogglePop(true);
-    const timer = window.setTimeout(() => setHostTreeTogglePop(false), 360);
-    return () => window.clearTimeout(timer);
-  }, [showHostTreeToggle]);
 
   const handleTabDragStart = useCallback((e: React.DragEvent, tabId: string) => {
     e.dataTransfer.effectAllowed = 'move';
@@ -377,12 +481,12 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   }, []);
 
   const handleHostTreeTogglePointerDown = useCallback((e: React.PointerEvent) => {
-    if (!showHostTreeToggle) return;
+    if (!effectiveShowHostTreeToggle) return;
     e.preventDefault();
     e.stopPropagation();
     suppressHostTreeToggleClickRef.current = true;
     toggleHostTree();
-  }, [showHostTreeToggle, toggleHostTree]);
+  }, [effectiveShowHostTreeToggle, toggleHostTree]);
 
   const handleHostTreeToggleClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -390,9 +494,9 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
       suppressHostTreeToggleClickRef.current = false;
       return;
     }
-    if (!showHostTreeToggle) return;
+    if (!effectiveShowHostTreeToggle) return;
     toggleHostTree();
-  }, [showHostTreeToggle, toggleHostTree]);
+  }, [effectiveShowHostTreeToggle, toggleHostTree]);
 
   // Pre-compute tab shift styles for all tabs to avoid recalculation during render
   const tabShiftStyles = useMemo(() => {
@@ -506,6 +610,11 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
           ? ` · ${editorTab.remotePath.split('/').slice(-2, -1)[0] || '/'}`
           : '';
 
+        const isBeingDragged = draggingSessionId === tabId;
+        const shiftStyle = tabShiftStyles[tabId] || emptyTabStyle;
+        const showDropIndicatorBefore = dropIndicator?.tabId === tabId && dropIndicator.position === 'before';
+        const showDropIndicatorAfter = dropIndicator?.tabId === tabId && dropIndicator.position === 'after';
+
         return (
           <EditorTopTab
             key={tabId}
@@ -514,6 +623,16 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             host={host}
             suffix={suffix}
             onRequestCloseEditorTab={onRequestCloseEditorTab}
+            isBeingDragged={isBeingDragged}
+            isDraggingForReorder={isDraggingForReorder}
+            shiftStyle={shiftStyle}
+            showDropIndicatorBefore={showDropIndicatorBefore}
+            showDropIndicatorAfter={showDropIndicatorAfter}
+            onTabDragStart={handleTabDragStart}
+            onTabDragEnd={handleTabDragEnd}
+            onTabDragOver={handleTabDragOver}
+            onTabDragLeave={handleTabDragLeave}
+            onTabDrop={handleTabDrop}
             tabAnimationClass={getTabAnimationClass(tabId)}
           />
         );
@@ -590,12 +709,26 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
 
       if (item.type === 'logView') {
         const logView = item.logView;
+        const isBeingDragged = draggingSessionId === logView.id;
+        const shiftStyle = tabShiftStyles[logView.id] || emptyTabStyle;
+        const showDropIndicatorBefore = dropIndicator?.tabId === logView.id && dropIndicator.position === 'before';
+        const showDropIndicatorAfter = dropIndicator?.tabId === logView.id && dropIndicator.position === 'after';
 
         return (
           <LogViewTopTab
             key={logView.id}
             logView={logView}
             onCloseLogView={onCloseLogView}
+            isBeingDragged={isBeingDragged}
+            isDraggingForReorder={isDraggingForReorder}
+            shiftStyle={shiftStyle}
+            showDropIndicatorBefore={showDropIndicatorBefore}
+            showDropIndicatorAfter={showDropIndicatorAfter}
+            onTabDragStart={handleTabDragStart}
+            onTabDragEnd={handleTabDragEnd}
+            onTabDragOver={handleTabDragOver}
+            onTabDragLeave={handleTabDragLeave}
+            onTabDrop={handleTabDrop}
             t={t}
             tabAnimationClass={getTabAnimationClass(logView.id)}
           />
@@ -644,7 +777,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             label="Vaults"
             icon={<FolderLock size={14} />}
             className="rounded"
-            compact={showHostTreeToggle}
+            compact={rootTabsCompact}
           />
           {showSftpTab && (
             <RootTopTab
@@ -652,7 +785,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
               label="SFTP"
               icon={<Folder size={14} />}
               className="rounded-t-md"
-              compact={showHostTreeToggle}
+              compact={rootTabsCompact}
             />
           )}
         </div>
@@ -674,7 +807,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             <div
               ref={hostTreeToggleSlotRef}
               className="top-tab-host-tree-toggle-slot mb-0 flex-shrink-0 self-end app-no-drag"
-              data-visible={showHostTreeToggle ? 'true' : 'false'}
+              data-visible={effectiveShowHostTreeToggle ? 'true' : 'false'}
               style={noDragRegionStyle}
             >
               <Tooltip>
@@ -686,13 +819,12 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
                     data-state={isHostTreeOpen ? 'active' : 'inactive'}
                     className={cn(
                       'h-7 w-7 flex-shrink-0 app-no-drag rounded-none hover:bg-transparent',
-                      hostTreeTogglePop && showHostTreeToggle && 'top-tab-host-tree-toggle-pop',
                     )}
                     style={{
                       color: isHostTreeOpen
                         ? 'var(--top-tabs-fg, hsl(var(--foreground)))'
                         : 'var(--top-tabs-muted, hsl(var(--muted-foreground)))',
-                      pointerEvents: showHostTreeToggle ? 'auto' : 'none',
+                      pointerEvents: effectiveShowHostTreeToggle ? 'auto' : 'none',
                       ...noDragRegionStyle,
                     }}
                     onPointerDown={handleHostTreeTogglePointerDown}
@@ -707,10 +839,12 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
               </Tooltip>
             </div>
           )}
-          {showHostTreeToggle && (
+          {hasHostTreeToggleSurface && (
             <div
-              className="top-tab-host-tree-gutter flex-shrink-0"
-              data-instant={isHostTreeOpen && hostTreeTogglePop ? 'true' : 'false'}
+              className={cn(
+                'top-tab-host-tree-gutter flex-shrink-0',
+                hostTreeGutterExiting && 'top-tab-host-tree-gutter-exit',
+              )}
               style={{ width: hostTreeTabGutter }}
               aria-hidden
             />
@@ -822,7 +956,6 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
                 className="h-7 w-7 shrink-0 app-no-drag"
                 style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
                 onClick={onToggleTheme}
-                disabled={effectiveImmersiveActive && !followAppTerminalTheme}
               >
                 {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
               </Button>
@@ -871,8 +1004,6 @@ const topTabsAreEqual = (prev: TopTabsProps, next: TopTabsProps): boolean => {
     prev.setWindowOpacity === next.setWindowOpacity &&
     prev.onSyncNow === next.onSyncNow &&
     prev.onToggleTheme === next.onToggleTheme &&
-    prev.followAppTerminalTheme === next.followAppTerminalTheme &&
-    prev.isImmersiveActive === next.isImmersiveActive &&
     prev.showSftpTab === next.showSftpTab &&
     prev.showHostTreeSidebar === next.showHostTreeSidebar
   );

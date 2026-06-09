@@ -8,9 +8,17 @@ import {
 } from '../../application/state/hostTreeInlineGroupEditStore';
 import { useVaultHostTreeActions } from '../../application/state/vaultHostTreeActionsStore';
 import {
+  TERMINAL_HOST_TREE_DEFAULT_WIDTH,
+  TERMINAL_HOST_TREE_MAX_WIDTH,
+  TERMINAL_HOST_TREE_MIN_WIDTH,
   terminalHostTreeStore,
   useTerminalHostTreeOpen,
 } from '../../application/state/terminalHostTreeStore';
+import {
+  TERMINAL_HOST_TREE_ANIMATION_EASING,
+  TERMINAL_HOST_TREE_ANIMATION_MS,
+} from '../../application/state/terminalHostTreeAnimation';
+import { scheduleChromeLayoutAnimation } from '../../application/state/useActiveChromeTheme';
 import { terminalLayoutSuppressStore } from '../../application/state/terminalLayoutSuppressStore';
 import { useStoredNumber } from '../../application/state/useStoredNumber';
 import { useTreeExpandedState } from '../../application/state/useTreeExpandedState';
@@ -39,11 +47,9 @@ import {
   type HostTreeToolbarPanel,
 } from './TerminalHostTreeToolbar';
 
-const SIDEBAR_MIN_WIDTH = 160;
-const SIDEBAR_DEFAULT_WIDTH = 220;
-const SIDEBAR_MAX_WIDTH = 360;
-const SIDEBAR_ANIM_MS = 220;
-const SIDEBAR_ANIM_EASING = 'cubic-bezier(0.4, 0, 0.2, 1)';
+const SIDEBAR_MIN_WIDTH = TERMINAL_HOST_TREE_MIN_WIDTH;
+const SIDEBAR_DEFAULT_WIDTH = TERMINAL_HOST_TREE_DEFAULT_WIDTH;
+const SIDEBAR_MAX_WIDTH = TERMINAL_HOST_TREE_MAX_WIDTH;
 
 const HOST_TREE_DRAG_HOST_ID = 'host-id';
 const HOST_TREE_DRAG_GROUP_PATH = 'group-path';
@@ -54,6 +60,7 @@ type HostTreeDropTarget =
 
 interface TerminalHostTreeSidebarProps {
   enabled?: boolean;
+  surfaceVisible?: boolean;
   hosts: Host[];
   customGroups: string[];
   resolvedPreviewTheme: TerminalTheme;
@@ -73,17 +80,21 @@ type HostTreeTheme = {
   folderFg: string;
 };
 
-export function isTerminalHostTreeSidebarVisible(isOpen: boolean, enabled = true): boolean {
-  return enabled && isOpen;
+export function isTerminalHostTreeSidebarVisible(
+  isOpen: boolean,
+  enabled = true,
+  surfaceVisible = true,
+): boolean {
+  return surfaceVisible && enabled && isOpen;
 }
 
 export function getTerminalHostTreeSidebarShellStyle(
   isVisible: boolean,
-  displayWidth: number,
+  layoutWidth: number,
   shellTransition: string,
 ): React.CSSProperties {
   return {
-    width: isVisible ? displayWidth : 0,
+    width: layoutWidth,
     transition: shellTransition,
     pointerEvents: isVisible ? 'auto' : 'none',
   };
@@ -102,12 +113,30 @@ export function getTerminalHostTreeSidebarPanelStyle({
 }): React.CSSProperties {
   return {
     width: displayWidth,
-    opacity: isVisible ? 1 : 0,
+    opacity: 1,
     transition: panelTransition,
     backgroundColor: theme.termBg,
     color: theme.termFg,
     borderRight: isVisible ? `1px solid ${theme.separator}` : '1px solid transparent',
   };
+}
+
+export function getTerminalHostTreeLayoutTargetWidth(isVisible: boolean, displayWidth: number): number {
+  return isVisible ? displayWidth : 0;
+}
+
+export function getTerminalHostTreeInitialLayoutWidth(): number {
+  return 0;
+}
+
+export function getTerminalHostTreeMeasuredLayoutWidth(
+  element: Pick<HTMLElement, 'getBoundingClientRect'> | null,
+  fallbackWidth: number,
+): number {
+  const measuredWidth = element?.getBoundingClientRect().width;
+  return typeof measuredWidth === 'number' && Number.isFinite(measuredWidth)
+    ? Math.max(0, measuredWidth)
+    : Math.max(0, fallbackWidth);
 }
 
 function hostMatchesSearch(host: Host, search: string): boolean {
@@ -405,6 +434,7 @@ HostTreeFlatRowItem.displayName = 'HostTreeFlatRowItem';
 
 const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
   enabled = true,
+  surfaceVisible = true,
   hosts,
   customGroups,
   resolvedPreviewTheme,
@@ -414,7 +444,7 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
 }) => {
   const { t } = useI18n();
   const isOpen = useTerminalHostTreeOpen();
-  const isVisible = isTerminalHostTreeSidebarVisible(isOpen, enabled);
+  const isVisible = isTerminalHostTreeSidebarVisible(isOpen, enabled, surfaceVisible);
   const [search, setSearch] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [expandedPanel, setExpandedPanel] = useState<HostTreeToolbarPanel>(null);
@@ -651,12 +681,12 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
     togglePath,
   ]);
 
-  const shellTransition = isResizing
+  const shellTransition = isResizing || !surfaceVisible
     ? 'none'
-    : `width ${SIDEBAR_ANIM_MS}ms ${SIDEBAR_ANIM_EASING}`;
+    : `width ${TERMINAL_HOST_TREE_ANIMATION_MS}ms ${TERMINAL_HOST_TREE_ANIMATION_EASING}`;
   const panelTransition = isResizing
     ? 'none'
-    : `opacity ${SIDEBAR_ANIM_MS - 40}ms ease-out, border-color ${SIDEBAR_ANIM_MS}ms ease-out`;
+    : `border-color ${TERMINAL_HOST_TREE_ANIMATION_MS}ms ease-out`;
 
   const handleResizeStart = useCallback((event: React.MouseEvent) => {
     if (!isVisible) return;
@@ -696,7 +726,31 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
     window.addEventListener('mouseup', onMouseUp);
   }, [isVisible, persistSidebarWidth, setSidebarWidth, sidebarWidth]);
 
+  const displayWidth = resizePreviewWidth ?? sidebarWidth;
+  const targetLayoutWidth = getTerminalHostTreeLayoutTargetWidth(isVisible, displayWidth);
+  const [shellWidth, setShellWidth] = useState(getTerminalHostTreeInitialLayoutWidth);
+  const cancelSyncLayoutWidthRef = useRef<(() => void) | null>(null);
   const prevIsVisibleRef = useRef(isVisible);
+
+  const syncLayoutWidthFromShell = useCallback((fallbackWidth = targetLayoutWidth) => {
+    terminalHostTreeStore.setLayoutWidth(
+      getTerminalHostTreeMeasuredLayoutWidth(shellRef.current, fallbackWidth),
+    );
+  }, [targetLayoutWidth]);
+
+  useEffect(() => {
+    const el = shellRef.current;
+    if (!el) return;
+
+    const ro = new ResizeObserver(() => {
+      if (isResizing) return;
+      syncLayoutWidthFromShell();
+    });
+    ro.observe(el);
+    syncLayoutWidthFromShell();
+
+    return () => ro.disconnect();
+  }, [isResizing, syncLayoutWidthFromShell]);
 
   useEffect(() => {
     if (prevIsVisibleRef.current === isVisible) return;
@@ -710,33 +764,70 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
     const finish = () => {
       if (ended) return;
       ended = true;
-      if (!isVisible) terminalHostTreeStore.setLayoutWidth(0);
       terminalLayoutSuppressStore.end();
     };
     const onTransitionEnd = (event: TransitionEvent) => {
       if (event.target !== el || event.propertyName !== 'width') return;
+      syncLayoutWidthFromShell();
       finish();
     };
     el.addEventListener('transitionend', onTransitionEnd);
-    const timer = window.setTimeout(finish, SIDEBAR_ANIM_MS + 80);
+    const timer = window.setTimeout(() => {
+      syncLayoutWidthFromShell();
+      finish();
+    }, TERMINAL_HOST_TREE_ANIMATION_MS + 80);
     return () => {
       el.removeEventListener('transitionend', onTransitionEnd);
       window.clearTimeout(timer);
       finish();
     };
-  }, [isVisible]);
-
-  const displayWidth = resizePreviewWidth ?? sidebarWidth;
+  }, [isVisible, syncLayoutWidthFromShell]);
 
   useEffect(() => {
-    if (isVisible) terminalHostTreeStore.setLayoutWidth(displayWidth);
-  }, [displayWidth, isVisible]);
+    const el = shellRef.current;
+    if (!el) return;
+
+    const onTransitionEnd = (event: TransitionEvent) => {
+      if (event.target !== el || event.propertyName !== 'width' || isResizing) return;
+      syncLayoutWidthFromShell();
+    };
+    el.addEventListener('transitionend', onTransitionEnd);
+    return () => el.removeEventListener('transitionend', onTransitionEnd);
+  }, [isResizing, syncLayoutWidthFromShell]);
+
+  useEffect(() => {
+    cancelSyncLayoutWidthRef.current?.();
+    cancelSyncLayoutWidthRef.current = null;
+
+    if (isResizing) {
+      setShellWidth(targetLayoutWidth);
+      terminalHostTreeStore.setLayoutWidth(targetLayoutWidth);
+      return;
+    }
+
+    if (!surfaceVisible) {
+      setShellWidth(0);
+      terminalHostTreeStore.setLayoutWidth(0);
+      return;
+    }
+
+    syncLayoutWidthFromShell();
+    cancelSyncLayoutWidthRef.current = scheduleChromeLayoutAnimation(() => {
+      cancelSyncLayoutWidthRef.current = null;
+      setShellWidth(targetLayoutWidth);
+    });
+
+    return () => {
+      cancelSyncLayoutWidthRef.current?.();
+      cancelSyncLayoutWidthRef.current = null;
+    };
+  }, [isResizing, surfaceVisible, syncLayoutWidthFromShell, targetLayoutWidth]);
 
   return (
     <div
       ref={shellRef}
       className="relative flex-shrink-0 h-full overflow-hidden"
-      style={getTerminalHostTreeSidebarShellStyle(isVisible, displayWidth, shellTransition)}
+      style={getTerminalHostTreeSidebarShellStyle(isVisible, shellWidth, shellTransition)}
       data-section="terminal-host-tree-sidebar-shell"
       data-open={isVisible ? 'true' : 'false'}
       data-enabled={enabled ? 'true' : 'false'}
@@ -812,6 +903,7 @@ export const TerminalHostTreeSidebar = memo(
   (prev, next) => (
     prev.hosts === next.hosts
     && prev.enabled === next.enabled
+    && prev.surfaceVisible === next.surfaceVisible
     && prev.customGroups === next.customGroups
     && prev.resolvedPreviewTheme === next.resolvedPreviewTheme
     && prev.activeHostId === next.activeHostId

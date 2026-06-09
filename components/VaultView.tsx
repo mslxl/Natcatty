@@ -57,7 +57,6 @@ import {
   STORAGE_KEY_VAULT_SIDEBAR_WIDTH,
 } from "../infrastructure/config/storageKeys";
 import { cn } from "../lib/utils";
-import { useInstantThemeSwitch } from "../lib/useInstantThemeSwitch";
 import {
   ConnectionLog,
   GroupConfig,
@@ -261,8 +260,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   const [isDeleteGroupOpen, setIsDeleteGroupOpen] = useState(false);
   const [deleteTargetPath, setDeleteTargetPath] = useState<string | null>(null);
   const [deleteGroupWithHosts, setDeleteGroupWithHosts] = useState(false);
-
-  useInstantThemeSwitch(rootRef);
 
   // Sidebar collapsed state with localStorage persistence
   const [storedSidebarCollapsed, setStoredSidebarCollapsed] = useStoredBoolean(

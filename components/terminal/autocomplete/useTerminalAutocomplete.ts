@@ -26,7 +26,8 @@ import { computeLivePreviewWrite } from "./livePreviewSequence";
 import {
   areSubDirPanelsEqual,
   areSuggestionsEqual,
-  calculatePopupPosition,
+  resolveAutocompleteAnchorInViewport,
+  resolveAutocompleteCursorColumn,
   resolveAutocompleteCwd,
 } from "./terminalAutocompleteLayout";
 import { handleTerminalAutocompleteInput } from "./terminalAutocompleteInput";
@@ -70,9 +71,7 @@ const EMPTY_STATE: AutocompleteState = Object.freeze({
   suggestions: [],
   selectedIndex: -1,
   popupVisible: false,
-  popupPosition: { x: 0, y: 0 },
-  popupCursorLineTop: 0,
-  popupCursorLineBottom: 0,
+  popupAnchorViewport: { left: 0, top: 0, bottom: 0 },
   expandUpward: false,
   subDirPanels: [],
   subDirFocusLevel: -1,
@@ -96,9 +95,7 @@ export interface AutocompleteState {
   suggestions: CompletionSuggestion[];
   selectedIndex: number;
   popupVisible: boolean;
-  popupPosition: { x: number; y: number };
-  popupCursorLineTop: number;
-  popupCursorLineBottom: number;
+  popupAnchorViewport: { left: number; top: number; bottom: number };
   expandUpward: boolean;
   /** Stack of sub-directory panels (cascading: panel 0 → panel 1 → ...) */
   subDirPanels: SubDirPanel[];
@@ -108,6 +105,7 @@ export interface AutocompleteState {
 
 interface UseTerminalAutocompleteOptions {
   termRef: RefObject<XTerm | null>;
+  containerRef: RefObject<HTMLElement | null>;
   sessionId: string;
   hostId: string;
   hostOs: "linux" | "windows" | "macos";
@@ -142,7 +140,7 @@ export { getCommandToRecordOnEnter } from "./terminalAutocompletePrompt";
 export function useTerminalAutocomplete(
   options: UseTerminalAutocompleteOptions,
 ): TerminalAutocompleteHandle {
-  const { termRef, sessionId, hostId, hostOs, settings: userSettings, onAcceptText, protocol, getCwd, snippets, onAcceptSnippet } = options;
+  const { termRef, containerRef, sessionId, hostId, hostOs, settings: userSettings, onAcceptText, protocol, getCwd, snippets, onAcceptSnippet } = options;
   const rawSettings: AutocompleteSettings = {
     ...DEFAULT_AUTOCOMPLETE_SETTINGS,
     ...userSettings,
@@ -471,19 +469,30 @@ export function useTerminalAutocomplete(
 
     setState((prev) => {
       if (!prev.popupVisible || prev.suggestions.length === 0) return prev;
-      const { position, cursorLineTop, cursorLineBottom, expandUpward } = calculatePopupPosition(term, prev.suggestions.length);
+      const { prompt } = getAlignedPrompt(term, typedInputBufferRef.current, typedBufferReliableRef.current);
+      const cursorColumn = prompt.isAtPrompt
+        ? resolveAutocompleteCursorColumn(term, prompt)
+        : term.buffer.active.cursorX;
+      const anchor = resolveAutocompleteAnchorInViewport(
+        term,
+        containerRef.current,
+        prev.suggestions.length,
+        cursorColumn,
+      );
 
       // Force a re-render even when the relative cursor cell hasn't changed.
       // The terminal container may have moved in the viewport after a fit/resize.
       return {
         ...prev,
-        popupPosition: position,
-        popupCursorLineTop: cursorLineTop,
-        popupCursorLineBottom: cursorLineBottom,
-        expandUpward,
+        popupAnchorViewport: {
+          left: anchor.anchorLeft,
+          top: anchor.anchorTop,
+          bottom: anchor.anchorBottom,
+        },
+        expandUpward: anchor.expandUpward,
       };
     });
-  }, [termRef]);
+  }, [containerRef, termRef]);
 
   /**
    * Render the full path for a sub-dir entry into the line WITHOUT finalizing
@@ -664,7 +673,13 @@ export function useTerminalAutocomplete(
       // Live-preview baseline: the typed input these suggestions completed.
       previewBaselineRef.current = input;
       previewActiveRef.current = false;
-      const { position, cursorLineTop, cursorLineBottom, expandUpward } = calculatePopupPosition(term, completions.length);
+      const cursorColumn = resolveAutocompleteCursorColumn(term, currentPrompt);
+      const anchor = resolveAutocompleteAnchorInViewport(
+        term,
+        containerRef.current,
+        completions.length,
+        cursorColumn,
+      );
       startTransition(() => {
         setState((prev) => {
           if (version !== fetchVersionRef.current) return prev;
@@ -673,10 +688,12 @@ export function useTerminalAutocomplete(
             suggestions: completions,
             selectedIndex: -1,
             popupVisible: true,
-            popupPosition: position,
-            popupCursorLineTop: cursorLineTop,
-            popupCursorLineBottom: cursorLineBottom,
-            expandUpward,
+            popupAnchorViewport: {
+              left: anchor.anchorLeft,
+              top: anchor.anchorTop,
+              bottom: anchor.anchorBottom,
+            },
+            expandUpward: anchor.expandUpward,
             subDirPanels: [],
             subDirFocusLevel: -1,
           };
@@ -685,10 +702,9 @@ export function useTerminalAutocomplete(
             prev.popupVisible &&
             prev.selectedIndex === nextState.selectedIndex &&
             prev.expandUpward === nextState.expandUpward &&
-            prev.popupPosition.x === nextState.popupPosition.x &&
-            prev.popupPosition.y === nextState.popupPosition.y &&
-            prev.popupCursorLineTop === nextState.popupCursorLineTop &&
-            prev.popupCursorLineBottom === nextState.popupCursorLineBottom &&
+            prev.popupAnchorViewport.left === nextState.popupAnchorViewport.left &&
+            prev.popupAnchorViewport.top === nextState.popupAnchorViewport.top &&
+            prev.popupAnchorViewport.bottom === nextState.popupAnchorViewport.bottom &&
             prev.subDirFocusLevel === -1 &&
             prev.subDirPanels.length === 0 &&
             areSuggestionsEqual(prev.suggestions, nextState.suggestions)
@@ -708,7 +724,7 @@ export function useTerminalAutocomplete(
         );
       });
     }
-  }, [termRef, clearState]);
+  }, [termRef, clearState, containerRef]);
 
   // Keep ref in sync so handleSubDirSelect can call it
   fetchSuggestionsRef.current = fetchSuggestions;

@@ -130,11 +130,8 @@ export const applyThemeTokens = (
   accentOverride: string,
 ) => {
   const root = window.document.documentElement;
-  // If immersive override is active (style tag present), it owns the dark/light class — don't override
-  if (!document.getElementById('netcatty-immersive-override')) {
-    root.classList.remove('light', 'dark');
-    root.classList.add(resolvedTheme);
-  }
+  root.classList.remove('light', 'dark');
+  root.classList.add(resolvedTheme);
   root.style.setProperty('--background', tokens.background);
   root.style.setProperty('--foreground', tokens.foreground);
   root.style.setProperty('--card', tokens.card);

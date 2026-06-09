@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { toast } from '../../components/ui/toast';
+import { AppHostTreeLayer } from './AppHostTreeLayer';
 
 const LazyProtocolSelectDialog = lazy(() => import('../../components/ProtocolSelectDialog'));
 const LazyQuickSwitcher = lazy(() =>
@@ -41,7 +42,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
     handleRequestCloseEditorTabRef, handleSessionStatusChange, handleSyncNowManual, handleTerminalDataCapture, handleToggleTheme, handleUpdateHostFromTerminal,
     hostById, hosts, hotkeyScheme, identities, importOrReuseKey, isBroadcastEnabled, isCreateWorkspaceOpen, isMacClient, isQuickSwitcherOpen,
     keyBindings, keyboardInteractiveQueue, keys, logViews, managedSources, navigateToSection, openLogView, orderedTabsWithEditors, orphanSessions,
-    passphraseQueue, protocolSelectHost, proxyProfiles, quickResults, quickSearch, reorderTabs, reorderWorkspaceSessions, resetSessionRename,
+    passphraseQueue, protocolSelectHost, proxyProfiles, quickResults, quickSearch, reorderWorkTabs, reorderWorkspaceSessions, resetSessionRename,
     resetWorkspaceRename, resolveEmptyVaultConflict, resolvedTheme, runSnippet, sessionLogsDir, sessionLogsEnabled, sessionLogsFormat, sessionLogsTimestampsEnabled, sessionRenameTarget, sshDebugLogsEnabled,
     sessionRenameValue, sessions, setActiveTabId, setAddToWorkspaceDialog, setDraggingSessionId, setEditorWordWrap, setIsCreateWorkspaceOpen, setIsQuickSwitcherOpen,
     setNavigateToSection, setProtocolSelectHost, setQuickSearch, setSessionRenameValue, setTerminalFontFamilyId, setTerminalFontSize, setTerminalThemeId,
@@ -108,7 +109,6 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
     <div className="flex flex-col h-screen text-foreground font-sans netcatty-shell" onContextMenu={handleRootContextMenu}>
       <TopTabs
         theme={resolvedTheme}
-        followAppTerminalTheme={followAppTerminalTheme}
         hosts={hosts}
         sessions={sessions}
         orphanSessions={orphanSessions}
@@ -133,7 +133,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
         onSyncNow={handleSyncNowManual}
         onStartSessionDrag={setDraggingSessionId}
         onEndSessionDrag={handleEndSessionDrag}
-        onReorderTabs={reorderTabs}
+        onReorderTabs={reorderWorkTabs}
         showSftpTab={settings.showSftpTab}
         showHostTreeSidebar={settings.showHostTreeSidebar}
         editorTabs={editorTabs}
@@ -142,6 +142,20 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
       />
 
       <div className="flex-1 relative min-h-0">
+        <AppHostTreeLayer
+          enabled={settings.showHostTreeSidebar}
+          hosts={hosts}
+          customGroups={customGroups}
+          sessions={sessions}
+          workspaces={workspaces}
+          editorTabs={editorTabs}
+          logViews={logViews}
+          orderedTabs={orderedTabsWithEditors}
+          resolvedPreviewTheme={currentTerminalTheme}
+          onConnect={handleConnectToHost}
+          onCreateLocalTerminal={handleCreateLocalTerminal}
+        />
+
         <VaultViewContainer>
           <VaultView
             hosts={hosts}

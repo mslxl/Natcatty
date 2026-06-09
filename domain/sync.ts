@@ -243,8 +243,6 @@ export interface SyncPayload {
     sftpFollowTerminalCwd?: boolean;
     sftpDefaultViewMode?: 'list' | 'tree';
     sftpGlobalBookmarks?: import('./models').SftpBookmark[];
-    // Immersive mode
-    immersiveMode?: boolean;
     // Vault: show recently connected hosts
     showRecentHosts?: boolean;
     // Vault: root list shows only ungrouped hosts

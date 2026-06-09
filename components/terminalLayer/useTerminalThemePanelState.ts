@@ -18,14 +18,11 @@ import {
 import { TERMINAL_THEMES } from '../../infrastructure/config/terminalThemes';
 import type { Host, TerminalSession, TerminalTheme, Workspace } from '../../types';
 import { useCustomThemes } from '../../application/state/customThemeStore';
+import { applyTopTabsChromeThemeVars } from '../../application/app/topTabsChromeTheme';
 import { getScopedTopTabsThemeId } from '../terminalTopTabsTheme';
 import {
-  adjustLightnessToken,
-  adjustSaturationToken,
   clearTerminalPreviewVars,
   clearTopTabsPreviewVars,
-  hexToHslToken,
-  setStylePropertyIfChanged,
 } from './TerminalLayerSupport';
 
 interface UseTerminalThemePanelStateOptions {
@@ -200,26 +197,7 @@ export function useTerminalThemePanelState({
         return;
       }
       const theme = applyCustomAccentToTerminalTheme(baseTheme, accentMode, customAccent);
-      const bg = hexToHslToken(theme.colors.background);
-      const fg = hexToHslToken(theme.colors.foreground);
-      const accent = hexToHslToken(theme.colors.cursor);
-      const isDark = theme.type === 'dark';
-      const secondary = adjustLightnessToken(bg, isDark ? 6 : -5);
-      const border = adjustLightnessToken(bg, isDark ? 12 : -10);
-      const mutedFg = adjustSaturationToken(adjustLightnessToken(fg, isDark ? -20 : 20), 0.5);
-  
-      setStylePropertyIfChanged(tabsRoot, '--background', bg);
-      setStylePropertyIfChanged(tabsRoot, '--foreground', fg);
-      setStylePropertyIfChanged(tabsRoot, '--accent', accent);
-      setStylePropertyIfChanged(tabsRoot, '--primary', accent);
-      setStylePropertyIfChanged(tabsRoot, '--secondary', secondary);
-      setStylePropertyIfChanged(tabsRoot, '--border', border);
-      setStylePropertyIfChanged(tabsRoot, '--muted-foreground', mutedFg);
-      setStylePropertyIfChanged(tabsRoot, '--top-tabs-bg', 'hsl(var(--secondary))');
-      setStylePropertyIfChanged(tabsRoot, '--top-tabs-fg', 'hsl(var(--foreground))');
-      setStylePropertyIfChanged(tabsRoot, '--top-tabs-muted', 'hsl(var(--muted-foreground))');
-      setStylePropertyIfChanged(tabsRoot, '--top-tabs-active-bg', 'hsl(var(--background))');
-      setStylePropertyIfChanged(tabsRoot, '--top-tabs-accent', 'hsl(var(--accent))');
+      applyTopTabsChromeThemeVars(theme);
     }, [accentMode, customAccent, customThemes]);
   
   const handleThemeChangeForFocusedSession = useCallback((themeId: string) => {

@@ -237,12 +237,17 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
     }, [applyTerminalPreviewVars, themePreview]);
   
   useLayoutEffect(() => {
+      if (!isTerminalLayerVisible) {
+        clearTopTabsPreviewVars();
+        return;
+      }
       if (activeTopTabsThemeId) {
         applyTopTabsPreviewVars(activeTopTabsThemeId);
         return;
       }
+      if (typeof document !== 'undefined' && document.documentElement.dataset.activeChromeTheme) return;
       clearTopTabsPreviewVars();
-    }, [activeTopTabsThemeId, applyTopTabsPreviewVars]);
+    }, [activeTopTabsThemeId, applyTopTabsPreviewVars, isTerminalLayerVisible]);
   
   useEffect(() => {
       if (!followAppTerminalTheme) return;

@@ -247,34 +247,34 @@ const LogViewComponent: React.FC<LogViewProps> = ({
     return (
         <div className="h-full w-full flex flex-col bg-background">
             {/* Header */}
-            <div className="flex items-center justify-between px-4 py-2 border-b border-border/50 bg-secondary/30 shrink-0">
-                <div className="flex items-center gap-3">
+            <div className="flex h-9 items-center justify-between gap-3 px-3 py-1 border-b border-border/50 bg-secondary/30 shrink-0">
+                <div className="flex min-w-0 flex-1 items-center gap-2">
                     <div
                         className={cn(
-                            "h-8 w-8 rounded-lg flex items-center justify-center",
+                            "h-6 w-6 shrink-0 rounded-md flex items-center justify-center",
                             isLocal
                                 ? "bg-emerald-500/10 text-emerald-500"
                                 : "bg-blue-500/10 text-blue-500"
                         )}
                     >
-                        <FileText size={16} />
+                        <FileText size={14} />
                     </div>
-                    <div>
-                        <div className="text-sm font-medium">
+                    <div className="flex min-w-0 flex-1 items-baseline gap-2">
+                        <div className="min-w-0 text-sm font-medium leading-none truncate">
                             {isLocal ? t("logs.localTerminal") : log.hostname}
                         </div>
-                        <div className="text-xs text-muted-foreground">
+                        <div className="text-xs leading-none text-muted-foreground truncate">
                             {formattedDate} • {log.localUsername}@{log.localHostname}
                         </div>
                     </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex h-7 shrink-0 items-center gap-1.5">
                     {/* Export button */}
                     {log.terminalData && (
                         <Button
                             variant="ghost"
                             size="sm"
-                            className="gap-1.5 h-8 px-2"
+                            className="gap-1.5 h-7 px-2 text-xs"
                             onClick={handleExport}
                             disabled={isExporting}
                         >
@@ -287,18 +287,18 @@ const LogViewComponent: React.FC<LogViewProps> = ({
                     <Button
                         variant="ghost"
                         size="sm"
-                        className="gap-1.5 h-8 px-2"
+                        className="gap-1.5 h-7 px-2 text-xs"
                         onClick={() => setThemeModalOpen(true)}
                     >
                         <Palette size={14} />
                         <span className="text-xs">{t("logView.appearance")}</span>
                     </Button>
 
-                    <span className="text-xs text-muted-foreground bg-secondary px-2 py-1 rounded">
+                    <span className="h-6 inline-flex items-center rounded bg-secondary px-2 text-xs text-muted-foreground">
                         {t("logView.readOnly")}
                     </span>
-                    <Button variant="ghost" size="sm" onClick={onClose}>
-                        <X size={16} />
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose}>
+                        <X size={14} />
                     </Button>
                 </div>
             </div>

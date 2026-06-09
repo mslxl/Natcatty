@@ -1,6 +1,7 @@
-import React, { Suspense, lazy, useEffect, useState } from 'react';
-import { useActiveTabId, useIsSftpActive, useIsTerminalLayerVisible, useIsVaultActive } from '../state/activeTabStore';
+import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
+import { useActiveTabId, useIsSftpActive, useIsVaultActive } from '../state/activeTabStore';
 import { useTerminalHostTreeLayoutWidth } from '../state/terminalHostTreeStore';
+import { isTerminalContentTabSurface } from './workTabSurface';
 import { cn } from '../../lib/utils';
 import { ConnectionLog, TerminalTheme } from '../../types';
 import type { LogView as LogViewType } from '../state/logViewState';
@@ -34,9 +35,12 @@ export function getLogViewWrapperStyle(
   isVisible: boolean,
   hostTreeLayoutWidth: number,
 ): React.CSSProperties {
+  const baseStyle = {
+    left: hostTreeLayoutWidth,
+  };
   return isVisible
-    ? { left: hostTreeLayoutWidth }
-    : { visibility: 'hidden', pointerEvents: 'none', position: 'absolute', zIndex: -1, left: hostTreeLayoutWidth };
+    ? baseStyle
+    : { visibility: 'hidden', pointerEvents: 'none', position: 'absolute', zIndex: -1, ...baseStyle };
 }
 
 export const LogViewWrapper: React.FC<LogViewWrapperProps> = ({ logView, defaultTerminalTheme, defaultFontSize, onClose, onUpdateLog }) => {
@@ -75,6 +79,13 @@ const LazyTerminalLayer = lazy(() =>
 type SftpViewProps = React.ComponentProps<typeof SftpViewComponent>;
 type TerminalLayerProps = React.ComponentProps<typeof TerminalLayerComponent>;
 
+export function shouldRenderTerminalLayerMount(
+  isVisible: boolean,
+  shouldMount: boolean,
+): boolean {
+  return isVisible || shouldMount;
+}
+
 export const SftpViewMount: React.FC<SftpViewProps> = (props) => {
   const isActive = useIsSftpActive();
   const [shouldMount, setShouldMount] = useState(isActive);
@@ -93,7 +104,14 @@ export const SftpViewMount: React.FC<SftpViewProps> = (props) => {
 };
 
 export const TerminalLayerMount: React.FC<TerminalLayerProps> = (props) => {
-  const isVisible = useIsTerminalLayerVisible(props.draggingSessionId);
+  const activeTabId = useActiveTabId();
+  const sessionIds = useMemo(() => new Set(props.sessions.map((session) => session.id)), [props.sessions]);
+  const workspaceIds = useMemo(() => new Set(props.workspaces.map((workspace) => workspace.id)), [props.workspaces]);
+  const isVisible = isTerminalContentTabSurface({
+    activeTabId,
+    sessionIds,
+    workspaceIds,
+  }) || !!props.draggingSessionId;
   const [shouldMount, setShouldMount] = useState(isVisible);
 
   useEffect(() => {
@@ -115,7 +133,7 @@ export const TerminalLayerMount: React.FC<TerminalLayerProps> = (props) => {
     return () => window.clearTimeout(id);
   }, [shouldMount]);
 
-  const shouldRender = shouldMount || isVisible;
+  const shouldRender = shouldRenderTerminalLayerMount(isVisible, shouldMount);
 
   if (!shouldRender) return null;
 

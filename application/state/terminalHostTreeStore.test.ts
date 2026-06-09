@@ -11,9 +11,13 @@ Object.defineProperty(globalThis, 'localStorage', {
   },
 });
 
-const { terminalHostTreeStore } = await import('./terminalHostTreeStore.ts');
+const {
+  TERMINAL_HOST_TREE_DEFAULT_WIDTH,
+  clampTerminalHostTreeWidth,
+  terminalHostTreeStore,
+} = await import('./terminalHostTreeStore.ts');
 
-test('closing host tree keeps layout width until the sidebar animation releases it', () => {
+test('closing host tree state does not mutate layout width by itself', () => {
   terminalHostTreeStore.setIsOpen(true);
   terminalHostTreeStore.setLayoutWidth(240);
 
@@ -21,4 +25,22 @@ test('closing host tree keeps layout width until the sidebar animation releases 
 
   assert.equal(terminalHostTreeStore.getLayoutWidth(), 240);
   terminalHostTreeStore.setLayoutWidth(0);
+});
+
+test('opening host tree state does not jump the layout width', () => {
+  storage.set('netcatty_terminal_host_tree_width_v1', '300');
+  terminalHostTreeStore.setLayoutWidth(0);
+  terminalHostTreeStore.setIsOpen(false);
+
+  terminalHostTreeStore.setIsOpen(true);
+
+  assert.equal(terminalHostTreeStore.getLayoutWidth(), 0);
+  terminalHostTreeStore.setLayoutWidth(0);
+});
+
+test('host tree restored layout width is clamped', () => {
+  assert.equal(clampTerminalHostTreeWidth(80), 160);
+  assert.equal(clampTerminalHostTreeWidth(999), 360);
+  assert.equal(clampTerminalHostTreeWidth(0), 160);
+  assert.equal(TERMINAL_HOST_TREE_DEFAULT_WIDTH, 220);
 });

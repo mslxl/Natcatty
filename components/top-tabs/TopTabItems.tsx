@@ -17,6 +17,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 // File extensions that render the code-file icon instead of the plain text icon.
 const CODE_EXTENSIONS_RE = /\.(js|jsx|ts|tsx|py|rb|go|rs|c|cpp|cs|java|php|sh|bash|zsh|fish|lua|r|scala|swift|kt|html|css|scss|less|json|yaml|yml|toml|xml|sql|graphql|gql|md|mdx|conf|ini|env|tf|hcl|dockerfile)$/i;
 
+export function activateLogViewTab(logViewId: string): void {
+  activeTabStore.setActiveTabId(logViewId);
+}
 
 const localOsId = (() => {
   if (typeof navigator === 'undefined') return 'linux';
@@ -319,6 +322,16 @@ interface EditorTopTabProps {
   host: Host | undefined;
   suffix: string;
   onRequestCloseEditorTab: (editorTabId: string) => void;
+  isBeingDragged: boolean;
+  isDraggingForReorder: boolean;
+  shiftStyle: React.CSSProperties;
+  showDropIndicatorBefore: boolean;
+  showDropIndicatorAfter: boolean;
+  onTabDragStart: (e: React.DragEvent, tabId: string) => void;
+  onTabDragEnd: () => void;
+  onTabDragOver: (e: React.DragEvent, tabId: string) => void;
+  onTabDragLeave: (e: React.DragEvent) => void;
+  onTabDrop: (e: React.DragEvent, targetTabId: string) => void;
   tabAnimationClass?: string;
 }
 
@@ -328,6 +341,16 @@ export const EditorTopTab: React.FC<EditorTopTabProps> = memo(({
   host,
   suffix,
   onRequestCloseEditorTab,
+  isBeingDragged,
+  isDraggingForReorder,
+  shiftStyle,
+  showDropIndicatorBefore,
+  showDropIndicatorAfter,
+  onTabDragStart,
+  onTabDragEnd,
+  onTabDragOver,
+  onTabDragLeave,
+  onTabDrop,
   tabAnimationClass,
 }) => {
   const isActive = useIsTabActive(tabId);
@@ -352,11 +375,20 @@ export const EditorTopTab: React.FC<EditorTopTabProps> = memo(({
           onClick={handleClick}
           onMouseDown={handleTabMiddleMouseDown}
           onAuxClick={(e) => handleTabMiddleClickClose(e, () => onRequestCloseEditorTab(editorTab.id))}
+          draggable
+          onDragStart={(e) => onTabDragStart(e, tabId)}
+          onDragEnd={onTabDragEnd}
+          onDragOver={(e) => onTabDragOver(e, tabId)}
+          onDragLeave={onTabDragLeave}
+          onDrop={(e) => onTabDrop(e, tabId)}
           className={cn(
             "netcatty-tab relative h-7 pl-3 pr-2 min-w-[140px] max-w-[240px] rounded-t-md overflow-hidden text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0",
+            "transition-transform duration-150",
+            isBeingDragged && isDraggingForReorder ? "opacity-40 scale-95" : "",
             tabAnimationClass,
           )}
           style={{
+            ...shiftStyle,
             backgroundColor: isActive
               ? 'var(--top-tabs-active-bg, hsl(var(--background)))'
               : 'transparent',
@@ -377,6 +409,18 @@ export const EditorTopTab: React.FC<EditorTopTabProps> = memo(({
             }
           }}
         >
+          {showDropIndicatorBefore && isDraggingForReorder && (
+            <div
+              className="absolute -left-0.5 top-1 bottom-1 w-0.5 rounded-full animate-pulse"
+              style={{ backgroundColor: 'var(--top-tabs-accent, hsl(var(--accent)))', boxShadow: '0 0 8px 2px color-mix(in srgb, var(--top-tabs-accent, hsl(var(--accent))) 50%, transparent)' }}
+            />
+          )}
+          {showDropIndicatorAfter && isDraggingForReorder && (
+            <div
+              className="absolute -right-0.5 top-1 bottom-1 w-0.5 rounded-full animate-pulse"
+              style={{ backgroundColor: 'var(--top-tabs-accent, hsl(var(--accent)))', boxShadow: '0 0 8px 2px color-mix(in srgb, var(--top-tabs-accent, hsl(var(--accent))) 50%, transparent)' }}
+            />
+          )}
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <FileIcon
               size={14}
@@ -685,6 +729,16 @@ WorkspaceTopTab.displayName = 'WorkspaceTopTab';
 interface LogViewTopTabProps {
   logView: LogView;
   onCloseLogView: (logViewId: string) => void;
+  isBeingDragged: boolean;
+  isDraggingForReorder: boolean;
+  shiftStyle: React.CSSProperties;
+  showDropIndicatorBefore: boolean;
+  showDropIndicatorAfter: boolean;
+  onTabDragStart: (e: React.DragEvent, tabId: string) => void;
+  onTabDragEnd: () => void;
+  onTabDragOver: (e: React.DragEvent, tabId: string) => void;
+  onTabDragLeave: (e: React.DragEvent) => void;
+  onTabDrop: (e: React.DragEvent, targetTabId: string) => void;
   t: TranslateFn;
   tabAnimationClass?: string;
 }
@@ -692,13 +746,23 @@ interface LogViewTopTabProps {
 export const LogViewTopTab: React.FC<LogViewTopTabProps> = memo(({
   logView,
   onCloseLogView,
+  isBeingDragged,
+  isDraggingForReorder,
+  shiftStyle,
+  showDropIndicatorBefore,
+  showDropIndicatorAfter,
+  onTabDragStart,
+  onTabDragEnd,
+  onTabDragOver,
+  onTabDragLeave,
+  onTabDrop,
   t,
   tabAnimationClass,
 }) => {
   const isActive = useIsTabActive(logView.id);
   const isLocal = logView.log.protocol === 'local' || logView.log.hostname === 'localhost';
   const handleClick = useCallback(() => {
-    activeTabStore.setActiveTabId(logView.id);
+    activateLogViewTab(logView.id);
   }, [logView.id]);
   const handleClose = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -713,11 +777,20 @@ export const LogViewTopTab: React.FC<LogViewTopTabProps> = memo(({
       onClick={handleClick}
       onMouseDown={handleTabMiddleMouseDown}
       onAuxClick={(e) => handleTabMiddleClickClose(e, () => onCloseLogView(logView.id))}
+      draggable
+      onDragStart={(e) => onTabDragStart(e, logView.id)}
+      onDragEnd={onTabDragEnd}
+      onDragOver={(e) => onTabDragOver(e, logView.id)}
+      onDragLeave={onTabDragLeave}
+      onDrop={(e) => onTabDrop(e, logView.id)}
       className={cn(
         "netcatty-tab relative h-7 pl-3 pr-2 min-w-[140px] max-w-[240px] rounded-t-md overflow-hidden text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0",
+        "transition-transform duration-150",
+        isBeingDragged && isDraggingForReorder ? "opacity-40 scale-95" : "",
         tabAnimationClass,
       )}
       style={{
+        ...shiftStyle,
         backgroundColor: isActive
           ? 'var(--top-tabs-active-bg, hsl(var(--background)))'
           : 'transparent',
@@ -738,6 +811,18 @@ export const LogViewTopTab: React.FC<LogViewTopTabProps> = memo(({
         }
       }}
     >
+      {showDropIndicatorBefore && isDraggingForReorder && (
+        <div
+          className="absolute -left-0.5 top-1 bottom-1 w-0.5 rounded-full animate-pulse"
+          style={{ backgroundColor: 'var(--top-tabs-accent, hsl(var(--accent)))', boxShadow: '0 0 8px 2px color-mix(in srgb, var(--top-tabs-accent, hsl(var(--accent))) 50%, transparent)' }}
+        />
+      )}
+      {showDropIndicatorAfter && isDraggingForReorder && (
+        <div
+          className="absolute -right-0.5 top-1 bottom-1 w-0.5 rounded-full animate-pulse"
+          style={{ backgroundColor: 'var(--top-tabs-accent, hsl(var(--accent)))', boxShadow: '0 0 8px 2px color-mix(in srgb, var(--top-tabs-accent, hsl(var(--accent))) 50%, transparent)' }}
+        />
+      )}
       <div className="flex items-center gap-2 min-w-0 flex-1">
         <FileText
           size={14}

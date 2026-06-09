@@ -19,6 +19,12 @@ test("terminal side panel exposes stable custom CSS regions", () => {
   assert.match(source, /isSidePanelOpenForCurrentTab \? 'terminal-side-panel' : undefined/);
 });
 
+test("terminal side panel shell is isolated from surrounding layout churn", () => {
+  const source = readProjectFile("components/terminalLayer/TerminalLayerSidePanelSection.tsx");
+
+  assert.match(source, /contain: 'layout paint style'/);
+});
+
 test("SFTP panel exposes stable custom CSS regions", () => {
   const source = [
     readProjectFile("components/SftpSidePanel.tsx"),
