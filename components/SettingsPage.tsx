@@ -18,9 +18,10 @@ import SettingsApplicationTab from "./SettingsApplicationTab";
 import SettingsAppearanceTab from "./settings/tabs/SettingsAppearanceTab";
 import SettingsFileAssociationsTab from "./settings/tabs/SettingsFileAssociationsTab";
 import SettingsShortcutsTab from "./settings/tabs/SettingsShortcutsTab";
+import SettingsAITab from "./settings/tabs/SettingsAITab";
+import SettingsSyncTab from "./settings/tabs/SettingsSyncTab";
 import SettingsTerminalTab from "./settings/tabs/SettingsTerminalTab";
 import SettingsSystemTab from "./settings/tabs/SettingsSystemTab";
-const SettingsAITab = React.lazy(() => import("./settings/tabs/SettingsAITab"));
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
@@ -49,8 +50,6 @@ class AITabErrorBoundary extends React.Component<
 }
 
 type SettingsState = ReturnType<typeof useSettingsState>;
-
-const SettingsSyncTab = React.lazy(() => import("./settings/tabs/SettingsSyncTab"));
 
 const settingsTabTriggerClassName =
     "w-full justify-start gap-2 px-3 py-2 text-sm data-[state=active]:bg-background hover:bg-background/60 rounded-md transition-colors overflow-hidden";
@@ -131,34 +130,32 @@ const SettingsAITabContainer: React.FC = () => {
 
     return (
         <AITabErrorBoundary>
-            <React.Suspense fallback={<div className="flex-1 px-6 py-5 text-sm text-muted-foreground">Loading AI settings...</div>}>
-                <SettingsAITab
-                    providers={aiState.providers}
-                    addProvider={aiState.addProvider}
-                    updateProvider={aiState.updateProvider}
-                    removeProvider={aiState.removeProvider}
-                    activeProviderId={aiState.activeProviderId}
-                    setActiveProviderId={aiState.setActiveProviderId}
-                    activeModelId={aiState.activeModelId}
-                    setActiveModelId={aiState.setActiveModelId}
-                    globalPermissionMode={aiState.globalPermissionMode}
-                    setGlobalPermissionMode={aiState.setGlobalPermissionMode}
-                    toolIntegrationMode={aiState.toolIntegrationMode}
-                    setToolIntegrationMode={aiState.setToolIntegrationMode}
-                    externalAgents={aiState.externalAgents}
-                    setExternalAgents={aiState.setExternalAgents}
-                    defaultAgentId={aiState.defaultAgentId}
-                    setDefaultAgentId={aiState.setDefaultAgentId}
-                    commandBlocklist={aiState.commandBlocklist}
-                    setCommandBlocklist={aiState.setCommandBlocklist}
-                    commandTimeout={aiState.commandTimeout}
-                    setCommandTimeout={aiState.setCommandTimeout}
-                    maxIterations={aiState.maxIterations}
-                    setMaxIterations={aiState.setMaxIterations}
-                    webSearchConfig={aiState.webSearchConfig}
-                    setWebSearchConfig={aiState.setWebSearchConfig}
-                />
-            </React.Suspense>
+            <SettingsAITab
+                providers={aiState.providers}
+                addProvider={aiState.addProvider}
+                updateProvider={aiState.updateProvider}
+                removeProvider={aiState.removeProvider}
+                activeProviderId={aiState.activeProviderId}
+                setActiveProviderId={aiState.setActiveProviderId}
+                activeModelId={aiState.activeModelId}
+                setActiveModelId={aiState.setActiveModelId}
+                globalPermissionMode={aiState.globalPermissionMode}
+                setGlobalPermissionMode={aiState.setGlobalPermissionMode}
+                toolIntegrationMode={aiState.toolIntegrationMode}
+                setToolIntegrationMode={aiState.setToolIntegrationMode}
+                externalAgents={aiState.externalAgents}
+                setExternalAgents={aiState.setExternalAgents}
+                defaultAgentId={aiState.defaultAgentId}
+                setDefaultAgentId={aiState.setDefaultAgentId}
+                commandBlocklist={aiState.commandBlocklist}
+                setCommandBlocklist={aiState.setCommandBlocklist}
+                commandTimeout={aiState.commandTimeout}
+                setCommandTimeout={aiState.setCommandTimeout}
+                maxIterations={aiState.maxIterations}
+                setMaxIterations={aiState.setMaxIterations}
+                webSearchConfig={aiState.webSearchConfig}
+                setWebSearchConfig={aiState.setWebSearchConfig}
+            />
         </AITabErrorBoundary>
     );
 };
@@ -417,9 +414,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                     )}
 
                     {mountedTabs.has("sync") && (
-                        <React.Suspense fallback={null}>
-                            <SettingsSyncTabWithVault onSettingsApplied={settings.rehydrateAllFromStorage} />
-                        </React.Suspense>
+                        <SettingsSyncTabWithVault onSettingsApplied={settings.rehydrateAllFromStorage} />
                     )}
 
                     {mountedTabs.has("system") && (
