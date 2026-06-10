@@ -19,6 +19,30 @@ export const getNextSftpViewMode = (viewMode: SftpPaneViewMode): SftpPaneViewMod
 export const getSftpViewModeToggleLabelKey = (viewMode: SftpPaneViewMode): string =>
   viewMode === "list" ? "sftp.viewMode.switchToTree" : "sftp.viewMode.switchToList";
 
+export const getSftpViewModeToggleTarget = (viewMode: SftpPaneViewMode) => ({
+  nextViewMode: getNextSftpViewMode(viewMode),
+  labelKey: getSftpViewModeToggleLabelKey(viewMode),
+});
+
+export const shouldToggleSftpBookmarkFromButton = ({
+  bookmarkCount,
+  isCurrentPathBookmarked,
+}: {
+  bookmarkCount: number;
+  isCurrentPathBookmarked: boolean;
+}): boolean => !isCurrentPathBookmarked && bookmarkCount === 0;
+
+export const getSftpBookmarkButtonLabelKey = ({
+  bookmarkCount,
+  isCurrentPathBookmarked,
+}: {
+  bookmarkCount: number;
+  isCurrentPathBookmarked: boolean;
+}): string =>
+  shouldToggleSftpBookmarkFromButton({ bookmarkCount, isCurrentPathBookmarked })
+    ? "sftp.bookmark.add"
+    : "sftp.bookmark.list";
+
 interface SftpPaneToolbarProps {
   t: (key: string, params?: Record<string, unknown>) => string;
   pane: SftpPane;
@@ -67,6 +91,63 @@ interface SftpPaneToolbarProps {
   onSetViewMode: (mode: SftpPaneViewMode) => void;
   onListDrives?: () => Promise<string[]>;
 }
+
+interface SftpBookmarkListProps {
+  bookmarks: SftpBookmark[];
+  onNavigateToBookmark: (path: string) => void;
+  onDeleteBookmark: (id: string) => void;
+  t: (key: string, params?: Record<string, unknown>) => string;
+}
+
+export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
+  bookmarks,
+  onNavigateToBookmark,
+  onDeleteBookmark,
+  t,
+}) => (
+  bookmarks.length > 0 ? (
+    <div className="max-h-48 overflow-auto py-1">
+      {bookmarks.map((bm) => (
+        <div
+          key={bm.id}
+          className="flex items-center gap-1 px-2 py-1 hover:bg-secondary/60 group"
+        >
+          {bm.global && (
+            <Globe size={10} className="shrink-0 text-primary" />
+          )}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className="flex-1 text-left text-xs truncate font-mono"
+                onClick={() => onNavigateToBookmark(bm.path)}
+              >
+                {bm.label}
+                <span className="ml-1.5 text-muted-foreground text-[10px]">{bm.path}</span>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>{bm.path}</TooltipContent>
+          </Tooltip>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-5 w-5 opacity-0 group-hover:opacity-100 shrink-0 text-muted-foreground hover:text-destructive"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDeleteBookmark(bm.id);
+            }}
+          >
+            <Trash2 size={10} />
+          </Button>
+        </div>
+      ))}
+    </div>
+  ) : (
+    <div className="p-3 text-xs text-muted-foreground text-center">
+      {t("sftp.bookmark.empty")}
+    </div>
+  )
+);
 
 // Prioritize breadcrumb path display. 6 action buttons need ~156px,
 // bookmark ~20px, padding ~16px. Collapse early so the breadcrumb
@@ -167,8 +248,16 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
   }, [showFilterBar, setShowFilterBar, filterInputRef]);
 
   const isRemote = !pane.connection?.isLocal;
-  const nextViewMode = getNextSftpViewMode(viewMode);
-  const viewModeToggleLabel = t(getSftpViewModeToggleLabelKey(viewMode));
+  const viewModeToggleTarget = getSftpViewModeToggleTarget(viewMode);
+  const viewModeToggleLabel = t(viewModeToggleTarget.labelKey);
+  const shouldToggleBookmarkFromButton = shouldToggleSftpBookmarkFromButton({
+    bookmarkCount: bookmarks.length,
+    isCurrentPathBookmarked,
+  });
+  const bookmarkButtonLabel = t(getSftpBookmarkButtonLabelKey({
+    bookmarkCount: bookmarks.length,
+    isCurrentPathBookmarked,
+  }));
 
   // Buttons that always remain visible (not collapsed)
   const pinnedButtons = (
@@ -214,7 +303,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
             size="icon"
             className="h-6 w-6 bg-secondary text-foreground"
             aria-label={viewModeToggleLabel}
-            onClick={() => onSetViewMode(nextViewMode)}
+            onClick={() => onSetViewMode(viewModeToggleTarget.nextViewMode)}
           >
             {viewMode === "list" ? <List size={14} /> : <ListTree size={14} />}
           </Button>
@@ -507,13 +596,19 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
                     "h-5 w-5 shrink-0",
                     isCurrentPathBookmarked ? "text-yellow-500" : bookmarks.length > 0 && "text-primary",
                   )}
-                  aria-label={t("sftp.bookmark.list")}
+                  aria-label={bookmarkButtonLabel}
+                  onClick={(e) => {
+                    if (shouldToggleBookmarkFromButton) {
+                      e.preventDefault();
+                      onToggleBookmark();
+                    }
+                  }}
                 >
                   <Bookmark size={12} fill={isCurrentPathBookmarked ? "currentColor" : "none"} />
                 </Button>
               </PopoverTrigger>
             </TooltipTrigger>
-            <TooltipContent>{t("sftp.bookmark.list")}</TooltipContent>
+            <TooltipContent>{bookmarkButtonLabel}</TooltipContent>
           </Tooltip>
           <PopoverContent className="w-64 p-0" align="start">
             <div className="px-3 py-2 border-b border-border/40">
@@ -545,48 +640,12 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
                 </Tooltip>
               )}
             </div>
-            {bookmarks.length > 0 ? (
-              <div className="max-h-48 overflow-auto py-1">
-                {bookmarks.map((bm) => (
-                  <div
-                    key={bm.id}
-                    className="flex items-center gap-1 px-2 py-1 hover:bg-secondary/60 group"
-                  >
-                    {bm.global && (
-                      <Globe size={10} className="shrink-0 text-primary" />
-                    )}
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          className="flex-1 text-left text-xs truncate font-mono"
-                          onClick={() => onNavigateToBookmark(bm.path)}
-                        >
-                          {bm.label}
-                          <span className="ml-1.5 text-muted-foreground text-[10px]">{bm.path}</span>
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>{bm.path}</TooltipContent>
-                    </Tooltip>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-5 w-5 opacity-0 group-hover:opacity-100 shrink-0 text-muted-foreground hover:text-destructive"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDeleteBookmark(bm.id);
-                      }}
-                    >
-                      <Trash2 size={10} />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="p-3 text-xs text-muted-foreground text-center">
-                {t("sftp.bookmark.empty")}
-              </div>
-            )}
+            <SftpBookmarkList
+              bookmarks={bookmarks}
+              onNavigateToBookmark={onNavigateToBookmark}
+              onDeleteBookmark={onDeleteBookmark}
+              t={t}
+            />
           </PopoverContent>
         </Popover>
 
