@@ -108,6 +108,7 @@ import { useSettingsStorageSync } from './settingsStorageSync';
 import { useSettingsIpcSync } from './settingsIpcSync';
 import { resolveCurrentTerminalTheme } from './settingsTerminalTheme';
 import { useSystemSettingsEffects } from './systemSettingsEffects';
+import { applyCustomCssToDocument } from '../../lib/customCss';
 
 export const useSettingsState = () => {
   const initialCustomKeyBindingsRecord =
@@ -777,14 +778,7 @@ export const useSettingsState = () => {
 
   // Apply and persist custom CSS
   useEffect(() => {
-    // Always apply CSS to document (needed on mount)
-    let styleEl = document.getElementById('netcatty-custom-css') as HTMLStyleElement | null;
-    if (!styleEl) {
-      styleEl = document.createElement('style');
-      styleEl.id = 'netcatty-custom-css';
-      document.head.appendChild(styleEl);
-    }
-    styleEl.textContent = customCSS;
+    applyCustomCssToDocument(customCSS);
     localStorageAdapter.writeString(STORAGE_KEY_CUSTOM_CSS, customCSS);
     // Skip IPC on initial mount
     if (!persistMountedRef.current) return;

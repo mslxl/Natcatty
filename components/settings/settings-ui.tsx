@@ -2,7 +2,6 @@ import React from "react";
 import * as SelectPrimitive from "@radix-ui/react-select";
 import { Check, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "../../lib/utils";
-import { ScrollArea } from "../ui/scroll-area";
 import { TabsContent } from "../ui/tabs";
 
 interface ToggleProps {
@@ -195,8 +194,8 @@ export const SettingsTabContent: React.FC<{
   children: React.ReactNode;
 }> = ({ value, children }) => (
   <TabsContent value={value} className="flex-1 m-0 h-full overflow-hidden">
-    <ScrollArea className="h-full">
+    <div className="h-full overflow-y-auto overflow-x-hidden">
       <div className="p-6 space-y-6">{children}</div>
-    </ScrollArea>
+    </div>
   </TabsContent>
 );

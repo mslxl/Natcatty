@@ -1019,4 +1019,4 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   );
 };
 
-export default SettingsSystemTab;
+export default React.memo(SettingsSystemTab);

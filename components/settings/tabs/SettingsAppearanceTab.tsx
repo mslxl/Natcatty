@@ -1,4 +1,6 @@
-import React, { useCallback } from "react";
+import React, { memo, useCallback } from "react";
+import { applyCustomCssToDocument } from "../../../lib/customCss";
+import { DebouncedTextarea } from "../DebouncedTextarea";
 import { Check, Monitor, Moon, Palette, Sun } from "lucide-react";
 import { useI18n } from "../../../application/i18n/I18nProvider";
 import { DARK_UI_THEMES, LIGHT_UI_THEMES } from "../../../infrastructure/config/uiThemes";
@@ -9,7 +11,7 @@ import { SectionHeader, SettingsTabContent, SettingRow, Toggle, Select } from ".
 import { FontSelect } from "../FontSelect";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
 
-export default function SettingsAppearanceTab(props: {
+function SettingsAppearanceTab(props: {
   theme: "dark" | "light" | "system";
   setTheme: (theme: "dark" | "light" | "system") => void;
   lightUiThemeId: string;
@@ -369,9 +371,10 @@ export default function SettingsAppearanceTab(props: {
         <p className="text-xs text-muted-foreground">
           {t("settings.appearance.customCss.desc")}
         </p>
-        <textarea
+        <DebouncedTextarea
           value={customCSS}
-          onChange={(e) => setCustomCSS(e.target.value)}
+          onCommit={setCustomCSS}
+          onDraftChange={applyCustomCssToDocument}
           placeholder={t("settings.appearance.customCss.placeholder")}
           className="w-full h-32 px-3 py-2 text-xs font-mono bg-muted/50 border border-border rounded-lg resize-y focus:outline-none focus:ring-2 focus:ring-primary/50"
           spellCheck={false}
@@ -380,3 +383,5 @@ export default function SettingsAppearanceTab(props: {
     </SettingsTabContent>
   );
 }
+
+export default memo(SettingsAppearanceTab);
