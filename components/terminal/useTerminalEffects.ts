@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/exhaustive-deps */
 import { useRef } from 'react';
 import { resolveFontWeightBold } from '../../lib/fontWeightAvailability';
+import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 
 type TerminalEffectsContext = Record<string, any>;
 
@@ -48,7 +49,7 @@ export function resolveSelectionOverlayPosition(term: any, container: HTMLElemen
 }
 
 export function useTerminalEffects(ctx: TerminalEffectsContext) {
-  const { CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, host, hotkeySchemeRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, onBroadcastInputRef, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalFontSizeChange, paneLayoutKey, pendingAuthRef, pendingOutputScrollRef, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, setIsSearchOpen, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, onSnippetShortkeyRef, snippetsRef, status, statusRef, sudoAutofillRef, t, teardown, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef } = ctx;
+  const { CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, host, hotkeySchemeRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, onBroadcastInputRef, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalFontSizeChange, paneLayoutKey, pendingAuthRef, pendingOutputScrollRef, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, setIsSearchOpen, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, onSnippetShortkeyRef, snippetsRef, status, statusRef, sudoAutofillRef, t, teardown, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef } = ctx;
 
   // Remember the last layout we successfully refit while visible so revisiting
   // the same workspace tab does not replay expensive force-fit/WebGL recovery.
@@ -284,6 +285,12 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         fitAddonRef.current = runtime.fitAddon;
         serializeAddonRef.current = runtime.serializeAddon;
         searchAddonRef.current = runtime.searchAddon;
+        // xterm boots asynchronously; ResizeObserver may have already run without
+        // fitAddon and will not re-attach until isVisible/isResizing changes.
+        setTimeout(() => {
+          if (disposed) return;
+          safeFit({ force: true, requireVisible: true });
+        }, 0);
 
         // Apply merged keyword highlight rules immediately after runtime creation
         // This fixes a timing issue where the useEffect for keyword highlighting
@@ -528,6 +535,30 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     }
   };
 
+  const layoutRecoveryTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const clearLayoutRecoveryTimers = () => {
+    for (const timerId of layoutRecoveryTimersRef.current) {
+      clearTimeout(timerId);
+    }
+    layoutRecoveryTimersRef.current = [];
+  };
+
+  // Re-fit after the app returns from the background, macOS fullscreen toggles,
+  // or other layout changes that do not reliably fire window.resize /
+  // ResizeObserver (common after App Nap / GPU context eviction).
+  const scheduleLayoutRecoveryRefit = (delaysMs: number[] = [0, 100, 350]) => {
+    clearLayoutRecoveryTimers();
+    for (const delayMs of delaysMs) {
+      const timerId = setTimeout(() => {
+        layoutRecoveryTimersRef.current = layoutRecoveryTimersRef.current.filter((id) => id !== timerId);
+        if (!isVisibleRef.current) return;
+        runImmediateRefit({ force: true });
+      }, delayMs);
+      layoutRecoveryTimersRef.current.push(timerId);
+    }
+  };
+
   const shouldRefitImmediatelyOnShow = () => (
     !inWorkspace || isFocusMode || isFocused
   );
@@ -627,6 +658,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       // same recovery a resize performs: clear the texture atlas (no-op on the
       // DOM renderer) and synchronously repaint every row.
       xtermRuntimeRef.current?.clearTextureAtlas();
+      runImmediateRefit({ force: true });
       const visibleTerm = termRef.current;
       if (visibleTerm) forceSyncRenderAfterResize(visibleTerm);
       if (pendingOutputScrollRef.current) {
@@ -727,12 +759,13 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
 
   useEffect(() => {
-    if (!isVisible || !containerRef.current || !fitAddonRef.current) return;
+    if (!isVisible || !containerRef.current) return;
 
     let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const observer = new ResizeObserver(() => {
-      if (isResizing || !isVisibleRef.current) return;
+      if (deferTerminalResizeRef?.current || !isVisibleRef.current) return;
+      if (!fitAddonRef.current) return;
       if (resizeTimeout) {
         clearTimeout(resizeTimeout);
       }
@@ -986,6 +1019,43 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       window.removeEventListener("resize", handler);
     };
   }, [isVisible]);
+
+
+  useEffect(() => {
+    if (!isVisible) return;
+
+    // App resume / refocus only needs a GPU+fit recovery on the active pane;
+    // non-focused split panes already refit when focused (see shouldRefitImmediatelyOnShow).
+    const shouldRecoverOnAppResume = () => (
+      !inWorkspace || isFocusMode || isFocused
+    );
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (!shouldRecoverOnAppResume()) return;
+      scheduleLayoutRecoveryRefit();
+    };
+
+    const handleWindowFocus = () => {
+      if (!shouldRecoverOnAppResume()) return;
+      scheduleLayoutRecoveryRefit();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleWindowFocus);
+
+    // Fullscreen changes layout for every visible pane.
+    const unsubscribeFullscreen = netcattyBridge.get()?.onWindowFullScreenChanged?.((isFullscreen) => {
+      scheduleLayoutRecoveryRefit(isFullscreen ? [0, 150, 400] : [0, 100, 300]);
+    });
+
+    return () => {
+      clearLayoutRecoveryTimers();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleWindowFocus);
+      unsubscribeFullscreen?.();
+    };
+  }, [isVisible, inWorkspace, isFocusMode, isFocused]);
 
 
   // Only register the snippet executor once the terminal session is ready.
