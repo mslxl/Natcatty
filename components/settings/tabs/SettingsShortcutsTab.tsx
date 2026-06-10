@@ -5,11 +5,13 @@ import { keyEventToString } from "../../../domain/models";
 import { useI18n } from "../../../application/i18n/I18nProvider";
 import { cn } from "../../../lib/utils";
 import { Button } from "../../ui/button";
-import { SectionHeader, Select, SettingsTabContent, SettingRow } from "../settings-ui";
+import { SectionHeader, Select, SettingsTabContent, SettingRow, Toggle } from "../settings-ui";
 
 export default function SettingsShortcutsTab(props: {
   hotkeyScheme: HotkeyScheme;
   setHotkeyScheme: (scheme: HotkeyScheme) => void;
+  shellOnlyTabNumberShortcuts: boolean;
+  setShellOnlyTabNumberShortcuts: (enabled: boolean) => void;
   keyBindings: KeyBinding[];
   updateKeyBinding?: (bindingId: string, scheme: "mac" | "pc", newKey: string) => void;
   resetKeyBinding?: (bindingId: string, scheme?: "mac" | "pc") => void;
@@ -19,6 +21,8 @@ export default function SettingsShortcutsTab(props: {
   const {
     hotkeyScheme,
     setHotkeyScheme,
+    shellOnlyTabNumberShortcuts,
+    setShellOnlyTabNumberShortcuts,
     keyBindings,
     updateKeyBinding,
     resetKeyBinding,
@@ -134,6 +138,15 @@ export default function SettingsShortcutsTab(props: {
             ]}
             onChange={(v) => setHotkeyScheme(v as HotkeyScheme)}
             className="w-32"
+          />
+        </SettingRow>
+        <SettingRow
+          label={t("settings.shortcuts.shellOnlyTabNumberShortcuts.label")}
+          description={t("settings.shortcuts.shellOnlyTabNumberShortcuts.desc")}
+        >
+          <Toggle
+            checked={shellOnlyTabNumberShortcuts}
+            onChange={setShellOnlyTabNumberShortcuts}
           />
         </SettingRow>
       </div>

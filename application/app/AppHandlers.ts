@@ -4,6 +4,7 @@ import type { Host, HostProtocol } from '../../types';
 import type { PassphraseRequest } from '../../components/PassphraseModal';
 import { getEffectiveHostDistro } from '../../domain/host';
 import { getTerminalPassthroughActions } from '../state/useGlobalHotkeys';
+import { buildNumberShortcutTabTargets } from './tabShortcutTargets';
 
 type AppContextGetter = () => Record<string, any>;
 const TERMINAL_PASSTHROUGH_ACTIONS = getTerminalPassthroughActions();
@@ -444,13 +445,19 @@ export function executeHotkeyActionImpl(getCtx: AppContextGetter, action: string
     const allTabs = settings.showSftpTab
       ? ['vault', 'sftp', ...orderedTabs, ...editorTabs.map((t) => toEditorTabId(t.id))]
       : ['vault', ...orderedTabs, ...editorTabs.map((t) => toEditorTabId(t.id))];
+    const numberShortcutTabs = buildNumberShortcutTabTargets({
+      showSftpTab: settings.showSftpTab ?? true,
+      shellOnlyTabNumberShortcuts: settings.shellOnlyTabNumberShortcuts ?? false,
+      orderedTabs,
+      editorTabIds: editorTabs.map((t) => toEditorTabId(t.id)),
+    });
     switch (action) {
       case 'switchToTab': {
         // Get the number key pressed (1-9)
         const num = parseInt(e.key, 10);
         if (num >= 1 && num <= 9) {
-          if (num <= allTabs.length) {
-            setActiveTabId(allTabs[num - 1]);
+          if (num <= numberShortcutTabs.length) {
+            setActiveTabId(numberShortcutTabs[num - 1]);
           }
         }
         break;

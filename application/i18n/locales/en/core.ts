@@ -468,6 +468,8 @@ export const enCoreMessages: Messages = {
   'settings.shortcuts.scheme.disabled': 'Disabled',
   'settings.shortcuts.scheme.mac': 'Mac (Cmd)',
   'settings.shortcuts.scheme.pc': 'PC (Ctrl)',
+  'settings.shortcuts.shellOnlyTabNumberShortcuts.label': 'Number keys skip pinned tabs',
+  'settings.shortcuts.shellOnlyTabNumberShortcuts.desc': 'When enabled, Cmd/Ctrl+[1...9] switches only work tabs (terminals, workspaces, editors), not the pinned Vault or SFTP tabs.',
   'settings.shortcuts.section.custom': 'Custom Shortcuts',
   'settings.shortcuts.resetAll': 'Reset All',
   'settings.shortcuts.recording': 'Press keys...',

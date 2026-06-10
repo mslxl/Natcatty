@@ -397,6 +397,8 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                         <SettingsShortcutsTab
                             hotkeyScheme={settings.hotkeyScheme}
                             setHotkeyScheme={settings.setHotkeyScheme}
+                            shellOnlyTabNumberShortcuts={settings.shellOnlyTabNumberShortcuts}
+                            setShellOnlyTabNumberShortcuts={settings.setShellOnlyTabNumberShortcuts}
                             keyBindings={settings.keyBindings}
                             updateKeyBinding={settings.updateKeyBinding}
                             resetKeyBinding={settings.resetKeyBinding}
