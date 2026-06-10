@@ -163,6 +163,13 @@ module.exports = {
         // Deepin OS and other distros that have issues with lzma decompression
         compression: 'gz'
     },
+    pacman: {
+        // FPM-generated .pacman packages bypass Arch's alpm hooks that
+        // normally refresh the hicolor icon cache. Without this, KDE cannot
+        // resolve Icon=netcatty and shows a generic placeholder (#1358).
+        afterInstall: 'scripts/linux/after-install.tpl',
+        afterRemove: 'scripts/linux/after-remove.tpl',
+    },
     publish: [
         {
             provider: 'github',
