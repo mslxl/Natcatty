@@ -420,9 +420,9 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
         color: theme.termFg,
         backgroundColor: isDragOver ? theme.rowDropBg : undefined,
       }}
-      draggable={canDrag}
+      draggable={canDrag && !isInlineEditing}
       onDragStart={(event) => {
-        if (!canDrag) return;
+        if (!canDrag || isInlineEditing) return;
         event.dataTransfer.setData(HOST_TREE_DRAG_GROUP_PATH, node.path);
         event.dataTransfer.effectAllowed = 'move';
       }}
@@ -445,8 +445,12 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
       onMouseLeave={(event) => {
         if (!isDragOver) event.currentTarget.style.backgroundColor = '';
       }}
-      onClick={() => onTogglePath(node.path)}
+      onClick={() => {
+        if (isInlineEditing) return;
+        onTogglePath(node.path);
+      }}
       onKeyDown={(event) => {
+        if (isInlineEditing) return;
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           onTogglePath(node.path);
@@ -711,6 +715,24 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
     handleDropToParent(null, event.dataTransfer);
   }, [canDrag, handleDropToParent]);
 
+  const handleListPointerDownCapture = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!menuActions) return;
+    const editingGroupPath = inlineEdit?.groupPath;
+    const editingHostId = inlineHostEdit?.hostId;
+    if (!editingGroupPath && !editingHostId) return;
+
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest('[data-inline-group-edit="true"]')) return;
+    const row = target.closest('[data-section="terminal-host-tree-sidebar-row"]');
+    if (!row) return;
+    if (editingGroupPath && row.getAttribute('data-group-path') === editingGroupPath) return;
+    if (editingHostId && row.getAttribute('data-host-id') === editingHostId) return;
+
+    if (editingGroupPath) menuActions.cancelInlineGroupEdit();
+    if (editingHostId) menuActions.cancelInlineHostEdit();
+  }, [inlineEdit?.groupPath, inlineHostEdit?.hostId, menuActions]);
+
   useEffect(() => {
     if (!inlineEdit?.shouldScrollIntoView || !inlineEdit.isNew) return;
     const index = flatRows.findIndex(
@@ -971,6 +993,7 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
           className="flex-1 min-h-0 py-1"
           data-section="terminal-host-tree-sidebar-content"
           style={dragOverTarget?.kind === 'root' ? { backgroundColor: theme.rowDropBg } : undefined}
+          onPointerDownCapture={handleListPointerDownCapture}
           onDragOver={handleRootDragOver}
           onDragLeave={handleRootDragLeave}
           onDrop={handleRootDrop}
