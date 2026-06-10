@@ -443,6 +443,7 @@ export const zhCNCoreMessages: Messages = {
   'vault.hosts.connectSelected': '连接 ({count})',
   'vault.hosts.connectMultiple.success': '正在连接 {count} 个主机',
   'vault.hosts.moveToGroup.success': '已将 {host} 移动到 {group}',
+  'vault.hosts.errors.nameRequired': '主机名称不能为空。',
   'vault.hosts.empty.title': '设置你的主机',
   'vault.hosts.empty.desc': '保存主机以快速连接到你的服务器、虚拟机和容器。',
 
