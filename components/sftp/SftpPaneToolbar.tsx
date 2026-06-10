@@ -131,7 +131,8 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
           <Button
             variant="ghost"
             size="icon"
-            className="h-5 w-5 opacity-0 group-hover:opacity-100 shrink-0 text-muted-foreground hover:text-destructive"
+            className="h-5 w-5 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-1 shrink-0 text-muted-foreground hover:text-destructive"
+            aria-label={t("sftp.bookmark.remove")}
             onClick={(e) => {
               e.stopPropagation();
               onDeleteBookmark(bm.id);

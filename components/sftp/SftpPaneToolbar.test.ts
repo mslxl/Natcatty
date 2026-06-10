@@ -148,11 +148,15 @@ test("bookmark list renders saved paths as selectable rows", () => {
         bookmarks: [{ id: "bm-1", path: "/srv/www", label: "Web root" }],
         onNavigateToBookmark: () => {},
         onDeleteBookmark: () => {},
-        t: (key: string) => key,
+        t: (key: string) => ({
+          "sftp.bookmark.remove": "Remove bookmark",
+        }[key] ?? key),
       }),
     ),
   );
 
   assert.match(markup, /Web root/);
   assert.match(markup, /\/srv\/www/);
+  assert.match(markup, /aria-label="Remove bookmark"/);
+  assert.match(markup, /focus-visible:opacity-100/);
 });
