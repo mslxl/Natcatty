@@ -24,6 +24,7 @@ import { buildCacheKey } from '../application/state/sftp/sharedRemoteHostCache';
 import type { DropEntry } from '../lib/sftpFileUtils';
 import { Host, KnownHost, TerminalSession, Workspace } from '../types';
 import { resolveGroupDefaults, applyGroupDefaults } from '../domain/groupConfig';
+import { applySessionFontSizeToHost } from '../domain/terminalAppearance';
 import { resolveHostAutofillPassword } from '../domain/sshAuth';
 import { materializeHostProxyProfile } from '../domain/proxyProfiles';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
@@ -100,6 +101,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   onUpdateTerminalFontFamilyId,
   onUpdateTerminalFontSize,
   onUpdateTerminalFontWeight,
+  onUpdateSessionFontSize,
+  onClearSessionFontSizeOverride,
   onCloseSession,
   onUpdateSessionStatus,
   onUpdateHostDistro,
@@ -479,26 +482,28 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         const moshEnabled = session.moshEnabled ?? existingHost.moshEnabled;
         const etEnabled = session.etEnabled ?? existingHost.etEnabled;
 
+        let hostForSession: Host;
         if (
           protocol === existingHost.protocol &&
           port === existingHost.port &&
           moshEnabled === existingHost.moshEnabled
           && etEnabled === existingHost.etEnabled
         ) {
-          map.set(session.id, existingHost);
+          hostForSession = existingHost;
         } else {
-          map.set(session.id, {
+          hostForSession = {
             ...existingHost,
             protocol,
             port,
             moshEnabled,
             etEnabled,
-          });
+          };
         }
+        map.set(session.id, applySessionFontSizeToHost(hostForSession, session));
       } else {
         // Create stable fallback host object
         const fallbackProtocol = session.protocol ?? 'local' as const;
-        map.set(session.id, {
+        const fallbackHost: Host = {
           id: session.hostId,
           label: session.hostLabel || 'Local Terminal',
           hostname: session.hostname || 'localhost',
@@ -523,7 +528,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
           localShellArgs: session.localShellArgs,
           localShellName: session.localShellName,
           localShellIcon: session.localShellIcon,
-        });
+        };
+        map.set(session.id, applySessionFontSizeToHost(fallbackHost, session));
       }
     }
     return map;
@@ -619,6 +625,14 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   }, [hostMap, sessions, keys, identities]);
 
   const handleTerminalFontSizeChange = useCallback((sessionId: string, nextFontSize: number) => {
+    const session = sessionsRef.current.find((candidate) => candidate.id === sessionId);
+    // Workspace panes keep per-session font size so zooming one split does not
+    // change global defaults or sibling panes (even when they share a host).
+    if (session?.workspaceId) {
+      onUpdateSessionFontSize?.(sessionId, nextFontSize);
+      return;
+    }
+
     const sessionHost = sessionHostsMapRef.current.get(sessionId);
     if (!sessionHost) return;
 
@@ -630,7 +644,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     }
 
     onUpdateHost({ ...rawHost, fontSize: nextFontSize, fontSizeOverride: true });
-  }, [onUpdateHost, onUpdateTerminalFontSize]);
+  }, [onUpdateHost, onUpdateSessionFontSize, onUpdateTerminalFontSize]);
 
   const validAIScopeTargetIds = useMemo(() => {
     const ids = new Set<string>();
@@ -1083,6 +1097,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     onUpdateTerminalFontFamilyId,
     onUpdateTerminalFontSize,
     onUpdateTerminalFontWeight,
+    onUpdateSessionFontSize,
+    onClearSessionFontSizeOverride,
     onUpdateTerminalThemeId,
     pendingTerminalSelectionForAI,
     refocusActiveTerminalSession,

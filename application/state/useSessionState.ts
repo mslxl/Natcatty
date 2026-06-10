@@ -16,6 +16,7 @@ SplitDirection,
 SplitHint,
 updateWorkspaceSplitSizes,
 } from '../../domain/workspace';
+import { clearSessionFontSizeOverride as clearSessionFontSizeOverrideFields } from '../../domain/terminalAppearance';
 import { buildOrderedWorkTabIds } from '../app/workTabSurface';
 import { activeTabStore } from './activeTabStore';
 import {
@@ -70,6 +71,18 @@ export const useSessionState = () => {
 
   const updateSessionStatus = useCallback((sessionId: string, status: TerminalSession['status']) => {
     setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, status } : s));
+  }, []);
+
+  const updateSessionFontSize = useCallback((sessionId: string, fontSize: number) => {
+    setSessions(prev => prev.map(s => (
+      s.id === sessionId ? { ...s, fontSize, fontSizeOverride: true } : s
+    )));
+  }, []);
+
+  const clearSessionFontSizeOverride = useCallback((sessionId: string) => {
+    setSessions(prev => prev.map(s => (
+      s.id === sessionId ? clearSessionFontSizeOverrideFields(s) : s
+    )));
   }, []);
 
   const closeWorkspace = useCallback((workspaceId: string) => {
@@ -943,6 +956,8 @@ export const useSessionState = () => {
     closeSession,
     closeWorkspace,
     updateSessionStatus,
+    updateSessionFontSize,
+    clearSessionFontSizeOverride,
     createWorkspaceWithHosts,
     createWorkspaceFromTargets,
     createWorkspaceFromSessions,

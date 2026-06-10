@@ -347,4 +347,7 @@ export interface TerminalSession {
   // falls back to a fresh connection — so this also applies on reconnect: a
   // reconnect reuses the source again if still connected, else dials fresh.
   reuseConnectionFromSessionId?: string;
+  // Per-pane font size override (workspace splits only; not persisted to vault hosts).
+  fontSize?: number;
+  fontSizeOverride?: boolean;
 }

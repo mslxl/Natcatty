@@ -436,69 +436,81 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   }, [effectiveTheme]);
 
 
+  // Keep font-size sync separate from terminalSettings so unrelated setting
+  // updates (or focus/layout re-renders) do not reset a wheel/Ctrl zoom that
+  // has not yet propagated into React props.
   useEffect(() => {
-    if (termRef.current) {
-      termRef.current.options.fontSize = effectiveFontSize;
-      termRef.current.options.fontFamily = resolvedFontFamily;
+    if (!termRef.current) return;
+    termRef.current.options.fontSize = effectiveFontSize;
+    xtermRuntimeRef.current?.clearTextureAtlas();
+    if (isVisibleRef.current) {
+      setTimeout(() => safeFit({ force: true, requireVisible: true }), 50);
+    } else {
+      lastFittedSizeRef.current = null;
+    }
+  }, [effectiveFontSize]);
 
-      if (terminalSettings) {
-        applyUserCursorPreference(termRef.current, terminalSettings);
-        termRef.current.options.scrollback = terminalSettings.scrollback === 0 ? 999999 : terminalSettings.scrollback;
-        termRef.current.options.fontWeight = effectiveFontWeight as
-          | 100
-          | 200
-          | 300
-          | 400
-          | 500
-          | 600
-          | 700
-          | 800
-          | 900;
-        const resolvedFontWeightBold = resolveFontWeightBold({
-          fontFamilyCss: termRef.current?.options.fontFamily || "",
-          normalWeight: effectiveFontWeight,
-          desiredBoldWeight: terminalSettings.fontWeightBold,
-          fontSize: effectiveFontSize,
-        });
+  useEffect(() => {
+    if (!termRef.current) return;
+    termRef.current.options.fontFamily = resolvedFontFamily;
 
-        termRef.current.options.fontWeightBold = resolvedFontWeightBold as
-          | 100
-          | 200
-          | 300
-          | 400
-          | 500
-          | 600
-          | 700
-          | 800
-          | 900;
-        termRef.current.options.lineHeight = 1 + terminalSettings.linePadding / 10;
-        termRef.current.options.drawBoldTextInBrightColors =
-          terminalSettings.drawBoldInBrightColors;
-        termRef.current.options.minimumContrastRatio =
-          terminalSettings.minimumContrastRatio;
-        termRef.current.options.smoothScrollDuration =
-          terminalSettings.smoothScrolling
-            ? XTERM_PERFORMANCE_CONFIG.rendering.smoothScrollDuration
-            : 0;
-        termRef.current.options.scrollOnUserInput =
-          shouldEnableNativeUserInputAutoScroll(terminalSettings);
-        const altKeyOpts = terminalAltKeyOptions(terminalSettings.altAsMeta);
-        termRef.current.options.macOptionIsMeta = altKeyOpts.macOptionIsMeta;
-        termRef.current.options.altClickMovesCursor = altKeyOpts.altClickMovesCursor;
-        termRef.current.options.wordSeparator = terminalSettings.wordSeparators;
-        termRef.current.options.ignoreBracketedPasteMode = terminalSettings.disableBracketedPaste ?? false;
-      }
+    if (terminalSettings) {
+      applyUserCursorPreference(termRef.current, terminalSettings);
+      termRef.current.options.scrollback = terminalSettings.scrollback === 0 ? 999999 : terminalSettings.scrollback;
+      termRef.current.options.fontWeight = effectiveFontWeight as
+        | 100
+        | 200
+        | 300
+        | 400
+        | 500
+        | 600
+        | 700
+        | 800
+        | 900;
+      const resolvedFontWeightBold = resolveFontWeightBold({
+        fontFamilyCss: termRef.current?.options.fontFamily || "",
+        normalWeight: effectiveFontWeight,
+        desiredBoldWeight: terminalSettings.fontWeightBold,
+        fontSize: effectiveFontSize,
+      });
 
-      // Changing the font can leave the WebGL renderer drawing stale glyphs from
-      // the old metrics (xterm.js #3280), surfacing as garbled text (issue #1049).
-      // Clear the texture atlas so glyphs re-rasterize with the new font.
-      xtermRuntimeRef.current?.clearTextureAtlas();
+      termRef.current.options.fontWeightBold = resolvedFontWeightBold as
+        | 100
+        | 200
+        | 300
+        | 400
+        | 500
+        | 600
+        | 700
+        | 800
+        | 900;
+      termRef.current.options.lineHeight = 1 + terminalSettings.linePadding / 10;
+      termRef.current.options.drawBoldTextInBrightColors =
+        terminalSettings.drawBoldInBrightColors;
+      termRef.current.options.minimumContrastRatio =
+        terminalSettings.minimumContrastRatio;
+      termRef.current.options.smoothScrollDuration =
+        terminalSettings.smoothScrolling
+          ? XTERM_PERFORMANCE_CONFIG.rendering.smoothScrollDuration
+          : 0;
+      termRef.current.options.scrollOnUserInput =
+        shouldEnableNativeUserInputAutoScroll(terminalSettings);
+      const altKeyOpts = terminalAltKeyOptions(terminalSettings.altAsMeta);
+      termRef.current.options.macOptionIsMeta = altKeyOpts.macOptionIsMeta;
+      termRef.current.options.altClickMovesCursor = altKeyOpts.altClickMovesCursor;
+      termRef.current.options.wordSeparator = terminalSettings.wordSeparators;
+      termRef.current.options.ignoreBracketedPasteMode = terminalSettings.disableBracketedPaste ?? false;
+    }
 
-      if (isVisibleRef.current) {
-        setTimeout(() => safeFit({ force: true, requireVisible: true }), 50);
-      } else {
-        lastFittedSizeRef.current = null;
-      }
+    // Changing the font can leave the WebGL renderer drawing stale glyphs from
+    // the old metrics (xterm.js #3280), surfacing as garbled text (issue #1049).
+    // Clear the texture atlas so glyphs re-rasterize with the new font.
+    xtermRuntimeRef.current?.clearTextureAtlas();
+
+    if (isVisibleRef.current) {
+      setTimeout(() => safeFit({ force: true, requireVisible: true }), 50);
+    } else {
+      lastFittedSizeRef.current = null;
     }
   }, [effectiveFontSize, effectiveFontWeight, resolvedFontFamily, terminalSettings]);
 

@@ -1,4 +1,4 @@
-import { Host, TerminalTheme } from './models';
+import { Host, TerminalSession, TerminalTheme } from './models';
 
 const hasLegacyStringValue = (value: string | undefined): boolean =>
   typeof value === 'string' && value.trim().length > 0;
@@ -215,6 +215,23 @@ export const resolveHostTerminalFontFamilyId = (host: Host | null | undefined, d
 
 export const resolveHostTerminalFontSize = (host: Host | null | undefined, defaultFontSize: number): number =>
   hasHostFontSizeOverride(host) && host?.fontSize != null ? host.fontSize : defaultFontSize;
+
+export const hasSessionFontSizeOverride = (
+  session?: Pick<TerminalSession, 'fontSizeOverride' | 'fontSize'> | null,
+): boolean => hasHostFontSizeOverride(session);
+
+export const applySessionFontSizeToHost = (host: Host, session?: TerminalSession): Host => {
+  if (!session || !hasSessionFontSizeOverride(session) || session.fontSize == null) {
+    return host;
+  }
+  return { ...host, fontSize: session.fontSize, fontSizeOverride: true };
+};
+
+export const clearSessionFontSizeOverride = (session: TerminalSession): TerminalSession => ({
+  ...session,
+  fontSize: undefined,
+  fontSizeOverride: false,
+});
 
 export const hasHostFontWeightOverride = (host?: Pick<Host, 'fontWeightOverride' | 'fontWeight'> | null): boolean =>
   hasEffectiveOverride(host?.fontWeightOverride, hasLegacyNumberValue(host?.fontWeight));
