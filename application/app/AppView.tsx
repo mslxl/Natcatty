@@ -2,7 +2,6 @@
 import React, { Suspense, lazy } from 'react';
 import { AlertTriangle, Download, Trash2 } from 'lucide-react';
 import { activeTabStore, toEditorTabId } from '../state/activeTabStore';
-import { useImmersiveActive } from '../state/immersiveStore';
 import { editorTabStore } from '../state/editorTabStore';
 import { releaseEditorTabSaveCoordinator, saveEditorTab } from '../state/editorTabSave';
 import { TopTabs } from '../../components/TopTabs';
@@ -19,7 +18,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { toast } from '../../components/ui/toast';
-import { cn } from '../../lib/utils';
+import { AppHostTreeLayer } from './AppHostTreeLayer';
 
 const LazyProtocolSelectDialog = lazy(() => import('../../components/ProtocolSelectDialog'));
 const LazyQuickSwitcher = lazy(() =>
@@ -43,7 +42,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
     handleRequestCloseEditorTabRef, handleSessionStatusChange, handleSyncNowManual, handleTerminalDataCapture, handleToggleTheme, handleUpdateHostFromTerminal,
     hostById, hosts, hotkeyScheme, identities, importOrReuseKey, isBroadcastEnabled, isCreateWorkspaceOpen, isMacClient, isQuickSwitcherOpen,
     keyBindings, keyboardInteractiveQueue, keys, logViews, managedSources, navigateToSection, openLogView, orderedTabsWithEditors, orphanSessions,
-    passphraseQueue, protocolSelectHost, proxyProfiles, quickResults, quickSearch, reorderTabs, reorderWorkspaceSessions, resetSessionRename,
+    passphraseQueue, protocolSelectHost, proxyProfiles, quickResults, quickSearch, reorderWorkTabs, reorderWorkspaceSessions, resetSessionRename,
     resetWorkspaceRename, resolveEmptyVaultConflict, resolvedTheme, runSnippet, sessionLogsDir, sessionLogsEnabled, sessionLogsFormat, sessionLogsTimestampsEnabled, sessionRenameTarget, sshDebugLogsEnabled,
     sessionRenameValue, sessions, setActiveTabId, setAddToWorkspaceDialog, setDraggingSessionId, setEditorWordWrap, setIsCreateWorkspaceOpen, setIsQuickSwitcherOpen,
     setNavigateToSection, setProtocolSelectHost, setQuickSearch, setSessionRenameValue, setTerminalFontFamilyId, setTerminalFontSize, setTerminalThemeId,
@@ -55,12 +54,6 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
     updateProxyProfiles, updateSnippetPackages, updateSnippets, updateSplitSizes, updateTerminalSetting, workspaceRenameTarget, workspaceRenameValue, workspaces,
     VaultViewContainer, SftpViewMount, TerminalLayerMount, LogViewWrapper,
   } = ctx;
-
-  // Immersive flag from store (not ctx) so toggling it doesn't re-render <App>.
-  // Note: we intentionally do NOT subscribe to the active tab id here — editor
-  // tab visibility self-subscribes inside TextEditorTabView — so plain tab
-  // switches don't re-render AppView/App at all.
-  const isImmersive = useImmersiveActive();
 
   return (
     <SnippetExecutionProvider>
@@ -113,10 +106,9 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
         handleRequestCloseEditorTabRef.current = handleRequestCloseEditorTab;
 
         return (
-    <div className={cn("flex flex-col h-screen text-foreground font-sans netcatty-shell", isImmersive && "immersive-transition")} onContextMenu={handleRootContextMenu}>
+    <div className="flex flex-col h-screen text-foreground font-sans netcatty-shell" onContextMenu={handleRootContextMenu}>
       <TopTabs
         theme={resolvedTheme}
-        followAppTerminalTheme={followAppTerminalTheme}
         hosts={hosts}
         sessions={sessions}
         orphanSessions={orphanSessions}
@@ -139,17 +131,31 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
         windowOpacity={settings.windowOpacity}
         setWindowOpacity={settings.setWindowOpacity}
         onSyncNow={handleSyncNowManual}
-        isImmersiveActive={isImmersive}
         onStartSessionDrag={setDraggingSessionId}
         onEndSessionDrag={handleEndSessionDrag}
-        onReorderTabs={reorderTabs}
+        onReorderTabs={reorderWorkTabs}
         showSftpTab={settings.showSftpTab}
+        showHostTreeSidebar={settings.showHostTreeSidebar}
         editorTabs={editorTabs}
         onRequestCloseEditorTab={handleRequestCloseEditorTab}
         hostById={hostById}
       />
 
       <div className="flex-1 relative min-h-0">
+        <AppHostTreeLayer
+          enabled={settings.showHostTreeSidebar}
+          hosts={hosts}
+          customGroups={customGroups}
+          sessions={sessions}
+          workspaces={workspaces}
+          editorTabs={editorTabs}
+          logViews={logViews}
+          orderedTabs={orderedTabsWithEditors}
+          resolvedPreviewTheme={currentTerminalTheme}
+          onConnect={handleConnectToHost}
+          onCreateLocalTerminal={handleCreateLocalTerminal}
+        />
+
         <VaultViewContainer>
           <VaultView
             hosts={hosts}
@@ -289,6 +295,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
           sessionLogsFormat={sessionLogsFormat}
           sessionLogsTimestampsEnabled={sessionLogsTimestampsEnabled}
           sshDebugLogsEnabled={sshDebugLogsEnabled}
+          showHostTreeSidebar={settings.showHostTreeSidebar}
           toggleScriptsSidePanelRef={toggleScriptsSidePanelRef}
           toggleSidePanelRef={toggleSidePanelRef}
         />

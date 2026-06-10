@@ -4,6 +4,7 @@ import { terminalLayoutSuppressStore } from './terminalLayoutSuppressStore';
 
 // Simple store for active tab that allows fine-grained subscriptions
 type Listener = () => void;
+type SyncListener = (activeTabId: string) => void;
 
 // ----- Editor tab id helpers -----
 export const EDITOR_PREFIX = 'editor:';
@@ -20,6 +21,7 @@ export const fromEditorTabId = (tabId: string): string => tabId.slice(EDITOR_PRE
 class ActiveTabStore {
   private activeTabId: string = 'vault';
   private listeners = new Set<Listener>();
+  private syncListeners = new Set<SyncListener>();
   private notifyRafId: number | null = null;
 
   getActiveTabId = () => this.activeTabId;
@@ -39,6 +41,7 @@ class ActiveTabStore {
     if (this.activeTabId !== id) {
       terminalLayoutSuppressStore.begin();
       this.activeTabId = id;
+      this.syncListeners.forEach((listener) => listener(id));
       // Coalesce rapid tab switches into one notification per frame and avoid
       // "setState during render" if called from a render phase.
       this.scheduleNotify();
@@ -56,6 +59,11 @@ class ActiveTabStore {
   subscribe = (listener: Listener) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  };
+
+  subscribeSync = (listener: SyncListener) => {
+    this.syncListeners.add(listener);
+    return () => this.syncListeners.delete(listener);
   };
 }
 
@@ -107,17 +115,5 @@ export const useIsSftpActive = () => {
 export const useIsEditorTabActive = (tabId: string): boolean => {
   const editorTopId = toEditorTabId(tabId);
   const getSnapshot = useCallback(() => activeTabStore.getActiveTabId() === editorTopId, [editorTopId]);
-  return useSyncExternalStore(activeTabStore.subscribe, getSnapshot, getSnapshot);
-};
-
-// Check if terminal layer should be visible
-// Editor tabs are NOT terminal tabs, so exclude them from the visibility condition.
-export const useIsTerminalLayerVisible = (draggingSessionId: string | null) => {
-  const getSnapshot = useCallback(() => {
-    const activeTabId = activeTabStore.getActiveTabId();
-    const isTerminalTab = activeTabId !== 'vault' && activeTabId !== 'sftp' && !isEditorTabId(activeTabId);
-    return isTerminalTab || !!draggingSessionId;
-  }, [draggingSessionId]);
-
   return useSyncExternalStore(activeTabStore.subscribe, getSnapshot, getSnapshot);
 };

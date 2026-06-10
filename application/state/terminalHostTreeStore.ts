@@ -5,6 +5,17 @@ import { localStorageAdapter } from '../../infrastructure/persistence/localStora
 
 type Listener = () => void;
 
+export const TERMINAL_HOST_TREE_MIN_WIDTH = 160;
+export const TERMINAL_HOST_TREE_DEFAULT_WIDTH = 220;
+export const TERMINAL_HOST_TREE_MAX_WIDTH = 360;
+
+export function clampTerminalHostTreeWidth(width: number): number {
+  return Math.max(
+    TERMINAL_HOST_TREE_MIN_WIDTH,
+    Math.min(TERMINAL_HOST_TREE_MAX_WIDTH, width),
+  );
+}
+
 function readIsOpen(): boolean {
   const stored = localStorageAdapter.readString(STORAGE_KEY_TERMINAL_HOST_TREE_COLLAPSED);
   // Legacy key stores "collapsed"; open is the inverse.
@@ -26,9 +37,6 @@ class TerminalHostTreeStore {
   setIsOpen = (open: boolean) => {
     if (this.isOpen === open) return;
     this.isOpen = open;
-    if (!open) {
-      this.layoutWidth = 0;
-    }
     localStorageAdapter.writeString(
       STORAGE_KEY_TERMINAL_HOST_TREE_COLLAPSED,
       open ? 'false' : 'true',
@@ -37,7 +45,7 @@ class TerminalHostTreeStore {
   };
 
   setLayoutWidth = (width: number) => {
-    const next = Math.max(0, width);
+    const next = Math.max(0, Math.round(width));
     if (this.layoutWidth === next) return;
     this.layoutWidth = next;
     this.listeners.forEach((listener) => listener());

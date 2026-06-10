@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
+
+import { runThemeTransition } from './themeTransition';
 import { SyncConfig, TerminalSettings, HotkeyScheme, CustomKeyBindings, DEFAULT_KEY_BINDINGS, KeyBinding, UILanguage, SessionLogFormat, normalizeTerminalSettings } from '../../domain/models';
 import {
   STORAGE_KEY_COLOR,
@@ -43,6 +45,7 @@ import {
   STORAGE_KEY_SHOW_RECENT_HOSTS,
   STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT,
   STORAGE_KEY_SHOW_SFTP_TAB,
+  STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR,
 } from '../../infrastructure/config/storageKeys';
 import { DEFAULT_UI_LOCALE, resolveSupportedLocale } from '../../infrastructure/config/i18n';
 import {
@@ -83,6 +86,7 @@ import {
   DEFAULT_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT,
   DEFAULT_SHOW_RECENT_HOSTS,
   DEFAULT_SHOW_SFTP_TAB,
+  DEFAULT_SHOW_HOST_TREE_SIDEBAR,
   DEFAULT_SSH_DEBUG_LOGS_ENABLED,
   DEFAULT_TERMINAL_THEME,
   DEFAULT_THEME,
@@ -104,6 +108,7 @@ import { useSettingsStorageSync } from './settingsStorageSync';
 import { useSettingsIpcSync } from './settingsIpcSync';
 import { resolveCurrentTerminalTheme } from './settingsTerminalTheme';
 import { useSystemSettingsEffects } from './systemSettingsEffects';
+import { applyCustomCssToDocument } from '../../lib/customCss';
 
 export const useSettingsState = () => {
   const initialCustomKeyBindingsRecord =
@@ -228,6 +233,10 @@ export const useSettingsState = () => {
   const [showSftpTab, setShowSftpTabState] = useState<boolean>(() => {
     const stored = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_SFTP_TAB);
     return stored ?? DEFAULT_SHOW_SFTP_TAB;
+  });
+  const [showHostTreeSidebar, setShowHostTreeSidebarState] = useState<boolean>(() => {
+    const stored = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR);
+    return stored ?? DEFAULT_SHOW_HOST_TREE_SIDEBAR;
   });
   const [sftpTransferConcurrency, setSftpTransferConcurrencyState] = useState<number>(() => {
     const stored = localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY);
@@ -441,7 +450,9 @@ export const useSettingsState = () => {
 
     const effective = nextTheme === 'system' ? getSystemPreference() : nextTheme;
     const tokens = getUiThemeById(effective, effective === 'dark' ? nextDarkId : nextLightId).tokens;
-    applyThemeTokens(nextTheme, effective, tokens, nextAccentMode, nextAccent);
+    runThemeTransition(() => {
+      applyThemeTokens(nextTheme, effective, tokens, nextAccentMode, nextAccent);
+    });
   }, [theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent]);
 
   const syncCustomCssFromStorage = useCallback(() => {
@@ -523,6 +534,8 @@ export const useSettingsState = () => {
     setShowOnlyUngroupedHostsInRootState(storedShowOnlyUngroupedHostsInRoot ?? DEFAULT_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT);
     const storedShowSftpTab = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_SFTP_TAB);
     setShowSftpTabState(storedShowSftpTab ?? DEFAULT_SHOW_SFTP_TAB);
+    const storedShowHostTreeSidebar = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR);
+    setShowHostTreeSidebarState(storedShowHostTreeSidebar ?? DEFAULT_SHOW_HOST_TREE_SIDEBAR);
 
     // Workspace focus style
     const storedFocusStyle = readStoredString(STORAGE_KEY_WORKSPACE_FOCUS_STYLE);
@@ -534,7 +547,12 @@ export const useSettingsState = () => {
 
   useLayoutEffect(() => {
     const tokens = getUiThemeById(resolvedTheme, resolvedTheme === 'dark' ? darkUiThemeId : lightUiThemeId).tokens;
-    applyThemeTokens(theme, resolvedTheme, tokens, accentMode, customAccent);
+    const apply = () => applyThemeTokens(theme, resolvedTheme, tokens, accentMode, customAccent);
+    if (persistMountedRef.current) {
+      runThemeTransition(apply);
+    } else {
+      apply();
+    }
     localStorageAdapter.writeString(STORAGE_KEY_THEME, theme);
     localStorageAdapter.writeString(STORAGE_KEY_UI_THEME_LIGHT, lightUiThemeId);
     localStorageAdapter.writeString(STORAGE_KEY_UI_THEME_DARK, darkUiThemeId);
@@ -608,6 +626,7 @@ export const useSettingsState = () => {
     setSftpFollowTerminalCwd,
     setSftpDefaultViewMode,
     setWorkspaceFocusStyleState,
+    setShowHostTreeSidebarState,
     setSftpTransferConcurrencyState,
   });
 
@@ -634,7 +653,7 @@ export const useSettingsState = () => {
     terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
-    showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab,
+    showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar,
     editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled,
     globalHotkeyEnabled, autoUpdateEnabled, windowOpacity,
     setTheme, setLightUiThemeId, setDarkUiThemeId, setAccentMode, setCustomAccent,
@@ -643,7 +662,7 @@ export const useSettingsState = () => {
     setFollowAppTerminalThemeState, setTerminalFontFamilyId, setTerminalFontSize,
     setSftpDoubleClickBehavior, setSftpAutoSync, setSftpShowHiddenFiles,
     setSftpUseCompressedUpload, setSftpAutoOpenSidebar, setSftpFollowTerminalCwd, setSftpDefaultViewMode,
-    setShowRecentHostsState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState,
+    setShowRecentHostsState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState,
     setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled,
     setGlobalHotkeyEnabled, setWindowOpacity, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
     setSftpTransferConcurrencyState, applyIncomingCustomKeyBindings, mergeIncomingTerminalSettings,
@@ -750,16 +769,16 @@ export const useSettingsState = () => {
     notifySettingsChanged(STORAGE_KEY_SHOW_SFTP_TAB, enabled);
   }, [notifySettingsChanged]);
 
+  const setShowHostTreeSidebar = useCallback((enabled: boolean) => {
+    setShowHostTreeSidebarState(enabled);
+    localStorageAdapter.writeBoolean(STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR, enabled);
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR, enabled);
+  }, [notifySettingsChanged]);
+
   // Apply and persist custom CSS
   useEffect(() => {
-    // Always apply CSS to document (needed on mount)
-    let styleEl = document.getElementById('netcatty-custom-css') as HTMLStyleElement | null;
-    if (!styleEl) {
-      styleEl = document.createElement('style');
-      styleEl.id = 'netcatty-custom-css';
-      document.head.appendChild(styleEl);
-    }
-    styleEl.textContent = customCSS;
+    applyCustomCssToDocument(customCSS);
     localStorageAdapter.writeString(STORAGE_KEY_CUSTOM_CSS, customCSS);
     // Skip IPC on initial mount
     if (!persistMountedRef.current) return;
@@ -923,8 +942,7 @@ export const useSettingsState = () => {
     setTerminalSettings(prev => ({ ...prev, [key]: value }));
   }, [setTerminalSettings]);
 
-  /** Re-apply the current UI theme tokens (used to restore after immersive mode override). */
-  const reapplyCurrentTheme = useCallback(() => {
+  const applyAppTheme = useCallback(() => {
     const tokens = getUiThemeById(resolvedTheme, resolvedTheme === 'dark' ? darkUiThemeId : lightUiThemeId).tokens;
     applyThemeTokens(theme, resolvedTheme, tokens, accentMode, customAccent);
   }, [theme, resolvedTheme, lightUiThemeId, darkUiThemeId, accentMode, customAccent]);
@@ -994,6 +1012,8 @@ export const useSettingsState = () => {
     setShowOnlyUngroupedHostsInRoot,
     showSftpTab,
     setShowSftpTab,
+    showHostTreeSidebar,
+    setShowHostTreeSidebar,
     sftpTransferConcurrency,
     setSftpTransferConcurrency,
     // Editor Settings
@@ -1027,7 +1047,7 @@ export const useSettingsState = () => {
     windowOpacity,
     setWindowOpacity,
     rehydrateAllFromStorage,
-    reapplyCurrentTheme,
+    applyAppTheme,
     workspaceFocusStyle,
     setWorkspaceFocusStyle,
     // Opaque version that changes when any synced setting changes, used by useAutoSync.
@@ -1038,7 +1058,7 @@ export const useSettingsState = () => {
       terminalThemeId, terminalFontFamilyId, terminalFontSize, terminalSettings,
       customKeyBindings, editorWordWrap,
       sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
-      showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab,
+      showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar,
       customThemes, workspaceFocusStyle, sessionLogsTimestampsEnabled, sshDebugLogsEnabled,
     ]),
   };

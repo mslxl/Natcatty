@@ -209,6 +209,8 @@ export const zhCNCoreMessages: Messages = {
   'settings.vault.showOnlyUngroupedHostsInRootDesc': '开启后，主机库根目录的主机列表只显示没有分组的主机，已分组主机请从左侧分组进入查看。',
   'settings.vault.showSftpTab': '显示 SFTP 标签页',
   'settings.vault.showSftpTabDesc': '在顶部标签栏显示独立的 SFTP 视图。关闭后可改用会话内左侧的 SFTP 侧栏。',
+  'settings.vault.showHostTreeSidebar': '显示主机列表侧栏',
+  'settings.vault.showHostTreeSidebarDesc': '在终端和编辑器标签页显示主机列表侧栏及顶部开关。',
 
   // Update notifications
   'update.available.title': '发现新版本',
@@ -441,6 +443,7 @@ export const zhCNCoreMessages: Messages = {
   'vault.hosts.connectSelected': '连接 ({count})',
   'vault.hosts.connectMultiple.success': '正在连接 {count} 个主机',
   'vault.hosts.moveToGroup.success': '已将 {host} 移动到 {group}',
+  'vault.hosts.errors.nameRequired': '主机名称不能为空。',
   'vault.hosts.empty.title': '设置你的主机',
   'vault.hosts.empty.desc': '保存主机以快速连接到你的服务器、虚拟机和容器。',
 
@@ -541,6 +544,7 @@ export const zhCNCoreMessages: Messages = {
   'sftp.filter.placeholder': '按文件名筛选...',
   'sftp.bookmark.add': '收藏此路径',
   'sftp.bookmark.remove': '取消收藏',
+  'sftp.bookmark.list': '收藏路径',
   'sftp.bookmark.addGlobal': '+全局',
   'sftp.bookmark.addGlobalTooltip': '保存为全局收藏（所有主机共享）',
   'sftp.bookmark.empty': '暂无收藏路径',
@@ -571,6 +575,8 @@ export const zhCNCoreMessages: Messages = {
   'sftp.viewMode.label': '视图模式',
   'sftp.viewMode.list': '列表视图',
   'sftp.viewMode.tree': '树形视图',
+  'sftp.viewMode.switchToList': '切换到列表视图',
+  'sftp.viewMode.switchToTree': '切换到树形视图',
   'sftp.tree.loadError': '加载目录失败',
   'sftp.tree.loading': '加载中...',
   'sftp.kind.folder': '文件夹',

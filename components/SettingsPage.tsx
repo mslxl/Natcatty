@@ -57,33 +57,74 @@ const settingsTabTriggerClassName =
 const settingsTabIconClassName = "shrink-0";
 const settingsTabLabelClassName = "min-w-0 truncate";
 
-const SettingsTerminalTabContainer: React.FC<{ settings: SettingsState }> = ({ settings }) => {
+type TerminalTabSettingsProps = Pick<
+    SettingsState,
+    | 'terminalThemeId'
+    | 'setTerminalThemeId'
+    | 'followAppTerminalTheme'
+    | 'setFollowAppTerminalTheme'
+    | 'terminalThemeDarkId'
+    | 'setTerminalThemeDarkId'
+    | 'terminalThemeLightId'
+    | 'setTerminalThemeLightId'
+    | 'lightUiThemeId'
+    | 'darkUiThemeId'
+    | 'terminalFontFamilyId'
+    | 'setTerminalFontFamilyId'
+    | 'terminalFontSize'
+    | 'setTerminalFontSize'
+    | 'terminalSettings'
+    | 'updateTerminalSetting'
+    | 'workspaceFocusStyle'
+    | 'setWorkspaceFocusStyle'
+>;
+
+const SettingsTerminalTabContainer = React.memo<TerminalTabSettingsProps>(function SettingsTerminalTabContainer({
+    terminalThemeId,
+    setTerminalThemeId,
+    followAppTerminalTheme,
+    setFollowAppTerminalTheme,
+    terminalThemeDarkId,
+    setTerminalThemeDarkId,
+    terminalThemeLightId,
+    setTerminalThemeLightId,
+    lightUiThemeId,
+    darkUiThemeId,
+    terminalFontFamilyId,
+    setTerminalFontFamilyId,
+    terminalFontSize,
+    setTerminalFontSize,
+    terminalSettings,
+    updateTerminalSetting,
+    workspaceFocusStyle,
+    setWorkspaceFocusStyle,
+}) {
     const availableFonts = useAvailableFonts();
 
     return (
         <SettingsTerminalTab
-            terminalThemeId={settings.terminalThemeId}
-            setTerminalThemeId={settings.setTerminalThemeId}
-            followAppTerminalTheme={settings.followAppTerminalTheme}
-            setFollowAppTerminalTheme={settings.setFollowAppTerminalTheme}
-            terminalThemeDarkId={settings.terminalThemeDarkId}
-            setTerminalThemeDarkId={settings.setTerminalThemeDarkId}
-            terminalThemeLightId={settings.terminalThemeLightId}
-            setTerminalThemeLightId={settings.setTerminalThemeLightId}
-            lightUiThemeId={settings.lightUiThemeId}
-            darkUiThemeId={settings.darkUiThemeId}
-            terminalFontFamilyId={settings.terminalFontFamilyId}
-            setTerminalFontFamilyId={settings.setTerminalFontFamilyId}
-            terminalFontSize={settings.terminalFontSize}
-            setTerminalFontSize={settings.setTerminalFontSize}
-            terminalSettings={settings.terminalSettings}
-            updateTerminalSetting={settings.updateTerminalSetting}
+            terminalThemeId={terminalThemeId}
+            setTerminalThemeId={setTerminalThemeId}
+            followAppTerminalTheme={followAppTerminalTheme}
+            setFollowAppTerminalTheme={setFollowAppTerminalTheme}
+            terminalThemeDarkId={terminalThemeDarkId}
+            setTerminalThemeDarkId={setTerminalThemeDarkId}
+            terminalThemeLightId={terminalThemeLightId}
+            setTerminalThemeLightId={setTerminalThemeLightId}
+            lightUiThemeId={lightUiThemeId}
+            darkUiThemeId={darkUiThemeId}
+            terminalFontFamilyId={terminalFontFamilyId}
+            setTerminalFontFamilyId={setTerminalFontFamilyId}
+            terminalFontSize={terminalFontSize}
+            setTerminalFontSize={setTerminalFontSize}
+            terminalSettings={terminalSettings}
+            updateTerminalSetting={updateTerminalSetting}
             availableFonts={availableFonts}
-            workspaceFocusStyle={settings.workspaceFocusStyle}
-            setWorkspaceFocusStyle={settings.setWorkspaceFocusStyle}
+            workspaceFocusStyle={workspaceFocusStyle}
+            setWorkspaceFocusStyle={setWorkspaceFocusStyle}
         />
     );
-};
+});
 
 const SettingsAITabContainer: React.FC = () => {
     const aiState = useAIState();
@@ -325,13 +366,34 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                             setShowOnlyUngroupedHostsInRoot={settings.setShowOnlyUngroupedHostsInRoot}
                             showSftpTab={settings.showSftpTab}
                             setShowSftpTab={settings.setShowSftpTab}
+                            showHostTreeSidebar={settings.showHostTreeSidebar}
+                            setShowHostTreeSidebar={settings.setShowHostTreeSidebar}
                             windowOpacity={settings.windowOpacity}
                             setWindowOpacity={settings.setWindowOpacity}
-                        />
+                          />
                     )}
 
                     {mountedTabs.has("terminal") && (
-                        <SettingsTerminalTabContainer settings={settings} />
+                        <SettingsTerminalTabContainer
+                            terminalThemeId={settings.terminalThemeId}
+                            setTerminalThemeId={settings.setTerminalThemeId}
+                            followAppTerminalTheme={settings.followAppTerminalTheme}
+                            setFollowAppTerminalTheme={settings.setFollowAppTerminalTheme}
+                            terminalThemeDarkId={settings.terminalThemeDarkId}
+                            setTerminalThemeDarkId={settings.setTerminalThemeDarkId}
+                            terminalThemeLightId={settings.terminalThemeLightId}
+                            setTerminalThemeLightId={settings.setTerminalThemeLightId}
+                            lightUiThemeId={settings.lightUiThemeId}
+                            darkUiThemeId={settings.darkUiThemeId}
+                            terminalFontFamilyId={settings.terminalFontFamilyId}
+                            setTerminalFontFamilyId={settings.setTerminalFontFamilyId}
+                            terminalFontSize={settings.terminalFontSize}
+                            setTerminalFontSize={settings.setTerminalFontSize}
+                            terminalSettings={settings.terminalSettings}
+                            updateTerminalSetting={settings.updateTerminalSetting}
+                            workspaceFocusStyle={settings.workspaceFocusStyle}
+                            setWorkspaceFocusStyle={settings.setWorkspaceFocusStyle}
+                        />
                     )}
 
                     {mountedTabs.has("shortcuts") && (

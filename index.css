@@ -146,9 +146,9 @@
   max-width: 4.5rem;
   opacity: 1;
   transition:
-    max-width 280ms cubic-bezier(0.4, 0, 0.2, 1),
+    max-width 220ms cubic-bezier(0.4, 0, 0.2, 1),
     opacity 220ms ease,
-    margin 280ms cubic-bezier(0.4, 0, 0.2, 1);
+    margin 220ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .top-tab-root-label-compact {
@@ -162,7 +162,7 @@
   flex-shrink: 0;
   overflow: hidden;
   transition:
-    width 280ms cubic-bezier(0.4, 0, 0.2, 1),
+    width 220ms cubic-bezier(0.4, 0, 0.2, 1),
     opacity 220ms ease;
   width: 0;
   opacity: 0;
@@ -174,33 +174,36 @@
 }
 
 .top-tab-host-tree-gutter {
-  transition: width 280ms cubic-bezier(0.4, 0, 0.2, 1);
   pointer-events: none;
 }
 
-.top-tab-host-tree-toggle-pop {
-  animation: pop-in 320ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+.top-tab-host-tree-gutter-exit {
+  transition: width 220ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-@keyframes pop-in {
-  0% {
-    opacity: 0;
-    transform: scale(0.82) translateY(6px);
-  }
-  45% {
-    opacity: 1;
-    transform: scale(1.06) translateY(-2px);
-  }
-  72% {
-    transform: scale(0.97) translateY(1px);
-  }
-  88% {
-    transform: scale(1.01);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
+.host-tree-notes-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.28) transparent;
+}
+
+.host-tree-notes-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.host-tree-notes-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.host-tree-notes-scroll::-webkit-scrollbar-thumb {
+  min-height: 28px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-color: hsl(var(--muted-foreground) / 0.18);
+  background-clip: content-box;
+}
+
+.host-tree-notes-scroll:hover::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--muted-foreground) / 0.36);
 }
 
 @keyframes ripple {
@@ -253,11 +256,33 @@ body {
   color: hsl(var(--foreground));
 }
 
-[data-instant-theme-switch="true"],
-[data-instant-theme-switch="true"] *,
-[data-instant-theme-switch="true"] *::before,
-[data-instant-theme-switch="true"] *::after {
-  transition: none !important;
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 220ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html[data-theme-transition],
+html[data-theme-transition] *,
+html[data-theme-transition] *::before,
+html[data-theme-transition] *::after {
+  transition-property: background-color, color, border-color, outline-color, fill, stroke, text-decoration-color;
+  transition-duration: 220ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 0.01ms;
+  }
+
+  html[data-theme-transition],
+  html[data-theme-transition] *,
+  html[data-theme-transition] *::before,
+  html[data-theme-transition] *::after {
+    transition-duration: 0.01ms;
+  }
 }
 
 .dark {
@@ -267,25 +292,6 @@ body {
 .dark body {
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
-}
-
-/* Immersive mode: fade-out overlay for smooth theme restoration */
-.immersive-fade-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  pointer-events: none;
-  opacity: 1;
-  transition: opacity 200ms ease-out;
-}
-.immersive-fade-overlay.fade-out {
-  opacity: 0;
-}
-
-/* Immersive mode: override agent icon badge colors to follow the theme */
-.immersive-transition [data-agent-badge] {
-  border-color: hsl(var(--primary) / 0.2) !important;
-  background-color: hsl(var(--primary) / 0.1) !important;
 }
 
 .netcatty-shell {
@@ -494,6 +500,50 @@ body {
   app-region: no-drag;
   user-select: auto;
   -webkit-user-select: auto;
+}
+
+/* Window controls: icons sit in the h-7 tab row; hover fills the full h-9 title bar */
+[data-section="top-tabs"] .window-control-btn {
+  position: relative;
+  z-index: 0;
+  display: flex;
+  height: 1.75rem;
+  width: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+  color: var(--top-tabs-muted, hsl(var(--muted-foreground)));
+  transition: color 150ms ease;
+}
+
+[data-section="top-tabs"] .window-control-btn::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: calc(1.75rem - 2.25rem);
+  z-index: -1;
+  background: transparent;
+  transition: background-color 150ms ease;
+}
+
+[data-section="top-tabs"] .window-control-btn:hover::before {
+  background: hsl(var(--foreground) / 0.1);
+}
+
+[data-section="top-tabs"] .window-control-btn--close:hover {
+  color: white;
+}
+
+[data-section="top-tabs"] .window-control-btn--close:hover::before {
+  background: rgb(239 68 68);
+}
+
+[data-section="top-tabs"] .top-tab-utility-btn:hover,
+[data-section="top-tabs"] .top-tab-utility-btn[data-state="open"] {
+  background-color: hsl(var(--foreground) / 0.1);
+  color: var(--top-tabs-muted, hsl(var(--muted-foreground)));
 }
 
 .no-scrollbar {

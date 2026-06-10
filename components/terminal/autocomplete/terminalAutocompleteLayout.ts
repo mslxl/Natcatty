@@ -1,5 +1,6 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 import type { CompletionSuggestion } from "./completionEngine";
+import type { PromptDetectionResult } from "./promptDetector";
 import type { SubDirPanel } from "./useTerminalAutocomplete";
 import { getXTermCellDimensions } from "./xtermUtils";
 
@@ -116,6 +117,13 @@ export function areSubDirPanelsEqual(left: SubDirPanel[], right: SubDirPanel[]):
   return true;
 }
 
+export interface PopupClampViewport {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 export interface PopupPlacementInput {
   /** Anchor (current input line) top edge, in viewport coordinates. */
   anchorTop: number;
@@ -125,6 +133,11 @@ export interface PopupPlacementInput {
   anchorLeft: number;
   viewportWidth: number;
   viewportHeight: number;
+  /**
+   * Optional clamp region in viewport coordinates. Defaults to the rectangle
+   * `(0, 0, viewportWidth, viewportHeight)`.
+   */
+  clampViewport?: PopupClampViewport;
   /** Natural height the popup wants if unconstrained (main list or detail). */
   desiredHeight: number;
   /**
@@ -133,6 +146,12 @@ export interface PopupPlacementInput {
    * inside the viewport, not just the main list.
    */
   totalWidth: number;
+  /**
+   * Width budget for horizontal clamping. Defaults to `totalWidth`. The detail
+   * tooltip is rendered beside the list and can extend left on its own, so
+   * callers may pass a smaller width to keep the primary list near the cursor.
+   */
+  clampWidth?: number;
   /** Hard cap on rendered height (matches the list's maxHeight prop). */
   maxHeight: number;
   /** Gap between the anchor line and the popup. */
@@ -188,11 +207,23 @@ export function computeAutocompletePopupPlacement(
     anchorGap,
     viewportPadding,
     expandUpwardHint,
+    clampViewport,
+    clampWidth,
   } = input;
 
+  const bounds: PopupClampViewport = clampViewport ?? {
+    left: 0,
+    top: 0,
+    width: viewportWidth,
+    height: viewportHeight,
+  };
+  const boundsRight = bounds.left + bounds.width;
+  const boundsBottom = bounds.top + bounds.height;
+  const horizontalClampWidth = clampWidth ?? totalWidth;
+
   const cappedDesiredHeight = Math.min(maxHeight, Math.max(0, desiredHeight));
-  const spaceAbove = Math.max(0, anchorTop - viewportPadding - anchorGap);
-  const spaceBelow = Math.max(0, viewportHeight - anchorBottom - viewportPadding - anchorGap);
+  const spaceAbove = Math.max(0, anchorTop - bounds.top - viewportPadding - anchorGap);
+  const spaceBelow = Math.max(0, boundsBottom - anchorBottom - viewportPadding - anchorGap);
   const canFullyRenderAbove = spaceAbove >= cappedDesiredHeight;
   const canFullyRenderBelow = spaceBelow >= cappedDesiredHeight;
   const renderUpward = canFullyRenderBelow
@@ -207,24 +238,141 @@ export function computeAutocompletePopupPlacement(
   const effectiveMaxHeight = Math.max(0, Math.min(maxHeight, availableVerticalSpace));
   const contentHeightForPlacement = Math.min(effectiveMaxHeight, cappedDesiredHeight);
   const top = renderUpward
-    ? Math.max(viewportPadding, anchorTop - anchorGap - contentHeightForPlacement)
+    ? Math.max(bounds.top + viewportPadding, anchorTop - anchorGap - contentHeightForPlacement)
     : Math.min(
         anchorBottom + anchorGap,
-        viewportHeight - viewportPadding - contentHeightForPlacement,
+        boundsBottom - viewportPadding - contentHeightForPlacement,
       );
 
-  // Right edge that keeps the whole assembly inside the viewport. When the
-  // assembly is wider than the available room this goes below viewportPadding,
+  // Right edge that keeps the clamped assembly inside the bounds. When the
+  // assembly is wider than the available room this goes below the left padding,
   // so the final clamp pins the popup to the left padding (primary list wins).
-  const maxLeft = viewportWidth - viewportPadding - Math.max(0, totalWidth);
-  const left = Math.max(viewportPadding, Math.min(anchorLeft, maxLeft));
+  const maxLeft = boundsRight - viewportPadding - Math.max(0, horizontalClampWidth);
+  const left = Math.max(bounds.left + viewportPadding, Math.min(anchorLeft, maxLeft));
 
   return { renderUpward, top, left, maxHeight: effectiveMaxHeight };
 }
 
+export interface AutocompleteViewportAnchor {
+  anchorLeft: number;
+  anchorTop: number;
+  anchorBottom: number;
+  expandUpward: boolean;
+}
+
+const ESTIMATED_ROW_HEIGHT_PX = 28;
+const POPUP_CHROME_PADDING_PX = 8;
+
+function estimatePopupHeight(itemCount: number): number {
+  return itemCount * ESTIMATED_ROW_HEIGHT_PX + POPUP_CHROME_PADDING_PX;
+}
+
+function shouldExpandAutocompleteUpward(
+  cursorY: number,
+  spaceBelowPx: number,
+  spaceAbovePx: number,
+  estimatedPopupHeight: number,
+): boolean {
+  if (spaceBelowPx >= estimatedPopupHeight) return false;
+  if (spaceAbovePx >= estimatedPopupHeight) return true;
+  return cursorY > 2 && spaceAbovePx >= spaceBelowPx;
+}
+
 /**
- * Calculate popup position based on terminal cursor.
+ * Best-effort cursor column for popup anchoring. xterm's helper textarea and
+ * buffer.cursorX can lag behind the keystroke that triggered completion, so
+ * derive the column from the aligned prompt when the command still fits on one
+ * row.
  */
+export function resolveAutocompleteCursorColumn(
+  term: XTerm,
+  prompt: Pick<PromptDetectionResult, "promptText" | "userInput">,
+): number {
+  const buffer = term.buffer.active;
+  const absY = buffer.cursorY + buffer.baseY;
+  const line = buffer.getLine(absY);
+  if (line?.isWrapped) {
+    return buffer.cursorX;
+  }
+
+  let fromLine = buffer.cursorX;
+  if (line) {
+    const lineText = line.translateToString(false);
+    const tail = lineText.substring(buffer.cursorX).trimEnd();
+    if (tail.length === 0) {
+      fromLine = Math.max(buffer.cursorX, lineText.trimEnd().length);
+    }
+  }
+
+  const fromPrompt = prompt.promptText.length + prompt.userInput.length;
+  return Math.max(fromLine, fromPrompt);
+}
+
+/** Clamp autocomplete popups to the active terminal pane in split workspaces. */
+export function resolveAutocompleteClampViewport(container: HTMLElement | null): PopupClampViewport {
+  const pane = container?.closest<HTMLElement>('[data-section="terminal-split-pane"]');
+  const rect = pane?.getBoundingClientRect() ?? container?.getBoundingClientRect();
+  if (rect && rect.width > 0 && rect.height > 0) {
+    return {
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height,
+    };
+  }
+
+  return {
+    left: 0,
+    top: 0,
+    width: typeof window !== "undefined" ? window.innerWidth : 1200,
+    height: typeof window !== "undefined" ? window.innerHeight : 800,
+  };
+}
+
+/**
+ * Resolve the autocomplete anchor in viewport coordinates so split panes and
+ * padded xterm screens stay aligned with the real cursor.
+ */
+export function resolveAutocompleteAnchorInViewport(
+  term: XTerm,
+  container: HTMLElement | null,
+  itemCount: number,
+  cursorColumn = term.buffer.active.cursorX,
+): AutocompleteViewportAnchor {
+  const empty: AutocompleteViewportAnchor = {
+    anchorLeft: 0,
+    anchorTop: 0,
+    anchorBottom: 0,
+    expandUpward: false,
+  };
+  if (!container || !term.element) return empty;
+
+  const buffer = term.buffer.active;
+  const cursorY = buffer.cursorY;
+  const rows = Math.max(1, term.rows);
+  const estimatedPopupHeight = estimatePopupHeight(itemCount);
+  const dims = getXTermCellDimensions(term);
+
+  const screen =
+    container.querySelector<HTMLElement>(".xterm-screen")
+    ?? term.element.querySelector<HTMLElement>(".xterm-screen")
+    ?? container;
+  const screenRect = screen.getBoundingClientRect();
+  const anchorLeft = screenRect.left + cursorColumn * dims.width;
+  const anchorTop = screenRect.top + cursorY * dims.height;
+  const anchorBottom = screenRect.top + (cursorY + 1) * dims.height;
+  const spaceBelow = Math.max(0, (rows - cursorY - 1) * dims.height);
+  const spaceAbove = Math.max(0, cursorY * dims.height);
+
+  return {
+    anchorLeft,
+    anchorTop,
+    anchorBottom,
+    expandUpward: shouldExpandAutocompleteUpward(cursorY, spaceBelow, spaceAbove, estimatedPopupHeight),
+  };
+}
+
+/** @deprecated Use resolveAutocompleteAnchorInViewport with the xterm container. */
 export function calculatePopupPosition(
   term: XTerm,
   itemCount: number,
@@ -250,11 +398,11 @@ export function calculatePopupPosition(
   const cursorY = buffer.cursorY;
   const cursorLineTop = cursorY * dims.height;
   const cursorLineBottom = (cursorY + 1) * dims.height;
-
-  const estimatedPopupHeight = itemCount * 28 + 8;
+  const estimatedPopupHeight = estimatePopupHeight(itemCount);
   const totalRows = term.rows;
   const spaceBelow = (totalRows - cursorY - 1) * dims.height;
-  const expandUpward = spaceBelow < estimatedPopupHeight && cursorY > 2;
+  const spaceAbove = cursorY * dims.height;
+  const expandUpward = shouldExpandAutocompleteUpward(cursorY, spaceBelow, spaceAbove, estimatedPopupHeight);
 
   if (expandUpward) {
     return {

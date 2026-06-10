@@ -173,7 +173,7 @@ function registerSdkStreamHandlers(ctx) {
           const claudeSettings = normalizedAgentEnv.NETCATTY_CLAUDE_SETTINGS;
           delete normalizedAgentEnv.NETCATTY_CLAUDE_SETTINGS;
 
-          const env = buildSdkAgentEnv({
+          let env = buildSdkAgentEnv({
             shellEnv,
             requestedAgentEnv: normalizedAgentEnv,
             withCliDiscoveryEnv,

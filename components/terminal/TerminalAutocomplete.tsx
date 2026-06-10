@@ -75,6 +75,7 @@ export function TerminalAutocomplete({
   const visible = usePaneVisible(sessionId);
   const autocomplete = useTerminalAutocomplete({
     termRef,
+    containerRef,
     sessionId,
     hostId,
     hostOs,
@@ -111,9 +112,7 @@ export function TerminalAutocomplete({
     <AutocompletePopup
       suggestions={state.suggestions}
       selectedIndex={state.selectedIndex}
-      position={state.popupPosition}
-      cursorLineTop={state.popupCursorLineTop}
-      cursorLineBottom={state.popupCursorLineBottom}
+      anchorViewport={state.popupAnchorViewport}
       visible={state.popupVisible}
       expandUpward={state.expandUpward}
       themeColors={themeColors}

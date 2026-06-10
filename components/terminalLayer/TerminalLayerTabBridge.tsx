@@ -25,6 +25,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
   const sessionHostsMap = s.sessionHostsMap as Map<string, Host>;
   const sftpHostForTab = s.sftpHostForTab as Map<string, Host>;
   const sidePanelOpenTabs = s.sidePanelOpenTabs as Map<string, SidePanelTab>;
+  const showHostTreeSidebar = s.showHostTreeSidebar as boolean | undefined;
 
   const activeWorkspace = useMemo(
     () => (activeTabId ? workspaceById.get(activeTabId) : undefined),
@@ -41,9 +42,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
   s.activeSessionRef.current = activeSession;
   s.focusedSessionIdRef.current = focusedSessionId;
 
-  const isVaultActive = activeTabId === 'vault';
-  const isSftpActive = activeTabId === 'sftp';
-  const isVisible = (!isVaultActive && !isSftpActive) || !!s.draggingSessionId;
+  const isVisible = Boolean(activeSession || activeWorkspace || s.draggingSessionId);
   const isTerminalLayerVisible = isVisible || !!s.draggingSessionId;
 
   const {
@@ -199,6 +198,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     onToggleWorkspaceViewModeRef: s.onToggleWorkspaceViewModeRef,
     prevFocusedSessionIdRef,
     previewTargetSessionId: themeState.previewTargetSessionId,
+    refocusActiveTerminalSession: s.refocusActiveTerminalSession,
     requestAnimationFrame,
     ResizeObserver,
     sessionActivityStore: s.sessionActivityStore,
@@ -355,6 +355,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     setEditorWordWrap: s.setEditorWordWrap,
     setIsComposeBarOpen: s.setIsComposeBarOpen,
     setResizing,
+    showHostTreeSidebar,
     setSidePanelPosition: s.setSidePanelPosition,
     setSftpFollowTerminalCwd: s.setSftpFollowTerminalCwd,
     sftpActiveHost,
@@ -420,6 +421,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     resolveAIExecutorContext,
     sessionHostsMap,
     sessions,
+    showHostTreeSidebar,
     sftpActiveHost,
     themeState,
     workspaceById,

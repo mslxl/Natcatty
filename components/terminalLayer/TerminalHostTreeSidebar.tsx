@@ -6,14 +6,24 @@ import {
   hostTreeInlineGroupEditStore,
   useHostTreeInlineGroupEdit,
 } from '../../application/state/hostTreeInlineGroupEditStore';
+import { useHostTreeInlineHostEdit } from '../../application/state/hostTreeInlineHostEditStore';
 import { useVaultHostTreeActions } from '../../application/state/vaultHostTreeActionsStore';
 import {
+  TERMINAL_HOST_TREE_DEFAULT_WIDTH,
+  TERMINAL_HOST_TREE_MAX_WIDTH,
+  TERMINAL_HOST_TREE_MIN_WIDTH,
   terminalHostTreeStore,
   useTerminalHostTreeOpen,
 } from '../../application/state/terminalHostTreeStore';
+import {
+  TERMINAL_HOST_TREE_ANIMATION_EASING,
+  TERMINAL_HOST_TREE_ANIMATION_MS,
+} from '../../application/state/terminalHostTreeAnimation';
+import { scheduleChromeLayoutAnimation } from '../../application/state/useActiveChromeTheme';
 import { terminalLayoutSuppressStore } from '../../application/state/terminalLayoutSuppressStore';
 import { useStoredNumber } from '../../application/state/useStoredNumber';
 import { useTreeExpandedState } from '../../application/state/useTreeExpandedState';
+import { applyHostLabelRename } from '../../domain/host';
 import { ensureAncestorPathsExpanded } from '../../domain/hostGroupPathMutations';
 import { buildHostGroupTree, collectGroupTreePaths } from '../../domain/hostGroupTree';
 import {
@@ -30,8 +40,10 @@ import { cn } from '../../lib/utils';
 import type { GroupNode, Host, TerminalTheme } from '../../types';
 import { HostTreeGroupContextMenuContent, HostTreeHostContextMenuContent } from '../host/HostTreeContextMenus';
 import { HostTreeGroupInlineRenameInput } from '../host/HostTreeGroupInlineRenameInput';
+import { MessageResponse } from '../ai-elements/message';
 import { DistroAvatar } from '../DistroAvatar';
 import { ContextMenu, ContextMenuTrigger } from '../ui/context-menu';
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '../ui/hover-card';
 import { TREE_ROW_HEIGHT } from '../sftp/SftpPaneTreeNode';
 import { FixedSizeVirtualList, type FixedSizeVirtualListHandle } from '../ui/FixedSizeVirtualList';
 import {
@@ -39,11 +51,9 @@ import {
   type HostTreeToolbarPanel,
 } from './TerminalHostTreeToolbar';
 
-const SIDEBAR_MIN_WIDTH = 160;
-const SIDEBAR_DEFAULT_WIDTH = 220;
-const SIDEBAR_MAX_WIDTH = 360;
-const SIDEBAR_ANIM_MS = 220;
-const SIDEBAR_ANIM_EASING = 'cubic-bezier(0.4, 0, 0.2, 1)';
+const SIDEBAR_MIN_WIDTH = TERMINAL_HOST_TREE_MIN_WIDTH;
+const SIDEBAR_DEFAULT_WIDTH = TERMINAL_HOST_TREE_DEFAULT_WIDTH;
+const SIDEBAR_MAX_WIDTH = TERMINAL_HOST_TREE_MAX_WIDTH;
 
 const HOST_TREE_DRAG_HOST_ID = 'host-id';
 const HOST_TREE_DRAG_GROUP_PATH = 'group-path';
@@ -53,6 +63,8 @@ type HostTreeDropTarget =
   | { kind: 'group'; path: string };
 
 interface TerminalHostTreeSidebarProps {
+  enabled?: boolean;
+  surfaceVisible?: boolean;
   hosts: Host[];
   customGroups: string[];
   resolvedPreviewTheme: TerminalTheme;
@@ -71,6 +83,74 @@ type HostTreeTheme = {
   rowDropBg: string;
   folderFg: string;
 };
+
+export function isTerminalHostTreeSidebarVisible(
+  isOpen: boolean,
+  enabled = true,
+  surfaceVisible = true,
+): boolean {
+  return surfaceVisible && enabled && isOpen;
+}
+
+export function getTerminalHostTreeSidebarShellStyle(
+  isVisible: boolean,
+  layoutWidth: number,
+  shellTransition: string,
+): React.CSSProperties {
+  return {
+    width: layoutWidth,
+    transition: shellTransition,
+    pointerEvents: isVisible ? 'auto' : 'none',
+  };
+}
+
+export function getTerminalHostTreeSidebarPanelStyle({
+  isVisible,
+  displayWidth,
+  panelTransition,
+  theme,
+}: {
+  isVisible: boolean;
+  displayWidth: number;
+  panelTransition: string;
+  theme: HostTreeTheme;
+}): React.CSSProperties {
+  return {
+    width: displayWidth,
+    opacity: 1,
+    transition: panelTransition,
+    backgroundColor: theme.termBg,
+    color: theme.termFg,
+    borderRight: isVisible ? `1px solid ${theme.separator}` : '1px solid transparent',
+  };
+}
+
+export function getTerminalHostTreeLayoutTargetWidth(isVisible: boolean, displayWidth: number): number {
+  return isVisible ? displayWidth : 0;
+}
+
+export function getTerminalHostTreeInitialLayoutWidth(): number {
+  return 0;
+}
+
+export const applyTerminalHostTreeHostRename = applyHostLabelRename;
+
+export function shouldShowTerminalHostHoverCard(
+  hoveredHostId: string | null,
+  editingHostId: string | null,
+): boolean {
+  return Boolean(hoveredHostId) && hoveredHostId !== editingHostId;
+}
+
+export function getTerminalHostTreeMeasuredLayoutWidth(
+  element: Pick<HTMLElement, 'getBoundingClientRect'> | null,
+  fallbackWidth: number,
+): number {
+  const measuredWidth = element?.getBoundingClientRect().width;
+  return typeof measuredWidth === 'number' && Number.isFinite(measuredWidth)
+    ? Math.max(0, measuredWidth)
+    : Math.max(0, fallbackWidth);
+}
 
 function hostMatchesSearch(host: Host, search: string): boolean {
   const s = search.toLowerCase();
@@ -120,6 +200,60 @@ function pruneEmptyGroupNode(
   return null;
 }
 
+const TerminalHostTreeHostHoverCard: React.FC<{ host: Host }> = ({ host }) => {
+  const { t } = useI18n();
+  const protocol = host.protocol || 'ssh';
+  const port = host.port ?? 22;
+  const username = host.username?.trim();
+  const notes = host.notes?.trim();
+
+  const rows = [
+    [t('terminal.layer.hostTree.details.host'), host.hostname],
+    [t('terminal.layer.hostTree.details.user'), username],
+    [t('terminal.layer.hostTree.details.port'), String(port)],
+    [t('terminal.layer.hostTree.details.protocol'), protocol.toUpperCase()],
+    [t('terminal.layer.hostTree.details.group'), host.group],
+    [t('terminal.layer.hostTree.details.tags'), host.tags?.join(', ')],
+  ].filter((entry): entry is [string, string] => Boolean(entry[1]));
+
+  return (
+    <HoverCardContent
+      side="right"
+      align="start"
+      sideOffset={10}
+      className="w-72 p-3 text-xs"
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <DistroAvatar
+          host={host}
+          size="sm"
+          fallback={host.label.slice(0, 1).toUpperCase()}
+          className="rounded"
+        />
+        <div className="flex h-5 min-w-0 items-center">
+          <div className="translate-y-px truncate text-[15px] font-semibold leading-none">{host.label}</div>
+        </div>
+      </div>
+      <div className="mt-3 space-y-1.5">
+        {rows.map(([label, value]) => (
+          <div key={label} className="grid grid-cols-[82px_minmax(0,1fr)] gap-2">
+            <span className="text-muted-foreground">{label}</span>
+            <span className="min-w-0 truncate">{value}</span>
+          </div>
+        ))}
+      </div>
+      {notes && (
+        <div className="mt-3 border-t border-border/60 pt-3">
+          <div className="mb-1 text-muted-foreground">{t('hostDetails.notes.label')}</div>
+          <MessageResponse className="host-tree-notes-scroll max-h-[min(44vh,420px)] overflow-y-auto pr-2 text-xs leading-relaxed text-popover-foreground/90 [&_h1]:text-sm [&_h1]:mt-2 [&_h1]:mb-1 [&_h2]:text-sm [&_h2]:mt-2 [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:mt-1.5 [&_h3]:mb-1 [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1">
+            {notes}
+          </MessageResponse>
+        </div>
+      )}
+    </HoverCardContent>
+  );
+};
+
 type HostTreeFlatRowProps = {
   row: HostTreeFlatRow;
   activeHostId?: string | null;
@@ -158,6 +292,10 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
   if (row.kind === 'host') {
     const isActive = activeHostId === row.host.id;
     const hostDropParent = row.host.group || null;
+    const canShowHoverCard = shouldShowTerminalHostHoverCard(
+      row.host.id,
+      isInlineEditing ? row.host.id : null,
+    );
     const rowBody = (
       <div
         role="button"
@@ -175,9 +313,9 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
           paddingLeft: row.depth * 16 + 8,
           backgroundColor: isActive ? theme.rowActiveBg : (isDragOver ? theme.rowDropBg : undefined),
         }}
-        draggable={canDrag}
+        draggable={canDrag && !isInlineEditing}
         onDragStart={(event) => {
-          if (!canDrag) return;
+          if (!canDrag || isInlineEditing) return;
           event.dataTransfer.setData(HOST_TREE_DRAG_HOST_ID, row.host.id);
           event.dataTransfer.effectAllowed = 'move';
         }}
@@ -200,21 +338,34 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
         onMouseLeave={(event) => {
           if (!isActive && !isDragOver) event.currentTarget.style.backgroundColor = '';
         }}
-        onDoubleClick={() => onConnect(row.host)}
+        onDoubleClick={() => {
+          if (!isInlineEditing) onConnect(row.host);
+        }}
         onKeyDown={(event) => {
+          if (isInlineEditing) return;
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
             onConnect(row.host);
           }
         }}
       >
-        <span className="shrink-0 w-4" />
-        <span className="shrink-0">
+        <span className="flex h-5 w-4 shrink-0 items-center" />
+        <span className="flex h-5 shrink-0 items-center">
           <DistroAvatar host={row.host} size="xs" fallback={row.host.label.slice(0, 1).toUpperCase()} />
         </span>
-        <span className="min-w-0 flex-1 truncate">{row.host.label}</span>
+        {isInlineEditing && menuActions && inlineEditInitialName ? (
+          <HostTreeGroupInlineRenameInput
+            initialName={inlineEditInitialName}
+            onCommit={menuActions.commitInlineHostRename}
+            onCancel={menuActions.cancelInlineHostEdit}
+            className="flex-1 font-medium"
+            style={{ color: theme.termFg }}
+          />
+        ) : (
+          <span className="flex h-5 min-w-0 flex-1 translate-y-px items-center truncate leading-none">{row.host.label}</span>
+        )}
         {row.host.protocol && row.host.protocol !== 'ssh' && (
-          <span className="shrink-0 text-[10px] uppercase opacity-70" style={{ color: theme.mutedFg }}>
+          <span className="flex h-5 shrink-0 translate-y-px items-center text-[10px] leading-none uppercase opacity-70" style={{ color: theme.mutedFg }}>
             {row.host.protocol}
           </span>
         )}
@@ -224,17 +375,24 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
     if (!menuActions) return rowBody;
 
     return (
-      <ContextMenu>
-        <ContextMenuTrigger asChild>
-          {rowBody}
-        </ContextMenuTrigger>
-        <HostTreeHostContextMenuContent
-          host={row.host}
-          onConnect={onConnect}
-          onCopyCredentials={menuActions.onCopyCredentials}
-          onDeleteHost={menuActions.onDeleteHost}
-        />
-      </ContextMenu>
+      <HoverCard openDelay={650} closeDelay={80}>
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <HoverCardTrigger asChild>
+              {rowBody}
+            </HoverCardTrigger>
+          </ContextMenuTrigger>
+          <HostTreeHostContextMenuContent
+            host={row.host}
+            onConnect={onConnect}
+            onRenameHost={menuActions.onRenameHost}
+            onDuplicateHost={menuActions.onDuplicateHost}
+            onCopyCredentials={menuActions.onCopyCredentials}
+            onDeleteHost={menuActions.onDeleteHost}
+          />
+        </ContextMenu>
+        {canShowHoverCard && <TerminalHostTreeHostHoverCard host={row.host} />}
+      </HoverCard>
     );
   }
 
@@ -262,9 +420,9 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
         color: theme.termFg,
         backgroundColor: isDragOver ? theme.rowDropBg : undefined,
       }}
-      draggable={canDrag}
+      draggable={canDrag && !isInlineEditing}
       onDragStart={(event) => {
-        if (!canDrag) return;
+        if (!canDrag || isInlineEditing) return;
         event.dataTransfer.setData(HOST_TREE_DRAG_GROUP_PATH, node.path);
         event.dataTransfer.effectAllowed = 'move';
       }}
@@ -287,15 +445,19 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
       onMouseLeave={(event) => {
         if (!isDragOver) event.currentTarget.style.backgroundColor = '';
       }}
-      onClick={() => onTogglePath(node.path)}
+      onClick={() => {
+        if (isInlineEditing) return;
+        onTogglePath(node.path);
+      }}
       onKeyDown={(event) => {
+        if (isInlineEditing) return;
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           onTogglePath(node.path);
         }
       }}
     >
-      <span className="shrink-0 w-4 flex items-center justify-center">
+      <span className="flex h-5 w-4 shrink-0 items-center justify-center">
         {(hasChildren || hasHosts) && (
           <ChevronRight
             size={14}
@@ -304,9 +466,11 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
           />
         )}
       </span>
-      {isExpanded
-        ? <FolderOpen size={14} className="shrink-0" style={{ color: theme.folderFg }} />
-        : <Folder size={14} className="shrink-0" style={{ color: theme.folderFg }} />}
+      <span className="flex h-5 shrink-0 items-center">
+        {isExpanded
+          ? <FolderOpen size={14} className="shrink-0" style={{ color: theme.folderFg }} />
+          : <Folder size={14} className="shrink-0" style={{ color: theme.folderFg }} />}
+      </span>
       {isInlineEditing && menuActions && inlineEditInitialName ? (
         <HostTreeGroupInlineRenameInput
           initialName={inlineEditInitialName}
@@ -316,7 +480,7 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
           style={{ color: theme.termFg }}
         />
       ) : (
-        <span className="min-w-0 flex-1 truncate">{node.name}</span>
+        <span className="flex h-5 min-w-0 flex-1 translate-y-px items-center truncate leading-none">{node.name}</span>
       )}
     </div>
   );
@@ -365,6 +529,8 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
 HostTreeFlatRowItem.displayName = 'HostTreeFlatRowItem';
 
 const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
+  enabled = true,
+  surfaceVisible = true,
   hosts,
   customGroups,
   resolvedPreviewTheme,
@@ -374,6 +540,7 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
 }) => {
   const { t } = useI18n();
   const isOpen = useTerminalHostTreeOpen();
+  const isVisible = isTerminalHostTreeSidebarVisible(isOpen, enabled, surfaceVisible);
   const [search, setSearch] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [expandedPanel, setExpandedPanel] = useState<HostTreeToolbarPanel>(null);
@@ -391,6 +558,7 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
   );
   const menuActions = useVaultHostTreeActions();
   const inlineEdit = useHostTreeInlineGroupEdit();
+  const inlineHostEdit = useHostTreeInlineHostEdit();
   const listRef = useRef<FixedSizeVirtualListHandle>(null);
 
   const theme = useMemo<HostTreeTheme>(() => {
@@ -457,14 +625,13 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
   }, [searchActive, searchTerm, ungroupedHosts]);
 
   const flatRows = useMemo(() => {
-    if (!isOpen) return [];
     return flattenHostGroupTree({
       groupNodes: filteredTree,
       ungroupedHosts: filteredUngrouped,
       expandedPaths,
       searchActive: treeExpandAll,
     });
-  }, [expandedPaths, filteredTree, filteredUngrouped, isOpen, treeExpandAll]);
+  }, [expandedPaths, filteredTree, filteredUngrouped, treeExpandAll]);
 
   const canDrag = Boolean(menuActions) && !searchActive && !tagsActive;
 
@@ -548,6 +715,24 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
     handleDropToParent(null, event.dataTransfer);
   }, [canDrag, handleDropToParent]);
 
+  const handleListPointerDownCapture = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!menuActions) return;
+    const editingGroupPath = inlineEdit?.groupPath;
+    const editingHostId = inlineHostEdit?.hostId;
+    if (!editingGroupPath && !editingHostId) return;
+
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest('[data-inline-group-edit="true"]')) return;
+    const row = target.closest('[data-section="terminal-host-tree-sidebar-row"]');
+    if (!row) return;
+    if (editingGroupPath && row.getAttribute('data-group-path') === editingGroupPath) return;
+    if (editingHostId && row.getAttribute('data-host-id') === editingHostId) return;
+
+    if (editingGroupPath) menuActions.cancelInlineGroupEdit();
+    if (editingHostId) menuActions.cancelInlineHostEdit();
+  }, [inlineEdit?.groupPath, inlineHostEdit?.hostId, menuActions]);
+
   useEffect(() => {
     if (!inlineEdit?.shouldScrollIntoView || !inlineEdit.isNew) return;
     const index = flatRows.findIndex(
@@ -581,11 +766,16 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
       searchActive={treeExpandAll}
       canDrag={canDrag}
       isDragOver={isRowDragOver(row)}
-      isInlineEditing={row.kind === 'group' && inlineEdit?.groupPath === row.node.path}
+      isInlineEditing={
+        (row.kind === 'group' && inlineEdit?.groupPath === row.node.path)
+        || (row.kind === 'host' && inlineHostEdit?.hostId === row.host.id)
+      }
       inlineEditInitialName={
         row.kind === 'group' && inlineEdit?.groupPath === row.node.path
           ? inlineEdit.initialName
-          : undefined
+          : row.kind === 'host' && inlineHostEdit?.hostId === row.host.id
+            ? inlineHostEdit.initialName
+            : undefined
       }
       onConnect={onConnect}
       onTogglePath={togglePath}
@@ -600,6 +790,7 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
     canDrag,
     expandedPaths,
     inlineEdit,
+    inlineHostEdit,
     handleDragLeaveRow,
     handleDragOverTarget,
     handleDropToParent,
@@ -611,15 +802,15 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
     togglePath,
   ]);
 
-  const shellTransition = isResizing
+  const shellTransition = isResizing || !surfaceVisible
     ? 'none'
-    : `width ${SIDEBAR_ANIM_MS}ms ${SIDEBAR_ANIM_EASING}`;
+    : `width ${TERMINAL_HOST_TREE_ANIMATION_MS}ms ${TERMINAL_HOST_TREE_ANIMATION_EASING}`;
   const panelTransition = isResizing
     ? 'none'
-    : `opacity ${SIDEBAR_ANIM_MS - 40}ms ease-out, border-color ${SIDEBAR_ANIM_MS}ms ease-out`;
+    : `border-color ${TERMINAL_HOST_TREE_ANIMATION_MS}ms ease-out`;
 
   const handleResizeStart = useCallback((event: React.MouseEvent) => {
-    if (!isOpen) return;
+    if (!isVisible) return;
     event.preventDefault();
     setIsResizing(true);
     terminalLayoutSuppressStore.begin();
@@ -654,13 +845,37 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
     };
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
-  }, [isOpen, persistSidebarWidth, setSidebarWidth, sidebarWidth]);
+  }, [isVisible, persistSidebarWidth, setSidebarWidth, sidebarWidth]);
 
-  const prevIsOpenRef = useRef(isOpen);
+  const displayWidth = resizePreviewWidth ?? sidebarWidth;
+  const targetLayoutWidth = getTerminalHostTreeLayoutTargetWidth(isVisible, displayWidth);
+  const [shellWidth, setShellWidth] = useState(getTerminalHostTreeInitialLayoutWidth);
+  const cancelSyncLayoutWidthRef = useRef<(() => void) | null>(null);
+  const prevIsVisibleRef = useRef(isVisible);
+
+  const syncLayoutWidthFromShell = useCallback((fallbackWidth = targetLayoutWidth) => {
+    terminalHostTreeStore.setLayoutWidth(
+      getTerminalHostTreeMeasuredLayoutWidth(shellRef.current, fallbackWidth),
+    );
+  }, [targetLayoutWidth]);
 
   useEffect(() => {
-    if (prevIsOpenRef.current === isOpen) return;
-    prevIsOpenRef.current = isOpen;
+    const el = shellRef.current;
+    if (!el) return;
+
+    const ro = new ResizeObserver(() => {
+      if (isResizing) return;
+      syncLayoutWidthFromShell();
+    });
+    ro.observe(el);
+    syncLayoutWidthFromShell();
+
+    return () => ro.disconnect();
+  }, [isResizing, syncLayoutWidthFromShell]);
+
+  useEffect(() => {
+    if (prevIsVisibleRef.current === isVisible) return;
+    prevIsVisibleRef.current = isVisible;
 
     const el = shellRef.current;
     if (!el) return;
@@ -674,48 +889,81 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
     };
     const onTransitionEnd = (event: TransitionEvent) => {
       if (event.target !== el || event.propertyName !== 'width') return;
+      syncLayoutWidthFromShell();
       finish();
     };
     el.addEventListener('transitionend', onTransitionEnd);
-    const timer = window.setTimeout(finish, SIDEBAR_ANIM_MS + 80);
+    const timer = window.setTimeout(() => {
+      syncLayoutWidthFromShell();
+      finish();
+    }, TERMINAL_HOST_TREE_ANIMATION_MS + 80);
     return () => {
       el.removeEventListener('transitionend', onTransitionEnd);
       window.clearTimeout(timer);
       finish();
     };
-  }, [isOpen]);
-
-  const displayWidth = resizePreviewWidth ?? sidebarWidth;
+  }, [isVisible, syncLayoutWidthFromShell]);
 
   useEffect(() => {
-    terminalHostTreeStore.setLayoutWidth(isOpen ? displayWidth : 0);
-  }, [displayWidth, isOpen]);
+    const el = shellRef.current;
+    if (!el) return;
+
+    const onTransitionEnd = (event: TransitionEvent) => {
+      if (event.target !== el || event.propertyName !== 'width' || isResizing) return;
+      syncLayoutWidthFromShell();
+    };
+    el.addEventListener('transitionend', onTransitionEnd);
+    return () => el.removeEventListener('transitionend', onTransitionEnd);
+  }, [isResizing, syncLayoutWidthFromShell]);
+
+  useEffect(() => {
+    cancelSyncLayoutWidthRef.current?.();
+    cancelSyncLayoutWidthRef.current = null;
+
+    if (isResizing) {
+      setShellWidth(targetLayoutWidth);
+      terminalHostTreeStore.setLayoutWidth(targetLayoutWidth);
+      return;
+    }
+
+    if (!surfaceVisible) {
+      setShellWidth(0);
+      terminalHostTreeStore.setLayoutWidth(0);
+      return;
+    }
+
+    syncLayoutWidthFromShell();
+    cancelSyncLayoutWidthRef.current = scheduleChromeLayoutAnimation(() => {
+      cancelSyncLayoutWidthRef.current = null;
+      setShellWidth(targetLayoutWidth);
+    });
+
+    return () => {
+      cancelSyncLayoutWidthRef.current?.();
+      cancelSyncLayoutWidthRef.current = null;
+    };
+  }, [isResizing, surfaceVisible, syncLayoutWidthFromShell, targetLayoutWidth]);
 
   return (
     <div
       ref={shellRef}
       className="relative flex-shrink-0 h-full overflow-hidden"
-      style={{
-        width: isOpen ? displayWidth : 0,
-        transition: shellTransition,
-        pointerEvents: isOpen ? 'auto' : 'none',
-      }}
+      style={getTerminalHostTreeSidebarShellStyle(isVisible, shellWidth, shellTransition)}
       data-section="terminal-host-tree-sidebar-shell"
-      data-open={isOpen ? 'true' : 'false'}
+      data-open={isVisible ? 'true' : 'false'}
+      data-enabled={enabled ? 'true' : 'false'}
     >
       <div
         className="relative flex flex-col h-full"
-        style={{
-          width: displayWidth,
-          opacity: isOpen ? 1 : 0,
-          transition: panelTransition,
-          backgroundColor: theme.termBg,
-          color: theme.termFg,
-          borderRight: isOpen ? `1px solid ${theme.separator}` : '1px solid transparent',
-        }}
+        style={getTerminalHostTreeSidebarPanelStyle({
+          isVisible,
+          displayWidth,
+          panelTransition,
+          theme,
+        })}
         data-section="terminal-host-tree-sidebar"
       >
-        {isOpen && (
+        {isVisible && (
           <div
             className="absolute top-0 right-[-3px] h-full w-2 cursor-ew-resize z-30"
             onMouseDown={handleResizeStart}
@@ -745,6 +993,7 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
           className="flex-1 min-h-0 py-1"
           data-section="terminal-host-tree-sidebar-content"
           style={dragOverTarget?.kind === 'root' ? { backgroundColor: theme.rowDropBg } : undefined}
+          onPointerDownCapture={handleListPointerDownCapture}
           onDragOver={handleRootDragOver}
           onDragLeave={handleRootDragLeave}
           onDrop={handleRootDrop}
@@ -775,6 +1024,8 @@ export const TerminalHostTreeSidebar = memo(
   TerminalHostTreeSidebarInner,
   (prev, next) => (
     prev.hosts === next.hosts
+    && prev.enabled === next.enabled
+    && prev.surfaceVisible === next.surfaceVisible
     && prev.customGroups === next.customGroups
     && prev.resolvedPreviewTheme === next.resolvedPreviewTheme
     && prev.activeHostId === next.activeHostId

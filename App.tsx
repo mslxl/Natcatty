@@ -138,7 +138,7 @@ function App({ settings }: { settings: SettingsState }) {
     sessionLogsDir,
     sessionLogsFormat,
     sessionLogsTimestampsEnabled,
-    reapplyCurrentTheme,
+    applyAppTheme,
     workspaceFocusStyle,
   } = settings;
 
@@ -244,6 +244,7 @@ function App({ settings }: { settings: SettingsState }) {
     runSnippet,
     orphanSessions,
     orderedTabs,
+    getOrderedWorkTabs,
     reorderTabs,
     toggleBroadcast,
     isBroadcastEnabled,
@@ -267,12 +268,11 @@ function App({ settings }: { settings: SettingsState }) {
   const isMacClient = typeof navigator !== 'undefined' && /Mac|Macintosh/.test(navigator.userAgent);
 
   // ---------------------------------------------------------------------------
-  // Immersive Mode — derive UI chrome colors from the active terminal's theme
+  // Active tab lookup maps
   // ---------------------------------------------------------------------------
   const customThemes = useCustomThemes();
   const editorTabs = useEditorTabs();
 
-  // Resolve the effective TerminalTheme for the currently focused terminal tab
   const hostById = useMemo(
     () => new Map(hosts.map((host) => [host.id, host])),
     [hosts],
@@ -291,8 +291,8 @@ function App({ settings }: { settings: SettingsState }) {
     () => new Map([...customThemes, ...TERMINAL_THEMES].map((theme) => [theme.id, theme])),
     [customThemes],
   );
-  // activeTabId-derived chrome (immersive theme, window title, sftp guard) is
-  // owned by <AppActiveTabChrome/> so switching tabs does not re-render App.
+  // activeTabId-derived chrome (window title, sftp guard) is owned by
+  // <AppActiveTabChrome/> so switching tabs does not re-render App.
 
   useEffect(() => {
     const bridge = netcattyBridge.get();
@@ -697,11 +697,24 @@ function App({ settings }: { settings: SettingsState }) {
 
   const closeTabsInFlightRef = useRef(false);
 
+  const editorTabTopIds = useMemo(
+    () => editorTabs.map((tab) => toEditorTabId(tab.id)),
+    [editorTabs],
+  );
+
   // 顶层标签顺序需要包含编辑器标签，供顶部标签和编辑器邻居计算使用。
   const orderedTabsWithEditors = useMemo(
-    () => [...orderedTabs, ...editorTabs.map((tab) => toEditorTabId(tab.id))],
-    [orderedTabs, editorTabs],
+    () => getOrderedWorkTabs(editorTabTopIds),
+    [editorTabTopIds, getOrderedWorkTabs],
   );
+
+  const reorderWorkTabs = useCallback((
+    draggedId: string,
+    targetId: string,
+    position: 'before' | 'after' = 'before',
+  ) => {
+    reorderTabs(draggedId, targetId, position, editorTabTopIds);
+  }, [editorTabTopIds, reorderTabs]);
 
   // Close many tabs at once with a single batched busy-shell confirmation.
   // Used by the "Close all / Close others / Close to the right" context-menu
@@ -959,20 +972,20 @@ function App({ settings }: { settings: SettingsState }) {
       <AppActiveTabChrome
         showSftpTab={settings.showSftpTab}
         setActiveTabId={setActiveTabId}
+        applyAppTheme={applyAppTheme}
         hostById={hostById}
         sessionById={sessionById}
-        workspaceById={workspaceById}
         themeById={themeById}
+        workspaceById={workspaceById}
         currentTerminalTheme={currentTerminalTheme}
         followAppTerminalTheme={followAppTerminalTheme}
         accentMode={accentMode}
         customAccent={customAccent}
-        reapplyCurrentTheme={reapplyCurrentTheme}
         editorTabs={editorTabs}
         logViews={logViews}
         t={t}
       />
-      <AppView ctx={{ accentMode, addShellHistoryEntry, addSessionToWorkspace, addToWorkspaceDialog, appendHostToWorkspace, appendLocalTerminalToWorkspace, clearAndRemoveSource, clearAndRemoveSources, clearUnsavedConnectionLogs, closeLogView, closeSession, closeTabsBatch, copySessionWithCurrentShell, copySessionToNewWindowWithCurrentShell, closeWorkspace, connectionLogs, convertKnownHostToHost, createWorkspaceFromSessions, createWorkspaceFromTargets, createWorkspaceWithHosts, customAccent, customGroups, currentTerminalTheme, deleteConnectionLog, draggingSessionId, effectiveKnownHosts, editorTabs, editorWordWrap, emptyVaultConflict, followAppTerminalTheme, groupConfigs, handleAddKnownHost, handleConnectSerial, handleConnectToHost, handleCreateLocalTerminal, handleDeleteHost, handleEndSessionDrag, handleHostConnectWithProtocolCheck, handleHotkeyAction, handleKeyboardInteractiveCancel, handleKeyboardInteractiveSubmit, handleOpenQuickSwitcher, handleOpenSettings, handleRootContextMenu, handlePassphraseCancel, handlePassphraseSkip, handlePassphraseSubmit, handleProtocolSelect, handleRequestCloseEditorTabRef, handleSessionStatusChange, handleSyncNowManual, handleTerminalDataCapture, handleToggleTheme, handleUpdateHostFromTerminal, hostById, hosts, hotkeyScheme, identities, importOrReuseKey, isBroadcastEnabled, isCreateWorkspaceOpen, isMacClient, isQuickSwitcherOpen, keyBindings, keyboardInteractiveQueue, keys, logViews, managedSources, navigateToSection, openLogView, orderedTabsWithEditors, orphanSessions, passphraseQueue, protocolSelectHost, proxyProfiles, quickResults, quickSearch, reorderTabs, reorderWorkspaceSessions, resetSessionRename, resetWorkspaceRename, resolveEmptyVaultConflict, resolvedTheme, runSnippet: handleRunSnippet, sessionLogsDir, sessionLogsEnabled, sessionLogsFormat, sessionLogsTimestampsEnabled, sessionRenameTarget, sessionRenameValue, sessions, setActiveTabId, setAddToWorkspaceDialog, setDraggingSessionId, setEditorWordWrap, setIsCreateWorkspaceOpen, setIsQuickSwitcherOpen, setNavigateToSection, setProtocolSelectHost, setQuickSearch, setSessionRenameValue, setTerminalFontFamilyId, setTerminalFontSize, setTerminalThemeId, setWorkspaceFocusedSession, setWorkspaceRenameValue, settings, sftpAutoOpenSidebar, sftpFollowTerminalCwd, setSftpFollowTerminalCwd, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior, sftpShowHiddenFiles, sftpUseCompressedUpload, shellHistory, snippetPackages, snippets, splitSessionWithCurrentShell, sshDebugLogsEnabled: settings.sshDebugLogsEnabled, startSessionRename, startWorkspaceRename, submitSessionRename, submitWorkspaceRename, t, terminalFontFamilyId, terminalFontSize, terminalSettings, terminalThemeId, toggleBroadcast, toggleConnectionLogSaved, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, unmanageSource, updateConnectionLog, updateCustomGroups, updateGroupConfigs, updateHostDistro, updateHosts, updateIdentities, updateKeys, updateKnownHosts, updateManagedSources, updateProxyProfiles, updateSnippetPackages, updateSnippets, updateSplitSizes, updateTerminalSetting, workspaceRenameTarget, workspaceRenameValue, workspaces, VaultViewContainer, SftpViewMount, TerminalLayerMount, LogViewWrapper }} />
+      <AppView ctx={{ accentMode, addShellHistoryEntry, addSessionToWorkspace, addToWorkspaceDialog, appendHostToWorkspace, appendLocalTerminalToWorkspace, clearAndRemoveSource, clearAndRemoveSources, clearUnsavedConnectionLogs, closeLogView, closeSession, closeTabsBatch, copySessionWithCurrentShell, copySessionToNewWindowWithCurrentShell, closeWorkspace, connectionLogs, convertKnownHostToHost, createWorkspaceFromSessions, createWorkspaceFromTargets, createWorkspaceWithHosts, customAccent, customGroups, currentTerminalTheme, deleteConnectionLog, draggingSessionId, effectiveKnownHosts, editorTabs, editorWordWrap, emptyVaultConflict, followAppTerminalTheme, groupConfigs, handleAddKnownHost, handleConnectSerial, handleConnectToHost, handleCreateLocalTerminal, handleDeleteHost, handleEndSessionDrag, handleHostConnectWithProtocolCheck, handleHotkeyAction, handleKeyboardInteractiveCancel, handleKeyboardInteractiveSubmit, handleOpenQuickSwitcher, handleOpenSettings, handleRootContextMenu, handlePassphraseCancel, handlePassphraseSkip, handlePassphraseSubmit, handleProtocolSelect, handleRequestCloseEditorTabRef, handleSessionStatusChange, handleSyncNowManual, handleTerminalDataCapture, handleToggleTheme, handleUpdateHostFromTerminal, hostById, hosts, hotkeyScheme, identities, importOrReuseKey, isBroadcastEnabled, isCreateWorkspaceOpen, isMacClient, isQuickSwitcherOpen, keyBindings, keyboardInteractiveQueue, keys, logViews, managedSources, navigateToSection, openLogView, orderedTabsWithEditors, orphanSessions, passphraseQueue, protocolSelectHost, proxyProfiles, quickResults, quickSearch, reorderWorkTabs, reorderWorkspaceSessions, resetSessionRename, resetWorkspaceRename, resolveEmptyVaultConflict, resolvedTheme, runSnippet: handleRunSnippet, sessionLogsDir, sessionLogsEnabled, sessionLogsFormat, sessionLogsTimestampsEnabled, sessionRenameTarget, sessionRenameValue, sessions, setActiveTabId, setAddToWorkspaceDialog, setDraggingSessionId, setEditorWordWrap, setIsCreateWorkspaceOpen, setIsQuickSwitcherOpen, setNavigateToSection, setProtocolSelectHost, setQuickSearch, setSessionRenameValue, setTerminalFontFamilyId, setTerminalFontSize, setTerminalThemeId, setWorkspaceFocusedSession, setWorkspaceRenameValue, settings, sftpAutoOpenSidebar, sftpFollowTerminalCwd, setSftpFollowTerminalCwd, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior, sftpShowHiddenFiles, sftpUseCompressedUpload, shellHistory, snippetPackages, snippets, splitSessionWithCurrentShell, sshDebugLogsEnabled: settings.sshDebugLogsEnabled, startSessionRename, startWorkspaceRename, submitSessionRename, submitWorkspaceRename, t, terminalFontFamilyId, terminalFontSize, terminalSettings, terminalThemeId, toggleBroadcast, toggleConnectionLogSaved, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, unmanageSource, updateConnectionLog, updateCustomGroups, updateGroupConfigs, updateHostDistro, updateHosts, updateIdentities, updateKeys, updateKnownHosts, updateManagedSources, updateProxyProfiles, updateSnippetPackages, updateSnippets, updateSplitSizes, updateTerminalSetting, workspaceRenameTarget, workspaceRenameValue, workspaces, VaultViewContainer, SftpViewMount, TerminalLayerMount, LogViewWrapper }} />
     </>
   );
 }

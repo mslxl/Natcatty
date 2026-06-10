@@ -24,7 +24,6 @@ import { HotkeyScheme, KeyBinding } from "../domain/models";
 import { logger } from "../lib/logger";
 import { useRenderTracker } from "../lib/useRenderTracker";
 import { cn } from "../lib/utils";
-import { useInstantThemeSwitch } from "../lib/useInstantThemeSwitch";
 import { Host, Identity, ProxyProfile, SSHKey, TransferTask } from "../types";
 import { resolveGroupDefaults, applyGroupDefaults } from "../domain/groupConfig";
 import { materializeHostProxyProfile } from "../domain/proxyProfiles";
@@ -92,8 +91,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
   const isActive = useIsSftpActive();
   const rootRef = useRef<HTMLDivElement>(null);
   const dialogActionScopeIdRef = useRef("sftp-main-view");
-
-  useInstantThemeSwitch(rootRef);
 
   // File watch event handlers (stable refs to avoid re-creating the useSftpState options)
   const fileWatchHandlers = useMemo(() => ({

@@ -136,6 +136,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   sessionLogsFormat,
   sessionLogsTimestampsEnabled,
   sshDebugLogsEnabled,
+  showHostTreeSidebar = true,
   toggleScriptsSidePanelRef,
   toggleSidePanelRef,
 }) => {
@@ -569,7 +570,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       sessionId,
       cwdRevisionAtCommand: revisionAtCommand,
       getCwdRevision: () => terminalCwdRevisionRef.current,
-      getSessionPwd: (id) => terminalBackend.getSessionPwd(id),
+      getSessionPwd: (id, options) => terminalBackend.getSessionPwd(id, options),
       canProbe: async () => {
         if (cwdProbeGenerationRef.current.get(sessionId) !== probeGeneration) return false;
         const host = sessionHostsMapRef.current.get(sessionId);
@@ -706,7 +707,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     return resolvePreferredTerminalCwd({
       rendererCwd: sessionId ? terminalRendererCwdBySessionRef.current.get(sessionId) : undefined,
       sessionId,
-      getSessionPwd: (id) => terminalBackend.getSessionPwd(id),
+      getSessionPwd: (id, options) => terminalBackend.getSessionPwd(id, options),
       preferFreshBackend: options?.preferFreshBackend,
     });
   }, [getActiveTerminalSessionId, terminalBackend]);
@@ -1108,6 +1109,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     setSftpInitialLocationForTab,
     setSftpPendingUploadsForTab,
     setupMcpApprovalBridge,
+    showHostTreeSidebar,
     sidePanelOpenTabs,
     sidePanelPosition,
     sidePanelWidth,

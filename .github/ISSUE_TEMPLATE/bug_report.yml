@@ -34,7 +34,7 @@ body:
     attributes:
       label: How did you install Netcatty?
       options:
-        - GitHub Release (.dmg / .exe / .AppImage / .deb)
+        - GitHub Release (.dmg / .exe / .AppImage / .deb / .rpm / .pacman)
         - Homebrew
         - Built from source (npm run dev / pack)
         - Other

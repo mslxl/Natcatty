@@ -50,6 +50,7 @@ const baseUrl = `https://github.com/${repo}/releases/download/${tag}`;
 // - AppImage: x64 -> x86_64, arm64 -> arm64
 // - deb: x64 -> amd64, arm64 -> arm64
 // - rpm: x64 -> x86_64, arm64 -> aarch64
+// - pacman: x64 -> x64, arm64 -> aarch64
 const files = {
   mac: {
     arm64: `Netcatty-${version}-mac-arm64.dmg`,
@@ -70,6 +71,10 @@ const files = {
     rpm: {
       x64: `Netcatty-${version}-linux-x86_64.rpm`,
       arm64: `Netcatty-${version}-linux-aarch64.rpm`
+    },
+    pacman: {
+      x64: `Netcatty-${version}-linux-x64.pacman`,
+      arm64: `Netcatty-${version}-linux-aarch64.pacman`
     }
   }
 };
@@ -88,7 +93,9 @@ const badges = {
     deb_x64: `[![DebPackage x64](https://img.shields.io/badge/DebPackage-x64-A80030?style=flat-square&logo=debian)](${baseUrl}/${files.linux.deb.x64})`,
     deb_arm64: `[![DebPackage arm64](https://img.shields.io/badge/DebPackage-arm64-A80030?style=flat-square&logo=debian)](${baseUrl}/${files.linux.deb.arm64})`,
     rpm_x64: `[![RpmPackage x64](https://img.shields.io/badge/RpmPackage-x64-CC0000?style=flat-square&logo=redhat)](${baseUrl}/${files.linux.rpm.x64})`,
-    rpm_arm64: `[![RpmPackage arm64](https://img.shields.io/badge/RpmPackage-arm64-CC0000?style=flat-square&logo=redhat)](${baseUrl}/${files.linux.rpm.arm64})`
+    rpm_arm64: `[![RpmPackage arm64](https://img.shields.io/badge/RpmPackage-arm64-CC0000?style=flat-square&logo=redhat)](${baseUrl}/${files.linux.rpm.arm64})`,
+    pacman_x64: `[![ArchPackage x64](https://img.shields.io/badge/ArchPackage-x64-1793D1?style=flat-square&logo=archlinux)](${baseUrl}/${files.linux.pacman.x64})`,
+    pacman_arm64: `[![ArchPackage arm64](https://img.shields.io/badge/ArchPackage-arm64-1793D1?style=flat-square&logo=archlinux)](${baseUrl}/${files.linux.pacman.arm64})`
   }
 };
 
@@ -99,7 +106,7 @@ const content = `
 | :--- | :--- |
 | **Windows** | ${badges.win.setup_x64} |
 | **macOS** | ${badges.mac.apple_silicon} ${badges.mac.intel} |
-| **Linux** | ${badges.linux.appimage_x64} ${badges.linux.deb_x64} ${badges.linux.rpm_x64} <br> ${badges.linux.appimage_arm64} ${badges.linux.deb_arm64} ${badges.linux.rpm_arm64} |
+| **Linux** | ${badges.linux.appimage_x64} ${badges.linux.deb_x64} ${badges.linux.rpm_x64} ${badges.linux.pacman_x64} <br> ${badges.linux.appimage_arm64} ${badges.linux.deb_arm64} ${badges.linux.rpm_arm64} ${badges.linux.pacman_arm64} |
 `;
 
 fs.writeFileSync('release_notes.md', content);

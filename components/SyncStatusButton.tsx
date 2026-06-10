@@ -179,7 +179,7 @@ export const SyncStatusButton: React.FC<SyncStatusButtonProps> = ({
                             variant="ghost"
                             size="icon"
                             className={cn(
-                                "h-7 w-7 relative text-muted-foreground hover:text-foreground app-no-drag",
+                                "h-7 w-7 relative app-no-drag top-tab-utility-btn",
                                 className
                             )}
                             style={style}

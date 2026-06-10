@@ -225,6 +225,8 @@ export const enCoreMessages: Messages = {
   'settings.vault.showOnlyUngroupedHostsInRootDesc': 'When enabled, the root host list only shows hosts without a group. Open a group from the sidebar to see grouped hosts.',
   'settings.vault.showSftpTab': 'Show SFTP tab',
   'settings.vault.showSftpTabDesc': 'Display the standalone SFTP view in the top tab bar. When hidden, use the in-session SFTP side panel instead.',
+  'settings.vault.showHostTreeSidebar': 'Show host list sidebar',
+  'settings.vault.showHostTreeSidebarDesc': 'Display the host list sidebar and its top-bar toggle on terminal and editor tabs.',
 
   // Update notifications
   'update.available.title': 'Update Available',
@@ -667,6 +669,7 @@ export const enCoreMessages: Messages = {
   'vault.hosts.connectSelected': 'Connect ({count})',
   'vault.hosts.connectMultiple.success': 'Connecting {count} hosts',
   'vault.hosts.moveToGroup.success': 'Moved {host} to {group}',
+  'vault.hosts.errors.nameRequired': 'Host name is required.',
   'vault.hosts.empty.title': 'Set up your hosts',
   'vault.hosts.empty.desc': 'Save hosts to quickly connect to your servers, VMs, and containers.',
 

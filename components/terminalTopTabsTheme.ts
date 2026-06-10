@@ -28,7 +28,15 @@ export function getScopedTopTabsThemeId({
     return activeThemePreviewId;
   }
 
-  if (!isVisible || followAppTerminalTheme || !activeWorkspace || activeWorkspace.viewMode === "focus") {
+  if (!isVisible || followAppTerminalTheme) {
+    return null;
+  }
+
+  if (!activeWorkspace) {
+    return previewedOrVisibleThemeId;
+  }
+
+  if (activeWorkspace.viewMode === "focus") {
     return null;
   }
 

@@ -1,5 +1,5 @@
 import { CheckSquare, ChevronRight, Edit2, FileSymlink, Folder, FolderOpen, Server, Square, Expand, Minimize2 } from 'lucide-react';
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
 import {
   hostTreeInlineGroupEditStore,
@@ -171,7 +171,13 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   return (
     <div>
       {/* Group Node */}
-      <Collapsible open={isExpanded} onOpenChange={() => onToggle(node.path)}>
+      <Collapsible
+        open={isExpanded}
+        onOpenChange={() => {
+          if (isInlineEditing) return;
+          onToggle(node.path);
+        }}
+      >
         <ContextMenu>
           <ContextMenuTrigger>
             <CollapsibleTrigger asChild>
@@ -182,8 +188,14 @@ const TreeNode: React.FC<TreeNodeProps> = ({
                   getDropTargetClasses?.(node.path),
                 )}
                 style={{ paddingLeft }}
-                draggable
-                onDragStart={(e) => e.dataTransfer.setData("group-path", node.path)}
+                data-section="host-tree-row"
+                data-row-type="group"
+                data-group-path={node.path}
+                draggable={!isInlineEditing}
+                onDragStart={(e) => {
+                  if (isInlineEditing) return;
+                  e.dataTransfer.setData("group-path", node.path);
+                }}
                 onDragOver={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -213,8 +225,12 @@ const TreeNode: React.FC<TreeNodeProps> = ({
                     </div>
                   )}
                 </div>
-                <div className="mr-3 text-primary/80 group-hover:text-primary transition-colors">
-                  {isExpanded ? <FolderOpen size={18} /> : <Folder size={18} />}
+                <div className="mr-3 flex h-8 w-8 shrink-0 items-center justify-center text-primary transition-colors dark:text-primary">
+                  {isExpanded ? (
+                    <FolderOpen size={21} strokeWidth={2.35} />
+                  ) : (
+                    <Folder size={21} strokeWidth={2.35} />
+                  )}
                 </div>
                 {isInlineEditing && commitRename && cancelRename ? (
                   <HostTreeGroupInlineRenameInput
@@ -359,7 +375,7 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
   depth,
   onConnect,
   onEditHost,
-  onDuplicateHost: _onDuplicateHost,
+  onDuplicateHost,
   onDeleteHost,
   onCopyCredentials,
   moveHostToGroup: _moveHostToGroup,
@@ -390,6 +406,9 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
             isSelected ? "bg-primary/10" : "",
           )}
           style={{ paddingLeft }}
+          data-section="host-tree-row"
+          data-row-type="host"
+          data-host-id={host.id}
           draggable={!isMultiSelectMode}
           onDragStart={(e) => e.dataTransfer.setData("host-id", host.id)}
           onClick={() => {
@@ -414,7 +433,7 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
           )}
           {!isMultiSelectMode && <div className="mr-2 flex-shrink-0 w-4 h-4" />}
           <div className="mr-3 flex-shrink-0">
-            <DistroAvatar host={host} fallback={(host.os || "L")[0].toUpperCase()} size="xs" />
+            <DistroAvatar host={host} fallback={(host.os || "L")[0].toUpperCase()} size="tree" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="font-medium truncate flex items-center gap-1.5">
@@ -452,6 +471,7 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
       <HostTreeHostContextMenuContent
         host={host}
         onConnect={onConnect}
+        onDuplicateHost={onDuplicateHost}
         onCopyCredentials={onCopyCredentials}
         onDeleteHost={onDeleteHost}
       />
@@ -491,6 +511,20 @@ export const HostTreeView: React.FC<HostTreeViewProps> = ({
   groupConfigs = [],
 }) => {
   const { t } = useI18n();
+  const inlineEdit = useHostTreeInlineGroupEdit();
+  const vaultTreeActions = useVaultHostTreeActions();
+  const cancelRename = cancelInlineGroupEdit ?? vaultTreeActions?.cancelInlineGroupEdit;
+
+  const handleTreePointerDownCapture = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!inlineEdit?.groupPath || !cancelRename) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest('[data-inline-group-edit="true"]')) return;
+    const row = target.closest('[data-section="host-tree-row"]');
+    if (!row) return;
+    if (row.getAttribute('data-group-path') === inlineEdit.groupPath) return;
+    cancelRename();
+  }, [cancelRename, inlineEdit?.groupPath]);
 
   // Use external state if provided, otherwise use local persistent state
   const localTreeState = useTreeExpandedState(STORAGE_KEY_VAULT_HOSTS_TREE_EXPANDED);
@@ -562,7 +596,7 @@ export const HostTreeView: React.FC<HostTreeViewProps> = ({
   }, [groupTree, sortMode]);
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-1" onPointerDownCapture={handleTreePointerDownCapture}>
       {/* Expand/Collapse controls */}
       {groupTree.length > 0 && (
         <div className="flex items-center gap-2 mb-3 pb-2 border-b border-border/30">

@@ -43,11 +43,23 @@ export const HostTreeGroupInlineRenameInput: React.FC<HostTreeGroupInlineRenameI
   return (
     <input
       ref={inputRef}
+      data-inline-group-edit="true"
       value={value}
+      draggable={false}
       onChange={(event) => setValue(event.target.value)}
-      onBlur={commit}
+      onBlur={() => {
+        queueMicrotask(() => {
+          commit();
+        });
+      }}
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+      onDragStart={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
       onKeyDown={(event) => {
         event.stopPropagation();
         if (event.key === 'Enter') {
@@ -60,7 +72,7 @@ export const HostTreeGroupInlineRenameInput: React.FC<HostTreeGroupInlineRenameI
         }
       }}
       className={cn(
-        'min-w-0 flex-1 truncate rounded-sm border border-primary/50 bg-background/80 px-1 py-0 text-sm font-medium outline-none ring-1 ring-primary/30',
+        'min-w-0 flex-1 truncate select-text rounded-sm border border-primary/50 bg-background/80 px-1 py-0 text-sm font-medium outline-none ring-1 ring-primary/30',
         className,
       )}
       style={style}

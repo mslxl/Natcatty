@@ -147,11 +147,14 @@ module.exports = {
         shortcutName: 'Netcatty'
     },
     linux: {
-        // Linux desktop icons render full-bleed like Windows — use the
-        // tight-crop source so the app icon doesn't look padded in KDE /
-        // GNOME launchers or AppImage integrations.
-        icon: 'public/icon-win.png',
-        target: ['AppImage', 'deb', 'rpm'],
+        // Linux .deb/.rpm/AppImage icons come from build/icons/* (see
+        // scripts/generate-linux-icons.sh). Point at the icons directory
+        // under buildResources — electron-builder still falls back to the
+        // top-level icon (public/icon.png) when linux.icon is unset, which
+        // installs only hicolor/1024x1024 and launchers miss the icon (#274,
+        // #1340). Do NOT set linux.icon to a single 1024px PNG either.
+        icon: 'icons',
+        target: ['AppImage', 'deb', 'rpm', 'pacman'],
         category: 'Development',
         extraResources: [...moshExtraResources('linux'), ...etExtraResources('linux')]
     },
@@ -159,6 +162,13 @@ module.exports = {
         // Use gzip instead of default xz(lzma) for better compatibility with
         // Deepin OS and other distros that have issues with lzma decompression
         compression: 'gz'
+    },
+    pacman: {
+        // FPM-generated .pacman packages bypass Arch's alpm hooks that
+        // normally refresh the hicolor icon cache. Without this, KDE cannot
+        // resolve Icon=netcatty and shows a generic placeholder (#1358).
+        afterInstall: 'scripts/linux/after-install.tpl',
+        afterRemove: 'scripts/linux/after-remove.tpl',
     },
     publish: [
         {

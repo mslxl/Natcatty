@@ -27,7 +27,7 @@ import { resolveFollowedTerminalThemeId, TERMINAL_THEME_AUTO } from "../../../do
 
 import { KeywordHighlightRulesEditor, ThemePreviewButton } from "./SettingsTerminalTabControls";
 import { TerminalBehaviorSettings } from "./TerminalBehaviorSettings";
-export default function SettingsTerminalTab(props: {
+function SettingsTerminalTab(props: {
   terminalThemeId: string;
   setTerminalThemeId: (id: string) => void;
   followAppTerminalTheme: boolean;
@@ -1015,3 +1015,5 @@ export default function SettingsTerminalTab(props: {
     </SettingsTabContent>
   );
 }
+
+export default React.memo(SettingsTerminalTab);

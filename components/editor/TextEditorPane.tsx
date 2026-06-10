@@ -146,13 +146,13 @@ const getEditorColors = (isDark: boolean): EditorColors => ({
   border: getCssColor('--border', isDark ? '#3c3c3c' : '#d4d4d4'),
 });
 
-/** Build a fingerprint string so we can detect immersive-mode color changes cheaply. */
+/** Build a fingerprint string so we can detect UI theme color changes cheaply. */
 const getThemeSignal = (): string => {
   if (typeof document === 'undefined' || typeof getComputedStyle === 'undefined') {
     return '';
   }
   const root = document.documentElement;
-  return root.dataset.immersiveTheme
+  return root.dataset.activeChromeTheme
     ?? getComputedStyle(root).getPropertyValue('--background').trim();
 };
 
@@ -182,28 +182,37 @@ export const isTextEditorReadOnly = ({ saving }: { saving: boolean }): boolean =
 
 export const canPromoteTextEditor = ({ saving }: { saving: boolean }): boolean => !saving;
 
+export function getTextEditorContentStats(content: string): { lineCount: number; charCount: number } {
+  let lineCount = 1;
+  for (let i = 0; i < content.length; i += 1) {
+    if (content.charCodeAt(i) === 10) lineCount += 1;
+  }
+  return { lineCount, charCount: content.length };
+}
+
 export const TextEditorPromoteButton: React.FC<{
   saving: boolean;
   onPromoteToTab: () => void;
   title: string;
-}> = ({ saving, onPromoteToTab, title }) => (
+}> = React.memo(({ saving, onPromoteToTab, title }) => (
   <Tooltip>
     <TooltipTrigger asChild>
       <Button
         variant="ghost"
         size="icon"
-        className="h-7 w-7"
+        className="h-6 w-6"
         onClick={onPromoteToTab}
         disabled={!canPromoteTextEditor({ saving })}
       >
-        <Maximize2 size={14} />
+        <Maximize2 size={13} />
       </Button>
     </TooltipTrigger>
     <TooltipContent>{title}</TooltipContent>
   </Tooltip>
-);
+));
+TextEditorPromoteButton.displayName = 'TextEditorPromoteButton';
 
-export const TextEditorPane: React.FC<TextEditorPaneProps> = ({
+const TextEditorPaneInner: React.FC<TextEditorPaneProps> = ({
   fileName,
   content,
   languageId,
@@ -238,13 +247,13 @@ export const TextEditorPane: React.FC<TextEditorPaneProps> = ({
     typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
   );
 
-  // Track a signal that changes whenever immersive-mode or base theme colors change
+  // Track a signal that changes whenever active chrome or base theme colors change
   const [themeSignal, setThemeSignal] = useState(() => getThemeSignal());
 
   // Custom theme name
   const customThemeName = isDarkTheme ? 'netcatty-dark' : 'netcatty-light';
 
-  // Define and update custom Monaco themes — syncs with immersive-mode / base UI colors
+  // Define and update custom Monaco themes from active chrome / base UI colors
   useEffect(() => {
     if (!monaco) return;
 
@@ -284,7 +293,7 @@ export const TextEditorPane: React.FC<TextEditorPaneProps> = ({
     monaco.editor.setTheme(customThemeName);
   }, [monaco, isDarkTheme, themeSignal, customThemeName]);
 
-  // Listen for theme changes via MutationObserver on <html> class, style, and immersive data attr
+  // Listen for theme changes via MutationObserver on <html> class, style, and active chrome attr
   useEffect(() => {
     if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return;
     const root = document.documentElement;
@@ -295,7 +304,7 @@ export const TextEditorPane: React.FC<TextEditorPaneProps> = ({
     const observer = new MutationObserver(updateTheme);
     observer.observe(root, {
       attributes: true,
-      attributeFilter: ['class', 'style', 'data-immersive-theme'],
+      attributeFilter: ['class', 'style', 'data-active-chrome-theme'],
     });
     return () => observer.disconnect();
   }, []);
@@ -465,6 +474,8 @@ export const TextEditorPane: React.FC<TextEditorPaneProps> = ({
 
   const supportedLanguages = useMemo(() => getSupportedLanguages(), []);
   const monacoLanguage = useMemo(() => languageIdToMonaco(languageId), [languageId]);
+  const languageName = useMemo(() => getLanguageName(languageId), [languageId]);
+  const contentStats = useMemo(() => getTextEditorContentStats(content), [content]);
   const languageOptions = useMemo(
     () => supportedLanguages.map((lang) => ({ value: lang.id, label: lang.name })),
     [supportedLanguages],
@@ -477,35 +488,35 @@ export const TextEditorPane: React.FC<TextEditorPaneProps> = ({
       data-hotkey-close-tab={chrome === 'modal' ? 'true' : undefined}
     >
       {/* Header */}
-      <div className="px-4 py-3 border-b border-border/60 flex-shrink-0">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-baseline gap-2 flex-1 min-w-0">
-            <span className="text-sm font-semibold truncate flex-shrink-0">
+      <div className="h-9 px-3 py-1.5 border-b border-border/60 flex-shrink-0">
+        <div className="flex h-full items-center justify-between gap-3">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <span className="text-sm font-semibold leading-none truncate flex-shrink-0">
               {fileName}
             </span>
             {subtitle && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span className="text-xs text-muted-foreground truncate cursor-default">
+                  <span className="text-xs leading-none text-muted-foreground truncate cursor-default">
                     {subtitle}
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>{subtitle}</TooltipContent>
               </Tooltip>
             )}
-            {saveError && <span className="text-xs text-destructive truncate">{saveError}</span>}
+            {saveError && <span className="text-xs leading-none text-destructive truncate">{saveError}</span>}
           </div>
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="flex h-6 items-center gap-2 min-w-0">
             {/* Search button */}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7"
+                  className="h-6 w-6"
                   onClick={handleSearch}
                 >
-                  <Search size={14} />
+                  <Search size={13} />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>{t('common.search')}</TooltipContent>
@@ -517,10 +528,10 @@ export const TextEditorPane: React.FC<TextEditorPaneProps> = ({
                 <Button
                   variant={wordWrap ? 'secondary' : 'ghost'}
                   size="icon"
-                  className="h-7 w-7"
+                  className="h-6 w-6"
                   onClick={onToggleWordWrap}
                 >
-                  <WrapText size={14} />
+                  <WrapText size={13} />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>{t('sftp.editor.wordWrap')}</TooltipContent>
@@ -532,21 +543,21 @@ export const TextEditorPane: React.FC<TextEditorPaneProps> = ({
               value={languageId}
               onValueChange={(v) => onLanguageChange(v || 'plaintext')}
               placeholder={t('sftp.editor.syntaxHighlight')}
-              triggerClassName="h-7 max-w-[180px] min-w-[120px] text-xs"
+              triggerClassName="h-6 max-w-[170px] min-w-[112px] text-xs"
             />
 
             {/* Save button */}
             <Button
               variant="default"
               size="sm"
-              className="h-7"
+              className="h-6 px-2.5 text-xs"
               onClick={handleSave}
               disabled={saving}
             >
               {saving ? (
-                <Loader2 size={14} className="mr-1.5 animate-spin" />
+                <Loader2 size={13} className="mr-1 animate-spin" />
               ) : (
-                <CloudUpload size={14} className="mr-1.5" />
+                <CloudUpload size={13} className="mr-1" />
               )}
               {saving ? t('sftp.editor.saving') : t('sftp.editor.save')}
             </Button>
@@ -565,10 +576,10 @@ export const TextEditorPane: React.FC<TextEditorPaneProps> = ({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7"
+                className="h-6 w-6"
                 onClick={onRequestClose}
               >
-                <X size={14} />
+                <X size={13} />
               </Button>
             )}
           </div>
@@ -618,14 +629,17 @@ export const TextEditorPane: React.FC<TextEditorPaneProps> = ({
       {/* Footer */}
       <div className="px-4 py-2 border-t border-border/60 flex items-center justify-between text-xs text-muted-foreground bg-muted/30 flex-shrink-0">
         <span>
-          {getLanguageName(languageId)}
+          {languageName}
         </span>
         <span>
-          {content.split('\n').length} lines • {content.length} characters
+          {contentStats.lineCount} lines • {contentStats.charCount} characters
         </span>
       </div>
     </div>
   );
 };
+
+export const TextEditorPane = React.memo(TextEditorPaneInner);
+TextEditorPane.displayName = 'TextEditorPane';
 
 export default TextEditorPane;

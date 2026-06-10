@@ -1,0 +1,124 @@
+import React, { useEffect, useMemo, useRef } from 'react';
+
+import { useActiveTabId } from '../state/activeTabStore';
+import type { EditorTab } from '../state/editorTabStore';
+import type { LogView } from '../state/logViewState';
+import { scheduleAfterInstantThemeSwitch } from '../state/useActiveChromeTheme';
+import { terminalHostTreeStore } from '../state/terminalHostTreeStore';
+import { TerminalHostTreeSidebar } from '../../components/terminalLayer/TerminalHostTreeSidebar';
+import type { Host, TerminalSession, TerminalTheme, Workspace } from '../../types';
+import {
+  isHostTreeWorkTabSurface,
+  resolveWorkTabActiveHostId,
+} from './workTabSurface';
+
+interface AppHostTreeLayerProps {
+  enabled: boolean;
+  hosts: Host[];
+  customGroups: string[];
+  sessions: TerminalSession[];
+  workspaces: Workspace[];
+  editorTabs: readonly EditorTab[];
+  logViews: readonly LogView[];
+  orderedTabs: readonly string[];
+  resolvedPreviewTheme: TerminalTheme;
+  onConnect: (host: Host) => void;
+  onCreateLocalTerminal?: () => void;
+}
+
+export function getAppHostTreeLayerStyle(surfaceVisible: boolean): React.CSSProperties {
+  return {
+    visibility: surfaceVisible ? 'visible' : 'hidden',
+    pointerEvents: surfaceVisible ? 'auto' : 'none',
+    zIndex: surfaceVisible ? 30 : 0,
+  };
+}
+
+export function shouldAutoOpenHostTreeOnSurfaceChange({
+  enabled,
+  previousSurfaceVisible,
+  surfaceVisible,
+}: {
+  enabled: boolean;
+  previousSurfaceVisible: boolean;
+  surfaceVisible: boolean;
+}): boolean {
+  return enabled && surfaceVisible && !previousSurfaceVisible;
+}
+
+export const AppHostTreeLayer: React.FC<AppHostTreeLayerProps> = ({
+  enabled,
+  hosts,
+  customGroups,
+  sessions,
+  workspaces,
+  editorTabs,
+  logViews,
+  orderedTabs,
+  resolvedPreviewTheme,
+  onConnect,
+  onCreateLocalTerminal,
+}) => {
+  const activeTabId = useActiveTabId();
+  const previousSurfaceVisibleRef = useRef(false);
+  const cancelAutoOpenRef = useRef<(() => void) | null>(null);
+  const sessionIds = useMemo(() => new Set(sessions.map((session) => session.id)), [sessions]);
+  const workspaceIds = useMemo(() => new Set(workspaces.map((workspace) => workspace.id)), [workspaces]);
+  const logViewIds = useMemo(() => new Set(logViews.map((logView) => logView.id)), [logViews]);
+  const surfaceVisible = isHostTreeWorkTabSurface({
+    enabled,
+    activeTabId,
+    logViewIds,
+    orderedTabs,
+    sessionIds,
+    workspaceIds,
+  });
+  useEffect(() => {
+    cancelAutoOpenRef.current?.();
+    cancelAutoOpenRef.current = null;
+
+    const previousSurfaceVisible = previousSurfaceVisibleRef.current;
+    previousSurfaceVisibleRef.current = surfaceVisible;
+    if (shouldAutoOpenHostTreeOnSurfaceChange({
+      enabled,
+      previousSurfaceVisible,
+      surfaceVisible,
+    })) {
+      cancelAutoOpenRef.current = scheduleAfterInstantThemeSwitch(() => {
+        cancelAutoOpenRef.current = null;
+        terminalHostTreeStore.setIsOpen(true);
+      });
+    }
+
+    return () => {
+      cancelAutoOpenRef.current?.();
+      cancelAutoOpenRef.current = null;
+    };
+  }, [enabled, surfaceVisible]);
+
+  const activeHostId = useMemo(() => resolveWorkTabActiveHostId({
+    activeTabId,
+    editorTabs,
+    sessions,
+    workspaces,
+  }), [activeTabId, editorTabs, sessions, workspaces]);
+
+  return (
+    <div
+      className="absolute left-0 top-0 bottom-0 flex min-h-0"
+      data-section="app-host-tree-layer"
+      style={getAppHostTreeLayerStyle(surfaceVisible)}
+    >
+      <TerminalHostTreeSidebar
+        enabled={enabled}
+        surfaceVisible={surfaceVisible}
+        hosts={hosts}
+        customGroups={customGroups}
+        resolvedPreviewTheme={resolvedPreviewTheme}
+        activeHostId={activeHostId}
+        onConnect={onConnect}
+        onCreateLocalTerminal={onCreateLocalTerminal}
+      />
+    </div>
+  );
+};

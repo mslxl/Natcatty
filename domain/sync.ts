@@ -243,14 +243,14 @@ export interface SyncPayload {
     sftpFollowTerminalCwd?: boolean;
     sftpDefaultViewMode?: 'list' | 'tree';
     sftpGlobalBookmarks?: import('./models').SftpBookmark[];
-    // Immersive mode
-    immersiveMode?: boolean;
     // Vault: show recently connected hosts
     showRecentHosts?: boolean;
     // Vault: root list shows only ungrouped hosts
     showOnlyUngroupedHostsInRoot?: boolean;
     // Top tabs: show standalone SFTP view tab
     showSftpTab?: boolean;
+    // Terminal/editor tabs: show left host list sidebar
+    showHostTreeSidebar?: boolean;
     // Workspace focus indicator style
     workspaceFocusStyle?: 'dim' | 'border';
     // AI configuration

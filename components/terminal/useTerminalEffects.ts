@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/exhaustive-deps */
 import { useRef } from 'react';
+import { resolveFontWeightBold } from '../../lib/fontWeightAvailability';
 
 type TerminalEffectsContext = Record<string, any>;
 
@@ -47,7 +48,7 @@ export function resolveSelectionOverlayPosition(term: any, container: HTMLElemen
 }
 
 export function useTerminalEffects(ctx: TerminalEffectsContext) {
-  const { CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, host, hotkeySchemeRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, onBroadcastInputRef, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalFontSizeChange, paneLayoutKey, pendingAuthRef, pendingOutputScrollRef, prevIsResizingRef, primaryFontFamily, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, setIsSearchOpen, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, onSnippetShortkeyRef, snippetsRef, status, statusRef, sudoAutofillRef, t, teardown, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef } = ctx;
+  const { CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, host, hotkeySchemeRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, onBroadcastInputRef, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalFontSizeChange, paneLayoutKey, pendingAuthRef, pendingOutputScrollRef, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, setIsSearchOpen, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, onSnippetShortkeyRef, snippetsRef, status, statusRef, sudoAutofillRef, t, teardown, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef } = ctx;
 
   // Remember the last layout we successfully refit while visible so revisiting
   // the same workspace tab does not replay expensive force-fit/WebGL recovery.
@@ -453,16 +454,12 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           | 700
           | 800
           | 900;
-        const resolvedFontWeightBold = (() => {
-          const fontFamily = termRef.current?.options.fontFamily || "";
-          if (typeof document === "undefined" || !document.fonts?.check) {
-            return terminalSettings.fontWeightBold;
-          }
-          const weightSpec = `${terminalSettings.fontWeightBold} ${effectiveFontSize}px ${primaryFontFamily(fontFamily)}`;
-          return document.fonts.check(weightSpec)
-            ? terminalSettings.fontWeightBold
-            : effectiveFontWeight;
-        })();
+        const resolvedFontWeightBold = resolveFontWeightBold({
+          fontFamilyCss: termRef.current?.options.fontFamily || "",
+          normalWeight: effectiveFontWeight,
+          desiredBoldWeight: terminalSettings.fontWeightBold,
+          fontSize: effectiveFontSize,
+        });
 
         termRef.current.options.fontWeightBold = resolvedFontWeightBold as
           | 100
@@ -662,23 +659,22 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         }
 
         if (terminalSettings && termRef.current) {
-          const fontFamily = termRef.current.options?.fontFamily || "";
-          if (typeof document !== "undefined" && document.fonts?.check) {
-            const weightSpec = `${terminalSettings.fontWeightBold} ${effectiveFontSize}px ${primaryFontFamily(fontFamily)}`;
-            const resolvedBold = document.fonts.check(weightSpec)
-              ? terminalSettings.fontWeightBold
-              : effectiveFontWeight;
-            termRef.current.options.fontWeightBold = resolvedBold as
-              | 100
-              | 200
-              | 300
-              | 400
-              | 500
-              | 600
-              | 700
-              | 800
-              | 900;
-          }
+          const resolvedBold = resolveFontWeightBold({
+            fontFamilyCss: termRef.current.options?.fontFamily || "",
+            normalWeight: effectiveFontWeight,
+            desiredBoldWeight: terminalSettings.fontWeightBold,
+            fontSize: effectiveFontSize,
+          });
+          termRef.current.options.fontWeightBold = resolvedBold as
+            | 100
+            | 200
+            | 300
+            | 400
+            | 500
+            | 600
+            | 700
+            | 800
+            | 900;
         }
 
         const id = sessionRef.current;

@@ -57,7 +57,6 @@ import {
   STORAGE_KEY_VAULT_SIDEBAR_WIDTH,
 } from "../infrastructure/config/storageKeys";
 import { cn } from "../lib/utils";
-import { useInstantThemeSwitch } from "../lib/useInstantThemeSwitch";
 import {
   ConnectionLog,
   GroupConfig,
@@ -89,6 +88,7 @@ import SnippetsManager from "./SnippetsManager";
 import { ImportVaultDialog } from "./vault/ImportVaultDialog";
 import { HostTreeGroupDeleteDialog } from "./host/HostTreeGroupDeleteDialog";
 import { useHostTreeInlineGroupActions } from "./vault/useHostTreeInlineGroupActions";
+import { useHostTreeInlineHostActions } from "./vault/useHostTreeInlineHostActions";
 import { useRegisterVaultHostTreeActions } from "./vault/useRegisterVaultHostTreeActions";
 import { Button } from "./ui/button";
 import { RippleButton } from "./ui/ripple";
@@ -261,8 +261,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   const [isDeleteGroupOpen, setIsDeleteGroupOpen] = useState(false);
   const [deleteTargetPath, setDeleteTargetPath] = useState<string | null>(null);
   const [deleteGroupWithHosts, setDeleteGroupWithHosts] = useState(false);
-
-  useInstantThemeSwitch(rootRef);
 
   // Sidebar collapsed state with localStorage persistence
   const [storedSidebarCollapsed, setStoredSidebarCollapsed] = useStoredBoolean(
@@ -482,6 +480,9 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   }, []);
 
   const handleDuplicateHost = useCallback((host: Host) => {
+    setCurrentSection("hosts");
+    setIsGroupPanelOpen(false);
+    setEditingGroupPath(null);
     // Create a copy of the host with a new ID and modified label
     const duplicatedHost: Host = {
       ...host,
@@ -962,8 +963,20 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     t,
   });
 
+  const {
+    startInlineRenameHost,
+    commitInlineHostRename,
+    cancelInlineHostEdit,
+  } = useHostTreeInlineHostActions({
+    hosts,
+    onUpdateHosts,
+    t,
+  });
+
   useRegisterVaultHostTreeActions({
     handleCopyCredentials,
+    handleDuplicateHost,
+    startInlineRenameHost,
     onDeleteHost,
     handleUnmanageGroup,
     moveHostToGroup,
@@ -974,6 +987,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     startInlineDeleteGroup,
     commitInlineGroupRename,
     cancelInlineGroupEdit,
+    commitInlineHostRename,
+    cancelInlineHostEdit,
   });
 
   const isHostsSectionActive = currentSection === "hosts";

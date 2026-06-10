@@ -63,6 +63,7 @@ import {
   STORAGE_KEY_SHOW_RECENT_HOSTS,
   STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT,
   STORAGE_KEY_SHOW_SFTP_TAB,
+  STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR,
   STORAGE_KEY_WORKSPACE_FOCUS_STYLE,
   STORAGE_KEY_AI_PROVIDERS,
   STORAGE_KEY_AI_ACTIVE_PROVIDER,
@@ -404,6 +405,8 @@ export function collectSyncableSettings(): SyncPayload['settings'] {
   if (showOnlyUngroupedHostsInRoot != null) settings.showOnlyUngroupedHostsInRoot = showOnlyUngroupedHostsInRoot;
   const showSftpTab = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_SFTP_TAB);
   if (showSftpTab != null) settings.showSftpTab = showSftpTab;
+  const showHostTreeSidebar = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR);
+  if (showHostTreeSidebar != null) settings.showHostTreeSidebar = showHostTreeSidebar;
   const workspaceFocusStyle = localStorageAdapter.readString(STORAGE_KEY_WORKSPACE_FOCUS_STYLE);
   if (workspaceFocusStyle === 'dim' || workspaceFocusStyle === 'border') {
     settings.workspaceFocusStyle = workspaceFocusStyle;
@@ -524,7 +527,6 @@ function applySyncableSettings(settings: NonNullable<SyncPayload['settings']>): 
   // SFTP Bookmarks (global only)
   if (settings.sftpGlobalBookmarks != null) localStorageAdapter.write(STORAGE_KEY_SFTP_GLOBAL_BOOKMARKS, settings.sftpGlobalBookmarks);
 
-  // Immersive mode (legacy — always enabled, ignore incoming value)
   if (settings.showRecentHosts != null) localStorageAdapter.writeBoolean(STORAGE_KEY_SHOW_RECENT_HOSTS, settings.showRecentHosts);
   if (settings.showOnlyUngroupedHostsInRoot != null) {
     localStorageAdapter.writeBoolean(
@@ -534,6 +536,9 @@ function applySyncableSettings(settings: NonNullable<SyncPayload['settings']>): 
   }
   if (settings.showSftpTab != null) {
     localStorageAdapter.writeBoolean(STORAGE_KEY_SHOW_SFTP_TAB, settings.showSftpTab);
+  }
+  if (settings.showHostTreeSidebar != null) {
+    localStorageAdapter.writeBoolean(STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR, settings.showHostTreeSidebar);
   }
   if (settings.workspaceFocusStyle != null) {
     localStorageAdapter.writeString(STORAGE_KEY_WORKSPACE_FOCUS_STYLE, settings.workspaceFocusStyle);
