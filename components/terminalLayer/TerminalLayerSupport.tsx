@@ -569,6 +569,7 @@ interface TerminalPaneProps {
   onOpenScripts: () => void;
   onOpenHistory?: () => void;
   onOpenTheme: () => void;
+  onOpenSystem?: () => void;
   onCloseSession: (sessionId: string) => void;
   onStatusChange: (sessionId: string, status: TerminalSession['status']) => void;
   onSessionExit: (sessionId: string, evt: TerminalSessionExitEvent) => void;
@@ -658,6 +659,7 @@ const terminalPanePropsAreEqual = (
   prev.onOpenScripts === next.onOpenScripts &&
   prev.onOpenHistory === next.onOpenHistory &&
   prev.onOpenTheme === next.onOpenTheme &&
+  prev.onOpenSystem === next.onOpenSystem &&
   prev.onCloseSession === next.onCloseSession &&
   prev.onStatusChange === next.onStatusChange &&
   prev.onSessionExit === next.onSessionExit &&
@@ -713,6 +715,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   onOpenScripts,
   onOpenHistory,
   onOpenTheme,
+  onOpenSystem,
   onCloseSession,
   onStatusChange,
   onSessionExit,
@@ -835,6 +838,12 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
       onSetWorkspaceFocusedSession?.(activeWorkspaceId, session.id);
     }
   }, [activeWorkspaceId, isFocusMode, onSetWorkspaceFocusedSession, session.id]);
+  const handleOpenSystemForPane = useCallback(() => {
+    if (activeWorkspaceId && !isFocusMode) {
+      onSetWorkspaceFocusedSession?.(activeWorkspaceId, session.id);
+    }
+    onOpenSystem?.();
+  }, [activeWorkspaceId, isFocusMode, onOpenSystem, onSetWorkspaceFocusedSession, session.id]);
   const handleTerminalFontSizeChange = useCallback((nextFontSize: number) => {
     onTerminalFontSizeChange?.(session.id, nextFontSize);
   }, [onTerminalFontSizeChange, session.id]);
@@ -888,6 +897,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         onOpenScripts={onOpenScripts}
         onOpenHistory={onOpenHistory}
         onOpenTheme={onOpenTheme}
+        onOpenSystem={handleOpenSystemForPane}
         onCloseSession={onCloseSession}
         onStatusChange={onStatusChange}
         onSessionExit={onSessionExit}
@@ -953,6 +963,7 @@ interface TerminalPanesHostProps {
   onOpenScripts: () => void;
   onOpenHistory?: () => void;
   onOpenTheme: () => void;
+  onOpenSystem?: () => void;
   onCloseSession: (sessionId: string) => void;
   onStatusChange: (sessionId: string, status: TerminalSession['status']) => void;
   onSessionExit: (sessionId: string, evt: TerminalSessionExitEvent) => void;
@@ -1014,6 +1025,7 @@ const terminalPanesHostPropsAreEqual = (
   if (prev.onOpenScripts !== next.onOpenScripts) return false;
   if (prev.onOpenHistory !== next.onOpenHistory) return false;
   if (prev.onOpenTheme !== next.onOpenTheme) return false;
+  if (prev.onOpenSystem !== next.onOpenSystem) return false;
   if (prev.onCloseSession !== next.onCloseSession) return false;
   if (prev.onStatusChange !== next.onStatusChange) return false;
   if (prev.onSessionExit !== next.onSessionExit) return false;
