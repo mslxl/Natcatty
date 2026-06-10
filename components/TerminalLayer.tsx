@@ -1,4 +1,4 @@
-import { FolderTree, MessageSquare, PanelLeft, PanelRight, Palette, X, Zap } from 'lucide-react';
+import { FolderTree, History, MessageSquare, PanelLeft, PanelRight, Palette, X, Zap } from 'lucide-react';
 import React, { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { activeTabStore } from '../application/state/activeTabStore';
 import { canReuseTerminalConnection } from '../application/state/terminalConnectionReuse';
@@ -31,6 +31,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { SftpSidePanel } from './SftpSidePanel';
 import { ScriptsSidePanel } from './ScriptsSidePanel';
+import { HistorySidePanel } from './HistorySidePanel';
+import { useRemoteHistoryState } from '../application/state/useRemoteHistoryState';
 import { resolveSnippetCommand } from './SnippetExecutionProvider';
 import type { Snippet } from '../types';
 import { ThemeSidePanel } from './terminal/ThemeSidePanel';
@@ -880,6 +882,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     handleSwitchSidePanelTab('theme');
   }, [handleSwitchSidePanelTab]);
 
+  const handleOpenHistory = useCallback(() => {
+    handleSwitchSidePanelTab('history');
+  }, [handleSwitchSidePanelTab]);
+
   // Open AI chat side panel (side-panel rail button: a plain switch that is a
   // no-op when AI is already the active sub-panel, matching the other rail tabs)
   const handleOpenAI = useCallback(() => {
@@ -951,6 +957,16 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     textarea?.focus();
   }, [terminalBackend]);
 
+  const remoteHistory = useRemoteHistoryState();
+  const handleHistoryPaste = useCallback(
+    (command: string) => handleSnippetClickForFocusedSession(command, true),
+    [handleSnippetClickForFocusedSession],
+  );
+  const handleHistoryRun = useCallback(
+    (command: string) => handleSnippetClickForFocusedSession(command, false),
+    [handleSnippetClickForFocusedSession],
+  );
+
   const handleSnippetFromPanel = useCallback(async (snippet: Snippet) => {
     const command = await resolveSnippetCommand(snippet);
     if (command === null) return;
@@ -1014,6 +1030,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     clearTerminalPreviewVars,
     clearTopTabsPreviewVars,
     FolderTree,
+    History,
+    HistorySidePanel,
     MessageSquare,
     Palette,
     PanelLeft,
@@ -1038,6 +1056,9 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     handleCommandExecuted,
     handleCommandSubmitted,
     handleComposeSend,
+    handleHistoryPaste,
+    handleHistoryRun,
+    handleOpenHistory,
     handleOpenSftp,
     handleOpenScripts,
     handleOpenTheme,
@@ -1103,6 +1124,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     pendingTerminalSelectionForAI,
     refocusActiveTerminalSession,
     refocusTerminalSession,
+    remoteHistory,
     resolveSftpHostForTab,
     ScriptsSidePanel,
     sessionActivityStore,
