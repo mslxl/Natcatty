@@ -62,6 +62,7 @@ export const terminalPropsAreEqual = (
   && prev.onOpenScripts === next.onOpenScripts
   && prev.onOpenHistory === next.onOpenHistory
   && prev.onOpenTheme === next.onOpenTheme
+  && prev.onOpenSystem === next.onOpenSystem
   && prev.onToggleBroadcast === next.onToggleBroadcast
   && prev.onToggleComposeBar === next.onToggleComposeBar
   && prev.onBroadcastInput === next.onBroadcastInput

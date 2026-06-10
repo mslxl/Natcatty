@@ -152,6 +152,7 @@ export interface TerminalProps {
   onOpenScripts?: () => void;
   onOpenHistory?: () => void;
   onOpenTheme?: () => void;
+  onOpenSystem?: () => void;
   isBroadcastEnabled?: boolean;
   onToggleBroadcast?: () => void;
   onToggleComposeBar?: () => void;

@@ -250,6 +250,7 @@ const WORKSPACE_CTX_KEYS = [
   'handleTerminalCwdChange',
   'handleOpenScripts',
   'handleOpenHistory',
+  'handleOpenSystem',
   'handleOpenTheme',
   'handleCloseSession',
   'handleStatusChange',
