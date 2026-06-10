@@ -16,11 +16,13 @@ function TerminalLayerViewInner({ ctx }: { ctx: TerminalLayerViewContext }) {
     composeBarThemeColors,
     focusedSessionId,
     handleComposeSend,
+    handleSnippetFromPanel,
     isBroadcastEnabled,
     isComposeBarOpen,
     isTerminalLayerVisible,
     refocusTerminalSession,
     setIsComposeBarOpen,
+    snippets,
     TerminalComposeBar,
     workspaceOuterRef,
   } = ctx;
@@ -46,6 +48,8 @@ function TerminalLayerViewInner({ ctx }: { ctx: TerminalLayerViewContext }) {
       {activeWorkspace && isComposeBarOpen && (
         <TerminalComposeBar
           onSend={handleComposeSend}
+          onSnippetClick={(snippet) => void handleSnippetFromPanel(snippet)}
+          snippets={snippets}
           onClose={() => {
             setIsComposeBarOpen(false);
             refocusTerminalSession(focusedSessionId);

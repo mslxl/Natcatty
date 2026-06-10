@@ -43,6 +43,10 @@ export const STORAGE_KEY_VAULT_PROXY_PROFILES_VIEW_MODE = 'netcatty_vault_proxy_
 export const STORAGE_KEY_VAULT_SNIPPETS_VIEW_MODE = 'netcatty_vault_snippets_view_mode_v1';
 /** Inline snippet script editor height (px) in vault edit panel. */
 export const STORAGE_KEY_SNIPPET_SCRIPT_EDITOR_HEIGHT = 'netcatty_snippet_script_editor_height_v1';
+/** Terminal compose bar total height (px). */
+export const STORAGE_KEY_COMPOSE_BAR_HEIGHT = 'netcatty_compose_bar_height_v1';
+/** Snippet IDs pinned to the terminal compose bar quick strip. */
+export const STORAGE_KEY_COMPOSE_BAR_PINNED_SNIPPETS = 'netcatty_compose_bar_pinned_snippets_v1';
 export const STORAGE_KEY_VAULT_KNOWN_HOSTS_VIEW_MODE = 'netcatty_vault_known_hosts_view_mode_v1';
 
 // Update check
