@@ -270,7 +270,7 @@ const HistorySidePanelInner: React.FC<HistorySidePanelProps> = ({
 
       <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 text-[11px] text-muted-foreground border-b border-border/30 min-h-[28px]">
         <div
-          className="inline-flex max-w-[calc(100%-3.5rem)] items-center gap-0.5 rounded-md p-0.5"
+          className="inline-flex max-w-[calc(100%-3.5rem)] items-center gap-0.5"
           role="tablist"
           aria-label={t('history.scope.label')}
         >
@@ -390,18 +390,11 @@ const ScopeTab: React.FC<{
     aria-selected={active}
     onClick={onClick}
     title={label}
-    style={{
-      backgroundColor: active
-        ? 'color-mix(in srgb, var(--terminal-sidepanel-accent, var(--primary)) 24%, transparent)'
-        : 'transparent',
-      color: active
-        ? 'var(--terminal-sidepanel-fg, var(--foreground))'
-        : 'var(--terminal-sidepanel-muted, var(--muted-foreground))',
-    }}
     className={cn(
-      'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] leading-4 transition-colors min-w-0 shrink',
-      'hover:bg-muted/30 hover:text-foreground',
-      active && 'font-medium hover:bg-transparent',
+      'inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] leading-4 transition-colors min-w-0 shrink whitespace-nowrap',
+      active
+        ? 'bg-muted text-foreground font-medium'
+        : 'text-muted-foreground hover:text-foreground',
       className,
     )}
   >
