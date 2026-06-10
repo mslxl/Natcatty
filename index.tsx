@@ -13,6 +13,7 @@ import { TooltipProvider } from './components/ui/tooltip';
 
 const LazySettingsPage = lazy(() => import('./components/SettingsPage'));
 const LazyTrayPanel = lazy(() => import('./components/TrayPanel'));
+const LazyTerminalPopupPage = lazy(() => import('./components/TerminalPopupPage'));
 
 function SettingsWindowFallback() {
   return (
@@ -94,6 +95,9 @@ const getRoute = () => {
   if (hash === '#/tray' || hash.startsWith('#/tray')) {
     return 'tray';
   }
+  if (hash === '#/terminal-popup' || hash.startsWith('#/terminal-popup')) {
+    return 'terminal-popup';
+  }
   return 'main';
 };
 
@@ -117,6 +121,16 @@ const renderApp = () => {
         <TooltipProvider delayDuration={300}>
           <Suspense fallback={<div style={{ padding: 12, color: '#fff' }}>Loading tray panel…</div>}>
             <LazyTrayPanel />
+          </Suspense>
+        </TooltipProvider>
+      </ToastProvider>
+    );
+  } else if (route === 'terminal-popup') {
+    root.render(
+      <ToastProvider>
+        <TooltipProvider delayDuration={300}>
+          <Suspense fallback={<div style={{ padding: 12, color: '#fff' }}>Loading terminal…</div>}>
+            <LazyTerminalPopupPage />
           </Suspense>
         </TooltipProvider>
       </ToastProvider>

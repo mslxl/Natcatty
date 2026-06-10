@@ -159,6 +159,15 @@ function createBridgeRegistrar(context) {
     transferBridge.registerHandlers(ipcMain);
     portForwardingBridge.registerHandlers(ipcMain);
     terminalBridge.registerHandlers(ipcMain);
+
+    const { createSystemManagerBridge } = require("../bridges/systemManagerBridge.cjs");
+    const systemManagerBridge = createSystemManagerBridge({
+      getSessions: () => sessions,
+      execOnEtSession: (...args) => terminalBridge.execOnEtSession(...args),
+      ensureMoshStatsConnection: (...args) => sshBridge.ensureMoshStatsConnection(...args),
+      process,
+    });
+    systemManagerBridge.registerHandlers(ipcMain);
     oauthBridge.setupOAuthBridge(ipcMain);
     githubAuthBridge.registerHandlers(ipcMain);
     googleAuthBridge.registerHandlers(ipcMain, electronModule);
@@ -343,6 +352,27 @@ function createBridgeRegistrar(context) {
       } catch (err) {
         console.error("[Main] Failed to open session in new window:", err);
         return { success: false, error: err?.message || "Failed to open new window" };
+      }
+    });
+
+    ipcMain.handle("netcatty:window:openTerminalPopup", async (event, payload) => {
+      try {
+        if (!payload || typeof payload !== "object") {
+          return { success: false, error: "Invalid popup payload" };
+        }
+        const sourceWindow = BrowserWindow.fromWebContents(event.sender);
+        return await getWindowManager().openTerminalPopupWindow(electronModule, {
+          preload,
+          devServerUrl: effectiveDevServerUrl,
+          isDev,
+          appIcon,
+          isMac,
+          electronDir,
+          sourceWindow,
+        }, payload);
+      } catch (err) {
+        console.error("[Main] Failed to open terminal popup:", err);
+        return { success: false, error: err?.message || "Failed to open terminal popup" };
       }
     });
   

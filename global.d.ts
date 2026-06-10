@@ -4,6 +4,7 @@
 /// <reference path="./types/global/netcatty-bridge-files.d.ts" />
 /// <reference path="./types/global/netcatty-bridge-ai.d.ts" />
 /// <reference path="./types/global/netcatty-bridge-app.d.ts" />
+/// <reference path="./types/global/netcatty-bridge-system.d.ts" />
 declare module "*.cjs" {
   const value: Record<string, unknown>;
   export = value;

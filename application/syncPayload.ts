@@ -196,7 +196,10 @@ const SYNCABLE_TERMINAL_KEYS = [
   'linkModifier', 'keywordHighlightEnabled', 'keywordHighlightRules',
   'keepaliveInterval', 'keepaliveCountMax', 'disableBracketedPaste', 'clearWipesScrollback',
   'preserveSelectionOnInput', 'forcePromptNewLine', 'osc52Clipboard', 'showServerStats', 'showLineTimestamps',
-  'serverStatsRefreshInterval', 'rendererType',
+  'serverStatsRefreshInterval',
+  'systemManagerProcessRefreshInterval', 'systemManagerTmuxRefreshInterval',
+  'systemManagerDockerListRefreshInterval', 'systemManagerDockerStatsRefreshInterval',
+  'rendererType',
   'autocompleteEnabled', 'autocompleteGhostText', 'autocompletePopupMenu',
   'autocompleteDebounceMs', 'autocompleteMinChars', 'autocompleteMaxSuggestions',
 ] as const;

@@ -81,6 +81,12 @@ export interface TerminalSettings {
   showServerStats: boolean; // Show CPU/Memory/Disk in terminal statusbar
   serverStatsRefreshInterval: number; // Seconds between stats refresh (default: 30)
 
+  // System Manager side panel polling (seconds)
+  systemManagerProcessRefreshInterval: number;
+  systemManagerTmuxRefreshInterval: number;
+  systemManagerDockerListRefreshInterval: number;
+  systemManagerDockerStatsRefreshInterval: number;
+
   // Paste
   disableBracketedPaste: boolean; // Disable bracketed paste mode (avoid ^[[200~ artifacts)
 
@@ -273,6 +279,10 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   moshClientPath: '', // Legacy mosh-client override; normal UI uses bundled mosh-client
   showServerStats: true, // Show server stats by default
   serverStatsRefreshInterval: 5, // Refresh every 5 seconds
+  systemManagerProcessRefreshInterval: 3,
+  systemManagerTmuxRefreshInterval: 3,
+  systemManagerDockerListRefreshInterval: 5,
+  systemManagerDockerStatsRefreshInterval: 3,
   disableBracketedPaste: false, // Bracketed paste enabled by default
   clearWipesScrollback: true, // POSIX-standard: shell `clear` clears scrollback too
   preserveSelectionOnInput: false, // Opt-in: keep selection alive when typing

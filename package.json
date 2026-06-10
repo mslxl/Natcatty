@@ -104,6 +104,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-unused-imports": "^4.3.0",
     "patch-package": "^8.0.0",
+    "simple-icons": "^16.23.0",
     "tailwindcss": "^4.1.17",
     "tsx": "^4.21.0",
     "typescript": "~5.9.3",

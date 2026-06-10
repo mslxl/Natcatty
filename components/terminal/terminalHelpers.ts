@@ -88,6 +88,9 @@ export interface TerminalProps {
   keys: SSHKey[];
   identities: Identity[];
   snippets: Snippet[];
+  snippetPackages?: string[];
+  /** Minimal toolbar for popup terminals (compose, search, snippets only). */
+  compactToolbar?: boolean;
   chainHosts?: Host[];
   themePreviewId?: string;
   knownHosts?: KnownHost[];

@@ -74,6 +74,62 @@ function createPreloadApi(ctx) {
   getServerStats: async (sessionId) => {
     return ipcRenderer.invoke("netcatty:ssh:stats", { sessionId });
   },
+  probeSystemCapabilities: async (sessionId) => {
+    return ipcRenderer.invoke("netcatty:system:probeCapabilities", { sessionId });
+  },
+  listSystemProcesses: async (sessionId) => {
+    return ipcRenderer.invoke("netcatty:system:listProcesses", { sessionId });
+  },
+  signalSystemProcess: async (options) => {
+    return ipcRenderer.invoke("netcatty:system:signalProcess", options);
+  },
+  listTmuxSessions: async (sessionId) => {
+    return ipcRenderer.invoke("netcatty:system:listTmuxSessions", { sessionId });
+  },
+  createTmuxSession: async (options) => {
+    return ipcRenderer.invoke("netcatty:system:createTmuxSession", options);
+  },
+  listTmuxWindows: async (options) => {
+    return ipcRenderer.invoke("netcatty:system:listTmuxWindows", options);
+  },
+  listTmuxPanes: async (options) => {
+    return ipcRenderer.invoke("netcatty:system:listTmuxPanes", options);
+  },
+  listTmuxClients: async (options) => {
+    return ipcRenderer.invoke("netcatty:system:listTmuxClients", options);
+  },
+  tmuxAction: async (options) => {
+    return ipcRenderer.invoke("netcatty:system:tmuxAction", options);
+  },
+  listDockerContainers: async (sessionId) => {
+    return ipcRenderer.invoke("netcatty:system:listDockerContainers", { sessionId });
+  },
+  listDockerImages: async (sessionId) => {
+    return ipcRenderer.invoke("netcatty:system:listDockerImages", { sessionId });
+  },
+  getDockerStats: async (options) => {
+    return ipcRenderer.invoke("netcatty:system:dockerStats", options);
+  },
+  dockerInspect: async (options) => {
+    return ipcRenderer.invoke("netcatty:system:dockerInspect", options);
+  },
+  dockerImageInspect: async (options) => {
+    return ipcRenderer.invoke("netcatty:system:dockerImageInspect", options);
+  },
+  dockerAction: async (options) => {
+    return ipcRenderer.invoke("netcatty:system:dockerAction", options);
+  },
+  dockerImageAction: async (options) => {
+    return ipcRenderer.invoke("netcatty:system:dockerImageAction", options);
+  },
+  openTerminalPopup: async (payload) => {
+    return ipcRenderer.invoke("netcatty:window:openTerminalPopup", payload);
+  },
+  onTerminalPopupConfig: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("netcatty:window:terminalPopupConfig", handler);
+    return () => ipcRenderer.removeListener("netcatty:window:terminalPopupConfig", handler);
+  },
   readRemoteHistory: async (sessionId, limit) => {
     return ipcRenderer.invoke("netcatty:ssh:readRemoteHistory", { sessionId, limit });
   },

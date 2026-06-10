@@ -30,7 +30,7 @@ function terminalViewCtxEqual(
 }
 
 function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
-  const { Button, Copy, Maximize2, Radio, Sparkles, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, chainProgress, cn, containerRef, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleRetry, handleSearch, handleTopOverlayMouseDownCapture, hasMouseTracking, hasSelection, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen, isDraggingOver, isFocusMode, isLocalConnection, isSearchOpen, isSupportedOs, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onCloseSession, onExpandToFocus, onSplitHorizontal, onSplitVertical, onToggleBroadcast, osc52ReadPromptVisible, pendingHostKeyInfo, progressLogs, progressValue, renderControls, searchMatchCount, selectionOverlayPosition, sessionId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, snippets, status, statusDotTone, sudoHintRef, sudoHintText, t, termRef, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem } = ctx;
+  const { Button, Copy, Maximize2, Radio, Sparkles, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, chainProgress, cn, compactToolbar, containerRef, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleRetry, handleSearch, handleTopOverlayMouseDownCapture, hasMouseTracking, hasSelection, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen, isDraggingOver, isFocusMode, isLocalConnection, isSearchOpen, isSupportedOs, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onCloseSession, onExpandToFocus, onSplitHorizontal, onSplitVertical, onToggleBroadcast, osc52ReadPromptVisible, pendingHostKeyInfo, progressLogs, progressValue, renderControls, searchMatchCount, selectionOverlayPosition, sessionId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, snippets, status, statusDotTone, sudoHintRef, sudoHintText, t, termRef, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem } = ctx;
   return (
     <TerminalContextMenu
       hasSelection={hasSelection}
@@ -98,8 +98,8 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
               ['--terminal-toolbar-btn-active' as never]: 'var(--terminal-ui-toolbar-btn-active)',
             }}
           >
-            <div className="flex items-center gap-1 text-[11px] font-semibold">
-              <span className="whitespace-nowrap">{host.label}</span>
+            <div className="flex items-center gap-1 text-[11px] font-semibold min-w-0">
+              <span className="whitespace-nowrap truncate">{host.label}</span>
               <span
                 className={cn(
                   "inline-block h-2 w-2 rounded-full flex-shrink-0",
@@ -128,14 +128,16 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
                 </Tooltip>
               )}
             </div>
-            <TerminalServerStats
-              sessionId={sessionId}
-              enabled={terminalSettings?.showServerStats ?? true}
-              refreshInterval={terminalSettings?.serverStatsRefreshInterval ?? 5}
-              isSupportedOs={isSupportedOs}
-              isConnected={status === 'connected'}
-              isVisible={isVisible}
-            />
+            {!compactToolbar && (
+              <TerminalServerStats
+                sessionId={sessionId}
+                enabled={terminalSettings?.showServerStats ?? true}
+                refreshInterval={terminalSettings?.serverStatsRefreshInterval ?? 5}
+                isSupportedOs={isSupportedOs}
+                isConnected={status === 'connected'}
+                isVisible={isVisible}
+              />
+            )}
             <div className="flex-1" />
             <div className="flex items-center gap-0.5 flex-shrink-0">
               {inWorkspace && onToggleBroadcast && (

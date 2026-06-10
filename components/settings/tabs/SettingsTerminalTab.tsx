@@ -856,6 +856,94 @@ function SettingsTerminalTab(props: {
         )}
       </div>
 
+      <SectionHeader title={t("settings.terminal.section.systemManager")} />
+      <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
+        <SettingRow
+          label={t("settings.terminal.systemManager.processRefreshInterval")}
+          description={t("settings.terminal.systemManager.processRefreshInterval.desc")}
+        >
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={2}
+              max={60}
+              value={terminalSettings.systemManagerProcessRefreshInterval}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10) || 3;
+                if (val >= 2 && val <= 60) {
+                  updateTerminalSetting("systemManagerProcessRefreshInterval", val);
+                }
+              }}
+              className="w-20"
+            />
+            <span className="text-sm text-muted-foreground">{t("settings.terminal.serverStats.seconds")}</span>
+          </div>
+        </SettingRow>
+        <SettingRow
+          label={t("settings.terminal.systemManager.tmuxRefreshInterval")}
+          description={t("settings.terminal.systemManager.tmuxRefreshInterval.desc")}
+        >
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={2}
+              max={60}
+              value={terminalSettings.systemManagerTmuxRefreshInterval}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10) || 3;
+                if (val >= 2 && val <= 60) {
+                  updateTerminalSetting("systemManagerTmuxRefreshInterval", val);
+                }
+              }}
+              className="w-20"
+            />
+            <span className="text-sm text-muted-foreground">{t("settings.terminal.serverStats.seconds")}</span>
+          </div>
+        </SettingRow>
+        <SettingRow
+          label={t("settings.terminal.systemManager.dockerListRefreshInterval")}
+          description={t("settings.terminal.systemManager.dockerListRefreshInterval.desc")}
+        >
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={3}
+              max={120}
+              value={terminalSettings.systemManagerDockerListRefreshInterval}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10) || 5;
+                if (val >= 3 && val <= 120) {
+                  updateTerminalSetting("systemManagerDockerListRefreshInterval", val);
+                }
+              }}
+              className="w-20"
+            />
+            <span className="text-sm text-muted-foreground">{t("settings.terminal.serverStats.seconds")}</span>
+          </div>
+        </SettingRow>
+        <SettingRow
+          label={t("settings.terminal.systemManager.dockerStatsRefreshInterval")}
+          description={t("settings.terminal.systemManager.dockerStatsRefreshInterval.desc")}
+        >
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={2}
+              max={60}
+              value={terminalSettings.systemManagerDockerStatsRefreshInterval}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10) || 3;
+                if (val >= 2 && val <= 60) {
+                  updateTerminalSetting("systemManagerDockerStatsRefreshInterval", val);
+                }
+              }}
+              className="w-20"
+            />
+            <span className="text-sm text-muted-foreground">{t("settings.terminal.serverStats.seconds")}</span>
+          </div>
+        </SettingRow>
+      </div>
+
       <SectionHeader title={t("settings.terminal.section.rendering")} />
       <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
         <SettingRow

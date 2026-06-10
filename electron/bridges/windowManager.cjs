@@ -894,6 +894,22 @@ const {
   prewarmSettingsWindow,
 } = settingsWindowApi;
 
+const { createTerminalPopupWindowApi } = require("./windowManager/terminalPopupWindow.cjs");
+const terminalPopupWindowApi = createTerminalPopupWindowApi({
+  get mainWindow() { return mainWindow; },
+  get currentTheme() { return currentTheme; },
+  V8_CACHE_OPTIONS,
+  __dirname,
+  resolveFrontendBackgroundColor,
+  createExternalOnlyWindowOpenHandler,
+  getDevRendererBaseUrl,
+  applyWindowOpacityToWindow,
+  sendWhenRendererReady,
+  showAndFocusWindow,
+  resolveSettingsWindowBounds,
+});
+const { openTerminalPopupWindow, closeTerminalPopupWindow } = terminalPopupWindowApi;
+
 /**
  * Register window control IPC handlers (only once)
  */
@@ -1174,6 +1190,8 @@ module.exports = {
   createWindow,
   openSettingsWindow,
   closeSettingsWindow,
+  openTerminalPopupWindow,
+  closeTerminalPopupWindow,
   prewarmSettingsWindow,
   buildAppMenu,
   getMainWindow,

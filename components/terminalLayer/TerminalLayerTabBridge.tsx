@@ -1,8 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 
 import { useActiveTabId } from '../../application/state/activeTabStore';
+import { sessionCapabilitiesStore } from '../../application/state/sessionCapabilitiesStore';
+import { useSystemManagerBackend } from '../../application/state/useSystemManagerBackend';
 import { canReuseTerminalConnection } from '../../application/state/terminalConnectionReuse';
+import { resolveSystemSidebarSession } from '../../domain/systemManager/resolveSystemSession';
+import { useSystemCapabilitiesWarmup } from '../systemManager/hooks/useSystemManager';
 import { cn } from '../../lib/utils';
 import type { Host, TerminalSession, Workspace } from '../../types';
 import { TerminalLayerView } from './TerminalLayerView';
@@ -17,6 +21,7 @@ type StableRef = React.MutableRefObject<Record<string, any>>;
 export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) {
   const s = stableRef.current;
   const activeTabId = useActiveTabId();
+  const systemBackend = useSystemManagerBackend();
 
   s.activeTabIdRef.current = activeTabId;
 
@@ -129,6 +134,33 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
   }, [linkedTerminalSessionIdForSftp, s.terminalCwdRevision]);
 
   const historySessionId = (activeWorkspace ? focusedSessionId : activeSession?.id) ?? null;
+  const activeTerminalSessionForSystem = useMemo(
+    () => resolveSystemSidebarSession(sessions, activeWorkspace, focusedSessionId, activeSession),
+    [activeSession, activeWorkspace, focusedSessionId, sessions],
+  );
+  const activeSystemSessionHost = useMemo((): Host | null => {
+    const id = activeTerminalSessionForSystem?.id;
+    if (!id) return null;
+    return sessionHostsMap.get(id) ?? null;
+  }, [activeTerminalSessionForSystem?.id, sessionHostsMap]);
+
+  const systemWarmupSessionIds = useMemo(() => {
+    if (!activeTabId || activeSidePanelTab !== 'system') return [];
+    const session = activeTerminalSessionForSystem;
+    if (!session || session.status !== 'connected') return [];
+    return [session.id];
+  }, [activeSidePanelTab, activeTabId, activeTerminalSessionForSystem]);
+
+  useSystemCapabilitiesWarmup(
+    systemWarmupSessionIds,
+    systemBackend,
+    systemWarmupSessionIds.length > 0,
+  );
+
+  useEffect(() => {
+    sessionCapabilitiesStore.prune(new Set(sessions.map((session) => session.id)));
+  }, [sessions]);
+
   const focusedHost = useMemo((): Host | null => {
     if (!historySessionId) return null;
     return sessionHostsMap.get(historySessionId) ?? null;
@@ -223,6 +255,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     setSftpPendingUploadsForTab: s.setSftpPendingUploadsForTab,
     setAiMountedTabIds: s.setAiMountedTabIds,
     setScriptsMountedTabIds: s.setScriptsMountedTabIds,
+    setSystemMountedTabIds: s.setSystemMountedTabIds,
     setThemeMountedTabIds: s.setThemeMountedTabIds,
     setSidePanelOpenTabs: s.setSidePanelOpenTabs,
     setThemePreview: themeState.setThemePreview,
@@ -306,8 +339,11 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     handleFontWeightChangeForFocusedSession: themeState.handleFontWeightChangeForFocusedSession,
     handleFontWeightResetForFocusedSession: themeState.handleFontWeightResetForFocusedSession,
     handleOpenAI: s.handleOpenAI,
+    handleOpenSystem: s.handleOpenSystem,
     handleOpenHistory: s.handleOpenHistory,
     handleOpenScripts: s.handleOpenScripts,
+    activeTerminalSessionForSystem,
+    activeSystemSessionHost,
     handleOpenSftp: s.handleOpenSftp,
     handleOpenTheme: s.handleOpenTheme,
     History: s.History,
@@ -348,6 +384,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     mountedAiTabIds: s.mountedAiTabIds,
     mountedSftpTabIds: s.mountedSftpTabIds,
     scriptsMountedTabIds: s.scriptsMountedTabIds,
+    systemMountedTabIds: s.systemMountedTabIds,
     themeMountedTabIds: s.themeMountedTabIds,
     onConnectToHost: s.onConnectToHost,
     onCreateLocalTerminal: s.onCreateLocalTerminal,

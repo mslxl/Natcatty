@@ -661,9 +661,15 @@ main();
           windowsHide: true,
         }, (err, stdout, stderr) => {
           if (err) {
-            resolve({ success: false, error: err.message, stdout, stderr });
+            resolve({
+              success: false,
+              error: err.message,
+              stdout: stdout || "",
+              stderr: stderr || "",
+              code: typeof err.code === "number" && err.code !== 0 ? err.code : 1,
+            });
           } else {
-            resolve({ success: true, stdout: stdout || "", stderr: stderr || "" });
+            resolve({ success: true, stdout: stdout || "", stderr: stderr || "", code: 0 });
           }
         });
       });

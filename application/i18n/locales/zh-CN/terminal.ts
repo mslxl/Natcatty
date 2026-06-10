@@ -302,6 +302,15 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.serverStats.refreshInterval': '刷新间隔',
   'settings.terminal.serverStats.refreshInterval.desc': '服务器状态刷新的频率。',
   'settings.terminal.serverStats.seconds': '秒',
+  'settings.terminal.section.systemManager': '系统管理',
+  'settings.terminal.systemManager.processRefreshInterval': '进程列表刷新间隔',
+  'settings.terminal.systemManager.processRefreshInterval.desc': '系统管理侧栏中进程列表的刷新频率。',
+  'settings.terminal.systemManager.tmuxRefreshInterval': 'tmux 会话刷新间隔',
+  'settings.terminal.systemManager.tmuxRefreshInterval.desc': 'tmux 会话列表的刷新频率。',
+  'settings.terminal.systemManager.dockerListRefreshInterval': 'Docker 容器列表刷新间隔',
+  'settings.terminal.systemManager.dockerListRefreshInterval.desc': 'Docker 容器列表的刷新频率。',
+  'settings.terminal.systemManager.dockerStatsRefreshInterval': 'Docker 性能数据刷新间隔',
+  'settings.terminal.systemManager.dockerStatsRefreshInterval.desc': 'Docker 容器 CPU/内存/网络指标的刷新频率。',
 
   // Settings > Terminal > Rendering
   'settings.terminal.section.rendering': '渲染',

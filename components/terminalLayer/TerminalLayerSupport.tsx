@@ -19,7 +19,7 @@ import {
   parseTerminalPaneRenderSnapshot,
 } from '../terminalPaneVisibility';
 
-export type SidePanelTab = 'sftp' | 'scripts' | 'history' | 'theme' | 'ai';
+export type SidePanelTab = 'sftp' | 'scripts' | 'history' | 'theme' | 'ai' | 'system';
 
 export type WorkspaceRect = { x: number; y: number; w: number; h: number };
 

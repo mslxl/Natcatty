@@ -1083,4 +1083,5 @@ module.exports = {
   // derives the preferred default key from findAllDefaultPrivateKeys()[0]).
   _findDefaultPrivateKey: findDefaultPrivateKey,
   _findAllDefaultPrivateKeys: findAllDefaultPrivateKeys,
+  ensureMoshStatsConnection,
 };

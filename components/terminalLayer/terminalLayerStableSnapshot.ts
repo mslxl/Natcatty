@@ -104,6 +104,7 @@ export type TerminalLayerStableSnapshot = {
   handleToggleSidePanel: () => void;
   handleOpenTheme: () => void;
   handleOpenAI: () => void;
+  handleOpenSystem: () => void;
   handleAddSelectionToAI: (sourceSessionId: string, selection: string) => void;
   handlePendingTerminalSelectionConsumed: (requestId: string) => void;
   handleToggleAiFromTopBar: () => void;
