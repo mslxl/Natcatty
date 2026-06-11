@@ -24,6 +24,7 @@ import {
   hasSyncPayloadEntityData,
   type SyncPayload,
 } from '../domain/sync';
+import { migrateHostsFromLegacyLineTimestamps } from '../domain/host';
 import {
   nextCustomKeyBindingsSyncVersion,
   parseCustomKeyBindingsStorageRecord,
@@ -195,7 +196,7 @@ const SYNCABLE_TERMINAL_KEYS = [
   'rightClickBehavior', 'copyOnSelect', 'middleClickPaste', 'wordSeparators',
   'linkModifier', 'keywordHighlightEnabled', 'keywordHighlightRules',
   'keepaliveInterval', 'keepaliveCountMax', 'disableBracketedPaste', 'clearWipesScrollback',
-  'preserveSelectionOnInput', 'forcePromptNewLine', 'osc52Clipboard', 'showServerStats', 'showLineTimestamps',
+  'preserveSelectionOnInput', 'forcePromptNewLine', 'osc52Clipboard', 'showServerStats',
   'serverStatsRefreshInterval',
   'systemManagerProcessRefreshInterval', 'systemManagerTmuxRefreshInterval',
   'systemManagerDockerListRefreshInterval', 'systemManagerDockerStatsRefreshInterval',
@@ -726,10 +727,11 @@ function applyPayload(
   importers: SyncPayloadImporters,
   options: { includeLocalOnlyData: boolean },
 ): Promise<void> {
+  const legacyLineTimestampsEnabled = payload.settings?.terminalSettings?.showLineTimestamps === true;
   // Build the vault import object. Cloud sync intentionally ignores
   // local-only trust records even if legacy cloud snapshots still carry them.
   const vaultImport: Record<string, unknown> = {
-    hosts: payload.hosts,
+    hosts: migrateHostsFromLegacyLineTimestamps(payload.hosts, legacyLineTimestampsEnabled),
     keys: payload.keys,
     identities: payload.identities,
     proxyProfiles: payload.proxyProfiles,

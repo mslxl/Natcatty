@@ -645,6 +645,7 @@ test("local session resets terminal timestamp state when reusing a terminal", as
       hostname: "local",
       username: "",
       protocol: "local",
+      showLineTimestamps: true,
     },
     keys: [],
     resolvedChainHosts: [],

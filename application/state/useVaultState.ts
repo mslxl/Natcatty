@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { normalizeDistroId, sanitizeHost } from "../../domain/host";
+import { migrateHostsFromLegacyLineTimestamps, normalizeDistroId, sanitizeHost } from "../../domain/host";
 import { sanitizeGroupConfig } from "../../domain/groupConfig";
 import { normalizeKnownHosts } from "../../domain/knownHosts";
 import {
@@ -33,6 +33,7 @@ import {
   STORAGE_KEY_SHELL_HISTORY,
   STORAGE_KEY_SNIPPET_PACKAGES,
   STORAGE_KEY_SNIPPETS,
+  STORAGE_KEY_TERM_SETTINGS,
 } from "../../infrastructure/config/storageKeys";
 import { localStorageAdapter } from "../../infrastructure/persistence/localStorageAdapter";
 import { mergeGlobalHistoryOnAppend } from "../../domain/globalHistory";
@@ -131,6 +132,11 @@ const pruneConnectionLogsForStorage = (logs: ConnectionLog[]): ConnectionLog[] =
     return rest;
   });
   return changed ? next : logs;
+};
+
+const readLegacyLineTimestampsEnabled = (): boolean => {
+  const stored = localStorageAdapter.read<Record<string, unknown>>(STORAGE_KEY_TERM_SETTINGS);
+  return stored?.showLineTimestamps === true;
 };
 
 export const useVaultState = () => {
@@ -433,7 +439,10 @@ export const useVaultState = () => {
           const ver = ++hostsWriteVersion.current;
           const decrypted = await decryptHosts(savedHosts);
           if (ver === hostsWriteVersion.current) {
-            const sanitized = decrypted.map(sanitizeHost);
+            const sanitized = migrateHostsFromLegacyLineTimestamps(
+              decrypted.map(sanitizeHost),
+              readLegacyLineTimestampsEnabled(),
+            );
             setHosts(sanitized);
             encryptHosts(sanitized).then((enc) => {
               if (ver === hostsWriteVersion.current)

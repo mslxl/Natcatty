@@ -243,6 +243,20 @@ export const normalizePrimaryTelnetState = (host: Host): Host =>
     ? { ...host, telnetEnabled: true }
     : host;
 
+export const migrateHostsFromLegacyLineTimestamps = (
+  hosts: Host[],
+  legacyEnabled: boolean,
+): Host[] => {
+  if (!legacyEnabled) return hosts;
+  let changed = false;
+  const migrated = hosts.map((host) => {
+    if (host.showLineTimestamps !== undefined) return host;
+    changed = true;
+    return { ...host, showLineTimestamps: true };
+  });
+  return changed ? migrated : hosts;
+};
+
 export const upsertHostById = (hosts: Host[], host: Host): Host[] => {
   const hostExists = hosts.some((entry) => entry.id === host.id);
   return hostExists

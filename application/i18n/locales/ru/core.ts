@@ -451,8 +451,6 @@ export const ruCoreMessages: Messages = {
   'settings.terminal.rendering.renderer': 'Рендерер',
   'settings.terminal.rendering.renderer.desc': 'Выберите технологию рендеринга терминала. В режиме "Авто" на устройствах с малым объёмом памяти будет использоваться DOM. Изменения применяются к новым терминальным сессиям.',
   'settings.terminal.rendering.auto': 'Авто',
-  'settings.terminal.rendering.lineTimestamps': 'Добавлять время к выводу',
-  'settings.terminal.rendering.lineTimestamps.desc': 'Вставлять локальное время перед строками вывода терминала. Метка времени становится частью видимого содержимого терминала.',
 
   // Settings > Terminal > Workspace Focus Indicator
   'settings.terminal.section.workspaceFocus': 'Индикатор фокуса рабочей области',
