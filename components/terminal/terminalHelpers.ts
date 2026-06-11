@@ -91,6 +91,8 @@ export interface TerminalProps {
   snippetPackages?: string[];
   /** Minimal toolbar for popup terminals (compose, search, snippets only). */
   compactToolbar?: boolean;
+  /** Line timestamps are unavailable in popup terminals that stream shell output without timestamp metadata. */
+  lineTimestampsAvailable?: boolean;
   chainHosts?: Host[];
   themePreviewId?: string;
   knownHosts?: KnownHost[];

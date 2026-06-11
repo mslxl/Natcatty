@@ -306,6 +306,7 @@ function TerminalPopupPageInner() {
               snippets={snippets}
               snippetPackages={snippetPackages}
               compactToolbar
+              lineTimestampsAvailable={false}
               knownHosts={knownHosts}
               isVisible
               isFocused

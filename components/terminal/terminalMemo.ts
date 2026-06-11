@@ -12,6 +12,7 @@ export const terminalPropsAreEqual = (
   && prev.snippets === next.snippets
   && prev.snippetPackages === next.snippetPackages
   && prev.compactToolbar === next.compactToolbar
+  && prev.lineTimestampsAvailable === next.lineTimestampsAvailable
   && prev.chainHosts === next.chainHosts
   && getThemePreviewId(prev) === getThemePreviewId(next)
   && prev.knownHosts === next.knownHosts

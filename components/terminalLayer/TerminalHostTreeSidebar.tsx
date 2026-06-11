@@ -164,6 +164,17 @@ export function getTerminalHostTreeLayoutTargetWidth(isVisible: boolean, display
   return isVisible ? displayWidth : 0;
 }
 
+export function getTerminalHostTreeHiddenSurfaceShellWidth(
+  isOpen: boolean,
+  enabled: boolean,
+  displayWidth: number,
+): number {
+  return getTerminalHostTreeLayoutTargetWidth(
+    isTerminalHostTreeSidebarVisible(isOpen, enabled, true),
+    displayWidth,
+  );
+}
+
 export function getTerminalHostTreeInitialLayoutWidth(): number {
   return 0;
 }
@@ -945,6 +956,7 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
 
   const displayWidth = resizePreviewWidth ?? sidebarWidth;
   const targetLayoutWidth = getTerminalHostTreeLayoutTargetWidth(isVisible, displayWidth);
+  const hiddenSurfaceShellWidth = getTerminalHostTreeHiddenSurfaceShellWidth(isOpen, enabled, displayWidth);
   const [shellWidth, setShellWidth] = useState(getTerminalHostTreeInitialLayoutWidth);
   const cancelSyncLayoutWidthRef = useRef<(() => void) | null>(null);
   const prevIsVisibleRef = useRef(isVisible);
@@ -1023,7 +1035,7 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
     }
 
     if (!surfaceVisible) {
-      setShellWidth(0);
+      setShellWidth(hiddenSurfaceShellWidth);
       terminalHostTreeStore.setLayoutWidth(0);
       return;
     }
@@ -1038,7 +1050,7 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
       cancelSyncLayoutWidthRef.current?.();
       cancelSyncLayoutWidthRef.current = null;
     };
-  }, [isResizing, surfaceVisible, syncLayoutWidthFromShell, targetLayoutWidth]);
+  }, [hiddenSurfaceShellWidth, isResizing, surfaceVisible, syncLayoutWidthFromShell, targetLayoutWidth]);
 
   return (
     <div
