@@ -171,7 +171,7 @@ export const writeSessionData = (
   flow.received(data.length);
   enqueueTerminalWrite(term, (done) => {
     const settings = ctx.terminalSettingsRef?.current ?? ctx.terminalSettings;
-    const timestampsEnabled = settings?.showLineTimestamps === true;
+    const timestampsEnabled = ctx.host?.showLineTimestamps === true;
     const forcePromptNewLine = settings?.forcePromptNewLine ?? false;
     if (!forcePromptNewLine && ctx.promptLineBreakStateRef?.current) {
       ctx.promptLineBreakStateRef.current.pendingCommand = false;

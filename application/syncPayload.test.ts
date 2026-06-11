@@ -696,6 +696,49 @@ test("applySyncPayload preserves host proxy references when group configs are ab
   assert.equal("groupConfigs" in imported, false);
 });
 
+test("applySyncPayload migrates legacy global line timestamps onto hosts", async () => {
+  let imported: Record<string, unknown> | null = null;
+  const payload: SyncPayload = {
+    hosts: [
+      {
+        id: "host-1",
+        label: "Inherited",
+        hostname: "example.com",
+        username: "root",
+        tags: [],
+        os: "linux",
+      },
+      {
+        id: "host-2",
+        label: "Explicit",
+        hostname: "example.net",
+        username: "root",
+        tags: [],
+        os: "linux",
+        showLineTimestamps: false,
+      },
+    ],
+    keys: [],
+    identities: [],
+    proxyProfiles: [],
+    snippets: [],
+    customGroups: [],
+    syncedAt: 1,
+    settings: { terminalSettings: { showLineTimestamps: true } },
+  };
+
+  await applySyncPayload(payload, {
+    importVaultData: (json) => {
+      imported = JSON.parse(json);
+    },
+  });
+
+  assert.ok(imported);
+  const hosts = imported.hosts as SyncPayload["hosts"];
+  assert.equal(hosts[0]?.showLineTimestamps, true);
+  assert.equal(hosts[1]?.showLineTimestamps, false);
+});
+
 test("applySyncPayload waits for async vault imports", async () => {
   let finished = false;
   const payload: SyncPayload = {

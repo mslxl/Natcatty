@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import type { Host } from "./models.ts";
 import {
   detectVendorFromSshVersion,
+  migrateHostsFromLegacyLineTimestamps,
   normalizeDistroId,
   normalizePrimaryTelnetState,
   resolveHostKeepalive,
@@ -107,6 +108,31 @@ test("normalizePrimaryTelnetState leaves optional telnet hosts unchanged", () =>
 
   assert.equal(result.telnetEnabled, false);
   assert.equal(result.telnetPort, undefined);
+});
+
+test("migrateHostsFromLegacyLineTimestamps preserves the old global opt-in", () => {
+  const host = makeHost();
+
+  assert.deepEqual(migrateHostsFromLegacyLineTimestamps([host], true), [
+    { ...host, showLineTimestamps: true },
+  ]);
+});
+
+test("migrateHostsFromLegacyLineTimestamps does not override explicit host choices", () => {
+  const enabled = makeHost({ id: "enabled", showLineTimestamps: true });
+  const disabled = makeHost({ id: "disabled", showLineTimestamps: false });
+
+  assert.deepEqual(migrateHostsFromLegacyLineTimestamps([enabled, disabled], true), [enabled, disabled]);
+});
+
+test("migrateHostsFromLegacyLineTimestamps fills only missing host choices", () => {
+  const inherited = makeHost({ id: "inherited" });
+  const disabled = makeHost({ id: "disabled", showLineTimestamps: false });
+
+  assert.deepEqual(migrateHostsFromLegacyLineTimestamps([inherited, disabled], true), [
+    { ...inherited, showLineTimestamps: true },
+    disabled,
+  ]);
 });
 
 test("normalizePrimaryTelnetState preserves an explicit telnet port", () => {

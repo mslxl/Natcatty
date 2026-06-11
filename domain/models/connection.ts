@@ -167,6 +167,10 @@ export interface Host {
   keepaliveInterval?: number; // Seconds; 0 = disabled
   keepaliveCountMax?: number; // Unanswered keepalives before declaring dead
   keepaliveOverride?: boolean;
+  // Prefix visible terminal output for this host with local timestamps.
+  // Kept per-host because some shells/prompts (notably PowerShell + oh-my-posh)
+  // break when extra printable content is injected into the terminal stream.
+  showLineTimestamps?: boolean;
   // What the Backspace key sends: undefined = xterm default (no interception), 'ctrl-h' = ^H (0x08)
   backspaceBehavior?: 'ctrl-h';
   // Local SSH key file paths (from SSH config IdentityFile or user-added)

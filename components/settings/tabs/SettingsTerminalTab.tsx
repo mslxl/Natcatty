@@ -961,15 +961,6 @@ function SettingsTerminalTab(props: {
             className="w-32"
           />
         </SettingRow>
-        <SettingRow
-          label={t("settings.terminal.rendering.lineTimestamps")}
-          description={t("settings.terminal.rendering.lineTimestamps.desc")}
-        >
-          <Toggle
-            checked={terminalSettings.showLineTimestamps}
-            onChange={(v) => updateTerminalSetting("showLineTimestamps", v)}
-          />
-        </SettingRow>
       </div>
       {/* Autocomplete */}
       <SectionHeader title={t("settings.terminal.section.workspaceFocus")} />

@@ -24,7 +24,8 @@ const createFakeTerm = (activeType = "normal") => {
   return { term, writes };
 };
 
-const createContext = (showLineTimestamps: boolean) => ({
+const createContext = (showLineTimestamps: boolean, host: Record<string, unknown> = {}) => ({
+  host,
   terminalSettingsRef: {
     current: {
       showLineTimestamps,
@@ -44,7 +45,7 @@ const createContext = (showLineTimestamps: boolean) => ({
 
 test("writeSessionData prefixes terminal output lines when enabled", () => {
   const { term, writes } = createFakeTerm();
-  writeSessionData(createContext(true) as never, term, "hello\r\nnext");
+  writeSessionData(createContext(false, { showLineTimestamps: true }) as never, term, "hello\r\nnext");
 
   assert.equal(writes.length, 1);
   assert.equal((writes[0].match(/\[\d{2}:\d{2}:\d{2}\]/g) ?? []).length, 2);
@@ -53,23 +54,38 @@ test("writeSessionData prefixes terminal output lines when enabled", () => {
   assert.ok(writes[0].endsWith("] \x1b[22;39mnext"));
 });
 
+test("writeSessionData does not use the global timestamp setting", () => {
+  const { term, writes } = createFakeTerm();
+  writeSessionData(createContext(true, { showLineTimestamps: false }) as never, term, "hello");
+
+  assert.deepEqual(writes, ["hello"]);
+});
+
+test("writeSessionData only prefixes timestamps for hosts with timestamps enabled", () => {
+  const { term, writes } = createFakeTerm();
+  writeSessionData(createContext(false, { showLineTimestamps: true }) as never, term, "hello");
+
+  assert.equal(writes.length, 1);
+  assert.equal((writes[0].match(/\[\d{2}:\d{2}:\d{2}\]/g) ?? []).length, 1);
+});
+
 test("writeSessionData skips timestamps on the alternate screen", () => {
   const { term, writes } = createFakeTerm("alternate");
-  writeSessionData(createContext(true) as never, term, "vim screen");
+  writeSessionData(createContext(false, { showLineTimestamps: true }) as never, term, "vim screen");
 
   assert.deepEqual(writes, ["vim screen"]);
 });
 
 test("writeSessionData does not timestamp output that enters alternate screen in the same chunk", () => {
   const { term, writes } = createFakeTerm();
-  writeSessionData(createContext(true) as never, term, "\x1b[?1049hvim screen");
+  writeSessionData(createContext(false, { showLineTimestamps: true }) as never, term, "\x1b[?1049hvim screen");
 
   assert.deepEqual(writes, ["\x1b[?1049hvim screen"]);
 });
 
 test("writeSessionData resumes timestamps after leaving alternate screen in the same chunk", () => {
   const { term, writes } = createFakeTerm("alternate");
-  writeSessionData(createContext(true) as never, term, "\x1b[?1049lprompt");
+  writeSessionData(createContext(false, { showLineTimestamps: true }) as never, term, "\x1b[?1049lprompt");
 
   assert.equal(writes.length, 1);
   assert.ok(writes[0].startsWith("\x1b[?1049l\x1b[2;90m["));
@@ -79,7 +95,7 @@ test("writeSessionData resumes timestamps after leaving alternate screen in the 
 test("attachSessionToTerminal resets timestamp state for a reused terminal", () => {
   const { term, writes } = createFakeTerm();
   const ctx = {
-    ...createContext(true),
+    ...createContext(false, { showLineTimestamps: true }),
     sessionId: "session-1",
     sessionRef: { current: null },
     hasConnectedRef: { current: true },
