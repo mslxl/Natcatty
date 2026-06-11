@@ -12,6 +12,7 @@
 const claude = require("./claudeDriver.cjs");
 const codex = require("./codexDriver.cjs");
 const copilot = require("./copilotDriver.cjs");
+const codebuddy = require("./codebuddyDriver.cjs");
 
 const DRIVER_REGISTRY = {
   claude: {
@@ -75,6 +76,29 @@ const DRIVER_REGISTRY = {
     },
     async listModels(ctx) {
       return copilot.listCopilotModels({ cliPath: ctx.binPath });
+    },
+  },
+  codebuddy: {
+    async runTurn(ctx) {
+      const options = codebuddy.buildCodebuddyQueryOptions({
+        cwd: ctx.cwd,
+        model: ctx.model,
+        env: ctx.env,
+        injectedMcpServers: ctx.injectedMcpServers,
+        abortController: ctx.abortController,
+        resume: ctx.resumeSessionId,
+        pathToCodebuddyCode: ctx.binPath,
+        toolIntegrationMode: ctx.toolIntegrationMode,
+      });
+      return codebuddy.runCodebuddyTurn({
+        prompt: ctx.prompt,
+        attachments: ctx.attachments,
+        options,
+        emitter: ctx.emitter,
+      });
+    },
+    async listModels(ctx) {
+      return codebuddy.listCodebuddyModels({ pathToCodebuddyCode: ctx.binPath, env: ctx.env });
     },
   },
 };

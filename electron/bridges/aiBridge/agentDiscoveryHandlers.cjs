@@ -11,6 +11,8 @@ function registerAgentDiscoveryHandlers(ctx) {
         description: "OpenAI's coding agent", sdkBackend: "codex", args: [] },
       { command: "copilot", name: "GitHub Copilot CLI", icon: "copilot",
         description: "GitHub's coding agent CLI", sdkBackend: "copilot", args: [] },
+      { command: "codebuddy", name: "CodeBuddy Code", icon: "codebuddy",
+        description: "Tencent's coding agent CLI (Agent SDK)", sdkBackend: "codebuddy", args: [] },
     ];
 
     const shellEnv = await getShellEnv();
@@ -35,6 +37,8 @@ function registerAgentDiscoveryHandlers(ctx) {
           // codex login status is async; resolve it then inject synchronously.
           const codexStatus = await runCodexCli(["login", "status"]).catch(() => null);
           auth = probeCodexAuth({ runLoginStatus: () => codexStatus || { exitCode: 1, stdout: "" } });
+        } else if (agent.command === "codebuddy") {
+          auth = probeCodebuddyAuth({ env: shellEnv });
         }
       } catch { /* auth probe is best-effort */ }
 

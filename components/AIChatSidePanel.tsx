@@ -48,7 +48,7 @@ import { canSendWithAgent, findEnabledExternalAgent } from './ai/agentSendEligib
 import { clearAllPendingApprovals } from '../infrastructure/ai/shared/approvalGate';
 import { useConversationExport } from './ai/hooks/useConversationExport';
 import type { AIChatSidePanelProps } from './AIChatSidePanel.types';
-import { generateId, isCopilotAgentConfig, modelPresetsContainId } from './AIChatSidePanelHelpers';
+import { generateId, modelPresetsContainId, shouldLoadSdkRuntimeModels } from './AIChatSidePanelHelpers';
 import { AIChatPanelContent } from './AIChatPanelContent';
 import {
   getAIPanelProfilerProps,
@@ -483,16 +483,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     () => currentAgentId !== 'catty' ? externalAgents.find(a => a.id === currentAgentId) : undefined,
     [currentAgentId, externalAgents],
   );
-  const isCopilotExternalAgent = useMemo(
-    () => isCopilotAgentConfig(currentAgentConfig),
-    [currentAgentConfig],
-  );
   const isCodexManagedAgent = useMemo(
     () => currentAgentConfig ? matchesManagedAgentConfig(currentAgentConfig, 'codex') : false,
-    [currentAgentConfig],
-  );
-  const isClaudeManagedAgent = useMemo(
-    () => currentAgentConfig ? matchesManagedAgentConfig(currentAgentConfig, 'claude') : false,
     [currentAgentConfig],
   );
 
@@ -531,7 +523,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     if (!isVisible) return;
     const sdkBackend = getExternalAgentSdkBackend(currentAgentConfig);
     if (!sdkBackend) return;
-    if (!isCopilotExternalAgent && !isClaudeManagedAgent && !isCodexManagedAgent) return;
+    if (!shouldLoadSdkRuntimeModels(currentAgentConfig) && !isCodexManagedAgent) return;
 
     const bridge = getNetcattyBridge();
     if (!bridge?.aiSdkAgentListModels) return;
@@ -571,7 +563,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [isVisible, currentAgentConfig, currentAgentId, isCopilotExternalAgent, isClaudeManagedAgent, isCodexManagedAgent, setAgentModel]);
+  }, [isVisible, currentAgentConfig, currentAgentId, isCodexManagedAgent, setAgentModel]);
 
   const hasCodexCustomConfig = codexCustomConfigResolved && isCodexManagedAgent;
 

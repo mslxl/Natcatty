@@ -4,6 +4,7 @@ const { getDriver, listBackends } = require("./index.cjs");
 const { buildSdkAgentEnv } = require("./env.cjs");
 const { buildInjectedMcpServers } = require("./injectMcp.cjs");
 const { createStreamEmitter } = require("./emit.cjs");
+const { realpathSync } = require("node:fs");
 
 const VALID_BACKENDS = new Set(listBackends());
 
@@ -37,6 +38,23 @@ function normalizeHistoryMessages(historyMessages) {
       content: String(msg.content || "").trim(),
     }))
     .filter((msg) => msg.content.length > 0);
+}
+
+function resolveRealCliPath(cliPath, realpath = realpathSync) {
+  if (!cliPath) return cliPath;
+  try { return realpath(cliPath); } catch { return cliPath; }
+}
+
+function resolveSdkBackendBinPath({
+  backendKey, shellEnv, env, resolveCliFromPath, normalizeCliPathForPlatform, resolveSdkBinPath, realpath = realpathSync,
+}) {
+  if (backendKey === "codebuddy") {
+    const configuredPath = normalizeCliPathForPlatform?.(env?.CODEBUDDY_CODE_PATH);
+    if (configuredPath) return resolveRealCliPath(configuredPath, realpath);
+    const resolvedPath = resolveCliFromPath(backendKey, shellEnv) || undefined;
+    return resolveRealCliPath(resolvedPath, realpath);
+  }
+  return resolveSdkBinPath?.(backendKey, shellEnv) || undefined;
 }
 
 function defaultWriteAttachmentToTemp(attachment) {
@@ -163,10 +181,14 @@ function registerSdkStreamHandlers(ctx) {
             normalizeClaudeCodeExecutableEnv: normalizeClaudeCodeExecutableEnvForSdk,
           });
 
-          // Resolve absolute CLI path for SDK backends. On Windows, rewrite npm
-          // shell shims to the underlying native/script entry (codex.exe / cli.js)
-          // because SDKs spawn without `shell: true` (Node 18+ EINVAL on .cmd).
-          const binPath = resolveSdkBinPath(backendKey, shellEnv) || undefined;
+          const binPath = resolveSdkBackendBinPath({
+            backendKey,
+            shellEnv,
+            env,
+            resolveCliFromPath,
+            normalizeCliPathForPlatform,
+            resolveSdkBinPath,
+          });
           if (backendKey === "codex") {
             env = addCodexExecutableEnvForSdk(env, binPath);
           }
@@ -241,16 +263,20 @@ function registerSdkStreamHandlers(ctx) {
           return { ok: true, currentModelId: null, models: [] };
         }
         const shellEnv = await getShellEnv();
-        const binPath = resolveSdkBinPath(backendKey, shellEnv) || undefined;
-        let env = buildSdkAgentEnv({
+        const env = buildSdkAgentEnv({
           shellEnv,
           requestedAgentEnv: normalizeAgentEnv(requestedAgentEnv),
           withCliDiscoveryEnv,
           normalizeClaudeCodeExecutableEnv: normalizeClaudeCodeExecutableEnvForSdk,
         });
-        if (backendKey === "codex") {
-          env = addCodexExecutableEnvForSdk(env, binPath);
-        }
+        const binPath = resolveSdkBackendBinPath({
+          backendKey,
+          shellEnv,
+          env,
+          resolveCliFromPath,
+          normalizeCliPathForPlatform,
+          resolveSdkBinPath,
+        });
         const raw = await withTimeout(driver.listModels({ binPath, env }), MODEL_LIST_TIMEOUT_MS);
         const models = Array.isArray(raw) ? raw.filter((m) => m && m.id) : [];
         sdkModelCache.set(backendKey, { at: Date.now(), models });
@@ -272,7 +298,6 @@ function registerSdkStreamHandlers(ctx) {
       const controller = sdkActiveStreams.get(requestId);
       if (controller) {
         controller.abort();
-        sdkActiveStreams.delete(requestId);
         return { ok: true };
       }
       return { ok: false, error: "Stream not found" };
@@ -295,6 +320,7 @@ function registerSdkStreamHandlers(ctx) {
 module.exports = {
   registerSdkStreamHandlers,
   resolveBackendKey,
+  resolveSdkBackendBinPath,
   normalizeHistoryMessages,
   buildSdkTurnPrompt,
 };

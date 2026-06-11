@@ -4,6 +4,7 @@ import {
 } from "../../../../infrastructure/ai/managedAgents";
 import type { AgentPathInfo } from "./types";
 import { AGENT_DEFAULTS } from "./types";
+import { buildCodebuddyEnv } from "./codebuddyConfigEnv";
 
 function isPathLikeCommand(command: string | undefined): boolean {
   const normalized = String(command || "").trim();
@@ -37,6 +38,24 @@ export function buildManagedAgentState(
   const otherAgents = prevAgents.filter((agent) => agent.id !== managedId);
 
   if (!pathInfo?.available || !pathInfo.path) {
+    if (agentKey === "codebuddy") {
+      const existingManaged = managedAgents.find((agent) => agent.id === managedId);
+      if (existingManaged?.env && Object.keys(existingManaged.env).length > 0) {
+        return {
+          agents: [
+            ...otherAgents,
+            {
+              ...existingManaged,
+              ...AGENT_DEFAULTS.codebuddy,
+              id: managedId,
+              command: existingManaged.command || "codebuddy",
+              enabled: false,
+            },
+          ],
+          defaultAgentId: existingManaged.id === defaultAgentId ? "catty" : defaultAgentId,
+        };
+      }
+    }
     return {
       agents: otherAgents,
       defaultAgentId: managedAgents.some((agent) => agent.id === defaultAgentId)
@@ -52,16 +71,22 @@ export function buildManagedAgentState(
     ...existingManagedWithoutLegacy
   } = existingManaged ?? {};
   const defaults = AGENT_DEFAULTS[agentKey];
-  const managedEnv = agentKey === "claude"
-    ? { ...(existingManaged?.env ?? {}), CLAUDE_CODE_EXECUTABLE: pathInfo.path }
-    : existingManaged?.env;
+  const managedEnv =
+    agentKey === "claude"
+      ? { ...(existingManaged?.env ?? {}), CLAUDE_CODE_EXECUTABLE: pathInfo.path }
+      : agentKey === "codebuddy"
+        ? { ...(existingManaged?.env ?? {}), CODEBUDDY_CODE_PATH: pathInfo.path }
+        : existingManaged?.env;
   const nextManagedAgent: ExternalAgentConfig = {
     ...existingManagedWithoutLegacy,
     ...defaults,
     id: managedId,
     command: pathInfo.path,
     ...(managedEnv ? { env: managedEnv } : {}),
-    enabled: managedAgents.length === 0 ? true : managedAgents.some((agent) => agent.enabled),
+    enabled: managedAgents.length === 0
+      || (agentKey === "codebuddy" && existingManaged && !isPathLikeCommand(existingManaged.command))
+      ? true
+      : managedAgents.some((agent) => agent.enabled),
   };
 
   return {
@@ -72,10 +97,45 @@ export function buildManagedAgentState(
   };
 }
 
+export function updateCodebuddyManagedEnv(
+  prevAgents: ExternalAgentConfig[],
+  internetEnv: string,
+  envText: string,
+): ExternalAgentConfig[] {
+  const managedId = "discovered_codebuddy";
+  const existingManaged = prevAgents.find((agent) => agent.id === managedId);
+  const nextEnv = buildCodebuddyEnv(existingManaged?.env, internetEnv, envText);
+
+  if (existingManaged) {
+    if (!nextEnv && !isPathLikeCommand(existingManaged.command)) {
+      return prevAgents.filter((agent) => agent.id !== managedId);
+    }
+    return prevAgents.map((agent) =>
+      agent.id === managedId
+        ? { ...agent, ...(nextEnv ? { env: nextEnv } : { env: undefined }) }
+        : agent,
+    );
+  }
+
+  if (!nextEnv) return prevAgents;
+
+  return [
+    ...prevAgents,
+    {
+      ...AGENT_DEFAULTS.codebuddy,
+      id: managedId,
+      command: "codebuddy",
+      enabled: false,
+      env: nextEnv,
+    },
+  ];
+}
+
 export function getInitialManagedAgentPaths(agents: ExternalAgentConfig[]) {
   return {
     codex: getAutoManagedAgentStoredPath(agents, "codex") ?? "",
     claude: getAutoManagedAgentStoredPath(agents, "claude") ?? "",
     copilot: getAutoManagedAgentStoredPath(agents, "copilot") ?? "",
+    codebuddy: getAutoManagedAgentStoredPath(agents, "codebuddy") ?? "",
   };
 }
