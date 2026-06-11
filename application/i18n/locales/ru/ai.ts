@@ -195,6 +195,7 @@ export const ruAiMessages: Messages = {
   'ai.chat.newChat': 'Новый чат',
   'ai.chat.allSessions': 'Все сессии',
   'ai.chat.loadEarlierMessages': 'Загрузить более ранние сообщения (ещё {n})',
+  'ai.chat.usedTools': 'Использовано инструментов: {n}',
   'ai.chat.loadMoreSessions': 'Загрузить больше сессий (ещё {n})',
   'ai.chat.noSessions': 'Предыдущих сессий нет',
   'ai.chat.retryHint': 'Вы можете повторить попытку, отправив сообщение ещё раз.',

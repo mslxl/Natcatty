@@ -8,6 +8,7 @@
 
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
+import { useI18n } from '../../application/i18n/I18nProvider';
 import { cn } from '../../lib/utils';
 
 interface ToolCallGroupProps {
@@ -22,6 +23,7 @@ const ToolCallGroup: React.FC<ToolCallGroupProps> = ({
   children,
   defaultExpanded = false,
 }) => {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(defaultExpanded);
   const prevDefault = useRef(defaultExpanded);
 
@@ -48,7 +50,7 @@ const ToolCallGroup: React.FC<ToolCallGroupProps> = ({
           : <ChevronRight size={12} className="text-muted-foreground/50 shrink-0" />
         }
         <span className="text-muted-foreground/70 font-medium">
-          Used {count} tool{count !== 1 ? 's' : ''}
+          {t('ai.chat.usedTools', { n: count })}
         </span>
       </button>
       {expanded && (

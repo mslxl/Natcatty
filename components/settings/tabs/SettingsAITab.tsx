@@ -48,9 +48,10 @@ import {
   areExternalAgentListsEqual,
   buildManagedAgentState,
   getInitialManagedAgentPaths,
+  updateCodebuddyManagedEnv,
 } from "./ai/managedAgentState";
 import { splitClaudeEnv, buildClaudeEnv } from "./ai/claudeConfigEnv";
-import { splitCodebuddyEnv, buildCodebuddyEnv } from "./ai/codebuddyConfigEnv";
+import { splitCodebuddyEnv } from "./ai/codebuddyConfigEnv";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -181,11 +182,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   const updateCodebuddyEnv = useCallback(
     (nextInternetEnv: string, nextEnvText: string) => {
       setExternalAgents((prev) =>
-        prev.map((a) =>
-          a.id === "discovered_codebuddy"
-            ? { ...a, env: buildCodebuddyEnv(a.env, nextInternetEnv, nextEnvText) }
-            : a,
-        ),
+        updateCodebuddyManagedEnv(prev, nextInternetEnv, nextEnvText),
       );
     },
     [setExternalAgents],

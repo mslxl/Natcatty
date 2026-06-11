@@ -96,3 +96,25 @@ test("resolveSdkBackendBinPath realpaths CodeBuddy PATH discovery fallback", () 
   });
   assert.equal(out, "/opt/codebuddy/bin/codebuddy");
 });
+
+test("resolveSdkBackendBinPath keeps non-CodeBuddy SDK path normalization", () => {
+  const out = resolveSdkBackendBinPath({
+    backendKey: "codex",
+    shellEnv: { PATH: "C:\\Users\\me\\AppData\\Roaming\\npm" },
+    env: {},
+    resolveCliFromPath: () => "C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd",
+    resolveSdkBinPath: () => "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js",
+  });
+  assert.equal(out, "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js");
+});
+
+test("resolveSdkBackendBinPath does not fall back to Windows shell shims for non-CodeBuddy", () => {
+  const out = resolveSdkBackendBinPath({
+    backendKey: "codex",
+    shellEnv: { PATH: "C:\\Users\\me\\AppData\\Roaming\\npm" },
+    env: {},
+    resolveCliFromPath: () => "C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd",
+    resolveSdkBinPath: () => null,
+  });
+  assert.equal(out, undefined);
+});

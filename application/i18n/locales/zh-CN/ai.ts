@@ -195,6 +195,7 @@ export const zhCNAiMessages: Messages = {
   'ai.chat.newChat': '新对话',
   'ai.chat.allSessions': '所有会话',
   'ai.chat.loadEarlierMessages': '加载更早的消息（还有 {n} 条）',
+  'ai.chat.usedTools': '已使用 {n} 个工具',
   'ai.chat.loadMoreSessions': '加载更多会话（还有 {n} 条）',
   'ai.chat.noSessions': '没有历史会话',
   'ai.chat.retryHint': '你可以重新发送消息来重试。',

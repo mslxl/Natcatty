@@ -116,9 +116,9 @@ function buildCodebuddyQueryOptions({
     tools: builtinTools,
     allowedTools: builtinTools,
     disallowedTools: [...UI_DISALLOWED_TOOLS],
-    // The SDK does not load filesystem settings by default. Include the user
-    // settings layer so CLI login state under ~/.codebuddy is honored.
-    settingSources: ["user"],
+    // Keep the SDK isolated from user/project settings so local hooks, plugins,
+    // or extra MCP servers cannot expand Netcatty's controlled tool boundary.
+    settingSources: [],
     env,
   };
   if (model) options.model = model;
@@ -157,8 +157,9 @@ function translateCodebuddyMessage(message, emitter, opts = {}) {
   if (!message || typeof message !== "object") return;
   const type = message.type;
 
-  if (type === "system" && message.session_id) {
-    emitter.sessionId(message.session_id);
+  if (type === "system") {
+    if (message.session_id) emitter.sessionId(message.session_id);
+    if (message.message) emitter.status(message.message);
     return;
   }
 
@@ -292,8 +293,22 @@ async function runCodebuddyTurn({ prompt, attachments, options, emitter, queryFn
   let hasContent = false;
   let hasStreamedText = false;
   let queryRef = null;
+  let removeAbortListener = null;
   try {
     queryRef = query({ prompt: promptInput, options });
+    const signal = options.abortController?.signal;
+    const interruptQuery = () => {
+      if (typeof queryRef?.interrupt === "function") {
+        void queryRef.interrupt().catch(() => {});
+      }
+    };
+    if (signal) {
+      if (signal.aborted) interruptQuery();
+      else {
+        signal.addEventListener("abort", interruptQuery, { once: true });
+        removeAbortListener = () => signal.removeEventListener("abort", interruptQuery);
+      }
+    }
     for await (const message of queryRef) {
       if (options.abortController?.signal?.aborted) {
         if (typeof queryRef.interrupt === "function") {
@@ -340,6 +355,8 @@ async function runCodebuddyTurn({ prompt, attachments, options, emitter, queryFn
       emitter.emitError(classified.message || "CodeBuddy turn failed");
     }
     return { sessionId };
+  } finally {
+    removeAbortListener?.();
   }
 }
 

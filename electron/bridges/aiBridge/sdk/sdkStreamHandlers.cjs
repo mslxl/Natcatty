@@ -46,14 +46,15 @@ function resolveRealCliPath(cliPath, realpath = realpathSync) {
 }
 
 function resolveSdkBackendBinPath({
-  backendKey, shellEnv, env, resolveCliFromPath, normalizeCliPathForPlatform, realpath = realpathSync,
+  backendKey, shellEnv, env, resolveCliFromPath, normalizeCliPathForPlatform, resolveSdkBinPath, realpath = realpathSync,
 }) {
   if (backendKey === "codebuddy") {
     const configuredPath = normalizeCliPathForPlatform?.(env?.CODEBUDDY_CODE_PATH);
     if (configuredPath) return resolveRealCliPath(configuredPath, realpath);
+    const resolvedPath = resolveCliFromPath(backendKey, shellEnv) || undefined;
+    return resolveRealCliPath(resolvedPath, realpath);
   }
-  const resolvedPath = resolveCliFromPath(backendKey, shellEnv) || undefined;
-  return backendKey === "codebuddy" ? resolveRealCliPath(resolvedPath, realpath) : resolvedPath;
+  return resolveSdkBinPath?.(backendKey, shellEnv) || undefined;
 }
 
 function defaultWriteAttachmentToTemp(attachment) {
@@ -186,7 +187,11 @@ function registerSdkStreamHandlers(ctx) {
             env,
             resolveCliFromPath,
             normalizeCliPathForPlatform,
+            resolveSdkBinPath,
           });
+          if (backendKey === "codex") {
+            env = addCodexExecutableEnvForSdk(env, binPath);
+          }
 
           const hasInMemorySession = sdkSessionIds.has(chatSessionId);
           const resumeSessionId = sdkSessionIds.get(chatSessionId) || existingSessionId || undefined;
@@ -270,6 +275,7 @@ function registerSdkStreamHandlers(ctx) {
           env,
           resolveCliFromPath,
           normalizeCliPathForPlatform,
+          resolveSdkBinPath,
         });
         const raw = await withTimeout(driver.listModels({ binPath, env }), MODEL_LIST_TIMEOUT_MS);
         const models = Array.isArray(raw) ? raw.filter((m) => m && m.id) : [];
@@ -292,7 +298,6 @@ function registerSdkStreamHandlers(ctx) {
       const controller = sdkActiveStreams.get(requestId);
       if (controller) {
         controller.abort();
-        sdkActiveStreams.delete(requestId);
         return { ok: true };
       }
       return { ok: false, error: "Stream not found" };

@@ -24,12 +24,12 @@ function collector() {
   return { events, emitter };
 }
 
-test("buildCodebuddyQueryOptions wires SDK options and user setting source", () => {
+test("buildCodebuddyQueryOptions wires SDK options in isolated mode", () => {
   const ac = new AbortController();
   const opts = buildCodebuddyQueryOptions({
     cwd: "/tmp",
     model: "codebuddy-1",
-    env: { PATH: "/usr/bin" },
+    env: { PATH: "/usr/bin", CODEBUDDY_INTERNET_ENVIRONMENT: "ioa" },
     pathToCodebuddyCode: "/opt/codebuddy/bin/codebuddy",
     abortController: ac,
     resume: "sess-1",
@@ -47,7 +47,8 @@ test("buildCodebuddyQueryOptions wires SDK options and user setting source", () 
   assert.equal(opts.permissionMode, "bypassPermissions");
   assert.equal(opts.allowDangerouslySkipPermissions, true);
   assert.deepEqual(opts.extraArgs, { "dangerously-skip-permissions": null });
-  assert.deepEqual(opts.settingSources, ["user"]);
+  assert.deepEqual(opts.settingSources, []);
+  assert.equal(opts.env.CODEBUDDY_INTERNET_ENVIRONMENT, "ioa");
   assert.equal(opts.pathToCodebuddyCode, "/opt/codebuddy/bin/codebuddy");
   assert.equal(opts.abortController, ac);
   assert.equal(opts.resume, "sess-1");
@@ -109,6 +110,18 @@ test("translateCodebuddyMessage maps stream deltas, tool calls, and tool results
   ]);
 });
 
+test("translateCodebuddyMessage emits system session id and status text", () => {
+  const { events, emitter } = collector();
+  translateCodebuddyMessage(
+    { type: "system", session_id: "sess-1", message: "initializing" },
+    emitter,
+  );
+  assert.deepEqual(events, [
+    { k: "sessionId", s: "sess-1" },
+    { k: "status", m: "initializing" },
+  ]);
+});
+
 test("runCodebuddyTurn does not duplicate assistant text after streamed text", async () => {
   const { events, emitter } = collector();
   async function* fakeQuery() {
@@ -128,6 +141,51 @@ test("runCodebuddyTurn does not duplicate assistant text after streamed text", a
   assert.deepEqual(events, [
     { k: "sessionId", s: "sess-1" },
     { k: "text", t: "hello" },
+    { k: "done" },
+  ]);
+});
+
+test("runCodebuddyTurn interrupts the SDK query as soon as abort is signaled", async () => {
+  const events = [];
+  let sawSession;
+  const sessionSeen = new Promise((resolve) => { sawSession = resolve; });
+  const emitter = {
+    text: (t) => events.push({ k: "text", t }),
+    reasoning: (d) => events.push({ k: "reasoning", d }),
+    toolCall: (name, args, id) => events.push({ k: "toolCall", name, args, id }),
+    toolResult: (id, out, name) => events.push({ k: "toolResult", id, out, name }),
+    status: (m) => events.push({ k: "status", m }),
+    sessionId: (s) => { events.push({ k: "sessionId", s }); sawSession(); },
+    emitDone: () => events.push({ k: "done" }),
+    emitError: (m) => events.push({ k: "error", m }),
+  };
+  const ac = new AbortController();
+  let interruptCount = 0;
+  let release;
+
+  const fakeQuery = () => ({
+    interrupt: async () => { interruptCount += 1; release?.(); },
+    async *[Symbol.asyncIterator]() {
+      yield { type: "system", session_id: "sess-1" };
+      await new Promise((resolve) => { release = resolve; });
+    },
+  });
+
+  const turn = runCodebuddyTurn({
+    prompt: "wait",
+    options: { abortController: ac },
+    emitter,
+    queryFn: fakeQuery,
+  });
+
+  await sessionSeen;
+  ac.abort();
+  const result = await turn;
+
+  assert.deepEqual(result, { sessionId: "sess-1" });
+  assert.ok(interruptCount >= 1);
+  assert.deepEqual(events, [
+    { k: "sessionId", s: "sess-1" },
     { k: "done" },
   ]);
 });

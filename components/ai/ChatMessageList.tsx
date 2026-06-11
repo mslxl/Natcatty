@@ -200,24 +200,33 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
     <>
     <Conversation className="flex-1">
       <ConversationContent className="gap-1.5 px-4 py-2">
-        {visibleMessages.map((message, idx) => {
+        {hiddenMessageCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setRenderedTailCount((count) => count + MESSAGE_RENDER_STEP)}
+            className="w-full py-2 text-center text-[12px] text-muted-foreground/50 hover:text-muted-foreground transition-colors cursor-pointer"
+          >
+            {t('ai.chat.loadEarlierMessages').replace('{n}', String(hiddenMessageCount))}
+          </button>
+        )}
+        {displayedMessages.map((message, idx) => {
           if (message.role === 'tool') {
-// Group consecutive tool messages into a collapsible section
+            // Group consecutive tool messages into a collapsible section
             // Skip if this is NOT the first in a consecutive run
-            const prevIsTool = idx > 0 && visibleMessages[idx - 1].role === "tool";
+            const prevIsTool = idx > 0 && displayedMessages[idx - 1].role === "tool";
             if (prevIsTool || hideToolCalls) return null;
 
             // Collect this run of consecutive tool messages
             let end = idx + 1;
-            while (end < visibleMessages.length && visibleMessages[end].role === "tool") end++;
-            const group = visibleMessages.slice(idx, end);
+            while (end < displayedMessages.length && displayedMessages[end].role === "tool") end++;
+            const group = displayedMessages.slice(idx, end);
             const groupTotal = group.reduce(
               (sum, m) => sum + (m.toolResults?.length ?? 0), 0,
             );
 
             // Expanded while the agent is still working (no assistant response follows)
-            const hasAssistantAfter = end < visibleMessages.length
-              && visibleMessages[end].role === "assistant";
+            const hasAssistantAfter = end < displayedMessages.length
+              && displayedMessages[end].role === "assistant";
 
             return (
               <ToolCallGroup

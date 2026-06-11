@@ -195,6 +195,7 @@ export const enAiMessages: Messages = {
   'ai.chat.newChat': 'New Chat',
   'ai.chat.allSessions': 'All Sessions',
   'ai.chat.loadEarlierMessages': 'Load earlier messages ({n} more)',
+  'ai.chat.usedTools': 'Tools used: {n}',
   'ai.chat.loadMoreSessions': 'Load more sessions ({n} more)',
   'ai.chat.noSessions': 'No previous sessions',
   'ai.chat.retryHint': 'You can retry by sending your message again.',

@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildManagedAgentState } from '../settings/tabs/ai/managedAgentState';
+import {
+  buildManagedAgentState,
+  updateCodebuddyManagedEnv,
+} from '../settings/tabs/ai/managedAgentState';
 import type { ExternalAgentConfig } from '../../infrastructure/ai/types';
 
 test('buildManagedAgentState removes stale managed agents when path detection fails', () => {
@@ -115,6 +118,66 @@ test('buildManagedAgentState stores CODEBUDDY_CODE_PATH for codebuddy', () => {
   assert.deepEqual(state.agents[0].env, {
     CODEBUDDY_CODE_PATH: '/opt/homebrew/bin/codebuddy',
   });
+});
+
+test('updateCodebuddyManagedEnv creates a disabled managed entry before CLI detection', () => {
+  const state = updateCodebuddyManagedEnv([], 'internal', 'CODEBUDDY_API_KEY=secret');
+
+  assert.equal(state.length, 1);
+  assert.equal(state[0].id, 'discovered_codebuddy');
+  assert.equal(state[0].command, 'codebuddy');
+  assert.equal(state[0].enabled, false);
+  assert.deepEqual(state[0].env, {
+    CODEBUDDY_INTERNET_ENVIRONMENT: 'internal',
+    CODEBUDDY_API_KEY: 'secret',
+  });
+});
+
+test('buildManagedAgentState preserves disabled CodeBuddy config when path detection fails', () => {
+  const agents = updateCodebuddyManagedEnv([], 'ioa', 'CODEBUDDY_AUTH_TOKEN=token');
+
+  const state = buildManagedAgentState(
+    agents,
+    'discovered_codebuddy',
+    'codebuddy',
+    { path: null, version: null, available: false },
+  );
+
+  assert.equal(state.defaultAgentId, 'catty');
+  assert.equal(state.agents.length, 1);
+  assert.equal(state.agents[0].id, 'discovered_codebuddy');
+  assert.equal(state.agents[0].enabled, false);
+  assert.deepEqual(state.agents[0].env, {
+    CODEBUDDY_INTERNET_ENVIRONMENT: 'ioa',
+    CODEBUDDY_AUTH_TOKEN: 'token',
+  });
+});
+
+test('buildManagedAgentState enables preconfigured CodeBuddy when path detection succeeds', () => {
+  const agents = updateCodebuddyManagedEnv([], 'internal', 'CODEBUDDY_API_KEY=secret');
+
+  const state = buildManagedAgentState(
+    agents,
+    'catty',
+    'codebuddy',
+    { path: '/opt/homebrew/bin/codebuddy', version: '0.1.0', available: true },
+  );
+
+  assert.equal(state.agents.length, 1);
+  assert.equal(state.agents[0].enabled, true);
+  assert.equal(state.agents[0].command, '/opt/homebrew/bin/codebuddy');
+  assert.deepEqual(state.agents[0].env, {
+    CODEBUDDY_INTERNET_ENVIRONMENT: 'internal',
+    CODEBUDDY_API_KEY: 'secret',
+    CODEBUDDY_CODE_PATH: '/opt/homebrew/bin/codebuddy',
+  });
+});
+
+test('updateCodebuddyManagedEnv removes an empty pre-detection placeholder', () => {
+  const agents = updateCodebuddyManagedEnv([], 'internal', 'CODEBUDDY_API_KEY=secret');
+  const cleared = updateCodebuddyManagedEnv(agents, '', '');
+
+  assert.deepEqual(cleared, []);
 });
 
 test('buildManagedAgentState does not remove user-created matching agents', () => {
