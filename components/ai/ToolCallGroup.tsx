@@ -54,7 +54,7 @@ const ToolCallGroup: React.FC<ToolCallGroupProps> = ({
         </span>
       </button>
       {expanded && (
-        <div className="border-t border-border/20 divide-y divide-border/10">
+        <div className="border-t border-border/20 p-1.5 space-y-1.5">
           {children}
         </div>
       )}

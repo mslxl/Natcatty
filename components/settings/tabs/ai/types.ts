@@ -47,8 +47,12 @@ export interface CodexLoginSession {
 
 export interface AgentPathInfo {
   path: string | null;
+  binPath?: string | null;
   version: string | null;
   available: boolean;
+  installed?: boolean;
+  authenticated?: boolean;
+  authSource?: string | null;
 }
 
 export interface UserSkillStatusItem {
@@ -104,7 +108,7 @@ export interface NetcattyAiBridge {
   aiCodexGetLoginSession?: (sessionId: string) => Promise<{ ok: boolean; session?: CodexLoginSession; error?: string }>;
   aiCodexCancelLogin?: (sessionId: string) => Promise<{ ok: boolean; found?: boolean; session?: CodexLoginSession; error?: string }>;
   aiCodexLogout?: () => Promise<{ ok: boolean; state?: CodexIntegrationState; isConnected?: boolean; rawOutput?: string; logoutOutput?: string; error?: string }>;
-  aiResolveCli?: (params: { command: string; customPath?: string }) => Promise<AgentPathInfo>;
+  aiResolveCli?: (params: { command: string; customPath?: string; refreshShellEnv?: boolean; apiKeyPresent?: boolean }) => Promise<AgentPathInfo>;
   aiUserSkillsGetStatus?: () => Promise<UserSkillsStatusResult>;
   aiUserSkillsOpenFolder?: () => Promise<UserSkillsStatusResult>;
   openExternal?: (url: string) => Promise<void>;
@@ -129,6 +133,12 @@ export const AGENT_DEFAULTS: Record<string, Omit<ExternalAgentConfig, "id" | "co
     args: ["-p", "{prompt}"],
     icon: "copilot",
     sdkBackend: "copilot",
+  },
+  cursor: {
+    name: "Cursor",
+    args: ["{prompt}"],
+    icon: "cursor",
+    sdkBackend: "cursor",
   },
   codebuddy: {
     name: "CodeBuddy Code",

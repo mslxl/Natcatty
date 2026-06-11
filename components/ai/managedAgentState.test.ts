@@ -104,6 +104,47 @@ test('buildManagedAgentState stores SDK backend keys for discovered managed agen
   assert.equal(copilotState.agents[0].acpArgs, undefined);
 });
 
+test('buildManagedAgentState stores SDK backend key for discovered Cursor', () => {
+  const state = buildManagedAgentState(
+    [],
+    'catty',
+    'cursor',
+    { path: 'cursor', version: 'Cursor SDK 1.0.18', available: true },
+  );
+
+  assert.equal(state.agents[0].id, 'discovered_cursor');
+  assert.equal(state.agents[0].name, 'Cursor');
+  assert.equal(state.agents[0].command, 'cursor');
+  assert.equal(state.agents[0].sdkBackend, 'cursor');
+});
+
+test('buildManagedAgentState preserves a saved Cursor API key when SDK is not ready', () => {
+  const agents: ExternalAgentConfig[] = [
+    {
+      id: 'discovered_cursor',
+      name: 'Cursor',
+      command: 'cursor',
+      enabled: true,
+      available: true,
+      sdkBackend: 'cursor',
+      apiKey: 'enc:v1:test',
+    },
+  ];
+
+  const state = buildManagedAgentState(
+    agents,
+    'discovered_cursor',
+    'cursor',
+    { path: 'cursor', version: 'Cursor SDK', available: false, installed: true },
+  );
+
+  assert.equal(state.agents[0].id, 'discovered_cursor');
+  assert.equal(state.agents[0].apiKey, 'enc:v1:test');
+  assert.equal(state.agents[0].enabled, false);
+  assert.equal(state.agents[0].available, false);
+  assert.equal(state.defaultAgentId, 'catty');
+});
+
 test('buildManagedAgentState stores CODEBUDDY_CODE_PATH for codebuddy', () => {
   const state = buildManagedAgentState(
     [],

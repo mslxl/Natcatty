@@ -46,6 +46,8 @@ import { SafetySettings } from "./ai/SafetySettings";
 import { WebSearchSettings } from "./ai/WebSearchSettings";
 import { QuickMessagesSettings } from "./ai/QuickMessagesSettings";
 import type { AIQuickMessage } from "../../../infrastructure/ai/quickMessages";
+import { encryptField } from "../../../infrastructure/persistence/secureFieldAdapter";
+import { CursorSdkCard } from "./ai/CursorSdkCard";
 import {
   areExternalAgentListsEqual,
   buildManagedAgentState,
@@ -163,6 +165,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     codex: string;
     claude: string;
     copilot: string;
+    cursor: string;
     codebuddy: string;
   } | null>(null);
   if (!initialManagedPathsRef.current) {
@@ -172,6 +175,9 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   const [copilotPathInfo, setCopilotPathInfo] = useState<AgentPathInfo | null>(null);
   const [copilotCustomPath, setCopilotCustomPath] = useState("");
   const [isResolvingCopilot, setIsResolvingCopilot] = useState(false);
+
+  const [cursorPathInfo, setCursorPathInfo] = useState<AgentPathInfo | null>(null);
+  const [isResolvingCursor, setIsResolvingCursor] = useState(false);
 
   const [codebuddyPathInfo, setCodebuddyPathInfo] = useState<AgentPathInfo | null>(null);
   const [codebuddyCustomPath, setCodebuddyCustomPath] = useState("");
@@ -195,6 +201,11 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   );
   const [userSkillsStatus, setUserSkillsStatus] = useState<UserSkillsStatusResult | null>(null);
   const [isLoadingUserSkills, setIsLoadingUserSkills] = useState(false);
+  const cursorManagedAgent = useMemo(
+    () => externalAgents.find((agent) => agent.id === "discovered_cursor"),
+    [externalAgents],
+  );
+  const cursorApiKeyEncrypted = cursorManagedAgent?.apiKey;
 
   // Ref to read current defaultAgentId without adding it as a dependency.
   const defaultAgentIdRef = useRef(defaultAgentId);
@@ -203,6 +214,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   const resolveAgentPath = useCallback(async (
     agentKey: ManagedAgentKey,
     customPath = "",
+    options?: { apiKeyPresent?: boolean },
   ) => {
     const bridge = getBridge();
     if (!bridge?.aiResolveCli) return null;
@@ -213,20 +225,26 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         ? setClaudePathInfo
         : agentKey === "copilot"
           ? setCopilotPathInfo
-          : setCodebuddyPathInfo;
+          : agentKey === "cursor"
+            ? setCursorPathInfo
+            : setCodebuddyPathInfo;
     const setResolving = agentKey === "codex"
       ? setIsResolvingCodex
       : agentKey === "claude"
         ? setIsResolvingClaude
         : agentKey === "copilot"
           ? setIsResolvingCopilot
-          : setIsResolvingCodebuddy;
+          : agentKey === "cursor"
+            ? setIsResolvingCursor
+            : setIsResolvingCodebuddy;
 
     setResolving(true);
     try {
       const result = await bridge.aiResolveCli({
         command: agentKey,
         customPath: customPath.trim(),
+        refreshShellEnv: agentKey === "cursor",
+        ...(agentKey === "cursor" ? { apiKeyPresent: Boolean(options?.apiKeyPresent ?? cursorApiKeyEncrypted) } : {}),
       });
       setInfo(result);
 
@@ -255,14 +273,15 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     } finally {
       setResolving(false);
     }
-  }, [setExternalAgents, setDefaultAgentId]);
+  }, [cursorApiKeyEncrypted, setExternalAgents, setDefaultAgentId]);
 
   useEffect(() => {
     void resolveAgentPath("codex", initialManagedPathsRef.current?.codex ?? "");
     void resolveAgentPath("claude", initialManagedPathsRef.current?.claude ?? "");
     void resolveAgentPath("copilot", initialManagedPathsRef.current?.copilot ?? "");
+    void resolveAgentPath("cursor", initialManagedPathsRef.current?.cursor ?? "", { apiKeyPresent: Boolean(cursorApiKeyEncrypted) });
     void resolveAgentPath("codebuddy", initialManagedPathsRef.current?.codebuddy ?? "");
-  }, [resolveAgentPath]);
+  }, [cursorApiKeyEncrypted, resolveAgentPath]);
 
   // Validate a custom path for an agent
   const handleCheckCustomPath = useCallback(async (agentKey: ManagedAgentKey) => {
@@ -272,9 +291,39 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         ? claudeCustomPath
         : agentKey === "copilot"
           ? copilotCustomPath
-          : codebuddyCustomPath;
+          : agentKey === "codebuddy"
+            ? codebuddyCustomPath
+            : "";
     await resolveAgentPath(agentKey, customPath);
   }, [claudeCustomPath, codexCustomPath, copilotCustomPath, codebuddyCustomPath, resolveAgentPath]);
+
+  const handleSaveCursorApiKey = useCallback(async (apiKey: string) => {
+    const trimmed = apiKey.trim();
+    const encrypted = trimmed ? await encryptField(trimmed) : undefined;
+    const result = await resolveAgentPath("cursor", "", { apiKeyPresent: Boolean(trimmed) });
+    setExternalAgents((prev) => {
+      const existing = prev.find((agent) => agent.id === "discovered_cursor");
+      const others = prev.filter((agent) => agent.id !== "discovered_cursor");
+      if (!encrypted && !existing) return prev;
+      if (!encrypted && existing && !result?.available) return others;
+      const nextAgent: ExternalAgentConfig = {
+        ...(existing ?? {
+          id: "discovered_cursor",
+          name: "Cursor",
+          command: result?.path || cursorPathInfo?.path || "cursor",
+          args: ["{prompt}"],
+          icon: "cursor",
+          sdkBackend: "cursor",
+          enabled: false,
+        }),
+        apiKey: encrypted,
+        command: result?.path || existing?.command || cursorPathInfo?.path || "cursor",
+        available: Boolean(result?.available),
+        enabled: result?.available ? (existing?.enabled ?? true) : false,
+      };
+      return [...others, nextAgent];
+    });
+  }, [cursorPathInfo?.path, resolveAgentPath, setExternalAgents]);
 
   // Add a new provider from preset
   const handleAddProvider = useCallback(
@@ -614,6 +663,19 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               customPath={copilotCustomPath}
               onCustomPathChange={setCopilotCustomPath}
               onRecheckPath={() => void handleCheckCustomPath("copilot")}
+            />
+          </SettingsSection>
+
+          <SettingsSection
+            title={t('ai.cursor.title')}
+            leading={<AgentIconBadge agent={{ id: "cursor", icon: "cursor", name: "Cursor" }} size="xs" variant="plain" />}
+          >
+            <CursorSdkCard
+              pathInfo={cursorPathInfo}
+              isResolvingPath={isResolvingCursor}
+              encryptedApiKey={cursorApiKeyEncrypted}
+              onSaveApiKey={handleSaveCursorApiKey}
+              onRecheckPath={() => void handleCheckCustomPath("cursor")}
             />
           </SettingsSection>
 

@@ -885,8 +885,8 @@ function createPreloadApi(ctx) {
   aiCattyCancelExec: async (chatSessionId) => {
     return ipcRenderer.invoke("netcatty:ai:catty:cancel", { chatSessionId });
   },
-  aiDiscoverAgents: async () => {
-    return ipcRenderer.invoke("netcatty:ai:agents:discover");
+  aiDiscoverAgents: async (options) => {
+    return ipcRenderer.invoke("netcatty:ai:agents:discover", options);
   },
   aiResolveCli: async (params) => {
     return ipcRenderer.invoke("netcatty:ai:resolve-cli", params);

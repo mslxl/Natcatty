@@ -12,6 +12,7 @@ module.exports = {
     // Local Network privacy treats Netcatty distinctly from every other
     // Electron app (which all share Electron's prebuilt LC_UUID) — see #1040
     // and scripts/afterPackMacUuid.cjs. No-op on Windows/Linux.
+    beforePack: './scripts/beforePackCursorSdk.cjs',
     afterPack: './scripts/afterPackMacUuid.cjs',
     // Platform-split icons (#813):
     //   - public/icon.png keeps Apple's HIG grid margin so the rendered
@@ -69,6 +70,9 @@ module.exports = {
         'node_modules/cpu-features/**/*',
         'node_modules/@vscode/windows-process-tree/**/*',
         'node_modules/@anthropic-ai/claude-agent-sdk/**/*',
+        'node_modules/@cursor/sdk/**/*',
+        'node_modules/@cursor/sdk-*/**/*',
+        'node_modules/sqlite3/**/*',
         'node_modules/@modelcontextprotocol/sdk/**/*',
         'lib/**/*.cjs',
         'lib/**/*.json',

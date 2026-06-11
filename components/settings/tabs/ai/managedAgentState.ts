@@ -38,8 +38,31 @@ export function buildManagedAgentState(
   const otherAgents = prevAgents.filter((agent) => agent.id !== managedId);
 
   if (!pathInfo?.available || !pathInfo.path) {
+    const existingManaged = managedAgents.find((agent) => agent.id === managedId);
+    if (agentKey === "cursor" && existingManaged?.apiKey) {
+      const defaults = AGENT_DEFAULTS[agentKey];
+      const {
+        acpCommand: _legacyCommand,
+        acpArgs: _legacyArgs,
+        ...existingManagedWithoutLegacy
+      } = existingManaged;
+      return {
+        agents: [
+          ...otherAgents,
+          {
+            ...existingManagedWithoutLegacy,
+            ...defaults,
+            id: managedId,
+            command: pathInfo?.path || existingManaged.command || "cursor",
+            enabled: false,
+            available: false,
+            apiKey: existingManaged.apiKey,
+          },
+        ],
+        defaultAgentId: existingManaged.id === defaultAgentId ? "catty" : defaultAgentId,
+      };
+    }
     if (agentKey === "codebuddy") {
-      const existingManaged = managedAgents.find((agent) => agent.id === managedId);
       if (existingManaged?.env && Object.keys(existingManaged.env).length > 0) {
         return {
           agents: [
@@ -83,10 +106,11 @@ export function buildManagedAgentState(
     id: managedId,
     command: pathInfo.path,
     ...(managedEnv ? { env: managedEnv } : {}),
+    available: true,
     enabled: managedAgents.length === 0
       || (agentKey === "codebuddy" && existingManaged && !isPathLikeCommand(existingManaged.command))
       ? true
-      : managedAgents.some((agent) => agent.enabled),
+      : managedAgents.some((agent) => agent.enabled) || managedAgents.every((agent) => agent.available === false),
   };
 
   return {
@@ -136,6 +160,7 @@ export function getInitialManagedAgentPaths(agents: ExternalAgentConfig[]) {
     codex: getAutoManagedAgentStoredPath(agents, "codex") ?? "",
     claude: getAutoManagedAgentStoredPath(agents, "claude") ?? "",
     copilot: getAutoManagedAgentStoredPath(agents, "copilot") ?? "",
+    cursor: getAutoManagedAgentStoredPath(agents, "cursor") ?? "",
     codebuddy: getAutoManagedAgentStoredPath(agents, "codebuddy") ?? "",
   };
 }

@@ -229,9 +229,11 @@ export interface ExternalAgentConfig {
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  apiKey?: string;           // encrypted via credentialBridge (enc:v1: prefix)
   icon?: string;
   enabled: boolean;
-  /** SDK backend key for managed agents (claude|codex|copilot|codebuddy). */
+  available?: boolean;
+  /** SDK backend key for managed agents (claude|codex|copilot|cursor|codebuddy). */
   sdkBackend?: string;
   /** @deprecated Legacy persisted field from the pre-SDK migration. Read only for compatibility. */
   acpCommand?: string;
@@ -254,8 +256,8 @@ export interface DiscoveredAgent {
   /** @deprecated Legacy discovery field from the pre-SDK migration. */
   acpCommand?: string;
   acpArgs?: string[];
-  /** SDK backend key (claude|codex|copilot|codebuddy) — the routing value. */
-  sdkBackend?: 'claude' | 'codex' | 'copilot' | 'codebuddy';
+  /** SDK backend key (claude|codex|copilot|cursor|codebuddy) — the routing value. */
+  sdkBackend?: 'claude' | 'codex' | 'copilot' | 'cursor' | 'codebuddy';
   /** Absolute resolved CLI path (preferred over `path`). */
   binPath?: string;
   installed?: boolean;
@@ -447,6 +449,15 @@ export const CODEX_MODEL_PRESETS: AgentModelPreset[] = [
   { id: 'gpt-4o', name: 'GPT-4o' },
 ];
 
+export const CURSOR_MODEL_PRESETS: AgentModelPreset[] = [
+  { id: 'composer-2.5', name: 'Composer 2.5', description: 'Recommended' },
+  { id: 'gpt-5.5', name: 'GPT-5.5' },
+  { id: 'gpt-5.2', name: 'GPT-5.2' },
+  { id: 'gpt-5.1', name: 'GPT-5.1' },
+  { id: 'claude-opus-4.6', name: 'Claude Opus 4.6' },
+  { id: 'claude-sonnet-4.6', name: 'Claude Sonnet 4.6' },
+];
+
 // CodeBuddy's SDK model enumeration can be empty depending on CLI/account
 // state; keep a CLI-supported fallback list so users can still pass --model.
 export const CODEBUDDY_MODEL_PRESETS: AgentModelPreset[] = [
@@ -469,6 +480,7 @@ export function getAgentModelPresets(agentCommand?: string): AgentModelPreset[] 
   const basename = agentCommand.split('/').pop()?.toLowerCase() ?? '';
   if (basename.startsWith('claude')) return CLAUDE_MODEL_PRESETS;
   if (basename.startsWith('codex')) return CODEX_MODEL_PRESETS;
+  if (basename.startsWith('cursor')) return CURSOR_MODEL_PRESETS;
   if (basename.startsWith('codebuddy')) return CODEBUDDY_MODEL_PRESETS;
   return [];
 }
