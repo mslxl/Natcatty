@@ -477,7 +477,11 @@ export const CODEBUDDY_MODEL_PRESETS: AgentModelPreset[] = [
 
 export function getAgentModelPresets(agentCommand?: string): AgentModelPreset[] {
   if (!agentCommand) return [];
-  const basename = agentCommand.split('/').pop()?.toLowerCase() ?? '';
+  // Split on both POSIX (/) and Windows (\) separators so command paths like
+  // "C:\\Users\\foo\\codex.cmd" resolve to the right basename. Splitting only
+  // on "/" leaves the full path intact on Windows, which never matches the
+  // preset prefixes below and yields an empty list (presets silently lost).
+  const basename = agentCommand.split(/[\\/]/).pop()?.toLowerCase() ?? '';
   if (basename.startsWith('claude')) return CLAUDE_MODEL_PRESETS;
   if (basename.startsWith('codex')) return CODEX_MODEL_PRESETS;
   if (basename.startsWith('cursor')) return CURSOR_MODEL_PRESETS;
