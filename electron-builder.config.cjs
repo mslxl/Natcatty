@@ -58,6 +58,10 @@ module.exports = {
         '!**/tests/**/*',
         '!**/example/**/*',
         '!**/examples/**/*',
+        '!node_modules/**/docs/**/*',
+        '!node_modules/**/doc/**/*',
+        '!node_modules/**/benchmark/**/*',
+        '!node_modules/**/benchmarks/**/*',
         // Renderer-only packages are compiled into dist by Vite. Keep them
         // installed for npm run dev/build, but do not ship the duplicate source
         // packages in release artifacts.
@@ -103,7 +107,15 @@ module.exports = {
         // other coding agents: Netcatty discovers and passes the user's
         // installed CLI path to the SDK. Keep the small SDK wrapper, but do not
         // bundle the full CodeBuddy CLI payload (rg vendors + web UI).
-        '!node_modules/@tencent-ai/agent-sdk/cli/**/*'
+        '!node_modules/@tencent-ai/agent-sdk/cli/**/*',
+        // Netcatty loads Cursor SDK through ESM dynamic import, so the duplicate
+        // CommonJS build and type metadata are not needed at runtime.
+        '!node_modules/@cursor/sdk/dist/cjs/**/*',
+        '!node_modules/@cursor/sdk/dist/**/*.d.ts',
+        '!node_modules/@cursor/sdk/dist/**/*.d.ts.map',
+        // sqlite3 rebuilds a native module for Electron; its upstream source
+        // tarball is build-time payload only.
+        '!node_modules/sqlite3/deps/**/*'
     ],
     asarUnpack: [
         'node_modules/node-pty/**/*',
@@ -111,7 +123,6 @@ module.exports = {
         'node_modules/cpu-features/**/*',
         'node_modules/@vscode/windows-process-tree/**/*',
         'node_modules/@anthropic-ai/claude-agent-sdk/**/*',
-        'node_modules/@cursor/sdk/**/*',
         'node_modules/@cursor/sdk-*/**/*',
         'node_modules/sqlite3/**/*',
         'node_modules/@modelcontextprotocol/sdk/**/*',

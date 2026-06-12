@@ -5,11 +5,36 @@ const {
   adHocSignAppBundle,
   deriveUuid,
   patchMachOBuffer,
+  pruneAsarHeaderEntries,
+  pruneCursorSdkPlatformPackages,
+  readAsarHeader,
 } = require("./afterPackMacUuid.cjs");
 
 const LC_UUID = 0x1b;
 const LC_OTHER = 0x19;
 const MH_MAGIC_64 = 0xfeedfacf;
+
+function align4(value) {
+  return value + ((4 - (value % 4)) % 4);
+}
+
+function writeFakeAsar(asarPath, header, payload = Buffer.from("packed-payload")) {
+  const headerString = JSON.stringify(header);
+  const headerStringLength = Buffer.byteLength(headerString);
+  const headerPayloadSize = 4 + align4(headerStringLength);
+  const headerSize = 4 + headerPayloadSize;
+  const sizeBuf = Buffer.alloc(8);
+  const headerBuf = Buffer.alloc(headerSize);
+
+  sizeBuf.writeUInt32LE(4, 0);
+  sizeBuf.writeUInt32LE(headerSize, 4);
+  headerBuf.writeUInt32LE(headerPayloadSize, 0);
+  headerBuf.writeInt32LE(headerStringLength, 4);
+  headerBuf.write(headerString, 8, headerStringLength, "utf8");
+
+  require("node:fs").writeFileSync(asarPath, Buffer.concat([sizeBuf, headerBuf, payload]));
+  return headerSize;
+}
 
 // Build a minimal thin little-endian 64-bit Mach-O with two load commands:
 // one dummy command and one LC_UUID carrying `uuidBytes`.
@@ -156,4 +181,160 @@ test("adHocSignAppBundle skips non-macOS hosts", () => {
 
   assert.equal(didSign, false);
   assert.equal(called, false);
+});
+
+test("pruneAsarHeaderEntries removes package records without moving packed payload", (t) => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-prune-asar-"));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+
+  const asarPath = path.join(tempDir, "app.asar");
+  const payload = Buffer.from("packed-payload");
+  const headerSize = writeFakeAsar(
+    asarPath,
+    {
+      files: {
+        node_modules: {
+          files: {
+            "@cursor": {
+              files: {
+                "sdk-darwin-arm64": {
+                  files: {
+                    "package.json": { size: 2, unpacked: true },
+                  },
+                },
+                "sdk-darwin-x64": {
+                  files: {
+                    "package.json": { size: 2, unpacked: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+        "packed.txt": { size: payload.length, offset: "0" },
+      },
+    },
+    payload,
+  );
+
+  const removed = pruneAsarHeaderEntries(asarPath, ["node_modules/@cursor/sdk-darwin-x64"]);
+  const { header, headerSize: updatedHeaderSize } = readAsarHeader(asarPath);
+  const packedPayload = fs.readFileSync(asarPath).subarray(8 + headerSize);
+
+  assert.deepEqual(removed, ["node_modules/@cursor/sdk-darwin-x64"]);
+  assert.equal(updatedHeaderSize, headerSize);
+  assert.ok(header.files.node_modules.files["@cursor"].files["sdk-darwin-arm64"]);
+  assert.equal(header.files.node_modules.files["@cursor"].files["sdk-darwin-x64"], undefined);
+  assert.equal(packedPayload.toString("utf8"), payload.toString("utf8"));
+});
+
+test("pruneCursorSdkPlatformPackages keeps only the target macOS arch package", (t) => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-prune-cursor-"));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const cursorRoot = path.join(
+    tempDir,
+    "Netcatty.app",
+    "Contents",
+    "Resources",
+    "app.asar.unpacked",
+    "node_modules",
+    "@cursor",
+  );
+  fs.mkdirSync(path.join(cursorRoot, "sdk-darwin-arm64"), { recursive: true });
+  fs.mkdirSync(path.join(cursorRoot, "sdk-darwin-x64"), { recursive: true });
+  writeFakeAsar(path.join(tempDir, "Netcatty.app", "Contents", "Resources", "app.asar"), {
+    files: {
+      node_modules: {
+        files: {
+          "@cursor": {
+            files: {
+              "sdk-darwin-arm64": { files: { "package.json": { size: 2, unpacked: true } } },
+              "sdk-darwin-x64": { files: { "package.json": { size: 2, unpacked: true } } },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const removed = pruneCursorSdkPlatformPackages({
+    electronPlatformName: "darwin",
+    arch: 3,
+    appOutDir: tempDir,
+    packager: { appInfo: { productFilename: "Netcatty" } },
+  });
+
+  assert.deepEqual(removed, ["sdk-darwin-x64"]);
+  assert.ok(fs.existsSync(path.join(cursorRoot, "sdk-darwin-arm64")));
+  assert.ok(!fs.existsSync(path.join(cursorRoot, "sdk-darwin-x64")));
+
+  const { header } = readAsarHeader(
+    path.join(tempDir, "Netcatty.app", "Contents", "Resources", "app.asar"),
+  );
+  assert.ok(header.files.node_modules.files["@cursor"].files["sdk-darwin-arm64"]);
+  assert.equal(header.files.node_modules.files["@cursor"].files["sdk-darwin-x64"], undefined);
+});
+
+test("pruneCursorSdkPlatformPackages keeps both macOS packages for universal builds", (t) => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-prune-cursor-"));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const cursorRoot = path.join(
+    tempDir,
+    "Netcatty.app",
+    "Contents",
+    "Resources",
+    "app.asar.unpacked",
+    "node_modules",
+    "@cursor",
+  );
+  fs.mkdirSync(path.join(cursorRoot, "sdk-darwin-arm64"), { recursive: true });
+  fs.mkdirSync(path.join(cursorRoot, "sdk-darwin-x64"), { recursive: true });
+
+  const removed = pruneCursorSdkPlatformPackages({
+    electronPlatformName: "darwin",
+    arch: 4,
+    appOutDir: tempDir,
+    packager: { appInfo: { productFilename: "Netcatty" } },
+  });
+
+  assert.deepEqual(removed, []);
+  assert.ok(fs.existsSync(path.join(cursorRoot, "sdk-darwin-arm64")));
+  assert.ok(fs.existsSync(path.join(cursorRoot, "sdk-darwin-x64")));
+});
+
+test("pruneCursorSdkPlatformPackages keeps only the target Linux arch package", (t) => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-prune-cursor-"));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const cursorRoot = path.join(
+    tempDir,
+    "resources",
+    "app.asar.unpacked",
+    "node_modules",
+    "@cursor",
+  );
+  fs.mkdirSync(path.join(cursorRoot, "sdk-linux-arm64"), { recursive: true });
+  fs.mkdirSync(path.join(cursorRoot, "sdk-linux-x64"), { recursive: true });
+
+  const removed = pruneCursorSdkPlatformPackages({
+    electronPlatformName: "linux",
+    arch: 1,
+    appOutDir: tempDir,
+    packager: { appInfo: { productFilename: "netcatty" } },
+  });
+
+  assert.deepEqual(removed, ["sdk-linux-arm64"]);
+  assert.ok(!fs.existsSync(path.join(cursorRoot, "sdk-linux-arm64")));
+  assert.ok(fs.existsSync(path.join(cursorRoot, "sdk-linux-x64")));
 });
