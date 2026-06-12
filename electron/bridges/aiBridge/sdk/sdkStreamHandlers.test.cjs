@@ -97,6 +97,38 @@ test("resolveSdkBackendBinPath realpaths CodeBuddy PATH discovery fallback", () 
   assert.equal(out, "/opt/codebuddy/bin/codebuddy");
 });
 
+test("resolveSdkBackendBinPath resolves Windows CodeBuddy shim to the package JS entry", () => {
+  const out = resolveSdkBackendBinPath({
+    backendKey: "codebuddy",
+    shellEnv: { Path: "C:\\Users\\me\\AppData\\Roaming\\npm" },
+    env: {},
+    resolveCliFromPath: () => "C:\\Users\\me\\AppData\\Roaming\\npm\\codebuddy.cmd",
+    normalizeCliPathForPlatform: () => null,
+    realpath: (p) => p,
+    resolveCodebuddyExecutableForSdk: (p) =>
+      p.endsWith("codebuddy.cmd")
+        ? "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@tencent-ai\\codebuddy-code\\bin\\codebuddy"
+        : p,
+  });
+  assert.equal(
+    out,
+    "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@tencent-ai\\codebuddy-code\\bin\\codebuddy",
+  );
+});
+
+test("resolveSdkBackendBinPath falls back to bundled CLI when Windows CodeBuddy shim is unresolvable", () => {
+  const out = resolveSdkBackendBinPath({
+    backendKey: "codebuddy",
+    shellEnv: { Path: "C:\\Users\\me\\AppData\\Roaming\\npm" },
+    env: {},
+    resolveCliFromPath: () => "C:\\Users\\me\\AppData\\Roaming\\npm\\codebuddy.cmd",
+    normalizeCliPathForPlatform: () => null,
+    realpath: (p) => p,
+    resolveCodebuddyExecutableForSdk: () => null,
+  });
+  assert.equal(out, undefined);
+});
+
 test("resolveSdkBackendBinPath keeps non-CodeBuddy SDK path normalization", () => {
   const out = resolveSdkBackendBinPath({
     backendKey: "codex",
