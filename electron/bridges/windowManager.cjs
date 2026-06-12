@@ -1132,7 +1132,6 @@ function buildAppMenu(Menu, app, isMac, language = currentLanguage) {
       label: tMenu(language, "view"),
       submenu: [
         { label: tMenu(language, "reload"), click: (_, win) => { if (win) win.reload(); } },
-        { role: "forceReload" },
         { role: "toggleDevTools" },
         { type: "separator" },
         { role: "resetZoom" },
