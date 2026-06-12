@@ -240,9 +240,9 @@ export const useTerminalBackend = () => {
     return bridge.startZmodemDragDropUpload(sessionId, files, uploadCommand);
   }, []);
 
-  const cancelZmodem = useCallback((sessionId: string) => {
+  const cancelZmodem = useCallback((sessionId: string, options?: { interrupt?: boolean }) => {
     const bridge = netcattyBridge.get();
-    bridge?.cancelZmodem?.(sessionId);
+    bridge?.cancelZmodem?.(sessionId, options);
   }, []);
 
   const onZmodemEvent = useCallback((

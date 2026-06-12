@@ -114,9 +114,13 @@ function createZmodemSentry(opts) {
   let cooldownUntil = 0;
   /** Drag-drop upload queued before auto-triggering rz on the PTY. */
   let dragDropUpload = null;
+  let dragDropStartTimer = null;
   const COOLDOWN_MS = 2000;
   const ECHO_TTL_MS = 1500;
   const ECHO_MAX_BYTES = 256;
+  const dragDropStartTimeoutMs = Number.isFinite(opts.dragDropStartTimeoutMs)
+    ? Math.max(0, opts.dragDropStartTimeoutMs)
+    : 15000;
 
   function prunePendingEchoes(now = Date.now()) {
     while (pendingEchoes.length && pendingEchoes[0].expiresAt <= now) {
@@ -271,6 +275,7 @@ function createZmodemSentry(opts) {
   }
 
   function clearDragDropUpload() {
+    clearDragDropStartTimer();
     if (dragDropUpload) {
       cleanupDragDropTempFiles(dragDropUpload);
       dragDropUpload = null;
@@ -278,9 +283,17 @@ function createZmodemSentry(opts) {
   }
 
   function takeDragDropUpload() {
+    clearDragDropStartTimer();
     const upload = dragDropUpload;
     dragDropUpload = null;
     return upload;
+  }
+
+  function clearDragDropStartTimer() {
+    if (dragDropStartTimer) {
+      clearTimeout(dragDropStartTimer);
+      dragDropStartTimer = null;
+    }
   }
 
   function scheduleRemoteInterruptAfterCancel(transferRole) {
@@ -303,6 +316,38 @@ function createZmodemSentry(opts) {
       try { interruptRemote?.(); } catch { /* ignore */ }
       try { writeToRemote(Buffer.from("\x03")); } catch { /* ignore */ }
     }, 120);
+  }
+
+  function interruptPendingDragDropCommand() {
+    ignoreDetectionUntil = Date.now() + 1000;
+    sendExtraAbortBytes();
+    try { interruptRemote?.(); } catch { /* ignore */ }
+
+    if (cancelInterruptTimer) {
+      clearTimeout(cancelInterruptTimer);
+      cancelInterruptTimer = null;
+    }
+    cancelInterruptTimer = setTimeout(() => {
+      cancelInterruptTimer = null;
+      try { interruptRemote?.(); } catch { /* ignore */ }
+      try { writeToRemote(Buffer.from("\x03")); } catch { /* ignore */ }
+    }, 120);
+  }
+
+  function scheduleDragDropStartTimeout() {
+    clearDragDropStartTimer();
+    if (!dragDropStartTimeoutMs) return;
+    dragDropStartTimer = setTimeout(() => {
+      dragDropStartTimer = null;
+      if (!dragDropUpload || active) return;
+      console.warn(`[ZMODEM][${label}] Drag-drop upload did not start before timeout; cancelling pending upload`);
+      interruptPendingDragDropCommand();
+      clearDragDropUpload();
+      safeSend(getWebContents(), "netcatty:zmodem:error", {
+        sessionId,
+        error: "ZMODEM drag-drop upload did not start",
+      });
+    }, dragDropStartTimeoutMs);
   }
 
   function isIgnorableSendKeepaliveError(errMsg) {
@@ -519,7 +564,7 @@ function createZmodemSentry(opts) {
     },
 
     /** Cancel the current ZMODEM transfer. */
-    cancel() {
+    cancel(options = {}) {
       if (currentZSession) {
         const transferRole = currentZSession.type;
         console.log(`[ZMODEM][${label}] Cancelling transfer for session ${sessionId}`);
@@ -533,6 +578,8 @@ function createZmodemSentry(opts) {
           sessionId,
           error: "Transfer cancelled",
         });
+      } else if (dragDropUpload && options.interrupt !== false) {
+        interruptPendingDragDropCommand();
       }
       clearDragDropUpload();
     },
@@ -562,9 +609,18 @@ function createZmodemSentry(opts) {
       };
 
       const cmdBuf = Buffer.from(uploadCommand, "utf8");
-      rememberOutgoingEcho(cmdBuf);
-      pendingTerminalSuppression = Buffer.from(uploadCommand.replace(/\r$/, ""));
-      writeToRemote(cmdBuf);
+      const pendingEchoCount = pendingEchoes.length;
+      try {
+        rememberOutgoingEcho(cmdBuf);
+        pendingTerminalSuppression = Buffer.from(uploadCommand.replace(/\r$/, ""));
+        writeToRemote(cmdBuf);
+        scheduleDragDropStartTimeout();
+      } catch (err) {
+        pendingEchoes.length = pendingEchoCount;
+        pendingTerminalSuppression = null;
+        clearDragDropUpload();
+        throw err;
+      }
     },
   };
 }
@@ -649,9 +705,8 @@ async function handleUpload(zsession, opts) {
     allNames = filePaths.map((fp) => path.basename(fp));
   }
 
-  const fileStats = filePaths.map((fp) => fs.statSync(fp));
-
   try {
+    const fileStats = filePaths.map((fp) => fs.statSync(fp));
 
   // Conflict handling (SSH only — callbacks absent on local/telnet/serial).
   // On any failure we fall back to today's behavior (rz silently skips).

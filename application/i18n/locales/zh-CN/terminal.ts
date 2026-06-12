@@ -212,6 +212,11 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.behavior.copyOnSelect.desc': '自动复制选中的文本。在 tmux/vim 鼠标模式下，macOS 按住 Option，Windows/Linux 按住 Shift 拖选即可选中文本',
   'settings.terminal.behavior.middleClickPaste': '中键粘贴',
   'settings.terminal.behavior.middleClickPaste.desc': '中键点击时粘贴剪贴板内容',
+  'settings.terminal.behavior.middleClick': '中键行为',
+  'settings.terminal.behavior.middleClick.desc': '在终端中点击鼠标中键时执行的操作',
+  'settings.terminal.behavior.middleClick.menu': '显示菜单',
+  'settings.terminal.behavior.middleClick.paste': '粘贴',
+  'settings.terminal.behavior.middleClick.disabled': '无动作',
   'settings.terminal.behavior.bracketedPaste': '括号粘贴模式',
   'settings.terminal.behavior.bracketedPaste.desc':
     '粘贴文本时使用转义序列包裹，以便终端区分粘贴和键入。如果出现 ^[[200~ 字样请关闭此选项。',

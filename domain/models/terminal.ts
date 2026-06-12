@@ -2,7 +2,9 @@ import type { SerialConfig } from './connection';
 
 // Terminal appearance settings
 export type CursorShape = 'block' | 'bar' | 'underline';
-export type RightClickBehavior = 'context-menu' | 'paste' | 'select-word';
+export type TerminalMouseClickBehavior = 'context-menu' | 'paste' | 'select-word';
+export type RightClickBehavior = TerminalMouseClickBehavior;
+export type MiddleClickBehavior = 'context-menu' | 'paste' | 'disabled';
 export type LinkModifier = 'none' | 'ctrl' | 'alt' | 'meta';
 export type TerminalEmulationType = 'xterm-256color' | 'xterm-16color' | 'xterm';
 
@@ -53,8 +55,9 @@ export interface TerminalSettings {
 
   // Mouse
   rightClickBehavior: RightClickBehavior;
+  middleClickBehavior: MiddleClickBehavior;
   copyOnSelect: boolean; // Automatically copy selected text
-  middleClickPaste: boolean; // Paste on middle-click
+  middleClickPaste: boolean; // Legacy mirror for older settings payloads
   wordSeparators: string; // Characters for word selection
   linkModifier: LinkModifier; // Modifier key to click links
 
@@ -213,12 +216,39 @@ const normalizeKeywordHighlightRules = (
   return normalizedRules;
 };
 
+const isMiddleClickBehavior = (value: unknown): value is MiddleClickBehavior => (
+  value === 'context-menu' ||
+  value === 'paste' ||
+  value === 'disabled'
+);
+
+const resolveMiddleClickBehavior = (
+  settings?: Partial<TerminalSettings> | null,
+): MiddleClickBehavior => {
+  if (isMiddleClickBehavior(settings?.middleClickBehavior)) {
+    return settings.middleClickBehavior;
+  }
+
+  if (
+    settings &&
+    Object.prototype.hasOwnProperty.call(settings, 'middleClickPaste') &&
+    settings.middleClickPaste === false
+  ) {
+    return 'disabled';
+  }
+
+  return DEFAULT_TERMINAL_SETTINGS.middleClickBehavior;
+};
+
 export const normalizeTerminalSettings = (
   settings?: Partial<TerminalSettings> | null,
 ): TerminalSettings => {
+  const middleClickBehavior = resolveMiddleClickBehavior(settings);
   const mergedSettings = {
     ...DEFAULT_TERMINAL_SETTINGS,
     ...(settings ?? {}),
+    middleClickBehavior,
+    middleClickPaste: middleClickBehavior === 'paste',
   };
 
   // Migrate legacy 'canvas' renderer to 'dom' (canvas removed in xterm.js 6.0)
@@ -259,6 +289,7 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   scrollOnPaste: true,
   smoothScrolling: false,
   rightClickBehavior: 'context-menu',
+  middleClickBehavior: 'paste',
   copyOnSelect: false,
   middleClickPaste: true,
   wordSeparators: ' ()[]{}\'"',

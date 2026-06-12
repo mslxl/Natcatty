@@ -195,7 +195,7 @@ const SYNCABLE_TERMINAL_KEYS = [
   'linePadding', 'cursorShape', 'cursorBlink', 'minimumContrastRatio',
   'altAsMeta', 'optionArrowWordJump', 'scrollOnInput', 'scrollOnOutput', 'scrollOnKeyPress', 'scrollOnPaste',
   'smoothScrolling',
-  'rightClickBehavior', 'copyOnSelect', 'middleClickPaste', 'wordSeparators',
+  'rightClickBehavior', 'middleClickBehavior', 'copyOnSelect', 'middleClickPaste', 'wordSeparators',
   'linkModifier', 'keywordHighlightEnabled', 'keywordHighlightRules',
   'keepaliveInterval', 'keepaliveCountMax', 'disableBracketedPaste', 'clearWipesScrollback',
   'preserveSelectionOnInput', 'forcePromptNewLine', 'osc52Clipboard', 'showServerStats',
@@ -504,10 +504,26 @@ function applySyncableSettings(settings: NonNullable<SyncPayload['settings']>): 
       try { existing = JSON.parse(raw); } catch { /* ignore */ }
     }
     const merged = { ...existing };
+    const hasIncomingMiddleClickBehavior = 'middleClickBehavior' in settings.terminalSettings;
+    const hasIncomingMiddleClickPaste = 'middleClickPaste' in settings.terminalSettings;
     for (const key of SYNCABLE_TERMINAL_KEYS) {
       if (key in settings.terminalSettings) {
         merged[key] = settings.terminalSettings[key];
       }
+    }
+    if (hasIncomingMiddleClickBehavior) {
+      const behavior = settings.terminalSettings.middleClickBehavior;
+      if (
+        behavior === 'context-menu' ||
+        behavior === 'paste' ||
+        behavior === 'disabled'
+      ) {
+        merged.middleClickPaste = behavior === 'paste';
+      }
+    } else if (hasIncomingMiddleClickPaste) {
+      merged.middleClickBehavior = settings.terminalSettings.middleClickPaste === false
+        ? 'disabled'
+        : 'paste';
     }
     localStorageAdapter.writeString(STORAGE_KEY_TERM_SETTINGS, JSON.stringify(merged));
   }

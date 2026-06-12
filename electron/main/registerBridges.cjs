@@ -199,7 +199,7 @@ function createBridgeRegistrar(context) {
     ipcMain.on("netcatty:zmodem:cancel", (_event, payload) => {
       const session = sessions.get(payload.sessionId);
       if (session?.zmodemSentry) {
-        session.zmodemSentry.cancel();
+        session.zmodemSentry.cancel(payload.options);
       }
     });
 

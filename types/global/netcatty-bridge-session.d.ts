@@ -105,9 +105,11 @@ declare global {
         totalBytes: number;
         writtenBytes: number;
       }>;
-      fileName?: string;
       fileCount?: number;
+      fileName?: string;
+      filePath?: string;
       totalBytes?: number;
+      writtenBytes?: number;
       error?: string;
       code?: string;
     }>;
@@ -242,7 +244,7 @@ declare global {
         error?: string;
       }) => void
     ): () => void;
-    cancelZmodem?(sessionId: string): void;
+    cancelZmodem?(sessionId: string, options?: { interrupt?: boolean }): void;
     startZmodemDragDropUpload?(
       sessionId: string,
       files: Array<{

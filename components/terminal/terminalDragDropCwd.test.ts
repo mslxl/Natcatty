@@ -146,6 +146,42 @@ test("serial terminal drop does not wrap rz with an SSH shell fallback", async (
   assert.equal(uploadCommandSeen, undefined);
 });
 
+test("telnet terminal drop does not wrap rz with an SSH shell fallback", async () => {
+  let uploadCommandSeen: string | undefined;
+
+  await handleTerminalDropEntries({
+    dropEntries: [
+      {
+        file: {
+          name: "report.txt",
+          arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+        } as File,
+        relativePath: "report.txt",
+        isDirectory: false,
+      },
+    ],
+    host: { ...host, protocol: "telnet" } as Host,
+    isLocalConnection: false,
+    onOpenSftp: () => {},
+    resolveSftpInitialPath: async () => "/srv/app/current",
+    scrollToBottomAfterProgrammaticInput: () => {},
+    sessionId: "session-1",
+    sessionRef: { current: "session-1" },
+    terminalBackend: {
+      writeToSession: () => {},
+      cancelZmodem: () => {},
+      onSessionData: () => () => {},
+      startZmodemDragDropUpload: async (_sessionId, _files, uploadCommand) => {
+        uploadCommandSeen = uploadCommand;
+        return { success: true };
+      },
+    },
+    termRef: { current: null },
+  });
+
+  assert.equal(uploadCommandSeen, undefined);
+});
+
 test("network device drop falls back to SFTP upload with a freshly resolved cwd", async () => {
   let receivedOptions: { preferFreshBackend?: boolean } | undefined;
   let openedPath: string | undefined;
@@ -187,7 +223,7 @@ test("remote SSH terminal drop falls back to SFTP when rz is unavailable", async
   let openedEntries: DropEntry[] | undefined;
   let openedSessionId: string | undefined;
   let dataCallback: ((chunk: string) => void) | undefined;
-  let cancelledSessionId: string | undefined;
+  let cancelled: { sessionId: string; interrupt?: boolean } | undefined;
 
   await handleTerminalDropEntries({
     dropEntries: [
@@ -222,8 +258,8 @@ test("remote SSH terminal drop falls back to SFTP when rz is unavailable", async
           dataCallback = undefined;
         };
       },
-      cancelZmodem: (sessionId: string) => {
-        cancelledSessionId = sessionId;
+      cancelZmodem: (sessionId: string, options?: { interrupt?: boolean }) => {
+        cancelled = { sessionId, interrupt: options?.interrupt };
       },
       startZmodemDragDropUpload: async (_sessionId, _files, uploadCommand) => {
         assert.match(uploadCommand ?? "", /NetcattyRzMissing=/);
@@ -242,7 +278,100 @@ test("remote SSH terminal drop falls back to SFTP when rz is unavailable", async
   assert.equal(openedEntries?.length, 1);
   assert.equal(openedEntries?.[0].relativePath, "report.txt");
   assert.equal(openedSessionId, "session-1");
-  assert.equal(cancelledSessionId, "session-1");
+  assert.deepEqual(cancelled, { sessionId: "session-1", interrupt: false });
+});
+
+test("remote SSH terminal drop falls back to SFTP when rz never starts", async () => {
+  let receivedOptions: { preferFreshBackend?: boolean } | undefined;
+  let openedPath: string | undefined;
+  let openedEntries: DropEntry[] | undefined;
+  let cancelled: { sessionId: string; interrupt?: boolean } | undefined;
+
+  await handleTerminalDropEntries({
+    dropEntries: [
+      {
+        file: {
+          name: "report.txt",
+          arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+        } as File,
+        relativePath: "report.txt",
+        isDirectory: false,
+      },
+    ],
+    host,
+    isLocalConnection: false,
+    onOpenSftp: (_host, initialPath, pendingUploadEntries) => {
+      openedPath = initialPath;
+      openedEntries = pendingUploadEntries;
+    },
+    resolveSftpInitialPath: async (options) => {
+      receivedOptions = options;
+      return "/srv/app/current";
+    },
+    scrollToBottomAfterProgrammaticInput: () => {},
+    sessionId: "session-1",
+    sessionRef: { current: "session-1" },
+    terminalBackend: {
+      writeToSession: () => {},
+      onSessionData: () => () => {},
+      cancelZmodem: (sessionId: string, options?: { interrupt?: boolean }) => {
+        cancelled = { sessionId, interrupt: options?.interrupt };
+      },
+      startZmodemDragDropUpload: async () => ({ success: true }),
+    },
+    rzMissingFallbackTimeoutMs: 1,
+    termRef: { current: null },
+  });
+
+  assert.deepEqual(receivedOptions, { preferFreshBackend: true });
+  assert.equal(openedPath, "/srv/app/current");
+  assert.equal(openedEntries?.length, 1);
+  assert.deepEqual(cancelled, { sessionId: "session-1", interrupt: true });
+});
+
+test("remote SSH folder drop uses SFTP to preserve directory structure", async () => {
+  let openedEntries: DropEntry[] | undefined;
+  let zmodemStarted = false;
+
+  const folderEntries: DropEntry[] = [
+    {
+      file: null,
+      relativePath: "docs",
+      isDirectory: true,
+    },
+    {
+      file: {
+        name: "guide.txt",
+        arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+      } as File,
+      relativePath: "docs/guide.txt",
+      isDirectory: false,
+    },
+  ];
+
+  await handleTerminalDropEntries({
+    dropEntries: folderEntries,
+    host,
+    isLocalConnection: false,
+    onOpenSftp: (_host, _initialPath, pendingUploadEntries) => {
+      openedEntries = pendingUploadEntries;
+    },
+    resolveSftpInitialPath: async () => "/srv/app/current",
+    scrollToBottomAfterProgrammaticInput: () => {},
+    sessionId: "session-1",
+    sessionRef: { current: "session-1" },
+    terminalBackend: {
+      writeToSession: () => {},
+      startZmodemDragDropUpload: async () => {
+        zmodemStarted = true;
+        return { success: true };
+      },
+    },
+    termRef: { current: null },
+  });
+
+  assert.equal(zmodemStarted, false);
+  assert.equal(openedEntries, folderEntries);
 });
 
 test("fresh cwd resolution falls back to the renderer cwd when backend probe has no real cwd", async () => {
