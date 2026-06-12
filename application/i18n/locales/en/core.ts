@@ -341,6 +341,11 @@ export const enCoreMessages: Messages = {
   'settings.terminal.behavior.middleClickPaste': 'Middle-click paste',
   'settings.terminal.behavior.middleClickPaste.desc':
     'Paste clipboard content on middle-click',
+  'settings.terminal.behavior.middleClick': 'Middle-click behavior',
+  'settings.terminal.behavior.middleClick.desc': 'Action when middle-clicking in terminal',
+  'settings.terminal.behavior.middleClick.menu': 'Show menu',
+  'settings.terminal.behavior.middleClick.paste': 'Paste',
+  'settings.terminal.behavior.middleClick.disabled': 'Do nothing',
   'settings.terminal.behavior.bracketedPaste': 'Bracketed paste mode',
   'settings.terminal.behavior.bracketedPaste.desc':
     'Wrap pasted text with escape sequences so the shell can distinguish paste from typed input. Disable if you see ^[[200~ artifacts.',

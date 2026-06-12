@@ -341,6 +341,11 @@ export const ruCoreMessages: Messages = {
   'settings.terminal.behavior.middleClickPaste': 'Вставка средней кнопкой мыши',
   'settings.terminal.behavior.middleClickPaste.desc':
     'Вставлять содержимое буфера обмена по щелчку средней кнопкой',
+  'settings.terminal.behavior.middleClick': 'Поведение средней кнопки мыши',
+  'settings.terminal.behavior.middleClick.desc': 'Действие при щелчке средней кнопкой в терминале',
+  'settings.terminal.behavior.middleClick.menu': 'Показать меню',
+  'settings.terminal.behavior.middleClick.paste': 'Вставить',
+  'settings.terminal.behavior.middleClick.disabled': 'Ничего не делать',
   'settings.terminal.behavior.bracketedPaste': 'Режим bracketed paste',
   'settings.terminal.behavior.bracketedPaste.desc':
     'Оборачивать вставляемый текст escape-последовательностями, чтобы оболочка отличала вставку от обычного ввода. Отключите, если видите артефакты вида ^[[200~.',

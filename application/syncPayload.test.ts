@@ -542,6 +542,7 @@ test("buildSyncPayload includes syncable terminal options from settings", () => 
   localStorage.setItem(storageKeys.STORAGE_KEY_TERM_SETTINGS, JSON.stringify({
     terminalEmulationType: "vt100",
     altAsMeta: true,
+    middleClickBehavior: "context-menu",
     showServerStats: false,
     serverStatsRefreshInterval: 12,
     rendererType: "dom",
@@ -554,6 +555,7 @@ test("buildSyncPayload includes syncable terminal options from settings", () => 
   assert.deepEqual(payload.settings?.terminalSettings, {
     terminalEmulationType: "vt100",
     altAsMeta: true,
+    middleClickBehavior: "context-menu",
     showServerStats: false,
     serverStatsRefreshInterval: 12,
     rendererType: "dom",
@@ -816,6 +818,42 @@ test("applySyncPayload writes incoming fallbackFont into local TERM_SETTINGS", a
   assert.ok(raw, "TERM_SETTINGS should be written");
   const parsed = JSON.parse(raw!);
   assert.equal(parsed.fallbackFont, "Sarasa Mono SC");
+});
+
+test("applySyncPayload lets legacy middle-click paste update the new middle-click behavior", async () => {
+  localStorage.setItem(
+    storageKeys.STORAGE_KEY_TERM_SETTINGS,
+    JSON.stringify({
+      scrollback: 2000,
+      middleClickBehavior: "paste",
+      middleClickPaste: true,
+    }),
+  );
+
+  const payload: SyncPayload = {
+    hosts: [],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+    syncedAt: 1,
+    settings: {
+      terminalSettings: {
+        middleClickPaste: false,
+      },
+    },
+  } as SyncPayload;
+
+  await applySyncPayload(payload, {
+    importVaultData: () => {},
+  });
+
+  const raw = localStorage.getItem(storageKeys.STORAGE_KEY_TERM_SETTINGS);
+  assert.ok(raw, "TERM_SETTINGS should be written");
+  const parsed = JSON.parse(raw!);
+  assert.equal(parsed.scrollback, 2000);
+  assert.equal(parsed.middleClickBehavior, "disabled");
+  assert.equal(parsed.middleClickPaste, false);
 });
 
 test("applySyncPayload from legacy client (no fallbackFont) preserves local value", async () => {

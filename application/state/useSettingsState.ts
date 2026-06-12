@@ -349,7 +349,14 @@ export const useSettingsState = () => {
 
   const mergeIncomingTerminalSettings = useCallback((incoming: Partial<TerminalSettings>) => {
     setTerminalSettingsState((prev) => {
-      const next = normalizeTerminalSettings({ ...prev, ...incoming });
+      const merged: Partial<TerminalSettings> = { ...prev, ...incoming };
+      if (
+        !Object.prototype.hasOwnProperty.call(incoming, 'middleClickBehavior') &&
+        Object.prototype.hasOwnProperty.call(incoming, 'middleClickPaste')
+      ) {
+        delete merged.middleClickBehavior;
+      }
+      const next = normalizeTerminalSettings(merged);
       if (areTerminalSettingsEqual(prev, next)) {
         return prev;
       }

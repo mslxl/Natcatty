@@ -14,7 +14,7 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react';
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { KeyBinding, RightClickBehavior } from '../../domain/models';
 import {
@@ -25,6 +25,7 @@ import {
   ContextMenuShortcut,
   ContextMenuTrigger,
 } from '../ui/context-menu';
+import { isMiddleClickContextMenuEvent } from './runtime/middleClickBehavior';
 
 export interface TerminalContextMenuProps {
   children: React.ReactNode;
@@ -69,6 +70,40 @@ export const shouldShowAddSelectionToAIContextMenuAction = (
   onAddSelectionToAI?: () => void,
 ): boolean => Boolean(onAddSelectionToAI);
 
+export const shouldRenderTerminalContextMenuContent = ({
+  isAlternateScreen,
+  showReconnectAction,
+  allowSuppressedMenuContent,
+}: {
+  isAlternateScreen?: boolean;
+  showReconnectAction?: boolean;
+  allowSuppressedMenuContent?: boolean;
+}): boolean =>
+  allowSuppressedMenuContent ||
+  !shouldSuppressMouseTrackingContextMenu({ isAlternateScreen, showReconnectAction });
+
+export const shouldOpenTerminalContextMenu = ({
+  event,
+  rightClickBehavior = 'context-menu',
+  isAlternateScreen,
+  showReconnectAction,
+}: {
+  event: { shiftKey?: boolean; nativeEvent: MouseEvent };
+  rightClickBehavior?: RightClickBehavior;
+  isAlternateScreen?: boolean;
+  showReconnectAction?: boolean;
+}): boolean => {
+  if (isMiddleClickContextMenuEvent(event.nativeEvent)) {
+    return true;
+  }
+
+  if (shouldSuppressMouseTrackingContextMenu({ isAlternateScreen, showReconnectAction })) {
+    return false;
+  }
+
+  return Boolean(event.shiftKey || rightClickBehavior === 'context-menu');
+};
+
 export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
   children,
   hasSelection = false,
@@ -97,11 +132,13 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
   // keep its `:focus-within`-driven opacity stable while focus is in the
   // menu portal (otherwise the pane dims for the menu's lifetime).
   const markedPaneRef = useRef<HTMLElement | null>(null);
+  const [allowSuppressedMenuContent, setAllowSuppressedMenuContent] = useState(false);
 
   const handleOpenChange = useCallback((open: boolean) => {
     if (!open) {
       markedPaneRef.current?.removeAttribute('data-menu-open');
       markedPaneRef.current = null;
+      setAllowSuppressedMenuContent(false);
     }
   }, []);
 
@@ -132,19 +169,28 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
       // In alternate screen (tmux, vim, etc.), let the terminal application
       // handle right-click natively to avoid conflicting menus. Reconnect is
       // still available after disconnect, even if mouse tracking was left on.
-      if (shouldSuppressMouseTrackingContextMenu({ isAlternateScreen, showReconnectAction })) {
+      const shouldOpenMenu = shouldOpenTerminalContextMenu({
+        event: e,
+        rightClickBehavior,
+        isAlternateScreen,
+        showReconnectAction,
+      });
+      const isMiddleClickMenu = isMiddleClickContextMenuEvent(e.nativeEvent);
+
+      if (!shouldOpenMenu && shouldSuppressMouseTrackingContextMenu({ isAlternateScreen, showReconnectAction })) {
         e.preventDefault();
         return;
       }
 
       // Shift+Right-Click or context-menu mode: let Radix open the menu
-      if (e.shiftKey || rightClickBehavior === 'context-menu') {
+      if (shouldOpenMenu) {
         const pane = (e.target as HTMLElement | null)?.closest<HTMLElement>('.workspace-pane');
         if (pane) {
           markedPaneRef.current?.removeAttribute('data-menu-open');
           pane.setAttribute('data-menu-open', '');
           markedPaneRef.current = pane;
         }
+        setAllowSuppressedMenuContent(isMiddleClickMenu);
         return;
       }
 
@@ -169,7 +215,11 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
       >
         {children}
       </ContextMenuTrigger>
-      {!shouldSuppressMouseTrackingContextMenu({ isAlternateScreen, showReconnectAction }) && (
+      {shouldRenderTerminalContextMenuContent({
+        isAlternateScreen,
+        showReconnectAction,
+        allowSuppressedMenuContent,
+      }) && (
         <ContextMenuContent className="w-max">
           <ContextMenuItem onClick={onCopy} disabled={!hasSelection}>
             <Copy size={14} className="mr-2" />
