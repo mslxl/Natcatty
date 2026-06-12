@@ -63,6 +63,10 @@ export const shouldSuppressMouseTrackingContextMenu = ({
   showReconnectAction?: boolean;
 }): boolean => Boolean(isAlternateScreen && !showReconnectAction);
 
+export const shouldShowAddSelectionToAIContextMenuAction = (
+  onAddSelectionToAI?: () => void,
+): boolean => Boolean(onAddSelectionToAI);
+
 export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
   children,
   hasSelection = false,
@@ -174,7 +178,7 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
             {t('terminal.menu.paste')}
             <ContextMenuShortcut>{pasteShortcut}</ContextMenuShortcut>
           </ContextMenuItem>
-          {onAddSelectionToAI && (
+          {shouldShowAddSelectionToAIContextMenuAction(onAddSelectionToAI) && (
             <ContextMenuItem onClick={onAddSelectionToAI} disabled={!hasSelection}>
               <Sparkles size={14} className="mr-2" />
               {t('terminal.menu.addSelectionToAI')}

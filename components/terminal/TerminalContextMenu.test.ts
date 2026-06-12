@@ -22,6 +22,11 @@ const shouldSuppressMouseTrackingContextMenu = (
     }) => boolean;
   }
 ).shouldSuppressMouseTrackingContextMenu;
+const shouldShowAddSelectionToAIContextMenuAction = (
+  terminalContextMenu as {
+    shouldShowAddSelectionToAIContextMenuAction?: (onAddSelectionToAI?: () => void) => boolean;
+  }
+).shouldShowAddSelectionToAIContextMenuAction;
 
 test("shows reconnect only for reconnectable terminals with a handler", () => {
   assert.equal(typeof shouldShowReconnectAction, "function");
@@ -47,6 +52,14 @@ test("shows reconnect only for reconnectable terminals with a handler", () => {
 test("localizes the reconnect context menu label", () => {
   assert.equal(en["terminal.menu.reconnect"], "Reconnect");
   assert.equal(zhCN["terminal.menu.reconnect"], "重新连接");
+});
+
+test("shows add selection to AI context menu action when a handler exists", () => {
+  assert.equal(typeof shouldShowAddSelectionToAIContextMenuAction, "function");
+  if (typeof shouldShowAddSelectionToAIContextMenuAction !== "function") return;
+
+  assert.equal(shouldShowAddSelectionToAIContextMenuAction(() => {}), true);
+  assert.equal(shouldShowAddSelectionToAIContextMenuAction(), false);
 });
 
 test("localizes the YMODEM serial send actions", () => {

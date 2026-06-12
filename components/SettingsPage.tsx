@@ -157,6 +157,8 @@ const SettingsAITabContainer: React.FC = () => {
                 setWebSearchConfig={aiState.setWebSearchConfig}
                 quickMessages={aiState.quickMessages}
                 setQuickMessages={aiState.setQuickMessages}
+                showTerminalSelectionAIAction={aiState.showTerminalSelectionAIAction}
+                setShowTerminalSelectionAIAction={aiState.setShowTerminalSelectionAIAction}
             />
         </AITabErrorBoundary>
     );

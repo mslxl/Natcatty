@@ -44,6 +44,7 @@ export const terminalPropsAreEqual = (
   && prev.sessionLog === next.sessionLog
   && prev.sshDebugLogEnabled === next.sshDebugLogEnabled
   && prev.sudoAutofillPassword === next.sudoAutofillPassword
+  && prev.showSelectionAIAction === next.showSelectionAIAction
   && prev.onHotkeyAction === next.onHotkeyAction
   && prev.onTerminalFontSizeChange === next.onTerminalFontSizeChange
   && prev.onStatusChange === next.onStatusChange

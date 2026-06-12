@@ -267,6 +267,11 @@ export const enAiMessages: Messages = {
   'ai.chat.slashNoResults': 'No matching commands',
   'ai.chat.slashEmptyHint': 'Add prompts in Settings → AI → Quick Messages.',
 
+  // AI Chat Shortcuts
+  'ai.chatShortcuts.title': 'Chat Shortcuts',
+  'ai.chatShortcuts.selectionAction': 'Show Add to Conversation when selecting terminal text',
+  'ai.chatShortcuts.selectionAction.description': 'Show a small AI button next to selected terminal text.',
+
   // AI Error
   'ai.codex.bridgeError': 'Codex main-process handlers are not loaded yet. Fully restart Netcatty, or restart the Electron dev process, then try again.',
 
