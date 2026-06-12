@@ -13,6 +13,7 @@ const {
   resolveWindowsShimToNativeExe,
   resolveClaudeCodeExecutableForSdk,
   resolveCodexExecutableForSdk,
+  resolveCodebuddyExecutableForSdk,
   trackSessionIdlePrompt,
 } = require("./shellUtils.cjs");
 const fs = require("node:fs");
@@ -340,6 +341,69 @@ test("addCodexExecutableEnvForSdk prepends bundled Codex path dir on Windows", (
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+function writeCodebuddyWin32BinLayout(dir) {
+  const binJs = path.join(dir, "node_modules", "@tencent-ai", "codebuddy-code", "bin", "codebuddy");
+  fs.mkdirSync(path.dirname(binJs), { recursive: true });
+  fs.writeFileSync(binJs, "#!/usr/bin/env node\n", "utf8");
+  return binJs;
+}
+
+test("resolveCodebuddyExecutableForSdk leaves non-Windows CodeBuddy paths unchanged", () => {
+  assert.equal(
+    resolveCodebuddyExecutableForSdk("/usr/local/bin/codebuddy", "darwin"),
+    "/usr/local/bin/codebuddy",
+  );
+});
+
+test("resolveCodebuddyExecutableForSdk maps Windows npm cmd shim to package bin/codebuddy", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-codebuddy-shim-"));
+  try {
+    const shimPath = path.join(tmp, "codebuddy.cmd");
+    const binJs = writeCodebuddyWin32BinLayout(tmp);
+    fs.writeFileSync(
+      shimPath,
+      '@ECHO off\r\nnode "%~dp0\\node_modules\\@tencent-ai\\codebuddy-code\\bin\\codebuddy" %*\r\n',
+      "utf8",
+    );
+
+    assert.equal(resolveCodebuddyExecutableForSdk(shimPath, "win32"), binJs);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("resolveCodebuddyExecutableForSdk maps extensionless Windows shim to package bin/codebuddy", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-codebuddy-noext-"));
+  try {
+    const shimPath = path.join(tmp, "codebuddy");
+    const binJs = writeCodebuddyWin32BinLayout(tmp);
+    fs.writeFileSync(shimPath, "#!/bin/sh\n", "utf8");
+
+    assert.equal(resolveCodebuddyExecutableForSdk(shimPath, "win32"), binJs);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("resolveCodebuddyExecutableForSdk returns null for Windows cmd shim when package JS is missing", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-codebuddy-missing-"));
+  try {
+    const shimPath = path.join(tmp, "codebuddy.cmd");
+    fs.writeFileSync(shimPath, "@ECHO off\r\nnode foo %*\r\n", "utf8");
+
+    assert.equal(resolveCodebuddyExecutableForSdk(shimPath, "win32"), null);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("resolveCodebuddyExecutableForSdk passes through a native exe path", () => {
+  assert.equal(
+    resolveCodebuddyExecutableForSdk("C:\\tools\\codebuddy.exe", "win32"),
+    "C:\\tools\\codebuddy.exe",
+  );
 });
 
 test("tracks PowerShell idle prompt after SSH output", () => {

@@ -63,13 +63,22 @@ function resolveRealCliPath(cliPath, realpath = realpathSync) {
 }
 
 function resolveSdkBackendBinPath({
-  backendKey, shellEnv, env, resolveCliFromPath, normalizeCliPathForPlatform, resolveSdkBinPath, realpath = realpathSync,
+  backendKey, shellEnv, env, resolveCliFromPath, normalizeCliPathForPlatform,
+  resolveSdkBinPath, resolveCodebuddyExecutableForSdk, realpath = realpathSync,
 }) {
   if (backendKey === "codebuddy") {
     const configuredPath = normalizeCliPathForPlatform?.(env?.CODEBUDDY_CODE_PATH);
-    if (configuredPath) return resolveRealCliPath(configuredPath, realpath);
-    const resolvedPath = resolveCliFromPath(backendKey, shellEnv) || undefined;
-    return resolveRealCliPath(resolvedPath, realpath);
+    const rawPath = configuredPath || resolveCliFromPath(backendKey, shellEnv) || undefined;
+    if (!rawPath) return undefined;
+    const realPath = resolveRealCliPath(rawPath, realpath);
+    // On Windows the discovered path is an npm shim (codebuddy.cmd/.ps1) that the
+    // Agent SDK can't run through `node`; resolve it to the package's JS entry so
+    // it launches like on macOS/Linux. A null result means the shim is unrunnable
+    // and unresolvable, so fall back to the SDK's bundled CLI.
+    const sdkPath = typeof resolveCodebuddyExecutableForSdk === "function"
+      ? resolveCodebuddyExecutableForSdk(realPath)
+      : realPath;
+    return sdkPath || undefined;
   }
   return resolveSdkBinPath?.(backendKey, shellEnv) || undefined;
 }
@@ -208,6 +217,7 @@ function registerSdkStreamHandlers(ctx) {
             resolveCliFromPath,
             normalizeCliPathForPlatform,
             resolveSdkBinPath,
+            resolveCodebuddyExecutableForSdk,
           });
           if (backendKey === "codex") {
             env = addCodexExecutableEnvForSdk(env, binPath);
@@ -296,6 +306,7 @@ function registerSdkStreamHandlers(ctx) {
           resolveCliFromPath,
           normalizeCliPathForPlatform,
           resolveSdkBinPath,
+          resolveCodebuddyExecutableForSdk,
         });
         const raw = await withTimeout(driver.listModels({ binPath, env }), MODEL_LIST_TIMEOUT_MS);
         const models = Array.isArray(raw) ? raw.filter((m) => m && m.id) : [];

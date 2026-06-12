@@ -445,6 +445,56 @@ function resolveCodexExecutableForSdk(codexExecutablePath, platform = process.pl
   return ext === ".cmd" || ext === ".bat" || ext === ".ps1" ? null : normalized;
 }
 
+function resolveCodebuddyExecutableForSdk(codebuddyExecutablePath, platform = process.platform) {
+  const normalized = String(codebuddyExecutablePath || "").trim();
+  if (!normalized) return null;
+  if (platform !== "win32") return normalized;
+
+  const ext = path.extname(normalized).toLowerCase();
+  // A native exe or an explicit .js entry can be launched by the Agent SDK as-is.
+  if (ext === ".exe" || ext === ".js") return normalized;
+  // Any other concrete, non-shim extension: leave it untouched.
+  if (ext && ext !== ".cmd" && ext !== ".bat" && ext !== ".ps1") return normalized;
+
+  // Windows npm globals expose `codebuddy.cmd` / `codebuddy.ps1` shims (and an
+  // extensionless POSIX shim). The Agent SDK launches the CLI through `node`
+  // (electron-as-node in a packaged app), which cannot parse a batch/POSIX shim
+  // as JavaScript — the spawned process exits immediately and the SDK surfaces
+  // "CLI process stdout closed unexpectedly". Resolve the shim to the package's
+  // real `bin/codebuddy` JS entry so the SDK runs it exactly as on macOS/Linux.
+  const baseDir = path.dirname(normalized);
+  const packageRoots = [
+    path.join(baseDir, "node_modules", "@tencent-ai", "codebuddy-code"),
+    path.join(baseDir, "..", "node_modules", "@tencent-ai", "codebuddy-code"),
+  ];
+  for (const root of packageRoots) {
+    const binJs = path.join(root, "bin", "codebuddy");
+    if (existsSync(binJs)) return binJs;
+  }
+
+  // Fall back to parsing the shim for the bin/codebuddy path it references.
+  const shimCandidates = [normalized];
+  if (!ext) shimCandidates.push(`${normalized}.cmd`, `${normalized}.bat`);
+  for (const shimPath of shimCandidates) {
+    try {
+      if (!existsSync(shimPath)) continue;
+      const contents = readFileSync(shimPath, "utf8");
+      const match = contents.match(/([^"\s]*codebuddy-code[\\/]bin[\\/]codebuddy)/i);
+      if (match) {
+        const ref = match[1].replace(/^%~dp0[\\/]?/i, "").replace(/[\\/]+/g, path.sep);
+        const binJs = path.isAbsolute(ref) ? ref : path.resolve(path.dirname(shimPath), ref);
+        if (existsSync(binJs)) return binJs;
+      }
+    } catch {
+      // Try the next shim candidate.
+    }
+  }
+
+  // Could not locate the JS entry — return null so the caller falls back to the
+  // SDK's bundled CLI rather than handing `node` an unrunnable shim.
+  return ext === ".cmd" || ext === ".bat" || ext === ".ps1" ? null : normalized;
+}
+
 function resolveSdkBinPath(command, shellEnv, platform = process.platform) {
   const raw = resolveCliFromPath(command, shellEnv);
   if (!raw) return null;
@@ -721,6 +771,7 @@ module.exports = {
   normalizeClaudeCodeExecutableEnvForSdk,
   resolveCodexExecutableForSdk,
   addCodexExecutableEnvForSdk,
+  resolveCodebuddyExecutableForSdk,
   resolveSdkBinPath,
   resolveSdkBinPathAsync,
   resolveCliFromPath,
