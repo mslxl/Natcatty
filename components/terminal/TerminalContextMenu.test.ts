@@ -64,9 +64,13 @@ test("shows add selection to AI context menu action when a handler exists", () =
 
 test("localizes the YMODEM serial send actions", () => {
   assert.equal(en["terminal.menu.sendYmodem"], "Send with YMODEM");
+  assert.equal(en["terminal.menu.receiveYmodem"], "Receive with YMODEM");
   assert.equal(en["terminal.toolbar.sendYmodem"], "Send with YMODEM");
+  assert.equal(en["terminal.toolbar.receiveYmodem"], "Receive with YMODEM");
   assert.equal(zhCN["terminal.menu.sendYmodem"], "YMODEM 发送");
+  assert.equal(zhCN["terminal.menu.receiveYmodem"], "YMODEM 接收");
   assert.equal(zhCN["terminal.toolbar.sendYmodem"], "YMODEM 发送");
+  assert.equal(zhCN["terminal.toolbar.receiveYmodem"], "YMODEM 接收");
 });
 
 test("enables YMODEM action only for connected serial terminals", () => {
@@ -77,6 +81,16 @@ test("enables YMODEM action only for connected serial terminals", () => {
     status: "connected",
     handleSendYmodem: handler,
   }), true);
+  assert.equal(shouldEnableYmodemAction({
+    isSerialConnection: true,
+    status: "connected",
+    handleReceiveYmodem: handler,
+  }), true);
+  assert.equal(shouldEnableYmodemAction({
+    isSerialConnection: true,
+    status: "disconnected",
+    handleReceiveYmodem: handler,
+  }), false);
   assert.equal(shouldEnableYmodemAction({
     isSerialConnection: true,
     status: "disconnected",
