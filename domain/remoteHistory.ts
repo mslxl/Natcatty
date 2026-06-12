@@ -8,6 +8,14 @@ export function isNetcattyAiHistoryCommand(command: string): boolean {
   return command.includes(NETCATTY_AI_HISTORY_MARKER);
 }
 
+const NETCATTY_MANAGED_STARTUP_COMMAND =
+  /^printf '\\033\[H\\033\[2J\\033\[3J';\s*exec\s+(?:docker\s+(?:exec|logs)\b|tmux\s+attach\b)/;
+
+/** True when a shell history line came from a Netcatty-managed terminal launch. */
+export function isNetcattyManagedStartupHistoryCommand(command: string): boolean {
+  return NETCATTY_MANAGED_STARTUP_COMMAND.test(command.trim());
+}
+
 const ZSH_EXTENDED_RECORD = /^: (\d+):\d+;([\s\S]*)$/;
 // fish_history is a YAML subset: each record starts with `- cmd: <value>`,
 // optionally followed by `  when: <epoch>` and a `  paths:` block.
@@ -215,6 +223,7 @@ export function mergeRemoteHistory(
   const merged: RemoteHistoryEntry[] = [];
   for (const { entry } of indexed) {
     if (isNetcattyAiHistoryCommand(entry.command)) continue;
+    if (isNetcattyManagedStartupHistoryCommand(entry.command)) continue;
     if (seen.has(entry.command)) continue;
     seen.add(entry.command);
     merged.push(entry);
