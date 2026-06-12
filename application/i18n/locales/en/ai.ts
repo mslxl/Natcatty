@@ -3,9 +3,11 @@ import type { Messages } from '../types';
 export const enAiMessages: Messages = {
   // AI Settings
   'ai.agentSettings': 'Agent Settings',
+  'ai.chat.preparing': 'Preparing…',
   'ai.title': 'AI',
   'ai.description': 'Configure AI providers, agents, and safety settings',
   'ai.providers': 'Providers',
+  'ai.agents': 'Agents',
   'ai.providers.empty': 'No providers configured. Add a provider to get started.',
   'ai.providers.add': 'Add Provider',
   'ai.providers.active': 'Active',
@@ -264,6 +266,11 @@ export const enAiMessages: Messages = {
   'ai.chat.quickMessages': 'Slash commands',
   'ai.chat.slashNoResults': 'No matching commands',
   'ai.chat.slashEmptyHint': 'Add prompts in Settings → AI → Quick Messages.',
+
+  // AI Chat Shortcuts
+  'ai.chatShortcuts.title': 'Chat Shortcuts',
+  'ai.chatShortcuts.selectionAction': 'Show Add to Conversation when selecting terminal text',
+  'ai.chatShortcuts.selectionAction.description': 'Show a small AI button next to selected terminal text.',
 
   // AI Error
   'ai.codex.bridgeError': 'Codex main-process handlers are not loaded yet. Fully restart Netcatty, or restart the Electron dev process, then try again.',

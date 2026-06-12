@@ -1,12 +1,16 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 const {
   YMODEM,
   createYmodemFileInfoPacket,
   createYmodemDataPackets,
   createYmodemEndSessionPacket,
+  receiveYmodemFiles,
   sendYmodemCancel,
   sendYmodemBuffer,
 } = require("./ymodemTransfer.cjs");
@@ -198,6 +202,137 @@ test("sends the Tera Term style cancel sequence", async () => {
       YMODEM.BACKSPACE,
     ],
   );
+});
+
+test("receives a YMODEM file into the selected directory", async () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-ymodem-receive-"));
+  try {
+    const serial = new FakeSerialPort();
+    const transfer = receiveYmodemFiles(serial, {
+      destinationDir: targetDir,
+      timeoutMs: 200,
+    });
+
+    await waitForWrites(serial, 1);
+    assert.deepEqual([...serial.writes[0]], [YMODEM.CRC16]);
+
+    serial.emit("data", createYmodemFileInfoPacket({
+      filename: "device.log",
+      size: 3,
+      mtime: 0,
+    }));
+    await waitForWrites(serial, 3);
+    assert.deepEqual([...serial.writes[1]], [YMODEM.ACK]);
+    assert.deepEqual([...serial.writes[2]], [YMODEM.CRC16]);
+
+    serial.emit("data", createYmodemDataPackets(Buffer.from("abc"))[0]);
+    await waitForWrites(serial, 4);
+    assert.deepEqual([...serial.writes[3]], [YMODEM.ACK]);
+
+    serial.emit("data", Buffer.from([YMODEM.EOT]));
+    await waitForWrites(serial, 5);
+    assert.deepEqual([...serial.writes[4]], [YMODEM.NAK]);
+
+    serial.emit("data", Buffer.from([YMODEM.EOT]));
+    await waitForWrites(serial, 7);
+    assert.deepEqual([...serial.writes[5]], [YMODEM.ACK]);
+    assert.deepEqual([...serial.writes[6]], [YMODEM.CRC16]);
+
+    serial.emit("data", createYmodemEndSessionPacket());
+    await waitForWrites(serial, 8);
+    assert.deepEqual([...serial.writes[7]], [YMODEM.ACK]);
+
+    const result = await transfer;
+    assert.deepEqual(result, {
+      files: [{
+        fileName: "device.log",
+        filePath: path.join(targetDir, "device.log"),
+        totalBytes: 3,
+        writtenBytes: 3,
+      }],
+      fileCount: 1,
+      totalBytes: 3,
+      writtenBytes: 3,
+      fileName: "device.log",
+      filePath: path.join(targetDir, "device.log"),
+    });
+    assert.equal(fs.readFileSync(path.join(targetDir, "device.log"), "utf8"), "abc");
+    assert.equal(serial.listenerCount("data"), 0);
+  } finally {
+    fs.rmSync(targetDir, { recursive: true, force: true });
+  }
+});
+
+test("rejects an incomplete received file and removes the partial file", async () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-ymodem-short-"));
+  try {
+    const serial = new FakeSerialPort();
+    const transfer = receiveYmodemFiles(serial, {
+      destinationDir: targetDir,
+      timeoutMs: 200,
+    });
+    const rejectedTransfer = assert.rejects(transfer, /incomplete/i);
+
+    await waitForWrites(serial, 1);
+    serial.emit("data", createYmodemFileInfoPacket({
+      filename: "short.log",
+      size: 1500,
+      mtime: 0,
+    }));
+    await waitForWrites(serial, 3);
+
+    serial.emit("data", createYmodemDataPackets(Buffer.alloc(1024, 0x61))[0]);
+    await waitForWrites(serial, 4);
+
+    serial.emit("data", Buffer.from([YMODEM.EOT]));
+    await waitForWrites(serial, 5);
+    serial.emit("data", Buffer.from([YMODEM.EOT]));
+    await waitForWrites(serial, 6);
+
+    await rejectedTransfer;
+    assert.equal(fs.existsSync(path.join(targetDir, "short.log")), false);
+    assert.equal(serial.listenerCount("data"), 0);
+  } finally {
+    fs.rmSync(targetDir, { recursive: true, force: true });
+  }
+});
+
+test("does not delete an existing file if creating the receive target fails", async () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-ymodem-race-"));
+  const targetPath = path.join(targetDir, "race.log");
+  const originalOpen = fs.promises.open;
+  try {
+    fs.promises.open = async (filePath, flags, ...args) => {
+      if (filePath === targetPath && flags === "wx") {
+        fs.writeFileSync(targetPath, "existing");
+        const error = new Error("file exists");
+        error.code = "EEXIST";
+        throw error;
+      }
+      return originalOpen.call(fs.promises, filePath, flags, ...args);
+    };
+
+    const serial = new FakeSerialPort();
+    const transfer = receiveYmodemFiles(serial, {
+      destinationDir: targetDir,
+      timeoutMs: 200,
+    });
+    const rejectedTransfer = assert.rejects(transfer, /file exists/i);
+
+    await waitForWrites(serial, 1);
+    serial.emit("data", createYmodemFileInfoPacket({
+      filename: "race.log",
+      size: 3,
+      mtime: 0,
+    }));
+    await waitForWrites(serial, 3);
+
+    await rejectedTransfer;
+    assert.equal(fs.readFileSync(targetPath, "utf8"), "existing");
+  } finally {
+    fs.promises.open = originalOpen;
+    fs.rmSync(targetDir, { recursive: true, force: true });
+  }
 });
 
 function waitForWrites(serial, count) {

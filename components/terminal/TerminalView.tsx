@@ -1,20 +1,66 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { memo } from 'react';
+import React, { memo, useCallback, useEffect, useState } from 'react';
 
 import { TerminalServerStats } from './TerminalServerStats';
+import {
+  TerminalTimestampGutter,
+  resolveTerminalTimestampGutterColor,
+  resolveTerminalTimestampGutterWidth,
+} from './TerminalTimestampGutter';
 
 type TerminalViewContext = Record<string, any>;
+type HostLineTimestampToggle = {
+  id: string;
+  showLineTimestamps?: boolean;
+};
+
+export function getLineTimestampToggleHostUpdate<T extends HostLineTimestampToggle>(
+  host: T,
+): Pick<T, "id"> & { showLineTimestamps: boolean } {
+  return {
+    id: host.id,
+    showLineTimestamps: host.showLineTimestamps !== true,
+  };
+}
+
+export function shouldShowLineTimestampToolbarToggle(
+  lineTimestampsAvailable: boolean | undefined,
+  onUpdateHost: unknown,
+): boolean {
+  return lineTimestampsAvailable !== false && Boolean(onUpdateHost);
+}
 
 export function shouldEnableYmodemAction({
   isSerialConnection,
   status,
   handleSendYmodem,
+  handleReceiveYmodem,
 }: {
   isSerialConnection?: boolean;
   status?: string;
   handleSendYmodem?: () => void;
+  handleReceiveYmodem?: () => void;
 }): boolean {
-  return Boolean(isSerialConnection && status === "connected" && handleSendYmodem);
+  return Boolean(isSerialConnection && status === "connected" && (handleSendYmodem || handleReceiveYmodem));
+}
+
+export function shouldShowSelectionAIOverlay({
+  hasSelection,
+  selectionOverlayPosition,
+  onAddSelectionToAI,
+  showSelectionAIAction,
+}: {
+  hasSelection: boolean;
+  selectionOverlayPosition?: { left: number; top: number } | null;
+  onAddSelectionToAI?: unknown;
+  showSelectionAIAction?: boolean;
+}): boolean {
+  return Boolean(
+    showSelectionAIAction !== false
+    && hasSelection
+    && selectionOverlayPosition
+    && onAddSelectionToAI,
+  );
 }
 
 /**
@@ -42,7 +88,30 @@ function terminalViewCtxEqual(
 }
 
 function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
-  const { Activity, Button, Copy, Maximize2, Radio, Sparkles, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, chainProgress, cn, compactToolbar, containerRef, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, hasSelection, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen, isDraggingOver, isFocusMode, isLocalConnection, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onCloseSession, onExpandToFocus, onOpenSystem, onSplitHorizontal, onSplitVertical, onToggleBroadcast, osc52ReadPromptVisible, pendingHostKeyInfo, progressLogs, progressValue, renderControls, searchMatchCount, selectionOverlayPosition, sessionId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, snippets, status, statusDotTone, sudoHintRef, sudoHintText, t, termRef, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem } = ctx;
+  const { Activity, Button, Clock3, Copy, Maximize2, Radio, Sparkles, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, hasSelection, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen, isDraggingOver, isFocusMode, isLocalConnection, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onCloseSession, onExpandToFocus, onOpenSystem, onSplitHorizontal, onSplitVertical, onToggleBroadcast, onUpdateHost, osc52ReadPromptVisible, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, searchMatchCount, selectionOverlayPosition, sessionId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, showSelectionAIAction, snippets, status, statusDotTone, sudoHintRef, sudoHintText, t, termRef, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem } = ctx;
+  const ymodemActionEnabled = shouldEnableYmodemAction({
+    isSerialConnection,
+    status,
+    handleSendYmodem,
+    handleReceiveYmodem,
+  });
+  const terminalContentTop = isSearchOpen ? "64px" : "30px";
+  const showLineTimestampGutter = lineTimestampsAvailable !== false && host.showLineTimestamps === true;
+  const lineTimestampColor = resolveTerminalTimestampGutterColor(effectiveTheme.colors);
+  const [lineTimestampGutterWidth, setLineTimestampGutterWidth] = useState(() => (
+    resolveTerminalTimestampGutterWidth({ fontSize: effectiveFontSize })
+  ));
+  useEffect(() => {
+    if (showLineTimestampGutter) return;
+    setLineTimestampGutterWidth(resolveTerminalTimestampGutterWidth({ fontSize: effectiveFontSize }));
+  }, [effectiveFontSize, effectiveFontWeight, resolvedFontFamily, sessionId, showLineTimestampGutter]);
+  const handleLineTimestampGutterWidthChange = useCallback((width: number) => {
+    setLineTimestampGutterWidth((current) => (current === width ? current : width));
+  }, []);
+  const activeLineTimestampGutterWidth = showLineTimestampGutter ? lineTimestampGutterWidth : 0;
+  const lineTimestampToggleLabel = showLineTimestampGutter
+    ? t("terminal.toolbar.timestampsDisable")
+    : t("terminal.toolbar.timestampsEnable");
   return (
     <TerminalContextMenu
       hasSelection={hasSelection}
@@ -58,7 +127,8 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
       onSelectWord={terminalContextActions.onSelectWord}
       onSplitHorizontal={onSplitHorizontal}
       onSplitVertical={onSplitVertical}
-      onSendYmodem={shouldEnableYmodemAction({ isSerialConnection, status, handleSendYmodem }) ? handleSendYmodem : undefined}
+      onSendYmodem={ymodemActionEnabled ? handleSendYmodem : undefined}
+      onReceiveYmodem={ymodemActionEnabled ? handleReceiveYmodem : undefined}
       isReconnectable={status === "disconnected"}
       onReconnect={handleRetry}
       onClose={inWorkspace ? () => onCloseSession?.(sessionId) : undefined}
@@ -119,6 +189,34 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
                   statusDotTone,
                 )}
               />
+              {shouldShowLineTimestampToolbarToggle(lineTimestampsAvailable, onUpdateHost) && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className={cn(
+                        "ml-0.5 p-0.5 rounded transition-colors flex-shrink-0",
+                        "hover:bg-[color:var(--terminal-toolbar-btn-hover)]",
+                        showLineTimestampGutter ? "opacity-100" : "opacity-60 hover:opacity-100",
+                      )}
+                      style={
+                        showLineTimestampGutter
+                          ? {
+                            backgroundColor: 'var(--terminal-toolbar-btn-active)',
+                            color: lineTimestampColor,
+                          }
+                          : undefined
+                      }
+                      onClick={() => onUpdateHost(getLineTimestampToggleHostUpdate(host))}
+                      aria-label={lineTimestampToggleLabel}
+                      aria-pressed={showLineTimestampGutter}
+                    >
+                      <Clock3 size={10} />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{lineTimestampToggleLabel}</TooltipContent>
+                </Tooltip>
+              )}
               {host.protocol !== "local" && host.hostname && host.hostname !== "localhost" && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -237,12 +335,31 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
             ref={containerRef}
             className="xterm-container absolute inset-x-0 bottom-0"
             style={{
-              top: isSearchOpen ? "64px" : "30px",
+              top: terminalContentTop,
+              left: activeLineTimestampGutterWidth,
               paddingLeft: 6,
               backgroundColor: 'var(--terminal-ui-bg)',
             }}
           />
-          {hasSelection && selectionOverlayPosition && ctx.onAddSelectionToAI && handleAddSelectionToAI && (
+          <TerminalTimestampGutter
+            termRef={termRef}
+            containerRef={containerRef}
+            enabled={showLineTimestampGutter}
+            top={terminalContentTop}
+            sessionId={sessionId}
+            color={lineTimestampColor}
+            fontFamily={resolvedFontFamily}
+            fontSize={effectiveFontSize}
+            fontWeight={effectiveFontWeight}
+            width={lineTimestampGutterWidth}
+            onWidthChange={handleLineTimestampGutterWidthChange}
+          />
+          {shouldShowSelectionAIOverlay({
+            hasSelection,
+            selectionOverlayPosition,
+            onAddSelectionToAI: ctx.onAddSelectionToAI,
+            showSelectionAIAction,
+          }) && handleAddSelectionToAI && (
             <div
               className="absolute z-30 pointer-events-none"
               style={{

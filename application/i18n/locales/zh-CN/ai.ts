@@ -3,9 +3,11 @@ import type { Messages } from '../types';
 export const zhCNAiMessages: Messages = {
   // AI Settings
   'ai.agentSettings': 'Agent 设置',
+  'ai.chat.preparing': '准备中…',
   'ai.title': 'AI',
   'ai.description': '配置 AI 提供商、Agent 和安全设置',
   'ai.providers': '提供商',
+  'ai.agents': 'Agent',
   'ai.providers.empty': '尚未配置提供商。添加一个提供商以开始使用。',
   'ai.providers.add': '添加提供商',
   'ai.providers.active': '活跃',
@@ -264,6 +266,11 @@ export const zhCNAiMessages: Messages = {
   'ai.chat.quickMessages': '快捷命令',
   'ai.chat.slashNoResults': '没有匹配的命令',
   'ai.chat.slashEmptyHint': '可在 设置 → AI → 快捷消息 中添加常用提示词。',
+
+  // AI 聊天快捷入口
+  'ai.chatShortcuts.title': '聊天快捷入口',
+  'ai.chatShortcuts.selectionAction': '选中终端内容时显示“添加到对话”',
+  'ai.chatShortcuts.selectionAction.description': '在终端里选中文本后显示 AI 快捷按钮。',
 
   // AI Error
   'ai.codex.bridgeError': 'Codex 主进程处理器尚未加载。请完全重启 Netcatty 或重启 Electron 开发进程，然后重试。',

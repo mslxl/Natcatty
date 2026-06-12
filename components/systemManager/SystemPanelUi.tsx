@@ -203,6 +203,19 @@ export const SystemPanelEmpty = memo(function SystemPanelEmpty({
   );
 });
 
+export const SystemPanelLoading = memo(function SystemPanelLoading({
+  message,
+}: {
+  message: string;
+}) {
+  return (
+    <div className="flex min-h-[180px] flex-col items-center justify-center px-4 py-10 text-center text-xs text-muted-foreground">
+      <Loader2 size={18} className="mb-2 animate-spin opacity-70" />
+      <span>{message}</span>
+    </div>
+  );
+});
+
 export const SystemPanelError = memo(function SystemPanelError({
   message,
   onRetry,
@@ -270,6 +283,7 @@ export const SystemPanelRow = memo(function SystemPanelRow({
   subtitle,
   trailing,
   actions,
+  className,
 }: {
   selected?: boolean;
   onClick?: () => void;
@@ -279,6 +293,7 @@ export const SystemPanelRow = memo(function SystemPanelRow({
   subtitle?: ReactNode;
   trailing?: ReactNode;
   actions?: ReactNode;
+  className?: string;
 }) {
   const content = (
     <>
@@ -292,7 +307,7 @@ export const SystemPanelRow = memo(function SystemPanelRow({
       {trailing}
       {actions && (
         <div
-          className="flex shrink-0 items-center justify-end gap-0.5 invisible group-hover:visible group-focus-within:visible"
+          className="flex shrink-0 items-center justify-end gap-0.5"
           onClick={(e) => e.stopPropagation()}
         >
           {actions}
@@ -301,10 +316,11 @@ export const SystemPanelRow = memo(function SystemPanelRow({
     </>
   );
 
-  const className = cn(
+  const rowClassName = cn(
     'group flex items-center gap-2.5 pr-2.5 py-2.5 min-h-[44px] border-b border-border/30',
     selected && 'bg-accent/30',
     onClick && 'cursor-pointer hover:bg-accent/50',
+    className,
   );
   const style = { paddingLeft: 12 + depth * 14 };
 
@@ -315,7 +331,7 @@ export const SystemPanelRow = memo(function SystemPanelRow({
       <div
         role="button"
         tabIndex={0}
-        className={cn('w-full text-left', className)}
+        className={cn('w-full text-left', rowClassName)}
         style={style}
         onClick={onClick}
         onKeyDown={(e) => {
@@ -332,7 +348,7 @@ export const SystemPanelRow = memo(function SystemPanelRow({
   }
 
   return (
-    <div className={className} style={style}>
+    <div className={rowClassName} style={style}>
       {content}
     </div>
   );

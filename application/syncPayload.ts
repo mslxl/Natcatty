@@ -67,6 +67,7 @@ import {
   STORAGE_KEY_SHOW_SFTP_TAB,
   STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR,
   STORAGE_KEY_SHELL_ONLY_TAB_NUMBER_SHORTCUTS,
+  STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM,
   STORAGE_KEY_WORKSPACE_FOCUS_STYLE,
   STORAGE_KEY_AI_PROVIDERS,
   STORAGE_KEY_AI_ACTIVE_PROVIDER,
@@ -82,6 +83,7 @@ import {
   STORAGE_KEY_AI_AGENT_PROVIDER_MAP,
   STORAGE_KEY_AI_WEB_SEARCH,
   STORAGE_KEY_AI_QUICK_MESSAGES,
+  STORAGE_KEY_AI_SHOW_TERMINAL_SELECTION_ACTION,
   STORAGE_KEY_PORT_FORWARDING,
 } from '../infrastructure/config/storageKeys';
 
@@ -193,7 +195,7 @@ const SYNCABLE_TERMINAL_KEYS = [
   'linePadding', 'cursorShape', 'cursorBlink', 'minimumContrastRatio',
   'altAsMeta', 'optionArrowWordJump', 'scrollOnInput', 'scrollOnOutput', 'scrollOnKeyPress', 'scrollOnPaste',
   'smoothScrolling',
-  'rightClickBehavior', 'copyOnSelect', 'middleClickPaste', 'wordSeparators',
+  'rightClickBehavior', 'middleClickBehavior', 'copyOnSelect', 'middleClickPaste', 'wordSeparators',
   'linkModifier', 'keywordHighlightEnabled', 'keywordHighlightRules',
   'keepaliveInterval', 'keepaliveCountMax', 'disableBracketedPaste', 'clearWipesScrollback',
   'preserveSelectionOnInput', 'forcePromptNewLine', 'osc52Clipboard', 'showServerStats',
@@ -251,6 +253,7 @@ export const SYNCABLE_SETTING_STORAGE_KEYS = [
   STORAGE_KEY_AI_AGENT_PROVIDER_MAP,
   STORAGE_KEY_AI_WEB_SEARCH,
   STORAGE_KEY_AI_QUICK_MESSAGES,
+  STORAGE_KEY_AI_SHOW_TERMINAL_SELECTION_ACTION,
 ] as const;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -416,6 +419,8 @@ export function collectSyncableSettings(): SyncPayload['settings'] {
   if (showSftpTab != null) settings.showSftpTab = showSftpTab;
   const shellOnlyTabNumberShortcuts = localStorageAdapter.readBoolean(STORAGE_KEY_SHELL_ONLY_TAB_NUMBER_SHORTCUTS);
   if (shellOnlyTabNumberShortcuts != null) settings.shellOnlyTabNumberShortcuts = shellOnlyTabNumberShortcuts;
+  const disableTerminalFontZoom = localStorageAdapter.readBoolean(STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM);
+  if (disableTerminalFontZoom != null) settings.disableTerminalFontZoom = disableTerminalFontZoom;
   const showHostTreeSidebar = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR);
   if (showHostTreeSidebar != null) settings.showHostTreeSidebar = showHostTreeSidebar;
   const workspaceFocusStyle = localStorageAdapter.readString(STORAGE_KEY_WORKSPACE_FOCUS_STYLE);
@@ -457,6 +462,10 @@ export function collectSyncableSettings(): SyncPayload['settings'] {
   if (webSearchConfig) ai.webSearchConfig = stripDeviceBoundApiKey(webSearchConfig);
   const quickMessages = readArraySetting(STORAGE_KEY_AI_QUICK_MESSAGES);
   if (quickMessages) ai.quickMessages = sanitizeQuickMessages(quickMessages);
+  const showTerminalSelectionAction = localStorageAdapter.readBoolean(STORAGE_KEY_AI_SHOW_TERMINAL_SELECTION_ACTION);
+  if (showTerminalSelectionAction != null) {
+    ai.showTerminalSelectionAction = showTerminalSelectionAction;
+  }
   if (Object.keys(ai).length > 0) settings.ai = ai;
 
   return Object.keys(settings).length > 0 ? settings : undefined;
@@ -495,10 +504,26 @@ function applySyncableSettings(settings: NonNullable<SyncPayload['settings']>): 
       try { existing = JSON.parse(raw); } catch { /* ignore */ }
     }
     const merged = { ...existing };
+    const hasIncomingMiddleClickBehavior = 'middleClickBehavior' in settings.terminalSettings;
+    const hasIncomingMiddleClickPaste = 'middleClickPaste' in settings.terminalSettings;
     for (const key of SYNCABLE_TERMINAL_KEYS) {
       if (key in settings.terminalSettings) {
         merged[key] = settings.terminalSettings[key];
       }
+    }
+    if (hasIncomingMiddleClickBehavior) {
+      const behavior = settings.terminalSettings.middleClickBehavior;
+      if (
+        behavior === 'context-menu' ||
+        behavior === 'paste' ||
+        behavior === 'disabled'
+      ) {
+        merged.middleClickPaste = behavior === 'paste';
+      }
+    } else if (hasIncomingMiddleClickPaste) {
+      merged.middleClickBehavior = settings.terminalSettings.middleClickPaste === false
+        ? 'disabled'
+        : 'paste';
     }
     localStorageAdapter.writeString(STORAGE_KEY_TERM_SETTINGS, JSON.stringify(merged));
   }
@@ -553,6 +578,9 @@ function applySyncableSettings(settings: NonNullable<SyncPayload['settings']>): 
   if (settings.shellOnlyTabNumberShortcuts != null) {
     localStorageAdapter.writeBoolean(STORAGE_KEY_SHELL_ONLY_TAB_NUMBER_SHORTCUTS, settings.shellOnlyTabNumberShortcuts);
   }
+  if (settings.disableTerminalFontZoom != null) {
+    localStorageAdapter.writeBoolean(STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM, settings.disableTerminalFontZoom);
+  }
   if (settings.showHostTreeSidebar != null) {
     localStorageAdapter.writeBoolean(STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR, settings.showHostTreeSidebar);
   }
@@ -593,6 +621,12 @@ function applySyncableSettings(settings: NonNullable<SyncPayload['settings']>): 
     }
     if (ai.quickMessages != null) {
       localStorageAdapter.write(STORAGE_KEY_AI_QUICK_MESSAGES, sanitizeQuickMessages(ai.quickMessages));
+    }
+    if (ai.showTerminalSelectionAction != null) {
+      localStorageAdapter.writeBoolean(
+        STORAGE_KEY_AI_SHOW_TERMINAL_SELECTION_ACTION,
+        ai.showTerminalSelectionAction,
+      );
     }
     // After all AI writes, reconcile per-agent bindings against the final
     // provider list. Sync payloads can land with a new `providers` set but
@@ -635,6 +669,9 @@ function notifyAIStateAfterSync(ai: NonNullable<SyncPayload['settings']>['ai']):
   }
   if (ai.webSearchConfig !== undefined) touched.push(STORAGE_KEY_AI_WEB_SEARCH);
   if (ai.quickMessages != null) touched.push(STORAGE_KEY_AI_QUICK_MESSAGES);
+  if (ai.showTerminalSelectionAction != null) {
+    touched.push(STORAGE_KEY_AI_SHOW_TERMINAL_SELECTION_ACTION);
+  }
   for (const key of touched) {
     emitAIStateChanged(key);
   }

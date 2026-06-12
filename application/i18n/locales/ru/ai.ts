@@ -3,9 +3,11 @@ import type { Messages } from '../types';
 export const ruAiMessages: Messages = {
   // AI Settings
   'ai.agentSettings': 'Настройки агента',
+  'ai.chat.preparing': 'Подготовка…',
   'ai.title': 'AI',
   'ai.description': 'Настройка AI-провайдеров, агентов и параметров безопасности',
   'ai.providers': 'Провайдеры',
+  'ai.agents': 'Агенты',
   'ai.providers.empty': 'Провайдеры не настроены. Добавьте провайдера, чтобы начать.',
   'ai.providers.add': 'Добавить провайдера',
   'ai.providers.active': 'Активен',
@@ -264,6 +266,11 @@ export const ruAiMessages: Messages = {
   'ai.chat.quickMessages': 'Команды /',
   'ai.chat.slashNoResults': 'Нет подходящих команд',
   'ai.chat.slashEmptyHint': 'Добавьте подсказки в Настройки → AI → Быстрые сообщения.',
+
+  // AI Chat Shortcuts
+  'ai.chatShortcuts.title': 'Быстрые действия чата',
+  'ai.chatShortcuts.selectionAction': 'Показывать «Добавить в чат» при выделении в терминале',
+  'ai.chatShortcuts.selectionAction.description': 'Показывать небольшую кнопку AI рядом с выделенным текстом терминала.',
 
   // AI Error
   'ai.codex.bridgeError': 'Обработчики главного процесса Codex ещё не загружены. Полностью перезапустите Netcatty или dev-процесс Electron и попробуйте снова.',

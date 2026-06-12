@@ -28,6 +28,7 @@ import { resolveHostAuth } from './domain/sshAuth';
 import { isEncryptedCredentialPlaceholder } from './domain/credentials';
 import {
   mergeTerminalHostUpdate,
+  type TerminalHostUpdate,
 } from './domain/terminalAppearance';
 import { selectConnectionLogForTerminalDataCapture } from './domain/connectionLog';
 import { collectSessionIds } from './domain/workspace';
@@ -193,7 +194,6 @@ function App({ settings }: { settings: SettingsState }) {
   const keysRef = useRef(keys);
   keysRef.current = keys;
   const knownHostsRef = useRef(knownHosts);
-  knownHostsRef.current = knownHosts;
   // Bridge the gap while useVaultState hydrates: its async init awaits
   // hosts/keys/identities/proxyProfiles decryption before reading knownHosts,
   // so the state is briefly [] at boot even when localStorage has entries.
@@ -204,6 +204,7 @@ function App({ settings }: { settings: SettingsState }) {
     () => getEffectiveKnownHosts(knownHosts) ?? [],
     [knownHosts],
   );
+  knownHostsRef.current = effectiveKnownHosts;
 
   const {
     sessions,
@@ -874,7 +875,7 @@ function App({ settings }: { settings: SettingsState }) {
     }
   }, [updateSessionStatus, updateHostLastConnected]);
 
-  const handleUpdateHostFromTerminal = useCallback((host: Host) => {
+  const handleUpdateHostFromTerminal = useCallback((host: TerminalHostUpdate) => {
     updateHosts(hosts.map((h) => (
       h.id === host.id ? mergeTerminalHostUpdate(h, host) : h
     )));

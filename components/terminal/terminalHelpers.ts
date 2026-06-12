@@ -91,6 +91,8 @@ export interface TerminalProps {
   snippetPackages?: string[];
   /** Minimal toolbar for popup terminals (compose, search, snippets only). */
   compactToolbar?: boolean;
+  /** Line timestamps are unavailable in popup terminals that stream shell output without timestamp metadata. */
+  lineTimestampsAvailable?: boolean;
   chainHosts?: Host[];
   themePreviewId?: string;
   knownHosts?: KnownHost[];
@@ -117,6 +119,7 @@ export interface TerminalProps {
   reuseConnectionFromSessionId?: string;
   serialConfig?: SerialConfig;
   hotkeyScheme?: "disabled" | "mac" | "pc";
+  disableTerminalFontZoom?: boolean;
   keyBindings?: KeyBinding[];
   onHotkeyAction?: (action: string, event: KeyboardEvent) => void;
   onTerminalFontSizeChange?: (fontSize: number) => void;
@@ -165,6 +168,7 @@ export interface TerminalProps {
   sessionLog?: { enabled: boolean; directory: string; format: string; timestampsEnabled?: boolean };
   sshDebugLogEnabled?: boolean;
   sudoAutofillPassword?: string;
+  showSelectionAIAction?: boolean;
   onAddSelectionToAI?: (sessionId: string, selection: string) => void;
 }
 

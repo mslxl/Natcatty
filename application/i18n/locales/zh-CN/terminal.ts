@@ -2,6 +2,8 @@ import type { Messages } from '../types';
 
 export const zhCNTerminalMessages: Messages = {
   'terminal.sudoHint.pressEnter': '按 Enter 粘贴 sudo 密码',
+  'terminal.toolbar.timestampsEnable': '显示时间戳',
+  'terminal.toolbar.timestampsDisable': '隐藏时间戳',
   'terminal.connection.protocol.et': 'EternalTerminal',
   'terminal.et.proxyUnsupported': 'EternalTerminal 目前不支持 Netcatty 的代理设置。请改用 SSH，或移除该主机的代理。',
   'terminal.et.multiJumpUnsupported': 'EternalTerminal 目前在 Netcatty 中最多支持一个跳板机。',
@@ -210,6 +212,11 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.behavior.copyOnSelect.desc': '自动复制选中的文本。在 tmux/vim 鼠标模式下，macOS 按住 Option，Windows/Linux 按住 Shift 拖选即可选中文本',
   'settings.terminal.behavior.middleClickPaste': '中键粘贴',
   'settings.terminal.behavior.middleClickPaste.desc': '中键点击时粘贴剪贴板内容',
+  'settings.terminal.behavior.middleClick': '中键行为',
+  'settings.terminal.behavior.middleClick.desc': '在终端中点击鼠标中键时执行的操作',
+  'settings.terminal.behavior.middleClick.menu': '显示菜单',
+  'settings.terminal.behavior.middleClick.paste': '粘贴',
+  'settings.terminal.behavior.middleClick.disabled': '无动作',
   'settings.terminal.behavior.bracketedPaste': '括号粘贴模式',
   'settings.terminal.behavior.bracketedPaste.desc':
     '粘贴文本时使用转义序列包裹，以便终端区分粘贴和键入。如果出现 ^[[200~ 字样请关闭此选项。',
@@ -334,6 +341,8 @@ export const zhCNTerminalMessages: Messages = {
   'settings.shortcuts.scheme.disabled': '禁用',
   'settings.shortcuts.scheme.mac': 'Mac (Cmd)',
   'settings.shortcuts.scheme.pc': 'PC (Ctrl)',
+  'settings.shortcuts.disableTerminalFontZoom.label': '禁用终端缩放',
+  'settings.shortcuts.disableTerminalFontZoom.desc': '关闭终端文字缩放快捷操作，包括 Cmd/Ctrl 加滚轮。',
   'settings.shortcuts.shellOnlyTabNumberShortcuts.label': '数字键跳过固定标签',
   'settings.shortcuts.shellOnlyTabNumberShortcuts.desc': '开启后，Cmd/Ctrl+[1...9] 仅在终端、工作区、编辑器等可关闭标签页之间切换，不包括固定的 Vault 和 SFTP 标签页。',
   'settings.shortcuts.section.custom': '自定义快捷键',

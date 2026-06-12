@@ -45,6 +45,9 @@ function createPreloadApi(ctx) {
   sendSerialYmodem: async (sessionId, filePath) => {
     return ipcRenderer.invoke("netcatty:serial:ymodem-send", { sessionId, filePath });
   },
+  receiveSerialYmodem: async (sessionId, destinationDir) => {
+    return ipcRenderer.invoke("netcatty:serial:ymodem-receive", { sessionId, destinationDir });
+  },
   getDefaultShell: async () => {
     return ipcRenderer.invoke("netcatty:local:defaultShell");
   },
@@ -894,6 +897,9 @@ function createPreloadApi(ctx) {
   },
   aiDiscoverAgents: async (options) => {
     return ipcRenderer.invoke("netcatty:ai:agents:discover", options);
+  },
+  aiPrewarmShellEnv: async () => {
+    return ipcRenderer.invoke("netcatty:ai:shell-env:prewarm");
   },
   aiResolveCli: async (params) => {
     return ipcRenderer.invoke("netcatty:ai:resolve-cli", params);

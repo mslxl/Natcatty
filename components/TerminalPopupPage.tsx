@@ -7,9 +7,11 @@ import { useTerminalPopupWindow } from '../application/state/useTerminalPopupWin
 import { useVaultState } from '../application/state/useVaultState';
 import { useWindowControls } from '../application/state/useWindowControls';
 import { shouldCloseTerminalPopupOnExit } from '../application/state/resolveTerminalSessionExitIntent';
+import { upsertKnownHost } from '../domain/knownHosts';
 import type { TerminalPopupPayload } from '../domain/systemManager/types';
 import type { TerminalTheme } from '../domain/models';
-import type { Host } from '../types';
+import type { Host, KnownHost } from '../types';
+import { getEffectiveKnownHosts } from '../infrastructure/syncHelpers';
 import { cn } from '../lib/utils';
 
 const Terminal = lazy(() => import('./Terminal'));
@@ -195,11 +197,22 @@ function TerminalPopupPageInner() {
   const { close, setWindowTitle, onPopupConfig } = useTerminalPopupWindow();
   const { notifyRendererReady, onWindowCommandCloseRequested } = useWindowControls();
   const settings = useSettingsState();
-  const { isInitialized: vaultInitialized, hosts, keys, identities, knownHosts, snippets, snippetPackages } = useVaultState();
+  const { isInitialized: vaultInitialized, hosts, keys, identities, knownHosts, snippets, snippetPackages, updateKnownHosts } = useVaultState();
   const [config, setConfig] = useState<TerminalPopupPayload | null>(null);
   const [terminalReady, setTerminalReady] = useState(false);
   const [startupError, setStartupError] = useState<string | null>(null);
   const sessionId = useMemo(() => crypto.randomUUID(), []);
+  const knownHostsRef = React.useRef(knownHosts);
+  const effectiveKnownHosts = useMemo(
+    () => getEffectiveKnownHosts(knownHosts) ?? [],
+    [knownHosts],
+  );
+  knownHostsRef.current = effectiveKnownHosts;
+  const handleAddKnownHost = useCallback((knownHost: KnownHost) => {
+    const nextKnownHosts = upsertKnownHost(knownHostsRef.current, knownHost);
+    knownHostsRef.current = nextKnownHosts;
+    updateKnownHosts(nextKnownHosts);
+  }, [updateKnownHosts]);
   const popupThemeVars = useMemo(
     () => buildPopupThemeVars(settings.currentTerminalTheme),
     [settings.currentTerminalTheme],
@@ -306,7 +319,9 @@ function TerminalPopupPageInner() {
               snippets={snippets}
               snippetPackages={snippetPackages}
               compactToolbar
-              knownHosts={knownHosts}
+              lineTimestampsAvailable={false}
+              knownHosts={effectiveKnownHosts}
+              onAddKnownHost={handleAddKnownHost}
               isVisible
               isFocused
               fontFamilyId={settings.terminalFontFamilyId}
@@ -316,6 +331,7 @@ function TerminalPopupPageInner() {
               accentMode={settings.accentMode}
               customAccent={settings.customAccent}
               terminalSettings={settings.terminalSettings}
+              disableTerminalFontZoom={settings.disableTerminalFontZoom}
               sessionId={sessionId}
               startupCommand={config.startupCommand}
               reuseConnectionFromSessionId={reuseId}
