@@ -183,6 +183,13 @@ function createPreloadApi(ctx) {
   cancelZmodem: (sessionId) => {
     ipcRenderer.send("netcatty:zmodem:cancel", { sessionId });
   },
+  startZmodemDragDropUpload: (sessionId, files, uploadCommand) => {
+    return ipcRenderer.invoke("netcatty:zmodem:drag-drop-upload", {
+      sessionId,
+      files,
+      uploadCommand,
+    });
+  },
   onZmodemOverwriteRequest: (sessionId, cb) => {
     if (!zmodemOverwriteListeners.has(sessionId)) zmodemOverwriteListeners.set(sessionId, new Set());
     zmodemOverwriteListeners.get(sessionId).add(cb);

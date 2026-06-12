@@ -23,7 +23,48 @@ const dropEntries: DropEntry[] = [
   },
 ];
 
-test("remote terminal drop opens SFTP upload with a freshly resolved cwd", async () => {
+test("remote SSH terminal drop triggers ZMODEM drag-drop upload", async () => {
+  let uploadedFiles: unknown;
+  let uploadedSessionId: string | undefined;
+
+  await handleTerminalDropEntries({
+    dropEntries: [
+      {
+        file: {
+          name: "report.txt",
+          arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+        } as File,
+        relativePath: "report.txt",
+        isDirectory: false,
+      },
+    ],
+    host,
+    isLocalConnection: false,
+    resolveSftpInitialPath: async () => "/srv/app/current",
+    scrollToBottomAfterProgrammaticInput: () => {},
+    sessionId: "session-1",
+    sessionRef: { current: "session-1" },
+    terminalBackend: {
+      writeToSession: () => {},
+      startZmodemDragDropUpload: async (sessionId, files) => {
+        uploadedSessionId = sessionId;
+        uploadedFiles = files;
+        return { success: true };
+      },
+    },
+    termRef: { current: null },
+  });
+
+  assert.equal(uploadedSessionId, "session-1");
+  assert.equal(Array.isArray(uploadedFiles), true);
+  const files = uploadedFiles as Array<{ name: string; remoteName: string; data?: ArrayBuffer }>;
+  assert.equal(files.length, 1);
+  assert.equal(files[0].name, "report.txt");
+  assert.equal(files[0].remoteName, "report.txt");
+  assert.ok(files[0].data);
+});
+
+test("network device drop falls back to SFTP upload with a freshly resolved cwd", async () => {
   let receivedOptions: { preferFreshBackend?: boolean } | undefined;
   let openedPath: string | undefined;
   let openedEntries: DropEntry[] | undefined;
@@ -33,6 +74,7 @@ test("remote terminal drop opens SFTP upload with a freshly resolved cwd", async
     dropEntries,
     host,
     isLocalConnection: false,
+    isNetworkDevice: true,
     onOpenSftp: (_host, initialPath, pendingUploadEntries, sourceSessionId) => {
       openedPath = initialPath;
       openedEntries = pendingUploadEntries;

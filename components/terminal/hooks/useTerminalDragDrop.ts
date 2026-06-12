@@ -3,6 +3,11 @@ import type React from "react";
 import { useRef, useState } from "react";
 
 import { logger } from "../../../lib/logger";
+import {
+  buildZmodemDragDropFiles,
+  supportsZmodemTerminalDragDrop,
+  type ZmodemDragDropFile,
+} from "../../../lib/zmodemDragDrop";
 import { extractDropEntries, type DropEntry } from "../../../lib/sftpFileUtils";
 import type { Host, TerminalSession } from "../../../types";
 import { toast } from "../../ui/toast";
@@ -14,6 +19,7 @@ import {
 interface UseTerminalDragDropOptions {
   host: Host;
   isLocalConnection: boolean;
+  isNetworkDevice?: boolean;
   onOpenSftp?: TerminalProps["onOpenSftp"];
   resolveSftpInitialPath: (options?: { preferFreshBackend?: boolean }) => Promise<string | undefined>;
   scrollToBottomAfterProgrammaticInput: (data: string) => void;
@@ -23,6 +29,11 @@ interface UseTerminalDragDropOptions {
   t: (key: string) => string;
   terminalBackend: {
     writeToSession: (sessionId: string, data: string, options?: { automated?: boolean }) => void;
+    startZmodemDragDropUpload?: (
+      sessionId: string,
+      files: ZmodemDragDropFile[],
+      uploadCommand?: string,
+    ) => Promise<{ success: boolean; error?: string }>;
   };
   termRef: React.MutableRefObject<XTerm | null>;
 }
@@ -37,6 +48,7 @@ export async function handleTerminalDropEntries({
   dropEntries,
   host,
   isLocalConnection,
+  isNetworkDevice = false,
   onOpenSftp,
   resolveSftpInitialPath,
   scrollToBottomAfterProgrammaticInput,
@@ -48,6 +60,7 @@ export async function handleTerminalDropEntries({
   UseTerminalDragDropOptions,
   | "host"
   | "isLocalConnection"
+  | "isNetworkDevice"
   | "onOpenSftp"
   | "resolveSftpInitialPath"
   | "scrollToBottomAfterProgrammaticInput"
@@ -74,7 +87,21 @@ export async function handleTerminalDropEntries({
     return;
   }
 
-  if (onOpenSftp) {
+  if (supportsZmodemTerminalDragDrop(host, isNetworkDevice)) {
+    const files = await buildZmodemDragDropFiles(dropEntries);
+    if (files.length === 0) {
+      throw new Error("No files to upload");
+    }
+
+    if (!terminalBackend.startZmodemDragDropUpload) {
+      throw new Error("ZMODEM drag-drop upload is unavailable");
+    }
+
+    const result = await terminalBackend.startZmodemDragDropUpload(sessionId, files);
+    if (!result.success) {
+      throw new Error(result.error || "ZMODEM upload failed");
+    }
+  } else if (onOpenSftp) {
     const initialPath = await resolveTerminalDropUploadInitialPath(resolveSftpInitialPath);
     onOpenSftp(host, initialPath, dropEntries, sessionId);
   }
@@ -83,6 +110,7 @@ export async function handleTerminalDropEntries({
 export function useTerminalDragDrop({
   host,
   isLocalConnection,
+  isNetworkDevice = false,
   onOpenSftp,
   resolveSftpInitialPath,
   scrollToBottomAfterProgrammaticInput,
@@ -143,6 +171,7 @@ export function useTerminalDragDrop({
         dropEntries,
         host,
         isLocalConnection,
+        isNetworkDevice,
         onOpenSftp,
         resolveSftpInitialPath,
         scrollToBottomAfterProgrammaticInput,
@@ -153,7 +182,10 @@ export function useTerminalDragDrop({
       });
     } catch (error) {
       logger.error("Failed to handle file drop", error);
-      toast.error(t("terminal.dragDrop.errorMessage"), t("terminal.dragDrop.errorTitle"));
+      const message = error instanceof Error && error.message === "No files to upload"
+        ? t("terminal.dragDrop.noFiles")
+        : t("terminal.dragDrop.errorMessage");
+      toast.error(message, t("terminal.dragDrop.errorTitle"));
     }
   };
 

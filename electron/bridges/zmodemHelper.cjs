@@ -112,6 +112,8 @@ function createZmodemSentry(opts) {
   // After aborting, suppress incoming data briefly so residual ZMODEM
   // protocol bytes from the remote don't flood the terminal as garbage.
   let cooldownUntil = 0;
+  /** Drag-drop upload queued before auto-triggering rz on the PTY. */
+  let dragDropUpload = null;
   const COOLDOWN_MS = 2000;
   const ECHO_TTL_MS = 1500;
   const ECHO_MAX_BYTES = 256;
@@ -257,6 +259,24 @@ function createZmodemSentry(opts) {
     }
   }
 
+  function cleanupDragDropTempFiles(upload) {
+    if (!upload?.tempPaths?.length) return;
+    for (const tempPath of upload.tempPaths) {
+      try {
+        fs.unlinkSync(tempPath);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  function clearDragDropUpload() {
+    if (dragDropUpload) {
+      cleanupDragDropTempFiles(dragDropUpload);
+      dragDropUpload = null;
+    }
+  }
+
   function scheduleRemoteInterruptAfterCancel(transferRole) {
     if (cancelInterruptTimer) {
       clearTimeout(cancelInterruptTimer);
@@ -351,6 +371,8 @@ function createZmodemSentry(opts) {
       // underlying transport's write buffer is full.
       const transferOpts = {
         ...opts,
+        getDragDropUpload: () => dragDropUpload,
+        clearDragDropUpload,
         waitForDrain: () => {
           if (!_needsDrain) return Promise.resolve();
           _needsDrain = false;
@@ -505,6 +527,35 @@ function createZmodemSentry(opts) {
           error: "Transfer cancelled",
         });
       }
+      clearDragDropUpload();
+    },
+
+    /**
+     * Queue files from a terminal drag-drop and auto-trigger rz on the PTY.
+     * @param {{ filePaths: string[], remoteNames?: string[], uploadCommand?: string, tempPaths?: string[] }} payload
+     */
+    queueDragDropUpload(payload) {
+      if (active) {
+        throw new Error("ZMODEM transfer already in progress");
+      }
+      const filePaths = payload?.filePaths;
+      if (!Array.isArray(filePaths) || filePaths.length === 0) {
+        throw new Error("No files to upload");
+      }
+
+      clearDragDropUpload();
+      const uploadCommand = payload.uploadCommand || "rz\r";
+      dragDropUpload = {
+        filePaths,
+        remoteNames: payload.remoteNames,
+        uploadCommand,
+        tempPaths: payload.tempPaths || [],
+      };
+
+      const cmdBuf = Buffer.from(uploadCommand, "utf8");
+      rememberOutgoingEcho(cmdBuf);
+      pendingTerminalSuppression = Buffer.from(uploadCommand.replace(/\r$/, ""));
+      writeToRemote(cmdBuf);
     },
   };
 }
@@ -561,22 +612,38 @@ async function handleUpload(zsession, opts) {
   const { BrowserWindow, dialog } = getElectron();
   const yieldToIO = () => new Promise((resolve) => setImmediate(resolve));
 
-  const win = contents ? BrowserWindow.fromWebContents(contents) : null;
-  const result = await dialog.showOpenDialog(win || undefined, {
-    properties: ["openFile", "multiSelections"],
-    title: "Select files to upload (ZMODEM)",
-  });
+  const dragDrop = opts.getDragDropUpload?.();
+  let filePaths;
+  let allNames;
+  let dragDropTempPaths = [];
 
-  if (result.canceled || !result.filePaths.length) {
-    try { zsession.abort(); } catch { /* ignore */ }
-    abortRemoteProcess(opts.writeToRemote);
-    throw new Error("Transfer cancelled");
+  if (dragDrop?.filePaths?.length) {
+    filePaths = dragDrop.filePaths;
+    allNames = Array.isArray(dragDrop.remoteNames) && dragDrop.remoteNames.length === filePaths.length
+      ? dragDrop.remoteNames
+      : filePaths.map((fp) => path.basename(fp));
+    dragDropTempPaths = dragDrop.tempPaths || [];
+    opts.clearDragDropUpload?.();
+  } else {
+    const win = contents ? BrowserWindow.fromWebContents(contents) : null;
+    const result = await dialog.showOpenDialog(win || undefined, {
+      properties: ["openFile", "multiSelections"],
+      title: "Select files to upload (ZMODEM)",
+    });
+
+    if (result.canceled || !result.filePaths.length) {
+      try { zsession.abort(); } catch { /* ignore */ }
+      abortRemoteProcess(opts.writeToRemote);
+      throw new Error("Transfer cancelled");
+    }
+
+    filePaths = result.filePaths;
+    allNames = filePaths.map((fp) => path.basename(fp));
   }
 
-  const filePaths = result.filePaths;
   const fileStats = filePaths.map((fp) => fs.statSync(fp));
 
-  const allNames = filePaths.map((fp) => path.basename(fp));
+  try {
 
   // Conflict handling (SSH only — callbacks absent on local/telnet/serial).
   // On any failure we fall back to today's behavior (rz silently skips).
@@ -706,6 +773,18 @@ async function handleUpload(zsession, opts) {
         await opts.restoreRemoteModes(restores);
       } catch (err) {
         console.warn("[ZMODEM] restoreRemoteModes failed:", err?.message || err);
+      }
+    }
+  }
+
+  } finally {
+    if (dragDropTempPaths.length) {
+      for (const tempPath of dragDropTempPaths) {
+        try {
+          fs.unlinkSync(tempPath);
+        } catch {
+          /* ignore */
+        }
       }
     }
   }

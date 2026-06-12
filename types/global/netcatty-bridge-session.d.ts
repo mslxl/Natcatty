@@ -229,6 +229,16 @@ declare global {
       }) => void
     ): () => void;
     cancelZmodem?(sessionId: string): void;
+    startZmodemDragDropUpload?(
+      sessionId: string,
+      files: Array<{
+        path?: string;
+        name: string;
+        remoteName: string;
+        data?: ArrayBuffer;
+      }>,
+      uploadCommand?: string,
+    ): Promise<{ success: boolean; error?: string }>;
     onZmodemOverwriteRequest?(
       sessionId: string,
       cb: (payload: { sessionId: string; requestId: string; filename: string }) => void
