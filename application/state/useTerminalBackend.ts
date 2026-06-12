@@ -223,6 +223,36 @@ export const useTerminalBackend = () => {
     return bridge.selectDirectory(title, defaultPath);
   }, []);
 
+  const startZmodemDragDropUpload = useCallback(async (
+    sessionId: string,
+    files: Array<{
+      path?: string;
+      name: string;
+      remoteName: string;
+      data?: ArrayBuffer;
+    }>,
+    uploadCommand?: string,
+  ) => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.startZmodemDragDropUpload) {
+      return { success: false, error: "startZmodemDragDropUpload unavailable" };
+    }
+    return bridge.startZmodemDragDropUpload(sessionId, files, uploadCommand);
+  }, []);
+
+  const cancelZmodem = useCallback((sessionId: string, options?: { interrupt?: boolean }) => {
+    const bridge = netcattyBridge.get();
+    bridge?.cancelZmodem?.(sessionId, options);
+  }, []);
+
+  const onZmodemEvent = useCallback((
+    sessionId: string,
+    cb: Parameters<NonNullable<NetcattyBridge["onZmodemEvent"]>>[1],
+  ) => {
+    const bridge = netcattyBridge.get();
+    return bridge?.onZmodemEvent?.(sessionId, cb) ?? (() => {});
+  }, []);
+
   const getSessionPwd = useCallback(async (sessionId: string, options?: { allowHomeFallback?: boolean }) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.getSessionPwd) return { success: false, error: 'getSessionPwd unavailable' };
@@ -285,6 +315,9 @@ export const useTerminalBackend = () => {
       receiveSerialYmodem,
       selectFile,
       selectDirectory,
+      startZmodemDragDropUpload,
+      cancelZmodem,
+      onZmodemEvent,
       execCommand,
       getSessionPwd,
       getSessionRemoteInfo,
@@ -330,6 +363,9 @@ export const useTerminalBackend = () => {
       receiveSerialYmodem,
       selectFile,
       selectDirectory,
+      startZmodemDragDropUpload,
+      cancelZmodem,
+      onZmodemEvent,
       execCommand,
       getSessionPwd,
       getSessionRemoteInfo,
