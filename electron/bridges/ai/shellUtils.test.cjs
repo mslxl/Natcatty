@@ -437,6 +437,15 @@ test("mergeWindowsPath dedupes case-insensitively and trims trailing slashes", (
   assert.equal(out, "C:\\Windows\\System32;C:\\tools\\;C:\\new");
 });
 
+test("mergeWindowsPath keeps refreshed Windows PATH entries ahead of stale process entries", () => {
+  const out = mergeWindowsPath(
+    "C:\\new-codebuddy;C:\\Windows\\System32",
+    "C:\\Users\\me\\AppData\\Roaming\\npm",
+    "C:\\old-codebuddy;C:\\Windows\\System32",
+  );
+  assert.equal(out, "C:\\new-codebuddy;C:\\Windows\\System32;C:\\Users\\me\\AppData\\Roaming\\npm;C:\\old-codebuddy");
+});
+
 test("readWindowsRegistryPath merges HKCU and HKLM and expands refs", async () => {
   const exec = async (cmd, args) => {
     assert.equal(cmd, "reg");

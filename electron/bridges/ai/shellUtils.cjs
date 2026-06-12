@@ -755,7 +755,7 @@ async function getShellEnv() {
       const knownDirs = getWindowsKnownCliPathDirs().join(path.delimiter);
       const nextEnv = {
         ...process.env,
-        PATH: mergeWindowsPath(process.env.PATH || "", registryPath, knownDirs),
+        PATH: mergeWindowsPath(registryPath, knownDirs, process.env.PATH || ""),
       };
       if (generation === _shellEnvGeneration) {
         _cachedShellEnv = nextEnv;
