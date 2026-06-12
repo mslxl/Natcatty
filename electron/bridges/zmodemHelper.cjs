@@ -277,6 +277,12 @@ function createZmodemSentry(opts) {
     }
   }
 
+  function takeDragDropUpload() {
+    const upload = dragDropUpload;
+    dragDropUpload = null;
+    return upload;
+  }
+
   function scheduleRemoteInterruptAfterCancel(transferRole) {
     if (cancelInterruptTimer) {
       clearTimeout(cancelInterruptTimer);
@@ -372,6 +378,7 @@ function createZmodemSentry(opts) {
       const transferOpts = {
         ...opts,
         getDragDropUpload: () => dragDropUpload,
+        takeDragDropUpload,
         clearDragDropUpload,
         waitForDrain: () => {
           if (!_needsDrain) return Promise.resolve();
@@ -542,8 +549,10 @@ function createZmodemSentry(opts) {
       if (!Array.isArray(filePaths) || filePaths.length === 0) {
         throw new Error("No files to upload");
       }
+      if (dragDropUpload) {
+        throw new Error("ZMODEM drag-drop upload already pending");
+      }
 
-      clearDragDropUpload();
       const uploadCommand = payload.uploadCommand || "rz\r";
       dragDropUpload = {
         filePaths,
@@ -612,7 +621,7 @@ async function handleUpload(zsession, opts) {
   const { BrowserWindow, dialog } = getElectron();
   const yieldToIO = () => new Promise((resolve) => setImmediate(resolve));
 
-  const dragDrop = opts.getDragDropUpload?.();
+  const dragDrop = opts.takeDragDropUpload?.() ?? opts.getDragDropUpload?.();
   let filePaths;
   let allNames;
   let dragDropTempPaths = [];
@@ -623,7 +632,6 @@ async function handleUpload(zsession, opts) {
       ? dragDrop.remoteNames
       : filePaths.map((fp) => path.basename(fp));
     dragDropTempPaths = dragDrop.tempPaths || [];
-    opts.clearDragDropUpload?.();
   } else {
     const win = contents ? BrowserWindow.fromWebContents(contents) : null;
     const result = await dialog.showOpenDialog(win || undefined, {

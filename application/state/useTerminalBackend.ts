@@ -180,15 +180,31 @@ export const useTerminalBackend = () => {
     return !!bridge?.sendSerialYmodem;
   }, []);
 
+  const serialYmodemReceiveAvailable = useCallback(() => {
+    const bridge = netcattyBridge.get();
+    return !!bridge?.receiveSerialYmodem;
+  }, []);
+
   const selectFileAvailable = useCallback(() => {
     const bridge = netcattyBridge.get();
     return !!bridge?.selectFile;
+  }, []);
+
+  const selectDirectoryAvailable = useCallback(() => {
+    const bridge = netcattyBridge.get();
+    return !!bridge?.selectDirectory;
   }, []);
 
   const sendSerialYmodem = useCallback(async (sessionId: string, filePath: string) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.sendSerialYmodem) return { success: false, error: 'sendSerialYmodem unavailable' };
     return bridge.sendSerialYmodem(sessionId, filePath);
+  }, []);
+
+  const receiveSerialYmodem = useCallback(async (sessionId: string, destinationDir: string) => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.receiveSerialYmodem) return { success: false, error: 'receiveSerialYmodem unavailable' };
+    return bridge.receiveSerialYmodem(sessionId, destinationDir);
   }, []);
 
   const selectFile = useCallback(async (
@@ -199,6 +215,12 @@ export const useTerminalBackend = () => {
     const bridge = netcattyBridge.get();
     if (!bridge?.selectFile) return null;
     return bridge.selectFile(title, defaultPath, filters);
+  }, []);
+
+  const selectDirectory = useCallback(async (title?: string, defaultPath?: string) => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.selectDirectory) return null;
+    return bridge.selectDirectory(title, defaultPath);
   }, []);
 
   const startZmodemDragDropUpload = useCallback(async (
@@ -216,6 +238,19 @@ export const useTerminalBackend = () => {
       return { success: false, error: "startZmodemDragDropUpload unavailable" };
     }
     return bridge.startZmodemDragDropUpload(sessionId, files, uploadCommand);
+  }, []);
+
+  const cancelZmodem = useCallback((sessionId: string) => {
+    const bridge = netcattyBridge.get();
+    bridge?.cancelZmodem?.(sessionId);
+  }, []);
+
+  const onZmodemEvent = useCallback((
+    sessionId: string,
+    cb: Parameters<NonNullable<NetcattyBridge["onZmodemEvent"]>>[1],
+  ) => {
+    const bridge = netcattyBridge.get();
+    return bridge?.onZmodemEvent?.(sessionId, cb) ?? (() => {});
   }, []);
 
   const getSessionPwd = useCallback(async (sessionId: string, options?: { allowHomeFallback?: boolean }) => {
@@ -273,10 +308,16 @@ export const useTerminalBackend = () => {
       startSerialSession,
       listSerialPorts,
       serialYmodemAvailable,
+      serialYmodemReceiveAvailable,
       selectFileAvailable,
+      selectDirectoryAvailable,
       sendSerialYmodem,
+      receiveSerialYmodem,
       selectFile,
+      selectDirectory,
       startZmodemDragDropUpload,
+      cancelZmodem,
+      onZmodemEvent,
       execCommand,
       getSessionPwd,
       getSessionRemoteInfo,
@@ -315,10 +356,16 @@ export const useTerminalBackend = () => {
       startSerialSession,
       listSerialPorts,
       serialYmodemAvailable,
+      serialYmodemReceiveAvailable,
       selectFileAvailable,
+      selectDirectoryAvailable,
       sendSerialYmodem,
+      receiveSerialYmodem,
       selectFile,
+      selectDirectory,
       startZmodemDragDropUpload,
+      cancelZmodem,
+      onZmodemEvent,
       execCommand,
       getSessionPwd,
       getSessionRemoteInfo,

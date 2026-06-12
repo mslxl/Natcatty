@@ -38,12 +38,14 @@ export const terminalPropsAreEqual = (
   && prev.reuseConnectionFromSessionId === next.reuseConnectionFromSessionId
   && prev.serialConfig === next.serialConfig
   && prev.hotkeyScheme === next.hotkeyScheme
+  && prev.disableTerminalFontZoom === next.disableTerminalFontZoom
   && prev.keyBindings === next.keyBindings
   && prev.isBroadcastEnabled === next.isBroadcastEnabled
   && prev.isWorkspaceComposeBarOpen === next.isWorkspaceComposeBarOpen
   && prev.sessionLog === next.sessionLog
   && prev.sshDebugLogEnabled === next.sshDebugLogEnabled
   && prev.sudoAutofillPassword === next.sudoAutofillPassword
+  && prev.showSelectionAIAction === next.showSelectionAIAction
   && prev.onHotkeyAction === next.onHotkeyAction
   && prev.onTerminalFontSizeChange === next.onTerminalFontSizeChange
   && prev.onStatusChange === next.onStatusChange

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import en from "../../application/i18n/locales/en.ts";
 import zhCN from "../../application/i18n/locales/zh-CN.ts";
+import { markMiddleClickContextMenuEvent } from "./runtime/middleClickBehavior.ts";
 import * as terminalContextMenu from "./TerminalContextMenu.tsx";
 import { shouldEnableYmodemAction } from "./TerminalView.tsx";
 
@@ -22,6 +23,30 @@ const shouldSuppressMouseTrackingContextMenu = (
     }) => boolean;
   }
 ).shouldSuppressMouseTrackingContextMenu;
+const shouldShowAddSelectionToAIContextMenuAction = (
+  terminalContextMenu as {
+    shouldShowAddSelectionToAIContextMenuAction?: (onAddSelectionToAI?: () => void) => boolean;
+  }
+).shouldShowAddSelectionToAIContextMenuAction;
+const shouldOpenTerminalContextMenu = (
+  terminalContextMenu as {
+    shouldOpenTerminalContextMenu?: (options: {
+      event: { shiftKey?: boolean; nativeEvent: MouseEvent };
+      rightClickBehavior?: "context-menu" | "paste" | "select-word";
+      isAlternateScreen?: boolean;
+      showReconnectAction?: boolean;
+    }) => boolean;
+  }
+).shouldOpenTerminalContextMenu;
+const shouldRenderTerminalContextMenuContent = (
+  terminalContextMenu as {
+    shouldRenderTerminalContextMenuContent?: (options: {
+      isAlternateScreen?: boolean;
+      showReconnectAction?: boolean;
+      allowSuppressedMenuContent?: boolean;
+    }) => boolean;
+  }
+).shouldRenderTerminalContextMenuContent;
 
 test("shows reconnect only for reconnectable terminals with a handler", () => {
   assert.equal(typeof shouldShowReconnectAction, "function");
@@ -49,11 +74,23 @@ test("localizes the reconnect context menu label", () => {
   assert.equal(zhCN["terminal.menu.reconnect"], "重新连接");
 });
 
+test("shows add selection to AI context menu action when a handler exists", () => {
+  assert.equal(typeof shouldShowAddSelectionToAIContextMenuAction, "function");
+  if (typeof shouldShowAddSelectionToAIContextMenuAction !== "function") return;
+
+  assert.equal(shouldShowAddSelectionToAIContextMenuAction(() => {}), true);
+  assert.equal(shouldShowAddSelectionToAIContextMenuAction(), false);
+});
+
 test("localizes the YMODEM serial send actions", () => {
   assert.equal(en["terminal.menu.sendYmodem"], "Send with YMODEM");
+  assert.equal(en["terminal.menu.receiveYmodem"], "Receive with YMODEM");
   assert.equal(en["terminal.toolbar.sendYmodem"], "Send with YMODEM");
+  assert.equal(en["terminal.toolbar.receiveYmodem"], "Receive with YMODEM");
   assert.equal(zhCN["terminal.menu.sendYmodem"], "YMODEM 发送");
+  assert.equal(zhCN["terminal.menu.receiveYmodem"], "YMODEM 接收");
   assert.equal(zhCN["terminal.toolbar.sendYmodem"], "YMODEM 发送");
+  assert.equal(zhCN["terminal.toolbar.receiveYmodem"], "YMODEM 接收");
 });
 
 test("enables YMODEM action only for connected serial terminals", () => {
@@ -64,6 +101,16 @@ test("enables YMODEM action only for connected serial terminals", () => {
     status: "connected",
     handleSendYmodem: handler,
   }), true);
+  assert.equal(shouldEnableYmodemAction({
+    isSerialConnection: true,
+    status: "connected",
+    handleReceiveYmodem: handler,
+  }), true);
+  assert.equal(shouldEnableYmodemAction({
+    isSerialConnection: true,
+    status: "disconnected",
+    handleReceiveYmodem: handler,
+  }), false);
   assert.equal(shouldEnableYmodemAction({
     isSerialConnection: true,
     status: "disconnected",
@@ -97,5 +144,85 @@ test("allows reconnect menu while stale mouse tracking is still active", () => {
       showReconnectAction: false,
     }),
     true,
+  );
+});
+
+test("opens a middle-click menu even when right-click is configured to paste", () => {
+  assert.equal(typeof shouldOpenTerminalContextMenu, "function");
+  if (typeof shouldOpenTerminalContextMenu !== "function") return;
+
+  assert.equal(
+    shouldOpenTerminalContextMenu({
+      event: {
+        shiftKey: false,
+        nativeEvent: markMiddleClickContextMenuEvent({} as MouseEvent),
+      },
+      rightClickBehavior: "paste",
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldOpenTerminalContextMenu({
+      event: {
+        shiftKey: false,
+        nativeEvent: {} as MouseEvent,
+      },
+      rightClickBehavior: "paste",
+    }),
+    false,
+  );
+});
+
+test("opens and renders middle-click menu while alternate-screen mouse tracking suppresses right-click menus", () => {
+  assert.equal(typeof shouldOpenTerminalContextMenu, "function");
+  assert.equal(typeof shouldRenderTerminalContextMenuContent, "function");
+  if (
+    typeof shouldOpenTerminalContextMenu !== "function" ||
+    typeof shouldRenderTerminalContextMenuContent !== "function"
+  ) {
+    return;
+  }
+
+  assert.equal(
+    shouldOpenTerminalContextMenu({
+      event: {
+        shiftKey: false,
+        nativeEvent: markMiddleClickContextMenuEvent({} as MouseEvent),
+      },
+      rightClickBehavior: "paste",
+      isAlternateScreen: true,
+      showReconnectAction: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRenderTerminalContextMenuContent({
+      isAlternateScreen: true,
+      showReconnectAction: false,
+      allowSuppressedMenuContent: true,
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldOpenTerminalContextMenu({
+      event: {
+        shiftKey: false,
+        nativeEvent: {} as MouseEvent,
+      },
+      rightClickBehavior: "context-menu",
+      isAlternateScreen: true,
+      showReconnectAction: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldRenderTerminalContextMenuContent({
+      isAlternateScreen: true,
+      showReconnectAction: false,
+      allowSuppressedMenuContent: false,
+    }),
+    false,
   );
 });

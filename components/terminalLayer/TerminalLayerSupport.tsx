@@ -5,8 +5,10 @@ import { useTerminalLayoutSuppressActive } from '../../application/state/termina
 import type { TerminalSessionExitEvent } from '../../application/state/resolveTerminalSessionExitIntent';
 import { createTerminalSelectionAttachment } from '../../application/state/terminalSelectionAttachment';
 import { useAIState } from '../../application/state/useAIState';
+import { useStoredBoolean } from '../../application/state/useStoredBoolean';
 import { SplitDirection } from '../../domain/workspace';
 import { KeyBinding, TerminalSettings } from '../../domain/models';
+import { STORAGE_KEY_AI_SHOW_TERMINAL_SELECTION_ACTION } from '../../infrastructure/config/storageKeys';
 import { cn } from '../../lib/utils';
 import type { DropEntry } from '../../lib/sftpFileUtils';
 import type { GroupConfig, Host, Identity, KnownHost, ProxyProfile, SSHKey, Snippet, TerminalSession, TerminalTheme, Workspace } from '../../types';
@@ -474,6 +476,7 @@ export interface TerminalLayerProps {
   terminalFontFamilyId: string;
   fontSize?: number;
   hotkeyScheme?: 'disabled' | 'mac' | 'pc';
+  disableTerminalFontZoom?: boolean;
   keyBindings?: KeyBinding[];
   onHotkeyAction?: (action: string, event: KeyboardEvent) => void;
   onUpdateTerminalThemeId?: (themeId: string) => void;
@@ -554,6 +557,7 @@ interface TerminalPaneProps {
   customAccent?: string;
   terminalSettings?: TerminalSettings;
   hotkeyScheme?: 'disabled' | 'mac' | 'pc';
+  disableTerminalFontZoom?: boolean;
   keyBindings?: KeyBinding[];
   isResizing: boolean;
   isComposeBarOpen: boolean;
@@ -592,6 +596,7 @@ interface TerminalPaneProps {
     executor: SnippetExecutor | null,
   ) => void;
   onAddSelectionToAI?: (sessionId: string, selection: string) => void;
+  showSelectionAIAction: boolean;
 }
 
 const getPaneThemePreviewId = (props: TerminalPaneProps): string | null => (
@@ -649,6 +654,7 @@ const terminalPanePropsAreEqual = (
   prev.customAccent === next.customAccent &&
   prev.terminalSettings === next.terminalSettings &&
   prev.hotkeyScheme === next.hotkeyScheme &&
+  prev.disableTerminalFontZoom === next.disableTerminalFontZoom &&
   prev.keyBindings === next.keyBindings &&
   prev.isResizing === next.isResizing &&
   prev.isComposeBarOpen === next.isComposeBarOpen &&
@@ -677,7 +683,8 @@ const terminalPanePropsAreEqual = (
   prev.onBroadcastInput === next.onBroadcastInput &&
   prev.onToggleWorkspaceComposeBar === next.onToggleWorkspaceComposeBar &&
   prev.onSnippetExecutorChange === next.onSnippetExecutorChange &&
-  prev.onAddSelectionToAI === next.onAddSelectionToAI
+  prev.onAddSelectionToAI === next.onAddSelectionToAI &&
+  prev.showSelectionAIAction === next.showSelectionAIAction
 );
 
 const TerminalPane: React.FC<TerminalPaneProps> = memo(({
@@ -705,6 +712,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   customAccent,
   terminalSettings,
   hotkeyScheme,
+  disableTerminalFontZoom,
   keyBindings,
   isResizing,
   isComposeBarOpen,
@@ -734,6 +742,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   onToggleWorkspaceComposeBar,
   onSnippetExecutorChange,
   onAddSelectionToAI,
+  showSelectionAIAction,
 }) => {
   const layoutSuppressActive = useTerminalLayoutSuppressActive();
   const deferPaneLayoutUpdate = isResizing || layoutSuppressActive;
@@ -891,6 +900,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         reuseConnectionFromSessionId={session.reuseConnectionFromSessionId}
         serialConfig={session.serialConfig}
         hotkeyScheme={hotkeyScheme}
+        disableTerminalFontZoom={disableTerminalFontZoom}
         keyBindings={keyBindings}
         onHotkeyAction={onHotkeyAction}
         onTerminalFontSizeChange={handleTerminalFontSizeChange}
@@ -921,6 +931,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         sessionLog={sessionLog}
         sshDebugLogEnabled={sshDebugLogEnabled}
         sudoAutofillPassword={sudoAutofillPassword}
+        showSelectionAIAction={showSelectionAIAction}
         onAddSelectionToAI={onAddSelectionToAI}
       />
     </div>
@@ -953,6 +964,7 @@ interface TerminalPanesHostProps {
   customAccent?: string;
   terminalSettings?: TerminalSettings;
   hotkeyScheme?: 'disabled' | 'mac' | 'pc';
+  disableTerminalFontZoom?: boolean;
   keyBindings?: KeyBinding[];
   isResizing: boolean;
   isComposeBarOpen: boolean;
@@ -1015,6 +1027,7 @@ const terminalPanesHostPropsAreEqual = (
   if (prev.customAccent !== next.customAccent) return false;
   if (prev.terminalSettings !== next.terminalSettings) return false;
   if (prev.hotkeyScheme !== next.hotkeyScheme) return false;
+  if (prev.disableTerminalFontZoom !== next.disableTerminalFontZoom) return false;
   if (prev.keyBindings !== next.keyBindings) return false;
   if (prev.isResizing !== next.isResizing) return false;
   if (prev.isComposeBarOpen !== next.isComposeBarOpen) return false;
@@ -1066,22 +1079,30 @@ export const TerminalPanesHost: React.FC<TerminalPanesHostProps> = memo(({
   sessionChainHostsMap,
   sessionSudoAutofillPasswordsMap,
   ...sharedProps
-}) => (
-  <>
-    {sessions.map((session) => {
-      const host = sessionHostsMap.get(session.id);
-      if (!host) return null;
-      return (
-        <TerminalPane
-          key={session.id}
-          session={session}
-          host={host}
-          chainHosts={sessionChainHostsMap.get(session.id)}
-          sudoAutofillPassword={sessionSudoAutofillPasswordsMap.get(session.id)}
-          {...sharedProps}
-        />
-      );
-    })}
-  </>
-), terminalPanesHostPropsAreEqual);
+}) => {
+  const [showSelectionAIAction] = useStoredBoolean(
+    STORAGE_KEY_AI_SHOW_TERMINAL_SELECTION_ACTION,
+    true,
+  );
+
+  return (
+    <>
+      {sessions.map((session) => {
+        const host = sessionHostsMap.get(session.id);
+        if (!host) return null;
+        return (
+          <TerminalPane
+            key={session.id}
+            session={session}
+            host={host}
+            chainHosts={sessionChainHostsMap.get(session.id)}
+            sudoAutofillPassword={sessionSudoAutofillPasswordsMap.get(session.id)}
+            showSelectionAIAction={showSelectionAIAction}
+            {...sharedProps}
+          />
+        );
+      })}
+    </>
+  );
+}, terminalPanesHostPropsAreEqual);
 TerminalPanesHost.displayName = 'TerminalPanesHost';

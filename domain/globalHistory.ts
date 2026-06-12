@@ -1,5 +1,8 @@
 import type { ShellHistoryEntry } from './models';
-import { isNetcattyAiHistoryCommand } from './remoteHistory';
+import {
+  isNetcattyAiHistoryCommand,
+  isNetcattyManagedStartupHistoryCommand,
+} from './remoteHistory';
 
 const makeId = (): string => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -13,7 +16,14 @@ export function shouldRecordGlobalHistoryCommand(command: string): boolean {
   const cmd = command.trim();
   if (!cmd) return false;
   if (isNetcattyAiHistoryCommand(cmd)) return false;
+  if (isNetcattyManagedStartupHistoryCommand(cmd)) return false;
   return true;
+}
+
+export function sanitizeGlobalHistoryEntries(
+  entries: ShellHistoryEntry[],
+): ShellHistoryEntry[] {
+  return entries.filter((entry) => shouldRecordGlobalHistoryCommand(entry.command));
 }
 
 /**
@@ -61,7 +71,7 @@ export interface GlobalHistoryDisplayEntry {
 export function toGlobalHistoryDisplayEntries(
   entries: ShellHistoryEntry[],
 ): GlobalHistoryDisplayEntry[] {
-  return entries.map((entry) => ({
+  return sanitizeGlobalHistoryEntries(entries).map((entry) => ({
     id: entry.id,
     command: entry.command,
     timestamp: entry.timestamp,

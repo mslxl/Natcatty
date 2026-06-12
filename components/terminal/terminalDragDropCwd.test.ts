@@ -64,6 +64,88 @@ test("remote SSH terminal drop triggers ZMODEM drag-drop upload", async () => {
   assert.ok(files[0].data);
 });
 
+test("remote SSH terminal drop stays on ZMODEM when rz starts", async () => {
+  let openedSftp = false;
+  let zmodemCallback: ((event: { type: string; transferType?: string }) => void) | undefined;
+
+  await handleTerminalDropEntries({
+    dropEntries: [
+      {
+        file: {
+          name: "report.txt",
+          arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+        } as File,
+        relativePath: "report.txt",
+        isDirectory: false,
+      },
+    ],
+    host,
+    isLocalConnection: false,
+    onOpenSftp: () => {
+      openedSftp = true;
+    },
+    resolveSftpInitialPath: async () => "/srv/app/current",
+    scrollToBottomAfterProgrammaticInput: () => {},
+    sessionId: "session-1",
+    sessionRef: { current: "session-1" },
+    terminalBackend: {
+      writeToSession: () => {},
+      cancelZmodem: () => {},
+      onSessionData: () => () => {},
+      onZmodemEvent: (_sessionId, cb) => {
+        zmodemCallback = cb;
+        return () => {
+          zmodemCallback = undefined;
+        };
+      },
+      startZmodemDragDropUpload: async (_sessionId, _files, uploadCommand) => {
+        assert.match(uploadCommand ?? "", /NetcattyRzMissing=/);
+        zmodemCallback?.({ type: "detect", transferType: "upload" });
+        return { success: true };
+      },
+    },
+    termRef: { current: null },
+  });
+
+  assert.equal(openedSftp, false);
+});
+
+test("serial terminal drop does not wrap rz with an SSH shell fallback", async () => {
+  let uploadCommandSeen: string | undefined;
+
+  await handleTerminalDropEntries({
+    dropEntries: [
+      {
+        file: {
+          name: "report.txt",
+          arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+        } as File,
+        relativePath: "report.txt",
+        isDirectory: false,
+      },
+    ],
+    host: { ...host, protocol: "serial" } as Host,
+    isLocalConnection: false,
+    onOpenSftp: () => {},
+    resolveSftpInitialPath: async () => "/srv/app/current",
+    scrollToBottomAfterProgrammaticInput: () => {},
+    sessionId: "session-1",
+    sessionRef: { current: "session-1" },
+    terminalBackend: {
+      writeToSession: () => {},
+      cancelZmodem: () => {},
+      onSessionData: () => () => {},
+      startZmodemDragDropUpload: async (_sessionId, _files, uploadCommand) => {
+        uploadCommandSeen = uploadCommand;
+        return { success: true };
+      },
+    },
+    termRef: { current: null },
+  });
+
+  assert.equal(uploadCommandSeen, undefined);
+});
+
 test("network device drop falls back to SFTP upload with a freshly resolved cwd", async () => {
   let receivedOptions: { preferFreshBackend?: boolean } | undefined;
   let openedPath: string | undefined;
@@ -97,6 +179,70 @@ test("network device drop falls back to SFTP upload with a freshly resolved cwd"
   assert.equal(openedPath, "/srv/app/current");
   assert.equal(openedEntries, dropEntries);
   assert.equal(openedSessionId, "session-1");
+});
+
+test("remote SSH terminal drop falls back to SFTP when rz is unavailable", async () => {
+  let receivedOptions: { preferFreshBackend?: boolean } | undefined;
+  let openedPath: string | undefined;
+  let openedEntries: DropEntry[] | undefined;
+  let openedSessionId: string | undefined;
+  let dataCallback: ((chunk: string) => void) | undefined;
+  let cancelledSessionId: string | undefined;
+
+  await handleTerminalDropEntries({
+    dropEntries: [
+      {
+        file: {
+          name: "report.txt",
+          arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+        } as File,
+        relativePath: "report.txt",
+        isDirectory: false,
+      },
+    ],
+    host,
+    isLocalConnection: false,
+    onOpenSftp: (_host, initialPath, pendingUploadEntries, sourceSessionId) => {
+      openedPath = initialPath;
+      openedEntries = pendingUploadEntries;
+      openedSessionId = sourceSessionId;
+    },
+    resolveSftpInitialPath: async (options) => {
+      receivedOptions = options;
+      return "/srv/app/current";
+    },
+    scrollToBottomAfterProgrammaticInput: () => {},
+    sessionId: "session-1",
+    sessionRef: { current: "session-1" },
+    terminalBackend: {
+      writeToSession: () => {},
+      onSessionData: (_sessionId: string, cb: (chunk: string) => void) => {
+        dataCallback = cb;
+        return () => {
+          dataCallback = undefined;
+        };
+      },
+      cancelZmodem: (sessionId: string) => {
+        cancelledSessionId = sessionId;
+      },
+      startZmodemDragDropUpload: async (_sessionId, _files, uploadCommand) => {
+        assert.match(uploadCommand ?? "", /NetcattyRzMissing=/);
+        assert.equal((uploadCommand ?? "").includes("\u001b]1337;NetcattyRzMissing="), false);
+        const token = uploadCommand?.match(/NetcattyRzMissing=([A-Za-z0-9_-]+)/)?.[1];
+        assert.ok(token);
+        dataCallback?.(`\u001b]1337;NetcattyRzMissing=${token}\u0007`);
+        return { success: true };
+      },
+    },
+    termRef: { current: null },
+  });
+
+  assert.deepEqual(receivedOptions, { preferFreshBackend: true });
+  assert.equal(openedPath, "/srv/app/current");
+  assert.equal(openedEntries?.length, 1);
+  assert.equal(openedEntries?.[0].relativePath, "report.txt");
+  assert.equal(openedSessionId, "session-1");
+  assert.equal(cancelledSessionId, "session-1");
 });
 
 test("fresh cwd resolution falls back to the renderer cwd when backend probe has no real cwd", async () => {

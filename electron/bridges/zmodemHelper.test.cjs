@@ -1,6 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { buildUploadPlan, buildModeRestores } = require("./zmodemHelper.cjs");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { createZmodemSentry, buildUploadPlan, buildModeRestores } = require("./zmodemHelper.cjs");
 
 const never = () => { throw new Error("resolver should not be called"); };
 
@@ -70,5 +73,51 @@ test("buildModeRestores strips trailing slashes and dedupes duplicate basenames"
   assert.deepEqual(
     buildModeRestores("/srv//", ["x", "x"], [0, 1], { x: "600" }),
     [{ path: "/srv/x", mode: "600" }],
+  );
+});
+
+test("queued drag-drop upload keeps temp files until cancel", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-"));
+  const tempPath = path.join(tempDir, "upload.txt");
+  fs.writeFileSync(tempPath, "payload");
+
+  const sentry = createZmodemSentry({
+    sessionId: "session-1",
+    onData: () => {},
+    writeToRemote: () => true,
+    getWebContents: () => null,
+  });
+
+  sentry.queueDragDropUpload({
+    filePaths: [tempPath],
+    remoteNames: ["upload.txt"],
+    tempPaths: [tempPath],
+  });
+
+  assert.equal(fs.existsSync(tempPath), true);
+  sentry.cancel();
+  assert.equal(fs.existsSync(tempPath), false);
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test("queued drag-drop upload rejects a second pending upload", () => {
+  const sentry = createZmodemSentry({
+    sessionId: "session-1",
+    onData: () => {},
+    writeToRemote: () => true,
+    getWebContents: () => null,
+  });
+
+  sentry.queueDragDropUpload({
+    filePaths: ["/tmp/first.txt"],
+    remoteNames: ["first.txt"],
+  });
+
+  assert.throws(
+    () => sentry.queueDragDropUpload({
+      filePaths: ["/tmp/second.txt"],
+      remoteNames: ["second.txt"],
+    }),
+    /already pending/,
   );
 });

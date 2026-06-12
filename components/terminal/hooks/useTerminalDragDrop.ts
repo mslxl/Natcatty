@@ -5,6 +5,10 @@ import { useRef, useState } from "react";
 import { logger } from "../../../lib/logger";
 import {
   buildZmodemDragDropFiles,
+  buildZmodemDragDropUploadCommand,
+  containsZmodemRzMissingMarker,
+  createZmodemRzMissingToken,
+  supportsZmodemDragDropSftpFallback,
   supportsZmodemTerminalDragDrop,
   type ZmodemDragDropFile,
 } from "../../../lib/zmodemDragDrop";
@@ -29,6 +33,12 @@ interface UseTerminalDragDropOptions {
   t: (key: string) => string;
   terminalBackend: {
     writeToSession: (sessionId: string, data: string, options?: { automated?: boolean }) => void;
+    cancelZmodem?: (sessionId: string) => void;
+    onSessionData?: (sessionId: string, cb: (chunk: string) => void) => () => void;
+    onZmodemEvent?: (
+      sessionId: string,
+      cb: (event: { type: string; transferType?: string }) => void,
+    ) => () => void;
     startZmodemDragDropUpload?: (
       sessionId: string,
       files: ZmodemDragDropFile[],
@@ -38,10 +48,67 @@ interface UseTerminalDragDropOptions {
   termRef: React.MutableRefObject<XTerm | null>;
 }
 
+const RZ_MISSING_FALLBACK_TIMEOUT_MS = 2500;
+
 export async function resolveTerminalDropUploadInitialPath(
   resolveSftpInitialPath: UseTerminalDragDropOptions["resolveSftpInitialPath"],
 ): Promise<string | undefined> {
   return resolveSftpInitialPath({ preferFreshBackend: true });
+}
+
+function createRzMissingWatcher({
+  sessionId,
+  terminalBackend,
+  token,
+}: {
+  sessionId: string;
+  terminalBackend: Pick<UseTerminalDragDropOptions["terminalBackend"], "onSessionData" | "onZmodemEvent">;
+  token: string;
+}): { promise: Promise<boolean>; stop: () => void } {
+  let settled = false;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let buffer = "";
+  let unsubscribeData: (() => void) | undefined;
+  let unsubscribeZmodem: (() => void) | undefined;
+  let settle: (rzMissing: boolean) => void = () => {};
+
+  const cleanup = () => {
+    if (timeout) clearTimeout(timeout);
+    timeout = undefined;
+    unsubscribeData?.();
+    unsubscribeData = undefined;
+    unsubscribeZmodem?.();
+    unsubscribeZmodem = undefined;
+  };
+
+  const promise = new Promise<boolean>((resolve) => {
+    settle = (rzMissing) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(rzMissing);
+    };
+
+    unsubscribeData = terminalBackend.onSessionData?.(sessionId, (chunk) => {
+      buffer = `${buffer}${chunk}`.slice(-512);
+      if (containsZmodemRzMissingMarker(buffer, token)) {
+        settle(true);
+      }
+    });
+
+    unsubscribeZmodem = terminalBackend.onZmodemEvent?.(sessionId, (event) => {
+      if (event.type === "detect" && event.transferType === "upload") {
+        settle(false);
+      }
+    });
+
+    timeout = setTimeout(() => settle(false), RZ_MISSING_FALLBACK_TIMEOUT_MS);
+  });
+
+  return {
+    promise,
+    stop: () => settle(false),
+  };
 }
 
 export async function handleTerminalDropEntries({
@@ -97,9 +164,38 @@ export async function handleTerminalDropEntries({
       throw new Error("ZMODEM drag-drop upload is unavailable");
     }
 
-    const result = await terminalBackend.startZmodemDragDropUpload(sessionId, files);
+    const shouldFallbackToSftpWhenRzMissing = Boolean(
+      onOpenSftp
+      && supportsZmodemDragDropSftpFallback(host)
+      && terminalBackend.onSessionData
+      && terminalBackend.cancelZmodem,
+    );
+    const rzMissingToken = shouldFallbackToSftpWhenRzMissing
+      ? createZmodemRzMissingToken()
+      : undefined;
+    const rzMissingWatcher = rzMissingToken
+      ? createRzMissingWatcher({ sessionId, terminalBackend, token: rzMissingToken })
+      : undefined;
+    const uploadCommand = rzMissingToken
+      ? buildZmodemDragDropUploadCommand(rzMissingToken)
+      : undefined;
+
+    let result: { success: boolean; error?: string };
+    try {
+      result = await terminalBackend.startZmodemDragDropUpload(sessionId, files, uploadCommand);
+    } catch (error) {
+      rzMissingWatcher?.stop();
+      throw error;
+    }
     if (!result.success) {
+      rzMissingWatcher?.stop();
       throw new Error(result.error || "ZMODEM upload failed");
+    }
+
+    if (rzMissingWatcher && await rzMissingWatcher.promise) {
+      terminalBackend.cancelZmodem?.(sessionId);
+      const initialPath = await resolveTerminalDropUploadInitialPath(resolveSftpInitialPath);
+      onOpenSftp?.(host, initialPath, dropEntries, sessionId);
     }
   } else if (onOpenSftp) {
     const initialPath = await resolveTerminalDropUploadInitialPath(resolveSftpInitialPath);

@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 
 import {
   getLineTimestampToggleHostUpdate,
+  shouldShowSelectionAIOverlay,
   shouldShowLineTimestampToolbarToggle,
 } from "./TerminalView.tsx";
 
@@ -30,6 +31,38 @@ test("line timestamp toolbar toggle is hidden when timestamps are unavailable", 
   assert.equal(shouldShowLineTimestampToolbarToggle(true, () => {}), true);
   assert.equal(shouldShowLineTimestampToolbarToggle(undefined, () => {}), true);
   assert.equal(shouldShowLineTimestampToolbarToggle(true, undefined), false);
+});
+
+test("selection AI overlay honors the visibility preference", () => {
+  const overlayPosition = { left: 120, top: 80 };
+  const addSelection = () => {};
+
+  assert.equal(
+    shouldShowSelectionAIOverlay({
+      hasSelection: true,
+      selectionOverlayPosition: overlayPosition,
+      onAddSelectionToAI: addSelection,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldShowSelectionAIOverlay({
+      hasSelection: true,
+      selectionOverlayPosition: overlayPosition,
+      onAddSelectionToAI: addSelection,
+      showSelectionAIAction: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldShowSelectionAIOverlay({
+      hasSelection: true,
+      selectionOverlayPosition: overlayPosition,
+      onAddSelectionToAI: addSelection,
+      showSelectionAIAction: false,
+    }),
+    false,
+  );
 });
 
 test("popup terminals disable line timestamp controls", () => {
