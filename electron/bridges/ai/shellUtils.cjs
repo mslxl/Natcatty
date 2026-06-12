@@ -654,6 +654,80 @@ function mergeLoginShellPath({
   return out.join(delimiter);
 }
 
+// ── Windows live PATH refresh ──
+//
+// A GUI-launched Electron process freezes process.env at launch. When a CLI is
+// installed *after* Netcatty starts (its installer appends to the user/system
+// PATH in the registry), a freshly opened cmd/PowerShell sees it but Netcatty
+// does not — and clicking "Refresh" can't help, because process.env never
+// changes for the life of the process. So on Windows we re-read the authoritative
+// PATH from the registry (the value a brand-new shell would inherit) and merge it
+// with the in-process PATH. This mirrors the login-shell PATH probe used on
+// macOS/Linux and fixes CLIs (e.g. CodeBuddy) that "work in cmd" but don't scan.
+
+function parseRegQueryPath(stdout) {
+  // `reg query` prints e.g.: "    Path    REG_EXPAND_SZ    C:\\a;C:\\b"
+  for (const line of String(stdout || "").split(/\r?\n/)) {
+    const match = line.match(/^\s*Path\s+REG_(?:EXPAND_)?SZ\s+(.*\S)\s*$/i);
+    if (match) return match[1];
+  }
+  return "";
+}
+
+function expandWindowsEnvRefs(value, env = process.env) {
+  return String(value || "").replace(/%([^%]+)%/g, (whole, name) => {
+    const key = Object.keys(env).find((k) => k.toLowerCase() === String(name).toLowerCase());
+    return key && typeof env[key] === "string" ? env[key] : whole;
+  });
+}
+
+function mergeWindowsPath(...pathStrings) {
+  const seen = new Set();
+  const out = [];
+  for (const str of pathStrings) {
+    for (const part of String(str || "").split(";")) {
+      const trimmed = part.trim().replace(/^"|"$/g, "");
+      if (!trimmed) continue;
+      const dedupeKey = trimmed.toLowerCase().replace(/[\\/]+$/, "");
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      out.push(trimmed);
+    }
+  }
+  return out.join(";");
+}
+
+function getWindowsKnownCliPathDirs(env = process.env) {
+  const dirs = [];
+  if (env.APPDATA) dirs.push(path.join(env.APPDATA, "npm"));
+  if (env.LOCALAPPDATA) {
+    dirs.push(path.join(env.LOCALAPPDATA, "pnpm"));
+    dirs.push(path.join(env.LOCALAPPDATA, "Yarn", "bin"));
+  }
+  return dirs.filter((dir) => existsSync(dir));
+}
+
+async function readWindowsRegistryPath({ exec = execFileAsync, env = process.env } = {}) {
+  const hives = [
+    "HKCU\\Environment",
+    "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+  ];
+  const parts = [];
+  for (const hive of hives) {
+    try {
+      const { stdout } = await exec("reg", ["query", hive, "/v", "Path"], {
+        encoding: "utf8",
+        timeout: 3000,
+      });
+      const raw = parseRegQueryPath(stdout);
+      if (raw) parts.push(expandWindowsEnvRefs(raw, env));
+    } catch {
+      // Hive unreadable / value missing — skip and rely on other sources.
+    }
+  }
+  return parts.join(";");
+}
+
 async function getShellEnv() {
   if (_cachedShellEnv) return _cachedShellEnv;
   if (_shellEnvPromise) return _shellEnvPromise;
@@ -669,9 +743,19 @@ async function getShellEnv() {
     ];
 
     if (process.platform === "win32") {
+      // Re-read the live PATH from the registry so CLIs installed after launch
+      // (e.g. CodeBuddy) are discoverable without restarting Netcatty, then fold
+      // in well-known npm/pnpm/yarn global bin dirs as a belt-and-suspenders.
+      let registryPath = "";
+      try {
+        registryPath = await readWindowsRegistryPath();
+      } catch {
+        registryPath = "";
+      }
+      const knownDirs = getWindowsKnownCliPathDirs().join(path.delimiter);
       const nextEnv = {
         ...process.env,
-        PATH: [...extraPaths, process.env.PATH || ""].join(path.delimiter),
+        PATH: mergeWindowsPath(process.env.PATH || "", registryPath, knownDirs),
       };
       if (generation === _shellEnvGeneration) {
         _cachedShellEnv = nextEnv;
@@ -779,6 +863,10 @@ module.exports = {
   toUnpackedAsarPath,
   isPlausibleCliVersionOutput,
   mergeLoginShellPath,
+  parseRegQueryPath,
+  expandWindowsEnvRefs,
+  mergeWindowsPath,
+  readWindowsRegistryPath,
   getShellEnv,
   invalidateShellEnvCache,
 };

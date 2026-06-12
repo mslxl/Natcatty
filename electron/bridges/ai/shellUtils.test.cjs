@@ -14,6 +14,10 @@ const {
   resolveClaudeCodeExecutableForSdk,
   resolveCodexExecutableForSdk,
   resolveCodebuddyExecutableForSdk,
+  parseRegQueryPath,
+  expandWindowsEnvRefs,
+  mergeWindowsPath,
+  readWindowsRegistryPath,
   trackSessionIdlePrompt,
 } = require("./shellUtils.cjs");
 const fs = require("node:fs");
@@ -404,6 +408,55 @@ test("resolveCodebuddyExecutableForSdk passes through a native exe path", () => 
     resolveCodebuddyExecutableForSdk("C:\\tools\\codebuddy.exe", "win32"),
     "C:\\tools\\codebuddy.exe",
   );
+});
+
+test("parseRegQueryPath extracts the Path value from reg query output", () => {
+  const out = parseRegQueryPath(
+    "\r\nHKEY_CURRENT_USER\\Environment\r\n    Path    REG_EXPAND_SZ    C:\\Users\\me\\AppData\\Roaming\\npm;C:\\tools\r\n",
+  );
+  assert.equal(out, "C:\\Users\\me\\AppData\\Roaming\\npm;C:\\tools");
+});
+
+test("parseRegQueryPath handles REG_SZ and missing value", () => {
+  assert.equal(parseRegQueryPath("    Path    REG_SZ    C:\\bin"), "C:\\bin");
+  assert.equal(parseRegQueryPath("HKEY_CURRENT_USER\\Environment\r\n    Temp    REG_SZ    C:\\Temp"), "");
+});
+
+test("expandWindowsEnvRefs expands %VAR% case-insensitively", () => {
+  assert.equal(
+    expandWindowsEnvRefs("%AppData%\\npm;%Other%", { APPDATA: "C:\\Users\\me\\AppData\\Roaming" }),
+    "C:\\Users\\me\\AppData\\Roaming\\npm;%Other%",
+  );
+});
+
+test("mergeWindowsPath dedupes case-insensitively and trims trailing slashes", () => {
+  const out = mergeWindowsPath(
+    "C:\\Windows\\System32;C:\\tools\\",
+    "c:\\windows\\system32;C:\\tools;C:\\new",
+  );
+  assert.equal(out, "C:\\Windows\\System32;C:\\tools\\;C:\\new");
+});
+
+test("readWindowsRegistryPath merges HKCU and HKLM and expands refs", async () => {
+  const exec = async (cmd, args) => {
+    assert.equal(cmd, "reg");
+    const hive = args[1];
+    if (hive === "HKCU\\Environment") {
+      return { stdout: "    Path    REG_EXPAND_SZ    %APPDATA%\\npm\r\n" };
+    }
+    return { stdout: "    Path    REG_EXPAND_SZ    C:\\Windows\\System32\r\n" };
+  };
+  const out = await readWindowsRegistryPath({ exec, env: { APPDATA: "C:\\Roaming" } });
+  assert.equal(out, "C:\\Roaming\\npm;C:\\Windows\\System32");
+});
+
+test("readWindowsRegistryPath tolerates a failing hive query", async () => {
+  const exec = async (cmd, args) => {
+    if (args[1] === "HKCU\\Environment") throw new Error("ERROR: cannot read");
+    return { stdout: "    Path    REG_SZ    C:\\tools\r\n" };
+  };
+  const out = await readWindowsRegistryPath({ exec, env: {} });
+  assert.equal(out, "C:\\tools");
 });
 
 test("tracks PowerShell idle prompt after SSH output", () => {
