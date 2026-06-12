@@ -21,7 +21,7 @@ import type { ManagedAgentKey } from "../../../infrastructure/ai/managedAgents";
 import { PROVIDER_PRESETS } from "../../../infrastructure/ai/types";
 import { useI18n } from "../../../application/i18n/I18nProvider";
 import { Button } from "../../ui/button";
-import { Select, SettingCard, SettingsSection, SettingsTabContent, SettingRow } from "../settings-ui";
+import { Select, SettingCard, SettingsSection, SettingsTabContent, SettingRow, Toggle } from "../settings-ui";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../ui/tabs";
 import { AgentIconBadge } from "../../ai/AgentIconBadge";
 import { canSendWithAgent } from "../../ai/agentSendEligibility";
@@ -140,6 +140,8 @@ interface SettingsAITabProps {
   setWebSearchConfig: (config: WebSearchConfig | null) => void;
   quickMessages: AIQuickMessage[];
   setQuickMessages: (value: AIQuickMessage[] | ((prev: AIQuickMessage[]) => AIQuickMessage[])) => void;
+  showTerminalSelectionAIAction: boolean;
+  setShowTerminalSelectionAIAction: (value: boolean | ((prev: boolean) => boolean)) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -173,6 +175,8 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   setWebSearchConfig,
   quickMessages,
   setQuickMessages,
+  showTerminalSelectionAIAction,
+  setShowTerminalSelectionAIAction,
 }) => {
   const { t } = useI18n();
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
@@ -871,6 +875,21 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         </TabsContent>
 
         <TabsContent value="tools" className="m-0 space-y-6">
+          <SettingsSection title={t('ai.chatShortcuts.title')}>
+            <SettingCard divided>
+              <SettingRow
+                label={t('ai.chatShortcuts.selectionAction')}
+                description={t('ai.chatShortcuts.selectionAction.description')}
+              >
+                <Toggle
+                  checked={showTerminalSelectionAIAction}
+                  onChange={setShowTerminalSelectionAIAction}
+                  ariaLabel={t('ai.chatShortcuts.selectionAction')}
+                />
+              </SettingRow>
+            </SettingCard>
+          </SettingsSection>
+
           <SettingsSection title={t('ai.toolAccess.title')}>
             <SettingCard>
               <SettingRow description={t('ai.toolAccess.description')}>

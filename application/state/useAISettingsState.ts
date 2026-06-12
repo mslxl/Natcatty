@@ -15,6 +15,7 @@ import {
   STORAGE_KEY_AI_AGENT_PROVIDER_MAP,
   STORAGE_KEY_AI_WEB_SEARCH,
   STORAGE_KEY_AI_QUICK_MESSAGES,
+  STORAGE_KEY_AI_SHOW_TERMINAL_SELECTION_ACTION,
 } from '../../infrastructure/config/storageKeys';
 import type { AIQuickMessage } from '../../infrastructure/ai/quickMessages';
 import { sanitizeQuickMessages } from '../../infrastructure/ai/quickMessages';
@@ -29,6 +30,7 @@ import { DEFAULT_COMMAND_BLOCKLIST } from '../../infrastructure/ai/types';
 import { removeProviderReferences } from './aiProviderCleanup';
 import { AI_STATE_CHANGED_EVENT, emitAIStateChanged } from './aiStateEvents';
 import { getAIBridge } from './aiStateSnapshots';
+import { useStoredBoolean } from './useStoredBoolean';
 
 function readPermissionMode(): AIPermissionMode {
   const stored = localStorageAdapter.readString(STORAGE_KEY_AI_PERMISSION_MODE);
@@ -74,6 +76,10 @@ export function useAISettingsState() {
   );
   const [quickMessages, setQuickMessagesRaw] = useState<AIQuickMessage[]>(() =>
     sanitizeQuickMessages(localStorageAdapter.read<unknown>(STORAGE_KEY_AI_QUICK_MESSAGES)),
+  );
+  const [showTerminalSelectionAIAction, setShowTerminalSelectionAIAction] = useStoredBoolean(
+    STORAGE_KEY_AI_SHOW_TERMINAL_SELECTION_ACTION,
+    true,
   );
 
   const setProviders = useCallback((value: ProviderConfig[] | ((prev: ProviderConfig[]) => ProviderConfig[])) => {
@@ -307,6 +313,8 @@ export function useAISettingsState() {
     setWebSearchConfig,
     quickMessages,
     setQuickMessages,
+    showTerminalSelectionAIAction,
+    setShowTerminalSelectionAIAction,
   }), [
     providers,
     setProviders,
@@ -336,5 +344,7 @@ export function useAISettingsState() {
     setWebSearchConfig,
     quickMessages,
     setQuickMessages,
+    showTerminalSelectionAIAction,
+    setShowTerminalSelectionAIAction,
   ]);
 }

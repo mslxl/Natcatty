@@ -267,6 +267,11 @@ export const zhCNAiMessages: Messages = {
   'ai.chat.slashNoResults': '没有匹配的命令',
   'ai.chat.slashEmptyHint': '可在 设置 → AI → 快捷消息 中添加常用提示词。',
 
+  // AI 聊天快捷入口
+  'ai.chatShortcuts.title': '聊天快捷入口',
+  'ai.chatShortcuts.selectionAction': '选中终端内容时显示“添加到对话”',
+  'ai.chatShortcuts.selectionAction.description': '在终端里选中文本后显示 AI 快捷按钮。',
+
   // AI Error
   'ai.codex.bridgeError': 'Codex 主进程处理器尚未加载。请完全重启 Netcatty 或重启 Electron 开发进程，然后重试。',
 

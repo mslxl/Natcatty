@@ -157,6 +157,8 @@ const SettingsAITabContainer: React.FC = () => {
                 setWebSearchConfig={aiState.setWebSearchConfig}
                 quickMessages={aiState.quickMessages}
                 setQuickMessages={aiState.setQuickMessages}
+                showTerminalSelectionAIAction={aiState.showTerminalSelectionAIAction}
+                setShowTerminalSelectionAIAction={aiState.setShowTerminalSelectionAIAction}
             />
         </AITabErrorBoundary>
     );
@@ -401,6 +403,8 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                             setHotkeyScheme={settings.setHotkeyScheme}
                             shellOnlyTabNumberShortcuts={settings.shellOnlyTabNumberShortcuts}
                             setShellOnlyTabNumberShortcuts={settings.setShellOnlyTabNumberShortcuts}
+                            disableTerminalFontZoom={settings.disableTerminalFontZoom}
+                            setDisableTerminalFontZoom={settings.setDisableTerminalFontZoom}
                             keyBindings={settings.keyBindings}
                             updateKeyBinding={settings.updateKeyBinding}
                             resetKeyBinding={settings.resetKeyBinding}
