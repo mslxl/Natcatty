@@ -50,7 +50,9 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
   const sessionId = session?.id ?? null;
   const isConnected = session?.status === 'connected';
 
-  const { capabilities, probing } = useSessionCapabilities(sessionId, isConnected, backend, isVisible);
+  const capabilitiesTtlMs = terminalSettings.systemManagerProcessRefreshInterval * 1000;
+
+  const { capabilities, probing, refreshCapabilities } = useSessionCapabilities(sessionId, isConnected, backend, isVisible, capabilitiesTtlMs);
 
   const availableTabs = useMemo(
     () => buildSystemManagerTabs(sessionHost, capabilities, session),
@@ -59,6 +61,19 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
 
   const [activeTab, setActiveTab] = useState<SystemManagerSubTab>('processes');
   const resolvedTab = availableTabs.includes(activeTab) ? activeTab : 'processes';
+
+  // Must be defined before early returns to comply with React rules of hooks.
+  const prevTabRef = React.useRef(resolvedTab);
+  React.useEffect(() => {
+    const prev = prevTabRef.current;
+    prevTabRef.current = resolvedTab;
+    if (prev === resolvedTab) return;
+    if (resolvedTab === 'docker' && capabilities?.hasDocker !== true) {
+      void refreshCapabilities();
+    } else if (resolvedTab === 'tmux' && capabilities?.hasTmux !== true) {
+      void refreshCapabilities();
+    }
+  }, [resolvedTab, capabilities, refreshCapabilities]);
 
   const workspaceHostHeader = showWorkspaceHostHeader && sessionHost ? (
     <WorkspaceSidebarHostHeader
