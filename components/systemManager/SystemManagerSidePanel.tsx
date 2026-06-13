@@ -64,16 +64,66 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
 
   // Must be defined before early returns to comply with React rules of hooks.
   const prevTabRef = React.useRef(resolvedTab);
+  const probingRef = React.useRef(false);
   React.useEffect(() => {
     const prev = prevTabRef.current;
     prevTabRef.current = resolvedTab;
     if (prev === resolvedTab) return;
     if (resolvedTab === 'docker' && capabilities?.hasDocker !== true) {
-      void refreshCapabilities();
+      if (!probingRef.current) {
+        probingRef.current = true;
+        refreshCapabilities().finally(() => { probingRef.current = false; });
+      }
     } else if (resolvedTab === 'tmux' && capabilities?.hasTmux !== true) {
       void refreshCapabilities();
     }
   }, [resolvedTab, capabilities, refreshCapabilities]);
+
+  // Auto-poll for Docker capabilities while Docker tab is active and Docker not yet detected.
+  // Use setTimeout recursion so the next probe only starts after the previous one finishes,
+  // avoiding overlapping probes (e.g. SSH timeout 8s vs user-configured interval 2s).
+  // First poll is delayed by one interval to avoid overlapping with the tab-switch probe above.
+  //
+  // Use a ref to store refreshCapabilities so that if its reference changes on every render,
+  // the useEffect below is NOT re-run (which would cancel the timer and bypass the interval).
+  const refreshRef = React.useRef(refreshCapabilities);
+  refreshRef.current = refreshCapabilities;
+
+  // Auto-poll for Docker capabilities while Docker tab is active and Docker not yet detected.
+  // Each effect generation gets its own cancelled flag and timerId via closure,
+  // preventing stale probes from surviving cleanup (unlike cancelledRef which is shared).
+  // First poll is delayed by one interval to avoid overlapping with the tab-switch probe.
+  React.useEffect(() => {
+    if (!isVisible || resolvedTab !== 'docker' || capabilities?.hasDocker === true) return;
+
+    let cancelled = false;
+    let timerId: ReturnType<typeof setTimeout>;
+
+    const pollOnce = async () => {
+      if (cancelled) return;
+      if (probingRef.current) {
+        // probe is in-flight, reschedule for next cycle
+        timerId = setTimeout(pollOnce, capabilitiesTtlMs);
+        return;
+      }
+      probingRef.current = true;
+      try {
+        await refreshRef.current();
+      } catch {
+        // Transient error - keep polling next round
+      }
+      probingRef.current = false;
+      if (cancelled) return;
+      timerId = setTimeout(pollOnce, capabilitiesTtlMs);
+    };
+
+    timerId = setTimeout(pollOnce, capabilitiesTtlMs);
+
+    return () => {
+      cancelled = true;
+      if (timerId) clearTimeout(timerId);
+    };
+  }, [isVisible, resolvedTab, capabilities?.hasDocker, capabilitiesTtlMs]);
 
   const workspaceHostHeader = showWorkspaceHostHeader && sessionHost ? (
     <WorkspaceSidebarHostHeader
