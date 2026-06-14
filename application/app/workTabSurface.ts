@@ -2,8 +2,9 @@ import {
   fromEditorTabId,
   isEditorTabId,
 } from '../state/activeTabStore';
+import { applyCustomAccentToTerminalTheme, resolveHostTerminalThemeId } from '../../domain/terminalAppearance';
 import type { EditorTab } from '../state/editorTabStore';
-import type { TerminalSession, Workspace } from '../../types';
+import type { Host, TerminalSession, TerminalTheme, Workspace } from '../../types';
 
 function uniqueTabIds(tabIds: readonly string[]): string[] {
   const seen = new Set<string>();
@@ -124,4 +125,29 @@ export function resolveWorkTabActiveHostId({
   }
 
   return null;
+}
+
+export function resolveWorkTabHostTreeTheme({
+  activeHostId,
+  accentMode,
+  currentTerminalTheme,
+  customAccent,
+  followAppTerminalTheme,
+  hostById,
+  themeById,
+}: {
+  activeHostId: string | null;
+  accentMode: 'theme' | 'custom';
+  currentTerminalTheme: TerminalTheme;
+  customAccent: string;
+  followAppTerminalTheme: boolean;
+  hostById: ReadonlyMap<string, Host>;
+  themeById: ReadonlyMap<string, TerminalTheme>;
+}): TerminalTheme {
+  if (!activeHostId || followAppTerminalTheme) return currentTerminalTheme;
+
+  const host = hostById.get(activeHostId) ?? null;
+  const themeId = resolveHostTerminalThemeId(host, currentTerminalTheme.id);
+  const baseTheme = themeById.get(themeId) ?? currentTerminalTheme;
+  return applyCustomAccentToTerminalTheme(baseTheme, accentMode, customAccent);
 }

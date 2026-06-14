@@ -8,6 +8,7 @@ import type { GroupConfig, Host, TerminalSession, TerminalTheme, Workspace } fro
 import {
   isHostTreeWorkTabSurface,
   resolveWorkTabActiveHostId,
+  resolveWorkTabHostTreeTheme,
 } from './workTabSurface';
 
 interface AppHostTreeLayerProps {
@@ -20,7 +21,12 @@ interface AppHostTreeLayerProps {
   editorTabs: readonly EditorTab[];
   logViews: readonly LogView[];
   orderedTabs: readonly string[];
-  resolvedPreviewTheme: TerminalTheme;
+  accentMode: 'theme' | 'custom';
+  currentTerminalTheme: TerminalTheme;
+  customAccent: string;
+  followAppTerminalTheme: boolean;
+  hostById: ReadonlyMap<string, Host>;
+  themeById: ReadonlyMap<string, TerminalTheme>;
   onConnect: (host: Host) => void;
   onCreateLocalTerminal?: () => void;
 }
@@ -43,7 +49,12 @@ export const AppHostTreeLayer: React.FC<AppHostTreeLayerProps> = ({
   editorTabs,
   logViews,
   orderedTabs,
-  resolvedPreviewTheme,
+  accentMode,
+  currentTerminalTheme,
+  customAccent,
+  followAppTerminalTheme,
+  hostById,
+  themeById,
   onConnect,
   onCreateLocalTerminal,
 }) => {
@@ -67,6 +78,24 @@ export const AppHostTreeLayer: React.FC<AppHostTreeLayerProps> = ({
     workspaces,
   }), [activeTabId, editorTabs, sessions, workspaces]);
 
+  const hostTreeTheme = useMemo(() => resolveWorkTabHostTreeTheme({
+    activeHostId,
+    accentMode,
+    currentTerminalTheme,
+    customAccent,
+    followAppTerminalTheme,
+    hostById,
+    themeById,
+  }), [
+    activeHostId,
+    accentMode,
+    currentTerminalTheme,
+    customAccent,
+    followAppTerminalTheme,
+    hostById,
+    themeById,
+  ]);
+
   return (
     <div
       className="absolute left-0 top-0 bottom-0 flex min-h-0"
@@ -79,7 +108,7 @@ export const AppHostTreeLayer: React.FC<AppHostTreeLayerProps> = ({
         hosts={hosts}
         customGroups={customGroups}
         groupConfigs={groupConfigs}
-        resolvedPreviewTheme={resolvedPreviewTheme}
+        resolvedPreviewTheme={hostTreeTheme}
         activeHostId={activeHostId}
         onConnect={onConnect}
         onCreateLocalTerminal={onCreateLocalTerminal}

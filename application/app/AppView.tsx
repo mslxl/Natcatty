@@ -48,7 +48,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
     setNavigateToSection, setProtocolSelectHost, setQuickSearch, setSessionRenameValue, setTerminalFontFamilyId, setTerminalFontSize, setTerminalThemeId, updateSessionFontSize, clearSessionFontSizeOverride,
     setWorkspaceFocusedSession, setWorkspaceRenameValue, settings, sftpAutoOpenSidebar, sftpFollowTerminalCwd, setSftpFollowTerminalCwd, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior,
     sftpShowHiddenFiles, sftpUseCompressedUpload, shellHistory, snippetPackages, snippets, splitSessionWithCurrentShell, startSessionRename,
-    startWorkspaceRename, submitSessionRename, submitWorkspaceRename, t, terminalFontFamilyId, terminalFontSize, terminalSettings, terminalThemeId,
+    startWorkspaceRename, submitSessionRename, submitWorkspaceRename, t, terminalFontFamilyId, terminalFontSize, terminalSettings, terminalThemeId, themeById,
     toggleBroadcast, toggleConnectionLogSaved, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, unmanageSource, updateConnectionLog,
     updateCustomGroups, updateGroupConfigs, updateHostDistro, updateHosts, updateIdentities, updateKeys, updateKnownHosts, updateManagedSources,
     updateProxyProfiles, updateSnippetPackages, updateSnippets, updateSplitSizes, updateTerminalSetting, workspaceRenameTarget, workspaceRenameValue, workspaces,
@@ -153,7 +153,12 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
           editorTabs={editorTabs}
           logViews={logViews}
           orderedTabs={orderedTabsWithEditors}
-          resolvedPreviewTheme={currentTerminalTheme}
+          accentMode={accentMode}
+          currentTerminalTheme={currentTerminalTheme}
+          customAccent={customAccent}
+          followAppTerminalTheme={followAppTerminalTheme}
+          hostById={hostById}
+          themeById={themeById}
           onConnect={handleConnectToHost}
           onCreateLocalTerminal={handleCreateLocalTerminal}
         />
