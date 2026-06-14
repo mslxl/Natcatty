@@ -9,7 +9,7 @@ const CAPABILITY_SCRIPT_POSIX = [
   "'",
   'printf "%s\\n" "__NC_OS__=$(uname -s)"; ',
   'command -v tmux >/dev/null 2>&1 && printf "%s\\n" __NC_TMUX__=1; ',
-  '(docker info >/dev/null 2>&1 || (command -v docker >/dev/null 2>&1 && [ -r /var/run/docker.sock ])) && printf "%s\\n" __NC_DOCKER__=1',
+  'command -v docker >/dev/null 2>&1 && printf "%s\\n" __NC_DOCKER__=1',
   "'",
 ].join("");
 
@@ -111,10 +111,10 @@ function createSystemManagerBridge(deps) {
     ensureMoshStatsConnection,
   });
 
-  const { execOnSession, execOnLocalMachine, isLocalSession } = execApi;
+  const { execOnSession, execOnLocalMachine, isLocalSession, getSession } = execApi;
 
   const tmuxOps = createTmuxOpsApi({ execOnSession });
-  const dockerOps = createDockerOpsApi({ execOnSession });
+  const dockerOps = createDockerOpsApi({ execOnSession, getSession });
 
   async function probeCapabilities(event, payload) {
     const sessionId = payload?.sessionId;
@@ -136,7 +136,7 @@ function createSystemManagerBridge(deps) {
         8000,
       );
       if (!result.success) {
-        const fallback = await execOnLocalMachine("uname -s; command -v tmux; (docker info >/dev/null 2>&1 || (command -v docker >/dev/null 2>&1 && [ -r /var/run/docker.sock ])) && echo docker_ok", 8000);
+        const fallback = await execOnLocalMachine("uname -s; command -v tmux; command -v docker >/dev/null 2>&1 && echo docker_ok", 8000);
         if (!fallback.success) return { success: false, error: fallback.error || "Probe failed" };
         const text = fallback.stdout || "";
         return {

@@ -46,3 +46,24 @@ test("listProcesses uses a ps format that works on CentOS 7 procps", async () =>
   assert.equal(result.processes[0].pid, 1);
   assert.equal(result.processes[0].command, "/usr/lib/systemd/systemd --switched-root --system --deserialize 21");
 });
+
+test("probeCapabilities reports Docker when docker is installed even if plain docker access is denied", async () => {
+  const conn = {
+    exec(command, callback) {
+      assert.match(command, /command -v docker/);
+      assert.doesNotMatch(command, /docker info/);
+      assert.doesNotMatch(command, /docker\.sock/);
+      callback(null, createFakeExecStream("__NC_OS__=Linux\n__NC_DOCKER__=1\n"));
+    },
+  };
+  const sessions = new Map([["s1", { conn, type: "ssh" }]]);
+  const bridge = createSystemManagerBridge({
+    getSessions: () => sessions,
+    process,
+  });
+
+  const result = await bridge.probeCapabilities(null, { sessionId: "s1" });
+
+  assert.equal(result.success, true);
+  assert.equal(result.capabilities.hasDocker, true);
+});

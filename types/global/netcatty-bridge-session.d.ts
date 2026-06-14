@@ -29,6 +29,7 @@ declare global {
       moshServerPath?: string;
       moshClientPath?: string;
       agentForwarding?: boolean;
+      sudoAutofillPassword?: string;
       // Algorithm settings, forwarded so the host-info stats companion SSH
       // connection (issue #1198) negotiates the same KEX / cipher / host-key
       // set the interactive session would.
@@ -63,6 +64,7 @@ declare global {
       knownHosts?: import("../../domain/models").KnownHost[];
       jumpHosts?: NetcattyJumpHost[];
       agentForwarding?: boolean;
+      sudoAutofillPassword?: string;
       cols?: number;
       rows?: number;
       charset?: string;

@@ -78,7 +78,7 @@ function createExecOnSessionApi(ctx) {
       return conn;
     }
 
-    function execOnConnection(conn, command, timeoutMs) {
+    function execOnConnection(conn, command, timeoutMs, execOptions = {}) {
       return new Promise((resolve) => {
         let settled = false;
         let activeStream = null;
@@ -106,6 +106,10 @@ function createExecOnSessionApi(ctx) {
             if (stream.stderr) {
               stream.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
             }
+            if (typeof execOptions.stdin === "string") {
+              stream.write(execOptions.stdin);
+              stream.end();
+            }
             stream.on("close", (code) => {
               settle({ success: true, stdout, stderr, code: code ?? 0 });
             });
@@ -116,7 +120,7 @@ function createExecOnSessionApi(ctx) {
       });
     }
 
-    async function execOnSshSession(session, sessionId, command, timeoutMs, event, allowCompanionRetry = true) {
+    async function execOnSshSession(session, sessionId, command, timeoutMs, event, execOptions = {}, allowCompanionRetry = true) {
       if (session?.type === "et") {
         if (typeof execOnEtSession !== "function") {
           return { success: false, error: "ET command executor unavailable" };
@@ -124,6 +128,7 @@ function createExecOnSessionApi(ctx) {
         return execOnEtSession(session, command, timeoutMs, {
           requireTrustedHost: true,
           knownHosts: session.etStatsAuth?.knownHosts,
+          stdin: execOptions.stdin,
         });
       }
 
@@ -135,7 +140,7 @@ function createExecOnSessionApi(ctx) {
         return { success: false, error: "Session not found or not connected" };
       }
 
-      const result = await execOnConnection(conn, command, timeoutMs);
+      const result = await execOnConnection(conn, command, timeoutMs, execOptions);
       if (
         allowCompanionRetry
         && !result.success
@@ -143,18 +148,18 @@ function createExecOnSessionApi(ctx) {
         && isTransportExecError(result.error)
       ) {
         session.moshStatsConn = null;
-        return execOnSshSession(session, sessionId, command, timeoutMs, event, false);
+        return execOnSshSession(session, sessionId, command, timeoutMs, event, execOptions, false);
       }
       return result;
     }
 
-    async function execOnLocalMachine(command, timeoutMs) {
+    async function execOnLocalMachine(command, timeoutMs, execOptions = {}) {
       const { execFile } = require("node:child_process");
       const platform = process.platform;
 
       if (platform === "win32") {
         return new Promise((resolve) => {
-          execFile(
+          const child = execFile(
             "powershell.exe",
             ["-NoProfile", "-NonInteractive", "-Command", command],
             { timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 },
@@ -166,11 +171,14 @@ function createExecOnSessionApi(ctx) {
               resolve({ success: true, stdout: String(stdout || ""), stderr: String(stderr || ""), code: err?.code ?? 0 });
             },
           );
+          if (typeof execOptions.stdin === "string") {
+            child.stdin?.end(execOptions.stdin);
+          }
         });
       }
 
       return new Promise((resolve) => {
-        execFile(
+        const child = execFile(
           "sh",
           ["-c", command],
           { timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 },
@@ -182,10 +190,13 @@ function createExecOnSessionApi(ctx) {
             resolve({ success: true, stdout: String(stdout || ""), stderr: String(stderr || ""), code: err?.code ?? 0 });
           },
         );
+        if (typeof execOptions.stdin === "string") {
+          child.stdin?.end(execOptions.stdin);
+        }
       });
     }
 
-    async function execOnSessionInner(event, sessionId, command, timeoutMs = 8000) {
+    async function execOnSessionInner(event, sessionId, command, timeoutMs = 8000, execOptions = {}) {
       const session = getSession(sessionId);
       if (!session) {
         execQueues.delete(sessionId);
@@ -193,18 +204,18 @@ function createExecOnSessionApi(ctx) {
       }
 
       if (session.protocol === "local" || session.type === "local") {
-        return execOnLocalMachine(command, timeoutMs);
+        return execOnLocalMachine(command, timeoutMs, execOptions);
       }
 
       if (session.conn || session.type === "mosh" || session.type === "et") {
-        return execOnSshSession(session, sessionId, command, timeoutMs, event);
+        return execOnSshSession(session, sessionId, command, timeoutMs, event, execOptions);
       }
 
       return { success: false, error: "Session not supported for system management" };
     }
 
-    async function execOnSession(event, sessionId, command, timeoutMs = 8000) {
-      return enqueueExec(sessionId, () => execOnSessionInner(event, sessionId, command, timeoutMs));
+    async function execOnSession(event, sessionId, command, timeoutMs = 8000, execOptions = {}) {
+      return enqueueExec(sessionId, () => execOnSessionInner(event, sessionId, command, timeoutMs, execOptions));
     }
 
     function isLocalSession(sessionId) {

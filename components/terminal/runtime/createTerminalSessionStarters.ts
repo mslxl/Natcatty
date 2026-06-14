@@ -53,12 +53,12 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
   };
 
   const resolveSavedSudoAutofillPassword = (): string | undefined => {
-    if (ctx.sudoAutofillPasswordRef) {
-      return sanitizeCredentialValue(ctx.sudoAutofillPasswordRef.current);
-    }
     const pendingAuth = ctx.pendingAuthRef.current;
     if (pendingAuth?.savedToHost && pendingAuth.password) {
       return sanitizeCredentialValue(pendingAuth.password);
+    }
+    if (ctx.sudoAutofillPasswordRef) {
+      return sanitizeCredentialValue(ctx.sudoAutofillPasswordRef.current);
     }
     return sanitizeCredentialValue(ctx.sudoAutofillPassword);
   };
@@ -401,6 +401,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           sshDebugLogEnabled: ctx.sshDebugLogEnabled,
           identityFilePaths: attempt.password ? undefined : targetIdentityFilePaths,
           knownHosts: ctx.knownHosts,
+          sudoAutofillPassword: resolveSavedSudoAutofillPassword(),
           // Ask the bridge to reuse the source tab's authenticated connection
           // (issue #1204). Only honored on the very first connect attempt; the
           // bridge silently falls back to a fresh connection if the source is
@@ -764,6 +765,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         // Lets the stats companion verify the host key before sending a saved
         // password (#1198), so it never discloses it to an unvetted host.
         knownHosts: ctx.knownHosts,
+        sudoAutofillPassword: resolveSavedSudoAutofillPassword(),
         cols: term.cols,
         rows: term.rows,
         charset: ctx.host.charset,
@@ -1002,6 +1004,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         knownHosts: ctx.knownHosts,
         jumpHosts: jumpHosts.length > 0 ? jumpHosts : undefined,
         agentForwarding: ctx.host.agentForwarding,
+        sudoAutofillPassword: resolveSavedSudoAutofillPassword(),
         cols: term.cols,
         rows: term.rows,
         charset: ctx.host.charset,
