@@ -155,6 +155,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     systemWarmupSessionIds,
     systemBackend,
     systemWarmupSessionIds.length > 0,
+    (s.terminalSettings?.systemManagerProcessRefreshInterval ?? 3) * 1000,
   );
 
   useEffect(() => {
@@ -391,8 +392,16 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     onCreateLocalTerminal: s.onCreateLocalTerminal,
     onHotkeyAction: s.onHotkeyAction,
     onReorderWorkspaceSessions: s.onReorderWorkspaceSessions,
+    onReorderTabs: s.onReorderTabs,
+    onCopySession: s.onCopySession,
+    onCopySessionToNewWindow: s.onCopySessionToNewWindow,
     onRequestAddToWorkspace: s.onRequestAddToWorkspace,
     onSetWorkspaceFocusedSession: s.onSetWorkspaceFocusedSession,
+    onStartSessionRename: s.onStartSessionRename,
+    onSubmitSessionRename: s.onSubmitSessionRename,
+    onRemoveSessionFromWorkspace: s.onRemoveSessionFromWorkspace,
+    onStartSessionDrag: s.onStartSessionDrag,
+    onEndSessionDrag: s.onEndSessionDrag,
     onSplitSession: s.onSplitSession,
     onToggleWorkspaceViewMode: s.onToggleWorkspaceViewMode,
     Palette: s.Palette,

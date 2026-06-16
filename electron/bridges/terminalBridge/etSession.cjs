@@ -654,7 +654,7 @@ main();
       args.push(session.sshUserHost, command);
 
       return new Promise((resolve) => {
-        execFile(sshCmd, args, {
+        const child = execFile(sshCmd, args, {
           env: { ...process.env, ...session.sshEnv },
           timeout: timeoutMs,
           encoding: "utf8",
@@ -672,6 +672,9 @@ main();
             resolve({ success: true, stdout: stdout || "", stderr: stderr || "", code: 0 });
           }
         });
+        if (typeof execOpts.stdin === "string") {
+          child.stdin?.end(execOpts.stdin);
+        }
       });
     }
 
@@ -791,6 +794,9 @@ main();
             knownHosts: options.knownHosts,
             hasJumpHost: Array.isArray(options.jumpHosts) && options.jumpHosts.length > 0,
           },
+          systemManagerSudoPassword: typeof options.sudoAutofillPassword === "string" && options.sudoAutofillPassword.length > 0
+            ? options.sudoAutofillPassword
+            : undefined,
           flushPendingData: null,
           lastIdlePrompt: "",
           lastIdlePromptAt: 0,

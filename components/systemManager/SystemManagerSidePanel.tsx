@@ -5,6 +5,7 @@ import { useSystemManagerBackend } from '../../application/state/useSystemManage
 import type { TerminalSettings } from '../../domain/models';
 import type { Host } from '../../domain/models/connection';
 import type { SystemManagerSubTab } from '../../domain/systemManager/types';
+import { resolveCapabilityPanelState } from '../../domain/systemManagerPanelState';
 import { buildSystemManagerTabs } from '../../domain/systemManager/systemTarget';
 import type { Snippet, TerminalSession } from '../../types';
 import { cn } from '../../lib/utils';
@@ -50,7 +51,9 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
   const sessionId = session?.id ?? null;
   const isConnected = session?.status === 'connected';
 
-  const { capabilities, probing } = useSessionCapabilities(sessionId, isConnected, backend, isVisible);
+  const capabilitiesTtlMs = terminalSettings.systemManagerProcessRefreshInterval * 1000;
+
+  const { capabilities, refreshCapabilities } = useSessionCapabilities(sessionId, isConnected, backend, isVisible, capabilitiesTtlMs);
 
   const availableTabs = useMemo(
     () => buildSystemManagerTabs(sessionHost, capabilities, session),
@@ -59,6 +62,69 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
 
   const [activeTab, setActiveTab] = useState<SystemManagerSubTab>('processes');
   const resolvedTab = availableTabs.includes(activeTab) ? activeTab : 'processes';
+
+  // Must be defined before early returns to comply with React rules of hooks.
+  const prevTabRef = React.useRef(resolvedTab);
+  const probingRef = React.useRef(false);
+  React.useEffect(() => {
+    const prev = prevTabRef.current;
+    prevTabRef.current = resolvedTab;
+    if (prev === resolvedTab) return;
+    if (resolvedTab === 'docker' && capabilities?.hasDocker !== true) {
+      if (!probingRef.current) {
+        probingRef.current = true;
+        refreshCapabilities().finally(() => { probingRef.current = false; });
+      }
+    } else if (resolvedTab === 'tmux' && capabilities?.hasTmux !== true) {
+      void refreshCapabilities();
+    }
+  }, [resolvedTab, capabilities, refreshCapabilities]);
+
+  // Auto-poll for Docker capabilities while Docker tab is active and Docker not yet detected.
+  // Use setTimeout recursion so the next probe only starts after the previous one finishes,
+  // avoiding overlapping probes (e.g. SSH timeout 8s vs user-configured interval 2s).
+  // First poll is delayed by one interval to avoid overlapping with the tab-switch probe above.
+  //
+  // Use a ref to store refreshCapabilities so that if its reference changes on every render,
+  // the useEffect below is NOT re-run (which would cancel the timer and bypass the interval).
+  const refreshRef = React.useRef(refreshCapabilities);
+  refreshRef.current = refreshCapabilities;
+
+  // Auto-poll for Docker capabilities while Docker tab is active and Docker not yet detected.
+  // Each effect generation gets its own cancelled flag and timerId via closure,
+  // preventing stale probes from surviving cleanup (unlike cancelledRef which is shared).
+  // First poll is delayed by one interval to avoid overlapping with the tab-switch probe.
+  React.useEffect(() => {
+    if (!isVisible || resolvedTab !== 'docker' || capabilities?.hasDocker === true) return;
+
+    let cancelled = false;
+    let timerId: ReturnType<typeof setTimeout>;
+
+    const pollOnce = async () => {
+      if (cancelled) return;
+      if (probingRef.current) {
+        // probe is in-flight, reschedule for next cycle
+        timerId = setTimeout(pollOnce, capabilitiesTtlMs);
+        return;
+      }
+      probingRef.current = true;
+      try {
+        await refreshRef.current();
+      } catch {
+        // Transient error - keep polling next round
+      }
+      probingRef.current = false;
+      if (cancelled) return;
+      timerId = setTimeout(pollOnce, capabilitiesTtlMs);
+    };
+
+    timerId = setTimeout(pollOnce, capabilitiesTtlMs);
+
+    return () => {
+      cancelled = true;
+      if (timerId) clearTimeout(timerId);
+    };
+  }, [isVisible, resolvedTab, capabilities?.hasDocker, capabilitiesTtlMs]);
 
   const workspaceHostHeader = showWorkspaceHostHeader && sessionHost ? (
     <WorkspaceSidebarHostHeader
@@ -93,10 +159,16 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
 
   const tmuxReady = capabilities?.hasTmux === true;
   const dockerReady = capabilities?.hasDocker === true;
-  const tmuxUnavailable = !probing && capabilities !== undefined && !tmuxReady;
-  const dockerUnavailable = !probing && capabilities !== undefined && !dockerReady;
-  const tmuxChecking = resolvedTab === 'tmux' && !tmuxReady && !tmuxUnavailable;
-  const dockerChecking = resolvedTab === 'docker' && !dockerReady && !dockerUnavailable;
+  const tmuxPanelState = resolveCapabilityPanelState({
+    isActive: resolvedTab === 'tmux',
+    ready: tmuxReady,
+    capabilitiesKnown: capabilities !== undefined,
+  });
+  const dockerPanelState = resolveCapabilityPanelState({
+    isActive: resolvedTab === 'docker',
+    ready: dockerReady,
+    capabilitiesKnown: capabilities !== undefined,
+  });
 
   return (
     <SystemPanelShell section="system-manager-panel">
@@ -129,15 +201,15 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
             refreshIntervalSec={terminalSettings.systemManagerProcessRefreshInterval}
           />
         </div>
-        {tmuxUnavailable && resolvedTab === 'tmux' ? (
+        {tmuxPanelState === 'unavailable' ? (
           <div className="flex-1 min-h-0">
             <SystemPanelEmpty icon={TerminalSquare} message={t('systemManager.tmux.unavailable')} />
           </div>
-        ) : tmuxChecking ? (
+        ) : tmuxPanelState === 'checking' ? (
           <div className="flex-1 min-h-0">
             <SystemPanelChecking message={t('systemManager.common.checkingAvailability')} />
           </div>
-        ) : tmuxReady ? (
+        ) : tmuxPanelState === 'ready' ? (
           <div className={cn('flex-1 min-h-0 flex flex-col', resolvedTab !== 'tmux' && 'hidden')}>
             <TmuxManagerTab
               sessionId={sessionId}
@@ -150,15 +222,15 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
             />
           </div>
         ) : null}
-        {dockerUnavailable && resolvedTab === 'docker' ? (
+        {dockerPanelState === 'unavailable' ? (
           <div className="flex-1 min-h-0">
             <SystemPanelEmpty icon={Box} message={t('systemManager.docker.unavailable')} />
           </div>
-        ) : dockerChecking ? (
+        ) : dockerPanelState === 'checking' ? (
           <div className="flex-1 min-h-0">
             <SystemPanelChecking message={t('systemManager.common.checkingAvailability')} />
           </div>
-        ) : dockerReady ? (
+        ) : dockerPanelState === 'ready' ? (
           <div className={cn('flex-1 min-h-0 flex flex-col', resolvedTab !== 'docker' && 'hidden')}>
             <DockerManagerTab
               sessionId={sessionId}

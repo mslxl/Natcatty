@@ -1,9 +1,19 @@
 import type { SessionCapabilities } from '../../domain/systemManager/types';
 
+/** Internal entry: capabilities plus computed expiry timestamp. */
+interface StoreEntry {
+  capabilities: SessionCapabilities;
+  expiresAt: number;
+}
+
 type Listener = () => void;
 
-const capabilitiesBySessionId = new Map<string, SessionCapabilities>();
+const capabilitiesBySessionId = new Map<string, StoreEntry>();
 const listenersBySessionId = new Map<string, Set<Listener>>();
+
+function isExpired(entry: StoreEntry): boolean {
+  return Date.now() > entry.expiresAt;
+}
 
 function notifySession(sessionId: string) {
   listenersBySessionId.get(sessionId)?.forEach((listener) => listener());
@@ -11,21 +21,25 @@ function notifySession(sessionId: string) {
 
 export const sessionCapabilitiesStore = {
   get(sessionId: string): SessionCapabilities | undefined {
-    return capabilitiesBySessionId.get(sessionId);
+    const entry = capabilitiesBySessionId.get(sessionId);
+    if (!entry) return undefined;
+    if (isExpired(entry)) {
+      capabilitiesBySessionId.delete(sessionId);
+      notifySession(sessionId);
+      return undefined;
+    }
+    return entry.capabilities;
   },
 
-  set(sessionId: string, capabilities: SessionCapabilities) {
-    const prev = capabilitiesBySessionId.get(sessionId);
-    if (
-      prev
-      && prev.targetOs === capabilities.targetOs
-      && prev.hasTmux === capabilities.hasTmux
-      && prev.hasDocker === capabilities.hasDocker
-      && prev.probedAt === capabilities.probedAt
-    ) {
-      return;
-    }
-    capabilitiesBySessionId.set(sessionId, capabilities);
+  set(sessionId: string, capabilities: SessionCapabilities, ttlMs: number) {
+    const entry: StoreEntry = {
+      capabilities: {
+        ...capabilities,
+        probedAt: Date.now(),
+      },
+      expiresAt: Date.now() + ttlMs,
+    };
+    capabilitiesBySessionId.set(sessionId, entry);
     notifySession(sessionId);
   },
 

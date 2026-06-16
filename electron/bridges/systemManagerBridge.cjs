@@ -9,14 +9,16 @@ const CAPABILITY_SCRIPT_POSIX = [
   "'",
   'printf "%s\\n" "__NC_OS__=$(uname -s)"; ',
   'command -v tmux >/dev/null 2>&1 && printf "%s\\n" __NC_TMUX__=1; ',
-  'docker info >/dev/null 2>&1 && printf "%s\\n" __NC_DOCKER__=1',
+  'command -v docker >/dev/null 2>&1 && printf "%s\\n" __NC_DOCKER__=1',
   "'",
 ].join("");
 
 const PROCESS_LIST_SCRIPT_POSIX = [
   "exec sh -c ",
   "'",
-  "ps -eo pid= -o ppid= -o user= -o stat= -o pcpu= -o pmem= -o rss= -o vsz= -o etime= -o args= 2>/dev/null | head -n 200",
+  // Safety cap: head -n 2000 prevents maxBuffer/timeout on process-dense hosts.
+  // This is NOT a functional limit — monitored processes still show accurate metrics.
+  "ps -eo pid= -o ppid= -o user= -o stat= -o pcpu= -o pmem= -o rss= -o vsz= -o etime= -o args= 2>/dev/null | head -n 2000",
   "'",
 ].join("");
 
@@ -109,10 +111,10 @@ function createSystemManagerBridge(deps) {
     ensureMoshStatsConnection,
   });
 
-  const { execOnSession, execOnLocalMachine, isLocalSession } = execApi;
+  const { execOnSession, execOnLocalMachine, isLocalSession, getSession } = execApi;
 
   const tmuxOps = createTmuxOpsApi({ execOnSession });
-  const dockerOps = createDockerOpsApi({ execOnSession });
+  const dockerOps = createDockerOpsApi({ execOnSession, getSession });
 
   async function probeCapabilities(event, payload) {
     const sessionId = payload?.sessionId;
@@ -134,7 +136,7 @@ function createSystemManagerBridge(deps) {
         8000,
       );
       if (!result.success) {
-        const fallback = await execOnLocalMachine("uname -s; command -v tmux; docker info >/dev/null 2>&1 && echo docker_ok", 8000);
+        const fallback = await execOnLocalMachine("uname -s; command -v tmux; command -v docker >/dev/null 2>&1 && echo docker_ok", 8000);
         if (!fallback.success) return { success: false, error: fallback.error || "Probe failed" };
         const text = fallback.stdout || "";
         return {
@@ -164,8 +166,10 @@ function createSystemManagerBridge(deps) {
     if (!sessionId) return { success: false, error: "Missing sessionId" };
 
     if (isLocalSession(sessionId) && process.platform === "win32") {
+      // Safety cap: -First 2000 prevents maxBuffer/timeout on process-dense hosts.
+      // This is NOT a functional limit — monitored processes still show accurate metrics.
       const result = await execOnLocalMachine(
-        "Get-CimInstance Win32_Process | Sort-Object KernelModeTime -Descending | Select-Object -First 200 ProcessId,ParentProcessId,Name,WorkingSetSize | ConvertTo-Json -Compress",
+        "Get-CimInstance Win32_Process | Sort-Object KernelModeTime -Descending | Select-Object -First 2000 ProcessId,ParentProcessId,Name,WorkingSetSize | ConvertTo-Json -Compress",
         10000,
       );
       if (!result.success) return { success: false, error: result.error };

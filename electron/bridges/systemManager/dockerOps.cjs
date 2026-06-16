@@ -19,6 +19,37 @@ function sanitizeImageRef(ref) {
   return trimmed || null;
 }
 
+function isSuccessfulCommandResult(result) {
+  return result?.success && (result.code === 0 || result.code === null || result.code === undefined);
+}
+
+function dockerCommandError(result, fallback) {
+  return (result?.stderr || result?.error || "").trim() || fallback;
+}
+
+function isDockerSocketPermissionError(result) {
+  const text = `${result?.stderr || ""}\n${result?.stdout || ""}\n${result?.error || ""}`.toLowerCase();
+  if (!text.includes("permission denied")) return false;
+  return text.includes("docker daemon")
+    || text.includes("docker.sock")
+    || text.includes("/var/run/docker.sock")
+    || text.includes("connect to the docker daemon");
+}
+
+function getSessionSudoPassword(session) {
+  return typeof session?.systemManagerSudoPassword === "string" && session.systemManagerSudoPassword.length > 0
+    ? session.systemManagerSudoPassword
+    : null;
+}
+
+function buildDockerCommand(args) {
+  return `docker ${args}`.trim();
+}
+
+function buildSudoDockerCommand(args) {
+  return `sudo -S -p '' ${buildDockerCommand(args)}`;
+}
+
 function parseDockerContainers(stdout) {
   const containers = [];
   for (const line of (stdout || "").split("\n")) {
@@ -132,15 +163,35 @@ function summarizeContainerInspect(info) {
   };
 }
 
-function createDockerOpsApi({ execOnSession }) {
+function createDockerOpsApi({ execOnSession, getSession }) {
   async function runDocker(event, sessionId, args, timeoutMs = 15000) {
-    const cmd = `docker ${args}`;
+    const cmd = buildDockerCommand(args);
     const result = await execOnSession(event, sessionId, cmd, timeoutMs);
+    if (isSuccessfulCommandResult(result)) return result;
+
+    const sudoPassword = getSessionSudoPassword(getSession?.(sessionId));
+
+    if (sudoPassword && isDockerSocketPermissionError(result)) {
+      const sudoResult = await execOnSession(
+        event,
+        sessionId,
+        buildSudoDockerCommand(args),
+        timeoutMs,
+        { stdin: `${sudoPassword}\n` },
+      );
+      if (isSuccessfulCommandResult(sudoResult)) return sudoResult;
+      return {
+        success: false,
+        error: dockerCommandError(sudoResult, `sudo docker exited with code ${sudoResult?.code}`),
+        stderr: sudoResult?.stderr,
+      };
+    }
+
     if (!result.success) return result;
     if (result.code !== 0 && result.code !== null && result.code !== undefined) {
       return {
         success: false,
-        error: (result.stderr || "").trim() || `docker exited with code ${result.code}`,
+        error: dockerCommandError(result, `docker exited with code ${result.code}`),
         stderr: result.stderr,
       };
     }
@@ -148,23 +199,13 @@ function createDockerOpsApi({ execOnSession }) {
   }
 
   async function listContainers(event, sessionId) {
-    const result = await execOnSession(
-      event,
-      sessionId,
-      "docker ps -a --format '{{json .}}'",
-      12000,
-    );
+    const result = await runDocker(event, sessionId, "ps -a --format '{{json .}}'", 12000);
     if (!result.success) return { success: false, error: result.error };
     return { success: true, containers: parseDockerContainers(result.stdout) };
   }
 
   async function listImages(event, sessionId) {
-    const result = await execOnSession(
-      event,
-      sessionId,
-      "docker images --format '{{json .}}'",
-      12000,
-    );
+    const result = await runDocker(event, sessionId, "images --format '{{json .}}'", 12000);
     if (!result.success) return { success: false, error: result.error };
     return { success: true, images: parseDockerImages(result.stdout) };
   }
@@ -174,10 +215,10 @@ function createDockerOpsApi({ execOnSession }) {
     if (!sessionId) return { success: false, error: "Missing sessionId" };
     const ids = Array.isArray(payload?.ids) ? payload.ids.filter(Boolean) : [];
     const idArg = ids.map((id) => sanitizeDockerId(id)).filter(Boolean).join(" ");
-    const result = await execOnSession(
+    const result = await runDocker(
       event,
       sessionId,
-      `docker stats --no-stream --format '{{json .}}' ${idArg}`.trim(),
+      `stats --no-stream --format '{{json .}}' ${idArg}`.trim(),
       15000,
     );
     if (!result.success) return { success: false, error: result.error };
@@ -188,7 +229,7 @@ function createDockerOpsApi({ execOnSession }) {
     const { sessionId, containerId } = payload || {};
     if (!sessionId || !containerId) return { success: false, error: "Missing params" };
     const safeId = sanitizeDockerId(containerId);
-    const result = await execOnSession(event, sessionId, `docker inspect ${safeId}`, 10000);
+    const result = await runDocker(event, sessionId, `inspect ${safeId}`, 10000);
     if (!result.success) return { success: false, error: result.error };
     try {
       const parsed = JSON.parse(result.stdout || "[]");
@@ -203,7 +244,7 @@ function createDockerOpsApi({ execOnSession }) {
     const { sessionId, imageId } = payload || {};
     if (!sessionId || !imageId) return { success: false, error: "Missing params" };
     const safeId = sanitizeDockerId(imageId);
-    const result = await execOnSession(event, sessionId, `docker image inspect ${safeId}`, 10000);
+    const result = await runDocker(event, sessionId, `image inspect ${safeId}`, 10000);
     if (!result.success) return { success: false, error: result.error };
     try {
       const parsed = JSON.parse(result.stdout || "[]");

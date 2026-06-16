@@ -61,6 +61,7 @@ import {
   shouldHandleTerminalFontSizeAction,
   terminalFontSizeWheelListenerOptions,
 } from "./terminalFontZoom";
+import { shouldPassThroughCopyShortcut } from "./terminalCopyShortcut";
 import {
   markExpectedTerminalCursorPositionReport,
   pasteTextIntoTerminal,
@@ -702,6 +703,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
             isTerminalFontSizeAction(action)
             && !shouldHandleTerminalFontSizeAction(action, ctx.disableTerminalFontZoomRef.current)
           ) {
+            return true;
+          }
+          // When copy is bound specifically to Ctrl+C and there is no text
+          // selected, pass the event through so xterm can send SIGINT.
+          if (shouldPassThroughCopyShortcut(action, term.hasSelection(), e)) {
             return true;
           }
           e.preventDefault();
