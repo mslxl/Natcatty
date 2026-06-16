@@ -114,7 +114,12 @@ function buildCodebuddyQueryOptions({
     extraArgs: { "dangerously-skip-permissions": null },
     mcpServers: toSdkMcpServers(injectedMcpServers),
     tools: builtinTools,
-    allowedTools: builtinTools,
+    // Do NOT set allowedTools here. In mcp mode builtinTools is [], and the SDK
+    // treats allowedTools:[] as an explicit allow-list that permits NOTHING — it
+    // filters out the injected netcatty MCP tools (mcp__netcatty-remote-hosts__*)
+    // so the model never sees them and leaks the call as plain `<tool_call>` text
+    // instead of invoking it. `tools` already scopes the builtin set; mirror the
+    // claude driver and leave allowedTools unset (permissive) so MCP tools pass.
     disallowedTools: [...UI_DISALLOWED_TOOLS],
     // Keep the SDK isolated from user/project settings so local hooks, plugins,
     // or extra MCP servers cannot expand Netcatty's controlled tool boundary.
@@ -364,16 +369,30 @@ async function runCodebuddyTurn({ prompt, attachments, options, emitter, queryFn
 // Model listing
 // ---------------------------------------------------------------------------
 
-/** Map CodeBuddy SDK ModelInfo[] → renderer preset shape {id, name, description}. */
+/**
+ * Map CodeBuddy SDK ModelInfo[] → renderer preset shape {id, name, description}.
+ *
+ * The SDK's ModelInfo type declares {value, displayName, description}, but the
+ * CLI's `supportedModels()` control response actually returns {id, name} at
+ * runtime (verified against codebuddy-code: e.g. {id:"glm-5.1", name:"GLM-5.1"}).
+ * The type and the wire shape disagree, so accept all three id keys
+ * (id / modelId / value); otherwise every model is filtered out and the UI
+ * silently falls back to curated presets even when the fetch succeeds.
+ */
 function mapCodebuddyModels(models) {
   if (!Array.isArray(models)) return [];
   return models
-    .filter((m) => m && (m.modelId || m.value))
-    .map((m) => ({
-      id: m.modelId || m.value,
-      name: m.name || m.displayName || m.modelId || m.value,
-      description: m.description,
-    }));
+    .map((m) => {
+      if (!m) return null;
+      const id = m.id || m.modelId || m.value;
+      if (!id) return null;
+      return {
+        id,
+        name: m.name || m.displayName || id,
+        description: m.description,
+      };
+    })
+    .filter(Boolean);
 }
 
 /**
