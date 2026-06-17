@@ -3,6 +3,15 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { runThemeTransition } from './themeTransition';
 import { SyncConfig, TerminalSettings, HotkeyScheme, CustomKeyBindings, DEFAULT_KEY_BINDINGS, KeyBinding, UILanguage, SessionLogFormat, normalizeTerminalSettings } from '../../domain/models';
 import {
+  DEFAULT_APP_LOCK_SETTINGS,
+  normalizeAppLockSettings,
+  normalizeAppLockTimeoutMinutes,
+  type AppLockPasswordVerifier,
+  type AppLockSettings,
+  type AppLockTimeoutMinutes,
+} from '../../domain/appLock';
+import {
+  STORAGE_KEY_APP_LOCK_SETTINGS,
   STORAGE_KEY_COLOR,
   STORAGE_KEY_SYNC,
   STORAGE_KEY_TERM_THEME,
@@ -176,6 +185,9 @@ export const useSettingsState = () => {
     const stored = readStoredString(STORAGE_KEY_UI_LANGUAGE);
     return resolveSupportedLocale(stored || DEFAULT_UI_LOCALE);
   });
+  const [appLockSettings, setAppLockSettingsState] = useState<AppLockSettings>(() =>
+    normalizeAppLockSettings(localStorageAdapter.read(STORAGE_KEY_APP_LOCK_SETTINGS) ?? DEFAULT_APP_LOCK_SETTINGS)
+  );
   const [terminalSettings, setTerminalSettingsState] = useState<TerminalSettings>(() => {
     const stored = localStorageAdapter.read<TerminalSettings>(STORAGE_KEY_TERM_SETTINGS);
     return normalizeTerminalSettings(stored);
@@ -438,6 +450,41 @@ export const useSettingsState = () => {
     notifySettingsChanged(STORAGE_KEY_WORKSPACE_FOCUS_STYLE, style);
   }, [notifySettingsChanged]);
 
+  const setAppLockSettings = useCallback((nextValue: SetStateAction<AppLockSettings>) => {
+    setAppLockSettingsState((prev) => {
+      const candidate = typeof nextValue === 'function'
+        ? (nextValue as (prevState: AppLockSettings) => AppLockSettings)(prev)
+        : nextValue;
+      return normalizeAppLockSettings(candidate);
+    });
+  }, []);
+
+  const setAppLockEnabled = useCallback((enabled: boolean) => {
+    setAppLockSettings((prev) => normalizeAppLockSettings({ ...prev, enabled }));
+  }, [setAppLockSettings]);
+
+  const setAppLockTimeoutMinutes = useCallback((timeoutMinutes: AppLockTimeoutMinutes) => {
+    setAppLockSettings((prev) => ({
+      ...prev,
+      timeoutMinutes: normalizeAppLockTimeoutMinutes(timeoutMinutes),
+    }));
+  }, [setAppLockSettings]);
+
+  const setAppLockPasswordVerifier = useCallback((passwordVerifier: AppLockPasswordVerifier) => {
+    setAppLockSettings((prev) => normalizeAppLockSettings({
+      ...prev,
+      passwordVerifier,
+    }));
+  }, [setAppLockSettings]);
+
+  const clearAppLockPassword = useCallback(() => {
+    setAppLockSettings((prev) => ({
+      enabled: false,
+      timeoutMinutes: prev.timeoutMinutes,
+      passwordVerifier: null,
+    }));
+  }, [setAppLockSettings]);
+
   const syncAppearanceFromStorage = useCallback(() => {
     const storedTheme = readStoredString(STORAGE_KEY_THEME);
     const nextTheme = storedTheme && isValidTheme(storedTheme) ? storedTheme : theme;
@@ -491,6 +538,9 @@ export const useSettingsState = () => {
     // Language
     const storedLang = readStoredString(STORAGE_KEY_UI_LANGUAGE);
     if (storedLang) setUiLanguage(storedLang as UILanguage);
+
+    // App lock is device-local but still synchronized between same-device renderer windows.
+    setAppLockSettingsState(normalizeAppLockSettings(localStorageAdapter.read(STORAGE_KEY_APP_LOCK_SETTINGS)));
 
     // Terminal
     const storedTermTheme = readStoredString(STORAGE_KEY_TERM_THEME);
@@ -652,6 +702,7 @@ export const useSettingsState = () => {
     setShowHostTreeSidebarState,
     setDisableTerminalFontZoomState,
     setSftpTransferConcurrencyState,
+    setAppLockSettingsState,
   });
 
   useEffect(() => {
@@ -675,6 +726,7 @@ export const useSettingsState = () => {
     theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent,
     customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage,
     terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
+    appLockSettings,
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
     showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, shellOnlyTabNumberShortcuts, disableTerminalFontZoom,
@@ -684,6 +736,7 @@ export const useSettingsState = () => {
     setCustomCSS, setUiFontFamilyId, setHotkeyScheme, setUiLanguage,
     setTerminalThemeId, setTerminalThemeDarkId, setTerminalThemeLightId,
     setFollowAppTerminalThemeState, setTerminalFontFamilyId, setTerminalFontSize,
+    setAppLockSettingsState,
     setSftpDoubleClickBehavior, setSftpAutoSync, setSftpShowHiddenFiles,
     setSftpUseCompressedUpload, setSftpAutoOpenSidebar, setSftpFollowTerminalCwd, setSftpDefaultViewMode,
     setShowRecentHostsState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setShellOnlyTabNumberShortcutsState, setDisableTerminalFontZoomState,
@@ -742,6 +795,12 @@ export const useSettingsState = () => {
     notifySettingsChanged(STORAGE_KEY_TERM_SETTINGS, terminalSettings);
     broadcastedLocalTerminalSettingsVersionRef.current = localTerminalSettingsVersionRef.current;
   }, [terminalSettings, notifySettingsChanged]);
+
+  useEffect(() => {
+    localStorageAdapter.write(STORAGE_KEY_APP_LOCK_SETTINGS, appLockSettings);
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_APP_LOCK_SETTINGS, appLockSettings);
+  }, [appLockSettings, notifySettingsChanged]);
 
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_HOTKEY_SCHEME, hotkeyScheme);
@@ -1003,6 +1062,12 @@ export const useSettingsState = () => {
     updateSyncConfig,
     uiLanguage,
     setUiLanguage,
+    appLockSettings,
+    setAppLockSettings,
+    setAppLockEnabled,
+    setAppLockTimeoutMinutes,
+    setAppLockPasswordVerifier,
+    clearAppLockPassword,
     terminalThemeId,
     setTerminalThemeId,
     followAppTerminalTheme,

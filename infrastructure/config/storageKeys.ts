@@ -25,6 +25,7 @@ export const STORAGE_KEY_CUSTOM_KEY_BINDINGS = 'netcatty_custom_key_bindings_v1'
 export const STORAGE_KEY_HOTKEY_RECORDING = 'netcatty_hotkey_recording_v1';
 export const STORAGE_KEY_CUSTOM_CSS = 'netcatty_custom_css_v1';
 export const STORAGE_KEY_UI_LANGUAGE = 'netcatty_ui_language_v1';
+export const STORAGE_KEY_APP_LOCK_SETTINGS = 'netcatty_app_lock_settings_v1';
 export const STORAGE_KEY_PORT_FORWARDING = 'netcatty_port_forwarding_v1';
 export const STORAGE_KEY_PF_PREFER_FORM_MODE = 'netcatty_pf_prefer_form_mode_v1';
 export const STORAGE_KEY_PF_VIEW_MODE = 'netcatty_pf_view_mode_v1';
