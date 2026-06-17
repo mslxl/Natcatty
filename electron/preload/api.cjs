@@ -759,6 +759,11 @@ function createPreloadApi(ctx) {
     ipcRenderer.invoke("netcatty:tray:isCloseToTray"),
   updateTrayMenuData: (data) =>
     ipcRenderer.invoke("netcatty:tray:updateMenuData", data),
+  onAppLockReopen: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on("netcatty:app-lock:reopen", handler);
+    return () => ipcRenderer.removeListener("netcatty:app-lock:reopen", handler);
+  },
   // Listen for tray menu actions
   onTrayFocusSession: (callback) => {
     const handler = (_event, sessionId) => callback(sessionId);

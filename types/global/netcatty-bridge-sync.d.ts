@@ -151,6 +151,9 @@ declare global {
 
     // Notify main process the renderer has mounted/painted (used to avoid initial blank screen).
     rendererReady?(): void;
+    // Fired when an existing main renderer window is shown again from tray,
+    // global hotkey, dock activation, or second-instance focusing.
+    onAppLockReopen?(listener: () => void): () => void;
 
     // Quit guard: subscribe to main-process quit requests that query for dirty editors.
     // Listener is called with no arguments; return value is an unsubscribe function.

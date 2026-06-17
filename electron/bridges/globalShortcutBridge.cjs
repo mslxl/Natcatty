@@ -45,6 +45,15 @@ const FULLSCREEN_LEAVE_WATCHDOG_MS = 5000;
 const FULLSCREEN_TRAILING_SHOW_FALLBACK_MS = 300;
 const pendingFullscreenHideByWindow = new WeakMap();
 
+function notifyAppLockReopen(win) {
+  try {
+    if (!win || win.isDestroyed?.()) return;
+    win.webContents?.send?.("netcatty:app-lock:reopen");
+  } catch {
+    // ignore
+  }
+}
+
 function clearPendingFullscreenHide(win) {
   if (!win || typeof win !== "object") return;
   const pending = pendingFullscreenHideByWindow.get(win);
@@ -169,6 +178,7 @@ function openMainWindow() {
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
+  notifyAppLockReopen(win);
   try {
     app.focus({ steal: true });
   } catch {
@@ -481,6 +491,7 @@ function toggleWindowVisibility() {
       win.restore();
       win.show();
       win.focus();
+      notifyAppLockReopen(win);
       const { app } = electronModule;
       try {
         app.focus({ steal: true });
@@ -507,6 +518,7 @@ function toggleWindowVisibility() {
       clearPendingFullscreenHide(win);
       win.show();
       win.focus();
+      notifyAppLockReopen(win);
       const { app } = electronModule;
       try {
         app.focus({ steal: true });

@@ -147,6 +147,12 @@ class FakeWindow extends EventEmitter {
     this.minimized = false;
     this.visible = true;
     this.focused = true;
+    this.sentMessages = [];
+    this.webContents = {
+      send: (channel, ...args) => {
+        this.sentMessages.push([channel, ...args]);
+      },
+    };
   }
 
   isDestroyed() {
@@ -415,6 +421,18 @@ test("openMainWindow cancels a pending fullscreen hide before showing the window
       assert.equal(win.hideCalls, 0);
     });
   });
+});
+
+test("openMainWindow notifies renderer to lock on reopen", async () => {
+  const bridge = loadBridge();
+  const electronModule = createElectronStub();
+  const win = new FakeWindow();
+  electronModule.BrowserWindow.getAllWindows = () => [win];
+  const { ipcMain } = await enableCloseToTray(bridge, electronModule);
+
+  await ipcMain.handlers.get("netcatty:trayPanel:openMainWindow")();
+
+  assert.deepEqual(win.sentMessages, [["netcatty:app-lock:reopen"]]);
 });
 
 test("closing the window clears a pending fullscreen hide", async () => {

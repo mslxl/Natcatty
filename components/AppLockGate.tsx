@@ -37,6 +37,13 @@ export const AppLockGate: React.FC<AppLockGateProps> = ({ children }) => {
     }
   }, []);
 
+  useEffect(() => {
+    const unsubscribe = netcattyBridge.get()?.onAppLockReopen?.(() => {
+      appLock.lockNow('startup');
+    });
+    return () => unsubscribe?.();
+  }, [appLock]);
+
   return (
     <I18nProvider locale={settings.uiLanguage}>
       <ToastProvider>

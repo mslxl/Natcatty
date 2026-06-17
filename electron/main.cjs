@@ -320,6 +320,9 @@ function focusMainWindow() {
       win.focus();
     } catch {}
     try {
+      win.webContents?.send?.("netcatty:app-lock:reopen");
+    } catch {}
+    try {
       app.focus({ steal: true });
     } catch {}
 
@@ -679,6 +682,9 @@ if (!gotLock) {
           if (mainWin.isMinimized?.()) mainWin.restore();
           mainWin.show?.();
           mainWin.focus?.();
+          try {
+            mainWin.webContents?.send?.("netcatty:app-lock:reopen");
+          } catch {}
           try {
             app.focus({ steal: true });
           } catch {}
