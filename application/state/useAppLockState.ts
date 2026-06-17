@@ -27,6 +27,17 @@ export function shouldLockAfterIdle(
   return now - lastActivityAt >= normalized.timeoutMinutes * 60_000;
 }
 
+export function getIdleLockDelayMs(
+  settings: AppLockSettings,
+  lastActivityAt: number,
+  now: number,
+): number | null {
+  const normalized = normalizeAppLockSettings(settings);
+  if (!normalized.enabled || !normalized.passwordVerifier) return null;
+  const timeoutMs = normalized.timeoutMinutes * 60_000;
+  return Math.max(0, timeoutMs - (now - lastActivityAt));
+}
+
 export async function resolveUnlockAttempt(
   password: string,
   verifier: AppLockPasswordVerifier | null,
@@ -95,14 +106,24 @@ export function useAppLockState(settings: AppLockSettings) {
 
   useEffect(() => {
     if (!shouldLockOnStartup(normalizedSettings) || locked) return undefined;
+    let timeout: number | undefined;
 
     const checkIdle = () => {
       if (shouldLockAfterIdle(normalizedSettings, lastActivityAtRef.current, Date.now())) {
         lockNow('idle');
+        return;
       }
+      scheduleNextCheck();
     };
 
-    const timeout = window.setTimeout(checkIdle, normalizedSettings.timeoutMinutes * 60_000);
+    const scheduleNextCheck = () => {
+      const delayMs = getIdleLockDelayMs(normalizedSettings, lastActivityAtRef.current, Date.now());
+      if (delayMs === null) return undefined;
+      timeout = window.setTimeout(checkIdle, delayMs);
+      return timeout;
+    };
+
+    scheduleNextCheck();
     return () => window.clearTimeout(timeout);
   }, [normalizedSettings, locked, lockNow]);
 

@@ -6,6 +6,7 @@ import {
   type AppLockSettings,
 } from "../../domain/appLock.ts";
 import {
+  getIdleLockDelayMs,
   resolveUnlockAttempt,
   shouldLockAfterIdle,
   shouldLockOnStartup,
@@ -37,6 +38,22 @@ test("shouldLockAfterIdle honors the configured timeout", async () => {
   assert.equal(shouldLockAfterIdle({ ...settings, enabled: false }, 1_000, 1_000 + 60 * 60_000), false);
   assert.equal(shouldLockAfterIdle({ ...settings, passwordVerifier: null }, 1_000, 1_000 + 60 * 60_000), false);
 });
+
+test("getIdleLockDelayMs schedules the next check after remaining idle time", async () => {
+  const verifier = await createAppLockPasswordVerifier("secret");
+  const settings: AppLockSettings = {
+    enabled: true,
+    timeoutMinutes: 5,
+    passwordVerifier: verifier,
+  };
+
+  assert.equal(getIdleLockDelayMs(settings, 1_000, 1_000), 5 * 60_000);
+  assert.equal(getIdleLockDelayMs(settings, 1_000, 1_000 + 4 * 60_000), 60_000);
+  assert.equal(getIdleLockDelayMs(settings, 1_000, 1_000 + 5 * 60_000), 0);
+  assert.equal(getIdleLockDelayMs({ ...settings, enabled: false }, 1_000, 1_000), null);
+  assert.equal(getIdleLockDelayMs({ ...settings, passwordVerifier: null }, 1_000, 1_000), null);
+});
+
 
 test("resolveUnlockAttempt validates empty, incorrect, and correct passwords", async () => {
   const verifier = await createAppLockPasswordVerifier("secret");
