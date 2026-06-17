@@ -478,6 +478,7 @@ export interface TerminalLayerProps {
   fontSize?: number;
   hotkeyScheme?: 'disabled' | 'mac' | 'pc';
   disableTerminalFontZoom?: boolean;
+  restoreTerminalCwd?: boolean;
   keyBindings?: KeyBinding[];
   onHotkeyAction?: (action: string, event: KeyboardEvent) => void;
   onUpdateTerminalThemeId?: (themeId: string) => void;
@@ -547,6 +548,7 @@ export interface TerminalLayerProps {
 interface TerminalPaneProps {
   session: TerminalSession;
   host: Host;
+  sessionHostResolved: boolean;
   chainHosts?: Host[];
   sudoAutofillPassword?: string;
   workspaceById: Map<string, Workspace>;
@@ -570,6 +572,7 @@ interface TerminalPaneProps {
   terminalSettings?: TerminalSettings;
   hotkeyScheme?: 'disabled' | 'mac' | 'pc';
   disableTerminalFontZoom?: boolean;
+  restoreTerminalCwd?: boolean;
   keyBindings?: KeyBinding[];
   isResizing: boolean;
   isComposeBarOpen: boolean;
@@ -652,6 +655,7 @@ const terminalPanePropsAreEqual = (
 ): boolean => (
   prev.session === next.session &&
   prev.host === next.host &&
+  prev.sessionHostResolved === next.sessionHostResolved &&
   prev.chainHosts === next.chainHosts &&
   prev.sudoAutofillPassword === next.sudoAutofillPassword &&
   prev.workspaceById === next.workspaceById &&
@@ -675,6 +679,7 @@ const terminalPanePropsAreEqual = (
   prev.terminalSettings === next.terminalSettings &&
   prev.hotkeyScheme === next.hotkeyScheme &&
   prev.disableTerminalFontZoom === next.disableTerminalFontZoom &&
+  prev.restoreTerminalCwd === next.restoreTerminalCwd &&
   prev.keyBindings === next.keyBindings &&
   prev.isResizing === next.isResizing &&
   prev.isComposeBarOpen === next.isComposeBarOpen &&
@@ -715,6 +720,7 @@ const terminalPanePropsAreEqual = (
 const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   session,
   host,
+  sessionHostResolved,
   chainHosts,
   sudoAutofillPassword,
   workspaceById,
@@ -738,6 +744,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   terminalSettings,
   hotkeyScheme,
   disableTerminalFontZoom,
+  restoreTerminalCwd,
   keyBindings,
   isResizing,
   isComposeBarOpen,
@@ -1112,6 +1119,8 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         terminalSettings={terminalSettings}
         sessionId={session.id}
         restoreState={session.restoreState}
+        lastCwd={session.lastCwd}
+        restoreTerminalCwd={restoreTerminalCwd && sessionHostResolved}
         startupCommand={session.startupCommand}
         noAutoRun={session.noAutoRun}
         reuseConnectionFromSessionId={session.reuseConnectionFromSessionId}
@@ -1169,6 +1178,7 @@ interface TerminalPanesHostProps {
   sessionHostsMap: Map<string, Host>;
   sessionChainHostsMap: Map<string, Host[]>;
   sessionSudoAutofillPasswordsMap: Map<string, string | undefined>;
+  resolvedSessionHostIds: Set<string>;
   workspaceById: Map<string, Workspace>;
   workspaceRectsById: Map<string, Record<string, WorkspaceRect>>;
   isTerminalLayerVisible: boolean;
@@ -1190,6 +1200,7 @@ interface TerminalPanesHostProps {
   terminalSettings?: TerminalSettings;
   hotkeyScheme?: 'disabled' | 'mac' | 'pc';
   disableTerminalFontZoom?: boolean;
+  restoreTerminalCwd?: boolean;
   keyBindings?: KeyBinding[];
   isResizing: boolean;
   isComposeBarOpen: boolean;
@@ -1238,6 +1249,7 @@ const terminalPanesHostPropsAreEqual = (
   if (prev.sessionHostsMap !== next.sessionHostsMap) return false;
   if (prev.sessionChainHostsMap !== next.sessionChainHostsMap) return false;
   if (prev.sessionSudoAutofillPasswordsMap !== next.sessionSudoAutofillPasswordsMap) return false;
+  if (prev.resolvedSessionHostIds !== next.resolvedSessionHostIds) return false;
   if (prev.workspaceById !== next.workspaceById) return false;
   if (prev.isTerminalLayerVisible !== next.isTerminalLayerVisible) return false;
   if (prev.workspaceFocusHandlersRef !== next.workspaceFocusHandlersRef) return false;
@@ -1258,6 +1270,7 @@ const terminalPanesHostPropsAreEqual = (
   if (prev.terminalSettings !== next.terminalSettings) return false;
   if (prev.hotkeyScheme !== next.hotkeyScheme) return false;
   if (prev.disableTerminalFontZoom !== next.disableTerminalFontZoom) return false;
+  if (prev.restoreTerminalCwd !== next.restoreTerminalCwd) return false;
   if (prev.keyBindings !== next.keyBindings) return false;
   if (prev.isResizing !== next.isResizing) return false;
   if (prev.isComposeBarOpen !== next.isComposeBarOpen) return false;
@@ -1313,6 +1326,7 @@ export const TerminalPanesHost: React.FC<TerminalPanesHostProps> = memo(({
   sessionHostsMap,
   sessionChainHostsMap,
   sessionSudoAutofillPasswordsMap,
+  resolvedSessionHostIds,
   ...sharedProps
 }) => {
   const [showSelectionAIAction] = useStoredBoolean(
@@ -1330,6 +1344,7 @@ export const TerminalPanesHost: React.FC<TerminalPanesHostProps> = memo(({
             key={session.id}
             session={session}
             host={host}
+            sessionHostResolved={resolvedSessionHostIds.has(session.id)}
             chainHosts={sessionChainHostsMap.get(session.id)}
             sudoAutofillPassword={sessionSudoAutofillPasswordsMap.get(session.id)}
             showSelectionAIAction={showSelectionAIAction}

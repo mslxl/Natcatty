@@ -88,6 +88,8 @@ interface SettingsSystemTabProps {
   setSshDebugLogsEnabled: (enabled: boolean) => void;
   restorePreviousSession: boolean;
   setRestorePreviousSession: (enabled: boolean) => void;
+  restoreTerminalCwd: boolean;
+  setRestoreTerminalCwd: (enabled: boolean) => void;
   toggleWindowHotkey: string;
   setToggleWindowHotkey: (hotkey: string) => void;
   closeToTray: boolean;
@@ -118,6 +120,8 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   setSshDebugLogsEnabled,
   restorePreviousSession,
   setRestorePreviousSession,
+  restoreTerminalCwd,
+  setRestoreTerminalCwd,
   toggleWindowHotkey,
   setToggleWindowHotkey,
   closeToTray,
@@ -811,6 +815,15 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                 <Toggle
                   checked={restorePreviousSession}
                   onChange={setRestorePreviousSession}
+                />
+              </SettingRow>
+              <SettingRow
+                label={t("settings.sessionRestore.restoreTerminalCwd")}
+                description={t("settings.sessionRestore.restoreTerminalCwdDesc")}
+              >
+                <Toggle
+                  checked={restoreTerminalCwd}
+                  onChange={setRestoreTerminalCwd}
                 />
               </SettingRow>
             </SettingCard>

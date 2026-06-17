@@ -100,6 +100,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   fontSize = 14,
   hotkeyScheme = 'disabled',
   disableTerminalFontZoom = false,
+  restoreTerminalCwd = false,
   keyBindings = [],
   onHotkeyAction,
   onUpdateTerminalThemeId,
@@ -567,6 +568,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     }
     return map;
   }, [sessions, hostMap, groupConfigs, proxyProfileIdSet, proxyProfiles]);
+  const resolvedSessionHostIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const session of sessions) {
+      if (hostMap.has(session.hostId) || session.protocol === 'local') ids.add(session.id);
+    }
+    return ids;
+  }, [hostMap, sessions]);
   const sessionChainHostsMap = useMemo(() => {
     const map = new Map<string, Host[]>();
     for (const session of sessions) {
@@ -1129,6 +1137,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     hostsRef,
     hotkeyScheme,
     disableTerminalFontZoom,
+    restoreTerminalCwd,
     identities,
     isBroadcastEnabled,
     isComposeBarOpen,
@@ -1183,6 +1192,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     sessionActivityStore,
     sessionChainHostsMap,
     sessionHostsMap,
+    resolvedSessionHostIds,
     sessionLogConfig,
     sessionSudoAutofillPasswordsMap,
     sessions,

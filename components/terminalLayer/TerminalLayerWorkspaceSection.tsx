@@ -41,6 +41,7 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
     terminalSettings,
     hotkeyScheme,
     disableTerminalFontZoom,
+    restoreTerminalCwd,
     keyBindings,
     resizing,
     isComposeBarOpen,
@@ -156,6 +157,7 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
           terminalSettings={terminalSettings}
           hotkeyScheme={hotkeyScheme}
           disableTerminalFontZoom={disableTerminalFontZoom}
+          restoreTerminalCwd={restoreTerminalCwd}
           keyBindings={keyBindings}
           isResizing={!!resizing}
           isComposeBarOpen={isComposeBarOpen}

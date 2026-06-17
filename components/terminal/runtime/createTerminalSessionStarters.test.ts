@@ -653,6 +653,115 @@ test("local session runs startup command after attaching", async () => {
   }]);
 });
 
+test("local session restores cwd before startup command after attaching", async () => {
+  const sessionWrites: Array<{ id: string; data: string; automated?: boolean }> = [];
+  const executedCommands: string[] = [];
+
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => "ssh-session",
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: (id: string, data: string, options?: { automated?: boolean }) => {
+      sessionWrites.push({ id, data, automated: options?.automated });
+    },
+    resizeSession: noop,
+  };
+
+  const restoreCwdIntentRef = {
+    current: { cwd: "/srv/app dir", command: "cd -- '/srv/app dir'" },
+  };
+  const ctx = createStarterContext({
+    host: {
+      id: "local-host",
+      label: "Local",
+      hostname: "local",
+      username: "",
+      protocol: "local",
+    },
+    terminalSettings: { startupCommandDelayMs: 0 },
+    terminalBackend,
+    startupCommand: "pwd",
+    promptLineBreakStateRef: undefined,
+    restoreCwdIntentRef,
+    onCommandExecuted: (command: string) => {
+      executedCommands.push(command);
+    },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startLocal(createTermStub() as never);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(restoreCwdIntentRef.current, null);
+  assert.deepEqual(sessionWrites, [
+    { id: "local-session", data: "cd -- '/srv/app dir'\r", automated: true },
+    { id: "local-session", data: "pwd\r", automated: true },
+  ]);
+  assert.deepEqual(executedCommands, ["pwd"]);
+});
+
+test("ssh session restores cwd before startup command after attaching", async () => {
+  const sessionWrites: Array<{ id: string; data: string; automated?: boolean }> = [];
+  const executedCommands: string[] = [];
+
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => "ssh-session",
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: (id: string, data: string, options?: { automated?: boolean }) => {
+      sessionWrites.push({ id, data, automated: options?.automated });
+    },
+    resizeSession: noop,
+  };
+
+  const restoreCwdIntentRef = {
+    current: { cwd: "/srv/app dir", command: "cd -- '/srv/app dir'" },
+  };
+  const ctx = createStarterContext({
+    terminalSettings: { startupCommandDelayMs: 0 },
+    terminalBackend,
+    startupCommand: "pwd",
+    promptLineBreakStateRef: undefined,
+    restoreCwdIntentRef,
+    onCommandExecuted: (command: string) => {
+      executedCommands.push(command);
+    },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(restoreCwdIntentRef.current, null);
+  assert.deepEqual(sessionWrites, [
+    { id: "ssh-session", data: "cd -- '/srv/app dir'\r", automated: true },
+    { id: "ssh-session", data: "pwd\r", automated: true },
+  ]);
+  assert.deepEqual(executedCommands, ["pwd"]);
+});
+
 test("local session resets terminal timestamp state when reusing a terminal", async () => {
   const writes: string[] = [];
   const markerLines: number[] = [];

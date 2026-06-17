@@ -148,6 +148,8 @@ export const enCoreMessages: Messages = {
   'settings.sessionRestore.title': 'Session Restore',
   'settings.sessionRestore.restorePreviousSession': 'Restore previous tabs and workspaces',
   'settings.sessionRestore.restorePreviousSessionDesc': 'Reopen terminal tabs and workspace layouts from the last app session.',
+  'settings.sessionRestore.restoreTerminalCwd': 'Restore terminal working directory',
+  'settings.sessionRestore.restoreTerminalCwdDesc': 'When reconnecting a restored terminal, try to return to its last known directory without blocking the connection.',
 
   // Settings > Session Logs
   'settings.sessionLogs.title': 'Session Logs',

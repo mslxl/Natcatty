@@ -37,6 +37,7 @@ export type TerminalLayerStableSnapshot = {
   effectiveHosts: Host[];
   sessionHostsMap: Map<string, Host>;
   sessionHostsMapRef: React.MutableRefObject<Map<string, Host>>;
+  resolvedSessionHostIds: Set<string>;
   sessionChainHostsMap: Map<string, Host[]>;
   sessionSudoAutofillPasswordsMap: Map<string, string | undefined>;
   workspaceById: Map<string, Workspace>;
@@ -132,6 +133,7 @@ export type TerminalLayerStableSnapshot = {
   knownHosts: KnownHost[];
   hotkeyScheme: TerminalLayerProps['hotkeyScheme'];
   disableTerminalFontZoom: TerminalLayerProps['disableTerminalFontZoom'];
+  restoreTerminalCwd: TerminalLayerProps['restoreTerminalCwd'];
   keyBindings: TerminalLayerProps['keyBindings'];
   onHotkeyAction: TerminalLayerProps['onHotkeyAction'];
   onConnectToHost: TerminalLayerProps['onConnectToHost'];

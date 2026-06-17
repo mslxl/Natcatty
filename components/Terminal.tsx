@@ -24,6 +24,7 @@ import {
   resolveHostTerminalThemeId,
   type TerminalHostUpdate,
 } from "../domain/terminalAppearance";
+import { resolveRestoreCwdIntent } from "../domain/sessionRestore";
 import { classifyDistroId, shouldProbeSessionCwd } from "../domain/host";
 import { supportsZmodemTerminalDragDrop } from "../lib/zmodemDragDrop";
 import { resolveHostAuth } from "../domain/sshAuth";
@@ -118,6 +119,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   terminalSettings,
   sessionId,
   restoreState,
+  lastCwd,
+  restoreTerminalCwd = false,
   startupCommand,
   noAutoRun,
   reuseConnectionFromSessionId,
@@ -188,6 +191,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const isBootActiveRef = useRef(false);
   const hasConnectedRef = useRef(false);
   const hasRunStartupCommandRef = useRef(false);
+  const restoreCwdIntentRef = useRef<{ cwd: string; command: string } | null>(null);
   // Token for an in-flight retry chain. handleRetry sets this to a fresh
   // symbol; any cancel/close/teardown/subsequent-retry invalidates it. The
   // chained xterm.write callbacks verify the token before proceeding so a
@@ -670,6 +674,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const teardown = () => {
     isBootActiveRef.current = false;
     retryTokenRef.current = null;
+    restoreCwdIntentRef.current = null;
     cleanupSession();
     xtermRuntimeRef.current?.dispose();
     xtermRuntimeRef.current = null;
@@ -699,6 +704,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     sessionRef,
     hasConnectedRef,
     hasRunStartupCommandRef,
+    restoreCwdIntentRef,
     disposeDataRef,
     disposeExitRef,
     fitAddonRef,
@@ -1028,6 +1034,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       void terminalBackend.respondHostKeyVerification(pendingHostKeyRequestId, false);
     }
     retryTokenRef.current = null;
+    restoreCwdIntentRef.current = null;
     setIsCancelling(true);
     auth.setNeedsAuth(false);
     auth.setAuthRetryMessage(null);
@@ -1049,6 +1056,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   const handleCloseDisconnectedSession = () => {
     retryTokenRef.current = null;
+    restoreCwdIntentRef.current = null;
     onCloseSession?.(sessionId);
   };
 
@@ -1091,6 +1099,18 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const handleRetry = () => {
     if (!termRef.current) return;
     cleanupSession();
+    restoreCwdIntentRef.current = resolveRestoreCwdIntent({
+      enabled: restoreTerminalCwd,
+      session: {
+        status,
+        restoreState,
+        protocol: host.protocol,
+        lastCwd,
+        moshEnabled: host.moshEnabled,
+        etEnabled: host.etEnabled,
+      },
+      isNetworkDevice,
+    });
     const term = termRef.current;
     // Claim a fresh retry token. If the user cancels / closes / unmounts /
     // kicks off another retry while the chained writes below are still

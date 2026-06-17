@@ -141,6 +141,65 @@ export const isRestoredDisconnectedSession = (
   session: Pick<TerminalSession, "status"> & { restoreState?: string },
 ): boolean => session.status === "disconnected" && session.restoreState === "restored-disconnected";
 
+type RestoreCwdSession = Pick<TerminalSession, "status"> & {
+  restoreState?: string;
+  protocol?: TerminalSession["protocol"];
+  lastCwd?: string;
+  moshEnabled?: boolean;
+  etEnabled?: boolean;
+};
+
+const isRestoreCwdPathEligible = (cwd: string | undefined): cwd is string => {
+  if (!cwd) return false;
+  const trimmed = cwd.trim();
+  if (!trimmed) return false;
+  if (/^[A-Za-z]:[\\/]/.test(trimmed)) return false;
+  return trimmed.startsWith("/") || trimmed === "~" || trimmed.startsWith("~/");
+};
+
+export function shouldAttemptRestoreCwd({
+  enabled,
+  session,
+  isNetworkDevice,
+}: {
+  enabled: boolean;
+  session: RestoreCwdSession;
+  isNetworkDevice: boolean;
+}): boolean {
+  if (!enabled || isNetworkDevice) return false;
+  if (!isRestoredDisconnectedSession(session)) return false;
+  if (!isRestoreCwdPathEligible(session.lastCwd)) return false;
+  if (session.moshEnabled || session.etEnabled) return false;
+  const protocol = session.protocol ?? "ssh";
+  return protocol === "ssh" || protocol === "local" || protocol === undefined;
+}
+
+export function quoteRestoreCwdForShell(cwd: string): string {
+  return `'${cwd.replace(/'/g, "'\\''")}'`;
+}
+
+function quoteRestoreCwdArgument(cwd: string): string {
+  if (cwd === "~") return "~";
+  if (cwd.startsWith("~/")) {
+    const suffix = cwd.slice(2);
+    return suffix ? `~/${quoteRestoreCwdForShell(suffix)}` : "~";
+  }
+  return quoteRestoreCwdForShell(cwd);
+}
+
+export function resolveRestoreCwdIntent(options: {
+  enabled: boolean;
+  session: RestoreCwdSession;
+  isNetworkDevice: boolean;
+}): { cwd: string; command: string } | null {
+  if (!shouldAttemptRestoreCwd(options)) return null;
+  const cwd = options.session.lastCwd!.trim();
+  return {
+    cwd,
+    command: `cd -- ${quoteRestoreCwdArgument(cwd)}`,
+  };
+}
+
 const pruneNode = (node: unknown, validSessionIds: ReadonlySet<string>): WorkspaceNode | null => {
   if (!isRecord(node)) return null;
   if (node.type === "pane") {

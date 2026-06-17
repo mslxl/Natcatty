@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import {
+  DEFAULT_RESTORE_TERMINAL_CWD,
   DEFAULT_RESTORE_PREVIOUS_SESSION,
+  resolveRestoreTerminalCwdSetting,
   resolveRestorePreviousSessionSetting,
 } from "./sessionRestoreSettings.ts";
 
@@ -17,6 +19,16 @@ test("restore previous session setting preserves explicit stored values", () => 
   assert.equal(resolveRestorePreviousSessionSetting(false), false);
 });
 
+test("restore terminal cwd setting defaults off", () => {
+  assert.equal(DEFAULT_RESTORE_TERMINAL_CWD, false);
+  assert.equal(resolveRestoreTerminalCwdSetting(null), false);
+});
+
+test("restore terminal cwd setting preserves explicit stored values", () => {
+  assert.equal(resolveRestoreTerminalCwdSetting(true), true);
+  assert.equal(resolveRestoreTerminalCwdSetting(false), false);
+});
+
 test("restore previous session setting participates in cross-window settings sync", () => {
   const storageSyncSource = readFileSync(new URL("./settingsStorageSync.ts", import.meta.url), "utf8");
   const ipcSyncSource = readFileSync(new URL("./settingsIpcSync.ts", import.meta.url), "utf8");
@@ -28,4 +40,17 @@ test("restore previous session setting participates in cross-window settings syn
   assert.match(ipcSyncSource, /STORAGE_KEY_RESTORE_PREVIOUS_SESSION/);
   assert.match(ipcSyncSource, /setRestorePreviousSessionState/);
   assert.match(ipcSyncSource, /key === STORAGE_KEY_RESTORE_PREVIOUS_SESSION/);
+});
+
+test("restore terminal cwd setting participates in cross-window settings sync", () => {
+  const storageSyncSource = readFileSync(new URL("./settingsStorageSync.ts", import.meta.url), "utf8");
+  const ipcSyncSource = readFileSync(new URL("./settingsIpcSync.ts", import.meta.url), "utf8");
+
+  assert.match(storageSyncSource, /STORAGE_KEY_RESTORE_TERMINAL_CWD/);
+  assert.match(storageSyncSource, /setRestoreTerminalCwdState/);
+  assert.match(storageSyncSource, /e\.key === STORAGE_KEY_RESTORE_TERMINAL_CWD/);
+
+  assert.match(ipcSyncSource, /STORAGE_KEY_RESTORE_TERMINAL_CWD/);
+  assert.match(ipcSyncSource, /setRestoreTerminalCwdState/);
+  assert.match(ipcSyncSource, /key === STORAGE_KEY_RESTORE_TERMINAL_CWD/);
 });

@@ -4,8 +4,11 @@ import assert from "node:assert/strict";
 import {
   buildSessionRestorePayload,
   isRestoredDisconnectedSession,
+  quoteRestoreCwdForShell,
   resolveRestoredActiveTabId,
+  resolveRestoreCwdIntent,
   sanitizeSessionRestorePayload,
+  shouldAttemptRestoreCwd,
 } from "./sessionRestore.ts";
 import type { TerminalSession, Workspace } from "./models.ts";
 
@@ -190,4 +193,73 @@ test("isRestoredDisconnectedSession detects only explicit restored sessions", ()
     true,
   );
   assert.equal(isRestoredDisconnectedSession({ ...session("s1"), status: "disconnected" }), false);
+});
+
+test("shouldAttemptRestoreCwd allows restored local and unix ssh sessions only when enabled", () => {
+  assert.equal(shouldAttemptRestoreCwd({
+    enabled: true,
+    session: { ...session("s1"), status: "disconnected", restoreState: "restored-disconnected", lastCwd: "/srv/app" },
+    isNetworkDevice: false,
+  }), true);
+  assert.equal(shouldAttemptRestoreCwd({
+    enabled: false,
+    session: { ...session("s1"), status: "disconnected", restoreState: "restored-disconnected", lastCwd: "/srv/app" },
+    isNetworkDevice: false,
+  }), false);
+});
+
+test("shouldAttemptRestoreCwd skips ineligible protocols and network devices", () => {
+  const base = { ...session("s1"), status: "disconnected" as const, restoreState: "restored-disconnected" as const, lastCwd: "/srv/app" };
+
+  assert.equal(shouldAttemptRestoreCwd({ enabled: true, session: { ...base, protocol: "telnet" }, isNetworkDevice: false }), false);
+  assert.equal(shouldAttemptRestoreCwd({ enabled: true, session: { ...base, protocol: "serial" }, isNetworkDevice: false }), false);
+  assert.equal(shouldAttemptRestoreCwd({ enabled: true, session: { ...base, protocol: "ssh" }, isNetworkDevice: true }), false);
+  assert.equal(shouldAttemptRestoreCwd({ enabled: true, session: { ...base, protocol: "ssh", moshEnabled: true }, isNetworkDevice: false }), false);
+  assert.equal(shouldAttemptRestoreCwd({ enabled: true, session: { ...base, protocol: "ssh", etEnabled: true }, isNetworkDevice: false }), false);
+});
+
+test("shouldAttemptRestoreCwd skips missing and windows-like cwd values", () => {
+  const base = { ...session("s1"), status: "disconnected" as const, restoreState: "restored-disconnected" as const };
+
+  assert.equal(shouldAttemptRestoreCwd({ enabled: true, session: { ...base }, isNetworkDevice: false }), false);
+  assert.equal(shouldAttemptRestoreCwd({ enabled: true, session: { ...base, lastCwd: "C:\\Users\\alice" }, isNetworkDevice: false }), false);
+  assert.equal(shouldAttemptRestoreCwd({ enabled: true, session: { ...base, lastCwd: "relative/path" }, isNetworkDevice: false }), false);
+  assert.equal(shouldAttemptRestoreCwd({ enabled: true, session: { ...base, lastCwd: "~alice/project" }, isNetworkDevice: false }), false);
+});
+
+test("quoteRestoreCwdForShell treats cwd as shell data", () => {
+  assert.equal(quoteRestoreCwdForShell("/srv/app"), "'/srv/app'");
+  assert.equal(quoteRestoreCwdForShell("/srv/app dir"), "'/srv/app dir'");
+  assert.equal(quoteRestoreCwdForShell("/tmp/it's ok; $(rm -rf ~)"), "'/tmp/it'\\''s ok; $(rm -rf ~)'");
+});
+
+test("resolveRestoreCwdIntent captures a one-shot restore command", () => {
+  assert.deepEqual(resolveRestoreCwdIntent({
+    enabled: true,
+    session: { ...session("s1"), status: "disconnected", restoreState: "restored-disconnected", lastCwd: "/srv/app dir" },
+    isNetworkDevice: false,
+  }), {
+    cwd: "/srv/app dir",
+    command: "cd -- '/srv/app dir'",
+  });
+});
+
+test("resolveRestoreCwdIntent keeps home-relative cwd expandable", () => {
+  assert.deepEqual(resolveRestoreCwdIntent({
+    enabled: true,
+    session: { ...session("s1"), status: "disconnected", restoreState: "restored-disconnected", lastCwd: "~/project dir" },
+    isNetworkDevice: false,
+  }), {
+    cwd: "~/project dir",
+    command: "cd -- ~/'project dir'",
+  });
+
+  assert.deepEqual(resolveRestoreCwdIntent({
+    enabled: true,
+    session: { ...session("s1"), status: "disconnected", restoreState: "restored-disconnected", lastCwd: "~" },
+    isNetworkDevice: false,
+  }), {
+    cwd: "~",
+    command: "cd -- ~",
+  });
 });

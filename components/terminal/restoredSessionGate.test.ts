@@ -39,3 +39,22 @@ test("restored disconnected sessions still create a terminal runtime before skip
     "restored placeholders need an xterm runtime so manual reconnect has a terminal to reuse",
   );
 });
+
+test("manual reconnect captures restore cwd intent before clearing restored state", () => {
+  const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  const importIndex = source.indexOf("resolveRestoreCwdIntent");
+  const refIndex = source.indexOf("const restoreCwdIntentRef = useRef");
+  const contextIndex = source.indexOf("restoreCwdIntentRef,");
+  const captureIndex = source.indexOf("restoreCwdIntentRef.current = resolveRestoreCwdIntent");
+  const connectingIndex = source.indexOf('setStatus("connecting")');
+
+  assert.notEqual(importIndex, -1);
+  assert.notEqual(refIndex, -1);
+  assert.notEqual(contextIndex, -1);
+  assert.notEqual(captureIndex, -1);
+  assert.notEqual(connectingIndex, -1);
+  assert.ok(
+    captureIndex < connectingIndex,
+    "manual retry must capture cwd intent while restoreState is still available",
+  );
+});

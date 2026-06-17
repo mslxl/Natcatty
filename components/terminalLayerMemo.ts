@@ -20,6 +20,7 @@ export const terminalLayerAreEqual = (
   prev.fontSize === next.fontSize &&
   prev.hotkeyScheme === next.hotkeyScheme &&
   prev.disableTerminalFontZoom === next.disableTerminalFontZoom &&
+  prev.restoreTerminalCwd === next.restoreTerminalCwd &&
   prev.keyBindings === next.keyBindings &&
   prev.sftpDefaultViewMode === next.sftpDefaultViewMode &&
   prev.sftpDoubleClickBehavior === next.sftpDoubleClickBehavior &&
