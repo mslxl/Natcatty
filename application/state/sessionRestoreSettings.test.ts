@@ -59,6 +59,21 @@ test("disabling restore previous session clears the stored restore snapshot", ()
   );
 });
 
+test("session restore persistence re-arms when restore previous session is enabled", () => {
+  const source = readFileSync(new URL("./useSessionState.ts", import.meta.url), "utf8");
+  const adapterEventImportIndex = source.indexOf("LOCAL_STORAGE_ADAPTER_CHANGED_EVENT");
+  const revisionStateIndex = source.indexOf("restorePreviousSessionRevision");
+  const keyGuardIndex = source.indexOf("detail?.key !== STORAGE_KEY_RESTORE_PREVIOUS_SESSION");
+  const listenerIndex = source.indexOf("addEventListener(LOCAL_STORAGE_ADAPTER_CHANGED_EVENT");
+  const effectDependencyIndex = source.indexOf("restorePreviousSessionRevision]", source.indexOf("beforeunload"));
+
+  assert.notEqual(adapterEventImportIndex, -1);
+  assert.notEqual(revisionStateIndex, -1);
+  assert.notEqual(keyGuardIndex, -1);
+  assert.notEqual(listenerIndex, -1);
+  assert.notEqual(effectDependencyIndex, -1);
+});
+
 test("restore terminal cwd setting participates in cross-window settings sync", () => {
   const storageSyncSource = readFileSync(new URL("./settingsStorageSync.ts", import.meta.url), "utf8");
   const ipcSyncSource = readFileSync(new URL("./settingsIpcSync.ts", import.meta.url), "utf8");

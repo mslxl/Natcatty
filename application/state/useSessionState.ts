@@ -29,7 +29,10 @@ import {
   createSplitTerminalSessionClone,
 } from './terminalConnectionReuse';
 import { STORAGE_KEY_RESTORE_PREVIOUS_SESSION } from '../../infrastructure/config/storageKeys';
-import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
+import {
+  LOCAL_STORAGE_ADAPTER_CHANGED_EVENT,
+  localStorageAdapter,
+} from '../../infrastructure/persistence/localStorageAdapter';
 import { sessionRestoreStorage } from './sessionRestoreStorage';
 import {
   buildAndWriteSessionRestorePayload,
@@ -69,6 +72,7 @@ export const useSessionState = () => {
   // Log views: stores open log replay tabs
   const [logViews, setLogViews] = useState<LogView[]>([]);
   const [activeTabRevision, setActiveTabRevision] = useState(0);
+  const [restorePreviousSessionRevision, setRestorePreviousSessionRevision] = useState(0);
   const sessionsRef = useRef(sessions);
   const tabOrderRef = useRef(tabOrder);
   sessionsRef.current = sessions;
@@ -83,6 +87,19 @@ export const useSessionState = () => {
   useEffect(() => activeTabStore.subscribeSync(() => {
     setActiveTabRevision((revision) => revision + 1);
   }), []);
+
+  useEffect(() => {
+    const handleLocalStorageAdapterChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ key?: string }>).detail;
+      if (detail?.key !== STORAGE_KEY_RESTORE_PREVIOUS_SESSION) return;
+      setRestorePreviousSessionRevision((revision) => revision + 1);
+    };
+
+    window.addEventListener(LOCAL_STORAGE_ADAPTER_CHANGED_EVENT, handleLocalStorageAdapterChanged);
+    return () => {
+      window.removeEventListener(LOCAL_STORAGE_ADAPTER_CHANGED_EVENT, handleLocalStorageAdapterChanged);
+    };
+  }, []);
 
   useEffect(() => {
     const restoreEnabled = resolveRestorePreviousSessionSetting(
@@ -123,7 +140,7 @@ export const useSessionState = () => {
       window.removeEventListener("pagehide", handlePageHide);
       window.removeEventListener("beforeunload", handlePageHide);
     };
-  }, [sessions, workspaces, tabOrder, activeTabRevision]);
+  }, [sessions, workspaces, tabOrder, activeTabRevision, restorePreviousSessionRevision]);
 
   const updateSessionRestoreCwd = useCallback((sessionId: string, cwd: string | null) => {
     setSessions((prev) => updateSessionRestoreCwdState(prev, sessionId, cwd));

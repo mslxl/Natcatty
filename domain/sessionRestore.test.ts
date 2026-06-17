@@ -444,6 +444,21 @@ test("shouldAttemptRestoreCwd skips ineligible protocols and network devices", (
   assert.equal(shouldAttemptRestoreCwd({ enabled: true, session: { ...base, protocol: "ssh", etEnabled: true }, isNetworkDevice: false }), false);
 });
 
+test("shouldAttemptRestoreCwd skips local Windows-like shell types", () => {
+  const base = {
+    ...session("s1"),
+    status: "disconnected" as const,
+    restoreState: "restored-disconnected" as const,
+    protocol: "local" as const,
+    lastCwd: "/srv/app",
+  };
+
+  assert.equal(shouldAttemptRestoreCwd({ enabled: true, session: { ...base, shellType: "posix" }, isNetworkDevice: false }), true);
+  assert.equal(shouldAttemptRestoreCwd({ enabled: true, session: { ...base, shellType: "fish" }, isNetworkDevice: false }), true);
+  assert.equal(shouldAttemptRestoreCwd({ enabled: true, session: { ...base, shellType: "powershell" }, isNetworkDevice: false }), false);
+  assert.equal(shouldAttemptRestoreCwd({ enabled: true, session: { ...base, shellType: "cmd" }, isNetworkDevice: false }), false);
+});
+
 test("shouldAttemptRestoreCwd skips missing and windows-like cwd values", () => {
   const base = { ...session("s1"), status: "disconnected" as const, restoreState: "restored-disconnected" as const };
 
@@ -468,6 +483,21 @@ test("resolveRestoreCwdIntent captures a one-shot restore command", () => {
     cwd: "/srv/app dir",
     command: "cd -- '/srv/app dir'",
   });
+});
+
+test("resolveRestoreCwdIntent does not emit POSIX cd for local Windows-like shells", () => {
+  assert.equal(resolveRestoreCwdIntent({
+    enabled: true,
+    session: {
+      ...session("s1"),
+      status: "disconnected",
+      restoreState: "restored-disconnected",
+      protocol: "local",
+      shellType: "powershell",
+      lastCwd: "/srv/app",
+    },
+    isNetworkDevice: false,
+  }), null);
 });
 
 test("resolveRestoreCwdIntent keeps home-relative cwd expandable", () => {

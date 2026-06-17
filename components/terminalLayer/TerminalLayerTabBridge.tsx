@@ -186,7 +186,6 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     onUpdateTerminalFontFamilyId: s.onUpdateTerminalFontFamilyId,
     onUpdateTerminalFontSize: s.onUpdateTerminalFontSize,
     onUpdateSessionFontSize: s.onUpdateSessionFontSize,
-    onUpdateSessionRestoreCwd: s.onUpdateSessionRestoreCwd,
     onClearSessionFontSizeOverride: s.onClearSessionFontSizeOverride,
     onUpdateTerminalFontWeight: s.onUpdateTerminalFontWeight,
     onUpdateTerminalThemeId: s.onUpdateTerminalThemeId,

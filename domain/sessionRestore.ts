@@ -188,6 +188,7 @@ export const isRestoredDisconnectedSession = (
 type RestoreCwdSession = Pick<TerminalSession, "status"> & {
   restoreState?: string;
   protocol?: TerminalSession["protocol"];
+  shellType?: TerminalSession["shellType"];
   lastCwd?: string;
   moshEnabled?: boolean;
   etEnabled?: boolean;
@@ -215,6 +216,9 @@ export function shouldAttemptRestoreCwd({
   if (!isRestoreCwdPathEligible(session.lastCwd)) return false;
   if (session.moshEnabled || session.etEnabled) return false;
   const protocol = session.protocol ?? "ssh";
+  if (protocol === "local" && (session.shellType === "powershell" || session.shellType === "cmd")) {
+    return false;
+  }
   return protocol === "ssh" || protocol === "local" || protocol === undefined;
 }
 
