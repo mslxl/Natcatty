@@ -128,6 +128,11 @@ export const zhCNCoreMessages: Messages = {
   'settings.update.autoUpdateEnabled': '自动更新',
   'settings.update.autoUpdateEnabledDesc': '有新版本时自动检查并下载更新。',
 
+  // Settings > Session Restore
+  'settings.sessionRestore.title': '会话恢复',
+  'settings.sessionRestore.restorePreviousSession': '恢复上次的标签页和工作区',
+  'settings.sessionRestore.restorePreviousSessionDesc': '启动时重新打开上次的终端标签页和工作区布局。',
+
   // Settings > Session Logs
   'settings.sessionLogs.title': '会话日志',
   'settings.sessionLogs.description': '配置会话日志导出和自动保存设置。',

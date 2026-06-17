@@ -1,4 +1,4 @@
-import { MouseEvent,useCallback,useMemo,useRef,useState } from 'react';
+import { MouseEvent,useCallback,useEffect,useMemo,useRef,useState } from 'react';
 import { ConnectionLog,Host,SerialConfig,Snippet,TerminalSession,Workspace,WorkspaceViewMode } from '../../domain/models';
 import { addLogView, getLogViewTabId, removeLogView, type LogView } from './logViewState';
 import { createHostTerminalSession, createLocalTerminalSession, createSerialTerminalSession, type LocalTerminalOptions } from './sessionFactories';
@@ -28,11 +28,27 @@ import {
   createCopiedTerminalSessionClone,
   createSplitTerminalSessionClone,
 } from './terminalConnectionReuse';
+import { STORAGE_KEY_RESTORE_PREVIOUS_SESSION } from '../../infrastructure/config/storageKeys';
+import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
+import { sessionRestoreStorage } from './sessionRestoreStorage';
+import {
+  buildPersistableSessionRestorePayload,
+  createInitialRestoredSessionState,
+  updateRestoredSessionStatusState,
+  updateSessionRestoreCwdState,
+} from './sessionRestoreState';
+import { resolveRestorePreviousSessionSetting } from './sessionRestoreSettings';
 
 
 export const useSessionState = () => {
-  const [sessions, setSessions] = useState<TerminalSession[]>([]);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const initialRestoreState = useMemo(() => createInitialRestoredSessionState({
+    restoreEnabled: resolveRestorePreviousSessionSetting(
+      localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION),
+    ),
+    payload: sessionRestoreStorage.read(),
+  }), []);
+  const [sessions, setSessions] = useState<TerminalSession[]>(initialRestoreState.sessions);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>(initialRestoreState.workspaces);
   // Latest workspaces snapshot for synchronous existence checks outside
   // setWorkspaces updaters — React doesn't guarantee updaters run
   // synchronously, so relying on a flag flipped inside them to decide
@@ -47,11 +63,51 @@ export const useSessionState = () => {
   const [workspaceRenameTarget, setWorkspaceRenameTarget] = useState<Workspace | null>(null);
   const [workspaceRenameValue, setWorkspaceRenameValue] = useState('');
   // Tab order: stores ordered list of tab IDs (orphan session IDs and workspace IDs)
-  const [tabOrder, setTabOrder] = useState<string[]>([]);
+  const [tabOrder, setTabOrder] = useState<string[]>(initialRestoreState.tabOrder);
   // Broadcast mode: stores workspace IDs that have broadcast enabled
   const [broadcastWorkspaceIds, setBroadcastWorkspaceIds] = useState<Set<string>>(new Set());
   // Log views: stores open log replay tabs
   const [logViews, setLogViews] = useState<LogView[]>([]);
+  const [activeTabRevision, setActiveTabRevision] = useState(0);
+
+  useEffect(() => {
+    if (initialRestoreState.activeTabId !== 'vault') {
+      activeTabStore.setActiveTabId(initialRestoreState.activeTabId);
+    }
+  }, [initialRestoreState.activeTabId]);
+
+  useEffect(() => activeTabStore.subscribeSync(() => {
+    setActiveTabRevision((revision) => revision + 1);
+  }), []);
+
+  useEffect(() => {
+    if (!resolveRestorePreviousSessionSetting(
+      localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION),
+    )) {
+      sessionRestoreStorage.clear();
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      const payload = buildPersistableSessionRestorePayload({
+        sessions,
+        workspaces,
+        tabOrder,
+        activeTabId: activeTabStore.getActiveTabId(),
+      });
+      if (payload) {
+        sessionRestoreStorage.write(payload);
+      } else {
+        sessionRestoreStorage.clear();
+      }
+    }, 250);
+
+    return () => window.clearTimeout(timeout);
+  }, [sessions, workspaces, tabOrder, activeTabRevision]);
+
+  const updateSessionRestoreCwd = useCallback((sessionId: string, cwd: string | null) => {
+    setSessions((prev) => updateSessionRestoreCwdState(prev, sessionId, cwd));
+  }, []);
 
   const createLocalTerminal = useCallback((options?: LocalTerminalOptions) => {
     const sessionId = crypto.randomUUID();
@@ -75,7 +131,7 @@ export const useSessionState = () => {
   }, [setActiveTabId]);
 
   const updateSessionStatus = useCallback((sessionId: string, status: TerminalSession['status']) => {
-    setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, status } : s));
+    setSessions(prev => updateRestoredSessionStatusState(prev, sessionId, status));
   }, []);
 
   const updateSessionFontSize = useCallback((sessionId: string, fontSize: number) => {
@@ -1016,5 +1072,6 @@ export const useSessionState = () => {
     // Copy session
     copySession,
     createSessionFromCloneSource,
+    updateSessionRestoreCwd,
   };
 };

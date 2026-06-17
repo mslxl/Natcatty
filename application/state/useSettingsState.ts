@@ -32,6 +32,7 @@ import {
   STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE,
   STORAGE_KEY_EDITOR_WORD_WRAP,
   STORAGE_KEY_SESSION_LOGS_ENABLED,
+  STORAGE_KEY_RESTORE_PREVIOUS_SESSION,
   STORAGE_KEY_SESSION_LOGS_DIR,
   STORAGE_KEY_SESSION_LOGS_FORMAT,
   STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED,
@@ -108,6 +109,7 @@ import {
   readStoredString,
   serializeTerminalSettings,
 } from './settingsStateDefaults';
+import { resolveRestorePreviousSessionSetting } from './sessionRestoreSettings';
 import { useSettingsStorageSync } from './settingsStorageSync';
 import { useSettingsIpcSync } from './settingsIpcSync';
 import { resolveCurrentTerminalTheme } from './settingsTerminalTheme';
@@ -249,6 +251,10 @@ export const useSettingsState = () => {
   const [disableTerminalFontZoom, setDisableTerminalFontZoomState] = useState<boolean>(() => {
     const stored = localStorageAdapter.readBoolean(STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM);
     return stored ?? DEFAULT_DISABLE_TERMINAL_FONT_ZOOM;
+  });
+  const [restorePreviousSession, setRestorePreviousSessionState] = useState<boolean>(() => {
+    const stored = localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION);
+    return resolveRestorePreviousSessionSetting(stored);
   });
   const [sftpTransferConcurrency, setSftpTransferConcurrencyState] = useState<number>(() => {
     const stored = localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY);
@@ -559,6 +565,8 @@ export const useSettingsState = () => {
     setShellOnlyTabNumberShortcutsState(storedShellOnlyTabNumberShortcuts ?? DEFAULT_SHELL_ONLY_TAB_NUMBER_SHORTCUTS);
     const storedDisableTerminalFontZoom = localStorageAdapter.readBoolean(STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM);
     setDisableTerminalFontZoomState(storedDisableTerminalFontZoom ?? DEFAULT_DISABLE_TERMINAL_FONT_ZOOM);
+    const storedRestorePreviousSession = localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION);
+    setRestorePreviousSessionState(resolveRestorePreviousSessionSetting(storedRestorePreviousSession));
 
     // Workspace focus style
     const storedFocusStyle = readStoredString(STORAGE_KEY_WORKSPACE_FOCUS_STYLE);
@@ -651,6 +659,7 @@ export const useSettingsState = () => {
     setWorkspaceFocusStyleState,
     setShowHostTreeSidebarState,
     setDisableTerminalFontZoomState,
+    setRestorePreviousSessionState,
     setSftpTransferConcurrencyState,
   });
 
@@ -677,7 +686,7 @@ export const useSettingsState = () => {
     terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
-    showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, shellOnlyTabNumberShortcuts, disableTerminalFontZoom,
+    showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, shellOnlyTabNumberShortcuts, disableTerminalFontZoom, restorePreviousSession,
     editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled,
     globalHotkeyEnabled, autoUpdateEnabled, windowOpacity,
     setTheme, setLightUiThemeId, setDarkUiThemeId, setAccentMode, setCustomAccent,
@@ -686,7 +695,7 @@ export const useSettingsState = () => {
     setFollowAppTerminalThemeState, setTerminalFontFamilyId, setTerminalFontSize,
     setSftpDoubleClickBehavior, setSftpAutoSync, setSftpShowHiddenFiles,
     setSftpUseCompressedUpload, setSftpAutoOpenSidebar, setSftpFollowTerminalCwd, setSftpDefaultViewMode,
-    setShowRecentHostsState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setShellOnlyTabNumberShortcutsState, setDisableTerminalFontZoomState,
+    setShowRecentHostsState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setShellOnlyTabNumberShortcutsState, setDisableTerminalFontZoomState, setRestorePreviousSessionState,
     setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled,
     setGlobalHotkeyEnabled, setWindowOpacity, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
     setSftpTransferConcurrencyState, applyIncomingCustomKeyBindings, mergeIncomingTerminalSettings,
@@ -812,6 +821,13 @@ export const useSettingsState = () => {
     localStorageAdapter.writeBoolean(STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM, enabled);
     if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM, enabled);
+  }, [notifySettingsChanged]);
+
+  const setRestorePreviousSession = useCallback((enabled: boolean) => {
+    setRestorePreviousSessionState(enabled);
+    localStorageAdapter.writeBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION, enabled);
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_RESTORE_PREVIOUS_SESSION, enabled);
   }, [notifySettingsChanged]);
 
   // Apply and persist custom CSS
@@ -1056,6 +1072,8 @@ export const useSettingsState = () => {
     setShellOnlyTabNumberShortcuts,
     disableTerminalFontZoom,
     setDisableTerminalFontZoom,
+    restorePreviousSession,
+    setRestorePreviousSession,
     sftpTransferConcurrency,
     setSftpTransferConcurrency,
     // Editor Settings
@@ -1100,7 +1118,7 @@ export const useSettingsState = () => {
       terminalThemeId, terminalFontFamilyId, terminalFontSize, terminalSettings,
       customKeyBindings, editorWordWrap,
       sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
-      showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, shellOnlyTabNumberShortcuts, disableTerminalFontZoom,
+      showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, shellOnlyTabNumberShortcuts, disableTerminalFontZoom, restorePreviousSession,
       customThemes, workspaceFocusStyle, sessionLogsTimestampsEnabled, sshDebugLogsEnabled,
     ]),
   };

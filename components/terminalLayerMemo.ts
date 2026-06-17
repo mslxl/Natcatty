@@ -34,6 +34,7 @@ export const terminalLayerAreEqual = (
   prev.showHostTreeSidebar === next.showHostTreeSidebar &&
   prev.setEditorWordWrap === next.setEditorWordWrap &&
   prev.onHotkeyAction === next.onHotkeyAction &&
+  prev.onUpdateSessionRestoreCwd === next.onUpdateSessionRestoreCwd &&
   prev.onUpdateHost === next.onUpdateHost &&
   prev.onAddKnownHost === next.onAddKnownHost &&
   prev.onToggleWorkspaceViewMode === next.onToggleWorkspaceViewMode &&

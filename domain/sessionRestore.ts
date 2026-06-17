@@ -1,0 +1,273 @@
+import type { SerialConfig, TerminalSession, Workspace, WorkspaceNode } from "./models";
+
+export const SESSION_RESTORE_VERSION = 1 as const;
+
+export type RestoredTerminalSession = {
+  id: string;
+  hostId: string;
+  hostLabel: string;
+  hostname: string;
+  username: string;
+  status: "disconnected";
+  workspaceId?: string;
+  protocol?: TerminalSession["protocol"];
+  port?: number;
+  moshEnabled?: boolean;
+  etEnabled?: boolean;
+  shellType?: TerminalSession["shellType"];
+  charset?: string;
+  serialConfig?: SerialConfig;
+  localShell?: string;
+  localShellArgs?: string[];
+  localShellName?: string;
+  localShellIcon?: string;
+  fontSize?: number;
+  fontSizeOverride?: boolean;
+  customName?: string;
+  lastCwd?: string;
+  restoreState: "restored-disconnected";
+};
+
+export type SessionRestorePayload = {
+  version: typeof SESSION_RESTORE_VERSION;
+  savedAt: number;
+  activeTabId: string;
+  tabOrder: string[];
+  sessions: RestoredTerminalSession[];
+  workspaces: Workspace[];
+};
+
+export type BuildSessionRestorePayloadInput = {
+  sessions: TerminalSession[];
+  workspaces: Workspace[];
+  tabOrder: string[];
+  activeTabId: string;
+  now?: number;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> => (
+  Boolean(value) && typeof value === "object"
+);
+
+const uniqueStrings = (values: readonly string[]): string[] => {
+  const seen = new Set<string>();
+  const next: string[] = [];
+  for (const value of values) {
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    next.push(value);
+  }
+  return next;
+};
+
+const readString = (record: Record<string, unknown>, key: string): string | undefined => {
+  const value = record[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+};
+
+const readBoolean = (record: Record<string, unknown>, key: string): boolean | undefined => {
+  const value = record[key];
+  return typeof value === "boolean" ? value : undefined;
+};
+
+const readNumber = (record: Record<string, unknown>, key: string): number | undefined => {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+};
+
+const restoreSession = (session: TerminalSession): RestoredTerminalSession => ({
+  id: session.id,
+  hostId: session.hostId,
+  hostLabel: session.hostLabel,
+  hostname: session.hostname,
+  username: session.username,
+  ...(session.workspaceId ? { workspaceId: session.workspaceId } : {}),
+  ...(session.protocol ? { protocol: session.protocol } : {}),
+  ...(session.port !== undefined ? { port: session.port } : {}),
+  ...(session.moshEnabled !== undefined ? { moshEnabled: session.moshEnabled } : {}),
+  ...(session.etEnabled !== undefined ? { etEnabled: session.etEnabled } : {}),
+  ...(session.shellType ? { shellType: session.shellType } : {}),
+  ...(session.charset ? { charset: session.charset } : {}),
+  ...(session.serialConfig ? { serialConfig: session.serialConfig } : {}),
+  ...(session.localShell ? { localShell: session.localShell } : {}),
+  ...(session.localShellArgs ? { localShellArgs: [...session.localShellArgs] } : {}),
+  ...(session.localShellName ? { localShellName: session.localShellName } : {}),
+  ...(session.localShellIcon ? { localShellIcon: session.localShellIcon } : {}),
+  ...(session.fontSize !== undefined ? { fontSize: session.fontSize } : {}),
+  ...(session.fontSizeOverride !== undefined ? { fontSizeOverride: session.fontSizeOverride } : {}),
+  ...(session.customName ? { customName: session.customName } : {}),
+  ...(session.lastCwd ? { lastCwd: session.lastCwd } : {}),
+  status: "disconnected",
+  restoreState: "restored-disconnected",
+});
+
+const restoreSessionFromUnknown = (value: unknown): RestoredTerminalSession | null => {
+  if (!isRecord(value)) return null;
+  const id = readString(value, "id");
+  const hostId = readString(value, "hostId");
+  const hostLabel = readString(value, "hostLabel");
+  const hostname = readString(value, "hostname");
+  const username = readString(value, "username");
+  if (!id || !hostId || !hostLabel || !hostname || !username) return null;
+
+  return {
+    id,
+    hostId,
+    hostLabel,
+    hostname,
+    username,
+    ...(readString(value, "workspaceId") ? { workspaceId: readString(value, "workspaceId") } : {}),
+    ...(readString(value, "protocol") ? { protocol: readString(value, "protocol") as TerminalSession["protocol"] } : {}),
+    ...(readNumber(value, "port") !== undefined ? { port: readNumber(value, "port") } : {}),
+    ...(readBoolean(value, "moshEnabled") !== undefined ? { moshEnabled: readBoolean(value, "moshEnabled") } : {}),
+    ...(readBoolean(value, "etEnabled") !== undefined ? { etEnabled: readBoolean(value, "etEnabled") } : {}),
+    ...(readString(value, "shellType") ? { shellType: readString(value, "shellType") as TerminalSession["shellType"] } : {}),
+    ...(readString(value, "charset") ? { charset: readString(value, "charset") } : {}),
+    ...(isRecord(value.serialConfig) ? { serialConfig: value.serialConfig as SerialConfig } : {}),
+    ...(readString(value, "localShell") ? { localShell: readString(value, "localShell") } : {}),
+    ...(Array.isArray(value.localShellArgs) ? { localShellArgs: value.localShellArgs.filter((arg): arg is string => typeof arg === "string") } : {}),
+    ...(readString(value, "localShellName") ? { localShellName: readString(value, "localShellName") } : {}),
+    ...(readString(value, "localShellIcon") ? { localShellIcon: readString(value, "localShellIcon") } : {}),
+    ...(readNumber(value, "fontSize") !== undefined ? { fontSize: readNumber(value, "fontSize") } : {}),
+    ...(readBoolean(value, "fontSizeOverride") !== undefined ? { fontSizeOverride: readBoolean(value, "fontSizeOverride") } : {}),
+    ...(readString(value, "customName") ? { customName: readString(value, "customName") } : {}),
+    ...(readString(value, "lastCwd") ? { lastCwd: readString(value, "lastCwd") } : {}),
+    status: "disconnected",
+    restoreState: "restored-disconnected",
+  };
+};
+
+export const isRestoredDisconnectedSession = (
+  session: Pick<TerminalSession, "status"> & { restoreState?: string },
+): boolean => session.status === "disconnected" && session.restoreState === "restored-disconnected";
+
+const pruneNode = (node: unknown, validSessionIds: ReadonlySet<string>): WorkspaceNode | null => {
+  if (!isRecord(node)) return null;
+  if (node.type === "pane") {
+    if (typeof node.id !== "string" || typeof node.sessionId !== "string") return null;
+    return validSessionIds.has(node.sessionId) ? node : null;
+  }
+
+  if (node.type !== "split" || typeof node.id !== "string" || (node.direction !== "horizontal" && node.direction !== "vertical") || !Array.isArray(node.children)) {
+    return null;
+  }
+
+  const children = node.children
+    .map((child) => pruneNode(child, validSessionIds))
+    .filter((child): child is WorkspaceNode => child !== null);
+
+  if (children.length === 0) return null;
+  if (children.length === 1) return children[0];
+
+  const sizes = Array.isArray(node.sizes) ? node.sizes.filter((size): size is number => typeof size === "number" && Number.isFinite(size)) : undefined;
+  const nextSizes = sizes && sizes.length === node.children.length
+    ? children.map((child) => {
+        const originalIndex = node.children.findIndex((original) => original.id === child.id);
+        return originalIndex >= 0 ? sizes[originalIndex] ?? 0 : 0;
+      })
+    : children.map(() => 1 / children.length);
+  const total = nextSizes.reduce((sum, size) => sum + size, 0);
+
+  return {
+    ...node,
+    children,
+    sizes: total > 0 ? nextSizes.map((size) => size / total) : children.map(() => 1 / children.length),
+  };
+};
+
+const collectNodeSessionIds = (node: WorkspaceNode): string[] => {
+  if (node.type === "pane") return [node.sessionId];
+  return node.children.flatMap(collectNodeSessionIds);
+};
+
+export function resolveRestoredActiveTabId(
+  activeTabId: string,
+  tabOrder: readonly string[],
+  sessions: readonly Pick<TerminalSession, "id" | "workspaceId">[],
+  workspaces: readonly Pick<Workspace, "id">[],
+): string {
+  const valid = new Set([
+    "vault",
+    "sftp",
+    ...sessions.filter((session) => !session.workspaceId).map((session) => session.id),
+    ...workspaces.map((workspace) => workspace.id),
+  ]);
+  if (valid.has(activeTabId)) return activeTabId;
+  const fallback = tabOrder.find((id) => valid.has(id));
+  return fallback ?? "vault";
+}
+
+const isWorkspaceRecord = (value: unknown): value is Workspace & Record<string, unknown> => (
+  isRecord(value) && typeof value.id === "string" && Boolean(value.id) && "root" in value
+);
+
+export function sanitizeSessionRestorePayload(payload: unknown): SessionRestorePayload {
+  const record = isRecord(payload) ? payload : {};
+  const rawSessions = Array.isArray(record.sessions) ? record.sessions : [];
+  const rawWorkspaces = Array.isArray(record.workspaces) ? record.workspaces : [];
+  const sessions = uniqueStrings(
+    rawSessions
+      .map((session) => isRecord(session) ? readString(session, "id") ?? "" : "")
+  )
+    .map((id) => rawSessions.find((session) => isRecord(session) && session.id === id))
+    .map(restoreSessionFromUnknown)
+    .filter((session): session is RestoredTerminalSession => session !== null);
+  const workspaces: Workspace[] = [];
+  for (const workspace of rawWorkspaces) {
+    if (!isWorkspaceRecord(workspace)) continue;
+    const workspaceSessionIds = new Set(
+      sessions
+        .filter((session) => session.workspaceId === workspace.id)
+        .map((session) => session.id),
+    );
+    const root = pruneNode(workspace.root, workspaceSessionIds);
+    if (!root) continue;
+    const sessionIds = collectNodeSessionIds(root);
+    const sessionIdSet = new Set(sessionIds);
+    workspaces.push({
+      ...workspace,
+      root,
+      focusedSessionId: workspace.focusedSessionId && sessionIdSet.has(workspace.focusedSessionId)
+        ? workspace.focusedSessionId
+        : sessionIds[0],
+      focusSessionOrder: uniqueStrings(workspace.focusSessionOrder ?? []).filter((id) => sessionIdSet.has(id)),
+    });
+  }
+
+  const validWorkspaceIds = new Set(workspaces.map((workspace) => workspace.id));
+  const sanitizedSessions = sessions.filter((session) => (
+    !session.workspaceId || validWorkspaceIds.has(session.workspaceId)
+  ));
+  const validTabIds = new Set([
+    ...sanitizedSessions.filter((session) => !session.workspaceId).map((session) => session.id),
+    ...workspaces.map((workspace) => workspace.id),
+  ]);
+  const tabOrder = uniqueStrings(Array.isArray(record.tabOrder) ? record.tabOrder.filter((id): id is string => typeof id === "string") : [])
+    .filter((id) => validTabIds.has(id));
+  const activeTabId = resolveRestoredActiveTabId(
+    typeof record.activeTabId === "string" ? record.activeTabId : "vault",
+    tabOrder,
+    sanitizedSessions,
+    workspaces,
+  );
+
+  return {
+    version: SESSION_RESTORE_VERSION,
+    savedAt: Number.isFinite(record.savedAt) ? record.savedAt as number : Date.now(),
+    activeTabId,
+    tabOrder,
+    sessions: sanitizedSessions,
+    workspaces,
+  };
+}
+
+export function buildSessionRestorePayload(input: BuildSessionRestorePayloadInput): SessionRestorePayload {
+  return sanitizeSessionRestorePayload({
+    version: SESSION_RESTORE_VERSION,
+    savedAt: input.now ?? Date.now(),
+    activeTabId: input.activeTabId,
+    tabOrder: input.tabOrder,
+    sessions: input.sessions.map(restoreSession),
+    workspaces: input.workspaces,
+  });
+}

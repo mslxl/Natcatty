@@ -33,6 +33,7 @@ export const terminalPropsAreEqual = (
   && prev.customAccent === next.customAccent
   && prev.terminalSettings === next.terminalSettings
   && prev.sessionId === next.sessionId
+  && prev.restoreState === next.restoreState
   && prev.sessionDisplayName === next.sessionDisplayName
   && prev.startupCommand === next.startupCommand
   && prev.noAutoRun === next.noAutoRun

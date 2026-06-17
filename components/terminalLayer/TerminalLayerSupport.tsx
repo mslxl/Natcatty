@@ -485,6 +485,7 @@ export interface TerminalLayerProps {
   onUpdateTerminalFontSize?: (fontSize: number) => void;
   onUpdateTerminalFontWeight?: (fontWeight: number) => void;
   onUpdateSessionFontSize?: (sessionId: string, fontSize: number) => void;
+  onUpdateSessionRestoreCwd?: (sessionId: string, cwd: string | null) => void;
   onClearSessionFontSizeOverride?: (sessionId: string) => void;
   onCloseSession: (sessionId: string, e?: React.MouseEvent) => void;
   onUpdateSessionStatus: (sessionId: string, status: TerminalSession['status']) => void;
@@ -1110,6 +1111,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         customAccent={customAccent}
         terminalSettings={terminalSettings}
         sessionId={session.id}
+        restoreState={session.restoreState}
         startupCommand={session.startupCommand}
         noAutoRun={session.noAutoRun}
         reuseConnectionFromSessionId={session.reuseConnectionFromSessionId}

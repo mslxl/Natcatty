@@ -107,6 +107,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   onUpdateTerminalFontSize,
   onUpdateTerminalFontWeight,
   onUpdateSessionFontSize,
+  onUpdateSessionRestoreCwd,
   onClearSessionFontSizeOverride,
   onCloseSession,
   onUpdateSessionStatus,
@@ -190,9 +191,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     } else {
       terminalRendererCwdBySessionRef.current.delete(sessionId);
     }
+    onUpdateSessionRestoreCwd?.(sessionId, nextCwd);
     terminalCwdRevisionRef.current += 1;
     setTerminalCwdRevision(terminalCwdRevisionRef.current);
-  }, []);
+  }, [onUpdateSessionRestoreCwd]);
 
   // Stable callback references for Terminal components
   const handleCloseSession = useCallback((sessionId: string) => {
@@ -1168,6 +1170,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     onUpdateTerminalFontSize,
     onUpdateTerminalFontWeight,
     onUpdateSessionFontSize,
+    onUpdateSessionRestoreCwd,
     onClearSessionFontSizeOverride,
     onUpdateTerminalThemeId,
     pendingTerminalSelectionForAI,

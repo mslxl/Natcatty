@@ -66,6 +66,7 @@ export const DEFAULT_SHOW_SFTP_TAB = true;
 export const DEFAULT_SHOW_HOST_TREE_SIDEBAR = true;
 export const DEFAULT_SHELL_ONLY_TAB_NUMBER_SHORTCUTS = false;
 export const DEFAULT_DISABLE_TERMINAL_FONT_ZOOM = false;
+export { DEFAULT_RESTORE_PREVIOUS_SESSION } from './sessionRestoreSettings';
 
 // Editor defaults
 export const DEFAULT_EDITOR_WORD_WRAP = false;

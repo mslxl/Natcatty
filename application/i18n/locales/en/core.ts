@@ -144,6 +144,11 @@ export const enCoreMessages: Messages = {
   'settings.update.autoUpdateEnabled': 'Automatic Updates',
   'settings.update.autoUpdateEnabledDesc': 'Automatically check and download updates when available.',
 
+  // Settings > Session Restore
+  'settings.sessionRestore.title': 'Session Restore',
+  'settings.sessionRestore.restorePreviousSession': 'Restore previous tabs and workspaces',
+  'settings.sessionRestore.restorePreviousSessionDesc': 'Reopen terminal tabs and workspace layouts from the last app session.',
+
   // Settings > Session Logs
   'settings.sessionLogs.title': 'Session Logs',
   'settings.sessionLogs.description': 'Configure session log export and auto-save settings.',
