@@ -111,6 +111,7 @@ import {
   serializeTerminalSettings,
 } from './settingsStateDefaults';
 import { resolveRestorePreviousSessionSetting, resolveRestoreTerminalCwdSetting } from './sessionRestoreSettings';
+import { sessionRestoreStorage } from './sessionRestoreStorage';
 import { useSettingsStorageSync } from './settingsStorageSync';
 import { useSettingsIpcSync } from './settingsIpcSync';
 import { resolveCurrentTerminalTheme } from './settingsTerminalTheme';
@@ -834,6 +835,9 @@ export const useSettingsState = () => {
   const setRestorePreviousSession = useCallback((enabled: boolean) => {
     setRestorePreviousSessionState(enabled);
     localStorageAdapter.writeBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION, enabled);
+    if (!enabled) {
+      sessionRestoreStorage.clear();
+    }
     if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_RESTORE_PREVIOUS_SESSION, enabled);
   }, [notifySettingsChanged]);

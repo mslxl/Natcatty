@@ -162,3 +162,30 @@ test("session restore flush writes through the same sanitized payload path", () 
   assert.equal("transientPanelState" in writes[0].workspaces[0], false);
   assert.equal(writes[0].savedAt, 42);
 });
+
+test("session restore flush clears storage instead of writing when restore is disabled", () => {
+  const writes: SessionRestorePayload[] = [];
+  let clearCount = 0;
+  const storage = {
+    write: (next: SessionRestorePayload) => {
+      writes.push(next);
+      return true;
+    },
+    clear: () => {
+      clearCount += 1;
+    },
+  };
+
+  const wrote = buildAndWriteSessionRestorePayload({
+    restoreEnabled: false,
+    sessions: payload.sessions,
+    workspaces: payload.workspaces,
+    tabOrder: payload.tabOrder,
+    activeTabId: payload.activeTabId,
+    storage,
+  });
+
+  assert.equal(wrote, false);
+  assert.equal(clearCount, 1);
+  assert.equal(writes.length, 0);
+});

@@ -42,6 +42,23 @@ test("restore previous session setting participates in cross-window settings syn
   assert.match(ipcSyncSource, /key === STORAGE_KEY_RESTORE_PREVIOUS_SESSION/);
 });
 
+test("disabling restore previous session clears the stored restore snapshot", () => {
+  const settingsSource = readFileSync(new URL("./useSettingsState.ts", import.meta.url), "utf8");
+  const importIndex = settingsSource.indexOf("sessionRestoreStorage");
+  const setterIndex = settingsSource.indexOf("const setRestorePreviousSession = useCallback");
+  const clearIndex = settingsSource.indexOf("sessionRestoreStorage.clear()", setterIndex);
+  const writeIndex = settingsSource.indexOf("localStorageAdapter.writeBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION", setterIndex);
+
+  assert.notEqual(importIndex, -1);
+  assert.notEqual(setterIndex, -1);
+  assert.notEqual(clearIndex, -1);
+  assert.notEqual(writeIndex, -1);
+  assert.ok(
+    writeIndex < clearIndex,
+    "the setting should be persisted before clearing the restore snapshot",
+  );
+});
+
 test("restore terminal cwd setting participates in cross-window settings sync", () => {
   const storageSyncSource = readFileSync(new URL("./settingsStorageSync.ts", import.meta.url), "utf8");
   const ipcSyncSource = readFileSync(new URL("./settingsIpcSync.ts", import.meta.url), "utf8");

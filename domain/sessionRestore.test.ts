@@ -99,6 +99,54 @@ test("buildSessionRestorePayload deeply allowlists serial config fields", () => 
   });
 });
 
+test("buildSessionRestorePayload preserves serial sessions with empty usernames", () => {
+  const payload = buildSessionRestorePayload({
+    sessions: [{
+      ...session("s1"),
+      username: "",
+      protocol: "serial",
+      serialConfig: {
+        path: "/dev/tty.usbserial",
+        baudRate: 115200,
+      },
+    }],
+    workspaces: [],
+    tabOrder: ["s1"],
+    activeTabId: "s1",
+    now: 123,
+  });
+
+  assert.equal(payload.sessions.length, 1);
+  assert.equal(payload.sessions[0].username, "");
+  assert.equal(payload.sessions[0].protocol, "serial");
+});
+
+test("buildSessionRestorePayload preserves serial-only workspaces", () => {
+  const payload = buildSessionRestorePayload({
+    sessions: [{
+      ...session("s1", "ws-1"),
+      username: "",
+      protocol: "serial",
+      serialConfig: {
+        path: "/dev/tty.usbserial",
+        baudRate: 115200,
+      },
+    }],
+    workspaces: [{
+      id: "ws-1",
+      title: "Serial workspace",
+      root: { id: "pane-1", type: "pane", sessionId: "s1" },
+    }],
+    tabOrder: ["ws-1"],
+    activeTabId: "ws-1",
+    now: 123,
+  });
+
+  assert.equal(payload.sessions.length, 1);
+  assert.equal(payload.workspaces.length, 1);
+  assert.equal(payload.activeTabId, "ws-1");
+});
+
 test("buildSessionRestorePayload drops startup commands from restored sessions", () => {
   const payload = buildSessionRestorePayload({
     sessions: [{
@@ -212,6 +260,31 @@ test("sanitizeSessionRestorePayload enforces workspace session ownership", () =>
   assert.equal(sanitized.workspaces[0].focusedSessionId, "owned");
   assert.deepEqual(sanitized.workspaces[0].focusSessionOrder, ["owned"]);
   assert.deepEqual(sanitized.tabOrder, ["ws-1", "standalone", "ws-2"]);
+});
+
+test("sanitizeSessionRestorePayload drops workspace sessions missing from the restored root", () => {
+  const sanitized = sanitizeSessionRestorePayload({
+    version: 1,
+    savedAt: 1,
+    activeTabId: "ws-1",
+    tabOrder: ["ws-1"],
+    sessions: [
+      session("s1", "ws-1"),
+      session("s2", "ws-1"),
+    ],
+    workspaces: [{
+      id: "ws-1",
+      title: "Workspace",
+      root: { id: "pane-1", type: "pane", sessionId: "s1" },
+      focusedSessionId: "s2",
+      focusSessionOrder: ["s2", "s1"],
+    }],
+  });
+
+  assert.deepEqual(sanitized.sessions.map((entry) => entry.id), ["s1"]);
+  assert.equal(sanitized.workspaces[0].focusedSessionId, "s1");
+  assert.deepEqual(sanitized.workspaces[0].focusSessionOrder, ["s1"]);
+  assert.deepEqual(sanitized.tabOrder, ["ws-1"]);
 });
 
 test("sanitizeSessionRestorePayload allowlists workspace node fields", () => {

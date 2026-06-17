@@ -69,6 +69,7 @@ export function buildPersistableSessionRestorePayload({
 }
 
 export function buildAndWriteSessionRestorePayload({
+  restoreEnabled = true,
   sessions,
   workspaces,
   tabOrder,
@@ -76,6 +77,7 @@ export function buildAndWriteSessionRestorePayload({
   now,
   storage,
 }: {
+  restoreEnabled?: boolean;
   sessions: TerminalSession[];
   workspaces: Workspace[];
   tabOrder: string[];
@@ -86,6 +88,10 @@ export function buildAndWriteSessionRestorePayload({
     clear(): void;
   };
 }): boolean {
+  if (!restoreEnabled) {
+    storage.clear();
+    return false;
+  }
   const payload = buildPersistableSessionRestorePayload({
     sessions,
     workspaces,

@@ -95,6 +95,9 @@ export const useSessionState = () => {
 
     const persistNow = () => {
       buildAndWriteSessionRestorePayload({
+        restoreEnabled: resolveRestorePreviousSessionSetting(
+          localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION),
+        ),
         sessions: sessionsRef.current,
         workspaces: workspacesRef.current,
         tabOrder: tabOrderRef.current,

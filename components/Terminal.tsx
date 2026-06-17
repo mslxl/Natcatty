@@ -1120,6 +1120,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     retryTokenRef.current = retryToken;
     const retryStillActive = () => retryTokenRef.current === retryToken && termRef.current === term;
 
+    isBootActiveRef.current = true;
     auth.resetForRetry();
     terminalDataCapturedRef.current = false;
     hasRunStartupCommandRef.current = false;

@@ -65,6 +65,11 @@ const readString = (record: Record<string, unknown>, key: string): string | unde
   return typeof value === "string" && value.length > 0 ? value : undefined;
 };
 
+const readStringAllowEmpty = (record: Record<string, unknown>, key: string): string | undefined => {
+  const value = record[key];
+  return typeof value === "string" ? value : undefined;
+};
+
 const readBoolean = (record: Record<string, unknown>, key: string): boolean | undefined => {
   const value = record[key];
   return typeof value === "boolean" ? value : undefined;
@@ -143,8 +148,8 @@ const restoreSessionFromUnknown = (value: unknown): RestoredTerminalSession | nu
   const hostId = readString(value, "hostId");
   const hostLabel = readString(value, "hostLabel");
   const hostname = readString(value, "hostname");
-  const username = readString(value, "username");
-  if (!id || !hostId || !hostLabel || !hostname || !username) return null;
+  const username = readStringAllowEmpty(value, "username");
+  if (!id || !hostId || !hostLabel || !hostname || username === undefined) return null;
 
   const serialConfig = sanitizeSerialConfig(value.serialConfig);
   const protocol = sanitizeProtocol(value.protocol);
@@ -331,6 +336,7 @@ export function sanitizeSessionRestorePayload(payload: unknown): SessionRestoreP
     .map(restoreSessionFromUnknown)
     .filter((session): session is RestoredTerminalSession => session !== null);
   const workspaces: Workspace[] = [];
+  const workspaceRootSessionIds = new Map<string, Set<string>>();
   for (const workspace of rawWorkspaces) {
     if (!isWorkspaceRecord(workspace)) continue;
     const workspaceSessionIds = new Set(
@@ -341,12 +347,17 @@ export function sanitizeSessionRestorePayload(payload: unknown): SessionRestoreP
     const root = pruneNode(workspace.root, workspaceSessionIds);
     if (!root) continue;
     const sessionIds = collectNodeSessionIds(root);
+    workspaceRootSessionIds.set(workspace.id, new Set(sessionIds));
     workspaces.push(restoreWorkspace(workspace, root, sessionIds));
   }
 
   const validWorkspaceIds = new Set(workspaces.map((workspace) => workspace.id));
   const sanitizedSessions = sessions.filter((session) => (
-    !session.workspaceId || validWorkspaceIds.has(session.workspaceId)
+    !session.workspaceId
+    || (
+      validWorkspaceIds.has(session.workspaceId)
+      && (workspaceRootSessionIds.get(session.workspaceId)?.has(session.id) ?? false)
+    )
   ));
   const validTabIds = new Set([
     ...sanitizedSessions.filter((session) => !session.workspaceId).map((session) => session.id),
