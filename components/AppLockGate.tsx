@@ -33,6 +33,13 @@ export function shouldRenderAppLockGateChildren(input: {
   );
 }
 
+export function shouldNotifyAppLockGateRendererReady(input: {
+  notifyRendererReady: boolean;
+  renderChildren: boolean;
+}): boolean {
+  return input.notifyRendererReady && input.renderChildren;
+}
+
 export const AppLockGate: React.FC<AppLockGateProps> = ({
   children,
   notifyRendererReady = true,
@@ -48,6 +55,10 @@ export const AppLockGate: React.FC<AppLockGateProps> = ({
   if (renderChildren) {
     hasRenderedChildrenRef.current = true;
   }
+  const shouldNotifyRendererReady = shouldNotifyAppLockGateRendererReady({
+    notifyRendererReady,
+    renderChildren,
+  });
 
   useEffect(() => {
     try {
@@ -56,13 +67,13 @@ export const AppLockGate: React.FC<AppLockGateProps> = ({
         splash.classList.add('fade-out');
         setTimeout(() => splash.remove(), 200);
       }
-      if (notifyRendererReady) {
+      if (shouldNotifyRendererReady) {
         netcattyBridge.get()?.rendererReady?.();
       }
     } catch {
       // ignore
     }
-  }, [notifyRendererReady]);
+  }, [shouldNotifyRendererReady]);
 
   useEffect(() => {
     const unsubscribe = netcattyBridge.get()?.onAppLockReopen?.(() => {

@@ -225,9 +225,8 @@ function TerminalPopupPageInner({ settings }: { settings: SettingsState }) {
         void setWindowTitle(payload.title);
       }
     });
-    // Main delivers the popup payload as soon as the renderer reports ready
-    // (and destroys the window if it never does) — so report ready only after
-    // the config listener above is registered.
+    // Popup config may already be buffered by preload, so register the listener
+    // before reporting renderer readiness or the buffered payload can be lost.
     notifyRendererReady();
     return unsubscribe;
   }, [notifyRendererReady, onPopupConfig, setWindowTitle]);

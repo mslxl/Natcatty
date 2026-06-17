@@ -33,10 +33,23 @@ function SettingsWindowFallback() {
           padding: '20px 16px 12px',
         }}
       >
-        <div style={{ fontSize: 18, fontWeight: 600 }}>Settings</div>
-        <div style={{ marginTop: 6, fontSize: 13, color: 'hsl(var(--muted-foreground))' }}>
-          Loading preferences...
-        </div>
+        <div
+          style={{
+            width: 96,
+            height: 22,
+            borderRadius: 6,
+            background: 'hsl(var(--muted) / 0.5)',
+          }}
+        />
+        <div
+          style={{
+            marginTop: 8,
+            width: 150,
+            height: 14,
+            borderRadius: 5,
+            background: 'hsl(var(--muted) / 0.38)',
+          }}
+        />
       </div>
 
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
@@ -148,7 +161,7 @@ const renderApp = () => {
     root.render(
       <AppLockGate>
         {({ settings }) => (
-          <Suspense fallback={<div style={{ padding: 12, color: '#fff' }}>Loading tray panel…</div>}>
+          <Suspense fallback={<div style={{ minHeight: 48, background: 'hsl(var(--background))' }} />}>
             <LazyTrayPanel settings={settings} />
           </Suspense>
         )}

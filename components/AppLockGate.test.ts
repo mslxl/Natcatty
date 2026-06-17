@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { shouldRenderAppLockGateChildren } from "./AppLockGate.tsx";
+import {
+  shouldNotifyAppLockGateRendererReady,
+  shouldRenderAppLockGateChildren,
+} from "./AppLockGate.tsx";
 
 test("shouldRenderAppLockGateChildren withholds startup-locked route children until unlock", () => {
   assert.equal(
@@ -49,5 +52,29 @@ test("shouldRenderAppLockGateChildren keeps existing children mounted for reopen
       hasRenderedChildren: true,
     }),
     true,
+  );
+});
+
+test("shouldNotifyAppLockGateRendererReady waits until startup-locked children can mount", () => {
+  assert.equal(
+    shouldNotifyAppLockGateRendererReady({
+      notifyRendererReady: true,
+      renderChildren: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldNotifyAppLockGateRendererReady({
+      notifyRendererReady: true,
+      renderChildren: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldNotifyAppLockGateRendererReady({
+      notifyRendererReady: false,
+      renderChildren: true,
+    }),
+    false,
   );
 });
