@@ -1,9 +1,9 @@
 import React, { useEffect, useRef } from 'react';
 
 import { I18nProvider } from '../application/i18n/I18nProvider';
+import { useAppLockBridge } from '../application/state/useAppLockBridge';
 import { type AppLockReason, useAppLockState } from '../application/state/useAppLockState';
 import { useSettingsState } from '../application/state/useSettingsState';
-import { netcattyBridge } from '../infrastructure/services/netcattyBridge';
 import { ToastProvider } from './ui/toast';
 import { TooltipProvider } from './ui/tooltip';
 import { AppLockOverlay } from './AppLockOverlay';
@@ -46,6 +46,10 @@ export const AppLockGate: React.FC<AppLockGateProps> = ({
 }) => {
   const settings = useSettingsState();
   const appLock = useAppLockState(settings.appLockSettings);
+  const {
+    notifyRendererReady: notifyAppLockRendererReady,
+    onAppLockReopen,
+  } = useAppLockBridge();
   const hasRenderedChildrenRef = useRef(false);
   const renderChildren = shouldRenderAppLockGateChildren({
     locked: appLock.locked,
@@ -68,19 +72,19 @@ export const AppLockGate: React.FC<AppLockGateProps> = ({
         setTimeout(() => splash.remove(), 200);
       }
       if (shouldNotifyRendererReady) {
-        netcattyBridge.get()?.rendererReady?.();
+        notifyAppLockRendererReady();
       }
     } catch {
       // ignore
     }
-  }, [shouldNotifyRendererReady]);
+  }, [notifyAppLockRendererReady, shouldNotifyRendererReady]);
 
   useEffect(() => {
-    const unsubscribe = netcattyBridge.get()?.onAppLockReopen?.(() => {
+    const unsubscribe = onAppLockReopen(() => {
       appLock.lockNow('startup');
     });
     return () => unsubscribe?.();
-  }, [appLock]);
+  }, [appLock, onAppLockReopen]);
 
   return (
     <I18nProvider locale={settings.uiLanguage}>
