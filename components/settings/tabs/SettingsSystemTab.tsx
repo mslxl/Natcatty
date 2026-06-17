@@ -4,11 +4,20 @@
 import { ChevronDown, ChevronRight, Download, ExternalLink, FolderOpen, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import React, { useCallback, useEffect, useState } from "react";
 import { useI18n } from "../../../application/i18n/I18nProvider";
+import {
+  applyAppLockEnabledChange,
+  replaceAppLockPassword,
+  type AppLockSettingsChangeError,
+} from "../../../application/state/appLockSettingsStorage";
+import type { AppLockSettings, AppLockTimeoutMinutes } from "../../../domain/appLock";
+import { APP_LOCK_TIMEOUT_OPTIONS_MINUTES } from "../../../domain/appLock";
 import { getCredentialProtectionAvailability } from "../../../infrastructure/services/credentialProtection";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import type { UpdateState } from '../../../application/state/useUpdateCheck';
 import { SessionLogFormat, keyEventToString } from "../../../domain/models";
 import { Button } from "../../ui/button";
+import { Input } from "../../ui/input";
+import { Label } from "../../ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
 import { Toggle, Select, SettingRow, SectionHeader, SettingCard, SettingsTabContent } from "../settings-ui";
 import { cn } from "../../../lib/utils";
@@ -76,6 +85,9 @@ function formatLastChecked(
 }
 
 interface SettingsSystemTabProps {
+  appLockSettings: AppLockSettings;
+  setAppLockSettings: (settings: AppLockSettings) => void;
+  unlockApp?: (password: string) => Promise<unknown>;
   sessionLogsEnabled: boolean;
   setSessionLogsEnabled: (enabled: boolean) => void;
   sessionLogsDir: string;
@@ -104,6 +116,9 @@ interface SettingsSystemTabProps {
 }
 
 const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
+  appLockSettings,
+  setAppLockSettings,
+  unlockApp,
   sessionLogsEnabled,
   setSessionLogsEnabled,
   sessionLogsDir,
@@ -131,6 +146,13 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
 }) => {
   const { t } = useI18n();
   const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
+
+  const [appLockCurrentPassword, setAppLockCurrentPassword] = useState("");
+  const [appLockNewPassword, setAppLockNewPassword] = useState("");
+  const [appLockConfirmPassword, setAppLockConfirmPassword] = useState("");
+  const [appLockError, setAppLockError] = useState<string | null>(null);
+  const [isSavingAppLock, setIsSavingAppLock] = useState(false);
+  const hasAppLockPassword = Boolean(appLockSettings.passwordVerifier);
 
   const [tempDirInfo, setTempDirInfo] = useState<TempDirInfo | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -334,6 +356,102 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
     await bridge.openSshDebugLogDir();
   }, []);
 
+  const mapAppLockChangeError = useCallback((error: AppLockSettingsChangeError): string => {
+    switch (error) {
+      case 'empty-current':
+        return t('settings.appLock.validation.currentRequired');
+      case 'empty-next':
+        return t('settings.appLock.validation.newRequired');
+      case 'incorrect':
+        return t('settings.appLock.validation.incorrect');
+    }
+  }, [t]);
+
+  const handleAppLockEnabledChange = useCallback(async (enabled: boolean) => {
+    setAppLockError(null);
+    if (enabled && !hasAppLockPassword) {
+      setAppLockError(t('settings.appLock.enableAfterPassword'));
+      return;
+    }
+
+    const result = await applyAppLockEnabledChange(appLockSettings, enabled, appLockCurrentPassword);
+    if ('ok' in result && result.ok === false) {
+      setAppLockError(mapAppLockChangeError(result.error));
+      return;
+    }
+
+    setAppLockSettings(result);
+    if (!enabled) {
+      setAppLockCurrentPassword("");
+      setAppLockNewPassword("");
+      setAppLockConfirmPassword("");
+      void unlockApp?.(appLockCurrentPassword);
+    }
+  }, [
+    appLockCurrentPassword,
+    appLockSettings,
+    hasAppLockPassword,
+    mapAppLockChangeError,
+    setAppLockSettings,
+    t,
+    unlockApp,
+  ]);
+
+  const handleAppLockTimeoutChange = useCallback((value: string) => {
+    const timeoutMinutes = Number(value) as AppLockTimeoutMinutes;
+    if (!APP_LOCK_TIMEOUT_OPTIONS_MINUTES.includes(timeoutMinutes)) return;
+    setAppLockSettings({
+      ...appLockSettings,
+      timeoutMinutes,
+    });
+  }, [appLockSettings, setAppLockSettings]);
+
+  const handleSaveAppLockPassword = useCallback(async () => {
+    setAppLockError(null);
+    if (!appLockNewPassword.trim()) {
+      setAppLockError(t('settings.appLock.validation.newRequired'));
+      return;
+    }
+    if (!appLockConfirmPassword.trim()) {
+      setAppLockError(t('settings.appLock.validation.confirmRequired'));
+      return;
+    }
+    if (appLockNewPassword !== appLockConfirmPassword) {
+      setAppLockError(t('settings.appLock.validation.mismatch'));
+      return;
+    }
+
+    setIsSavingAppLock(true);
+    try {
+      const result = await replaceAppLockPassword(appLockSettings, {
+        currentPassword: appLockCurrentPassword,
+        nextPassword: appLockNewPassword,
+      });
+      if ('ok' in result && result.ok === false) {
+        setAppLockError(mapAppLockChangeError(result.error));
+        return;
+      }
+
+      setAppLockSettings({
+        ...result,
+        enabled: true,
+      });
+      setAppLockCurrentPassword("");
+      setAppLockNewPassword("");
+      setAppLockConfirmPassword("");
+    } finally {
+      setIsSavingAppLock(false);
+    }
+  }, [
+    appLockConfirmPassword,
+    appLockCurrentPassword,
+    appLockNewPassword,
+    appLockSettings,
+    mapAppLockChangeError,
+    setAppLockSettings,
+    t,
+  ]);
+
   // Handle global toggle hotkey recording
   const cancelHotkeyRecording = useCallback(() => {
     setIsRecordingHotkey(false);
@@ -389,9 +507,124 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
     { value: "raw", label: t("settings.sessionLogs.formatRaw") },
     { value: "html", label: t("settings.sessionLogs.formatHtml") },
   ];
+  const appLockTimeoutOptions = APP_LOCK_TIMEOUT_OPTIONS_MINUTES.map((minutes) => ({
+    value: String(minutes),
+    label: t(`settings.appLock.timeout.${minutes}`),
+  }));
 
   return (
     <SettingsTabContent value="system">
+          <SectionHeader title={t("settings.appLock.title")} />
+            <SettingCard className="space-y-4 py-4">
+              <p className="text-sm text-muted-foreground">
+                {t("settings.appLock.description")}
+              </p>
+
+              <SettingRow
+                label={t("settings.appLock.enable")}
+                description={hasAppLockPassword ? t("settings.appLock.enableDesc") : t("settings.appLock.enableAfterPassword")}
+              >
+                <Toggle
+                  checked={appLockSettings.enabled}
+                  onChange={(enabled) => void handleAppLockEnabledChange(enabled)}
+                />
+              </SettingRow>
+
+              <SettingRow
+                label={t("settings.appLock.timeout")}
+                description={t("settings.appLock.timeoutDesc")}
+              >
+                <Select
+                  value={String(appLockSettings.timeoutMinutes)}
+                  options={appLockTimeoutOptions}
+                  onChange={handleAppLockTimeoutChange}
+                  className="w-36"
+                />
+              </SettingRow>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                {hasAppLockPassword && (
+                  <div className="space-y-2">
+                    <Label htmlFor="app-lock-current-password">
+                      {t("settings.appLock.currentPassword")}
+                    </Label>
+                    <Input
+                      id="app-lock-current-password"
+                      type="password"
+                      value={appLockCurrentPassword}
+                      autoComplete="current-password"
+                      placeholder={t("settings.appLock.currentPasswordPlaceholder")}
+                      onChange={(event) => {
+                        setAppLockCurrentPassword(event.target.value);
+                        setAppLockError(null);
+                      }}
+                    />
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <Label htmlFor="app-lock-new-password">
+                    {t("settings.appLock.newPassword")}
+                  </Label>
+                  <Input
+                    id="app-lock-new-password"
+                    type="password"
+                    value={appLockNewPassword}
+                    autoComplete="new-password"
+                    placeholder={t("settings.appLock.newPasswordPlaceholder")}
+                    onChange={(event) => {
+                      setAppLockNewPassword(event.target.value);
+                      setAppLockError(null);
+                    }}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="app-lock-confirm-password">
+                    {t("settings.appLock.confirmPassword")}
+                  </Label>
+                  <Input
+                    id="app-lock-confirm-password"
+                    type="password"
+                    value={appLockConfirmPassword}
+                    autoComplete="new-password"
+                    placeholder={t("settings.appLock.confirmPasswordPlaceholder")}
+                    onChange={(event) => {
+                      setAppLockConfirmPassword(event.target.value);
+                      setAppLockError(null);
+                    }}
+                  />
+                </div>
+              </div>
+
+              {appLockError && (
+                <p className="text-sm text-destructive">{appLockError}</p>
+              )}
+
+              <div className="flex items-center justify-between gap-3">
+                <div className="space-y-1">
+                  {hasAppLockPassword && (
+                    <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                      {t("settings.appLock.passwordSet")}
+                    </p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    {t("settings.appLock.localOnlyHint")}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => void handleSaveAppLockPassword()}
+                  disabled={isSavingAppLock}
+                >
+                  {isSavingAppLock
+                    ? t("settings.appLock.savingPassword")
+                    : hasAppLockPassword
+                      ? t("settings.appLock.replacePassword")
+                      : t("settings.appLock.savePassword")}
+                </Button>
+              </div>
+            </SettingCard>
+
           <SectionHeader title={t('settings.update.title')} />
             <SettingCard className="space-y-3 py-4">
               {/* Current version */}

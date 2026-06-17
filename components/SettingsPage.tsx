@@ -206,7 +206,7 @@ const SettingsSyncTabWithVault: React.FC<{ onSettingsApplied?: () => void }> = (
     );
 };
 
-const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }) => {
+const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLockState }> = ({ settings, appLock }) => {
     const { t } = useI18n();
     const { notifyRendererReady, closeSettingsWindow, onWindowCommandCloseRequested } = useWindowControls();
     const { updateState, checkNow, installUpdate, openReleasePage, startDownload, isUpdateDemoMode } = useUpdateCheck({
@@ -429,6 +429,9 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
 
                     {mountedTabs.has("system") && (
                         <SettingsSystemTab
+                            appLockSettings={settings.appLockSettings}
+                            setAppLockSettings={settings.setAppLockSettings}
+                            unlockApp={appLock?.unlock}
                             sessionLogsEnabled={settings.sessionLogsEnabled}
                             setSessionLogsEnabled={settings.setSessionLogsEnabled}
                             sessionLogsDir={settings.sessionLogsDir}
@@ -463,6 +466,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
 
 export default function SettingsPage({
     settings: providedSettings,
+    appLock,
 }: {
     settings?: SettingsState;
     appLock?: AppLockState;
@@ -472,7 +476,7 @@ export default function SettingsPage({
 
     return (
         <I18nProvider locale={settings.uiLanguage}>
-            <SettingsPageContent settings={settings} />
+            <SettingsPageContent settings={settings} appLock={appLock} />
         </I18nProvider>
     );
 }
