@@ -156,7 +156,7 @@ const renderApp = () => {
     );
   } else if (route === 'terminal-popup') {
     root.render(
-      <AppLockGate>
+      <AppLockGate notifyRendererReady={false}>
         {({ settings }) => (
           <Suspense fallback={<TerminalPopupWindowFallback />}>
             <LazyTerminalPopupPage settings={settings} />
