@@ -59,6 +59,20 @@ export const zhCNCoreMessages: Messages = {
   'credentials.protectionUnavailable.message': '当前设备无法自动解密已保存的密码和密钥。连接前请重新输入凭据。',
   'credentials.protectionUnavailable.action': '打开设置',
 
+  // App Lock
+  'appLock.title': 'Netcatty 已锁定',
+  'appLock.reason.default': '输入锁定密码以继续。',
+  'appLock.reason.startup': '每次打开此窗口时，Netcatty 都会锁定。',
+  'appLock.reason.idle': 'Netcatty 已因长时间无操作而锁定。',
+  'appLock.reason.manual': 'Netcatty 已被手动锁定。',
+  'appLock.passwordLabel': '锁定密码',
+  'appLock.passwordPlaceholder': '输入密码',
+  'appLock.unlock': '解锁',
+  'appLock.unlocking': '正在解锁...',
+  'appLock.error.emptyPassword': '请输入锁定密码。',
+  'appLock.error.incorrectPassword': '锁定密码不正确。',
+  'topTabs.lockApp': '锁定 Netcatty',
+
   // Settings shell
   'settings.title': '设置',
   'settings.tab.application': '应用',

@@ -75,6 +75,20 @@ export const ruCoreMessages: Messages = {
   'credentials.protectionUnavailable.message': 'Сохранённые пароли и ключи не могут быть автоматически расшифрованы на этом устройстве. Перед подключением введите учётные данные заново.',
   'credentials.protectionUnavailable.action': 'Открыть настройки',
 
+  // App Lock
+  'appLock.title': 'Netcatty заблокирован',
+  'appLock.reason.default': 'Введите пароль блокировки, чтобы продолжить.',
+  'appLock.reason.startup': 'Netcatty блокируется при каждом открытии этого окна.',
+  'appLock.reason.idle': 'Netcatty заблокирован после периода бездействия.',
+  'appLock.reason.manual': 'Netcatty был заблокирован вручную.',
+  'appLock.passwordLabel': 'Пароль блокировки',
+  'appLock.passwordPlaceholder': 'Введите пароль',
+  'appLock.unlock': 'Разблокировать',
+  'appLock.unlocking': 'Разблокировка...',
+  'appLock.error.emptyPassword': 'Введите пароль блокировки.',
+  'appLock.error.incorrectPassword': 'Неверный пароль блокировки.',
+  'topTabs.lockApp': 'Заблокировать Netcatty',
+
   // Settings shell
   'settings.title': 'Настройки',
   'settings.tab.application': 'Приложение',

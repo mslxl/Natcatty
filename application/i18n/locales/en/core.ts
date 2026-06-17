@@ -75,6 +75,20 @@ export const enCoreMessages: Messages = {
   'credentials.protectionUnavailable.message': 'Saved passwords and keys cannot be auto-decrypted on this device. Re-enter credentials before connecting.',
   'credentials.protectionUnavailable.action': 'Open Settings',
 
+  // App Lock
+  'appLock.title': 'Netcatty is locked',
+  'appLock.reason.default': 'Enter your lock password to continue.',
+  'appLock.reason.startup': 'Netcatty locks each time this window opens.',
+  'appLock.reason.idle': 'Netcatty locked after the inactivity timeout.',
+  'appLock.reason.manual': 'Netcatty was locked manually.',
+  'appLock.passwordLabel': 'Lock password',
+  'appLock.passwordPlaceholder': 'Enter password',
+  'appLock.unlock': 'Unlock',
+  'appLock.unlocking': 'Unlocking...',
+  'appLock.error.emptyPassword': 'Enter the lock password.',
+  'appLock.error.incorrectPassword': 'Incorrect lock password.',
+  'topTabs.lockApp': 'Lock Netcatty',
+
   // Settings shell
   'settings.title': 'Settings',
   'settings.tab.application': 'Application',
