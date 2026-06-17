@@ -43,13 +43,17 @@ import {
 import { resolveRestorePreviousSessionSetting } from './sessionRestoreSettings';
 
 
-export const useSessionState = () => {
+export const useSessionState = ({
+  persistSessionRestore = true,
+}: {
+  persistSessionRestore?: boolean;
+} = {}) => {
   const initialRestoreState = useMemo(() => createInitialRestoredSessionState({
-    restoreEnabled: resolveRestorePreviousSessionSetting(
+    restoreEnabled: persistSessionRestore && resolveRestorePreviousSessionSetting(
       localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION),
     ),
     payload: sessionRestoreStorage.read(),
-  }), []);
+  }), [persistSessionRestore]);
   const [sessions, setSessions] = useState<TerminalSession[]>(initialRestoreState.sessions);
   const [workspaces, setWorkspaces] = useState<Workspace[]>(initialRestoreState.workspaces);
   // Latest workspaces snapshot for synchronous existence checks outside
@@ -102,6 +106,8 @@ export const useSessionState = () => {
   }, []);
 
   useEffect(() => {
+    if (!persistSessionRestore) return;
+
     const restoreEnabled = resolveRestorePreviousSessionSetting(
       localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION),
     );
@@ -140,7 +146,7 @@ export const useSessionState = () => {
       window.removeEventListener("pagehide", handlePageHide);
       window.removeEventListener("beforeunload", handlePageHide);
     };
-  }, [sessions, workspaces, tabOrder, activeTabRevision, restorePreviousSessionRevision]);
+  }, [sessions, workspaces, tabOrder, activeTabRevision, restorePreviousSessionRevision, persistSessionRestore]);
 
   const updateSessionRestoreCwd = useCallback((sessionId: string, cwd: string | null) => {
     setSessions((prev) => updateSessionRestoreCwdState(prev, sessionId, cwd));

@@ -105,6 +105,7 @@ function App({ settings }: { settings: SettingsState }) {
   // Passphrase request queue for encrypted SSH keys
   const [passphraseQueue, setPassphraseQueue] = useState<PassphraseRequest[]>([]);
   const [pendingNewWindowSession, setPendingNewWindowSession] = useState<OpenSessionInNewWindowPayload | null>(null);
+  const isPeerSessionWindow = typeof window !== 'undefined' && window.location.hash.startsWith('#/session-window');
 
   const {
     theme,
@@ -259,7 +260,7 @@ function App({ settings }: { settings: SettingsState }) {
     copySession,
     createSessionFromCloneSource,
     updateSessionRestoreCwd,
-  } = useSessionState();
+  } = useSessionState({ persistSessionRestore: !isPeerSessionWindow });
 
   const handleRunSnippet = useCallback(
     async (snippet: Snippet, targetHosts: Host[]) => {

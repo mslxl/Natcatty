@@ -65,13 +65,34 @@ test("session restore persistence re-arms when restore previous session is enabl
   const revisionStateIndex = source.indexOf("restorePreviousSessionRevision");
   const keyGuardIndex = source.indexOf("detail?.key !== STORAGE_KEY_RESTORE_PREVIOUS_SESSION");
   const listenerIndex = source.indexOf("addEventListener(LOCAL_STORAGE_ADAPTER_CHANGED_EVENT");
-  const effectDependencyIndex = source.indexOf("restorePreviousSessionRevision]", source.indexOf("beforeunload"));
+  const effectDependencyIndex = source.indexOf("restorePreviousSessionRevision, persistSessionRestore]", source.indexOf("beforeunload"));
 
   assert.notEqual(adapterEventImportIndex, -1);
   assert.notEqual(revisionStateIndex, -1);
   assert.notEqual(keyGuardIndex, -1);
   assert.notEqual(listenerIndex, -1);
   assert.notEqual(effectDependencyIndex, -1);
+});
+
+test("session restore persistence can be disabled for non-main windows", () => {
+  const hookSource = readFileSync(new URL("./useSessionState.ts", import.meta.url), "utf8");
+  const traySource = readFileSync(new URL("../../components/TrayPanel.tsx", import.meta.url), "utf8");
+  const appSource = readFileSync(new URL("../../App.tsx", import.meta.url), "utf8");
+  const indexSource = readFileSync(new URL("../../index.tsx", import.meta.url), "utf8");
+  const registerBridgesSource = readFileSync(new URL("../../electron/main/registerBridges.cjs", import.meta.url), "utf8");
+  const mainWindowSource = readFileSync(new URL("../../electron/bridges/windowManager/mainWindow.cjs", import.meta.url), "utf8");
+
+  assert.match(hookSource, /persistSessionRestore\?: boolean/);
+  assert.match(hookSource, /restoreEnabled: persistSessionRestore && resolveRestorePreviousSessionSetting/);
+  assert.match(hookSource, /if \(!persistSessionRestore\) return;/);
+  assert.match(traySource, /useSessionState\(\{ persistSessionRestore: false \}\)/);
+  assert.match(appSource, /window\.location\.hash\.startsWith\('#\/session-window'\)/);
+  assert.match(appSource, /persistSessionRestore: !isPeerSessionWindow/);
+  assert.match(indexSource, /hash === '#\/session-window'/);
+  assert.match(registerBridgesSource, /route: "session-window"/);
+  assert.match(mainWindowSource, /const rendererHash = typeof route === "string"/);
+  assert.match(mainWindowSource, /loadURL\(`\$\{getDevRendererBaseUrl\(devServerUrl\)\}\$\{rendererHash\}`\)/);
+  assert.match(mainWindowSource, /loadURL\(`app:\/\/netcatty\/index\.html\$\{rendererHash\}`\)/);
 });
 
 test("restore terminal cwd setting participates in cross-window settings sync", () => {

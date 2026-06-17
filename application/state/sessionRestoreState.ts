@@ -100,7 +100,6 @@ export function buildAndWriteSessionRestorePayload({
     now,
   });
   if (!payload) {
-    storage.clear();
     return false;
   }
   return storage.write(payload);

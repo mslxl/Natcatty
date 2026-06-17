@@ -189,3 +189,29 @@ test("session restore flush clears storage instead of writing when restore is di
   assert.equal(clearCount, 1);
   assert.equal(writes.length, 0);
 });
+
+test("session restore flush skips empty transient windows without clearing existing snapshots", () => {
+  const writes: SessionRestorePayload[] = [];
+  let clearCount = 0;
+  const storage = {
+    write: (next: SessionRestorePayload) => {
+      writes.push(next);
+      return true;
+    },
+    clear: () => {
+      clearCount += 1;
+    },
+  };
+
+  const wrote = buildAndWriteSessionRestorePayload({
+    sessions: [],
+    workspaces: [],
+    tabOrder: [],
+    activeTabId: "vault",
+    storage,
+  });
+
+  assert.equal(wrote, false);
+  assert.equal(clearCount, 0);
+  assert.equal(writes.length, 0);
+});

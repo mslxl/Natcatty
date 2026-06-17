@@ -401,6 +401,47 @@ test("sanitizeSessionRestorePayload falls back to equal split sizes when saved s
   }
 });
 
+test("sanitizeSessionRestorePayload preserves split sizes when nested splits collapse", () => {
+  const sanitized = sanitizeSessionRestorePayload({
+    version: 1,
+    savedAt: 1,
+    activeTabId: "ws-1",
+    tabOrder: ["ws-1"],
+    sessions: [session("s1", "ws-1"), session("s3", "ws-1")],
+    workspaces: [{
+      id: "ws-1",
+      title: "Workspace",
+      root: {
+        id: "root-split",
+        type: "split",
+        direction: "horizontal",
+        sizes: [0.7, 0.3],
+        children: [
+          {
+            id: "left-split",
+            type: "split",
+            direction: "vertical",
+            sizes: [0.4, 0.6],
+            children: [
+              { id: "pane-1", type: "pane", sessionId: "s1" },
+              { id: "pane-missing", type: "pane", sessionId: "missing" },
+            ],
+          },
+          { id: "pane-3", type: "pane", sessionId: "s3" },
+        ],
+      },
+    }],
+  });
+
+  const root = sanitized.workspaces[0].root;
+  assert.equal(root.type, "split");
+  if (root.type === "split") {
+    assert.deepEqual(root.children.map((child) => child.type === "pane" ? child.sessionId : "split"), ["s1", "s3"]);
+    assert.deepEqual(root.sizes, [0.7, 0.3]);
+    assert.ok(root.sizes?.every((size) => size > 0));
+  }
+});
+
 test("resolveRestoredActiveTabId falls back to vault when no restored tab is valid", () => {
   assert.equal(resolveRestoredActiveTabId("missing", [], [], []), "vault");
 });

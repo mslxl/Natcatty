@@ -261,9 +261,13 @@ const pruneNode = (node: unknown, validSessionIds: ReadonlySet<string>): Workspa
     return null;
   }
 
-  const children = node.children
-    .map((child) => pruneNode(child, validSessionIds))
-    .filter((child): child is WorkspaceNode => child !== null);
+  const restoredChildren = node.children
+    .map((child, originalIndex) => ({
+      child: pruneNode(child, validSessionIds),
+      originalIndex,
+    }))
+    .filter((entry): entry is { child: WorkspaceNode; originalIndex: number } => entry.child !== null);
+  const children = restoredChildren.map((entry) => entry.child);
 
   if (children.length === 0) return null;
   if (children.length === 1) return children[0];
@@ -272,10 +276,7 @@ const pruneNode = (node: unknown, validSessionIds: ReadonlySet<string>): Workspa
   const canReuseSizes = rawSizes?.length === node.children.length
     && rawSizes.every((size) => typeof size === "number" && Number.isFinite(size) && size > 0);
   const nextSizes = canReuseSizes
-    ? children.map((child) => {
-        const originalIndex = node.children.findIndex((original) => original.id === child.id);
-        return originalIndex >= 0 && typeof rawSizes[originalIndex] === "number" ? rawSizes[originalIndex] : 0;
-      })
+    ? restoredChildren.map(({ originalIndex }) => rawSizes[originalIndex])
     : children.map(() => 1 / children.length);
   const total = nextSizes.reduce((sum, size) => sum + size, 0);
 

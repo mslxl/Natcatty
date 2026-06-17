@@ -390,6 +390,7 @@ function createBridgeRegistrar(context) {
           appIcon,
           isMac,
           electronDir,
+          route: "session-window",
           onRegisterBridge: registerBridges,
         });
         try {

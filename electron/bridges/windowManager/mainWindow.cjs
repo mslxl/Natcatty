@@ -3,7 +3,10 @@ function createMainWindowApi(ctx) {
   with (ctx) {
     async function createWindow(electronModule, options) {
       const { BrowserWindow, nativeTheme, app, screen, shell } = electronModule;
-      const { preload, devServerUrl, isDev, appIcon, isMac, onRegisterBridge, electronDir } = options;
+      const { preload, devServerUrl, isDev, appIcon, isMac, onRegisterBridge, electronDir, route } = options;
+      const rendererHash = typeof route === "string" && route.trim()
+        ? `#/${route.trim().replace(/^#?\/*/, "")}`
+        : "";
     
       // Store app reference for window state persistence
       electronApp = app;
@@ -321,7 +324,7 @@ function createMainWindowApi(ctx) {
     
       if (isDev) {
         try {
-          await win.loadURL(getDevRendererBaseUrl(devServerUrl));
+          await win.loadURL(`${getDevRendererBaseUrl(devServerUrl)}${rendererHash}`);
           win.webContents.openDevTools({ mode: "detach" });
           return win;
         } catch (e) {
@@ -330,7 +333,7 @@ function createMainWindowApi(ctx) {
       }
     
       // Production mode - load via custom protocol.
-      await win.loadURL("app://netcatty/index.html");
+      await win.loadURL(`app://netcatty/index.html${rendererHash}`);
       return win;
     }
 
