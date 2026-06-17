@@ -428,8 +428,11 @@ const TrayPanelContent: React.FC<TrayPanelContentProps> = ({ terminalSettings })
   );
 };
 
-const TrayPanel: React.FC = () => {
-  const settings = useSettingsState();
+type SettingsState = ReturnType<typeof useSettingsState>;
+
+const TrayPanel: React.FC<{ settings?: SettingsState }> = ({ settings: providedSettings }) => {
+  const fallbackSettings = useSettingsState();
+  const settings = providedSettings ?? fallbackSettings;
   return (
     <I18nProvider locale={settings.uiLanguage}>
       <TrayPanelContent terminalSettings={settings.terminalSettings} />

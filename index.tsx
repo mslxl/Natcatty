@@ -8,8 +8,7 @@ import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/500.css';
 import '@fontsource/jetbrains-mono/600.css';
 import App from './App';
-import { ToastProvider } from './components/ui/toast';
-import { TooltipProvider } from './components/ui/tooltip';
+import { AppLockGate } from './components/AppLockGate';
 
 const LazySettingsPage = lazy(() => import('./components/SettingsPage'));
 const LazyTrayPanel = lazy(() => import('./components/TrayPanel'));
@@ -137,36 +136,40 @@ const renderApp = () => {
   const route = getRoute();
   if (route === 'settings') {
     root.render(
-      <ToastProvider>
-        <TooltipProvider delayDuration={300}>
+      <AppLockGate>
+        {({ settings, appLock }) => (
           <Suspense fallback={<SettingsWindowFallback />}>
-            <LazySettingsPage />
+            <LazySettingsPage settings={settings} appLock={appLock} />
           </Suspense>
-        </TooltipProvider>
-      </ToastProvider>
+        )}
+      </AppLockGate>
     );
   } else if (route === 'tray') {
     root.render(
-      <ToastProvider>
-        <TooltipProvider delayDuration={300}>
+      <AppLockGate>
+        {({ settings }) => (
           <Suspense fallback={<div style={{ padding: 12, color: '#fff' }}>Loading tray panel…</div>}>
-            <LazyTrayPanel />
+            <LazyTrayPanel settings={settings} />
           </Suspense>
-        </TooltipProvider>
-      </ToastProvider>
+        )}
+      </AppLockGate>
     );
   } else if (route === 'terminal-popup') {
     root.render(
-      <ToastProvider>
-        <TooltipProvider delayDuration={300}>
+      <AppLockGate>
+        {({ settings }) => (
           <Suspense fallback={<TerminalPopupWindowFallback />}>
-            <LazyTerminalPopupPage />
+            <LazyTerminalPopupPage settings={settings} />
           </Suspense>
-        </TooltipProvider>
-      </ToastProvider>
+        )}
+      </AppLockGate>
     );
   } else {
-    root.render(<App />);
+    root.render(
+      <AppLockGate>
+        {({ settings, appLock }) => <App settings={settings} appLock={appLock} />}
+      </AppLockGate>
+    );
   }
 };
 

@@ -5,6 +5,7 @@ import { useManagedSourceSync } from './application/state/useManagedSourceSync';
 import { usePortForwardingState } from './application/state/usePortForwardingState';
 import { useSessionState } from './application/state/useSessionState';
 import { useSettingsState } from './application/state/useSettingsState';
+import type { useAppLockState } from './application/state/useAppLockState';
 import { useUpdateCheck } from './application/state/useUpdateCheck';
 import { useVaultState } from './application/state/useVaultState';
 import { useWindowControls } from './application/state/useWindowControls';
@@ -19,7 +20,7 @@ import {
 } from './application/defaultKeyPassphrases';
 import { initializeFonts } from './application/state/fontStore';
 import { initializeUIFonts } from './application/state/uiFontStore';
-import { I18nProvider, useI18n } from './application/i18n/I18nProvider';
+import { useI18n } from './application/i18n/I18nProvider';
 import { matchesKeyBinding } from './domain/models';
 import { resolveGroupDefaults, applyGroupDefaults } from './domain/groupConfig';
 import { upsertKnownHost } from './domain/knownHosts';
@@ -51,8 +52,7 @@ import {
   STORAGE_KEY_PORT_FORWARDING,
 } from './infrastructure/config/storageKeys';
 import { getEffectiveKnownHosts } from './infrastructure/syncHelpers';
-import { ToastProvider, toast } from './components/ui/toast';
-import { TooltipProvider } from './components/ui/tooltip';
+import { toast } from './components/ui/toast';
 import { VaultSection } from './components/VaultView';
 import { KeyboardInteractiveRequest } from './components/KeyboardInteractiveModal';
 import { PassphraseRequest } from './components/PassphraseModal';
@@ -71,6 +71,7 @@ initializeFonts();
 initializeUIFonts();
 
 type SettingsState = ReturnType<typeof useSettingsState>;
+type AppLockState = ReturnType<typeof useAppLockState>;
 type OpenSessionInNewWindowPayload = {
   title?: string;
   sourceSession?: TerminalSession;
@@ -81,7 +82,7 @@ const IS_DEV = import.meta.env.DEV;
 const HOTKEY_DEBUG =
   IS_DEV && localStorageAdapter.readString(STORAGE_KEY_DEBUG_HOTKEYS) === '1';
 
-function App({ settings }: { settings: SettingsState }) {
+function App({ settings, appLock }: { settings: SettingsState; appLock: AppLockState }) {
   const { t } = useI18n();
 
   const [isQuickSwitcherOpen, setIsQuickSwitcherOpen] = useState(false);
@@ -990,39 +991,9 @@ function App({ settings }: { settings: SettingsState }) {
         logViews={logViews}
         t={t}
       />
-      <AppView ctx={{ accentMode, addShellHistoryEntry, addSessionToWorkspace, addToWorkspaceDialog, appendHostToWorkspace, appendLocalTerminalToWorkspace, clearAndRemoveSource, clearAndRemoveSources, clearUnsavedConnectionLogs, clearSessionFontSizeOverride, closeLogView, closeSession, closeTabsBatch, copySessionWithCurrentShell, copySessionToNewWindowWithCurrentShell, closeWorkspace, connectionLogs, convertKnownHostToHost, createWorkspaceFromSessions, createWorkspaceFromTargets, createWorkspaceWithHosts, customAccent, customGroups, currentTerminalTheme, deleteConnectionLog, draggingSessionId, effectiveKnownHosts, editorTabs, editorWordWrap, emptyVaultConflict, followAppTerminalTheme, groupConfigs, handleAddKnownHost, handleConnectSerial, handleConnectToHost, handleCreateLocalTerminal, handleDeleteHost, handleEndSessionDrag, handleHostConnectWithProtocolCheck, handleHotkeyAction, handleKeyboardInteractiveCancel, handleKeyboardInteractiveSubmit, handleOpenQuickSwitcher, handleOpenSettings, handleRootContextMenu, handlePassphraseCancel, handlePassphraseSkip, handlePassphraseSubmit, handleProtocolSelect, handleRequestCloseEditorTabRef, handleSessionStatusChange, handleSyncNowManual, handleTerminalDataCapture, handleToggleTheme, handleUpdateHostFromTerminal, hostById, hosts, hotkeyScheme, identities, importOrReuseKey, isBroadcastEnabled, isCreateWorkspaceOpen, isMacClient, isQuickSwitcherOpen, keyBindings, keyboardInteractiveQueue, keys, logViews, managedSources, navigateToSection, openLogView, orderedTabsWithEditors, orphanSessions, passphraseQueue, protocolSelectHost, proxyProfiles, quickResults, quickSearch, removeSessionFromWorkspace, reorderWorkTabs, reorderWorkspaceSessions, resetSessionRename, resetWorkspaceRename, resolveEmptyVaultConflict, resolvedTheme, runSnippet: handleRunSnippet, sessionLogsDir, sessionLogsEnabled, sessionLogsFormat, sessionLogsTimestampsEnabled, sessionRenameTarget, sessionRenameValue, sessions, setActiveTabId, setAddToWorkspaceDialog, setDraggingSessionId, setEditorWordWrap, setIsCreateWorkspaceOpen, setIsQuickSwitcherOpen, setNavigateToSection, setProtocolSelectHost, setQuickSearch, setSessionRenameValue, setTerminalFontFamilyId, setTerminalFontSize, setTerminalThemeId, setWorkspaceFocusedSession, setWorkspaceRenameValue, settings, sftpAutoOpenSidebar, sftpFollowTerminalCwd, setSftpFollowTerminalCwd, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior, sftpShowHiddenFiles, sftpUseCompressedUpload, shellHistory, snippetPackages, snippets, splitSessionWithCurrentShell, sshDebugLogsEnabled: settings.sshDebugLogsEnabled, startSessionRename, renameSessionInline, startWorkspaceRename, submitSessionRename, submitWorkspaceRename, t, terminalFontFamilyId, terminalFontSize, terminalSettings, terminalThemeId, themeById, toggleBroadcast, toggleConnectionLogSaved, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, unmanageSource, updateConnectionLog, updateCustomGroups, updateGroupConfigs, updateHostDistro, updateHosts, updateIdentities, updateKeys, updateKnownHosts, updateManagedSources, updateProxyProfiles, updateSnippetPackages, updateSnippets, updateSplitSizes, updateSessionFontSize, updateTerminalSetting, workspaceRenameTarget, workspaceRenameValue, workspaces, VaultViewContainer, SftpViewMount, TerminalLayerMount, LogViewWrapper }} />
+      <AppView ctx={{ accentMode, addShellHistoryEntry, addSessionToWorkspace, addToWorkspaceDialog, appendHostToWorkspace, appendLocalTerminalToWorkspace, appLockEnabled: settings.appLockSettings.enabled, clearAndRemoveSource, clearAndRemoveSources, clearUnsavedConnectionLogs, clearSessionFontSizeOverride, closeLogView, closeSession, closeTabsBatch, copySessionWithCurrentShell, copySessionToNewWindowWithCurrentShell, closeWorkspace, connectionLogs, convertKnownHostToHost, createWorkspaceFromSessions, createWorkspaceFromTargets, createWorkspaceWithHosts, customAccent, customGroups, currentTerminalTheme, deleteConnectionLog, draggingSessionId, effectiveKnownHosts, editorTabs, editorWordWrap, emptyVaultConflict, followAppTerminalTheme, groupConfigs, handleAddKnownHost, handleConnectSerial, handleConnectToHost, handleCreateLocalTerminal, handleDeleteHost, handleEndSessionDrag, handleHostConnectWithProtocolCheck, handleHotkeyAction, handleKeyboardInteractiveCancel, handleKeyboardInteractiveSubmit, handleLockApp: () => appLock.lockNow('manual'), handleOpenQuickSwitcher, handleOpenSettings, handleRootContextMenu, handlePassphraseCancel, handlePassphraseSkip, handlePassphraseSubmit, handleProtocolSelect, handleRequestCloseEditorTabRef, handleSessionStatusChange, handleSyncNowManual, handleTerminalDataCapture, handleToggleTheme, handleUpdateHostFromTerminal, hostById, hosts, hotkeyScheme, identities, importOrReuseKey, isBroadcastEnabled, isCreateWorkspaceOpen, isMacClient, isQuickSwitcherOpen, keyBindings, keyboardInteractiveQueue, keys, logViews, managedSources, navigateToSection, openLogView, orderedTabsWithEditors, orphanSessions, passphraseQueue, protocolSelectHost, proxyProfiles, quickResults, quickSearch, removeSessionFromWorkspace, reorderWorkTabs, reorderWorkspaceSessions, resetSessionRename, resetWorkspaceRename, resolveEmptyVaultConflict, resolvedTheme, runSnippet: handleRunSnippet, sessionLogsDir, sessionLogsEnabled, sessionLogsFormat, sessionLogsTimestampsEnabled, sessionRenameTarget, sessionRenameValue, sessions, setActiveTabId, setAddToWorkspaceDialog, setDraggingSessionId, setEditorWordWrap, setIsCreateWorkspaceOpen, setIsQuickSwitcherOpen, setNavigateToSection, setProtocolSelectHost, setQuickSearch, setSessionRenameValue, setTerminalFontFamilyId, setTerminalFontSize, setTerminalThemeId, setWorkspaceFocusedSession, setWorkspaceRenameValue, settings, sftpAutoOpenSidebar, sftpFollowTerminalCwd, setSftpFollowTerminalCwd, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior, sftpShowHiddenFiles, sftpUseCompressedUpload, shellHistory, snippetPackages, snippets, splitSessionWithCurrentShell, sshDebugLogsEnabled: settings.sshDebugLogsEnabled, startSessionRename, renameSessionInline, startWorkspaceRename, submitSessionRename, submitWorkspaceRename, t, terminalFontFamilyId, terminalFontSize, terminalSettings, terminalThemeId, themeById, toggleBroadcast, toggleConnectionLogSaved, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, unmanageSource, updateConnectionLog, updateCustomGroups, updateGroupConfigs, updateHostDistro, updateHosts, updateIdentities, updateKeys, updateKnownHosts, updateManagedSources, updateProxyProfiles, updateSnippetPackages, updateSnippets, updateSplitSizes, updateSessionFontSize, updateTerminalSetting, workspaceRenameTarget, workspaceRenameValue, workspaces, VaultViewContainer, SftpViewMount, TerminalLayerMount, LogViewWrapper }} />
     </>
   );
 }
 
-function AppWithProviders() {
-  const settings = useSettingsState();
-
-  useEffect(() => {
-    try {
-      // Hide splash screen with a fade-out animation
-      const splash = document.getElementById('splash');
-      if (splash) {
-        splash.classList.add('fade-out');
-        // Remove from DOM after animation completes
-        setTimeout(() => splash.remove(), 200);
-      }
-      // Notify main process that renderer is ready
-      netcattyBridge.get()?.rendererReady?.();
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  return (
-    <I18nProvider locale={settings.uiLanguage}>
-      <ToastProvider>
-        <TooltipProvider delayDuration={300}>
-          <App settings={settings} />
-        </TooltipProvider>
-      </ToastProvider>
-    </I18nProvider>
-  );
-}
-
-export default AppWithProviders;
+export default App;

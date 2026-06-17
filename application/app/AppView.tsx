@@ -32,12 +32,12 @@ type AppViewContext = Record<string, any>;
 
 export function AppView({ ctx }: { ctx: AppViewContext }) {
   const {
-    accentMode, addShellHistoryEntry, addSessionToWorkspace, addToWorkspaceDialog, appendHostToWorkspace, appendLocalTerminalToWorkspace,
+    accentMode, addShellHistoryEntry, addSessionToWorkspace, addToWorkspaceDialog, appendHostToWorkspace, appendLocalTerminalToWorkspace, appLockEnabled,
     clearAndRemoveSource, clearAndRemoveSources, clearUnsavedConnectionLogs, closeLogView, closeSession, closeTabsBatch, closeWorkspace, copySessionToNewWindowWithCurrentShell, copySessionWithCurrentShell,
     connectionLogs, convertKnownHostToHost, createWorkspaceFromSessions, createWorkspaceFromTargets, createWorkspaceWithHosts, customAccent,
     customGroups, currentTerminalTheme, deleteConnectionLog, draggingSessionId, effectiveKnownHosts, editorTabs, editorWordWrap, emptyVaultConflict,
     followAppTerminalTheme, groupConfigs, handleAddKnownHost, handleConnectSerial, handleConnectToHost, handleCreateLocalTerminal, handleDeleteHost,
-    handleEndSessionDrag, handleHostConnectWithProtocolCheck, handleHotkeyAction, handleKeyboardInteractiveCancel, handleKeyboardInteractiveSubmit,
+    handleEndSessionDrag, handleHostConnectWithProtocolCheck, handleHotkeyAction, handleKeyboardInteractiveCancel, handleKeyboardInteractiveSubmit, handleLockApp,
     handleOpenQuickSwitcher, handleOpenSettings, handleRootContextMenu, handlePassphraseCancel, handlePassphraseSkip, handlePassphraseSubmit, handleProtocolSelect,
     handleRequestCloseEditorTabRef, handleSessionStatusChange, handleSyncNowManual, handleTerminalDataCapture, handleToggleTheme, handleUpdateHostFromTerminal,
     hostById, hosts, hotkeyScheme, identities, importOrReuseKey, isBroadcastEnabled, isCreateWorkspaceOpen, isMacClient, isQuickSwitcherOpen,
@@ -128,6 +128,8 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
         onOpenQuickSwitcher={handleOpenQuickSwitcher}
         onToggleTheme={handleToggleTheme}
         onOpenSettings={handleOpenSettings}
+        onLockApp={handleLockApp}
+        appLockEnabled={appLockEnabled}
         windowOpacity={settings.windowOpacity}
         setWindowOpacity={settings.setWindowOpacity}
         onSyncNow={handleSyncNowManual}

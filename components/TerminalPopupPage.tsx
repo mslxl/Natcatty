@@ -22,6 +22,7 @@ const POPUP_STARTUP_REVEAL_MIN_DELAY_MS = 1500;
 const POPUP_STARTUP_REVEAL_MAX_DELAY_MS = 12000;
 
 type PopupThemeVars = React.CSSProperties & Record<string, string>;
+type SettingsState = ReturnType<typeof useSettingsState>;
 
 const buildPopupThemeVars = (theme: TerminalTheme): PopupThemeVars => {
   const { colors } = theme;
@@ -192,11 +193,10 @@ function buildHostFromSession(source: TerminalPopupPayload['sourceSession']): Ho
   };
 }
 
-function TerminalPopupPageInner() {
+function TerminalPopupPageInner({ settings }: { settings: SettingsState }) {
   const { t } = useI18n();
   const { close, setWindowTitle, onPopupConfig } = useTerminalPopupWindow();
   const { notifyRendererReady, onWindowCommandCloseRequested } = useWindowControls();
-  const settings = useSettingsState();
   const { isInitialized: vaultInitialized, hosts, keys, identities, knownHosts, snippets, snippetPackages, updateKnownHosts } = useVaultState();
   const [config, setConfig] = useState<TerminalPopupPayload | null>(null);
   const [terminalReady, setTerminalReady] = useState(false);
@@ -364,11 +364,12 @@ function TerminalPopupPageInner() {
   );
 }
 
-export default function TerminalPopupPage() {
-  const settings = useSettingsState();
+export default function TerminalPopupPage({ settings: providedSettings }: { settings?: SettingsState }) {
+  const fallbackSettings = useSettingsState();
+  const settings = providedSettings ?? fallbackSettings;
   return (
     <I18nProvider locale={settings.uiLanguage}>
-      <TerminalPopupPageInner />
+      <TerminalPopupPageInner settings={settings} />
     </I18nProvider>
   );
 }

@@ -1,4 +1,4 @@
-import { Folder, FolderLock, Menu, Moon, MoreHorizontal, Plus, Settings, Sparkles, Sun } from 'lucide-react';
+import { Folder, FolderLock, Lock, Menu, Moon, MoreHorizontal, Plus, Settings, Sparkles, Sun } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { fromEditorTabId, isEditorTabId, useActiveTabId } from '../application/state/activeTabStore';
 import { isHostTreeWorkTabSurface } from '../application/app/workTabSurface';
@@ -133,6 +133,8 @@ interface TopTabsProps {
   onOpenQuickSwitcher: () => void;
   onToggleTheme: () => void;
   onOpenSettings: () => void;
+  onLockApp?: () => void;
+  appLockEnabled?: boolean;
   windowOpacity: number;
   setWindowOpacity: (opacity: number) => void;
   onSyncNow?: () => Promise<void>;
@@ -171,6 +173,8 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   onOpenQuickSwitcher,
   onToggleTheme,
   onOpenSettings,
+  onLockApp,
+  appLockEnabled,
   windowOpacity,
   setWindowOpacity,
   onSyncNow,
@@ -1064,6 +1068,22 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             className="h-7 w-7 shrink-0 top-tab-utility-btn"
             style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
           />
+          {appLockEnabled && onLockApp && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0 app-no-drag top-tab-utility-btn"
+                  style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
+                  onClick={onLockApp}
+                >
+                  <Lock size={16} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t('topTabs.lockApp')}</TooltipContent>
+            </Tooltip>
+          )}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -1118,6 +1138,8 @@ const topTabsAreEqual = (prev: TopTabsProps, next: TopTabsProps): boolean => {
     prev.onCopySession === next.onCopySession &&
     prev.onCopySessionToNewWindow === next.onCopySessionToNewWindow &&
     prev.onOpenSettings === next.onOpenSettings &&
+    prev.onLockApp === next.onLockApp &&
+    prev.appLockEnabled === next.appLockEnabled &&
     prev.windowOpacity === next.windowOpacity &&
     prev.setWindowOpacity === next.setWindowOpacity &&
     prev.onSyncNow === next.onSyncNow &&

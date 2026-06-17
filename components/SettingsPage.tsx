@@ -5,6 +5,7 @@
 import { AppWindow, Cloud, FileType, HardDrive, Keyboard, Palette, Sparkles, TerminalSquare, X } from "lucide-react";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useSettingsState } from "../application/state/useSettingsState";
+import type { useAppLockState } from "../application/state/useAppLockState";
 import { useAISettingsState } from "../application/state/useAISettingsState";
 import { useAvailableFonts } from "../application/state/fontStore";
 import { usePortForwardingState } from "../application/state/usePortForwardingState";
@@ -50,6 +51,7 @@ class AITabErrorBoundary extends React.Component<
 }
 
 type SettingsState = ReturnType<typeof useSettingsState>;
+type AppLockState = ReturnType<typeof useAppLockState>;
 
 const settingsTabTriggerClassName =
     "w-full justify-start gap-2 px-3 py-2 text-sm data-[state=active]:bg-background hover:bg-background/60 rounded-md transition-colors overflow-hidden";
@@ -459,8 +461,14 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
     );
 };
 
-export default function SettingsPage() {
-    const settings = useSettingsState();
+export default function SettingsPage({
+    settings: providedSettings,
+}: {
+    settings?: SettingsState;
+    appLock?: AppLockState;
+}) {
+    const fallbackSettings = useSettingsState();
+    const settings = providedSettings ?? fallbackSettings;
 
     return (
         <I18nProvider locale={settings.uiLanguage}>
