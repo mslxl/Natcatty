@@ -103,15 +103,20 @@ test("session peer windows do not run main-window startup effects", () => {
   const appSource = readFileSync(new URL("../../App.tsx", import.meta.url), "utf8");
   const autoSyncSource = readFileSync(new URL("./useAutoSync.ts", import.meta.url), "utf8");
   const startupEffectsSource = readFileSync(new URL("../app/useAppStartupEffects.ts", import.meta.url), "utf8");
+  const updateCheckSource = readFileSync(new URL("./useUpdateCheck.ts", import.meta.url), "utf8");
   const trayFocusIndex = appSource.indexOf("onTrayFocusSession");
   const trayPanelJumpIndex = appSource.indexOf("onTrayPanelJumpToSession");
 
   assert.match(appSource, /useAppStartupEffects\(\{[^}]*enabled: !isPeerSessionWindow/s);
+  assert.match(appSource, /useUpdateCheck\(\{[^}]*enabled: !isPeerSessionWindow/s);
   assert.match(appSource, /if \(isPeerSessionWindow \|\| !isVaultInitialized \|\| versionBackupAttemptedRef\.current\) return;/);
   assert.match(appSource, /useAutoSync\(\{[^}]*enabled: !isPeerSessionWindow/s);
   assert.match(autoSyncSource, /enabled\?: boolean/);
   assert.match(autoSyncSource, /const enabled = config\.enabled !== false/);
   assert.match(autoSyncSource, /if \(!enabled\) return;/);
+  assert.match(updateCheckSource, /enabled\?: boolean/);
+  assert.match(updateCheckSource, /const enabled = options\?\.enabled !== false/);
+  assert.match(updateCheckSource, /if \(!enabled\) return;/);
   assert.ok(
     appSource.lastIndexOf("if (isPeerSessionWindow) return;", trayFocusIndex) !== -1,
     "peer session windows should not register tray focus/toggle listeners",
@@ -130,6 +135,15 @@ test("session peer windows do not run main-window startup effects", () => {
     /if \(!enabled\) return;\s*const bridge = netcattyBridge\.get\(\);\s*if \(!bridge\?\.onCheckDirtyEditors\) return;/,
     "dirty editor quit guard must remain registered in peer session windows",
   );
+});
+
+test("restore-only settings do not bump the cloud sync settings version", () => {
+  const settingsSource = readFileSync(new URL("./useSettingsState.ts", import.meta.url), "utf8");
+  const settingsVersionIndex = settingsSource.indexOf("settingsVersion: useMemo");
+  const settingsVersionSource = settingsSource.slice(settingsVersionIndex);
+
+  assert.notEqual(settingsVersionIndex, -1);
+  assert.doesNotMatch(settingsVersionSource, /restorePreviousSession|restoreTerminalCwd/);
 });
 
 test("restore previous session re-arms after cross-window settings ipc sync", () => {

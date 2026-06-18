@@ -486,6 +486,7 @@ function App({ settings }: { settings: SettingsState }) {
 
   // Update check hook - checks for new versions on startup
   const { updateState, dismissUpdate, installUpdate } = useUpdateCheck({
+    enabled: !isPeerSessionWindow,
     // Install blocked because an editor has unsaved changes (#1215). The main
     // process broadcasts this; show an actionable toast telling the user to save
     // and click "Restart Now" again.

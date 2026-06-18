@@ -125,8 +125,8 @@ function setQuittingForUpdate(nextValue) {
 
 /**
  * True when quitAndInstall() initiated the current quit. The before-quit guard
- * checks this to skip the dirty-editor round-trip and let the app exit so the
- * updater's installer can run.
+ * still performs the dirty-editor round-trip; if the user cancels to save, it
+ * uses this state to roll back the update quit flags.
  */
 function isQuittingForUpdate() {
   return quittingForUpdate;
