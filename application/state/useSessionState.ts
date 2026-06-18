@@ -33,6 +33,7 @@ import {
   LOCAL_STORAGE_ADAPTER_CHANGED_EVENT,
   localStorageAdapter,
 } from '../../infrastructure/persistence/localStorageAdapter';
+import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import { sessionRestoreStorage } from './sessionRestoreStorage';
 import {
   buildAndWriteSessionRestorePayload,
@@ -104,15 +105,22 @@ export const useSessionState = ({
   }), []);
 
   useEffect(() => {
+    const handleRestorePreviousSessionChanged = (key?: string) => {
+      if (key !== STORAGE_KEY_RESTORE_PREVIOUS_SESSION) return;
+      setRestorePreviousSessionRevision((revision) => revision + 1);
+    };
     const handleLocalStorageAdapterChanged = (event: Event) => {
       const detail = (event as CustomEvent<{ key?: string }>).detail;
-      if (detail?.key !== STORAGE_KEY_RESTORE_PREVIOUS_SESSION) return;
-      setRestorePreviousSessionRevision((revision) => revision + 1);
+      handleRestorePreviousSessionChanged(detail?.key);
     };
 
     window.addEventListener(LOCAL_STORAGE_ADAPTER_CHANGED_EVENT, handleLocalStorageAdapterChanged);
+    const unsubscribeSettingsSync = netcattyBridge.get()?.onSettingsChanged?.((payload) => {
+      handleRestorePreviousSessionChanged(payload?.key);
+    });
     return () => {
       window.removeEventListener(LOCAL_STORAGE_ADAPTER_CHANGED_EVENT, handleLocalStorageAdapterChanged);
+      unsubscribeSettingsSync?.();
     };
   }, []);
 

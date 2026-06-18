@@ -18,7 +18,10 @@ type SessionIdLike = { id: string };
 export function shouldQueueKeyboardInteractiveRequest(
   request: KeyboardInteractiveRequestLike,
   sessions: SessionIdLike[],
+  options: { enabled?: boolean } = {},
 ): boolean {
+  const enabled = options.enabled !== false;
+  if (!enabled && request.scope !== "terminal") return false;
   if (request.scope !== "terminal") return true;
   if (!request.sessionId) return false;
   return sessions.some((session) => session.id === request.sessionId);
@@ -178,7 +181,7 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
     if (!bridge?.onKeyboardInteractive) return;
 
     const unsubscribe = bridge.onKeyboardInteractive((request) => {
-      if (!shouldQueueKeyboardInteractiveRequest(request, sessionsRef.current)) return;
+      if (!shouldQueueKeyboardInteractiveRequest(request, sessionsRef.current, { enabled })) return;
       console.log('[App] Keyboard-interactive request received:', request);
       // Add to queue instead of replacing - supports multiple concurrent sessions
       setKeyboardInteractiveQueue(prev => [...prev, {
@@ -195,7 +198,7 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
     return () => {
       unsubscribe?.();
     };
-  }, [setKeyboardInteractiveQueue]);
+  }, [enabled, setKeyboardInteractiveQueue]);
 
 
 }

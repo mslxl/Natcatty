@@ -856,6 +856,7 @@ const mainWindowApi = createMainWindowApi({
   createExternalOnlyWindowOpenHandler,
   createAppWindowOpenHandler,
   attachOAuthLoadingOverlay,
+  queryDirtyEditors: (...args) => require("./dirtyEditorGuard.cjs").queryDirtyEditors(...args),
   registerWindowHandlers,
   requestWindowCommandClose,
   shouldCloseWindowFromInput,

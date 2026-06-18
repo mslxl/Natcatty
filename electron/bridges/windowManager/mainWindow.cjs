@@ -236,6 +236,34 @@ function createMainWindowApi(ctx) {
     
       // Save state when window is about to close
       win.on("close", (event) => {
+        if (!registerAsMainWindow && registerAsAppContentWindow && !isQuitting && !thisWindowCloseRequested) {
+          event.preventDefault();
+          thisWindowCloseRequested = true;
+          const dirtyEditorQuery = typeof queryDirtyEditors === "function"
+            ? queryDirtyEditors(win.webContents, 5000, { ipcMain: electronModule.ipcMain })
+            : false;
+          Promise.resolve(dirtyEditorQuery)
+            .then((hasDirty) => {
+              if (hasDirty) {
+                thisWindowCloseRequested = false;
+                return;
+              }
+              try {
+                win.close();
+              } catch {
+                // ignore
+              }
+            })
+            .catch(() => {
+              try {
+                win.close();
+              } catch {
+                // ignore
+              }
+            });
+          return;
+        }
+
         // Check if close-to-tray is enabled
         const trackedMainWindowCount = typeof getMainWindowCount === "function" ? getMainWindowCount() : 1;
         if (registerAsMainWindow && trackedMainWindowCount <= 1 && !isQuitting && getGlobalShortcutBridge().handleWindowClose(event, win)) {

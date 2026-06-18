@@ -27,6 +27,24 @@ test("external keyboard-interactive requests are not filtered by terminal sessio
   );
 });
 
+test("disabled peer windows do not queue external keyboard-interactive requests", () => {
+  assert.equal(
+    shouldQueueKeyboardInteractiveRequest({ scope: "external", sessionId: "sftp-conn-1" }, sessions, {
+      enabled: false,
+    }),
+    false,
+  );
+});
+
+test("disabled peer windows can still queue owned terminal keyboard-interactive requests", () => {
+  assert.equal(
+    shouldQueueKeyboardInteractiveRequest({ scope: "terminal", sessionId: "terminal-1" }, sessions, {
+      enabled: false,
+    }),
+    true,
+  );
+});
+
 test("legacy unscoped keyboard-interactive requests remain visible", () => {
   assert.equal(
     shouldQueueKeyboardInteractiveRequest({ sessionId: "legacy-conn" }, sessions),

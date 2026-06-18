@@ -63,7 +63,7 @@ test("session restore persistence re-arms when restore previous session is enabl
   const source = readFileSync(new URL("./useSessionState.ts", import.meta.url), "utf8");
   const adapterEventImportIndex = source.indexOf("LOCAL_STORAGE_ADAPTER_CHANGED_EVENT");
   const revisionStateIndex = source.indexOf("restorePreviousSessionRevision");
-  const keyGuardIndex = source.indexOf("detail?.key !== STORAGE_KEY_RESTORE_PREVIOUS_SESSION");
+  const keyGuardIndex = source.indexOf("key !== STORAGE_KEY_RESTORE_PREVIOUS_SESSION");
   const listenerIndex = source.indexOf("addEventListener(LOCAL_STORAGE_ADAPTER_CHANGED_EVENT");
   const effectDependencyIndex = source.indexOf("restorePreviousSessionRevision, persistSessionRestore]", source.indexOf("beforeunload"));
 
@@ -124,12 +124,24 @@ test("session peer windows do not run main-window startup effects", () => {
   assert.match(startupEffectsSource, /if \(!enabled\) return;/);
   assert.match(startupEffectsSource, /export function shouldQueueKeyboardInteractiveRequest/);
   assert.match(startupEffectsSource, /request\.scope !== "terminal"/);
-  assert.match(startupEffectsSource, /shouldQueueKeyboardInteractiveRequest\(request, sessionsRef\.current\)/);
+  assert.match(startupEffectsSource, /shouldQueueKeyboardInteractiveRequest\(request, sessionsRef\.current, \{ enabled \}\)/);
   assert.doesNotMatch(
     startupEffectsSource,
     /if \(!enabled\) return;\s*const bridge = netcattyBridge\.get\(\);\s*if \(!bridge\?\.onCheckDirtyEditors\) return;/,
     "dirty editor quit guard must remain registered in peer session windows",
   );
+});
+
+test("restore previous session re-arms after cross-window settings ipc sync", () => {
+  const hookSource = readFileSync(new URL("./useSessionState.ts", import.meta.url), "utf8");
+  const settingsIpcSyncSource = readFileSync(new URL("./settingsIpcSync.ts", import.meta.url), "utf8");
+
+  assert.match(settingsIpcSyncSource, /STORAGE_KEY_RESTORE_PREVIOUS_SESSION/);
+  assert.match(hookSource, /netcattyBridge/);
+  assert.match(hookSource, /onSettingsChanged/);
+  assert.match(hookSource, /handleRestorePreviousSessionChanged\(payload\?\.key\)/);
+  assert.match(hookSource, /key !== STORAGE_KEY_RESTORE_PREVIOUS_SESSION/);
+  assert.match(hookSource, /setRestorePreviousSessionRevision\(\(revision\) => revision \+ 1\)/);
 });
 
 test("restore terminal cwd setting participates in cross-window settings sync", () => {

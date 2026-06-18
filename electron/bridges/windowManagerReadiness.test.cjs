@@ -934,7 +934,7 @@ test("peer session windows do not load or save shared main window state", async 
   assert.ok(win);
   assert.equal(loadWindowStateCount, 0);
   resizeHandlers[0]?.();
-  closeHandlers[0]?.({});
+  closeHandlers[0]?.({ preventDefault() {} });
   assert.deepEqual(savedStates, []);
   assert.equal(closeSettingsWindowCount, 0);
 });
@@ -1049,6 +1049,129 @@ test("peer session windows register as app content windows for dirty editor guar
   assert.deepEqual(registeredContentWindows, [win]);
   closeHandlers[0]?.();
   assert.deepEqual(unregisteredContentWindows, [win]);
+});
+
+test("peer session window close queries dirty editors before destroying the renderer", async () => {
+  const closeHandlers = [];
+  const queriedWebContents = [];
+  let preventDefaultCount = 0;
+
+  class BrowserWindowStub {
+    constructor() {
+      this.closeCalls = 0;
+      this.webContents = {
+        id: 1,
+        on() {},
+        setWindowOpenHandler() {},
+        openDevTools() {},
+        send() {},
+        isDestroyed: () => false,
+        isCrashed: () => false,
+      };
+    }
+    on(channel, handler) {
+      if (channel === "close") closeHandlers.push(handler);
+    }
+    once() {}
+    close() {
+      this.closeCalls += 1;
+    }
+    isDestroyed() { return false; }
+    isMaximized() { return false; }
+    isFullScreen() { return false; }
+    getBounds() { return { width: 1000, height: 700 }; }
+    setBackgroundColor() {}
+    loadURL() { return Promise.resolve(); }
+  }
+
+  const api = createMainWindowApi({
+    mainWindow: null,
+    electronApp: null,
+    currentTheme: "light",
+    isQuitting: false,
+    pendingWindowStateWrite: null,
+    queuedWindowState: null,
+    windowStateCloseRequested: false,
+    DEFAULT_WINDOW_WIDTH: 1400,
+    DEFAULT_WINDOW_HEIGHT: 900,
+    MIN_WINDOW_WIDTH: 1100,
+    MIN_WINDOW_HEIGHT: 640,
+    V8_CACHE_OPTIONS: "bypassHeatCheck",
+    THEME_COLORS: { light: { background: "#fff" } },
+    unhealthyWebContentsIds: new Set(),
+    rendererReadySeenByWebContentsId: new Set(),
+    __dirname,
+    URL,
+    require,
+    console,
+    setTimeout,
+    clearTimeout,
+    getGlobalShortcutBridge() {
+      return { handleWindowClose: () => false };
+    },
+    debugLog() {},
+    resolveFrontendBackgroundColor() { return null; },
+    loadWindowState() { return null; },
+    getDevRendererBaseUrl(url) { return url; },
+    getWindowBoundsState() {
+      return null;
+    },
+    queueWindowStateSave() {},
+    saveWindowStateSync() {},
+    setupDeferredShow() {},
+    createExternalOnlyWindowOpenHandler() { return {}; },
+    createAppWindowOpenHandler() { return {}; },
+    attachOAuthLoadingOverlay() {},
+    registerWindowHandlers() {},
+    requestWindowCommandClose() {
+      return true;
+    },
+    shouldCloseWindowFromInput,
+    registerMainWindow() {
+      throw new Error("peer window should not register as main");
+    },
+    unregisterMainWindow() {},
+    registerAppContentWindow() {},
+    unregisterAppContentWindow() {},
+    queryDirtyEditors: async (webContents) => {
+      queriedWebContents.push(webContents);
+      return true;
+    },
+    applyWindowOpacityToWindow() {},
+    closeSettingsWindow() {},
+    hideSettingsWindow() {},
+  });
+
+  await api.createWindow(
+    {
+      BrowserWindow: BrowserWindowStub,
+      nativeTheme: {},
+      app: {},
+      screen: {},
+      shell: {},
+      ipcMain: {},
+    },
+    {
+      preload: "/tmp/preload.cjs",
+      devServerUrl: "http://localhost:5173",
+      isDev: true,
+      appIcon: null,
+      isMac: true,
+      electronDir: __dirname,
+      route: "session-window",
+      registerAsMainWindow: false,
+    },
+  );
+
+  closeHandlers[0]?.({
+    preventDefault() {
+      preventDefaultCount += 1;
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(preventDefaultCount, 1);
+  assert.equal(queriedWebContents.length, 1);
 });
 
 test("window IPC handlers target the sender owner window", async () => {
