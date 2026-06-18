@@ -45,20 +45,22 @@ test("manual reconnect captures restore cwd intent before clearing restored stat
   const importIndex = source.indexOf("resolveRestoreCwdIntent");
   const refIndex = source.indexOf("const restoreCwdIntentRef = useRef");
   const contextIndex = source.indexOf("restoreCwdIntentRef,");
-  const captureIndex = source.indexOf("restoreCwdIntentRef.current = resolveRestoreCwdIntent");
-  const bootActiveIndex = source.indexOf("isBootActiveRef.current = true", captureIndex);
+  const captureCallIndex = source.indexOf("const restoreCwdIntent = resolveRestoreCwdIntent");
+  const captureAssignIndex = source.indexOf("restoreCwdIntentRef.current = restoreCwdIntent", captureCallIndex);
+  const bootActiveIndex = source.indexOf("isBootActiveRef.current = true", captureAssignIndex);
   const connectingIndex = source.indexOf('updateStatus("connecting")');
   const startNewSessionIndex = source.indexOf("const startNewSession = () =>", connectingIndex);
 
   assert.notEqual(importIndex, -1);
   assert.notEqual(refIndex, -1);
   assert.notEqual(contextIndex, -1);
-  assert.notEqual(captureIndex, -1);
+  assert.notEqual(captureCallIndex, -1);
+  assert.notEqual(captureAssignIndex, -1);
   assert.notEqual(bootActiveIndex, -1);
   assert.notEqual(connectingIndex, -1);
   assert.notEqual(startNewSessionIndex, -1);
   assert.ok(
-    captureIndex < connectingIndex,
+    captureCallIndex < captureAssignIndex && captureAssignIndex < connectingIndex,
     "manual retry must capture cwd intent while restoreState is still available",
   );
   assert.ok(

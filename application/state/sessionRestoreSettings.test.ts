@@ -122,7 +122,14 @@ test("session peer windows do not run main-window startup effects", () => {
   );
   assert.match(startupEffectsSource, /enabled = true/);
   assert.match(startupEffectsSource, /if \(!enabled\) return;/);
-  assert.match(startupEffectsSource, /sessionsRef\.current\.some\(\(session: \{ id: string \}\) => session\.id === request\.sessionId\)/);
+  assert.match(startupEffectsSource, /export function shouldQueueKeyboardInteractiveRequest/);
+  assert.match(startupEffectsSource, /request\.scope !== "terminal"/);
+  assert.match(startupEffectsSource, /shouldQueueKeyboardInteractiveRequest\(request, sessionsRef\.current\)/);
+  assert.doesNotMatch(
+    startupEffectsSource,
+    /if \(!enabled\) return;\s*const bridge = netcattyBridge\.get\(\);\s*if \(!bridge\?\.onCheckDirtyEditors\) return;/,
+    "dirty editor quit guard must remain registered in peer session windows",
+  );
 });
 
 test("restore terminal cwd setting participates in cross-window settings sync", () => {

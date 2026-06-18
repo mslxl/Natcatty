@@ -199,6 +199,25 @@ test("createKeyboardInteractiveHandler shows the modal when the challenge is rea
   drainPendingRequests(sent);
 });
 
+test("createKeyboardInteractiveHandler includes the request scope in modal payloads", () => {
+  const { sender, sent } = createSender();
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "vps-1.example.com",
+    password: "hunter2",
+    scope: "terminal",
+  });
+
+  handler("Two-factor", "", "", [passwordPrompt, verificationCodePrompt], () => {});
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].payload.scope, "terminal");
+
+  drainPendingRequests(sent);
+});
+
 test("createKeyboardInteractiveHandler does not auto-fill when no saved password is configured", () => {
   const { sender, sent } = createSender();
   const autoFillEvents = [];

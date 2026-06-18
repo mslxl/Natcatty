@@ -6,6 +6,7 @@ import {
   getMissingChainHostIds,
 } from "./createTerminalSessionStarters";
 import { createPromptLineBreakState } from "./promptLineBreak";
+import { resolveStartupCommand } from "./terminalStartupCommands";
 import { pasteTextIntoTerminal } from "./terminalUserPaste";
 
 const noop = () => undefined;
@@ -651,6 +652,77 @@ test("local session runs startup command after attaching", async () => {
     data: "docker logs -f --tail 200 abc123\r",
     automated: true,
   }]);
+});
+
+test("startup command suppression is consumed only when scheduling", () => {
+  const suppressHostStartupCommandRef = { current: true };
+  const ctx = createStarterContext({
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      startupCommand: "echo host-startup",
+    },
+    startupCommand: undefined,
+    suppressHostStartupCommandRef,
+  });
+
+  assert.equal(resolveStartupCommand(ctx as never), undefined);
+  assert.equal(suppressHostStartupCommandRef.current, true);
+  assert.equal(
+    resolveStartupCommand(ctx as never, { consumeSuppressHostStartupCommand: true }),
+    undefined,
+  );
+  assert.equal(suppressHostStartupCommandRef.current, false);
+  assert.equal(resolveStartupCommand(ctx as never), "echo host-startup");
+});
+
+test("restored local reconnect does not fall back to host startup command", async () => {
+  const sessionWrites: Array<{ id: string; data: string; automated?: boolean }> = [];
+
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => "ssh-session",
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: (id: string, data: string, options?: { automated?: boolean }) => {
+      sessionWrites.push({ id, data, automated: options?.automated });
+    },
+    resizeSession: noop,
+  };
+
+  const ctx = createStarterContext({
+    host: {
+      id: "local-host",
+      label: "Local",
+      hostname: "local",
+      username: "",
+      protocol: "local",
+      startupCommand: "echo host-startup",
+    },
+    terminalSettings: { startupCommandDelayMs: 0 },
+    terminalBackend,
+    startupCommand: undefined,
+    suppressHostStartupCommandRef: { current: true },
+    promptLineBreakStateRef: undefined,
+  });
+
+  await createTerminalSessionStarters(ctx as never).startLocal(createTermStub() as never);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(sessionWrites, []);
 });
 
 test("local session restores cwd before startup command after attaching", async () => {

@@ -8,6 +8,22 @@ import { toast } from '../../components/ui/toast';
 
 type StartupEffectsContext = Record<string, any>;
 
+type KeyboardInteractiveScope = "terminal" | "external";
+type KeyboardInteractiveRequestLike = {
+  scope?: KeyboardInteractiveScope;
+  sessionId?: string;
+};
+type SessionIdLike = { id: string };
+
+export function shouldQueueKeyboardInteractiveRequest(
+  request: KeyboardInteractiveRequestLike,
+  sessions: SessionIdLike[],
+): boolean {
+  if (request.scope !== "terminal") return true;
+  if (!request.sessionId) return false;
+  return sessions.some((session) => session.id === request.sessionId);
+}
+
 export function useAppStartupEffects(ctx: StartupEffectsContext) {
   const {dismissUpdate, enabled = true, groupConfigs, hosts, identities,
     installUpdate, isVaultInitialized, keys, openSettingsWindow, portForwardingRules, proxyProfiles, sessions, setKeyboardInteractiveQueue,
@@ -129,7 +145,6 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
   // Quit guard: block app exit while any editor tab has unsaved changes.
   // Main process sends "app:query-dirty-editors"; we respond with the result.
   useEffect(() => {
-    if (!enabled) return;
     const bridge = netcattyBridge.get();
     if (!bridge?.onCheckDirtyEditors) return;
     const unsub = bridge.onCheckDirtyEditors(() => {
@@ -163,7 +178,7 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
     if (!bridge?.onKeyboardInteractive) return;
 
     const unsubscribe = bridge.onKeyboardInteractive((request) => {
-      if (request.sessionId && !sessionsRef.current.some((session: { id: string }) => session.id === request.sessionId)) return;
+      if (!shouldQueueKeyboardInteractiveRequest(request, sessionsRef.current)) return;
       console.log('[App] Keyboard-interactive request received:', request);
       // Add to queue instead of replacing - supports multiple concurrent sessions
       setKeyboardInteractiveQueue(prev => [...prev, {

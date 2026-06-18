@@ -758,9 +758,14 @@ if (!gotLock) {
     // BrowserWindow.getAllWindows() could pick tray/settings windows whose
     // renderers don't listen for app:query-dirty-editors and would force the
     // timeout fallback on every quit.
-    const mainWindows = typeof getWindowManager().getMainWindows === "function"
-      ? getWindowManager().getMainWindows()
-      : [getWindowManager().getMainWindow()].filter(Boolean);
+    const appContentWindows = typeof getWindowManager().getAppContentWindows === "function"
+      ? getWindowManager().getAppContentWindows()
+      : null;
+    const mainWindows = Array.isArray(appContentWindows)
+      ? appContentWindows
+      : typeof getWindowManager().getMainWindows === "function"
+        ? getWindowManager().getMainWindows()
+        : [getWindowManager().getMainWindow()].filter(Boolean);
 
     // No reachable main window (tray-panel "Quit" path) — there's no visible
     // UI to surface a "save first" toast on, so skip the round-trip and quit

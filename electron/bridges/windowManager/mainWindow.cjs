@@ -14,6 +14,7 @@ function createMainWindowApi(ctx) {
         route,
         registerAsMainWindow = true,
         persistWindowState = registerAsMainWindow,
+        registerAsAppContentWindow = true,
       } = options;
       const rendererHash = typeof route === "string" && route.trim()
         ? `#/${route.trim().replace(/^#?\/*/, "")}`
@@ -92,6 +93,8 @@ function createMainWindowApi(ctx) {
         } else {
           mainWindow = win;
         }
+      } else if (registerAsAppContentWindow && typeof registerAppContentWindow === "function") {
+        registerAppContentWindow(win);
       }
     
       // Clear reference when the main window is destroyed
@@ -110,6 +113,8 @@ function createMainWindowApi(ctx) {
           } else if (mainWindow === win) {
             mainWindow = null;
           }
+        } else if (registerAsAppContentWindow && typeof unregisterAppContentWindow === "function") {
+          unregisterAppContentWindow(win);
         }
       });
     

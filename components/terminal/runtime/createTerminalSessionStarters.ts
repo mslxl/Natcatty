@@ -15,7 +15,7 @@ import {
   writeTerminalLine,
 } from "./terminalSessionAttachment";
 import { isConnectionTokenCurrent, registerConnectionToken, runDistroDetection } from "./terminalDistroDetection";
-import { scheduleStartupCommand } from "./terminalStartupCommands";
+import { resolveStartupCommand, scheduleStartupCommand } from "./terminalStartupCommands";
 import { markPromptLineBreakCommandPending } from "./promptLineBreak";
 import {
   isEncryptedCredentialPlaceholder,
@@ -596,7 +596,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         ctx.updateStatus("disconnected");
         return;
       }
-      const commandToRun = ctx.startupCommand || ctx.host.startupCommand;
+      const commandToRun = resolveStartupCommand(ctx);
       const waitsForAutoLogin = Boolean(
         commandToRun &&
         (telnetUsername || hasTelnetPasswordForAutoLogin) &&
