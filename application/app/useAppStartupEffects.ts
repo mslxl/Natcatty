@@ -18,10 +18,8 @@ type SessionIdLike = { id: string };
 export function shouldQueueKeyboardInteractiveRequest(
   request: KeyboardInteractiveRequestLike,
   sessions: SessionIdLike[],
-  options: { enabled?: boolean } = {},
+  _options: { enabled?: boolean } = {},
 ): boolean {
-  const enabled = options.enabled !== false;
-  if (!enabled && request.scope !== "terminal") return false;
   if (request.scope !== "terminal") return true;
   if (!request.sessionId) return false;
   return sessions.some((session) => session.id === request.sessionId);
