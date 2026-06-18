@@ -104,9 +104,13 @@ test("session peer windows do not run main-window startup effects", () => {
   const autoSyncSource = readFileSync(new URL("./useAutoSync.ts", import.meta.url), "utf8");
   const startupEffectsSource = readFileSync(new URL("../app/useAppStartupEffects.ts", import.meta.url), "utf8");
   const updateCheckSource = readFileSync(new URL("./useUpdateCheck.ts", import.meta.url), "utf8");
+  const settingsStateSource = readFileSync(new URL("./useSettingsState.ts", import.meta.url), "utf8");
+  const systemEffectsSource = readFileSync(new URL("./systemSettingsEffects.ts", import.meta.url), "utf8");
   const trayFocusIndex = appSource.indexOf("onTrayFocusSession");
   const trayPanelJumpIndex = appSource.indexOf("onTrayPanelJumpToSession");
 
+  assert.match(appSource, /const isPeerSessionWindow = typeof window !== 'undefined' && window\.location\.hash\.startsWith\('#\/session-window'\)/);
+  assert.match(appSource, /useSettingsState\(\{ enableSystemEffects: !isPeerSessionWindow \}\)/);
   assert.match(appSource, /useAppStartupEffects\(\{[^}]*enabled: !isPeerSessionWindow/s);
   assert.match(appSource, /useUpdateCheck\(\{[^}]*enabled: !isPeerSessionWindow/s);
   assert.match(appSource, /if \(isPeerSessionWindow \|\| !isVaultInitialized \|\| versionBackupAttemptedRef\.current\) return;/);
@@ -117,6 +121,10 @@ test("session peer windows do not run main-window startup effects", () => {
   assert.match(updateCheckSource, /enabled\?: boolean/);
   assert.match(updateCheckSource, /const enabled = options\?\.enabled !== false/);
   assert.match(updateCheckSource, /if \(!enabled\) return;/);
+  assert.match(settingsStateSource, /enableSystemEffects\?: boolean/);
+  assert.match(settingsStateSource, /useSystemSettingsEffects\(\{[^}]*enabled: enableSystemEffects/s);
+  assert.match(systemEffectsSource, /enabled\?: boolean/);
+  assert.match(systemEffectsSource, /if \(!enabled\) return;/);
   assert.ok(
     appSource.lastIndexOf("if (isPeerSessionWindow) return;", trayFocusIndex) !== -1,
     "peer session windows should not register tray focus/toggle listeners",
@@ -129,7 +137,7 @@ test("session peer windows do not run main-window startup effects", () => {
   assert.match(startupEffectsSource, /if \(!enabled\) return;/);
   assert.match(startupEffectsSource, /export function shouldQueueKeyboardInteractiveRequest/);
   assert.match(startupEffectsSource, /request\.scope !== "terminal"/);
-  assert.match(startupEffectsSource, /shouldQueueKeyboardInteractiveRequest\(request, sessionsRef\.current, \{ enabled \}\)/);
+  assert.match(startupEffectsSource, /shouldQueueKeyboardInteractiveRequest\(request, sessionsRef\.current\)/);
   assert.doesNotMatch(
     startupEffectsSource,
     /if \(!enabled\) return;\s*const bridge = netcattyBridge\.get\(\);\s*if \(!bridge\?\.onCheckDirtyEditors\) return;/,

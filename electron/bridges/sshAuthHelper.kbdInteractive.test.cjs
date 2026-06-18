@@ -21,12 +21,12 @@ const createSender = () => {
 
 // Settles any modal requests that the handler queued via storeRequest so the
 // 5-minute TTL timer doesn't keep the test process alive.
-const drainPendingRequests = (sent) => {
+const drainPendingRequests = (sent, senderId = 42) => {
   for (const event of sent) {
     if (event.channel !== "netcatty:keyboard-interactive") continue;
     const requestId = event.payload?.requestId;
     if (requestId) {
-      keyboardInteractiveHandler.handleResponse(null, { requestId, cancelled: true });
+      keyboardInteractiveHandler.handleResponse({ sender: { id: senderId } }, { requestId, cancelled: true });
     }
   }
 };

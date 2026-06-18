@@ -1002,7 +1002,8 @@ function App({ settings }: { settings: SettingsState }) {
 }
 
 function AppWithProviders() {
-  const settings = useSettingsState();
+  const isPeerSessionWindow = typeof window !== 'undefined' && window.location.hash.startsWith('#/session-window');
+  const settings = useSettingsState({ enableSystemEffects: !isPeerSessionWindow });
 
   useEffect(() => {
     try {

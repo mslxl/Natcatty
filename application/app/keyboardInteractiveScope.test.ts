@@ -29,18 +29,14 @@ test("external keyboard-interactive requests are not filtered by terminal sessio
 
 test("disabled peer windows still queue sender-targeted external keyboard-interactive requests", () => {
   assert.equal(
-    shouldQueueKeyboardInteractiveRequest({ scope: "external", sessionId: "sftp-conn-1" }, sessions, {
-      enabled: false,
-    }),
+    shouldQueueKeyboardInteractiveRequest({ scope: "external", sessionId: "sftp-conn-1" }, sessions),
     true,
   );
 });
 
 test("disabled peer windows can still queue owned terminal keyboard-interactive requests", () => {
   assert.equal(
-    shouldQueueKeyboardInteractiveRequest({ scope: "terminal", sessionId: "terminal-1" }, sessions, {
-      enabled: false,
-    }),
+    shouldQueueKeyboardInteractiveRequest({ scope: "terminal", sessionId: "terminal-1" }, sessions),
     true,
   );
 });

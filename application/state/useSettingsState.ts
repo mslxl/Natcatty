@@ -118,7 +118,8 @@ import { resolveCurrentTerminalTheme } from './settingsTerminalTheme';
 import { useSystemSettingsEffects } from './systemSettingsEffects';
 import { applyCustomCssToDocument } from '../../lib/customCss';
 
-export const useSettingsState = () => {
+export const useSettingsState = (options: { enableSystemEffects?: boolean } = {}) => {
+  const enableSystemEffects = options.enableSystemEffects !== false;
   const initialCustomKeyBindingsRecord =
     parseCustomKeyBindingsStorageRecord(localStorageAdapter.readString(STORAGE_KEY_CUSTOM_KEY_BINDINGS));
   const uiFontsLoaded = useUIFontsLoaded();
@@ -939,6 +940,7 @@ export const useSettingsState = () => {
   }, [sshDebugLogsEnabled, notifySettingsChanged]);
 
   useSystemSettingsEffects({
+    enabled: enableSystemEffects,
     toggleWindowHotkey,
     globalHotkeyEnabled,
     closeToTray,
