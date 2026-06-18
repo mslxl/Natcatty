@@ -3,7 +3,17 @@ function createMainWindowApi(ctx) {
   with (ctx) {
     async function createWindow(electronModule, options) {
       const { BrowserWindow, nativeTheme, app, screen, shell } = electronModule;
-      const { preload, devServerUrl, isDev, appIcon, isMac, onRegisterBridge, electronDir, route } = options;
+      const {
+        preload,
+        devServerUrl,
+        isDev,
+        appIcon,
+        isMac,
+        onRegisterBridge,
+        electronDir,
+        route,
+        registerAsMainWindow = true,
+      } = options;
       const rendererHash = typeof route === "string" && route.trim()
         ? `#/${route.trim().replace(/^#?\/*/, "")}`
         : "";
@@ -75,10 +85,12 @@ function createMainWindowApi(ctx) {
         },
       });
     
-      if (typeof registerMainWindow === "function") {
-        registerMainWindow(win);
-      } else {
-        mainWindow = win;
+      if (registerAsMainWindow) {
+        if (typeof registerMainWindow === "function") {
+          registerMainWindow(win);
+        } else {
+          mainWindow = win;
+        }
       }
     
       // Clear reference when the main window is destroyed
@@ -91,10 +103,12 @@ function createMainWindowApi(ctx) {
         } catch {
           // ignore
         }
-        if (typeof unregisterMainWindow === "function") {
-          unregisterMainWindow(win);
-        } else if (mainWindow === win) {
-          mainWindow = null;
+        if (registerAsMainWindow) {
+          if (typeof unregisterMainWindow === "function") {
+            unregisterMainWindow(win);
+          } else if (mainWindow === win) {
+            mainWindow = null;
+          }
         }
       });
     
@@ -217,7 +231,7 @@ function createMainWindowApi(ctx) {
       win.on("close", (event) => {
         // Check if close-to-tray is enabled
         const trackedMainWindowCount = typeof getMainWindowCount === "function" ? getMainWindowCount() : 1;
-        if (trackedMainWindowCount <= 1 && !isQuitting && getGlobalShortcutBridge().handleWindowClose(event, win)) {
+        if (registerAsMainWindow && trackedMainWindowCount <= 1 && !isQuitting && getGlobalShortcutBridge().handleWindowClose(event, win)) {
           // Window was hidden to tray - save state before returning
           if (saveStateTimer) clearTimeout(saveStateTimer);
           const state = getWindowBoundsState(win, lastNormalBounds);

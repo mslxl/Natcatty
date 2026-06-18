@@ -9,13 +9,14 @@ import { toast } from '../../components/ui/toast';
 type StartupEffectsContext = Record<string, any>;
 
 export function useAppStartupEffects(ctx: StartupEffectsContext) {
-  const {dismissUpdate, groupConfigs, hosts, identities,
+  const {dismissUpdate, enabled = true, groupConfigs, hosts, identities,
     installUpdate, isVaultInitialized, keys, openSettingsWindow, portForwardingRules, proxyProfiles, sessions, setKeyboardInteractiveQueue,
     t, terminalSettings, updateState, workspaces,
   } = ctx;
 
   // Show toast notification when update is available (only when auto-download is idle)
   useEffect(() => {
+    if (!enabled) return;
     // Skip "update available" toast if auto-download has already started or completed
     if (updateState.autoDownloadStatus !== 'idle') return;
     // Don't show automatic notification when auto-update is disabled
@@ -41,12 +42,13 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
         }
       );
     }
-  }, [updateState.hasUpdate, updateState.latestRelease, updateState.autoDownloadStatus, t, openSettingsWindow, dismissUpdate]);
+  }, [enabled, updateState.hasUpdate, updateState.latestRelease, updateState.autoDownloadStatus, t, openSettingsWindow, dismissUpdate]);
 
   // Track previous autoDownloadStatus so toast effects fire only on actual transitions,
   // not when unrelated deps (installUpdate, openSettingsWindow) change their reference.
   const prevAutoDownloadStatusRef = useRef(updateState.autoDownloadStatus);
   useEffect(() => {
+    if (!enabled) return;
     const prev = prevAutoDownloadStatusRef.current;
     prevAutoDownloadStatusRef.current = updateState.autoDownloadStatus;
     if (prev === updateState.autoDownloadStatus) return;
@@ -72,10 +74,11 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
         }
       );
     }
-  }, [updateState.autoDownloadStatus, updateState.latestRelease?.version, t, installUpdate, openSettingsWindow]);
+  }, [enabled, updateState.autoDownloadStatus, updateState.latestRelease?.version, t, installUpdate, openSettingsWindow]);
 
   // Auto-start port forwarding rules on app launch
   usePortForwardingAutoStart({
+    enabled,
     isVaultInitialized,
     hosts,
     keys,
@@ -87,6 +90,7 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
 
   // Sync tray menu data + handle tray actions
   useEffect(() => {
+    if (!enabled) return;
     const bridge = netcattyBridge.get();
     if (!bridge?.updateTrayMenuData) return;
 
@@ -116,11 +120,12 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [sessions, portForwardingRules, workspaces]);
+  }, [enabled, sessions, portForwardingRules, workspaces]);
 
   // Quit guard: block app exit while any editor tab has unsaved changes.
   // Main process sends "app:query-dirty-editors"; we respond with the result.
   useEffect(() => {
+    if (!enabled) return;
     const bridge = netcattyBridge.get();
     if (!bridge?.onCheckDirtyEditors) return;
     const unsub = bridge.onCheckDirtyEditors(() => {
@@ -146,7 +151,7 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
       }
     });
     return unsub;
-  }, [t]);
+  }, [enabled, t]);
 
   // Keyboard-interactive authentication (2FA/MFA) event listener
   useEffect(() => {

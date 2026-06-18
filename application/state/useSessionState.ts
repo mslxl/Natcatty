@@ -37,6 +37,7 @@ import { sessionRestoreStorage } from './sessionRestoreStorage';
 import {
   buildAndWriteSessionRestorePayload,
   createInitialRestoredSessionState,
+  shouldPersistSessionRestoreState,
   updateRestoredSessionStatusState,
   updateSessionRestoreCwdState,
 } from './sessionRestoreState';
@@ -79,8 +80,18 @@ export const useSessionState = ({
   const [restorePreviousSessionRevision, setRestorePreviousSessionRevision] = useState(0);
   const sessionsRef = useRef(sessions);
   const tabOrderRef = useRef(tabOrder);
+  const hasSeenRestorableSessionRestoreStateRef = useRef(
+    persistSessionRestore && shouldPersistSessionRestoreState(
+      initialRestoreState.sessions,
+      initialRestoreState.workspaces,
+      initialRestoreState.tabOrder,
+    ),
+  );
   sessionsRef.current = sessions;
   tabOrderRef.current = tabOrder;
+  if (persistSessionRestore && shouldPersistSessionRestoreState(sessions, workspaces, tabOrder)) {
+    hasSeenRestorableSessionRestoreStateRef.current = true;
+  }
 
   useEffect(() => {
     if (initialRestoreState.activeTabId !== 'vault') {
@@ -113,14 +124,22 @@ export const useSessionState = ({
     );
     if (!restoreEnabled) {
       sessionRestoreStorage.clear();
+      hasSeenRestorableSessionRestoreStateRef.current = false;
       return;
     }
 
     const persistNow = () => {
+      const hasRestorableState = shouldPersistSessionRestoreState(
+        sessionsRef.current,
+        workspacesRef.current,
+        tabOrderRef.current,
+      );
+      const clearOnEmpty = hasSeenRestorableSessionRestoreStateRef.current && !hasRestorableState;
       buildAndWriteSessionRestorePayload({
         restoreEnabled: resolveRestorePreviousSessionSetting(
           localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION),
         ),
+        clearOnEmpty,
         sessions: sessionsRef.current,
         workspaces: workspacesRef.current,
         tabOrder: tabOrderRef.current,

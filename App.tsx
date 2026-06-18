@@ -308,7 +308,7 @@ function App({ settings }: { settings: SettingsState }) {
       if (!payload?.sourceSession) return;
       setPendingNewWindowSession(payload);
     });
-  }, []);
+  }, [isPeerSessionWindow]);
 
   useEffect(() => {
     if (!isVaultInitialized || !pendingNewWindowSession?.sourceSession) return;
@@ -499,9 +499,10 @@ function App({ settings }: { settings: SettingsState }) {
   const _handleGlobalHotkeyKeyDown = useEffectEvent((e: KeyboardEvent) => { return handleGlobalHotkeyKeyDownImpl(() => ({ HOTKEY_DEBUG, closeTabKeyStr, e, executeHotkeyAction, hotkeyScheme, keyBindings, matchesKeyBinding }), e); });
   const _handleEscapeKeyDown = useEffectEvent((e: KeyboardEvent) => { return handleEscapeKeyDownImpl(() => ({ e, isQuickSwitcherOpen, setIsQuickSwitcherOpen }), e); });
 
-  useAppStartupEffects({ dismissUpdate, groupConfigs, hosts, identities, installUpdate, isVaultInitialized, keys, openSettingsWindow, portForwardingRules, proxyProfiles, sessions, setKeyboardInteractiveQueue, t, terminalSettings, updateState, workspaces });
+  useAppStartupEffects({ dismissUpdate, enabled: !isPeerSessionWindow, groupConfigs, hosts, identities, installUpdate, isVaultInitialized, keys, openSettingsWindow, portForwardingRules, proxyProfiles, sessions, setKeyboardInteractiveQueue, t, terminalSettings, updateState, workspaces });
 
   useEffect(() => {
+    if (isPeerSessionWindow) return;
     const bridge = netcattyBridge.get();
     if (!bridge?.onTrayFocusSession || !bridge?.onTrayTogglePortForward) return;
 
@@ -516,9 +517,10 @@ function App({ settings }: { settings: SettingsState }) {
       unsubscribeFocus?.();
       unsubscribeToggle?.();
     };
-  }, []);
+  }, [isPeerSessionWindow]);
 
   useEffect(() => {
+    if (isPeerSessionWindow) return;
     const bridge = netcattyBridge.get();
     if (!bridge?.onTrayPanelJumpToSession || !bridge?.onTrayPanelConnectToHost) return;
 
@@ -532,7 +534,7 @@ function App({ settings }: { settings: SettingsState }) {
       unsubscribeJump?.();
       unsubscribeConnect?.();
     };
-  }, []);
+  }, [isPeerSessionWindow]);
 
   // Handle keyboard-interactive submit
   const handleKeyboardInteractiveSubmit = useCallback((requestId: string, responses: string[], savePassword?: string) => { return handleKeyboardInteractiveSubmitImpl(() => ({ hosts, keyboardInteractiveQueue, netcattyBridge, requestId, responses, savePassword, sessions, setKeyboardInteractiveQueue, updateHosts }), requestId, responses, savePassword); }, [keyboardInteractiveQueue, sessions, hosts, updateHosts]);

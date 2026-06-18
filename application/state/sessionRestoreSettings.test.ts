@@ -90,9 +90,31 @@ test("session restore persistence can be disabled for non-main windows", () => {
   assert.match(appSource, /persistSessionRestore: !isPeerSessionWindow/);
   assert.match(indexSource, /hash === '#\/session-window'/);
   assert.match(registerBridgesSource, /route: "session-window"/);
+  assert.match(registerBridgesSource, /registerAsMainWindow: false/);
   assert.match(mainWindowSource, /const rendererHash = typeof route === "string"/);
+  assert.match(mainWindowSource, /registerAsMainWindow = true/);
+  assert.match(mainWindowSource, /if \(registerAsMainWindow\)/);
   assert.match(mainWindowSource, /loadURL\(`\$\{getDevRendererBaseUrl\(devServerUrl\)\}\$\{rendererHash\}`\)/);
   assert.match(mainWindowSource, /loadURL\(`app:\/\/netcatty\/index\.html\$\{rendererHash\}`\)/);
+});
+
+test("session peer windows do not run main-window startup effects", () => {
+  const appSource = readFileSync(new URL("../../App.tsx", import.meta.url), "utf8");
+  const startupEffectsSource = readFileSync(new URL("../app/useAppStartupEffects.ts", import.meta.url), "utf8");
+  const trayFocusIndex = appSource.indexOf("onTrayFocusSession");
+  const trayPanelJumpIndex = appSource.indexOf("onTrayPanelJumpToSession");
+
+  assert.match(appSource, /useAppStartupEffects\(\{[^}]*enabled: !isPeerSessionWindow/s);
+  assert.ok(
+    appSource.lastIndexOf("if (isPeerSessionWindow) return;", trayFocusIndex) !== -1,
+    "peer session windows should not register tray focus/toggle listeners",
+  );
+  assert.ok(
+    appSource.lastIndexOf("if (isPeerSessionWindow) return;", trayPanelJumpIndex) !== -1,
+    "peer session windows should not register tray panel listeners",
+  );
+  assert.match(startupEffectsSource, /enabled = true/);
+  assert.match(startupEffectsSource, /if \(!enabled\) return;/);
 });
 
 test("restore terminal cwd setting participates in cross-window settings sync", () => {

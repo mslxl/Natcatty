@@ -70,6 +70,7 @@ export function buildPersistableSessionRestorePayload({
 
 export function buildAndWriteSessionRestorePayload({
   restoreEnabled = true,
+  clearOnEmpty = false,
   sessions,
   workspaces,
   tabOrder,
@@ -78,6 +79,7 @@ export function buildAndWriteSessionRestorePayload({
   storage,
 }: {
   restoreEnabled?: boolean;
+  clearOnEmpty?: boolean;
   sessions: TerminalSession[];
   workspaces: Workspace[];
   tabOrder: string[];
@@ -100,6 +102,9 @@ export function buildAndWriteSessionRestorePayload({
     now,
   });
   if (!payload) {
+    if (clearOnEmpty) {
+      storage.clear();
+    }
     return false;
   }
   return storage.write(payload);
