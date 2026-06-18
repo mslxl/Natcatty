@@ -53,7 +53,7 @@ export const useSessionState = ({
     restoreEnabled: persistSessionRestore && resolveRestorePreviousSessionSetting(
       localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION),
     ),
-    payload: sessionRestoreStorage.read(),
+    payload: persistSessionRestore ? sessionRestoreStorage.read() : null,
   }), [persistSessionRestore]);
   const [sessions, setSessions] = useState<TerminalSession[]>(initialRestoreState.sessions);
   const [workspaces, setWorkspaces] = useState<Workspace[]>(initialRestoreState.workspaces);

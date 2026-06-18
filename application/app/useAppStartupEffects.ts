@@ -13,6 +13,10 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
     installUpdate, isVaultInitialized, keys, openSettingsWindow, portForwardingRules, proxyProfiles, sessions, setKeyboardInteractiveQueue,
     t, terminalSettings, updateState, workspaces,
   } = ctx;
+  const sessionsRef = useRef(sessions);
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
 
   // Show toast notification when update is available (only when auto-download is idle)
   useEffect(() => {
@@ -159,6 +163,7 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
     if (!bridge?.onKeyboardInteractive) return;
 
     const unsubscribe = bridge.onKeyboardInteractive((request) => {
+      if (request.sessionId && !sessionsRef.current.some((session: { id: string }) => session.id === request.sessionId)) return;
       console.log('[App] Keyboard-interactive request received:', request);
       // Add to queue instead of replacing - supports multiple concurrent sessions
       setKeyboardInteractiveQueue(prev => [...prev, {

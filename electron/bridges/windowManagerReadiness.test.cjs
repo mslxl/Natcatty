@@ -816,6 +816,127 @@ test("each main window close saves its own state", async () => {
   assert.deepEqual(savedStates, [{ windowId: 1 }, { windowId: 2 }]);
 });
 
+test("peer session windows do not load or save shared main window state", async () => {
+  const closeHandlers = [];
+  const resizeHandlers = [];
+  const savedStates = [];
+  let loadWindowStateCount = 0;
+  let closeSettingsWindowCount = 0;
+
+  class BrowserWindowStub {
+    constructor() {
+      this.webContents = {
+        id: 1,
+        on() {},
+        setWindowOpenHandler() {},
+        openDevTools() {},
+        send() {},
+        isDestroyed: () => false,
+      };
+    }
+    on(channel, handler) {
+      if (channel === "close") closeHandlers.push(handler);
+      if (channel === "resize") resizeHandlers.push(handler);
+    }
+    once() {}
+    isDestroyed() { return false; }
+    isMaximized() { return false; }
+    isFullScreen() { return false; }
+    getBounds() { return { width: 1000, height: 700 }; }
+    setBackgroundColor() {}
+    loadURL() { return Promise.resolve(); }
+  }
+
+  const api = createMainWindowApi({
+    mainWindow: null,
+    electronApp: null,
+    currentTheme: "light",
+    isQuitting: false,
+    pendingWindowStateWrite: null,
+    queuedWindowState: null,
+    windowStateCloseRequested: false,
+    DEFAULT_WINDOW_WIDTH: 1400,
+    DEFAULT_WINDOW_HEIGHT: 900,
+    MIN_WINDOW_WIDTH: 1100,
+    MIN_WINDOW_HEIGHT: 640,
+    V8_CACHE_OPTIONS: "bypassHeatCheck",
+    THEME_COLORS: { light: { background: "#fff" } },
+    unhealthyWebContentsIds: new Set(),
+    rendererReadySeenByWebContentsId: new Set(),
+    __dirname,
+    URL,
+    require,
+    console,
+    setTimeout,
+    clearTimeout,
+    getGlobalShortcutBridge() {
+      return { handleWindowClose: () => false };
+    },
+    debugLog() {},
+    resolveFrontendBackgroundColor() { return null; },
+    loadWindowState() {
+      loadWindowStateCount += 1;
+      return { width: 1234, height: 777 };
+    },
+    getDevRendererBaseUrl(url) { return url; },
+    getWindowBoundsState(win) {
+      return { windowId: win.webContents.id };
+    },
+    queueWindowStateSave(state) {
+      savedStates.push(state);
+    },
+    saveWindowStateSync(state) {
+      savedStates.push(state);
+    },
+    setupDeferredShow() {},
+    createExternalOnlyWindowOpenHandler() { return {}; },
+    createAppWindowOpenHandler() { return {}; },
+    attachOAuthLoadingOverlay() {},
+    registerWindowHandlers() {},
+    requestWindowCommandClose() {
+      return true;
+    },
+    shouldCloseWindowFromInput,
+    registerMainWindow() {
+      throw new Error("peer window should not register as main");
+    },
+    unregisterMainWindow() {},
+    applyWindowOpacityToWindow() {},
+    closeSettingsWindow() {
+      closeSettingsWindowCount += 1;
+    },
+    hideSettingsWindow() {},
+  });
+
+  const win = await api.createWindow(
+    {
+      BrowserWindow: BrowserWindowStub,
+      nativeTheme: {},
+      app: {},
+      screen: {},
+      shell: {},
+      ipcMain: {},
+    },
+    {
+      preload: "/tmp/preload.cjs",
+      devServerUrl: "http://localhost:5173",
+      isDev: true,
+      appIcon: null,
+      isMac: true,
+      electronDir: __dirname,
+      route: "session-window",
+      registerAsMainWindow: false,
+    },
+  );
+
+  assert.ok(win);
+  assert.equal(loadWindowStateCount, 0);
+  resizeHandlers[0]?.();
+  closeHandlers[0]?.({});
+  assert.deepEqual(savedStates, []);
+  assert.equal(closeSettingsWindowCount, 0);
+});
+
 test("window IPC handlers target the sender owner window", async () => {
   const handlers = new Map();
   const ipcMain = {

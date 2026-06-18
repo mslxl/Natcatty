@@ -405,7 +405,7 @@ function App({ settings }: { settings: SettingsState }) {
   // hydrated enough to be backed up (or the user genuinely stays empty,
   // in which case the effect continues to no-op).
   useEffect(() => {
-    if (!isVaultInitialized || versionBackupAttemptedRef.current) return;
+    if (isPeerSessionWindow || !isVaultInitialized || versionBackupAttemptedRef.current) return;
     const payload = buildCurrentSyncPayloadRef.current();
     if (!hasMeaningfulSyncData(payload)) return;
     versionBackupAttemptedRef.current = true;
@@ -429,7 +429,7 @@ function App({ settings }: { settings: SettingsState }) {
     return () => {
       cancelled = true;
     };
-  }, [isVaultInitialized, hosts, keys, identities, proxyProfiles, snippets, customGroups, snippetPackages, knownHosts]);
+  }, [isPeerSessionWindow, isVaultInitialized, hosts, keys, identities, proxyProfiles, snippets, customGroups, snippetPackages, knownHosts]);
 
   // Memoized "apply a remote payload safely" callback. Stable identity
   // across renders so useAutoSync's `syncNow` useCallback doesn't rebuild
@@ -459,6 +459,7 @@ function App({ settings }: { settings: SettingsState }) {
 
   // Auto-sync hook for cloud sync
   const { syncNow: handleSyncNow, emptyVaultConflict, resolveEmptyVaultConflict } = useAutoSync({
+    enabled: !isPeerSessionWindow,
     hosts,
     keys,
     identities,

@@ -84,6 +84,7 @@ test("session restore persistence can be disabled for non-main windows", () => {
 
   assert.match(hookSource, /persistSessionRestore\?: boolean/);
   assert.match(hookSource, /restoreEnabled: persistSessionRestore && resolveRestorePreviousSessionSetting/);
+  assert.match(hookSource, /payload: persistSessionRestore \? sessionRestoreStorage\.read\(\) : null/);
   assert.match(hookSource, /if \(!persistSessionRestore\) return;/);
   assert.match(traySource, /useSessionState\(\{ persistSessionRestore: false \}\)/);
   assert.match(appSource, /window\.location\.hash\.startsWith\('#\/session-window'\)/);
@@ -100,11 +101,17 @@ test("session restore persistence can be disabled for non-main windows", () => {
 
 test("session peer windows do not run main-window startup effects", () => {
   const appSource = readFileSync(new URL("../../App.tsx", import.meta.url), "utf8");
+  const autoSyncSource = readFileSync(new URL("./useAutoSync.ts", import.meta.url), "utf8");
   const startupEffectsSource = readFileSync(new URL("../app/useAppStartupEffects.ts", import.meta.url), "utf8");
   const trayFocusIndex = appSource.indexOf("onTrayFocusSession");
   const trayPanelJumpIndex = appSource.indexOf("onTrayPanelJumpToSession");
 
   assert.match(appSource, /useAppStartupEffects\(\{[^}]*enabled: !isPeerSessionWindow/s);
+  assert.match(appSource, /if \(isPeerSessionWindow \|\| !isVaultInitialized \|\| versionBackupAttemptedRef\.current\) return;/);
+  assert.match(appSource, /useAutoSync\(\{[^}]*enabled: !isPeerSessionWindow/s);
+  assert.match(autoSyncSource, /enabled\?: boolean/);
+  assert.match(autoSyncSource, /const enabled = config\.enabled !== false/);
+  assert.match(autoSyncSource, /if \(!enabled\) return;/);
   assert.ok(
     appSource.lastIndexOf("if (isPeerSessionWindow) return;", trayFocusIndex) !== -1,
     "peer session windows should not register tray focus/toggle listeners",
@@ -115,6 +122,7 @@ test("session peer windows do not run main-window startup effects", () => {
   );
   assert.match(startupEffectsSource, /enabled = true/);
   assert.match(startupEffectsSource, /if \(!enabled\) return;/);
+  assert.match(startupEffectsSource, /sessionsRef\.current\.some\(\(session: \{ id: string \}\) => session\.id === request\.sessionId\)/);
 });
 
 test("restore terminal cwd setting participates in cross-window settings sync", () => {

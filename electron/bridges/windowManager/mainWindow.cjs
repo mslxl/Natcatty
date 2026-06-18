@@ -13,6 +13,7 @@ function createMainWindowApi(ctx) {
         electronDir,
         route,
         registerAsMainWindow = true,
+        persistWindowState = registerAsMainWindow,
       } = options;
       const rendererHash = typeof route === "string" && route.trim()
         ? `#/${route.trim().replace(/^#?\/*/, "")}`
@@ -28,7 +29,7 @@ function createMainWindowApi(ctx) {
       const themeConfig = THEME_COLORS[effectiveTheme] || THEME_COLORS.light;
     
       // Load saved window state
-      const savedState = loadWindowState();
+      const savedState = persistWindowState ? loadWindowState() : null;
       let windowBounds = {
         width: DEFAULT_WINDOW_WIDTH,
         height: DEFAULT_WINDOW_HEIGHT,
@@ -203,6 +204,7 @@ function createMainWindowApi(ctx) {
       };
     
       const scheduleSaveState = () => {
+        if (!persistWindowState) return;
         if (saveStateTimer) clearTimeout(saveStateTimer);
         saveStateTimer = setTimeout(() => {
           const state = getWindowBoundsState(win, lastNormalBounds);
@@ -234,7 +236,7 @@ function createMainWindowApi(ctx) {
         if (registerAsMainWindow && trackedMainWindowCount <= 1 && !isQuitting && getGlobalShortcutBridge().handleWindowClose(event, win)) {
           // Window was hidden to tray - save state before returning
           if (saveStateTimer) clearTimeout(saveStateTimer);
-          const state = getWindowBoundsState(win, lastNormalBounds);
+          const state = persistWindowState ? getWindowBoundsState(win, lastNormalBounds) : null;
           if (state) saveWindowStateSync(state);
           hideSettingsWindow();
           return;
@@ -245,7 +247,7 @@ function createMainWindowApi(ctx) {
         }
         thisWindowCloseRequested = true;
         if (saveStateTimer) clearTimeout(saveStateTimer);
-        const state = getWindowBoundsState(win, lastNormalBounds);
+        const state = persistWindowState ? getWindowBoundsState(win, lastNormalBounds) : null;
         if (pendingWindowStateWrite) {
           event.preventDefault();
           if (state) queuedWindowState = state;
@@ -254,9 +256,9 @@ function createMainWindowApi(ctx) {
               // ignore async write errors before closing
             })
             .finally(() => {
-              const finalState = getWindowBoundsState(win, lastNormalBounds);
+              const finalState = persistWindowState ? getWindowBoundsState(win, lastNormalBounds) : null;
               if (finalState) saveWindowStateSync(finalState);
-              closeSettingsWindow();
+              if (registerAsMainWindow) closeSettingsWindow();
               try {
                 win.close();
               } catch {
@@ -266,7 +268,7 @@ function createMainWindowApi(ctx) {
           return;
         }
         if (state) saveWindowStateSync(state);
-        closeSettingsWindow();
+        if (registerAsMainWindow) closeSettingsWindow();
       });
     
       const safeSend = (channel, ...args) => {
