@@ -492,6 +492,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     focusedHostHistoryState,
     focusedSessionId,
     s.shellHistory,
+    s.restoreTerminalCwd,
     handleWorkspaceDrop,
     historySessionId,
     isFocusMode,
