@@ -1,7 +1,6 @@
 import { Copy, Minus, Square, Unplug, X } from 'lucide-react';
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { I18nProvider, useI18n } from '../application/i18n/I18nProvider';
-import { canReuseTerminalConnection } from '../application/state/terminalConnectionReuse';
 import { useSettingsState } from '../application/state/useSettingsState';
 import { useTerminalPopupWindow } from '../application/state/useTerminalPopupWindow';
 import { useVaultState } from '../application/state/useVaultState';
@@ -177,19 +176,58 @@ function TerminalPopupTitleIcon({ icon }: { icon: TerminalPopupPayload['icon'] }
 
 /** Fallback when the parent session's host is no longer in the vault (e.g. quick connect). */
 function buildHostFromSession(source: TerminalPopupPayload['sourceSession']): Host {
+  const protocol = resolveHostProtocolFromSourceSession(source);
   return {
     id: source.hostId,
     label: source.hostLabel,
     hostname: source.hostname,
     username: source.username,
-    port: source.port ?? (source.protocol === 'local' ? undefined : 22),
-    protocol: source.protocol === 'local' ? 'local' : 'ssh',
+    port: source.port ?? (protocol === 'local' ? undefined : 22),
+    protocol,
     tags: [],
     os: 'linux',
-    moshEnabled: source.moshEnabled,
-    etEnabled: source.etEnabled,
+    moshEnabled: source.moshEnabled === true,
+    etEnabled: source.etEnabled === true,
     charset: source.charset,
   };
+}
+
+function resolveHostProtocolFromSourceSession(source: TerminalPopupPayload['sourceSession']): Host['protocol'] {
+  if (
+    source.protocol === 'local' ||
+    source.protocol === 'telnet'
+  ) {
+    return source.protocol;
+  }
+  return 'ssh';
+}
+
+function applySourceSessionConnectionOverrides(
+  host: Host,
+  source: TerminalPopupPayload['sourceSession'],
+): Host {
+  return {
+    ...host,
+    hostname: source.hostname || host.hostname,
+    username: source.username || host.username,
+    port: source.port ?? host.port,
+    protocol: resolveHostProtocolFromSourceSession(source),
+    moshEnabled: source.moshEnabled === true,
+    etEnabled: source.etEnabled === true,
+    charset: source.charset ?? host.charset,
+  };
+}
+
+export function resolveTerminalPopupHost(config: TerminalPopupPayload, hosts: Host[]): Host {
+  const vaultHost = hosts.find((h) => h.id === config.sourceSession.hostId);
+  return applySourceSessionConnectionOverrides(
+    vaultHost ?? buildHostFromSession(config.sourceSession),
+    config.sourceSession,
+  );
+}
+
+export function resolveTerminalPopupReuseId(config: TerminalPopupPayload): string | undefined {
+  return config.sourceSession.reuseConnectionFromSessionId;
 }
 
 function TerminalPopupPageInner() {
@@ -240,15 +278,12 @@ function TerminalPopupPageInner() {
 
   const host = useMemo(() => {
     if (!config) return null;
-    const vaultHost = hosts.find((h) => h.id === config.sourceSession.hostId);
-    return vaultHost ?? buildHostFromSession(config.sourceSession);
+    return resolveTerminalPopupHost(config, hosts);
   }, [config, hosts]);
 
   const reuseId = useMemo(() => {
     if (!config) return undefined;
-    return canReuseTerminalConnection(config.sourceSession)
-      ? config.parentSessionId
-      : undefined;
+    return resolveTerminalPopupReuseId(config);
   }, [config]);
 
   const ready = Boolean(config && host && vaultInitialized);

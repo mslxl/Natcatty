@@ -14,6 +14,33 @@ function buildPopupTitle(parentSession: TerminalSession, title: string): string 
   return `${hostLabel} · ${cleanTitle}`;
 }
 
+function buildCommandPopupSourceSession(
+  parentSession: TerminalSession,
+  startupCommand: string,
+  canReuseConnection: boolean,
+): TerminalSession {
+  const runtimeProtocol = parentSession.protocol as TerminalSession['protocol'] | 'mosh' | 'et' | undefined;
+  const shouldUseSshShell =
+    runtimeProtocol === undefined ||
+    runtimeProtocol === 'ssh' ||
+    runtimeProtocol === 'mosh' ||
+    parentSession.moshEnabled === true;
+
+  return {
+    ...parentSession,
+    ...(shouldUseSshShell
+      ? {
+        protocol: 'ssh' as const,
+        moshEnabled: false,
+      }
+      : {}),
+    startupCommand,
+    reuseConnectionFromSessionId: canReuseConnection
+      ? parentSession.id
+      : undefined,
+  };
+}
+
 export async function openInteractiveTerminal(
   backend: Backend,
   parentSession: TerminalSession,
@@ -37,13 +64,7 @@ export async function openInteractiveTerminal(
     icon: options?.icon,
     parentSessionId: parentSession.id,
     startupCommand,
-    sourceSession: {
-      ...parentSession,
-      startupCommand,
-      reuseConnectionFromSessionId: canReuseConnection
-        ? parentSession.id
-        : undefined,
-    },
+    sourceSession: buildCommandPopupSourceSession(parentSession, startupCommand, canReuseConnection),
   });
   await writeSystemManagerDiagnostic('openInteractiveTerminal result', {
     title: popupTitle,
