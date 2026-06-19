@@ -723,6 +723,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           hostname: hopLabel,
           password: jump.password,
           logPrefix: `[Chain] Hop ${i + 1}/${totalHops}`,
+          scope: "terminal",
           onAutoFill: () => sendProgress(
             i + 1, totalHops + 1, hopLabel, 'auth-attempt', 'using saved password',
           ),

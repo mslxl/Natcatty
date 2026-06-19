@@ -120,6 +120,10 @@ export interface TerminalProps {
   customAccent?: string;
   terminalSettings?: TerminalSettings;
   sessionId: string;
+  restoreState?: TerminalSession["restoreState"];
+  shellType?: TerminalSession["shellType"];
+  lastCwd?: string;
+  restoreTerminalCwd?: boolean;
   startupCommand?: string;
   noAutoRun?: boolean;
   // When this tab was created from a connected SSH session, the id of the

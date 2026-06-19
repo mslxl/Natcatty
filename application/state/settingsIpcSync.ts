@@ -13,6 +13,8 @@ import {
   STORAGE_KEY_HOTKEY_RECORDING,
   STORAGE_KEY_HOTKEY_SCHEME,
   STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM,
+  STORAGE_KEY_RESTORE_PREVIOUS_SESSION,
+  STORAGE_KEY_RESTORE_TERMINAL_CWD,
   STORAGE_KEY_SESSION_LOGS_DIR,
   STORAGE_KEY_SESSION_LOGS_ENABLED,
   STORAGE_KEY_SESSION_LOGS_FORMAT,
@@ -46,6 +48,7 @@ import {
 } from './settingsStateDefaults';
 
 interface UseSettingsIpcSyncParams {
+  enabled?: boolean;
   syncAppearanceFromStorage: () => void;
   syncCustomCssFromStorage: () => void;
   setUiLanguage: Dispatch<SetStateAction<UILanguage>>;
@@ -75,10 +78,13 @@ interface UseSettingsIpcSyncParams {
   setWorkspaceFocusStyleState: Dispatch<SetStateAction<'dim' | 'border'>>;
   setShowHostTreeSidebarState: Dispatch<SetStateAction<boolean>>;
   setDisableTerminalFontZoomState: Dispatch<SetStateAction<boolean>>;
+  setRestorePreviousSessionState: Dispatch<SetStateAction<boolean>>;
+  setRestoreTerminalCwdState: Dispatch<SetStateAction<boolean>>;
   setSftpTransferConcurrencyState: Dispatch<SetStateAction<number>>;
 }
 
 export function useSettingsIpcSync({
+  enabled = true,
   syncAppearanceFromStorage,
   syncCustomCssFromStorage,
   setUiLanguage,
@@ -108,10 +114,13 @@ export function useSettingsIpcSync({
   setWorkspaceFocusStyleState,
   setShowHostTreeSidebarState,
   setDisableTerminalFontZoomState,
+  setRestorePreviousSessionState,
+  setRestoreTerminalCwdState,
   setSftpTransferConcurrencyState,
 }: UseSettingsIpcSyncParams) {
   // Listen for settings changes from other windows via IPC
   useEffect(() => {
+    if (!enabled) return;
     const bridge = netcattyBridge.get();
     if (!bridge?.onSettingsChanged) return;
     const unsubscribe = bridge.onSettingsChanged((payload) => {
@@ -234,6 +243,12 @@ export function useSettingsIpcSync({
       if (key === STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM && typeof value === 'boolean') {
         setDisableTerminalFontZoomState((prev) => (prev === value ? prev : value));
       }
+      if (key === STORAGE_KEY_RESTORE_PREVIOUS_SESSION && typeof value === 'boolean') {
+        setRestorePreviousSessionState((prev) => (prev === value ? prev : value));
+      }
+      if (key === STORAGE_KEY_RESTORE_TERMINAL_CWD && typeof value === 'boolean') {
+        setRestoreTerminalCwdState((prev) => (prev === value ? prev : value));
+      }
       if (key === STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY && typeof value === 'number') {
         setSftpTransferConcurrencyState((prev) => (prev === value ? prev : value));
       }
@@ -246,6 +261,7 @@ export function useSettingsIpcSync({
       }
     };
   }, [
+    enabled,
     applyIncomingCustomKeyBindings,
     mergeIncomingTerminalSettings,
     setAutoUpdateEnabled,
@@ -265,6 +281,8 @@ export function useSettingsIpcSync({
     setSftpDefaultViewMode,
     setShowHostTreeSidebarState,
     setDisableTerminalFontZoomState,
+    setRestorePreviousSessionState,
+    setRestoreTerminalCwdState,
     setSftpTransferConcurrencyState,
     setTerminalFontFamilyId,
     setTerminalFontSize,

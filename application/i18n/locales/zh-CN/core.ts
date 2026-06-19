@@ -128,6 +128,17 @@ export const zhCNCoreMessages: Messages = {
   'settings.update.autoUpdateEnabled': '自动更新',
   'settings.update.autoUpdateEnabledDesc': '有新版本时自动检查并下载更新。',
 
+  // Settings > Session Restore
+  'settings.sessionRestore.title': '会话恢复',
+  'settings.sessionRestore.restorePreviousSession': '恢复上次的标签页和工作区',
+  'settings.sessionRestore.restorePreviousSessionDesc': '启动时重新打开上次的终端标签页和工作区布局。',
+  'settings.sessionRestore.restoreTerminalCwd': '恢复终端工作目录',
+  'settings.sessionRestore.restoreTerminalCwdDesc': '重新连接恢复的终端时，尝试回到上次记录的目录；失败时不会阻塞连接。',
+  'terminal.restore.placeholder.title': '已恢复的会话',
+  'terminal.restore.placeholder.desc': '此终端当前已断开。准备好后可以重新连接，为这个标签页启动新的 shell。',
+  'terminal.restore.placeholder.reconnect': '重新连接',
+  'terminal.restore.cwdLog': '正在恢复工作目录：{cwd}',
+
   // Settings > Session Logs
   'settings.sessionLogs.title': '会话日志',
   'settings.sessionLogs.description': '配置会话日志导出和自动保存设置。',

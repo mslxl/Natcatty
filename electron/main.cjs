@@ -754,31 +754,32 @@ if (!gotLock) {
     }
 
     const { ipcMain: _ipcMain } = electronModule;
-    // Target all visible/recoverable main windows explicitly. Falling back to
+    // Target app-content windows explicitly. Falling back to
     // BrowserWindow.getAllWindows() could pick tray/settings windows whose
     // renderers don't listen for app:query-dirty-editors and would force the
     // timeout fallback on every quit.
-    const mainWindows = typeof getWindowManager().getMainWindows === "function"
-      ? getWindowManager().getMainWindows()
-      : [getWindowManager().getMainWindow()].filter(Boolean);
-
-    // No reachable main window (tray-panel "Quit" path) — there's no visible
-    // UI to surface a "save first" toast on, so skip the round-trip and quit
-    // directly. A minimized window is still reachable via taskbar/Dock.
-    const reachableMainWindows = mainWindows.filter((candidate) => (
-      candidate && !candidate.isDestroyed?.() &&
-      (candidate.isVisible?.() || candidate.isMinimized?.())
-    ));
-    if (reachableMainWindows.length === 0) {
-      commitQuit();
-      return;
-    }
+    const appContentWindows = typeof getWindowManager().getAppContentWindows === "function"
+      ? getWindowManager().getAppContentWindows()
+      : null;
+    const mainWindows = Array.isArray(appContentWindows)
+      ? appContentWindows
+      : typeof getWindowManager().getMainWindows === "function"
+        ? getWindowManager().getMainWindows()
+        : [getWindowManager().getMainWindow()].filter(Boolean);
 
     // The renderer needs to be alive for the IPC roundtrip to make sense.
     // Crashed/dead renderers are skipped; there is no usable UI to warn from.
-    const queryableWebContents = reachableMainWindows
+    // Hidden-to-tray windows are still queried because their renderer can own
+    // dirty SFTP editor tabs.
+    const queryableWindows = mainWindows.filter((candidate) => (
+      candidate && !candidate.isDestroyed?.() &&
+      candidate.webContents &&
+      !candidate.webContents.isDestroyed?.() &&
+      !candidate.webContents.isCrashed?.()
+    ));
+    const queryableWebContents = queryableWindows
       .map((candidate) => candidate.webContents)
-      .filter((wc) => wc && !wc.isDestroyed?.() && !wc.isCrashed?.());
+      .filter(Boolean);
     if (queryableWebContents.length === 0) {
       commitQuit();
       return;
@@ -793,14 +794,24 @@ if (!gotLock) {
     // one place. It fails open (resolves false) on timeout / dead renderer, so
     // a hung renderer can never strand the quit.
     Promise.all(
-      queryableWebContents.map((wc) => queryDirtyEditors(wc, QUIT_GUARD_TIMEOUT_MS, { ipcMain: _ipcMain })),
+      queryableWindows.map((win) => queryDirtyEditors(win.webContents, QUIT_GUARD_TIMEOUT_MS, { ipcMain: _ipcMain })
+        .then((hasDirty) => ({ win, hasDirty }))),
     )
       .then((dirtyResults) => {
         quitGuardChannelBusy = false;
-        const hasDirty = dirtyResults.some(Boolean);
+        const dirtyWindows = dirtyResults.filter((result) => result.hasDirty).map((result) => result.win);
+        const hasDirty = dirtyWindows.length > 0;
         if (!hasDirty) {
           commitQuit();
           return;
+        }
+        for (const win of dirtyWindows) {
+          try {
+            if (typeof win.show === "function" && !win.isVisible?.()) win.show();
+            if (typeof win.focus === "function") win.focus();
+          } catch {
+            // ignore
+          }
         }
         // hasDirty: the renderer showed a toast for dirty editors and the user
         // is saving instead of quitting.

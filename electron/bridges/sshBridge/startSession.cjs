@@ -1260,6 +1260,7 @@ function createStartSessionApi(ctx) {
             hostname: options.hostname,
             password: options.password,
             logPrefix,
+            scope: "terminal",
             onAutoFill: () => sendProgress(
               totalHops, totalHops, options.hostname, 'auth-attempt', 'using saved password',
             ),

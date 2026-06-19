@@ -86,6 +86,10 @@ interface SettingsSystemTabProps {
   setSessionLogsTimestampsEnabled: (enabled: boolean) => void;
   sshDebugLogsEnabled: boolean;
   setSshDebugLogsEnabled: (enabled: boolean) => void;
+  restorePreviousSession: boolean;
+  setRestorePreviousSession: (enabled: boolean) => void;
+  restoreTerminalCwd: boolean;
+  setRestoreTerminalCwd: (enabled: boolean) => void;
   toggleWindowHotkey: string;
   setToggleWindowHotkey: (hotkey: string) => void;
   closeToTray: boolean;
@@ -114,6 +118,10 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   setSessionLogsTimestampsEnabled,
   sshDebugLogsEnabled,
   setSshDebugLogsEnabled,
+  restorePreviousSession,
+  setRestorePreviousSession,
+  restoreTerminalCwd,
+  setRestoreTerminalCwd,
   toggleWindowHotkey,
   setToggleWindowHotkey,
   closeToTray,
@@ -797,6 +805,28 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
             <p className="text-xs text-muted-foreground">
               {t("settings.system.tempDirectoryHint")}
             </p>
+
+          <SectionHeader title={t("settings.sessionRestore.title")} />
+            <SettingCard className="space-y-4 py-4">
+              <SettingRow
+                label={t("settings.sessionRestore.restorePreviousSession")}
+                description={t("settings.sessionRestore.restorePreviousSessionDesc")}
+              >
+                <Toggle
+                  checked={restorePreviousSession}
+                  onChange={setRestorePreviousSession}
+                />
+              </SettingRow>
+              <SettingRow
+                label={t("settings.sessionRestore.restoreTerminalCwd")}
+                description={t("settings.sessionRestore.restoreTerminalCwdDesc")}
+              >
+                <Toggle
+                  checked={restoreTerminalCwd}
+                  onChange={setRestoreTerminalCwd}
+                />
+              </SettingRow>
+            </SettingCard>
 
           <SectionHeader title={t("settings.sessionLogs.title")} />
             <SettingCard className="space-y-4 py-4">

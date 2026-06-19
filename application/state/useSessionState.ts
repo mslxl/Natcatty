@@ -1,4 +1,4 @@
-import { MouseEvent,useCallback,useMemo,useRef,useState } from 'react';
+import { MouseEvent,useCallback,useEffect,useMemo,useRef,useState } from 'react';
 import { ConnectionLog,Host,SerialConfig,Snippet,TerminalSession,Workspace,WorkspaceViewMode } from '../../domain/models';
 import { addLogView, getLogViewTabId, removeLogView, type LogView } from './logViewState';
 import { createHostTerminalSession, createLocalTerminalSession, createSerialTerminalSession, type LocalTerminalOptions } from './sessionFactories';
@@ -28,11 +28,36 @@ import {
   createCopiedTerminalSessionClone,
   createSplitTerminalSessionClone,
 } from './terminalConnectionReuse';
+import { STORAGE_KEY_RESTORE_PREVIOUS_SESSION } from '../../infrastructure/config/storageKeys';
+import {
+  LOCAL_STORAGE_ADAPTER_CHANGED_EVENT,
+  localStorageAdapter,
+} from '../../infrastructure/persistence/localStorageAdapter';
+import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
+import { sessionRestoreStorage } from './sessionRestoreStorage';
+import {
+  buildAndWriteSessionRestorePayload,
+  createInitialRestoredSessionState,
+  shouldPersistSessionRestoreState,
+  updateRestoredSessionStatusState,
+  updateSessionRestoreCwdState,
+} from './sessionRestoreState';
+import { resolveRestorePreviousSessionSetting } from './sessionRestoreSettings';
 
 
-export const useSessionState = () => {
-  const [sessions, setSessions] = useState<TerminalSession[]>([]);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+export const useSessionState = ({
+  persistSessionRestore = true,
+}: {
+  persistSessionRestore?: boolean;
+} = {}) => {
+  const initialRestoreState = useMemo(() => createInitialRestoredSessionState({
+    restoreEnabled: persistSessionRestore && resolveRestorePreviousSessionSetting(
+      localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION),
+    ),
+    payload: persistSessionRestore ? sessionRestoreStorage.read() : null,
+  }), [persistSessionRestore]);
+  const [sessions, setSessions] = useState<TerminalSession[]>(initialRestoreState.sessions);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>(initialRestoreState.workspaces);
   // Latest workspaces snapshot for synchronous existence checks outside
   // setWorkspaces updaters — React doesn't guarantee updaters run
   // synchronously, so relying on a flag flipped inside them to decide
@@ -47,11 +72,112 @@ export const useSessionState = () => {
   const [workspaceRenameTarget, setWorkspaceRenameTarget] = useState<Workspace | null>(null);
   const [workspaceRenameValue, setWorkspaceRenameValue] = useState('');
   // Tab order: stores ordered list of tab IDs (orphan session IDs and workspace IDs)
-  const [tabOrder, setTabOrder] = useState<string[]>([]);
+  const [tabOrder, setTabOrder] = useState<string[]>(initialRestoreState.tabOrder);
   // Broadcast mode: stores workspace IDs that have broadcast enabled
   const [broadcastWorkspaceIds, setBroadcastWorkspaceIds] = useState<Set<string>>(new Set());
   // Log views: stores open log replay tabs
   const [logViews, setLogViews] = useState<LogView[]>([]);
+  const [activeTabRevision, setActiveTabRevision] = useState(0);
+  const [restorePreviousSessionRevision, setRestorePreviousSessionRevision] = useState(0);
+  const sessionsRef = useRef(sessions);
+  const tabOrderRef = useRef(tabOrder);
+  const hasSeenRestorableSessionRestoreStateRef = useRef(
+    persistSessionRestore && shouldPersistSessionRestoreState(
+      initialRestoreState.sessions,
+      initialRestoreState.workspaces,
+      initialRestoreState.tabOrder,
+    ),
+  );
+  sessionsRef.current = sessions;
+  tabOrderRef.current = tabOrder;
+  if (persistSessionRestore && shouldPersistSessionRestoreState(sessions, workspaces, tabOrder)) {
+    hasSeenRestorableSessionRestoreStateRef.current = true;
+  }
+
+  useEffect(() => {
+    if (initialRestoreState.activeTabId !== 'vault') {
+      activeTabStore.setActiveTabId(initialRestoreState.activeTabId);
+    }
+  }, [initialRestoreState.activeTabId]);
+
+  useEffect(() => activeTabStore.subscribeSync(() => {
+    setActiveTabRevision((revision) => revision + 1);
+  }), []);
+
+  useEffect(() => {
+    const handleRestorePreviousSessionChanged = (key?: string) => {
+      if (key !== STORAGE_KEY_RESTORE_PREVIOUS_SESSION) return;
+      setRestorePreviousSessionRevision((revision) => revision + 1);
+    };
+    const handleLocalStorageAdapterChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ key?: string }>).detail;
+      handleRestorePreviousSessionChanged(detail?.key);
+    };
+
+    window.addEventListener(LOCAL_STORAGE_ADAPTER_CHANGED_EVENT, handleLocalStorageAdapterChanged);
+    const unsubscribeSettingsSync = netcattyBridge.get()?.onSettingsChanged?.((payload) => {
+      handleRestorePreviousSessionChanged(payload?.key);
+    });
+    return () => {
+      window.removeEventListener(LOCAL_STORAGE_ADAPTER_CHANGED_EVENT, handleLocalStorageAdapterChanged);
+      unsubscribeSettingsSync?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!persistSessionRestore) return;
+
+    const restoreEnabled = resolveRestorePreviousSessionSetting(
+      localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION),
+    );
+    if (!restoreEnabled) {
+      sessionRestoreStorage.clear();
+      hasSeenRestorableSessionRestoreStateRef.current = false;
+      return;
+    }
+
+    const persistNow = () => {
+      const hasRestorableState = shouldPersistSessionRestoreState(
+        sessionsRef.current,
+        workspacesRef.current,
+        tabOrderRef.current,
+      );
+      const clearOnEmpty = hasSeenRestorableSessionRestoreStateRef.current && !hasRestorableState;
+      buildAndWriteSessionRestorePayload({
+        restoreEnabled: resolveRestorePreviousSessionSetting(
+          localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION),
+        ),
+        clearOnEmpty,
+        sessions: sessionsRef.current,
+        workspaces: workspacesRef.current,
+        tabOrder: tabOrderRef.current,
+        activeTabId: activeTabStore.getActiveTabId(),
+        storage: sessionRestoreStorage,
+      });
+    };
+
+    const timeout = window.setTimeout(() => {
+      persistNow();
+    }, 250);
+
+    const handlePageHide = () => {
+      window.clearTimeout(timeout);
+      persistNow();
+    };
+
+    window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("beforeunload", handlePageHide);
+
+    return () => {
+      window.clearTimeout(timeout);
+      window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("beforeunload", handlePageHide);
+    };
+  }, [sessions, workspaces, tabOrder, activeTabRevision, restorePreviousSessionRevision, persistSessionRestore]);
+
+  const updateSessionRestoreCwd = useCallback((sessionId: string, cwd: string | null) => {
+    setSessions((prev) => updateSessionRestoreCwdState(prev, sessionId, cwd));
+  }, []);
 
   const createLocalTerminal = useCallback((options?: LocalTerminalOptions) => {
     const sessionId = crypto.randomUUID();
@@ -75,7 +201,7 @@ export const useSessionState = () => {
   }, [setActiveTabId]);
 
   const updateSessionStatus = useCallback((sessionId: string, status: TerminalSession['status']) => {
-    setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, status } : s));
+    setSessions(prev => updateRestoredSessionStatusState(prev, sessionId, status));
   }, []);
 
   const updateSessionFontSize = useCallback((sessionId: string, fontSize: number) => {
@@ -1016,5 +1142,6 @@ export const useSessionState = () => {
     // Copy session
     copySession,
     createSessionFromCloneSource,
+    updateSessionRestoreCwd,
   };
 };

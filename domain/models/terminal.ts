@@ -393,4 +393,8 @@ export interface TerminalSession {
   fontSizeOverride?: boolean;
   /** User-assigned display name for this terminal session (overrides hostLabel in UI) */
   customName?: string;
+  /** Runtime marker for sessions reconstructed from startup restore. */
+  restoreState?: 'restored-disconnected';
+  /** Latest known working directory captured from terminal cwd tracking. */
+  lastCwd?: string;
 }

@@ -242,6 +242,7 @@ const WORKSPACE_CTX_KEYS = [
   'terminalSettings',
   'hotkeyScheme',
   'disableTerminalFontZoom',
+  'restoreTerminalCwd',
   'keyBindings',
   'resizing',
   'isComposeBarOpen',

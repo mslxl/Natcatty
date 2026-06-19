@@ -15,7 +15,8 @@ import {
   writeTerminalLine,
 } from "./terminalSessionAttachment";
 import { isConnectionTokenCurrent, registerConnectionToken, runDistroDetection } from "./terminalDistroDetection";
-import { scheduleStartupCommand } from "./terminalStartupCommands";
+import { resolveStartupCommand, scheduleStartupCommand } from "./terminalStartupCommands";
+import { markPromptLineBreakCommandPending } from "./promptLineBreak";
 import {
   isEncryptedCredentialPlaceholder,
   sanitizeCredentialValue,
@@ -50,6 +51,16 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     ctx.updateStatus("disconnected");
     ctx.setProgressValue(0);
     ctx.setChainProgress(null);
+  };
+
+  const consumeRestoreCwdIntent = (term: XTerm, id: string): void => {
+    const intent = ctx.restoreCwdIntentRef?.current;
+    if (!intent) return;
+    ctx.restoreCwdIntentRef.current = null;
+    ctx.setProgressLogs((prev) => [...prev, tr("terminal.restore.cwdLog", `Restoring working directory: ${intent.cwd}`)
+      .replace("{cwd}", intent.cwd)]);
+    ctx.terminalBackend.writeToSession(id, `${intent.command}\r`, { automated: true });
+    markPromptLineBreakCommandPending(ctx.promptLineBreakStateRef, term, intent.command);
   };
 
   const resolveSavedSudoAutofillPassword = (): string | undefined => {
@@ -483,6 +494,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         return;
       }
 
+      consumeRestoreCwdIntent(term, id);
       scheduleStartupCommand(ctx, term, id);
 
       // Run OS detection only after successful connection. Mint a fresh
@@ -584,7 +596,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         ctx.updateStatus("disconnected");
         return;
       }
-      const commandToRun = ctx.startupCommand || ctx.host.startupCommand;
+      const commandToRun = resolveStartupCommand(ctx);
       const waitsForAutoLogin = Boolean(
         commandToRun &&
         (telnetUsername || hasTelnetPasswordForAutoLogin) &&
@@ -1129,6 +1141,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       });
 
       ctx.onSessionAttached?.(id);
+      consumeRestoreCwdIntent(term, id);
       scheduleStartupCommand(ctx, term, id);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

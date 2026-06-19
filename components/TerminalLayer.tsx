@@ -50,6 +50,9 @@ import { resolveSidePanelToggleIntent } from '../application/state/resolveSidePa
 import { resolveAiSidePanelToggleIntent } from '../application/state/resolveAiSidePanelToggleIntent';
 import { terminalLayerAreEqual } from './terminalLayerMemo';
 import { TerminalLayerTabBridge } from './terminalLayer/TerminalLayerTabBridge';
+import {
+  canUseDirectSessionWriteFallback,
+} from './terminalLayer/terminalLayerSessionRouting';
 import { resolvePreferredTerminalCwd, scheduleBackendCwdProbeAfterCommand } from './terminal/sftpCwd';
 import { classifyDistroId, shouldProbeSessionCwd } from '../domain/host';
 
@@ -103,6 +106,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   fontSize = 14,
   hotkeyScheme = 'disabled',
   disableTerminalFontZoom = false,
+  restoreTerminalCwd = false,
   keyBindings = [],
   onHotkeyAction,
   onUpdateTerminalThemeId,
@@ -110,6 +114,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   onUpdateTerminalFontSize,
   onUpdateTerminalFontWeight,
   onUpdateSessionFontSize,
+  onUpdateSessionRestoreCwd,
   onClearSessionFontSizeOverride,
   onCloseSession,
   onUpdateSessionStatus,
@@ -193,9 +198,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     } else {
       terminalRendererCwdBySessionRef.current.delete(sessionId);
     }
+    onUpdateSessionRestoreCwd?.(sessionId, nextCwd);
     terminalCwdRevisionRef.current += 1;
     setTerminalCwdRevision(terminalCwdRevisionRef.current);
-  }, []);
+  }, [onUpdateSessionRestoreCwd]);
 
   // Stable callback references for Terminal components
   const handleCloseSession = useCallback((sessionId: string) => {
@@ -321,6 +327,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
     for (const session of sessionsRef.current) {
       if (session.workspaceId === workspaceId && session.id !== sourceSessionId) {
+        if (!canUseDirectSessionWriteFallback(session)) continue;
         terminalBackend.writeToSession(session.id, data);
       }
     }
@@ -508,6 +515,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     }
     return map;
   }, [sessions, hosts, groupConfigs, proxyProfiles]);
+  const resolvedSessionHostIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const session of sessions) {
+      if (hostMap.has(session.hostId) || session.protocol === 'local') ids.add(session.id);
+    }
+    return ids;
+  }, [hostMap, sessions]);
   const sessionChainHostsMap = useMemo(() => {
     const map = new Map<string, Host[]>();
     for (const session of sessions) {
@@ -920,6 +934,9 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       return;
     }
 
+    const session = sessionsRef.current.find((candidate) => candidate.id === sessionId);
+    if (!session || !canUseDirectSessionWriteFallback(session)) return;
+
     let data = normalizeLineEndings(command);
     if (!noAutoRun) data = `${data}\r`;
     terminalBackend.writeToSession(sessionId, data);
@@ -961,6 +978,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         if (executor) {
           executor(text, false, { broadcast: false });
         } else {
+          const session = sessionsRef.current.find((candidate) => candidate.id === sid);
+          if (!session || !canUseDirectSessionWriteFallback(session)) continue;
           terminalBackend.writeToSession(sid, payload);
         }
       }
@@ -975,6 +994,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         if (executor) {
           executor(text, false);
         } else {
+          const session = sessionsRef.current.find((candidate) => candidate.id === targetId);
+          if (!session || !canUseDirectSessionWriteFallback(session)) return;
           terminalBackend.writeToSession(targetId, payload);
         }
       }
@@ -1061,6 +1082,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     hostsRef,
     hotkeyScheme,
     disableTerminalFontZoom,
+    restoreTerminalCwd,
     identities,
     isBroadcastEnabled,
     isComposeBarOpen,
@@ -1102,6 +1124,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     onUpdateTerminalFontSize,
     onUpdateTerminalFontWeight,
     onUpdateSessionFontSize,
+    onUpdateSessionRestoreCwd,
     onClearSessionFontSizeOverride,
     onUpdateTerminalThemeId,
     pendingTerminalSelectionForAI,
@@ -1114,6 +1137,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     sessionActivityStore,
     sessionChainHostsMap,
     sessionHostsMap,
+    resolvedSessionHostIds,
     sessionLogConfig,
     sessionSudoAutofillPasswordsMap,
     sessions,

@@ -20,6 +20,7 @@ export const terminalLayerAreEqual = (
   prev.fontSize === next.fontSize &&
   prev.hotkeyScheme === next.hotkeyScheme &&
   prev.disableTerminalFontZoom === next.disableTerminalFontZoom &&
+  prev.restoreTerminalCwd === next.restoreTerminalCwd &&
   prev.keyBindings === next.keyBindings &&
   prev.sftpDefaultViewMode === next.sftpDefaultViewMode &&
   prev.sftpDoubleClickBehavior === next.sftpDoubleClickBehavior &&
@@ -34,6 +35,7 @@ export const terminalLayerAreEqual = (
   prev.showHostTreeSidebar === next.showHostTreeSidebar &&
   prev.setEditorWordWrap === next.setEditorWordWrap &&
   prev.onHotkeyAction === next.onHotkeyAction &&
+  prev.onUpdateSessionRestoreCwd === next.onUpdateSessionRestoreCwd &&
   prev.onUpdateHost === next.onUpdateHost &&
   prev.onAddKnownHost === next.onAddKnownHost &&
   prev.onToggleWorkspaceViewMode === next.onToggleWorkspaceViewMode &&

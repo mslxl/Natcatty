@@ -29,6 +29,7 @@ const THEME_COLORS = {
 // State
 let mainWindow = null;
 const mainWindows = new Set();
+const appContentWindows = new Set();
 let lastFocusedMainWindow = null;
 let settingsWindow = null;
 let currentTheme = "light";
@@ -124,8 +125,8 @@ function setQuittingForUpdate(nextValue) {
 
 /**
  * True when quitAndInstall() initiated the current quit. The before-quit guard
- * checks this to skip the dirty-editor round-trip and let the app exit so the
- * updater's installer can run.
+ * still performs the dirty-editor round-trip; if the user cancels to save, it
+ * uses this state to roll back the update quit flags.
  */
 function isQuittingForUpdate() {
   return quittingForUpdate;
@@ -286,9 +287,22 @@ function pruneMainWindows() {
   }
 }
 
+function pruneAppContentWindows() {
+  for (const win of Array.from(appContentWindows)) {
+    if (!win || win.isDestroyed?.()) {
+      appContentWindows.delete(win);
+    }
+  }
+}
+
 function getMainWindowList() {
   pruneMainWindows();
   return Array.from(mainWindows).filter((win) => isWindowUsable(win));
+}
+
+function getAppContentWindowList() {
+  pruneAppContentWindows();
+  return Array.from(appContentWindows).filter((win) => isWindowUsable(win));
 }
 
 function rememberMainWindow(win) {
@@ -297,8 +311,19 @@ function rememberMainWindow(win) {
   mainWindow = win;
 }
 
+function registerAppContentWindow(win) {
+  if (!win || win.isDestroyed?.()) return;
+  appContentWindows.add(win);
+}
+
+function unregisterAppContentWindow(win) {
+  if (!win) return;
+  appContentWindows.delete(win);
+}
+
 function registerMainWindow(win) {
   if (!win || win.isDestroyed?.()) return;
+  registerAppContentWindow(win);
   mainWindows.add(win);
   rememberMainWindow(win);
   try {
@@ -311,6 +336,7 @@ function registerMainWindow(win) {
 function unregisterMainWindow(win) {
   if (!win) return;
   mainWindows.delete(win);
+  unregisterAppContentWindow(win);
   if (lastFocusedMainWindow === win) lastFocusedMainWindow = null;
   if (mainWindow === win) mainWindow = null;
   const fallback = getMainWindowList().at(-1) || null;
@@ -830,11 +856,14 @@ const mainWindowApi = createMainWindowApi({
   createExternalOnlyWindowOpenHandler,
   createAppWindowOpenHandler,
   attachOAuthLoadingOverlay,
+  queryDirtyEditors: (...args) => require("./dirtyEditorGuard.cjs").queryDirtyEditors(...args),
   registerWindowHandlers,
   requestWindowCommandClose,
   shouldCloseWindowFromInput,
   registerMainWindow,
   unregisterMainWindow,
+  registerAppContentWindow,
+  unregisterAppContentWindow,
   getMainWindowCount,
   applyWindowOpacityToWindow,
   closeSettingsWindow: (...args) => closeSettingsWindow(...args),
@@ -1195,10 +1224,13 @@ module.exports = {
   buildAppMenu,
   getMainWindow,
   getMainWindows: getMainWindowList,
+  getAppContentWindows: getAppContentWindowList,
   getMainWindowCount,
   isMainWindow,
   registerMainWindow,
   unregisterMainWindow,
+  registerAppContentWindow,
+  unregisterAppContentWindow,
   getSettingsWindow,
   isWindowUsable,
   registerWindowHandlers,

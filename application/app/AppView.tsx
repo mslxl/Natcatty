@@ -45,7 +45,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
     passphraseQueue, protocolSelectHost, proxyProfiles, quickResults, quickSearch, removeSessionFromWorkspace, reorderWorkTabs, reorderWorkspaceSessions, resetSessionRename,
     resetWorkspaceRename, resolveEmptyVaultConflict, resolvedTheme, runSnippet, sessionLogsDir, sessionLogsEnabled, sessionLogsFormat, sessionLogsTimestampsEnabled, sessionRenameTarget, sshDebugLogsEnabled,
     sessionRenameValue, sessions, setActiveTabId, setAddToWorkspaceDialog, setDraggingSessionId, setEditorWordWrap, setIsCreateWorkspaceOpen, setIsQuickSwitcherOpen,
-    setNavigateToSection, setProtocolSelectHost, setQuickSearch, setSessionRenameValue, setTerminalFontFamilyId, setTerminalFontSize, setTerminalThemeId, updateSessionFontSize, clearSessionFontSizeOverride,
+    setNavigateToSection, setProtocolSelectHost, setQuickSearch, setSessionRenameValue, setTerminalFontFamilyId, setTerminalFontSize, setTerminalThemeId, updateSessionFontSize, updateSessionRestoreCwd, clearSessionFontSizeOverride,
     setWorkspaceFocusedSession, setWorkspaceRenameValue, settings, sftpAutoOpenSidebar, sftpFollowTerminalCwd, setSftpFollowTerminalCwd, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior,
     sftpShowHiddenFiles, sftpUseCompressedUpload, shellHistory, snippetPackages, snippets, splitSessionWithCurrentShell, startSessionRename,
     startWorkspaceRename, submitSessionRename, submitWorkspaceRename, t, terminalFontFamilyId, terminalFontSize, terminalSettings, terminalThemeId, themeById,
@@ -259,12 +259,14 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
           fontSize={terminalFontSize}
           hotkeyScheme={hotkeyScheme}
           disableTerminalFontZoom={settings.disableTerminalFontZoom}
+          restoreTerminalCwd={settings.restoreTerminalCwd}
           keyBindings={keyBindings}
           onHotkeyAction={handleHotkeyAction}
           onUpdateTerminalThemeId={setTerminalThemeId}
           onUpdateTerminalFontFamilyId={setTerminalFontFamilyId}
           onUpdateTerminalFontSize={setTerminalFontSize}
           onUpdateSessionFontSize={updateSessionFontSize}
+          onUpdateSessionRestoreCwd={updateSessionRestoreCwd}
           onClearSessionFontSizeOverride={clearSessionFontSizeOverride}
           onUpdateTerminalFontWeight={(w) => updateTerminalSetting('fontWeight', w)}
           onCloseSession={closeSession}

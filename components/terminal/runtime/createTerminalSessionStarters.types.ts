@@ -103,6 +103,7 @@ export type TerminalSessionStartersContext = {
   reuseConnectionFromSessionId?: string;
   startupCommand?: string;
   noAutoRun?: boolean;
+  suppressHostStartupCommandRef?: RefObject<boolean>;
   terminalSettings?: TerminalSettings;
   terminalSettingsRef?: RefObject<TerminalSettings | undefined>;
   terminalBackend: TerminalBackendApi;
@@ -127,6 +128,7 @@ export type TerminalSessionStartersContext = {
   pendingAuthRef: RefObject<PendingAuth>;
   promptLineBreakStateRef?: RefObject<PromptLineBreakState>;
   sudoAutofillRef?: RefObject<SudoPasswordAutofill | null>;
+  restoreCwdIntentRef?: RefObject<{ cwd: string; command: string } | null>;
 
   updateStatus: (next: TerminalSession["status"]) => void;
   setStatus: Dispatch<SetStateAction<TerminalSession["status"]>>;

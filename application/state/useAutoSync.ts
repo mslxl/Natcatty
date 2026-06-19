@@ -40,6 +40,7 @@ import {
 } from './autoSyncRemoteSchedule';
 
 interface AutoSyncConfig {
+  enabled?: boolean;
   // Data to sync
   hosts: SyncPayload['hosts'];
   keys: SyncPayload['keys'];
@@ -108,6 +109,7 @@ interface RemoteVersionCheckOptions {
 }
 
 export const useAutoSync = (config: AutoSyncConfig) => {
+  const enabled = config.enabled !== false;
   const { t } = useI18n();
   const tRef = useRef(t);
   useEffect(() => {
@@ -212,6 +214,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
   
   // Sync now handler - get fresh state directly from manager
   const syncNow = useCallback(async (options?: SyncNowOptions) => {
+    if (!enabled) return;
     const trigger: SyncTrigger = options?.trigger ?? 'auto';
 
     isSyncRunningRef.current = true;
@@ -380,7 +383,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     } finally {
       isSyncRunningRef.current = false;
     }
-  }, [sync, buildPayload, getDataHash, onApplyPayload, t]);
+  }, [enabled, sync, buildPayload, getDataHash, onApplyPayload, t]);
 
   // One-shot toast per mount when a previous apply was interrupted, so the
   // user understands why auto-sync is silently paused and where to go to
@@ -389,6 +392,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
   // after the user completes a recovery.
   const interruptedApplyNotifiedRef = useRef(false);
   useEffect(() => {
+    if (!enabled) return;
     if (interruptedApplyNotifiedRef.current) return;
     if (!sync.isUnlocked) return;
     const interrupted = readInterruptedVaultApply();
@@ -398,7 +402,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       t('sync.autoSync.interruptedApplyMessage'),
       t('sync.autoSync.interruptedApplyTitle'),
     );
-  }, [sync.isUnlocked, t]);
+  }, [enabled, sync.isUnlocked, t]);
 
   // Stabilize the fields `checkRemoteVersion` reads from `config`.
   // AutoSyncConfig is a fresh object literal on every App render, so a
@@ -439,6 +443,9 @@ export const useAutoSync = (config: AutoSyncConfig) => {
 
   // Check remote version and pull if newer (on startup)
   const checkRemoteVersion = useCallback(async (options?: RemoteVersionCheckOptions) => {
+    if (!enabled) {
+      return;
+    }
     if (checkRemoteInFlightRef.current) {
       return;
     }
@@ -683,7 +690,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     // callback and restart the retry-timer's exponential backoff.
     // `t` is read through tRef so locale updates don't rebuild this
     // callback and re-fire the startup retry effect on unrelated renders.
-  }, []);
+  }, [enabled]);
 
   const checkRemoteVersionRef = useRef(checkRemoteVersion);
   useEffect(() => {
@@ -692,6 +699,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
   
   // Debounced auto-sync when data changes
   useEffect(() => {
+    if (!enabled) return;
     // Skip if not ready
     if (!sync.hasAnyConnectedProvider || !sync.autoSyncEnabled || !sync.isUnlocked) {
       return;
@@ -773,6 +781,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     getDataHash,
     syncNow,
     config.settingsVersion,
+    enabled,
     bookmarksVersion,
     syncableSettingsStorageVersion,
   ]);
@@ -784,6 +793,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
   // sync from Settings — the 30s/60s/90s cadence below lets a short
   // outage (network blip, provider rate-limit) self-heal.
   useEffect(() => {
+    if (!enabled) return;
     if (
       !sync.hasAnyConnectedProvider ||
       !sync.isUnlocked ||
@@ -838,9 +848,10 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       cancelled = true;
       if (timerId) clearTimeout(timerId);
     };
-  }, [sync.hasAnyConnectedProvider, sync.isUnlocked, config.startupReady]);
+  }, [enabled, sync.hasAnyConnectedProvider, sync.isUnlocked, config.startupReady]);
 
   const runRuntimeRemoteCheck = useCallback(async (options?: { force?: boolean }) => {
+    if (!enabled) return;
     const now = Date.now();
     const minIntervalMs = getRuntimeRemoteCheckIntervalMs(sync.autoSyncInterval);
     if (!shouldRunRuntimeRemoteCheck({
@@ -863,6 +874,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     await checkRemoteVersion({ force: true, notifyOnFailure: false });
   }, [
     checkRemoteVersion,
+    enabled,
     sync.autoSyncEnabled,
     sync.autoSyncInterval,
     sync.hasAnyConnectedProvider,
@@ -874,6 +886,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
   // another device uploads changes after our startup inspection but before
   // this device edits anything locally.
   useEffect(() => {
+    if (!enabled) return;
     if (!sync.hasAnyConnectedProvider || !sync.autoSyncEnabled || !sync.isUnlocked) {
       return;
     }
@@ -885,6 +898,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
 
     return () => window.clearInterval(timerId);
   }, [
+    enabled,
     runRuntimeRemoteCheck,
     sync.autoSyncEnabled,
     sync.autoSyncInterval,
@@ -894,6 +908,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
 
   // Also re-check when the user returns to the app or the network comes back.
   useEffect(() => {
+    if (!enabled) return;
     if (typeof window === 'undefined' || typeof document === 'undefined') return;
 
     const handleVisibilityChange = () => {
@@ -911,16 +926,17 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('online', handleOnline);
     };
-  }, [runRuntimeRemoteCheck]);
+  }, [enabled, runRuntimeRemoteCheck]);
   
   // Reset check flags when provider disconnects
   useEffect(() => {
+    if (!enabled) return;
     if (!sync.hasAnyConnectedProvider) {
       hasCheckedRemoteRef.current = false;
       remoteCheckDoneRef.current = false;
       lastRuntimeRemoteCheckAtRef.current = null;
     }
-  }, [sync.hasAnyConnectedProvider]);
+  }, [enabled, sync.hasAnyConnectedProvider]);
 
   // On unmount, release any pending empty-vault confirmation. Without
   // this, an unmount mid-dialog (window close, workspace switch) leaves

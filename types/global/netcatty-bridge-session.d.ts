@@ -294,6 +294,7 @@ declare global {
         prompts: Array<{ prompt: string; echo: boolean }>;
         hostname: string;
         savedPassword?: string | null;
+        scope?: "terminal" | "external";
       }) => void
     ): () => void;
     respondKeyboardInteractive?(
