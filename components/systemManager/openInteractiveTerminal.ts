@@ -24,7 +24,9 @@ function buildCommandPopupSourceSession(
     runtimeProtocol === undefined ||
     runtimeProtocol === 'ssh' ||
     runtimeProtocol === 'mosh' ||
-    parentSession.moshEnabled === true;
+    runtimeProtocol === 'et' ||
+    parentSession.moshEnabled === true ||
+    parentSession.etEnabled === true;
 
   return {
     ...parentSession,
@@ -32,6 +34,7 @@ function buildCommandPopupSourceSession(
       ? {
         protocol: 'ssh' as const,
         moshEnabled: false,
+        etEnabled: false,
       }
       : {}),
     startupCommand,

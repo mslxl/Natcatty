@@ -42,10 +42,34 @@ test('openInteractiveTerminal opens command popups over SSH even when the source
       ...parentSession({ moshEnabled: true }),
       protocol: 'ssh',
       moshEnabled: false,
+      etEnabled: false,
       startupCommand: 'docker exec -it abc123 sh',
       reuseConnectionFromSessionId: undefined,
     },
   });
+});
+
+test('openInteractiveTerminal opens command popups over SSH even when the source host uses ET', async () => {
+  const payloads: unknown[] = [];
+  const backend = {
+    openTerminalPopup: async (payload: unknown) => {
+      payloads.push(payload);
+      return { success: true };
+    },
+  };
+
+  await openInteractiveTerminal(
+    backend as never,
+    parentSession({ protocol: 'et' as TerminalSession['protocol'], etEnabled: true }),
+    'tmux: api',
+    'tmux attach-session -t api',
+  );
+
+  const payload = payloads[0] as { sourceSession: TerminalSession };
+  assert.equal(payload.sourceSession.protocol, 'ssh');
+  assert.equal(payload.sourceSession.moshEnabled, false);
+  assert.equal(payload.sourceSession.etEnabled, false);
+  assert.equal(payload.sourceSession.reuseConnectionFromSessionId, undefined);
 });
 
 test('openInteractiveTerminal keeps SSH connection reuse for ordinary connected SSH parents', async () => {

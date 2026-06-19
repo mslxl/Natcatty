@@ -1,9 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import type { Host, TerminalSession } from '../types';
 import type { TerminalPopupPayload } from '../domain/systemManager/types';
 import { resolveTerminalPopupHost, resolveTerminalPopupReuseId } from './TerminalPopupPage';
+
+const source = readFileSync(new URL('./TerminalPopupPage.tsx', import.meta.url), 'utf8');
 
 const vaultHost = (overrides: Partial<Host> = {}): Host => ({
   id: 'host-1',
@@ -31,10 +34,10 @@ const sourceSession = (overrides: Partial<TerminalSession> = {}): TerminalSessio
   ...overrides,
 });
 
-const popupPayload = (source: TerminalSession): TerminalPopupPayload => ({
+const popupPayload = (sourceSessionValue: TerminalSession): TerminalPopupPayload => ({
   title: 'Prod · docker: api',
-  parentSessionId: source.id,
-  sourceSession: source,
+  parentSessionId: sourceSessionValue.id,
+  sourceSession: sourceSessionValue,
   startupCommand: 'docker exec -it abc123 sh',
 });
 
@@ -77,4 +80,11 @@ test('resolveTerminalPopupReuseId uses the explicit reuse id from the prepared s
     resolveTerminalPopupReuseId(popupPayload(sourceSession({ reuseConnectionFromSessionId: undefined }))),
     undefined,
   );
+});
+
+test('popup terminals resolve complete host config and pass jump hosts into Terminal', () => {
+  assert.match(source, /proxyProfiles,\s+knownHosts,\s+snippets,\s+snippetPackages,\s+groupConfigs,/);
+  assert.match(source, /resolveTerminalPopupHost\(config,\s*hosts,\s*\{\s+groupConfigs,\s+proxyProfiles,/);
+  assert.match(source, /resolveTerminalChainHosts\(\{\s+host,\s+hosts,\s+groupConfigs,\s+proxyProfiles,/);
+  assert.match(source, /chainHosts=\{chainHosts\}/);
 });

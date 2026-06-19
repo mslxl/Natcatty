@@ -7,10 +7,12 @@ import { useVaultState } from '../application/state/useVaultState';
 import { useWindowControls } from '../application/state/useWindowControls';
 import { shouldCloseTerminalPopupOnExit } from '../application/state/resolveTerminalSessionExitIntent';
 import { upsertKnownHost } from '../domain/knownHosts';
+import { resolveTerminalChainHosts, resolveTerminalSessionHost } from '../domain/terminalHostResolution';
 import type { TerminalPopupPayload } from '../domain/systemManager/types';
-import type { TerminalTheme } from '../domain/models';
-import type { Host, KnownHost } from '../types';
+import type { GroupConfig, Host, ProxyProfile, TerminalTheme } from '../domain/models';
+import type { KnownHost } from '../types';
 import { getEffectiveKnownHosts } from '../infrastructure/syncHelpers';
+import { detectLocalOs } from '../lib/localShell';
 import { cn } from '../lib/utils';
 
 const Terminal = lazy(() => import('./Terminal'));
@@ -174,24 +176,6 @@ function TerminalPopupTitleIcon({ icon }: { icon: TerminalPopupPayload['icon'] }
   );
 }
 
-/** Fallback when the parent session's host is no longer in the vault (e.g. quick connect). */
-function buildHostFromSession(source: TerminalPopupPayload['sourceSession']): Host {
-  const protocol = resolveHostProtocolFromSourceSession(source);
-  return {
-    id: source.hostId,
-    label: source.hostLabel,
-    hostname: source.hostname,
-    username: source.username,
-    port: source.port ?? (protocol === 'local' ? undefined : 22),
-    protocol,
-    tags: [],
-    os: 'linux',
-    moshEnabled: source.moshEnabled === true,
-    etEnabled: source.etEnabled === true,
-    charset: source.charset,
-  };
-}
-
 function resolveHostProtocolFromSourceSession(source: TerminalPopupPayload['sourceSession']): Host['protocol'] {
   if (
     source.protocol === 'local' ||
@@ -206,22 +190,37 @@ function applySourceSessionConnectionOverrides(
   host: Host,
   source: TerminalPopupPayload['sourceSession'],
 ): Host {
+  const protocol = resolveHostProtocolFromSourceSession(source);
   return {
     ...host,
     hostname: source.hostname || host.hostname,
     username: source.username || host.username,
-    port: source.port ?? host.port,
-    protocol: resolveHostProtocolFromSourceSession(source),
+    port: source.port ?? (protocol === 'local' ? undefined : host.port),
+    protocol,
     moshEnabled: source.moshEnabled === true,
     etEnabled: source.etEnabled === true,
     charset: source.charset ?? host.charset,
   };
 }
 
-export function resolveTerminalPopupHost(config: TerminalPopupPayload, hosts: Host[]): Host {
-  const vaultHost = hosts.find((h) => h.id === config.sourceSession.hostId);
+export function resolveTerminalPopupHost(
+  config: TerminalPopupPayload,
+  hosts: Host[],
+  options: {
+    groupConfigs?: GroupConfig[];
+    proxyProfiles?: ProxyProfile[];
+    localOs?: Host['os'];
+  } = {},
+): Host {
+  const resolvedHost = resolveTerminalSessionHost({
+    session: config.sourceSession,
+    hosts,
+    groupConfigs: options.groupConfigs ?? [],
+    proxyProfiles: options.proxyProfiles ?? [],
+    localOs: options.localOs ?? 'linux',
+  });
   return applySourceSessionConnectionOverrides(
-    vaultHost ?? buildHostFromSession(config.sourceSession),
+    resolvedHost,
     config.sourceSession,
   );
 }
@@ -235,7 +234,18 @@ function TerminalPopupPageInner() {
   const { close, setWindowTitle, onPopupConfig } = useTerminalPopupWindow();
   const { notifyRendererReady, onWindowCommandCloseRequested } = useWindowControls();
   const settings = useSettingsState();
-  const { isInitialized: vaultInitialized, hosts, keys, identities, knownHosts, snippets, snippetPackages, updateKnownHosts } = useVaultState();
+  const {
+    isInitialized: vaultInitialized,
+    hosts,
+    keys,
+    identities,
+    proxyProfiles,
+    knownHosts,
+    snippets,
+    snippetPackages,
+    groupConfigs,
+    updateKnownHosts,
+  } = useVaultState();
   const [config, setConfig] = useState<TerminalPopupPayload | null>(null);
   const [terminalReady, setTerminalReady] = useState(false);
   const [startupError, setStartupError] = useState<string | null>(null);
@@ -278,8 +288,19 @@ function TerminalPopupPageInner() {
 
   const host = useMemo(() => {
     if (!config) return null;
-    return resolveTerminalPopupHost(config, hosts);
-  }, [config, hosts]);
+    return resolveTerminalPopupHost(config, hosts, {
+      groupConfigs,
+      proxyProfiles,
+      localOs: detectLocalOs(navigator.userAgent || navigator.platform),
+    });
+  }, [config, groupConfigs, hosts, proxyProfiles]);
+
+  const chainHosts = useMemo(() => resolveTerminalChainHosts({
+    host,
+    hosts,
+    groupConfigs,
+    proxyProfiles,
+  }), [groupConfigs, host, hosts, proxyProfiles]);
 
   const reuseId = useMemo(() => {
     if (!config) return undefined;
@@ -353,6 +374,7 @@ function TerminalPopupPageInner() {
               identities={identities}
               snippets={snippets}
               snippetPackages={snippetPackages}
+              chainHosts={chainHosts}
               compactToolbar
               lineTimestampsAvailable={false}
               knownHosts={effectiveKnownHosts}
