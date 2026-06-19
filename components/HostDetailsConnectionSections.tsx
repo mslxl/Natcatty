@@ -385,20 +385,20 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
 
             {/* Selected credential display */}
             {!selectedIdentity && form.identityFileId && (
-              <div className="flex items-center gap-2 p-2 rounded-md bg-secondary/50 border border-border/60">
+              <div className="flex items-center gap-2 min-w-0 overflow-hidden p-2 rounded-md bg-secondary/50 border border-border/60">
                 {form.authMethod === "certificate" ? (
-                  <Shield size={14} className="text-primary" />
+                  <Shield size={14} className="text-primary shrink-0" />
                 ) : (
-                  <Key size={14} className="text-primary" />
+                  <Key size={14} className="text-primary shrink-0" />
                 )}
-                <span className="text-sm flex-1 truncate">
+                <span className="text-sm min-w-0 flex-1 truncate">
                   {availableKeys.find((k) => k.id === form.identityFileId)
                     ?.label || "Key"}
                 </span>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6"
+                  className="h-6 w-6 shrink-0"
                   onClick={() => {
                     update("identityFileId", undefined);
                     update("authMethod", "password");
