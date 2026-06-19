@@ -118,7 +118,8 @@ import { resolveCurrentTerminalTheme } from './settingsTerminalTheme';
 import { useSystemSettingsEffects } from './systemSettingsEffects';
 import { applyCustomCssToDocument } from '../../lib/customCss';
 
-export const useSettingsState = (options: { enableSystemEffects?: boolean } = {}) => {
+export const useSettingsState = (options: { enableSettingsSync?: boolean; enableSystemEffects?: boolean } = {}) => {
+  const enableSettingsSync = options.enableSettingsSync !== false;
   const enableSystemEffects = options.enableSystemEffects !== false;
   const initialCustomKeyBindingsRecord =
     parseCustomKeyBindingsStorageRecord(localStorageAdapter.readString(STORAGE_KEY_CUSTOM_KEY_BINDINGS));
@@ -426,12 +427,13 @@ export const useSettingsState = (options: { enableSystemEffects?: boolean } = {}
 
   // Helper to notify other windows about settings changes via IPC
   const notifySettingsChanged = useCallback((key: string, value: unknown) => {
+    if (!enableSettingsSync) return;
     try {
       netcattyBridge.get()?.notifySettingsChanged?.({ key, value });
     } catch {
       // ignore - bridge may not be available
     }
-  }, []);
+  }, [enableSettingsSync]);
 
 
   const setSftpTransferConcurrency = useCallback((value: number) => {
@@ -639,6 +641,7 @@ export const useSettingsState = (options: { enableSystemEffects?: boolean } = {}
   }, [uiFontFamilyId, uiFontsLoaded, notifySettingsChanged]);
 
   useSettingsIpcSync({
+    enabled: enableSettingsSync,
     syncAppearanceFromStorage,
     syncCustomCssFromStorage,
     setUiLanguage,
@@ -674,6 +677,7 @@ export const useSettingsState = (options: { enableSystemEffects?: boolean } = {}
   });
 
   useEffect(() => {
+    if (!enableSettingsSync) return;
     const bridge = netcattyBridge.get();
     if (!bridge?.onLanguageChanged) return;
     const unsubscribe = bridge.onLanguageChanged((language) => {
@@ -688,9 +692,10 @@ export const useSettingsState = (options: { enableSystemEffects?: boolean } = {}
         // ignore
       }
     };
-  }, []);
+  }, [enableSettingsSync]);
 
   useSettingsStorageSync({
+    enabled: enableSettingsSync,
     theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent,
     customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage,
     terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,

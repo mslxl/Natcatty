@@ -48,6 +48,7 @@ import {
 } from './settingsStateDefaults';
 
 interface UseSettingsIpcSyncParams {
+  enabled?: boolean;
   syncAppearanceFromStorage: () => void;
   syncCustomCssFromStorage: () => void;
   setUiLanguage: Dispatch<SetStateAction<UILanguage>>;
@@ -83,6 +84,7 @@ interface UseSettingsIpcSyncParams {
 }
 
 export function useSettingsIpcSync({
+  enabled = true,
   syncAppearanceFromStorage,
   syncCustomCssFromStorage,
   setUiLanguage,
@@ -118,6 +120,7 @@ export function useSettingsIpcSync({
 }: UseSettingsIpcSyncParams) {
   // Listen for settings changes from other windows via IPC
   useEffect(() => {
+    if (!enabled) return;
     const bridge = netcattyBridge.get();
     if (!bridge?.onSettingsChanged) return;
     const unsubscribe = bridge.onSettingsChanged((payload) => {
@@ -258,6 +261,7 @@ export function useSettingsIpcSync({
       }
     };
   }, [
+    enabled,
     applyIncomingCustomKeyBindings,
     mergeIncomingTerminalSettings,
     setAutoUpdateEnabled,

@@ -57,6 +57,7 @@ import {
 } from './settingsStateDefaults';
 
 interface UseSettingsStorageSyncParams {
+  enabled?: boolean;
   theme: 'dark' | 'light' | 'system';
   lightUiThemeId: string;
   darkUiThemeId: string;
@@ -140,6 +141,7 @@ interface UseSettingsStorageSyncParams {
 }
 
 export function useSettingsStorageSync({
+  enabled = true,
   theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent,
   customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage,
   terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
@@ -185,6 +187,7 @@ export function useSettingsStorageSync({
 
   // Listen for storage changes from other windows (cross-window sync)
   useEffect(() => {
+    if (!enabled) return;
     const handleStorageChange = (e: StorageEvent) => {
       const s = settingsSnapshotRef.current;
       if (e.key === STORAGE_KEY_THEME && e.newValue) {
@@ -454,6 +457,7 @@ export function useSettingsStorageSync({
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
   }, [
+    enabled,
     applyIncomingCustomKeyBindings,
     mergeIncomingTerminalSettings,
     setAccentMode,

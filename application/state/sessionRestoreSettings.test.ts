@@ -105,12 +105,14 @@ test("session peer windows do not run main-window startup effects", () => {
   const startupEffectsSource = readFileSync(new URL("../app/useAppStartupEffects.ts", import.meta.url), "utf8");
   const updateCheckSource = readFileSync(new URL("./useUpdateCheck.ts", import.meta.url), "utf8");
   const settingsStateSource = readFileSync(new URL("./useSettingsState.ts", import.meta.url), "utf8");
+  const settingsIpcSyncSource = readFileSync(new URL("./settingsIpcSync.ts", import.meta.url), "utf8");
+  const storageSyncSource = readFileSync(new URL("./settingsStorageSync.ts", import.meta.url), "utf8");
   const systemEffectsSource = readFileSync(new URL("./systemSettingsEffects.ts", import.meta.url), "utf8");
   const trayFocusIndex = appSource.indexOf("onTrayFocusSession");
   const trayPanelJumpIndex = appSource.indexOf("onTrayPanelJumpToSession");
 
   assert.match(appSource, /const isPeerSessionWindow = typeof window !== 'undefined' && window\.location\.hash\.startsWith\('#\/session-window'\)/);
-  assert.match(appSource, /useSettingsState\(\{ enableSystemEffects: !isPeerSessionWindow \}\)/);
+  assert.match(appSource, /useSettingsState\(\{[^}]*enableSettingsSync: !isPeerSessionWindow[^}]*enableSystemEffects: !isPeerSessionWindow/s);
   assert.match(appSource, /useAppStartupEffects\(\{[^}]*enabled: !isPeerSessionWindow/s);
   assert.match(appSource, /useUpdateCheck\(\{[^}]*enabled: !isPeerSessionWindow/s);
   assert.match(appSource, /if \(isPeerSessionWindow \|\| !isVaultInitialized \|\| versionBackupAttemptedRef\.current\) return;/);
@@ -122,7 +124,16 @@ test("session peer windows do not run main-window startup effects", () => {
   assert.match(updateCheckSource, /const enabled = options\?\.enabled !== false/);
   assert.match(updateCheckSource, /if \(!enabled\) return;/);
   assert.match(settingsStateSource, /enableSystemEffects\?: boolean/);
+  assert.match(settingsStateSource, /enableSettingsSync\?: boolean/);
+  assert.match(settingsStateSource, /const enableSettingsSync = options\.enableSettingsSync !== false/);
+  assert.match(settingsStateSource, /useSettingsIpcSync\(\{[^}]*enabled: enableSettingsSync/s);
+  assert.match(settingsStateSource, /useSettingsStorageSync\(\{[^}]*enabled: enableSettingsSync/s);
+  assert.match(settingsStateSource, /if \(!enableSettingsSync\) return;\s*try \{\s*netcattyBridge\.get\(\)\?\.notifySettingsChanged/s);
   assert.match(settingsStateSource, /useSystemSettingsEffects\(\{[^}]*enabled: enableSystemEffects/s);
+  assert.match(settingsIpcSyncSource, /enabled\?: boolean/);
+  assert.match(settingsIpcSyncSource, /if \(!enabled\) return;/);
+  assert.match(storageSyncSource, /enabled\?: boolean/);
+  assert.match(storageSyncSource, /if \(!enabled\) return;/);
   assert.match(systemEffectsSource, /enabled\?: boolean/);
   assert.match(systemEffectsSource, /if \(!enabled\) return;/);
   assert.ok(
