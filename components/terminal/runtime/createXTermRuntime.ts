@@ -62,6 +62,14 @@ import {
   shouldHandleTerminalFontSizeAction,
   terminalFontSizeWheelListenerOptions,
 } from "./terminalFontZoom";
+import {
+  getHistoryPreviewLines,
+  forcedHistoryScrollLinesForWheel,
+  forcedHistoryScrollPageToLines,
+  forcedHistoryScrollPagesForKey,
+  forcedHistoryScrollWheelListenerOptions,
+  nextHistoryPreviewTop,
+} from "./terminalHistoryScrollOverride";
 import { shouldPassThroughCopyShortcut } from "./terminalCopyShortcut";
 import {
   markExpectedTerminalCursorPositionReport,
@@ -581,11 +589,83 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     event.stopPropagation();
     applyTerminalFontSize(nextFontSize);
   };
+  let historyPreviewOverlay: HTMLPreElement | null = null;
+  let historyPreviewTop: number | null = null;
+  const hideHistoryPreview = () => {
+    historyPreviewOverlay?.remove();
+    historyPreviewOverlay = null;
+    historyPreviewTop = null;
+  };
+  const ensureHistoryPreviewOverlay = () => {
+    if (historyPreviewOverlay) return historyPreviewOverlay;
+    const overlay = document.createElement("pre");
+    overlay.setAttribute("aria-hidden", "true");
+    Object.assign(overlay.style, {
+      position: "absolute",
+      inset: "0",
+      zIndex: "8",
+      margin: "0",
+      padding: "0 6px",
+      overflow: "hidden",
+      pointerEvents: "none",
+      whiteSpace: "pre",
+      fontFamily: String(term.options.fontFamily ?? fontFamily),
+      fontSize: `${currentTerminalFontSize()}px`,
+      lineHeight: String(term.options.lineHeight ?? lineHeight),
+      color: ctx.terminalTheme.colors.foreground,
+      background: ctx.terminalTheme.colors.background,
+    } satisfies Partial<CSSStyleDeclaration>);
+    ctx.container.appendChild(overlay);
+    historyPreviewOverlay = overlay;
+    return overlay;
+  };
+  const showAlternateScreenHistoryPreview = (lines: number) => {
+    if (term.buffer.active.type !== "alternate") return false;
+    const normalBuffer = term.buffer.normal;
+    historyPreviewTop = nextHistoryPreviewTop({
+      buffer: normalBuffer,
+      currentTop: historyPreviewTop,
+      lines,
+    });
+    const overlay = ensureHistoryPreviewOverlay();
+    overlay.style.fontSize = `${currentTerminalFontSize()}px`;
+    overlay.style.fontFamily = String(term.options.fontFamily ?? fontFamily);
+    overlay.style.lineHeight = String(term.options.lineHeight ?? lineHeight);
+    overlay.textContent = getHistoryPreviewLines({
+      buffer: normalBuffer,
+      rows: term.rows,
+      top: historyPreviewTop,
+    }).join("\n");
+    return true;
+  };
+  const scrollForcedHistoryLines = (lines: number) => {
+    if (showAlternateScreenHistoryPreview(lines)) return;
+    hideHistoryPreview();
+    term.scrollLines(lines);
+  };
+  const handleForcedHistoryScrollWheel = (event: WheelEvent) => {
+    const lines = forcedHistoryScrollLinesForWheel(event);
+    if (lines === null) {
+      hideHistoryPreview();
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    scrollForcedHistoryLines(lines);
+  };
+  ctx.container.addEventListener(
+    "wheel",
+    handleForcedHistoryScrollWheel,
+    forcedHistoryScrollWheelListenerOptions,
+  );
   ctx.container.addEventListener(
     "wheel",
     handleFontSizeWheel,
     terminalFontSizeWheelListenerOptions,
   );
+  const historyPreviewBufferChangeDisposable = term.buffer.onBufferChange(() => {
+    hideHistoryPreview();
+  });
 
   term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
     // Preserve mouse selection across keystrokes when enabled. xterm.js
@@ -633,6 +713,20 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     if (e.type !== "keydown") {
       return true;
     }
+
+    const forcedHistoryScrollPages = forcedHistoryScrollPagesForKey(e);
+    if (forcedHistoryScrollPages !== null) {
+      e.preventDefault();
+      e.stopPropagation();
+      const lines = forcedHistoryScrollPageToLines(forcedHistoryScrollPages, term.rows);
+      if (showAlternateScreenHistoryPreview(lines)) {
+        return false;
+      }
+      hideHistoryPreview();
+      term.scrollPages(forcedHistoryScrollPages);
+      return false;
+    }
+    hideHistoryPreview();
 
     // Sudo password hint: while a hint is pending, Enter confirms (paste the
     // saved password + submit); any other visible key dismisses it so the user
@@ -839,6 +933,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
   ctx.container.addEventListener("mousedown", captureMiddleClickTerminalMouseEvent, true);
   ctx.container.addEventListener("mouseup", captureMiddleClickTerminalMouseEvent, true);
+  ctx.container.addEventListener("mousedown", hideHistoryPreview, true);
   ctx.container.addEventListener("auxclick", handleMiddleClick);
 
   fitAddon.fit();
@@ -1124,12 +1219,20 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     dispose: () => {
       ctx.container.removeEventListener(
         "wheel",
+        handleForcedHistoryScrollWheel,
+        forcedHistoryScrollWheelListenerOptions,
+      );
+      ctx.container.removeEventListener(
+        "wheel",
         handleFontSizeWheel,
         terminalFontSizeWheelListenerOptions,
       );
       ctx.container.removeEventListener("auxclick", handleMiddleClick);
       ctx.container.removeEventListener("mousedown", captureMiddleClickTerminalMouseEvent, true);
       ctx.container.removeEventListener("mouseup", captureMiddleClickTerminalMouseEvent, true);
+      ctx.container.removeEventListener("mousedown", hideHistoryPreview, true);
+      hideHistoryPreview();
+      historyPreviewBufferChangeDisposable.dispose();
       stopDprWatch();
       keywordHighlighter.dispose();
       eraseScrollbackDisposable.dispose();
