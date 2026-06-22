@@ -9,7 +9,7 @@ import { OSC7_MARKER, buildOsc7SetupCommand, shouldOfferOsc7SetupAction } from "
 
 const runSetup = (env: NodeJS.ProcessEnv) => {
   execFileSync("/bin/sh", ["-c", buildOsc7SetupCommand()], {
-    env: { ...process.env, ...env },
+    env: { ...process.env, ZDOTDIR: "", XDG_CONFIG_HOME: "", ...env },
     stdio: "pipe",
   });
 };
@@ -27,7 +27,7 @@ const markerCount = (content: string) => content.split(OSC7_MARKER).length - 1;
 
 const existingShells = (paths: string[]) => Array.from(new Set(paths.filter(existsSync)));
 
-const supportedShells = () => existingShells(["/bin/bash", "/bin/zsh", "/opt/homebrew/bin/fish", "/usr/bin/fish"]);
+const supportedShells = () => existingShells(["/bin/bash", "/bin/zsh", "/usr/bin/zsh", "/opt/homebrew/bin/fish", "/usr/bin/fish"]);
 
 const extractOsc7Path = (output: string) => {
   const escape = String.fromCharCode(0x1b);
@@ -77,11 +77,17 @@ test("buildOsc7SetupCommand configures bash once and prompt loading stays idempo
   });
 });
 
-test("buildOsc7SetupCommand honors zsh ZDOTDIR captured from the current shell", () => {
+test("buildOsc7SetupCommand honors zsh ZDOTDIR captured from the current shell", (t) => {
+  const zshPath = existingShells(["/bin/zsh", "/usr/bin/zsh"])[0];
+  if (!zshPath) {
+    t.skip("zsh is not installed on this runner");
+    return;
+  }
+
   withTempHome("netcatty-osc7-zsh-", (home) => {
     const zdotdir = join(home, ".config", "zsh");
-    runSetup({ HOME: home, SHELL: "/bin/zsh", ZDOTDIR: zdotdir });
-    runSetup({ HOME: home, SHELL: "/bin/zsh", ZDOTDIR: zdotdir });
+    runSetup({ HOME: home, SHELL: zshPath, ZDOTDIR: zdotdir });
+    runSetup({ HOME: home, SHELL: zshPath, ZDOTDIR: zdotdir });
 
     const zshrcPath = join(zdotdir, ".zshrc");
     const zshrc = readFileSync(zshrcPath, "utf8");
@@ -89,7 +95,7 @@ test("buildOsc7SetupCommand honors zsh ZDOTDIR captured from the current shell",
     assert.match(zshrc, /precmd_functions/);
     assert.equal(existsSync(join(home, ".zshrc")), false);
 
-    execFileSync("/bin/zsh", ["-uc", `source ${JSON.stringify(zshrcPath)}; print -r -- "\${precmd_functions[*]}"`], {
+    execFileSync(zshPath, ["-uc", `source ${JSON.stringify(zshrcPath)}; print -r -- "\${precmd_functions[*]}"`], {
       env: { ...process.env, HOME: home, ZDOTDIR: zdotdir },
       stdio: "pipe",
     });

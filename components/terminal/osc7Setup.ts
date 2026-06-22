@@ -149,4 +149,4 @@ printf '\033]7;file://%s%s\a' "$host" "$(__netcatty_osc7_url_path "$PWD")"
 printf "\nRestart this shell, or open a new one, to keep tracking future directory changes.\n"`;
 
 export const buildOsc7SetupCommand = (): string =>
-  `{ set +u 2>/dev/null || true; printf "%s\\n" ${quoteForSingleQuotedShellString(POSIX_SETUP_SCRIPT)} | env NETCATTY_ZDOTDIR="$ZDOTDIR" NETCATTY_XDG_CONFIG_HOME="$XDG_CONFIG_HOME" sh; }\n`;
+  `set +u 2>/dev/null || true; printf "%s\\n" ${quoteForSingleQuotedShellString(POSIX_SETUP_SCRIPT)} | env NETCATTY_ZDOTDIR="$ZDOTDIR" NETCATTY_XDG_CONFIG_HOME="$XDG_CONFIG_HOME" sh\n`;
