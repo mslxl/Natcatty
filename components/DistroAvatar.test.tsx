@@ -35,6 +35,19 @@ test("DistroAvatar keeps serial hosts on the USB icon", () => {
   assert.doesNotMatch(markup, /background-color:#2563EB/i);
 });
 
+test("DistroAvatar tree size uses compact host icon corners", () => {
+  const markup = renderToStaticMarkup(
+    <DistroAvatar
+      host={{ ...baseHost, distro: "ubuntu" }}
+      fallback="U"
+      size="tree"
+    />,
+  );
+
+  assert.match(markup, /h-6 w-6 rounded/);
+  assert.doesNotMatch(markup, /rounded-md/);
+});
+
 test("DistroAvatar keeps distro icon and applies custom palette color when icon mode is automatic", () => {
   const markup = renderToStaticMarkup(
     <DistroAvatar

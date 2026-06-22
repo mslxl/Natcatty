@@ -12,6 +12,7 @@ import {
   getNoteGroupSelectionState,
   getNotesGroupDropAction,
   getNoteSelectionState,
+  getValidatedNoteSelectionState,
   getSelectedVaultNote,
   isNoteFolderTreeSelected,
   NotesManager,
@@ -65,6 +66,13 @@ test("NotesManager marks selected notebook rows with shared tree state", () => {
   assert.equal(markup.match(/data-selected="true"/g)?.length, 1);
   assert.match(markup, /data-vault-tree-row="group"[^>]*data-selected="false"/);
   assert.match(markup, /data-vault-tree-row="item"[^>]*data-selected="true"/);
+});
+
+test("NotesManager balances folder and note tree icon sizes", () => {
+  const markup = renderNotes();
+
+  assert.match(markup, /width="16" height="16"[^>]*class="lucide lucide-folder/);
+  assert.match(markup, /width="16" height="16"[^>]*class="lucide lucide-file-text/);
 });
 
 test("NotesManager selection helpers keep note and folder selection exclusive", () => {
@@ -125,6 +133,20 @@ test("NotesManager note creation, duplicate, and delete fallback selections stay
   });
 });
 
+test("NotesManager selects the first loaded note when full mode has no selection", () => {
+  const notes = [
+    note({ id: "note-2", title: "Loaded note", group: "Ops", order: 2000 }),
+  ];
+
+  assert.deepEqual(getValidatedNoteSelectionState(notes, null, null, false), {
+    selectedNoteId: "note-2",
+    selectedGroup: null,
+    overlayNoteId: null,
+  });
+  assert.equal(getValidatedNoteSelectionState(notes, null, "Ops", false), null);
+  assert.equal(getValidatedNoteSelectionState(notes, null, null, true), null);
+});
+
 test("NotesManager group drop helper separates reorder, inside, and ignored drops", () => {
   assert.equal(getNotesGroupDropAction("Ops", "Deploy", "before"), "reorder");
   assert.equal(getNotesGroupDropAction("Ops", "Deploy", "after"), "reorder");
@@ -180,6 +202,7 @@ test("NotesManager renders empty state", () => {
 
   assert.match(markup, /No notes yet/);
   assert.match(markup, /New Note/);
+  assert.doesNotMatch(markup, /data-notes-drop-zone="root"/);
 });
 
 test("NotesManager sidebar mode renders list without editor by default", () => {
