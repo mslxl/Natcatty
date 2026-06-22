@@ -242,6 +242,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
             <Tooltip>
                 <TooltipTrigger asChild>
                     <Button
+                        type="button"
                         variant="secondary"
                         size="icon"
                         className={buttonBase}
@@ -259,6 +260,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
             <Tooltip>
                 <TooltipTrigger asChild>
                     <Button
+                        type="button"
                         variant="secondary"
                         size="icon"
                         className={buttonBase}
@@ -273,10 +275,26 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                 <TooltipContent>{t("terminal.toolbar.searchTerminal")}</TooltipContent>
             </Tooltip>
 
+            <Tooltip>
+                <TooltipTrigger asChild>
+                    <Button
+                        type="button"
+                        variant="secondary"
+                        size="icon"
+                        className={buttonBase}
+                        aria-label={t("terminal.toolbar.scripts")}
+                        onClick={onOpenScripts}
+                    >
+                        <Zap size={12} />
+                    </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t("terminal.toolbar.scripts")}</TooltipContent>
+            </Tooltip>
+
             {/* Overflow menu — keeps lower-frequency opener-style actions
-                (Encoding / Scripts / Terminal Settings) behind a single
+                (Encoding / Terminal Settings) behind a single
                 trigger so the toolbar doesn't feel crowded.
-                Highlight / Compose / Search stay visible because they
+                Highlight / Compose / Search / Scripts stay visible because they
                 are toggled mid-session, not just once. */}
             <Popover
                 open={overflowOpen}
@@ -313,12 +331,6 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                         }
                     }}
                 >
-                    <PopoverClose asChild>
-                        <button type="button" className={menuItemClass} onClick={onOpenScripts}>
-                            <Zap size={12} className="shrink-0" />
-                            <span className="flex-1 text-left truncate">{t("terminal.toolbar.scripts")}</span>
-                        </button>
-                    </PopoverClose>
                     {historySupported && (
                         <PopoverClose asChild>
                             <button

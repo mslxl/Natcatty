@@ -96,7 +96,7 @@ const DistroAvatarInner: React.FC<DistroAvatarProps> = ({
     xs: "h-4 w-4 rounded",
     sm: "h-5 w-5 rounded",
     md: "h-8 w-8 rounded",
-    tree: "h-6 w-6 rounded-md",
+    tree: "h-6 w-6 rounded",
     log: "h-9 w-9 rounded-xl",
     lg: "h-11 w-11 rounded-xl",
   };

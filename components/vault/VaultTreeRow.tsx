@@ -95,6 +95,7 @@ type VaultTreeGroupRowProps = Omit<React.HTMLAttributes<HTMLDivElement>, "childr
   onRenameCancel?: () => void;
   actions?: React.ReactNode;
   icon?: React.ReactNode;
+  iconSize?: number;
   meta?: React.ReactNode;
   rowRef?: React.Ref<HTMLDivElement>;
   onToggle?: () => void;
@@ -113,6 +114,7 @@ export const VaultTreeGroupRow: React.FC<VaultTreeGroupRowProps> = ({
   onRenameCancel,
   actions,
   icon,
+  iconSize = 18,
   meta,
   rowRef,
   className,
@@ -146,9 +148,9 @@ export const VaultTreeGroupRow: React.FC<VaultTreeGroupRowProps> = ({
       </div>
       <div className="mr-2 flex h-5 w-5 shrink-0 items-center justify-center text-current transition-colors">
         {icon ?? (expanded ? (
-          <FolderOpen size={18} strokeWidth={1.9} />
+          <FolderOpen size={iconSize} strokeWidth={1.9} />
         ) : (
-          <Folder size={18} strokeWidth={1.9} />
+          <Folder size={iconSize} strokeWidth={1.9} />
         ))}
       </div>
       {editing && onRenameCommit && onRenameCancel ? (

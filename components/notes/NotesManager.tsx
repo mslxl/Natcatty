@@ -263,6 +263,19 @@ export const getFallbackNoteSelectionState = (
   overlayNoteId: null,
 });
 
+export const getValidatedNoteSelectionState = (
+  notes: VaultNote[],
+  selectedNoteId: string | null,
+  selectedGroup: string | null,
+  isSidebarMode: boolean,
+): { selectedNoteId: string | null; selectedGroup: null; overlayNoteId: null } | null => {
+  if (selectedNoteId && notes.some((note) => note.id === selectedNoteId)) return null;
+  if (selectedNoteId || (!isSidebarMode && !selectedGroup && notes.length > 0)) {
+    return getFallbackNoteSelectionState(notes, isSidebarMode);
+  }
+  return null;
+};
+
 export const getNotesGroupDropAction = (
   sourceGroup: string | null,
   targetGroup: string,
@@ -334,12 +347,12 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     !queryLower || node.name.toLowerCase().includes(queryLower) || node.path.toLowerCase().includes(queryLower);
 
   useEffect(() => {
-    if (!selectedNoteId || sortedNotes.some((note) => note.id === selectedNoteId)) return;
-    const nextSelection = getFallbackNoteSelectionState(sortedNotes, isSidebarMode);
+    const nextSelection = getValidatedNoteSelectionState(sortedNotes, selectedNoteId, selectedGroup, isSidebarMode);
+    if (!nextSelection) return;
     setSelectedNoteId(nextSelection.selectedNoteId);
     setSelectedGroup(nextSelection.selectedGroup);
     setOverlayNoteId(nextSelection.overlayNoteId);
-  }, [isSidebarMode, selectedNoteId, sortedNotes]);
+  }, [isSidebarMode, selectedGroup, selectedNoteId, sortedNotes]);
 
   useEffect(() => {
     if (!overlayNoteId || sortedNotes.some((note) => note.id === overlayNoteId)) return;
@@ -751,7 +764,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       >
         <div className="mr-1 h-5 w-4 shrink-0" />
         <div className="mr-2 flex h-5 w-5 shrink-0 items-center justify-center text-current">
-          <Folder size={18} strokeWidth={1.9} />
+          <Folder size={16} strokeWidth={1.9} />
         </div>
         <VaultTreeInlineRenameInput
           initialName={t("notes.action.newGroup")}
@@ -780,7 +793,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               saveNote({ ...note, title, updatedAt: Date.now() });
             }}
             onRenameCancel={() => setEditingNoteId(null)}
-            icon={<FileText size={14} className="mr-2 shrink-0 text-muted-foreground" />}
+            icon={<FileText size={16} className="mr-2 shrink-0 text-muted-foreground" />}
             data-note-id={note.id}
             data-notes-drag-kind="note"
             data-notes-context-menu="note"
@@ -856,6 +869,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               expanded={expanded}
               selected={isNoteFolderTreeSelected(selectedGroup, selectedNoteId, node.path)}
               hasChildren={hasChildren}
+              iconSize={16}
               editing={editingGroupPath === node.path}
               editingInitialName={node.name}
               onRenameCommit={(name) => renameGroup(node.path, name)}
@@ -950,6 +964,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   const treeIsEmpty = visibleRootNotes.length === 0 && visibleTree.length === 0;
   const hasSearch = query.trim().length > 0;
   const canExpandCollapse = allGroupPaths.length > 0 && !hasSearch;
+  const shouldShowNotesTree = isSidebarMode || sortedNotes.length > 0;
 
   const handleTreeResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -991,13 +1006,14 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
       <div className="flex min-h-0 flex-1">
-        <aside
-          className={cn(
-            "relative flex flex-col bg-background",
-            isSidebarMode ? "min-w-0 flex-1" : "shrink-0 border-r border-border/60",
-          )}
-          style={isSidebarMode ? undefined : { width: treeWidth }}
-        >
+        {shouldShowNotesTree && (
+          <aside
+            className={cn(
+              "relative flex flex-col bg-background",
+              isSidebarMode ? "min-w-0 flex-1" : "shrink-0 border-r border-border/60",
+            )}
+            style={isSidebarMode ? undefined : { width: treeWidth }}
+          >
           <div className="flex-shrink-0">
             <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border/60 px-1.5 py-1">
               <Tooltip>
@@ -1150,7 +1166,8 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               onPointerDown={handleTreeResizeStart}
             />
           )}
-        </aside>
+          </aside>
+        )}
 
         {!isSidebarMode && (
         <main className="flex min-w-0 flex-1 flex-col bg-background">
