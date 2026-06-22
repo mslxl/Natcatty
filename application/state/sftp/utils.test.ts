@@ -35,6 +35,10 @@ test("SFTP filter stays when refreshing the same directory", () => {
   assert.equal(getSftpFilterAfterPathChange("C:\\Users\\alice", "c:/Users/alice", "docs"), "docs");
 });
 
-test("SFTP filter restores when directory navigation fails", () => {
-  assert.equal(getSftpFilterAfterPathChangeError("log"), "log");
+test("SFTP filter restores when changed-directory navigation fails", () => {
+  assert.equal(getSftpFilterAfterPathChangeError(true, "log", "typed-while-loading"), "log");
+});
+
+test("SFTP filter preserves in-flight edits when same-directory refresh fails", () => {
+  assert.equal(getSftpFilterAfterPathChangeError(false, "log", "typed-while-loading"), "typed-while-loading");
 });

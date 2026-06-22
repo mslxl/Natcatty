@@ -361,7 +361,7 @@ export const useSftpPaneActions = ({
             connection: { ...prev.connection, currentPath: previousPath },
             files: previousFiles,
             selectedFiles: previousSelection,
-            filter: getSftpFilterAfterPathChangeError(previousFilter),
+            filter: getSftpFilterAfterPathChangeError(clearFilterForPathChange, previousFilter, prev.filter),
             error:
               err instanceof Error ? err.message : "Failed to list directory",
             loading: false,

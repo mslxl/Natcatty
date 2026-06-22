@@ -114,6 +114,10 @@ export const getSftpFilterAfterPathChange = (
   return shouldClearSftpFilterForPathChange(currentPath, nextPath) ? "" : currentFilter;
 };
 
-export const getSftpFilterAfterPathChangeError = (previousFilter: string): string => {
-  return previousFilter;
+export const getSftpFilterAfterPathChangeError = (
+  clearFilterForPathChange: boolean,
+  previousFilter: string,
+  currentFilter: string,
+): string => {
+  return clearFilterForPathChange ? previousFilter : currentFilter;
 };
