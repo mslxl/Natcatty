@@ -6,7 +6,7 @@ import { cn } from "../lib/utils";
 import { useApplicationBackend } from "../application/state/useApplicationBackend";
 import type { UpdateState, UseUpdateCheckResult } from "../application/state/useUpdateCheck";
 import { useI18n } from "../application/i18n/I18nProvider";
-import { SectionHeader, SettingCard, SettingRow, SettingsTabContent, Toggle } from "./settings/settings-ui";
+import { SettingsTabContent } from "./settings/settings-ui";
 import { toast } from "./ui/toast";
 
 type AppInfo = {
@@ -91,11 +91,9 @@ interface SettingsApplicationTabProps {
   installUpdate: UseUpdateCheckResult['installUpdate'];
   startDownload: UseUpdateCheckResult['startDownload'];
   isUpdateDemoMode: boolean;
-  sshDeepLinkEnabled: boolean;
-  setSshDeepLinkEnabled: (enabled: boolean) => void;
 }
 
-export default function SettingsApplicationTab({ updateState, checkNow, openReleasePage, installUpdate, startDownload, isUpdateDemoMode, sshDeepLinkEnabled, setSshDeepLinkEnabled }: SettingsApplicationTabProps) {
+export default function SettingsApplicationTab({ updateState, checkNow, openReleasePage, installUpdate, startDownload, isUpdateDemoMode }: SettingsApplicationTabProps) {
   const { t } = useI18n();
   const { openExternal, getApplicationInfo } = useApplicationBackend();
   const [appInfo, setAppInfo] = useState<AppInfo>({ name: "Netcatty", version: "" });
@@ -264,21 +262,6 @@ export default function SettingsApplicationTab({ updateState, checkNow, openRele
         </div>
       </div>
 
-      <div>
-        <SectionHeader title={t('settings.sshDeepLink.title')} />
-        <SettingCard>
-          <SettingRow
-            label={t('settings.sshDeepLink.enable')}
-            description={t('settings.sshDeepLink.enableDesc')}
-          >
-            <Toggle
-              checked={sshDeepLinkEnabled}
-              onChange={setSshDeepLinkEnabled}
-              ariaLabel={t('settings.sshDeepLink.enable')}
-            />
-          </SettingRow>
-        </SettingCard>
-      </div>
     </SettingsTabContent>
   );
 }

@@ -195,7 +195,7 @@ interface SyncPayloadImporters {
 const SYNCABLE_TERMINAL_KEYS = [
   'startupCommandDelayMs',
   'scrollback', 'drawBoldInBrightColors', 'terminalEmulationType',
-  'fontLigatures', 'fontWeight', 'fontWeightBold', 'fallbackFont',
+  'fontLigatures', 'fontSmoothing', 'fontWeight', 'fontWeightBold', 'fallbackFont',
   'linePadding', 'cursorShape', 'cursorBlink', 'minimumContrastRatio',
   'altAsMeta', 'optionArrowWordJump', 'scrollOnInput', 'scrollOnOutput', 'scrollOnKeyPress', 'scrollOnPaste',
   'smoothScrolling',

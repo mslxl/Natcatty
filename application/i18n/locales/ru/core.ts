@@ -323,6 +323,8 @@ export const ruCoreMessages: Messages = {
   'settings.terminal.font.weight.black': 'Максимально жирный',
   'settings.terminal.font.weightBold': 'Толщина жирного шрифта',
   'settings.terminal.font.weightBold.desc': 'Толщина жирного текста (100-900)',
+  'settings.terminal.font.smoothing': 'Сглаживание шрифта',
+  'settings.terminal.font.smoothing.desc': 'Использовать родное сглаживание шрифтов macOS',
   'settings.terminal.font.linePadding': 'Межстрочный отступ',
   'settings.terminal.font.linePadding.desc': 'Дополнительное пространство между строками (0-10)',
   'settings.terminal.font.emulationType': 'Тип эмуляции терминала',

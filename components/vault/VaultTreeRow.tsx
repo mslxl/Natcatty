@@ -144,11 +144,11 @@ export const VaultTreeGroupRow: React.FC<VaultTreeGroupRowProps> = ({
           </div>
         )}
       </div>
-      <div className="mr-2 flex h-5 shrink-0 items-center text-primary transition-colors dark:text-primary">
+      <div className="mr-2 flex h-5 w-5 shrink-0 items-center justify-center text-current transition-colors">
         {icon ?? (expanded ? (
-          <FolderOpen size={14} />
+          <FolderOpen size={18} strokeWidth={1.9} />
         ) : (
-          <Folder size={14} />
+          <Folder size={18} strokeWidth={1.9} />
         ))}
       </div>
       {editing && onRenameCommit && onRenameCancel ? (

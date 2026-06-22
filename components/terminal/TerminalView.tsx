@@ -104,7 +104,9 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
     handleSendYmodem,
     handleReceiveYmodem,
   });
-  const terminalContentTop = isSearchOpen ? "64px" : "30px";
+  const terminalToolbarOffset = isSearchOpen ? 64 : 30;
+  const terminalBodyInset = 4;
+  const terminalContentTop = `${terminalToolbarOffset + terminalBodyInset}px`;
   const showLineTimestampGutter = lineTimestampsAvailable !== false && host.showLineTimestamps === true;
   const lineTimestampColor = resolveTerminalTimestampGutterColor(effectiveTheme.colors);
   const [lineTimestampGutterWidth, setLineTimestampGutterWidth] = useState(() => (
@@ -376,10 +378,13 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
         >
           <div
             ref={containerRef}
-            className="xterm-container absolute inset-x-0 bottom-0"
+            className="xterm-container absolute"
+            data-font-smoothing={terminalSettings?.fontSmoothing !== false ? "true" : "false"}
             style={{
               top: terminalContentTop,
-              left: activeLineTimestampGutterWidth,
+              left: activeLineTimestampGutterWidth + terminalBodyInset,
+              right: terminalBodyInset,
+              bottom: terminalBodyInset,
               paddingLeft: 6,
               backgroundColor: 'var(--terminal-ui-bg)',
             }}
@@ -389,6 +394,8 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
             containerRef={containerRef}
             enabled={showLineTimestampGutter}
             top={terminalContentTop}
+            left={terminalBodyInset}
+            bottom={terminalBodyInset}
             sessionId={sessionId}
             color={lineTimestampColor}
             fontFamily={resolvedFontFamily}
@@ -453,7 +460,7 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
             onAcceptSnippet={(snippet) => void executeSnippet(snippet)}
             themeColors={effectiveTheme.colors}
             containerRef={containerRef}
-            searchBarOffset={isSearchOpen ? 64 : 30}
+            searchBarOffset={terminalToolbarOffset + terminalBodyInset}
             keyEventRef={autocompleteKeyEventRef}
             inputRef={autocompleteInputRef}
             repositionRef={autocompleteRepositionRef}
