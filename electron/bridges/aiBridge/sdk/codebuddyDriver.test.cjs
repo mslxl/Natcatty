@@ -53,8 +53,8 @@ test("buildCodebuddyQueryOptions wires SDK options in isolated mode", () => {
   assert.equal(opts.abortController, ac);
   assert.equal(opts.resume, "sess-1");
   assert.deepEqual(opts.tools, []);
-  // allowedTools must stay unset in mcp mode: an empty allow-list would block the
-  // injected netcatty MCP tools and make the model leak tool calls as text.
+  // allowedTools must stay unset in mcp mode: tools:[] disables built-ins, while
+  // allowedTools:[] would prevent injected Netcatty MCP tools from running.
   assert.ok(!("allowedTools" in opts));
   assert.ok(opts.disallowedTools.includes("AskUserQuestion"));
   assert.equal(opts.mcpServers["netcatty-remote-hosts"].type, "stdio");

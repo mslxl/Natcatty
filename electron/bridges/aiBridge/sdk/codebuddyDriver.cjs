@@ -114,12 +114,11 @@ function buildCodebuddyQueryOptions({
     extraArgs: { "dangerously-skip-permissions": null },
     mcpServers: toSdkMcpServers(injectedMcpServers),
     tools: builtinTools,
-    // Do NOT set allowedTools here. In mcp mode builtinTools is [], and the SDK
-    // treats allowedTools:[] as an explicit allow-list that permits NOTHING — it
-    // filters out the injected netcatty MCP tools (mcp__netcatty-remote-hosts__*)
-    // so the model never sees them and leaks the call as plain `<tool_call>` text
-    // instead of invoking it. `tools` already scopes the builtin set; mirror the
-    // claude driver and leave allowedTools unset (permissive) so MCP tools pass.
+    // `tools` is the built-in tool whitelist. In mcp mode it is [], so CodeBuddy
+    // built-ins stay disabled while injected Netcatty MCP tools remain visible.
+    // Do not mirror that empty list into allowedTools: the SDK treats
+    // allowedTools as an auto-approval list, and allowedTools: [] prevents MCP
+    // tool calls from running under bypassPermissions.
     disallowedTools: [...UI_DISALLOWED_TOOLS],
     // Keep the SDK isolated from user/project settings so local hooks, plugins,
     // or extra MCP servers cannot expand Netcatty's controlled tool boundary.
