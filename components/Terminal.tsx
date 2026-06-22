@@ -78,6 +78,10 @@ import { useTerminalDragDrop } from "./terminal/hooks/useTerminalDragDrop";
 import { useTerminalFilePaste } from "./terminal/hooks/useTerminalFilePaste";
 import { TerminalAutocomplete } from "./terminal/TerminalAutocomplete";
 import { buildOsc7SetupCommand, shouldOfferOsc7SetupAction } from "./terminal/osc7Setup";
+import {
+  getRemoteClipboardImageUploadErrorMessageKey,
+  type RemoteClipboardImageUploadResult,
+} from "./terminal/clipboardImagePaste";
 import { createTerminalCwdTracker, resolvePreferredTerminalCwd } from "./terminal/sftpCwd";
 import { useTerminalEffects } from "./terminal/useTerminalEffects";
 import { TerminalView } from "./terminal/TerminalView";
@@ -958,6 +962,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const onSnippetShortkeyRef = useRef(executeSnippet);
   onSnippetShortkeyRef.current = executeSnippet;
 
+  const handleClipboardImageUploadResult = useCallback((result: RemoteClipboardImageUploadResult) => {
+    const messageKey = getRemoteClipboardImageUploadErrorMessageKey(result);
+    if (messageKey) toast.error(t(messageKey));
+  }, [t]);
+
   const terminalContextActions = useTerminalContextActions({
     termRef,
     sourceSessionId: sessionId,
@@ -971,6 +980,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     terminalBackend,
     getRemoteCwd: () => resolveSftpInitialPath({ preferFreshBackend: true }),
     scrollToBottomAfterProgrammaticInput,
+    onClipboardImageUploadResult: handleClipboardImageUploadResult,
   });
   // Kept fresh on every render so the mouseTracking capture handler at
   // handleContextMenuCapture (which is bound once per sessionId) can
@@ -1262,12 +1272,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   useTerminalFilePaste({
     isLocalConnection,
-    supportsRemoteImagePaste,
     status,
     termRef,
     sessionRef,
     terminalBackend,
-    resolveSftpInitialPath,
     scrollOnPasteRef,
     onPasteData: broadcastUserPasteData,
     scrollToBottomAfterProgrammaticInput,
