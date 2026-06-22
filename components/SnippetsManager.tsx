@@ -333,11 +333,15 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     setTargetSelection([]);
   };
 
+  const hostById = useMemo(() => (
+    new Map(hosts.map((host) => [host.id, host]))
+  ), [hosts]);
+
   const targetHosts = useMemo(() => {
     return targetSelection
-      .map((id) => hosts.find((h) => h.id === id))
+      .map((id) => hostById.get(id))
       .filter((h): h is Host => Boolean(h));
-  }, [targetSelection, hosts]);
+  }, [targetSelection, hostById]);
 
   const openTargetPicker = () => {
     setRightPanelMode('select-targets');
@@ -352,6 +356,30 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
   const handleTargetPickerBack = () => {
     setRightPanelMode('edit-snippet');
   };
+
+  const snippetPackageDescendantCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    snippets.forEach((snippet) => {
+      const pkg = snippet.package || '';
+      if (!pkg) return;
+
+      if (pkg.startsWith('/')) {
+        const parts = pkg.substring(1).split('/').filter(Boolean);
+        for (let index = 0; index < parts.length; index += 1) {
+          const path = `/${parts.slice(0, index + 1).join('/')}`;
+          counts.set(path, (counts.get(path) ?? 0) + 1);
+        }
+        return;
+      }
+
+      const parts = pkg.split('/').filter(Boolean);
+      for (let index = 0; index < parts.length; index += 1) {
+        const path = parts.slice(0, index + 1).join('/');
+        counts.set(path, (counts.get(path) ?? 0) + 1);
+      }
+    });
+    return counts;
+  }, [snippets]);
 
   const displayedPackages = useMemo(() => {
     const packageIndexByPath = new Map(packages.map((pkg, index) => [pkg, index]));
@@ -383,10 +411,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
       
       Array.from(new Set(relativeRoots)).forEach((name: string) => {
         const path: string = name;
-        const count = snippets.filter((s) => {
-          const pkg = s.package || '';
-          return pkg === path || pkg.startsWith(path + '/');
-        }).length;
+        const count = snippetPackageDescendantCounts.get(path) ?? 0;
         results.push({ name, path, count });
       });
       
@@ -401,10 +426,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
       Array.from(new Set(absoluteRoots)).forEach((name: string) => {
         const path: string = `/${name}`;
         const displayName: string = `/${name}`; // Show with leading slash to distinguish
-        const count = snippets.filter((s) => {
-          const pkg = s.package || '';
-          return pkg === path || pkg.startsWith(path + '/');
-        }).length;
+        const count = snippetPackageDescendantCounts.get(path) ?? 0;
         results.push({ name: displayName, path, count });
       });
       
@@ -418,13 +440,10 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
       .filter((name): name is string => Boolean(name) && name.length > 0);
     return sortBySavedPackageOrder(Array.from(new Set<string>(children)).map((name) => {
       const path = `${selectedPackage}/${name}`;
-      const count = snippets.filter((s) => {
-        const pkg = s.package || '';
-        return pkg === path || pkg.startsWith(path + '/');
-      }).length;
+      const count = snippetPackageDescendantCounts.get(path) ?? 0;
       return { name, path, count };
     }));
-  }, [packages, selectedPackage, snippets]);
+  }, [packages, selectedPackage, snippetPackageDescendantCounts]);
 
   const displayedSnippets = useMemo(() => {
     const hasSearch = search.trim().length > 0;
@@ -1152,7 +1171,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                       <ContextMenuItem
                         onClick={() => {
                           const targetHostsList = (snippet.targets || [])
-                            .map(id => hosts.find(h => h.id === id))
+                            .map(id => hostById.get(id))
                             .filter((h): h is Host => Boolean(h));
                           if (targetHostsList.length > 0) {
                             onRunSnippet?.(snippet, targetHostsList);

@@ -94,6 +94,7 @@ interface TreeNodeProps {
   getDropTargetClasses?: (target: string) => string;
   setDragOverDropTarget?: (target: string | null) => void;
   groupConfigs: GroupConfig[];
+  groupDefaultsByPath: ReadonlyMap<string, Partial<GroupConfig>>;
 }
 
 
@@ -125,6 +126,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   getDropTargetClasses,
   setDragOverDropTarget,
   groupConfigs,
+  groupDefaultsByPath,
 }) => {
   const inlineEdit = useHostTreeInlineGroupEdit();
   const vaultTreeActions = useVaultHostTreeActions();
@@ -326,6 +328,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
 	              getDropTargetClasses={getDropTargetClasses}
 	              setDragOverDropTarget={setDragOverDropTarget}
 	              groupConfigs={groupConfigs}
+	              groupDefaultsByPath={groupDefaultsByPath}
 	            />
 	          ))}
 
@@ -346,6 +349,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
 	              selectedHostIds={selectedHostIds}
 	              toggleHostSelection={toggleHostSelection}
 	              groupConfigs={groupConfigs}
+	              groupDefaultsByPath={groupDefaultsByPath}
 	            />
 	          ))}
         </CollapsibleContent>
@@ -368,14 +372,16 @@ interface HostTreeItemProps {
   selectedHostIds?: Set<string>;
   toggleHostSelection?: (hostId: string) => void;
   groupConfigs: GroupConfig[];
+  groupDefaultsByPath: ReadonlyMap<string, Partial<GroupConfig>>;
 }
 
 export const getHostTreeDisplayDetails = (
   host: Host,
   groupConfigs: GroupConfig[] = [],
+  groupDefaultsByPath?: ReadonlyMap<string, Partial<GroupConfig>>,
 ) => {
   const displayHost = host.group
-    ? applyGroupDefaults(host, resolveGroupDefaults(host.group, groupConfigs))
+    ? applyGroupDefaults(host, groupDefaultsByPath?.get(host.group) ?? resolveGroupDefaults(host.group, groupConfigs))
     : host;
   const isTelnet = displayHost.protocol === 'telnet';
   return {
@@ -403,12 +409,13 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
   selectedHostIds,
   toggleHostSelection,
   groupConfigs,
+  groupDefaultsByPath,
 }) => {
   const safeHost = sanitizeHost(host);
   const tags = host.tags || [];
   const displayDetails = useMemo(
-    () => getHostTreeDisplayDetails(host, groupConfigs),
-    [groupConfigs, host],
+    () => getHostTreeDisplayDetails(host, groupConfigs, groupDefaultsByPath),
+    [groupConfigs, groupDefaultsByPath, host],
   );
   const displayProtocol = displayDetails.protocol;
   const displayUsername = displayDetails.username;
@@ -574,6 +581,21 @@ export const HostTreeView: React.FC<HostTreeViewProps> = ({
 
   const allGroupPaths = useMemo(() => getAllGroupPaths(groupTree), [groupTree]);
 
+  const groupDefaultsByPath = useMemo(() => {
+    const paths = new Set(allGroupPaths);
+    for (const host of hosts) {
+      if (host.group) {
+        paths.add(host.group);
+      }
+    }
+
+    const defaultsByPath = new Map<string, Partial<GroupConfig>>();
+    for (const path of paths) {
+      defaultsByPath.set(path, resolveGroupDefaults(path, groupConfigs));
+    }
+    return defaultsByPath;
+  }, [allGroupPaths, groupConfigs, hosts]);
+
   const handleExpandAll = () => {
     expandAll(allGroupPaths);
   };
@@ -680,6 +702,7 @@ export const HostTreeView: React.FC<HostTreeViewProps> = ({
 	          getDropTargetClasses={getDropTargetClasses}
 	          setDragOverDropTarget={setDragOverDropTarget}
 	          groupConfigs={groupConfigs}
+	          groupDefaultsByPath={groupDefaultsByPath}
 	        />
       ))}
 
@@ -699,6 +722,7 @@ export const HostTreeView: React.FC<HostTreeViewProps> = ({
 	          selectedHostIds={selectedHostIds}
 	          toggleHostSelection={toggleHostSelection}
 	          groupConfigs={groupConfigs}
+	          groupDefaultsByPath={groupDefaultsByPath}
 	        />
       ))}
       

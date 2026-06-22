@@ -11,6 +11,15 @@ type SelectionOverlayPosition = {
   top: number;
 } | null;
 
+const areSelectionOverlayPositionsEqual = (
+  a: SelectionOverlayPosition,
+  b: SelectionOverlayPosition,
+): boolean => {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.left === b.left && a.top === b.top;
+};
+
 export function resolveSelectionOverlayPosition(term: any, container: HTMLElement | null): SelectionOverlayPosition {
   if (!container || !term?.getSelectionPosition || !term.getSelection()) return null;
 
@@ -906,36 +915,70 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     const term = termRef.current;
     if (!term) return;
 
-    const updateSelectionOverlayPosition = () => {
-      setSelectionOverlayPosition?.(
-        resolveSelectionOverlayPosition(term, containerRef.current),
-      );
+    let overlayRafId: number | null = null;
+    let copyTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastHasSelection: boolean | null = null;
+    let lastOverlayPosition: SelectionOverlayPosition = null;
+    const requestFrame = typeof requestAnimationFrame === "function"
+      ? requestAnimationFrame
+      : (callback: FrameRequestCallback) => setTimeout(() => callback(Date.now()), 0) as unknown as number;
+    const cancelFrame = typeof cancelAnimationFrame === "function"
+      ? cancelAnimationFrame
+      : (id: number) => clearTimeout(id);
+
+    const publishSelectionOverlayPosition = () => {
+      overlayRafId = null;
+      const nextPosition = resolveSelectionOverlayPosition(term, containerRef.current);
+      if (areSelectionOverlayPositionsEqual(lastOverlayPosition, nextPosition)) return;
+      lastOverlayPosition = nextPosition;
+      setSelectionOverlayPosition?.(nextPosition);
+    };
+
+    const scheduleSelectionOverlayPosition = () => {
+      if (overlayRafId !== null) return;
+      overlayRafId = requestFrame(publishSelectionOverlayPosition);
     };
 
     const onSelectionChange = () => {
       const selection = term.getSelection();
       const hasText = !!selection && selection.length > 0;
-      setHasSelection(hasText);
-      updateSelectionOverlayPosition();
+      if (lastHasSelection !== hasText) {
+        lastHasSelection = hasText;
+        setHasSelection(hasText);
+      }
+      scheduleSelectionOverlayPosition();
+
+      if (copyTimer) {
+        clearTimeout(copyTimer);
+        copyTimer = null;
+      }
 
       if (hasText && terminalSettings?.copyOnSelect && !isRestoringSelectionRef.current) {
-        navigator.clipboard.writeText(selection).catch((err) => {
-          logger.warn("Copy on select failed:", err);
-        });
+        copyTimer = setTimeout(() => {
+          navigator.clipboard.writeText(selection).catch((err) => {
+            logger.warn("Copy on select failed:", err);
+          });
+        }, 80);
       }
     };
 
     const selectionDisposable = term.onSelectionChange(onSelectionChange);
-    const scrollDisposable = term.onScroll?.(updateSelectionOverlayPosition);
-    const resizeDisposable = term.onResize?.(updateSelectionOverlayPosition);
+    const scrollDisposable = term.onScroll?.(scheduleSelectionOverlayPosition);
+    const resizeDisposable = term.onResize?.(scheduleSelectionOverlayPosition);
     const resizeObserver = typeof ResizeObserver === "undefined"
       ? null
-      : new ResizeObserver(updateSelectionOverlayPosition);
+      : new ResizeObserver(scheduleSelectionOverlayPosition);
     if (containerRef.current) {
       resizeObserver?.observe(containerRef.current);
     }
-    updateSelectionOverlayPosition();
+    scheduleSelectionOverlayPosition();
     return () => {
+      if (overlayRafId !== null) {
+        cancelFrame(overlayRafId);
+      }
+      if (copyTimer) {
+        clearTimeout(copyTimer);
+      }
       selectionDisposable.dispose();
       scrollDisposable?.dispose();
       resizeDisposable?.dispose();

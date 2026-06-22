@@ -1,18 +1,20 @@
-import React from "react";
+import React, { lazy, Suspense } from "react";
 import type { Host, SftpFileEntry } from "../../types";
 import type { FileOpenerType, SystemAppInfo } from "../../lib/sftpFileUtils";
 import type { useSftpState } from "../../application/state/useSftpState";
 import type { HotkeyScheme, KeyBinding } from "../../domain/models";
 import type { TransferTask } from "../../types";
 import FileOpenerDialog from "../FileOpenerDialog";
-import TextEditorModal from "../TextEditorModal";
 import type { TextEditorModalSnapshot } from "../TextEditorModal";
 import { TerminalHostKeyVerification } from "../terminal/TerminalHostKeyVerification";
 import { Dialog, DialogContent, DialogTitle } from "../ui/dialog";
+import { LazyLoadBoundary } from "../ui/lazy-load-boundary";
 import { SftpConflictDialog } from "./SftpConflictDialog";
 import { SftpHostPicker } from "./SftpHostPicker";
 import { SftpPermissionsDialog } from "./SftpPermissionsDialog";
 import { SftpTransferQueue } from "./SftpTransferQueue";
+
+const LazyTextEditorModal = lazy(() => import("../TextEditorModal"));
 
 type SftpState = ReturnType<typeof useSftpState>;
 
@@ -179,23 +181,29 @@ export const SftpOverlays: React.FC<SftpOverlaysProps> = React.memo(({
       />
 
       {/* Text Editor Modal */}
-      <TextEditorModal
-        open={showTextEditor}
-        onClose={() => {
-          setShowTextEditor(false);
-          setTextEditorTarget(null);
-          setTextEditorContent("");
-          onRequestTerminalFocus?.();
-        }}
-        fileName={textEditorTarget?.file.name || ""}
-        initialContent={textEditorContent}
-        onSave={handleSaveTextFile}
-        editorWordWrap={editorWordWrap}
-        onToggleWordWrap={() => setEditorWordWrap(!editorWordWrap)}
-        hotkeyScheme={hotkeyScheme}
-        keyBindings={keyBindings}
-        onPromoteToTab={onPromoteToTab}
-      />
+      {showTextEditor && (
+        <LazyLoadBoundary name="Text editor" resetKey={textEditorTarget?.fullPath || "text-editor"}>
+          <Suspense fallback={null}>
+            <LazyTextEditorModal
+              open={showTextEditor}
+              onClose={() => {
+                setShowTextEditor(false);
+                setTextEditorTarget(null);
+                setTextEditorContent("");
+                onRequestTerminalFocus?.();
+              }}
+              fileName={textEditorTarget?.file.name || ""}
+              initialContent={textEditorContent}
+              onSave={handleSaveTextFile}
+              editorWordWrap={editorWordWrap}
+              onToggleWordWrap={() => setEditorWordWrap(!editorWordWrap)}
+              hotkeyScheme={hotkeyScheme}
+              keyBindings={keyBindings}
+              onPromoteToTab={onPromoteToTab}
+            />
+          </Suspense>
+        </LazyLoadBoundary>
+      )}
 
       {/* File Opener Dialog */}
       <FileOpenerDialog

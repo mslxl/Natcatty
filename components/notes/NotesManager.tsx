@@ -11,7 +11,7 @@ import {
   Search,
   X,
 } from "lucide-react";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../application/i18n/I18nProvider";
 import { useApplicationBackend } from "../../application/state/useApplicationBackend";
 import { useStoredNumber } from "../../application/state/useStoredNumber";
@@ -33,6 +33,7 @@ import { STORAGE_KEY_VAULT_NOTES_TREE_WIDTH } from "../../infrastructure/config/
 import { cn } from "../../lib/utils";
 import type { Host, VaultNote } from "../../types";
 import { Button } from "../ui/button";
+import { LazyLoadBoundary } from "../ui/lazy-load-boundary";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -57,7 +58,10 @@ import {
   markVaultDropIndicator,
   markVaultInsideDropIndicator,
 } from "../vault/vaultReorderDrag";
-import { InlineMarkdownEditor } from "./InlineMarkdownEditor";
+
+const InlineMarkdownEditor = lazy(() =>
+  import("./InlineMarkdownEditor").then((module) => ({ default: module.InlineMarkdownEditor })),
+);
 
 interface NoteFolderNode {
   name: string;
@@ -75,6 +79,14 @@ const NOTES_TREE_MIN_WIDTH = 220;
 const NOTES_TREE_MAX_WIDTH = 520;
 const NOTE_DRAG_TYPE = "application/x-netcatty-note-id";
 const NOTE_GROUP_DRAG_TYPE = "application/x-netcatty-note-group-path";
+
+const InlineMarkdownEditorFallback = () => (
+  <div
+    className="netcatty-lazy-fade-in min-h-[420px]"
+    data-notes-editor-loading="true"
+    aria-hidden="true"
+  />
+);
 
 export interface NotesManagerProps {
   notes: VaultNote[];
@@ -1189,19 +1201,23 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               </div>
               <ScrollArea className="min-h-0 flex-1">
                 <div className="min-h-full w-full px-8 pt-2 pb-6">
-                  <InlineMarkdownEditor
-                    key={selectedNote.id}
-                    value={selectedNote.content}
-                    placeholder={t("notes.editor.placeholder")}
-                    onChange={(content) => saveNote({
-                      ...selectedNote,
-                      content,
-                      updatedAt: Date.now(),
-                    })}
-                    hosts={hosts}
-                    onOpenHost={(host) => handleOpenHostFromNote(host, selectedNote.id)}
-                    onOpenExternalLink={openExternal}
-                  />
+                  <LazyLoadBoundary name="Notes editor" resetKey={selectedNote.id}>
+                    <Suspense fallback={<InlineMarkdownEditorFallback />}>
+                      <InlineMarkdownEditor
+                        key={selectedNote.id}
+                        value={selectedNote.content}
+                        placeholder={t("notes.editor.placeholder")}
+                        onChange={(content) => saveNote({
+                          ...selectedNote,
+                          content,
+                          updatedAt: Date.now(),
+                        })}
+                        hosts={hosts}
+                        onOpenHost={(host) => handleOpenHostFromNote(host, selectedNote.id)}
+                        onOpenExternalLink={openExternal}
+                      />
+                    </Suspense>
+                  </LazyLoadBoundary>
                 </div>
               </ScrollArea>
             </>
@@ -1259,19 +1275,23 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
             </div>
             <ScrollArea className="min-h-0 flex-1">
               <div className="min-h-full w-full px-4 pt-2 pb-6">
-                <InlineMarkdownEditor
-                  key={overlayNote.id}
-                  value={overlayNote.content}
-                  placeholder={t("notes.editor.placeholder")}
-                  onChange={(content) => saveNote({
-                    ...overlayNote,
-                    content,
-                    updatedAt: Date.now(),
-                  })}
-                  hosts={hosts}
-                  onOpenHost={(host) => handleOpenHostFromNote(host, overlayNote.id)}
-                  onOpenExternalLink={openExternal}
-                />
+                <LazyLoadBoundary name="Notes editor" resetKey={overlayNote.id}>
+                  <Suspense fallback={<InlineMarkdownEditorFallback />}>
+                    <InlineMarkdownEditor
+                      key={overlayNote.id}
+                      value={overlayNote.content}
+                      placeholder={t("notes.editor.placeholder")}
+                      onChange={(content) => saveNote({
+                        ...overlayNote,
+                        content,
+                        updatedAt: Date.now(),
+                      })}
+                      hosts={hosts}
+                      onOpenHost={(host) => handleOpenHostFromNote(host, overlayNote.id)}
+                      onOpenExternalLink={openExternal}
+                    />
+                  </Suspense>
+                </LazyLoadBoundary>
               </div>
             </ScrollArea>
           </div>

@@ -40,7 +40,7 @@ import { cn } from '../../lib/utils';
 import type { GroupConfig, GroupNode, Host, TerminalTheme } from '../../types';
 import { HostTreeGroupContextMenuContent, HostTreeHostContextMenuContent } from '../host/HostTreeContextMenus';
 import { HostTreeGroupInlineRenameInput } from '../host/HostTreeGroupInlineRenameInput';
-import { MessageResponse } from '../ai-elements/message';
+import { LazyMessageResponse } from '../ai-elements/LazyMessageResponse';
 import { DistroAvatar } from '../DistroAvatar';
 import { ContextMenu, ContextMenuTrigger } from '../ui/context-menu';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '../ui/hover-card';
@@ -291,9 +291,9 @@ const TerminalHostTreeHostHoverCard: React.FC<{ host: Host }> = ({ host }) => {
       {notes && (
         <div className="mt-3 border-t border-border/60 pt-3">
           <div className="mb-1 text-muted-foreground">{t('hostDetails.notes.label')}</div>
-          <MessageResponse className="host-tree-notes-scroll max-h-[min(44vh,420px)] overflow-y-auto pr-2 text-xs leading-relaxed text-popover-foreground/90 [&_h1]:text-sm [&_h1]:mt-2 [&_h1]:mb-1 [&_h2]:text-sm [&_h2]:mt-2 [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:mt-1.5 [&_h3]:mb-1 [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1">
+          <LazyMessageResponse className="host-tree-notes-scroll max-h-[min(44vh,420px)] overflow-y-auto pr-2 text-xs leading-relaxed text-popover-foreground/90 [&_h1]:text-sm [&_h1]:mt-2 [&_h1]:mb-1 [&_h2]:text-sm [&_h2]:mt-2 [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:mt-1.5 [&_h3]:mb-1 [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1">
             {notes}
-          </MessageResponse>
+          </LazyMessageResponse>
         </div>
       )}
     </HoverCardContent>

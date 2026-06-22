@@ -722,63 +722,64 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     }
 
     let cancelled = false;
-    void (async () => {
-      const currentHash = await getDataHash();
-      if (cancelled) return;
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current);
+    }
 
-      // Skip initial render
-      if (!isInitializedRef.current) {
-        isInitializedRef.current = true;
-        lastSyncedDataRef.current = currentHash;
-        return;
-      }
+    // Debounce first, then build the expensive full-data hash. This keeps
+    // rapid edit bursts from serializing the whole vault on every keystroke.
+    syncTimeoutRef.current = setTimeout(() => {
+      syncTimeoutRef.current = null;
+      void (async () => {
+        const currentHash = await getDataHash();
+        if (cancelled) return;
 
-      // After a merge, onApplyPayload changes local state which triggers
-      // this effect. Skip that cycle and just update the hash baseline.
-      if (skipNextSyncRef.current) {
-        skipNextSyncRef.current = false;
-        lastSyncedDataRef.current = currentHash;
-        return;
-      }
+        // Skip initial render
+        if (!isInitializedRef.current) {
+          isInitializedRef.current = true;
+          lastSyncedDataRef.current = currentHash;
+          return;
+        }
 
-      // Skip if data hasn't changed
-      if (currentHash === lastSyncedDataRef.current) {
-        return;
-      }
+        // After a merge, onApplyPayload changes local state which triggers
+        // this effect. Skip that cycle and just update the hash baseline.
+        if (skipNextSyncRef.current) {
+          skipNextSyncRef.current = false;
+          lastSyncedDataRef.current = currentHash;
+          return;
+        }
 
-      // Wait for the current sync to finish, then this effect will re-run
-      // because sync.isSyncing changed.
-      if (sync.isSyncing || isSyncRunningRef.current) {
-        return;
-      }
+        // Skip if data hasn't changed
+        if (currentHash === lastSyncedDataRef.current) {
+          return;
+        }
 
-      // Hold off on scheduling a new push while another window is applying
-      // a restore — the restore is about to land via localStorage and the
-      // debounce-fired syncNow would otherwise race it. The next data-
-      // change tick after the restore barrier clears will re-enter here.
-      if (isRestoreInProgress()) {
-        return;
-      }
+        // Wait for the current sync to finish, then this effect will re-run
+        // because sync.isSyncing changed.
+        if (sync.isSyncing || isSyncRunningRef.current) {
+          return;
+        }
 
-      // Don't even schedule a push while the apply-in-progress sentinel
-      // is held. The syncNow path re-checks and refuses too, but dropping
-      // the debounced schedule here avoids spinning a 3-second timer for
-      // every keystroke while the user is in the Restore UI working
-      // through recovery.
-      if (readInterruptedVaultApply()) {
-        return;
-      }
+        // Hold off on scheduling a new push while another window is applying
+        // a restore — the restore is about to land via localStorage and the
+        // debounce-fired syncNow would otherwise race it. The next data-
+        // change tick after the restore barrier clears will re-enter here.
+        if (isRestoreInProgress()) {
+          return;
+        }
 
-      // Clear existing timeout
-      if (syncTimeoutRef.current) {
-        clearTimeout(syncTimeoutRef.current);
-      }
+        // Don't even schedule a push while the apply-in-progress sentinel
+        // is held. The syncNow path re-checks and refuses too, but dropping
+        // the debounced schedule here avoids spinning a 3-second timer for
+        // every keystroke while the user is in the Restore UI working
+        // through recovery.
+        if (readInterruptedVaultApply()) {
+          return;
+        }
 
-      // Debounce sync by 3 seconds
-      syncTimeoutRef.current = setTimeout(() => {
         void syncNow();
-      }, 3000);
-    })();
+      })();
+    }, 3000);
     
     return () => {
       cancelled = true;

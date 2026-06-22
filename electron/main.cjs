@@ -229,9 +229,41 @@ const DIST_MIME_TYPES = {
   ".wasm": "application/wasm",
 };
 
+const APP_PROTOCOL_LONG_CACHE_EXTENSIONS = new Set([
+  ".js",
+  ".mjs",
+  ".css",
+  ".json",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".svg",
+  ".ico",
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".eot",
+  ".wav",
+  ".mp3",
+  ".mp4",
+  ".webm",
+  ".wasm",
+]);
+
 function resolveContentType(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   return DIST_MIME_TYPES[ext] || "application/octet-stream";
+}
+
+function resolveAppProtocolCacheControl(filePath, distPath) {
+  const relativePath = path.relative(distPath, filePath).replace(/\\/g, "/");
+  if (relativePath === "index.html") return "no-store";
+  const ext = path.extname(filePath).toLowerCase();
+  if (relativePath.startsWith("assets/") && APP_PROTOCOL_LONG_CACHE_EXTENSIONS.has(ext)) {
+    return "public, max-age=31536000, immutable";
+  }
+  return "no-cache";
 }
 
 function isPathInside(parentPath, childPath) {
@@ -288,6 +320,7 @@ function registerAppProtocol() {
           status: 200,
           headers: {
             ...APP_PROTOCOL_HEADERS,
+            "Cache-Control": resolveAppProtocolCacheControl(fullPath, distPath),
             "Content-Type": resolveContentType(fullPath),
           },
         });

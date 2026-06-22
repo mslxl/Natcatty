@@ -1,5 +1,5 @@
 import React from "react";
-import { MessageResponse } from "../ai-elements/message";
+import { LazyMessageResponse } from "../ai-elements/LazyMessageResponse";
 
 export function MarkdownPreview({
   content,
@@ -18,8 +18,8 @@ export function MarkdownPreview({
   }
 
   return (
-    <MessageResponse className="text-sm leading-relaxed text-foreground/90">
+    <LazyMessageResponse className="text-sm leading-relaxed text-foreground/90">
       {trimmed}
-    </MessageResponse>
+    </LazyMessageResponse>
   );
 }
