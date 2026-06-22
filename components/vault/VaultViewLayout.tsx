@@ -585,7 +585,10 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
             }
           />
         )}
-        {currentSection === "notes" && (
+        <div
+          className={cn("min-h-0 flex-1", currentSection !== "notes" && "hidden")}
+          data-section="vault-notes-retained"
+        >
           <NotesManager
             notes={notes}
             noteGroups={noteGroups}
@@ -600,7 +603,7 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
               handleHostConnect(host);
             }}
           />
-        )}
+        </div>
         {currentSection === "keys" && (
           <KeychainManager
             keys={keys}

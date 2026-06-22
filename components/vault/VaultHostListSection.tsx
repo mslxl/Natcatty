@@ -49,7 +49,8 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
   return <div
           ref={hostListScrollRef}
           className={cn(
-            "flex-1 overflow-auto px-4 pt-0 pb-4 space-y-3",
+            "flex-1 overflow-auto px-4 pb-4 space-y-3",
+            viewMode === "tree" ? "pt-1.5" : "pt-0",
             !isHostsSectionActive && "hidden",
           )}
           data-section="vault-host-list"
