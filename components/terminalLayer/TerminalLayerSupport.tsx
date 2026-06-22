@@ -128,6 +128,56 @@ const removeStylePropertyIfSet = (element: HTMLElement, property: string) => {
   element.style.removeProperty(property);
 };
 
+const HOST_TREE_PREVIEW_PROPERTIES = [
+  '--terminal-host-tree-bg',
+  '--terminal-host-tree-fg',
+  '--terminal-host-tree-muted',
+  '--terminal-host-tree-separator',
+  '--terminal-host-tree-hover-bg',
+  '--terminal-host-tree-active-bg',
+  '--terminal-host-tree-drop-bg',
+  '--terminal-host-tree-folder-fg',
+] as const;
+
+const getHostTreePreviewRoots = (): HTMLElement[] => {
+  if (typeof document === 'undefined') return [];
+  return Array.from(document.querySelectorAll<HTMLElement>(
+    '[data-section="app-host-tree-layer"], [data-section="terminal-host-tree-sidebar"]',
+  ));
+};
+
+export const applyHostTreePreviewThemeVars = (theme: TerminalTheme) => {
+  const roots = getHostTreePreviewRoots();
+  if (roots.length === 0) return;
+  const bg = theme.colors.background;
+  const fg = theme.colors.foreground;
+  const values = {
+    '--terminal-host-tree-bg': bg,
+    '--terminal-host-tree-fg': fg,
+    '--terminal-host-tree-muted': `color-mix(in srgb, ${fg} 55%, ${bg} 45%)`,
+    '--terminal-host-tree-separator': `color-mix(in srgb, ${fg} 10%, ${bg} 90%)`,
+    '--terminal-host-tree-hover-bg': `color-mix(in srgb, ${fg} 8%, transparent)`,
+    '--terminal-host-tree-active-bg': `color-mix(in srgb, ${fg} 14%, transparent)`,
+    '--terminal-host-tree-drop-bg': `color-mix(in srgb, ${fg} 20%, transparent)`,
+    '--terminal-host-tree-folder-fg': `color-mix(in srgb, ${fg} 75%, ${bg} 25%)`,
+  } satisfies Record<(typeof HOST_TREE_PREVIEW_PROPERTIES)[number], string>;
+
+  for (const root of roots) {
+    for (const property of HOST_TREE_PREVIEW_PROPERTIES) {
+      setStylePropertyIfChanged(root, property, values[property]);
+    }
+  }
+};
+
+export const clearHostTreePreviewVars = () => {
+  const roots = getHostTreePreviewRoots();
+  for (const root of roots) {
+    for (const property of HOST_TREE_PREVIEW_PROPERTIES) {
+      removeStylePropertyIfSet(root, property);
+    }
+  }
+};
+
 export const clearTopTabsPreviewVars = () => {
   if (typeof document === 'undefined') return;
   const tabsRoot = document.querySelector<HTMLElement>('[data-top-tabs-root]');
@@ -474,6 +524,7 @@ export interface TerminalLayerProps {
   knownHosts?: KnownHost[];
   draggingSessionId: string | null;
   terminalTheme: TerminalTheme;
+  terminalThemeId?: string;
   followAppTerminalTheme?: boolean;
   accentMode?: 'theme' | 'custom';
   customAccent?: string;
@@ -486,6 +537,7 @@ export interface TerminalLayerProps {
   keyBindings?: KeyBinding[];
   onHotkeyAction?: (action: string, event: KeyboardEvent) => void;
   onUpdateTerminalThemeId?: (themeId: string) => void;
+  onUpdateFollowAppTerminalThemeId?: (themeId: string) => void;
   onUpdateTerminalFontFamilyId?: (fontFamilyId: string) => void;
   onUpdateTerminalFontSize?: (fontSize: number) => void;
   onUpdateTerminalFontWeight?: (fontWeight: number) => void;

@@ -8,7 +8,7 @@ import { getTerminalSidePanelShellWidth } from './TerminalLayerSidePanelSection'
 type TerminalLayerEffectsContext = Record<string, any>;
 
 export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
-  const { activeSidePanelTab, activeTabId, activeTabIdRef, activeTopTabsThemeId, activeWorkspace, activityTrackedSessions, appliedPreviewSessionRef, applyTerminalPreviewVars, applyTopTabsPreviewVars, cancelAnimationFrame, ChunkedEscapeFilter, clearTerminalPreviewVars, clearTimeout, clearTopTabsPreviewVars, document, dropHint, filterTabsMap, focusedSessionId, followAppTerminalTheme, getSessionActivityIdsToClear, handleToggleAiFromTopBar, handleToggleScriptsSidePanel, handleToggleSidePanel, hasNotifiableTerminalOutput, isComposeBarOpen, isFocusMode, isTerminalLayerVisible, lastSidePanelTabRef, Map, onSessionData, onSplitSessionRef, onToggleBroadcastRef, onToggleWorkspaceViewModeRef, prevFocusedSessionIdRef, previewTargetSessionId, refocusActiveTerminalSession, requestAnimationFrame, ResizeObserver, sessionActivityStore, sessions, Set, setAiMountedTabIds, setDropHint, setNotesMountedTabIds, setScriptsMountedTabIds, setSystemMountedTabIds, setSftpHostForTab, setSftpInitialLocationForTab, setSftpPendingUploadsForTab, setSidePanelOpenTabs, setThemeMountedTabIds, setThemePreview, setTimeout, setupMcpApprovalBridge, setWorkspaceArea, sidePanelPosition, sidePanelWidth, sftpActiveHost, sftpHostForTab, shouldMarkSessionActivity, sidePanelOpenTabs, splitHorizontalHandlersRef, splitVerticalHandlersRef, terminalRendererCwdBySessionRef, themeCommitTimerRef, themePreview, toggleScriptsSidePanelRef, toggleSidePanelRef, validAIScopeTargetIds, validSessionActivityIds, visibleFocusedThemeId, window, workspaceBroadcastHandlersRef, workspaceFocusHandlersRef, workspaceInnerRef, workspaces } = ctx;
+  const { activeSidePanelTab, activeTabId, activeTabIdRef, activeTopTabsThemeId, activeWorkspace, activityTrackedSessions, appliedPreviewSessionRef, applyHostTreePreviewVars, applyTerminalPreviewVars, applyTopTabsPreviewVars, cancelAnimationFrame, ChunkedEscapeFilter, clearHostTreePreviewVars, clearTerminalPreviewVars, clearTimeout, clearTopTabsPreviewVars, document, dropHint, filterTabsMap, focusedSessionId, followAppTerminalTheme, getSessionActivityIdsToClear, handleToggleAiFromTopBar, handleToggleScriptsSidePanel, handleToggleSidePanel, hasNotifiableTerminalOutput, isComposeBarOpen, isFocusMode, isTerminalLayerVisible, lastSidePanelTabRef, Map, onSessionData, onSplitSessionRef, onToggleBroadcastRef, onToggleWorkspaceViewModeRef, prevFocusedSessionIdRef, previewTargetSessionId, refocusActiveTerminalSession, requestAnimationFrame, ResizeObserver, sessionActivityStore, sessions, Set, setAiMountedTabIds, setDropHint, setNotesMountedTabIds, setScriptsMountedTabIds, setSystemMountedTabIds, setSftpHostForTab, setSftpInitialLocationForTab, setSftpPendingUploadsForTab, setSidePanelOpenTabs, setThemeMountedTabIds, setThemePreview, setTimeout, setupMcpApprovalBridge, setWorkspaceArea, sidePanelPosition, sidePanelWidth, sftpActiveHost, sftpHostForTab, shouldMarkSessionActivity, sidePanelOpenTabs, splitHorizontalHandlersRef, splitVerticalHandlersRef, terminalRendererCwdBySessionRef, themeCommitTimerRef, themePreview, toggleScriptsSidePanelRef, toggleSidePanelRef, validAIScopeTargetIds, validSessionActivityIds, visibleFocusedThemeId, window, workspaceBroadcastHandlersRef, workspaceFocusHandlersRef, workspaceInnerRef, workspaces } = ctx;
 
   const activeWorkspaceId = activeWorkspace?.id;
   const activeWorkspaceViewMode = activeWorkspace?.viewMode;
@@ -23,6 +23,7 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
   });
 
   const activityEscapeFiltersRef = useRef<any>(new Map());
+  const previousFollowAppTerminalThemeRef = useRef(followAppTerminalTheme);
 
   const remeasureWorkspaceArea = useCallback(() => {
     const el = workspaceInnerRef.current;
@@ -259,6 +260,7 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
           clearTimeout(themeCommitTimerRef.current);
         }
         clearTerminalPreviewVars(appliedPreviewSessionRef.current);
+        clearHostTreePreviewVars();
         clearTopTabsPreviewVars();
       };
     }, []);
@@ -275,9 +277,12 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
   
       if (themePreview.targetSessionId && themePreview.themeId) {
         applyTerminalPreviewVars(themePreview.targetSessionId, themePreview.themeId);
+        applyHostTreePreviewVars(themePreview.themeId);
         appliedPreviewSessionRef.current = themePreview.targetSessionId;
+      } else {
+        clearHostTreePreviewVars();
       }
-    }, [applyTerminalPreviewVars, themePreview]);
+    }, [applyHostTreePreviewVars, applyTerminalPreviewVars, themePreview]);
   
   useLayoutEffect(() => {
       if (!isTerminalLayerVisible) {
@@ -293,7 +298,9 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
     }, [activeTopTabsThemeId, applyTopTabsPreviewVars, isTerminalLayerVisible]);
   
   useEffect(() => {
-      if (!followAppTerminalTheme) return;
+      const didChangeFollowTheme = followAppTerminalTheme !== previousFollowAppTerminalThemeRef.current;
+      previousFollowAppTerminalThemeRef.current = followAppTerminalTheme;
+      if (!didChangeFollowTheme) return;
       if (themeCommitTimerRef.current) {
         clearTimeout(themeCommitTimerRef.current);
         themeCommitTimerRef.current = null;
@@ -303,11 +310,12 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
         clearTerminalPreviewVars(appliedSessionId);
         appliedPreviewSessionRef.current = null;
       }
+      clearHostTreePreviewVars();
       clearTopTabsPreviewVars();
       if (themePreview.targetSessionId || themePreview.themeId) {
         setThemePreview({ targetSessionId: null, themeId: null });
       }
-    }, [followAppTerminalTheme, themePreview.targetSessionId, themePreview.themeId]);
+    }, [followAppTerminalTheme]);
   
   useEffect(() => {
       const panelOpen = activeSidePanelTab === 'theme' && !!previewTargetSessionId;
@@ -324,6 +332,7 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
         clearTerminalPreviewVars(appliedSessionId);
         appliedPreviewSessionRef.current = null;
       }
+      clearHostTreePreviewVars();
       if (themePreview.targetSessionId || themePreview.themeId) {
         setThemePreview({ targetSessionId: null, themeId: null });
       }
@@ -335,6 +344,7 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
         themePreview.themeId &&
         themePreview.themeId === visibleFocusedThemeId
       ) {
+        clearHostTreePreviewVars();
         setThemePreview({ targetSessionId: null, themeId: null });
       }
     }, [previewTargetSessionId, themePreview, visibleFocusedThemeId]);

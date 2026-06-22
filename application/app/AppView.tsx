@@ -37,7 +37,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
     connectionLogs, convertKnownHostToHost, createWorkspaceFromSessions, createWorkspaceFromTargets, createWorkspaceWithHosts, customAccent,
     customGroups, currentTerminalTheme, deepLinkHostDraft, deleteConnectionLog, draggingSessionId, effectiveKnownHosts, editorTabs, editorWordWrap, emptyVaultConflict,
     followAppTerminalTheme, groupConfigs, handleAddKnownHost, handleConnectSerial, handleConnectToHost, handleCreateLocalTerminal, handleDeleteHost,
-    handleEndSessionDrag, handleHostConnectWithProtocolCheck, handleHotkeyAction, handleKeyboardInteractiveCancel, handleKeyboardInteractiveSubmit,
+    handleEndSessionDrag, handleFollowAppTerminalThemeChange, handleHostConnectWithProtocolCheck, handleHotkeyAction, handleKeyboardInteractiveCancel, handleKeyboardInteractiveSubmit,
     handleOpenHostFromVaultNote, handleOpenQuickSwitcher, handleOpenSettings, handleRootContextMenu, handlePassphraseCancel, handlePassphraseSkip, handlePassphraseSubmit, handleProtocolSelect,
     handleRequestCloseEditorTabRef, handleSessionStatusChange, handleSyncNowManual, handleTerminalDataCapture, handleToggleTheme, handleUpdateHostFromTerminal,
     hostById, hosts, hotkeyScheme, identities, importOrReuseKey, isBroadcastEnabled, isCreateWorkspaceOpen, isMacClient, isQuickSwitcherOpen,
@@ -260,6 +260,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
           knownHosts={effectiveKnownHosts}
           draggingSessionId={draggingSessionId}
           terminalTheme={currentTerminalTheme}
+          terminalThemeId={terminalThemeId}
           followAppTerminalTheme={followAppTerminalTheme}
           accentMode={accentMode}
           customAccent={customAccent}
@@ -272,6 +273,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
           keyBindings={keyBindings}
           onHotkeyAction={handleHotkeyAction}
           onUpdateTerminalThemeId={setTerminalThemeId}
+          onUpdateFollowAppTerminalThemeId={handleFollowAppTerminalThemeChange}
           onUpdateTerminalFontFamilyId={setTerminalFontFamilyId}
           onUpdateTerminalFontSize={setTerminalFontSize}
           onUpdateSessionFontSize={updateSessionFontSize}

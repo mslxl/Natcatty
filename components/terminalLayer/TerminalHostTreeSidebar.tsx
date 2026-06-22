@@ -639,15 +639,21 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
   const theme = useMemo<HostTreeTheme>(() => {
     const termBg = resolvedPreviewTheme.colors.background;
     const termFg = resolvedPreviewTheme.colors.foreground;
+    const mutedFg = `color-mix(in srgb, ${termFg} 55%, ${termBg} 45%)`;
+    const separator = `color-mix(in srgb, ${termFg} 10%, ${termBg} 90%)`;
+    const rowHoverBg = `color-mix(in srgb, ${termFg} 8%, transparent)`;
+    const rowActiveBg = `color-mix(in srgb, ${termFg} 14%, transparent)`;
+    const rowDropBg = `color-mix(in srgb, ${termFg} 20%, transparent)`;
+    const folderFg = `color-mix(in srgb, ${termFg} 75%, ${termBg} 25%)`;
     return {
-      termBg,
-      termFg,
-      mutedFg: `color-mix(in srgb, ${termFg} 55%, ${termBg} 45%)`,
-      separator: `color-mix(in srgb, ${termFg} 10%, ${termBg} 90%)`,
-      rowHoverBg: `color-mix(in srgb, ${termFg} 8%, transparent)`,
-      rowActiveBg: `color-mix(in srgb, ${termFg} 14%, transparent)`,
-      rowDropBg: `color-mix(in srgb, ${termFg} 20%, transparent)`,
-      folderFg: `color-mix(in srgb, ${termFg} 75%, ${termBg} 25%)`,
+      termBg: `var(--terminal-host-tree-bg, ${termBg})`,
+      termFg: `var(--terminal-host-tree-fg, ${termFg})`,
+      mutedFg: `var(--terminal-host-tree-muted, ${mutedFg})`,
+      separator: `var(--terminal-host-tree-separator, ${separator})`,
+      rowHoverBg: `var(--terminal-host-tree-hover-bg, ${rowHoverBg})`,
+      rowActiveBg: `var(--terminal-host-tree-active-bg, ${rowActiveBg})`,
+      rowDropBg: `var(--terminal-host-tree-drop-bg, ${rowDropBg})`,
+      folderFg: `var(--terminal-host-tree-folder-fg, ${folderFg})`,
     };
   }, [resolvedPreviewTheme]);
 

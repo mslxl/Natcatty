@@ -167,6 +167,7 @@ function TerminalLayerSidePanelTabBody({ ctx }: { ctx: SidePanelContext }) {
     terminalFontFamilyId,
     terminalSettings,
     terminalTheme,
+    terminalThemeId,
     ThemeSidePanel,
     updateHosts,
     updateNoteGroups,
@@ -601,12 +602,12 @@ function TerminalLayerSidePanelTabBody({ ctx }: { ctx: SidePanelContext }) {
                   <ThemeSidePanel
                     followAppTerminalTheme={followAppTerminalTheme}
                     currentThemeId={previewedOrVisibleThemeId}
-                    globalThemeId={terminalTheme.id}
+                    globalThemeId={terminalThemeId ?? terminalTheme.id}
                     currentFontFamilyId={focusedFontFamilyId}
                     globalFontFamilyId={terminalFontFamilyId}
                     currentFontSize={focusedFontSize}
                     currentFontWeight={focusedFontWeight}
-                    canResetTheme={focusedThemeOverridden}
+                    canResetTheme={followAppTerminalTheme ? false : focusedThemeOverridden}
                     canResetFontFamily={focusedFontFamilyOverridden}
                     canResetFontSize={focusedFontSizeOverridden}
                     canResetFontWeight={focusedFontWeightOverridden}

@@ -17,6 +17,8 @@ const baseProps = {
   knownHosts: [],
   draggingSessionId: null,
   terminalTheme: {},
+  terminalThemeId: "midnight",
+  followAppTerminalTheme: false,
   accentMode: "theme",
   customAccent: null,
   terminalSettings: {},
@@ -36,6 +38,7 @@ const baseProps = {
   setEditorWordWrap: () => {},
   onHotkeyAction: () => {},
   onUpdateHost: () => {},
+  onUpdateFollowAppTerminalThemeId: () => {},
   onAddKnownHost: () => {},
   onToggleWorkspaceViewMode: () => {},
   onSetWorkspaceFocusedSession: () => {},
@@ -149,6 +152,26 @@ test("TerminalLayer re-renders when SSH debug logging changes", () => {
     terminalLayerAreEqual(
       baseProps as never,
       { ...baseProps, sshDebugLogsEnabled: true } as never,
+    ),
+    false,
+  );
+});
+
+test("TerminalLayer re-renders when follow-app terminal theme mode changes", () => {
+  assert.equal(
+    terminalLayerAreEqual(
+      baseProps as never,
+      { ...baseProps, followAppTerminalTheme: true } as never,
+    ),
+    false,
+  );
+});
+
+test("TerminalLayer re-renders when the visible terminal theme id changes", () => {
+  assert.equal(
+    terminalLayerAreEqual(
+      baseProps as never,
+      { ...baseProps, terminalThemeId: "snow" } as never,
     ),
     false,
   );

@@ -347,8 +347,9 @@ function SettingsTerminalTab(props: {
           />
         </SettingRow>
       </div>
-      {followAppTerminalTheme ? (
-        <div className="space-y-2">
+      <div className="space-y-2">
+        {followAppTerminalTheme && (
+          <>
           <div>
             <div className="text-xs text-muted-foreground mb-1.5 px-1">
               {t("settings.terminal.theme.darkTheme")}
@@ -373,14 +374,21 @@ function SettingsTerminalTab(props: {
                 : t("settings.terminal.theme.selectButton")}
             />
           </div>
+          </>
+        )}
+        <div>
+          {followAppTerminalTheme && (
+            <div className="text-xs text-muted-foreground mb-1.5 px-1">
+              {t("terminal.themeModal.globalTheme")}
+            </div>
+          )}
+          <ThemePreviewButton
+            theme={currentTheme}
+            onClick={() => setThemeModalOpen(true)}
+            buttonLabel={t("settings.terminal.theme.selectButton")}
+          />
         </div>
-      ) : (
-        <ThemePreviewButton
-          theme={currentTheme}
-          onClick={() => setThemeModalOpen(true)}
-          buttonLabel={t("settings.terminal.theme.selectButton")}
-        />
-      )}
+      </div>
 
       <ThemeSelectModal
         open={themeModalOpen}
