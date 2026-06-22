@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { Host } from "./models";
 import {
+  buildSshDeepLinkConnectionHost,
   buildSshDeepLinkHostDraft,
   findSshDeepLinkHost,
   parseSshDeepLink,
@@ -72,6 +73,35 @@ test("findSshDeepLinkHost avoids ambiguous saved hosts", () => {
   const match = findSshDeepLinkHost(hosts, parseSshDeepLink("ssh://alice@example.com")!);
 
   assert.equal(match, null);
+});
+
+test("findSshDeepLinkHost treats omitted ports as the ssh default", () => {
+  const hosts = [
+    host({ id: "custom-port", hostname: "example.com", username: "alice", port: 2200 }),
+    host({ id: "default-port", hostname: "example.com", username: "alice" }),
+  ];
+
+  const match = findSshDeepLinkHost(hosts, parseSshDeepLink("ssh://alice@example.com")!);
+
+  assert.equal(match?.id, "default-port");
+});
+
+test("buildSshDeepLinkConnectionHost forces a saved host to open with ssh", () => {
+  const savedHost = host({
+    id: "saved",
+    hostname: "example.com",
+    username: "alice",
+    moshEnabled: true,
+    etEnabled: true,
+  });
+
+  const connectionHost = buildSshDeepLinkConnectionHost(savedHost);
+
+  assert.equal(connectionHost.protocol, "ssh");
+  assert.equal(connectionHost.moshEnabled, false);
+  assert.equal(connectionHost.etEnabled, false);
+  assert.equal(savedHost.moshEnabled, true);
+  assert.equal(savedHost.etEnabled, true);
 });
 
 test("buildSshDeepLinkHostDraft prepares an editable new ssh host", () => {

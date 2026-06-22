@@ -351,6 +351,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   const customKeyBindingsLocalOriginRef = useRef(createCustomKeyBindingsSyncOrigin());
   const customKeyBindingsMutationSourceRef = useRef<'local' | 'incoming'>('local');
   const sshDeepLinkMutationSourceRef = useRef<'local' | 'incoming'>('local');
+  const sshDeepLinkEnabledRef = useRef(sshDeepLinkEnabled);
+  const sshDeepLinkSetRequestIdRef = useRef(0);
 
   // Fix 1: Mount guard — skip redundant IPC broadcasts & localStorage writes on initial mount.
   // Set to true by the LAST useEffect declaration; all persist effects see false on first render.
@@ -435,6 +437,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   }, []);
 
   const applyIncomingSshDeepLinkEnabled = useCallback((enabled: boolean) => {
+    sshDeepLinkSetRequestIdRef.current += 1;
     setSshDeepLinkEnabledState((prev) => {
       if (prev === enabled) return prev;
       sshDeepLinkMutationSourceRef.current = 'incoming';
@@ -964,9 +967,54 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     notifySettingsChanged(STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED, sshDebugLogsEnabled);
   }, [sshDebugLogsEnabled, notifySettingsChanged]);
 
+  useEffect(() => {
+    sshDeepLinkEnabledRef.current = sshDeepLinkEnabled;
+  }, [sshDeepLinkEnabled]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const requestIdAtStart = sshDeepLinkSetRequestIdRef.current;
+    const bridge = netcattyBridge.get();
+    if (!bridge?.getSshDeepLinkEnabled) return;
+    void bridge.getSshDeepLinkEnabled().then((enabled) => {
+      if (cancelled || typeof enabled !== 'boolean') return;
+      if (sshDeepLinkSetRequestIdRef.current !== requestIdAtStart) return;
+      sshDeepLinkMutationSourceRef.current = 'incoming';
+      setSshDeepLinkEnabledState((prev) => (prev === enabled ? prev : enabled));
+      localStorageAdapter.writeBoolean(STORAGE_KEY_SSH_DEEP_LINK_ENABLED, enabled);
+    }).catch(() => {
+      // The renderer can still use its cached setting when the bridge is unavailable.
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const setSshDeepLinkEnabled = useCallback((enabled: boolean) => {
+    const previous = sshDeepLinkEnabledRef.current;
+    const requestId = sshDeepLinkSetRequestIdRef.current + 1;
+    sshDeepLinkSetRequestIdRef.current = requestId;
     sshDeepLinkMutationSourceRef.current = 'local';
     setSshDeepLinkEnabledState(enabled);
+
+    const bridge = netcattyBridge.get();
+    if (!bridge?.setSshDeepLinkEnabled) return;
+    void bridge.setSshDeepLinkEnabled(enabled).then((result) => {
+      if (sshDeepLinkSetRequestIdRef.current !== requestId) return;
+      const success = typeof result === 'object' ? result.success : result;
+      if (success !== false) return;
+      const finalEnabled = typeof result === 'object' && typeof result.enabled === 'boolean'
+        ? result.enabled
+        : previous;
+      sshDeepLinkMutationSourceRef.current = 'incoming';
+      setSshDeepLinkEnabledState(finalEnabled);
+      localStorageAdapter.writeBoolean(STORAGE_KEY_SSH_DEEP_LINK_ENABLED, finalEnabled);
+    }).catch(() => {
+      if (sshDeepLinkSetRequestIdRef.current !== requestId) return;
+      sshDeepLinkMutationSourceRef.current = 'incoming';
+      setSshDeepLinkEnabledState(previous);
+      localStorageAdapter.writeBoolean(STORAGE_KEY_SSH_DEEP_LINK_ENABLED, previous);
+    });
   }, []);
 
   useEffect(() => {
@@ -975,7 +1023,6 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
       sshDeepLinkMutationSourceRef.current = 'local';
       return;
     }
-    void netcattyBridge.get()?.setSshDeepLinkEnabled?.(sshDeepLinkEnabled);
     if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_SSH_DEEP_LINK_ENABLED, sshDeepLinkEnabled);
   }, [sshDeepLinkEnabled, notifySettingsChanged]);

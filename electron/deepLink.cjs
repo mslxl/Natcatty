@@ -83,13 +83,70 @@ function applySshProtocolClientPreference(options = {}) {
   return registerSshProtocolClient(options);
 }
 
+function updateSshDeepLinkEnabledPreference({
+  currentEnabled = true,
+  enabled = true,
+  applyPreference = () => false,
+  writePreference = () => false,
+  clearPending,
+} = {}) {
+  const nextEnabled = enabled !== false;
+  if (nextEnabled === currentEnabled) {
+    return { enabled: currentEnabled, success: true };
+  }
+
+  const success = applyPreference(nextEnabled) === true;
+  if (!success) {
+    return { enabled: currentEnabled, success: false };
+  }
+
+  const writeSucceeded = writePreference(nextEnabled) === true;
+  if (!writeSucceeded) {
+    const rolledBack = applyPreference(currentEnabled) === true;
+    const finalEnabled = rolledBack ? currentEnabled : nextEnabled;
+    if (!finalEnabled) {
+      clearPending?.();
+    }
+    return { enabled: finalEnabled, success: false };
+  }
+  if (!nextEnabled) {
+    clearPending?.();
+  }
+  return { enabled: nextEnabled, success: true };
+}
+
+function shouldDeliverSshDeepLink({ enabled = true, deliveryGeneration = 0, expectedGeneration = 0 } = {}) {
+  return enabled !== false && deliveryGeneration === expectedGeneration;
+}
+
+function applyInitialSshDeepLinkPreference({
+  enabled = true,
+  applyPreference = () => false,
+  clearPending,
+  logWarn = console.warn,
+} = {}) {
+  const requestedEnabled = enabled !== false;
+  const success = applyPreference(requestedEnabled) === true;
+  if (success) {
+    return { enabled: requestedEnabled, success: true };
+  }
+  logWarn("[Main] Failed to apply saved ssh:// deep link preference.");
+  if (requestedEnabled) {
+    clearPending?.();
+  }
+  return { enabled: false, success: false };
+}
+
 module.exports = {
   SSH_DEEP_LINK_CHANNEL,
+  applyInitialSshDeepLinkPreference,
   collectSshDeepLinkUrls,
   isSshDeepLinkUrl,
   applySshProtocolClientPreference,
   registerSshProtocolClient,
   removeSshProtocolClient,
   readSshDeepLinkEnabledPreference,
+  shouldDeliverSshDeepLink,
+  updateSshDeepLinkEnabledPreference,
   writeSshDeepLinkEnabledPreference,
 };

@@ -73,16 +73,24 @@ export const findSshDeepLinkHost = (
   target: SshDeepLinkTarget,
 ): Host | null => {
   const targetHost = normalizeHostname(target.hostname);
+  const targetPort = target.port ?? DEFAULT_SSH_PORT;
   const candidates = hosts.filter((host) => {
     if (!isPrimarySshHost(host)) return false;
     if (normalizeHostname(host.hostname) !== targetHost) return false;
     if (target.username && (host.username || "").trim() !== target.username) return false;
-    if (target.port !== undefined && getHostPort(host) !== target.port) return false;
+    if (getHostPort(host) !== targetPort) return false;
     return true;
   });
 
   return candidates.length === 1 ? candidates[0] : null;
 };
+
+export const buildSshDeepLinkConnectionHost = (host: Host): Host => ({
+  ...host,
+  protocol: "ssh",
+  moshEnabled: false,
+  etEnabled: false,
+});
 
 export const buildSshDeepLinkHostDraft = (
   target: SshDeepLinkTarget,

@@ -65,10 +65,13 @@ const fs = require("node:fs");
 const { getCliDiscoveryFilePath } = require("./cli/discoveryPath.cjs");
 const {
   SSH_DEEP_LINK_CHANNEL,
+  applyInitialSshDeepLinkPreference,
   applySshProtocolClientPreference,
   collectSshDeepLinkUrls,
   isSshDeepLinkUrl,
   readSshDeepLinkEnabledPreference,
+  shouldDeliverSshDeepLink,
+  updateSshDeepLinkEnabledPreference,
   writeSshDeepLinkEnabledPreference,
 } = require("./deepLink.cjs");
 
@@ -499,6 +502,7 @@ async function createAndShowMainWindow() {
 let sshDeepLinkEnabled = readSshDeepLinkEnabledPreference({ app });
 const pendingSshDeepLinkUrls = sshDeepLinkEnabled ? collectSshDeepLinkUrls(process.argv) : [];
 let flushingSshDeepLinks = false;
+let sshDeepLinkDeliveryGeneration = 0;
 
 function queueSshDeepLink(rawUrl) {
   if (!sshDeepLinkEnabled) return;
@@ -511,24 +515,51 @@ function queueSshDeepLink(rawUrl) {
 
 ipcMain?.handle?.("netcatty:deepLink:ssh:setEnabled", async (_event, payload) => {
   const enabled = payload?.enabled !== false;
-  sshDeepLinkEnabled = enabled;
-  writeSshDeepLinkEnabledPreference({ app, enabled });
-  return applySshProtocolClientPreference({ app, enabled, isDev });
+  const result = updateSshDeepLinkEnabledPreference({
+    currentEnabled: sshDeepLinkEnabled,
+    enabled,
+    applyPreference: (nextEnabled) => applySshProtocolClientPreference({ app, enabled: nextEnabled, isDev }),
+    writePreference: (nextEnabled) => writeSshDeepLinkEnabledPreference({ app, enabled: nextEnabled }),
+    clearPending: () => {
+      pendingSshDeepLinkUrls.length = 0;
+      sshDeepLinkDeliveryGeneration += 1;
+    },
+  });
+  sshDeepLinkEnabled = result.enabled;
+  return result;
 });
 
 ipcMain?.handle?.("netcatty:deepLink:ssh:getEnabled", async () => sshDeepLinkEnabled);
 
-async function deliverSshDeepLink(rawUrl) {
+async function deliverSshDeepLink(rawUrl, expectedGeneration = sshDeepLinkDeliveryGeneration) {
+  if (!shouldDeliverSshDeepLink({
+    enabled: sshDeepLinkEnabled,
+    deliveryGeneration: sshDeepLinkDeliveryGeneration,
+    expectedGeneration,
+  })) return;
   const win = await createAndShowMainWindow();
+  if (!shouldDeliverSshDeepLink({
+    enabled: sshDeepLinkEnabled,
+    deliveryGeneration: sshDeepLinkDeliveryGeneration,
+    expectedGeneration,
+  })) return;
   focusMainWindow();
   const windowManager = getWindowManager();
   const result = await windowManager.sendWhenRendererReady?.(
     win,
     SSH_DEEP_LINK_CHANNEL,
     { url: rawUrl },
-    { timeoutMs: isDev ? 30000 : 15000 },
+    {
+      timeoutMs: isDev ? 30000 : 15000,
+      shouldSend: () => shouldDeliverSshDeepLink({
+        enabled: sshDeepLinkEnabled,
+        deliveryGeneration: sshDeepLinkDeliveryGeneration,
+        expectedGeneration,
+      }),
+      cancelReason: "ssh-deep-link-disabled",
+    },
   );
-  if (result && result.success === false) {
+  if (result && result.success === false && result.reason !== "ssh-deep-link-disabled") {
     console.warn("[Main] Failed to deliver ssh:// deep link:", result.error || result.reason);
   }
 }
@@ -537,16 +568,16 @@ async function flushPendingSshDeepLinks() {
   if (flushingSshDeepLinks) return;
   flushingSshDeepLinks = true;
   try {
-    while (pendingSshDeepLinkUrls.length > 0) {
+    while (sshDeepLinkEnabled && pendingSshDeepLinkUrls.length > 0) {
       const rawUrl = pendingSshDeepLinkUrls.shift();
       if (!rawUrl) continue;
-      await deliverSshDeepLink(rawUrl);
+      await deliverSshDeepLink(rawUrl, sshDeepLinkDeliveryGeneration);
     }
   } catch (err) {
     console.warn("[Main] Failed to process ssh:// deep link:", err);
   } finally {
     flushingSshDeepLinks = false;
-    if (pendingSshDeepLinkUrls.length > 0) {
+    if (sshDeepLinkEnabled && pendingSshDeepLinkUrls.length > 0) {
       void flushPendingSshDeepLinks();
     }
   }
@@ -612,7 +643,15 @@ if (!gotLock) {
   // Application lifecycle
   app.whenReady().then(() => {
     registerAppProtocol();
-    applySshProtocolClientPreference({ app, enabled: sshDeepLinkEnabled, isDev });
+    const initialSshDeepLinkPreference = applyInitialSshDeepLinkPreference({
+      enabled: sshDeepLinkEnabled,
+      applyPreference: (enabled) => applySshProtocolClientPreference({ app, enabled, isDev }),
+      clearPending: () => {
+        pendingSshDeepLinkUrls.length = 0;
+        sshDeepLinkDeliveryGeneration += 1;
+      },
+    });
+    sshDeepLinkEnabled = initialSshDeepLinkPreference.enabled;
 
     // Grant only the Chromium permissions the app actually uses, and only
     // to the app's own origin. The default session is shared with in-app
