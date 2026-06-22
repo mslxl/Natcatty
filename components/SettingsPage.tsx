@@ -340,6 +340,8 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                             installUpdate={installUpdate}
                             startDownload={startDownload}
                             isUpdateDemoMode={isUpdateDemoMode}
+                            sshDeepLinkEnabled={settings.sshDeepLinkEnabled}
+                            setSshDeepLinkEnabled={settings.setSshDeepLinkEnabled}
                         />
                     )}
 

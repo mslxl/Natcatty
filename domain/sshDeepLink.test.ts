@@ -5,6 +5,7 @@ import {
   buildSshDeepLinkHostDraft,
   findSshDeepLinkHost,
   parseSshDeepLink,
+  shouldHandleSshDeepLink,
 } from "./sshDeepLink";
 
 const host = (overrides: Partial<Host>): Host => ({
@@ -42,6 +43,12 @@ test("parseSshDeepLink rejects unsupported or incomplete links", () => {
   assert.equal(parseSshDeepLink("https://example.com"), null);
   assert.equal(parseSshDeepLink("ssh://"), null);
   assert.equal(parseSshDeepLink("ssh://example.com:99999"), null);
+});
+
+test("shouldHandleSshDeepLink respects the user setting", () => {
+  assert.equal(shouldHandleSshDeepLink("ssh://alice@example.com", true), true);
+  assert.equal(shouldHandleSshDeepLink("ssh://alice@example.com", false), false);
+  assert.equal(shouldHandleSshDeepLink("https://example.com", true), false);
 });
 
 test("findSshDeepLinkHost matches saved ssh hosts by username hostname and port", () => {

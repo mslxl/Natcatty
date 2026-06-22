@@ -555,6 +555,10 @@ function createPreloadApi(ctx) {
     ipcRenderer.on("netcatty:deepLink:ssh", handler);
     return () => ipcRenderer.removeListener("netcatty:deepLink:ssh", handler);
   },
+  setSshDeepLinkEnabled: (enabled) =>
+    ipcRenderer.invoke("netcatty:deepLink:ssh:setEnabled", { enabled }),
+  getSshDeepLinkEnabled: () =>
+    ipcRenderer.invoke("netcatty:deepLink:ssh:getEnabled"),
 
   // Quit guard: main process asks whether any editor tabs have unsaved changes.
   // Returns an unsubscribe function so React effects can clean up on unmount.

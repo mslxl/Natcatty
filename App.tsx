@@ -875,7 +875,9 @@ function App({ settings }: { settings: SettingsState }) {
   const handleConnectToHost = useCallback((host: Host) => { return handleConnectToHostImpl(() => ({ addConnectionLog, connectToHost, host, identities, keys, resolveEffectiveHost, resolveHostAuth, systemInfoRef }), host); }, [addConnectionLog, connectToHost, resolveEffectiveHost, identities, keys]);
 
   const _handleSshDeepLink = useEffectEvent((payload: { url?: string }) => {
-    const target = parseSshDeepLink(payload?.url || '');
+    const rawUrl = payload?.url || '';
+    if (!settings.sshDeepLinkEnabled) return;
+    const target = parseSshDeepLink(rawUrl);
     if (!target) {
       toast.warning(t('deepLink.ssh.invalid'));
       return;

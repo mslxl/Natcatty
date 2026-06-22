@@ -54,7 +54,7 @@ try {
   electronModule = require("electron");
 }
 
-const { app, BrowserWindow, Menu, protocol, shell, clipboard, session } = electronModule || {};
+const { app, BrowserWindow, Menu, protocol, shell, clipboard, session, ipcMain } = electronModule || {};
 if (!app || !BrowserWindow) {
   throw new Error("Failed to load Electron runtime. Ensure the app is launched with the Electron binary.");
 }
@@ -65,9 +65,11 @@ const fs = require("node:fs");
 const { getCliDiscoveryFilePath } = require("./cli/discoveryPath.cjs");
 const {
   SSH_DEEP_LINK_CHANNEL,
+  applySshProtocolClientPreference,
   collectSshDeepLinkUrls,
   isSshDeepLinkUrl,
-  registerSshProtocolClient,
+  readSshDeepLinkEnabledPreference,
+  writeSshDeepLinkEnabledPreference,
 } = require("./deepLink.cjs");
 
 try {
@@ -494,16 +496,27 @@ async function createAndShowMainWindow() {
   return mainWindowStartupPromise;
 }
 
-const pendingSshDeepLinkUrls = collectSshDeepLinkUrls(process.argv);
+let sshDeepLinkEnabled = readSshDeepLinkEnabledPreference({ app });
+const pendingSshDeepLinkUrls = sshDeepLinkEnabled ? collectSshDeepLinkUrls(process.argv) : [];
 let flushingSshDeepLinks = false;
 
 function queueSshDeepLink(rawUrl) {
+  if (!sshDeepLinkEnabled) return;
   if (!isSshDeepLinkUrl(rawUrl)) return;
   pendingSshDeepLinkUrls.push(rawUrl);
   if (app.isReady?.()) {
     void flushPendingSshDeepLinks();
   }
 }
+
+ipcMain?.handle?.("netcatty:deepLink:ssh:setEnabled", async (_event, payload) => {
+  const enabled = payload?.enabled !== false;
+  sshDeepLinkEnabled = enabled;
+  writeSshDeepLinkEnabledPreference({ app, enabled });
+  return applySshProtocolClientPreference({ app, enabled, isDev });
+});
+
+ipcMain?.handle?.("netcatty:deepLink:ssh:getEnabled", async () => sshDeepLinkEnabled);
 
 async function deliverSshDeepLink(rawUrl) {
   const win = await createAndShowMainWindow();
@@ -579,7 +592,9 @@ if (!gotLock) {
   app.on("second-instance", (_event, argv) => {
     const deepLinkUrls = collectSshDeepLinkUrls(argv);
     if (deepLinkUrls.length > 0) {
-      deepLinkUrls.forEach(queueSshDeepLink);
+      if (sshDeepLinkEnabled) {
+        deepLinkUrls.forEach(queueSshDeepLink);
+      }
       return;
     }
     if (!focusMainWindow()) {
@@ -597,7 +612,7 @@ if (!gotLock) {
   // Application lifecycle
   app.whenReady().then(() => {
     registerAppProtocol();
-    registerSshProtocolClient({ app, isDev });
+    applySshProtocolClientPreference({ app, enabled: sshDeepLinkEnabled, isDev });
 
     // Grant only the Chromium permissions the app actually uses, and only
     // to the app's own origin. The default session is shared with in-app

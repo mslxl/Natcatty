@@ -348,6 +348,9 @@ export const enVaultMessages: Messages = {
   'settings.sftp.doubleClickBehavior.transfer': 'Transfer to other pane',
   'settings.sftp.doubleClickBehavior.openDesc': 'Open the file in the default application',
   'settings.sftp.doubleClickBehavior.transferDesc': 'Transfer the file to the other pane\'s active host',
+  'settings.sshDeepLink.title': 'SSH links',
+  'settings.sshDeepLink.enable': 'Open ssh:// links with Netcatty',
+  'settings.sshDeepLink.enableDesc': 'Allow Netcatty to handle ssh:// links from browsers and other apps.',
 
   // Settings > SFTP Auto Sync
   'settings.sftp.autoSync': 'Auto-sync to remote',

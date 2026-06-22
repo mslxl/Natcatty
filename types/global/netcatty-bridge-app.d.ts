@@ -32,6 +32,8 @@ declare global {
     // Fired when an install was requested but blocked by unsaved editors (#1215).
     onUpdateNeedsSave?(cb: () => void): () => void;
     onSshDeepLink?(cb: (payload: { url?: string }) => void): () => void;
+    setSshDeepLinkEnabled?(enabled: boolean): Promise<boolean>;
+    getSshDeepLinkEnabled?(): Promise<boolean>;
 
     // Global Toggle Hotkey (Quake Mode)
     registerGlobalHotkey?(hotkey: string): Promise<{ success: boolean; enabled?: boolean; error?: string; accelerator?: string }>;

@@ -383,6 +383,9 @@ export const ruVaultMessages: Messages = {
   'settings.sftp.doubleClickBehavior.transfer': 'Передать в другую панель',
   'settings.sftp.doubleClickBehavior.openDesc': 'Открыть файл в приложении по умолчанию',
   'settings.sftp.doubleClickBehavior.transferDesc': 'Передать файл на активный хост другой панели',
+  'settings.sshDeepLink.title': 'SSH-ссылки',
+  'settings.sshDeepLink.enable': 'Открывать ssh:// ссылки в Netcatty',
+  'settings.sshDeepLink.enableDesc': 'Разрешить Netcatty обрабатывать ssh:// ссылки из браузеров и других приложений.',
 
   // Settings > SFTP Auto Sync
   'settings.sftp.autoSync': 'Автосинхронизация с удалённым сервером',

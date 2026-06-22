@@ -65,6 +65,9 @@ export const parseSshDeepLink = (rawUrl: string): SshDeepLinkTarget | null => {
   };
 };
 
+export const shouldHandleSshDeepLink = (rawUrl: string, enabled: boolean): boolean =>
+  enabled && parseSshDeepLink(rawUrl) !== null;
+
 export const findSshDeepLinkHost = (
   hosts: Host[],
   target: SshDeepLinkTarget,
