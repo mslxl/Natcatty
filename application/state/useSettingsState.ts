@@ -38,6 +38,7 @@ import {
   STORAGE_KEY_SESSION_LOGS_FORMAT,
   STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED,
   STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED,
+  STORAGE_KEY_SSH_DEEP_LINK_ENABLED,
   STORAGE_KEY_TOGGLE_WINDOW_HOTKEY,
   STORAGE_KEY_CLOSE_TO_TRAY,
   STORAGE_KEY_GLOBAL_HOTKEY_ENABLED,
@@ -95,6 +96,7 @@ import {
   DEFAULT_SHELL_ONLY_TAB_NUMBER_SHORTCUTS,
   DEFAULT_DISABLE_TERMINAL_FONT_ZOOM,
   DEFAULT_SSH_DEBUG_LOGS_ENABLED,
+  DEFAULT_SSH_DEEP_LINK_ENABLED,
   DEFAULT_TERMINAL_THEME,
   DEFAULT_THEME,
   DEFAULT_WINDOW_OPACITY,
@@ -298,6 +300,10 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     const stored = readStoredString(STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED);
     return stored === 'true' ? true : DEFAULT_SSH_DEBUG_LOGS_ENABLED;
   });
+  const [sshDeepLinkEnabled, setSshDeepLinkEnabledState] = useState<boolean>(() => {
+    const stored = localStorageAdapter.readBoolean(STORAGE_KEY_SSH_DEEP_LINK_ENABLED);
+    return stored ?? DEFAULT_SSH_DEEP_LINK_ENABLED;
+  });
 
   // Global Toggle Window Settings (Quake Mode)
   const [toggleWindowHotkey, setToggleWindowHotkey] = useState<string>(() => {
@@ -344,6 +350,9 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   const customKeyBindingsOriginRef = useRef(initialCustomKeyBindingsRecord?.origin || 'legacy');
   const customKeyBindingsLocalOriginRef = useRef(createCustomKeyBindingsSyncOrigin());
   const customKeyBindingsMutationSourceRef = useRef<'local' | 'incoming'>('local');
+  const sshDeepLinkMutationSourceRef = useRef<'local' | 'incoming'>('local');
+  const sshDeepLinkEnabledRef = useRef(sshDeepLinkEnabled);
+  const sshDeepLinkSetRequestIdRef = useRef(0);
 
   // Fix 1: Mount guard — skip redundant IPC broadcasts & localStorage writes on initial mount.
   // Set to true by the LAST useEffect declaration; all persist effects see false on first render.
@@ -424,6 +433,15 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
         return prev;
       }
       return incoming.bindings;
+    });
+  }, []);
+
+  const applyIncomingSshDeepLinkEnabled = useCallback((enabled: boolean) => {
+    sshDeepLinkSetRequestIdRef.current += 1;
+    setSshDeepLinkEnabledState((prev) => {
+      if (prev === enabled) return prev;
+      sshDeepLinkMutationSourceRef.current = 'incoming';
+      return enabled;
     });
   }, []);
 
@@ -546,6 +564,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     if (storedSshDebugLogsEnabled === 'true' || storedSshDebugLogsEnabled === 'false') {
       setSshDebugLogsEnabled(storedSshDebugLogsEnabled === 'true');
     }
+    const storedSshDeepLinkEnabled = localStorageAdapter.readBoolean(STORAGE_KEY_SSH_DEEP_LINK_ENABLED);
+    applyIncomingSshDeepLinkEnabled(storedSshDeepLinkEnabled ?? DEFAULT_SSH_DEEP_LINK_ENABLED);
 
     // SFTP
     const storedDblClick = readStoredString(STORAGE_KEY_SFTP_DOUBLE_CLICK_BEHAVIOR);
@@ -587,7 +607,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
 
     // Custom terminal themes
     customThemeStore.loadFromStorage();
-  }, [applyIncomingCustomKeyBindings, syncAppearanceFromStorage, syncCustomCssFromStorage, setTerminalSettings]);
+  }, [applyIncomingCustomKeyBindings, applyIncomingSshDeepLinkEnabled, syncAppearanceFromStorage, syncCustomCssFromStorage, setTerminalSettings]);
 
   useLayoutEffect(() => {
     const tokens = getUiThemeById(resolvedTheme, resolvedTheme === 'dark' ? darkUiThemeId : lightUiThemeId).tokens;
@@ -661,6 +681,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setSessionLogsFormat,
     setSessionLogsTimestampsEnabled,
     setSshDebugLogsEnabled,
+    setSshDeepLinkEnabledState: applyIncomingSshDeepLinkEnabled,
     setHotkeyScheme,
     applyIncomingCustomKeyBindings,
     setIsHotkeyRecordingState,
@@ -704,7 +725,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
     showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, shellOnlyTabNumberShortcuts, disableTerminalFontZoom, restorePreviousSession, restoreTerminalCwd,
-    editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled,
+    editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled,
     globalHotkeyEnabled, autoUpdateEnabled, windowOpacity,
     setTheme, setLightUiThemeId, setDarkUiThemeId, setAccentMode, setCustomAccent,
     setCustomCSS, setUiFontFamilyId, setHotkeyScheme, setUiLanguage,
@@ -713,7 +734,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setSftpDoubleClickBehavior, setSftpAutoSync, setSftpShowHiddenFiles,
     setSftpUseCompressedUpload, setSftpAutoOpenSidebar, setSftpFollowTerminalCwd, setSftpDefaultViewMode,
     setShowRecentHostsState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setShellOnlyTabNumberShortcutsState, setDisableTerminalFontZoomState, setRestorePreviousSessionState, setRestoreTerminalCwdState,
-    setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled,
+    setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled, setSshDeepLinkEnabledState: applyIncomingSshDeepLinkEnabled,
     setGlobalHotkeyEnabled, setWindowOpacity, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
     setSftpTransferConcurrencyState, applyIncomingCustomKeyBindings, mergeIncomingTerminalSettings,
   });
@@ -946,6 +967,66 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     notifySettingsChanged(STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED, sshDebugLogsEnabled);
   }, [sshDebugLogsEnabled, notifySettingsChanged]);
 
+  useEffect(() => {
+    sshDeepLinkEnabledRef.current = sshDeepLinkEnabled;
+  }, [sshDeepLinkEnabled]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const requestIdAtStart = sshDeepLinkSetRequestIdRef.current;
+    const bridge = netcattyBridge.get();
+    if (!bridge?.getSshDeepLinkEnabled) return;
+    void bridge.getSshDeepLinkEnabled().then((enabled) => {
+      if (cancelled || typeof enabled !== 'boolean') return;
+      if (sshDeepLinkSetRequestIdRef.current !== requestIdAtStart) return;
+      sshDeepLinkMutationSourceRef.current = 'incoming';
+      setSshDeepLinkEnabledState((prev) => (prev === enabled ? prev : enabled));
+      localStorageAdapter.writeBoolean(STORAGE_KEY_SSH_DEEP_LINK_ENABLED, enabled);
+    }).catch(() => {
+      // The renderer can still use its cached setting when the bridge is unavailable.
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const setSshDeepLinkEnabled = useCallback((enabled: boolean) => {
+    const previous = sshDeepLinkEnabledRef.current;
+    const requestId = sshDeepLinkSetRequestIdRef.current + 1;
+    sshDeepLinkSetRequestIdRef.current = requestId;
+    sshDeepLinkMutationSourceRef.current = 'local';
+    setSshDeepLinkEnabledState(enabled);
+
+    const bridge = netcattyBridge.get();
+    if (!bridge?.setSshDeepLinkEnabled) return;
+    void bridge.setSshDeepLinkEnabled(enabled).then((result) => {
+      if (sshDeepLinkSetRequestIdRef.current !== requestId) return;
+      const success = typeof result === 'object' ? result.success : result;
+      if (success !== false) return;
+      const finalEnabled = typeof result === 'object' && typeof result.enabled === 'boolean'
+        ? result.enabled
+        : previous;
+      sshDeepLinkMutationSourceRef.current = 'incoming';
+      setSshDeepLinkEnabledState(finalEnabled);
+      localStorageAdapter.writeBoolean(STORAGE_KEY_SSH_DEEP_LINK_ENABLED, finalEnabled);
+    }).catch(() => {
+      if (sshDeepLinkSetRequestIdRef.current !== requestId) return;
+      sshDeepLinkMutationSourceRef.current = 'incoming';
+      setSshDeepLinkEnabledState(previous);
+      localStorageAdapter.writeBoolean(STORAGE_KEY_SSH_DEEP_LINK_ENABLED, previous);
+    });
+  }, []);
+
+  useEffect(() => {
+    localStorageAdapter.writeBoolean(STORAGE_KEY_SSH_DEEP_LINK_ENABLED, sshDeepLinkEnabled);
+    if (sshDeepLinkMutationSourceRef.current === 'incoming') {
+      sshDeepLinkMutationSourceRef.current = 'local';
+      return;
+    }
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_SSH_DEEP_LINK_ENABLED, sshDeepLinkEnabled);
+  }, [sshDeepLinkEnabled, notifySettingsChanged]);
+
   useSystemSettingsEffects({
     enabled: enableSystemEffects,
     toggleWindowHotkey,
@@ -1124,6 +1205,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setSessionLogsTimestampsEnabled,
     sshDebugLogsEnabled,
     setSshDebugLogsEnabled,
+    sshDeepLinkEnabled,
+    setSshDeepLinkEnabled,
     // Global Toggle Window (Quake Mode)
     toggleWindowHotkey,
     setToggleWindowHotkey,
@@ -1149,7 +1232,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
       customKeyBindings, editorWordWrap,
       sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
       showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, shellOnlyTabNumberShortcuts, disableTerminalFontZoom,
-      customThemes, workspaceFocusStyle, sessionLogsTimestampsEnabled, sshDebugLogsEnabled,
+      customThemes, workspaceFocusStyle, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled,
     ]),
   };
 };

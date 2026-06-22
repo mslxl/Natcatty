@@ -67,6 +67,15 @@ test("beforePack installs missing Cursor SDK platform runtime packages", () => {
   assert.equal(config.beforePack, "./scripts/beforePackCursorSdk.cjs");
 });
 
+test("packaged app declares ssh URL protocol support", () => {
+  assert.deepEqual(config.protocols, [
+    {
+      name: "SSH URL",
+      schemes: ["ssh"],
+    },
+  ]);
+});
+
 test("build.files trims release-only dependency payloads", () => {
   const files = config.files;
   for (const glob of [

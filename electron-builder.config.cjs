@@ -8,6 +8,12 @@ module.exports = {
     appId: 'com.netcatty.app',
     productName: 'Netcatty',
     artifactName: '${productName}-${version}-${os}-${arch}.${ext}',
+    protocols: [
+        {
+            name: 'SSH URL',
+            schemes: ['ssh']
+        }
+    ],
     electronLanguages: ['en', 'en-US', 'zh_CN', 'zh-CN', 'ru'],
     // Give the macOS build a unique Mach-O LC_UUID before signing, so macOS
     // Local Network privacy treats Netcatty distinctly from every other

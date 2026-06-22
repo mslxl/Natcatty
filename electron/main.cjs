@@ -54,7 +54,7 @@ try {
   electronModule = require("electron");
 }
 
-const { app, BrowserWindow, Menu, protocol, shell, clipboard, session } = electronModule || {};
+const { app, BrowserWindow, Menu, protocol, shell, clipboard, session, ipcMain } = electronModule || {};
 if (!app || !BrowserWindow) {
   throw new Error("Failed to load Electron runtime. Ensure the app is launched with the Electron binary.");
 }
@@ -63,6 +63,17 @@ const path = require("node:path");
 const os = require("node:os");
 const fs = require("node:fs");
 const { getCliDiscoveryFilePath } = require("./cli/discoveryPath.cjs");
+const {
+  SSH_DEEP_LINK_CHANNEL,
+  applyInitialSshDeepLinkPreference,
+  applySshProtocolClientPreference,
+  collectSshDeepLinkUrls,
+  isSshDeepLinkUrl,
+  readSshDeepLinkEnabledPreference,
+  shouldDeliverSshDeepLink,
+  updateSshDeepLinkEnabledPreference,
+  writeSshDeepLinkEnabledPreference,
+} = require("./deepLink.cjs");
 
 try {
   protocol?.registerSchemesAsPrivileged?.([
@@ -488,6 +499,90 @@ async function createAndShowMainWindow() {
   return mainWindowStartupPromise;
 }
 
+let sshDeepLinkEnabled = readSshDeepLinkEnabledPreference({ app });
+const pendingSshDeepLinkUrls = sshDeepLinkEnabled ? collectSshDeepLinkUrls(process.argv) : [];
+let flushingSshDeepLinks = false;
+let sshDeepLinkDeliveryGeneration = 0;
+
+function queueSshDeepLink(rawUrl) {
+  if (!sshDeepLinkEnabled) return;
+  if (!isSshDeepLinkUrl(rawUrl)) return;
+  pendingSshDeepLinkUrls.push(rawUrl);
+  if (app.isReady?.()) {
+    void flushPendingSshDeepLinks();
+  }
+}
+
+ipcMain?.handle?.("netcatty:deepLink:ssh:setEnabled", async (_event, payload) => {
+  const enabled = payload?.enabled !== false;
+  const result = updateSshDeepLinkEnabledPreference({
+    currentEnabled: sshDeepLinkEnabled,
+    enabled,
+    applyPreference: (nextEnabled) => applySshProtocolClientPreference({ app, enabled: nextEnabled, isDev }),
+    writePreference: (nextEnabled) => writeSshDeepLinkEnabledPreference({ app, enabled: nextEnabled }),
+    clearPending: () => {
+      pendingSshDeepLinkUrls.length = 0;
+      sshDeepLinkDeliveryGeneration += 1;
+    },
+  });
+  sshDeepLinkEnabled = result.enabled;
+  return result;
+});
+
+ipcMain?.handle?.("netcatty:deepLink:ssh:getEnabled", async () => sshDeepLinkEnabled);
+
+async function deliverSshDeepLink(rawUrl, expectedGeneration = sshDeepLinkDeliveryGeneration) {
+  if (!shouldDeliverSshDeepLink({
+    enabled: sshDeepLinkEnabled,
+    deliveryGeneration: sshDeepLinkDeliveryGeneration,
+    expectedGeneration,
+  })) return;
+  const win = await createAndShowMainWindow();
+  if (!shouldDeliverSshDeepLink({
+    enabled: sshDeepLinkEnabled,
+    deliveryGeneration: sshDeepLinkDeliveryGeneration,
+    expectedGeneration,
+  })) return;
+  focusMainWindow();
+  const windowManager = getWindowManager();
+  const result = await windowManager.sendWhenRendererReady?.(
+    win,
+    SSH_DEEP_LINK_CHANNEL,
+    { url: rawUrl },
+    {
+      timeoutMs: isDev ? 30000 : 15000,
+      shouldSend: () => shouldDeliverSshDeepLink({
+        enabled: sshDeepLinkEnabled,
+        deliveryGeneration: sshDeepLinkDeliveryGeneration,
+        expectedGeneration,
+      }),
+      cancelReason: "ssh-deep-link-disabled",
+    },
+  );
+  if (result && result.success === false && result.reason !== "ssh-deep-link-disabled") {
+    console.warn("[Main] Failed to deliver ssh:// deep link:", result.error || result.reason);
+  }
+}
+
+async function flushPendingSshDeepLinks() {
+  if (flushingSshDeepLinks) return;
+  flushingSshDeepLinks = true;
+  try {
+    while (sshDeepLinkEnabled && pendingSshDeepLinkUrls.length > 0) {
+      const rawUrl = pendingSshDeepLinkUrls.shift();
+      if (!rawUrl) continue;
+      await deliverSshDeepLink(rawUrl, sshDeepLinkDeliveryGeneration);
+    }
+  } catch (err) {
+    console.warn("[Main] Failed to process ssh:// deep link:", err);
+  } finally {
+    flushingSshDeepLinks = false;
+    if (sshDeepLinkEnabled && pendingSshDeepLinkUrls.length > 0) {
+      void flushPendingSshDeepLinks();
+    }
+  }
+}
+
 function hasUsableWindow() {
   try {
     const windowManager = getWindowManager();
@@ -520,7 +615,19 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
+  app.on("open-url", (event, rawUrl) => {
+    event.preventDefault();
+    queueSshDeepLink(rawUrl);
+  });
+
+  app.on("second-instance", (_event, argv) => {
+    const deepLinkUrls = collectSshDeepLinkUrls(argv);
+    if (deepLinkUrls.length > 0) {
+      if (sshDeepLinkEnabled) {
+        deepLinkUrls.forEach(queueSshDeepLink);
+      }
+      return;
+    }
     if (!focusMainWindow()) {
       // Window is missing or crashed — try to recreate it
       void createAndShowMainWindow().catch((err) => {
@@ -536,6 +643,15 @@ if (!gotLock) {
   // Application lifecycle
   app.whenReady().then(() => {
     registerAppProtocol();
+    const initialSshDeepLinkPreference = applyInitialSshDeepLinkPreference({
+      enabled: sshDeepLinkEnabled,
+      applyPreference: (enabled) => applySshProtocolClientPreference({ app, enabled, isDev }),
+      clearPending: () => {
+        pendingSshDeepLinkUrls.length = 0;
+        sshDeepLinkDeliveryGeneration += 1;
+      },
+    });
+    sshDeepLinkEnabled = initialSshDeepLinkPreference.enabled;
 
     // Grant only the Chromium permissions the app actually uses, and only
     // to the app's own origin. The default session is shared with in-app
@@ -639,6 +755,8 @@ if (!gotLock) {
 
     // Create the main window
     void createAndShowMainWindow().then(() => {
+      void flushPendingSshDeepLinks();
+
       // Trigger auto-update check 5 s after window creation.
       // startAutoCheck() is a no-op on unsupported platforms (Linux deb/rpm/snap).
       getAutoUpdateBridge().startAutoCheck(5000);

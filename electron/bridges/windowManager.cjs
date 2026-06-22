@@ -796,10 +796,18 @@ function waitForRendererReady(win, { timeoutMs = 15000 } = {}) {
  * existing error path instead.
  */
 async function sendWhenRendererReady(win, channel, payload, options = {}) {
-  const { timeoutMs = 8000, waitForReady = waitForRendererReady } = options;
+  const {
+    timeoutMs = 8000,
+    waitForReady = waitForRendererReady,
+    shouldSend,
+    cancelReason = "cancelled",
+  } = options;
   try {
     await waitForReady(win, { timeoutMs });
   } catch (err) {
+    if (typeof shouldSend === "function" && shouldSend() === false) {
+      return { success: false, reason: cancelReason };
+    }
     return {
       success: false,
       error: "New window did not become ready in time",
@@ -808,6 +816,9 @@ async function sendWhenRendererReady(win, channel, payload, options = {}) {
   }
   if (win?.isDestroyed?.() || win?.webContents?.isDestroyed?.()) {
     return { success: false, error: "Window closed before message could be delivered" };
+  }
+  if (typeof shouldSend === "function" && shouldSend() === false) {
+    return { success: false, reason: cancelReason };
   }
   win.webContents.send(channel, payload);
   return { success: true };

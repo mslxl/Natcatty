@@ -1488,3 +1488,43 @@ test("sendWhenRendererReady reports failure without sending when the window is g
   assert.equal(result.success, false);
   assert.equal(sent.length, 0);
 });
+
+test("sendWhenRendererReady can cancel after readiness before sending", async () => {
+  const { win, sent } = createSendableWindowStub();
+
+  const result = await sendWhenRendererReady(
+    win,
+    "netcatty:window:openSession",
+    { title: "Prod" },
+    {
+      timeoutMs: 8000,
+      waitForReady: async () => {},
+      shouldSend: () => false,
+      cancelReason: "disabled",
+    },
+  );
+
+  assert.deepEqual(result, { success: false, reason: "disabled" });
+  assert.equal(sent.length, 0);
+});
+
+test("sendWhenRendererReady reports cancellation instead of timeout after cancellation", async () => {
+  const { win, sent } = createSendableWindowStub();
+
+  const result = await sendWhenRendererReady(
+    win,
+    "netcatty:window:openSession",
+    { title: "Prod" },
+    {
+      timeoutMs: 5,
+      waitForReady: async () => {
+        throw new Error("Renderer did not report ready before timeout.");
+      },
+      shouldSend: () => false,
+      cancelReason: "disabled",
+    },
+  );
+
+  assert.deepEqual(result, { success: false, reason: "disabled" });
+  assert.equal(sent.length, 0);
+});

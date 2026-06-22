@@ -95,6 +95,9 @@ export const zhCNTerminalMessages: Messages = {
   'settings.sftp.doubleClickBehavior.transfer': '传输到另一侧',
   'settings.sftp.doubleClickBehavior.openDesc': '使用默认应用程序打开文件',
   'settings.sftp.doubleClickBehavior.transferDesc': '将文件传输到另一窗格的活动主机',
+  'settings.sshDeepLink.title': 'SSH 链接',
+  'settings.sshDeepLink.enable': '用 Netcatty 打开 ssh:// 链接',
+  'settings.sshDeepLink.enableDesc': '允许 Netcatty 接管来自浏览器和其他应用的 ssh:// 链接。',
 
   // Settings > SFTP Auto Sync
   'settings.sftp.autoSync': '自动同步到远程',

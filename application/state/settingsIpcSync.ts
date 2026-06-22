@@ -20,6 +20,7 @@ import {
   STORAGE_KEY_SESSION_LOGS_FORMAT,
   STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED,
   STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED,
+  STORAGE_KEY_SSH_DEEP_LINK_ENABLED,
   STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR,
   STORAGE_KEY_SFTP_FOLLOW_TERMINAL_CWD,
   STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE,
@@ -66,6 +67,7 @@ interface UseSettingsIpcSyncParams {
   setSessionLogsFormat: Dispatch<SetStateAction<SessionLogFormat>>;
   setSessionLogsTimestampsEnabled: Dispatch<SetStateAction<boolean>>;
   setSshDebugLogsEnabled: Dispatch<SetStateAction<boolean>>;
+  setSshDeepLinkEnabledState: (enabled: boolean) => void;
   setHotkeyScheme: Dispatch<SetStateAction<HotkeyScheme>>;
   applyIncomingCustomKeyBindings: (incoming: { bindings: CustomKeyBindings; version: number; origin: string }) => void;
   setIsHotkeyRecordingState: Dispatch<SetStateAction<boolean>>;
@@ -102,6 +104,7 @@ export function useSettingsIpcSync({
   setSessionLogsFormat,
   setSessionLogsTimestampsEnabled,
   setSshDebugLogsEnabled,
+  setSshDeepLinkEnabledState,
   setHotkeyScheme,
   applyIncomingCustomKeyBindings,
   setIsHotkeyRecordingState,
@@ -201,6 +204,9 @@ export function useSettingsIpcSync({
       if (key === STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED && typeof value === 'boolean') {
         setSshDebugLogsEnabled((prev) => (prev === value ? prev : value));
       }
+      if (key === STORAGE_KEY_SSH_DEEP_LINK_ENABLED && typeof value === 'boolean') {
+        setSshDeepLinkEnabledState(value);
+      }
       if (key === STORAGE_KEY_HOTKEY_SCHEME && (value === 'disabled' || value === 'mac' || value === 'pc')) {
         setHotkeyScheme(value);
       }
@@ -275,6 +281,7 @@ export function useSettingsIpcSync({
     setSessionLogsEnabled,
     setSessionLogsFormat,
     setSessionLogsTimestampsEnabled,
+    setSshDeepLinkEnabledState,
     setSshDebugLogsEnabled,
     setSftpAutoOpenSidebar,
     setSftpFollowTerminalCwd,
