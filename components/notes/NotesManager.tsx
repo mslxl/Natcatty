@@ -750,8 +750,8 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
         style={{ paddingLeft: depth * 16 + 4 }}
       >
         <div className="mr-1 h-5 w-4 shrink-0" />
-        <div className="mr-2 flex h-5 shrink-0 items-center text-primary">
-          <Folder size={14} />
+        <div className="mr-2 flex h-5 w-5 shrink-0 items-center justify-center text-current">
+          <Folder size={18} strokeWidth={1.9} />
         </div>
         <VaultTreeInlineRenameInput
           initialName={t("notes.action.newGroup")}
@@ -1116,7 +1116,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
           </div>
           <ScrollArea className="flex-1">
             <div
-              className="min-h-full space-y-1 px-1.5 pb-4"
+              className="min-h-full space-y-1 px-1.5 pt-1.5 pb-4"
               data-notes-drop-zone="root"
               onDragOver={(event) => {
                 if (!hasNotesTreeDrag(event.dataTransfer)) return;

@@ -366,8 +366,6 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                             installUpdate={installUpdate}
                             startDownload={startDownload}
                             isUpdateDemoMode={isUpdateDemoMode}
-                            sshDeepLinkEnabled={settings.sshDeepLinkEnabled}
-                            setSshDeepLinkEnabled={settings.setSshDeepLinkEnabled}
                         />
                     )}
 
@@ -465,6 +463,8 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                             setSessionLogsTimestampsEnabled={settings.setSessionLogsTimestampsEnabled}
                             sshDebugLogsEnabled={settings.sshDebugLogsEnabled}
                             setSshDebugLogsEnabled={settings.setSshDebugLogsEnabled}
+                            sshDeepLinkEnabled={settings.sshDeepLinkEnabled}
+                            setSshDeepLinkEnabled={settings.setSshDeepLinkEnabled}
                             restorePreviousSession={settings.restorePreviousSession}
                             setRestorePreviousSession={settings.setRestorePreviousSession}
                             restoreTerminalCwd={settings.restoreTerminalCwd}

@@ -417,11 +417,12 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
 
   return (
     <ContextMenu>
-      <ContextMenuTrigger>
+      <ContextMenuTrigger asChild>
         <VaultTreeItemRow
           label={host.label}
           depth={depth}
           selected={Boolean(isSelected)}
+          className="h-10 rounded-md py-1 pr-2 text-[13px]"
           data-section="host-tree-row"
           data-row-type="host"
           data-host-id={host.id}
@@ -435,56 +436,56 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
             }
           }}
           leading={isMultiSelectMode ? (
-            <div className="mr-2 flex-shrink-0" onClick={(e) => {
+            <div className="mr-2 flex h-5 w-4 flex-shrink-0 items-center justify-center" onClick={(e) => {
               e.stopPropagation();
               toggleHostSelection?.(host.id);
             }}>
               {isSelected ? (
-                <CheckSquare size={18} className="text-primary" />
+                <CheckSquare size={15} className="text-primary" />
               ) : (
-                <Square size={18} className="text-muted-foreground" />
+                <Square size={15} className="text-muted-foreground" />
               )}
             </div>
           ) : (
             <div className="mr-2 h-4 w-4 flex-shrink-0" />
           )}
           icon={(
-            <div className="mr-3 flex-shrink-0">
-            <DistroAvatar host={host} fallback={(host.os || "L")[0].toUpperCase()} size="tree" />
+            <div className="mr-2 flex-shrink-0">
+              <DistroAvatar host={host} fallback={(host.os || "L")[0].toUpperCase()} size="tree" />
             </div>
           )}
           content={(
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5 truncate font-medium">
+            <div className="min-w-0 flex-1 leading-tight">
+              <div className="flex items-center gap-1.5 truncate font-medium leading-4">
                 <span className="truncate">{host.label}</span>
                 <HostNotesIndicator notes={host.notes} />
               </div>
-              <div className="truncate text-xs text-muted-foreground">
+              <div className="truncate text-[11px] leading-4 text-muted-foreground">
                 {displayUsername}@{host.hostname}:{displayPort}
               </div>
             </div>
           )}
           actions={(
-            <div className="flex items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+            <div className="ml-2 flex shrink-0 items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
               {displayProtocol && displayProtocol !== 'ssh' && (
-                <span className="rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary">
+                <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] leading-none text-primary">
                   {displayProtocol.toUpperCase()}
                 </span>
               )}
               {tags.length > 0 && (
-                <span className="text-xs opacity-60">
+                <span className="text-[10px] opacity-60">
                   {tags.slice(0, 2).join(', ')}
                   {tags.length > 2 && '...'}
                 </span>
               )}
               <button
-                className="flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-secondary/80"
+                className="flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-secondary/80"
                 onClick={(e) => {
                   e.stopPropagation();
                   onEditHost(host);
                 }}
               >
-                <Edit2 size={13} />
+                <Edit2 size={12} />
               </button>
             </div>
           )}

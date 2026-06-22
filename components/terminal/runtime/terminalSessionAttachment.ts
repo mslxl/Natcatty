@@ -180,12 +180,7 @@ export const writeSessionData = (
       flow.written(data.length);
     };
 
-    if (ctx.host?.showLineTimestamps === true) {
-      writeTerminalDataWithLineTimestamps(term, displayData, afterWrite);
-      return;
-    }
-
-    term.write(displayData, afterWrite);
+    writeTerminalDataWithLineTimestamps(term, displayData, afterWrite);
   });
 };
 

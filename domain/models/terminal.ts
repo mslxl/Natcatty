@@ -31,6 +31,7 @@ export interface TerminalSettings {
 
   // Font
   fontLigatures: boolean; // Enable font ligatures
+  fontSmoothing: boolean; // Use native macOS/WebKit font anti-aliasing
   fontWeight: number; // Normal font weight (100-900)
   fontWeightBold: number; // Bold font weight (100-900)
   linePadding: number; // Additional space between lines
@@ -274,6 +275,7 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   terminalEmulationType: 'xterm-256color',
   startupCommandDelayMs: 600,
   fontLigatures: true,
+  fontSmoothing: true,
   fontWeight: 400,
   fontWeightBold: 700,
   linePadding: 0,

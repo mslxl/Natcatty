@@ -51,6 +51,17 @@ type LinkActionState = {
 
 const LINK_ACTION_SIZE = 28;
 const LINK_ACTION_HOVER_PADDING = 10;
+const HOST_PICKER_WIDTH = 384;
+const HOST_PICKER_EDGE_PADDING = 8;
+const HOST_PICKER_TOP_FLOOR = 32;
+const HOST_PICKER_VERTICAL_GAP = 10;
+const HOST_PICKER_HEADER_HEIGHT = 37;
+const HOST_PICKER_ROW_HEIGHT = 34;
+const HOST_PICKER_EMPTY_HEIGHT = 40;
+const HOST_PICKER_LIST_VERTICAL_PADDING = 8;
+const HOST_PICKER_LIST_MAX_HEIGHT = 256;
+
+type RectLike = Pick<DOMRect, "bottom" | "height" | "left" | "top" | "width">;
 
 const isSshCandidateHost = (host: Host): boolean =>
   Boolean(host.hostname?.trim()) && (host.protocol === undefined || host.protocol === "ssh");
@@ -64,6 +75,65 @@ const formatSshDeepLinkForHost = (host: Host): string => {
   const username = host.username?.trim() ? `${encodeURIComponent(host.username.trim())}@` : "";
   const port = host.port && host.port !== 22 ? `:${host.port}` : "";
   return `ssh://${username}${hostPart}${port}`;
+};
+
+const filterHostPickerHosts = (hostCandidates: Host[], query: string): Host[] => {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return hostCandidates.slice(0, 8);
+  return hostCandidates.filter((host) => {
+    const haystack = [
+      host.label,
+      host.hostname,
+      host.username,
+      ...(host.tags || []),
+    ].filter(Boolean).join(" ").toLowerCase();
+    return haystack.includes(normalizedQuery);
+  }).slice(0, 8);
+};
+
+const getEstimatedHostPickerHeight = (availableHostCount: number): number => {
+  const listHeight = availableHostCount > 0
+    ? availableHostCount * HOST_PICKER_ROW_HEIGHT + HOST_PICKER_LIST_VERTICAL_PADDING
+    : HOST_PICKER_EMPTY_HEIGHT;
+  return HOST_PICKER_HEADER_HEIGHT + Math.min(HOST_PICKER_LIST_MAX_HEIGHT, listHeight);
+};
+
+export const resolveHostPickerPopupPosition = ({
+  anchorRect,
+  containerRect,
+  availableHostCount,
+  viewportHeight,
+}: {
+  anchorRect: RectLike;
+  containerRect: RectLike;
+  availableHostCount: number;
+  viewportHeight: number;
+}): { left: number; top: number } => {
+  const estimatedHeight = getEstimatedHostPickerHeight(availableHostCount);
+  const maxLeft = Math.max(
+    HOST_PICKER_EDGE_PADDING,
+    containerRect.width - HOST_PICKER_WIDTH - HOST_PICKER_EDGE_PADDING,
+  );
+  const left = Math.max(
+    HOST_PICKER_EDGE_PADDING,
+    Math.min(maxLeft, anchorRect.left - containerRect.left),
+  );
+  const visibleBottom = Math.min(containerRect.top + containerRect.height, viewportHeight);
+  const visibleTop = Math.max(containerRect.top, 0);
+  const spaceBelow = visibleBottom - anchorRect.bottom - HOST_PICKER_VERTICAL_GAP;
+  const spaceAbove = anchorRect.top - visibleTop - HOST_PICKER_VERTICAL_GAP;
+  const shouldOpenAbove = spaceBelow < estimatedHeight && spaceAbove > spaceBelow;
+  const belowTop = anchorRect.bottom - containerRect.top + HOST_PICKER_VERTICAL_GAP;
+  const aboveTop = anchorRect.top - containerRect.top - estimatedHeight - HOST_PICKER_VERTICAL_GAP;
+  const maxTop = Math.max(
+    HOST_PICKER_TOP_FLOOR,
+    containerRect.height - estimatedHeight - HOST_PICKER_EDGE_PADDING,
+  );
+  const top = shouldOpenAbove
+    ? Math.max(HOST_PICKER_TOP_FLOOR, aboveTop)
+    : Math.max(HOST_PICKER_TOP_FLOOR, Math.min(belowTop, maxTop));
+
+  return { left, top };
 };
 
 const openExternalLink = async (
@@ -186,17 +256,7 @@ export function InlineMarkdownEditor({
     [hosts],
   );
   const filteredHosts = useMemo(() => {
-    const query = hostPicker.query.trim().toLowerCase();
-    if (!query) return hostCandidates.slice(0, 8);
-    return hostCandidates.filter((host) => {
-      const haystack = [
-        host.label,
-        host.hostname,
-        host.username,
-        ...(host.tags || []),
-      ].filter(Boolean).join(" ").toLowerCase();
-      return haystack.includes(query);
-    }).slice(0, 8);
+    return filterHostPickerHosts(hostCandidates, hostPicker.query);
   }, [hostCandidates, hostPicker.query]);
 
   useEffect(() => {
@@ -238,17 +298,21 @@ export function InlineMarkdownEditor({
     const fallbackRect = triggerRange.getBoundingClientRect();
     const anchorRect = caretRect.width || caretRect.height ? caretRect : fallbackRect;
     const containerRect = container.getBoundingClientRect();
-    const left = Math.max(8, Math.min(containerRect.width - 392, anchorRect.left - containerRect.left));
-    const top = Math.max(32, anchorRect.bottom - containerRect.top + 10);
+    const position = resolveHostPickerPopupPosition({
+      anchorRect,
+      availableHostCount: filterHostPickerHosts(hostCandidates, triggerRangeInfo.query).length,
+      containerRect,
+      viewportHeight: window.innerHeight,
+    });
 
     return {
-      left,
+      left: position.left,
       query: triggerRangeInfo.query,
       range: triggerRange,
       trigger: triggerRangeInfo.trigger,
-      top,
+      top: position.top,
     };
-  }, []);
+  }, [hostCandidates]);
 
   const updateHostPickerFromSelection = useCallback(() => {
     const context = getHostPickerContext();

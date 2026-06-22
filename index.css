@@ -422,6 +422,14 @@ html[data-theme-transition] *::after {
   }
 }
 
+.xterm-container[data-font-smoothing="true"],
+.xterm-container[data-font-smoothing="true"] .xterm,
+.xterm-container[data-font-smoothing="true"] .xterm-screen,
+.xterm-container[data-font-smoothing="true"] .xterm-rows {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
 @keyframes shimmer {
   0% {
     transform: translateX(-100%);

@@ -15,6 +15,7 @@ import {
   SettingCard,
   SettingsTabContent,
   SettingRow,
+  Toggle,
   Select,
 } from "../settings-ui";
 

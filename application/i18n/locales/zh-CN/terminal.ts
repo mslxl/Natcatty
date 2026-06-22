@@ -214,6 +214,8 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.font.weight.black': '黑体',
   'settings.terminal.font.weightBold': '粗体字重',
   'settings.terminal.font.weightBold.desc': '粗体文本字重 (100-900)',
+  'settings.terminal.font.smoothing': '字体平滑',
+  'settings.terminal.font.smoothing.desc': '使用 macOS 原生字体抗锯齿',
   'settings.terminal.font.linePadding': '行间距',
   'settings.terminal.font.linePadding.desc': '行之间的额外间距 (0-10)',
   'settings.terminal.font.emulationType': '终端仿真类型',

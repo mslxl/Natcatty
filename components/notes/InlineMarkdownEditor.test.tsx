@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   getHostPickerTriggerRange,
   isPointerInsideLinkActionHoverZone,
+  resolveHostPickerPopupPosition,
   shouldHandleHostPickerNavigationKey,
 } from "./InlineMarkdownEditor.tsx";
 
@@ -54,4 +55,28 @@ test("host picker trigger range supports slash without stealing ordinary text", 
     trigger: "/",
   });
   assert.equal(getHostPickerTriggerRange("email foo@bar"), null);
+});
+
+test("host picker opens above the caret when the bottom edge has no room", () => {
+  const position = resolveHostPickerPopupPosition({
+    anchorRect: { left: 520, top: 910, bottom: 930, width: 1, height: 20 },
+    containerRect: { left: 400, top: 40, bottom: 960, width: 1200, height: 920 },
+    availableHostCount: 8,
+    viewportHeight: 960,
+  });
+
+  assert.equal(position.left, 120);
+  assert.ok(position.top < 870);
+});
+
+test("host picker stays below the caret when there is enough room", () => {
+  const position = resolveHostPickerPopupPosition({
+    anchorRect: { left: 520, top: 160, bottom: 180, width: 1, height: 20 },
+    containerRect: { left: 400, top: 40, bottom: 960, width: 1200, height: 920 },
+    availableHostCount: 4,
+    viewportHeight: 960,
+  });
+
+  assert.equal(position.left, 120);
+  assert.equal(position.top, 150);
 });

@@ -344,15 +344,11 @@ const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
             {activeTab === 'theme' && (
               <div>
                 {hiddenSelectedTheme && (
-                  <div className="mx-2 mb-2 rounded-lg border px-3 py-2.5" style={{ borderColor: 'var(--terminal-panel-border)', backgroundColor: 'var(--terminal-panel-hover)' }}>
-                    <div className="text-[10px] uppercase tracking-wider mb-1 font-semibold" style={{ color: 'var(--terminal-panel-muted)' }}>
-                      {t('terminal.hiddenTheme.title')}
-                    </div>
-                    <div className="text-xs font-medium">{hiddenSelectedTheme.name}</div>
-                    <div className="text-[10px] mt-1" style={{ color: 'var(--terminal-panel-muted)' }}>
-                      {t('terminal.hiddenTheme.desc')}
-                    </div>
-                  </div>
+                  <ThemeItem
+                    theme={hiddenSelectedTheme}
+                    isSelected={currentThemeId === hiddenSelectedTheme.id && !editingTheme}
+                    onSelect={handleThemeSelect}
+                  />
                 )}
                 {builtinThemes.map(theme => (
                   <ThemeItem

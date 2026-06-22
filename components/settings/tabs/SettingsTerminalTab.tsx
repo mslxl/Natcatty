@@ -376,18 +376,18 @@ function SettingsTerminalTab(props: {
           </div>
           </>
         )}
-        <div>
-          {followAppTerminalTheme && (
+        {!followAppTerminalTheme && (
+          <div>
             <div className="text-xs text-muted-foreground mb-1.5 px-1">
               {t("terminal.themeModal.globalTheme")}
             </div>
-          )}
-          <ThemePreviewButton
-            theme={currentTheme}
-            onClick={() => setThemeModalOpen(true)}
-            buttonLabel={t("settings.terminal.theme.selectButton")}
-          />
-        </div>
+            <ThemePreviewButton
+              theme={currentTheme}
+              onClick={() => setThemeModalOpen(true)}
+              buttonLabel={t("settings.terminal.theme.selectButton")}
+            />
+          </div>
+        )}
       </div>
 
       <ThemeSelectModal
@@ -559,6 +559,16 @@ function SettingsTerminalTab(props: {
             options={fontWeightOptions}
             onChange={(v) => updateTerminalSetting("fontWeightBold", parseInt(v))}
             className="w-40"
+          />
+        </SettingRow>
+
+        <SettingRow
+          label={t("settings.terminal.font.smoothing")}
+          description={t("settings.terminal.font.smoothing.desc")}
+        >
+          <Toggle
+            checked={terminalSettings.fontSmoothing}
+            onChange={(v) => updateTerminalSetting("fontSmoothing", v)}
           />
         </SettingRow>
 

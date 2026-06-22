@@ -16,6 +16,8 @@ type TerminalTimestampGutterProps = {
   containerRef: RefObject<HTMLDivElement | null>;
   enabled: boolean;
   top: string;
+  left?: number;
+  bottom?: number;
   sessionId: string;
   color: string;
   fontFamily: string;
@@ -100,6 +102,8 @@ export function TerminalTimestampGutter({
   containerRef,
   enabled,
   top,
+  left = 0,
+  bottom = 0,
   sessionId,
   color,
   fontFamily,
@@ -256,6 +260,8 @@ export function TerminalTimestampGutter({
     color,
     containerRef,
     enabled,
+    bottom,
+    left,
     sessionId,
     termRef,
     top,
@@ -270,10 +276,14 @@ export function TerminalTimestampGutter({
     <div
       ref={gutterRef}
       aria-hidden="true"
-      className="pointer-events-none absolute bottom-0 left-0 z-[1] overflow-hidden select-none border-r border-white/5 bg-black/10 text-[color:var(--terminal-ui-fg)]"
+      className="pointer-events-none absolute z-[1] overflow-hidden select-none text-[color:var(--terminal-ui-fg)]"
       style={{
         top,
+        bottom,
+        left,
         width,
+        backgroundColor: "var(--terminal-ui-bg)",
+        boxShadow: "inset -0.5px 0 0 color-mix(in srgb, var(--terminal-ui-fg) 8%, transparent)",
       }}
       data-section="terminal-timestamp-gutter"
     />
