@@ -63,6 +63,12 @@ const path = require("node:path");
 const os = require("node:os");
 const fs = require("node:fs");
 const { getCliDiscoveryFilePath } = require("./cli/discoveryPath.cjs");
+const {
+  SSH_DEEP_LINK_CHANNEL,
+  collectSshDeepLinkUrls,
+  isSshDeepLinkUrl,
+  registerSshProtocolClient,
+} = require("./deepLink.cjs");
 
 try {
   protocol?.registerSchemesAsPrivileged?.([
@@ -488,6 +494,51 @@ async function createAndShowMainWindow() {
   return mainWindowStartupPromise;
 }
 
+const pendingSshDeepLinkUrls = collectSshDeepLinkUrls(process.argv);
+let flushingSshDeepLinks = false;
+
+function queueSshDeepLink(rawUrl) {
+  if (!isSshDeepLinkUrl(rawUrl)) return;
+  pendingSshDeepLinkUrls.push(rawUrl);
+  if (app.isReady?.()) {
+    void flushPendingSshDeepLinks();
+  }
+}
+
+async function deliverSshDeepLink(rawUrl) {
+  const win = await createAndShowMainWindow();
+  focusMainWindow();
+  const windowManager = getWindowManager();
+  const result = await windowManager.sendWhenRendererReady?.(
+    win,
+    SSH_DEEP_LINK_CHANNEL,
+    { url: rawUrl },
+    { timeoutMs: isDev ? 30000 : 15000 },
+  );
+  if (result && result.success === false) {
+    console.warn("[Main] Failed to deliver ssh:// deep link:", result.error || result.reason);
+  }
+}
+
+async function flushPendingSshDeepLinks() {
+  if (flushingSshDeepLinks) return;
+  flushingSshDeepLinks = true;
+  try {
+    while (pendingSshDeepLinkUrls.length > 0) {
+      const rawUrl = pendingSshDeepLinkUrls.shift();
+      if (!rawUrl) continue;
+      await deliverSshDeepLink(rawUrl);
+    }
+  } catch (err) {
+    console.warn("[Main] Failed to process ssh:// deep link:", err);
+  } finally {
+    flushingSshDeepLinks = false;
+    if (pendingSshDeepLinkUrls.length > 0) {
+      void flushPendingSshDeepLinks();
+    }
+  }
+}
+
 function hasUsableWindow() {
   try {
     const windowManager = getWindowManager();
@@ -520,7 +571,17 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
+  app.on("open-url", (event, rawUrl) => {
+    event.preventDefault();
+    queueSshDeepLink(rawUrl);
+  });
+
+  app.on("second-instance", (_event, argv) => {
+    const deepLinkUrls = collectSshDeepLinkUrls(argv);
+    if (deepLinkUrls.length > 0) {
+      deepLinkUrls.forEach(queueSshDeepLink);
+      return;
+    }
     if (!focusMainWindow()) {
       // Window is missing or crashed — try to recreate it
       void createAndShowMainWindow().catch((err) => {
@@ -536,6 +597,7 @@ if (!gotLock) {
   // Application lifecycle
   app.whenReady().then(() => {
     registerAppProtocol();
+    registerSshProtocolClient({ app, isDev });
 
     // Grant only the Chromium permissions the app actually uses, and only
     // to the app's own origin. The default session is shared with in-app
@@ -639,6 +701,8 @@ if (!gotLock) {
 
     // Create the main window
     void createAndShowMainWindow().then(() => {
+      void flushPendingSshDeepLinks();
+
       // Trigger auto-update check 5 s after window creation.
       // startAutoCheck() is a no-op on unsupported platforms (Linux deb/rpm/snap).
       getAutoUpdateBridge().startAutoCheck(5000);

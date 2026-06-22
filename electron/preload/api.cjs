@@ -550,6 +550,12 @@ function createPreloadApi(ctx) {
   // Tell main process the renderer has mounted/painted (used to avoid initial blank screen).
   rendererReady: () => ipcRenderer.send("netcatty:renderer:ready"),
 
+  onSshDeepLink: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("netcatty:deepLink:ssh", handler);
+    return () => ipcRenderer.removeListener("netcatty:deepLink:ssh", handler);
+  },
+
   // Quit guard: main process asks whether any editor tabs have unsaved changes.
   // Returns an unsubscribe function so React effects can clean up on unmount.
   onCheckDirtyEditors: (listener) => {

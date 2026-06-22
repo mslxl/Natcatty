@@ -215,6 +215,8 @@ interface VaultViewProps {
   // Optional: navigate to a specific section on mount or when changed
   navigateToSection?: VaultSection | null;
   onNavigateToSectionHandled?: () => void;
+  deepLinkHostDraft?: Host | null;
+  onDeepLinkHostDraftHandled?: () => void;
   terminalSettings?: { keepaliveInterval: number; keepaliveCountMax: number };
 }
 
@@ -266,6 +268,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   showOnlyUngroupedHostsInRoot,
   navigateToSection,
   onNavigateToSectionHandled,
+  deepLinkHostDraft,
+  onDeepLinkHostDraftHandled,
   terminalSettings,
 }) => {
   const { t } = useI18n();
@@ -347,6 +351,16 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   const [isHostPanelOpen, setIsHostPanelOpen] = useState(false);
   const [editingHost, setEditingHost] = useState<Host | null>(null);
   const [newHostGroupPath, setNewHostGroupPath] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!deepLinkHostDraft) return;
+    setCurrentSection("hosts");
+    setSelectedGroupPath(null);
+    setNewHostGroupPath(null);
+    setEditingHost(deepLinkHostDraft);
+    setIsHostPanelOpen(true);
+    onDeepLinkHostDraftHandled?.();
+  }, [deepLinkHostDraft, onDeepLinkHostDraftHandled]);
 
   // When the side panel is open, Tailwind's viewport-based grid-cols-* can't
   // react to the narrowed content area, so we drive the host-grid column count
@@ -1158,6 +1172,7 @@ export const vaultViewAreEqual = (
     prev.terminalThemeId === next.terminalThemeId &&
     prev.terminalFontSize === next.terminalFontSize &&
     prev.navigateToSection === next.navigateToSection &&
+    prev.deepLinkHostDraft === next.deepLinkHostDraft &&
     // Only the keepalive fields of terminalSettings are forwarded to
     // PortForwarding inside the vault, so compare them directly. Other
     // terminal settings (fonts, themes, etc.) don't affect this subtree

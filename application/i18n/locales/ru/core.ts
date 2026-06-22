@@ -703,5 +703,6 @@ export const ruCoreMessages: Messages = {
 
   'vault.hosts.header.entries': 'Записей: {count}',
   'vault.hosts.header.live': 'Активных: {count}',
+  'deepLink.ssh.invalid': 'Недопустимая ссылка ssh://',
 
 };

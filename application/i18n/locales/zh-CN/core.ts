@@ -458,6 +458,7 @@ export const zhCNCoreMessages: Messages = {
   'vault.hosts.errors.nameRequired': '主机名称不能为空。',
   'vault.hosts.empty.title': '设置你的主机',
   'vault.hosts.empty.desc': '保存主机以快速连接到你的服务器、虚拟机和容器。',
+  'deepLink.ssh.invalid': '无效的 ssh:// 链接',
 
   // Vault import
   'vault.import.title': '添加数据到你的 Vault',
