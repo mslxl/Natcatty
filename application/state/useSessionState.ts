@@ -40,7 +40,6 @@ import {
   createInitialRestoredSessionState,
   shouldPersistSessionRestoreState,
   updateRestoredSessionStatusState,
-  updateSessionRestoreCwdState,
 } from './sessionRestoreState';
 import { resolveRestorePreviousSessionSetting } from './sessionRestoreSettings';
 
@@ -77,10 +76,17 @@ export const useSessionState = ({
   const [broadcastWorkspaceIds, setBroadcastWorkspaceIds] = useState<Set<string>>(new Set());
   // Log views: stores open log replay tabs
   const [logViews, setLogViews] = useState<LogView[]>([]);
-  const [activeTabRevision, setActiveTabRevision] = useState(0);
   const [restorePreviousSessionRevision, setRestorePreviousSessionRevision] = useState(0);
   const sessionsRef = useRef(sessions);
   const tabOrderRef = useRef(tabOrder);
+  const scheduleSessionRestorePersistRef = useRef<() => void>(() => {});
+  const sessionRestoreCwdByIdRef = useRef(
+    new Map(
+      initialRestoreState.sessions
+        .filter((session) => Boolean(session.lastCwd))
+        .map((session) => [session.id, session.lastCwd as string]),
+    ),
+  );
   const hasSeenRestorableSessionRestoreStateRef = useRef(
     persistSessionRestore && shouldPersistSessionRestoreState(
       initialRestoreState.sessions,
@@ -99,10 +105,6 @@ export const useSessionState = ({
       activeTabStore.setActiveTabId(initialRestoreState.activeTabId);
     }
   }, [initialRestoreState.activeTabId]);
-
-  useEffect(() => activeTabStore.subscribeSync(() => {
-    setActiveTabRevision((revision) => revision + 1);
-  }), []);
 
   useEffect(() => {
     const handleRestorePreviousSessionChanged = (key?: string) => {
@@ -131,14 +133,26 @@ export const useSessionState = ({
       localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION),
     );
     if (!restoreEnabled) {
+      scheduleSessionRestorePersistRef.current = () => {};
       sessionRestoreStorage.clear();
       hasSeenRestorableSessionRestoreStateRef.current = false;
       return;
     }
 
+    let timeout: number | undefined;
+
     const persistNow = () => {
+      const sessionsForRestore = sessionsRef.current.map((session) => {
+        const cwd = sessionRestoreCwdByIdRef.current.get(session.id);
+        if (cwd) {
+          return session.lastCwd === cwd ? session : { ...session, lastCwd: cwd };
+        }
+        if (session.lastCwd === undefined) return session;
+        const { lastCwd: _lastCwd, ...rest } = session;
+        return rest;
+      });
       const hasRestorableState = shouldPersistSessionRestoreState(
-        sessionsRef.current,
+        sessionsForRestore,
         workspacesRef.current,
         tabOrderRef.current,
       );
@@ -148,7 +162,7 @@ export const useSessionState = ({
           localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION),
         ),
         clearOnEmpty,
-        sessions: sessionsRef.current,
+        sessions: sessionsForRestore,
         workspaces: workspacesRef.current,
         tabOrder: tabOrderRef.current,
         activeTabId: activeTabStore.getActiveTabId(),
@@ -156,12 +170,25 @@ export const useSessionState = ({
       });
     };
 
-    const timeout = window.setTimeout(() => {
-      persistNow();
-    }, 250);
+    const schedulePersist = () => {
+      if (timeout !== undefined) {
+        window.clearTimeout(timeout);
+      }
+      timeout = window.setTimeout(() => {
+        timeout = undefined;
+        persistNow();
+      }, 250);
+    };
+
+    schedulePersist();
+    scheduleSessionRestorePersistRef.current = schedulePersist;
+    const unsubscribeActiveTab = activeTabStore.subscribeSync(schedulePersist);
 
     const handlePageHide = () => {
-      window.clearTimeout(timeout);
+      if (timeout !== undefined) {
+        window.clearTimeout(timeout);
+        timeout = undefined;
+      }
       persistNow();
     };
 
@@ -169,14 +196,26 @@ export const useSessionState = ({
     window.addEventListener("beforeunload", handlePageHide);
 
     return () => {
-      window.clearTimeout(timeout);
+      scheduleSessionRestorePersistRef.current = () => {};
+      if (timeout !== undefined) {
+        window.clearTimeout(timeout);
+      }
+      unsubscribeActiveTab();
       window.removeEventListener("pagehide", handlePageHide);
       window.removeEventListener("beforeunload", handlePageHide);
     };
-  }, [sessions, workspaces, tabOrder, activeTabRevision, restorePreviousSessionRevision, persistSessionRestore]);
+  }, [sessions, workspaces, tabOrder, restorePreviousSessionRevision, persistSessionRestore]);
 
   const updateSessionRestoreCwd = useCallback((sessionId: string, cwd: string | null) => {
-    setSessions((prev) => updateSessionRestoreCwdState(prev, sessionId, cwd));
+    const nextCwd = cwd && cwd.trim().length > 0 ? cwd : null;
+    const currentCwd = sessionRestoreCwdByIdRef.current.get(sessionId) ?? null;
+    if (currentCwd === nextCwd) return;
+    if (nextCwd) {
+      sessionRestoreCwdByIdRef.current.set(sessionId, nextCwd);
+    } else {
+      sessionRestoreCwdByIdRef.current.delete(sessionId);
+    }
+    scheduleSessionRestorePersistRef.current();
   }, []);
 
   const createLocalTerminal = useCallback((options?: LocalTerminalOptions) => {

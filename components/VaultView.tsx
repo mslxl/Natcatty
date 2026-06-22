@@ -84,14 +84,10 @@ import { DistroAvatar } from "./DistroAvatar";
 import GroupDetailsPanel from "./GroupDetailsPanel";
 import HostDetailsPanel from "./HostDetailsPanel";
 import { HostTreeView } from "./HostTreeView";
-import KeychainManager from "./KeychainManager";
-import PortForwarding from "./PortForwardingNew";
-import ProxyProfilesManager from "./ProxyProfilesManager";
 import QuickConnectWizard from "./QuickConnectWizard";
 import { isQuickConnectInput, parseQuickConnectInputWithWarnings } from "../domain/quickConnect";
 import SerialConnectModal from "./SerialConnectModal";
 import SerialHostDetailsPanel from "./SerialHostDetailsPanel";
-import SnippetsManager from "./SnippetsManager";
 import { NotesManager } from "./notes/NotesManager";
 import { ImportVaultDialog } from "./vault/ImportVaultDialog";
 import { HostTreeGroupDeleteDialog } from "./host/HostTreeGroupDeleteDialog";
@@ -130,6 +126,10 @@ import { useVaultGroupDragHandlers } from "./vault/useVaultGroupDragHandlers";
 
 const LazyProtocolSelectDialog = lazy(() => import("./ProtocolSelectDialog"));
 const LazyConnectionLogsManager = lazy(() => import("./ConnectionLogsManager"));
+const KeychainManager = lazy(() => import("./KeychainManager"));
+const PortForwarding = lazy(() => import("./PortForwardingNew"));
+const ProxyProfilesManager = lazy(() => import("./ProxyProfilesManager"));
+const SnippetsManager = lazy(() => import("./SnippetsManager"));
 
 export type VaultSection = "hosts" | "keys" | "proxies" | "snippets" | "notes" | "port" | "knownhosts" | "logs";
 

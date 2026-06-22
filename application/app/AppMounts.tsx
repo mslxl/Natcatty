@@ -4,6 +4,7 @@ import { useTerminalHostTreeLayoutWidth } from '../state/terminalHostTreeStore';
 import { isTerminalContentTabSurface } from './workTabSurface';
 import { cn } from '../../lib/utils';
 import { ConnectionLog, TerminalTheme } from '../../types';
+import { LazyLoadBoundary } from '../../components/ui/lazy-load-boundary';
 import type { LogView as LogViewType } from '../state/logViewState';
 import type { SftpView as SftpViewComponent } from '../../components/SftpView';
 import type { TerminalLayer as TerminalLayerComponent } from '../../components/TerminalLayer';
@@ -89,16 +90,18 @@ export const LogViewWrapper: React.FC<LogViewWrapperProps> = ({ logView, default
       data-inactive-app-surface={isVisible ? undefined : "true"}
       style={containerStyle}
     >
-      <Suspense fallback={null}>
-        <LazyLogView
-          log={logView.log}
-          defaultTerminalTheme={defaultTerminalTheme}
-          defaultFontSize={defaultFontSize}
-          isVisible={isVisible}
-          onClose={onClose}
-          onUpdateLog={onUpdateLog}
-        />
-      </Suspense>
+      <LazyLoadBoundary name="Log view" resetKey={logView.id}>
+        <Suspense fallback={<LogViewFallback />}>
+          <LazyLogView
+            log={logView.log}
+            defaultTerminalTheme={defaultTerminalTheme}
+            defaultFontSize={defaultFontSize}
+            isVisible={isVisible}
+            onClose={onClose}
+            onUpdateLog={onUpdateLog}
+          />
+        </Suspense>
+      </LazyLoadBoundary>
     </div>
   );
 };
@@ -115,6 +118,24 @@ const LazyTerminalLayer = lazy(() =>
 
 type SftpViewProps = React.ComponentProps<typeof SftpViewComponent>;
 type TerminalLayerProps = React.ComponentProps<typeof TerminalLayerComponent>;
+
+const LogViewFallback = () => (
+  <div className="netcatty-lazy-fade-in h-full min-h-0 bg-background" aria-hidden="true" />
+);
+
+const SftpViewFallback = ({ visible }: { visible: boolean }) => {
+  if (!visible) return null;
+  return (
+    <div className="netcatty-lazy-fade-in absolute inset-0 z-20 bg-background" aria-hidden="true" />
+  );
+};
+
+const TerminalLayerFallback = ({ visible }: { visible: boolean }) => {
+  if (!visible) return null;
+  return (
+    <div className="netcatty-lazy-fade-in absolute inset-0 z-20 bg-background" aria-hidden="true" />
+  );
+};
 
 export function shouldRenderTerminalLayerMount(
   isVisible: boolean,
@@ -134,9 +155,11 @@ export const SftpViewMount: React.FC<SftpViewProps> = (props) => {
   if (!shouldMount) return null;
 
   return (
-    <Suspense fallback={null}>
-      <LazySftpView {...props} />
-    </Suspense>
+    <LazyLoadBoundary name="SFTP" resetKey={isActive ? "active" : "idle"}>
+      <Suspense fallback={<SftpViewFallback visible={isActive} />}>
+        <LazySftpView {...props} />
+      </Suspense>
+    </LazyLoadBoundary>
   );
 };
 
@@ -175,8 +198,10 @@ export const TerminalLayerMount: React.FC<TerminalLayerProps> = (props) => {
   if (!shouldRender) return null;
 
   return (
-    <Suspense fallback={null}>
-      <LazyTerminalLayer {...props} />
-    </Suspense>
+    <LazyLoadBoundary name="Terminal" resetKey={activeTabId}>
+      <Suspense fallback={<TerminalLayerFallback visible={isVisible} />}>
+        <LazyTerminalLayer {...props} />
+      </Suspense>
+    </LazyLoadBoundary>
   );
 };

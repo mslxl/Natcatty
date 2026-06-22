@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   createTerminalLineTimestampSegmenter,
   formatTerminalLineTimestamp,
+  onTerminalLineTimestampsChange,
   resolveTerminalTimestampGutterRows,
   writeTerminalDataWithLineTimestamps,
 } from "./terminalLineTimestamps.ts";
@@ -146,6 +147,21 @@ test("records line timestamps even while the gutter is hidden", () => {
 
   assert.equal(writes.join(""), "before\r\nnext");
   assert.deepEqual(markerLines, [0, 1]);
+});
+
+test("coalesces timestamp change notifications per write", () => {
+  const { term, markerLines } = createFakeTerm();
+  let notifications = 0;
+  const unsubscribe = onTerminalLineTimestampsChange(term as never, () => {
+    notifications += 1;
+  });
+
+  writeTerminalDataWithLineTimestamps(term as never, "one\r\ntwo\r\nthree", () => {});
+  writeTerminalDataWithLineTimestamps(term as never, " continued", () => {});
+  unsubscribe();
+
+  assert.deepEqual(markerLines, [0, 1, 2]);
+  assert.equal(notifications, 1);
 });
 
 test("keeps recording and preserves existing timestamps when the gutter is hidden", () => {

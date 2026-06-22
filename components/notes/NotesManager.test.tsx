@@ -55,7 +55,7 @@ test("NotesManager renders notes tree and selected markdown editor", () => {
 
   assert.match(markup, /Ops/);
   assert.match(markup, /Postgres failover checklist/);
-  assert.match(markup, /editable markdown/);
+  assert.match(markup, /data-notes-editor-loading="true"/);
 });
 
 test("NotesManager marks selected notebook rows with shared tree state", () => {
@@ -211,6 +211,7 @@ test("NotesManager sidebar mode renders list without editor by default", () => {
   assert.match(markup, /Ops/);
   assert.match(markup, /Postgres failover checklist/);
   assert.doesNotMatch(markup, /editable markdown/);
+  assert.doesNotMatch(markup, /data-notes-editor-loading="true"/);
 });
 
 test("NotesManager sidebar mode opens the requested note without selecting its folder", () => {
@@ -231,7 +232,7 @@ test("NotesManager sidebar mode opens the requested note without selecting its f
   );
 
   assert.match(markup, /Deploy overlay/);
-  assert.match(markup, /editable markdown/);
+  assert.match(markup, /data-notes-editor-loading="true"/);
   assert.equal(markup.match(/data-selected="true"/g)?.length, 1);
   assert.match(markup, /data-vault-tree-row="group"[^>]*data-selected="false"/);
   assert.match(markup, /data-vault-tree-row="item"[^>]*data-selected="true"[^>]*data-note-id="note-2"/);

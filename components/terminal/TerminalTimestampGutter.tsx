@@ -161,13 +161,19 @@ export function TerminalTimestampGutter({
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let disposables: DisposableLike[] = [];
     let resizeObserver: ResizeObserver | null = null;
+    let lastRenderSignature = "";
+
+    const clearGutter = () => {
+      lastRenderSignature = "";
+      clearElement(gutter);
+    };
 
     const render = () => {
       rafId = null;
       const term = termRef.current;
       const container = containerRef.current;
       if (!enabled || !term || !container) {
-        clearElement(gutter);
+        clearGutter();
         return;
       }
 
@@ -175,16 +181,29 @@ export function TerminalTimestampGutter({
       const rows = Math.max(1, term.rows || 1);
       const cellHeight = screen.clientHeight / rows;
       if (!Number.isFinite(cellHeight) || cellHeight <= 0) {
-        clearElement(gutter);
+        clearGutter();
         return;
       }
 
       const screenRect = screen.getBoundingClientRect();
       const gutterRect = gutter.getBoundingClientRect();
       const screenTop = screenRect.top - gutterRect.top;
+      const visibleRows = getVisibleTerminalLineTimestampRows(term);
+      const signature = JSON.stringify({
+        screenTop,
+        cellHeight,
+        color,
+        fontFamily: typography.fontFamily,
+        fontSize: typography.fontSize,
+        fontWeight: typography.fontWeight,
+        rows: visibleRows,
+      });
+      if (signature === lastRenderSignature) return;
+      lastRenderSignature = signature;
+
       const fragment = document.createDocumentFragment();
 
-      for (const { row, label } of getVisibleTerminalLineTimestampRows(term)) {
+      for (const { row, label } of visibleRows) {
         const item = document.createElement("div");
         item.textContent = label;
         item.className = "absolute left-0 right-0 px-2 text-right tabular-nums whitespace-nowrap";
@@ -217,7 +236,7 @@ export function TerminalTimestampGutter({
       const term = termRef.current;
       const container = containerRef.current;
       if (!enabled || !term || !container) {
-        clearElement(gutter);
+        clearGutter();
         if (enabled) {
           retryTimer = setTimeout(attach, 50);
         }

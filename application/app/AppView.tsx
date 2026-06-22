@@ -1,22 +1,23 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { Suspense, lazy, useMemo } from 'react';
 import { AlertTriangle, Download, Trash2 } from 'lucide-react';
-import { activeTabStore, toEditorTabId } from '../state/activeTabStore';
+import { activeTabStore, toEditorTabId, useIsEditorTabActive } from '../state/activeTabStore';
 import { editorTabStore } from '../state/editorTabStore';
 import { releaseEditorTabSaveCoordinator, saveEditorTab } from '../state/editorTabSave';
+import { useTerminalHostTreeLayoutWidth } from '../state/terminalHostTreeStore';
 import { TopTabs } from '../../components/TopTabs';
 import { VaultView } from '../../components/VaultView';
 import { QuickAddSnippetDialog } from '../../components/QuickAddSnippetDialog';
 import { AddToWorkspaceDialog } from '../../components/workspace/AddToWorkspaceDialog';
 import { KeyboardInteractiveModal } from '../../components/KeyboardInteractiveModal';
 import { PassphraseModal } from '../../components/PassphraseModal';
-import { TextEditorTabView } from '../../components/editor/TextEditorTabView';
 import { UnsavedChangesProvider } from '../../components/editor/UnsavedChangesDialog';
 import { SnippetExecutionProvider } from '../../components/SnippetExecutionProvider';
 import { Button } from '../../components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
+import { LazyLoadBoundary } from '../../components/ui/lazy-load-boundary';
 import { toast } from '../../components/ui/toast';
 import { AppHostTreeLayer } from './AppHostTreeLayer';
 import { getUiThemeById } from '../../infrastructure/config/uiThemes';
@@ -29,6 +30,25 @@ const LazyQuickSwitcher = lazy(() =>
 const LazyCreateWorkspaceDialog = lazy(() =>
   import('../../components/CreateWorkspaceDialog').then((m) => ({ default: m.CreateWorkspaceDialog })),
 );
+const LazyTextEditorTabView = lazy(() =>
+  import('../../components/editor/TextEditorTabView').then((m) => ({ default: m.TextEditorTabView })),
+);
+
+const TextEditorTabFallback = ({ tabId }: { tabId: string }) => {
+  const isVisible = useIsEditorTabActive(tabId);
+  const hostTreeLayoutWidth = useTerminalHostTreeLayoutWidth();
+  return (
+    <div
+      style={{
+        ...(isVisible ? null : { pointerEvents: 'none', visibility: 'hidden' }),
+        zIndex: 20,
+        left: hostTreeLayoutWidth,
+      }}
+      className="netcatty-lazy-fade-in absolute top-0 right-0 bottom-0 min-h-0 flex flex-col bg-background"
+      aria-hidden="true"
+    />
+  );
+};
 
 type AppViewContext = Record<string, any>;
 
@@ -368,14 +388,17 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
 
         {/* Editor Tabs — kept mounted for Monaco instance persistence; visibility toggled via CSS */}
         {editorTabs.map((tab) => (
-          <TextEditorTabView
-            key={tab.id}
-            tabId={tab.id}
-            hotkeyScheme={hotkeyScheme}
-            keyBindings={keyBindings}
-            hostById={hostById}
-            onRequestClose={(id) => handleRequestCloseEditorTabRef.current(id)}
-          />
+          <LazyLoadBoundary key={tab.id} name="Editor" resetKey={tab.id}>
+            <Suspense fallback={<TextEditorTabFallback tabId={tab.id} />}>
+              <LazyTextEditorTabView
+                tabId={tab.id}
+                hotkeyScheme={hotkeyScheme}
+                keyBindings={keyBindings}
+                hostById={hostById}
+                onRequestClose={(id) => handleRequestCloseEditorTabRef.current(id)}
+              />
+            </Suspense>
+          </LazyLoadBoundary>
         ))}
       </div>
 
@@ -439,38 +462,40 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
       )}
 
       {isQuickSwitcherOpen && (
-        <Suspense fallback={null}>
-          <LazyQuickSwitcher
-            isOpen={isQuickSwitcherOpen}
-            query={quickSearch}
-            results={quickResults}
-            sessions={sessions}
-            workspaces={workspaces}
-            showSftpTab={settings.showSftpTab}
-            onQueryChange={setQuickSearch}
-            onSelect={handleHostConnectWithProtocolCheck}
-            onSelectTab={(tabId) => {
-              setActiveTabId(tabId);
-              setIsQuickSwitcherOpen(false);
-              setQuickSearch('');
-            }}
-            onCreateLocalTerminal={(shell) => {
-              handleCreateLocalTerminal(shell);
-              setIsQuickSwitcherOpen(false);
-              setQuickSearch('');
-            }}
-            onCreateWorkspace={() => {
-              setIsQuickSwitcherOpen(false);
-              setQuickSearch('');
-              setAddToWorkspaceDialog({ mode: 'create' });
-            }}
-            onClose={() => {
-              setIsQuickSwitcherOpen(false);
-              setQuickSearch('');
-            }}
-            keyBindings={keyBindings}
-          />
-        </Suspense>
+        <LazyLoadBoundary name="Quick switcher" resetKey={quickSearch}>
+          <Suspense fallback={null}>
+            <LazyQuickSwitcher
+              isOpen={isQuickSwitcherOpen}
+              query={quickSearch}
+              results={quickResults}
+              sessions={sessions}
+              workspaces={workspaces}
+              showSftpTab={settings.showSftpTab}
+              onQueryChange={setQuickSearch}
+              onSelect={handleHostConnectWithProtocolCheck}
+              onSelectTab={(tabId) => {
+                setActiveTabId(tabId);
+                setIsQuickSwitcherOpen(false);
+                setQuickSearch('');
+              }}
+              onCreateLocalTerminal={(shell) => {
+                handleCreateLocalTerminal(shell);
+                setIsQuickSwitcherOpen(false);
+                setQuickSearch('');
+              }}
+              onCreateWorkspace={() => {
+                setIsQuickSwitcherOpen(false);
+                setQuickSearch('');
+                setAddToWorkspaceDialog({ mode: 'create' });
+              }}
+              onClose={() => {
+                setIsQuickSwitcherOpen(false);
+                setQuickSearch('');
+              }}
+              keyBindings={keyBindings}
+            />
+          </Suspense>
+        </LazyLoadBoundary>
       )}
 
       <Dialog open={!!sessionRenameTarget} onOpenChange={(open) => {
@@ -528,25 +553,29 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
       </Dialog>
 
       {isCreateWorkspaceOpen && (
-        <Suspense fallback={null}>
-          <LazyCreateWorkspaceDialog
-            isOpen={isCreateWorkspaceOpen}
-            onClose={() => setIsCreateWorkspaceOpen(false)}
-            hosts={hosts}
-            onCreate={createWorkspaceWithHosts}
-          />
-        </Suspense>
+        <LazyLoadBoundary name="Create workspace" resetKey="create-workspace">
+          <Suspense fallback={null}>
+            <LazyCreateWorkspaceDialog
+              isOpen={isCreateWorkspaceOpen}
+              onClose={() => setIsCreateWorkspaceOpen(false)}
+              hosts={hosts}
+              onCreate={createWorkspaceWithHosts}
+            />
+          </Suspense>
+        </LazyLoadBoundary>
       )}
 
       {/* Protocol Select Dialog for QuickSwitcher */}
       {protocolSelectHost && (
-        <Suspense fallback={null}>
-          <LazyProtocolSelectDialog
-            host={protocolSelectHost}
-            onSelect={handleProtocolSelect}
-            onCancel={() => setProtocolSelectHost(null)}
-          />
-        </Suspense>
+        <LazyLoadBoundary name="Protocol selector" resetKey={protocolSelectHost.id}>
+          <Suspense fallback={null}>
+            <LazyProtocolSelectDialog
+              host={protocolSelectHost}
+              onSelect={handleProtocolSelect}
+              onCancel={() => setProtocolSelectHost(null)}
+            />
+          </Suspense>
+        </LazyLoadBoundary>
       )}
 
       {/* Global Keyboard-Interactive Authentication Modal (2FA/MFA) - processes queue */}

@@ -321,10 +321,11 @@ const recordTerminalLineTimestamp = (
   term: XTerm,
   store: TimestampStore,
   label: string,
-) => {
+  notify = true,
+): boolean => {
   const registerMarker = (term as XTerm & { registerMarker?: (offset: number) => TimestampMarker | undefined }).registerMarker;
   const marker = registerMarker?.call(term, 0);
-  if (!marker) return;
+  if (!marker) return false;
 
   const entry: TimestampEntry = { marker, label };
   entry.disposeListener = marker.onDispose?.(() => {
@@ -333,7 +334,10 @@ const recordTerminalLineTimestamp = (
     notifyTimestampStore(store);
   });
   store.entries.push(entry);
-  notifyTimestampStore(store);
+  if (notify) {
+    notifyTimestampStore(store);
+  }
+  return true;
 };
 
 export const resetTerminalLineTimestamps = (term: XTerm) => {
@@ -362,10 +366,29 @@ export const resolveTerminalTimestampGutterRows = ({
   entries: readonly TerminalTimestampGutterEntry[];
   isWrappedLine?: (line: number) => boolean;
 }): TerminalTimestampGutterRow[] => {
+  const viewportEnd = viewportY + rows - 1;
+  let firstRelevantLine = viewportY;
+  const wrappedSourceLineByRow = new Map<number, number>();
+
+  if (isWrappedLine) {
+    for (let row = 0; row < rows; row += 1) {
+      const line = viewportY + row;
+      if (!isWrappedLine(line)) continue;
+      let sourceLine = line;
+      while (sourceLine > 0 && isWrappedLine(sourceLine)) {
+        sourceLine -= 1;
+      }
+      wrappedSourceLineByRow.set(row, sourceLine);
+      firstRelevantLine = Math.min(firstRelevantLine, sourceLine);
+    }
+  }
+
   const labelByLine = new Map<number, string>();
   for (const entry of entries) {
     if (entry.marker.isDisposed) continue;
-    labelByLine.set(entry.marker.line, entry.label);
+    const line = entry.marker.line;
+    if (line < firstRelevantLine || line > viewportEnd) continue;
+    labelByLine.set(line, entry.label);
   }
 
   const rowLabels = new Map<number, string>();
@@ -377,11 +400,8 @@ export const resolveTerminalTimestampGutterRows = ({
       continue;
     }
 
-    if (!isWrappedLine?.(line)) continue;
-    let sourceLine = line;
-    while (sourceLine > 0 && isWrappedLine(sourceLine)) {
-      sourceLine -= 1;
-    }
+    const sourceLine = wrappedSourceLineByRow.get(row);
+    if (sourceLine === undefined) continue;
     const wrappedLabel = labelByLine.get(sourceLine);
     if (wrappedLabel) {
       rowLabels.set(row, wrappedLabel);
@@ -438,18 +458,27 @@ export const writeTerminalDataWithLineTimestamps = (
   ) => {
     let index = 0;
     let remainingSkipLength = skipLeadingDataLength;
+    let timestampRecorded = false;
+
+    const complete = () => {
+      if (timestampRecorded) {
+        notifyTimestampStore(store);
+      }
+      onComplete();
+    };
 
     const writeNext = () => {
       const segment = segments[index];
       index += 1;
 
       if (!segment) {
-        onComplete();
+        complete();
         return;
       }
 
       if (segment.kind === "timestamp") {
-        recordTerminalLineTimestamp(term, store, segment.label);
+        timestampRecorded = recordTerminalLineTimestamp(term, store, segment.label, false)
+          || timestampRecorded;
         writeNext();
         return;
       }

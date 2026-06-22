@@ -179,7 +179,7 @@ test('host tree hover card is hidden while the same host is inline editing', () 
 test('host tree hover card renders markdown notes and keeps host details out of the header subtitle', () => {
   const source = readFileSync(new URL('./TerminalHostTreeSidebar.tsx', import.meta.url), 'utf8');
 
-  assert.match(source, /<MessageResponse/);
+  assert.match(source, /<LazyMessageResponse/);
   assert.match(source, /size="sm"/);
   assert.match(source, /items-center gap-2/);
   assert.match(source, /className="rounded"/);
