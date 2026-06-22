@@ -190,7 +190,9 @@ export const clearTopTabsPreviewVars = () => {
   removeStylePropertyIfSet(tabsRoot, '--background');
   removeStylePropertyIfSet(tabsRoot, '--foreground');
   removeStylePropertyIfSet(tabsRoot, '--accent');
+  removeStylePropertyIfSet(tabsRoot, '--accent-foreground');
   removeStylePropertyIfSet(tabsRoot, '--primary');
+  removeStylePropertyIfSet(tabsRoot, '--primary-foreground');
   removeStylePropertyIfSet(tabsRoot, '--secondary');
   removeStylePropertyIfSet(tabsRoot, '--border');
   removeStylePropertyIfSet(tabsRoot, '--muted-foreground');
