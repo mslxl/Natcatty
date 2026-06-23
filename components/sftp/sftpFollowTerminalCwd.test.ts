@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  mergeLatestFollowTerminalCwdHostSetting,
   resolveHostFollowTerminalCwd,
   resolveSftpFollowTerminalCwdTargetHost,
   shouldFollowTerminalCwdNavigate,
@@ -56,5 +57,27 @@ test("resolveSftpFollowTerminalCwdTargetHost prefers the visible SFTP host", () 
   assert.equal(
     resolveSftpFollowTerminalCwdTargetHost(null, terminalHost),
     terminalHost,
+  );
+});
+
+test("mergeLatestFollowTerminalCwdHostSetting refreshes the follow flag without losing display overrides", () => {
+  const connectedHost = {
+    id: "host-1",
+    hostname: "session.example.com",
+    sftpFollowTerminalCwd: false,
+  };
+  const latestHost = {
+    id: "host-1",
+    hostname: "vault.example.com",
+    sftpFollowTerminalCwd: true,
+  };
+
+  assert.deepEqual(
+    mergeLatestFollowTerminalCwdHostSetting(connectedHost, latestHost),
+    {
+      id: "host-1",
+      hostname: "session.example.com",
+      sftpFollowTerminalCwd: true,
+    },
   );
 });
