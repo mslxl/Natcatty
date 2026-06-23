@@ -816,7 +816,7 @@ test("each main window close saves its own state", async () => {
   assert.deepEqual(savedStates, [{ windowId: 1 }, { windowId: 2 }]);
 });
 
-test("window IPC handlers target the sender owner window", async () => {
+test("window IPC handlers target sender owner windows and preserve minimize lock state", async () => {
   const handlers = new Map();
   const ipcMain = {
     handle(channel, handler) {
@@ -849,6 +849,9 @@ test("window IPC handlers target the sender owner window", async () => {
     },
   };
   const minimizeCalls = [];
+  const minimizeCloseCalls = [];
+  const minimizeHideCalls = [];
+  const minimizeSentMessages = [];
   const minimizeWin = {
     isDestroyed() {
       return false;
@@ -856,10 +859,19 @@ test("window IPC handlers target the sender owner window", async () => {
     minimize() {
       minimizeCalls.push("minimize");
     },
+    close() {
+      minimizeCloseCalls.push("close");
+    },
+    hide() {
+      minimizeHideCalls.push("hide");
+    },
     webContents: {
       id: 404,
       isDestroyed() {
         return false;
+      },
+      send(channel, payload) {
+        minimizeSentMessages.push([channel, payload]);
       },
     },
   };
@@ -919,6 +931,9 @@ test("window IPC handlers target the sender owner window", async () => {
   });
 
   assert.deepEqual(minimizeCalls, ["minimize"]);
+  assert.deepEqual(minimizeCloseCalls, []);
+  assert.deepEqual(minimizeHideCalls, []);
+  assert.deepEqual(minimizeSentMessages, []);
 });
 
 test("resolveSettingsWindowBounds centers settings on the requesting window display", () => {
