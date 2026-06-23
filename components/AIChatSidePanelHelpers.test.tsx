@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   modelPresetsContainId,
+  normalizeSdkRuntimeModelPresets,
   shouldAdoptSdkCurrentModel,
   shouldLoadSdkRuntimeModels,
   shouldUseStoredAgentModel,
@@ -47,6 +48,17 @@ test('shouldAdoptSdkCurrentModel keeps SDK defaults when no runtime list is retu
     false,
   );
   assert.equal(shouldAdoptSdkCurrentModel(null, undefined, []), false);
+});
+
+test('normalizeSdkRuntimeModelPresets preserves SDK current model without a catalog', () => {
+  assert.deepEqual(normalizeSdkRuntimeModelPresets([], 'custom/provider-model'), [
+    { id: 'custom/provider-model', name: 'custom/provider-model' },
+  ]);
+  assert.deepEqual(normalizeSdkRuntimeModelPresets([], null), []);
+  assert.deepEqual(
+    normalizeSdkRuntimeModelPresets([{ id: 'openai/gpt-5.1', name: 'GPT-5.1' }], 'custom/provider-model'),
+    [{ id: 'openai/gpt-5.1', name: 'GPT-5.1' }],
+  );
 });
 
 test('shouldUseStoredAgentModel trusts SDK defaults when no runtime list is returned', () => {

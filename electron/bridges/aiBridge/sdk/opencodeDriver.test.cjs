@@ -10,8 +10,10 @@ const {
   createOpenCodeProcessEnv,
   mapOpenCodeModels,
   parseOpenCodeModel,
+  resolveUsableOpenCodeBinPath,
   runOpenCodeTurn,
   translateOpenCodeEvent,
+  withOpenCodeProcessEnv,
 } = require("./opencodeDriver.cjs");
 
 function collector() {
@@ -99,6 +101,128 @@ test("createOpenCodeProcessEnv creates an opencode shim for arbitrary custom bin
   }
 });
 
+test("createOpenCodeProcessEnv uses a unique shim directory per launch", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-opencode-test-"));
+  const fakeBin = path.join(tempRoot, "my-opencode-wrapper");
+  fs.writeFileSync(fakeBin, "#!/bin/sh\n");
+  fs.chmodSync(fakeBin, 0o755);
+
+  const first = createOpenCodeProcessEnv(
+    { PATH: "/usr/bin" },
+    fakeBin,
+    {
+      platform: "linux",
+      getTempFilePath: (name) => path.join(tempRoot, name),
+    },
+  );
+  const second = createOpenCodeProcessEnv(
+    { PATH: "/usr/bin" },
+    fakeBin,
+    {
+      platform: "linux",
+      getTempFilePath: (name) => path.join(tempRoot, name),
+    },
+  );
+
+  try {
+    const firstShimDir = first.env.PATH.split(path.delimiter)[0];
+    const secondShimDir = second.env.PATH.split(path.delimiter)[0];
+    const shimParent = path.dirname(firstShimDir);
+    assert.notEqual(firstShimDir, secondShimDir);
+    assert.equal(path.dirname(secondShimDir), shimParent);
+    assert.equal(fs.existsSync(path.join(firstShimDir, "opencode")), true);
+    assert.equal(fs.existsSync(path.join(secondShimDir, "opencode")), true);
+
+    first.cleanup();
+    assert.equal(fs.existsSync(path.join(firstShimDir, "opencode")), false);
+    assert.equal(fs.existsSync(path.join(secondShimDir, "opencode")), true);
+    assert.equal(fs.existsSync(shimParent), true);
+
+    second.cleanup();
+    assert.equal(fs.existsSync(shimParent), false);
+  } finally {
+    second.cleanup();
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("withOpenCodeProcessEnv launches before another call can overwrite process env", async () => {
+  const previousOpenCodeBin = process.env.OPENCODE_BIN;
+  const previousPath = process.env.PATH;
+  const observed = [];
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-opencode-test-"));
+  const firstBin = path.join(tempRoot, "opencode-one");
+  const secondBin = path.join(tempRoot, "opencode-two");
+  fs.writeFileSync(firstBin, "#!/bin/sh\nexit 0\n");
+  fs.writeFileSync(secondBin, "#!/bin/sh\nexit 0\n");
+  fs.chmodSync(firstBin, 0o755);
+  fs.chmodSync(secondBin, 0o755);
+
+  try {
+    const first = withOpenCodeProcessEnv(
+      { OPENCODE_BIN: firstBin, PATH: "/tmp/one" },
+      null,
+      () => {
+        observed.push({ bin: process.env.OPENCODE_BIN, path: process.env.PATH });
+        return new Promise((resolve) => setImmediate(resolve));
+      },
+    );
+    const second = withOpenCodeProcessEnv(
+      { OPENCODE_BIN: secondBin, PATH: "/tmp/two" },
+      null,
+      () => {
+        observed.push({ bin: process.env.OPENCODE_BIN, path: process.env.PATH });
+        return Promise.resolve();
+      },
+    );
+
+    await Promise.all([first, second]);
+
+    assert.deepEqual(observed, [
+      { bin: firstBin, path: "/tmp/one" },
+      { bin: secondBin, path: "/tmp/two" },
+    ]);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    if (previousOpenCodeBin === undefined) delete process.env.OPENCODE_BIN;
+    else process.env.OPENCODE_BIN = previousOpenCodeBin;
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+  }
+});
+
+test("withOpenCodeProcessEnv restores process env before async startup settles", async () => {
+  const previousOpenCodeBin = process.env.OPENCODE_BIN;
+  const previousPath = process.env.PATH;
+  let releaseStartup;
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-opencode-test-"));
+  const fakeBin = path.join(tempRoot, "opencode-starting");
+  fs.writeFileSync(fakeBin, "#!/bin/sh\nexit 0\n");
+  fs.chmodSync(fakeBin, 0o755);
+
+  try {
+    const pending = withOpenCodeProcessEnv(
+      { OPENCODE_BIN: fakeBin, PATH: "/tmp/opencode-shim" },
+      null,
+      () => {
+        assert.equal(process.env.OPENCODE_BIN, fakeBin);
+        return new Promise((resolve) => { releaseStartup = resolve; });
+      },
+    );
+
+    assert.equal(process.env.OPENCODE_BIN, previousOpenCodeBin);
+    assert.equal(process.env.PATH, previousPath);
+    releaseStartup();
+    await pending;
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    if (previousOpenCodeBin === undefined) delete process.env.OPENCODE_BIN;
+    else process.env.OPENCODE_BIN = previousOpenCodeBin;
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+  }
+});
+
 test("translateOpenCodeEvent maps text, reasoning, tools, errors, and idle", () => {
   const { events, emitter } = collector();
   const state = {};
@@ -141,6 +265,82 @@ test("translateOpenCodeEvent maps text, reasoning, tools, errors, and idle", () 
     { k: "error", m: "bad key" },
     { k: "status", m: "OpenCode session idle" },
   ]);
+});
+
+test("translateOpenCodeEvent maps OpenCode part delta text and reasoning events", () => {
+  const { events, emitter } = collector();
+  const state = {};
+
+  assert.equal(
+    translateOpenCodeEvent(
+      { type: "message.part.delta", properties: { sessionID: "sess-1", messageID: "msg-1", partID: "p1", field: "text", delta: "he" } },
+      emitter,
+      state,
+    ).content,
+    true,
+  );
+  translateOpenCodeEvent(
+    { type: "message.part.updated", properties: { part: { type: "text", id: "p1", sessionID: "sess-1", text: "hello" } } },
+    emitter,
+    state,
+  );
+  translateOpenCodeEvent(
+    { type: "message.part.updated", properties: { part: { type: "reasoning", id: "r1", sessionID: "sess-1", text: "" } } },
+    emitter,
+    state,
+  );
+  assert.equal(
+    translateOpenCodeEvent(
+      { type: "message.part.delta", properties: { sessionID: "sess-1", messageID: "msg-1", partID: "r1", field: "text", delta: "think" } },
+      emitter,
+      state,
+    ).content,
+    true,
+  );
+  translateOpenCodeEvent(
+    { type: "message.part.updated", properties: { part: { type: "reasoning", id: "r1", sessionID: "sess-1", text: "thinking" } } },
+    emitter,
+    state,
+  );
+
+  assert.deepEqual(events, [
+    { k: "text", t: "he" },
+    { k: "text", t: "llo" },
+    { k: "reasoning", d: "think" },
+    { k: "reasoning", d: "ing" },
+  ]);
+});
+
+test("translateOpenCodeEvent ignores user message text and delta parts", () => {
+  const { events, emitter } = collector();
+  const state = {};
+  translateOpenCodeEvent(
+    { type: "message.updated", properties: { info: { id: "msg-user", role: "user" } } },
+    emitter,
+    state,
+  );
+  translateOpenCodeEvent(
+    { type: "message.part.updated", properties: { part: { type: "text", id: "p-user", messageID: "msg-user", text: "用户问题" } } },
+    emitter,
+    state,
+  );
+  translateOpenCodeEvent(
+    { type: "message.part.delta", properties: { messageID: "msg-user", partID: "p-user", field: "text", delta: "?" } },
+    emitter,
+    state,
+  );
+  translateOpenCodeEvent(
+    { type: "message.updated", properties: { info: { id: "msg-asst", role: "assistant" } } },
+    emitter,
+    state,
+  );
+  translateOpenCodeEvent(
+    { type: "message.part.updated", properties: { part: { type: "text", id: "p-asst", messageID: "msg-asst", text: "reply" }, delta: "reply" } },
+    emitter,
+    state,
+  );
+
+  assert.deepEqual(events, [{ k: "text", t: "reply" }]);
 });
 
 test("translateOpenCodeEvent also accepts direct OpenCode SDK events", () => {
@@ -261,6 +461,116 @@ test("runOpenCodeTurn creates a session, streams event deltas, and returns sessi
   ]);
 });
 
+test("runOpenCodeTurn sends Netcatty context via body.system instead of user parts", async () => {
+  const { events, emitter } = collector();
+  const abortController = new AbortController();
+  const stream = {
+    async *[Symbol.asyncIterator]() {
+      yield { payload: { type: "message.part.updated", properties: { part: { type: "text", id: "p1", text: "ok" }, delta: "ok" } } };
+      yield { payload: { type: "session.idle", properties: { sessionID: "sess-1" } } };
+    },
+  };
+  const client = {
+    global: { event: async () => ({ stream }) },
+    session: {
+      create: async () => ({ data: { id: "sess-1" } }),
+      promptAsync: async (args) => {
+        assert.equal(args.body.system, "[Context: You are inside Netcatty.]");
+        assert.deepEqual(args.body.parts, [{ type: "text", text: "看看这个机器的配置" }]);
+        return { data: true };
+      },
+    },
+  };
+
+  await runOpenCodeTurn({
+    prompt: "看看这个机器的配置",
+    systemPrompt: "[Context: You are inside Netcatty.]",
+    emitter,
+    abortController,
+    openCodeFactory: async () => ({ client, server: { close() {} } }),
+  });
+
+  assert.deepEqual(events.filter((event) => event.k === "text"), [{ k: "text", t: "ok" }]);
+});
+
+test("runOpenCodeTurn treats OpenCode part delta events as streamed content", async () => {
+  const { events, emitter } = collector();
+  const abortController = new AbortController();
+  const stream = {
+    async *[Symbol.asyncIterator]() {
+      yield { type: "message.part.delta", properties: { sessionID: "sess-1", messageID: "msg-1", partID: "p1", field: "text", delta: "hi" } };
+      yield { type: "session.idle", properties: { sessionID: "sess-1" } };
+    },
+  };
+  const client = {
+    global: { event: async () => ({ stream }) },
+    session: {
+      create: async () => ({ data: { id: "sess-1" } }),
+      promptAsync: async () => ({ data: true }),
+    },
+  };
+
+  const result = await runOpenCodeTurn({
+    prompt: "hello",
+    emitter,
+    abortController,
+    openCodeFactory: async () => ({ client, server: { close() {} } }),
+  });
+
+  assert.deepEqual(result, { sessionId: "sess-1" });
+  assert.deepEqual(events, [
+    { k: "sessionId", s: "sess-1" },
+    { k: "text", t: "hi" },
+    { k: "status", m: "OpenCode session idle" },
+    { k: "done" },
+  ]);
+});
+
+test("runOpenCodeTurn surfaces promptAsync error results without waiting for events", async () => {
+  const { events, emitter } = collector();
+  const abortController = new AbortController();
+  let closeCount = 0;
+  let abortCount = 0;
+  let iteratorReturnCount = 0;
+  const stream = {
+    [Symbol.asyncIterator]() {
+      return {
+        next: async () => new Promise(() => {}),
+        return: async () => {
+          iteratorReturnCount += 1;
+          return { done: true };
+        },
+      };
+    },
+  };
+  const client = {
+    global: { event: async () => ({ stream }) },
+    session: {
+      create: async () => ({ data: { id: "sess-1" } }),
+      promptAsync: async () => ({ error: { data: { message: "bad model" } } }),
+      abort: async () => { abortCount += 1; },
+    },
+  };
+
+  const result = await Promise.race([
+    runOpenCodeTurn({
+      prompt: "hello",
+      emitter,
+      abortController,
+      openCodeFactory: async () => ({ client, server: { close() { closeCount += 1; } } }),
+    }),
+    new Promise((resolve) => setTimeout(() => resolve("timed-out"), 50)),
+  ]);
+
+  assert.notEqual(result, "timed-out");
+  assert.deepEqual(result, { sessionId: "sess-1" });
+  assert.equal(events.some((event) => event.k === "error" && event.m === "bad model"), true);
+  assert.equal(events.some((event) => event.k === "done"), false);
+  assert.equal(abortCount, 1);
+  assert.equal(closeCount >= 1, true);
+  assert.equal(iteratorReturnCount, 1);
+});
+
 test("runOpenCodeTurn returns promptly when aborted while the event stream is quiet", async () => {
   const { events, emitter } = collector();
   const abortController = new AbortController();
@@ -371,6 +681,38 @@ test("runOpenCodeTurn waits for the OpenCode event stream before prompting", asy
   const result = await running;
 
   assert.deepEqual(result, { sessionId: "sess-1" });
+});
+
+test("resolveUsableOpenCodeBinPath ignores missing candidates", () => {
+  assert.equal(resolveUsableOpenCodeBinPath("/definitely/missing/opencode", { OPENCODE_BIN: "/also/missing" }), undefined);
+});
+
+test("createOpenCodeProcessEnv drops stale OPENCODE_BIN when no usable binary exists", () => {
+  const { env } = createOpenCodeProcessEnv(
+    { OPENCODE_BIN: "/stale/opencode", PATH: "/bin" },
+    "/missing/opencode",
+  );
+  assert.equal(env.OPENCODE_BIN, undefined);
+  assert.equal(env.PATH, "/bin");
+});
+
+test("createOpenCodeProcessEnv prefers an existing opencode binary", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-opencode-test-"));
+  const fakeBin = path.join(tempRoot, "my-opencode-wrapper");
+  fs.writeFileSync(fakeBin, "#!/bin/sh\nexit 0\n");
+  fs.chmodSync(fakeBin, 0o755);
+
+  const { env, cleanup } = createOpenCodeProcessEnv(
+    { OPENCODE_BIN: "/stale/opencode", PATH: "/bin" },
+    fakeBin,
+  );
+  try {
+    assert.equal(env.OPENCODE_BIN, fakeBin);
+    assert.match(env.PATH, /opencode-sdk-shim/);
+  } finally {
+    cleanup();
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("listOpenCodeModels passes an explicit non-default port to the OpenCode SDK factory", async () => {

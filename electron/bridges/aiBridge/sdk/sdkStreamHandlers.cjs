@@ -376,6 +376,12 @@ function registerSdkStreamHandlers(ctx) {
           });
           mcpServerBridge.updateAttachmentMetadata?.(stagedAttachments, chatSessionId);
 
+          const systemContext = buildExternalAgentSystemContext({
+            mode: effectiveMode,
+            chatSessionId,
+            defaultTargetSession,
+            userSkillsContext,
+          });
           const contextualPrompt = buildExternalAgentContextualPrompt({
             mode: effectiveMode,
             prompt: turnPrompt,
@@ -399,7 +405,8 @@ function registerSdkStreamHandlers(ctx) {
             },
           };
           const result = await driver.runTurn({
-            prompt: contextualPrompt,
+            prompt: backendKey === "opencode" ? turnPrompt : contextualPrompt,
+            systemPrompt: backendKey === "opencode" ? systemContext : undefined,
             cwd: cwd || process.cwd(),
             model: model || undefined,
             env,

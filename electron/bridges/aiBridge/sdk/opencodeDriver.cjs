@@ -9,6 +9,20 @@ const { mcpEnvPairsToObject } = require("./injectMcp.cjs");
 const OPENCODE_IMAGE_MEDIA_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 const DEFAULT_OPENCODE_PORT = 4096;
 
+function resolveUsableOpenCodeBinPath(binPath, env) {
+  const candidates = [];
+  if (binPath) candidates.push(String(binPath));
+  if (env?.OPENCODE_BIN) candidates.push(String(env.OPENCODE_BIN));
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        return candidate;
+      }
+    } catch {}
+  }
+  return undefined;
+}
+
 function isOpenCodeImageAttachment(attachment) {
   return Boolean(
     attachment &&
@@ -83,6 +97,11 @@ function extractOpenCodeErrorMessage(error) {
   );
 }
 
+function getOpenCodeResultError(result) {
+  if (!result || typeof result !== "object") return null;
+  return result.error || null;
+}
+
 function getOpenCodeEventPayload(event) {
   if (event?.payload && typeof event.payload === "object") return event.payload;
   if (event?.type && event?.properties) return event;
@@ -101,25 +120,131 @@ function getOpenCodeSessionIdFromEvent(event) {
     || null;
 }
 
+function getOpenCodePartId(part) {
+  return part?.id || part?.partID || part?.partId || null;
+}
+
+function rememberOpenCodePartType(state, part) {
+  const partId = getOpenCodePartId(part);
+  if (!partId || !part?.type) return;
+  state.partTypes = state.partTypes || new Map();
+  state.partTypes.set(partId, part.type);
+}
+
+function rememberOpenCodeMessageRole(state, info) {
+  if (!info || typeof info !== "object") return;
+  const messageId = info.id;
+  const role = info.role;
+  if (!messageId || !role) return;
+  state.messageRoles = state.messageRoles || new Map();
+  state.messageRoles.set(messageId, role);
+}
+
+function getOpenCodeMessageId(source) {
+  if (!source || typeof source !== "object") return null;
+  return source.messageID
+    || source.messageId
+    || source.part?.messageID
+    || source.part?.messageId
+    || null;
+}
+
+function shouldEmitOpenCodeAssistantPart(state, source) {
+  const messageId = getOpenCodeMessageId(source);
+  if (!messageId) return true;
+  const role = state.messageRoles?.get(messageId);
+  if (!role) return true;
+  return role === "assistant";
+}
+
+function forgetOpenCodeMessageRole(state, messageId) {
+  if (!messageId) return;
+  state.messageRoles?.delete(messageId);
+}
+
+function getOpenCodeDeltaKind(properties, state) {
+  const partId = properties?.partID || properties?.partId || null;
+  const knownType = partId && state.partTypes?.get(partId);
+  if (knownType === "reasoning" || knownType === "text") return knownType;
+  const field = String(properties?.field || "").toLowerCase();
+  if (field.includes("reason") || field.includes("thinking")) return "reasoning";
+  if (field === "text" || field === "content" || field.endsWith(".text") || field.endsWith(".content")) return "text";
+  return null;
+}
+
+function emitOpenCodePartChunk({ emitter, state, partId, kind, text, isDelta }) {
+  if (typeof text !== "string" || text.length === 0) return false;
+  let chunk = text;
+  if (partId) {
+    state.partOffsets = state.partOffsets || new Map();
+    const emittedLength = state.partOffsets.get(partId) || 0;
+    if (isDelta) {
+      state.partOffsets.set(partId, emittedLength + text.length);
+    } else {
+      chunk = text.slice(emittedLength);
+      state.partOffsets.set(partId, Math.max(emittedLength, text.length));
+    }
+  }
+  if (!chunk) return false;
+  if (kind === "reasoning") {
+    emitter.reasoning(chunk);
+    state.reasoningOpen = true;
+  } else {
+    emitter.text(chunk);
+  }
+  return true;
+}
+
 function translateOpenCodeEvent(event, emitter, state = {}) {
   const payload = getOpenCodeEventPayload(event);
-  if (!payload || typeof payload !== "object") return { idle: false, error: false };
+  if (!payload || typeof payload !== "object") return { idle: false, error: false, content: false };
+
+  if (payload.type === "message.updated") {
+    rememberOpenCodeMessageRole(state, payload.properties?.info);
+    return { idle: false, error: false, content: false };
+  }
+
+  if (payload.type === "message.removed") {
+    forgetOpenCodeMessageRole(state, payload.properties?.messageID || payload.properties?.messageId);
+    return { idle: false, error: false, content: false };
+  }
 
   if (payload.type === "message.part.updated") {
     const part = payload.properties?.part;
-    if (!part || typeof part !== "object") return { idle: false, error: false };
+    if (!part || typeof part !== "object") return { idle: false, error: false, content: false };
+    if (!shouldEmitOpenCodeAssistantPart(state, part)) {
+      return { idle: false, error: false, content: false };
+    }
+    rememberOpenCodePartType(state, part);
 
     if (part.type === "text") {
       const delta = payload.properties?.delta;
-      emitter.text(typeof delta === "string" ? delta : part.text);
-      return { idle: false, error: false };
+      if (emitOpenCodePartChunk({
+        emitter,
+        state,
+        partId: getOpenCodePartId(part),
+        kind: "text",
+        text: typeof delta === "string" ? delta : part.text,
+        isDelta: typeof delta === "string",
+      })) {
+        return { idle: false, error: false, content: true };
+      }
+      return { idle: false, error: false, content: false };
     }
 
     if (part.type === "reasoning") {
       const delta = payload.properties?.delta;
-      emitter.reasoning(typeof delta === "string" ? delta : part.text);
-      state.reasoningOpen = true;
-      return { idle: false, error: false };
+      if (emitOpenCodePartChunk({
+        emitter,
+        state,
+        partId: getOpenCodePartId(part),
+        kind: "reasoning",
+        text: typeof delta === "string" ? delta : part.text,
+        isDelta: typeof delta === "string",
+      })) {
+        return { idle: false, error: false, content: true };
+      }
+      return { idle: false, error: false, content: false };
     }
 
     if (part.type === "tool") {
@@ -149,15 +274,36 @@ function translateOpenCodeEvent(event, emitter, state = {}) {
         }
       } else if (part.state?.status === "error") {
         emitter.emitError(part.state.error || "OpenCode tool failed");
-        return { idle: false, error: true };
+        return { idle: false, error: true, content: false };
       }
     }
-    return { idle: false, error: false };
+    return { idle: false, error: false, content: part.type === "tool" };
+  }
+
+  if (payload.type === "message.part.delta") {
+    const properties = payload.properties || {};
+    if (!shouldEmitOpenCodeAssistantPart(state, properties)) {
+      return { idle: false, error: false, content: false };
+    }
+    const delta = typeof properties.delta === "string" ? properties.delta : "";
+    const kind = getOpenCodeDeltaKind(properties, state);
+    if (!delta || !kind) return { idle: false, error: false, content: false };
+    if (emitOpenCodePartChunk({
+      emitter,
+      state,
+      partId: properties.partID || properties.partId || null,
+      kind,
+      text: delta,
+      isDelta: true,
+    })) {
+      return { idle: false, error: false, content: true };
+    }
+    return { idle: false, error: false, content: false };
   }
 
   if (payload.type === "session.error") {
     emitter.emitError(extractOpenCodeErrorMessage(payload.properties?.error) || "OpenCode session failed");
-    return { idle: false, error: true };
+    return { idle: false, error: true, content: false };
   }
 
   if (payload.type === "session.idle") {
@@ -166,14 +312,14 @@ function translateOpenCodeEvent(event, emitter, state = {}) {
       state.reasoningOpen = false;
     }
     emitter.status("OpenCode session idle");
-    return { idle: true, error: false };
+    return { idle: true, error: false, content: false };
   }
 
   if (payload.type === "session.status" && payload.properties?.status?.type) {
     emitter.status(`OpenCode session ${payload.properties.status.type}`);
   }
 
-  return { idle: false, error: false };
+  return { idle: false, error: false, content: false };
 }
 
 function classifyOpenCodeSpawnError(error) {
@@ -194,7 +340,9 @@ function createOpenCodeShim(binPath, options = {}) {
   const platform = options.platform || process.platform;
   const tempDirBridge = options.tempDirBridge || require("../../tempDirBridge.cjs");
   const getTempFilePath = options.getTempFilePath || tempDirBridge.getTempFilePath;
-  const shimRoot = getTempFilePath("opencode-sdk-shim");
+  const shimParent = getTempFilePath("opencode-sdk-shim");
+  const uniqueId = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const shimRoot = path.join(shimParent, uniqueId);
   fs.mkdirSync(shimRoot, { recursive: true });
   const shimName = platform === "win32" ? "opencode.cmd" : "opencode";
   const shimPath = path.join(shimRoot, shimName);
@@ -209,6 +357,7 @@ function createOpenCodeShim(binPath, options = {}) {
     path: shimPath,
     cleanup() {
       try { fs.rmSync(shimRoot, { recursive: true, force: true }); } catch {}
+      try { fs.rmdirSync(shimParent); } catch {}
     },
   };
 }
@@ -216,13 +365,21 @@ function createOpenCodeShim(binPath, options = {}) {
 function createOpenCodeProcessEnv(env, binPath, options = {}) {
   const next = { ...(env || {}) };
   let shim = null;
-  if (binPath) {
-    shim = createOpenCodeShim(binPath, options);
-    next.OPENCODE_BIN = binPath;
-    next.PATH = [shim?.dir || path.dirname(binPath), next.PATH || process.env.PATH || ""]
+  const explicitBinPath = binPath ? resolveUsableOpenCodeBinPath(binPath, null) : undefined;
+  const envBinPath = explicitBinPath ? undefined : resolveUsableOpenCodeBinPath(null, next);
+
+  if (explicitBinPath) {
+    shim = createOpenCodeShim(explicitBinPath, options);
+    next.OPENCODE_BIN = explicitBinPath;
+    next.PATH = [shim?.dir || path.dirname(explicitBinPath), next.PATH || process.env.PATH || ""]
       .filter(Boolean)
       .join(path.delimiter);
+  } else if (envBinPath) {
+    next.OPENCODE_BIN = envBinPath;
+  } else if (binPath || next.OPENCODE_BIN) {
+    delete next.OPENCODE_BIN;
   }
+
   return {
     env: next,
     cleanup() {
@@ -234,19 +391,24 @@ function createOpenCodeProcessEnv(env, binPath, options = {}) {
 function withOpenCodeProcessEnv(env, binPath, fn) {
   const previous = {};
   const { env: next, cleanup } = createOpenCodeProcessEnv(env, binPath);
+  const restore = () => {
+    for (const key of Object.keys(next)) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
+    cleanup();
+  };
   for (const [key, value] of Object.entries(next)) {
     previous[key] = process.env[key];
     process.env[key] = String(value);
   }
-  return Promise.resolve()
-    .then(fn)
-    .finally(() => {
-      for (const key of Object.keys(next)) {
-        if (previous[key] === undefined) delete process.env[key];
-        else process.env[key] = previous[key];
-      }
-      cleanup();
-    });
+  try {
+    return fn();
+  } catch (error) {
+    throw error;
+  } finally {
+    restore();
+  }
 }
 
 function getAvailablePort(host = "127.0.0.1") {
@@ -275,7 +437,40 @@ async function createDefaultOpenCode(options, env, binPath) {
   try { sdk = await import("@opencode-ai/sdk"); } catch {
     throw new Error("OpenCode SDK not installed. Run: npm install @opencode-ai/sdk");
   }
-  return withOpenCodeProcessEnv(env, binPath, () => sdk.createOpencode(options));
+
+  const { env: nextEnv, cleanup: cleanupShim } = createOpenCodeProcessEnv(env, binPath);
+  const previous = {};
+  for (const [key, value] of Object.entries(nextEnv)) {
+    previous[key] = process.env[key];
+    process.env[key] = String(value);
+  }
+
+  const restoreEnv = () => {
+    if (restoreEnv.done) return;
+    restoreEnv.done = true;
+    for (const key of Object.keys(nextEnv)) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
+    cleanupShim();
+  };
+
+  try {
+    const opencode = await sdk.createOpencode(options);
+    const originalClose = opencode.server?.close?.bind(opencode.server);
+    if (typeof originalClose === "function") {
+      opencode.server.close = () => {
+        try { originalClose(); } catch {}
+        restoreEnv();
+      };
+    } else {
+      restoreEnv();
+    }
+    return opencode;
+  } catch (error) {
+    restoreEnv();
+    throw error;
+  }
 }
 
 function createAbortWait(signal) {
@@ -293,8 +488,23 @@ function createAbortWait(signal) {
   };
 }
 
+function createStopWait() {
+  let stopped = false;
+  let resolveStop;
+  const promise = new Promise((resolve) => { resolveStop = resolve; });
+  return {
+    promise,
+    get stopped() { return stopped; },
+    stop() {
+      if (stopped) return;
+      stopped = true;
+      resolveStop();
+    },
+  };
+}
+
 async function runOpenCodeTurn({
-  prompt, attachments, cwd, model, injectedMcpServers, toolIntegrationMode,
+  prompt, systemPrompt, attachments, cwd, model, injectedMcpServers, toolIntegrationMode,
   resumeSessionId, env, binPath, emitter, abortController, openCodeFactory,
 }) {
   const config = buildOpenCodeConfig({ model, injectedMcpServers, toolIntegrationMode });
@@ -336,6 +546,7 @@ async function runOpenCodeTurn({
     if (!sessionId) throw new Error("OpenCode did not create a session");
     emitter.sessionId(sessionId);
 
+    const stopEventLoopWait = createStopWait();
     const eventLoop = (async () => {
       const iterator = events.stream?.[Symbol.asyncIterator]?.();
       if (!iterator) return;
@@ -349,25 +560,27 @@ async function runOpenCodeTurn({
               (error) => ({ type: "error", error }),
             ),
             abortWait.promise.then(() => ({ type: "abort" })),
+            stopEventLoopWait.promise.then(() => ({ type: "stop" })),
           ]);
           if (raced.type === "abort") break;
+          if (raced.type === "stop") break;
           if (raced.type === "error") throw raced.error;
           const { value: event, done } = raced.value;
           if (done) break;
           if (abortController?.signal?.aborted) break;
-        const eventSessionId = getOpenCodeSessionIdFromEvent(event);
-        if (eventSessionId && eventSessionId !== sessionId) continue;
-        const result = translateOpenCodeEvent(event, emitter, state);
-        if (getOpenCodeEventPayload(event)?.type === "message.part.updated") hasContent = true;
-        if (result.error) {
-          failed = true;
-          break;
+          const eventSessionId = getOpenCodeSessionIdFromEvent(event);
+          if (eventSessionId && eventSessionId !== sessionId) continue;
+          const result = translateOpenCodeEvent(event, emitter, state);
+          if (result.content) hasContent = true;
+          if (result.error) {
+            failed = true;
+            break;
+          }
+          if (result.idle) break;
         }
-        if (result.idle) break;
-      }
       } finally {
         abortWait.dispose();
-        if (abortController?.signal?.aborted) {
+        if (abortController?.signal?.aborted || stopEventLoopWait.stopped) {
           try { void iterator.return?.(); } catch {}
         }
       }
@@ -376,24 +589,35 @@ async function runOpenCodeTurn({
     const body = {
       parts: buildOpenCodePromptParts(prompt, attachments),
     };
+    if (systemPrompt) body.system = String(systemPrompt);
     const parsedModel = parseOpenCodeModel(model);
     if (parsedModel) body.model = parsedModel;
 
     const promptAbortWait = createAbortWait(abortController?.signal);
     const promptResult = await Promise.race([
       client.session.promptAsync({
-      path: { id: sessionId },
-      query: directoryQuery,
-      body,
-      signal: abortController?.signal,
+        path: { id: sessionId },
+        query: directoryQuery,
+        body,
+        signal: abortController?.signal,
+        throwOnError: true,
       }).then(
-        () => ({ type: "prompt" }),
+        (result) => {
+          const error = getOpenCodeResultError(result);
+          return error ? { type: "error", error } : { type: "prompt" };
+        },
         (error) => ({ type: "error", error }),
       ),
       promptAbortWait.promise.then(() => ({ type: "abort" })),
     ]);
     promptAbortWait.dispose();
-    if (promptResult.type === "error") throw promptResult.error;
+    if (promptResult.type === "error") {
+      failed = true;
+      await abortOpenCode();
+      stopEventLoopWait.stop();
+      await eventLoop.catch(() => {});
+      throw promptResult.error;
+    }
 
     if (promptResult.type === "abort") {
       await abortOpenCode();
@@ -416,7 +640,7 @@ async function runOpenCodeTurn({
     if (classified.isSpawnEnoent) {
       emitter.emitError("OpenCode CLI not found or not runnable. Install OpenCode and ensure `opencode` is on PATH, or set a custom path in Settings.");
     } else {
-      emitter.emitError(classified.message || "OpenCode turn failed");
+      emitter.emitError(extractOpenCodeErrorMessage(error) || classified.message || "OpenCode turn failed");
     }
     return { sessionId };
   } finally {
@@ -471,6 +695,9 @@ async function listOpenCodeModels({ env, binPath, openCodeFactory } = {}) {
     const factory = openCodeFactory || ((options) => createDefaultOpenCode(options, env, binPath));
     opencode = await factory(await withOpenCodeServerPort({ config: { autoupdate: false }, timeout: 10000 }));
     const response = await opencode.client.config.providers();
+    if (response?.error) {
+      throw new Error(extractOpenCodeErrorMessage(response.error) || "OpenCode providers unavailable");
+    }
     const data = response?.data || response;
     return {
       currentModelId: getOpenCodeDefaultModelId(data),
@@ -488,9 +715,11 @@ module.exports = {
   buildOpenCodePromptParts,
   classifyOpenCodeSpawnError,
   createOpenCodeProcessEnv,
+  withOpenCodeProcessEnv,
   listOpenCodeModels,
   mapOpenCodeModels,
   parseOpenCodeModel,
+  resolveUsableOpenCodeBinPath,
   runOpenCodeTurn,
   toOpenCodeMcpConfig,
   translateOpenCodeEvent,

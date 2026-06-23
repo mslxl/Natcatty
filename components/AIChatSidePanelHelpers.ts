@@ -47,6 +47,15 @@ export function shouldAdoptSdkCurrentModel(
     || !modelPresetsContainId(runtimePresets, storedModelId);
 }
 
+export function normalizeSdkRuntimeModelPresets(
+  models: AgentModelPreset[],
+  currentModelId: string | null | undefined,
+): AgentModelPreset[] {
+  if (models.length > 0) return models;
+  if (!currentModelId) return [];
+  return [{ id: currentModelId, name: currentModelId }];
+}
+
 export function shouldUseStoredAgentModel(
   storedModelId: string | null | undefined,
   presets: AgentModelPreset[],

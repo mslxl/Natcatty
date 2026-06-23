@@ -130,6 +130,7 @@ const DRIVER_REGISTRY = {
     async runTurn(ctx) {
       return opencode.runOpenCodeTurn({
         prompt: ctx.prompt,
+        systemPrompt: ctx.systemPrompt,
         attachments: ctx.attachments,
         cwd: ctx.cwd,
         model: ctx.model,

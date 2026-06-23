@@ -53,6 +53,7 @@ import { useConversationExport } from './ai/hooks/useConversationExport';
 import type { AIChatSidePanelProps } from './AIChatSidePanel.types';
 import {
   generateId,
+  normalizeSdkRuntimeModelPresets,
   shouldAdoptSdkCurrentModel,
   shouldLoadSdkRuntimeModels,
   shouldUseStoredAgentModel,
@@ -669,9 +670,9 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       getManualAgentCommand(currentAgentConfig),
     ).then((result) => {
       if (cancelled || !result?.ok || !Array.isArray(result.models)) return;
-      const runtimePresets = result.models ?? [];
+      const runtimePresets = normalizeSdkRuntimeModelPresets(result.models, result.currentModelId);
       const storedModelId = agentModelMapRef.current[currentAgentId];
-      if (result.models.length === 0) {
+      if (runtimePresets.length === 0) {
         setRuntimeAgentModelPresets((prev) => {
           if (!(currentAgentId in prev)) return prev;
           const { [currentAgentId]: _removed, ...rest } = prev;
