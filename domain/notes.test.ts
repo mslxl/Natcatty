@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildVaultNoteFromMarkdownImport,
+  deriveNoteImportTitle,
+  importMarkdownFilesToVaultNotes,
+  importMarkdownPayloadsToVaultNotes,
   matchesVaultNoteSearch,
   normalizeNoteGroups,
   normalizeVaultNotes,
@@ -130,4 +134,95 @@ test("resolveRenderedMarkdownLinkHref avoids guessing duplicate labels", () => {
     ),
     "about:blank",
   );
+});
+
+test("deriveNoteImportTitle prefers the first markdown heading", () => {
+  assert.equal(
+    deriveNoteImportTitle("runbook.md", "# Failover\n\nPromote replica"),
+    "Failover",
+  );
+  assert.equal(
+    deriveNoteImportTitle("deploy-notes.markdown", "No heading here"),
+    "deploy-notes",
+  );
+  assert.equal(
+    deriveNoteImportTitle("README.txt", ""),
+    "README",
+  );
+  assert.equal(
+    deriveNoteImportTitle("script.md", "```sh\n# not a title\n```\n\n# Real Title"),
+    "Real Title",
+  );
+  assert.equal(
+    deriveNoteImportTitle("unclosed.md", "```sh\n# not a title\n\n# Also inside fence"),
+    "unclosed",
+  );
+  assert.equal(
+    deriveNoteImportTitle("preface.md", "# Real Title\n\n```sh\n# not a title"),
+    "Real Title",
+  );
+});
+
+test("buildVaultNoteFromMarkdownImport creates a note in the target group", () => {
+  const note = buildVaultNoteFromMarkdownImport({
+    fileName: "runbook.md",
+    content: "# Runbook\n\nRestart sshd",
+    group: "Ops",
+    order: 1000,
+  });
+
+  assert.equal(note.title, "Runbook");
+  assert.equal(note.content, "# Runbook\n\nRestart sshd");
+  assert.equal(note.group, "Ops");
+  assert.equal(note.order, 1000);
+});
+
+test("importMarkdownPayloadsToVaultNotes appends notes from pre-read payloads", () => {
+  const existing = [sanitizeVaultNote({
+    id: "existing",
+    title: "Existing",
+    content: "body",
+    createdAt: 1,
+    updatedAt: 1,
+    order: 1000,
+  })];
+
+  const result = importMarkdownPayloadsToVaultNotes(
+    [{ fileName: "imported.md", content: "# Imported\n\nBody" }],
+    existing,
+    "Ops",
+  );
+
+  assert.equal(result.importedCount, 1);
+  assert.equal(result.notes.length, 2);
+  assert.equal(result.notes[1].title, "Imported");
+  assert.equal(result.notes[1].group, "Ops");
+});
+
+test("importMarkdownFilesToVaultNotes appends notes and skips unsupported files", async () => {
+  const existing = [sanitizeVaultNote({
+    id: "existing",
+    title: "Existing",
+    content: "body",
+    createdAt: 1,
+    updatedAt: 1,
+    order: 1000,
+  })];
+  const files = [
+    new File(["# Imported\n\nBody"], "imported.md", { type: "text/markdown" }),
+    new File(["ignored"], "notes.json", { type: "application/json" }),
+  ];
+
+  const result = await importMarkdownFilesToVaultNotes(
+    files,
+    existing,
+    "Ops",
+    async (file) => file.text(),
+  );
+
+  assert.equal(result.importedCount, 1);
+  assert.equal(result.skippedCount, 1);
+  assert.equal(result.notes.length, 2);
+  assert.equal(result.notes[1].title, "Imported");
+  assert.equal(result.notes[1].group, "Ops");
 });

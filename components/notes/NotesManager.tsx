@@ -11,6 +11,7 @@ import {
   PencilLine,
   Plus,
   Search,
+  Upload,
   X,
 } from "lucide-react";
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -25,6 +26,7 @@ import {
   isNoteGroupInside,
   joinNoteGroupPath,
   matchesVaultNoteSearch,
+  importMarkdownPayloadsToVaultNotes,
   normalizeNoteGroups,
   normalizeVaultNotes,
   remapExpandedNoteGroupPaths,
@@ -36,7 +38,9 @@ import {
   STORAGE_KEY_VAULT_NOTES_EDITOR_MODE,
   STORAGE_KEY_VAULT_NOTES_TREE_WIDTH,
 } from "../../infrastructure/config/storageKeys";
+import { logger } from "../../lib/logger";
 import { cn } from "../../lib/utils";
+import { readTextFile } from "../../lib/readTextFile";
 import type { Host, VaultNote } from "../../types";
 import { Button } from "../ui/button";
 import { LazyLoadBoundary } from "../ui/lazy-load-boundary";
@@ -50,6 +54,7 @@ import { Dropdown, DropdownContent, DropdownTrigger } from "../ui/dropdown";
 import { Input } from "../ui/input";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { toast } from "../ui/toast";
 import {
   VaultTreeGroupRow,
   VaultTreeInlineRenameInput,
@@ -353,6 +358,10 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     { min: NOTES_TREE_MIN_WIDTH, max: NOTES_TREE_MAX_WIDTH },
   );
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const importFileInputRef = useRef<HTMLInputElement>(null);
+  const isImportingMarkdownRef = useRef(false);
+  const importTargetGroupRef = useRef<string | null | undefined>(undefined);
+  const sortedNotesRef = useRef<VaultNote[]>([]);
 
   const groups = useMemo(() => normalizeNoteGroups(noteGroups), [noteGroups]);
   const groupOrderByPath = useMemo(
@@ -360,6 +369,15 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     [groups],
   );
   const sortedNotes = useMemo(() => sortNoteItems(normalizeVaultNotes(notes)), [notes]);
+  sortedNotesRef.current = sortedNotes;
+
+  const commitNotes = useCallback((nextNotes: VaultNote[]) => {
+    const cleaned = normalizeVaultNotes(nextNotes);
+    sortedNotesRef.current = cleaned;
+    onUpdateNotes(cleaned);
+    return cleaned;
+  }, [onUpdateNotes]);
+
   const noteTree = useMemo(() => {
     const tree = buildNoteTree(groups, sortedNotes);
     return {
@@ -447,10 +465,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   const collapseAllGroups = () => setExpandedGroups(new Set());
 
   const saveNote = (nextNote: VaultNote) => {
-    const cleaned = normalizeVaultNotes(
-      sortedNotes.map((note) => (note.id === nextNote.id ? nextNote : note)),
-    );
-    onUpdateNotes(cleaned);
+    commitNotes(sortedNotes.map((note) => (note.id === nextNote.id ? nextNote : note)));
   };
 
   const handleOpenHostFromNote = useCallback((host: Host, noteId: string) => {
@@ -485,7 +500,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
 
   const addNoteToGroup = (group: string | null) => {
     const note = createNote(group, getNextVaultOrder(sortedNotes));
-    onUpdateNotes(normalizeVaultNotes([...sortedNotes, note]));
+    commitNotes([...sortedNotes, note]);
     if (group) expandPath(group);
     const nextSelection = getNoteSelectionState(note, isSidebarMode);
     setSelectedNoteId(nextSelection.selectedNoteId);
@@ -496,6 +511,90 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   const addNote = () => {
     addNoteToGroup(getNoteActionTargetGroup(selectedNote, selectedGroup));
   };
+
+  const openImportMarkdownPicker = useCallback((targetGroupOverride?: string | null) => {
+    importTargetGroupRef.current = targetGroupOverride;
+    importFileInputRef.current?.click();
+  }, []);
+
+  const handleImportMarkdownFiles = useCallback(async (fileList: FileList | null) => {
+    const resetImportInput = () => {
+      if (importFileInputRef.current) {
+        importFileInputRef.current.value = "";
+      }
+    };
+
+    if (!fileList || fileList.length === 0) {
+      resetImportInput();
+      return;
+    }
+    if (isImportingMarkdownRef.current) {
+      toast.info(t("notes.import.toast.inProgress"));
+      resetImportInput();
+      return;
+    }
+
+    const files = Array.from(fileList);
+    const markdownFiles = files.filter((file) => /\.(md|markdown|txt)$/i.test(file.name));
+    const skippedCount = files.length - markdownFiles.length;
+    const pendingTargetGroup = importTargetGroupRef.current;
+    importTargetGroupRef.current = undefined;
+    const targetGroup = pendingTargetGroup !== undefined
+      ? pendingTargetGroup
+      : getNoteActionTargetGroup(selectedNote, selectedGroup);
+    isImportingMarkdownRef.current = true;
+
+    try {
+      if (markdownFiles.length === 0) {
+        toast.error(t("notes.import.toast.noNotes"));
+        return;
+      }
+
+      const payloads = await Promise.all(
+        markdownFiles.map(async (file) => ({
+          fileName: file.name,
+          content: await readTextFile(file),
+        })),
+      );
+
+      const result = importMarkdownPayloadsToVaultNotes(
+        payloads,
+        sortedNotesRef.current,
+        targetGroup,
+      );
+
+      if (result.importedCount === 0) {
+        toast.error(t("notes.import.toast.noNotes"));
+        return;
+      }
+
+      const mergedNotes = commitNotes(result.notes);
+      if (targetGroup) expandPath(targetGroup);
+
+      const lastImported = mergedNotes[mergedNotes.length - 1];
+      const nextSelection = getNoteSelectionState(lastImported, isSidebarMode);
+      setSelectedNoteId(nextSelection.selectedNoteId);
+      setSelectedGroup(nextSelection.selectedGroup);
+      setOverlayNoteId(nextSelection.overlayNoteId);
+
+      toast.success(t("notes.import.toast.success", { count: result.importedCount }));
+      if (skippedCount > 0) {
+        toast.info(t("notes.import.toast.skipped", { count: skippedCount }));
+      }
+    } catch (err) {
+      logger.error("Failed to import markdown files:", err);
+      toast.error(t("notes.import.toast.failed"));
+    } finally {
+      isImportingMarkdownRef.current = false;
+      resetImportInput();
+    }
+  }, [
+    isSidebarMode,
+    commitNotes,
+    selectedGroup,
+    selectedNote,
+    t,
+  ]);
 
   const duplicateNoteById = (noteId: string) => {
     const source = sortedNotes.find((note) => note.id === noteId);
@@ -509,7 +608,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       updatedAt: now,
       order: getNextVaultOrder(sortedNotes),
     };
-    onUpdateNotes(normalizeVaultNotes([...sortedNotes, copy]));
+    commitNotes([...sortedNotes, copy]);
     if (copy.group) expandPath(copy.group);
     const nextSelection = getNoteSelectionState(copy, isSidebarMode);
     setSelectedNoteId(nextSelection.selectedNoteId);
@@ -519,7 +618,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
 
   const deleteNoteById = (noteId: string) => {
     const next = sortedNotes.filter((note) => note.id !== noteId);
-    onUpdateNotes(next);
+    commitNotes(next);
     if (selectedNoteId === noteId) {
       const nextSelection = getFallbackNoteSelectionState(next, isSidebarMode);
       setSelectedNoteId(nextSelection.selectedNoteId);
@@ -563,7 +662,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       group: replaceNoteGroupPrefix(note.group, group, nextPath),
     }));
     onUpdateNoteGroups(nextGroups);
-    onUpdateNotes(normalizeVaultNotes(nextNotes));
+    commitNotes(nextNotes);
     setExpandedGroups((current) => {
       const next = new Set<string>();
       current.forEach((item) => {
@@ -580,7 +679,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
 
   const deleteGroup = (group: string) => {
     onUpdateNoteGroups(groups.filter((item) => !isNoteGroupInside(item, group)));
-    onUpdateNotes(sortedNotes.map((note) => isNoteGroupInside(note.group, group) ? { ...note, group: undefined } : note));
+    commitNotes(sortedNotes.map((note) => isNoteGroupInside(note.group, group) ? { ...note, group: undefined } : note));
     if (selectedGroup && isNoteGroupInside(selectedGroup, group)) setSelectedGroup(null);
     setEditingGroupPath(null);
   };
@@ -617,9 +716,9 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     const nextGroup = group || undefined;
     if ((source.group || undefined) === nextGroup) return;
 
-    onUpdateNotes(normalizeVaultNotes(sortedNotes.map((note) => (
+    commitNotes(sortedNotes.map((note) => (
       note.id === noteId ? { ...note, group: nextGroup, updatedAt: Date.now() } : note
-    ))));
+    )));
     if (group) expandPath(group);
   };
 
@@ -631,7 +730,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
         ? { ...note, group: targetNote.group, updatedAt: Date.now() }
         : note
     ));
-    onUpdateNotes(normalizeVaultNotes(reorderVaultItems(movedNotes, sourceId, targetNote.id, position)));
+    commitNotes(reorderVaultItems(movedNotes, sourceId, targetNote.id, position));
     if (targetNote.group) expandPath(targetNote.group);
   };
 
@@ -648,7 +747,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       group: replaceNoteGroupPrefix(note.group, group, nextPath),
     }));
     onUpdateNoteGroups(nextGroups);
-    onUpdateNotes(normalizeVaultNotes(nextNotes));
+    commitNotes(nextNotes);
     setExpandedGroups((current) => remapExpandedNoteGroupPaths(current, group, nextPath));
     if (selectedGroup && isNoteGroupInside(selectedGroup, group)) {
       setSelectedGroup(replaceNoteGroupPrefix(selectedGroup, group, nextPath) ?? null);
@@ -693,7 +792,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
 
     onUpdateNoteGroups(nextGroups);
     if (nextSourceGroup !== sourceGroup) {
-      onUpdateNotes(normalizeVaultNotes(nextNotes));
+      commitNotes(nextNotes);
       setExpandedGroups((current) => remapExpandedNoteGroupPaths(current, sourceGroup, nextSourceGroup));
       if (selectedGroup && isNoteGroupInside(selectedGroup, sourceGroup)) {
         setSelectedGroup(replaceNoteGroupPrefix(selectedGroup, sourceGroup, nextSourceGroup) ?? null);
@@ -769,6 +868,10 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
           setCreatingGroupParent(groupPath);
           expandPath(groupPath);
         },
+      },
+      {
+        label: t("notes.action.importMarkdown"),
+        action: () => openImportMarkdownPicker(groupPath),
       },
       {
         label: t("common.rename"),
@@ -1061,6 +1164,16 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
+      <input
+        ref={importFileInputRef}
+        type="file"
+        accept=".md,.markdown,.txt"
+        multiple
+        className="hidden"
+        onChange={(event) => {
+          void handleImportMarkdownFiles(event.target.files);
+        }}
+      />
       <div className="flex min-h-0 flex-1">
         {shouldShowNotesTree && (
           <aside
@@ -1112,6 +1225,20 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom">{t("notes.action.newGroup")}</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className={toolbarIconButtonClass}
+                    onClick={() => openImportMarkdownPicker()}
+                  >
+                    <Upload size={14} className="text-muted-foreground" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t("notes.action.importMarkdown")}</TooltipContent>
               </Tooltip>
 
               <Tooltip>
@@ -1276,10 +1403,16 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                 </div>
                 <h3 className="mb-2 text-lg font-semibold text-foreground">{t("notes.empty.title")}</h3>
                 <p className="mb-4 text-sm">{t("notes.empty.desc")}</p>
-                <Button onClick={addNote}>
-                  <Plus size={14} className="mr-2" />
-                  {t("notes.action.newNote")}
-                </Button>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <Button onClick={addNote}>
+                    <Plus size={14} className="mr-2" />
+                    {t("notes.action.newNote")}
+                  </Button>
+                  <Button variant="outline" onClick={() => openImportMarkdownPicker()}>
+                    <Upload size={14} className="mr-2" />
+                    {t("notes.action.importMarkdown")}
+                  </Button>
+                </div>
               </div>
             </div>
           )}
