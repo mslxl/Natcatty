@@ -49,13 +49,9 @@ import { focusTerminalSessionInput } from './terminal/focusTerminalSession';
 import { TerminalComposeBar } from './terminal/TerminalComposeBar';
 import {
   AUTO_RUN_SNIPPET_LINE_DELAY_MS,
-  createProtectedSnippetLogRewriteForPreparedCommand,
-  prepareAutoRunSnippetCommand,
-  prepareProtectedBroadcastSnippetWrite,
   shouldDelayAutoRunSnippetInput,
   type TerminalBroadcastInputOptions,
 } from './terminal/terminalHelpers';
-import type { ProgrammaticCommandLogRewrite } from './terminal/programmaticCommandLog';
 import { Button } from './ui/button';
 import { setupMcpApprovalBridge } from '../infrastructure/ai/shared/approvalGate';
 import { resolveScriptsSidePanelShortcutIntent } from '../application/state/resolveSnippetsShortcutIntent';
@@ -690,31 +686,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       if (session.workspaceId !== workspaceId || session.id === sourceSessionId) continue;
       if (!canUseDirectSessionWriteFallback(session)) continue;
 
-      let targetData = data;
-      let logRewrite: ProgrammaticCommandLogRewrite | null = null;
-      if (options?.protectTerminalMode && options.rawCommand !== undefined) {
-        const host = sessionHostsMapRef.current.get(session.id);
-        if (host) {
-          const prepared = prepareProtectedBroadcastSnippetWrite({
-            rawCommand: options.rawCommand,
-            fallbackData: options.fallbackData ?? data,
-            host,
-            noAutoRun: options.noAutoRun,
-            shellType: session.shellType,
-          });
-          targetData = prepared.data;
-          logRewrite = prepared.logRewrite;
-        }
-      }
-
-      if (logRewrite) {
-        programmaticCommandLogRewriteHandlersRef.current.get(session.id)?.(logRewrite);
-      }
       const lineDelayMs = options?.lineDelayMs;
-      terminalBackend.writeToSession(session.id, targetData, {
+      terminalBackend.writeToSession(session.id, data, {
         automated: true,
         ...(lineDelayMs ? { lineDelayMs } : {}),
-        ...(logRewrite ? { logRewrite } : {}),
       });
     }
   }, [terminalBackend]);
@@ -1191,38 +1166,27 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const handleSnippetClickForFocusedSession = useCallback((
     command: string,
     noAutoRun?: boolean,
-    options?: { protectTerminalMode?: boolean },
+    
   ) => {
     const sessionId = activeWorkspaceRef.current?.focusedSessionId ?? activeSessionRef.current?.id;
     if (!sessionId) return;
     const executor = snippetExecutorsRef.current.get(sessionId);
     if (executor) {
-      executor(command, noAutoRun, { protectTerminalMode: options?.protectTerminalMode });
+      executor(command, noAutoRun);
       return;
     }
 
     const session = sessionsRef.current.find((candidate) => candidate.id === sessionId);
     if (!session || !canUseDirectSessionWriteFallback(session)) return;
 
-    const host = sessionHostsMapRef.current.get(sessionId);
-    const commandToSend = options?.protectTerminalMode && host
-      ? prepareAutoRunSnippetCommand(command, { host, noAutoRun, shellType: session.shellType })
-      : command;
-    const logRewrite = options?.protectTerminalMode && host
-      ? createProtectedSnippetLogRewriteForPreparedCommand(command, commandToSend)
-      : null;
-    let data = normalizeLineEndings(commandToSend);
+    let data = normalizeLineEndings(command);
     if (!noAutoRun) data = `${data}\r`;
     const lineDelayMs = shouldDelayAutoRunSnippetInput(data, { noAutoRun })
       ? AUTO_RUN_SNIPPET_LINE_DELAY_MS
       : undefined;
-    if (logRewrite) {
-      programmaticCommandLogRewriteHandlersRef.current.get(sessionId)?.(logRewrite);
-    }
     terminalBackend.writeToSession(sessionId, data, {
       automated: true,
       ...(lineDelayMs ? { lineDelayMs } : {}),
-      ...(logRewrite ? { logRewrite } : {}),
     });
     // Re-focus the terminal so the user can interact immediately
     const pane = document.querySelector(`[data-session-id="${sessionId}"]`);
@@ -1243,7 +1207,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const handleSnippetFromPanel = useCallback(async (snippet: Snippet) => {
     const command = await resolveSnippetCommand(snippet);
     if (command === null) return;
-    handleSnippetClickForFocusedSession(command, snippet.noAutoRun, { protectTerminalMode: true });
+    handleSnippetClickForFocusedSession(command, snippet.noAutoRun);
   }, [handleSnippetClickForFocusedSession]);
 
   const handleComposeSend = useCallback((text: string) => {

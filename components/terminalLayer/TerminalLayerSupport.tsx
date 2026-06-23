@@ -18,7 +18,6 @@ import type { GroupConfig, Host, Identity, KnownHost, ProxyProfile, SSHKey, Snip
 import type { ExecutorContext } from '../../infrastructure/ai/cattyAgent/executor';
 import Terminal from '../Terminal';
 import { removePaneVisible, setPaneVisible } from '../terminal/paneVisibilityStore';
-import type { ProgrammaticCommandLogRewrite } from '../terminal/programmaticCommandLog';
 import type { TerminalBroadcastInputOptions } from '../terminal/terminalHelpers';
 import {
   getTerminalPaneRenderSnapshot,
@@ -67,7 +66,7 @@ export type PendingSftpUpload = {
 export type SnippetExecutor = (
   command: string,
   noAutoRun?: boolean,
-  options?: { broadcast?: boolean; protectTerminalMode?: boolean },
+  options?: { broadcast?: boolean },
 ) => void;
 
 export type PendingTerminalSelectionForAI = {
@@ -1220,7 +1219,6 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         restoreTerminalCwd={restoreTerminalCwd && sessionHostResolved}
         startupCommand={session.startupCommand}
         noAutoRun={session.noAutoRun}
-        protectStartupCommandTerminalMode={session.protectStartupCommandTerminalMode}
         reuseConnectionFromSessionId={session.reuseConnectionFromSessionId}
         serialConfig={session.serialConfig}
         hotkeyScheme={hotkeyScheme}

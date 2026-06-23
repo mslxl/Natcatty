@@ -93,9 +93,7 @@ import {
 import {
   AUTO_RUN_SNIPPET_LINE_DELAY_MS,
   forceSyncRenderAfterResize,
-  createProtectedSnippetLogRewriteForPreparedCommand,
   MAX_CONNECTION_LOG_DATA_CHARS,
-  prepareAutoRunSnippetCommand,
   shouldDelayAutoRunSnippetInput,
   shouldHideConnectingDialogForConnectionReuse,
   shouldShowTerminalConnectionDialog,
@@ -134,7 +132,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   restoreTerminalCwd = false,
   startupCommand,
   noAutoRun,
-  protectStartupCommandTerminalMode,
   reuseConnectionFromSessionId,
   serialConfig,
   hotkeyScheme = "disabled",
@@ -785,7 +782,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     reuseConnectionFromSessionId,
     startupCommand,
     noAutoRun,
-    protectStartupCommandTerminalMode,
     shellType,
     suppressHostStartupCommandRef,
     terminalSettings,
@@ -970,26 +966,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const executeSnippetCommand = useCallback((
     command: string,
     noAutoRun?: boolean,
-    options?: { broadcast?: boolean; protectTerminalMode?: boolean },
+    options?: { broadcast?: boolean },
   ) => {
     const term = termRef.current;
     const id = sessionRef.current;
     if (!term || !id) return;
 
-    let fallbackBroadcastData = normalizeLineEndings(command);
-    const fallbackBroadcastIsMultiLine = fallbackBroadcastData.includes('\n');
-    if (fallbackBroadcastIsMultiLine && term.modes.bracketedPasteMode && !disableBracketedPasteRef.current) {
-      fallbackBroadcastData = wrapBracketedPaste(fallbackBroadcastData);
-    }
-    if (!noAutoRun) fallbackBroadcastData = `${fallbackBroadcastData}\r`;
-
-    const commandToSend = options?.protectTerminalMode
-      ? prepareAutoRunSnippetCommand(command, { host, noAutoRun, shellType })
-      : command;
-    const logRewrite = options?.protectTerminalMode
-      ? createProtectedSnippetLogRewriteForPreparedCommand(command, commandToSend)
-      : null;
-    let data = normalizeLineEndings(commandToSend);
+    let data = normalizeLineEndings(command);
     const lineDelayMs = shouldDelayAutoRunSnippetInput(data, { noAutoRun })
       ? AUTO_RUN_SNIPPET_LINE_DELAY_MS
       : undefined;
@@ -1011,35 +994,24 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     // through the broadcast-aware path) but never send the command.
     if (options?.broadcast !== false && isBroadcastEnabledRef.current && onBroadcastInputRef.current) {
       onBroadcastInputRef.current(data, sessionId, {
-        ...(options?.protectTerminalMode
-          ? {
-              protectTerminalMode: true,
-              rawCommand: command,
-              fallbackData: fallbackBroadcastData,
-            }
-          : {}),
         noAutoRun,
         ...(lineDelayMs ? { lineDelayMs } : {}),
       });
     }
 
     data = prepareProgrammaticSudoInput(data);
-    if (logRewrite) {
-      commandLogRewriterRef.current.queueRewrite(logRewrite);
-    }
     terminalBackend.writeToSession(id, data, {
       automated: true,
       ...(lineDelayMs ? { lineDelayMs } : {}),
-      ...(logRewrite ? { logRewrite } : {}),
     });
     scrollToBottomAfterProgrammaticInput(data);
     term.focus();
-  }, [host, prepareProgrammaticSudoInput, scrollToBottomAfterProgrammaticInput, shellType, terminalBackend, sessionId]);
+  }, [prepareProgrammaticSudoInput, scrollToBottomAfterProgrammaticInput, terminalBackend, sessionId]);
 
   const executeSnippet = useCallback(async (snippet: Snippet) => {
     const command = await resolveSnippetCommand(snippet);
     if (command === null) return;
-    executeSnippetCommand(command, snippet.noAutoRun, { protectTerminalMode: true });
+    executeSnippetCommand(command, snippet.noAutoRun);
   }, [executeSnippetCommand]);
 
   const onSnippetShortkeyRef = useRef(executeSnippet);

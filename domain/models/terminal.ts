@@ -371,7 +371,6 @@ export interface TerminalSession {
   workspaceId?: string;
   startupCommand?: string; // Command to run after connection (for snippet runner)
   noAutoRun?: boolean;     // If true, paste command without auto-executing
-  protectStartupCommandTerminalMode?: boolean;
   // Connection-time protocol overrides (used instead of looking up from hosts)
   protocol?: 'ssh' | 'telnet' | 'local' | 'serial';
   port?: number;
