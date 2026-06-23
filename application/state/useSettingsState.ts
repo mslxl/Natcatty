@@ -66,7 +66,7 @@ import { TERMINAL_THEME_AUTO } from '../../domain/terminalAppearance';
 import { customThemeStore, useCustomThemes } from '../state/customThemeStore';
 import { DEFAULT_FONT_SIZE } from '../../infrastructure/config/fonts';
 import { getUiThemeById } from '../../infrastructure/config/uiThemes';
-import { DEFAULT_UI_FONT_ID } from '../../infrastructure/config/uiFonts';
+import { DEFAULT_UI_FONT_ID, withWindowsEmojiFallback } from '../../infrastructure/config/uiFonts';
 import { uiFontStore, useUIFontsLoaded } from './uiFontStore';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
@@ -654,7 +654,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   // Re-run when fonts finish loading to get correct family for local fonts
   useLayoutEffect(() => {
     const font = uiFontStore.getFontById(uiFontFamilyId);
-    document.documentElement.style.setProperty('--font-sans', font.family);
+    document.documentElement.style.setProperty('--font-sans', withWindowsEmojiFallback(font.family));
     localStorageAdapter.writeString(STORAGE_KEY_UI_FONT_FAMILY, uiFontFamilyId);
     // Fix 1: Skip IPC broadcast on initial mount
     if (persistMountedRef.current) {
