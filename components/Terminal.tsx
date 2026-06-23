@@ -359,6 +359,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   const statusRef = useRef<TerminalSession["status"]>(status);
   statusRef.current = status;
+  const getSessionConnectedRef = useRef(() => statusRef.current === "connected" && Boolean(sessionRef.current));
+  getSessionConnectedRef.current = () => statusRef.current === "connected" && Boolean(sessionRef.current);
   const sudoAutofillRef = useRef<SudoPasswordAutofill | null>(null);
   const sudoAutofillPasswordRef = useRef(sudoAutofillPassword);
   sudoAutofillPasswordRef.current = sudoAutofillPassword;
@@ -794,6 +796,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   };
 
   const forceCloseHibernatedSession = useCallback(() => {
+    if (!terminalDataCapturedRef.current) {
+      const hibernatedData = hibernateSnapshotRef.current + hibernatePendingBufferRef.current;
+      if (hibernatedData) {
+        handleTerminalDataCaptureOnce(sessionId, hibernatedData);
+      }
+    }
     disposeDataRef.current?.();
     disposeDataRef.current = null;
     disposeExitRef.current?.();
@@ -810,7 +818,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     hibernateSnapshotRef.current = "";
     hibernatePendingBufferRef.current = "";
     hibernateAlternateScreenRef.current = false;
-  }, [terminalBackend]);
+  }, [handleTerminalDataCaptureOnce, sessionId, terminalBackend]);
 
   const hibernateRuntime = useCallback(() => {
     if (hibernatedRef.current || !termRef.current || !serializeAddonRef.current) return;
@@ -1630,6 +1638,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   useTerminalHibernateEffect({
     sessionId,
     isVisibleRef,
+    getSessionConnectedRef,
     status,
     isSearchOpen,
     hibernateEnabled: resolveTerminalHibernateEnabled(terminalSettings),

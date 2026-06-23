@@ -13,6 +13,7 @@ import type { TerminalSession } from "../../types";
 type UseTerminalHibernateEffectOptions = {
   sessionId: string;
   isVisibleRef: React.MutableRefObject<boolean>;
+  getSessionConnectedRef: React.MutableRefObject<() => boolean>;
   status: TerminalSession["status"];
   isSearchOpen: boolean;
   hibernateEnabled: boolean;
@@ -33,6 +34,7 @@ type UseTerminalHibernateEffectOptions = {
 export function useTerminalHibernateEffect({
   sessionId,
   isVisibleRef,
+  getSessionConnectedRef,
   status,
   isSearchOpen,
   hibernateEnabled,
@@ -72,7 +74,7 @@ export function useTerminalHibernateEffect({
     const tryWake = () => {
       if (!hibernatedRef.current) return;
 
-      const sessionConnected = status === "connected";
+      const sessionConnected = getSessionConnectedRef.current();
       const payload: TerminalHibernateWakePayload = {
         snapshot: hibernateSnapshotRef.current,
         pendingBuffer: hibernatePendingBufferRef.current,
@@ -151,6 +153,7 @@ export function useTerminalHibernateEffect({
     };
   }, [
     fileTransferActive,
+    getSessionConnectedRef,
     hasRuntimeRef,
     hibernateDelayMs,
     hibernateEnabled,

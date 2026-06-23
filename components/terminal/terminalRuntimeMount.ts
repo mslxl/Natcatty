@@ -129,8 +129,9 @@ export async function wakeTerminalFromHibernate(
   forceSyncRenderAfterResize(term);
   if (payload.alternateScreen) {
     nudgeAlternateScreenRedraw(term);
+  } else {
+    term.scrollToBottom();
   }
-  term.scrollToBottom();
 
   window.setTimeout(() => safeFit({ force: true }), 0);
   window.setTimeout(() => {
