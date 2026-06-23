@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { shouldFollowTerminalCwdNavigate } from "./sftpFollowTerminalCwd";
+import {
+  resolveHostFollowTerminalCwd,
+  shouldFollowTerminalCwdNavigate,
+} from "./sftpFollowTerminalCwd";
 
 const base = {
   followEnabled: true,
@@ -32,4 +35,11 @@ test("shouldFollowTerminalCwdNavigate returns false while interactive work is ac
 
 test("shouldFollowTerminalCwdNavigate returns false without a known terminal cwd", () => {
   assert.equal(shouldFollowTerminalCwdNavigate({ ...base, terminalCwd: null }), false);
+});
+
+test("resolveHostFollowTerminalCwd inherits the global setting until the host overrides it", () => {
+  assert.equal(resolveHostFollowTerminalCwd(undefined, true), true);
+  assert.equal(resolveHostFollowTerminalCwd(undefined, false), false);
+  assert.equal(resolveHostFollowTerminalCwd(true, false), true);
+  assert.equal(resolveHostFollowTerminalCwd(false, true), false);
 });

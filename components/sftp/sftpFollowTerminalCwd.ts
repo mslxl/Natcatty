@@ -7,6 +7,11 @@ export type SftpFollowTerminalCwdContext = {
   isConnected: boolean;
 };
 
+export const resolveHostFollowTerminalCwd = (
+  hostFollowTerminalCwd: boolean | undefined,
+  globalFollowTerminalCwd: boolean,
+): boolean => hostFollowTerminalCwd ?? globalFollowTerminalCwd;
+
 /** Whether SFTP should auto-navigate to match the linked terminal cwd. */
 export const shouldFollowTerminalCwdNavigate = ({
   followEnabled,

@@ -271,9 +271,20 @@ export const preserveConcurrentHostLineTimestampUpdate = ({
 }): Host => {
   if (!openedHost || !latestHost) return draft;
   if (draft.id !== openedHost.id || draft.id !== latestHost.id) return draft;
-  if (draft.showLineTimestamps !== openedHost.showLineTimestamps) return draft;
-  if (latestHost.showLineTimestamps === openedHost.showLineTimestamps) return draft;
-  return { ...draft, showLineTimestamps: latestHost.showLineTimestamps };
+  let next = draft;
+  if (
+    draft.showLineTimestamps === openedHost.showLineTimestamps &&
+    latestHost.showLineTimestamps !== openedHost.showLineTimestamps
+  ) {
+    next = { ...next, showLineTimestamps: latestHost.showLineTimestamps };
+  }
+  if (
+    draft.sftpFollowTerminalCwd === openedHost.sftpFollowTerminalCwd &&
+    latestHost.sftpFollowTerminalCwd !== openedHost.sftpFollowTerminalCwd
+  ) {
+    next = { ...next, sftpFollowTerminalCwd: latestHost.sftpFollowTerminalCwd };
+  }
+  return next;
 };
 
 export const upsertHostById = (hosts: Host[], host: Host): Host[] => {

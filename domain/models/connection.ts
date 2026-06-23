@@ -188,6 +188,7 @@ export interface Host {
   sftpSudo?: boolean; // Use sudo for SFTP operations (requires password)
   sftpEncoding?: SftpFilenameEncoding; // Filename encoding for SFTP operations
   sftpBookmarks?: SftpBookmark[]; // Bookmarked SFTP paths for quick navigation
+  sftpFollowTerminalCwd?: boolean; // Overrides global SFTP follow-terminal-directory setting
   // Managed source: if this host is managed by an external file (e.g., ~/.ssh/config)
   managedSourceId?: string; // Reference to ManagedSource.id
   // Host-level keyword highlighting (overrides/extends global settings)

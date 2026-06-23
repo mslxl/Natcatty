@@ -527,6 +527,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     sessions,
     showHostTreeSidebar,
     sftpActiveHost,
+    s.sftpFollowTerminalCwd,
     themeState,
     workspaceById,
     workspaceInnerRef,
