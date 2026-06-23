@@ -1575,7 +1575,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   safeFitRef.current = safeFit;
 
   const wakeFromHibernateRuntime = useCallback((
-    payload: TerminalHibernateWakePayload,
+    getPayload: () => TerminalHibernateWakePayload,
     options: { sessionConnected: boolean },
   ): boolean | Promise<boolean> => {
     if (wakeInProgressRef.current || hasRuntimeRef.current) {
@@ -1607,8 +1607,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       refs: terminalRuntimeRefs,
       runtimeContext,
       container,
-      payload,
+      getPayload,
       sessionConnected: options.sessionConnected,
+      getSessionConnected: () => getSessionConnectedRef.current(),
       reattachSession: (term) => {
         sessionStartersRef.current?.reattachSession(term);
       },

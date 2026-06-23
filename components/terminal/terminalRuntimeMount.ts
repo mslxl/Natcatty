@@ -61,7 +61,7 @@ export type WakeTerminalFromHibernateOptions = {
   refs: TerminalRuntimeRefs;
   runtimeContext: Omit<CreateXTermRuntimeContext, "container" | "initiallyVisible">;
   container: HTMLDivElement;
-  payload: TerminalHibernateWakePayload;
+  getPayload: () => TerminalHibernateWakePayload;
   reattachSession: (term: XTerm) => void;
   safeFit: (options?: { force?: boolean; requireVisible?: boolean }) => void;
   resizeSession: () => void;
@@ -72,6 +72,7 @@ export type WakeTerminalFromHibernateOptions = {
   updateStatus: (status: "connected") => void;
   /** When false, recreate xterm and replay output without reattaching or forcing connected status. */
   sessionConnected?: boolean;
+  getSessionConnected?: () => boolean;
 };
 
 export async function wakeTerminalFromHibernate(
@@ -81,7 +82,7 @@ export async function wakeTerminalFromHibernate(
     refs,
     runtimeContext,
     container,
-    payload,
+    getPayload,
     reattachSession,
     safeFit,
     resizeSession,
@@ -91,6 +92,7 @@ export async function wakeTerminalFromHibernate(
     sessionId,
     updateStatus,
     sessionConnected = true,
+    getSessionConnected,
   } = options;
 
   if (refs.hasRuntimeRef.current) {
@@ -118,8 +120,9 @@ export async function wakeTerminalFromHibernate(
   applyTerminalKeywordHighlightRules(runtime, runtimeContext.terminalSettingsRef, runtimeContext.host);
 
   const term = runtime.term;
+  const payload = getPayload();
   await applyHibernateWakeToTerminal(term, runtime, payload);
-  if (sessionConnected) {
+  if (sessionConnected && (getSessionConnected?.() ?? true)) {
     reattachSession(term);
     updateStatus("connected");
   }

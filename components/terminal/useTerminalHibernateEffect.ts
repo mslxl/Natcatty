@@ -26,7 +26,7 @@ type UseTerminalHibernateEffectOptions = {
   hasRuntimeRef: React.MutableRefObject<boolean>;
   onHibernate: () => void;
   onWake: (
-    payload: TerminalHibernateWakePayload,
+    getPayload: () => TerminalHibernateWakePayload,
     options: { sessionConnected: boolean },
   ) => boolean | Promise<boolean>;
 };
@@ -75,18 +75,18 @@ export function useTerminalHibernateEffect({
       if (!hibernatedRef.current) return;
 
       const sessionConnected = getSessionConnectedRef.current();
-      const payload: TerminalHibernateWakePayload = {
+      const getPayload = (): TerminalHibernateWakePayload => ({
         snapshot: hibernateSnapshotRef.current,
         pendingBuffer: hibernatePendingBufferRef.current,
         alternateScreen: hibernateAlternateScreenRef.current,
-      };
+      });
       logger.info("[Terminal] Waking from hibernate", {
         sessionId,
-        snapshotChars: payload.snapshot.length,
-        pendingChars: payload.pendingBuffer.length,
+        snapshotChars: hibernateSnapshotRef.current.length,
+        pendingChars: hibernatePendingBufferRef.current.length,
         sessionConnected,
       });
-      void Promise.resolve(onWakeRef.current(payload, { sessionConnected })).then((accepted) => {
+      void Promise.resolve(onWakeRef.current(getPayload, { sessionConnected })).then((accepted) => {
         if (accepted !== false) {
           clearHibernateState();
         }
