@@ -1162,15 +1162,13 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
     document.addEventListener('pointerup', handlePointerUp, true);
     document.addEventListener('pointercancel', handlePointerCancel, true);
   }, [
+    host,
     inActiveWorkspace,
     onEndSessionDrag,
     onRemoveSessionFromWorkspace,
     onReorderTabs,
     onStartSessionDrag,
-    session.customName,
-    session.hostLabel,
-    session.id,
-    session.workspaceId,
+    session,
     workspaceById,
   ]);
   const handleTerminalFontSizeChange = useCallback((nextFontSize: number) => {
