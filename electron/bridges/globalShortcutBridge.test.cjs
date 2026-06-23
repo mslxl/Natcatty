@@ -446,6 +446,114 @@ test("openMainWindow notifies renderer to lock on reopen", async () => {
   assert.deepEqual(win.sentMessages, [["netcatty:app-lock:reopen"]]);
 });
 
+test("tray session menu reveal cancels a pending fullscreen hide before focusing a session", async () => {
+  await withPatchedTimers(async ({ flushNextTimer, getPendingTimerCount }) => {
+    const bridge = loadBridge();
+    const electronModule = createElectronStub();
+    const appLockController = createAppLockControllerStub();
+    const win = new FakeWindow({ fullscreen: true });
+    win.show = function showWithoutEmit() {
+      this.showCalls += 1;
+      this.visible = true;
+    };
+    electronModule.BrowserWindow.getAllWindows = () => [win];
+    bridge.init({
+      electronModule,
+      getAppLockController: () => appLockController,
+    });
+    const ipcMain = createIpcMainStub();
+    bridge.registerHandlers(ipcMain);
+
+    await withPlatform("darwin", async () => {
+      await ipcMain.handlers.get("netcatty:tray:setCloseToTray")(null, { enabled: true });
+      const result = bridge.handleWindowClose({ preventDefault() {} }, win);
+      assert.equal(result, true);
+      assert.equal(getPendingTimerCount(), 1);
+    });
+
+    await withPlatform("linux", async () => {
+      await ipcMain.handlers.get("netcatty:tray:updateMenuData")(null, {
+        sessions: [{ id: "s1", label: "dev", hostLabel: "dev.example", status: "connected" }],
+      });
+
+      const sessionItem = bridge.getTray().contextMenu.template
+        .filter((item) => typeof item.click === "function")
+        .find((item) => String(item.label).includes("dev.example"));
+      sessionItem.click();
+
+      assert.equal(win.showCalls, 1);
+      assert.equal(getPendingTimerCount(), 0);
+      assert.equal(win.listenerCount("leave-full-screen"), 0);
+      assert.equal(win.listenerCount("closed"), 0);
+      assert.equal(flushNextTimer(), false);
+      assert.equal(win.hideCalls, 0);
+      assert.deepEqual(appLockController.setLockedCalls, []);
+      assert.deepEqual(win.sentMessages.slice(0, 2), [
+        ["netcatty:app-lock:reopen"],
+        ["netcatty:tray:focusSession", "s1"],
+      ]);
+    });
+  });
+});
+
+test("tray port-forward menu reveal cancels a pending fullscreen hide before toggling", async () => {
+  await withPatchedTimers(async ({ flushNextTimer, getPendingTimerCount }) => {
+    const bridge = loadBridge();
+    const electronModule = createElectronStub();
+    const appLockController = createAppLockControllerStub();
+    const win = new FakeWindow({ fullscreen: true });
+    win.show = function showWithoutEmit() {
+      this.showCalls += 1;
+      this.visible = true;
+    };
+    electronModule.BrowserWindow.getAllWindows = () => [win];
+    bridge.init({
+      electronModule,
+      getAppLockController: () => appLockController,
+    });
+    const ipcMain = createIpcMainStub();
+    bridge.registerHandlers(ipcMain);
+
+    await withPlatform("darwin", async () => {
+      await ipcMain.handlers.get("netcatty:tray:setCloseToTray")(null, { enabled: true });
+      const result = bridge.handleWindowClose({ preventDefault() {} }, win);
+      assert.equal(result, true);
+      assert.equal(getPendingTimerCount(), 1);
+    });
+
+    await withPlatform("linux", async () => {
+      await ipcMain.handlers.get("netcatty:tray:updateMenuData")(null, {
+        portForwardRules: [{
+          id: "pf1",
+          label: "ssh",
+          type: "local",
+          localPort: 8080,
+          remoteHost: "host",
+          remotePort: 80,
+          status: "active",
+        }],
+      });
+
+      const portForwardItem = bridge.getTray().contextMenu.template
+        .filter((item) => typeof item.click === "function")
+        .find((item) => String(item.label).includes("ssh"));
+      portForwardItem.click();
+
+      assert.equal(win.showCalls, 1);
+      assert.equal(getPendingTimerCount(), 0);
+      assert.equal(win.listenerCount("leave-full-screen"), 0);
+      assert.equal(win.listenerCount("closed"), 0);
+      assert.equal(flushNextTimer(), false);
+      assert.equal(win.hideCalls, 0);
+      assert.deepEqual(appLockController.setLockedCalls, []);
+      assert.deepEqual(win.sentMessages.slice(0, 2), [
+        ["netcatty:app-lock:reopen"],
+        ["netcatty:tray:togglePortForward", "pf1", false],
+      ]);
+    });
+  });
+});
+
 test("closing the window clears a pending fullscreen hide", async () => {
   await withPatchedTimers(async ({ flushNextTimer, getPendingTimerCount }) => {
     await withPlatform("darwin", async () => {

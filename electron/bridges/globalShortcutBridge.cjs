@@ -712,6 +712,7 @@ function buildTrayMenuTemplate() {
           // Focus window and switch to this session
           const win = getMainWindow();
           if (win) {
+            clearPendingFullscreenHide(win);
             if (win.isMinimized()) win.restore();
             win.show();
             win.focus();
@@ -753,6 +754,7 @@ function buildTrayMenuTemplate() {
         click: () => {
           const win = getMainWindow();
           if (win) {
+            clearPendingFullscreenHide(win);
             if (win.isMinimized()) win.restore();
             win.show();
             win.focus();
