@@ -70,6 +70,8 @@ export type WakeTerminalFromHibernateOptions = {
   isBootActiveRef: MutableRefObject<boolean>;
   sessionId: string;
   updateStatus: (status: "connected") => void;
+  /** When false, recreate xterm and replay output without reattaching or forcing connected status. */
+  sessionConnected?: boolean;
 };
 
 export async function wakeTerminalFromHibernate(
@@ -88,6 +90,7 @@ export async function wakeTerminalFromHibernate(
     isBootActiveRef,
     sessionId,
     updateStatus,
+    sessionConnected = true,
   } = options;
 
   if (refs.hasRuntimeRef.current) {
@@ -116,8 +119,10 @@ export async function wakeTerminalFromHibernate(
 
   const term = runtime.term;
   await applyHibernateWakeToTerminal(term, runtime, payload);
-  reattachSession(term);
-  updateStatus("connected");
+  if (sessionConnected) {
+    reattachSession(term);
+    updateStatus("connected");
+  }
 
   safeFit({ force: true });
   resizeSession();

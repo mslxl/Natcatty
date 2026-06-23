@@ -5,6 +5,7 @@ import {
   isTerminalAlternateScreenActive,
   refreshTerminalViewport,
   resolveHibernateSerializeOptions,
+  serializeTerminalForHibernate,
 } from "./terminalHibernateRuntime.ts";
 
 const createFakeTerm = (bufferType: "normal" | "alternate") => ({
@@ -53,4 +54,17 @@ test("refreshTerminalViewport refreshes the full viewport", () => {
   };
   refreshTerminalViewport(term as never);
   assert.deepEqual(refreshed, [0, 23]);
+});
+
+test("serializeTerminalForHibernate preserves alternate screen when serialize throws", () => {
+  const term = createFakeTerm("alternate");
+  const serializeAddon = {
+    serialize: () => {
+      throw new Error("serialize failed");
+    },
+  };
+  assert.deepEqual(serializeTerminalForHibernate(term as never, serializeAddon as never), {
+    snapshot: "",
+    alternateScreen: true,
+  });
 });

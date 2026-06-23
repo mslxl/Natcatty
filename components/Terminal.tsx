@@ -1552,36 +1552,43 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const safeFitRef = useRef(safeFit);
   safeFitRef.current = safeFit;
 
-  const wakeFromHibernateRuntime = useCallback((payload: TerminalHibernateWakePayload) => {
+  const wakeFromHibernateRuntime = useCallback((
+    payload: TerminalHibernateWakePayload,
+    options: { sessionConnected: boolean },
+  ): boolean | Promise<boolean> => {
     if (wakeInProgressRef.current || hasRuntimeRef.current) {
       logger.warn("[Terminal] Wake skipped", {
         sessionId,
         wakeInProgress: wakeInProgressRef.current,
         hasRuntime: hasRuntimeRef.current,
       });
-      return;
+      return false;
     }
     const container = containerRef.current;
     const runtimeContext = xTermRuntimeContextRef.current;
-    if (!container || !runtimeContext || !sessionRef.current) {
+    if (!container || !runtimeContext) {
       logger.warn("[Terminal] Wake skipped: missing mount prerequisites", {
         sessionId,
         hasContainer: !!container,
         hasRuntimeContext: !!runtimeContext,
-        hasSession: !!sessionRef.current,
       });
-      return;
+      return false;
+    }
+    if (options.sessionConnected && !sessionRef.current) {
+      logger.warn("[Terminal] Wake skipped: missing backend session", { sessionId });
+      return false;
     }
 
     wakeInProgressRef.current = true;
     disposeDataRef.current?.();
     disposeDataRef.current = null;
 
-    void wakeTerminalFromHibernate({
+    return wakeTerminalFromHibernate({
       refs: terminalRuntimeRefs,
       runtimeContext,
       container,
       payload,
+      sessionConnected: options.sessionConnected,
       reattachSession: (term) => {
         sessionStartersRef.current?.reattachSession(term);
       },
@@ -1594,6 +1601,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       updateStatus: (next) => updateStatusRef.current(next),
     }).catch((err) => {
       logger.error("[Terminal] Failed to resume from hibernate", err);
+      return false;
     }).finally(() => {
       wakeInProgressRef.current = false;
     });

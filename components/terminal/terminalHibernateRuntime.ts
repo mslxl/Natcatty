@@ -41,7 +41,10 @@ export function serializeTerminalForHibernate(term: XTerm, serializeAddon: Seria
       alternateScreen,
     };
   } catch {
-    return { snapshot: "", alternateScreen: false };
+    return {
+      snapshot: "",
+      alternateScreen: isTerminalAlternateScreenActive(term),
+    };
   }
 }
 

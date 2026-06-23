@@ -24,7 +24,10 @@ type UseTerminalHibernateEffectOptions = {
   hibernateAlternateScreenRef: React.MutableRefObject<boolean>;
   hasRuntimeRef: React.MutableRefObject<boolean>;
   onHibernate: () => void;
-  onWake: (payload: TerminalHibernateWakePayload) => void;
+  onWake: (
+    payload: TerminalHibernateWakePayload,
+    options: { sessionConnected: boolean },
+  ) => boolean | Promise<boolean>;
 };
 
 export function useTerminalHibernateEffect({
@@ -59,29 +62,38 @@ export function useTerminalHibernateEffect({
       }
     };
 
+    const clearHibernateState = () => {
+      hibernateSnapshotRef.current = "";
+      hibernatePendingBufferRef.current = "";
+      hibernateAlternateScreenRef.current = false;
+      hibernatedRef.current = false;
+    };
+
     const tryWake = () => {
       if (!hibernatedRef.current) return;
 
+      const sessionConnected = status === "connected";
       const payload: TerminalHibernateWakePayload = {
         snapshot: hibernateSnapshotRef.current,
         pendingBuffer: hibernatePendingBufferRef.current,
         alternateScreen: hibernateAlternateScreenRef.current,
       };
-      hibernateSnapshotRef.current = "";
-      hibernatePendingBufferRef.current = "";
-      hibernateAlternateScreenRef.current = false;
-      hibernatedRef.current = false;
       logger.info("[Terminal] Waking from hibernate", {
         sessionId,
         snapshotChars: payload.snapshot.length,
         pendingChars: payload.pendingBuffer.length,
+        sessionConnected,
       });
-      onWakeRef.current(payload);
+      void Promise.resolve(onWakeRef.current(payload, { sessionConnected })).then((accepted) => {
+        if (accepted !== false) {
+          clearHibernateState();
+        }
+      });
     };
 
     if (!hibernateEnabled) {
       clearHibernateTimer();
-      if (hibernatedRef.current && getPaneVisible(sessionId)) {
+      if (hibernatedRef.current) {
         tryWake();
       }
       const unsubscribeDisabled = subscribePaneVisible(sessionId, () => {
