@@ -86,6 +86,7 @@ test("workspace section passes resolved session host ids to terminal panes", () 
     handleBroadcastInput: noop,
     handleToggleWorkspaceComposeBar: noop,
     handleSnippetExecutorChange: noop,
+    handleProgrammaticCommandLogRewriteChange: noop,
     handleAddSelectionToAI: noop,
     activeResizers: [],
     activeWorkspace: null,

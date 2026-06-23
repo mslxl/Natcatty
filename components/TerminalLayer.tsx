@@ -48,10 +48,12 @@ import { ThemeSidePanel } from './terminal/ThemeSidePanel';
 import { focusTerminalSessionInput } from './terminal/focusTerminalSession';
 import { TerminalComposeBar } from './terminal/TerminalComposeBar';
 import {
+  createProtectedSnippetLogRewriteForPreparedCommand,
   prepareAutoRunSnippetCommand,
-  prepareProtectedBroadcastSnippetData,
+  prepareProtectedBroadcastSnippetWrite,
   type TerminalBroadcastInputOptions,
 } from './terminal/terminalHelpers';
+import type { ProgrammaticCommandLogRewrite } from './terminal/programmaticCommandLog';
 import { Button } from './ui/button';
 import { setupMcpApprovalBridge } from '../infrastructure/ai/shared/approvalGate';
 import { resolveScriptsSidePanelShortcutIntent } from '../application/state/resolveSnippetsShortcutIntent';
@@ -406,6 +408,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   // Terminal backend for broadcast writes
   const terminalBackend = useTerminalBackend();
   const snippetExecutorsRef = useRef<Map<string, SnippetExecutor>>(new Map());
+  const programmaticCommandLogRewriteHandlersRef = useRef<Map<string, (rewrite: ProgrammaticCommandLogRewrite) => void>>(new Map());
 
   const handleSnippetExecutorChange = useCallback((sessionId: string, executor: SnippetExecutor | null) => {
     if (executor) {
@@ -413,6 +416,17 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       return;
     }
     snippetExecutorsRef.current.delete(sessionId);
+  }, []);
+
+  const handleProgrammaticCommandLogRewriteChange = useCallback((
+    sessionId: string,
+    queueRewrite: ((rewrite: ProgrammaticCommandLogRewrite) => void) | null,
+  ) => {
+    if (queueRewrite) {
+      programmaticCommandLogRewriteHandlersRef.current.set(sessionId, queueRewrite);
+      return;
+    }
+    programmaticCommandLogRewriteHandlersRef.current.delete(sessionId);
   }, []);
 
   const onSessionData = terminalBackend.onSessionData;
@@ -658,20 +672,26 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       if (!canUseDirectSessionWriteFallback(session)) continue;
 
       let targetData = data;
+      let logRewrite: ProgrammaticCommandLogRewrite | null = null;
       if (options?.protectTerminalMode && options.rawCommand !== undefined) {
         const host = sessionHostsMapRef.current.get(session.id);
         if (host) {
-          targetData = prepareProtectedBroadcastSnippetData({
+          const prepared = prepareProtectedBroadcastSnippetWrite({
             rawCommand: options.rawCommand,
             fallbackData: options.fallbackData ?? data,
             host,
             noAutoRun: options.noAutoRun,
             shellType: session.shellType,
           });
+          targetData = prepared.data;
+          logRewrite = prepared.logRewrite;
         }
       }
 
-      terminalBackend.writeToSession(session.id, targetData);
+      if (logRewrite) {
+        programmaticCommandLogRewriteHandlersRef.current.get(session.id)?.(logRewrite);
+      }
+      terminalBackend.writeToSession(session.id, targetData, logRewrite ? { logRewrite } : undefined);
     }
   }, [terminalBackend]);
 
@@ -1162,9 +1182,15 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     const commandToSend = options?.protectTerminalMode && host
       ? prepareAutoRunSnippetCommand(command, { host, noAutoRun, shellType: session.shellType })
       : command;
+    const logRewrite = options?.protectTerminalMode && host
+      ? createProtectedSnippetLogRewriteForPreparedCommand(command, commandToSend)
+      : null;
     let data = normalizeLineEndings(commandToSend);
     if (!noAutoRun) data = `${data}\r`;
-    terminalBackend.writeToSession(sessionId, data);
+    if (logRewrite) {
+      programmaticCommandLogRewriteHandlersRef.current.get(sessionId)?.(logRewrite);
+    }
+    terminalBackend.writeToSession(sessionId, data, logRewrite ? { logRewrite } : undefined);
     // Re-focus the terminal so the user can interact immediately
     const pane = document.querySelector(`[data-session-id="${sessionId}"]`);
     const textarea = pane?.querySelector('textarea.xterm-helper-textarea') as HTMLTextAreaElement | null;
@@ -1296,6 +1322,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     handleSnippetClickForFocusedSession,
     handleSnippetFromPanel,
     handleSnippetExecutorChange,
+    handleProgrammaticCommandLogRewriteChange,
     handleStatusChange,
     handleTerminalCwdChange,
     handleTerminalTitleChange,
@@ -1412,6 +1439,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     sftpUseCompressedUpload,
     shouldMarkSessionActivity,
     snippetExecutorsRef,
+    programmaticCommandLogRewriteHandlersRef,
     snippetPackages,
     snippets,
     noteGroups,

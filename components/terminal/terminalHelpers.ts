@@ -6,6 +6,7 @@ import { getSessionConnectionLabel, resolveSessionTabTitle } from "../../domain/
 import { logger } from "../../lib/logger";
 import { getPathForFile, type DropEntry } from "../../lib/sftpFileUtils";
 import { normalizeLineEndings } from "../../lib/utils";
+import type { ProgrammaticCommandLogRewrite } from "./programmaticCommandLog";
 import type {
   Host,
   Identity,
@@ -202,6 +203,10 @@ export interface TerminalProps {
       options?: { broadcast?: boolean; protectTerminalMode?: boolean },
     ) => void) | null,
   ) => void;
+  onProgrammaticCommandLogRewriteChange?: (
+    sessionId: string,
+    queueRewrite: ((rewrite: ProgrammaticCommandLogRewrite) => void) | null,
+  ) => void;
   sessionLog?: { enabled: boolean; directory: string; format: string; timestampsEnabled?: boolean };
   sshDebugLogEnabled?: boolean;
   sudoAutofillPassword?: string;
@@ -395,7 +400,32 @@ export function prepareAutoRunSnippetCommand(
     : buildPosixSnippetRestoreCommand(encodedCommand);
 }
 
-export function prepareProtectedBroadcastSnippetData({
+export function createProtectedSnippetLogRewriteForPreparedCommand(
+  command: string,
+  preparedCommand: string,
+): ProgrammaticCommandLogRewrite | null {
+  const rawCommand = String(command ?? "");
+  if (preparedCommand === rawCommand) return null;
+  return {
+    sentCommand: normalizeLineEndings(preparedCommand),
+    displayCommand: normalizeLineEndings(rawCommand),
+  };
+}
+
+export function createProtectedSnippetLogRewrite(
+  command: string,
+  opts: {
+    host: SnippetRestoreHost;
+    noAutoRun?: boolean;
+    shellType?: TerminalSession["shellType"];
+  },
+): ProgrammaticCommandLogRewrite | null {
+  const rawCommand = String(command ?? "");
+  const preparedCommand = prepareAutoRunSnippetCommand(rawCommand, opts);
+  return createProtectedSnippetLogRewriteForPreparedCommand(rawCommand, preparedCommand);
+}
+
+export function prepareProtectedBroadcastSnippetWrite({
   rawCommand,
   fallbackData,
   host,
@@ -407,14 +437,15 @@ export function prepareProtectedBroadcastSnippetData({
   host: SnippetRestoreHost;
   noAutoRun?: boolean;
   shellType?: TerminalSession["shellType"];
-}): string {
+}): { data: string; logRewrite: ProgrammaticCommandLogRewrite | null } {
   const prepared = prepareAutoRunSnippetCommand(rawCommand, { host, noAutoRun, shellType });
-  if (prepared === String(rawCommand ?? "")) {
-    return fallbackData;
+  const logRewrite = createProtectedSnippetLogRewriteForPreparedCommand(rawCommand, prepared);
+  if (!logRewrite) {
+    return { data: fallbackData, logRewrite: null };
   }
   let data = normalizeLineEndings(prepared);
   if (!noAutoRun) data = `${data}\r`;
-  return data;
+  return { data, logRewrite };
 }
 
 export function shouldHideConnectingDialogForConnectionReuse({

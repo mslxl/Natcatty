@@ -74,6 +74,7 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
     handleBroadcastInput,
     handleToggleWorkspaceComposeBar,
     handleSnippetExecutorChange,
+    handleProgrammaticCommandLogRewriteChange,
     handleAddSelectionToAI,
     activeResizers,
     activeWorkspace,
@@ -194,6 +195,7 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
           onBroadcastInput={handleBroadcastInput}
           onToggleWorkspaceComposeBar={handleToggleWorkspaceComposeBar}
           onSnippetExecutorChange={handleSnippetExecutorChange}
+          onProgrammaticCommandLogRewriteChange={handleProgrammaticCommandLogRewriteChange}
           onAddSelectionToAI={handleAddSelectionToAI}
           onStartSessionRename={onStartSessionRename}
           onRemoveSessionFromWorkspace={onRemoveSessionFromWorkspace}
