@@ -1,10 +1,13 @@
 "use strict";
 
+const net = require("node:net");
+const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { mcpEnvPairsToObject } = require("./injectMcp.cjs");
 
 const OPENCODE_IMAGE_MEDIA_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+const DEFAULT_OPENCODE_PORT = 4096;
 
 function isOpenCodeImageAttachment(attachment) {
   return Boolean(
@@ -88,7 +91,14 @@ function getOpenCodeEventPayload(event) {
 
 function getOpenCodeSessionIdFromEvent(event) {
   const properties = getOpenCodeEventPayload(event)?.properties;
-  return properties?.sessionID || properties?.sessionId || properties?.info?.id || null;
+  return properties?.sessionID
+    || properties?.sessionId
+    || properties?.part?.sessionID
+    || properties?.part?.sessionId
+    || properties?.info?.sessionID
+    || properties?.info?.sessionId
+    || properties?.info?.id
+    || null;
 }
 
 function translateOpenCodeEvent(event, emitter, state = {}) {
@@ -127,7 +137,8 @@ function translateOpenCodeEvent(event, emitter, state = {}) {
           emitter.toolCall(toolName, input, callId);
         }
       } else if (part.state?.status === "completed") {
-        if (state.toolCalls && !state.toolCalls.has(callId)) {
+        state.toolCalls = state.toolCalls || new Set();
+        if (!state.toolCalls.has(callId)) {
           state.toolCalls.add(callId);
           emitter.toolCall(toolName, input, callId);
         }
@@ -174,14 +185,55 @@ function classifyOpenCodeSpawnError(error) {
   };
 }
 
+function shellQuotePosix(value) {
+  return `"${String(value).replace(/(["\\$`])/g, "\\$1")}"`;
+}
+
+function createOpenCodeShim(binPath, options = {}) {
+  if (!binPath) return null;
+  const platform = options.platform || process.platform;
+  const tempDirBridge = options.tempDirBridge || require("../../tempDirBridge.cjs");
+  const getTempFilePath = options.getTempFilePath || tempDirBridge.getTempFilePath;
+  const shimRoot = getTempFilePath("opencode-sdk-shim");
+  fs.mkdirSync(shimRoot, { recursive: true });
+  const shimName = platform === "win32" ? "opencode.cmd" : "opencode";
+  const shimPath = path.join(shimRoot, shimName);
+  if (platform === "win32") {
+    fs.writeFileSync(shimPath, `@echo off\r\n"${binPath}" %*\r\n`);
+  } else {
+    fs.writeFileSync(shimPath, `#!/bin/sh\nexec ${shellQuotePosix(binPath)} "$@"\n`);
+    fs.chmodSync(shimPath, 0o755);
+  }
+  return {
+    dir: shimRoot,
+    path: shimPath,
+    cleanup() {
+      try { fs.rmSync(shimRoot, { recursive: true, force: true }); } catch {}
+    },
+  };
+}
+
+function createOpenCodeProcessEnv(env, binPath, options = {}) {
+  const next = { ...(env || {}) };
+  let shim = null;
+  if (binPath) {
+    shim = createOpenCodeShim(binPath, options);
+    next.OPENCODE_BIN = binPath;
+    next.PATH = [shim?.dir || path.dirname(binPath), next.PATH || process.env.PATH || ""]
+      .filter(Boolean)
+      .join(path.delimiter);
+  }
+  return {
+    env: next,
+    cleanup() {
+      shim?.cleanup?.();
+    },
+  };
+}
+
 function withOpenCodeProcessEnv(env, binPath, fn) {
   const previous = {};
-  const next = { ...(env || {}) };
-  if (binPath) {
-    next.OPENCODE_BIN = binPath;
-    const binDir = path.dirname(binPath);
-    next.PATH = [binDir, next.PATH || process.env.PATH || ""].filter(Boolean).join(path.delimiter);
-  }
+  const { env: next, cleanup } = createOpenCodeProcessEnv(env, binPath);
   for (const [key, value] of Object.entries(next)) {
     previous[key] = process.env[key];
     process.env[key] = String(value);
@@ -193,7 +245,29 @@ function withOpenCodeProcessEnv(env, binPath, fn) {
         if (previous[key] === undefined) delete process.env[key];
         else process.env[key] = previous[key];
       }
+      cleanup();
     });
+}
+
+function getAvailablePort(host = "127.0.0.1") {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.on("error", reject);
+    server.listen(0, host, () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve(port === DEFAULT_OPENCODE_PORT ? getAvailablePort(host) : port);
+      });
+    });
+  });
+}
+
+async function withOpenCodeServerPort(options = {}) {
+  if (options.port != null) return options;
+  return { ...options, port: await getAvailablePort(options.hostname || "127.0.0.1") };
 }
 
 async function createDefaultOpenCode(options, env, binPath) {
@@ -202,6 +276,21 @@ async function createDefaultOpenCode(options, env, binPath) {
     throw new Error("OpenCode SDK not installed. Run: npm install @opencode-ai/sdk");
   }
   return withOpenCodeProcessEnv(env, binPath, () => sdk.createOpencode(options));
+}
+
+function createAbortWait(signal) {
+  if (!signal) return { promise: new Promise(() => {}), dispose() {} };
+  if (signal.aborted) return { promise: Promise.resolve(), dispose() {} };
+  let resolveAbort;
+  const promise = new Promise((resolve) => { resolveAbort = resolve; });
+  const onAbort = () => resolveAbort();
+  signal.addEventListener("abort", onAbort, { once: true });
+  return {
+    promise,
+    dispose() {
+      signal.removeEventListener("abort", onAbort);
+    },
+  };
 }
 
 async function runOpenCodeTurn({
@@ -213,18 +302,34 @@ async function runOpenCodeTurn({
   let sessionId = resumeSessionId || null;
   let hasContent = false;
   let failed = false;
+  let abortSent = false;
+  let removeAbortListener = null;
   const state = { reasoningOpen: false };
+  const directoryQuery = cwd ? { directory: cwd } : undefined;
 
   try {
     const factory = openCodeFactory || ((options) => createDefaultOpenCode(options, env, binPath));
-    opencode = await factory({ config, signal: abortController?.signal });
+    opencode = await factory(await withOpenCodeServerPort({ config, signal: abortController?.signal }));
     const { client } = opencode;
-    const events = await client.global.event();
+    const abortOpenCode = async () => {
+      if (abortSent) return;
+      abortSent = true;
+      if (sessionId) {
+        try { await client.session.abort({ path: { id: sessionId }, query: directoryQuery }); } catch {}
+      }
+      try { opencode?.server?.close?.(); } catch {}
+    };
+    if (abortController?.signal) {
+      const onAbort = () => { void abortOpenCode(); };
+      abortController.signal.addEventListener("abort", onAbort, { once: true });
+      removeAbortListener = () => abortController.signal.removeEventListener("abort", onAbort);
+    }
+    const events = await client.global.event({ signal: abortController?.signal });
 
     if (!sessionId) {
       const created = await client.session.create({
         body: { title: "Netcatty OpenCode" },
-        query: cwd ? { directory: cwd } : undefined,
+        query: directoryQuery,
       });
       sessionId = created?.data?.id || created?.id || null;
     }
@@ -232,8 +337,24 @@ async function runOpenCodeTurn({
     emitter.sessionId(sessionId);
 
     const eventLoop = (async () => {
-      for await (const event of events.stream) {
-        if (abortController?.signal?.aborted) break;
+      const iterator = events.stream?.[Symbol.asyncIterator]?.();
+      if (!iterator) return;
+      const abortWait = createAbortWait(abortController?.signal);
+      try {
+        while (true) {
+          const nextEvent = iterator.next();
+          const raced = await Promise.race([
+            nextEvent.then(
+              (value) => ({ type: "event", value }),
+              (error) => ({ type: "error", error }),
+            ),
+            abortWait.promise.then(() => ({ type: "abort" })),
+          ]);
+          if (raced.type === "abort") break;
+          if (raced.type === "error") throw raced.error;
+          const { value: event, done } = raced.value;
+          if (done) break;
+          if (abortController?.signal?.aborted) break;
         const eventSessionId = getOpenCodeSessionIdFromEvent(event);
         if (eventSessionId && eventSessionId !== sessionId) continue;
         const result = translateOpenCodeEvent(event, emitter, state);
@@ -244,6 +365,12 @@ async function runOpenCodeTurn({
         }
         if (result.idle) break;
       }
+      } finally {
+        abortWait.dispose();
+        if (abortController?.signal?.aborted) {
+          try { void iterator.return?.(); } catch {}
+        }
+      }
     })();
 
     const body = {
@@ -252,23 +379,37 @@ async function runOpenCodeTurn({
     const parsedModel = parseOpenCodeModel(model);
     if (parsedModel) body.model = parsedModel;
 
-    await client.session.promptAsync({
+    const promptAbortWait = createAbortWait(abortController?.signal);
+    const promptResult = await Promise.race([
+      client.session.promptAsync({
       path: { id: sessionId },
-      query: cwd ? { directory: cwd } : undefined,
+      query: directoryQuery,
       body,
-    });
+      signal: abortController?.signal,
+      }).then(
+        () => ({ type: "prompt" }),
+        (error) => ({ type: "error", error }),
+      ),
+      promptAbortWait.promise.then(() => ({ type: "abort" })),
+    ]);
+    promptAbortWait.dispose();
+    if (promptResult.type === "error") throw promptResult.error;
 
-    await eventLoop;
+    if (promptResult.type === "abort") {
+      await abortOpenCode();
+    } else {
+      await eventLoop;
+    }
 
     if (abortController?.signal?.aborted) {
-      try { await client.session.abort({ path: { id: sessionId }, query: cwd ? { directory: cwd } : undefined }); } catch {}
+      await abortOpenCode();
     }
 
     if (!hasContent && !failed && !abortController?.signal?.aborted) {
       emitter.emitError("OpenCode returned an empty response. Run `opencode` in a terminal to configure authentication and models.");
       return { sessionId };
     }
-    if (!failed) emitter.emitDone();
+    if (!failed && !abortController?.signal?.aborted) emitter.emitDone();
     return { sessionId };
   } catch (error) {
     const classified = classifyOpenCodeSpawnError(error);
@@ -279,6 +420,7 @@ async function runOpenCodeTurn({
     }
     return { sessionId };
   } finally {
+    removeAbortListener?.();
     try { opencode?.server?.close?.(); } catch {}
   }
 }
@@ -299,15 +441,43 @@ function mapOpenCodeModels(response) {
   return models;
 }
 
+function getOpenCodeDefaultModelId(response) {
+  const value = response?.default;
+  if (!value) return null;
+  if (typeof value === "string") return value.includes("/") ? value : null;
+  if (typeof value !== "object") return null;
+  if (typeof value.model === "string" && value.model.includes("/")) return value.model;
+  if (typeof value.providerID === "string" && typeof value.modelID === "string") {
+    return `${value.providerID}/${value.modelID}`;
+  }
+  if (typeof value.provider === "string" && typeof value.model === "string") {
+    return `${value.provider}/${value.model}`;
+  }
+  for (const [providerId, modelId] of Object.entries(value)) {
+    if (typeof modelId === "string" && providerId && modelId) {
+      return modelId.includes("/") ? modelId : `${providerId}/${modelId}`;
+    }
+    if (modelId && typeof modelId === "object" && typeof modelId.modelID === "string") {
+      const nestedProvider = typeof modelId.providerID === "string" ? modelId.providerID : providerId;
+      return `${nestedProvider}/${modelId.modelID}`;
+    }
+  }
+  return null;
+}
+
 async function listOpenCodeModels({ env, binPath, openCodeFactory } = {}) {
   let opencode = null;
   try {
     const factory = openCodeFactory || ((options) => createDefaultOpenCode(options, env, binPath));
-    opencode = await factory({ config: { autoupdate: false }, timeout: 10000 });
+    opencode = await factory(await withOpenCodeServerPort({ config: { autoupdate: false }, timeout: 10000 }));
     const response = await opencode.client.config.providers();
-    return mapOpenCodeModels(response?.data || response);
+    const data = response?.data || response;
+    return {
+      currentModelId: getOpenCodeDefaultModelId(data),
+      models: mapOpenCodeModels(data),
+    };
   } catch {
-    return [];
+    return { currentModelId: null, models: [] };
   } finally {
     try { opencode?.server?.close?.(); } catch {}
   }
@@ -317,6 +487,7 @@ module.exports = {
   buildOpenCodeConfig,
   buildOpenCodePromptParts,
   classifyOpenCodeSpawnError,
+  createOpenCodeProcessEnv,
   listOpenCodeModels,
   mapOpenCodeModels,
   parseOpenCodeModel,

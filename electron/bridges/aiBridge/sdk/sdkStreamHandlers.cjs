@@ -28,6 +28,17 @@ function buildSdkModelCacheKey(backendKey, binPath) {
   return [String(backendKey || ""), String(binPath || "")].join("\u0000");
 }
 
+function shouldCacheSdkRuntimeModels(backendKey) {
+  return backendKey !== "opencode";
+}
+
+function normalizeSdkListModelsResult(raw) {
+  const rawModels = Array.isArray(raw) ? raw : raw?.models;
+  const currentModelId = Array.isArray(raw) ? null : raw?.currentModelId || null;
+  const models = Array.isArray(rawModels) ? rawModels.filter((m) => m && m.id) : [];
+  return { currentModelId, models };
+}
+
 function isPathLikeCommand(command) {
   const raw = String(command || "").trim();
   return Boolean(raw && (raw.includes("/") || raw.includes("\\") || /^[a-z]:/i.test(raw)));
@@ -450,15 +461,18 @@ function registerSdkStreamHandlers(ctx) {
         });
         // claude/copilot enumerate models via the SDK; codex has no catalog (its
         // driver returns []), so the renderer falls back to curated presets.
+        // OpenCode model catalogs are user-config driven and can change outside
+        // Netcatty, so do not cache them behind the generic SDK cache.
         const cacheKey = buildSdkModelCacheKey(backendKey, binPath);
-        const cached = sdkModelCache.get(cacheKey);
+        const shouldCacheModels = shouldCacheSdkRuntimeModels(backendKey);
+        const cached = shouldCacheModels ? sdkModelCache.get(cacheKey) : null;
         if (cached && Date.now() - cached.at < MODEL_CACHE_TTL_MS) {
-          return { ok: true, currentModelId: null, models: cached.models };
+          return { ok: true, currentModelId: cached.currentModelId || null, models: cached.models };
         }
         const raw = await withTimeout(driver.listModels({ binPath, env }), MODEL_LIST_TIMEOUT_MS);
-        const models = Array.isArray(raw) ? raw.filter((m) => m && m.id) : [];
-        sdkModelCache.set(cacheKey, { at: Date.now(), models });
-        return { ok: true, currentModelId: null, models };
+        const { currentModelId, models } = normalizeSdkListModelsResult(raw);
+        if (shouldCacheModels) sdkModelCache.set(cacheKey, { at: Date.now(), currentModelId, models });
+        return { ok: true, currentModelId, models };
       } catch (err) {
         // Degrade to [] so the renderer keeps its curated presets (never empty).
         console.debug(`[sdk] list-models(${backendKey}) unavailable, using curated presets`);
@@ -501,7 +515,9 @@ module.exports = {
   resolveSdkBackendBinPath,
   buildSdkSessionKey,
   buildSdkModelCacheKey,
+  normalizeSdkListModelsResult,
   resolveSdkResumeSessionId,
+  shouldCacheSdkRuntimeModels,
   normalizeHistoryMessages,
   buildSdkTurnPrompt,
 };

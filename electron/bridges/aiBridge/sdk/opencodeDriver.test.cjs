@@ -1,9 +1,13 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const {
   buildOpenCodeConfig,
   buildOpenCodePromptParts,
   classifyOpenCodeSpawnError,
+  createOpenCodeProcessEnv,
   mapOpenCodeModels,
   parseOpenCodeModel,
   runOpenCodeTurn,
@@ -68,31 +72,65 @@ test("buildOpenCodePromptParts includes supported images as file parts", () => {
   ]);
 });
 
+test("createOpenCodeProcessEnv creates an opencode shim for arbitrary custom binary paths", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-opencode-test-"));
+  const fakeBin = path.join(tempRoot, "my-opencode-wrapper");
+  fs.writeFileSync(fakeBin, "#!/bin/sh\n");
+  fs.chmodSync(fakeBin, 0o755);
+
+  const { env, cleanup } = createOpenCodeProcessEnv(
+    { PATH: "/usr/bin" },
+    fakeBin,
+    {
+      platform: "linux",
+      getTempFilePath: (name) => path.join(tempRoot, name),
+    },
+  );
+
+  try {
+    const shimDir = env.PATH.split(path.delimiter)[0];
+    const shim = path.join(shimDir, "opencode");
+    assert.equal(env.OPENCODE_BIN, fakeBin);
+    assert.equal(fs.existsSync(shim), true);
+    assert.match(fs.readFileSync(shim, "utf8"), new RegExp(`exec "${fakeBin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`));
+  } finally {
+    cleanup();
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("translateOpenCodeEvent maps text, reasoning, tools, errors, and idle", () => {
   const { events, emitter } = collector();
+  const state = {};
   translateOpenCodeEvent(
     { directory: "/tmp", payload: { type: "message.part.updated", properties: { part: { type: "text", id: "p1", text: "hello" }, delta: "he" } } },
     emitter,
+    state,
   );
   translateOpenCodeEvent(
     { payload: { type: "message.part.updated", properties: { part: { type: "reasoning", id: "r1", text: "thinking" }, delta: "think" } } },
     emitter,
+    state,
   );
   translateOpenCodeEvent(
     { payload: { type: "message.part.updated", properties: { part: { type: "tool", callID: "tool-1", tool: "netcatty_run", state: { status: "running", input: { command: "uptime" } } } } } },
     emitter,
+    state,
   );
   translateOpenCodeEvent(
     { payload: { type: "message.part.updated", properties: { part: { type: "tool", callID: "tool-1", tool: "netcatty_run", state: { status: "completed", input: { command: "uptime" }, output: "ok" } } } } },
     emitter,
+    state,
   );
   translateOpenCodeEvent(
     { payload: { type: "session.error", properties: { error: { data: { message: "bad key" } } } } },
     emitter,
+    state,
   );
   translateOpenCodeEvent(
     { payload: { type: "session.idle", properties: { sessionID: "sess-1" } } },
     emitter,
+    state,
   );
 
   assert.deepEqual(events, [
@@ -122,6 +160,19 @@ test("translateOpenCodeEvent also accepts direct OpenCode SDK events", () => {
   ]);
 });
 
+test("translateOpenCodeEvent emits a tool call before a result when only completion arrives", () => {
+  const { events, emitter } = collector();
+  translateOpenCodeEvent(
+    { type: "message.part.updated", properties: { part: { type: "tool", callID: "tool-1", tool: "netcatty_run", state: { status: "completed", input: { command: "whoami" }, output: "me" } } } },
+    emitter,
+  );
+
+  assert.deepEqual(events, [
+    { k: "toolCall", name: "netcatty_run", args: { command: "whoami" }, id: "tool-1" },
+    { k: "toolResult", id: "tool-1", out: "me", name: "netcatty_run" },
+  ]);
+});
+
 test("mapOpenCodeModels flattens providers", () => {
   assert.deepEqual(mapOpenCodeModels({
     providers: [
@@ -133,6 +184,36 @@ test("mapOpenCodeModels flattens providers", () => {
     { id: "anthropic/claude-sonnet", name: "anthropic claude-sonnet" },
   ]);
   assert.deepEqual(mapOpenCodeModels(null), []);
+});
+
+test("runOpenCodeTurn ignores events from other OpenCode sessions", async () => {
+  const { events, emitter } = collector();
+  const abortController = new AbortController();
+  const stream = {
+    async *[Symbol.asyncIterator]() {
+      yield { type: "message.part.updated", properties: { part: { type: "text", sessionID: "other", id: "p0", text: "wrong" }, delta: "wrong" } };
+      yield { type: "message.part.updated", properties: { part: { type: "text", sessionID: "sess-1", id: "p1", text: "right" }, delta: "right" } };
+      yield { type: "session.idle", properties: { sessionID: "sess-1" } };
+    },
+  };
+  const client = {
+    global: { event: async () => ({ stream }) },
+    session: {
+      create: async () => ({ data: { id: "sess-1" } }),
+      promptAsync: async () => ({ data: true }),
+    },
+  };
+
+  await runOpenCodeTurn({
+    prompt: "hello",
+    emitter,
+    abortController,
+    openCodeFactory: async () => ({ client, server: { close() {} } }),
+  });
+
+  assert.deepEqual(events.filter((event) => event.k === "text"), [
+    { k: "text", t: "right" },
+  ]);
 });
 
 test("runOpenCodeTurn creates a session, streams event deltas, and returns session id", async () => {
@@ -180,6 +261,78 @@ test("runOpenCodeTurn creates a session, streams event deltas, and returns sessi
   ]);
 });
 
+test("runOpenCodeTurn returns promptly when aborted while the event stream is quiet", async () => {
+  const { events, emitter } = collector();
+  const abortController = new AbortController();
+  let closeCount = 0;
+  let abortCount = 0;
+  const stream = {
+    async *[Symbol.asyncIterator]() {
+      await new Promise(() => {});
+    },
+  };
+  const client = {
+    global: { event: async () => ({ stream }) },
+    session: {
+      create: async () => ({ data: { id: "sess-1" } }),
+      promptAsync: async () => ({ data: true }),
+      abort: async () => { abortCount += 1; },
+    },
+  };
+
+  const running = runOpenCodeTurn({
+    prompt: "hello",
+    emitter,
+    abortController,
+    openCodeFactory: async () => ({ client, server: { close() { closeCount += 1; } } }),
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  abortController.abort();
+
+  const result = await Promise.race([
+    running,
+    new Promise((resolve) => setTimeout(() => resolve("timed-out"), 50)),
+  ]);
+
+  assert.notEqual(result, "timed-out");
+  assert.deepEqual(result, { sessionId: "sess-1" });
+  assert.equal(abortCount, 1);
+  assert.equal(closeCount >= 1, true);
+  assert.equal(events.some((event) => event.k === "done"), false);
+});
+
+test("runOpenCodeTurn passes an explicit non-default port to the OpenCode SDK factory", async () => {
+  const { emitter } = collector();
+  const abortController = new AbortController();
+  let capturedPort;
+  const stream = {
+    async *[Symbol.asyncIterator]() {
+      yield { type: "message.part.updated", properties: { part: { type: "text", sessionID: "sess-1", id: "p1", text: "ok" }, delta: "ok" } };
+      yield { type: "session.idle", properties: { sessionID: "sess-1" } };
+    },
+  };
+  const client = {
+    global: { event: async () => ({ stream }) },
+    session: {
+      create: async () => ({ data: { id: "sess-1" } }),
+      promptAsync: async () => ({ data: true }),
+    },
+  };
+
+  await runOpenCodeTurn({
+    prompt: "hello",
+    emitter,
+    abortController,
+    openCodeFactory: async (options) => {
+      capturedPort = options.port;
+      return { client, server: { close() {} } };
+    },
+  });
+
+  assert.equal(typeof capturedPort, "number");
+  assert.notEqual(capturedPort, 4096);
+});
+
 test("runOpenCodeTurn waits for the OpenCode event stream before prompting", async () => {
   const { emitter } = collector();
   const abortController = new AbortController();
@@ -218,6 +371,23 @@ test("runOpenCodeTurn waits for the OpenCode event stream before prompting", asy
   const result = await running;
 
   assert.deepEqual(result, { sessionId: "sess-1" });
+});
+
+test("listOpenCodeModels passes an explicit non-default port to the OpenCode SDK factory", async () => {
+  let capturedPort;
+  const models = await require("./opencodeDriver.cjs").listOpenCodeModels({
+    openCodeFactory: async (options) => {
+      capturedPort = options.port;
+      return {
+        client: { config: { providers: async () => ({ providers: [], default: { openai: "gpt-5.1" } }) } },
+        server: { close() {} },
+      };
+    },
+  });
+
+  assert.deepEqual(models, { currentModelId: "openai/gpt-5.1", models: [] });
+  assert.equal(typeof capturedPort, "number");
+  assert.notEqual(capturedPort, 4096);
 });
 
 test("classifyOpenCodeSpawnError recognizes missing opencode CLI", () => {

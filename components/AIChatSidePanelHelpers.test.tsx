@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 
 import {
   modelPresetsContainId,
+  shouldAdoptSdkCurrentModel,
   shouldLoadSdkRuntimeModels,
+  shouldUseStoredAgentModel,
 } from './AIChatSidePanelHelpers';
 import type { AgentModelPreset, ExternalAgentConfig } from '../infrastructure/ai/types';
 
@@ -33,4 +35,41 @@ test('shouldLoadSdkRuntimeModels includes SDK agents with model catalogs', () =>
   assert.equal(shouldLoadSdkRuntimeModels(agent('opencode')), true);
   assert.equal(shouldLoadSdkRuntimeModels(agent('codex')), false);
   assert.equal(shouldLoadSdkRuntimeModels(undefined), false);
+});
+
+test('shouldAdoptSdkCurrentModel keeps SDK defaults when no runtime list is returned', () => {
+  assert.equal(shouldAdoptSdkCurrentModel('openai/gpt-5.1', undefined, []), true);
+  assert.equal(shouldAdoptSdkCurrentModel('openai/gpt-5.1', 'openai/gpt-5.1', []), true);
+  assert.equal(
+    shouldAdoptSdkCurrentModel('openai/gpt-5.1', 'anthropic/claude-sonnet', [
+      { id: 'anthropic/claude-sonnet', name: 'Claude' },
+    ]),
+    false,
+  );
+  assert.equal(shouldAdoptSdkCurrentModel(null, undefined, []), false);
+});
+
+test('shouldUseStoredAgentModel trusts SDK defaults when no runtime list is returned', () => {
+  const opencodeAgent: ExternalAgentConfig = {
+    id: 'managed_opencode',
+    name: 'OpenCode',
+    command: 'opencode',
+    enabled: true,
+    sdkBackend: 'opencode',
+  };
+
+  assert.equal(shouldUseStoredAgentModel('openai/gpt-5.1', [], opencodeAgent), true);
+  assert.equal(shouldUseStoredAgentModel('openai/gpt-5.1', [], undefined), false);
+  assert.equal(
+    shouldUseStoredAgentModel('anthropic/claude-sonnet', [
+      { id: 'anthropic/claude-sonnet', name: 'Claude' },
+    ], opencodeAgent),
+    true,
+  );
+  assert.equal(
+    shouldUseStoredAgentModel('openai/gpt-5.1', [
+      { id: 'anthropic/claude-sonnet', name: 'Claude' },
+    ], opencodeAgent),
+    false,
+  );
 });
