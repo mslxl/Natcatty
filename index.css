@@ -1036,12 +1036,48 @@ html[data-theme-transition] *::after {
 }
 
 .netcatty-mdx-editor [class*="_codeMirrorWrapper_"] {
+  position: relative;
   margin: 0.85rem 0 1rem;
   border: 0 !important;
   border-radius: 6px;
   background: transparent !important;
   padding: 0 !important;
   overflow: hidden;
+}
+
+.netcatty-note-code-copy {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.45rem;
+  padding: 0 0.45rem;
+  border: 0;
+  border-radius: 4px;
+  background: hsl(var(--background) / 0.92);
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, background-color 0.15s;
+}
+
+.netcatty-mdx-editor [class*="_codeMirrorWrapper_"]:hover .netcatty-note-code-copy,
+.netcatty-note-code-copy[data-copied="true"],
+.netcatty-note-code-copy:focus-visible {
+  opacity: 1;
+}
+
+.netcatty-note-code-copy:hover {
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
+}
+
+.netcatty-note-code-copy[data-copied="true"] {
+  color: hsl(var(--foreground));
 }
 
 .netcatty-mdx-editor [class*="_codeMirrorToolbar_"] {

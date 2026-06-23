@@ -273,3 +273,34 @@ test("note code block frame is borderless and language picker is compact", () =>
     /\.netcatty-mdx-editor--preview\s+\[class\*="_codeMirrorToolbar_"\]\s*\{[^}]*display:\s*none\s*!important;/s,
   );
 });
+
+test("getCodeMirrorBlockText reads rendered code block lines", () => {
+  const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /export const getCodeMirrorBlockText/);
+  assert.match(source, /\.cm-content \.cm-line/);
+  assert.match(source, /\.join\("\\n"\)/);
+});
+
+test("annotateNoteCodeBlockCopyButtons adds a copy action to code blocks", () => {
+  const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /export const annotateNoteCodeBlockCopyButtons/);
+  assert.match(source, /data-note-code-copy/);
+  assert.match(source, /getCodeMirrorBlockText\(wrapper\)/);
+  assert.match(source, /onCopy\(text\)/);
+});
+
+test("note code blocks expose a hover copy action in edit and preview modes", () => {
+  const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
+  const styles = readFileSync(new URL("../../index.css", import.meta.url), "utf8");
+
+  assert.match(source, /annotateNoteCodeBlockCopyButtons/);
+  assert.match(source, /notes\.codeBlock\.copied/);
+  assert.match(source, /copyToClipboard/);
+  assert.match(styles, /\.netcatty-note-code-copy/);
+  assert.match(
+    styles,
+    /\.netcatty-mdx-editor\s+\[class\*="_codeMirrorWrapper_"\]:hover\s+\.netcatty-note-code-copy/s,
+  );
+});

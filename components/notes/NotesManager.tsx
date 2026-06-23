@@ -11,6 +11,7 @@ import {
   PencilLine,
   Plus,
   Search,
+  Upload,
   X,
 } from "lucide-react";
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -25,6 +26,7 @@ import {
   isNoteGroupInside,
   joinNoteGroupPath,
   matchesVaultNoteSearch,
+  importMarkdownFilesToVaultNotes,
   normalizeNoteGroups,
   normalizeVaultNotes,
   remapExpandedNoteGroupPaths,
@@ -37,6 +39,7 @@ import {
   STORAGE_KEY_VAULT_NOTES_TREE_WIDTH,
 } from "../../infrastructure/config/storageKeys";
 import { cn } from "../../lib/utils";
+import { readTextFile } from "../../lib/readTextFile";
 import type { Host, VaultNote } from "../../types";
 import { Button } from "../ui/button";
 import { LazyLoadBoundary } from "../ui/lazy-load-boundary";
@@ -50,6 +53,7 @@ import { Dropdown, DropdownContent, DropdownTrigger } from "../ui/dropdown";
 import { Input } from "../ui/input";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { toast } from "../ui/toast";
 import {
   VaultTreeGroupRow,
   VaultTreeInlineRenameInput,
@@ -353,6 +357,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     { min: NOTES_TREE_MIN_WIDTH, max: NOTES_TREE_MAX_WIDTH },
   );
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const importFileInputRef = useRef<HTMLInputElement>(null);
 
   const groups = useMemo(() => normalizeNoteGroups(noteGroups), [noteGroups]);
   const groupOrderByPath = useMemo(
@@ -496,6 +501,51 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   const addNote = () => {
     addNoteToGroup(getNoteActionTargetGroup(selectedNote, selectedGroup));
   };
+
+  const handleImportMarkdownFiles = useCallback(async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+
+    const files = Array.from(fileList);
+    const targetGroup = getNoteActionTargetGroup(selectedNote, selectedGroup);
+
+    try {
+      const result = await importMarkdownFilesToVaultNotes(
+        files,
+        sortedNotes,
+        targetGroup,
+        readTextFile,
+      );
+
+      if (result.importedCount === 0) {
+        toast.error(t("notes.import.toast.noNotes"));
+        return;
+      }
+
+      onUpdateNotes(result.notes);
+      if (targetGroup) expandPath(targetGroup);
+
+      const lastImported = result.notes[result.notes.length - 1];
+      const nextSelection = getNoteSelectionState(lastImported, isSidebarMode);
+      setSelectedNoteId(nextSelection.selectedNoteId);
+      setSelectedGroup(nextSelection.selectedGroup);
+      setOverlayNoteId(nextSelection.overlayNoteId);
+
+      toast.success(t("notes.import.toast.success", { count: result.importedCount }));
+    } catch {
+      toast.error(t("notes.import.toast.failed"));
+    } finally {
+      if (importFileInputRef.current) {
+        importFileInputRef.current.value = "";
+      }
+    }
+  }, [
+    isSidebarMode,
+    onUpdateNotes,
+    selectedGroup,
+    selectedNote,
+    sortedNotes,
+    t,
+  ]);
 
   const duplicateNoteById = (noteId: string) => {
     const source = sortedNotes.find((note) => note.id === noteId);
@@ -1061,6 +1111,16 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
+      <input
+        ref={importFileInputRef}
+        type="file"
+        accept=".md,.markdown,.txt,text/markdown,text/plain"
+        multiple
+        className="hidden"
+        onChange={(event) => {
+          void handleImportMarkdownFiles(event.target.files);
+        }}
+      />
       <div className="flex min-h-0 flex-1">
         {shouldShowNotesTree && (
           <aside
@@ -1112,6 +1172,20 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom">{t("notes.action.newGroup")}</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className={toolbarIconButtonClass}
+                    onClick={() => importFileInputRef.current?.click()}
+                  >
+                    <Upload size={14} className="text-muted-foreground" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t("notes.action.importMarkdown")}</TooltipContent>
               </Tooltip>
 
               <Tooltip>
@@ -1276,10 +1350,16 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                 </div>
                 <h3 className="mb-2 text-lg font-semibold text-foreground">{t("notes.empty.title")}</h3>
                 <p className="mb-4 text-sm">{t("notes.empty.desc")}</p>
-                <Button onClick={addNote}>
-                  <Plus size={14} className="mr-2" />
-                  {t("notes.action.newNote")}
-                </Button>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <Button onClick={addNote}>
+                    <Plus size={14} className="mr-2" />
+                    {t("notes.action.newNote")}
+                  </Button>
+                  <Button variant="outline" onClick={() => importFileInputRef.current?.click()}>
+                    <Upload size={14} className="mr-2" />
+                    {t("notes.action.importMarkdown")}
+                  </Button>
+                </div>
               </div>
             </div>
           )}

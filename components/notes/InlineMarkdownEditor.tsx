@@ -34,8 +34,10 @@ import {
   getNearestEditorFromDOMNode,
 } from "lexical";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useI18n } from "../../application/i18n/I18nProvider";
 import { resolveRenderedMarkdownLinkHref } from "../../domain/notes";
 import { buildSshNoteLinkOpenHost } from "../../domain/sshDeepLink";
+import { copyToClipboard } from "../keychain/utils";
 import { cn } from "../../lib/utils";
 import type { Host } from "../../types";
 
@@ -322,6 +324,64 @@ export const getHostPickerTriggerRange = (textBeforeCursor: string): {
   };
 };
 
+export const getCodeMirrorBlockText = (wrapper: Element): string => {
+  const lines = wrapper.querySelectorAll(".cm-content .cm-line");
+  if (lines.length > 0) {
+    return Array.from(lines)
+      .map((line) => line.textContent?.replace(/\u00a0/g, " ") ?? "")
+      .join("\n");
+  }
+
+  const content = wrapper.querySelector(".cm-content");
+  return content?.textContent?.replace(/\u00a0/g, " ") ?? "";
+};
+
+export const annotateNoteCodeBlockCopyButtons = (
+  container: HTMLElement,
+  {
+    copyLabel,
+    copiedLabel,
+    onCopy,
+  }: {
+    copyLabel: string;
+    copiedLabel: string;
+    onCopy: (text: string) => Promise<boolean>;
+  },
+): void => {
+  container.querySelectorAll('[class*="_codeMirrorWrapper_"]').forEach((wrapper) => {
+    if (!(wrapper instanceof HTMLElement)) return;
+    if (wrapper.querySelector("[data-note-code-copy]")) return;
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.noteCodeCopy = "true";
+    button.className = "netcatty-note-code-copy";
+    button.title = copyLabel;
+    button.setAttribute("aria-label", copyLabel);
+    button.textContent = copyLabel;
+
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void (async () => {
+        const text = getCodeMirrorBlockText(wrapper);
+        const ok = await onCopy(text);
+        if (!ok) return;
+        button.dataset.copied = "true";
+        button.textContent = copiedLabel;
+        button.title = copiedLabel;
+        window.setTimeout(() => {
+          delete button.dataset.copied;
+          button.textContent = copyLabel;
+          button.title = copyLabel;
+        }, 1500);
+      })();
+    });
+
+    wrapper.appendChild(button);
+  });
+};
+
 const deleteLexicalTextRange = (range: Range, onUpdate: () => void): boolean => {
   const rangeContainer = range.startContainer.nodeType === Node.TEXT_NODE
     ? range.startContainer.parentElement
@@ -358,6 +418,7 @@ export function InlineMarkdownEditor({
   onOpenExternalLink,
   previewEmptyLabel,
 }: InlineMarkdownEditorProps) {
+  const { t } = useI18n();
   const editorRef = useRef<MDXEditorMethods>(null);
   const latestMarkdownRef = useRef(value);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -521,6 +582,22 @@ export function InlineMarkdownEditor({
     const frame = window.requestAnimationFrame(annotateHostLinks);
     return () => window.cancelAnimationFrame(frame);
   }, [annotateHostLinks, value]);
+
+  const annotateCodeBlockCopyButtons = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    annotateNoteCodeBlockCopyButtons(container, {
+      copyLabel: t("action.copy"),
+      copiedLabel: t("notes.codeBlock.copied"),
+      onCopy: copyToClipboard,
+    });
+  }, [t]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(annotateCodeBlockCopyButtons);
+    return () => window.cancelAnimationFrame(frame);
+  }, [annotateCodeBlockCopyButtons, editorMode, value]);
 
   const commitMarkdown = useCallback((markdown: string) => {
     if (markdown === latestMarkdownRef.current) return;
