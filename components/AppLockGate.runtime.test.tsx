@@ -241,3 +241,71 @@ test("focus recovery resync clears stale overlay state after a missed broadcast"
     dom.cleanup();
   }
 });
+
+test("reopen recovery resync clears stale overlay state after a missed broadcast", async () => {
+  const dom = installDomEnvironment();
+  const renderer = await createDomRenderer(dom.document);
+  const bridgeHarness = createAppLockBridgeHarness({
+    runtimeState: {
+      initialized: true,
+      locked: true,
+      reason: "manual",
+      version: 1,
+      lastLockedAt: 1_000,
+      lastUnlockedAt: null,
+      lastActivityAt: 1_000,
+    },
+  });
+  const AppLockGate = createAppLockGate({
+    useSettingsState: () => ({
+      uiLanguage: "en",
+      appLockSettings: {
+        enabled: true,
+        timeoutMinutes: 15,
+        passwordVerifier: {
+          version: 1,
+          algorithm: "PBKDF2-SHA256",
+          iterations: 210000,
+          salt: "AAAAAAAAAAAAAAAAAAAAAA==",
+          hash: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        },
+      },
+    }) as ReturnType<typeof import("../application/state/useSettingsState.ts").useSettingsState>,
+    useAppLockState,
+    useAppLockBridge,
+  });
+
+  const previousWindowNetcatty = dom.window.netcatty;
+  dom.window.netcatty = bridgeHarness.bridge;
+
+  try {
+    await renderer.render(
+      React.createElement(AppLockGate, {
+        notifyRendererReady: false,
+        children: () => React.createElement("div", { id: "reopen-gate" }, "Unlocked After Reopen"),
+      }),
+    );
+    await flushEffects();
+
+    assert.equal(dom.document.querySelectorAll('[role="dialog"]').length, 1);
+
+    await runWithAct(async () => {
+      bridgeHarness.setRuntimeState({
+        locked: false,
+        reason: null,
+        lastUnlockedAt: 2_000,
+        lastActivityAt: 2_000,
+      }, { notify: false });
+      bridgeHarness.emitReopen();
+    });
+    await flushEffects();
+    await flushEffects();
+
+    assert.equal(dom.document.querySelector('[role="dialog"]'), null);
+    assert.equal(dom.document.getElementById("reopen-gate")?.textContent, "Unlocked After Reopen");
+  } finally {
+    dom.window.netcatty = previousWindowNetcatty;
+    await renderer.unmount();
+    dom.cleanup();
+  }
+});
