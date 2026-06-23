@@ -40,7 +40,11 @@ import { useSftpKeyboardShortcuts } from "./sftp/hooks/useSftpKeyboardShortcuts"
 import { sftpFocusStore } from "./sftp/hooks/useSftpFocusedPane";
 import { keepOnlyPaneSelections } from "./sftp/hooks/selectionScope";
 import { KeyBinding, HotkeyScheme } from "../domain/models";
-import { resolveHostFollowTerminalCwd, shouldFollowTerminalCwdNavigate } from "./sftp/sftpFollowTerminalCwd";
+import {
+  mergeLatestFollowTerminalCwdHostSetting,
+  resolveHostFollowTerminalCwd,
+  shouldFollowTerminalCwdNavigate,
+} from "./sftp/sftpFollowTerminalCwd";
 
 interface SftpSidePanelProps {
   hosts: Host[];
@@ -658,12 +662,13 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
   const displayHost = useMemo(() => {
     const conn = sftp.leftPane.connection;
     if (conn && !conn.isLocal) {
+      const latestHost = hosts.find((h) => h.id === conn.hostId) ?? null;
       // Prefer the stored Host object from connect time — it preserves
       // session-time overrides that the vault host may lack.
       if (connectedHostObjRef.current && connectedHostObjRef.current.id === conn.hostId) {
-        return connectedHostObjRef.current;
+        return mergeLatestFollowTerminalCwdHostSetting(connectedHostObjRef.current, latestHost);
       }
-      return hosts.find((h) => h.id === conn.hostId) ?? activeHost;
+      return latestHost ?? activeHost;
     }
     return activeHost;
   }, [activeHost, connectedHostObjRef, hosts, sftp.leftPane.connection]);
