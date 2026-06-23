@@ -193,6 +193,11 @@ function resolveSdkBackendBinPath({
       : realPath;
     return sdkPath || undefined;
   }
+  if (backendKey === "opencode") {
+    const configuredEnvPath = normalizeCliPathForPlatform?.(env?.OPENCODE_BIN);
+    const rawPath = configuredEnvPath || resolveCliFromPath(backendKey, shellEnv) || undefined;
+    return rawPath ? resolveRealCliPath(rawPath, realpath) : undefined;
+  }
   return resolveSdkBinPath?.(backendKey, shellEnv) || undefined;
 }
 

@@ -14,6 +14,7 @@ test("resolveBackendKey maps backend command/value to registry key", () => {
   assert.equal(resolveBackendKey("codex"), "codex");
   assert.equal(resolveBackendKey("copilot"), "copilot");
   assert.equal(resolveBackendKey("codebuddy"), "codebuddy");
+  assert.equal(resolveBackendKey("opencode"), "opencode");
 });
 
 test("resolveBackendKey returns null for unknown", () => {
