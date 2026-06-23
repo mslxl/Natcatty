@@ -30,7 +30,10 @@ export function isCopilotAgentConfig(agent?: ExternalAgentConfig): boolean {
 
 export function shouldLoadSdkRuntimeModels(agent?: ExternalAgentConfig): boolean {
   const sdkBackend = getExternalAgentSdkBackend(agent);
-  return sdkBackend === 'claude' || sdkBackend === 'copilot' || sdkBackend === 'codebuddy';
+  return sdkBackend === 'claude'
+    || sdkBackend === 'copilot'
+    || sdkBackend === 'codebuddy'
+    || sdkBackend === 'opencode';
 }
 
 export function generateId(): string {

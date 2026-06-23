@@ -80,13 +80,19 @@ function extractOpenCodeErrorMessage(error) {
   );
 }
 
+function getOpenCodeEventPayload(event) {
+  if (event?.payload && typeof event.payload === "object") return event.payload;
+  if (event?.type && event?.properties) return event;
+  return null;
+}
+
 function getOpenCodeSessionIdFromEvent(event) {
-  const properties = event?.payload?.properties;
+  const properties = getOpenCodeEventPayload(event)?.properties;
   return properties?.sessionID || properties?.sessionId || properties?.info?.id || null;
 }
 
 function translateOpenCodeEvent(event, emitter, state = {}) {
-  const payload = event?.payload;
+  const payload = getOpenCodeEventPayload(event);
   if (!payload || typeof payload !== "object") return { idle: false, error: false };
 
   if (payload.type === "message.part.updated") {
@@ -231,7 +237,7 @@ async function runOpenCodeTurn({
         const eventSessionId = getOpenCodeSessionIdFromEvent(event);
         if (eventSessionId && eventSessionId !== sessionId) continue;
         const result = translateOpenCodeEvent(event, emitter, state);
-        if (event?.payload?.type === "message.part.updated") hasContent = true;
+        if (getOpenCodeEventPayload(event)?.type === "message.part.updated") hasContent = true;
         if (result.error) {
           failed = true;
           break;

@@ -105,6 +105,23 @@ test("translateOpenCodeEvent maps text, reasoning, tools, errors, and idle", () 
   ]);
 });
 
+test("translateOpenCodeEvent also accepts direct OpenCode SDK events", () => {
+  const { events, emitter } = collector();
+  translateOpenCodeEvent(
+    { type: "message.part.updated", properties: { part: { type: "text", sessionID: "sess-1", id: "p1", text: "hello" }, delta: "he" } },
+    emitter,
+  );
+  translateOpenCodeEvent(
+    { type: "session.idle", properties: { sessionID: "sess-1" } },
+    emitter,
+  );
+
+  assert.deepEqual(events, [
+    { k: "text", t: "he" },
+    { k: "status", m: "OpenCode session idle" },
+  ]);
+});
+
 test("mapOpenCodeModels flattens providers", () => {
   assert.deepEqual(mapOpenCodeModels({
     providers: [
@@ -161,6 +178,46 @@ test("runOpenCodeTurn creates a session, streams event deltas, and returns sessi
     { k: "status", m: "OpenCode session idle" },
     { k: "done" },
   ]);
+});
+
+test("runOpenCodeTurn waits for the OpenCode event stream before prompting", async () => {
+  const { emitter } = collector();
+  const abortController = new AbortController();
+  let releaseServerConnected;
+  let serverConnectedSeen = false;
+  const stream = {
+    async *[Symbol.asyncIterator]() {
+      await new Promise((resolve) => { releaseServerConnected = resolve; });
+      yield { payload: { type: "server.connected", properties: {} } };
+      serverConnectedSeen = true;
+      yield { payload: { type: "message.part.updated", properties: { part: { type: "text", sessionID: "sess-1", id: "p1", text: "ok" }, delta: "ok" } } };
+      yield { payload: { type: "session.idle", properties: { sessionID: "sess-1" } } };
+    },
+  };
+  const client = {
+    global: { event: async () => ({ stream }) },
+    session: {
+      create: async () => ({ data: { id: "sess-1" } }),
+      promptAsync: async () => {
+        assert.equal(serverConnectedSeen, true);
+        return { data: true };
+      },
+    },
+  };
+
+  const running = runOpenCodeTurn({
+    prompt: "hello",
+    model: "openai/gpt-5.1",
+    emitter,
+    abortController,
+    openCodeFactory: async () => ({ client, server: { close() {} } }),
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseServerConnected();
+  const result = await running;
+
+  assert.deepEqual(result, { sessionId: "sess-1" });
 });
 
 test("classifyOpenCodeSpawnError recognizes missing opencode CLI", () => {
