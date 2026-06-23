@@ -60,6 +60,7 @@ import {
 } from './terminalLayer/terminalLayerSessionRouting';
 import { resolvePreferredTerminalCwd, scheduleBackendCwdProbeAfterCommand } from './terminal/sftpCwd';
 import { classifyDistroId, shouldProbeSessionCwd } from '../domain/host';
+import { resolveHostFollowTerminalCwd } from './sftp/sftpFollowTerminalCwd';
 
 import {
   AIChatPanelsHost,
@@ -576,10 +577,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
   const handleCommandSubmitted = useCallback((_command: string, _hostId: string, _hostLabel: string, sessionId: string) => {
     const tabId = activeTabIdRef.current;
-    if (!sftpFollowTerminalCwdRef.current || !tabId || sidePanelOpenTabsRef.current.get(tabId) !== 'sftp') return;
+    if (!tabId || sidePanelOpenTabsRef.current.get(tabId) !== 'sftp') return;
 
     const session = sessionsRef.current.find((candidate) => candidate.id === sessionId);
     if (!session || !canReuseTerminalConnection(session)) return;
+    const sessionHost = sessionHostsMapRef.current.get(sessionId);
+    if (!resolveHostFollowTerminalCwd(sessionHost?.sftpFollowTerminalCwd, sftpFollowTerminalCwdRef.current)) return;
 
     const revisionAtCommand = terminalCwdRevisionRef.current;
     const probeGeneration = (cwdProbeGenerationRef.current.get(sessionId) ?? 0) + 1;
