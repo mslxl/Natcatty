@@ -546,6 +546,26 @@ html[data-theme-transition] *::after {
   animation: session-activity-breathe 1.4s ease-in-out infinite;
 }
 
+@keyframes coding-cli-icon-pulse {
+  0%, 100% {
+    opacity: 0.72;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+.coding-cli-icon-busy {
+  animation: coding-cli-icon-pulse 1.1s ease-in-out infinite;
+}
+
+.coding-cli-icon-waiting {
+  animation: coding-cli-icon-pulse 1.6s ease-in-out infinite;
+}
+
 .card-highlight {
   position: relative;
   overflow: hidden;

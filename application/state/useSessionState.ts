@@ -42,6 +42,7 @@ import {
   updateRestoredSessionStatusState,
 } from './sessionRestoreState';
 import { resolveRestorePreviousSessionSetting } from './sessionRestoreSettings';
+import type { CodingCliProviderId } from '../../domain/codingCliProviders';
 
 
 export const useSessionState = ({
@@ -216,6 +217,42 @@ export const useSessionState = ({
       sessionRestoreCwdByIdRef.current.delete(sessionId);
     }
     scheduleSessionRestorePersistRef.current();
+  }, []);
+
+  const updateSessionDynamicTitle = useCallback((sessionId: string, title: string | null) => {
+    const nextTitle = title && title.trim().length > 0 ? title.trim() : null;
+    setSessions((prev) => {
+      const session = prev.find((candidate) => candidate.id === sessionId);
+      if (!session) return prev;
+      if ((session.dynamicTitle ?? null) === nextTitle) return prev;
+      return prev.map((candidate) => {
+        if (candidate.id !== sessionId) return candidate;
+        if (!nextTitle) {
+          const { dynamicTitle: _removed, ...rest } = candidate;
+          return rest;
+        }
+        return { ...candidate, dynamicTitle: nextTitle };
+      });
+    });
+  }, []);
+
+  const updateSessionCodingCliProvider = useCallback((
+    sessionId: string,
+    providerId: CodingCliProviderId | null,
+  ) => {
+    setSessions((prev) => {
+      const session = prev.find((candidate) => candidate.id === sessionId);
+      if (!session) return prev;
+      if ((session.codingCliProviderId ?? null) === providerId) return prev;
+      return prev.map((candidate) => {
+        if (candidate.id !== sessionId) return candidate;
+        if (!providerId) {
+          const { codingCliProviderId: _removed, ...rest } = candidate;
+          return rest;
+        }
+        return { ...candidate, codingCliProviderId: providerId };
+      });
+    });
   }, []);
 
   const createLocalTerminal = useCallback((options?: LocalTerminalOptions) => {
@@ -1183,5 +1220,7 @@ export const useSessionState = ({
     copySession,
     createSessionFromCloneSource,
     updateSessionRestoreCwd,
+    updateSessionDynamicTitle,
+    updateSessionCodingCliProvider,
   };
 };

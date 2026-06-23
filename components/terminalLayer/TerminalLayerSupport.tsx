@@ -8,6 +8,7 @@ import { getTopTabInsertionTarget, isPointInsideRect, WORKSPACE_SESSION_DRAG_TYP
 import { useAIState } from '../../application/state/useAIState';
 import { useStoredBoolean } from '../../application/state/useStoredBoolean';
 import { collectSessionIds, SplitDirection } from '../../domain/workspace';
+import { resolveSessionTabTitle } from '../../domain/sessionTabTitle';
 import { KeyBinding, TerminalSettings } from '../../domain/models';
 import { STORAGE_KEY_AI_SHOW_TERMINAL_SELECTION_ACTION } from '../../infrastructure/config/storageKeys';
 import { cn } from '../../lib/utils';
@@ -17,6 +18,7 @@ import type { GroupConfig, Host, Identity, KnownHost, ProxyProfile, SSHKey, Snip
 import type { ExecutorContext } from '../../infrastructure/ai/cattyAgent/executor';
 import Terminal from '../Terminal';
 import { removePaneVisible, setPaneVisible } from '../terminal/paneVisibilityStore';
+import type { ProgrammaticCommandLogRewrite } from '../terminal/programmaticCommandLog';
 import type { TerminalBroadcastInputOptions } from '../terminal/terminalHelpers';
 import {
   getTerminalPaneRenderSnapshot,
@@ -559,6 +561,8 @@ export interface TerminalLayerProps {
   onUpdateTerminalFontWeight?: (fontWeight: number) => void;
   onUpdateSessionFontSize?: (sessionId: string, fontSize: number) => void;
   onUpdateSessionRestoreCwd?: (sessionId: string, cwd: string | null) => void;
+  onUpdateSessionDynamicTitle?: (sessionId: string, title: string | null) => void;
+  onUpdateSessionCodingCliProvider?: (sessionId: string, providerId: import('../../domain/codingCliProviders').CodingCliProviderId | null) => void;
   onClearSessionFontSizeOverride?: (sessionId: string) => void;
   onCloseSession: (sessionId: string, e?: React.MouseEvent) => void;
   onUpdateSessionStatus: (sessionId: string, status: TerminalSession['status']) => void;
@@ -661,6 +665,9 @@ interface TerminalPaneProps {
     sourceSessionId?: string,
   ) => void;
   onTerminalCwdChange: (sessionId: string, cwd: string | null) => void;
+  onTerminalTitleChange?: (sessionId: string, title: string | null) => void;
+  onTerminalBell?: (sessionId: string) => void;
+  onTerminalOutput?: (sessionId: string, chunk: string) => void;
   onOpenScripts: () => void;
   onOpenHistory?: () => void;
   onOpenTheme: () => void;
@@ -687,6 +694,10 @@ interface TerminalPaneProps {
   onSnippetExecutorChange: (
     sessionId: string,
     executor: SnippetExecutor | null,
+  ) => void;
+  onProgrammaticCommandLogRewriteChange: (
+    sessionId: string,
+    queueRewrite: ((rewrite: ProgrammaticCommandLogRewrite) => void) | null,
   ) => void;
   onAddSelectionToAI?: (sessionId: string, selection: string) => void;
   showSelectionAIAction: boolean;
@@ -767,6 +778,9 @@ const terminalPanePropsAreEqual = (
   prev.onTerminalFontSizeChange === next.onTerminalFontSizeChange &&
   prev.onOpenSftp === next.onOpenSftp &&
   prev.onTerminalCwdChange === next.onTerminalCwdChange &&
+  prev.onTerminalTitleChange === next.onTerminalTitleChange &&
+  prev.onTerminalBell === next.onTerminalBell &&
+  prev.onTerminalOutput === next.onTerminalOutput &&
   prev.onOpenScripts === next.onOpenScripts &&
   prev.onOpenHistory === next.onOpenHistory &&
   prev.onOpenTheme === next.onOpenTheme &&
@@ -832,6 +846,9 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   onTerminalFontSizeChange,
   onOpenSftp,
   onTerminalCwdChange,
+  onTerminalTitleChange,
+  onTerminalBell,
+  onTerminalOutput,
   onOpenScripts,
   onOpenHistory,
   onOpenTheme,
@@ -851,6 +868,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   onBroadcastInput,
   onToggleWorkspaceComposeBar,
   onSnippetExecutorChange,
+  onProgrammaticCommandLogRewriteChange,
   onAddSelectionToAI,
   showSelectionAIAction,
   onStartSessionRename,
@@ -993,7 +1011,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
     e.stopPropagation();
 
     const startPoint = { clientX: e.clientX, clientY: e.clientY };
-    const dragLabel = session.customName || session.hostLabel;
+    const dragLabel = resolveSessionTabTitle(session, host);
     let dragStarted = false;
     let ghostEl: HTMLDivElement | null = null;
     let insertEl: HTMLDivElement | null = null;
@@ -1212,6 +1230,9 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         onTerminalFontSizeChange={handleTerminalFontSizeChange}
         onOpenSftp={onOpenSftp}
         onTerminalCwdChange={onTerminalCwdChange}
+        onTerminalTitleChange={onTerminalTitleChange}
+        onTerminalBell={onTerminalBell}
+        onTerminalOutput={onTerminalOutput}
         onOpenScripts={onOpenScripts}
         onOpenHistory={onOpenHistory}
         onOpenTheme={onOpenTheme}
@@ -1234,10 +1255,11 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         isWorkspaceComposeBarOpen={inActiveWorkspace ? isComposeBarOpen : undefined}
         onBroadcastInput={broadcastEnabled ? onBroadcastInput : undefined}
         onSnippetExecutorChange={onSnippetExecutorChange}
+        onProgrammaticCommandLogRewriteChange={onProgrammaticCommandLogRewriteChange}
         sessionLog={sessionLog}
         sshDebugLogEnabled={sshDebugLogEnabled}
         sudoAutofillPassword={sudoAutofillPassword}
-        sessionDisplayName={session.customName || session.hostLabel}
+        sessionDisplayName={resolveSessionTabTitle(session, host)}
         showSelectionAIAction={showSelectionAIAction}
         onAddSelectionToAI={onAddSelectionToAI}
         onRename={handleRename}
@@ -1290,6 +1312,9 @@ interface TerminalPanesHostProps {
   onTerminalFontSizeChange?: TerminalPaneProps['onTerminalFontSizeChange'];
   onOpenSftp: TerminalPaneProps['onOpenSftp'];
   onTerminalCwdChange: TerminalPaneProps['onTerminalCwdChange'];
+  onTerminalTitleChange?: TerminalPaneProps['onTerminalTitleChange'];
+  onTerminalBell?: TerminalPaneProps['onTerminalBell'];
+  onTerminalOutput?: TerminalPaneProps['onTerminalOutput'];
   onOpenScripts: () => void;
   onOpenHistory?: () => void;
   onOpenTheme: () => void;
@@ -1317,6 +1342,7 @@ interface TerminalPanesHostProps {
     sessionId: string,
     executor: SnippetExecutor | null,
   ) => void;
+  onProgrammaticCommandLogRewriteChange: TerminalPaneProps['onProgrammaticCommandLogRewriteChange'];
   onAddSelectionToAI?: (sessionId: string, selection: string) => void;
   onStartSessionRename?: (sessionId: string) => void;
   onRemoveSessionFromWorkspace?: TerminalPaneProps['onRemoveSessionFromWorkspace'];
@@ -1364,6 +1390,9 @@ const terminalPanesHostPropsAreEqual = (
   if (prev.onTerminalFontSizeChange !== next.onTerminalFontSizeChange) return false;
   if (prev.onOpenSftp !== next.onOpenSftp) return false;
   if (prev.onTerminalCwdChange !== next.onTerminalCwdChange) return false;
+  if (prev.onTerminalTitleChange !== next.onTerminalTitleChange) return false;
+  if (prev.onTerminalBell !== next.onTerminalBell) return false;
+  if (prev.onTerminalOutput !== next.onTerminalOutput) return false;
   if (prev.onOpenScripts !== next.onOpenScripts) return false;
   if (prev.onOpenHistory !== next.onOpenHistory) return false;
   if (prev.onOpenTheme !== next.onOpenTheme) return false;
@@ -1383,6 +1412,7 @@ const terminalPanesHostPropsAreEqual = (
   if (prev.onBroadcastInput !== next.onBroadcastInput) return false;
   if (prev.onToggleWorkspaceComposeBar !== next.onToggleWorkspaceComposeBar) return false;
   if (prev.onSnippetExecutorChange !== next.onSnippetExecutorChange) return false;
+  if (prev.onProgrammaticCommandLogRewriteChange !== next.onProgrammaticCommandLogRewriteChange) return false;
   if (prev.onAddSelectionToAI !== next.onAddSelectionToAI) return false;
   if (prev.onStartSessionRename !== next.onStartSessionRename) return false;
   if (prev.onRemoveSessionFromWorkspace !== next.onRemoveSessionFromWorkspace) return false;

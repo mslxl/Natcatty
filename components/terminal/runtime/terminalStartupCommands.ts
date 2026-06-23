@@ -1,5 +1,8 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
-import { prepareAutoRunSnippetCommand } from "../terminalHelpers";
+import {
+  createProtectedSnippetLogRewriteForPreparedCommand,
+  prepareAutoRunSnippetCommand,
+} from "../terminalHelpers";
 import { markPromptLineBreakCommandPending } from "./promptLineBreak";
 import type { TerminalSessionStartersContext } from "./createTerminalSessionStarters.types";
 
@@ -81,6 +84,9 @@ export const scheduleStartupCommand = (
         shellType: ctx.shellType,
       })
     : commandToRun;
+  const logRewrite = ctx.protectStartupCommandTerminalMode
+    ? createProtectedSnippetLogRewriteForPreparedCommand(commandToRun, preparedCommandToRun)
+    : null;
 
   // Auto-run: send each non-empty line in sequence, waiting delayMs before the
   // first and between each, so a line runs inside any sub-shell opened by a
@@ -99,8 +105,12 @@ export const scheduleStartupCommand = (
       return;
     }
     const line = lines[index];
-    ctx.terminalBackend.writeToSession(ctx.sessionRef.current, `${line}\r`, { automated: true });
+    if (logRewrite) {
+      ctx.onProgrammaticCommandLogRewrite?.(logRewrite);
+    }
+    ctx.terminalBackend.writeToSession(ctx.sessionRef.current, `${line}\r`, { automated: true, logRewrite: logRewrite ?? undefined });
     markPromptLineBreakCommandPending(ctx.promptLineBreakStateRef, term, line);
+    ctx.onCommandSubmitted?.(line, ctx.host.id, ctx.host.label, ctx.sessionId);
     ctx.onCommandExecuted?.(line, ctx.host.id, ctx.host.label, ctx.sessionId);
     index += 1;
     if (index < lines.length) {

@@ -52,6 +52,9 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
     handleTerminalFontSizeChange,
     handleOpenSftp,
     handleTerminalCwdChange,
+    handleTerminalTitleChange,
+    handleTerminalBell,
+    handleTerminalOutput,
     handleOpenScripts,
     handleOpenHistory,
     handleOpenSystem,
@@ -71,6 +74,7 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
     handleBroadcastInput,
     handleToggleWorkspaceComposeBar,
     handleSnippetExecutorChange,
+    handleProgrammaticCommandLogRewriteChange,
     handleAddSelectionToAI,
     activeResizers,
     activeWorkspace,
@@ -169,6 +173,9 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
           onTerminalFontSizeChange={handleTerminalFontSizeChange}
           onOpenSftp={handleOpenSftp}
           onTerminalCwdChange={handleTerminalCwdChange}
+          onTerminalTitleChange={handleTerminalTitleChange}
+          onTerminalBell={handleTerminalBell}
+          onTerminalOutput={handleTerminalOutput}
           onOpenScripts={handleOpenScripts}
           onOpenHistory={handleOpenHistory}
           onOpenSystem={handleOpenSystem}
@@ -188,6 +195,7 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
           onBroadcastInput={handleBroadcastInput}
           onToggleWorkspaceComposeBar={handleToggleWorkspaceComposeBar}
           onSnippetExecutorChange={handleSnippetExecutorChange}
+          onProgrammaticCommandLogRewriteChange={handleProgrammaticCommandLogRewriteChange}
           onAddSelectionToAI={handleAddSelectionToAI}
           onStartSessionRename={onStartSessionRename}
           onRemoveSessionFromWorkspace={onRemoveSessionFromWorkspace}

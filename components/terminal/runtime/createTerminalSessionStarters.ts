@@ -1098,6 +1098,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       resetTerminalLineTimestampState(term);
       ctx.disposeDataRef.current = ctx.terminalBackend.onSessionData(id, (chunk) => {
         writeSessionData(ctx, term, chunk);
+        ctx.onTerminalOutput?.(chunk);
         if (!ctx.hasConnectedRef.current) {
           ctx.updateStatus("connected");
           setTimeout(() => {

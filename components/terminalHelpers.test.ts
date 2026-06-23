@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import type { Host } from "../domain/models";
 import {
   prepareAutoRunSnippetCommand,
-  prepareProtectedBroadcastSnippetData,
+  prepareProtectedBroadcastSnippetWrite,
   shouldHideConnectingDialogForConnectionReuse,
   shouldShowTerminalConnectionDialog,
 } from "./terminal/terminalHelpers";
@@ -305,31 +305,59 @@ test("protected snippet broadcast is prepared per target host", () => {
   const command = "bash <(curl -sSL https://linuxmirrors.cn/docker.sh)";
   const fallbackData = `${command}\r`;
 
-  const linuxData = prepareProtectedBroadcastSnippetData({
+  const linuxWrite = prepareProtectedBroadcastSnippetWrite({
     rawCommand: command,
     fallbackData,
     host: host({ protocol: "ssh", os: "linux", distro: "rocky" }),
     noAutoRun: false,
     shellType: "posix",
   });
-  assert.match(linuxData, /__netcatty_stty_state=/);
-  assert.match(linuxData, /stty "\$__netcatty_stty_state"/);
-  assert.equal(linuxData.endsWith("\r"), true);
+  assert.match(linuxWrite.data, /__netcatty_stty_state=/);
+  assert.match(linuxWrite.data, /stty "\$__netcatty_stty_state"/);
+  assert.equal(linuxWrite.data.endsWith("\r"), true);
+  assert.equal(linuxWrite.logRewrite?.displayCommand, command);
+  assert.equal(linuxWrite.logRewrite?.sentCommand, linuxWrite.data.slice(0, -1));
 
-  const fishData = prepareProtectedBroadcastSnippetData({
+  const fishWrite = prepareProtectedBroadcastSnippetWrite({
     rawCommand: command,
     fallbackData,
     host: host({ protocol: "ssh", os: "linux", distro: "rocky" }),
     noAutoRun: false,
     shellType: "fish",
   });
-  assert.equal(fishData, fallbackData);
+  assert.equal(fishWrite.data, fallbackData);
+  assert.equal(fishWrite.logRewrite, null);
 
-  const networkDeviceData = prepareProtectedBroadcastSnippetData({
+  const networkDeviceWrite = prepareProtectedBroadcastSnippetWrite({
     rawCommand: command,
     fallbackData,
     host: host({ protocol: "ssh", deviceType: "network", distro: "cisco" }),
     noAutoRun: false,
   });
-  assert.equal(networkDeviceData, fallbackData);
+  assert.equal(networkDeviceWrite.data, fallbackData);
+  assert.equal(networkDeviceWrite.logRewrite, null);
+});
+
+test("protected snippet broadcast log rewrites are isolated per generated target command", () => {
+  const command = "sudo apt update && sudo apt upgrade -y";
+  const fallbackData = `${command}\r`;
+
+  const firstWrite = prepareProtectedBroadcastSnippetWrite({
+    rawCommand: command,
+    fallbackData,
+    host: host({ protocol: "ssh", os: "linux", distro: "ubuntu" }),
+    noAutoRun: false,
+  });
+  const secondWrite = prepareProtectedBroadcastSnippetWrite({
+    rawCommand: command,
+    fallbackData,
+    host: host({ protocol: "ssh", os: "linux", distro: "ubuntu" }),
+    noAutoRun: false,
+  });
+
+  assert.notEqual(firstWrite.data, secondWrite.data);
+  assert.equal(firstWrite.logRewrite?.displayCommand, command);
+  assert.equal(secondWrite.logRewrite?.displayCommand, command);
+  assert.equal(firstWrite.logRewrite?.sentCommand, firstWrite.data.slice(0, -1));
+  assert.equal(secondWrite.logRewrite?.sentCommand, secondWrite.data.slice(0, -1));
 });

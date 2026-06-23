@@ -60,6 +60,12 @@ function createPreloadApi(ctx) {
       sessionId,
       data,
       automated: Boolean(options?.automated),
+      logRewrite: options?.logRewrite && typeof options.logRewrite === "object"
+        ? {
+            sentCommand: String(options.logRewrite.sentCommand ?? ""),
+            displayCommand: String(options.logRewrite.displayCommand ?? ""),
+          }
+        : undefined,
     });
   },
   execCommand: async (options) => {

@@ -732,7 +732,13 @@ test("local session runs startup command after attaching", async () => {
 });
 
 test("ssh snippet startup command restores terminal mode after attaching", async () => {
-  const sessionWrites: Array<{ id: string; data: string; automated?: boolean }> = [];
+  const sessionWrites: Array<{
+    id: string;
+    data: string;
+    automated?: boolean;
+    logRewrite?: { sentCommand: string; displayCommand: string };
+  }> = [];
+  const queuedLogRewrites: Array<{ sentCommand: string; displayCommand: string }> = [];
 
   const terminalBackend = {
     backendAvailable: () => true,
@@ -750,8 +756,8 @@ test("ssh snippet startup command restores terminal mode after attaching", async
     onSessionData: () => noop,
     onSessionExit: () => noop,
     onChainProgress: () => noop,
-    writeToSession: (id: string, data: string, options?: { automated?: boolean }) => {
-      sessionWrites.push({ id, data, automated: options?.automated });
+    writeToSession: (id: string, data: string, options?: { automated?: boolean; logRewrite?: { sentCommand: string; displayCommand: string } }) => {
+      sessionWrites.push({ id, data, automated: options?.automated, logRewrite: options?.logRewrite });
     },
     resizeSession: noop,
   };
@@ -771,6 +777,7 @@ test("ssh snippet startup command restores terminal mode after attaching", async
     startupCommand: "bash <(curl -sSL https://linuxmirrors.cn/docker.sh)",
     protectStartupCommandTerminalMode: true,
     promptLineBreakStateRef: undefined,
+    onProgrammaticCommandLogRewrite: (rewrite) => queuedLogRewrites.push(rewrite),
   });
 
   await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
@@ -782,6 +789,15 @@ test("ssh snippet startup command restores terminal mode after attaching", async
   assert.match(sessionWrites[0].data, /mkdir -m 700 \/tmp\/\.netcatty-/);
   assert.match(sessionWrites[0].data, /stty -g > stty/);
   assert.equal(sessionWrites[0].data.endsWith("\r"), true);
+  assert.deepEqual(queuedLogRewrites, [sessionWrites[0].logRewrite]);
+  assert.equal(
+    sessionWrites[0].logRewrite?.displayCommand,
+    "bash <(curl -sSL https://linuxmirrors.cn/docker.sh)",
+  );
+  assert.equal(
+    sessionWrites[0].logRewrite?.sentCommand,
+    sessionWrites[0].data.slice(0, -1),
+  );
 });
 
 test("startup command suppression is consumed only when scheduling", () => {

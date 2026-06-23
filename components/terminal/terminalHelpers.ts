@@ -2,9 +2,11 @@ import type { DragEvent, PointerEvent } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 
 import { classifyDistroId } from "../../domain/host";
+import { getSessionConnectionLabel, resolveSessionTabTitle } from "../../domain/sessionTabTitle";
 import { logger } from "../../lib/logger";
 import { getPathForFile, type DropEntry } from "../../lib/sftpFileUtils";
 import { normalizeLineEndings } from "../../lib/utils";
+import type { ProgrammaticCommandLogRewrite } from "./programmaticCommandLog";
 import type {
   Host,
   Identity,
@@ -28,12 +30,14 @@ export interface TerminalBroadcastInputOptions {
 }
 
 /**
- * Get the display name for a terminal session.
+ * Get the static connection label for a terminal session.
  * Uses customName if set, otherwise falls back to hostLabel.
  */
 export function getSessionDisplayName(session: TerminalSession): string {
-  return session.customName || session.hostLabel || '';
+  return getSessionConnectionLabel(session);
 }
+
+export { resolveSessionTabTitle };
 
 /**
  * Extract unique root paths from drop entries for local terminal path insertion.
@@ -175,6 +179,9 @@ export interface TerminalProps {
     sourceSessionId?: string,
   ) => void;
   onTerminalCwdChange?: (sessionId: string, cwd: string | null) => void;
+  onTerminalTitleChange?: (sessionId: string, title: string | null) => void;
+  onTerminalBell?: (sessionId: string) => void;
+  onTerminalOutput?: (sessionId: string, chunk: string) => void;
   onOpenScripts?: () => void;
   onOpenHistory?: () => void;
   onOpenTheme?: () => void;
@@ -195,6 +202,10 @@ export interface TerminalProps {
       noAutoRun?: boolean,
       options?: { broadcast?: boolean; protectTerminalMode?: boolean },
     ) => void) | null,
+  ) => void;
+  onProgrammaticCommandLogRewriteChange?: (
+    sessionId: string,
+    queueRewrite: ((rewrite: ProgrammaticCommandLogRewrite) => void) | null,
   ) => void;
   sessionLog?: { enabled: boolean; directory: string; format: string; timestampsEnabled?: boolean };
   sshDebugLogEnabled?: boolean;
@@ -389,7 +400,32 @@ export function prepareAutoRunSnippetCommand(
     : buildPosixSnippetRestoreCommand(encodedCommand);
 }
 
-export function prepareProtectedBroadcastSnippetData({
+export function createProtectedSnippetLogRewriteForPreparedCommand(
+  command: string,
+  preparedCommand: string,
+): ProgrammaticCommandLogRewrite | null {
+  const rawCommand = String(command ?? "");
+  if (preparedCommand === rawCommand) return null;
+  return {
+    sentCommand: normalizeLineEndings(preparedCommand),
+    displayCommand: normalizeLineEndings(rawCommand),
+  };
+}
+
+export function createProtectedSnippetLogRewrite(
+  command: string,
+  opts: {
+    host: SnippetRestoreHost;
+    noAutoRun?: boolean;
+    shellType?: TerminalSession["shellType"];
+  },
+): ProgrammaticCommandLogRewrite | null {
+  const rawCommand = String(command ?? "");
+  const preparedCommand = prepareAutoRunSnippetCommand(rawCommand, opts);
+  return createProtectedSnippetLogRewriteForPreparedCommand(rawCommand, preparedCommand);
+}
+
+export function prepareProtectedBroadcastSnippetWrite({
   rawCommand,
   fallbackData,
   host,
@@ -401,14 +437,15 @@ export function prepareProtectedBroadcastSnippetData({
   host: SnippetRestoreHost;
   noAutoRun?: boolean;
   shellType?: TerminalSession["shellType"];
-}): string {
+}): { data: string; logRewrite: ProgrammaticCommandLogRewrite | null } {
   const prepared = prepareAutoRunSnippetCommand(rawCommand, { host, noAutoRun, shellType });
-  if (prepared === String(rawCommand ?? "")) {
-    return fallbackData;
+  const logRewrite = createProtectedSnippetLogRewriteForPreparedCommand(rawCommand, prepared);
+  if (!logRewrite) {
+    return { data: fallbackData, logRewrite: null };
   }
   let data = normalizeLineEndings(prepared);
   if (!noAutoRun) data = `${data}\r`;
-  return data;
+  return { data, logRewrite };
 }
 
 export function shouldHideConnectingDialogForConnectionReuse({

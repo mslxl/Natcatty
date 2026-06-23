@@ -2,6 +2,7 @@
 import type React from 'react';
 
 import type { DropEntry } from '../../lib/sftpFileUtils';
+import type { ProgrammaticCommandLogRewrite } from '../terminal/programmaticCommandLog';
 import type {
   GroupConfig,
   Host,
@@ -43,6 +44,7 @@ export type TerminalLayerStableSnapshot = {
   sessionSudoAutofillPasswordsMap: Map<string, string | undefined>;
   workspaceById: Map<string, Workspace>;
   snippetExecutorsRef: React.MutableRefObject<Map<string, SnippetExecutor>>;
+  programmaticCommandLogRewriteHandlersRef: React.MutableRefObject<Map<string, (rewrite: ProgrammaticCommandLogRewrite) => void>>;
   activeTabIdRef: React.MutableRefObject<string>;
   activeWorkspaceRef: React.MutableRefObject<Workspace | undefined>;
   activeSessionRef: React.MutableRefObject<TerminalSession | undefined>;
@@ -94,6 +96,10 @@ export type TerminalLayerStableSnapshot = {
   handleTerminalDataCapture: (sessionId: string, data: string) => void;
   handleBroadcastInput: (data: string, sourceSessionId: string) => void;
   handleSnippetExecutorChange: (sessionId: string, executor: SnippetExecutor | null) => void;
+  handleProgrammaticCommandLogRewriteChange: (
+    sessionId: string,
+    queueRewrite: ((rewrite: ProgrammaticCommandLogRewrite) => void) | null,
+  ) => void;
   handleTerminalFontSizeChange: (sessionId: string, nextFontSize: number) => void;
   handleOpenSftp: (host: Host, initialPath?: string, pendingUploadEntries?: DropEntry[], sourceSessionId?: string) => void;
   handlePendingUploadHandled: (tabId: string, requestId: string) => void;
@@ -153,6 +159,8 @@ export type TerminalLayerStableSnapshot = {
   onCopySession: TerminalLayerProps['onCopySession'];
   onCopySessionToNewWindow: TerminalLayerProps['onCopySessionToNewWindow'];
   onUpdateSessionRestoreCwd: TerminalLayerProps['onUpdateSessionRestoreCwd'];
+  onUpdateSessionDynamicTitle: TerminalLayerProps['onUpdateSessionDynamicTitle'];
+  onUpdateSessionCodingCliProvider: TerminalLayerProps['onUpdateSessionCodingCliProvider'];
   onRequestAddToWorkspace: TerminalLayerProps['onRequestAddToWorkspace'];
   onSetWorkspaceFocusedSession: TerminalLayerProps['onSetWorkspaceFocusedSession'];
   onToggleWorkspaceViewMode: TerminalLayerProps['onToggleWorkspaceViewMode'];

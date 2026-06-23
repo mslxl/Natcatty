@@ -188,6 +188,7 @@ export interface Host {
   sftpSudo?: boolean; // Use sudo for SFTP operations (requires password)
   sftpEncoding?: SftpFilenameEncoding; // Filename encoding for SFTP operations
   sftpBookmarks?: SftpBookmark[]; // Bookmarked SFTP paths for quick navigation
+  sftpFollowTerminalCwd?: boolean; // Overrides global SFTP follow-terminal-directory setting
   // Managed source: if this host is managed by an external file (e.g., ~/.ssh/config)
   managedSourceId?: string; // Reference to ManagedSource.id
   // Host-level keyword highlighting (overrides/extends global settings)
@@ -218,6 +219,10 @@ export interface Host {
   showLineTimestamps?: boolean;
   // What the Backspace key sends: undefined = xterm default (no interception), 'ctrl-h' = ^H (0x08)
   backspaceBehavior?: 'ctrl-h';
+  // When true, tab titles stay on the connection label instead of following the
+  // shell-reported window title (OSC 0/2). Useful when many hosts share one
+  // bastion profile name.
+  disableDynamicTabTitle?: boolean;
   // Local SSH key file paths (from SSH config IdentityFile or user-added)
   // Resolved at connection time — the app reads the file content when connecting.
   identityFilePaths?: string[];
