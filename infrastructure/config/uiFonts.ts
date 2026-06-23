@@ -9,6 +9,15 @@ export interface UIFont {
   family: string;
 }
 
+export type UiPlatform = 'darwin' | 'win32' | 'linux';
+
+/**
+ * Windows bundles UI fonts via @font-face. Their regional-indicator glyphs
+ * render as separate letters instead of composed flag emoji unless a color
+ * emoji font is consulted first — see #1589.
+ */
+export const WINDOWS_UI_EMOJI_FONTS = '"Segoe UI Emoji", "Segoe UI Symbol"';
+
 /**
  * Fallback fonts for CJK (Chinese, Japanese, Korean) support
  */
@@ -32,6 +41,24 @@ export const withUiCjkFallback = (family: string) => {
   }
   return `${trimmed}, ${CJK_FALLBACK_STACK}`;
 };
+
+export function detectUiPlatform(userAgent: string): UiPlatform {
+  if (/Win/i.test(userAgent)) return 'win32';
+  if (/Mac|iPod|iPhone|iPad/i.test(userAgent)) return 'darwin';
+  return 'linux';
+}
+
+export function withWindowsEmojiFallback(
+  family: string,
+  platform: UiPlatform = typeof navigator !== 'undefined'
+    ? detectUiPlatform(navigator.userAgent)
+    : 'linux',
+): string {
+  if (platform !== 'win32') return family;
+  const trimmed = family.trim();
+  if (trimmed.includes('Segoe UI Emoji')) return trimmed;
+  return `${WINDOWS_UI_EMOJI_FONTS}, ${trimmed}`;
+}
 
 const BASE_UI_FONTS: UIFont[] = [
   {

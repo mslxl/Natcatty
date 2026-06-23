@@ -123,6 +123,12 @@
 
 }
 
+/* Windows: Space Grotesk includes regional-indicator letters that block
+   composed flag emoji unless a color emoji font is tried first (#1589). */
+html.platform-win32 {
+  --font-sans: "Segoe UI Emoji", "Segoe UI Symbol", "Space Grotesk", system-ui, sans-serif;
+}
+
 @keyframes top-tab-enter {
   from {
     opacity: 0;
