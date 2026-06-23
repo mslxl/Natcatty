@@ -87,6 +87,88 @@ test("startup-locked gate reveals children after successful unlock", async () =>
   }
 });
 
+test("mounted locked gate uses the latest unlock password without remounting", async () => {
+  const dom = installDomEnvironment();
+  const renderer = await createDomRenderer(dom.document);
+  const bridgeHarness = createAppLockBridgeHarness({
+    runtimeState: {
+      initialized: true,
+      locked: true,
+      reason: "manual",
+      version: 1,
+      lastLockedAt: 1_000,
+      lastUnlockedAt: null,
+      lastActivityAt: 1_000,
+    },
+    unlockPassword: "alpha",
+  });
+  const AppLockGate = createAppLockGate({
+    useSettingsState: () => ({
+      uiLanguage: "en",
+      appLockSettings: {
+        enabled: true,
+        timeoutMinutes: 15,
+        passwordVerifier: {
+          version: 1,
+          algorithm: "PBKDF2-SHA256",
+          iterations: 210000,
+          salt: "AAAAAAAAAAAAAAAAAAAAAA==",
+          hash: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        },
+      },
+    }) as ReturnType<typeof import("../application/state/useSettingsState.ts").useSettingsState>,
+    useAppLockState,
+    useAppLockBridge,
+  });
+
+  const previousWindowNetcatty = dom.window.netcatty;
+  dom.window.netcatty = bridgeHarness.bridge;
+
+  try {
+    await renderer.render(
+      React.createElement(AppLockGate, {
+        notifyRendererReady: false,
+        children: () => React.createElement("div", { id: "latest-password-content" }, "Unlocked"),
+      }),
+    );
+    await flushEffects();
+
+    bridgeHarness.setUnlockPassword("bravo");
+
+    const form = dom.document.querySelector("form");
+    assert.ok(form);
+    const input = dom.document.getElementById("app-lock-password") as HTMLInputElement | null;
+    assert.ok(input);
+    const setInputValue = Object.getOwnPropertyDescriptor(
+      dom.window.HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    assert.ok(setInputValue);
+
+    setInputValue.call(input, "alpha");
+    await dispatchDomEvent(input, new dom.window.Event("input", { bubbles: true }));
+    await dispatchDomEvent(form, new dom.window.Event("submit", { bubbles: true, cancelable: true }));
+    await flushEffects();
+
+    assert.equal(dom.document.querySelectorAll('[role="dialog"]').length, 1);
+    assert.equal(dom.document.getElementById("latest-password-content")?.textContent, "Unlocked");
+
+    setInputValue.call(input, "bravo");
+    await dispatchDomEvent(input, new dom.window.Event("input", { bubbles: true }));
+    await dispatchDomEvent(form, new dom.window.Event("submit", { bubbles: true, cancelable: true }));
+    await flushEffects();
+    await flushEffects();
+
+    assert.deepEqual(bridgeHarness.getUnlockAttempts(), ["alpha", "bravo"]);
+    assert.equal(dom.document.querySelector('[role="dialog"]'), null);
+    assert.equal(dom.document.getElementById("latest-password-content")?.textContent, "Unlocked");
+  } finally {
+    dom.window.netcatty = previousWindowNetcatty;
+    await renderer.unmount();
+    dom.cleanup();
+  }
+});
+
 test("runtime unlock and relock broadcasts update multiple mounted gates together", async () => {
   const dom = installDomEnvironment();
   const renderer = await createDomRenderer(dom.document);

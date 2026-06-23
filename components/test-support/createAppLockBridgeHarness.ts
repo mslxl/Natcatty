@@ -18,7 +18,7 @@ function cloneRuntimeState(input: RuntimeAppLockState): RuntimeAppLockState {
 export function createAppLockBridgeHarness(options: HarnessOptions) {
   let runtimeState = cloneRuntimeState(options.runtimeState);
   let nextVersion = runtimeState.version + 1;
-  const unlockPassword = options.unlockPassword ?? "secret";
+  let unlockPassword = options.unlockPassword ?? "secret";
   const runtimeListeners = new Set<(state: RuntimeAppLockState) => void>();
   const reopenListeners = new Set<() => void>();
   const rendererReadyCalls: number[] = [];
@@ -98,6 +98,9 @@ export function createAppLockBridgeHarness(options: HarnessOptions) {
       return runtimeFetchCount;
     },
     setRuntimeState,
+    setUnlockPassword(nextPassword: string) {
+      unlockPassword = nextPassword;
+    },
     emitReopen() {
       for (const listener of reopenListeners) {
         listener();
