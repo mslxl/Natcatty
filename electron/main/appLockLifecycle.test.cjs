@@ -126,6 +126,41 @@ test("handleActivateWithMainWindow shows and focuses the main window, then emits
   ]);
 });
 
+test("handleActivateWithMainWindow refuses crashed main windows so activate can recreate them", () => {
+  const calls = [];
+  const mainWindow = {
+    isDestroyed: () => false,
+    destroy() {
+      calls.push("destroy");
+    },
+    webContents: {
+      isCrashed: () => true,
+      id: 99,
+      send(channel) {
+        calls.push(`send:${channel}`);
+      },
+    },
+  };
+
+  const handled = handleActivateWithMainWindow({
+    app: {
+      focus() {
+        calls.push("app.focus");
+      },
+    },
+    mainWindow,
+    globalShortcutBridge: {
+      clearPendingFullscreenHide() {
+        calls.push("clear");
+      },
+    },
+    reopenWindows: [mainWindow],
+  });
+
+  assert.equal(handled, false);
+  assert.deepEqual(calls, ["destroy"]);
+});
+
 test("handleBeforeQuit commits quit after clean dirty-editor check and locks background", async () => {
   const calls = [];
   const mainWindow = {

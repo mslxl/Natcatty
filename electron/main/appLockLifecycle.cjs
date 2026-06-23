@@ -28,6 +28,15 @@ function handleActivateWithMainWindow({
   if (!mainWindow || mainWindow.isDestroyed?.()) return false;
 
   try {
+    if (mainWindow.webContents?.isCrashed?.()) {
+      mainWindow.destroy?.();
+      return false;
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
     globalShortcutBridge?.clearPendingFullscreenHide?.(mainWindow);
   } catch {
     // ignore
