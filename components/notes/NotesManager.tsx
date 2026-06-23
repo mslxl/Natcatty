@@ -358,6 +358,8 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   );
   const searchInputRef = useRef<HTMLInputElement>(null);
   const importFileInputRef = useRef<HTMLInputElement>(null);
+  const isImportingMarkdownRef = useRef(false);
+  const sortedNotesRef = useRef<VaultNote[]>([]);
 
   const groups = useMemo(() => normalizeNoteGroups(noteGroups), [noteGroups]);
   const groupOrderByPath = useMemo(
@@ -365,6 +367,11 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     [groups],
   );
   const sortedNotes = useMemo(() => sortNoteItems(normalizeVaultNotes(notes)), [notes]);
+
+  useEffect(() => {
+    sortedNotesRef.current = sortedNotes;
+  }, [sortedNotes]);
+
   const noteTree = useMemo(() => {
     const tree = buildNoteTree(groups, sortedNotes);
     return {
@@ -504,14 +511,19 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
 
   const handleImportMarkdownFiles = useCallback(async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
+    if (isImportingMarkdownRef.current) {
+      toast.info(t("notes.import.toast.inProgress"));
+      return;
+    }
 
     const files = Array.from(fileList);
     const targetGroup = getNoteActionTargetGroup(selectedNote, selectedGroup);
+    isImportingMarkdownRef.current = true;
 
     try {
       const result = await importMarkdownFilesToVaultNotes(
         files,
-        sortedNotes,
+        sortedNotesRef.current,
         targetGroup,
         readTextFile,
       );
@@ -522,6 +534,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       }
 
       onUpdateNotes(result.notes);
+      sortedNotesRef.current = result.notes;
       if (targetGroup) expandPath(targetGroup);
 
       const lastImported = result.notes[result.notes.length - 1];
@@ -534,6 +547,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     } catch {
       toast.error(t("notes.import.toast.failed"));
     } finally {
+      isImportingMarkdownRef.current = false;
       if (importFileInputRef.current) {
         importFileInputRef.current.value = "";
       }
@@ -543,7 +557,6 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     onUpdateNotes,
     selectedGroup,
     selectedNote,
-    sortedNotes,
     t,
   ]);
 
@@ -1114,7 +1127,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       <input
         ref={importFileInputRef}
         type="file"
-        accept=".md,.markdown,.txt,text/markdown,text/plain"
+        accept=".md,.markdown,.txt"
         multiple
         className="hidden"
         onChange={(event) => {

@@ -221,7 +221,9 @@ test("NotesManager exposes markdown import controls", () => {
 
   assert.match(source, /notes\.action\.importMarkdown/);
   assert.match(source, /importMarkdownFilesToVaultNotes/);
-  assert.match(source, /accept="\.md,\.markdown,\.txt,text\/markdown,text\/plain"/);
+  assert.match(source, /accept="\.md,\.markdown,\.txt"/);
+  assert.match(source, /isImportingMarkdownRef/);
+  assert.match(source, /sortedNotesRef/);
   assert.match(source, /multiple/);
 });
 

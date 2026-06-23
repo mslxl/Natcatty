@@ -283,7 +283,8 @@ export const resolveRenderedMarkdownLinkHref = (
 const NOTE_IMPORT_TITLE_EXTENSIONS = /\.(md|markdown|txt)$/i;
 
 export const deriveNoteImportTitle = (fileName: string, content: string): string => {
-  const headingMatch = /^#\s+(.+?)\s*$/m.exec(content);
+  const contentWithoutCodeBlocks = content.replace(/```[\s\S]*?```/g, "");
+  const headingMatch = /^#\s+(.+?)\s*$/m.exec(contentWithoutCodeBlocks);
   if (headingMatch?.[1]) return headingMatch[1].trim();
 
   const baseName = fileName.replace(NOTE_IMPORT_TITLE_EXTENSIONS, "").trim();

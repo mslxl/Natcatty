@@ -9,6 +9,7 @@ export const enVaultMessages: Messages = {
   'notes.import.toast.success': 'Imported {count} note(s)',
   'notes.import.toast.noNotes': 'No Markdown files were imported.',
   'notes.import.toast.failed': 'Failed to import Markdown files.',
+  'notes.import.toast.inProgress': 'A Markdown import is already in progress.',
   'notes.codeBlock.copied': 'Copied',
   'notes.group.prompt': 'Folder path',
   'notes.group.all': 'Notebook',

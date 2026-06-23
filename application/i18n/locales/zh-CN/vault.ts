@@ -9,6 +9,7 @@ export const zhCNVaultMessages: Messages = {
   'notes.import.toast.success': '已导入 {count} 条笔记',
   'notes.import.toast.noNotes': '没有导入任何 Markdown 文件。',
   'notes.import.toast.failed': '导入 Markdown 文件失败。',
+  'notes.import.toast.inProgress': '正在导入 Markdown 文件，请稍候。',
   'notes.codeBlock.copied': '已复制',
   'notes.group.prompt': '文件夹路径',
   'notes.group.all': '笔记本',

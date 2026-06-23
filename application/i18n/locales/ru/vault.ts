@@ -9,6 +9,7 @@ export const ruVaultMessages: Messages = {
   'notes.import.toast.success': 'Импортировано заметок: {count}',
   'notes.import.toast.noNotes': 'Markdown-файлы не были импортированы.',
   'notes.import.toast.failed': 'Не удалось импортировать Markdown-файлы.',
+  'notes.import.toast.inProgress': 'Импорт Markdown уже выполняется.',
   'notes.codeBlock.copied': 'Скопировано',
   'notes.group.prompt': 'Путь папки',
   'notes.group.all': 'Блокнот',
