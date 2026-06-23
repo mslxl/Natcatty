@@ -212,7 +212,20 @@ test("NotesManager renders empty state", () => {
 
   assert.match(markup, /No notes yet/);
   assert.match(markup, /New Note/);
+  assert.match(markup, /Import Markdown/);
   assert.doesNotMatch(markup, /data-notes-drop-zone="root"/);
+});
+
+test("NotesManager exposes markdown import controls", () => {
+  const source = readFileSync(new URL("./NotesManager.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /notes\.action\.importMarkdown/);
+  assert.match(source, /importMarkdownPayloadsToVaultNotes/);
+  assert.match(source, /accept="\.md,\.markdown,\.txt"/);
+  assert.match(source, /importTargetGroupRef/);
+  assert.match(source, /openImportMarkdownPicker/);
+  assert.match(source, /notes\.action\.importMarkdown[\s\S]*openImportMarkdownPicker\(groupPath\)/);
+  assert.match(source, /multiple/);
 });
 
 test("NotesManager sidebar mode renders list without editor by default", () => {
