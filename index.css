@@ -42,6 +42,23 @@
   font-display: swap;
 }
 
+/* Bundled flag-emoji subset of Noto Color Emoji (COLR, ~820 KB). Windows
+   system fonts omit flag glyphs and show ISO country codes (HK, US, …)
+   instead of 🇭🇰 🇺🇸 — see #1604. unicode-range limits this face to
+   regional-indicator codepoints so spaces and Latin text stay on the UI
+   sans stack.
+
+   Source: subset of https://github.com/googlefonts/noto-emoji (flagsonly).
+   License: OFL-1.1 — see public/fonts/NotoColorEmojiFlags-LICENSE.txt. */
+@font-face {
+  font-family: "Noto Color Emoji Flags";
+  src: url("/fonts/noto-color-emoji-flags.woff2") format("woff2");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+1F1E6-1F1FF;
+}
+
 /* ============================================
    Tailwind CSS v4 Theme Configuration
    ============================================ */
@@ -123,10 +140,10 @@
 
 }
 
-/* Windows: Space Grotesk includes regional-indicator letters that block
-   composed flag emoji unless a color emoji font is tried first (#1589). */
+/* Windows: bundled flag font + Segoe UI Emoji ahead of Space Grotesk so host
+   labels render flag icons instead of ISO country codes (#1589, #1604). */
 html.platform-win32 {
-  --font-sans: "Segoe UI Emoji", "Segoe UI Symbol", "Space Grotesk", system-ui, sans-serif;
+  --font-sans: "Noto Color Emoji Flags", "Segoe UI Emoji", "Segoe UI Symbol", "Space Grotesk", system-ui, sans-serif;
 }
 
 @keyframes top-tab-enter {
