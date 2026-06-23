@@ -376,6 +376,39 @@ test("unlock and activity keep the shared idle timer armed", async () => {
   });
 });
 
+test("activity reported from any window postpones the shared idle lock", async () => {
+  await withPatchedTimers(async ({ flushNextTimer, getPendingTimerCount }) => {
+    await withPatchedDateNow(1000, async ({ setNow }) => {
+      const { controller, runtimeBridge } = await createControllerHarness();
+
+      await controller.requestPasswordChange({ nextPassword: "alpha" });
+      await controller.setTimeoutMinutes(1);
+      await controller.requestEnable();
+      controller.setLocked("manual");
+      await controller.requestUnlock("alpha");
+      assert.equal(getPendingTimerCount(), 1);
+
+      setNow(30000);
+      controller.reportActivity(30000);
+      assert.equal(runtimeBridge.getState().lastActivityAt, 30000);
+      assert.equal(getPendingTimerCount(), 1);
+
+      setNow(61000);
+      assert.equal(flushNextTimer(), true);
+      assert.equal(runtimeBridge.getState().locked, false);
+      assert.equal(getPendingTimerCount(), 1);
+
+      setNow(90000);
+      assert.equal(flushNextTimer(), true);
+      assert.equal(runtimeBridge.getState().locked, true);
+      assert.equal(runtimeBridge.getState().reason, "idle");
+      assert.equal(getPendingTimerCount(), 0);
+
+      runtimeBridge.clearIdleTimer();
+    });
+  });
+});
+
 test("disabling app lock clears the shared idle timer", async () => {
   await withPatchedTimers(async ({ getPendingTimerCount }) => {
     const { controller, runtimeBridge } = await createControllerHarness();
