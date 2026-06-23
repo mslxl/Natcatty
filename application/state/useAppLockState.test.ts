@@ -32,6 +32,7 @@ test("shouldLockAfterIdle honors the configured timeout", async () => {
 
   assert.equal(shouldLockAfterIdle(settings, 1_000, 1_000 + 5 * 60_000 - 1), false);
   assert.equal(shouldLockAfterIdle(settings, 1_000, 1_000 + 5 * 60_000), true);
+  assert.equal(shouldLockAfterIdle({ ...settings, timeoutMinutes: 0 }, 1_000, 1_000 + 60 * 60_000), false);
   assert.equal(shouldLockAfterIdle({ ...settings, enabled: false }, 1_000, 1_000 + 60 * 60_000), false);
   assert.equal(shouldLockAfterIdle({ ...settings, passwordVerifier: null }, 1_000, 1_000 + 60 * 60_000), false);
 });
@@ -47,6 +48,7 @@ test("getIdleLockDelayMs schedules the next check after remaining idle time", as
   assert.equal(getIdleLockDelayMs(settings, 1_000, 1_000), 5 * 60_000);
   assert.equal(getIdleLockDelayMs(settings, 1_000, 1_000 + 4 * 60_000), 60_000);
   assert.equal(getIdleLockDelayMs(settings, 1_000, 1_000 + 5 * 60_000), 0);
+  assert.equal(getIdleLockDelayMs({ ...settings, timeoutMinutes: 0 }, 1_000, 1_000), null);
   assert.equal(getIdleLockDelayMs({ ...settings, enabled: false }, 1_000, 1_000), null);
   assert.equal(getIdleLockDelayMs({ ...settings, passwordVerifier: null }, 1_000, 1_000), null);
 });

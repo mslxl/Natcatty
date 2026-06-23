@@ -4,7 +4,7 @@ const {
   timingSafeEqual,
 } = require("node:crypto");
 
-const APP_LOCK_TIMEOUT_OPTIONS_MINUTES = [1, 5, 15, 30, 60];
+const APP_LOCK_TIMEOUT_OPTIONS_MINUTES = [0, 1, 5, 15, 30, 60];
 
 const DEFAULT_APP_LOCK_SETTINGS = Object.freeze({
   enabled: false,

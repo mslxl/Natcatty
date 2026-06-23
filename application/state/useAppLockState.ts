@@ -29,6 +29,7 @@ export function shouldLockAfterIdle(
 ): boolean {
   const normalized = normalizeAppLockSettings(settings);
   if (!normalized.enabled || !normalized.passwordVerifier) return false;
+  if (normalized.timeoutMinutes <= 0) return false;
   return now - lastActivityAt >= normalized.timeoutMinutes * 60_000;
 }
 
@@ -39,6 +40,7 @@ export function getIdleLockDelayMs(
 ): number | null {
   const normalized = normalizeAppLockSettings(settings);
   if (!normalized.enabled || !normalized.passwordVerifier) return null;
+  if (normalized.timeoutMinutes <= 0) return null;
   const timeoutMs = normalized.timeoutMinutes * 60_000;
   return Math.max(0, timeoutMs - (now - lastActivityAt));
 }

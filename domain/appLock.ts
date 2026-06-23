@@ -1,4 +1,4 @@
-export const APP_LOCK_TIMEOUT_OPTIONS_MINUTES = [1, 5, 15, 30, 60] as const;
+export const APP_LOCK_TIMEOUT_OPTIONS_MINUTES = [0, 1, 5, 15, 30, 60] as const;
 export type AppLockTimeoutMinutes = typeof APP_LOCK_TIMEOUT_OPTIONS_MINUTES[number];
 
 export interface AppLockPasswordVerifier {

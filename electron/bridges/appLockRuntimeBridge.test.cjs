@@ -133,6 +133,24 @@ test("runtime bridge reschedules the shared idle timer after activity", async ()
   });
 });
 
+test("runtime bridge does not schedule idle timer when timeout is disabled", async () => {
+  await withPatchedTimers(async ({ getPendingTimerCount }) => {
+    const bridge = createAppLockRuntimeBridge();
+
+    bridge.initialize({ locked: false, reason: null, lastActivityAt: 1000 });
+    bridge.scheduleIdleTimer({
+      timeoutMinutes: 0,
+      canLock: () => true,
+      onIdleLock: () => {
+        throw new Error("idle lock should not run");
+      },
+    });
+
+    assert.equal(getPendingTimerCount(), 0);
+    assert.equal(bridge.getState().locked, false);
+  });
+});
+
 test("runtime bridge notifies subscribers on lock state changes", () => {
   const bridge = createAppLockRuntimeBridge();
   const snapshots = [];

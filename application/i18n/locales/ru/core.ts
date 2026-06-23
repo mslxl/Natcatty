@@ -140,6 +140,7 @@ export const ruCoreMessages: Messages = {
   'settings.appLock.enableDesc': 'Блокировать при запуске и после выбранного периода бездействия.',
   'settings.appLock.timeout': 'Тайм-аут бездействия',
   'settings.appLock.timeoutDesc': 'Блокировать Netcatty, если нет активности клавиатуры, указателя, колеса, касания или фокуса.',
+  'settings.appLock.timeout.0': 'Не блокировать автоматически',
   'settings.appLock.timeout.1': '1 минута',
   'settings.appLock.timeout.5': '5 минут',
   'settings.appLock.timeout.15': '15 минут',

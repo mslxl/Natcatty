@@ -81,6 +81,7 @@ test("all app lock strings are translated in every supported locale", () => {
     "settings.appLock.enableDesc",
     "settings.appLock.timeout",
     "settings.appLock.timeoutDesc",
+    "settings.appLock.timeout.0",
     "settings.appLock.timeout.1",
     "settings.appLock.timeout.5",
     "settings.appLock.timeout.15",

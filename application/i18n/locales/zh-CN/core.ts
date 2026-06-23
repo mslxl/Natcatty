@@ -124,6 +124,7 @@ export const zhCNCoreMessages: Messages = {
   'settings.appLock.enableDesc': '启动时锁定，并在达到所选无操作时间后锁定。',
   'settings.appLock.timeout': '无操作超时',
   'settings.appLock.timeoutDesc': '没有键盘、指针、滚轮、触摸或窗口聚焦活动时锁定 Netcatty。',
+  'settings.appLock.timeout.0': '不自动锁定',
   'settings.appLock.timeout.1': '1 分钟',
   'settings.appLock.timeout.5': '5 分钟',
   'settings.appLock.timeout.15': '15 分钟',

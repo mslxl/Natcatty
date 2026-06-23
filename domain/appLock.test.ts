@@ -12,7 +12,8 @@ import {
 } from "./appLock.ts";
 
 test("normalizeAppLockTimeoutMinutes accepts only supported timeout options", () => {
-  assert.deepEqual(APP_LOCK_TIMEOUT_OPTIONS_MINUTES, [1, 5, 15, 30, 60]);
+  assert.deepEqual(APP_LOCK_TIMEOUT_OPTIONS_MINUTES, [0, 1, 5, 15, 30, 60]);
+  assert.equal(normalizeAppLockTimeoutMinutes(0), 0);
   assert.equal(normalizeAppLockTimeoutMinutes(1), 1);
   assert.equal(normalizeAppLockTimeoutMinutes("5"), 5);
   assert.equal(normalizeAppLockTimeoutMinutes(60), 60);

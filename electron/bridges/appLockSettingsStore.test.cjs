@@ -72,13 +72,13 @@ test("settings store saves normalized settings and updates snapshot", async () =
 
   const saved = await store.save({
     enabled: true,
-    timeoutMinutes: 5,
+    timeoutMinutes: 0,
     passwordVerifier: VALID_VERIFIER,
   });
 
   assert.deepEqual(saved, {
     enabled: true,
-    timeoutMinutes: 5,
+    timeoutMinutes: 0,
     passwordVerifier: VALID_VERIFIER,
   });
   assert.deepEqual(store.getSnapshot(), saved);
