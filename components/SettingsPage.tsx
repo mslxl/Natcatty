@@ -430,7 +430,6 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
                         <SettingsSystemTab
                             appLockSettings={settings.appLockSettings}
                             setAppLockTimeoutMinutes={settings.setAppLockTimeoutMinutes}
-                            requestAppLockEnable={settings.requestAppLockEnable}
                             requestAppLockDisable={settings.requestAppLockDisable}
                             requestAppLockPasswordChange={settings.requestAppLockPasswordChange}
                             sessionLogsEnabled={settings.sessionLogsEnabled}

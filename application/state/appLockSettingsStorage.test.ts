@@ -56,7 +56,7 @@ test("applyAppLockEnabledChange requires current password before disabling an ex
     {
       enabled: false,
       timeoutMinutes: 30,
-      passwordVerifier: verifier,
+      passwordVerifier: null,
     },
   );
 });
@@ -109,4 +109,21 @@ test("replaceAppLockPassword rejects empty new passwords", async () => {
     }),
     { ok: false, error: "empty-next" },
   );
+});
+
+test("replaceAppLockPassword enables app lock when creating the first password", async () => {
+  const settings: AppLockSettings = {
+    enabled: false,
+    timeoutMinutes: 15,
+    passwordVerifier: null,
+  };
+
+  const saved = await replaceAppLockPassword(settings, {
+    nextPassword: "first secret",
+  });
+
+  assert.equal("ok" in saved, false);
+  assert.equal(saved.enabled, true);
+  assert.equal(saved.timeoutMinutes, 15);
+  assert.equal(await verifyAppLockPassword("first secret", saved.passwordVerifier), true);
 });

@@ -38,7 +38,7 @@ export async function applyAppLockEnabledChange(
   return {
     enabled: false,
     timeoutMinutes,
-    passwordVerifier,
+    passwordVerifier: null,
   };
 }
 
@@ -59,7 +59,7 @@ export async function replaceAppLockPassword(
   }
 
   return {
-    enabled: normalized.enabled,
+    enabled: normalized.enabled || !normalized.passwordVerifier,
     timeoutMinutes: normalized.timeoutMinutes,
     passwordVerifier: await createAppLockPasswordVerifier(input.nextPassword),
   };

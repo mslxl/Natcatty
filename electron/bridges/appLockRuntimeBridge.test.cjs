@@ -331,7 +331,7 @@ test("stale renderer cannot overwrite the latest verifier with a whole-object se
     {
       enabled: false,
       timeoutMinutes: freshSnapshot.timeoutMinutes,
-      passwordVerifier: freshSnapshot.passwordVerifier,
+      passwordVerifier: null,
     },
   );
 });
@@ -435,4 +435,27 @@ test("disabling app lock clears the shared idle timer", async () => {
     assert.equal(getPendingTimerCount(), 0);
     runtimeBridge.clearIdleTimer();
   });
+});
+
+test("disabling app lock removes the saved password verifier", async () => {
+  const { controller } = await createControllerHarness();
+
+  const saved = await controller.requestDisable("alpha");
+
+  assert.equal(saved.enabled, false);
+  assert.equal(saved.passwordVerifier, null);
+});
+
+test("creating the first app lock password enables app lock", async () => {
+  const { controller } = await createControllerHarness({
+    enabled: false,
+    passwordVerifier: null,
+  });
+
+  const saved = await controller.requestPasswordChange({
+    nextPassword: "first secret",
+  });
+
+  assert.equal(saved.enabled, true);
+  assert.equal(typeof saved.passwordVerifier?.hash, "string");
 });

@@ -18,6 +18,27 @@ const suppressMonacoSourcemapWarning = () => ({
   },
 });
 
+const devContentSecurityPolicy = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'",
+  "worker-src 'self' blob:",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self' data:",
+  "connect-src 'self' data: blob: ws: wss: https: http://localhost:5173",
+  "img-src 'self' data: https:",
+].join("; ");
+
+const devContentSecurityPolicyPlugin = () => ({
+  name: 'dev-content-security-policy',
+  apply: 'serve' as const,
+  transformIndexHtml(html: string) {
+    return html.replace(
+      /content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' data: blob: ws: wss: https:; img-src 'self' data: https:;"/,
+      `content="${devContentSecurityPolicy}"`,
+    );
+  },
+});
+
 export default defineConfig(() => {
     return {
       base: "./",
@@ -72,7 +93,7 @@ export default defineConfig(() => {
           },
         },
       },
-      plugins: [suppressMonacoSourcemapWarning(), tailwindcss(), react()],
+      plugins: [suppressMonacoSourcemapWarning(), devContentSecurityPolicyPlugin(), tailwindcss(), react()],
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),

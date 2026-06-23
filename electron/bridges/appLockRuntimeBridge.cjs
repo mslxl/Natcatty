@@ -337,7 +337,7 @@ function createAppLockController({
     const saved = await saveSettings({
       enabled: false,
       timeoutMinutes: current.timeoutMinutes,
-      passwordVerifier: current.passwordVerifier,
+      passwordVerifier: null,
     });
     const runtimeState = runtimeBridge.unlock();
     syncIdleTimer();
@@ -366,6 +366,7 @@ function createAppLockController({
     const passwordVerifier = await createAppLockPasswordVerifier(nextPassword);
     return saveSettings({
       ...current,
+      enabled: current.enabled || !current.passwordVerifier,
       passwordVerifier,
     });
   }

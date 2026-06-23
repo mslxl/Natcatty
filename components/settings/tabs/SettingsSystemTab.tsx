@@ -83,7 +83,6 @@ function formatLastChecked(
 interface SettingsSystemTabProps {
   appLockSettings: AppLockSettings;
   setAppLockTimeoutMinutes: (timeoutMinutes: AppLockTimeoutMinutes) => void;
-  requestAppLockEnable: () => Promise<AppLockSettings>;
   requestAppLockDisable: (currentPassword: string) => Promise<AppLockSettings | { ok: false; error: AppLockSettingsChangeError }>;
   requestAppLockPasswordChange: (input: {
     currentPassword?: string;
@@ -119,7 +118,6 @@ interface SettingsSystemTabProps {
 const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   appLockSettings,
   setAppLockTimeoutMinutes,
-  requestAppLockEnable,
   requestAppLockDisable,
   requestAppLockPasswordChange,
   sessionLogsEnabled,
@@ -151,9 +149,11 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
 
   const [appLockCurrentPassword, setAppLockCurrentPassword] = useState("");
+  const [appLockDisablePassword, setAppLockDisablePassword] = useState("");
   const [appLockNewPassword, setAppLockNewPassword] = useState("");
   const [appLockConfirmPassword, setAppLockConfirmPassword] = useState("");
   const [appLockError, setAppLockError] = useState<string | null>(null);
+  const [isDisablingAppLock, setIsDisablingAppLock] = useState(false);
   const [isSavingAppLock, setIsSavingAppLock] = useState(false);
   const hasAppLockPassword = Boolean(appLockSettings.passwordVerifier);
 
@@ -370,38 +370,33 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
     }
   }, [t]);
 
-  const handleAppLockEnabledChange = useCallback(async (enabled: boolean) => {
-    setAppLockError(null);
-    if (enabled && !hasAppLockPassword) {
-      setAppLockError(t('settings.appLock.enableAfterPassword'));
-      return;
-    }
-
-    const result = enabled
-      ? await requestAppLockEnable()
-      : await requestAppLockDisable(appLockCurrentPassword);
-    if ('ok' in result && result.ok === false) {
-      setAppLockError(mapAppLockChangeError(result.error));
-      return;
-    }
-    if (!enabled) {
-      setAppLockCurrentPassword("");
-      setAppLockNewPassword("");
-      setAppLockConfirmPassword("");
-    }
-  }, [
-    hasAppLockPassword,
-    mapAppLockChangeError,
-    requestAppLockDisable,
-    requestAppLockEnable,
-    t,
-  ]);
-
   const handleAppLockTimeoutChange = useCallback((value: string) => {
     const timeoutMinutes = Number(value) as AppLockTimeoutMinutes;
     if (!APP_LOCK_TIMEOUT_OPTIONS_MINUTES.includes(timeoutMinutes)) return;
     setAppLockTimeoutMinutes(timeoutMinutes);
   }, [setAppLockTimeoutMinutes]);
+
+  const handleDisableAppLock = useCallback(async () => {
+    setAppLockError(null);
+    setIsDisablingAppLock(true);
+    try {
+      const result = await requestAppLockDisable(appLockDisablePassword);
+      if ('ok' in result && result.ok === false) {
+        setAppLockError(mapAppLockChangeError(result.error));
+        return;
+      }
+      setAppLockDisablePassword("");
+      setAppLockCurrentPassword("");
+      setAppLockNewPassword("");
+      setAppLockConfirmPassword("");
+    } finally {
+      setIsDisablingAppLock(false);
+    }
+  }, [
+    appLockDisablePassword,
+    mapAppLockChangeError,
+    requestAppLockDisable,
+  ]);
 
   const handleSaveAppLockPassword = useCallback(async () => {
     setAppLockError(null);
@@ -523,21 +518,15 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
               ) : (
                 <>
                   <div className="rounded-xl border border-border/60 bg-muted/30 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="space-y-1">
-                        <p className="text-sm font-medium text-foreground">
-                          {t("settings.appLock.manageTitle")}
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          {appLockSettings.enabled
-                            ? t("settings.appLock.enabledStatus")
-                            : t("settings.appLock.disabledStatus")}
-                        </p>
-                      </div>
-                      <Toggle
-                        checked={appLockSettings.enabled}
-                        onChange={(enabled) => void handleAppLockEnabledChange(enabled)}
-                      />
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium text-foreground">
+                        {t("settings.appLock.manageTitle")}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {appLockSettings.enabled
+                          ? t("settings.appLock.enabledStatus")
+                          : t("settings.appLock.disabledStatus")}
+                      </p>
                     </div>
                   </div>
 
@@ -552,59 +541,110 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                       className="w-36"
                     />
                   </SettingRow>
+
+                  {appLockSettings.enabled && (
+                    <div className="rounded-xl border border-destructive/25 bg-destructive/5 p-4">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium text-foreground">
+                            {t("settings.appLock.disableTitle")}
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            {t("settings.appLock.disableDescription")}
+                          </p>
+                          <Input
+                            type="password"
+                            value={appLockDisablePassword}
+                            autoComplete="current-password"
+                            placeholder={t("settings.appLock.currentPasswordForDisablePlaceholder")}
+                            onChange={(event) => {
+                              setAppLockDisablePassword(event.target.value);
+                              setAppLockError(null);
+                            }}
+                            className="max-w-sm"
+                          />
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => void handleDisableAppLock()}
+                          disabled={isDisablingAppLock}
+                        >
+                          {isDisablingAppLock
+                            ? t("settings.appLock.disabling")
+                            : t("settings.appLock.disable")}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
 
-              <div className="grid gap-3 sm:grid-cols-3">
-                {hasAppLockPassword && (
+              <div className="space-y-3 rounded-xl border border-border/60 p-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-foreground">
+                    {hasAppLockPassword
+                      ? t("settings.appLock.changePasswordTitle")
+                      : t("settings.appLock.setupPasswordTitle")}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {hasAppLockPassword
+                      ? t("settings.appLock.changePasswordDescription")
+                      : t("settings.appLock.setupPasswordDescription")}
+                  </p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {hasAppLockPassword && (
+                    <div className="space-y-2">
+                      <Label htmlFor="app-lock-current-password">
+                        {t("settings.appLock.currentPassword")}
+                      </Label>
+                      <Input
+                        id="app-lock-current-password"
+                        type="password"
+                        value={appLockCurrentPassword}
+                        autoComplete="current-password"
+                        placeholder={t("settings.appLock.currentPasswordForChangePlaceholder")}
+                        onChange={(event) => {
+                          setAppLockCurrentPassword(event.target.value);
+                          setAppLockError(null);
+                        }}
+                      />
+                    </div>
+                  )}
                   <div className="space-y-2">
-                    <Label htmlFor="app-lock-current-password">
-                      {t("settings.appLock.currentPassword")}
+                    <Label htmlFor="app-lock-new-password">
+                      {t("settings.appLock.newPassword")}
                     </Label>
                     <Input
-                      id="app-lock-current-password"
+                      id="app-lock-new-password"
                       type="password"
-                      value={appLockCurrentPassword}
-                      autoComplete="current-password"
-                      placeholder={t("settings.appLock.currentPasswordPlaceholder")}
+                      value={appLockNewPassword}
+                      autoComplete="new-password"
+                      placeholder={t("settings.appLock.newPasswordPlaceholder")}
                       onChange={(event) => {
-                        setAppLockCurrentPassword(event.target.value);
+                        setAppLockNewPassword(event.target.value);
                         setAppLockError(null);
                       }}
                     />
                   </div>
-                )}
-                <div className="space-y-2">
-                  <Label htmlFor="app-lock-new-password">
-                    {t("settings.appLock.newPassword")}
-                  </Label>
-                  <Input
-                    id="app-lock-new-password"
-                    type="password"
-                    value={appLockNewPassword}
-                    autoComplete="new-password"
-                    placeholder={t("settings.appLock.newPasswordPlaceholder")}
-                    onChange={(event) => {
-                      setAppLockNewPassword(event.target.value);
-                      setAppLockError(null);
-                    }}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="app-lock-confirm-password">
-                    {t("settings.appLock.confirmPassword")}
-                  </Label>
-                  <Input
-                    id="app-lock-confirm-password"
-                    type="password"
-                    value={appLockConfirmPassword}
-                    autoComplete="new-password"
-                    placeholder={t("settings.appLock.confirmPasswordPlaceholder")}
-                    onChange={(event) => {
-                      setAppLockConfirmPassword(event.target.value);
-                      setAppLockError(null);
-                    }}
-                  />
+                  <div className="space-y-2">
+                    <Label htmlFor="app-lock-confirm-password">
+                      {t("settings.appLock.confirmPassword")}
+                    </Label>
+                    <Input
+                      id="app-lock-confirm-password"
+                      type="password"
+                      value={appLockConfirmPassword}
+                      autoComplete="new-password"
+                      placeholder={t("settings.appLock.confirmPasswordPlaceholder")}
+                      onChange={(event) => {
+                        setAppLockConfirmPassword(event.target.value);
+                        setAppLockError(null);
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
 
