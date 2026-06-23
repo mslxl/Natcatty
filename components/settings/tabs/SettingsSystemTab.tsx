@@ -4,11 +4,7 @@
 import { ChevronDown, ChevronRight, Download, ExternalLink, FolderOpen, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import React, { useCallback, useEffect, useState } from "react";
 import { useI18n } from "../../../application/i18n/I18nProvider";
-import {
-  applyAppLockEnabledChange,
-  replaceAppLockPassword,
-  type AppLockSettingsChangeError,
-} from "../../../application/state/appLockSettingsStorage";
+import type { AppLockSettingsChangeError } from "../../../application/state/appLockSettingsStorage";
 import type { AppLockSettings, AppLockTimeoutMinutes } from "../../../domain/appLock";
 import { APP_LOCK_TIMEOUT_OPTIONS_MINUTES } from "../../../domain/appLock";
 import { getCredentialProtectionAvailability } from "../../../infrastructure/services/credentialProtection";
@@ -86,8 +82,13 @@ function formatLastChecked(
 
 interface SettingsSystemTabProps {
   appLockSettings: AppLockSettings;
-  setAppLockSettings: (settings: AppLockSettings) => void;
-  unlockApp?: (password: string) => Promise<unknown>;
+  setAppLockTimeoutMinutes: (timeoutMinutes: AppLockTimeoutMinutes) => void;
+  requestAppLockEnable: () => Promise<AppLockSettings>;
+  requestAppLockDisable: (currentPassword: string) => Promise<AppLockSettings | { ok: false; error: AppLockSettingsChangeError }>;
+  requestAppLockPasswordChange: (input: {
+    currentPassword?: string;
+    nextPassword: string;
+  }) => Promise<AppLockSettings | { ok: false; error: AppLockSettingsChangeError }>;
   sessionLogsEnabled: boolean;
   setSessionLogsEnabled: (enabled: boolean) => void;
   sessionLogsDir: string;
@@ -117,8 +118,10 @@ interface SettingsSystemTabProps {
 
 const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   appLockSettings,
-  setAppLockSettings,
-  unlockApp,
+  setAppLockTimeoutMinutes,
+  requestAppLockEnable,
+  requestAppLockDisable,
+  requestAppLockPasswordChange,
   sessionLogsEnabled,
   setSessionLogsEnabled,
   sessionLogsDir,
@@ -374,37 +377,31 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
       return;
     }
 
-    const result = await applyAppLockEnabledChange(appLockSettings, enabled, appLockCurrentPassword);
+    const result = enabled
+      ? await requestAppLockEnable()
+      : await requestAppLockDisable(appLockCurrentPassword);
     if ('ok' in result && result.ok === false) {
       setAppLockError(mapAppLockChangeError(result.error));
       return;
     }
-
-    setAppLockSettings(result);
     if (!enabled) {
       setAppLockCurrentPassword("");
       setAppLockNewPassword("");
       setAppLockConfirmPassword("");
-      void unlockApp?.(appLockCurrentPassword);
     }
   }, [
-    appLockCurrentPassword,
-    appLockSettings,
     hasAppLockPassword,
     mapAppLockChangeError,
-    setAppLockSettings,
+    requestAppLockDisable,
+    requestAppLockEnable,
     t,
-    unlockApp,
   ]);
 
   const handleAppLockTimeoutChange = useCallback((value: string) => {
     const timeoutMinutes = Number(value) as AppLockTimeoutMinutes;
     if (!APP_LOCK_TIMEOUT_OPTIONS_MINUTES.includes(timeoutMinutes)) return;
-    setAppLockSettings({
-      ...appLockSettings,
-      timeoutMinutes,
-    });
-  }, [appLockSettings, setAppLockSettings]);
+    setAppLockTimeoutMinutes(timeoutMinutes);
+  }, [setAppLockTimeoutMinutes]);
 
   const handleSaveAppLockPassword = useCallback(async () => {
     setAppLockError(null);
@@ -423,7 +420,7 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
 
     setIsSavingAppLock(true);
     try {
-      const result = await replaceAppLockPassword(appLockSettings, {
+      const result = await requestAppLockPasswordChange({
         currentPassword: appLockCurrentPassword,
         nextPassword: appLockNewPassword,
       });
@@ -431,11 +428,6 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
         setAppLockError(mapAppLockChangeError(result.error));
         return;
       }
-
-      setAppLockSettings({
-        ...result,
-        enabled: true,
-      });
       setAppLockCurrentPassword("");
       setAppLockNewPassword("");
       setAppLockConfirmPassword("");
@@ -446,9 +438,8 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
     appLockConfirmPassword,
     appLockCurrentPassword,
     appLockNewPassword,
-    appLockSettings,
     mapAppLockChangeError,
-    setAppLockSettings,
+    requestAppLockPasswordChange,
     t,
   ]);
 

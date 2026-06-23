@@ -123,6 +123,22 @@ const getAutoUpdateBridge = createLazyModule("./bridges/autoUpdateBridge.cjs");
 const getAiBridge = createLazyModule("./bridges/aiBridge.cjs");
 const getWindowManager = createLazyModule("./bridges/windowManager.cjs");
 const getVaultBackupBridge = createLazyModule("./bridges/vaultBackupBridge.cjs");
+const {
+  DEFAULT_APP_LOCK_SETTINGS,
+  canLockFromSettings,
+  createAppLockSettingsStore,
+} = require("./bridges/appLockSettingsStore.cjs");
+const {
+  createAppLockController,
+  createAppLockRuntimeBridge,
+} = require("./bridges/appLockRuntimeBridge.cjs");
+const {
+  emitAppLockReopen,
+  handleActivateWithMainWindow,
+  handleBeforeQuit,
+  shouldBackgroundLockOnHide,
+  shouldCommitQuitWithoutDirtyCheck,
+} = require("./main/appLockLifecycle.cjs");
 const ptyProcessTree = require("./bridges/ptyProcessTree.cjs");
 const { queryDirtyEditors } = require("./bridges/dirtyEditorGuard.cjs");
 
@@ -319,9 +335,7 @@ function focusMainWindow() {
     try {
       win.focus();
     } catch {}
-    try {
-      win.webContents?.send?.("netcatty:app-lock:reopen");
-    } catch {}
+    notifyAllAppLockReopenWindows();
     try {
       app.focus({ steal: true });
     } catch {}
@@ -332,12 +346,25 @@ function focusMainWindow() {
   }
 }
 
+function notifyAllAppLockReopenWindows() {
+  emitAppLockReopen([
+    ...(getWindowManager().getMainWindows?.() ?? []),
+    getWindowManager().getSettingsWindow?.() ?? null,
+    getGlobalShortcutBridge().getTrayPanelWindow?.() ?? null,
+    ...(getWindowManager().getTerminalPopupWindows?.() ?? []),
+  ]);
+}
+
 // Shared state
 const sessions = new Map();
 const sftpClients = new Map();
 const keyRoot = path.join(os.homedir(), ".netcatty", "keys");
+const APP_LOCK_SETTINGS_FILE = "app-lock-settings.json";
 let cloudSyncSessionPassword = null;
 const CLOUD_SYNC_PASSWORD_FILE = "netcatty_cloud_sync_master_password_v1";
+let appLockSettingsStore = null;
+const appLockRuntimeBridge = createAppLockRuntimeBridge();
+let appLockController = null;
 
 // Key management helpers
 const ensureKeyDir = async () => {
@@ -408,6 +435,7 @@ const registerBridges = createBridgeRegistrar({
   getAiBridge,
   getWindowManager,
   getVaultBackupBridge,
+  getAppLockController: () => appLockController,
   isPathInside,
 });
 /**
@@ -537,8 +565,38 @@ if (!gotLock) {
   });
 
   // Application lifecycle
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     registerAppProtocol();
+
+    appLockSettingsStore = createAppLockSettingsStore({
+      filePath: path.join(app.getPath("userData"), APP_LOCK_SETTINGS_FILE),
+      readFile: (filePath, encoding) => fs.promises.readFile(filePath, encoding),
+      writeFile: (filePath, content, options) => fs.promises.writeFile(filePath, content, options),
+    });
+
+    let persistedAppLockSettings = DEFAULT_APP_LOCK_SETTINGS;
+    try {
+      persistedAppLockSettings = await appLockSettingsStore.load();
+    } catch (err) {
+      console.warn("[Main] Failed to load app lock settings, defaulting to disabled:", err);
+      persistedAppLockSettings = appLockSettingsStore.getSnapshot();
+    }
+
+    const lockOnStartup = canLockFromSettings(persistedAppLockSettings);
+    appLockRuntimeBridge.initialize({
+      locked: lockOnStartup,
+      reason: lockOnStartup ? "startup" : null,
+      lastActivityAt: Date.now(),
+    });
+    appLockController = createAppLockController({
+      settingsStore: appLockSettingsStore,
+      runtimeBridge: appLockRuntimeBridge,
+      getMainWindows: () => getWindowManager().getMainWindows?.() ?? [],
+      getSettingsWindow: () => getWindowManager().getSettingsWindow?.() ?? null,
+      getTrayPanelWindow: () => getGlobalShortcutBridge().getTrayPanelWindow?.() ?? null,
+      getTerminalPopupWindows: () => getWindowManager().getTerminalPopupWindows?.() ?? [],
+    });
+    appLockController.syncIdleTimer?.();
 
     // Grant only the Chromium permissions the app actually uses, and only
     // to the app's own origin. The default session is shared with in-app
@@ -672,22 +730,17 @@ if (!gotLock) {
       // should bring it back. Fallback to creating a new window if none exists.
       try {
         const mainWin = getWindowManager().getMainWindow?.();
-        if (mainWin && !mainWin.isDestroyed?.()) {
-          // If a close-to-tray hide is still pending (fullscreen exit animation
-          // not finished yet), cancel it — user intent to bring the window
-          // back overrides the pending hide.
-          try {
-            getGlobalShortcutBridge().clearPendingFullscreenHide?.(mainWin);
-          } catch {}
-          if (mainWin.isMinimized?.()) mainWin.restore();
-          mainWin.show?.();
-          mainWin.focus?.();
-          try {
-            mainWin.webContents?.send?.("netcatty:app-lock:reopen");
-          } catch {}
-          try {
-            app.focus({ steal: true });
-          } catch {}
+        if (handleActivateWithMainWindow({
+          app,
+          mainWindow: mainWin,
+          globalShortcutBridge: getGlobalShortcutBridge(),
+          reopenWindows: [
+            ...(getWindowManager().getMainWindows?.() ?? []),
+            getWindowManager().getSettingsWindow?.() ?? null,
+            getGlobalShortcutBridge().getTrayPanelWindow?.() ?? null,
+            ...(getWindowManager().getTerminalPopupWindows?.() ?? []),
+          ],
+        })) {
           return;
         }
       } catch {}
@@ -701,6 +754,16 @@ if (!gotLock) {
           try { app.quit(); } catch {}
         }
       });
+    });
+
+    app.on("hide", () => {
+      if (shouldBackgroundLockOnHide(appLockController)) {
+        try {
+          appLockController.setLocked("background");
+        } catch {
+          // ignore
+        }
+      }
     });
   });
 
@@ -734,102 +797,43 @@ if (!gotLock) {
   // later window-close behavior (e.g. close-to-tray hooks that gate on
   // !isQuitting would stop firing).
   const commitQuit = () => {
+    try {
+      appLockController?.setLocked?.("background");
+    } catch {
+      // ignore
+    }
     getWindowManager().setIsQuitting(true);
     quitConfirmed = true;
     app.quit();
   };
 
   app.on("before-quit", (event) => {
-    // Fast path: we've already confirmed the quit once (commitQuit ran) and
-    // app.quit() re-fired before-quit. Let it through.
-    if (quitConfirmed) return;
-
-    // NOTE: an update install (quitAndInstall) intentionally still runs the
-    // dirty-editor check below. setQuittingForUpdate(true) only bypasses
-    // close-to-tray (so the window actually closes and Squirrel.Mac's ShipIt
-    // can swap the bundle); it must NOT skip the unsaved-work guard, or
-    // clicking "Restart Now" with a dirty SFTP editor would silently lose
-    // edits (#1215 review). If the user cancels to save, the quit is aborted
-    // and autoUpdateBridge's watchdog clears the quitting-for-update flags.
-
-    // A check is already in flight — swallow this event; the in-flight handler
-    // will issue commitQuit() when it completes if appropriate.
-    if (quitGuardChannelBusy) {
-      event.preventDefault();
-      return;
-    }
-
     const { ipcMain: _ipcMain } = electronModule;
-    // Target all visible/recoverable main windows explicitly. Falling back to
-    // BrowserWindow.getAllWindows() could pick tray/settings windows whose
-    // renderers don't listen for app:query-dirty-editors and would force the
-    // timeout fallback on every quit.
     const mainWindows = typeof getWindowManager().getMainWindows === "function"
       ? getWindowManager().getMainWindows()
       : [getWindowManager().getMainWindow()].filter(Boolean);
-
-    // No reachable main window (tray-panel "Quit" path) — there's no visible
-    // UI to surface a "save first" toast on, so skip the round-trip and quit
-    // directly. A minimized window is still reachable via taskbar/Dock.
-    const reachableMainWindows = mainWindows.filter((candidate) => (
-      candidate && !candidate.isDestroyed?.() &&
-      (candidate.isVisible?.() || candidate.isMinimized?.())
-    ));
-    if (reachableMainWindows.length === 0) {
+    void handleBeforeQuit({
+      event,
+      mainWindows,
+      queryDirtyEditors,
+      appLockController,
+      windowManager: getWindowManager(),
+      app,
+      ipcMain: _ipcMain,
+      quitConfirmed,
+      quitGuardChannelBusy,
+      timeoutMs: QUIT_GUARD_TIMEOUT_MS,
+      setQuitGuardChannelBusy(value) {
+        quitGuardChannelBusy = value;
+      },
+      setQuitConfirmed(value) {
+        quitConfirmed = value;
+      },
+    }).catch((err) => {
+      console.warn("[Main] dirty-editor quit guard failed:", err);
+      quitGuardChannelBusy = false;
       commitQuit();
-      return;
-    }
-
-    // The renderer needs to be alive for the IPC roundtrip to make sense.
-    // Crashed/dead renderers are skipped; there is no usable UI to warn from.
-    const queryableWebContents = reachableMainWindows
-      .map((candidate) => candidate.webContents)
-      .filter((wc) => wc && !wc.isDestroyed?.() && !wc.isCrashed?.());
-    if (queryableWebContents.length === 0) {
-      commitQuit();
-      return;
-    }
-
-    quitGuardChannelBusy = true;
-    event.preventDefault();
-
-    // Ask the renderer whether any editor tab has unsaved changes. The same
-    // round-trip is used by the auto-update install handler (#1215); both go
-    // through queryDirtyEditors so the request/reply/timeout handling stays in
-    // one place. It fails open (resolves false) on timeout / dead renderer, so
-    // a hung renderer can never strand the quit.
-    Promise.all(
-      queryableWebContents.map((wc) => queryDirtyEditors(wc, QUIT_GUARD_TIMEOUT_MS, { ipcMain: _ipcMain })),
-    )
-      .then((dirtyResults) => {
-        quitGuardChannelBusy = false;
-        const hasDirty = dirtyResults.some(Boolean);
-        if (!hasDirty) {
-          commitQuit();
-          return;
-        }
-        // hasDirty: the renderer showed a toast for dirty editors and the user
-        // is saving instead of quitting.
-        //
-        // A normal quit never sets isQuitting before commitQuit, so there is
-        // nothing to undo. But an update install (quitAndInstall) calls
-        // setQuittingForUpdate(true) — which also flips isQuitting=true to
-        // bypass close-to-tray — BEFORE this dirty check runs. If the user
-        // cancels to save, clear it NOW instead of waiting up to 10s for
-        // autoUpdateBridge's watchdog; otherwise close-to-tray and other
-        // !isQuitting-gated behavior stay bypassed while the app keeps running
-        // (#1215 review).
-        const wm = getWindowManager();
-        if (wm.isQuittingForUpdate?.()) wm.setQuittingForUpdate(false);
-      })
-      .catch((err) => {
-        // queryDirtyEditors is written to never reject, but guard anyway: a
-        // throw here would leave quitGuardChannelBusy=true and wedge the app
-        // un-quittable. Fail open and let the quit through.
-        console.warn("[Main] dirty-editor quit guard failed:", err);
-        quitGuardChannelBusy = false;
-        commitQuit();
-      });
+    });
   });
 
   // Cleanup all PTY sessions and port forwarding tunnels before quitting

@@ -908,7 +908,11 @@ const terminalPopupWindowApi = createTerminalPopupWindowApi({
   showAndFocusWindow,
   resolveSettingsWindowBounds,
 });
-const { openTerminalPopupWindow, closeTerminalPopupWindow } = terminalPopupWindowApi;
+const {
+  openTerminalPopupWindow,
+  closeTerminalPopupWindow,
+  getTerminalPopupWindows,
+} = terminalPopupWindowApi;
 
 /**
  * Register window control IPC handlers (only once)
@@ -1191,6 +1195,7 @@ module.exports = {
   closeSettingsWindow,
   openTerminalPopupWindow,
   closeTerminalPopupWindow,
+  getTerminalPopupWindows,
   prewarmSettingsWindow,
   buildAppMenu,
   getMainWindow,

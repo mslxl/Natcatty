@@ -106,7 +106,7 @@ export function normalizeAppLockSettings(input: unknown): AppLockSettings {
   return {
     enabled,
     timeoutMinutes,
-    passwordVerifier: enabled ? passwordVerifier : null,
+    passwordVerifier,
   };
 }
 

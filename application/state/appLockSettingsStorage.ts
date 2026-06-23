@@ -38,7 +38,7 @@ export async function applyAppLockEnabledChange(
   return {
     enabled: false,
     timeoutMinutes,
-    passwordVerifier: null,
+    passwordVerifier,
   };
 }
 

@@ -1,4 +1,24 @@
 import type { S3Config, SyncedFile, WebDAVConfig } from "../../domain/sync";
+import type { AppLockSettings } from "../../domain/appLock";
+
+type AppLockRuntimeReason = 'startup' | 'idle' | 'manual' | 'background' | null;
+
+interface AppLockRuntimeState {
+  initialized: boolean;
+  locked: boolean;
+  reason: AppLockRuntimeReason;
+  version: number;
+  lastLockedAt: number | null;
+  lastUnlockedAt: number | null;
+  lastActivityAt: number | null;
+}
+
+type AppLockSettingsMutationError =
+  | { ok: false; error: 'empty-current' | 'empty-next' | 'incorrect' };
+
+type AppLockUnlockResult =
+  | { ok: true }
+  | { ok: false; error: 'empty' | 'incorrect' };
 
 declare global {
   interface NetcattyBridge {
@@ -34,6 +54,20 @@ declare global {
     // Cross-window settings sync
     notifySettingsChanged?(payload: { key: string; value: unknown }): void;
     onSettingsChanged?(cb: (payload: { key: string; value: unknown }) => void): () => void;
+    getAppLockRuntimeState?(): Promise<AppLockRuntimeState>;
+    getAppLockSettings?(): Promise<AppLockSettings>;
+    setAppLockTimeoutMinutes?(timeoutMinutes: number): Promise<AppLockSettings>;
+    requestAppLockEnable?(): Promise<AppLockSettings | AppLockSettingsMutationError>;
+    requestAppLockDisable?(currentPassword: string): Promise<AppLockSettings | AppLockSettingsMutationError>;
+    requestAppLockPasswordChange?(input: {
+      currentPassword?: string;
+      nextPassword: string;
+    }): Promise<AppLockSettings | AppLockSettingsMutationError>;
+    setAppLockRuntimeLocked?(reason: Exclude<AppLockRuntimeReason, null>): Promise<AppLockRuntimeState>;
+    requestAppLockUnlock?(password: string): Promise<AppLockUnlockResult>;
+    reportAppLockActivity?(): Promise<void>;
+    onAppLockSettingsChanged?(cb: (settings: AppLockSettings) => void): () => void;
+    onAppLockRuntimeStateChanged?(cb: (state: AppLockRuntimeState) => void): () => void;
 
     // Cloud sync master password (stored in-memory + persisted via Electron safeStorage)
     cloudSyncSetSessionPassword?(password: string): Promise<boolean>;

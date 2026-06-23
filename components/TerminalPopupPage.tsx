@@ -2,7 +2,6 @@ import { Copy, Minus, Square, Unplug, X } from 'lucide-react';
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { I18nProvider, useI18n } from '../application/i18n/I18nProvider';
 import { canReuseTerminalConnection } from '../application/state/terminalConnectionReuse';
-import { useSettingsState } from '../application/state/useSettingsState';
 import { useTerminalPopupWindow } from '../application/state/useTerminalPopupWindow';
 import { useVaultState } from '../application/state/useVaultState';
 import { useWindowControls } from '../application/state/useWindowControls';
@@ -13,6 +12,7 @@ import type { TerminalTheme } from '../domain/models';
 import type { Host, KnownHost } from '../types';
 import { getEffectiveKnownHosts } from '../infrastructure/syncHelpers';
 import { cn } from '../lib/utils';
+import type { AppLockGateRenderContext } from './AppLockGate';
 
 const Terminal = lazy(() => import('./Terminal'));
 
@@ -22,7 +22,7 @@ const POPUP_STARTUP_REVEAL_MIN_DELAY_MS = 1500;
 const POPUP_STARTUP_REVEAL_MAX_DELAY_MS = 12000;
 
 type PopupThemeVars = React.CSSProperties & Record<string, string>;
-type SettingsState = ReturnType<typeof useSettingsState>;
+type SettingsState = AppLockGateRenderContext["settings"];
 
 const buildPopupThemeVars = (theme: TerminalTheme): PopupThemeVars => {
   const { colors } = theme;
@@ -363,9 +363,7 @@ function TerminalPopupPageInner({ settings }: { settings: SettingsState }) {
   );
 }
 
-export default function TerminalPopupPage({ settings: providedSettings }: { settings?: SettingsState }) {
-  const fallbackSettings = useSettingsState();
-  const settings = providedSettings ?? fallbackSettings;
+export default function TerminalPopupPage({ settings }: { settings: SettingsState }) {
   return (
     <I18nProvider locale={settings.uiLanguage}>
       <TerminalPopupPageInner settings={settings} />

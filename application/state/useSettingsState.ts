@@ -3,15 +3,11 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { runThemeTransition } from './themeTransition';
 import { SyncConfig, TerminalSettings, HotkeyScheme, CustomKeyBindings, DEFAULT_KEY_BINDINGS, KeyBinding, UILanguage, SessionLogFormat, normalizeTerminalSettings } from '../../domain/models';
 import {
-  DEFAULT_APP_LOCK_SETTINGS,
-  normalizeAppLockSettings,
   normalizeAppLockTimeoutMinutes,
-  type AppLockPasswordVerifier,
   type AppLockSettings,
   type AppLockTimeoutMinutes,
 } from '../../domain/appLock';
 import {
-  STORAGE_KEY_APP_LOCK_SETTINGS,
   STORAGE_KEY_COLOR,
   STORAGE_KEY_SYNC,
   STORAGE_KEY_TERM_THEME,
@@ -185,9 +181,11 @@ export const useSettingsState = () => {
     const stored = readStoredString(STORAGE_KEY_UI_LANGUAGE);
     return resolveSupportedLocale(stored || DEFAULT_UI_LOCALE);
   });
-  const [appLockSettings, setAppLockSettingsState] = useState<AppLockSettings>(() =>
-    normalizeAppLockSettings(localStorageAdapter.read(STORAGE_KEY_APP_LOCK_SETTINGS) ?? DEFAULT_APP_LOCK_SETTINGS)
-  );
+  const [appLockSettings, setAppLockSettingsState] = useState<AppLockSettings>({
+    enabled: false,
+    timeoutMinutes: 15,
+    passwordVerifier: null,
+  });
   const [terminalSettings, setTerminalSettingsState] = useState<TerminalSettings>(() => {
     const stored = localStorageAdapter.read<TerminalSettings>(STORAGE_KEY_TERM_SETTINGS);
     return normalizeTerminalSettings(stored);
@@ -450,40 +448,40 @@ export const useSettingsState = () => {
     notifySettingsChanged(STORAGE_KEY_WORKSPACE_FOCUS_STYLE, style);
   }, [notifySettingsChanged]);
 
-  const setAppLockSettings = useCallback((nextValue: SetStateAction<AppLockSettings>) => {
-    setAppLockSettingsState((prev) => {
-      const candidate = typeof nextValue === 'function'
-        ? (nextValue as (prevState: AppLockSettings) => AppLockSettings)(prev)
-        : nextValue;
-      return normalizeAppLockSettings(candidate);
-    });
+  const setAppLockTimeoutMinutes = useCallback((timeoutMinutes: AppLockTimeoutMinutes) => {
+    void netcattyBridge.get()?.setAppLockTimeoutMinutes?.(normalizeAppLockTimeoutMinutes(timeoutMinutes))
+      ?.then((next) => {
+        if (next) setAppLockSettingsState(next);
+      })
+      .catch(() => {});
   }, []);
 
-  const setAppLockEnabled = useCallback((enabled: boolean) => {
-    setAppLockSettings((prev) => normalizeAppLockSettings({ ...prev, enabled }));
-  }, [setAppLockSettings]);
+  const requestAppLockEnable = useCallback(async () => {
+    const next = await netcattyBridge.get()?.requestAppLockEnable?.();
+    if (next && !('ok' in next)) {
+      setAppLockSettingsState(next);
+    }
+    return next ?? appLockSettings;
+  }, [appLockSettings]);
 
-  const setAppLockTimeoutMinutes = useCallback((timeoutMinutes: AppLockTimeoutMinutes) => {
-    setAppLockSettings((prev) => ({
-      ...prev,
-      timeoutMinutes: normalizeAppLockTimeoutMinutes(timeoutMinutes),
-    }));
-  }, [setAppLockSettings]);
+  const requestAppLockDisable = useCallback(async (currentPassword: string) => {
+    const next = await netcattyBridge.get()?.requestAppLockDisable?.(currentPassword);
+    if (next && !('ok' in next)) {
+      setAppLockSettingsState(next);
+    }
+    return next ?? appLockSettings;
+  }, [appLockSettings]);
 
-  const setAppLockPasswordVerifier = useCallback((passwordVerifier: AppLockPasswordVerifier) => {
-    setAppLockSettings((prev) => normalizeAppLockSettings({
-      ...prev,
-      passwordVerifier,
-    }));
-  }, [setAppLockSettings]);
-
-  const clearAppLockPassword = useCallback(() => {
-    setAppLockSettings((prev) => ({
-      enabled: false,
-      timeoutMinutes: prev.timeoutMinutes,
-      passwordVerifier: null,
-    }));
-  }, [setAppLockSettings]);
+  const requestAppLockPasswordChange = useCallback(async (input: {
+    currentPassword?: string;
+    nextPassword: string;
+  }) => {
+    const next = await netcattyBridge.get()?.requestAppLockPasswordChange?.(input);
+    if (next && !('ok' in next)) {
+      setAppLockSettingsState(next);
+    }
+    return next ?? appLockSettings;
+  }, [appLockSettings]);
 
   const syncAppearanceFromStorage = useCallback(() => {
     const storedTheme = readStoredString(STORAGE_KEY_THEME);
@@ -539,8 +537,9 @@ export const useSettingsState = () => {
     const storedLang = readStoredString(STORAGE_KEY_UI_LANGUAGE);
     if (storedLang) setUiLanguage(storedLang as UILanguage);
 
-    // App lock is device-local but still synchronized between same-device renderer windows.
-    setAppLockSettingsState(normalizeAppLockSettings(localStorageAdapter.read(STORAGE_KEY_APP_LOCK_SETTINGS)));
+    void netcattyBridge.get()?.getAppLockSettings?.().then((next) => {
+      if (next) setAppLockSettingsState(next);
+    }).catch(() => {});
 
     // Terminal
     const storedTermTheme = readStoredString(STORAGE_KEY_TERM_THEME);
@@ -722,6 +721,25 @@ export const useSettingsState = () => {
     };
   }, []);
 
+  useEffect(() => {
+    const bridge = netcattyBridge.get();
+    let sawPushedSettings = false;
+
+    const unsubscribe = bridge?.onAppLockSettingsChanged?.((next) => {
+      sawPushedSettings = true;
+      setAppLockSettingsState(next);
+    }) ?? (() => {});
+
+    void bridge?.getAppLockSettings?.().then((next) => {
+      if (!next || sawPushedSettings) return;
+      setAppLockSettingsState(next);
+    }).catch(() => {});
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
   useSettingsStorageSync({
     theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent,
     customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage,
@@ -795,12 +813,6 @@ export const useSettingsState = () => {
     notifySettingsChanged(STORAGE_KEY_TERM_SETTINGS, terminalSettings);
     broadcastedLocalTerminalSettingsVersionRef.current = localTerminalSettingsVersionRef.current;
   }, [terminalSettings, notifySettingsChanged]);
-
-  useEffect(() => {
-    localStorageAdapter.write(STORAGE_KEY_APP_LOCK_SETTINGS, appLockSettings);
-    if (!persistMountedRef.current) return;
-    notifySettingsChanged(STORAGE_KEY_APP_LOCK_SETTINGS, appLockSettings);
-  }, [appLockSettings, notifySettingsChanged]);
 
   useEffect(() => {
     localStorageAdapter.writeString(STORAGE_KEY_HOTKEY_SCHEME, hotkeyScheme);
@@ -1063,11 +1075,10 @@ export const useSettingsState = () => {
     uiLanguage,
     setUiLanguage,
     appLockSettings,
-    setAppLockSettings,
-    setAppLockEnabled,
     setAppLockTimeoutMinutes,
-    setAppLockPasswordVerifier,
-    clearAppLockPassword,
+    requestAppLockEnable,
+    requestAppLockDisable,
+    requestAppLockPasswordChange,
     terminalThemeId,
     setTerminalThemeId,
     followAppTerminalTheme,

@@ -4,8 +4,6 @@
  */
 import { AppWindow, Cloud, FileType, HardDrive, Keyboard, Palette, Sparkles, TerminalSquare, X } from "lucide-react";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { useSettingsState } from "../application/state/useSettingsState";
-import type { useAppLockState } from "../application/state/useAppLockState";
 import { useAISettingsState } from "../application/state/useAISettingsState";
 import { useAvailableFonts } from "../application/state/fontStore";
 import { usePortForwardingState } from "../application/state/usePortForwardingState";
@@ -14,6 +12,7 @@ import { useWindowControls } from "../application/state/useWindowControls";
 import { useUpdateCheck } from "../application/state/useUpdateCheck";
 import { I18nProvider, useI18n } from "../application/i18n/I18nProvider";
 import { sanitizePortForwardingRulesForSync } from "../application/syncPayload";
+import type { AppLockGateRenderContext } from "./AppLockGate";
 import { toast } from "./ui/toast";
 import SettingsApplicationTab from "./SettingsApplicationTab";
 import SettingsAppearanceTab from "./settings/tabs/SettingsAppearanceTab";
@@ -50,8 +49,8 @@ class AITabErrorBoundary extends React.Component<
   }
 }
 
-type SettingsState = ReturnType<typeof useSettingsState>;
-type AppLockState = ReturnType<typeof useAppLockState>;
+type SettingsState = AppLockGateRenderContext["settings"];
+type AppLockState = AppLockGateRenderContext["appLock"];
 
 const settingsTabTriggerClassName =
     "w-full justify-start gap-2 px-3 py-2 text-sm data-[state=active]:bg-background hover:bg-background/60 rounded-md transition-colors overflow-hidden";
@@ -430,8 +429,10 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
                     {mountedTabs.has("system") && (
                         <SettingsSystemTab
                             appLockSettings={settings.appLockSettings}
-                            setAppLockSettings={settings.setAppLockSettings}
-                            unlockApp={appLock?.unlock}
+                            setAppLockTimeoutMinutes={settings.setAppLockTimeoutMinutes}
+                            requestAppLockEnable={settings.requestAppLockEnable}
+                            requestAppLockDisable={settings.requestAppLockDisable}
+                            requestAppLockPasswordChange={settings.requestAppLockPasswordChange}
                             sessionLogsEnabled={settings.sessionLogsEnabled}
                             setSessionLogsEnabled={settings.setSessionLogsEnabled}
                             sessionLogsDir={settings.sessionLogsDir}
@@ -465,15 +466,12 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
 };
 
 export default function SettingsPage({
-    settings: providedSettings,
+    settings,
     appLock,
 }: {
-    settings?: SettingsState;
-    appLock?: AppLockState;
+    settings: SettingsState;
+    appLock: AppLockState;
 }) {
-    const fallbackSettings = useSettingsState();
-    const settings = providedSettings ?? fallbackSettings;
-
     return (
         <I18nProvider locale={settings.uiLanguage}>
             <SettingsPageContent settings={settings} appLock={appLock} />

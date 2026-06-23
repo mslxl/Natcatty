@@ -124,6 +124,16 @@ function createElectronStub() {
   };
 }
 
+function createAppLockControllerStub() {
+  return {
+    setLockedCalls: [],
+    setLocked(reason) {
+      this.setLockedCalls.push(reason);
+      return { locked: true, reason };
+    },
+  };
+}
+
 function createIpcMainStub() {
   const handlers = new Map();
   return {
@@ -358,6 +368,7 @@ test("app activate clears a pending fullscreen hide", async () => {
       assert.equal(getPendingTimerCount(), 0);
       assert.equal(win.listenerCount("leave-full-screen"), 0);
       assert.equal(win.listenerCount("closed"), 0);
+      assert.deepEqual(bridge.__testOnly?.getAppLockController?.().setLockedCalls ?? [], []);
       assert.equal(flushNextTimer(), false);
       assert.equal(win.hideCalls, 0);
     });
@@ -502,10 +513,37 @@ test("handleWindowClose hides immediately when tray close is used outside fullsc
   });
 });
 
+test("handleWindowClose locks app runtime before hiding to tray", async () => {
+  await withPlatform("darwin", async () => {
+    const bridge = loadBridge();
+    const appLockController = createAppLockControllerStub();
+    bridge.init({
+      electronModule: createElectronStub(),
+      getAppLockController: () => appLockController,
+    });
+    const ipcMain = createIpcMainStub();
+    bridge.registerHandlers(ipcMain);
+    await ipcMain.handlers.get("netcatty:tray:setCloseToTray")(null, { enabled: true });
+
+    const win = new FakeWindow({ fullscreen: false });
+    bridge.handleWindowClose({ preventDefault() {} }, win);
+
+    assert.deepEqual(appLockController.setLockedCalls, ["background"]);
+    assert.equal(win.hideCalls, 1);
+  });
+});
+
 test("handleWindowClose stays in close-to-tray mode even if hide fails", async () => {
   await withPlatform("darwin", async () => {
     const bridge = loadBridge();
-    await enableCloseToTray(bridge);
+    const appLockController = createAppLockControllerStub();
+    bridge.init({
+      electronModule: createElectronStub(),
+      getAppLockController: () => appLockController,
+    });
+    const ipcMain = createIpcMainStub();
+    bridge.registerHandlers(ipcMain);
+    await ipcMain.handlers.get("netcatty:tray:setCloseToTray")(null, { enabled: true });
 
     const win = new FakeWindow({ fullscreen: false });
     win.hide = function failingHide() {
@@ -518,6 +556,7 @@ test("handleWindowClose stays in close-to-tray mode even if hide fails", async (
     assert.equal(result, true);
     assert.equal(prevented, true);
     assert.equal(win.visible, true);
+    assert.deepEqual(appLockController.setLockedCalls, []);
   });
 });
 
@@ -557,6 +596,40 @@ test("tray icon event registration is platform-dependent", async () => {
       updatedLabels.some((label) => label.includes("dev.example")),
       "linux context menu should rebuild when tray menu data changes",
     );
+
+    const win = new FakeWindow();
+    win.minimized = true;
+    bridge.init({
+      electronModule: {
+        ...createElectronStub(),
+        BrowserWindow: {
+          getAllWindows() {
+            return [win];
+          },
+        },
+      },
+      getAppLockController: () => null,
+    });
+    await ipcMain.handlers.get("netcatty:tray:updateMenuData")(null, {
+      sessions: [{ id: "s1", label: "dev", hostLabel: "dev.example", status: "connected" }],
+      portForwardRules: [{ id: "pf1", label: "ssh", type: "local", localPort: 8080, remoteHost: "host", remotePort: 80, status: "active" }],
+    });
+    const clickableItems = bridge.getTray().contextMenu.template.filter((item) => typeof item.click === "function");
+    const sessionItem = clickableItems.find((item) => String(item.label).includes("dev.example"));
+    const portForwardItem = clickableItems.find((item) => String(item.label).includes("ssh"));
+
+    sessionItem.click();
+    assert.deepEqual(win.sentMessages.slice(0, 2), [
+      ["netcatty:app-lock:reopen"],
+      ["netcatty:tray:focusSession", "s1"],
+    ]);
+
+    win.sentMessages = [];
+    portForwardItem.click();
+    assert.deepEqual(win.sentMessages.slice(0, 2), [
+      ["netcatty:app-lock:reopen"],
+      ["netcatty:tray:togglePortForward", "pf1", false],
+    ]);
     bridge.cleanup();
   });
 

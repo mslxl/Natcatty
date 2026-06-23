@@ -9,6 +9,7 @@ import {
 test("shouldRenderAppLockGateChildren withholds startup-locked route children until unlock", () => {
   assert.equal(
     shouldRenderAppLockGateChildren({
+      initialized: true,
       locked: true,
       lockReason: "startup",
       hasRenderedChildren: false,
@@ -17,6 +18,7 @@ test("shouldRenderAppLockGateChildren withholds startup-locked route children un
   );
   assert.equal(
     shouldRenderAppLockGateChildren({
+      initialized: true,
       locked: false,
       lockReason: null,
       hasRenderedChildren: false,
@@ -25,9 +27,22 @@ test("shouldRenderAppLockGateChildren withholds startup-locked route children un
   );
 });
 
+test("shouldRenderAppLockGateChildren withholds children before runtime initialization", () => {
+  assert.equal(
+    shouldRenderAppLockGateChildren({
+      initialized: false,
+      locked: false,
+      lockReason: null,
+      hasRenderedChildren: false,
+    }),
+    false,
+  );
+});
+
 test("shouldRenderAppLockGateChildren keeps mounted children for manual and idle locks", () => {
   assert.equal(
     shouldRenderAppLockGateChildren({
+      initialized: true,
       locked: true,
       lockReason: "manual",
       hasRenderedChildren: true,
@@ -36,6 +51,7 @@ test("shouldRenderAppLockGateChildren keeps mounted children for manual and idle
   );
   assert.equal(
     shouldRenderAppLockGateChildren({
+      initialized: true,
       locked: true,
       lockReason: "idle",
       hasRenderedChildren: true,
@@ -47,6 +63,7 @@ test("shouldRenderAppLockGateChildren keeps mounted children for manual and idle
 test("shouldRenderAppLockGateChildren keeps existing children mounted for reopen locks", () => {
   assert.equal(
     shouldRenderAppLockGateChildren({
+      initialized: true,
       locked: true,
       lockReason: "startup",
       hasRenderedChildren: true,

@@ -57,6 +57,7 @@ function createBridgeRegistrar(context) {
     getAiBridge,
     getWindowManager,
     getVaultBackupBridge,
+    getAppLockController,
     isPathInside,
   } = context;
 
@@ -85,6 +86,7 @@ function createBridgeRegistrar(context) {
     const autoUpdateBridge = getAutoUpdateBridge();
     const aiBridge = getAiBridge();
     const vaultBackupBridge = getVaultBackupBridge();
+    const appLockController = getAppLockController?.();
   
     const getCloudSyncPasswordPath = () => {
       try {
@@ -149,7 +151,10 @@ function createBridgeRegistrar(context) {
     transferBridge.init(deps);
     terminalBridge.init(deps);
     fileWatcherBridge.init(deps);
-    globalShortcutBridge.init(deps);
+    globalShortcutBridge.init({
+      ...deps,
+      getAppLockController,
+    });
     aiBridge.init(deps);
     crashLogBridge.init(deps);
   
@@ -194,6 +199,7 @@ function createBridgeRegistrar(context) {
     aiBridge.registerHandlers(ipcMain);
     crashLogBridge.registerHandlers(ipcMain);
     vaultBackupBridge.registerHandlers(ipcMain, electronModule);
+    appLockController?.registerHandlers?.(ipcMain);
   
     // ZMODEM cancel handler
     ipcMain.on("netcatty:zmodem:cancel", (_event, payload) => {

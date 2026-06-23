@@ -32,6 +32,7 @@ let trayMenuData = {
 };
 
 let trayPanelWindow = null;
+let appLockController = null;
 
 let trayPanelRefreshTimer = null;
 // Watchdog: if `leave-full-screen` never arrives (edge case / stuck transition)
@@ -49,6 +50,14 @@ function notifyAppLockReopen(win) {
   try {
     if (!win || win.isDestroyed?.()) return;
     win.webContents?.send?.("netcatty:app-lock:reopen");
+  } catch {
+    // ignore
+  }
+}
+
+function lockAppForBackground() {
+  try {
+    appLockController?.setLocked?.("background");
   } catch {
     // ignore
   }
@@ -97,6 +106,7 @@ function performPendingFullscreenHide(win) {
 
   try {
     win.hide();
+    lockAppForBackground();
     return "hidden";
   } catch (err) {
     console.warn("[GlobalShortcut] Error hiding window after leaving fullscreen:", err);
@@ -343,6 +353,7 @@ function resolveTrayIconPath() {
  */
 function init(deps) {
   electronModule = deps.electronModule;
+  appLockController = deps.getAppLockController?.() ?? null;
 }
 
 /**
@@ -415,6 +426,7 @@ function hideWindowRespectingMacFullscreen(win) {
 
   try {
     win.hide();
+    lockAppForBackground();
     return true;
   } catch (err) {
     console.warn("[GlobalShortcut] Error hiding window:", err);
@@ -703,6 +715,7 @@ function buildTrayMenuTemplate() {
             if (win.isMinimized()) win.restore();
             win.show();
             win.focus();
+            notifyAppLockReopen(win);
             // Notify renderer to focus this session
             win.webContents?.send("netcatty:tray:focusSession", session.id);
           }
@@ -740,6 +753,10 @@ function buildTrayMenuTemplate() {
         click: () => {
           const win = getMainWindow();
           if (win) {
+            if (win.isMinimized()) win.restore();
+            win.show();
+            win.focus();
+            notifyAppLockReopen(win);
             win.webContents?.send("netcatty:tray:togglePortForward", rule.id, !isActive);
           }
         },
@@ -965,4 +982,5 @@ module.exports = {
   clearPendingFullscreenHide,
   cleanup,
   getTray: () => tray,
+  getTrayPanelWindow: () => trayPanelWindow,
 };

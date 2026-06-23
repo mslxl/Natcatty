@@ -56,7 +56,7 @@ test("applyAppLockEnabledChange requires current password before disabling an ex
     {
       enabled: false,
       timeoutMinutes: 30,
-      passwordVerifier: null,
+      passwordVerifier: verifier,
     },
   );
 });

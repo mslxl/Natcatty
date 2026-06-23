@@ -22,10 +22,12 @@ interface AppLockGateProps {
 }
 
 export function shouldRenderAppLockGateChildren(input: {
+  initialized: boolean;
   locked: boolean;
   lockReason: AppLockReason | null;
   hasRenderedChildren: boolean;
 }): boolean {
+  if (!input.initialized && !input.hasRenderedChildren) return false;
   return !(
     input.locked &&
     input.lockReason === 'startup' &&
@@ -52,6 +54,7 @@ export const AppLockGate: React.FC<AppLockGateProps> = ({
   } = useAppLockBridge();
   const hasRenderedChildrenRef = useRef(false);
   const renderChildren = shouldRenderAppLockGateChildren({
+    initialized: appLock.initialized,
     locked: appLock.locked,
     lockReason: appLock.lockReason,
     hasRenderedChildren: hasRenderedChildrenRef.current,
@@ -81,10 +84,22 @@ export const AppLockGate: React.FC<AppLockGateProps> = ({
 
   useEffect(() => {
     const unsubscribe = onAppLockReopen(() => {
-      appLock.lockNow('startup');
+      void appLock.resync?.();
     });
     return () => unsubscribe?.();
   }, [appLock, onAppLockReopen]);
+
+  useEffect(() => {
+    const handleVisibilityOrFocus = () => {
+      void appLock.resync?.();
+    };
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    return () => {
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+    };
+  }, [appLock]);
 
   return (
     <I18nProvider locale={settings.uiLanguage}>

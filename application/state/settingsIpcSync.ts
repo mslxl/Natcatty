@@ -1,11 +1,10 @@
 import { useEffect, type Dispatch, type SetStateAction } from 'react';
 import type { CustomKeyBindings, HotkeyScheme, SessionLogFormat, TerminalSettings, UILanguage } from '../../domain/models';
-import { normalizeAppLockSettings, type AppLockSettings } from '../../domain/appLock';
+import type { AppLockSettings } from '../../domain/appLock';
 import { parseCustomKeyBindingsStorageRecord } from '../../domain/customKeyBindings';
 import { resolveSupportedLocale } from '../../infrastructure/config/i18n';
 import {
   STORAGE_KEY_ACCENT_MODE,
-  STORAGE_KEY_APP_LOCK_SETTINGS,
   STORAGE_KEY_AUTO_UPDATE_ENABLED,
   STORAGE_KEY_COLOR,
   STORAGE_KEY_CUSTOM_CSS,
@@ -173,22 +172,6 @@ export function useSettingsIpcSync({
           }
         } else if (value && typeof value === 'object') {
           mergeIncomingTerminalSettings(value as Partial<TerminalSettings>);
-        }
-      }
-      if (key === STORAGE_KEY_APP_LOCK_SETTINGS) {
-        const next = typeof value === 'string'
-          ? (() => {
-              try {
-                return normalizeAppLockSettings(JSON.parse(value));
-              } catch {
-                return null;
-              }
-            })()
-          : normalizeAppLockSettings(value);
-        if (next) {
-          setAppLockSettingsState((prev) =>
-            JSON.stringify(prev) === JSON.stringify(next) ? prev : next
-          );
         }
       }
       if (key === STORAGE_KEY_EDITOR_WORD_WRAP && typeof value === 'boolean') {

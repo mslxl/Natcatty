@@ -20,7 +20,7 @@ test("normalizeAppLockTimeoutMinutes accepts only supported timeout options", ()
   assert.equal(normalizeAppLockTimeoutMinutes(""), DEFAULT_APP_LOCK_SETTINGS.timeoutMinutes);
 });
 
-test("normalizeAppLockSettings defaults disabled and clears verifier when disabled", () => {
+test("normalizeAppLockSettings preserves a valid verifier even when disabled", () => {
   const normalized = normalizeAppLockSettings({
     enabled: false,
     timeoutMinutes: 30,
@@ -28,15 +28,21 @@ test("normalizeAppLockSettings defaults disabled and clears verifier when disabl
       version: 1,
       algorithm: "PBKDF2-SHA256",
       iterations: 210000,
-      salt: "abc",
-      hash: "def",
+      salt: Buffer.alloc(16, 1).toString("base64"),
+      hash: Buffer.alloc(32, 2).toString("base64"),
     },
   });
 
   assert.deepEqual(normalized, {
     enabled: false,
     timeoutMinutes: 30,
-    passwordVerifier: null,
+    passwordVerifier: {
+      version: 1,
+      algorithm: "PBKDF2-SHA256",
+      iterations: 210000,
+      salt: Buffer.alloc(16, 1).toString("base64"),
+      hash: Buffer.alloc(32, 2).toString("base64"),
+    },
   });
 });
 

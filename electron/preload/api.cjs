@@ -477,6 +477,31 @@ function createPreloadApi(ctx) {
     ipcRenderer.on("netcatty:settings:changed", handler);
     return () => ipcRenderer.removeListener("netcatty:settings:changed", handler);
   },
+  getAppLockRuntimeState: () => ipcRenderer.invoke("netcatty:appLock:getRuntimeState"),
+  getAppLockSettings: () => ipcRenderer.invoke("netcatty:appLock:getSettings"),
+  setAppLockTimeoutMinutes: (timeoutMinutes) =>
+    ipcRenderer.invoke("netcatty:appLock:setTimeoutMinutes", timeoutMinutes),
+  requestAppLockEnable: () => ipcRenderer.invoke("netcatty:appLock:requestEnable"),
+  requestAppLockDisable: (currentPassword) =>
+    ipcRenderer.invoke("netcatty:appLock:requestDisable", currentPassword),
+  requestAppLockPasswordChange: (input) =>
+    ipcRenderer.invoke("netcatty:appLock:requestPasswordChange", input),
+  setAppLockRuntimeLocked: (reason) =>
+    ipcRenderer.invoke("netcatty:appLock:setLocked", reason),
+  requestAppLockUnlock: (password) =>
+    ipcRenderer.invoke("netcatty:appLock:requestUnlock", password),
+  reportAppLockActivity: () =>
+    ipcRenderer.invoke("netcatty:appLock:reportActivity"),
+  onAppLockSettingsChanged: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("netcatty:appLock:settingsChanged", handler);
+    return () => ipcRenderer.removeListener("netcatty:appLock:settingsChanged", handler);
+  },
+  onAppLockRuntimeStateChanged: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("netcatty:appLock:runtimeStateChanged", handler);
+    return () => ipcRenderer.removeListener("netcatty:appLock:runtimeStateChanged", handler);
+  },
   getSshDebugLogInfo: () => ipcRenderer.invoke("netcatty:sshDebugLog:info"),
   openSshDebugLogDir: () => ipcRenderer.invoke("netcatty:sshDebugLog:openDir"),
 

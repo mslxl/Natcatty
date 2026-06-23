@@ -1,13 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 
 import {
   normalizeAppLockSettings,
-  verifyAppLockPassword,
-  type AppLockPasswordVerifier,
   type AppLockSettings,
 } from '../../domain/appLock';
+import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
+import {
+  normalizeRuntimeAppLockState,
+  useAppLockRuntime,
+  type RuntimeAppLockReason,
+  type RuntimeAppLockState,
+} from './useAppLockRuntime';
 
-export type AppLockReason = 'startup' | 'idle' | 'manual';
+export type AppLockReason = RuntimeAppLockReason;
 export type AppLockUnlockResult =
   | { ok: true }
   | { ok: false; error: 'empty' | 'incorrect' };
@@ -38,56 +43,86 @@ export function getIdleLockDelayMs(
   return Math.max(0, timeoutMs - (now - lastActivityAt));
 }
 
-export async function resolveUnlockAttempt(
-  password: string,
-  verifier: AppLockPasswordVerifier | null,
-): Promise<AppLockUnlockResult> {
+export async function resolveUnlockAttempt(password: string): Promise<AppLockUnlockResult> {
   if (!password) return { ok: false, error: 'empty' };
-  const ok = await verifyAppLockPassword(password, verifier);
-  return ok ? { ok: true } : { ok: false, error: 'incorrect' };
+  try {
+    return await netcattyBridge.get()?.requestAppLockUnlock?.(password) ?? { ok: false, error: 'incorrect' };
+  } catch {
+    return { ok: false, error: 'incorrect' };
+  }
+}
+
+export function createOptimisticUnlockedRuntimeState(
+  input: RuntimeAppLockState,
+  now: number,
+): RuntimeAppLockState {
+  const current = normalizeRuntimeAppLockState(input);
+  if (current.initialized && !current.locked && current.reason === null) {
+    return current;
+  }
+
+  return {
+    ...current,
+    initialized: true,
+    locked: false,
+    reason: null,
+    lastUnlockedAt: now,
+    lastActivityAt: now,
+  };
 }
 
 export function useAppLockState(settings: AppLockSettings) {
   const normalizedSettings = useMemo(() => normalizeAppLockSettings(settings), [settings]);
-  const [locked, setLocked] = useState(() => shouldLockOnStartup(normalizedSettings));
-  const [lockReason, setLockReason] = useState<AppLockReason | null>(() =>
-    shouldLockOnStartup(normalizedSettings) ? 'startup' : null
+  const bridge = netcattyBridge.get();
+  const { runtimeState, refreshRuntimeState, setRuntimeState } = useAppLockRuntime(bridge);
+  const normalizedRuntimeState = useMemo(
+    () => normalizeRuntimeAppLockState(runtimeState),
+    [runtimeState],
   );
-  const lastActivityAtRef = useRef(Date.now());
-  const lockedRef = useRef(locked);
-  lockedRef.current = locked;
+  const effectiveRuntimeState = useMemo(() => {
+    if (normalizedRuntimeState.initialized) return normalizedRuntimeState;
+    if (shouldLockOnStartup(normalizedSettings)) {
+      return {
+        ...normalizedRuntimeState,
+        locked: true,
+        reason: 'startup' as const,
+      };
+    }
+    return normalizedRuntimeState;
+  }, [normalizedRuntimeState, normalizedSettings]);
 
   const lockNow = useCallback((reason: AppLockReason = 'manual') => {
-    if (!shouldLockOnStartup(normalizedSettings)) return;
-    setLocked(true);
-    setLockReason(reason);
-  }, [normalizedSettings]);
+    if (!shouldLockOnStartup(normalizedSettings) || !reason) return;
+    void bridge?.setAppLockRuntimeLocked?.(reason);
+  }, [bridge, normalizedSettings]);
 
   const recordActivity = useCallback(() => {
-    if (lockedRef.current) return;
-    lastActivityAtRef.current = Date.now();
-  }, []);
+    if (effectiveRuntimeState.locked) return;
+    void bridge?.reportAppLockActivity?.();
+  }, [bridge, effectiveRuntimeState.locked]);
 
   const unlock = useCallback(async (password: string): Promise<AppLockUnlockResult> => {
-    const result = await resolveUnlockAttempt(password, normalizedSettings.passwordVerifier);
+    const result = await resolveUnlockAttempt(password);
     if (result.ok) {
-      lastActivityAtRef.current = Date.now();
-      setLocked(false);
-      setLockReason(null);
+      const unlockedAt = Date.now();
+      setRuntimeState((current) => createOptimisticUnlockedRuntimeState(current, unlockedAt));
+      await refreshRuntimeState().catch(() => {});
     }
     return result;
-  }, [normalizedSettings.passwordVerifier]);
+  }, [refreshRuntimeState, setRuntimeState]);
 
   useEffect(() => {
-    if (!shouldLockOnStartup(normalizedSettings)) {
-      setLocked(false);
-      setLockReason(null);
-      return;
+    if (!shouldLockOnStartup(normalizedSettings) && effectiveRuntimeState.locked) {
+      const unlockedAt = Date.now();
+      void bridge?.requestAppLockUnlock?.('')
+        ?.then((result) => {
+          if (result?.ok !== true) return;
+          setRuntimeState((current) => createOptimisticUnlockedRuntimeState(current, unlockedAt));
+          return refreshRuntimeState();
+        })
+        .catch(() => {});
     }
-    if (!lockedRef.current) return;
-    setLocked(true);
-    setLockReason((prev) => prev ?? 'startup');
-  }, [normalizedSettings]);
+  }, [bridge, effectiveRuntimeState.locked, normalizedSettings, refreshRuntimeState, setRuntimeState]);
 
   useEffect(() => {
     if (!shouldLockOnStartup(normalizedSettings)) return undefined;
@@ -105,33 +140,18 @@ export function useAppLockState(settings: AppLockSettings) {
   }, [normalizedSettings, recordActivity]);
 
   useEffect(() => {
-    if (!shouldLockOnStartup(normalizedSettings) || locked) return undefined;
-    let timeout: number | undefined;
-
-    const checkIdle = () => {
-      if (shouldLockAfterIdle(normalizedSettings, lastActivityAtRef.current, Date.now())) {
-        lockNow('idle');
-        return;
-      }
-      scheduleNextCheck();
-    };
-
-    const scheduleNextCheck = () => {
-      const delayMs = getIdleLockDelayMs(normalizedSettings, lastActivityAtRef.current, Date.now());
-      if (delayMs === null) return undefined;
-      timeout = window.setTimeout(checkIdle, delayMs);
-      return timeout;
-    };
-
-    scheduleNextCheck();
-    return () => window.clearTimeout(timeout);
-  }, [normalizedSettings, locked, lockNow]);
+    if (!shouldLockOnStartup(normalizedSettings)) return undefined;
+    void bridge?.reportAppLockActivity?.();
+    return undefined;
+  }, [bridge, normalizedSettings]);
 
   return {
-    locked,
-    lockReason,
+    initialized: effectiveRuntimeState.initialized,
+    locked: effectiveRuntimeState.locked,
+    lockReason: effectiveRuntimeState.reason,
     lockNow,
     unlock,
     recordActivity,
+    resync: refreshRuntimeState,
   };
 }

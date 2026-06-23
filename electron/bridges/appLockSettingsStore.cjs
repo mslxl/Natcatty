@@ -1,0 +1,213 @@
+const {
+  pbkdf2Sync,
+  randomBytes,
+  timingSafeEqual,
+} = require("node:crypto");
+
+const APP_LOCK_TIMEOUT_OPTIONS_MINUTES = [1, 5, 15, 30, 60];
+
+const DEFAULT_APP_LOCK_SETTINGS = Object.freeze({
+  enabled: false,
+  timeoutMinutes: 15,
+  passwordVerifier: null,
+});
+
+const APP_LOCK_VERIFIER_VERSION = 1;
+const APP_LOCK_ALGORITHM = "PBKDF2-SHA256";
+const APP_LOCK_HASH_ITERATIONS = 210000;
+const APP_LOCK_MIN_ITERATIONS = 100000;
+const APP_LOCK_SALT_BYTES = 16;
+const APP_LOCK_HASH_BYTES = 32;
+
+function cloneSettings(settings) {
+  return {
+    enabled: settings.enabled === true,
+    timeoutMinutes: normalizeAppLockTimeoutMinutes(settings.timeoutMinutes),
+    passwordVerifier: settings.passwordVerifier
+      ? {
+          version: settings.passwordVerifier.version,
+          algorithm: settings.passwordVerifier.algorithm,
+          iterations: settings.passwordVerifier.iterations,
+          salt: settings.passwordVerifier.salt,
+          hash: settings.passwordVerifier.hash,
+        }
+      : null,
+  };
+}
+
+function isRecord(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function decodeBase64Bytes(value) {
+  if (typeof value !== "string" || value.length === 0) return null;
+
+  try {
+    const bytes = Buffer.from(value, "base64");
+    if (bytes.length === 0) return null;
+    if (bytes.toString("base64") !== value) return null;
+    return bytes;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeAppLockTimeoutMinutes(input) {
+  const value = typeof input === "string" && input.trim() !== "" ? Number(input) : input;
+  return APP_LOCK_TIMEOUT_OPTIONS_MINUTES.includes(value)
+    ? value
+    : DEFAULT_APP_LOCK_SETTINGS.timeoutMinutes;
+}
+
+function normalizeAppLockPasswordVerifier(input) {
+  if (!isRecord(input)) return null;
+  if (input.version !== APP_LOCK_VERIFIER_VERSION) return null;
+  if (input.algorithm !== APP_LOCK_ALGORITHM) return null;
+  if (
+    typeof input.iterations !== "number" ||
+    !Number.isInteger(input.iterations) ||
+    input.iterations < APP_LOCK_MIN_ITERATIONS
+  ) {
+    return null;
+  }
+
+  const saltBytes = decodeBase64Bytes(input.salt);
+  if (!saltBytes || saltBytes.length !== APP_LOCK_SALT_BYTES) return null;
+
+  const hashBytes = decodeBase64Bytes(input.hash);
+  if (!hashBytes || hashBytes.length !== APP_LOCK_HASH_BYTES) return null;
+
+  return {
+    version: APP_LOCK_VERIFIER_VERSION,
+    algorithm: APP_LOCK_ALGORITHM,
+    iterations: input.iterations,
+    salt: input.salt,
+    hash: input.hash,
+  };
+}
+
+function derivePasswordHash(password, saltBytes, iterations) {
+  return pbkdf2Sync(password, saltBytes, iterations, APP_LOCK_HASH_BYTES, "sha256").toString("base64");
+}
+
+function normalizeAppLockSettings(input) {
+  if (!isRecord(input)) return cloneSettings(DEFAULT_APP_LOCK_SETTINGS);
+
+  const timeoutMinutes = normalizeAppLockTimeoutMinutes(input.timeoutMinutes);
+  const passwordVerifier = normalizeAppLockPasswordVerifier(input.passwordVerifier);
+  const enabled = input.enabled === true && passwordVerifier !== null;
+
+  return {
+    enabled,
+    timeoutMinutes,
+    passwordVerifier,
+  };
+}
+
+function canLockFromSettings(settings) {
+  const normalized = normalizeAppLockSettings(settings);
+  return normalized.enabled === true && normalized.passwordVerifier !== null;
+}
+
+async function createAppLockPasswordVerifier(password) {
+  if (typeof password !== "string" || password.trim() === "") {
+    throw new Error("App lock password is required");
+  }
+
+  const saltBytes = randomBytes(APP_LOCK_SALT_BYTES);
+  return {
+    version: APP_LOCK_VERIFIER_VERSION,
+    algorithm: APP_LOCK_ALGORITHM,
+    iterations: APP_LOCK_HASH_ITERATIONS,
+    salt: saltBytes.toString("base64"),
+    hash: derivePasswordHash(password, saltBytes, APP_LOCK_HASH_ITERATIONS),
+  };
+}
+
+async function verifyAppLockPassword(password, verifier) {
+  const normalized = normalizeAppLockPasswordVerifier(verifier);
+  if (typeof password !== "string" || password.length === 0 || !normalized) {
+    return false;
+  }
+
+  const saltBytes = decodeBase64Bytes(normalized.salt);
+  const hashBytes = decodeBase64Bytes(normalized.hash);
+  if (!saltBytes || !hashBytes) return false;
+
+  const candidateBytes = Buffer.from(
+    derivePasswordHash(password, saltBytes, normalized.iterations),
+    "base64",
+  );
+  if (candidateBytes.length !== hashBytes.length) return false;
+
+  return timingSafeEqual(candidateBytes, hashBytes);
+}
+
+function createAppLockSettingsStore({
+  filePath,
+  readFile,
+  writeFile,
+}) {
+  if (!filePath) {
+    throw new Error("createAppLockSettingsStore requires filePath");
+  }
+  if (typeof readFile !== "function") {
+    throw new Error("createAppLockSettingsStore requires readFile");
+  }
+  if (typeof writeFile !== "function") {
+    throw new Error("createAppLockSettingsStore requires writeFile");
+  }
+
+  let snapshot = cloneSettings(DEFAULT_APP_LOCK_SETTINGS);
+
+  async function load() {
+    let raw;
+
+    try {
+      raw = await readFile(filePath, "utf8");
+    } catch (err) {
+      if (err && err.code === "ENOENT") {
+        snapshot = cloneSettings(DEFAULT_APP_LOCK_SETTINGS);
+        return cloneSettings(snapshot);
+      }
+      throw err;
+    }
+
+    try {
+      snapshot = normalizeAppLockSettings(JSON.parse(String(raw)));
+    } catch {
+      snapshot = cloneSettings(DEFAULT_APP_LOCK_SETTINGS);
+    }
+
+    return cloneSettings(snapshot);
+  }
+
+  async function save(nextSettings) {
+    const normalized = normalizeAppLockSettings(nextSettings);
+    await writeFile(filePath, `${JSON.stringify(normalized, null, 2)}\n`, { mode: 0o600 });
+    snapshot = normalized;
+    return cloneSettings(snapshot);
+  }
+
+  function getSnapshot() {
+    return cloneSettings(snapshot);
+  }
+
+  return {
+    load,
+    save,
+    getSnapshot,
+  };
+}
+
+module.exports = {
+  APP_LOCK_TIMEOUT_OPTIONS_MINUTES,
+  DEFAULT_APP_LOCK_SETTINGS,
+  canLockFromSettings,
+  createAppLockPasswordVerifier,
+  createAppLockSettingsStore,
+  normalizeAppLockPasswordVerifier,
+  normalizeAppLockSettings,
+  normalizeAppLockTimeoutMinutes,
+  verifyAppLockPassword,
+};
