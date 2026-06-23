@@ -260,6 +260,7 @@ export const attachSessionToTerminal = (
     }
     data = sudoAutofill?.handleOutput(data) ?? data;
     writeSessionData(ctx, term, data);
+    ctx.onTerminalOutput?.(data);
     if (!ctx.hasConnectedRef.current) {
       ctx.updateStatus("connected");
       opts?.onConnected?.();

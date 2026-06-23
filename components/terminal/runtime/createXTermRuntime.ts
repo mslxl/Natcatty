@@ -183,6 +183,12 @@ export type CreateXTermRuntimeContext = {
   // Callback when shell reports CWD change via OSC 7
   onCwdChange?: (cwd: string) => void;
 
+  // Callback when shell reports window/icon title via OSC 0/2
+  onTitleChange?: (title: string | null) => void;
+
+  // Callback when the shell rings the terminal bell
+  onBell?: () => void;
+
   // Callback when remote requests clipboard read in 'prompt' mode; resolves to user's decision
   onOsc52ReadRequest?: () => Promise<boolean>;
 
@@ -1190,6 +1196,15 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
   const cursorPreferenceDisposable = installUserCursorPreferenceGuard(term, ctx.terminalSettingsRef);
 
+  const titleChangeDisposable = term.onTitleChange((title) => {
+    const trimmed = title.trim();
+    ctx.onTitleChange?.(trimmed.length > 0 ? trimmed : null);
+  });
+
+  const bellDisposable = term.onBell(() => {
+    ctx.onBell?.();
+  });
+
   let resizeTimeout: NodeJS.Timeout | null = null;
   const resizeDebounceMs = XTERM_PERFORMANCE_CONFIG.resize.debounceMs;
   term.onResize(({ cols, rows }) => {
@@ -1242,6 +1257,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       kittyKeyboardDisposable.dispose();
       osc7Disposable.dispose();
       osc52Disposable.dispose();
+      titleChangeDisposable.dispose();
+      bellDisposable.dispose();
       cursorPreferenceDisposable?.dispose();
       try {
         term.dispose();

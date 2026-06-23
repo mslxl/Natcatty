@@ -8,6 +8,7 @@ import { getTopTabInsertionTarget, isPointInsideRect, WORKSPACE_SESSION_DRAG_TYP
 import { useAIState } from '../../application/state/useAIState';
 import { useStoredBoolean } from '../../application/state/useStoredBoolean';
 import { collectSessionIds, SplitDirection } from '../../domain/workspace';
+import { resolveSessionTabTitle } from '../../domain/sessionTabTitle';
 import { KeyBinding, TerminalSettings } from '../../domain/models';
 import { STORAGE_KEY_AI_SHOW_TERMINAL_SELECTION_ACTION } from '../../infrastructure/config/storageKeys';
 import { cn } from '../../lib/utils';
@@ -559,6 +560,8 @@ export interface TerminalLayerProps {
   onUpdateTerminalFontWeight?: (fontWeight: number) => void;
   onUpdateSessionFontSize?: (sessionId: string, fontSize: number) => void;
   onUpdateSessionRestoreCwd?: (sessionId: string, cwd: string | null) => void;
+  onUpdateSessionDynamicTitle?: (sessionId: string, title: string | null) => void;
+  onUpdateSessionCodingCliProvider?: (sessionId: string, providerId: import('../../domain/codingCliProviders').CodingCliProviderId | null) => void;
   onClearSessionFontSizeOverride?: (sessionId: string) => void;
   onCloseSession: (sessionId: string, e?: React.MouseEvent) => void;
   onUpdateSessionStatus: (sessionId: string, status: TerminalSession['status']) => void;
@@ -661,6 +664,9 @@ interface TerminalPaneProps {
     sourceSessionId?: string,
   ) => void;
   onTerminalCwdChange: (sessionId: string, cwd: string | null) => void;
+  onTerminalTitleChange?: (sessionId: string, title: string | null) => void;
+  onTerminalBell?: (sessionId: string) => void;
+  onTerminalOutput?: (sessionId: string, chunk: string) => void;
   onOpenScripts: () => void;
   onOpenHistory?: () => void;
   onOpenTheme: () => void;
@@ -767,6 +773,9 @@ const terminalPanePropsAreEqual = (
   prev.onTerminalFontSizeChange === next.onTerminalFontSizeChange &&
   prev.onOpenSftp === next.onOpenSftp &&
   prev.onTerminalCwdChange === next.onTerminalCwdChange &&
+  prev.onTerminalTitleChange === next.onTerminalTitleChange &&
+  prev.onTerminalBell === next.onTerminalBell &&
+  prev.onTerminalOutput === next.onTerminalOutput &&
   prev.onOpenScripts === next.onOpenScripts &&
   prev.onOpenHistory === next.onOpenHistory &&
   prev.onOpenTheme === next.onOpenTheme &&
@@ -832,6 +841,9 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   onTerminalFontSizeChange,
   onOpenSftp,
   onTerminalCwdChange,
+  onTerminalTitleChange,
+  onTerminalBell,
+  onTerminalOutput,
   onOpenScripts,
   onOpenHistory,
   onOpenTheme,
@@ -993,7 +1005,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
     e.stopPropagation();
 
     const startPoint = { clientX: e.clientX, clientY: e.clientY };
-    const dragLabel = session.customName || session.hostLabel;
+    const dragLabel = resolveSessionTabTitle(session, host);
     let dragStarted = false;
     let ghostEl: HTMLDivElement | null = null;
     let insertEl: HTMLDivElement | null = null;
@@ -1212,6 +1224,9 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         onTerminalFontSizeChange={handleTerminalFontSizeChange}
         onOpenSftp={onOpenSftp}
         onTerminalCwdChange={onTerminalCwdChange}
+        onTerminalTitleChange={onTerminalTitleChange}
+        onTerminalBell={onTerminalBell}
+        onTerminalOutput={onTerminalOutput}
         onOpenScripts={onOpenScripts}
         onOpenHistory={onOpenHistory}
         onOpenTheme={onOpenTheme}
@@ -1237,7 +1252,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         sessionLog={sessionLog}
         sshDebugLogEnabled={sshDebugLogEnabled}
         sudoAutofillPassword={sudoAutofillPassword}
-        sessionDisplayName={session.customName || session.hostLabel}
+        sessionDisplayName={resolveSessionTabTitle(session, host)}
         showSelectionAIAction={showSelectionAIAction}
         onAddSelectionToAI={onAddSelectionToAI}
         onRename={handleRename}
@@ -1290,6 +1305,9 @@ interface TerminalPanesHostProps {
   onTerminalFontSizeChange?: TerminalPaneProps['onTerminalFontSizeChange'];
   onOpenSftp: TerminalPaneProps['onOpenSftp'];
   onTerminalCwdChange: TerminalPaneProps['onTerminalCwdChange'];
+  onTerminalTitleChange?: TerminalPaneProps['onTerminalTitleChange'];
+  onTerminalBell?: TerminalPaneProps['onTerminalBell'];
+  onTerminalOutput?: TerminalPaneProps['onTerminalOutput'];
   onOpenScripts: () => void;
   onOpenHistory?: () => void;
   onOpenTheme: () => void;
@@ -1364,6 +1382,9 @@ const terminalPanesHostPropsAreEqual = (
   if (prev.onTerminalFontSizeChange !== next.onTerminalFontSizeChange) return false;
   if (prev.onOpenSftp !== next.onOpenSftp) return false;
   if (prev.onTerminalCwdChange !== next.onTerminalCwdChange) return false;
+  if (prev.onTerminalTitleChange !== next.onTerminalTitleChange) return false;
+  if (prev.onTerminalBell !== next.onTerminalBell) return false;
+  if (prev.onTerminalOutput !== next.onTerminalOutput) return false;
   if (prev.onOpenScripts !== next.onOpenScripts) return false;
   if (prev.onOpenHistory !== next.onOpenHistory) return false;
   if (prev.onOpenTheme !== next.onOpenTheme) return false;

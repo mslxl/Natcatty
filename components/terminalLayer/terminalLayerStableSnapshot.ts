@@ -153,6 +153,8 @@ export type TerminalLayerStableSnapshot = {
   onCopySession: TerminalLayerProps['onCopySession'];
   onCopySessionToNewWindow: TerminalLayerProps['onCopySessionToNewWindow'];
   onUpdateSessionRestoreCwd: TerminalLayerProps['onUpdateSessionRestoreCwd'];
+  onUpdateSessionDynamicTitle: TerminalLayerProps['onUpdateSessionDynamicTitle'];
+  onUpdateSessionCodingCliProvider: TerminalLayerProps['onUpdateSessionCodingCliProvider'];
   onRequestAddToWorkspace: TerminalLayerProps['onRequestAddToWorkspace'];
   onSetWorkspaceFocusedSession: TerminalLayerProps['onSetWorkspaceFocusedSession'];
   onToggleWorkspaceViewMode: TerminalLayerProps['onToggleWorkspaceViewMode'];

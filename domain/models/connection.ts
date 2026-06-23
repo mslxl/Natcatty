@@ -218,6 +218,10 @@ export interface Host {
   showLineTimestamps?: boolean;
   // What the Backspace key sends: undefined = xterm default (no interception), 'ctrl-h' = ^H (0x08)
   backspaceBehavior?: 'ctrl-h';
+  // When true, tab titles stay on the connection label instead of following the
+  // shell-reported window title (OSC 0/2). Useful when many hosts share one
+  // bastion profile name.
+  disableDynamicTabTitle?: boolean;
   // Local SSH key file paths (from SSH config IdentityFile or user-added)
   // Resolved at connection time — the app reads the file content when connecting.
   identityFilePaths?: string[];

@@ -2,6 +2,7 @@ import type { DragEvent, PointerEvent } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 
 import { classifyDistroId } from "../../domain/host";
+import { getSessionConnectionLabel, resolveSessionTabTitle } from "../../domain/sessionTabTitle";
 import { logger } from "../../lib/logger";
 import { getPathForFile, type DropEntry } from "../../lib/sftpFileUtils";
 import { normalizeLineEndings } from "../../lib/utils";
@@ -28,12 +29,14 @@ export interface TerminalBroadcastInputOptions {
 }
 
 /**
- * Get the display name for a terminal session.
+ * Get the static connection label for a terminal session.
  * Uses customName if set, otherwise falls back to hostLabel.
  */
 export function getSessionDisplayName(session: TerminalSession): string {
-  return session.customName || session.hostLabel || '';
+  return getSessionConnectionLabel(session);
 }
+
+export { resolveSessionTabTitle };
 
 /**
  * Extract unique root paths from drop entries for local terminal path insertion.
@@ -175,6 +178,9 @@ export interface TerminalProps {
     sourceSessionId?: string,
   ) => void;
   onTerminalCwdChange?: (sessionId: string, cwd: string | null) => void;
+  onTerminalTitleChange?: (sessionId: string, title: string | null) => void;
+  onTerminalBell?: (sessionId: string) => void;
+  onTerminalOutput?: (sessionId: string, chunk: string) => void;
   onOpenScripts?: () => void;
   onOpenHistory?: () => void;
   onOpenTheme?: () => void;
