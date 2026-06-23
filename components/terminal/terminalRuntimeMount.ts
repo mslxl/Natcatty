@@ -127,12 +127,17 @@ export async function wakeTerminalFromHibernate(
   const initialPayload = getPayload();
   const pendingAtApplyStart = initialPayload.pendingBuffer;
   await applyHibernateWakeToTerminal(term, runtime, initialPayload);
-  const afterApply = getPayload();
-  if (afterApply.pendingBuffer.length > pendingAtApplyStart.length) {
-    await appendTerminalReplayData(
-      term,
-      afterApply.pendingBuffer.slice(pendingAtApplyStart.length),
-    );
+  let replayedPendingLength = pendingAtApplyStart.length;
+  for (let drainPass = 0; drainPass < 16; drainPass += 1) {
+    const pending = getPayload().pendingBuffer;
+    if (pending.length <= replayedPendingLength) break;
+    await appendTerminalReplayData(term, pending.slice(replayedPendingLength));
+    replayedPendingLength = pending.length;
+  }
+  const finalPending = getPayload().pendingBuffer;
+  if (finalPending.length > replayedPendingLength) {
+    await appendTerminalReplayData(term, finalPending.slice(replayedPendingLength));
+    replayedPendingLength = finalPending.length;
   }
   stopHibernateListeners();
   const shouldReattach = sessionConnected && (getSessionConnected?.() ?? true);
@@ -169,7 +174,7 @@ export async function wakeTerminalFromHibernate(
   logger.info("[Terminal] Resumed from hibernate", {
     sessionId,
     snapshotChars: initialPayload.snapshot.length,
-    pendingChars: afterApply.pendingBuffer.length,
+    pendingChars: replayedPendingLength,
     alternateScreen: initialPayload.alternateScreen,
   });
   return true;

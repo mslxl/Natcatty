@@ -71,6 +71,24 @@ export function useTerminalHibernateEffect({
       hibernatedRef.current = false;
     };
 
+    const scheduleHibernate = () => {
+      if (!hibernateEnabled) return;
+      clearHibernateTimer();
+      if (hibernatedRef.current || !hasRuntimeRef.current) return;
+      if (status !== "connected") return;
+      if (isSearchOpen) return;
+      if (fileTransferActive) return;
+
+      hiddenSinceRef.current = Date.now();
+      const hiddenAt = hiddenSinceRef.current;
+      hibernateTimerRef.current = window.setTimeout(() => {
+        hibernateTimerRef.current = null;
+        if (hiddenSinceRef.current !== hiddenAt) return;
+        if (getPaneVisible(sessionId)) return;
+        onHibernateRef.current();
+      }, hibernateDelayMs);
+    };
+
     const tryWake = () => {
       if (!hibernatedRef.current) return;
 
@@ -89,6 +107,9 @@ export function useTerminalHibernateEffect({
       void Promise.resolve(onWakeRef.current(getPayload, { sessionConnected })).then((accepted) => {
         if (accepted !== false) {
           clearHibernateState();
+          if (!getPaneVisible(sessionId)) {
+            scheduleHibernate();
+          }
         }
       });
     };
@@ -107,23 +128,6 @@ export function useTerminalHibernateEffect({
         unsubscribeDisabled();
       };
     }
-
-    const scheduleHibernate = () => {
-      clearHibernateTimer();
-      if (hibernatedRef.current || !hasRuntimeRef.current) return;
-      if (status !== "connected") return;
-      if (isSearchOpen) return;
-      if (fileTransferActive) return;
-
-      hiddenSinceRef.current = Date.now();
-      const hiddenAt = hiddenSinceRef.current;
-      hibernateTimerRef.current = window.setTimeout(() => {
-        hibernateTimerRef.current = null;
-        if (hiddenSinceRef.current !== hiddenAt) return;
-        if (getPaneVisible(sessionId)) return;
-        onHibernateRef.current();
-      }, hibernateDelayMs);
-    };
 
     const applyVisibility = (visible: boolean) => {
       paneVisibleRef.current = visible;
