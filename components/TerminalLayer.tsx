@@ -215,6 +215,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     meta?: { source?: 'osc7' },
   ) => {
     if (meta?.source === 'osc7') {
+      // Bump on every OSC 7 report, even when the decoded path is unchanged.
+      // PROMPT_COMMAND/precmd emits OSC 7 after each command; skipping the
+      // backend pwd probe in that case prevents SFTP follow from toggling
+      // between OSC 7 cwd and login-shell fallback pwd (notably after sudo).
       const nextSignal = (terminalOsc7SignalBySessionRef.current.get(sessionId) ?? 0) + 1;
       terminalOsc7SignalBySessionRef.current.set(sessionId, nextSignal);
     }

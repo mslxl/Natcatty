@@ -123,6 +123,22 @@ test("probeBackendSessionCwdAfterCommand probes backend when OSC 7 did not repor
   assert.equal(cwd, "/var/log");
 });
 
+test("probeBackendSessionCwdAfterCommand skips when OSC 7 confirms unchanged cwd after command", async () => {
+  let backendCalls = 0;
+  const cwd = await probeBackendSessionCwdAfterCommand({
+    sessionId: "session-1",
+    osc7SignalAtCommand: 2,
+    getOsc7Signal: () => 3,
+    getSessionPwd: async () => {
+      backendCalls += 1;
+      return { success: true, cwd: "/home/user" };
+    },
+  });
+
+  assert.equal(cwd, null);
+  assert.equal(backendCalls, 0);
+});
+
 test("probeBackendSessionCwdAfterCommand still probes when cwd path is unchanged but OSC 7 did not fire", async () => {
   const cwd = await probeBackendSessionCwdAfterCommand({
     sessionId: "session-1",
