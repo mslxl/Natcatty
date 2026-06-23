@@ -369,10 +369,14 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     [groups],
   );
   const sortedNotes = useMemo(() => sortNoteItems(normalizeVaultNotes(notes)), [notes]);
+  sortedNotesRef.current = sortedNotes;
 
-  useEffect(() => {
-    sortedNotesRef.current = sortedNotes;
-  }, [sortedNotes]);
+  const commitNotes = useCallback((nextNotes: VaultNote[]) => {
+    const cleaned = normalizeVaultNotes(nextNotes);
+    sortedNotesRef.current = cleaned;
+    onUpdateNotes(cleaned);
+    return cleaned;
+  }, [onUpdateNotes]);
 
   const noteTree = useMemo(() => {
     const tree = buildNoteTree(groups, sortedNotes);
@@ -461,10 +465,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   const collapseAllGroups = () => setExpandedGroups(new Set());
 
   const saveNote = (nextNote: VaultNote) => {
-    const cleaned = normalizeVaultNotes(
-      sortedNotes.map((note) => (note.id === nextNote.id ? nextNote : note)),
-    );
-    onUpdateNotes(cleaned);
+    commitNotes(sortedNotes.map((note) => (note.id === nextNote.id ? nextNote : note)));
   };
 
   const handleOpenHostFromNote = useCallback((host: Host, noteId: string) => {
@@ -499,7 +500,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
 
   const addNoteToGroup = (group: string | null) => {
     const note = createNote(group, getNextVaultOrder(sortedNotes));
-    onUpdateNotes(normalizeVaultNotes([...sortedNotes, note]));
+    commitNotes([...sortedNotes, note]);
     if (group) expandPath(group);
     const nextSelection = getNoteSelectionState(note, isSidebarMode);
     setSelectedNoteId(nextSelection.selectedNoteId);
@@ -567,11 +568,10 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
         return;
       }
 
-      onUpdateNotes(result.notes);
-      sortedNotesRef.current = result.notes;
+      const mergedNotes = commitNotes(result.notes);
       if (targetGroup) expandPath(targetGroup);
 
-      const lastImported = result.notes[result.notes.length - 1];
+      const lastImported = mergedNotes[mergedNotes.length - 1];
       const nextSelection = getNoteSelectionState(lastImported, isSidebarMode);
       setSelectedNoteId(nextSelection.selectedNoteId);
       setSelectedGroup(nextSelection.selectedGroup);
@@ -590,7 +590,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     }
   }, [
     isSidebarMode,
-    onUpdateNotes,
+    commitNotes,
     selectedGroup,
     selectedNote,
     t,
@@ -608,7 +608,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       updatedAt: now,
       order: getNextVaultOrder(sortedNotes),
     };
-    onUpdateNotes(normalizeVaultNotes([...sortedNotes, copy]));
+    commitNotes([...sortedNotes, copy]);
     if (copy.group) expandPath(copy.group);
     const nextSelection = getNoteSelectionState(copy, isSidebarMode);
     setSelectedNoteId(nextSelection.selectedNoteId);
@@ -618,7 +618,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
 
   const deleteNoteById = (noteId: string) => {
     const next = sortedNotes.filter((note) => note.id !== noteId);
-    onUpdateNotes(next);
+    commitNotes(next);
     if (selectedNoteId === noteId) {
       const nextSelection = getFallbackNoteSelectionState(next, isSidebarMode);
       setSelectedNoteId(nextSelection.selectedNoteId);
@@ -662,7 +662,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       group: replaceNoteGroupPrefix(note.group, group, nextPath),
     }));
     onUpdateNoteGroups(nextGroups);
-    onUpdateNotes(normalizeVaultNotes(nextNotes));
+    commitNotes(nextNotes);
     setExpandedGroups((current) => {
       const next = new Set<string>();
       current.forEach((item) => {
@@ -679,7 +679,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
 
   const deleteGroup = (group: string) => {
     onUpdateNoteGroups(groups.filter((item) => !isNoteGroupInside(item, group)));
-    onUpdateNotes(sortedNotes.map((note) => isNoteGroupInside(note.group, group) ? { ...note, group: undefined } : note));
+    commitNotes(sortedNotes.map((note) => isNoteGroupInside(note.group, group) ? { ...note, group: undefined } : note));
     if (selectedGroup && isNoteGroupInside(selectedGroup, group)) setSelectedGroup(null);
     setEditingGroupPath(null);
   };
@@ -716,9 +716,9 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     const nextGroup = group || undefined;
     if ((source.group || undefined) === nextGroup) return;
 
-    onUpdateNotes(normalizeVaultNotes(sortedNotes.map((note) => (
+    commitNotes(sortedNotes.map((note) => (
       note.id === noteId ? { ...note, group: nextGroup, updatedAt: Date.now() } : note
-    ))));
+    )));
     if (group) expandPath(group);
   };
 
@@ -730,7 +730,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
         ? { ...note, group: targetNote.group, updatedAt: Date.now() }
         : note
     ));
-    onUpdateNotes(normalizeVaultNotes(reorderVaultItems(movedNotes, sourceId, targetNote.id, position)));
+    commitNotes(reorderVaultItems(movedNotes, sourceId, targetNote.id, position));
     if (targetNote.group) expandPath(targetNote.group);
   };
 
@@ -747,7 +747,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       group: replaceNoteGroupPrefix(note.group, group, nextPath),
     }));
     onUpdateNoteGroups(nextGroups);
-    onUpdateNotes(normalizeVaultNotes(nextNotes));
+    commitNotes(nextNotes);
     setExpandedGroups((current) => remapExpandedNoteGroupPaths(current, group, nextPath));
     if (selectedGroup && isNoteGroupInside(selectedGroup, group)) {
       setSelectedGroup(replaceNoteGroupPrefix(selectedGroup, group, nextPath) ?? null);
@@ -792,7 +792,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
 
     onUpdateNoteGroups(nextGroups);
     if (nextSourceGroup !== sourceGroup) {
-      onUpdateNotes(normalizeVaultNotes(nextNotes));
+      commitNotes(nextNotes);
       setExpandedGroups((current) => remapExpandedNoteGroupPaths(current, sourceGroup, nextSourceGroup));
       if (selectedGroup && isNoteGroupInside(selectedGroup, sourceGroup)) {
         setSelectedGroup(replaceNoteGroupPrefix(selectedGroup, sourceGroup, nextSourceGroup) ?? null);
