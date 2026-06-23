@@ -848,6 +848,21 @@ test("window IPC handlers target the sender owner window", async () => {
       },
     },
   };
+  const minimizeCalls = [];
+  const minimizeWin = {
+    isDestroyed() {
+      return false;
+    },
+    minimize() {
+      minimizeCalls.push("minimize");
+    },
+    webContents: {
+      id: 404,
+      isDestroyed() {
+        return false;
+      },
+    },
+  };
 
   registerWindowHandlers(ipcMain, { themeSource: "light" });
 
@@ -893,6 +908,17 @@ test("window IPC handlers target the sender owner window", async () => {
   const opacityResult = await handlers.get("netcatty:setWindowOpacity")(null, 0.7);
   assert.equal(opacityResult, true);
   assert.deepEqual(opacityCalls, [0.7]);
+
+  await handlers.get("netcatty:window:minimize")({
+    sender: {
+      id: 505,
+      getOwnerBrowserWindow() {
+        return minimizeWin;
+      },
+    },
+  });
+
+  assert.deepEqual(minimizeCalls, ["minimize"]);
 });
 
 test("resolveSettingsWindowBounds centers settings on the requesting window display", () => {
