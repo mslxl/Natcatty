@@ -12,6 +12,11 @@ export const resolveHostFollowTerminalCwd = (
   globalFollowTerminalCwd: boolean,
 ): boolean => hostFollowTerminalCwd ?? globalFollowTerminalCwd;
 
+export const resolveSftpFollowTerminalCwdTargetHost = <T>(
+  visibleHost: T | null | undefined,
+  fallbackHost: T | null | undefined,
+): T | null => visibleHost ?? fallbackHost ?? null;
+
 /** Whether SFTP should auto-navigate to match the linked terminal cwd. */
 export const shouldFollowTerminalCwdNavigate = ({
   followEnabled,
