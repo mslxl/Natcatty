@@ -726,6 +726,7 @@ function writeToSession(event, payload) {
     // UTF-8 string for them. For UTF-8 it also returns the string unchanged, so
     // the transport's native string serialization keeps handling that case.
     sessionLogStreamManager.registerSudoAutofillInput(payload.sessionId, payload.data);
+    sessionLogStreamManager.registerProgrammaticCommandLogRewrite(payload.sessionId, payload.logRewrite);
     const outgoing = encodeTerminalInput(payload.data, session.encoding);
 
     if (session.stream) {

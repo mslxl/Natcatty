@@ -281,6 +281,7 @@ const WORKSPACE_CTX_KEYS = [
   'handleBroadcastInput',
   'handleToggleWorkspaceComposeBar',
   'handleSnippetExecutorChange',
+  'handleProgrammaticCommandLogRewriteChange',
   'handleAddSelectionToAI',
   'activeResizers',
   'activeWorkspace',

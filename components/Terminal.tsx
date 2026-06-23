@@ -51,6 +51,7 @@ import { ZmodemOverwriteDialog } from "./terminal/ZmodemOverwriteDialog";
 import { ZmodemProgressIndicator } from "./terminal/ZmodemProgressIndicator";
 import { createReplaySafeTerminalLogSanitizer } from "./terminal/replaySafeTerminalLog";
 import { createConnectionLogBuffer } from "./terminal/connectionLogBuffer";
+import { createProgrammaticCommandLogRewriter, type ProgrammaticCommandLogRewrite } from "./terminal/programmaticCommandLog";
 import { useZmodemTransfer } from "./terminal/hooks/useZmodemTransfer";
 import { createTerminalSessionStarters, type PendingAuth } from "./terminal/runtime/createTerminalSessionStarters";
 import { createXTermRuntime, type XTermRuntime } from "./terminal/runtime/createXTermRuntime";
@@ -91,6 +92,7 @@ import {
 } from "./terminal/restoredSessionGate";
 import {
   forceSyncRenderAfterResize,
+  createProtectedSnippetLogRewriteForPreparedCommand,
   MAX_CONNECTION_LOG_DATA_CHARS,
   prepareAutoRunSnippetCommand,
   shouldHideConnectingDialogForConnectionReuse,
@@ -162,6 +164,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   isWorkspaceComposeBarOpen,
   onBroadcastInput,
   onSnippetExecutorChange,
+  onProgrammaticCommandLogRewriteChange,
   sessionLog,
   sshDebugLogEnabled,
   sudoAutofillPassword,
@@ -209,6 +212,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const terminalDataCapturedRef = useRef(false);
   const connectionLogBufferRef = useRef(createConnectionLogBuffer(MAX_CONNECTION_LOG_DATA_CHARS));
   const terminalLogSanitizerRef = useRef(createReplaySafeTerminalLogSanitizer());
+  const commandLogRewriterRef = useRef(createProgrammaticCommandLogRewriter());
   const onTerminalDataCaptureRef = useRef(onTerminalDataCapture);
   const commandBufferRef = useRef<string>("");
   const promptLineBreakStateRef = useRef<PromptLineBreakState>(createPromptLineBreakState());
@@ -229,18 +233,39 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const fontWeightFixupDoneRef = useRef(false);
 
   const captureTerminalLogData = useCallback((data: string) => {
-    const replaySafeData = terminalLogSanitizerRef.current.append(data);
+    const readableCommandData = commandLogRewriterRef.current.append(data);
+    const replaySafeData = terminalLogSanitizerRef.current.append(readableCommandData);
     if (!replaySafeData) return;
     connectionLogBufferRef.current.append(replaySafeData);
   }, []);
 
   const finalizeTerminalLogData = useCallback(() => {
+    const readableCommandData = commandLogRewriterRef.current.finish();
+    if (readableCommandData) {
+      const replaySafeData = terminalLogSanitizerRef.current.append(readableCommandData);
+      if (replaySafeData) {
+        connectionLogBufferRef.current.append(replaySafeData);
+      }
+    }
     const replaySafeData = terminalLogSanitizerRef.current.finish();
     if (replaySafeData) {
       connectionLogBufferRef.current.append(replaySafeData);
     }
     return connectionLogBufferRef.current.toString();
   }, []);
+
+  useEffect(() => {
+    commandLogRewriterRef.current = createProgrammaticCommandLogRewriter();
+  }, [sessionId]);
+
+  const queueProgrammaticCommandLogRewrite = useCallback((rewrite: ProgrammaticCommandLogRewrite) => {
+    commandLogRewriterRef.current.queueRewrite(rewrite);
+  }, []);
+
+  useEffect(() => {
+    onProgrammaticCommandLogRewriteChange?.(sessionId, queueProgrammaticCommandLogRewrite);
+    return () => onProgrammaticCommandLogRewriteChange?.(sessionId, null);
+  }, [onProgrammaticCommandLogRewriteChange, queueProgrammaticCommandLogRewrite, sessionId]);
 
   const writeLocalTerminalData = useCallback((data: string) => {
     if (!data) return;
@@ -819,6 +844,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     },
     onTerminalDataCapture: handleTerminalDataCaptureOnce,
     onTerminalLogData: captureTerminalLogData,
+    onProgrammaticCommandLogRewrite: queueProgrammaticCommandLogRewrite,
     onOsDetected,
     onCommandExecuted,
     sessionLog,
@@ -951,6 +977,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     const commandToSend = options?.protectTerminalMode
       ? prepareAutoRunSnippetCommand(command, { host, noAutoRun, shellType })
       : command;
+    const logRewrite = options?.protectTerminalMode
+      ? createProtectedSnippetLogRewriteForPreparedCommand(command, commandToSend)
+      : null;
     let data = normalizeLineEndings(commandToSend);
     const isMultiLine = data.includes('\n');
     // Wrap in bracketed paste BEFORE appending \r so the Enter is sent
@@ -980,7 +1009,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }
 
     data = prepareProgrammaticSudoInput(data);
-    terminalBackend.writeToSession(id, data);
+    if (logRewrite) {
+      commandLogRewriterRef.current.queueRewrite(logRewrite);
+    }
+    terminalBackend.writeToSession(id, data, logRewrite ? { logRewrite } : undefined);
     scrollToBottomAfterProgrammaticInput(data);
     term.focus();
   }, [host, prepareProgrammaticSudoInput, scrollToBottomAfterProgrammaticInput, shellType, terminalBackend, sessionId]);

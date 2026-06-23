@@ -17,6 +17,7 @@ import type { GroupConfig, Host, Identity, KnownHost, ProxyProfile, SSHKey, Snip
 import type { ExecutorContext } from '../../infrastructure/ai/cattyAgent/executor';
 import Terminal from '../Terminal';
 import { removePaneVisible, setPaneVisible } from '../terminal/paneVisibilityStore';
+import type { ProgrammaticCommandLogRewrite } from '../terminal/programmaticCommandLog';
 import type { TerminalBroadcastInputOptions } from '../terminal/terminalHelpers';
 import {
   getTerminalPaneRenderSnapshot,
@@ -688,6 +689,10 @@ interface TerminalPaneProps {
     sessionId: string,
     executor: SnippetExecutor | null,
   ) => void;
+  onProgrammaticCommandLogRewriteChange: (
+    sessionId: string,
+    queueRewrite: ((rewrite: ProgrammaticCommandLogRewrite) => void) | null,
+  ) => void;
   onAddSelectionToAI?: (sessionId: string, selection: string) => void;
   showSelectionAIAction: boolean;
   onStartSessionRename?: (sessionId: string) => void;
@@ -851,6 +856,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   onBroadcastInput,
   onToggleWorkspaceComposeBar,
   onSnippetExecutorChange,
+  onProgrammaticCommandLogRewriteChange,
   onAddSelectionToAI,
   showSelectionAIAction,
   onStartSessionRename,
@@ -1234,6 +1240,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         isWorkspaceComposeBarOpen={inActiveWorkspace ? isComposeBarOpen : undefined}
         onBroadcastInput={broadcastEnabled ? onBroadcastInput : undefined}
         onSnippetExecutorChange={onSnippetExecutorChange}
+        onProgrammaticCommandLogRewriteChange={onProgrammaticCommandLogRewriteChange}
         sessionLog={sessionLog}
         sshDebugLogEnabled={sshDebugLogEnabled}
         sudoAutofillPassword={sudoAutofillPassword}
@@ -1317,6 +1324,7 @@ interface TerminalPanesHostProps {
     sessionId: string,
     executor: SnippetExecutor | null,
   ) => void;
+  onProgrammaticCommandLogRewriteChange: TerminalPaneProps['onProgrammaticCommandLogRewriteChange'];
   onAddSelectionToAI?: (sessionId: string, selection: string) => void;
   onStartSessionRename?: (sessionId: string) => void;
   onRemoveSessionFromWorkspace?: TerminalPaneProps['onRemoveSessionFromWorkspace'];
@@ -1383,6 +1391,7 @@ const terminalPanesHostPropsAreEqual = (
   if (prev.onBroadcastInput !== next.onBroadcastInput) return false;
   if (prev.onToggleWorkspaceComposeBar !== next.onToggleWorkspaceComposeBar) return false;
   if (prev.onSnippetExecutorChange !== next.onSnippetExecutorChange) return false;
+  if (prev.onProgrammaticCommandLogRewriteChange !== next.onProgrammaticCommandLogRewriteChange) return false;
   if (prev.onAddSelectionToAI !== next.onAddSelectionToAI) return false;
   if (prev.onStartSessionRename !== next.onStartSessionRename) return false;
   if (prev.onRemoveSessionFromWorkspace !== next.onRemoveSessionFromWorkspace) return false;
