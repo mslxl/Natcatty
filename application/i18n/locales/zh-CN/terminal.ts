@@ -351,6 +351,10 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.rendering.renderer': '渲染器',
   'settings.terminal.rendering.renderer.desc': '选择终端渲染技术。自动模式会在低内存设备上使用 DOM 渲染。更改将在新终端会话中生效。',
   'settings.terminal.rendering.auto': '自动',
+  'settings.terminal.rendering.hibernateHiddenTabs': '隐藏标签页休眠',
+  'settings.terminal.rendering.hibernateHiddenTabs.desc': '标签页离开视野后释放终端渲染器以节省内存，SSH 连接保持不断。文件传输期间不会休眠。',
+  'settings.terminal.rendering.hibernateHiddenTabsDelay': '休眠延迟',
+  'settings.terminal.rendering.hibernateHiddenTabsDelay.desc': '标签页离开视野多久后释放渲染器（5–600 秒）。',
 
   // Settings > Terminal > Workspace Focus Indicator
   'settings.terminal.section.workspaceFocus': '工作区焦点提示',

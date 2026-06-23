@@ -218,6 +218,13 @@ export const tryAttachSessionToTerminal = (
   return true;
 };
 
+export const detachSessionDataListeners = (ctx: Pick<TerminalSessionStartersContext, "disposeDataRef" | "disposeExitRef">) => {
+  ctx.disposeDataRef.current?.();
+  ctx.disposeDataRef.current = null;
+  ctx.disposeExitRef.current?.();
+  ctx.disposeExitRef.current = null;
+};
+
 export const attachSessionToTerminal = (
   ctx: TerminalSessionStartersContext,
   term: XTerm,

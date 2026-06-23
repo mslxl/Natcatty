@@ -5,6 +5,7 @@ import type { TerminalSessionStartersContext } from "./createTerminalSessionStar
 export type { PendingAuth, SessionLogConfig, TerminalSessionStartersContext } from "./createTerminalSessionStarters.types";
 export { normalizeStartupCommandDelay, splitStartupCommandLines } from "./terminalStartupCommands";
 import {
+  attachSessionToTerminal,
   buildTermEnv,
   closeOrphanBackendSession,
   getFlowController,
@@ -1202,5 +1203,21 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     }
   };
 
-  return { startSSH, startTelnet, startMosh, startEt, startLocal, startSerial };
+  const reattachSession = (term: XTerm) => {
+    const id = ctx.sessionRef.current;
+    if (!id) return false;
+    ctx.disposeDataRef.current?.();
+    ctx.disposeDataRef.current = null;
+    ctx.disposeExitRef.current?.();
+    ctx.disposeExitRef.current = null;
+    const isSerial = ctx.host.protocol === "serial" || ctx.host.id?.startsWith("serial-");
+    attachSessionToTerminal(ctx, term, id, {
+      convertLfToCrlf: isSerial,
+      sudoAutofillPassword: ctx.sudoAutofillPassword,
+    });
+    ctx.hasConnectedRef.current = true;
+    return true;
+  };
+
+  return { startSSH, startTelnet, startMosh, startEt, startLocal, startSerial, reattachSession };
 };

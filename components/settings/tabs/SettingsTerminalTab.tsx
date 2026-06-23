@@ -979,6 +979,38 @@ function SettingsTerminalTab(props: {
             className="w-32"
           />
         </SettingRow>
+        <SettingRow
+          label={t("settings.terminal.rendering.hibernateHiddenTabs")}
+          description={t("settings.terminal.rendering.hibernateHiddenTabs.desc")}
+        >
+          <Toggle
+            checked={terminalSettings.hibernateHiddenTabs}
+            onChange={(v) => updateTerminalSetting("hibernateHiddenTabs", v)}
+          />
+        </SettingRow>
+        {terminalSettings.hibernateHiddenTabs && (
+          <SettingRow
+            label={t("settings.terminal.rendering.hibernateHiddenTabsDelay")}
+            description={t("settings.terminal.rendering.hibernateHiddenTabsDelay.desc")}
+          >
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={5}
+                max={600}
+                value={terminalSettings.hibernateHiddenTabsDelaySec}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  if (!Number.isNaN(val) && val >= 5 && val <= 600) {
+                    updateTerminalSetting("hibernateHiddenTabsDelaySec", val);
+                  }
+                }}
+                className="w-20"
+              />
+              <span className="text-sm text-muted-foreground">{t("settings.terminal.serverStats.seconds")}</span>
+            </div>
+          </SettingRow>
+        )}
       </div>
       {/* Autocomplete */}
       <SectionHeader title={t("settings.terminal.section.workspaceFocus")} />

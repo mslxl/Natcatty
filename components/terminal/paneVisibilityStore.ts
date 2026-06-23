@@ -28,6 +28,23 @@ export function removePaneVisible(sessionId: string): void {
   listenersBySession.get(sessionId)?.forEach((listener) => listener());
 }
 
+export function getPaneVisible(sessionId: string): boolean {
+  return visibleBySession.get(sessionId) ?? false;
+}
+
+export function subscribePaneVisible(sessionId: string, listener: Listener): () => void {
+  let set = listenersBySession.get(sessionId);
+  if (!set) {
+    set = new Set();
+    listenersBySession.set(sessionId, set);
+  }
+  set.add(listener);
+  return () => {
+    set!.delete(listener);
+    if (set!.size === 0) listenersBySession.delete(sessionId);
+  };
+}
+
 export function usePaneVisible(sessionId: string): boolean {
   const subscribe = useCallback((listener: Listener) => {
     let set = listenersBySession.get(sessionId);
