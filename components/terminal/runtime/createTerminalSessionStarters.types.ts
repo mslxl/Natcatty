@@ -149,8 +149,15 @@ export type TerminalSessionStartersContext = {
   onTerminalDataCapture?: (sessionId: string, data: string) => void;
   onTerminalLogData?: (data: string) => void;
   onProgrammaticCommandLogRewrite?: (rewrite: ProgrammaticCommandLogRewrite) => void;
+  onTerminalOutput?: (chunk: string) => void;
   onOsDetected?: (hostId: string, distro: string) => void;
   onCommandExecuted?: (
+    command: string,
+    hostId: string,
+    hostLabel: string,
+    sessionId: string,
+  ) => void;
+  onCommandSubmitted?: (
     command: string,
     hostId: string,
     hostLabel: string,

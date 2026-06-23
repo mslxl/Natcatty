@@ -195,6 +195,28 @@ test("keeps host details timestamp value when the details form edits it", () => 
   );
 });
 
+test("preserves a concurrent SFTP follow-terminal-directory toggle when host details did not edit it", () => {
+  const openedHost = makeHost({ sftpFollowTerminalCwd: undefined });
+  const latestHost = makeHost({ sftpFollowTerminalCwd: true });
+  const draft = makeHost({ label: "Edited label", sftpFollowTerminalCwd: undefined });
+
+  assert.deepEqual(
+    preserveConcurrentHostLineTimestampUpdate({ draft, openedHost, latestHost }),
+    { ...draft, sftpFollowTerminalCwd: true },
+  );
+});
+
+test("keeps host details SFTP follow-terminal-directory value when the details form edits it", () => {
+  const openedHost = makeHost({ sftpFollowTerminalCwd: false });
+  const latestHost = makeHost({ sftpFollowTerminalCwd: false });
+  const draft = makeHost({ sftpFollowTerminalCwd: true });
+
+  assert.equal(
+    preserveConcurrentHostLineTimestampUpdate({ draft, openedHost, latestHost }).sftpFollowTerminalCwd,
+    true,
+  );
+});
+
 test("normalizePrimaryTelnetState preserves an explicit telnet port", () => {
   const result = normalizePrimaryTelnetState(makeHost({
     protocol: "telnet",

@@ -1,5 +1,5 @@
 import type { Host, VaultNote } from "./models";
-import { normalizeVaultOrder, sortByVaultOrder } from "./vaultOrder";
+import { getNextVaultOrder, normalizeVaultOrder, sortByVaultOrder } from "./vaultOrder";
 
 const cleanStringArray = (values: unknown): string[] | undefined => {
   if (!Array.isArray(values)) return undefined;
@@ -278,4 +278,115 @@ export const resolveRenderedMarkdownLinkHref = (
   const matches = findInlineMarkdownLinkMatches(markdown, label);
   const uniqueMatches = Array.from(new Set(matches));
   return uniqueMatches.length === 1 ? uniqueMatches[0] : renderedHref;
+};
+
+const NOTE_IMPORT_TITLE_EXTENSIONS = /\.(md|markdown|txt)$/i;
+
+const stripFencedCodeBlocksForImportTitle = (content: string): string => {
+  const withoutClosedBlocks = content.replace(/```[\s\S]*?```/g, "");
+  const lines = withoutClosedBlocks.split("\n");
+  const output: string[] = [];
+  let inUnclosedFence = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^```/.test(trimmed)) {
+      inUnclosedFence = true;
+      continue;
+    }
+    if (inUnclosedFence) continue;
+    output.push(line);
+  }
+
+  return output.join("\n");
+};
+
+export const deriveNoteImportTitle = (fileName: string, content: string): string => {
+  const contentWithoutCodeBlocks = stripFencedCodeBlocksForImportTitle(content);
+  const headingMatch = /^#\s+(.+?)\s*$/m.exec(contentWithoutCodeBlocks);
+  if (headingMatch?.[1]) return headingMatch[1].trim();
+
+  const baseName = fileName.replace(NOTE_IMPORT_TITLE_EXTENSIONS, "").trim();
+  return baseName || "Untitled note";
+};
+
+export const buildVaultNoteFromMarkdownImport = ({
+  fileName,
+  content,
+  group,
+  order,
+}: {
+  fileName: string;
+  content: string;
+  group: string | null;
+  order: number;
+}): VaultNote => {
+  const now = Date.now();
+  return sanitizeVaultNote({
+    title: deriveNoteImportTitle(fileName, content),
+    content,
+    group: group || undefined,
+    createdAt: now,
+    updatedAt: now,
+    order,
+  });
+};
+
+export const importMarkdownPayloadsToVaultNotes = (
+  payloads: Array<{ fileName: string; content: string }>,
+  existingNotes: VaultNote[],
+  targetGroup: string | null,
+): { notes: VaultNote[]; importedCount: number } => {
+  const imported: VaultNote[] = [];
+  let orderBase = existingNotes;
+
+  for (const { fileName, content } of payloads) {
+    const note = buildVaultNoteFromMarkdownImport({
+      fileName,
+      content,
+      group: targetGroup,
+      order: getNextVaultOrder([...orderBase, ...imported]),
+    });
+    imported.push(note);
+    orderBase = [...orderBase, note];
+  }
+
+  return {
+    notes: normalizeVaultNotes([...existingNotes, ...imported]),
+    importedCount: imported.length,
+  };
+};
+
+export const importMarkdownFilesToVaultNotes = async (
+  files: File[],
+  existingNotes: VaultNote[],
+  targetGroup: string | null,
+  readFile: (file: File) => Promise<string>,
+): Promise<{ notes: VaultNote[]; importedCount: number; skippedCount: number }> => {
+  const payloads: Array<{ fileName: string; content: string }> = [];
+  let skippedCount = 0;
+
+  for (const file of files) {
+    if (!/\.(md|markdown|txt)$/i.test(file.name)) {
+      skippedCount += 1;
+      continue;
+    }
+
+    payloads.push({
+      fileName: file.name,
+      content: await readFile(file),
+    });
+  }
+
+  const { notes, importedCount } = importMarkdownPayloadsToVaultNotes(
+    payloads,
+    existingNotes,
+    targetGroup,
+  );
+
+  return {
+    notes,
+    importedCount,
+    skippedCount,
+  };
 };

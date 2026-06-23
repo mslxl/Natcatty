@@ -110,6 +110,7 @@ export const scheduleStartupCommand = (
     }
     ctx.terminalBackend.writeToSession(ctx.sessionRef.current, `${line}\r`, { automated: true, logRewrite: logRewrite ?? undefined });
     markPromptLineBreakCommandPending(ctx.promptLineBreakStateRef, term, line);
+    ctx.onCommandSubmitted?.(line, ctx.host.id, ctx.host.label, ctx.sessionId);
     ctx.onCommandExecuted?.(line, ctx.host.id, ctx.host.label, ctx.sessionId);
     index += 1;
     if (index < lines.length) {

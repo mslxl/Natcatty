@@ -16,6 +16,8 @@ import { AI_PANEL_FORCE_HIDE_SHELL } from '../ai/aiPanelDiagnostics';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import type { SidePanelTab } from './TerminalLayerSupport';
 import { terminalLayerSidePanelCtxEqual } from './terminalLayerViewMemo';
+import { resolveSftpFollowTerminalCwdTargetHost } from '../sftp/sftpFollowTerminalCwd';
+import type { Host } from '../../types';
 
 type SidePanelContext = Record<string, any>;
 const SIDE_PANEL_TAB_DRAG_MIME = 'application/x-netcatty-sidepanel-tab';
@@ -487,6 +489,24 @@ function TerminalLayerSidePanelTabBody({ ctx }: { ctx: SidePanelContext }) {
               const panelActiveHost = isVisibleSftpPanel
                 ? (sftpActiveHost ?? storedSftpHost)
                 : storedSftpHost;
+              const handlePanelFollowTerminalCwdChange = (enabled: boolean, visibleHost?: Host | null) => {
+                const targetHost = resolveSftpFollowTerminalCwdTargetHost(visibleHost, panelActiveHost);
+                if (!targetHost?.id) {
+                  setSftpFollowTerminalCwd(enabled);
+                  return;
+                }
+                let updated = false;
+                const nextHosts = (hosts as Host[]).map((host) => {
+                  if (host.id !== targetHost.id) return host;
+                  updated = true;
+                  return { ...host, sftpFollowTerminalCwd: enabled };
+                });
+                if (updated) {
+                  updateHosts(nextHosts);
+                } else {
+                  setSftpFollowTerminalCwd(enabled);
+                }
+              };
               return (
                 <div
                   key={tabId}
@@ -523,9 +543,9 @@ function TerminalLayerSidePanelTabBody({ ctx }: { ctx: SidePanelContext }) {
                   editorWordWrap={editorWordWrap}
                   setEditorWordWrap={setEditorWordWrap}
                   onGetTerminalCwd={getTerminalCwd}
-                  activeTerminalCwd={isVisibleSftpPanel && sftpFollowTerminalCwd ? activeTerminalCwd : null}
+                  activeTerminalCwd={isVisibleSftpPanel ? activeTerminalCwd : null}
                   sftpFollowTerminalCwd={sftpFollowTerminalCwd}
-                  onSftpFollowTerminalCwdChange={setSftpFollowTerminalCwd}
+                  onSftpFollowTerminalCwdChange={handlePanelFollowTerminalCwdChange}
                   onRequestTerminalFocus={refocusActiveTerminalSession}
                   terminalSettings={terminalSettings}
                 />
