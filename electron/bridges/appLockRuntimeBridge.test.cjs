@@ -16,9 +16,12 @@ function withPatchedTimers(run) {
   let nextTimerId = 1;
   const timers = new Map();
 
-  global.setTimeout = (fn, _delay, ...args) => {
+  global.setTimeout = (fn, delay = 0, ...args) => {
     const id = nextTimerId++;
-    timers.set(id, () => fn(...args));
+    timers.set(id, {
+      dueAt: Date.now() + Math.max(0, Number(delay) || 0),
+      fn: () => fn(...args),
+    });
     return id;
   };
 
@@ -29,16 +32,26 @@ function withPatchedTimers(run) {
   const flushNextTimer = () => {
     const nextEntry = timers.entries().next().value;
     if (!nextEntry) return false;
-    const [id, fn] = nextEntry;
+    const [id, timer] = nextEntry;
     timers.delete(id);
-    fn();
+    timer.fn();
     return true;
+  };
+  const flushDueTimers = () => {
+    let flushed = 0;
+    for (const [id, timer] of [...timers.entries()]) {
+      if (timer.dueAt > Date.now()) continue;
+      timers.delete(id);
+      timer.fn();
+      flushed += 1;
+    }
+    return flushed;
   };
 
   const getPendingTimerCount = () => timers.size;
 
   return Promise.resolve()
-    .then(() => run({ flushNextTimer, getPendingTimerCount }))
+    .then(() => run({ flushNextTimer, flushDueTimers, getPendingTimerCount }))
     .finally(() => {
       global.setTimeout = originalSetTimeout;
       global.clearTimeout = originalClearTimeout;
@@ -377,7 +390,7 @@ test("unlock and activity keep the shared idle timer armed", async () => {
 });
 
 test("activity reported from any window postpones the shared idle lock", async () => {
-  await withPatchedTimers(async ({ flushNextTimer, getPendingTimerCount }) => {
+  await withPatchedTimers(async ({ flushDueTimers, getPendingTimerCount }) => {
     await withPatchedDateNow(1000, async ({ setNow }) => {
       const { controller, runtimeBridge } = await createControllerHarness();
 
@@ -394,12 +407,12 @@ test("activity reported from any window postpones the shared idle lock", async (
       assert.equal(getPendingTimerCount(), 1);
 
       setNow(61000);
-      assert.equal(flushNextTimer(), true);
+      assert.equal(flushDueTimers(), 0);
       assert.equal(runtimeBridge.getState().locked, false);
       assert.equal(getPendingTimerCount(), 1);
 
       setNow(90000);
-      assert.equal(flushNextTimer(), true);
+      assert.equal(flushDueTimers(), 1);
       assert.equal(runtimeBridge.getState().locked, true);
       assert.equal(runtimeBridge.getState().reason, "idle");
       assert.equal(getPendingTimerCount(), 0);
