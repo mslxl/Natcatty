@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   resolveHostFollowTerminalCwd,
+  resolveSftpFollowTerminalCwdTargetHost,
   shouldFollowTerminalCwdNavigate,
 } from "./sftpFollowTerminalCwd";
 
@@ -42,4 +43,18 @@ test("resolveHostFollowTerminalCwd inherits the global setting until the host ov
   assert.equal(resolveHostFollowTerminalCwd(undefined, false), false);
   assert.equal(resolveHostFollowTerminalCwd(true, false), true);
   assert.equal(resolveHostFollowTerminalCwd(false, true), false);
+});
+
+test("resolveSftpFollowTerminalCwdTargetHost prefers the visible SFTP host", () => {
+  const terminalHost = { id: "terminal-host" };
+  const visibleHost = { id: "visible-sftp-host" };
+
+  assert.equal(
+    resolveSftpFollowTerminalCwdTargetHost(visibleHost, terminalHost),
+    visibleHost,
+  );
+  assert.equal(
+    resolveSftpFollowTerminalCwdTargetHost(null, terminalHost),
+    terminalHost,
+  );
 });
