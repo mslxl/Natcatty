@@ -4,6 +4,7 @@ import {
   buildVaultNoteFromMarkdownImport,
   deriveNoteImportTitle,
   importMarkdownFilesToVaultNotes,
+  importMarkdownPayloadsToVaultNotes,
   matchesVaultNoteSearch,
   normalizeNoteGroups,
   normalizeVaultNotes,
@@ -166,6 +167,28 @@ test("buildVaultNoteFromMarkdownImport creates a note in the target group", () =
   assert.equal(note.content, "# Runbook\n\nRestart sshd");
   assert.equal(note.group, "Ops");
   assert.equal(note.order, 1000);
+});
+
+test("importMarkdownPayloadsToVaultNotes appends notes from pre-read payloads", () => {
+  const existing = [sanitizeVaultNote({
+    id: "existing",
+    title: "Existing",
+    content: "body",
+    createdAt: 1,
+    updatedAt: 1,
+    order: 1000,
+  })];
+
+  const result = importMarkdownPayloadsToVaultNotes(
+    [{ fileName: "imported.md", content: "# Imported\n\nBody" }],
+    existing,
+    "Ops",
+  );
+
+  assert.equal(result.importedCount, 1);
+  assert.equal(result.notes.length, 2);
+  assert.equal(result.notes[1].title, "Imported");
+  assert.equal(result.notes[1].group, "Ops");
 });
 
 test("importMarkdownFilesToVaultNotes appends notes and skips unsupported files", async () => {

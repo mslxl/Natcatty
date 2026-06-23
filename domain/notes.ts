@@ -313,25 +313,17 @@ export const buildVaultNoteFromMarkdownImport = ({
   });
 };
 
-export const importMarkdownFilesToVaultNotes = async (
-  files: File[],
+export const importMarkdownPayloadsToVaultNotes = (
+  payloads: Array<{ fileName: string; content: string }>,
   existingNotes: VaultNote[],
   targetGroup: string | null,
-  readFile: (file: File) => Promise<string>,
-): Promise<{ notes: VaultNote[]; importedCount: number; skippedCount: number }> => {
+): { notes: VaultNote[]; importedCount: number } => {
   const imported: VaultNote[] = [];
-  let skippedCount = 0;
   let orderBase = existingNotes;
 
-  for (const file of files) {
-    if (!/\.(md|markdown|txt)$/i.test(file.name)) {
-      skippedCount += 1;
-      continue;
-    }
-
-    const content = await readFile(file);
+  for (const { fileName, content } of payloads) {
     const note = buildVaultNoteFromMarkdownImport({
-      fileName: file.name,
+      fileName,
       content,
       group: targetGroup,
       order: getNextVaultOrder([...orderBase, ...imported]),
@@ -343,6 +335,39 @@ export const importMarkdownFilesToVaultNotes = async (
   return {
     notes: normalizeVaultNotes([...existingNotes, ...imported]),
     importedCount: imported.length,
+  };
+};
+
+export const importMarkdownFilesToVaultNotes = async (
+  files: File[],
+  existingNotes: VaultNote[],
+  targetGroup: string | null,
+  readFile: (file: File) => Promise<string>,
+): Promise<{ notes: VaultNote[]; importedCount: number; skippedCount: number }> => {
+  const payloads: Array<{ fileName: string; content: string }> = [];
+  let skippedCount = 0;
+
+  for (const file of files) {
+    if (!/\.(md|markdown|txt)$/i.test(file.name)) {
+      skippedCount += 1;
+      continue;
+    }
+
+    payloads.push({
+      fileName: file.name,
+      content: await readFile(file),
+    });
+  }
+
+  const { notes, importedCount } = importMarkdownPayloadsToVaultNotes(
+    payloads,
+    existingNotes,
+    targetGroup,
+  );
+
+  return {
+    notes,
+    importedCount,
     skippedCount,
   };
 };

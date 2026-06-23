@@ -26,7 +26,7 @@ import {
   isNoteGroupInside,
   joinNoteGroupPath,
   matchesVaultNoteSearch,
-  importMarkdownFilesToVaultNotes,
+  importMarkdownPayloadsToVaultNotes,
   normalizeNoteGroups,
   normalizeVaultNotes,
   remapExpandedNoteGroupPaths,
@@ -517,15 +517,27 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     }
 
     const files = Array.from(fileList);
+    const markdownFiles = files.filter((file) => /\.(md|markdown|txt)$/i.test(file.name));
     const targetGroup = getNoteActionTargetGroup(selectedNote, selectedGroup);
     isImportingMarkdownRef.current = true;
 
     try {
-      const result = await importMarkdownFilesToVaultNotes(
-        files,
+      if (markdownFiles.length === 0) {
+        toast.error(t("notes.import.toast.noNotes"));
+        return;
+      }
+
+      const payloads = await Promise.all(
+        markdownFiles.map(async (file) => ({
+          fileName: file.name,
+          content: await readTextFile(file),
+        })),
+      );
+
+      const result = importMarkdownPayloadsToVaultNotes(
+        payloads,
         sortedNotesRef.current,
         targetGroup,
-        readTextFile,
       );
 
       if (result.importedCount === 0) {
