@@ -1091,17 +1091,114 @@ html[data-theme-transition] *::after {
   background: transparent !important;
 }
 
+.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorWrapper_"] {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  margin: 0.3rem 0 0.65rem;
+  border-radius: 6px;
+  background: hsl(var(--secondary) / 0.35) !important;
+  overflow: hidden;
+}
+
+.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) .netcatty-mdx-content p:has(+ [class*="_codeMirrorWrapper_"]) {
+  margin-bottom: 0.2rem;
+}
+
+.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorWrapper_"] .cm-editor {
+  background: transparent !important;
+  border-radius: 0 !important;
+}
+
+.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorWrapper_"] .cm-content {
+  padding: 0 !important;
+}
+
+.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] {
+  position: static !important;
+  top: auto !important;
+  right: auto !important;
+  left: auto !important;
+  z-index: auto;
+  display: flex !important;
+  flex-direction: row;
+  justify-content: flex-end;
+  align-items: center;
+  align-self: stretch;
+  flex-shrink: 0;
+  gap: 0.125rem;
+  padding: 0.15rem 0.3rem 0 !important;
+  margin: 0 !important;
+  width: auto !important;
+  background: transparent !important;
+}
+
 .netcatty-mdx-editor--preview [class*="_codeMirrorToolbar_"] {
   display: none !important;
 }
 
-.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] [class*="_toolbarCodeBlockLanguageSelectTrigger_"] {
+.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] [class*="_toolbarCodeBlockLanguageSelectTrigger_"],
+.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] [class*="_selectTrigger_"] {
   height: 1.45rem !important;
   width: auto !important;
-  min-width: 3.75rem;
+  min-width: 0 !important;
+  max-width: none !important;
   padding: 0 0.4rem !important;
   font-size: 11px !important;
   line-height: 1 !important;
+}
+
+.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] [class*="_toolbarCodeBlockLanguageSelectTrigger_"],
+.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] [class*="_selectTrigger_"] {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: flex-start;
+  height: 1.35rem !important;
+  width: auto !important;
+  min-width: fit-content !important;
+  max-width: none !important;
+  padding: 0 0.35rem !important;
+  margin: 0 !important;
+  gap: 0.2rem;
+  font-size: 11px !important;
+  font-weight: 400 !important;
+  line-height: 1 !important;
+  white-space: nowrap;
+  border: 0 !important;
+  border-radius: 4px !important;
+  background: hsl(var(--background) / 0.88) !important;
+  box-shadow: none !important;
+  filter: none !important;
+}
+
+.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] [class*="_selectTrigger_"] [data-radix-select-value],
+.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] [class*="_selectTrigger_"] > span:first-child {
+  flex: 0 0 auto;
+  overflow: visible;
+  max-width: none;
+  font-size: 11px !important;
+  line-height: 1 !important;
+  white-space: nowrap;
+}
+
+.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] [class*="_selectTrigger_"][data-state="open"] {
+  border-radius: 4px !important;
+  background: hsl(var(--background) / 0.88) !important;
+  box-shadow: none !important;
+  filter: none !important;
+}
+
+.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] [class*="_selectDropdownArrow_"] {
+  margin-left: 0 !important;
+  flex-shrink: 0;
+}
+
+.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] [class*="_toolbarCodeBlockLanguageSelectTrigger_"] svg,
+.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] [class*="_selectTrigger_"] svg {
+  width: 10px !important;
+  height: 10px !important;
+  flex-shrink: 0;
 }
 
 .netcatty-mdx-editor [class*="_codeMirrorToolbar_"] button {
@@ -1113,18 +1210,91 @@ html[data-theme-transition] *::after {
   background: hsl(var(--background) / 0.88) !important;
 }
 
+.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] button {
+  min-height: 1.35rem !important;
+  height: 1.35rem !important;
+  min-width: 1.35rem !important;
+  width: 1.35rem !important;
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] button svg {
+  width: 14px !important;
+  height: 14px !important;
+}
+
 .netcatty-mdx-editor [class*="_codeMirrorToolbar_"] [class*="_toolbarCodeBlockLanguageSelectTrigger_"] span {
   font-size: inherit !important;
   line-height: inherit !important;
 }
 
-.netcatty-mdx-editor [class*="_toolbarCodeBlockLanguageSelectContent_"] {
-  width: 9.5rem !important;
+.netcatty-mdx-editor .mdxeditor-select-content,
+.netcatty-mdx-editor [class*="_selectContainer_"] {
+  width: auto !important;
+  min-width: max-content !important;
+  max-width: none !important;
+  max-height: 12rem;
+  overflow-x: visible !important;
+  overflow-y: auto;
   font-size: 11px !important;
+  line-height: 1.25 !important;
+  margin: 0 !important;
+  padding: 0.15rem 0 !important;
+  border: 1px solid hsl(var(--border) / 0.7) !important;
+  border-radius: 6px !important;
+  background: hsl(var(--popover)) !important;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 0.22) !important;
+  filter: none !important;
+}
+
+.netcatty-mdx-editor .mdxeditor-select-content [data-radix-select-viewport],
+.netcatty-mdx-editor [data-editor-dropdown][data-radix-select-viewport] {
+  width: auto !important;
+  min-width: max-content !important;
+  max-width: none !important;
+  padding: 0 !important;
+}
+
+.netcatty-mdx-editor [data-editor-dropdown] {
+  padding: 0 !important;
+}
+
+.netcatty-mdx-editor .mdxeditor-select-content [class*="_selectItem_"],
+.netcatty-mdx-editor [data-editor-dropdown] [class*="_selectItem_"] {
+  font-size: 11px !important;
+  line-height: 1.25 !important;
+  padding: 0.28rem 0.45rem !important;
+  min-height: 0 !important;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.netcatty-mdx-editor .mdxeditor-select-content [class*="_selectItem_"] [data-radix-select-item-text],
+.netcatty-mdx-editor [data-editor-dropdown] [class*="_selectItem_"] [data-radix-select-item-text] {
+  font-size: 11px !important;
+  line-height: 1.25 !important;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.netcatty-mdx-editor [class*="_toolbarCodeBlockLanguageSelectContent_"] {
+  width: auto !important;
+  min-width: max-content !important;
+  max-width: none !important;
+  font-size: 11px !important;
+  max-height: 12rem;
+  overflow-y: auto;
 }
 
 .netcatty-mdx-editor [class*="_toolbarCodeBlockLanguageSelectContent_"] [class*="_selectItem_"] {
   font-size: 11px !important;
+  padding: 0.28rem 0.45rem !important;
+  min-height: 0 !important;
 }
 
 .netcatty-mdx-editor .cm-editor {

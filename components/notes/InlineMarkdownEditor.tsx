@@ -336,6 +336,12 @@ export const getCodeMirrorBlockText = (wrapper: Element): string => {
   return content?.textContent?.replace(/\u00a0/g, " ") ?? "";
 };
 
+export const removeNoteCodeBlockCopyButtons = (container: HTMLElement): void => {
+  container.querySelectorAll("[data-note-code-copy]").forEach((button) => {
+    button.remove();
+  });
+};
+
 export const annotateNoteCodeBlockCopyButtons = (
   container: HTMLElement,
   {
@@ -595,6 +601,14 @@ export function InlineMarkdownEditor({
   }, [t]);
 
   useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    if (editorMode !== "preview") {
+      removeNoteCodeBlockCopyButtons(container);
+      return;
+    }
+
     const frame = window.requestAnimationFrame(annotateCodeBlockCopyButtons);
     return () => window.cancelAnimationFrame(frame);
   }, [annotateCodeBlockCopyButtons, editorMode, value]);

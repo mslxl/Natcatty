@@ -359,6 +359,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const importFileInputRef = useRef<HTMLInputElement>(null);
   const isImportingMarkdownRef = useRef(false);
+  const importTargetGroupRef = useRef<string | null | undefined>(undefined);
   const sortedNotesRef = useRef<VaultNote[]>([]);
 
   const groups = useMemo(() => normalizeNoteGroups(noteGroups), [noteGroups]);
@@ -509,6 +510,11 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     addNoteToGroup(getNoteActionTargetGroup(selectedNote, selectedGroup));
   };
 
+  const openImportMarkdownPicker = useCallback((targetGroupOverride?: string | null) => {
+    importTargetGroupRef.current = targetGroupOverride;
+    importFileInputRef.current?.click();
+  }, []);
+
   const handleImportMarkdownFiles = useCallback(async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
     if (isImportingMarkdownRef.current) {
@@ -518,7 +524,11 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
 
     const files = Array.from(fileList);
     const markdownFiles = files.filter((file) => /\.(md|markdown|txt)$/i.test(file.name));
-    const targetGroup = getNoteActionTargetGroup(selectedNote, selectedGroup);
+    const pendingTargetGroup = importTargetGroupRef.current;
+    importTargetGroupRef.current = undefined;
+    const targetGroup = pendingTargetGroup !== undefined
+      ? pendingTargetGroup
+      : getNoteActionTargetGroup(selectedNote, selectedGroup);
     isImportingMarkdownRef.current = true;
 
     try {
@@ -844,6 +854,10 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
           setCreatingGroupParent(groupPath);
           expandPath(groupPath);
         },
+      },
+      {
+        label: t("notes.action.importMarkdown"),
+        action: () => openImportMarkdownPicker(groupPath),
       },
       {
         label: t("common.rename"),
@@ -1205,7 +1219,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                     variant="ghost"
                     size="icon"
                     className={toolbarIconButtonClass}
-                    onClick={() => importFileInputRef.current?.click()}
+                    onClick={() => openImportMarkdownPicker()}
                   >
                     <Upload size={14} className="text-muted-foreground" />
                   </Button>
@@ -1380,7 +1394,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                     <Plus size={14} className="mr-2" />
                     {t("notes.action.newNote")}
                   </Button>
-                  <Button variant="outline" onClick={() => importFileInputRef.current?.click()}>
+                  <Button variant="outline" onClick={() => openImportMarkdownPicker()}>
                     <Upload size={14} className="mr-2" />
                     {t("notes.action.importMarkdown")}
                   </Button>

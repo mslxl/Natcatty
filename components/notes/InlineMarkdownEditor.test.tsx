@@ -242,11 +242,19 @@ test("note code block frame is borderless and language picker is compact", () =>
   );
   assert.match(
     styles,
-    /\.netcatty-mdx-editor\s+\[class\*="_codeMirrorToolbar_"\]\s+\[class\*="_toolbarCodeBlockLanguageSelectTrigger_"\]\s*\{[^}]*height:\s*1\.45rem\s*!important;[^}]*font-size:\s*11px\s*!important;/s,
+    /\.netcatty-mdx-editor \[class\*="_codeMirrorToolbar_"\] \[class\*="_selectTrigger_"\]\s*\{[^}]*height:\s*1\.45rem\s*!important;[^}]*font-size:\s*11px\s*!important;/s,
   );
   assert.match(
     styles,
-    /\.netcatty-mdx-editor\s+\[class\*="_toolbarCodeBlockLanguageSelectContent_"\]\s*\{[^}]*font-size:\s*11px\s*!important;/s,
+    /\.netcatty-mdx-editor:not\(\.netcatty-mdx-editor--preview\)\s+\[class\*="_codeMirrorToolbar_"\]\s+\[class\*="_selectTrigger_"\]\s*\{[^}]*width:\s*auto\s*!important;[^}]*min-width:\s*fit-content\s*!important;/s,
+  );
+  assert.match(
+    styles,
+    /\.netcatty-mdx-editor \.mdxeditor-select-content[\s\S]*width:\s*auto\s*!important;[\s\S]*min-width:\s*max-content\s*!important;/s,
+  );
+  assert.match(
+    styles,
+    /\.netcatty-mdx-editor \.mdxeditor-select-content \[class\*="_selectItem_"\][\s\S]*font-size:\s*11px\s*!important;/s,
   );
   assert.match(
     styles,
@@ -262,7 +270,11 @@ test("note code block frame is borderless and language picker is compact", () =>
   );
   assert.match(
     styles,
-    /\.netcatty-mdx-editor\s+\.cm-content\s*\{[^}]*padding:\s*0\.25rem\s+0\s*!important;/s,
+    /\.netcatty-mdx-editor:not\(\.netcatty-mdx-editor--preview\)\s+\[class\*="_codeMirrorWrapper_"\]\s*\{[^}]*gap:\s*0;[^}]*margin:\s*0\.3rem\s+0\s+0\.65rem;/s,
+  );
+  assert.match(
+    styles,
+    /\.netcatty-mdx-editor:not\(\.netcatty-mdx-editor--preview\)\s+\[class\*="_codeMirrorWrapper_"\]\s+\.cm-content\s*\{[^}]*padding:\s*0\s*!important;/s,
   );
   assert.match(
     styles,
@@ -291,10 +303,12 @@ test("annotateNoteCodeBlockCopyButtons adds a copy action to code blocks", () =>
   assert.match(source, /onCopy\(text\)/);
 });
 
-test("note code blocks expose a hover copy action in edit and preview modes", () => {
+test("note code blocks expose a hover copy action only in preview mode", () => {
   const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
   const styles = readFileSync(new URL("../../index.css", import.meta.url), "utf8");
 
+  assert.match(source, /removeNoteCodeBlockCopyButtons/);
+  assert.match(source, /if \(editorMode !== "preview"\) \{[\s\S]*removeNoteCodeBlockCopyButtons/);
   assert.match(source, /annotateNoteCodeBlockCopyButtons/);
   assert.match(source, /notes\.codeBlock\.copied/);
   assert.match(source, /copyToClipboard/);
@@ -302,5 +316,25 @@ test("note code blocks expose a hover copy action in edit and preview modes", ()
   assert.match(
     styles,
     /\.netcatty-mdx-editor\s+\[class\*="_codeMirrorWrapper_"\]:hover\s+\.netcatty-note-code-copy/s,
+  );
+  assert.match(
+    styles,
+    /\.netcatty-mdx-editor:not\(\.netcatty-mdx-editor--preview\)\s+\[class\*="_codeMirrorWrapper_"\]\s*\{[^}]*display:\s*flex;/s,
+  );
+  assert.match(
+    styles,
+    /\.netcatty-mdx-editor:not\(\.netcatty-mdx-editor--preview\)\s+\[class\*="_codeMirrorToolbar_"\]\s*\{[^}]*position:\s*static\s*!important;[^}]*justify-content:\s*flex-end;/s,
+  );
+  assert.match(
+    styles,
+    /\.netcatty-mdx-editor:not\(\.netcatty-mdx-editor--preview\)\s+\[class\*="_codeMirrorToolbar_"\]\s+\[class\*="_selectTrigger_"\]\s*\{[^}]*font-size:\s*11px\s*!important;/s,
+  );
+  assert.match(
+    styles,
+    /\.netcatty-mdx-editor:not\(\.netcatty-mdx-editor--preview\)\s+\[class\*="_codeMirrorToolbar_"\]\s+button\s*\{[^}]*height:\s*1\.35rem\s*!important;/s,
+  );
+  assert.match(
+    styles,
+    /\.netcatty-mdx-editor:not\(\.netcatty-mdx-editor--preview\)\s+\[class\*="_codeMirrorToolbar_"\]\s+button\s+svg\s*\{[^}]*width:\s*14px\s*!important;/s,
   );
 });
