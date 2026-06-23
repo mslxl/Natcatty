@@ -1603,11 +1603,19 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
     wakeInProgressRef.current = true;
 
+    const stopHibernateListeners = () => {
+      disposeDataRef.current?.();
+      disposeDataRef.current = null;
+      disposeExitRef.current?.();
+      disposeExitRef.current = null;
+    };
+
     return wakeTerminalFromHibernate({
       refs: terminalRuntimeRefs,
       runtimeContext,
       container,
       getPayload,
+      stopHibernateListeners,
       sessionConnected: options.sessionConnected,
       getSessionConnected: () => getSessionConnectedRef.current(),
       reattachSession: (term) => {
@@ -1620,15 +1628,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       isBootActiveRef,
       sessionId,
       updateStatus: (next) => updateStatusRef.current(next),
-    }).then((ok) => {
-      if (ok && !options.sessionConnected) {
-        disposeDataRef.current?.();
-        disposeDataRef.current = null;
-        disposeExitRef.current?.();
-        disposeExitRef.current = null;
-      }
-      return ok;
-    }).catch((err) => {
+    }).then((ok) => ok).catch((err) => {
       logger.error("[Terminal] Failed to resume from hibernate", err);
       return false;
     }).finally(() => {

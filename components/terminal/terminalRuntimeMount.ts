@@ -62,6 +62,8 @@ export type WakeTerminalFromHibernateOptions = {
   runtimeContext: Omit<CreateXTermRuntimeContext, "container" | "initiallyVisible">;
   container: HTMLDivElement;
   getPayload: () => TerminalHibernateWakePayload;
+  /** Stop hibernate IPC listeners before reading the final replay payload. */
+  stopHibernateListeners: () => void;
   reattachSession: (term: XTerm) => void;
   safeFit: (options?: { force?: boolean; requireVisible?: boolean }) => void;
   resizeSession: () => void;
@@ -83,6 +85,7 @@ export async function wakeTerminalFromHibernate(
     runtimeContext,
     container,
     getPayload,
+    stopHibernateListeners,
     reattachSession,
     safeFit,
     resizeSession,
@@ -120,9 +123,11 @@ export async function wakeTerminalFromHibernate(
   applyTerminalKeywordHighlightRules(runtime, runtimeContext.terminalSettingsRef, runtimeContext.host);
 
   const term = runtime.term;
+  stopHibernateListeners();
   const payload = getPayload();
   await applyHibernateWakeToTerminal(term, runtime, payload);
-  if (sessionConnected && (getSessionConnected?.() ?? true)) {
+  const shouldReattach = sessionConnected && (getSessionConnected?.() ?? true);
+  if (shouldReattach) {
     reattachSession(term);
     updateStatus("connected");
   }
