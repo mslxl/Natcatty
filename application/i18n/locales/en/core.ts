@@ -123,7 +123,7 @@ export const enCoreMessages: Messages = {
   // Settings > System > App Lock
   'settings.appLock.title': 'App Lock',
   'settings.appLock.description': 'Require a local lock password when Netcatty opens, after inactivity, or when you lock it manually.',
-  'settings.appLock.setupTitle': 'Step 1: set a lock password',
+  'settings.appLock.setupTitle': 'Set a lock password',
   'settings.appLock.setupDescription': 'Create the password below. App Lock turns on immediately after it is saved.',
   'settings.appLock.manageTitle': 'App Lock is ready',
   'settings.appLock.enabledStatus': 'Enabled. Netcatty locks on startup, after inactivity, and when you lock it manually.',

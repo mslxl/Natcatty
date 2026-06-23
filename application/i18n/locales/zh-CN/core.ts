@@ -107,7 +107,7 @@ export const zhCNCoreMessages: Messages = {
   // Settings > System > App Lock
   'settings.appLock.title': '应用锁定',
   'settings.appLock.description': '在 Netcatty 打开、长时间无操作或手动锁定后，要求输入本地锁定密码。',
-  'settings.appLock.setupTitle': '第一步：设置锁定密码',
+  'settings.appLock.setupTitle': '设置锁定密码',
   'settings.appLock.setupDescription': '在下方创建密码，保存后会立即启用应用锁定。',
   'settings.appLock.manageTitle': '应用锁定已准备就绪',
   'settings.appLock.enabledStatus': '已启用。Netcatty 会在启动、长时间无操作或手动锁定时要求输入密码。',
