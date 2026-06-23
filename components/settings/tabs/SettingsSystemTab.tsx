@@ -511,27 +511,49 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                 {t("settings.appLock.description")}
               </p>
 
-              <SettingRow
-                label={t("settings.appLock.enable")}
-                description={hasAppLockPassword ? t("settings.appLock.enableDesc") : t("settings.appLock.enableAfterPassword")}
-              >
-                <Toggle
-                  checked={appLockSettings.enabled}
-                  onChange={(enabled) => void handleAppLockEnabledChange(enabled)}
-                />
-              </SettingRow>
+              {!hasAppLockPassword ? (
+                <div className="rounded-xl border border-border/60 bg-muted/30 p-4">
+                  <p className="text-sm font-medium text-foreground">
+                    {t("settings.appLock.setupTitle")}
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {t("settings.appLock.setupDescription")}
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="rounded-xl border border-border/60 bg-muted/30 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium text-foreground">
+                          {t("settings.appLock.manageTitle")}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          {appLockSettings.enabled
+                            ? t("settings.appLock.enabledStatus")
+                            : t("settings.appLock.disabledStatus")}
+                        </p>
+                      </div>
+                      <Toggle
+                        checked={appLockSettings.enabled}
+                        onChange={(enabled) => void handleAppLockEnabledChange(enabled)}
+                      />
+                    </div>
+                  </div>
 
-              <SettingRow
-                label={t("settings.appLock.timeout")}
-                description={t("settings.appLock.timeoutDesc")}
-              >
-                <Select
-                  value={String(appLockSettings.timeoutMinutes)}
-                  options={appLockTimeoutOptions}
-                  onChange={handleAppLockTimeoutChange}
-                  className="w-36"
-                />
-              </SettingRow>
+                  <SettingRow
+                    label={t("settings.appLock.timeout")}
+                    description={t("settings.appLock.timeoutDesc")}
+                  >
+                    <Select
+                      value={String(appLockSettings.timeoutMinutes)}
+                      options={appLockTimeoutOptions}
+                      onChange={handleAppLockTimeoutChange}
+                      className="w-36"
+                    />
+                  </SettingRow>
+                </>
+              )}
 
               <div className="grid gap-3 sm:grid-cols-3">
                 {hasAppLockPassword && (

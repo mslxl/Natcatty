@@ -123,6 +123,11 @@ export const ruCoreMessages: Messages = {
   // Settings > System > App Lock
   'settings.appLock.title': 'Блокировка приложения',
   'settings.appLock.description': 'Требовать локальный пароль блокировки при открытии Netcatty, после бездействия или при ручной блокировке.',
+  'settings.appLock.setupTitle': 'Шаг 1: задайте пароль блокировки',
+  'settings.appLock.setupDescription': 'Создайте пароль ниже. Блокировка приложения включится сразу после сохранения.',
+  'settings.appLock.manageTitle': 'Блокировка приложения готова',
+  'settings.appLock.enabledStatus': 'Включена. Netcatty блокируется при запуске, после бездействия и при ручной блокировке.',
+  'settings.appLock.disabledStatus': 'Пароль сохранён, но блокировка приложения сейчас выключена.',
   'settings.appLock.enable': 'Включить блокировку приложения',
   'settings.appLock.enableDesc': 'Блокировать при запуске и после выбранного периода бездействия.',
   'settings.appLock.timeout': 'Тайм-аут бездействия',

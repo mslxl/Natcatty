@@ -8,3 +8,16 @@ test("disabling app lock does not trigger a second renderer-side unlock request"
   assert.doesNotMatch(source, /unlockApp\?\.\(/);
   assert.doesNotMatch(source, /unlockApp\?:/);
 });
+
+test("app lock setup starts with password setup instead of a misleading enable toggle", () => {
+  const source = readFileSync(new URL("./SettingsSystemTab.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /!hasAppLockPassword \? \(/);
+  assert.match(source, /settings\.appLock\.setupTitle/);
+  assert.match(source, /settings\.appLock\.setupDescription/);
+  assert.match(source, /settings\.appLock\.manageTitle/);
+  assert.doesNotMatch(
+    source,
+    /hasAppLockPassword \? t\("settings\.appLock\.enableDesc"\) : t\("settings\.appLock\.enableAfterPassword"\)/,
+  );
+});
