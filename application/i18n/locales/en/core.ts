@@ -479,6 +479,10 @@ export const enCoreMessages: Messages = {
   'settings.terminal.rendering.renderer': 'Renderer',
   'settings.terminal.rendering.renderer.desc': 'Choose the terminal rendering technology. Auto will use DOM on low-memory devices. Changes take effect on new terminal sessions.',
   'settings.terminal.rendering.auto': 'Auto',
+  'settings.terminal.rendering.hibernateHiddenTabs': 'Hibernate hidden tabs',
+  'settings.terminal.rendering.hibernateHiddenTabs.desc': 'Dispose the terminal renderer for off-screen tabs to save memory while keeping the SSH session connected. Skipped during file transfers.',
+  'settings.terminal.rendering.hibernateHiddenTabsDelay': 'Hibernate delay',
+  'settings.terminal.rendering.hibernateHiddenTabsDelay.desc': 'How long a tab must stay off-screen before its renderer is released (5–600 seconds).',
 
   // Settings > Terminal > Workspace Focus Indicator
   'settings.terminal.section.workspaceFocus': 'Workspace Focus Indicator',

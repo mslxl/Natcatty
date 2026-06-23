@@ -85,6 +85,22 @@ import {
 } from "./terminal/clipboardImagePaste";
 import { createTerminalCwdTracker, resolvePreferredTerminalCwd } from "./terminal/sftpCwd";
 import { useTerminalEffects } from "./terminal/useTerminalEffects";
+import { useTerminalHibernateEffect } from "./terminal/useTerminalHibernateEffect";
+import {
+  appendHibernatePendingBuffer,
+  serializeTerminalForHibernate,
+} from "./terminal/terminalHibernateRuntime";
+import {
+  isTerminalFileTransferActive,
+  resolveTerminalHibernateDelayMs,
+  resolveTerminalHibernateEnabled,
+  type TerminalHibernateWakePayload,
+} from "../domain/terminalHibernate";
+import {
+  wakeTerminalFromHibernate,
+  type TerminalRuntimeRefs,
+} from "./terminal/terminalRuntimeMount";
+import type { CreateXTermRuntimeContext } from "./terminal/runtime/createXTermRuntime";
 import { TerminalView } from "./terminal/TerminalView";
 import {
   getInitialTerminalStatus,
@@ -200,6 +216,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const knownCwdRef = useRef<string | undefined>(undefined);
   const disposeDataRef = useRef<(() => void) | null>(null);
   const disposeExitRef = useRef<(() => void) | null>(null);
+  const hibernatedRef = useRef(false);
+  const hasRuntimeRef = useRef(false);
+  const hibernateSnapshotRef = useRef("");
+  const hibernatePendingBufferRef = useRef("");
+  const hibernateAlternateScreenRef = useRef(false);
+  const wakeInProgressRef = useRef(false);
   const sessionRef = useRef<string | null>(null);
   const isBootActiveRef = useRef(false);
   const hasConnectedRef = useRef(false);
@@ -337,6 +359,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   const statusRef = useRef<TerminalSession["status"]>(status);
   statusRef.current = status;
+  const getSessionConnectedRef = useRef(() => statusRef.current === "connected" && Boolean(sessionRef.current));
+  getSessionConnectedRef.current = () => statusRef.current === "connected" && Boolean(sessionRef.current);
   const sudoAutofillRef = useRef<SudoPasswordAutofill | null>(null);
   const sudoAutofillPasswordRef = useRef(sudoAutofillPassword);
   sudoAutofillPasswordRef.current = sudoAutofillPassword;
@@ -558,6 +582,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   // terminal. We just forward `isSupportedOs` via ctx.
 
   const zmodem = useZmodemTransfer(sessionId);
+  const [ymodemInProgress, setYmodemInProgress] = useState(false);
 
   const zmodemToastedRef = useRef(false);
 
@@ -700,6 +725,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     hasConnectedRef.current = next === "connected";
     onStatusChange?.(sessionId, next);
   };
+  const updateStatusRef = useRef(updateStatus);
+  updateStatusRef.current = updateStatus;
 
   const prepareRestoredReconnect = useCallback(() => {
     if (restoreState !== "restored-disconnected") {
@@ -758,18 +785,109 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     sessionRef.current = null;
   };
 
-  const teardown = () => {
-    isBootActiveRef.current = false;
-    retryTokenRef.current = null;
-    restoreCwdIntentRef.current = null;
-    suppressHostStartupCommandRef.current = false;
-    cleanupSession();
+  const disposeRuntimeOnly = () => {
     xtermRuntimeRef.current?.dispose();
     xtermRuntimeRef.current = null;
     termRef.current = null;
     fitAddonRef.current = null;
     serializeAddonRef.current = null;
     searchAddonRef.current = null;
+    hasRuntimeRef.current = false;
+  };
+
+  const forceCloseHibernatedSession = useCallback(() => {
+    if (!terminalDataCapturedRef.current) {
+      const hibernatedData = hibernateSnapshotRef.current + hibernatePendingBufferRef.current;
+      if (hibernatedData) {
+        handleTerminalDataCaptureOnce(sessionId, hibernatedData);
+      }
+    }
+    disposeDataRef.current?.();
+    disposeDataRef.current = null;
+    disposeExitRef.current?.();
+    disposeExitRef.current = null;
+    if (sessionRef.current) {
+      try {
+        terminalBackend.closeSession(sessionRef.current);
+      } catch (err) {
+        logger.warn("Failed to close hibernated session", err);
+      }
+    }
+    sessionRef.current = null;
+    hibernatedRef.current = false;
+    hibernateSnapshotRef.current = "";
+    hibernatePendingBufferRef.current = "";
+    hibernateAlternateScreenRef.current = false;
+  }, [handleTerminalDataCaptureOnce, sessionId, terminalBackend]);
+
+  const hibernateRuntime = useCallback(() => {
+    if (hibernatedRef.current || !termRef.current || !serializeAddonRef.current) return;
+    const backendId = sessionRef.current;
+    if (!backendId) return;
+
+    const { snapshot, alternateScreen } = serializeTerminalForHibernate(
+      termRef.current,
+      serializeAddonRef.current,
+    );
+    if (alternateScreen && snapshot.length === 0) {
+      logger.info("[Terminal] Skipping hibernate: alternate screen snapshot unavailable", { sessionId });
+      return;
+    }
+
+    hibernateSnapshotRef.current = snapshot;
+    hibernateAlternateScreenRef.current = alternateScreen;
+    isBootActiveRef.current = false;
+    disposeRuntimeOnly();
+
+    disposeDataRef.current?.();
+    hibernatePendingBufferRef.current = "";
+    disposeDataRef.current = terminalBackend.onSessionData(backendId, (chunk) => {
+      hibernatePendingBufferRef.current = appendHibernatePendingBuffer(
+        hibernatePendingBufferRef.current,
+        chunk,
+      );
+    });
+
+    disposeExitRef.current?.();
+    disposeExitRef.current = terminalBackend.onSessionExit(backendId, (evt) => {
+      updateStatusRef.current("disconnected");
+      if (evt.error) {
+        setError(evt.error);
+      }
+      const exitMessage = `\r\n[session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`;
+      hibernatePendingBufferRef.current = appendHibernatePendingBuffer(
+        hibernatePendingBufferRef.current,
+        exitMessage,
+      );
+      onSessionExit?.(sessionId, evt);
+    });
+
+    hibernatedRef.current = true;
+    logger.info("[Terminal] Hibernated runtime", {
+      sessionId,
+      snapshotChars: hibernateSnapshotRef.current.length,
+      alternateScreen,
+    });
+  }, [onSessionExit, sessionId, terminalBackend]);
+
+  const terminalRuntimeRefs = useMemo<TerminalRuntimeRefs>(() => ({
+    xtermRuntimeRef,
+    termRef,
+    fitAddonRef,
+    serializeAddonRef,
+    searchAddonRef,
+    hasRuntimeRef,
+  }), []);
+
+  const xTermRuntimeContextRef = useRef<Omit<CreateXTermRuntimeContext, "container" | "initiallyVisible"> | null>(null);
+
+  const teardown = () => {
+    isBootActiveRef.current = false;
+    retryTokenRef.current = null;
+    restoreCwdIntentRef.current = null;
+    suppressHostStartupCommandRef.current = false;
+    cleanupSession();
+    disposeRuntimeOnly();
   };
 
   const sessionStarters = createTerminalSessionStarters({
@@ -1091,6 +1209,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
       const fileName = filePath.split(/[\\/]/).pop() || filePath;
       toast.info(t("terminal.ymodem.started", { fileName }));
+      setYmodemInProgress(true);
       const result = await sendSerialYmodem(sessionRef.current || sessionId, filePath);
       if (result.success) {
         toast.success(t("terminal.ymodem.complete", { fileName: result.fileName || fileName }));
@@ -1099,6 +1218,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("terminal.ymodem.failed"));
+    } finally {
+      setYmodemInProgress(false);
     }
   }, [isSerialConnection, selectFile, selectFileAvailable, sendSerialYmodem, serialYmodemAvailable, sessionId, t]);
 
@@ -1114,6 +1235,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       if (!destinationDir) return;
 
       toast.info(t("terminal.ymodem.receiveStarted"));
+      setYmodemInProgress(true);
       const result = await receiveSerialYmodem(sessionRef.current || sessionId, destinationDir);
       if (result.success) {
         if (result.fileCount && result.fileCount > 1) {
@@ -1128,6 +1250,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       }
     } catch {
       toast.error(t("terminal.ymodem.receiveFailed"));
+    } finally {
+      setYmodemInProgress(false);
     }
   }, [
     isSerialConnection,
@@ -1399,7 +1523,142 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   const effectiveComposeBarOpen = inWorkspace ? !!isWorkspaceComposeBarOpen : isComposeBarOpen;
 
-  useTerminalEffects({ CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, host, hotkeySchemeRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen: effectiveComposeBarOpen, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing: deferTerminalResize, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, onBroadcastInputRef, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onSnippetShortkeyRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, pendingAuthRef, pendingOutputScrollRef, prepareRestoredReconnect, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, setIsSearchOpen, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, snippetsRef, status, statusRef, sudoAutofillRef, t, teardown, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState });
+  xTermRuntimeContextRef.current = {
+    host,
+    fontFamilyId,
+    resolvedFontFamily,
+    fontSize: effectiveFontSize,
+    terminalTheme: effectiveTheme,
+    terminalSettingsRef,
+    terminalBackend,
+    sessionRef,
+    hotkeySchemeRef,
+    disableTerminalFontZoomRef,
+    keyBindingsRef,
+    onHotkeyActionRef,
+    onTerminalFontSizeChange,
+    isBroadcastEnabledRef,
+    onBroadcastInputRef,
+    snippetsRef,
+    onSnippetShortkeyRef,
+    sessionId,
+    statusRef,
+    onCommandExecuted,
+    onCommandSubmitted,
+    commandBufferRef,
+    promptLineBreakStateRef,
+    sudoAutofillRef,
+    setIsSearchOpen,
+    serialLocalEcho: serialConfig?.localEcho,
+    serialLineMode: serialConfig?.lineMode,
+    serialLineBufferRef,
+    onTerminalLogData: captureTerminalLogData,
+    onCwdChange: (cwd: string) => {
+      terminalCwdTracker.setRendererCwd(cwd);
+      knownCwdRef.current = cwd;
+      onTerminalCwdChange?.(sessionId, cwd);
+    },
+    onTitleChange: (title: string | null) => {
+      onTerminalTitleChange?.(sessionId, title);
+    },
+    onBell: () => {
+      onTerminalBell?.(sessionId);
+    },
+    onOsc52ReadRequest: handleOsc52ReadRequest,
+    onAutocompleteKeyEvent: (e: KeyboardEvent) => autocompleteKeyEventRef.current?.(e) ?? true,
+    onAutocompleteInput: (data: string) => autocompleteInputRef.current?.(data),
+    terminalContextActionsRef,
+    isRestoringSelectionRef,
+  };
+
+  const safeFitRef = useRef(safeFit);
+  safeFitRef.current = safeFit;
+
+  const wakeFromHibernateRuntime = useCallback((
+    getPayload: () => TerminalHibernateWakePayload,
+    options: { sessionConnected: boolean },
+  ): boolean | Promise<boolean> => {
+    if (wakeInProgressRef.current || hasRuntimeRef.current) {
+      logger.warn("[Terminal] Wake skipped", {
+        sessionId,
+        wakeInProgress: wakeInProgressRef.current,
+        hasRuntime: hasRuntimeRef.current,
+      });
+      return false;
+    }
+    const container = containerRef.current;
+    const runtimeContext = xTermRuntimeContextRef.current;
+    if (!container || !runtimeContext) {
+      logger.warn("[Terminal] Wake skipped: missing mount prerequisites", {
+        sessionId,
+        hasContainer: !!container,
+        hasRuntimeContext: !!runtimeContext,
+      });
+      return false;
+    }
+    if (options.sessionConnected && !sessionRef.current) {
+      logger.warn("[Terminal] Wake skipped: missing backend session", { sessionId });
+      return false;
+    }
+
+    wakeInProgressRef.current = true;
+
+    const stopHibernateListeners = () => {
+      disposeDataRef.current?.();
+      disposeDataRef.current = null;
+      disposeExitRef.current?.();
+      disposeExitRef.current = null;
+    };
+
+    return wakeTerminalFromHibernate({
+      refs: terminalRuntimeRefs,
+      runtimeContext,
+      container,
+      getPayload,
+      stopHibernateListeners,
+      sessionConnected: options.sessionConnected,
+      getSessionConnected: () => getSessionConnectedRef.current(),
+      reattachSession: (term) => {
+        sessionStartersRef.current?.reattachSession(term);
+      },
+      safeFit: (...args) => safeFitRef.current(...args),
+      resizeSession,
+      forceSyncRenderAfterResize,
+      lastFittedSizeRef,
+      isBootActiveRef,
+      sessionId,
+      updateStatus: (next) => updateStatusRef.current(next),
+    }).then((ok) => ok).catch((err) => {
+      logger.error("[Terminal] Failed to resume from hibernate", err);
+      return false;
+    }).finally(() => {
+      wakeInProgressRef.current = false;
+    });
+  }, [sessionId, terminalRuntimeRefs, resizeSession]);
+
+  useTerminalHibernateEffect({
+    sessionId,
+    isVisibleRef,
+    getSessionConnectedRef,
+    status,
+    isSearchOpen,
+    hibernateEnabled: resolveTerminalHibernateEnabled(terminalSettings),
+    hibernateDelayMs: resolveTerminalHibernateDelayMs(terminalSettings),
+    fileTransferActive: isTerminalFileTransferActive({
+      zmodemActive: zmodem.active,
+      ymodemInProgress,
+      isDraggingOver,
+    }),
+    hibernatedRef,
+    hibernatePendingBufferRef,
+    hibernateSnapshotRef,
+    hibernateAlternateScreenRef,
+    hasRuntimeRef,
+    onHibernate: hibernateRuntime,
+    onWake: wakeFromHibernateRuntime,
+  });
+
+  useTerminalEffects({ CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen: effectiveComposeBarOpen, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing: deferTerminalResize, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, onBroadcastInputRef, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onSnippetShortkeyRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, pendingAuthRef, pendingOutputScrollRef, prepareRestoredReconnect, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, setIsSearchOpen, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, snippetsRef, status, statusRef, sudoAutofillRef, t, teardown, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState });
 
   return <TerminalView ctx={{ Activity, ArrowDownToLine, ArrowUpFromLine, Button, Clock3, Copy, Cpu, HardDrive, HoverCard, HoverCardContent, HoverCardTrigger, Maximize2, MemoryStick, Radio, Sparkles, SquareArrowOutUpRight, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, hasSelection, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen, isDraggingOver, isFocusMode, isLocalConnection, remoteDragDropUsesZmodem, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onAddSelectionToAI, onBroadcastInput, onCloseSession, onDetach, onDetachDragEnd, onDetachDragStart, onDetachPointerDown, onEndSessionDrag, onExpandToFocus, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onStartSessionDrag, onToggleBroadcast, onUpdateHost: handleUpdateHostFromTerminal, osc52ReadPromptVisible, osc7SetupCommand, osc7SetupOpen, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scrollToBottomAfterProgrammaticInput, searchMatchCount, selectionOverlayPosition, sessionDisplayName, sessionId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, showSelectionAIAction, snippets, status, statusDotTone, sudoHintRef, sudoHintText: t("terminal.sudoHint.pressEnter"), t, termRef, terminalBackend, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem }} />;
 };

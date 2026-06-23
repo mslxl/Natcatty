@@ -1,5 +1,6 @@
 import type { SerialConfig } from './connection';
 import type { CodingCliProviderId } from '../codingCliProviders';
+import { normalizeHibernateHiddenTabsDelaySec } from '../terminalHibernate';
 
 // Terminal appearance settings
 export type CursorShape = 'block' | 'bar' | 'underline';
@@ -117,6 +118,10 @@ export interface TerminalSettings {
 
   // Rendering
   rendererType: 'auto' | 'webgl' | 'dom'; // Terminal renderer: auto (detect based on hardware), webgl, or dom
+  /** Dispose xterm for hidden tabs after a delay to save renderer memory; SSH stays connected. */
+  hibernateHiddenTabs: boolean;
+  /** Seconds after a tab leaves view before hibernating (see hibernateHiddenTabs). */
+  hibernateHiddenTabsDelaySec: number;
   showLineTimestamps: boolean; // Show output timestamps in a side gutter
 
   // Autocomplete
@@ -261,6 +266,9 @@ export const normalizeTerminalSettings = (
   return {
     ...mergedSettings,
     rendererType,
+    hibernateHiddenTabsDelaySec: normalizeHibernateHiddenTabsDelaySec(
+      mergedSettings.hibernateHiddenTabsDelaySec,
+    ),
     autocompleteGhostText: mergedSettings.autocompletePopupMenu
       ? false
       : mergedSettings.autocompleteGhostText,
@@ -323,6 +331,8 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   forcePromptNewLine: false, // Opt-in: keep the next shell prompt visually separated from unterminated final output lines
   osc52Clipboard: 'write-only', // OSC-52: allow remote programs to write clipboard by default
   rendererType: 'auto', // Auto-detect best renderer based on hardware
+  hibernateHiddenTabs: true,
+  hibernateHiddenTabsDelaySec: 5,
   showLineTimestamps: false, // Opt-in: shows output timestamps beside terminal lines
   autocompleteEnabled: true, // Autocomplete enabled by default
   autocompleteGhostText: false, // Mutually exclusive with popup menu
