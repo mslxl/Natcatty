@@ -840,13 +840,27 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       );
     });
 
+    disposeExitRef.current?.();
+    disposeExitRef.current = terminalBackend.onSessionExit(backendId, (evt) => {
+      updateStatusRef.current("disconnected");
+      if (evt.error) {
+        setError(evt.error);
+      }
+      const exitMessage = `\r\n[session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`;
+      hibernatePendingBufferRef.current = appendHibernatePendingBuffer(
+        hibernatePendingBufferRef.current,
+        exitMessage,
+      );
+      onSessionExit?.(sessionId, evt);
+    });
+
     hibernatedRef.current = true;
     logger.info("[Terminal] Hibernated runtime", {
       sessionId,
       snapshotChars: hibernateSnapshotRef.current.length,
       alternateScreen,
     });
-  }, [sessionId, terminalBackend]);
+  }, [onSessionExit, sessionId, terminalBackend]);
 
   const terminalRuntimeRefs = useMemo<TerminalRuntimeRefs>(() => ({
     xtermRuntimeRef,
@@ -1580,8 +1594,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }
 
     wakeInProgressRef.current = true;
-    disposeDataRef.current?.();
-    disposeDataRef.current = null;
 
     return wakeTerminalFromHibernate({
       refs: terminalRuntimeRefs,
@@ -1599,6 +1611,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       isBootActiveRef,
       sessionId,
       updateStatus: (next) => updateStatusRef.current(next),
+    }).then((ok) => {
+      if (ok && !options.sessionConnected) {
+        disposeDataRef.current?.();
+        disposeDataRef.current = null;
+        disposeExitRef.current?.();
+        disposeExitRef.current = null;
+      }
+      return ok;
     }).catch((err) => {
       logger.error("[Terminal] Failed to resume from hibernate", err);
       return false;
