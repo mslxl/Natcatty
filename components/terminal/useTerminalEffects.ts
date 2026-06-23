@@ -3,6 +3,12 @@ import { useRef } from 'react';
 import { resolveFontWeightBold } from '../../lib/fontWeightAvailability';
 import { resolveXTermScrollback } from '../../infrastructure/config/xtermPerformance';
 import { shouldInterceptMouseTrackingContextMenu } from './runtime/middleClickBehavior';
+import {
+  hasOpenAppDialog,
+  TERMINAL_SESSION_RESTORE_FOCUS_EVENT,
+  type TerminalSessionRestoreFocusDetail,
+} from './focusTerminalSession';
+import { applyUserCursorBlinkPreference } from './runtime/cursorPreference';
 
 type TerminalEffectsContext = Record<string, any>;
 
@@ -594,6 +600,25 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       layoutRecoveryTimersRef.current.push(timerId);
     }
   };
+
+  useEffect(() => {
+    const handleRestoreFocus = (event: Event) => {
+      const detail = (event as CustomEvent<TerminalSessionRestoreFocusDetail>).detail;
+      if (detail?.sessionId !== sessionId) return;
+      if (!isVisibleRef.current) return;
+
+      const term = termRef.current;
+      if (!term) return;
+
+      applyUserCursorBlinkPreference(term, terminalSettingsRef.current);
+      if (hasOpenAppDialog()) return;
+      term.focus();
+      scheduleLayoutRecoveryRefit([0, 100]);
+    };
+
+    window.addEventListener(TERMINAL_SESSION_RESTORE_FOCUS_EVENT, handleRestoreFocus);
+    return () => window.removeEventListener(TERMINAL_SESSION_RESTORE_FOCUS_EVENT, handleRestoreFocus);
+  }, [sessionId]);
 
   const shouldRefitImmediatelyOnShow = () => (
     !inWorkspace || isFocusMode || isFocused

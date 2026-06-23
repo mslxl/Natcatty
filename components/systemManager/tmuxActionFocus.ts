@@ -19,6 +19,32 @@ interface RunTmuxSessionActionOptions {
 const shouldRequestTerminalFocusAfterAction = (action: TmuxManageAction): boolean =>
   action.action === 'detachSession';
 
+const DEFERRED_TERMINAL_FOCUS_DELAYS_MS = [0, 50, 150] as const;
+
+export function scheduleDeferredTerminalFocus(onRequestTerminalFocus?: () => void): void {
+  if (!onRequestTerminalFocus) return;
+
+  const run = () => onRequestTerminalFocus();
+  const schedule = typeof globalThis.setTimeout === 'function'
+    ? globalThis.setTimeout.bind(globalThis)
+    : (callback: () => void) => {
+      callback();
+      return 0;
+    };
+  const raf = typeof globalThis.requestAnimationFrame === 'function'
+    ? globalThis.requestAnimationFrame.bind(globalThis)
+    : (callback: () => void) => {
+      callback();
+      return 0;
+    };
+
+  raf(() => {
+    for (const delayMs of DEFERRED_TERMINAL_FOCUS_DELAYS_MS) {
+      schedule(run, delayMs);
+    }
+  });
+}
+
 export async function runTmuxSessionAction({
   sessionId,
   action,
@@ -35,7 +61,7 @@ export async function runTmuxSessionAction({
     await onSessionsChanged();
   } finally {
     if (shouldRequestTerminalFocusAfterAction(action)) {
-      onRequestTerminalFocus?.();
+      scheduleDeferredTerminalFocus(onRequestTerminalFocus);
     }
   }
 
