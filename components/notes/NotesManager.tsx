@@ -38,6 +38,7 @@ import {
   STORAGE_KEY_VAULT_NOTES_EDITOR_MODE,
   STORAGE_KEY_VAULT_NOTES_TREE_WIDTH,
 } from "../../infrastructure/config/storageKeys";
+import { logger } from "../../lib/logger";
 import { cn } from "../../lib/utils";
 import { readTextFile } from "../../lib/readTextFile";
 import type { Host, VaultNote } from "../../types";
@@ -516,14 +517,25 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   }, []);
 
   const handleImportMarkdownFiles = useCallback(async (fileList: FileList | null) => {
-    if (!fileList || fileList.length === 0) return;
+    const resetImportInput = () => {
+      if (importFileInputRef.current) {
+        importFileInputRef.current.value = "";
+      }
+    };
+
+    if (!fileList || fileList.length === 0) {
+      resetImportInput();
+      return;
+    }
     if (isImportingMarkdownRef.current) {
       toast.info(t("notes.import.toast.inProgress"));
+      resetImportInput();
       return;
     }
 
     const files = Array.from(fileList);
     const markdownFiles = files.filter((file) => /\.(md|markdown|txt)$/i.test(file.name));
+    const skippedCount = files.length - markdownFiles.length;
     const pendingTargetGroup = importTargetGroupRef.current;
     importTargetGroupRef.current = undefined;
     const targetGroup = pendingTargetGroup !== undefined
@@ -566,13 +578,15 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       setOverlayNoteId(nextSelection.overlayNoteId);
 
       toast.success(t("notes.import.toast.success", { count: result.importedCount }));
-    } catch {
+      if (skippedCount > 0) {
+        toast.info(t("notes.import.toast.skipped", { count: skippedCount }));
+      }
+    } catch (err) {
+      logger.error("Failed to import markdown files:", err);
       toast.error(t("notes.import.toast.failed"));
     } finally {
       isImportingMarkdownRef.current = false;
-      if (importFileInputRef.current) {
-        importFileInputRef.current.value = "";
-      }
+      resetImportInput();
     }
   }, [
     isSidebarMode,

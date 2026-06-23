@@ -250,11 +250,11 @@ test("note code block frame is borderless and language picker is compact", () =>
   );
   assert.match(
     styles,
-    /\.netcatty-mdx-editor \.mdxeditor-select-content[\s\S]*width:\s*auto\s*!important;[\s\S]*min-width:\s*max-content\s*!important;/s,
+    /\.netcatty-mdx-editor \[class\*="_toolbarCodeBlockLanguageSelectContent_"\][\s\S]*width:\s*auto\s*!important;[\s\S]*min-width:\s*max-content\s*!important;/s,
   );
   assert.match(
     styles,
-    /\.netcatty-mdx-editor \.mdxeditor-select-content \[class\*="_selectItem_"\][\s\S]*font-size:\s*11px\s*!important;/s,
+    /\.netcatty-mdx-editor \[class\*="_toolbarCodeBlockLanguageSelectContent_"\] \[class\*="_selectItem_"\][\s\S]*font-size:\s*11px\s*!important;/s,
   );
   assert.match(
     styles,
@@ -311,7 +311,9 @@ test("note code blocks expose a hover copy action only in preview mode", () => {
   assert.match(source, /if \(editorMode !== "preview"\) \{[\s\S]*removeNoteCodeBlockCopyButtons/);
   assert.match(source, /annotateNoteCodeBlockCopyButtons/);
   assert.match(source, /notes\.codeBlock\.copied/);
-  assert.match(source, /copyToClipboard/);
+  assert.match(source, /copyFailedLabel/);
+  assert.match(source, /MutationObserver/);
+  assert.match(source, /setAttribute\("aria-label", copiedLabel\)/);
   assert.match(styles, /\.netcatty-note-code-copy/);
   assert.match(
     styles,

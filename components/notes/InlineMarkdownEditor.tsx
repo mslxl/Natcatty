@@ -38,6 +38,7 @@ import { useI18n } from "../../application/i18n/I18nProvider";
 import { resolveRenderedMarkdownLinkHref } from "../../domain/notes";
 import { buildSshNoteLinkOpenHost } from "../../domain/sshDeepLink";
 import { copyToClipboard } from "../keychain/utils";
+import { toast } from "../ui/toast";
 import { cn } from "../../lib/utils";
 import type { Host } from "../../types";
 
@@ -336,8 +337,19 @@ export const getCodeMirrorBlockText = (wrapper: Element): string => {
   return content?.textContent?.replace(/\u00a0/g, " ") ?? "";
 };
 
+const clearNoteCodeBlockCopyResetTimer = (button: HTMLElement): void => {
+  const timerId = Number(button.dataset.resetTimerId);
+  if (timerId) {
+    window.clearTimeout(timerId);
+    delete button.dataset.resetTimerId;
+  }
+};
+
 export const removeNoteCodeBlockCopyButtons = (container: HTMLElement): void => {
   container.querySelectorAll("[data-note-code-copy]").forEach((button) => {
+    if (button instanceof HTMLElement) {
+      clearNoteCodeBlockCopyResetTimer(button);
+    }
     button.remove();
   });
 };
@@ -347,10 +359,12 @@ export const annotateNoteCodeBlockCopyButtons = (
   {
     copyLabel,
     copiedLabel,
+    copyFailedLabel,
     onCopy,
   }: {
     copyLabel: string;
     copiedLabel: string;
+    copyFailedLabel: string;
     onCopy: (text: string) => Promise<boolean>;
   },
 ): void => {
@@ -370,17 +384,25 @@ export const annotateNoteCodeBlockCopyButtons = (
       event.preventDefault();
       event.stopPropagation();
       void (async () => {
+        clearNoteCodeBlockCopyResetTimer(button);
         const text = getCodeMirrorBlockText(wrapper);
         const ok = await onCopy(text);
-        if (!ok) return;
+        if (!ok) {
+          toast.error(copyFailedLabel);
+          return;
+        }
         button.dataset.copied = "true";
         button.textContent = copiedLabel;
         button.title = copiedLabel;
-        window.setTimeout(() => {
+        button.setAttribute("aria-label", copiedLabel);
+        const timerId = window.setTimeout(() => {
           delete button.dataset.copied;
+          delete button.dataset.resetTimerId;
           button.textContent = copyLabel;
           button.title = copyLabel;
+          button.setAttribute("aria-label", copyLabel);
         }, 1500);
+        button.dataset.resetTimerId = String(timerId);
       })();
     });
 
@@ -596,6 +618,7 @@ export function InlineMarkdownEditor({
     annotateNoteCodeBlockCopyButtons(container, {
       copyLabel: t("action.copy"),
       copiedLabel: t("notes.codeBlock.copied"),
+      copyFailedLabel: t("notes.codeBlock.copyFailed"),
       onCopy: copyToClipboard,
     });
   }, [t]);
@@ -609,8 +632,16 @@ export function InlineMarkdownEditor({
       return;
     }
 
-    const frame = window.requestAnimationFrame(annotateCodeBlockCopyButtons);
-    return () => window.cancelAnimationFrame(frame);
+    annotateCodeBlockCopyButtons();
+    const observer = new MutationObserver(() => {
+      annotateCodeBlockCopyButtons();
+    });
+    observer.observe(container, { childList: true, subtree: true });
+
+    return () => {
+      observer.disconnect();
+      removeNoteCodeBlockCopyButtons(container);
+    };
   }, [annotateCodeBlockCopyButtons, editorMode, value]);
 
   const commitMarkdown = useCallback((markdown: string) => {

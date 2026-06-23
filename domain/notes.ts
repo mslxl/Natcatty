@@ -282,8 +282,27 @@ export const resolveRenderedMarkdownLinkHref = (
 
 const NOTE_IMPORT_TITLE_EXTENSIONS = /\.(md|markdown|txt)$/i;
 
+const stripFencedCodeBlocksForImportTitle = (content: string): string => {
+  const withoutClosedBlocks = content.replace(/```[\s\S]*?```/g, "");
+  const lines = withoutClosedBlocks.split("\n");
+  const output: string[] = [];
+  let inUnclosedFence = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^```/.test(trimmed)) {
+      inUnclosedFence = true;
+      continue;
+    }
+    if (inUnclosedFence) continue;
+    output.push(line);
+  }
+
+  return output.join("\n");
+};
+
 export const deriveNoteImportTitle = (fileName: string, content: string): string => {
-  const contentWithoutCodeBlocks = content.replace(/```[\s\S]*?```/g, "");
+  const contentWithoutCodeBlocks = stripFencedCodeBlocksForImportTitle(content);
   const headingMatch = /^#\s+(.+?)\s*$/m.exec(contentWithoutCodeBlocks);
   if (headingMatch?.[1]) return headingMatch[1].trim();
 

@@ -1231,8 +1231,8 @@ html[data-theme-transition] *::after {
   line-height: inherit !important;
 }
 
-.netcatty-mdx-editor .mdxeditor-select-content,
-.netcatty-mdx-editor [class*="_selectContainer_"] {
+.netcatty-mdx-editor [class*="_toolbarCodeBlockLanguageSelectContent_"],
+.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] [class*="_selectContainer_"] {
   width: auto !important;
   min-width: max-content !important;
   max-width: none !important;
@@ -1250,20 +1250,14 @@ html[data-theme-transition] *::after {
   filter: none !important;
 }
 
-.netcatty-mdx-editor .mdxeditor-select-content [data-radix-select-viewport],
-.netcatty-mdx-editor [data-editor-dropdown][data-radix-select-viewport] {
+.netcatty-mdx-editor [class*="_toolbarCodeBlockLanguageSelectContent_"] [data-radix-select-viewport] {
   width: auto !important;
   min-width: max-content !important;
   max-width: none !important;
   padding: 0 !important;
 }
 
-.netcatty-mdx-editor [data-editor-dropdown] {
-  padding: 0 !important;
-}
-
-.netcatty-mdx-editor .mdxeditor-select-content [class*="_selectItem_"],
-.netcatty-mdx-editor [data-editor-dropdown] [class*="_selectItem_"] {
+.netcatty-mdx-editor [class*="_toolbarCodeBlockLanguageSelectContent_"] [class*="_selectItem_"] {
   font-size: 11px !important;
   line-height: 1.25 !important;
   padding: 0.28rem 0.45rem !important;
@@ -1273,8 +1267,7 @@ html[data-theme-transition] *::after {
   text-overflow: clip;
 }
 
-.netcatty-mdx-editor .mdxeditor-select-content [class*="_selectItem_"] [data-radix-select-item-text],
-.netcatty-mdx-editor [data-editor-dropdown] [class*="_selectItem_"] [data-radix-select-item-text] {
+.netcatty-mdx-editor [class*="_toolbarCodeBlockLanguageSelectContent_"] [class*="_selectItem_"] [data-radix-select-item-text] {
   font-size: 11px !important;
   line-height: 1.25 !important;
   white-space: nowrap;

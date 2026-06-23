@@ -153,6 +153,14 @@ test("deriveNoteImportTitle prefers the first markdown heading", () => {
     deriveNoteImportTitle("script.md", "```sh\n# not a title\n```\n\n# Real Title"),
     "Real Title",
   );
+  assert.equal(
+    deriveNoteImportTitle("unclosed.md", "```sh\n# not a title\n\n# Also inside fence"),
+    "unclosed",
+  );
+  assert.equal(
+    deriveNoteImportTitle("preface.md", "# Real Title\n\n```sh\n# not a title"),
+    "Real Title",
+  );
 });
 
 test("buildVaultNoteFromMarkdownImport creates a note in the target group", () => {
