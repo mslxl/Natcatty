@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   emitAppLockReopen,
+  handleAppHide,
   handleActivateWithMainWindow,
   handleBeforeQuit,
   shouldBackgroundLockOnHide,
@@ -74,6 +75,24 @@ test("emitAppLockReopen sends reopen once per live unique webContents", () => {
     "netcatty:app-lock:reopen",
     "netcatty:app-lock:reopen",
   ]);
+});
+
+test("handleAppHide locks the app in background when controller exists", () => {
+  const calls = [];
+
+  handleAppHide({
+    setLocked(reason) {
+      calls.push(reason);
+    },
+  });
+
+  assert.deepEqual(calls, ["background"]);
+});
+
+test("handleAppHide ignores missing controllers", () => {
+  assert.doesNotThrow(() => {
+    handleAppHide(null);
+  });
 });
 
 test("handleActivateWithMainWindow shows and focuses the main window, then emits reopen", () => {

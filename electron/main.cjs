@@ -134,9 +134,9 @@ const {
 } = require("./bridges/appLockRuntimeBridge.cjs");
 const {
   emitAppLockReopen,
+  handleAppHide,
   handleActivateWithMainWindow,
   handleBeforeQuit,
-  shouldBackgroundLockOnHide,
   shouldCommitQuitWithoutDirtyCheck,
 } = require("./main/appLockLifecycle.cjs");
 const ptyProcessTree = require("./bridges/ptyProcessTree.cjs");
@@ -757,13 +757,7 @@ if (!gotLock) {
     });
 
     app.on("hide", () => {
-      if (shouldBackgroundLockOnHide(appLockController)) {
-        try {
-          appLockController.setLocked("background");
-        } catch {
-          // ignore
-        }
-      }
+      handleAppHide(appLockController);
     });
   });
 

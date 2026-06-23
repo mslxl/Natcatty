@@ -24,6 +24,7 @@ export function createAppLockBridgeHarness(options: HarnessOptions) {
   const rendererReadyCalls: number[] = [];
   const unlockAttempts: string[] = [];
   const activityReports: number[] = [];
+  let runtimeFetchCount = 0;
 
   const emitRuntimeState = () => {
     const snapshot = cloneRuntimeState(runtimeState);
@@ -42,7 +43,10 @@ export function createAppLockBridgeHarness(options: HarnessOptions) {
   };
 
   const bridge: NetcattyBridge = {
-    getAppLockRuntimeState: async () => cloneRuntimeState(runtimeState),
+    getAppLockRuntimeState: async () => {
+      runtimeFetchCount += 1;
+      return cloneRuntimeState(runtimeState);
+    },
     onAppLockRuntimeStateChanged: (listener) => {
       runtimeListeners.add(listener);
       return () => runtimeListeners.delete(listener);
@@ -89,6 +93,9 @@ export function createAppLockBridgeHarness(options: HarnessOptions) {
     bridge,
     getRuntimeState() {
       return cloneRuntimeState(runtimeState);
+    },
+    getRuntimeFetchCount() {
+      return runtimeFetchCount;
     },
     setRuntimeState,
     emitReopen() {

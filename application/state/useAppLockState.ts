@@ -66,6 +66,7 @@ export function createOptimisticUnlockedRuntimeState(
     initialized: true,
     locked: false,
     reason: null,
+    version: current.version + 1,
     lastUnlockedAt: now,
     lastActivityAt: now,
   };

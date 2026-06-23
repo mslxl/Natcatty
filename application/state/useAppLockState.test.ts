@@ -69,11 +69,28 @@ test("createOptimisticUnlockedRuntimeState clears stale locked state after succe
     initialized: true,
     locked: false,
     reason: null,
-    version: 7,
+    version: 8,
     lastLockedAt: 2_000,
     lastUnlockedAt: 5_000,
     lastActivityAt: 5_000,
   });
+});
+
+test("createOptimisticUnlockedRuntimeState outranks same-version stale locked fetches", () => {
+  const optimistic = createOptimisticUnlockedRuntimeState(
+    {
+      initialized: true,
+      locked: true,
+      reason: "startup",
+      version: 7,
+      lastLockedAt: 2_000,
+      lastUnlockedAt: null,
+      lastActivityAt: 1_000,
+    },
+    5_000,
+  );
+
+  assert.equal(optimistic.version, 8);
 });
 
 

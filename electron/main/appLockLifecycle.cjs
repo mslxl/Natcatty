@@ -19,6 +19,16 @@ function shouldBackgroundLockOnHide(appLockController) {
   return Boolean(appLockController && typeof appLockController.setLocked === "function");
 }
 
+function handleAppHide(appLockController) {
+  if (!shouldBackgroundLockOnHide(appLockController)) return false;
+  try {
+    appLockController.setLocked("background");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function handleActivateWithMainWindow({
   app,
   mainWindow,
@@ -151,6 +161,7 @@ async function handleBeforeQuit({
 
 module.exports = {
   emitAppLockReopen,
+  handleAppHide,
   handleActivateWithMainWindow,
   handleBeforeQuit,
   shouldBackgroundLockOnHide,
