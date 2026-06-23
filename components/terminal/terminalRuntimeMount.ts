@@ -13,6 +13,7 @@ import {
   type XTermRuntime,
 } from "./runtime/createXTermRuntime";
 import {
+  appendTerminalReplayData,
   applyHibernateWakeToTerminal,
   nudgeAlternateScreenRedraw,
 } from "./terminalHibernateRuntime";
@@ -123,9 +124,17 @@ export async function wakeTerminalFromHibernate(
   applyTerminalKeywordHighlightRules(runtime, runtimeContext.terminalSettingsRef, runtimeContext.host);
 
   const term = runtime.term;
+  const initialPayload = getPayload();
+  const pendingAtApplyStart = initialPayload.pendingBuffer;
+  await applyHibernateWakeToTerminal(term, runtime, initialPayload);
+  const afterApply = getPayload();
+  if (afterApply.pendingBuffer.length > pendingAtApplyStart.length) {
+    await appendTerminalReplayData(
+      term,
+      afterApply.pendingBuffer.slice(pendingAtApplyStart.length),
+    );
+  }
   stopHibernateListeners();
-  const payload = getPayload();
-  await applyHibernateWakeToTerminal(term, runtime, payload);
   const shouldReattach = sessionConnected && (getSessionConnected?.() ?? true);
   if (shouldReattach) {
     reattachSession(term);
@@ -135,7 +144,7 @@ export async function wakeTerminalFromHibernate(
   safeFit({ force: true });
   resizeSession();
   forceSyncRenderAfterResize(term);
-  if (payload.alternateScreen) {
+  if (initialPayload.alternateScreen) {
     nudgeAlternateScreenRedraw(term);
   } else {
     term.scrollToBottom();
@@ -145,23 +154,23 @@ export async function wakeTerminalFromHibernate(
   window.setTimeout(() => {
     safeFit({ force: true });
     forceSyncRenderAfterResize(term);
-    if (payload.alternateScreen) {
+    if (initialPayload.alternateScreen) {
       nudgeAlternateScreenRedraw(term);
     }
   }, 100);
   window.setTimeout(() => {
     safeFit({ force: true });
     forceSyncRenderAfterResize(term);
-    if (payload.alternateScreen) {
+    if (initialPayload.alternateScreen) {
       nudgeAlternateScreenRedraw(term);
     }
   }, 350);
 
   logger.info("[Terminal] Resumed from hibernate", {
     sessionId,
-    snapshotChars: payload.snapshot.length,
-    pendingChars: payload.pendingBuffer.length,
-    alternateScreen: payload.alternateScreen,
+    snapshotChars: initialPayload.snapshot.length,
+    pendingChars: afterApply.pendingBuffer.length,
+    alternateScreen: initialPayload.alternateScreen,
   });
   return true;
 }

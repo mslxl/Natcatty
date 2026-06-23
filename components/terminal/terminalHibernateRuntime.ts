@@ -65,6 +65,10 @@ export function refreshTerminalViewport(term: XTerm): void {
   term.refresh(0, endRow);
 }
 
+export async function appendTerminalReplayData(term: XTerm, data: string): Promise<void> {
+  return writeTerminalPayload(term, data);
+}
+
 export async function applyHibernateWakeToTerminal(
   term: XTerm,
   runtime: XTermRuntime,
