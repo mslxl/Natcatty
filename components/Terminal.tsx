@@ -91,10 +91,12 @@ import {
   shouldStartTerminalBackend,
 } from "./terminal/restoredSessionGate";
 import {
+  AUTO_RUN_SNIPPET_LINE_DELAY_MS,
   forceSyncRenderAfterResize,
   createProtectedSnippetLogRewriteForPreparedCommand,
   MAX_CONNECTION_LOG_DATA_CHARS,
   prepareAutoRunSnippetCommand,
+  shouldDelayAutoRunSnippetInput,
   shouldHideConnectingDialogForConnectionReuse,
   shouldShowTerminalConnectionDialog,
   type TerminalProps,
@@ -988,11 +990,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       ? createProtectedSnippetLogRewriteForPreparedCommand(command, commandToSend)
       : null;
     let data = normalizeLineEndings(commandToSend);
+    const lineDelayMs = shouldDelayAutoRunSnippetInput(data, { noAutoRun })
+      ? AUTO_RUN_SNIPPET_LINE_DELAY_MS
+      : undefined;
     const isMultiLine = data.includes('\n');
     // Wrap in bracketed paste BEFORE appending \r so the Enter is sent
     // outside the paste markers — otherwise shells treat it as pasted text
     // instead of a submit action.
-    if (isMultiLine && term.modes.bracketedPasteMode && !disableBracketedPasteRef.current) {
+    if (!lineDelayMs && isMultiLine && term.modes.bracketedPasteMode && !disableBracketedPasteRef.current) {
       data = wrapBracketedPaste(data);
     }
     if (!noAutoRun) data = `${data}\r`;
@@ -1005,21 +1010,28 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     // broadcast mode would clear peer input (the clear keystrokes already go
     // through the broadcast-aware path) but never send the command.
     if (options?.broadcast !== false && isBroadcastEnabledRef.current && onBroadcastInputRef.current) {
-      onBroadcastInputRef.current(data, sessionId, options?.protectTerminalMode
-        ? {
-            protectTerminalMode: true,
-            rawCommand: command,
-            fallbackData: fallbackBroadcastData,
-            noAutoRun,
-          }
-        : undefined);
+      onBroadcastInputRef.current(data, sessionId, {
+        ...(options?.protectTerminalMode
+          ? {
+              protectTerminalMode: true,
+              rawCommand: command,
+              fallbackData: fallbackBroadcastData,
+            }
+          : {}),
+        noAutoRun,
+        ...(lineDelayMs ? { lineDelayMs } : {}),
+      });
     }
 
     data = prepareProgrammaticSudoInput(data);
     if (logRewrite) {
       commandLogRewriterRef.current.queueRewrite(logRewrite);
     }
-    terminalBackend.writeToSession(id, data, logRewrite ? { logRewrite } : undefined);
+    terminalBackend.writeToSession(id, data, {
+      automated: true,
+      ...(lineDelayMs ? { lineDelayMs } : {}),
+      ...(logRewrite ? { logRewrite } : {}),
+    });
     scrollToBottomAfterProgrammaticInput(data);
     term.focus();
   }, [host, prepareProgrammaticSudoInput, scrollToBottomAfterProgrammaticInput, shellType, terminalBackend, sessionId]);
