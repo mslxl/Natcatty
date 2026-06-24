@@ -71,6 +71,15 @@ test("app lock system unlock enablement requires current password", () => {
   assert.match(handlerSource, /currentPassword: enabled \? appLockSystemUnlockPassword : undefined/);
 });
 
+test("app lock system unlock toggle still allows disabling when system auth is unavailable", () => {
+  const source = readFileSync(new URL("./SettingsSystemTab.tsx", import.meta.url), "utf8");
+  const appLockSectionStart = source.indexOf('<SectionHeader title={t("settings.appLock.title")} />');
+  const nextSectionStart = source.indexOf("<SectionHeader", appLockSectionStart + 1);
+  const appLockSection = source.slice(appLockSectionStart, nextSectionStart);
+
+  assert.match(appLockSection, /disabled=\{isSavingAppLockSystemUnlock \|\| \(!appLockSettings\.systemUnlockEnabled && !appLockSystemUnlockStatus\.available\)\}/);
+});
+
 test("app lock disable explains that turning it off removes the saved password", () => {
   const englishLocale = readFileSync(new URL("../../../application/i18n/locales/en/core.ts", import.meta.url), "utf8");
 

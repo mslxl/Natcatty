@@ -761,7 +761,7 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                         )}
                         <Toggle
                           checked={appLockSettings.systemUnlockEnabled}
-                          disabled={!appLockSystemUnlockStatus.available || isSavingAppLockSystemUnlock}
+                          disabled={isSavingAppLockSystemUnlock || (!appLockSettings.systemUnlockEnabled && !appLockSystemUnlockStatus.available)}
                           ariaLabel={t("settings.appLock.systemUnlock.label").replace("{label}", appLockSystemUnlockStatus.label)}
                           onChange={(enabled) => void handleAppLockSystemUnlockChange(enabled)}
                         />

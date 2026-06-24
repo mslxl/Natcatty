@@ -206,6 +206,16 @@ test("startup-locked gate reveals children after hidden app lock reset", async (
 
     assert.equal(dom.document.getElementById("reset-unlocked-content"), null);
 
+    const input = dom.document.getElementById("app-lock-password") as HTMLInputElement | null;
+    assert.ok(input);
+    const setInputValue = Object.getOwnPropertyDescriptor(
+      dom.window.HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    assert.ok(setInputValue);
+    setInputValue.call(input, "secret");
+    await dispatchDomEvent(input, new dom.window.Event("input", { bubbles: true }));
+
     const logoButton = dom.document.querySelector("[data-testid='app-lock-logo-easter-egg']");
     assert.ok(logoButton);
     for (let index = 0; index < 5; index += 1) {
@@ -221,6 +231,7 @@ test("startup-locked gate reveals children after hidden app lock reset", async (
     await flushEffects();
 
     assert.equal(bridgeHarness.getResetCount(), 1);
+    assert.deepEqual(bridgeHarness.getResetAttempts(), ["secret"]);
     assert.equal(bridgeHarness.getRuntimeState().locked, false);
     assert.equal(dom.document.getElementById("reset-unlocked-content")?.textContent, "Unlocked");
   } finally {

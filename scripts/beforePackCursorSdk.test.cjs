@@ -72,7 +72,7 @@ test("beforePackCursorSdk builds Windows Hello helper only for Windows packages"
     buildWindowsHelloHelper: (projectDir) => calls.push(projectDir),
   });
 
-  assert.deepEqual(calls, [process.cwd()]);
+  assert.deepEqual(calls, [{ projectDir: process.cwd(), platform: "win32" }]);
 
   beforePackCursorSdk({
     appDir: process.cwd(),
@@ -81,5 +81,17 @@ test("beforePackCursorSdk builds Windows Hello helper only for Windows packages"
     buildWindowsHelloHelper: (projectDir) => calls.push(projectDir),
   });
 
-  assert.deepEqual(calls, [process.cwd()]);
+  assert.deepEqual(calls, [{ projectDir: process.cwd(), platform: "win32" }]);
+});
+
+test("beforePackCursorSdk fails Windows packaging when Windows Hello helper build is skipped", () => {
+  assert.throws(
+    () => beforePackCursorSdk({
+      appDir: process.cwd(),
+      electronPlatformName: "win32",
+      ensureCursorSdkPlatformPackages: () => [],
+      buildWindowsHelloHelper: () => ({ skipped: true, reason: "compiler-unavailable" }),
+    }),
+    /Windows Hello helper was not built: compiler-unavailable/,
+  );
 });

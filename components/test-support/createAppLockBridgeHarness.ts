@@ -44,6 +44,7 @@ export function createAppLockBridgeHarness(options: HarnessOptions) {
   let systemUnlockResult = options.systemUnlockResult ?? { ok: true as const };
   let systemUnlockCount = 0;
   let resetCount = 0;
+  const resetAttempts: string[] = [];
   let runtimeFetchCount = 0;
 
   const emitRuntimeState = () => {
@@ -84,8 +85,11 @@ export function createAppLockBridgeHarness(options: HarnessOptions) {
       });
       return { ok: true } satisfies UnlockResult;
     },
-    requestAppLockReset: async () => {
+    requestAppLockReset: async (currentPassword) => {
       resetCount += 1;
+      resetAttempts.push(currentPassword);
+      if (!currentPassword) return { ok: false, error: "empty-current" };
+      if (currentPassword !== unlockPassword) return { ok: false, error: "incorrect" };
       setRuntimeState({
         initialized: true,
         locked: false,
@@ -96,6 +100,7 @@ export function createAppLockBridgeHarness(options: HarnessOptions) {
       return {
         enabled: false,
         timeoutMinutes: 15,
+        systemUnlockEnabled: false,
         passwordVerifier: null,
       };
     },
@@ -177,6 +182,9 @@ export function createAppLockBridgeHarness(options: HarnessOptions) {
     },
     getResetCount() {
       return resetCount;
+    },
+    getResetAttempts() {
+      return [...resetAttempts];
     },
     getSystemUnlockCount() {
       return systemUnlockCount;

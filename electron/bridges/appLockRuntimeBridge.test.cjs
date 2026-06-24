@@ -571,6 +571,24 @@ test("disabling app lock removes the saved password verifier", async () => {
   assert.equal(saved.passwordVerifier, null);
 });
 
+test("resetting app lock requires the current password before clearing the verifier", async () => {
+  const { controller, runtimeBridge } = await createControllerHarness();
+  await controller.requestPasswordChange({ nextPassword: "alpha" });
+  await controller.requestEnable();
+  controller.setLocked("manual");
+
+  assert.deepEqual(
+    await controller.requestReset(),
+    { ok: false, error: "empty-current" },
+  );
+  assert.deepEqual(
+    await controller.requestReset("wrong"),
+    { ok: false, error: "incorrect" },
+  );
+  assert.equal(controller.getSettings().passwordVerifier !== null, true);
+  assert.equal(runtimeBridge.getState().locked, true);
+});
+
 test("resetting app lock clears the verifier, unlocks runtime, and broadcasts settings and runtime", async () => {
   const { controller, runtimeBridge, windows } = await createControllerHarness();
   await controller.requestPasswordChange({ nextPassword: "alpha" });
@@ -580,7 +598,7 @@ test("resetting app lock clears the verifier, unlocks runtime, and broadcasts se
     win.sent.length = 0;
   }
 
-  const saved = await controller.requestReset();
+  const saved = await controller.requestReset("alpha");
 
   assert.equal(saved.enabled, false);
   assert.equal(saved.passwordVerifier, null);

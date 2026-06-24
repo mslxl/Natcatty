@@ -72,7 +72,10 @@ function beforePackCursorSdk(context = {}) {
   ensureCursor({ projectDir, platform });
   const buildHelper = context.buildWindowsHelloHelper || buildWindowsHelloHelper;
   if (platform === "win32") {
-    buildHelper(projectDir);
+    const result = buildHelper({ projectDir, platform });
+    if (result?.skipped) {
+      throw new Error(`Windows Hello helper was not built: ${result.reason || "unknown"}`);
+    }
   }
 }
 

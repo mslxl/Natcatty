@@ -21,7 +21,7 @@ interface AppLockOverlayProps {
   onUnlock: (password: string) => Promise<AppLockUnlockResult>;
   systemUnlockStatus?: AppLockSystemUnlockStatus;
   onSystemUnlock?: () => Promise<AppLockSystemUnlockResult>;
-  onResetAppLock: () => Promise<void>;
+  onResetAppLock: (currentPassword: string) => Promise<void>;
 }
 
 export function getAppLockReasonMessageKey(reason: AppLockReason | null): string {
@@ -135,7 +135,7 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
     setIsResetting(true);
     setResetError(false);
     try {
-      await onResetAppLock();
+      await onResetAppLock(password);
     } catch {
       setResetError(true);
       setIsResetting(false);

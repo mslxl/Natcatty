@@ -383,8 +383,11 @@ function createAppLockController({
     return saved;
   }
 
-  async function requestReset() {
+  async function requestReset(currentPassword) {
     const current = getSettings();
+    const verified = await verifyCurrentPassword(current, currentPassword);
+    if (verified !== true) return verified;
+
     const saved = await saveSettings({
       enabled: false,
       timeoutMinutes: current.timeoutMinutes,
@@ -547,7 +550,8 @@ function createAppLockController({
     ipcMain.handle("netcatty:appLock:requestEnable", () => requestEnable());
     ipcMain.handle("netcatty:appLock:requestDisable", (_event, currentPassword) =>
       requestDisable(currentPassword));
-    ipcMain.handle("netcatty:appLock:requestReset", () => requestReset());
+    ipcMain.handle("netcatty:appLock:requestReset", (_event, currentPassword) =>
+      requestReset(currentPassword));
     ipcMain.handle("netcatty:appLock:requestPasswordChange", (_event, input) =>
       requestPasswordChange(input));
     ipcMain.handle("netcatty:appLock:setLocked", (_event, reason) => setLocked(reason));

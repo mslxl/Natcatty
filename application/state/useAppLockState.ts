@@ -196,11 +196,14 @@ export function useAppLockState(settings: AppLockSettings) {
     return result;
   }, [bridge, refreshRuntimeState, refreshSystemUnlockStatus, setRuntimeState]);
 
-  const reset = useCallback(async () => {
+  const reset = useCallback(async (currentPassword: string) => {
     if (typeof bridge?.requestAppLockReset !== 'function') {
       throw new Error('App Lock reset bridge is unavailable');
     }
-    await bridge.requestAppLockReset();
+    const result = await bridge.requestAppLockReset(currentPassword);
+    if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
+      throw new Error(result.error);
+    }
     const unlockedAt = Date.now();
     setRuntimeState((current) => createOptimisticUnlockedRuntimeState(current, unlockedAt));
     await refreshRuntimeState().catch(() => {});

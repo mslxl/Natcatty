@@ -492,8 +492,8 @@ function createPreloadApi(ctx) {
   requestAppLockEnable: () => ipcRenderer.invoke("netcatty:appLock:requestEnable"),
   requestAppLockDisable: (currentPassword) =>
     ipcRenderer.invoke("netcatty:appLock:requestDisable", currentPassword),
-  requestAppLockReset: () =>
-    ipcRenderer.invoke("netcatty:appLock:requestReset"),
+  requestAppLockReset: (currentPassword) =>
+    ipcRenderer.invoke("netcatty:appLock:requestReset", currentPassword),
   requestAppLockPasswordChange: (input) =>
     ipcRenderer.invoke("netcatty:appLock:requestPasswordChange", input),
   setAppLockRuntimeLocked: (reason) =>

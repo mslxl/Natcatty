@@ -67,7 +67,7 @@ test("AppLockOverlay shows incorrect-password error and clears it after editing"
 test("AppLockOverlay reveals reset action after clicking Netcatty logo five times", async () => {
   const dom = installDomEnvironment();
   const renderer = await createDomRenderer(dom.document);
-  let resetCount = 0;
+  const resetAttempts: string[] = [];
 
   try {
     await renderer.render(
@@ -78,13 +78,23 @@ test("AppLockOverlay reveals reset action after clicking Netcatty logo five time
           locked: true,
           reason: "manual",
           onUnlock: async () => ({ ok: false, error: "incorrect" as const }),
-          onResetAppLock: async () => {
-            resetCount += 1;
+          onResetAppLock: async (currentPassword) => {
+            resetAttempts.push(currentPassword);
           },
         }),
       ),
     );
     await flushEffects();
+
+    const input = dom.document.getElementById("app-lock-password") as HTMLInputElement | null;
+    assert.ok(input);
+    const setInputValue = Object.getOwnPropertyDescriptor(
+      dom.window.HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    assert.ok(setInputValue);
+    setInputValue.call(input, "secret");
+    await dispatchDomEvent(input, new dom.window.Event("input", { bubbles: true }));
 
     assert.doesNotMatch(dom.document.body.textContent ?? "", /Reset App Lock/i);
     const logoButton = dom.document.querySelector("[data-testid='app-lock-logo-easter-egg']");
@@ -104,7 +114,7 @@ test("AppLockOverlay reveals reset action after clicking Netcatty logo five time
     await flushEffects();
     await flushEffects();
 
-    assert.equal(resetCount, 1);
+    assert.deepEqual(resetAttempts, ["secret"]);
   } finally {
     await renderer.unmount();
     dom.cleanup();
@@ -152,7 +162,7 @@ test("AppLockOverlay reset controls do not submit the unlock form", async () => 
   const dom = installDomEnvironment();
   const renderer = await createDomRenderer(dom.document);
   let unlockCount = 0;
-  let resetCount = 0;
+  const resetAttempts: string[] = [];
 
   try {
     await renderer.render(
@@ -166,13 +176,23 @@ test("AppLockOverlay reset controls do not submit the unlock form", async () => 
             unlockCount += 1;
             return { ok: false, error: "incorrect" as const };
           },
-          onResetAppLock: async () => {
-            resetCount += 1;
+          onResetAppLock: async (currentPassword) => {
+            resetAttempts.push(currentPassword);
           },
         }),
       ),
     );
     await flushEffects();
+
+    const input = dom.document.getElementById("app-lock-password") as HTMLInputElement | null;
+    assert.ok(input);
+    const setInputValue = Object.getOwnPropertyDescriptor(
+      dom.window.HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    assert.ok(setInputValue);
+    setInputValue.call(input, "secret");
+    await dispatchDomEvent(input, new dom.window.Event("input", { bubbles: true }));
 
     assert.doesNotMatch(dom.document.body.textContent ?? "", /forgot password/i);
     const logoButton = dom.document.querySelector("[data-testid='app-lock-logo-easter-egg']");
@@ -188,7 +208,7 @@ test("AppLockOverlay reset controls do not submit the unlock form", async () => 
     await dispatchDomEvent(cancelButton, new dom.window.MouseEvent("click", { bubbles: true }));
     await flushEffects();
     assert.equal(unlockCount, 0);
-    assert.equal(resetCount, 0);
+    assert.deepEqual(resetAttempts, []);
 
     for (let index = 0; index < 5; index += 1) {
       await dispatchDomEvent(logoButton, new dom.window.MouseEvent("click", { bubbles: true }));
@@ -202,7 +222,7 @@ test("AppLockOverlay reset controls do not submit the unlock form", async () => 
     await flushEffects();
 
     assert.equal(unlockCount, 0);
-    assert.equal(resetCount, 1);
+    assert.deepEqual(resetAttempts, ["secret"]);
   } finally {
     await renderer.unmount();
     dom.cleanup();
