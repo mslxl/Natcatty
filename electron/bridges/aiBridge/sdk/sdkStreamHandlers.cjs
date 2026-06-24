@@ -4,6 +4,9 @@ const { getDriver, listBackends } = require("./index.cjs");
 const { buildSdkAgentEnv } = require("./env.cjs");
 const { buildInjectedMcpServers } = require("./injectMcp.cjs");
 const { createStreamEmitter } = require("./emit.cjs");
+const { buildNetcattySkillsOpenCodePathAllowlist } = require("./netcattySkillsOpenCodePermissions.cjs");
+const { getToolCliStateDir } = require("../../../cli/discoveryPath.cjs");
+const tempDirBridge = require("../../tempDirBridge.cjs");
 const { realpathSync } = require("node:fs");
 
 const VALID_BACKENDS = new Set(listBackends());
@@ -404,6 +407,22 @@ function registerSdkStreamHandlers(ctx) {
               }
             },
           };
+          const skillsPathAllowlist = effectiveMode === "skills" && backendKey === "opencode"
+            ? buildNetcattySkillsOpenCodePathAllowlist({
+              launcherPath: NETCATTY_TOOL_LAUNCHER_PATH,
+              cliScriptPath: NETCATTY_TOOL_CLI_PATH,
+              skillPath: NETCATTY_TOOL_SKILL_PATH,
+              discoveryFilePath: cliDiscoveryFilePath || undefined,
+              cliStateDir: cliDiscoveryFilePath
+                ? undefined
+                : getToolCliStateDir({ userDataDir: electronModule?.getPath?.("userData") }),
+              runtimeBinaryPath: process.execPath,
+              tempDir: tempDirBridge.getTempDir(),
+              extraFilePaths: stagedAttachments
+                .map((attachment) => attachment?.filePath)
+                .filter(Boolean),
+            })
+            : undefined;
           const result = await driver.runTurn({
             prompt: backendKey === "opencode" ? turnPrompt : contextualPrompt,
             systemPrompt: backendKey === "opencode" ? systemContext : undefined,
@@ -414,6 +433,7 @@ function registerSdkStreamHandlers(ctx) {
             injectedMcpServers,
             claudeSettings,
             toolIntegrationMode: effectiveMode,
+            skillsPathAllowlist,
             emitter: driverEmitter,
             signal: abortController.signal,
             abortController,
