@@ -125,6 +125,10 @@ test("keeps clear-screen inside sync blocks when stripping is disabled", () => {
   );
 });
 
+test("isTerminalViewportScrolledUp is false when buffer state is unavailable", () => {
+  assert.equal(isTerminalViewportScrolledUp({} as never), false);
+});
+
 test("isTerminalViewportScrolledUp is false on alternate-screen buffers", () => {
   const term = {
     rows: 24,

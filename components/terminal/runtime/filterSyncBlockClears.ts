@@ -125,8 +125,8 @@ export const createSyncBlockFilterState = (): SyncBlockFilterState => ({
 });
 
 export const isTerminalViewportScrolledUp = (term: XTerm): boolean => {
-  const buffer = term.buffer.active;
-  if (buffer.type === "alternate") {
+  const buffer = term.buffer?.active;
+  if (!buffer || buffer.type === "alternate") {
     return false;
   }
 
