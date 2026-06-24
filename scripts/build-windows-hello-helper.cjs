@@ -8,6 +8,41 @@ function findCompiler(env = process.env) {
   return "cl.exe";
 }
 
+function quoteCmdArg(value) {
+  return `"${String(value).replace(/"/g, '\\"')}"`;
+}
+
+function visualStudioDevCmdCandidates(env = process.env) {
+  const candidates = [];
+  if (env.VSINSTALLDIR) {
+    candidates.push(path.win32.join(env.VSINSTALLDIR, "Common7", "Tools", "VsDevCmd.bat"));
+  }
+
+  const programFilesRoots = [
+    env.ProgramFiles,
+    env["ProgramFiles(x86)"],
+    "C:\\Program Files",
+    "C:\\Program Files (x86)",
+  ].filter(Boolean);
+  const versions = ["2026", "2022", "2019"];
+  const editions = ["Enterprise", "Professional", "Community", "BuildTools", "Preview"];
+  for (const root of programFilesRoots) {
+    for (const version of versions) {
+      for (const edition of editions) {
+        candidates.push(
+          path.win32.join(root, "Microsoft Visual Studio", version, edition, "Common7", "Tools", "VsDevCmd.bat"),
+        );
+      }
+    }
+  }
+
+  return [...new Set(candidates)];
+}
+
+function findVisualStudioDevCmd(env = process.env, existsSync = fs.existsSync) {
+  return visualStudioDevCmdCandidates(env).find((candidate) => existsSync(candidate)) || null;
+}
+
 function normalizeWindowsHelperArch(arch) {
   if (arch === "x64" || arch === "arm64") return arch;
   if (arch === 1 || arch === "1") return "x64";
@@ -37,6 +72,7 @@ function buildWindowsHelloHelper({
   env = process.env,
   run = execFileSync,
   mkdir = fs.mkdirSync,
+  existsSync = fs.existsSync,
   readMachine = readPeMachine,
   logger = console,
 } = {}) {
@@ -44,29 +80,49 @@ function buildWindowsHelloHelper({
   const targetArch = normalizeWindowsHelperArch(arch);
   if (!targetArch) return { skipped: true, reason: "unsupported-arch" };
 
-  const sourcePath = path.join(projectDir, "electron", "bridges", "windowsHelloHelper", "NetcattyWindowsHello.cpp");
-  const outputDir = path.join(projectDir, "electron", "bridges", "windowsHelloHelper", "build", targetArch);
-  const outputPath = path.join(outputDir, "NetcattyWindowsHello.exe");
+  const pathApi = platform === "win32" ? path.win32 : path;
+  const sourcePath = pathApi.join(projectDir, "electron", "bridges", "windowsHelloHelper", "NetcattyWindowsHello.cpp");
+  const outputDir = pathApi.join(projectDir, "electron", "bridges", "windowsHelloHelper", "build", targetArch);
+  const outputPath = pathApi.join(outputDir, "NetcattyWindowsHello.exe");
   mkdir(outputDir, { recursive: true });
 
   const compiler = findCompiler(env);
   const machine = targetArch === "arm64" ? "ARM64" : "X64";
+  const compilerArgs = [
+    "/nologo",
+    "/EHsc",
+    "/std:c++17",
+    sourcePath,
+    "/Fe:" + outputPath,
+    "/link",
+    "/MACHINE:" + machine,
+    "runtimeobject.lib",
+    "windowsapp.lib",
+  ];
   try {
-    run(compiler, [
-      "/nologo",
-      "/EHsc",
-      "/std:c++17",
-      sourcePath,
-      "/Fe:" + outputPath,
-      "/link",
-      "/MACHINE:" + machine,
-      "runtimeobject.lib",
-      "windowsapp.lib",
-    ], {
-      cwd: projectDir,
-      stdio: "inherit",
-      env,
-    });
+    const vsDevCmd = compiler === "cl.exe" ? findVisualStudioDevCmd(env, existsSync) : null;
+    if (vsDevCmd) {
+      const devArch = targetArch === "arm64" ? "arm64" : "x64";
+      const compileCommand = [
+        quoteCmdArg(vsDevCmd),
+        `-arch=${devArch}`,
+        "-host_arch=x64",
+        "&&",
+        quoteCmdArg(compiler),
+        ...compilerArgs.map(quoteCmdArg),
+      ].join(" ");
+      run("cmd.exe", ["/d", "/s", "/c", compileCommand], {
+        cwd: projectDir,
+        stdio: "inherit",
+        env,
+      });
+    } else {
+      run(compiler, compilerArgs, {
+        cwd: projectDir,
+        stdio: "inherit",
+        env,
+      });
+    }
   } catch (err) {
     logger.warn?.(`[windowsHelloHelper] Failed to build Windows Hello helper: ${err?.message || err}`);
     return { skipped: true, reason: "compiler-unavailable" };
@@ -94,7 +150,9 @@ if (require.main === module) {
 module.exports = {
   buildWindowsHelloHelper,
   findCompiler,
+  findVisualStudioDevCmd,
   getExpectedPeMachine,
   normalizeWindowsHelperArch,
   readPeMachine,
+  visualStudioDevCmdCandidates,
 };

@@ -40,13 +40,40 @@ test("buildWindowsHelloHelper writes target architecture helper into an arch-spe
   assert.equal(result.skipped, false);
   assert.equal(
     result.outputPath,
-    path.join("/repo", "electron", "bridges", "windowsHelloHelper", "build", "arm64", "NetcattyWindowsHello.exe"),
+    path.win32.join("\\repo", "electron", "bridges", "windowsHelloHelper", "build", "arm64", "NetcattyWindowsHello.exe"),
   );
   assert.match(
     calls[0][1].join(" "),
     /\/Fe:.*windowsHelloHelper.*build.*arm64.*NetcattyWindowsHello\.exe/,
   );
   assert.deepEqual(calls[0][1].slice(-4), ["/link", "/MACHINE:ARM64", "runtimeobject.lib", "windowsapp.lib"]);
+});
+
+test("buildWindowsHelloHelper initializes the Visual Studio developer environment when cl is not already on PATH", () => {
+  const calls = [];
+  const vsDevCmd = "C:\\Program Files\\Microsoft Visual Studio\\2026\\Enterprise\\Common7\\Tools\\VsDevCmd.bat";
+  const result = buildWindowsHelloHelper({
+    projectDir: "D:\\a\\Netcatty\\Netcatty",
+    platform: "win32",
+    arch: "x64",
+    env: {
+      ProgramFiles: "C:\\Program Files",
+      "ProgramFiles(x86)": "C:\\Program Files (x86)",
+    },
+    existsSync: (candidate) => candidate === vsDevCmd,
+    run: (...args) => calls.push(args),
+    mkdir: () => {},
+    readMachine: () => 0x8664,
+    logger: { warn() {} },
+  });
+
+  assert.equal(result.skipped, false);
+  assert.equal(calls[0][0], "cmd.exe");
+  assert.deepEqual(calls[0][1].slice(0, 3), ["/d", "/s", "/c"]);
+  assert.match(calls[0][1][3], /VsDevCmd\.bat/);
+  assert.match(calls[0][1][3], /-arch=x64/);
+  assert.match(calls[0][1][3], /cl\.exe/);
+  assert.match(calls[0][1][3], /\/MACHINE:X64/);
 });
 
 test("buildWindowsHelloHelper rejects unsupported target architectures on Windows", () => {
