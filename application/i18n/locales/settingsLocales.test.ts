@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { DEFAULT_KEY_BINDINGS } from "../../../domain/models/keyBindings.ts";
 import en from "./en.ts";
+import { HOST_ICON_COLORS, HOST_ICON_IDS } from "../../../domain/hostIcon.ts";
 import zhCN from "./zh-CN.ts";
 import ru from "./ru.ts";
 
@@ -116,5 +117,26 @@ test("all app lock strings are translated in every supported locale", () => {
   for (const locale of APP_LOCK_LOCALES) {
     const missing = keys.filter((key) => !locale.messages[key]);
     assert.deepEqual(missing, [], `${locale.name} is missing app lock labels`);
+  }
+});
+
+test("localized vault messages include host icon labels", () => {
+  const keys = [
+    "hostDetails.icon.title",
+    "hostDetails.icon.desc",
+    "hostDetails.icon.mode.auto",
+    "hostDetails.icon.mode.custom",
+    "hostDetails.icon.reset",
+    "hostDetails.icon.showLibrary",
+    "hostDetails.icon.hideLibrary",
+    "hostDetails.icon.autoUsesDistro",
+    "hostDetails.icon.customOverridesDistro",
+    ...HOST_ICON_IDS.map((id) => `hostDetails.icon.option.${id}`),
+    ...HOST_ICON_COLORS.map((color) => `hostDetails.icon.color.${color.id}`),
+  ];
+
+  for (const locale of LOCALIZED_SETTINGS_LOCALES) {
+    const missing = keys.filter((key) => !locale.messages[key]);
+    assert.deepEqual(missing, [], `${locale.name} is missing host icon labels`);
   }
 });

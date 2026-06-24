@@ -98,6 +98,12 @@ interface SettingsSystemTabProps {
   setSessionLogsTimestampsEnabled: (enabled: boolean) => void;
   sshDebugLogsEnabled: boolean;
   setSshDebugLogsEnabled: (enabled: boolean) => void;
+  sshDeepLinkEnabled: boolean;
+  setSshDeepLinkEnabled: (enabled: boolean) => void;
+  restorePreviousSession: boolean;
+  setRestorePreviousSession: (enabled: boolean) => void;
+  restoreTerminalCwd: boolean;
+  setRestoreTerminalCwd: (enabled: boolean) => void;
   toggleWindowHotkey: string;
   setToggleWindowHotkey: (hotkey: string) => void;
   closeToTray: boolean;
@@ -130,6 +136,12 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   setSessionLogsTimestampsEnabled,
   sshDebugLogsEnabled,
   setSshDebugLogsEnabled,
+  sshDeepLinkEnabled,
+  setSshDeepLinkEnabled,
+  restorePreviousSession,
+  setRestorePreviousSession,
+  restoreTerminalCwd,
+  setRestoreTerminalCwd,
   toggleWindowHotkey,
   setToggleWindowHotkey,
   closeToTray,
@@ -1084,6 +1096,28 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
               {t("settings.system.tempDirectoryHint")}
             </p>
 
+          <SectionHeader title={t("settings.sessionRestore.title")} />
+            <SettingCard className="space-y-4 py-4">
+              <SettingRow
+                label={t("settings.sessionRestore.restorePreviousSession")}
+                description={t("settings.sessionRestore.restorePreviousSessionDesc")}
+              >
+                <Toggle
+                  checked={restorePreviousSession}
+                  onChange={setRestorePreviousSession}
+                />
+              </SettingRow>
+              <SettingRow
+                label={t("settings.sessionRestore.restoreTerminalCwd")}
+                description={t("settings.sessionRestore.restoreTerminalCwdDesc")}
+              >
+                <Toggle
+                  checked={restoreTerminalCwd}
+                  onChange={setRestoreTerminalCwd}
+                />
+              </SettingRow>
+            </SettingCard>
+
           <SectionHeader title={t("settings.sessionLogs.title")} />
             <SettingCard className="space-y-4 py-4">
               {/* Enable Toggle */}
@@ -1166,6 +1200,20 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
             <p className="text-xs text-muted-foreground">
               {t("settings.sessionLogs.hint")}
             </p>
+
+          <SectionHeader title={t('settings.sshDeepLink.title')} />
+            <SettingCard>
+              <SettingRow
+                label={t('settings.sshDeepLink.enable')}
+                description={t('settings.sshDeepLink.enableDesc')}
+              >
+                <Toggle
+                  checked={sshDeepLinkEnabled}
+                  onChange={setSshDeepLinkEnabled}
+                  ariaLabel={t('settings.sshDeepLink.enable')}
+                />
+              </SettingRow>
+            </SettingCard>
 
           <SectionHeader title={t("settings.sshDebugLogs.title")} />
             <SettingCard className="min-w-0 max-w-full overflow-hidden space-y-4 py-4">

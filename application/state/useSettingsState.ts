@@ -37,10 +37,13 @@ import {
   STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE,
   STORAGE_KEY_EDITOR_WORD_WRAP,
   STORAGE_KEY_SESSION_LOGS_ENABLED,
+  STORAGE_KEY_RESTORE_PREVIOUS_SESSION,
+  STORAGE_KEY_RESTORE_TERMINAL_CWD,
   STORAGE_KEY_SESSION_LOGS_DIR,
   STORAGE_KEY_SESSION_LOGS_FORMAT,
   STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED,
   STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED,
+  STORAGE_KEY_SSH_DEEP_LINK_ENABLED,
   STORAGE_KEY_TOGGLE_WINDOW_HOTKEY,
   STORAGE_KEY_CLOSE_TO_TRAY,
   STORAGE_KEY_GLOBAL_HOTKEY_ENABLED,
@@ -68,10 +71,11 @@ import { TERMINAL_THEME_AUTO } from '../../domain/terminalAppearance';
 import { customThemeStore, useCustomThemes } from '../state/customThemeStore';
 import { DEFAULT_FONT_SIZE } from '../../infrastructure/config/fonts';
 import { getUiThemeById } from '../../infrastructure/config/uiThemes';
-import { DEFAULT_UI_FONT_ID } from '../../infrastructure/config/uiFonts';
+import { DEFAULT_UI_FONT_ID, withWindowsEmojiFallback } from '../../infrastructure/config/uiFonts';
 import { uiFontStore, useUIFontsLoaded } from './uiFontStore';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
+import { resolveSftpTransferConcurrency } from './sftp/transferConcurrency';
 import {
   DEFAULT_ACCENT_MODE,
   DEFAULT_CUSTOM_ACCENT,
@@ -97,6 +101,7 @@ import {
   DEFAULT_SHELL_ONLY_TAB_NUMBER_SHORTCUTS,
   DEFAULT_DISABLE_TERMINAL_FONT_ZOOM,
   DEFAULT_SSH_DEBUG_LOGS_ENABLED,
+  DEFAULT_SSH_DEEP_LINK_ENABLED,
   DEFAULT_TERMINAL_THEME,
   DEFAULT_THEME,
   DEFAULT_WINDOW_OPACITY,
@@ -113,13 +118,17 @@ import {
   readStoredString,
   serializeTerminalSettings,
 } from './settingsStateDefaults';
+import { resolveRestorePreviousSessionSetting, resolveRestoreTerminalCwdSetting } from './sessionRestoreSettings';
+import { sessionRestoreStorage } from './sessionRestoreStorage';
 import { useSettingsStorageSync } from './settingsStorageSync';
 import { useSettingsIpcSync } from './settingsIpcSync';
 import { resolveCurrentTerminalTheme } from './settingsTerminalTheme';
 import { useSystemSettingsEffects } from './systemSettingsEffects';
 import { applyCustomCssToDocument } from '../../lib/customCss';
 
-export const useSettingsState = () => {
+export const useSettingsState = (options: { enableSettingsSync?: boolean; enableSystemEffects?: boolean } = {}) => {
+  const enableSettingsSync = options.enableSettingsSync !== false;
+  const enableSystemEffects = options.enableSystemEffects !== false;
   const initialCustomKeyBindingsRecord =
     parseCustomKeyBindingsStorageRecord(localStorageAdapter.readString(STORAGE_KEY_CUSTOM_KEY_BINDINGS));
   const uiFontsLoaded = useUIFontsLoaded();
@@ -260,9 +269,18 @@ export const useSettingsState = () => {
     const stored = localStorageAdapter.readBoolean(STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM);
     return stored ?? DEFAULT_DISABLE_TERMINAL_FONT_ZOOM;
   });
+  const [restorePreviousSession, setRestorePreviousSessionState] = useState<boolean>(() => {
+    const stored = localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION);
+    return resolveRestorePreviousSessionSetting(stored);
+  });
+  const [restoreTerminalCwd, setRestoreTerminalCwdState] = useState<boolean>(() => {
+    const stored = localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_TERMINAL_CWD);
+    return resolveRestoreTerminalCwdSetting(stored);
+  });
   const [sftpTransferConcurrency, setSftpTransferConcurrencyState] = useState<number>(() => {
-    const stored = localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY);
-    return stored != null && stored >= 1 && stored <= 16 ? stored : 4;
+    return resolveSftpTransferConcurrency(() =>
+      localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
+    );
   });
 
   // Editor Settings
@@ -291,6 +309,10 @@ export const useSettingsState = () => {
   const [sshDebugLogsEnabled, setSshDebugLogsEnabled] = useState<boolean>(() => {
     const stored = readStoredString(STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED);
     return stored === 'true' ? true : DEFAULT_SSH_DEBUG_LOGS_ENABLED;
+  });
+  const [sshDeepLinkEnabled, setSshDeepLinkEnabledState] = useState<boolean>(() => {
+    const stored = localStorageAdapter.readBoolean(STORAGE_KEY_SSH_DEEP_LINK_ENABLED);
+    return stored ?? DEFAULT_SSH_DEEP_LINK_ENABLED;
   });
 
   // Global Toggle Window Settings (Quake Mode)
@@ -338,6 +360,9 @@ export const useSettingsState = () => {
   const customKeyBindingsOriginRef = useRef(initialCustomKeyBindingsRecord?.origin || 'legacy');
   const customKeyBindingsLocalOriginRef = useRef(createCustomKeyBindingsSyncOrigin());
   const customKeyBindingsMutationSourceRef = useRef<'local' | 'incoming'>('local');
+  const sshDeepLinkMutationSourceRef = useRef<'local' | 'incoming'>('local');
+  const sshDeepLinkEnabledRef = useRef(sshDeepLinkEnabled);
+  const sshDeepLinkSetRequestIdRef = useRef(0);
 
   // Fix 1: Mount guard — skip redundant IPC broadcasts & localStorage writes on initial mount.
   // Set to true by the LAST useEffect declaration; all persist effects see false on first render.
@@ -421,14 +446,24 @@ export const useSettingsState = () => {
     });
   }, []);
 
+  const applyIncomingSshDeepLinkEnabled = useCallback((enabled: boolean) => {
+    sshDeepLinkSetRequestIdRef.current += 1;
+    setSshDeepLinkEnabledState((prev) => {
+      if (prev === enabled) return prev;
+      sshDeepLinkMutationSourceRef.current = 'incoming';
+      return enabled;
+    });
+  }, []);
+
   // Helper to notify other windows about settings changes via IPC
   const notifySettingsChanged = useCallback((key: string, value: unknown) => {
+    if (!enableSettingsSync) return;
     try {
       netcattyBridge.get()?.notifySettingsChanged?.({ key, value });
     } catch {
       // ignore - bridge may not be available
     }
-  }, []);
+  }, [enableSettingsSync]);
 
 
   const setSftpTransferConcurrency = useCallback((value: number) => {
@@ -578,6 +613,8 @@ export const useSettingsState = () => {
     if (storedSshDebugLogsEnabled === 'true' || storedSshDebugLogsEnabled === 'false') {
       setSshDebugLogsEnabled(storedSshDebugLogsEnabled === 'true');
     }
+    const storedSshDeepLinkEnabled = localStorageAdapter.readBoolean(STORAGE_KEY_SSH_DEEP_LINK_ENABLED);
+    applyIncomingSshDeepLinkEnabled(storedSshDeepLinkEnabled ?? DEFAULT_SSH_DEEP_LINK_ENABLED);
 
     // SFTP
     const storedDblClick = readStoredString(STORAGE_KEY_SFTP_DOUBLE_CLICK_BEHAVIOR);
@@ -608,6 +645,10 @@ export const useSettingsState = () => {
     setShellOnlyTabNumberShortcutsState(storedShellOnlyTabNumberShortcuts ?? DEFAULT_SHELL_ONLY_TAB_NUMBER_SHORTCUTS);
     const storedDisableTerminalFontZoom = localStorageAdapter.readBoolean(STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM);
     setDisableTerminalFontZoomState(storedDisableTerminalFontZoom ?? DEFAULT_DISABLE_TERMINAL_FONT_ZOOM);
+    const storedRestorePreviousSession = localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION);
+    setRestorePreviousSessionState(resolveRestorePreviousSessionSetting(storedRestorePreviousSession));
+    const storedRestoreTerminalCwd = localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_TERMINAL_CWD);
+    setRestoreTerminalCwdState(resolveRestoreTerminalCwdSetting(storedRestoreTerminalCwd));
 
     // Workspace focus style
     const storedFocusStyle = readStoredString(STORAGE_KEY_WORKSPACE_FOCUS_STYLE);
@@ -615,7 +656,7 @@ export const useSettingsState = () => {
 
     // Custom terminal themes
     customThemeStore.loadFromStorage();
-  }, [applyIncomingCustomKeyBindings, syncAppearanceFromStorage, syncCustomCssFromStorage, setTerminalSettings]);
+  }, [applyIncomingCustomKeyBindings, applyIncomingSshDeepLinkEnabled, syncAppearanceFromStorage, syncCustomCssFromStorage, setTerminalSettings]);
 
   useLayoutEffect(() => {
     const tokens = getUiThemeById(resolvedTheme, resolvedTheme === 'dark' ? darkUiThemeId : lightUiThemeId).tokens;
@@ -662,7 +703,7 @@ export const useSettingsState = () => {
   // Re-run when fonts finish loading to get correct family for local fonts
   useLayoutEffect(() => {
     const font = uiFontStore.getFontById(uiFontFamilyId);
-    document.documentElement.style.setProperty('--font-sans', font.family);
+    document.documentElement.style.setProperty('--font-sans', withWindowsEmojiFallback(font.family));
     localStorageAdapter.writeString(STORAGE_KEY_UI_FONT_FAMILY, uiFontFamilyId);
     // Fix 1: Skip IPC broadcast on initial mount
     if (persistMountedRef.current) {
@@ -671,6 +712,7 @@ export const useSettingsState = () => {
   }, [uiFontFamilyId, uiFontsLoaded, notifySettingsChanged]);
 
   useSettingsIpcSync({
+    enabled: enableSettingsSync,
     syncAppearanceFromStorage,
     syncCustomCssFromStorage,
     setUiLanguage,
@@ -688,6 +730,7 @@ export const useSettingsState = () => {
     setSessionLogsFormat,
     setSessionLogsTimestampsEnabled,
     setSshDebugLogsEnabled,
+    setSshDeepLinkEnabledState: applyIncomingSshDeepLinkEnabled,
     setHotkeyScheme,
     applyIncomingCustomKeyBindings,
     setIsHotkeyRecordingState,
@@ -700,11 +743,14 @@ export const useSettingsState = () => {
     setWorkspaceFocusStyleState,
     setShowHostTreeSidebarState,
     setDisableTerminalFontZoomState,
+    setRestorePreviousSessionState,
+    setRestoreTerminalCwdState,
     setSftpTransferConcurrencyState,
     setAppLockSettingsState,
   });
 
   useEffect(() => {
+    if (!enableSettingsSync) return;
     const bridge = netcattyBridge.get();
     if (!bridge?.onLanguageChanged) return;
     const unsubscribe = bridge.onLanguageChanged((language) => {
@@ -719,7 +765,7 @@ export const useSettingsState = () => {
         // ignore
       }
     };
-  }, []);
+  }, [enableSettingsSync]);
 
   useEffect(() => {
     const bridge = netcattyBridge.get();
@@ -741,14 +787,15 @@ export const useSettingsState = () => {
   }, []);
 
   useSettingsStorageSync({
+    enabled: enableSettingsSync,
     theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent,
     customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage,
     terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
     appLockSettings,
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
-    showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, shellOnlyTabNumberShortcuts, disableTerminalFontZoom,
-    editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled,
+    showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, shellOnlyTabNumberShortcuts, disableTerminalFontZoom, restorePreviousSession, restoreTerminalCwd,
+    editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled,
     globalHotkeyEnabled, autoUpdateEnabled, windowOpacity,
     setTheme, setLightUiThemeId, setDarkUiThemeId, setAccentMode, setCustomAccent,
     setCustomCSS, setUiFontFamilyId, setHotkeyScheme, setUiLanguage,
@@ -757,8 +804,8 @@ export const useSettingsState = () => {
     setAppLockSettingsState,
     setSftpDoubleClickBehavior, setSftpAutoSync, setSftpShowHiddenFiles,
     setSftpUseCompressedUpload, setSftpAutoOpenSidebar, setSftpFollowTerminalCwd, setSftpDefaultViewMode,
-    setShowRecentHostsState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setShellOnlyTabNumberShortcutsState, setDisableTerminalFontZoomState,
-    setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled,
+    setShowRecentHostsState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setShellOnlyTabNumberShortcutsState, setDisableTerminalFontZoomState, setRestorePreviousSessionState, setRestoreTerminalCwdState,
+    setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled, setSshDeepLinkEnabledState: applyIncomingSshDeepLinkEnabled,
     setGlobalHotkeyEnabled, setWindowOpacity, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
     setSftpTransferConcurrencyState, applyIncomingCustomKeyBindings, mergeIncomingTerminalSettings,
   });
@@ -885,6 +932,23 @@ export const useSettingsState = () => {
     notifySettingsChanged(STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM, enabled);
   }, [notifySettingsChanged]);
 
+  const setRestorePreviousSession = useCallback((enabled: boolean) => {
+    setRestorePreviousSessionState(enabled);
+    localStorageAdapter.writeBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION, enabled);
+    if (!enabled) {
+      sessionRestoreStorage.clear();
+    }
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_RESTORE_PREVIOUS_SESSION, enabled);
+  }, [notifySettingsChanged]);
+
+  const setRestoreTerminalCwd = useCallback((enabled: boolean) => {
+    setRestoreTerminalCwdState(enabled);
+    localStorageAdapter.writeBoolean(STORAGE_KEY_RESTORE_TERMINAL_CWD, enabled);
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_RESTORE_TERMINAL_CWD, enabled);
+  }, [notifySettingsChanged]);
+
   // Apply and persist custom CSS
   useEffect(() => {
     applyCustomCssToDocument(customCSS);
@@ -974,7 +1038,68 @@ export const useSettingsState = () => {
     notifySettingsChanged(STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED, sshDebugLogsEnabled);
   }, [sshDebugLogsEnabled, notifySettingsChanged]);
 
+  useEffect(() => {
+    sshDeepLinkEnabledRef.current = sshDeepLinkEnabled;
+  }, [sshDeepLinkEnabled]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const requestIdAtStart = sshDeepLinkSetRequestIdRef.current;
+    const bridge = netcattyBridge.get();
+    if (!bridge?.getSshDeepLinkEnabled) return;
+    void bridge.getSshDeepLinkEnabled().then((enabled) => {
+      if (cancelled || typeof enabled !== 'boolean') return;
+      if (sshDeepLinkSetRequestIdRef.current !== requestIdAtStart) return;
+      sshDeepLinkMutationSourceRef.current = 'incoming';
+      setSshDeepLinkEnabledState((prev) => (prev === enabled ? prev : enabled));
+      localStorageAdapter.writeBoolean(STORAGE_KEY_SSH_DEEP_LINK_ENABLED, enabled);
+    }).catch(() => {
+      // The renderer can still use its cached setting when the bridge is unavailable.
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const setSshDeepLinkEnabled = useCallback((enabled: boolean) => {
+    const previous = sshDeepLinkEnabledRef.current;
+    const requestId = sshDeepLinkSetRequestIdRef.current + 1;
+    sshDeepLinkSetRequestIdRef.current = requestId;
+    sshDeepLinkMutationSourceRef.current = 'local';
+    setSshDeepLinkEnabledState(enabled);
+
+    const bridge = netcattyBridge.get();
+    if (!bridge?.setSshDeepLinkEnabled) return;
+    void bridge.setSshDeepLinkEnabled(enabled).then((result) => {
+      if (sshDeepLinkSetRequestIdRef.current !== requestId) return;
+      const success = typeof result === 'object' ? result.success : result;
+      if (success !== false) return;
+      const finalEnabled = typeof result === 'object' && typeof result.enabled === 'boolean'
+        ? result.enabled
+        : previous;
+      sshDeepLinkMutationSourceRef.current = 'incoming';
+      setSshDeepLinkEnabledState(finalEnabled);
+      localStorageAdapter.writeBoolean(STORAGE_KEY_SSH_DEEP_LINK_ENABLED, finalEnabled);
+    }).catch(() => {
+      if (sshDeepLinkSetRequestIdRef.current !== requestId) return;
+      sshDeepLinkMutationSourceRef.current = 'incoming';
+      setSshDeepLinkEnabledState(previous);
+      localStorageAdapter.writeBoolean(STORAGE_KEY_SSH_DEEP_LINK_ENABLED, previous);
+    });
+  }, []);
+
+  useEffect(() => {
+    localStorageAdapter.writeBoolean(STORAGE_KEY_SSH_DEEP_LINK_ENABLED, sshDeepLinkEnabled);
+    if (sshDeepLinkMutationSourceRef.current === 'incoming') {
+      sshDeepLinkMutationSourceRef.current = 'local';
+      return;
+    }
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_SSH_DEEP_LINK_ENABLED, sshDeepLinkEnabled);
+  }, [sshDeepLinkEnabled, notifySettingsChanged]);
+
   useSystemSettingsEffects({
+    enabled: enableSystemEffects,
     toggleWindowHotkey,
     globalHotkeyEnabled,
     closeToTray,
@@ -1132,6 +1257,10 @@ export const useSettingsState = () => {
     setShellOnlyTabNumberShortcuts,
     disableTerminalFontZoom,
     setDisableTerminalFontZoom,
+    restorePreviousSession,
+    setRestorePreviousSession,
+    restoreTerminalCwd,
+    setRestoreTerminalCwd,
     sftpTransferConcurrency,
     setSftpTransferConcurrency,
     // Editor Settings
@@ -1152,6 +1281,8 @@ export const useSettingsState = () => {
     setSessionLogsTimestampsEnabled,
     sshDebugLogsEnabled,
     setSshDebugLogsEnabled,
+    sshDeepLinkEnabled,
+    setSshDeepLinkEnabled,
     // Global Toggle Window (Quake Mode)
     toggleWindowHotkey,
     setToggleWindowHotkey,
@@ -1177,7 +1308,7 @@ export const useSettingsState = () => {
       customKeyBindings, editorWordWrap,
       sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
       showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, shellOnlyTabNumberShortcuts, disableTerminalFontZoom,
-      customThemes, workspaceFocusStyle, sessionLogsTimestampsEnabled, sshDebugLogsEnabled,
+      customThemes, workspaceFocusStyle, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled,
     ]),
   };
 };
