@@ -5,7 +5,7 @@ const { buildSdkAgentEnv } = require("./env.cjs");
 const { buildInjectedMcpServers } = require("./injectMcp.cjs");
 const { createStreamEmitter } = require("./emit.cjs");
 const { buildNetcattySkillsOpenCodePathAllowlist } = require("./netcattySkillsOpenCodePermissions.cjs");
-const { getToolCliStateDir } = require("../../cli/discoveryPath.cjs");
+const { getToolCliStateDir } = require("../../../cli/discoveryPath.cjs");
 const { realpathSync } = require("node:fs");
 
 const VALID_BACKENDS = new Set(listBackends());
