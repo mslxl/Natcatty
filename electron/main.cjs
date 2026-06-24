@@ -62,6 +62,7 @@ if (!app || !BrowserWindow) {
 const path = require("node:path");
 const os = require("node:os");
 const fs = require("node:fs");
+const { execFile } = require("node:child_process");
 const { getCliDiscoveryFilePath } = require("./cli/discoveryPath.cjs");
 const {
   SSH_DEEP_LINK_CHANNEL,
@@ -143,6 +144,10 @@ const {
   createAppLockController,
   createAppLockRuntimeBridge,
 } = require("./bridges/appLockRuntimeBridge.cjs");
+const {
+  createAppLockSystemAuthBridge,
+  resolveDefaultHelperPath,
+} = require("./bridges/appLockSystemAuthBridge.cjs");
 const {
   emitAppLockReopen,
   handleAppHide,
@@ -409,6 +414,27 @@ const CLOUD_SYNC_PASSWORD_FILE = "netcatty_cloud_sync_master_password_v1";
 let appLockSettingsStore = null;
 const appLockRuntimeBridge = createAppLockRuntimeBridge();
 let appLockController = null;
+
+function getLiveAppLockWindows() {
+  const windowManager = getWindowManager();
+  return [
+    BrowserWindow.getFocusedWindow?.(),
+    ...(windowManager.getMainWindows?.() ?? []),
+    windowManager.getSettingsWindow?.() ?? null,
+    getGlobalShortcutBridge().getTrayPanelWindow?.() ?? null,
+    ...(windowManager.getTerminalPopupWindows?.() ?? []),
+  ].filter((win) => (
+    win &&
+    typeof win.isDestroyed === "function" &&
+    !win.isDestroyed() &&
+    typeof win.getNativeWindowHandle === "function"
+  ));
+}
+
+function getAppLockNativeWindowHandle() {
+  const win = getLiveAppLockWindows()[0] || null;
+  return win ? win.getNativeWindowHandle() : null;
+}
 
 // Key management helpers
 const ensureKeyDir = async () => {
@@ -737,9 +763,17 @@ if (!gotLock) {
       reason: lockOnStartup ? "startup" : null,
       lastActivityAt: Date.now(),
     });
+    const appLockSystemAuthBridge = createAppLockSystemAuthBridge({
+      platform: process.platform,
+      systemPreferences: electronModule.systemPreferences,
+      execFile,
+      helperPath: resolveDefaultHelperPath(),
+      getNativeWindowHandle: getAppLockNativeWindowHandle,
+    });
     appLockController = createAppLockController({
       settingsStore: appLockSettingsStore,
       runtimeBridge: appLockRuntimeBridge,
+      systemAuthBridge: appLockSystemAuthBridge,
       getMainWindows: () => getWindowManager().getMainWindows?.() ?? [],
       getSettingsWindow: () => getWindowManager().getSettingsWindow?.() ?? null,
       getTrayPanelWindow: () => getGlobalShortcutBridge().getTrayPanelWindow?.() ?? null,

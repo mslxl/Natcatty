@@ -236,6 +236,7 @@ module.exports = {
 function createAppLockController({
   settingsStore,
   runtimeBridge,
+  systemAuthBridge = null,
   getMainWindows = () => [],
   getSettingsWindow = () => null,
   getTrayPanelWindow = () => null,
@@ -302,6 +303,43 @@ function createAppLockController({
 
   function getRuntimeState() {
     return runtimeBridge.getState();
+  }
+
+  async function getSystemAuthStatusOnly() {
+    if (!systemAuthBridge || typeof systemAuthBridge.getStatus !== "function") {
+      return {
+        supported: false,
+        available: false,
+        platform: "unsupported",
+        label: null,
+        reason: null,
+      };
+    }
+    try {
+      return await systemAuthBridge.getStatus();
+    } catch {
+      return {
+        supported: false,
+        available: false,
+        platform: "unsupported",
+        label: null,
+        reason: "failed",
+      };
+    }
+  }
+
+  async function getSystemUnlockStatus() {
+    const status = await getSystemAuthStatusOnly();
+    const settings = getSettings();
+    const canLock = canLockFromSettings(settings);
+    return {
+      supported: status.supported === true,
+      available: status.available === true && canLock,
+      enabled: settings.systemUnlockEnabled === true && canLock,
+      platform: status.platform || "unsupported",
+      label: status.label || null,
+      reason: status.reason || null,
+    };
   }
 
   async function saveSettings(nextSettings) {
@@ -392,6 +430,49 @@ function createAppLockController({
     });
   }
 
+  async function verifyCurrentPassword(current, currentPassword) {
+    if (!current.passwordVerifier) return true;
+    if (!currentPassword) return { ok: false, error: "empty-current" };
+    const verified = await verifyAppLockPassword(currentPassword, current.passwordVerifier);
+    if (!verified) return { ok: false, error: "incorrect" };
+    return true;
+  }
+
+  async function setSystemUnlockEnabled(input = {}) {
+    const enabled = input?.enabled === true;
+    const currentPassword = typeof input?.currentPassword === "string" ? input.currentPassword : "";
+    const current = getSettings();
+    if (!canLockFromSettings(current)) {
+      return { ok: false, error: "unavailable" };
+    }
+
+    if (!enabled) {
+      if (runtimeBridge.getState().locked === true && !currentPassword) {
+        return { ok: false, error: "locked" };
+      }
+      if (currentPassword) {
+        const verified = await verifyCurrentPassword(current, currentPassword);
+        if (verified !== true) return verified;
+      }
+      return saveSettings({
+        ...current,
+        systemUnlockEnabled: false,
+      });
+    }
+
+    const verified = await verifyCurrentPassword(current, currentPassword);
+    if (verified !== true) return verified;
+
+    const status = await getSystemAuthStatusOnly();
+    if (status.supported !== true) return { ok: false, error: "unsupported" };
+    if (status.available !== true) return { ok: false, error: "unavailable" };
+
+    return saveSettings({
+      ...current,
+      systemUnlockEnabled: true,
+    });
+  }
+
   function setLocked(reason) {
     if (!canLockFromSettings(getSettings())) {
       return getRuntimeState();
@@ -425,6 +506,33 @@ function createAppLockController({
     return { ok: true };
   }
 
+  async function requestSystemUnlock() {
+    const current = getSettings();
+    if (!canLockFromSettings(current)) return { ok: false, error: "unavailable" };
+    if (current.systemUnlockEnabled !== true) return { ok: false, error: "disabled" };
+    if (runtimeBridge.getState().locked !== true) return { ok: false, error: "not-locked" };
+
+    const status = await getSystemAuthStatusOnly();
+    if (status.supported !== true) return { ok: false, error: "unsupported" };
+    if (status.available !== true) return { ok: false, error: "unavailable" };
+    if (!systemAuthBridge || typeof systemAuthBridge.requestUnlock !== "function") {
+      return { ok: false, error: "unsupported" };
+    }
+
+    const result = await systemAuthBridge.requestUnlock();
+    if (!result || result.ok !== true) {
+      return {
+        ok: false,
+        error: result?.error || "failed",
+      };
+    }
+
+    const nextState = runtimeBridge.unlock();
+    syncIdleTimer();
+    broadcast("netcatty:appLock:runtimeStateChanged", nextState);
+    return { ok: true };
+  }
+
   function reportActivity(timestamp = Date.now()) {
     const nextState = runtimeBridge.recordActivity(timestamp);
     syncIdleTimer();
@@ -445,6 +553,12 @@ function createAppLockController({
     ipcMain.handle("netcatty:appLock:setLocked", (_event, reason) => setLocked(reason));
     ipcMain.handle("netcatty:appLock:requestUnlock", (_event, password) =>
       requestUnlock(password));
+    ipcMain.handle("netcatty:appLock:getSystemUnlockStatus", () =>
+      getSystemUnlockStatus());
+    ipcMain.handle("netcatty:appLock:setSystemUnlockEnabled", (_event, input) =>
+      setSystemUnlockEnabled(input));
+    ipcMain.handle("netcatty:appLock:requestSystemUnlock", () =>
+      requestSystemUnlock());
     ipcMain.handle("netcatty:appLock:reportActivity", () => reportActivity());
   }
 
@@ -458,6 +572,9 @@ function createAppLockController({
     setTimeoutMinutes,
     setLocked,
     requestUnlock,
+    getSystemUnlockStatus,
+    setSystemUnlockEnabled,
+    requestSystemUnlock,
     reportActivity,
     registerHandlers,
     syncIdleTimer,

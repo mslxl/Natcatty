@@ -20,6 +20,23 @@ type AppLockUnlockResult =
   | { ok: true }
   | { ok: false; error: 'empty' | 'incorrect' };
 
+type AppLockSystemUnlockStatus = {
+  supported: boolean;
+  available: boolean;
+  enabled: boolean;
+  platform: 'darwin' | 'win32' | 'unsupported';
+  label: 'Touch ID' | 'Windows Hello' | null;
+  reason: string | null;
+};
+
+type AppLockSystemUnlockResult =
+  | { ok: true }
+  | { ok: false; error: 'disabled' | 'not-locked' | 'unsupported' | 'unavailable' | 'cancelled' | 'failed' };
+
+type AppLockSystemUnlockSettingsResult =
+  | AppLockSettings
+  | { ok: false; error: 'empty-current' | 'incorrect' | 'locked' | 'unsupported' | 'unavailable' };
+
 declare global {
   interface NetcattyBridge {
     setTheme?(theme: 'light' | 'dark' | 'system'): Promise<boolean>;
@@ -66,6 +83,12 @@ declare global {
     }): Promise<AppLockSettings | AppLockSettingsMutationError>;
     setAppLockRuntimeLocked?(reason: Exclude<AppLockRuntimeReason, null>): Promise<AppLockRuntimeState>;
     requestAppLockUnlock?(password: string): Promise<AppLockUnlockResult>;
+    getAppLockSystemUnlockStatus?(): Promise<AppLockSystemUnlockStatus>;
+    setAppLockSystemUnlockEnabled?(input: {
+      enabled: boolean;
+      currentPassword?: string;
+    }): Promise<AppLockSystemUnlockSettingsResult>;
+    requestAppLockSystemUnlock?(): Promise<AppLockSystemUnlockResult>;
     reportAppLockActivity?(): Promise<void>;
     onAppLockSettingsChanged?(cb: (settings: AppLockSettings) => void): () => void;
     onAppLockRuntimeStateChanged?(cb: (state: AppLockRuntimeState) => void): () => void;

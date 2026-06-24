@@ -247,6 +247,16 @@ function createWindowCollector(name) {
   };
 }
 
+function createIpcMainHarness() {
+  const handlers = new Map();
+  return {
+    handlers,
+    handle(channel, handler) {
+      handlers.set(channel, handler);
+    },
+  };
+}
+
 async function createControllerHarness() {
   const settingsStore = createAppLockSettingsStore({
     filePath: "/tmp/app-lock-settings.json",
@@ -272,10 +282,31 @@ async function createControllerHarness() {
   const trayPanelWindow = createWindowCollector("tray");
   const popupWindowA = createWindowCollector("popup-a");
   const popupWindowB = createWindowCollector("popup-b");
+  const systemAuthCalls = {
+    status: 0,
+    unlock: 0,
+  };
+  const systemAuthBridge = {
+    async getStatus() {
+      systemAuthCalls.status += 1;
+      return {
+        supported: true,
+        available: true,
+        platform: "darwin",
+        label: "Touch ID",
+        reason: null,
+      };
+    },
+    async requestUnlock() {
+      systemAuthCalls.unlock += 1;
+      return { ok: true };
+    },
+  };
 
   const controller = createAppLockController({
     settingsStore,
     runtimeBridge,
+    systemAuthBridge,
     getMainWindows: () => [mainWindowA, mainWindowB],
     getSettingsWindow: () => settingsWindow,
     getTrayPanelWindow: () => trayPanelWindow,
@@ -286,6 +317,8 @@ async function createControllerHarness() {
     controller,
     runtimeBridge,
     settingsStore,
+    systemAuthBridge,
+    systemAuthCalls,
     windows: [
       mainWindowA,
       mainWindowB,
@@ -296,6 +329,79 @@ async function createControllerHarness() {
     ],
   };
 }
+
+test("system unlock setting requires current password to enable", async () => {
+  const { controller } = await createControllerHarness();
+  await controller.requestPasswordChange({ nextPassword: "alpha" });
+  await controller.requestEnable();
+
+  assert.deepEqual(
+    await controller.setSystemUnlockEnabled({ enabled: true }),
+    { ok: false, error: "empty-current" },
+  );
+  assert.deepEqual(
+    await controller.setSystemUnlockEnabled({ enabled: true, currentPassword: "wrong" }),
+    { ok: false, error: "incorrect" },
+  );
+
+  const saved = await controller.setSystemUnlockEnabled({ enabled: true, currentPassword: "alpha" });
+  assert.equal(saved.systemUnlockEnabled, true);
+});
+
+test("system unlock setting cannot be disabled without password while locked", async () => {
+  const { controller } = await createControllerHarness();
+  await controller.requestPasswordChange({ nextPassword: "alpha" });
+  await controller.requestEnable();
+  await controller.setSystemUnlockEnabled({ enabled: true, currentPassword: "alpha" });
+  controller.setLocked("manual");
+
+  assert.deepEqual(
+    await controller.setSystemUnlockEnabled({ enabled: false }),
+    { ok: false, error: "locked" },
+  );
+
+  const saved = await controller.setSystemUnlockEnabled({ enabled: false, currentPassword: "alpha" });
+  assert.equal(saved.systemUnlockEnabled, false);
+});
+
+test("system unlock succeeds only when enabled and locked", async () => {
+  const { controller, runtimeBridge, systemAuthCalls } = await createControllerHarness();
+  await controller.requestPasswordChange({ nextPassword: "alpha" });
+  await controller.requestEnable();
+
+  assert.deepEqual(await controller.requestSystemUnlock(), { ok: false, error: "disabled" });
+  await controller.setSystemUnlockEnabled({ enabled: true, currentPassword: "alpha" });
+  assert.deepEqual(await controller.requestSystemUnlock(), { ok: true });
+  assert.equal(runtimeBridge.getState().locked, false);
+  assert.equal(systemAuthCalls.unlock, 1);
+  assert.deepEqual(await controller.requestSystemUnlock(), { ok: false, error: "not-locked" });
+});
+
+test("system unlock cancellation preserves locked runtime state", async () => {
+  const { controller, runtimeBridge, systemAuthBridge } = await createControllerHarness();
+  systemAuthBridge.requestUnlock = async () => ({ ok: false, error: "cancelled" });
+  await controller.requestPasswordChange({ nextPassword: "alpha" });
+  await controller.requestEnable();
+  await controller.setSystemUnlockEnabled({ enabled: true, currentPassword: "alpha" });
+  controller.setLocked("manual");
+
+  assert.deepEqual(await controller.requestSystemUnlock(), { ok: false, error: "cancelled" });
+  assert.equal(runtimeBridge.getState().locked, true);
+});
+
+test("system unlock IPC handlers are registered", async () => {
+  const { controller } = await createControllerHarness();
+  const ipcMain = createIpcMainHarness();
+  controller.registerHandlers(ipcMain);
+
+  assert.equal(ipcMain.handlers.has("netcatty:appLock:getSystemUnlockStatus"), true);
+  assert.equal(ipcMain.handlers.has("netcatty:appLock:setSystemUnlockEnabled"), true);
+  assert.equal(ipcMain.handlers.has("netcatty:appLock:requestSystemUnlock"), true);
+  assert.equal(
+    (await ipcMain.handlers.get("netcatty:appLock:getSystemUnlockStatus")()).label,
+    "Touch ID",
+  );
+});
 
 test("unlock request verifies against the latest persisted password verifier", async () => {
   const { controller } = await createControllerHarness();
@@ -349,6 +455,7 @@ test("stale renderer cannot overwrite the latest verifier with a whole-object se
     {
       enabled: false,
       timeoutMinutes: freshSnapshot.timeoutMinutes,
+      systemUnlockEnabled: false,
       passwordVerifier: null,
     },
   );

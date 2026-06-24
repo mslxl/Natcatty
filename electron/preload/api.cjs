@@ -500,6 +500,12 @@ function createPreloadApi(ctx) {
     ipcRenderer.invoke("netcatty:appLock:setLocked", reason),
   requestAppLockUnlock: (password) =>
     ipcRenderer.invoke("netcatty:appLock:requestUnlock", password),
+  getAppLockSystemUnlockStatus: () =>
+    ipcRenderer.invoke("netcatty:appLock:getSystemUnlockStatus"),
+  setAppLockSystemUnlockEnabled: (input) =>
+    ipcRenderer.invoke("netcatty:appLock:setSystemUnlockEnabled", input),
+  requestAppLockSystemUnlock: () =>
+    ipcRenderer.invoke("netcatty:appLock:requestSystemUnlock"),
   reportAppLockActivity: () =>
     ipcRenderer.invoke("netcatty:appLock:reportActivity"),
   onAppLockSettingsChanged: (callback) => {
