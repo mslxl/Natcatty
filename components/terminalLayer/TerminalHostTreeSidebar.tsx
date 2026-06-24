@@ -48,6 +48,8 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from '../ui/hover-card'
 import { TREE_ROW_HEIGHT } from '../sftp/SftpPaneTreeNode';
 import { FixedSizeVirtualList, type FixedSizeVirtualListHandle } from '../ui/FixedSizeVirtualList';
 import {
+  shouldCompactTerminalHostTreeToolbar,
+  shouldShowTerminalHostTreeExpandCollapseControls,
   TerminalHostTreeToolbar,
   type HostTreeToolbarPanel,
 } from './TerminalHostTreeToolbar';
@@ -741,8 +743,6 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
     collapseAll();
   }, [collapseAll]);
 
-  const canExpandCollapse = allGroupPaths.length > 0 && !searchActive && !tagsActive;
-
   const handleCollapse = useCallback(() => {
     terminalHostTreeStore.setIsOpen(false);
   }, []);
@@ -957,6 +957,13 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
   }, [isVisible, persistSidebarWidth, setSidebarWidth, sidebarWidth]);
 
   const displayWidth = resizePreviewWidth ?? sidebarWidth;
+  const compactToolbarActions = shouldCompactTerminalHostTreeToolbar(displayWidth);
+  const showExpandCollapseControls = shouldShowTerminalHostTreeExpandCollapseControls(
+    allGroupPaths.length,
+    searchActive,
+    tagsActive,
+    compactToolbarActions,
+  );
   const targetLayoutWidth = getTerminalHostTreeLayoutTargetWidth(isVisible, displayWidth);
   const hiddenSurfaceShellWidth = getTerminalHostTreeHiddenSurfaceShellWidth(isOpen, enabled, displayWidth);
   const [shellWidth, setShellWidth] = useState(getTerminalHostTreeInitialLayoutWidth);
@@ -1093,9 +1100,10 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
           canNewGroup={Boolean(menuActions)}
           onCreateLocalTerminal={handleCreateLocalTerminal}
           canCreateLocalTerminal={Boolean(onCreateLocalTerminal)}
+          compactActions={compactToolbarActions}
           onExpandAll={handleExpandAll}
           onCollapseAll={handleCollapseAll}
-          canExpandCollapse={canExpandCollapse}
+          showExpandCollapseControls={showExpandCollapseControls}
           onCollapse={handleCollapse}
         />
 
