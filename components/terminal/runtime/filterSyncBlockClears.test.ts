@@ -89,3 +89,27 @@ test("handles clear-screen marker split across chunks inside sync block", () => 
   assert.equal(state.inSyncBlock, false);
   assert.equal(state.pending, "");
 });
+
+test("handles sync end marker split across chunks", () => {
+  const state = createSyncBlockFilterState();
+  const endPrefix = SYNC_END.slice(0, -1);
+  const endSuffix = SYNC_END.slice(-1);
+
+  assert.equal(filterSyncBlockClears(`${SYNC_START}frame${endPrefix}`, state), `${SYNC_START}frame`);
+  assert.equal(state.inSyncBlock, true);
+  assert.equal(state.pending, endPrefix);
+
+  assert.equal(filterSyncBlockClears(endSuffix, state), SYNC_END);
+  assert.equal(state.inSyncBlock, false);
+  assert.equal(state.pending, "");
+});
+
+test("releases a trailing ESC when the next chunk is ordinary text", () => {
+  const state = createSyncBlockFilterState();
+
+  assert.equal(filterSyncBlockClears("prompt\x1b", state), "prompt");
+  assert.equal(state.pending, "\x1b");
+
+  assert.equal(filterSyncBlockClears("more output", state), "\x1bmore output");
+  assert.equal(state.pending, "");
+});
