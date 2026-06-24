@@ -87,6 +87,7 @@ declare global {
     setAppLockSystemUnlockEnabled?(input: {
       enabled: boolean;
       currentPassword?: string;
+      autoPromptEnabled?: boolean;
     }): Promise<AppLockSystemUnlockSettingsResult>;
     requestAppLockSystemUnlock?(): Promise<AppLockSystemUnlockResult>;
     reportAppLockActivity?(): Promise<void>;

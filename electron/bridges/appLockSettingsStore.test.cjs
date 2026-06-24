@@ -32,6 +32,7 @@ test("settings store loads disabled config when no persisted file exists", async
     enabled: false,
     timeoutMinutes: 15,
     systemUnlockEnabled: false,
+    systemUnlockAutoPromptEnabled: false,
     passwordVerifier: null,
   });
   assert.deepEqual(store.getSnapshot(), settings);
@@ -54,6 +55,7 @@ test("settings store normalizes malformed persisted config to disabled defaults"
     enabled: false,
     timeoutMinutes: 15,
     systemUnlockEnabled: false,
+    systemUnlockAutoPromptEnabled: false,
     passwordVerifier: null,
   });
 });
@@ -76,6 +78,7 @@ test("settings store saves normalized settings and updates snapshot", async () =
     enabled: true,
     timeoutMinutes: 0,
     systemUnlockEnabled: true,
+    systemUnlockAutoPromptEnabled: true,
     passwordVerifier: VALID_VERIFIER,
   });
 
@@ -83,6 +86,7 @@ test("settings store saves normalized settings and updates snapshot", async () =
     enabled: true,
     timeoutMinutes: 0,
     systemUnlockEnabled: true,
+    systemUnlockAutoPromptEnabled: true,
     passwordVerifier: VALID_VERIFIER,
   });
   assert.deepEqual(store.getSnapshot(), saved);
@@ -101,6 +105,7 @@ test("settings store clears system unlock when no valid verifier exists", async 
         enabled: true,
         timeoutMinutes: 5,
         systemUnlockEnabled: true,
+        systemUnlockAutoPromptEnabled: true,
         passwordVerifier: null,
       }),
     writeFile: async () => {},
@@ -111,6 +116,7 @@ test("settings store clears system unlock when no valid verifier exists", async 
     enabled: false,
     timeoutMinutes: 5,
     systemUnlockEnabled: false,
+    systemUnlockAutoPromptEnabled: false,
     passwordVerifier: null,
   });
 });

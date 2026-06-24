@@ -18,6 +18,14 @@ type HarnessOptions = {
   systemUnlockResult?: { ok: true } | { ok: false; error: "disabled" | "not-locked" | "unsupported" | "unavailable" | "cancelled" | "failed" };
 };
 
+const TEST_PASSWORD_VERIFIER = {
+  version: 1 as const,
+  algorithm: "PBKDF2-SHA256" as const,
+  iterations: 210000,
+  salt: "AAAAAAAAAAAAAAAAAAAAAA==",
+  hash: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+};
+
 function cloneRuntimeState(input: RuntimeAppLockState): RuntimeAppLockState {
   return {
     ...input,
@@ -101,6 +109,7 @@ export function createAppLockBridgeHarness(options: HarnessOptions) {
         enabled: false,
         timeoutMinutes: 15,
         systemUnlockEnabled: false,
+        systemUnlockAutoPromptEnabled: false,
         passwordVerifier: null,
       };
     },
@@ -111,10 +120,11 @@ export function createAppLockBridgeHarness(options: HarnessOptions) {
         enabled: input.enabled,
       };
       return {
-        enabled: input.enabled,
+        enabled: true,
         timeoutMinutes: 15,
         systemUnlockEnabled: input.enabled,
-        passwordVerifier: null,
+        systemUnlockAutoPromptEnabled: input.enabled && input.autoPromptEnabled === true,
+        passwordVerifier: TEST_PASSWORD_VERIFIER,
       };
     },
     requestAppLockSystemUnlock: async () => {

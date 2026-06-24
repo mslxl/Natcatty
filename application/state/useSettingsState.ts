@@ -194,6 +194,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     enabled: false,
     timeoutMinutes: 15,
     systemUnlockEnabled: false,
+    systemUnlockAutoPromptEnabled: false,
     passwordVerifier: null,
   });
   const [terminalSettings, setTerminalSettingsState] = useState<TerminalSettings>(() => {
@@ -522,6 +523,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   const setAppLockSystemUnlockEnabled = useCallback(async (input: {
     enabled: boolean;
     currentPassword?: string;
+    autoPromptEnabled?: boolean;
   }) => {
     const next = await netcattyBridge.get()?.setAppLockSystemUnlockEnabled?.(input);
     if (next && !('ok' in next)) {

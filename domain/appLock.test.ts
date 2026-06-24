@@ -21,11 +21,12 @@ test("normalizeAppLockTimeoutMinutes accepts only supported timeout options", ()
   assert.equal(normalizeAppLockTimeoutMinutes(""), DEFAULT_APP_LOCK_SETTINGS.timeoutMinutes);
 });
 
-test("normalizeAppLockSettings preserves a valid verifier even when disabled", () => {
+test("normalizeAppLockSettings preserves a valid verifier but clears system unlock when disabled", () => {
   const normalized = normalizeAppLockSettings({
     enabled: false,
     timeoutMinutes: 30,
     systemUnlockEnabled: true,
+    systemUnlockAutoPromptEnabled: true,
     passwordVerifier: {
       version: 1,
       algorithm: "PBKDF2-SHA256",
@@ -38,7 +39,8 @@ test("normalizeAppLockSettings preserves a valid verifier even when disabled", (
   assert.deepEqual(normalized, {
     enabled: false,
     timeoutMinutes: 30,
-    systemUnlockEnabled: true,
+    systemUnlockEnabled: false,
+    systemUnlockAutoPromptEnabled: false,
     passwordVerifier: {
       version: 1,
       algorithm: "PBKDF2-SHA256",
@@ -62,17 +64,19 @@ test("normalizeAppLockSettings refuses enabled state without a valid verifier", 
         hash: "",
       },
       systemUnlockEnabled: true,
+      systemUnlockAutoPromptEnabled: true,
     }),
     {
       enabled: false,
       timeoutMinutes: 5,
       systemUnlockEnabled: false,
+      systemUnlockAutoPromptEnabled: false,
       passwordVerifier: null,
     },
   );
 });
 
-test("normalizeAppLockSettings defaults system unlock off for older settings", () => {
+test("normalizeAppLockSettings defaults system unlock and auto prompt off for older settings", () => {
   const normalized = normalizeAppLockSettings({
     enabled: false,
     timeoutMinutes: 15,
@@ -80,6 +84,26 @@ test("normalizeAppLockSettings defaults system unlock off for older settings", (
   });
 
   assert.equal(normalized.systemUnlockEnabled, false);
+  assert.equal(normalized.systemUnlockAutoPromptEnabled, false);
+});
+
+test("normalizeAppLockSettings disables auto prompt unless system unlock is enabled", () => {
+  const normalized = normalizeAppLockSettings({
+    enabled: false,
+    timeoutMinutes: 15,
+    systemUnlockEnabled: false,
+    systemUnlockAutoPromptEnabled: true,
+    passwordVerifier: {
+      version: 1,
+      algorithm: "PBKDF2-SHA256",
+      iterations: 210000,
+      salt: Buffer.alloc(16, 1).toString("base64"),
+      hash: Buffer.alloc(32, 2).toString("base64"),
+    },
+  });
+
+  assert.equal(normalized.systemUnlockEnabled, false);
+  assert.equal(normalized.systemUnlockAutoPromptEnabled, false);
 });
 
 test("createAppLockPasswordVerifier stores a verifier and verifies password attempts", async () => {

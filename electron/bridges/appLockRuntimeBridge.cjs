@@ -443,6 +443,7 @@ function createAppLockController({
 
   async function setSystemUnlockEnabled(input = {}) {
     const enabled = input?.enabled === true;
+    const autoPromptEnabled = input?.autoPromptEnabled === true;
     const currentPassword = typeof input?.currentPassword === "string" ? input.currentPassword : "";
     const current = getSettings();
     if (!canLockFromSettings(current)) {
@@ -460,6 +461,14 @@ function createAppLockController({
       return saveSettings({
         ...current,
         systemUnlockEnabled: false,
+        systemUnlockAutoPromptEnabled: false,
+      });
+    }
+
+    if (current.systemUnlockEnabled === true) {
+      return saveSettings({
+        ...current,
+        systemUnlockAutoPromptEnabled: autoPromptEnabled,
       });
     }
 
@@ -481,6 +490,7 @@ function createAppLockController({
     return saveSettings({
       ...current,
       systemUnlockEnabled: true,
+      systemUnlockAutoPromptEnabled: autoPromptEnabled,
     });
   }
 

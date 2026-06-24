@@ -26,6 +26,7 @@ interface AppLockOverlayProps {
   systemUnlockStatus?: AppLockSystemUnlockStatus;
   onSystemUnlock?: () => Promise<AppLockSystemUnlockResult>;
   onResetAppLock: (currentPassword: string) => Promise<void>;
+  autoPromptSystemUnlock?: boolean;
   reopenSignal?: number;
 }
 
@@ -60,6 +61,7 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
   systemUnlockStatus,
   onSystemUnlock,
   onResetAppLock,
+  autoPromptSystemUnlock = false,
   reopenSignal = 0,
 }) => {
   const { t } = useI18n();
@@ -121,8 +123,15 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
     setIsSystemUnlocking(false);
   }, [isSystemUnlocking, onSystemUnlock]);
 
+  const requestAutomaticSystemUnlock = useCallback(() => {
+    if (isSystemUnlocking || !onSystemUnlock) return false;
+    void handleSystemUnlock();
+    return true;
+  }, [handleSystemUnlock, isSystemUnlocking, onSystemUnlock]);
+
   useEffect(() => {
     if (!locked) return;
+    if (!autoPromptSystemUnlock) return;
     if (!documentVisible) return;
     if (!systemUnlockStatus?.enabled || !systemUnlockStatus.available || !systemUnlockStatus.label) return;
     if (!onSystemUnlock) return;
@@ -133,10 +142,11 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
     if (reason === 'background' && reopenSignal <= 0) return;
     if (lastAutoUnlockPresentationRef.current === presentationKey) return;
 
+    if (!requestAutomaticSystemUnlock()) return;
     lastAutoUnlockPresentationRef.current = presentationKey;
-    void handleSystemUnlock();
   }, [
     locked,
+    autoPromptSystemUnlock,
     reason,
     reopenSignal,
     documentVisible,
@@ -144,7 +154,7 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
     systemUnlockStatus?.available,
     systemUnlockStatus?.enabled,
     systemUnlockStatus?.label,
-    handleSystemUnlock,
+    requestAutomaticSystemUnlock,
   ]);
 
   if (!locked) return null;

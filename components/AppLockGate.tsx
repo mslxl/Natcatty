@@ -124,6 +124,7 @@ export function createAppLockGate(deps: AppLockGateDeps): React.FC<AppLockGatePr
               systemUnlockStatus={appLock.systemUnlockStatus}
               onSystemUnlock={appLock.unlockWithSystemAuth}
               onResetAppLock={appLock.reset}
+              autoPromptSystemUnlock={settings.appLockSettings.systemUnlockAutoPromptEnabled}
               reopenSignal={reopenSignal}
             />
           </TooltipProvider>

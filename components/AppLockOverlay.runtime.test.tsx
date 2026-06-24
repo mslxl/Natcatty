@@ -260,6 +260,9 @@ test("AppLockOverlay renders platform-specific system unlock button", async () =
       ),
     );
     await flushEffects();
+    await flushEffects();
+
+    assert.equal(systemUnlockCount, 0);
 
     const button = [...dom.document.querySelectorAll("button")]
       .find((candidate) => /Unlock with Windows Hello/i.test(candidate.textContent ?? ""));
@@ -267,7 +270,7 @@ test("AppLockOverlay renders platform-specific system unlock button", async () =
     await dispatchDomEvent(button, new dom.window.MouseEvent("click", { bubbles: true }));
     await flushEffects();
     await flushEffects();
-    assert.equal(systemUnlockCount, 2);
+    assert.equal(systemUnlockCount, 1);
   } finally {
     await renderer.unmount();
     dom.cleanup();
@@ -310,7 +313,7 @@ test("AppLockOverlay localizes the system unlock button label", async () => {
   }
 });
 
-test("AppLockOverlay automatically requests system unlock once when locked", async () => {
+test("AppLockOverlay does not automatically request system unlock by default", async () => {
   const dom = installDomEnvironment();
   const renderer = await createDomRenderer(dom.document);
   let systemUnlockCount = 0;
@@ -328,6 +331,58 @@ test("AppLockOverlay automatically requests system unlock once when locked", asy
         label: "Touch ID" as const,
         reason: null,
       },
+      onSystemUnlock: async () => {
+        systemUnlockCount += 1;
+        return { ok: true as const };
+      },
+      onResetAppLock: async () => {},
+    };
+
+    await renderer.render(
+      React.createElement(
+        I18nProvider,
+        { locale: "en" },
+        React.createElement(AppLockOverlay, props),
+      ),
+    );
+    await flushEffects();
+    await flushEffects();
+
+    assert.equal(systemUnlockCount, 0);
+
+    const button = [...dom.document.querySelectorAll("button")]
+      .find((candidate) => /Unlock with Touch ID/i.test(candidate.textContent ?? ""));
+    assert.ok(button);
+    await dispatchDomEvent(button, new dom.window.MouseEvent("click", { bubbles: true }));
+    await flushEffects();
+    await flushEffects();
+
+    assert.equal(systemUnlockCount, 1);
+  } finally {
+    await renderer.unmount();
+    dom.cleanup();
+  }
+});
+
+test("AppLockOverlay automatically requests system unlock once when auto prompt is enabled", async () => {
+  const dom = installDomEnvironment();
+  const renderer = await createDomRenderer(dom.document);
+  let systemUnlockCount = 0;
+
+  try {
+    const props = {
+      locked: true,
+      reason: "manual" as const,
+      onUnlock: async () => ({ ok: false as const, error: "incorrect" as const }),
+      systemUnlockStatus: {
+        supported: true,
+        available: true,
+        enabled: true,
+        platform: "darwin" as const,
+        label: "Touch ID" as const,
+        reason: null,
+      },
+      autoPromptSystemUnlock: true,
       onSystemUnlock: async () => {
         systemUnlockCount += 1;
         return { ok: true as const };
@@ -391,6 +446,7 @@ test("AppLockOverlay waits until the document is visible before auto system unlo
             label: "Touch ID" as const,
             reason: null,
           },
+          autoPromptSystemUnlock: true,
           onSystemUnlock: async () => {
             systemUnlockCount += 1;
             return { ok: true as const };
@@ -413,6 +469,65 @@ test("AppLockOverlay waits until the document is visible before auto system unlo
     await flushEffects();
 
     assert.equal(systemUnlockCount, 1);
+  } finally {
+    await renderer.unmount();
+    dom.cleanup();
+  }
+});
+
+test("AppLockOverlay retries a reopen presentation after an in-flight auto prompt finishes", async () => {
+  const dom = installDomEnvironment();
+  const renderer = await createDomRenderer(dom.document);
+  let systemUnlockCount = 0;
+  let resolveFirstUnlock: ((result: { ok: false; error: "cancelled" }) => void) | null = null;
+
+  try {
+    const createOverlay = (reopenSignal: number) => React.createElement(
+      I18nProvider,
+      { locale: "en" },
+      React.createElement(AppLockOverlay, {
+        locked: true,
+        reason: "background",
+        reopenSignal,
+        autoPromptSystemUnlock: true,
+        onUnlock: async () => ({ ok: false as const, error: "incorrect" as const }),
+        systemUnlockStatus: {
+          supported: true,
+          available: true,
+          enabled: true,
+          platform: "darwin" as const,
+          label: "Touch ID" as const,
+          reason: null,
+        },
+        onSystemUnlock: async () => {
+          systemUnlockCount += 1;
+          if (systemUnlockCount === 1) {
+            return new Promise<{ ok: false; error: "cancelled" }>((resolve) => {
+              resolveFirstUnlock = resolve;
+            });
+          }
+          return { ok: false as const, error: "cancelled" as const };
+        },
+        onResetAppLock: async () => {},
+      }),
+    );
+
+    await renderer.render(createOverlay(1));
+    await flushEffects();
+    await flushEffects();
+    assert.equal(systemUnlockCount, 1);
+
+    await renderer.render(createOverlay(2));
+    await flushEffects();
+    await flushEffects();
+    assert.equal(systemUnlockCount, 1);
+
+    assert.ok(resolveFirstUnlock);
+    resolveFirstUnlock({ ok: false, error: "cancelled" });
+    await flushEffects();
+    await flushEffects();
+
+    assert.equal(systemUnlockCount, 2);
   } finally {
     await renderer.unmount();
     dom.cleanup();

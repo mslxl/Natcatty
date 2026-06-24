@@ -17,6 +17,7 @@ test("applyAppLockEnabledChange enables only when a verifier exists", async () =
     enabled: false,
     timeoutMinutes: 15,
     systemUnlockEnabled: false,
+    systemUnlockAutoPromptEnabled: false,
     passwordVerifier: verifier,
   };
 
@@ -26,6 +27,7 @@ test("applyAppLockEnabledChange enables only when a verifier exists", async () =
       enabled: true,
       timeoutMinutes: 15,
       systemUnlockEnabled: false,
+      systemUnlockAutoPromptEnabled: false,
       passwordVerifier: verifier,
     },
   );
@@ -36,6 +38,7 @@ test("applyAppLockEnabledChange enables only when a verifier exists", async () =
       enabled: false,
       timeoutMinutes: 15,
       systemUnlockEnabled: false,
+      systemUnlockAutoPromptEnabled: false,
       passwordVerifier: null,
     },
   );
@@ -47,6 +50,7 @@ test("applyAppLockEnabledChange requires current password before disabling an ex
     enabled: true,
     timeoutMinutes: 30,
     systemUnlockEnabled: true,
+    systemUnlockAutoPromptEnabled: true,
     passwordVerifier: verifier,
   };
 
@@ -61,6 +65,7 @@ test("applyAppLockEnabledChange requires current password before disabling an ex
       enabled: false,
       timeoutMinutes: 30,
       systemUnlockEnabled: false,
+      systemUnlockAutoPromptEnabled: false,
       passwordVerifier: null,
     },
   );
@@ -72,6 +77,7 @@ test("replaceAppLockPassword requires current password when replacing an existin
     enabled: true,
     timeoutMinutes: 5,
     systemUnlockEnabled: true,
+    systemUnlockAutoPromptEnabled: true,
     passwordVerifier: verifier,
   };
 
@@ -99,6 +105,7 @@ test("replaceAppLockPassword requires current password when replacing an existin
   assert.equal(replaced.enabled, true);
   assert.equal(replaced.timeoutMinutes, 5);
   assert.equal(replaced.systemUnlockEnabled, true);
+  assert.equal(replaced.systemUnlockAutoPromptEnabled, true);
   assert.notEqual(replaced.passwordVerifier?.hash, verifier.hash);
   assert.equal(await verifyAppLockPassword("new secret", replaced.passwordVerifier), true);
 });
@@ -108,6 +115,7 @@ test("replaceAppLockPassword rejects empty new passwords", async () => {
     enabled: false,
     timeoutMinutes: 60,
     systemUnlockEnabled: false,
+    systemUnlockAutoPromptEnabled: false,
     passwordVerifier: null,
   };
 
@@ -124,6 +132,7 @@ test("replaceAppLockPassword enables app lock when creating the first password",
     enabled: false,
     timeoutMinutes: 15,
     systemUnlockEnabled: false,
+    systemUnlockAutoPromptEnabled: false,
     passwordVerifier: null,
   };
 
@@ -135,5 +144,6 @@ test("replaceAppLockPassword enables app lock when creating the first password",
   assert.equal(saved.enabled, true);
   assert.equal(saved.timeoutMinutes, 15);
   assert.equal(saved.systemUnlockEnabled, false);
+  assert.equal(saved.systemUnlockAutoPromptEnabled, false);
   assert.equal(await verifyAppLockPassword("first secret", saved.passwordVerifier), true);
 });

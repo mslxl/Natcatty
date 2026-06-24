@@ -116,6 +116,7 @@ test("startup-locked gate reveals children after successful system unlock", asyn
         enabled: true,
         timeoutMinutes: 15,
         systemUnlockEnabled: true,
+        systemUnlockAutoPromptEnabled: true,
         passwordVerifier: {
           version: 1,
           algorithm: "PBKDF2-SHA256",
@@ -152,6 +153,76 @@ test("startup-locked gate reveals children after successful system unlock", asyn
   }
 });
 
+test("startup-locked gate does not automatically system unlock when auto prompt is disabled", async () => {
+  const dom = installDomEnvironment();
+  const renderer = await createDomRenderer(dom.document);
+  const bridgeHarness = createAppLockBridgeHarness({
+    runtimeState: {
+      initialized: true,
+      locked: true,
+      reason: "startup",
+      version: 1,
+      lastLockedAt: 1_000,
+      lastUnlockedAt: null,
+      lastActivityAt: 1_000,
+    },
+    systemUnlockStatus: {
+      supported: true,
+      available: true,
+      enabled: true,
+      platform: "darwin",
+      label: "Touch ID",
+      reason: null,
+    },
+  });
+  const AppLockGate = createAppLockGate({
+    useSettingsState: () => ({
+      uiLanguage: "en",
+      appLockSettings: {
+        enabled: true,
+        timeoutMinutes: 15,
+        systemUnlockEnabled: true,
+        systemUnlockAutoPromptEnabled: false,
+        passwordVerifier: {
+          version: 1,
+          algorithm: "PBKDF2-SHA256",
+          iterations: 210000,
+          salt: "AAAAAAAAAAAAAAAAAAAAAA==",
+          hash: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        },
+      },
+    }) as ReturnType<typeof import("../application/state/useSettingsState.ts").useSettingsState>,
+    useAppLockState,
+    useAppLockBridge,
+  });
+
+  const previousWindowNetcatty = dom.window.netcatty;
+  dom.window.netcatty = bridgeHarness.bridge;
+
+  try {
+    await renderer.render(
+      React.createElement(AppLockGate, {
+        notifyRendererReady: false,
+        children: () => React.createElement("div", { id: "unlocked-content" }, "Unlocked"),
+      }),
+    );
+    await flushEffects();
+    await flushEffects();
+
+    assert.equal(bridgeHarness.getSystemUnlockCount(), 0);
+    assert.equal(bridgeHarness.getRuntimeState().locked, true);
+    assert.equal(dom.document.getElementById("unlocked-content"), null);
+
+    const button = [...dom.document.querySelectorAll("button")]
+      .find((candidate) => /Unlock with Touch ID/i.test(candidate.textContent ?? ""));
+    assert.ok(button);
+  } finally {
+    dom.window.netcatty = previousWindowNetcatty;
+    await renderer.unmount();
+    dom.cleanup();
+  }
+});
+
 test("background-locked gate waits for reopen before automatic system unlock", async () => {
   const dom = installDomEnvironment();
   const renderer = await createDomRenderer(dom.document);
@@ -181,6 +252,7 @@ test("background-locked gate waits for reopen before automatic system unlock", a
         enabled: true,
         timeoutMinutes: 15,
         systemUnlockEnabled: true,
+        systemUnlockAutoPromptEnabled: true,
         passwordVerifier: {
           version: 1,
           algorithm: "PBKDF2-SHA256",
@@ -256,6 +328,7 @@ test("background-locked gate retries automatic system unlock on each reopen whil
         enabled: true,
         timeoutMinutes: 15,
         systemUnlockEnabled: true,
+        systemUnlockAutoPromptEnabled: true,
         passwordVerifier: {
           version: 1,
           algorithm: "PBKDF2-SHA256",

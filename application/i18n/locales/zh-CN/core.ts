@@ -144,6 +144,8 @@ export const zhCNCoreMessages: Messages = {
   'settings.appLock.systemUnlock.unavailableDesc': '此设备当前无法使用 {label}。',
   'settings.appLock.systemUnlock.unavailable': '此设备当前无法使用系统解锁。',
   'settings.appLock.systemUnlock.locked': '请先解锁 Netcatty，再更改系统解锁。',
+  'settings.appLock.systemUnlock.autoPrompt.label': '自动弹出 {label}',
+  'settings.appLock.systemUnlock.autoPrompt.desc': '当 Netcatty 等待解锁时，自动显示 {label} 验证提示。',
   'settings.appLock.currentPassword': '当前密码',
   'settings.appLock.currentPasswordPlaceholder': '禁用或替换时需要',
   'settings.appLock.currentPasswordForDisablePlaceholder': '用于关闭应用锁定的当前密码',

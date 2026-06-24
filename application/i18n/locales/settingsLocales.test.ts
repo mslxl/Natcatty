@@ -102,6 +102,8 @@ test("all app lock strings are translated in every supported locale", () => {
     "settings.appLock.systemUnlock.unavailableDesc",
     "settings.appLock.systemUnlock.unavailable",
     "settings.appLock.systemUnlock.locked",
+    "settings.appLock.systemUnlock.autoPrompt.label",
+    "settings.appLock.systemUnlock.autoPrompt.desc",
     "settings.appLock.currentPassword",
     "settings.appLock.currentPasswordPlaceholder",
     "settings.appLock.newPassword",

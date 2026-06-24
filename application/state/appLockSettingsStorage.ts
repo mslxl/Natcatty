@@ -23,11 +23,18 @@ export async function applyAppLockEnabledChange(
 ): Promise<AppLockSettingsChangeResult> {
   const timeoutMinutes = normalizeAppLockTimeoutMinutes(settings.timeoutMinutes);
   const passwordVerifier = normalizeAppLockPasswordVerifier(settings.passwordVerifier);
-  const systemUnlockEnabled = settings.systemUnlockEnabled === true && passwordVerifier !== null;
+  const systemUnlockEnabled = settings.systemUnlockEnabled === true && settings.enabled === true && passwordVerifier !== null;
+  const systemUnlockAutoPromptEnabled = settings.systemUnlockAutoPromptEnabled === true && systemUnlockEnabled;
   if (enabled) {
     return passwordVerifier
-      ? { enabled: true, timeoutMinutes, systemUnlockEnabled, passwordVerifier }
-      : { enabled: false, timeoutMinutes, systemUnlockEnabled: false, passwordVerifier: null };
+      ? { enabled: true, timeoutMinutes, systemUnlockEnabled, systemUnlockAutoPromptEnabled, passwordVerifier }
+      : {
+          enabled: false,
+          timeoutMinutes,
+          systemUnlockEnabled: false,
+          systemUnlockAutoPromptEnabled: false,
+          passwordVerifier: null,
+        };
   }
 
   if (passwordVerifier) {
@@ -40,6 +47,7 @@ export async function applyAppLockEnabledChange(
     enabled: false,
     timeoutMinutes,
     systemUnlockEnabled: false,
+    systemUnlockAutoPromptEnabled: false,
     passwordVerifier: null,
   };
 }
@@ -64,6 +72,7 @@ export async function replaceAppLockPassword(
     enabled: normalized.enabled || !normalized.passwordVerifier,
     timeoutMinutes: normalized.timeoutMinutes,
     systemUnlockEnabled: normalized.systemUnlockEnabled,
+    systemUnlockAutoPromptEnabled: normalized.systemUnlockAutoPromptEnabled,
     passwordVerifier: await createAppLockPasswordVerifier(input.nextPassword),
   };
 }

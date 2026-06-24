@@ -160,6 +160,8 @@ export const enCoreMessages: Messages = {
   'settings.appLock.systemUnlock.unavailableDesc': '{label} is not available on this device right now.',
   'settings.appLock.systemUnlock.unavailable': 'System unlock is not available on this device.',
   'settings.appLock.systemUnlock.locked': 'Unlock Netcatty before changing system unlock.',
+  'settings.appLock.systemUnlock.autoPrompt.label': 'Open {label} automatically',
+  'settings.appLock.systemUnlock.autoPrompt.desc': 'Show the {label} prompt automatically when Netcatty is waiting to unlock.',
   'settings.appLock.currentPassword': 'Current password',
   'settings.appLock.currentPasswordPlaceholder': 'Required to disable or replace',
   'settings.appLock.currentPasswordForDisablePlaceholder': 'Current password to turn off App Lock',

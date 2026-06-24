@@ -10,6 +10,7 @@ const DEFAULT_APP_LOCK_SETTINGS = Object.freeze({
   enabled: false,
   timeoutMinutes: 15,
   systemUnlockEnabled: false,
+  systemUnlockAutoPromptEnabled: false,
   passwordVerifier: null,
 });
 
@@ -24,7 +25,15 @@ function cloneSettings(settings) {
   return {
     enabled: settings.enabled === true,
     timeoutMinutes: normalizeAppLockTimeoutMinutes(settings.timeoutMinutes),
-    systemUnlockEnabled: settings.systemUnlockEnabled === true && settings.passwordVerifier !== null,
+    systemUnlockEnabled:
+      settings.systemUnlockEnabled === true &&
+      settings.enabled === true &&
+      settings.passwordVerifier !== null,
+    systemUnlockAutoPromptEnabled:
+      settings.systemUnlockAutoPromptEnabled === true &&
+      settings.systemUnlockEnabled === true &&
+      settings.enabled === true &&
+      settings.passwordVerifier !== null,
     passwordVerifier: settings.passwordVerifier
       ? {
           version: settings.passwordVerifier.version,
@@ -98,12 +107,14 @@ function normalizeAppLockSettings(input) {
   const timeoutMinutes = normalizeAppLockTimeoutMinutes(input.timeoutMinutes);
   const passwordVerifier = normalizeAppLockPasswordVerifier(input.passwordVerifier);
   const enabled = input.enabled === true && passwordVerifier !== null;
-  const systemUnlockEnabled = input.systemUnlockEnabled === true && passwordVerifier !== null;
+  const systemUnlockEnabled = input.systemUnlockEnabled === true && enabled;
+  const systemUnlockAutoPromptEnabled = input.systemUnlockAutoPromptEnabled === true && systemUnlockEnabled;
 
   return {
     enabled,
     timeoutMinutes,
     systemUnlockEnabled,
+    systemUnlockAutoPromptEnabled,
     passwordVerifier,
   };
 }

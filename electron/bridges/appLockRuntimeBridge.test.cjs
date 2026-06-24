@@ -340,6 +340,31 @@ test("system unlock setting confirms with system auth instead of current passwor
   assert.equal(systemAuthCalls.unlock, 1);
 });
 
+test("system unlock auto prompt setting does not request system auth when already enabled", async () => {
+  const { controller, systemAuthCalls } = await createControllerHarness();
+  await controller.requestPasswordChange({ nextPassword: "alpha" });
+  await controller.requestEnable();
+
+  await controller.setSystemUnlockEnabled({ enabled: true });
+  assert.equal(systemAuthCalls.unlock, 1);
+
+  const enabledAutoPrompt = await controller.setSystemUnlockEnabled({
+    enabled: true,
+    autoPromptEnabled: true,
+  });
+  assert.equal(enabledAutoPrompt.systemUnlockEnabled, true);
+  assert.equal(enabledAutoPrompt.systemUnlockAutoPromptEnabled, true);
+  assert.equal(systemAuthCalls.unlock, 1);
+
+  const disabledAutoPrompt = await controller.setSystemUnlockEnabled({
+    enabled: true,
+    autoPromptEnabled: false,
+  });
+  assert.equal(disabledAutoPrompt.systemUnlockEnabled, true);
+  assert.equal(disabledAutoPrompt.systemUnlockAutoPromptEnabled, false);
+  assert.equal(systemAuthCalls.unlock, 1);
+});
+
 test("system unlock setting cannot be disabled without password while locked", async () => {
   const { controller } = await createControllerHarness();
   await controller.requestPasswordChange({ nextPassword: "alpha" });
@@ -448,6 +473,7 @@ test("stale renderer cannot overwrite the latest verifier with a whole-object se
       enabled: false,
       timeoutMinutes: freshSnapshot.timeoutMinutes,
       systemUnlockEnabled: false,
+      systemUnlockAutoPromptEnabled: false,
       passwordVerifier: null,
     },
   );

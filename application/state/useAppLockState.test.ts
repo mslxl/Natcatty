@@ -18,6 +18,7 @@ test("shouldLockOnStartup locks only when enabled with a verifier", async () => 
     enabled: true,
     timeoutMinutes: 15,
     systemUnlockEnabled: false,
+    systemUnlockAutoPromptEnabled: false,
     passwordVerifier: verifier,
   };
 
@@ -32,6 +33,7 @@ test("shouldLockAfterIdle honors the configured timeout", async () => {
     enabled: true,
     timeoutMinutes: 5,
     systemUnlockEnabled: false,
+    systemUnlockAutoPromptEnabled: false,
     passwordVerifier: verifier,
   };
 
@@ -48,6 +50,7 @@ test("getIdleLockDelayMs schedules the next check after remaining idle time", as
     enabled: true,
     timeoutMinutes: 5,
     systemUnlockEnabled: false,
+    systemUnlockAutoPromptEnabled: false,
     passwordVerifier: verifier,
   };
 

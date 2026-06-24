@@ -160,6 +160,8 @@ export const ruCoreMessages: Messages = {
   'settings.appLock.systemUnlock.unavailableDesc': '{label} сейчас недоступен на этом устройстве.',
   'settings.appLock.systemUnlock.unavailable': 'Системная разблокировка недоступна на этом устройстве.',
   'settings.appLock.systemUnlock.locked': 'Разблокируйте Netcatty перед изменением системной разблокировки.',
+  'settings.appLock.systemUnlock.autoPrompt.label': 'Открывать {label} автоматически',
+  'settings.appLock.systemUnlock.autoPrompt.desc': 'Автоматически показывать запрос {label}, когда Netcatty ожидает разблокировки.',
   'settings.appLock.currentPassword': 'Текущий пароль',
   'settings.appLock.currentPasswordPlaceholder': 'Нужен для отключения или замены',
   'settings.appLock.currentPasswordForDisablePlaceholder': 'Текущий пароль для отключения блокировки',

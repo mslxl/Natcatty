@@ -93,6 +93,7 @@ interface SettingsSystemTabProps {
   setAppLockSystemUnlockEnabled?: (input: {
     enabled: boolean;
     currentPassword?: string;
+    autoPromptEnabled?: boolean;
   }) => Promise<AppLockSettings | { ok: false; error: 'empty-current' | 'incorrect' | 'locked' | 'unsupported' | 'unavailable' }>;
   sessionLogsEnabled: boolean;
   setSessionLogsEnabled: (enabled: boolean) => void;
@@ -471,7 +472,12 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
 
     setIsSavingAppLockSystemUnlock(true);
     try {
-      const result = await setAppLockSystemUnlockEnabled({ enabled });
+      const result = await setAppLockSystemUnlockEnabled({
+        enabled,
+        autoPromptEnabled: enabled && appLockSettings.systemUnlockEnabled
+          ? appLockSettings.systemUnlockAutoPromptEnabled
+          : false,
+      });
       if ('ok' in result && result.ok === false) {
         setAppLockError(mapAppLockChangeError(result.error));
         return;
@@ -480,6 +486,32 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
       setIsSavingAppLockSystemUnlock(false);
     }
   }, [
+    appLockSettings.systemUnlockAutoPromptEnabled,
+    appLockSystemUnlockStatus?.label,
+    mapAppLockChangeError,
+    setAppLockSystemUnlockEnabled,
+  ]);
+
+  const handleAppLockSystemUnlockAutoPromptChange = useCallback(async (autoPromptEnabled: boolean) => {
+    if (!setAppLockSystemUnlockEnabled || !appLockSystemUnlockStatus?.label) return;
+    if (!appLockSettings.systemUnlockEnabled) return;
+    setAppLockError(null);
+
+    setIsSavingAppLockSystemUnlock(true);
+    try {
+      const result = await setAppLockSystemUnlockEnabled({
+        enabled: true,
+        autoPromptEnabled,
+      });
+      if ('ok' in result && result.ok === false) {
+        setAppLockError(mapAppLockChangeError(result.error));
+        return;
+      }
+    } finally {
+      setIsSavingAppLockSystemUnlock(false);
+    }
+  }, [
+    appLockSettings.systemUnlockEnabled,
     appLockSystemUnlockStatus?.label,
     mapAppLockChangeError,
     setAppLockSystemUnlockEnabled,
@@ -725,23 +757,38 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                   </SettingRow>
 
                   {showAppLockSystemUnlock && appLockSystemUnlockStatus?.label && (
-                    <SettingRow
-                      label={t("settings.appLock.systemUnlock.label").replace("{label}", appLockSystemUnlockStatus.label)}
-                      description={
-                        appLockSystemUnlockStatus.available
-                          ? t("settings.appLock.systemUnlock.desc").replace("{label}", appLockSystemUnlockStatus.label)
-                          : t("settings.appLock.systemUnlock.unavailableDesc").replace("{label}", appLockSystemUnlockStatus.label)
-                      }
-                    >
-                      <div className="flex flex-col items-end gap-2">
-                        <Toggle
-                          checked={appLockSettings.systemUnlockEnabled}
-                          disabled={isSavingAppLockSystemUnlock || (!appLockSettings.systemUnlockEnabled && !appLockSystemUnlockStatus.available)}
-                          ariaLabel={t("settings.appLock.systemUnlock.label").replace("{label}", appLockSystemUnlockStatus.label)}
-                          onChange={(enabled) => void handleAppLockSystemUnlockChange(enabled)}
-                        />
+                    <div className="space-y-3">
+                      <SettingRow
+                        label={t("settings.appLock.systemUnlock.label").replace("{label}", appLockSystemUnlockStatus.label)}
+                        description={
+                          appLockSystemUnlockStatus.available
+                            ? t("settings.appLock.systemUnlock.desc").replace("{label}", appLockSystemUnlockStatus.label)
+                            : t("settings.appLock.systemUnlock.unavailableDesc").replace("{label}", appLockSystemUnlockStatus.label)
+                        }
+                      >
+                        <div className="flex flex-col items-end gap-2">
+                          <Toggle
+                            checked={appLockSettings.systemUnlockEnabled}
+                            disabled={isSavingAppLockSystemUnlock || (!appLockSettings.systemUnlockEnabled && !appLockSystemUnlockStatus.available)}
+                            ariaLabel={t("settings.appLock.systemUnlock.label").replace("{label}", appLockSystemUnlockStatus.label)}
+                            onChange={(enabled) => void handleAppLockSystemUnlockChange(enabled)}
+                          />
+                        </div>
+                      </SettingRow>
+                      <div className="border-l border-border/60 pl-4">
+                        <SettingRow
+                          label={t("settings.appLock.systemUnlock.autoPrompt.label").replace("{label}", appLockSystemUnlockStatus.label)}
+                          description={t("settings.appLock.systemUnlock.autoPrompt.desc").replace("{label}", appLockSystemUnlockStatus.label)}
+                        >
+                          <Toggle
+                            checked={appLockSettings.systemUnlockAutoPromptEnabled}
+                            disabled={isSavingAppLockSystemUnlock || !appLockSettings.systemUnlockEnabled || !appLockSystemUnlockStatus.available}
+                            ariaLabel={t("settings.appLock.systemUnlock.autoPrompt.label").replace("{label}", appLockSystemUnlockStatus.label)}
+                            onChange={(enabled) => void handleAppLockSystemUnlockAutoPromptChange(enabled)}
+                          />
+                        </SettingRow>
                       </div>
-                    </SettingRow>
+                    </div>
                   )}
 
                   {appLockSettings.enabled && (
