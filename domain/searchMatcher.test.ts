@@ -51,6 +51,18 @@ test("host search does not mix human tokens with hostname IP tokens", () => {
   );
 });
 
+test("host search treats equivalent dash separators as strict punctuation matches", () => {
+  const match = getHostSearchMatch("山东 6-1", {
+    label: "山东—业务交换机6—1",
+    hostname: "10.6.1.88",
+    group: "铁塔/山东",
+    tags: [],
+  });
+
+  assert.equal(match.matched, true);
+  assert.equal(match.phase, "strict");
+});
+
 test("host search still supports direct IP matching", () => {
   assert.equal(
     matchesHostSearchQuery("10.6.1.88", {

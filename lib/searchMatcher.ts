@@ -4,6 +4,7 @@ const SEARCH_SPLIT_REGEX = /[\s\p{Pd}_/\\|.,，。;；:：!！?？()（）[\]{}<
 const SEARCH_REMOVE_REGEX = /[\s\p{Pd}_/\\|.,，。;；:：!！?？()（）[\]{}<>《》、"'`~·]+/gu;
 const SEARCH_QUERY_SEGMENT_SPLIT_REGEX = /\s+/u;
 const SEARCH_QUERY_PUNCT_REGEX = /[\p{Pd}_/\\|.,，。;；:：!！?？()（）[\]{}<>《》、"'`~·]/u;
+const DASH_SEPARATOR_REGEX = /[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/gu;
 const PINYIN_CACHE = new Map<string, { full: string; initials: string }>();
 const IPV4_LIKE_REGEX = /^\d{1,3}(?:\.\d{1,3})+$/;
 const HOST_PHASE_SCORE_BONUS = {
@@ -24,7 +25,7 @@ const HOST_METHOD_SCORE = {
 } as const;
 
 function normalizeText(input: string): string {
-  return input.normalize("NFKC").toLowerCase().trim();
+  return input.normalize("NFKC").replace(DASH_SEPARATOR_REGEX, "-").toLowerCase().trim();
 }
 
 function compactText(input: string): string {
