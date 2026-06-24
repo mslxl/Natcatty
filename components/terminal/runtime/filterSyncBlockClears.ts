@@ -31,6 +31,11 @@ export type SyncBlockClearFilterOptions = {
   stripClearsInSyncBlock: boolean;
 };
 
+export type SyncBlockClearFilterResult = {
+  output: string;
+  startedSyncBlock: boolean;
+};
+
 const SYNC_START = "\x1b[?2026h";
 const SYNC_END = "\x1b[?2026l";
 const CLEAR = "\x1b[2J";
@@ -57,13 +62,15 @@ const scanSyncBlockClears = (
   input: string,
   state: SyncBlockFilterState,
   stripClearsInSyncBlock: boolean,
-): string => {
+): SyncBlockClearFilterResult => {
   let result = "";
+  let startedSyncBlock = false;
   let index = 0;
 
   while (index < input.length) {
     if (input.startsWith(SYNC_START, index)) {
       state.inSyncBlock = true;
+      startedSyncBlock = true;
       result += SYNC_START;
       index += SYNC_START.length;
       continue;
@@ -89,22 +96,28 @@ const scanSyncBlockClears = (
     index += 1;
   }
 
-  return result;
+  return { output: result, startedSyncBlock };
+};
+
+export const filterSyncBlockClearsWithMeta = (
+  data: string,
+  state: SyncBlockFilterState,
+  options: SyncBlockClearFilterOptions = { stripClearsInSyncBlock: true },
+): SyncBlockClearFilterResult => {
+  const { emit, pending } = splitPendingMarkerSuffix(`${state.pending}${data}`);
+  state.pending = pending;
+  if (!emit) {
+    return { output: "", startedSyncBlock: false };
+  }
+
+  return scanSyncBlockClears(emit, state, options.stripClearsInSyncBlock);
 };
 
 export const filterSyncBlockClears = (
   data: string,
   state: SyncBlockFilterState,
   options: SyncBlockClearFilterOptions = { stripClearsInSyncBlock: true },
-): string => {
-  const { emit, pending } = splitPendingMarkerSuffix(`${state.pending}${data}`);
-  state.pending = pending;
-  if (!emit) {
-    return "";
-  }
-
-  return scanSyncBlockClears(emit, state, options.stripClearsInSyncBlock);
-};
+): string => filterSyncBlockClearsWithMeta(data, state, options).output;
 
 export const createSyncBlockFilterState = (): SyncBlockFilterState => ({
   inSyncBlock: false,
@@ -117,8 +130,7 @@ export const isTerminalViewportScrolledUp = (term: XTerm): boolean => {
     return false;
   }
 
-  const maxBaseY = Math.max(0, buffer.length - term.rows);
-  return buffer.baseY < maxBaseY;
+  return buffer.viewportY < buffer.baseY;
 };
 
 export const shouldStripSyncBlockClears = (term: XTerm): boolean =>

@@ -137,11 +137,11 @@ test("isTerminalViewportScrolledUp is false on alternate-screen buffers", () => 
 test("isTerminalViewportScrolledUp detects normal-buffer scrollback", () => {
   const atBottom = {
     rows: 24,
-    buffer: { active: { type: "normal", baseY: 76, length: 100 } },
+    buffer: { active: { type: "normal", viewportY: 76, baseY: 76, length: 100 } },
   } as never;
   const scrolledUp = {
     rows: 24,
-    buffer: { active: { type: "normal", baseY: 10, length: 100 } },
+    buffer: { active: { type: "normal", viewportY: 10, baseY: 76, length: 100 } },
   } as never;
 
   assert.equal(isTerminalViewportScrolledUp(atBottom), false);
