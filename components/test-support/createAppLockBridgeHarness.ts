@@ -7,6 +7,15 @@ type UnlockResult =
 type HarnessOptions = {
   runtimeState: RuntimeAppLockState;
   unlockPassword?: string;
+  systemUnlockStatus?: {
+    supported: boolean;
+    available: boolean;
+    enabled: boolean;
+    platform: "darwin" | "win32" | "unsupported";
+    label: "Touch ID" | "Windows Hello" | null;
+    reason: string | null;
+  };
+  systemUnlockResult?: { ok: true } | { ok: false; error: "disabled" | "not-locked" | "unsupported" | "unavailable" | "cancelled" | "failed" };
 };
 
 function cloneRuntimeState(input: RuntimeAppLockState): RuntimeAppLockState {
@@ -24,6 +33,16 @@ export function createAppLockBridgeHarness(options: HarnessOptions) {
   const rendererReadyCalls: number[] = [];
   const unlockAttempts: string[] = [];
   const activityReports: number[] = [];
+  let systemUnlockStatus = options.systemUnlockStatus ?? {
+    supported: false,
+    available: false,
+    enabled: false,
+    platform: "unsupported" as const,
+    label: null,
+    reason: null,
+  };
+  let systemUnlockResult = options.systemUnlockResult ?? { ok: true as const };
+  let systemUnlockCount = 0;
   let resetCount = 0;
   let runtimeFetchCount = 0;
 
@@ -80,6 +99,31 @@ export function createAppLockBridgeHarness(options: HarnessOptions) {
         passwordVerifier: null,
       };
     },
+    getAppLockSystemUnlockStatus: async () => ({ ...systemUnlockStatus }),
+    setAppLockSystemUnlockEnabled: async (input) => {
+      systemUnlockStatus = {
+        ...systemUnlockStatus,
+        enabled: input.enabled,
+      };
+      return {
+        enabled: input.enabled,
+        timeoutMinutes: 15,
+        systemUnlockEnabled: input.enabled,
+        passwordVerifier: null,
+      };
+    },
+    requestAppLockSystemUnlock: async () => {
+      systemUnlockCount += 1;
+      if (!systemUnlockResult.ok) return systemUnlockResult;
+      setRuntimeState({
+        initialized: true,
+        locked: false,
+        reason: null,
+        lastUnlockedAt: Date.now(),
+        lastActivityAt: Date.now(),
+      });
+      return { ok: true };
+    },
     setAppLockRuntimeLocked: async (reason) => {
       setRuntimeState({
         initialized: true,
@@ -133,6 +177,15 @@ export function createAppLockBridgeHarness(options: HarnessOptions) {
     },
     getResetCount() {
       return resetCount;
+    },
+    getSystemUnlockCount() {
+      return systemUnlockCount;
+    },
+    setSystemUnlockResult(nextResult: typeof systemUnlockResult) {
+      systemUnlockResult = nextResult;
+    },
+    setSystemUnlockStatus(nextStatus: typeof systemUnlockStatus) {
+      systemUnlockStatus = nextStatus;
     },
   };
 }

@@ -87,6 +87,78 @@ test("startup-locked gate reveals children after successful unlock", async () =>
   }
 });
 
+test("startup-locked gate reveals children after successful system unlock", async () => {
+  const dom = installDomEnvironment();
+  const renderer = await createDomRenderer(dom.document);
+  const bridgeHarness = createAppLockBridgeHarness({
+    runtimeState: {
+      initialized: true,
+      locked: true,
+      reason: "startup",
+      version: 1,
+      lastLockedAt: 1_000,
+      lastUnlockedAt: null,
+      lastActivityAt: 1_000,
+    },
+    systemUnlockStatus: {
+      supported: true,
+      available: true,
+      enabled: true,
+      platform: "darwin",
+      label: "Touch ID",
+      reason: null,
+    },
+  });
+  const AppLockGate = createAppLockGate({
+    useSettingsState: () => ({
+      uiLanguage: "en",
+      appLockSettings: {
+        enabled: true,
+        timeoutMinutes: 15,
+        systemUnlockEnabled: true,
+        passwordVerifier: {
+          version: 1,
+          algorithm: "PBKDF2-SHA256",
+          iterations: 210000,
+          salt: "AAAAAAAAAAAAAAAAAAAAAA==",
+          hash: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        },
+      },
+    }) as ReturnType<typeof import("../application/state/useSettingsState.ts").useSettingsState>,
+    useAppLockState,
+    useAppLockBridge,
+  });
+
+  const previousWindowNetcatty = dom.window.netcatty;
+  dom.window.netcatty = bridgeHarness.bridge;
+
+  try {
+    await renderer.render(
+      React.createElement(AppLockGate, {
+        notifyRendererReady: false,
+        children: () => React.createElement("div", { id: "unlocked-content" }, "Unlocked"),
+      }),
+    );
+    await flushEffects();
+    await flushEffects();
+
+    const button = [...dom.document.querySelectorAll("button")]
+      .find((candidate) => /Touch ID/i.test(candidate.textContent ?? ""));
+    assert.ok(button);
+    await dispatchDomEvent(button, new dom.window.MouseEvent("click", { bubbles: true }));
+    await flushEffects();
+    await flushEffects();
+
+    assert.equal(bridgeHarness.getSystemUnlockCount(), 1);
+    assert.equal(bridgeHarness.getRuntimeState().locked, false);
+    assert.equal(dom.document.getElementById("unlocked-content")?.textContent, "Unlocked");
+  } finally {
+    dom.window.netcatty = previousWindowNetcatty;
+    await renderer.unmount();
+    dom.cleanup();
+  }
+});
+
 test("startup-locked gate reveals children after hidden app lock reset", async () => {
   const dom = installDomEnvironment();
   const renderer = await createDomRenderer(dom.document);

@@ -3,7 +3,10 @@ import test from "node:test";
 import { createAppLockPasswordVerifier, type AppLockSettings } from "../../domain/appLock.ts";
 import {
   createOptimisticUnlockedRuntimeState,
+  DEFAULT_APP_LOCK_SYSTEM_UNLOCK_STATUS,
   getIdleLockDelayMs,
+  normalizeAppLockSystemUnlockStatus,
+  normalizeAppLockSystemUnlockResult,
   resolveUnlockAttempt,
   shouldLockAfterIdle,
   shouldLockOnStartup,
@@ -14,6 +17,7 @@ test("shouldLockOnStartup locks only when enabled with a verifier", async () => 
   const enabled: AppLockSettings = {
     enabled: true,
     timeoutMinutes: 15,
+    systemUnlockEnabled: false,
     passwordVerifier: verifier,
   };
 
@@ -27,6 +31,7 @@ test("shouldLockAfterIdle honors the configured timeout", async () => {
   const settings: AppLockSettings = {
     enabled: true,
     timeoutMinutes: 5,
+    systemUnlockEnabled: false,
     passwordVerifier: verifier,
   };
 
@@ -42,6 +47,7 @@ test("getIdleLockDelayMs schedules the next check after remaining idle time", as
   const settings: AppLockSettings = {
     enabled: true,
     timeoutMinutes: 5,
+    systemUnlockEnabled: false,
     passwordVerifier: verifier,
   };
 
@@ -93,6 +99,44 @@ test("createOptimisticUnlockedRuntimeState outranks same-version stale locked fe
   );
 
   assert.equal(optimistic.version, 8);
+});
+
+test("normalizes app lock system unlock bridge status and results", () => {
+  assert.deepEqual(DEFAULT_APP_LOCK_SYSTEM_UNLOCK_STATUS, {
+    supported: false,
+    available: false,
+    enabled: false,
+    platform: "unsupported",
+    label: null,
+    reason: null,
+  });
+  assert.deepEqual(
+    normalizeAppLockSystemUnlockStatus({
+      supported: true,
+      available: true,
+      enabled: true,
+      platform: "win32",
+      label: "Windows Hello",
+      reason: "",
+    }),
+    {
+      supported: true,
+      available: true,
+      enabled: true,
+      platform: "win32",
+      label: "Windows Hello",
+      reason: null,
+    },
+  );
+  assert.deepEqual(normalizeAppLockSystemUnlockResult({ ok: true }), { ok: true });
+  assert.deepEqual(normalizeAppLockSystemUnlockResult({ ok: false, error: "cancelled" }), {
+    ok: false,
+    error: "cancelled",
+  });
+  assert.deepEqual(normalizeAppLockSystemUnlockResult({ ok: false, error: "unknown" }), {
+    ok: false,
+    error: "failed",
+  });
 });
 
 

@@ -519,6 +519,17 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     return next ?? appLockSettings;
   }, [appLockSettings]);
 
+  const setAppLockSystemUnlockEnabled = useCallback(async (input: {
+    enabled: boolean;
+    currentPassword?: string;
+  }) => {
+    const next = await netcattyBridge.get()?.setAppLockSystemUnlockEnabled?.(input);
+    if (next && !('ok' in next)) {
+      setAppLockSettingsState(next);
+    }
+    return next ?? appLockSettings;
+  }, [appLockSettings]);
+
   const syncAppearanceFromStorage = useCallback(() => {
     const storedTheme = readStoredString(STORAGE_KEY_THEME);
     const nextTheme = storedTheme && isValidTheme(storedTheme) ? storedTheme : theme;
@@ -1205,6 +1216,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     requestAppLockEnable,
     requestAppLockDisable,
     requestAppLockPasswordChange,
+    setAppLockSystemUnlockEnabled,
     terminalThemeId,
     setTerminalThemeId,
     followAppTerminalTheme,

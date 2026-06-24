@@ -1,7 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 
 import { useI18n } from '../application/i18n/I18nProvider';
-import type { AppLockReason, AppLockUnlockResult } from '../application/state/useAppLockState';
+import type {
+  AppLockReason,
+  AppLockSystemUnlockResult,
+  AppLockSystemUnlockStatus,
+  AppLockUnlockResult,
+} from '../application/state/useAppLockState';
 import { AppLogo } from './AppLogo';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -14,6 +19,8 @@ interface AppLockOverlayProps {
   locked: boolean;
   reason: AppLockReason | null;
   onUnlock: (password: string) => Promise<AppLockUnlockResult>;
+  systemUnlockStatus?: AppLockSystemUnlockStatus;
+  onSystemUnlock?: () => Promise<AppLockSystemUnlockResult>;
   onResetAppLock: () => Promise<void>;
 }
 
@@ -45,6 +52,8 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
   locked,
   reason,
   onUnlock,
+  systemUnlockStatus,
+  onSystemUnlock,
   onResetAppLock,
 }) => {
   const { t } = useI18n();
@@ -52,6 +61,8 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
   const [password, setPassword] = useState('');
   const [error, setError] = useState<AppLockUnlockResult['error'] | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSystemUnlocking, setIsSystemUnlocking] = useState(false);
+  const [systemUnlockError, setSystemUnlockError] = useState(false);
   const [logoClickCount, setLogoClickCount] = useState(0);
   const [lastLogoClickAt, setLastLogoClickAt] = useState<number | null>(null);
   const [showReset, setShowReset] = useState(false);
@@ -63,6 +74,8 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
       setPassword('');
       setError(null);
       setIsSubmitting(false);
+      setIsSystemUnlocking(false);
+      setSystemUnlockError(false);
       setLogoClickCount(0);
       setLastLogoClickAt(null);
       setShowReset(false);
@@ -91,6 +104,17 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
     }
     setPassword('');
     setIsSubmitting(false);
+  };
+
+  const handleSystemUnlock = async () => {
+    if (isSystemUnlocking || !onSystemUnlock) return;
+    setIsSystemUnlocking(true);
+    setSystemUnlockError(false);
+    const result = await onSystemUnlock();
+    if (!result.ok) {
+      setSystemUnlockError(true);
+    }
+    setIsSystemUnlocking(false);
   };
 
   const handleLogoClick = () => {
@@ -175,6 +199,25 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
         <Button type="submit" className="w-full" disabled={isSubmitting}>
           {isSubmitting ? t('appLock.unlocking') : t('appLock.unlock')}
         </Button>
+
+        {systemUnlockStatus?.enabled && systemUnlockStatus.available && systemUnlockStatus.label && (
+          <div className="w-full space-y-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              disabled={isSystemUnlocking}
+              onClick={() => void handleSystemUnlock()}
+            >
+              {`Unlock with ${systemUnlockStatus.label}`}
+            </Button>
+            {systemUnlockError && (
+              <p className="text-sm text-destructive">
+                {t('appLock.systemUnlock.error')}
+              </p>
+            )}
+          </div>
+        )}
 
         {showReset && (
           <div
