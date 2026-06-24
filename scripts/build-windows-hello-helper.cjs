@@ -31,6 +31,7 @@ function buildWindowsHelloHelper({
       sourcePath,
       "/Fe:" + outputPath,
       "runtimeobject.lib",
+      "windowsapp.lib",
     ], {
       cwd: projectDir,
       stdio: "inherit",
