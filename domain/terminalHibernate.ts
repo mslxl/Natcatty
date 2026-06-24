@@ -33,7 +33,7 @@ export function resolveTerminalHibernateEnabled(
   settings?: Pick<TerminalSettings, "hibernateHiddenTabs"> | null,
 ): boolean {
   if (!TERMINAL_HIBERNATE_ENABLED) return false;
-  return settings?.hibernateHiddenTabs !== false;
+  return settings?.hibernateHiddenTabs === true;
 }
 
 /** Block hibernate while a file transfer or drag-drop session is in progress. */
