@@ -84,6 +84,9 @@ export function matchesSearchQuery(
     return normalizedFields.some((field) => field.includes(normalizedQuery));
   }
 
+  const tokens = tokenizeSearchQuery(normalizedQuery);
+  if (tokens.length === 0) return false;
+
   const sourceText = normalizedFields.join(" ");
   const haystack = sourceText;
   if (haystack.includes(normalizedQuery)) {
@@ -95,9 +98,6 @@ export function matchesSearchQuery(
   if (compactQuery && haystackCompact.includes(compactQuery)) {
     return true;
   }
-
-  const tokens = tokenizeSearchQuery(normalizedQuery);
-  if (tokens.length === 0) return true;
 
   if (tokens.every((token) => haystack.includes(token))) {
     return true;
@@ -199,7 +199,11 @@ function matchSegmentAgainstSource(
   if (SEARCH_QUERY_PUNCT_REGEX.test(segment)) return null;
 
   const compactSegment = compactText(segment);
-  if (compactSegment && source.compact.includes(compactSegment)) {
+  if (
+    compactSegment
+    && source.field !== "hostname"
+    && source.compact.includes(compactSegment)
+  ) {
     return {
       segment,
       field: source.field,
