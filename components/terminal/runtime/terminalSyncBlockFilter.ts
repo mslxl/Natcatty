@@ -6,9 +6,46 @@ import {
   type SyncBlockFilterState,
 } from "./filterSyncBlockClears.ts";
 
+/** Matches @xterm/xterm RenderService SYNCHRONIZED_OUTPUT_TIMEOUT_MS. */
+export const SYNC_BLOCK_TIMEOUT_MS = 1000;
+
 const syncBlockFilterStates = new WeakMap<XTerm, SyncBlockFilterState>();
+const syncBlockTimers = new WeakMap<XTerm, ReturnType<typeof setTimeout>>();
+
+const clearSyncBlockTimer = (term: XTerm): void => {
+  const timer = syncBlockTimers.get(term);
+  if (timer === undefined) {
+    return;
+  }
+  clearTimeout(timer);
+  syncBlockTimers.delete(term);
+};
+
+const abandonSyncBlock = (term: XTerm, state: SyncBlockFilterState): void => {
+  state.inSyncBlock = false;
+  state.pending = "";
+  clearSyncBlockTimer(term);
+};
+
+const scheduleSyncBlockTimeout = (term: XTerm, state: SyncBlockFilterState): void => {
+  clearSyncBlockTimer(term);
+  if (!state.inSyncBlock) {
+    return;
+  }
+  syncBlockTimers.set(
+    term,
+    setTimeout(() => {
+      syncBlockTimers.delete(term);
+      abandonSyncBlock(term, state);
+    }, SYNC_BLOCK_TIMEOUT_MS),
+  );
+};
 
 export const resetTerminalSyncBlockFilter = (term: XTerm): void => {
+  const state = syncBlockFilterStates.get(term);
+  if (state) {
+    abandonSyncBlock(term, state);
+  }
   syncBlockFilterStates.set(term, createSyncBlockFilterState());
 };
 
@@ -21,5 +58,13 @@ const getSyncBlockFilterState = (term: XTerm): SyncBlockFilterState => {
   return state;
 };
 
-export const filterTerminalSessionData = (term: XTerm, data: string): string =>
-  filterSyncBlockClears(data, getSyncBlockFilterState(term));
+export const filterTerminalSessionData = (term: XTerm, data: string): string => {
+  const state = getSyncBlockFilterState(term);
+  const filtered = filterSyncBlockClears(data, state);
+  if (state.inSyncBlock) {
+    scheduleSyncBlockTimeout(term, state);
+  } else {
+    clearSyncBlockTimer(term);
+  }
+  return filtered;
+};
