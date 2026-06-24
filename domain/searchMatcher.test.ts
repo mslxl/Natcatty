@@ -116,6 +116,23 @@ test("host search scoring prefers strict punctuation match over loose compact ma
   assert.equal(strict.score > loose.score, true);
 });
 
+test("punctuation-only query does not match every field", () => {
+  assert.equal(matchesSearchQuery("---", "prod-api-01"), false);
+  assert.equal(matchesSearchQuery("-", "some-host"), false);
+});
+
+test("host search avoids compact hostname false positives on numeric segments", () => {
+  assert.equal(
+    matchesHostSearchQuery("61", {
+      label: "核心交换机",
+      hostname: "10.6.1.88",
+      group: "网络设备",
+      tags: [],
+    }),
+    false,
+  );
+});
+
 test("host search scoring favors label over group when both match", () => {
   const labelHit = getHostSearchMatch("山东 6-1", {
     label: "山东-业务交换机6-1",
