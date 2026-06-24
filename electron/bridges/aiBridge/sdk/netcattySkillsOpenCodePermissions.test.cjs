@@ -46,6 +46,19 @@ test("buildNetcattySkillsOpenCodePathAllowlist dedupes launcher and script roots
   ]);
 });
 
+test("buildNetcattySkillsOpenCodePathAllowlist includes temp dir and extra attachment paths", () => {
+  const patterns = buildNetcattySkillsOpenCodePathAllowlist({
+    discoveryFilePath: "/Users/me/Library/Application Support/netcatty/netcatty-tool-cli/discovery.json",
+    tempDir: "/var/folders/tmp/Netcatty",
+    extraFilePaths: ["/var/folders/tmp/Netcatty/ai-attachment-1.png"],
+  });
+
+  assert.deepEqual(patterns, [
+    "/Users/me/Library/Application Support/netcatty/netcatty-tool-cli/**",
+    "/var/folders/tmp/Netcatty/**",
+  ]);
+});
+
 test("buildOpenCodeSkillsPermissionRules allowlists Netcatty CLI paths and denies other external access", () => {
   const rules = buildOpenCodeSkillsPermissionRules([
     "/Applications/Netcatty.app/Contents/MacOS/**",

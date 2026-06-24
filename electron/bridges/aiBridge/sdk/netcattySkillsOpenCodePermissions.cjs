@@ -43,14 +43,21 @@ function buildNetcattySkillsOpenCodePathAllowlist({
   discoveryFilePath,
   cliStateDir,
   runtimeBinaryPath,
+  tempDir,
+  extraFilePaths,
 } = {}) {
+  const filePaths = [
+    launcherPath,
+    cliScriptPath,
+    skillPath,
+    discoveryFilePath,
+    runtimeBinaryPath,
+    ...(Array.isArray(extraFilePaths) ? extraFilePaths : []),
+  ];
   return dedupePatterns([
-    launcherPath && toOpenCodeFileParentGlob(launcherPath),
-    cliScriptPath && toOpenCodeFileParentGlob(cliScriptPath),
-    skillPath && toOpenCodeFileParentGlob(skillPath),
-    discoveryFilePath && toOpenCodeFileParentGlob(discoveryFilePath),
+    ...filePaths.map((filePath) => filePath && toOpenCodeFileParentGlob(filePath)),
     cliStateDir && toOpenCodeDirectoryGlob(cliStateDir),
-    runtimeBinaryPath && toOpenCodeFileParentGlob(runtimeBinaryPath),
+    tempDir && toOpenCodeDirectoryGlob(tempDir),
   ]);
 }
 
