@@ -6,6 +6,7 @@ const path = require("node:path");
 
 const {
   CURSOR_PLATFORM_PACKAGES,
+  beforePackCursorSdk,
   ensureCursorSdkPlatformPackages,
 } = require("./beforePackCursorSdk.cjs");
 
@@ -59,4 +60,26 @@ test("ensureCursorSdkPlatformPackages is a no-op when target packages exist", (t
 
   assert.deepEqual(installed, []);
   assert.deepEqual(calls, []);
+});
+
+test("beforePackCursorSdk builds Windows Hello helper only for Windows packages", () => {
+  const calls = [];
+
+  beforePackCursorSdk({
+    appDir: process.cwd(),
+    electronPlatformName: "win32",
+    ensureCursorSdkPlatformPackages: () => [],
+    buildWindowsHelloHelper: (projectDir) => calls.push(projectDir),
+  });
+
+  assert.deepEqual(calls, [process.cwd()]);
+
+  beforePackCursorSdk({
+    appDir: process.cwd(),
+    electronPlatformName: "darwin",
+    ensureCursorSdkPlatformPackages: () => [],
+    buildWindowsHelloHelper: (projectDir) => calls.push(projectDir),
+  });
+
+  assert.deepEqual(calls, [process.cwd()]);
 });

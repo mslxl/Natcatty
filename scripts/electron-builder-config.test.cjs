@@ -65,8 +65,23 @@ test("asarUnpack keeps Cursor SDK runtime deps unpacked", () => {
   assert.ok(config.asarUnpack.includes("node_modules/sqlite3/**/*"));
 });
 
-test("beforePack installs missing Cursor SDK platform runtime packages", () => {
+test("beforePack installs missing Cursor SDK packages and builds Windows Hello helper", () => {
   assert.equal(config.beforePack, "./scripts/beforePackCursorSdk.cjs");
+});
+
+test("Windows packaging includes the Windows Hello helper executable", () => {
+  assert.ok(
+    Array.isArray(config.win.extraResources),
+    "win.extraResources must be an array",
+  );
+  assert.ok(
+    config.win.extraResources.some((entry) => (
+      entry &&
+      entry.from === "electron/bridges/windowsHelloHelper/build/NetcattyWindowsHello.exe" &&
+      entry.to === "windowsHello/NetcattyWindowsHello.exe"
+    )),
+    "Windows package must include the Windows Hello helper executable",
+  );
 });
 
 test("packaged app declares ssh URL protocol support", () => {

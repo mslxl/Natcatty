@@ -196,7 +196,15 @@ module.exports = {
                 arch: ['x64', 'arm64']
             }
         ],
-        extraResources: [...moshExtraResources('win32'), ...etExtraResources('win32')]
+        extraResources: [
+            ...moshExtraResources('win32'),
+            ...etExtraResources('win32'),
+            {
+                from: 'electron/bridges/windowsHelloHelper/build/NetcattyWindowsHello.exe',
+                to: 'windowsHello/NetcattyWindowsHello.exe',
+                filter: ['**/*']
+            }
+        ]
     },
     portable: {
         artifactName: '${productName}-${version}-portable-${os}-${arch}.${ext}',

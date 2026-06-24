@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
+const { buildWindowsHelloHelper } = require("./build-windows-hello-helper.cjs");
 
 const CURSOR_PLATFORM_PACKAGES = {
   darwin: ["@cursor/sdk-darwin-arm64", "@cursor/sdk-darwin-x64"],
@@ -67,10 +68,16 @@ function ensureCursorSdkPlatformPackages({
 function beforePackCursorSdk(context = {}) {
   const projectDir = context.appDir || process.cwd();
   const platform = context.electronPlatformName || process.platform;
-  ensureCursorSdkPlatformPackages({ projectDir, platform });
+  const ensureCursor = context.ensureCursorSdkPlatformPackages || ensureCursorSdkPlatformPackages;
+  ensureCursor({ projectDir, platform });
+  const buildHelper = context.buildWindowsHelloHelper || buildWindowsHelloHelper;
+  if (platform === "win32") {
+    buildHelper(projectDir);
+  }
 }
 
 module.exports = beforePackCursorSdk;
 module.exports.default = beforePackCursorSdk;
+module.exports.beforePackCursorSdk = beforePackCursorSdk;
 module.exports.ensureCursorSdkPlatformPackages = ensureCursorSdkPlatformPackages;
 module.exports.CURSOR_PLATFORM_PACKAGES = CURSOR_PLATFORM_PACKAGES;

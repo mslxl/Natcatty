@@ -19,6 +19,7 @@
     "fetch:mosh:dev": "node scripts/fetch-mosh-binaries.cjs --host --resolve-release",
     "fetch:et": "node scripts/fetch-et-binaries.cjs",
     "fetch:et:dev": "node scripts/fetch-et-binaries.cjs --host --resolve-release",
+    "build:windows-hello-helper": "node scripts/build-windows-hello-helper.cjs",
     "build": "vite build",
     "preview": "vite preview",
     "start": "node electron/launch.cjs",
