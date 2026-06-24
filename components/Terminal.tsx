@@ -117,6 +117,19 @@ import {
 } from "./terminal/terminalHelpers";
 import { terminalPropsAreEqual } from "./terminal/terminalMemo";
 
+const resolveInitialTerminalEncoding = (charset?: string): 'utf-8' | 'gb18030' => {
+  if (!charset) return 'utf-8';
+  const raw = String(charset).trim().toLowerCase();
+  const localeCodeset = raw.match(/\.([^@]+)(?:@.*)?$/)?.[1];
+  const candidates = [raw, localeCodeset].filter((value): value is string => Boolean(value));
+  return candidates.some((candidate) => {
+    const normalized = candidate.replace(/[^a-z0-9]/g, "");
+    return ["gb18030", "gbk", "gb2312", "cp936", "ms936"].includes(normalized);
+  })
+    ? 'gb18030'
+    : 'utf-8';
+};
+
 const TerminalComponent: React.FC<TerminalProps> = ({
   host,
   keys,
@@ -374,8 +387,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   // pendingUploadEntries removed - drag-drop uploads now handled by SftpSidePanel
   const [isComposeBarOpen, setIsComposeBarOpen] = useState(false);
   const [terminalEncoding, setTerminalEncoding] = useState<'utf-8' | 'gb18030'>(() => {
-    if (host?.charset && /^gb/i.test(String(host.charset).trim())) return 'gb18030';
-    return 'utf-8';
+    return resolveInitialTerminalEncoding(host?.charset);
   });
   const terminalEncodingRef = useRef(terminalEncoding);
   terminalEncodingRef.current = terminalEncoding;

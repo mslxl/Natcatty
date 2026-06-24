@@ -231,8 +231,8 @@ function createStartSessionApi(ctx) {
       // (Terminal.tsx) so behavior for other/arbitrary charsets is unchanged:
       // the renderer pushes the effective encoding via setEncoding on attach,
       // and that handler keeps both halves in sync.
-      const gbCharset = options.charset && /^gb/i.test(String(options.charset).trim());
-      if (gbCharset) {
+      const initialEncoding = normalizeTerminalEncoding(options.charset);
+      if (initialEncoding === "gb18030") {
         sessionEncodings.set(sessionId, "gb18030");
         session.encoding = "gb18030";
       }
