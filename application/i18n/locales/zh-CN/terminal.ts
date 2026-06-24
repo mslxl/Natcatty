@@ -355,6 +355,16 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.rendering.hibernateHiddenTabs.desc': '标签页离开视野后释放终端渲染器以节省内存，SSH 连接保持不断。文件传输期间不会休眠。',
   'settings.terminal.rendering.hibernateHiddenTabsDelay': '休眠延迟',
   'settings.terminal.rendering.hibernateHiddenTabsDelay.desc': '标签页离开视野多久后释放渲染器（5–600 秒）。',
+  'settings.terminal.rendering.hibernateSkipAltScreen': '全屏 TUI 跳过休眠',
+  'settings.terminal.rendering.hibernateSkipAltScreen.desc': 'vim、htop 或 Agent TUI 占用 alternate screen 时保持终端渲染器，避免慢恢复。',
+  'settings.terminal.rendering.hibernateKeepRendererCount': '保留隐藏渲染器数量',
+  'settings.terminal.rendering.hibernateKeepRendererCount.desc': '多少个不可见标签页仅暂停 WebGL、不销毁 xterm，超出后才完整休眠。',
+  'settings.terminal.rendering.hibernateUseHeadlessMirror': '主进程终端镜像',
+  'settings.terminal.rendering.hibernateUseHeadlessMirror.desc': '在主进程用 headless xterm 镜像 PTY 输出，加快休眠唤醒时的快照获取。',
+  'settings.terminal.rendering.hibernateReplayChunkBytes': '唤醒分片大小',
+  'settings.terminal.rendering.hibernateReplayChunkBytes.desc': '恢复休眠终端时每帧回放的 ANSI 字节数（4–64 KB）。',
+  'settings.terminal.rendering.hibernatePreferWasmSerialize': '优先 WASM 序列化',
+  'settings.terminal.rendering.hibernatePreferWasmSerialize.desc': '在可用时使用 WASM 终端序列化，否则回退到 JS SerializeAddon。',
 
   // Settings > Terminal > Workspace Focus Indicator
   'settings.terminal.section.workspaceFocus': '工作区焦点提示',

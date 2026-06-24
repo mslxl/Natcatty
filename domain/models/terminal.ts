@@ -1,6 +1,10 @@
 import type { SerialConfig } from './connection';
 import type { CodingCliProviderId } from '../codingCliProviders';
-import { normalizeHibernateHiddenTabsDelaySec } from '../terminalHibernate';
+import {
+  normalizeHibernateHiddenTabsDelaySec,
+  normalizeHibernateKeepRendererCount,
+  normalizeHibernateReplayChunkBytes,
+} from '../terminalHibernate';
 
 // Terminal appearance settings
 export type CursorShape = 'block' | 'bar' | 'underline';
@@ -122,6 +126,16 @@ export interface TerminalSettings {
   hibernateHiddenTabs: boolean;
   /** Seconds after a tab leaves view before hibernating (see hibernateHiddenTabs). */
   hibernateHiddenTabsDelaySec: number;
+  /** Skip full hibernate while a full-screen TUI owns the alternate screen buffer. */
+  hibernateSkipAltScreen: boolean;
+  /** Hidden tabs whose renderer is kept alive (WebGL suspended) before full hibernate. */
+  hibernateKeepRendererCount: number;
+  /** Mirror PTY output in a main-process headless xterm for faster wake snapshots. */
+  hibernateUseHeadlessMirror: boolean;
+  /** Bytes per animation frame when replaying hibernate snapshots in the renderer. */
+  hibernateReplayChunkBytes: number;
+  /** Prefer WASM terminal serialize when available (falls back to JS). */
+  hibernatePreferWasmSerialize: boolean;
   showLineTimestamps: boolean; // Show output timestamps in a side gutter
 
   // Autocomplete
@@ -269,6 +283,12 @@ export const normalizeTerminalSettings = (
     hibernateHiddenTabsDelaySec: normalizeHibernateHiddenTabsDelaySec(
       mergedSettings.hibernateHiddenTabsDelaySec,
     ),
+    hibernateKeepRendererCount: normalizeHibernateKeepRendererCount(
+      mergedSettings.hibernateKeepRendererCount,
+    ),
+    hibernateReplayChunkBytes: normalizeHibernateReplayChunkBytes(
+      mergedSettings.hibernateReplayChunkBytes,
+    ),
     autocompleteGhostText: mergedSettings.autocompletePopupMenu
       ? false
       : mergedSettings.autocompleteGhostText,
@@ -333,6 +353,11 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   rendererType: 'auto', // Auto-detect best renderer based on hardware
   hibernateHiddenTabs: true,
   hibernateHiddenTabsDelaySec: 5,
+  hibernateSkipAltScreen: true,
+  hibernateKeepRendererCount: 2,
+  hibernateUseHeadlessMirror: true,
+  hibernateReplayChunkBytes: 16 * 1024,
+  hibernatePreferWasmSerialize: false,
   showLineTimestamps: false, // Opt-in: shows output timestamps beside terminal lines
   autocompleteEnabled: true, // Autocomplete enabled by default
   autocompleteGhostText: false, // Mutually exclusive with popup menu

@@ -126,6 +126,8 @@ export type XTermRuntime = {
    * active. Called when a deferred pane first becomes visible.
    */
   ensureWebglRenderer: () => void;
+  /** Drop the WebGL addon while keeping the terminal alive (soft-hide). */
+  suspendWebglRenderer: () => void;
 };
 
 export type CreateXTermRuntimeContext = {
@@ -212,6 +214,8 @@ export type CreateXTermRuntimeContext = {
   // background tabs) to avoid spinning up many WebGL contexts at once. Defaults
   // to visible (immediate WebGL) when omitted.
   initiallyVisible?: boolean;
+  /** When true, keep the DOM renderer until replay completes (hibernate wake). */
+  deferWebglUntilReplayComplete?: boolean;
 };
 
 const detectPlatform = (): XTermPlatform => {
@@ -439,6 +443,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       webglAddon.onContextLoss(() => {
         logger.warn("[XTerm] WebGL context loss detected, disposing addon");
         webglAddon?.dispose();
+        webglAddon = null;
+        webglLoaded = false;
       });
       term.loadAddon(webglAddon);
       webglLoaded = true;
@@ -451,6 +457,22 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     scopedWindow.__xtermWebGLLoaded = webglLoaded;
   };
 
+  const suspendWebglRenderer = () => {
+    if (!webglAddon) {
+      webglLoaded = false;
+      scopedWindow.__xtermWebGLLoaded = false;
+      return;
+    }
+    try {
+      webglAddon.dispose();
+    } catch (webglErr) {
+      logger.warn("[XTerm] Failed to suspend WebGL renderer", webglErr);
+    }
+    webglAddon = null;
+    webglLoaded = false;
+    scopedWindow.__xtermWebGLLoaded = false;
+  };
+
   if (!performanceConfig.useWebGLAddon) {
     logger.info(
       "[XTerm] Skipping WebGL addon (DOM preferred for low-memory devices)",
@@ -459,9 +481,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     shouldDeferWebglUntilVisible({
       useWebGLAddon: performanceConfig.useWebGLAddon,
       initiallyVisible: ctx.initiallyVisible ?? true,
-    })
+    }) || ctx.deferWebglUntilReplayComplete
   ) {
-    logger.info("[XTerm] Deferring WebGL addon until pane becomes visible");
+    logger.info("[XTerm] Deferring WebGL addon until pane becomes visible or replay completes");
   } else {
     loadWebglRenderer();
   }
@@ -1253,6 +1275,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     keywordHighlighter,
     clearTextureAtlas: clearWebglTextureAtlas,
     ensureWebglRenderer: loadWebglRenderer,
+    suspendWebglRenderer,
     dispose: () => {
       ctx.container.removeEventListener(
         "wheel",
