@@ -3,7 +3,6 @@ import type { Terminal as XTerm } from "@xterm/xterm";
 import {
   createSyncBlockFilterState,
   filterSyncBlockClearsWithMeta,
-  shouldStripSyncBlockClears,
   type SyncBlockFilterState,
 } from "./filterSyncBlockClears.ts";
 
@@ -29,13 +28,13 @@ const expireSyncBlock = (term: XTerm, state: SyncBlockFilterState): void => {
 
 export const resetTerminalSyncBlockFilter = (term: XTerm): void => {
   clearSyncBlockTimer(term);
-  syncBlockFilterStates.set(term, createSyncBlockFilterState());
+  syncBlockFilterStates.set(term, createSyncBlockFilterState(term));
 };
 
 const getSyncBlockFilterState = (term: XTerm): SyncBlockFilterState => {
   let state = syncBlockFilterStates.get(term);
   if (!state) {
-    state = createSyncBlockFilterState();
+    state = createSyncBlockFilterState(term);
     syncBlockFilterStates.set(term, state);
   }
   return state;
@@ -57,9 +56,7 @@ const scheduleSyncBlockTimeout = (term: XTerm, state: SyncBlockFilterState): voi
 
 export const filterTerminalSessionData = (term: XTerm, data: string): string => {
   const state = getSyncBlockFilterState(term);
-  const { output, startedSyncBlock } = filterSyncBlockClearsWithMeta(data, state, {
-    stripClearsInSyncBlock: shouldStripSyncBlockClears(term),
-  });
+  const { output, startedSyncBlock } = filterSyncBlockClearsWithMeta(data, state, term);
 
   if (startedSyncBlock) {
     clearSyncBlockTimer(term);

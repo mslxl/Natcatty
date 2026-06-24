@@ -11,8 +11,9 @@ import type { Terminal as XTerm } from "@xterm/xterm";
  * position and makes earlier output appear "eaten".
  *
  * Alternate-screen TUIs still need the clear to remove stale cells from shorter
- * redraw frames, so callers should only enable stripping while the viewport is
- * scrolled up in the normal buffer.
+ * redraw frames. Because PTY chunks can enter alternate screen before xterm has
+ * applied the switch, this filter tracks alternate-screen transitions in-band
+ * and only strips clears while the normal buffer is scrolled up.
  *
  * PTY/IPC chunks can split escape sequences at arbitrary byte boundaries, so a
  * trailing partial marker is held in `pending` until the next chunk completes it.
@@ -23,12 +24,9 @@ import type { Terminal as XTerm } from "@xterm/xterm";
 
 export type SyncBlockFilterState = {
   inSyncBlock: boolean;
+  inAlternateScreen: boolean;
   /** Trailing bytes that may complete a marker in the next chunk. */
   pending: string;
-};
-
-export type SyncBlockClearFilterOptions = {
-  stripClearsInSyncBlock: boolean;
 };
 
 export type SyncBlockClearFilterResult = {
@@ -39,8 +37,16 @@ export type SyncBlockClearFilterResult = {
 const SYNC_START = "\x1b[?2026h";
 const SYNC_END = "\x1b[?2026l";
 const CLEAR = "\x1b[2J";
+const ALT_SCREEN_ENTER = ["\x1b[?1049h", "\x1b[?1047h", "\x1b[?47h"] as const;
+const ALT_SCREEN_LEAVE = ["\x1b[?1049l", "\x1b[?1047l", "\x1b[?47l"] as const;
 
-const MARKERS = [SYNC_START, SYNC_END, CLEAR] as const;
+const MARKERS = [
+  SYNC_START,
+  SYNC_END,
+  CLEAR,
+  ...ALT_SCREEN_ENTER,
+  ...ALT_SCREEN_LEAVE,
+] as const;
 
 const maxMarkerPrefixLength = Math.max(...MARKERS.map((marker) => marker.length)) - 1;
 
@@ -58,16 +64,51 @@ const splitPendingMarkerSuffix = (input: string): { emit: string; pending: strin
   return { emit: input, pending: "" };
 };
 
+const matchMarker = (input: string, index: number, markers: readonly string[]): string | null => {
+  for (const marker of markers) {
+    if (input.startsWith(marker, index)) {
+      return marker;
+    }
+  }
+  return null;
+};
+
+const shouldStripClearInSyncBlock = (
+  state: SyncBlockFilterState,
+  term: XTerm,
+): boolean => {
+  if (state.inAlternateScreen) {
+    return false;
+  }
+  return isTerminalViewportScrolledUp(term);
+};
+
 const scanSyncBlockClears = (
   input: string,
   state: SyncBlockFilterState,
-  stripClearsInSyncBlock: boolean,
+  term: XTerm,
 ): SyncBlockClearFilterResult => {
   let result = "";
   let startedSyncBlock = false;
   let index = 0;
 
   while (index < input.length) {
+    const alternateEnter = matchMarker(input, index, ALT_SCREEN_ENTER);
+    if (alternateEnter) {
+      state.inAlternateScreen = true;
+      result += alternateEnter;
+      index += alternateEnter.length;
+      continue;
+    }
+
+    const alternateLeave = matchMarker(input, index, ALT_SCREEN_LEAVE);
+    if (alternateLeave) {
+      state.inAlternateScreen = false;
+      result += alternateLeave;
+      index += alternateLeave.length;
+      continue;
+    }
+
     if (input.startsWith(SYNC_START, index)) {
       state.inSyncBlock = true;
       startedSyncBlock = true;
@@ -84,8 +125,8 @@ const scanSyncBlockClears = (
     }
 
     if (
-      stripClearsInSyncBlock
-      && state.inSyncBlock
+      state.inSyncBlock
+      && shouldStripClearInSyncBlock(state, term)
       && input.startsWith(CLEAR, index)
     ) {
       index += CLEAR.length;
@@ -102,7 +143,7 @@ const scanSyncBlockClears = (
 export const filterSyncBlockClearsWithMeta = (
   data: string,
   state: SyncBlockFilterState,
-  options: SyncBlockClearFilterOptions = { stripClearsInSyncBlock: true },
+  term: XTerm,
 ): SyncBlockClearFilterResult => {
   const { emit, pending } = splitPendingMarkerSuffix(`${state.pending}${data}`);
   state.pending = pending;
@@ -110,17 +151,20 @@ export const filterSyncBlockClearsWithMeta = (
     return { output: "", startedSyncBlock: false };
   }
 
-  return scanSyncBlockClears(emit, state, options.stripClearsInSyncBlock);
+  return scanSyncBlockClears(emit, state, term);
 };
 
 export const filterSyncBlockClears = (
   data: string,
   state: SyncBlockFilterState,
-  options: SyncBlockClearFilterOptions = { stripClearsInSyncBlock: true },
-): string => filterSyncBlockClearsWithMeta(data, state, options).output;
+  term: XTerm,
+): string => filterSyncBlockClearsWithMeta(data, state, term).output;
 
-export const createSyncBlockFilterState = (): SyncBlockFilterState => ({
+export const createSyncBlockFilterState = (
+  term?: Pick<XTerm, "buffer">,
+): SyncBlockFilterState => ({
   inSyncBlock: false,
+  inAlternateScreen: term?.buffer?.active?.type === "alternate",
   pending: "",
 });
 
