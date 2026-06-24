@@ -170,6 +170,31 @@ test("preserves clear-screen for combined alternate-screen private-mode sequence
   assert.equal(state.inAlternateScreen, true);
 });
 
+test("handles split combined alternate-screen sequences across chunks", () => {
+  const state = createSyncBlockFilterState(scrolledUpTerm);
+  const prefix = "\x1b[?1049;";
+  const suffix = `1000h${SYNC_START}${CLEAR}frame${SYNC_END}`;
+
+  assert.equal(filterSyncBlockClears(prefix, state, scrolledUpTerm), "");
+  assert.equal(state.pending, prefix);
+
+  assert.equal(
+    filterSyncBlockClears(suffix, state, scrolledUpTerm),
+    `\x1b[?1049;1000h${SYNC_START}${CLEAR}frame${SYNC_END}`,
+  );
+  assert.equal(state.inAlternateScreen, true);
+});
+
+test("does not treat later text as part of a private-mode CSI", () => {
+  const state = createSyncBlockFilterState(scrolledUpTerm);
+
+  assert.equal(
+    filterSyncBlockClears("\x1b[?1049shello", state, scrolledUpTerm),
+    "\x1b[?1049shello",
+  );
+  assert.equal(state.inAlternateScreen, false);
+});
+
 test("preserves clear-screen inside sync blocks when viewport is at bottom", () => {
   const state = createSyncBlockFilterState(bottomTerm);
   const input = `${SYNC_START}${CLEAR}frame${SYNC_END}`;

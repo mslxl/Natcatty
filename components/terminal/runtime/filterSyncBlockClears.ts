@@ -49,19 +49,41 @@ const isIncompleteEscapePrefix = (suffix: string): boolean => {
   if (!suffix.startsWith("\x1b")) {
     return false;
   }
-  if (suffix === "\x1b") {
-    return true;
+
+  let index = 0;
+  while (index < suffix.length) {
+    if (suffix.startsWith("\x1b[", index)) {
+      let hasFinal = false;
+      for (let i = index + 2; i < suffix.length; i += 1) {
+        if (isCsiFinal(suffix[i])) {
+          index = i + 1;
+          hasFinal = true;
+          break;
+        }
+      }
+      if (!hasFinal) {
+        return true;
+      }
+      continue;
+    }
+
+    if (suffix[index] === "\x1b") {
+      if (index === suffix.length - 1) {
+        return true;
+      }
+      index += 1;
+      continue;
+    }
+
+    index += 1;
   }
-  if (!suffix.startsWith("\x1b[")) {
-    return false;
-  }
-  const final = suffix[suffix.length - 1];
-  return !isCsiFinal(final);
+
+  return false;
 };
 
 const splitPendingMarkerSuffix = (input: string): { emit: string; pending: string } => {
-  const maxLength = Math.min(input.length, maxMarkerPrefixLength);
-  for (let length = maxLength; length > 0; length -= 1) {
+  const markerMax = Math.min(input.length, maxMarkerPrefixLength);
+  for (let length = markerMax; length > 0; length -= 1) {
     const suffix = input.slice(-length);
     if (MARKERS.some((marker) => marker.startsWith(suffix) && marker.length > suffix.length)) {
       return {
@@ -69,6 +91,10 @@ const splitPendingMarkerSuffix = (input: string): { emit: string; pending: strin
         pending: suffix,
       };
     }
+  }
+
+  for (let length = input.length; length > 0; length -= 1) {
+    const suffix = input.slice(-length);
     if (isIncompleteEscapePrefix(suffix)) {
       return {
         emit: input.slice(0, -length),
@@ -76,6 +102,7 @@ const splitPendingMarkerSuffix = (input: string): { emit: string; pending: strin
       };
     }
   }
+
   return { emit: input, pending: "" };
 };
 
@@ -89,8 +116,16 @@ const readPrivateModeCsi = (
 
   for (let end = index + 3; end < input.length; end += 1) {
     const final = input[end];
-    if (final !== "h" && final !== "l") {
+    if (!isCsiFinal(final)) {
       continue;
+    }
+
+    if (final !== "h" && final !== "l") {
+      return {
+        raw: input.slice(index, end + 1),
+        end: end + 1,
+        setsAlternate: null,
+      };
     }
 
     const params = input.slice(index + 3, end).split(";");
