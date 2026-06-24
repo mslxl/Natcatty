@@ -193,6 +193,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   const [appLockSettings, setAppLockSettingsState] = useState<AppLockSettings>({
     enabled: false,
     timeoutMinutes: 15,
+    systemUnlockEnabled: false,
     passwordVerifier: null,
   });
   const [terminalSettings, setTerminalSettingsState] = useState<TerminalSettings>(() => {

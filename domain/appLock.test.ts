@@ -25,6 +25,7 @@ test("normalizeAppLockSettings preserves a valid verifier even when disabled", (
   const normalized = normalizeAppLockSettings({
     enabled: false,
     timeoutMinutes: 30,
+    systemUnlockEnabled: true,
     passwordVerifier: {
       version: 1,
       algorithm: "PBKDF2-SHA256",
@@ -37,6 +38,7 @@ test("normalizeAppLockSettings preserves a valid verifier even when disabled", (
   assert.deepEqual(normalized, {
     enabled: false,
     timeoutMinutes: 30,
+    systemUnlockEnabled: true,
     passwordVerifier: {
       version: 1,
       algorithm: "PBKDF2-SHA256",
@@ -59,13 +61,25 @@ test("normalizeAppLockSettings refuses enabled state without a valid verifier", 
         salt: "",
         hash: "",
       },
+      systemUnlockEnabled: true,
     }),
     {
       enabled: false,
       timeoutMinutes: 5,
+      systemUnlockEnabled: false,
       passwordVerifier: null,
     },
   );
+});
+
+test("normalizeAppLockSettings defaults system unlock off for older settings", () => {
+  const normalized = normalizeAppLockSettings({
+    enabled: false,
+    timeoutMinutes: 15,
+    passwordVerifier: null,
+  });
+
+  assert.equal(normalized.systemUnlockEnabled, false);
 });
 
 test("createAppLockPasswordVerifier stores a verifier and verifies password attempts", async () => {

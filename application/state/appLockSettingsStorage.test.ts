@@ -16,6 +16,7 @@ test("applyAppLockEnabledChange enables only when a verifier exists", async () =
   const disabled: AppLockSettings = {
     enabled: false,
     timeoutMinutes: 15,
+    systemUnlockEnabled: false,
     passwordVerifier: verifier,
   };
 
@@ -24,6 +25,7 @@ test("applyAppLockEnabledChange enables only when a verifier exists", async () =
     {
       enabled: true,
       timeoutMinutes: 15,
+      systemUnlockEnabled: false,
       passwordVerifier: verifier,
     },
   );
@@ -33,6 +35,7 @@ test("applyAppLockEnabledChange enables only when a verifier exists", async () =
     {
       enabled: false,
       timeoutMinutes: 15,
+      systemUnlockEnabled: false,
       passwordVerifier: null,
     },
   );
@@ -43,6 +46,7 @@ test("applyAppLockEnabledChange requires current password before disabling an ex
   const enabled: AppLockSettings = {
     enabled: true,
     timeoutMinutes: 30,
+    systemUnlockEnabled: true,
     passwordVerifier: verifier,
   };
 
@@ -56,6 +60,7 @@ test("applyAppLockEnabledChange requires current password before disabling an ex
     {
       enabled: false,
       timeoutMinutes: 30,
+      systemUnlockEnabled: false,
       passwordVerifier: null,
     },
   );
@@ -66,6 +71,7 @@ test("replaceAppLockPassword requires current password when replacing an existin
   const enabled: AppLockSettings = {
     enabled: true,
     timeoutMinutes: 5,
+    systemUnlockEnabled: true,
     passwordVerifier: verifier,
   };
 
@@ -92,6 +98,7 @@ test("replaceAppLockPassword requires current password when replacing an existin
   assert.equal("ok" in replaced, false);
   assert.equal(replaced.enabled, true);
   assert.equal(replaced.timeoutMinutes, 5);
+  assert.equal(replaced.systemUnlockEnabled, true);
   assert.notEqual(replaced.passwordVerifier?.hash, verifier.hash);
   assert.equal(await verifyAppLockPassword("new secret", replaced.passwordVerifier), true);
 });
@@ -100,6 +107,7 @@ test("replaceAppLockPassword rejects empty new passwords", async () => {
   const settings: AppLockSettings = {
     enabled: false,
     timeoutMinutes: 60,
+    systemUnlockEnabled: false,
     passwordVerifier: null,
   };
 
@@ -115,6 +123,7 @@ test("replaceAppLockPassword enables app lock when creating the first password",
   const settings: AppLockSettings = {
     enabled: false,
     timeoutMinutes: 15,
+    systemUnlockEnabled: false,
     passwordVerifier: null,
   };
 
@@ -125,5 +134,6 @@ test("replaceAppLockPassword enables app lock when creating the first password",
   assert.equal("ok" in saved, false);
   assert.equal(saved.enabled, true);
   assert.equal(saved.timeoutMinutes, 15);
+  assert.equal(saved.systemUnlockEnabled, false);
   assert.equal(await verifyAppLockPassword("first secret", saved.passwordVerifier), true);
 });

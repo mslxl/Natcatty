@@ -9,6 +9,7 @@ const APP_LOCK_TIMEOUT_OPTIONS_MINUTES = [0, 1, 5, 15, 30, 60];
 const DEFAULT_APP_LOCK_SETTINGS = Object.freeze({
   enabled: false,
   timeoutMinutes: 15,
+  systemUnlockEnabled: false,
   passwordVerifier: null,
 });
 
@@ -23,6 +24,7 @@ function cloneSettings(settings) {
   return {
     enabled: settings.enabled === true,
     timeoutMinutes: normalizeAppLockTimeoutMinutes(settings.timeoutMinutes),
+    systemUnlockEnabled: settings.systemUnlockEnabled === true && settings.passwordVerifier !== null,
     passwordVerifier: settings.passwordVerifier
       ? {
           version: settings.passwordVerifier.version,
@@ -96,10 +98,12 @@ function normalizeAppLockSettings(input) {
   const timeoutMinutes = normalizeAppLockTimeoutMinutes(input.timeoutMinutes);
   const passwordVerifier = normalizeAppLockPasswordVerifier(input.passwordVerifier);
   const enabled = input.enabled === true && passwordVerifier !== null;
+  const systemUnlockEnabled = input.systemUnlockEnabled === true && passwordVerifier !== null;
 
   return {
     enabled,
     timeoutMinutes,
+    systemUnlockEnabled,
     passwordVerifier,
   };
 }

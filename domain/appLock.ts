@@ -12,12 +12,14 @@ export interface AppLockPasswordVerifier {
 export interface AppLockSettings {
   enabled: boolean;
   timeoutMinutes: AppLockTimeoutMinutes;
+  systemUnlockEnabled: boolean;
   passwordVerifier: AppLockPasswordVerifier | null;
 }
 
 export const DEFAULT_APP_LOCK_SETTINGS: AppLockSettings = {
   enabled: false,
   timeoutMinutes: 15,
+  systemUnlockEnabled: false,
   passwordVerifier: null,
 };
 
@@ -102,10 +104,12 @@ export function normalizeAppLockSettings(input: unknown): AppLockSettings {
   const timeoutMinutes = normalizeAppLockTimeoutMinutes(input.timeoutMinutes);
   const passwordVerifier = normalizeAppLockPasswordVerifier(input.passwordVerifier);
   const enabled = input.enabled === true && passwordVerifier !== null;
+  const systemUnlockEnabled = input.systemUnlockEnabled === true && passwordVerifier !== null;
 
   return {
     enabled,
     timeoutMinutes,
+    systemUnlockEnabled,
     passwordVerifier,
   };
 }

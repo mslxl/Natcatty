@@ -31,6 +31,7 @@ test("settings store loads disabled config when no persisted file exists", async
   assert.deepEqual(settings, {
     enabled: false,
     timeoutMinutes: 15,
+    systemUnlockEnabled: false,
     passwordVerifier: null,
   });
   assert.deepEqual(store.getSnapshot(), settings);
@@ -52,6 +53,7 @@ test("settings store normalizes malformed persisted config to disabled defaults"
   assert.deepEqual(settings, {
     enabled: false,
     timeoutMinutes: 15,
+    systemUnlockEnabled: false,
     passwordVerifier: null,
   });
 });
@@ -73,12 +75,14 @@ test("settings store saves normalized settings and updates snapshot", async () =
   const saved = await store.save({
     enabled: true,
     timeoutMinutes: 0,
+    systemUnlockEnabled: true,
     passwordVerifier: VALID_VERIFIER,
   });
 
   assert.deepEqual(saved, {
     enabled: true,
     timeoutMinutes: 0,
+    systemUnlockEnabled: true,
     passwordVerifier: VALID_VERIFIER,
   });
   assert.deepEqual(store.getSnapshot(), saved);
@@ -86,6 +90,28 @@ test("settings store saves normalized settings and updates snapshot", async () =
     filePath: "/tmp/app-lock-settings.json",
     content: `${JSON.stringify(saved, null, 2)}\n`,
     options: { mode: 0o600 },
+  });
+});
+
+test("settings store clears system unlock when no valid verifier exists", async () => {
+  const store = createAppLockSettingsStore({
+    filePath: "/tmp/app-lock-settings.json",
+    readFile: async () =>
+      JSON.stringify({
+        enabled: true,
+        timeoutMinutes: 5,
+        systemUnlockEnabled: true,
+        passwordVerifier: null,
+      }),
+    writeFile: async () => {},
+  });
+
+  const settings = await store.load();
+  assert.deepEqual(settings, {
+    enabled: false,
+    timeoutMinutes: 5,
+    systemUnlockEnabled: false,
+    passwordVerifier: null,
   });
 });
 
