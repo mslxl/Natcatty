@@ -12,10 +12,31 @@ import {
 const SYNC_START = "\x1b[?2026h";
 const CLEAR = "\x1b[2J";
 
-const term = {} as XTerm;
+const createMockTerm = ({
+  type = "normal",
+  baseY = 76,
+  length = 100,
+  rows = 24,
+}: {
+  type?: "normal" | "alternate";
+  baseY?: number;
+  length?: number;
+  rows?: number;
+} = {}): XTerm => ({
+  rows,
+  buffer: {
+    active: {
+      type,
+      baseY,
+      length,
+      viewportY: baseY,
+    },
+  },
+} as unknown as XTerm);
 
 test("abandoned sync blocks stop stripping clear-screen after timeout", () => {
   mock.timers.enable({ apis: ["setTimeout"] });
+  const term = createMockTerm({ baseY: 10 });
 
   try {
     resetTerminalSyncBlockFilter(term);
@@ -32,6 +53,7 @@ test("abandoned sync blocks stop stripping clear-screen after timeout", () => {
 
 test("completed sync blocks clear the timeout without waiting", () => {
   mock.timers.enable({ apis: ["setTimeout"] });
+  const term = createMockTerm({ baseY: 10 });
 
   try {
     resetTerminalSyncBlockFilter(term);
@@ -50,6 +72,7 @@ test("completed sync blocks clear the timeout without waiting", () => {
 
 test("sync block timeout is armed once even when output keeps streaming", () => {
   mock.timers.enable({ apis: ["setTimeout"] });
+  const term = createMockTerm({ baseY: 10 });
 
   try {
     resetTerminalSyncBlockFilter(term);
@@ -70,6 +93,7 @@ test("sync block timeout is armed once even when output keeps streaming", () => 
 
 test("sync block timeout preserves pending partial marker bytes", () => {
   mock.timers.enable({ apis: ["setTimeout"] });
+  const term = createMockTerm({ baseY: 10 });
 
   try {
     resetTerminalSyncBlockFilter(term);
@@ -82,4 +106,24 @@ test("sync block timeout preserves pending partial marker bytes", () => {
     resetTerminalSyncBlockFilter(term);
     mock.timers.reset();
   }
+});
+
+test("preserves clear-screen redraws on alternate-screen buffers", () => {
+  const term = createMockTerm({ type: "alternate", baseY: 0, length: 24 });
+  resetTerminalSyncBlockFilter(term);
+
+  assert.equal(
+    filterTerminalSessionData(term, `${SYNC_START}${CLEAR}frame\x1b[?2026l`),
+    `${SYNC_START}${CLEAR}frame\x1b[?2026l`,
+  );
+});
+
+test("preserves clear-screen redraws when the viewport is at the bottom", () => {
+  const term = createMockTerm({ baseY: 76, length: 100 });
+  resetTerminalSyncBlockFilter(term);
+
+  assert.equal(
+    filterTerminalSessionData(term, `${SYNC_START}${CLEAR}frame\x1b[?2026l`),
+    `${SYNC_START}${CLEAR}frame\x1b[?2026l`,
+  );
 });

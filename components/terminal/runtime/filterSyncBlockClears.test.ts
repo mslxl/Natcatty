@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createSyncBlockFilterState,
   filterSyncBlockClears,
+  isTerminalViewportScrolledUp,
 } from "./filterSyncBlockClears.ts";
 
 const SYNC_START = "\x1b[?2026h";
@@ -112,4 +113,37 @@ test("releases a trailing ESC when the next chunk is ordinary text", () => {
 
   assert.equal(filterSyncBlockClears("more output", state), "\x1bmore output");
   assert.equal(state.pending, "");
+});
+
+test("keeps clear-screen inside sync blocks when stripping is disabled", () => {
+  const state = createSyncBlockFilterState();
+  const input = `${SYNC_START}${CLEAR}frame${SYNC_END}`;
+
+  assert.equal(
+    filterSyncBlockClears(input, state, { stripClearsInSyncBlock: false }),
+    input,
+  );
+});
+
+test("isTerminalViewportScrolledUp is false on alternate-screen buffers", () => {
+  const term = {
+    rows: 24,
+    buffer: { active: { type: "alternate", baseY: 0, length: 24 } },
+  } as never;
+
+  assert.equal(isTerminalViewportScrolledUp(term), false);
+});
+
+test("isTerminalViewportScrolledUp detects normal-buffer scrollback", () => {
+  const atBottom = {
+    rows: 24,
+    buffer: { active: { type: "normal", baseY: 76, length: 100 } },
+  } as never;
+  const scrolledUp = {
+    rows: 24,
+    buffer: { active: { type: "normal", baseY: 10, length: 100 } },
+  } as never;
+
+  assert.equal(isTerminalViewportScrolledUp(atBottom), false);
+  assert.equal(isTerminalViewportScrolledUp(scrolledUp), true);
 });
