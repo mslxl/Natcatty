@@ -22,6 +22,11 @@ import {
   filterTerminalSessionData,
   resetTerminalSyncBlockFilter,
 } from "./terminalSyncBlockFilter";
+import {
+  enqueueCoalescedTerminalWrite,
+  flushTerminalWriteCoalescer,
+  resetTerminalWriteCoalescer,
+} from "./terminalWriteCoalescer";
 
 export const buildTermEnv = (host: Host, terminalSettings?: TerminalSettings) => {
   const env: Record<string, string> = {
@@ -145,10 +150,20 @@ export const writeSessionData = (
   term: XTerm,
   data: string,
 ) => {
-  const displayData = filterTerminalSessionData(term, data);
+  enqueueCoalescedTerminalWrite(term, data, (batch) => {
+    writeSessionDataImmediate(ctx, term, batch);
+  });
+};
+
+const writeSessionDataImmediate = (
+  ctx: TerminalSessionStartersContext,
+  term: XTerm,
+  data: string,
+) => {
   const flow = getFlowController(ctx, term);
-  flow.received(displayData.length);
+  flow.received(data.length);
   enqueueTerminalWrite(term, (done) => {
+    const displayData = filterTerminalSessionData(term, data);
     const settings = ctx.terminalSettingsRef?.current ?? ctx.terminalSettings;
     const forcePromptNewLine = settings?.forcePromptNewLine ?? false;
     if (!forcePromptNewLine && ctx.promptLineBreakStateRef?.current) {
@@ -251,6 +266,8 @@ export const attachSessionToTerminal = (
   ctx.sessionRef.current = id;
   // Clear any stale back-pressure accounting from a prior session on this term.
   getFlowController(ctx, term).reset();
+  flushTerminalWriteCoalescer(term);
+  resetTerminalWriteCoalescer(term);
   resetTerminalSyncBlockFilter(term);
   resetTerminalLineTimestamps(term);
   ctx.onSessionAttached?.(id);

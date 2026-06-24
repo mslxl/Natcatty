@@ -23,18 +23,20 @@ const clearSyncBlockTimer = (term: XTerm): void => {
 
 const expireSyncBlock = (term: XTerm, state: SyncBlockFilterState): void => {
   state.inSyncBlock = false;
+  state.pendingCursorHome = null;
+  state.fullRedrawBlock = null;
   clearSyncBlockTimer(term);
 };
 
 export const resetTerminalSyncBlockFilter = (term: XTerm): void => {
   clearSyncBlockTimer(term);
-  syncBlockFilterStates.set(term, createSyncBlockFilterState(term));
+  syncBlockFilterStates.set(term, createSyncBlockFilterState());
 };
 
 const getSyncBlockFilterState = (term: XTerm): SyncBlockFilterState => {
   let state = syncBlockFilterStates.get(term);
   if (!state) {
-    state = createSyncBlockFilterState(term);
+    state = createSyncBlockFilterState();
     syncBlockFilterStates.set(term, state);
   }
   return state;

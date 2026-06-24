@@ -1,32 +1,30 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 
 /**
- * Strip `\x1b[2J` (ED — erase display) inside DEC Mode 2026 synchronized-output
+ * Strip full-screen redraw sequences inside DEC Mode 2026 synchronized-output
  * blocks before data reaches xterm.js.
  *
- * Coding CLIs such as Codex and Claude Code wrap full-screen redraws in
- * `\x1b[?2026h` … `\x1b[?2026l`. Native terminals treat the enclosed clear as
- * part of the atomic update, but xterm.js resets viewportY on every `\x1b[2J`
- * when the user has scrolled up in the normal buffer, which yanks scroll
- * position and makes earlier output appear "eaten".
+ * Codex and Claude Code emit `\x1b[H` + `\x1b[2J` inside sync blocks for
+ * full-screen frames. xterm.js resets viewportY on `\x1b[2J`, which yanks
+ * scroll position. Incremental sync blocks must pass through untouched.
  *
- * Alternate-screen TUIs still need the clear to remove stale cells from shorter
- * redraw frames. Because PTY chunks can enter alternate screen before xterm has
- * applied the switch, this filter tracks alternate-screen transitions in-band
- * and only strips clears while the normal buffer is scrolled up.
+ * Detection follows anthropics/claude-code#35580: only blocks that contain
+ * both cursor-home and erase-display are treated as full redraws. Pane (#120)
+ * strips `\x1b[2J`; we also hold the leading `\x1b[H` until `\x1b[2J` confirms
+ * the redraw so incremental blocks that never emit `\x1b[2J` still work.
  *
- * PTY/IPC chunks can split escape sequences at arbitrary byte boundaries, so a
- * trailing partial marker is held in `pending` until the next chunk completes it.
- *
+ * @see https://github.com/Dcouple-Inc/Pane/pull/120
+ * @see https://github.com/anthropics/claude-code/issues/35580
  * @see https://github.com/xtermjs/xterm.js/issues/5801
- * @see https://github.com/openai/codex/issues/14277
  */
 
 export type SyncBlockFilterState = {
   inSyncBlock: boolean;
-  inAlternateScreen: boolean;
-  /** Trailing bytes that may complete a marker in the next chunk. */
   pending: string;
+  /** Leading `\x1b[H` held until `\x1b[2J` confirms a full redraw. */
+  pendingCursorHome: string | null;
+  /** null = unknown; true = strip home+clear; false = pass block through. */
+  fullRedrawBlock: boolean | null;
 };
 
 export type SyncBlockClearFilterResult = {
@@ -37,18 +35,19 @@ export type SyncBlockClearFilterResult = {
 const SYNC_START = "\x1b[?2026h";
 const SYNC_END = "\x1b[?2026l";
 const CLEAR = "\x1b[2J";
+const CURSOR_HOME = "\x1b[H";
+const CURSOR_HOME_EXPLICIT = "\x1b[1;1H";
 
-const MARKERS = [SYNC_START, SYNC_END, CLEAR] as const;
-const ALTERNATE_SCREEN_MODES = new Set([47, 1047, 1049]);
+const MARKERS = [SYNC_START, SYNC_END, CLEAR, CURSOR_HOME, CURSOR_HOME_EXPLICIT] as const;
 
 const maxMarkerPrefixLength = Math.max(...MARKERS.map((marker) => marker.length)) - 1;
-
-const isCsiFinal = (ch: string): boolean => ch >= "@" && ch <= "~";
 
 const isIncompleteEscapePrefix = (suffix: string): boolean => {
   if (!suffix.startsWith("\x1b")) {
     return false;
   }
+
+  const isCsiFinal = (ch: string): boolean => ch >= "@" && ch <= "~";
 
   let index = 0;
   while (index < suffix.length) {
@@ -106,61 +105,50 @@ const splitPendingMarkerSuffix = (input: string): { emit: string; pending: strin
   return { emit: input, pending: "" };
 };
 
-const readPrivateModeCsi = (
+const readBlockCursorHome = (
   input: string,
   index: number,
-): { raw: string; end: number; setsAlternate: boolean | null } | null => {
-  if (!input.startsWith("\x1b[?", index)) {
-    return null;
+): { raw: string; end: number } | null => {
+  if (input.startsWith(CURSOR_HOME_EXPLICIT, index)) {
+    return { raw: CURSOR_HOME_EXPLICIT, end: index + CURSOR_HOME_EXPLICIT.length };
   }
-
-  for (let end = index + 3; end < input.length; end += 1) {
-    const final = input[end];
-    if (!isCsiFinal(final)) {
-      continue;
-    }
-
-    if (final !== "h" && final !== "l") {
-      return {
-        raw: input.slice(index, end + 1),
-        end: end + 1,
-        setsAlternate: null,
-      };
-    }
-
-    const params = input.slice(index + 3, end).split(";");
-    let setsAlternate: boolean | null = null;
-    for (const param of params) {
-      const mode = Number.parseInt(param, 10);
-      if (ALTERNATE_SCREEN_MODES.has(mode)) {
-        setsAlternate = final === "h";
-      }
-    }
-
-    return {
-      raw: input.slice(index, end + 1),
-      end: end + 1,
-      setsAlternate,
-    };
+  if (input.startsWith(CURSOR_HOME, index)) {
+    return { raw: CURSOR_HOME, end: index + CURSOR_HOME.length };
   }
-
   return null;
 };
 
-const shouldStripClearInSyncBlock = (
-  state: SyncBlockFilterState,
-  term: XTerm,
-): boolean => {
-  if (state.inAlternateScreen) {
+const releasePendingCursorHome = (state: SyncBlockFilterState, result: string): string => {
+  if (!state.pendingCursorHome) {
+    return result;
+  }
+  const released = `${result}${state.pendingCursorHome}`;
+  state.pendingCursorHome = null;
+  return released;
+};
+
+const resetSyncBlockState = (state: SyncBlockFilterState): void => {
+  state.inSyncBlock = false;
+  state.pendingCursorHome = null;
+  state.fullRedrawBlock = null;
+};
+
+/** True when the user has scrolled up into scrollback history. */
+export const isTerminalViewportScrolledUp = (term: XTerm): boolean => {
+  const buffer = term.buffer.active;
+  if (buffer.type !== "normal") {
     return false;
   }
-  return isTerminalViewportScrolledUp(term);
+  return buffer.viewportY < buffer.baseY;
 };
+
+const shouldStripFullRedrawClear = (term?: XTerm): boolean =>
+  term !== undefined && isTerminalViewportScrolledUp(term);
 
 const scanSyncBlockClears = (
   input: string,
   state: SyncBlockFilterState,
-  term: XTerm,
+  term?: XTerm,
 ): SyncBlockClearFilterResult => {
   let result = "";
   let startedSyncBlock = false;
@@ -168,6 +156,7 @@ const scanSyncBlockClears = (
 
   while (index < input.length) {
     if (input.startsWith(SYNC_START, index)) {
+      resetSyncBlockState(state);
       state.inSyncBlock = true;
       startedSyncBlock = true;
       result += SYNC_START;
@@ -176,31 +165,66 @@ const scanSyncBlockClears = (
     }
 
     if (input.startsWith(SYNC_END, index)) {
-      state.inSyncBlock = false;
+      result = releasePendingCursorHome(state, result);
+      resetSyncBlockState(state);
       result += SYNC_END;
       index += SYNC_END.length;
       continue;
     }
 
-    const privateMode = readPrivateModeCsi(input, index);
-    if (privateMode) {
-      if (privateMode.setsAlternate === true) {
-        state.inAlternateScreen = true;
-      } else if (privateMode.setsAlternate === false) {
-        state.inAlternateScreen = false;
-      }
-      result += privateMode.raw;
-      index = privateMode.end;
+    if (!state.inSyncBlock) {
+      result += input[index];
+      index += 1;
       continue;
     }
 
-    if (
-      state.inSyncBlock
-      && shouldStripClearInSyncBlock(state, term)
-      && input.startsWith(CLEAR, index)
-    ) {
+    if (state.fullRedrawBlock === false) {
+      result += input[index];
+      index += 1;
+      continue;
+    }
+
+    const cursorHome = readBlockCursorHome(input, index);
+    if (cursorHome) {
+      if (state.fullRedrawBlock === true) {
+        index = cursorHome.end;
+        continue;
+      }
+      if (!shouldStripFullRedrawClear(term)) {
+        result += cursorHome.raw;
+        index = cursorHome.end;
+        continue;
+      }
+      state.pendingCursorHome = cursorHome.raw;
+      index = cursorHome.end;
+      continue;
+    }
+
+    if (input.startsWith(CLEAR, index)) {
+      if (state.pendingCursorHome !== null) {
+        state.pendingCursorHome = null;
+        state.fullRedrawBlock = true;
+        index += CLEAR.length;
+        continue;
+      }
+      if (state.fullRedrawBlock === true) {
+        index += CLEAR.length;
+        continue;
+      }
+      if (!shouldStripFullRedrawClear(term)) {
+        result += CLEAR;
+        index += CLEAR.length;
+        continue;
+      }
+      state.fullRedrawBlock = false;
+      result += CLEAR;
       index += CLEAR.length;
       continue;
+    }
+
+    if (state.pendingCursorHome !== null) {
+      result += state.pendingCursorHome;
+      state.pendingCursorHome = null;
     }
 
     result += input[index];
@@ -213,8 +237,12 @@ const scanSyncBlockClears = (
 export const filterSyncBlockClearsWithMeta = (
   data: string,
   state: SyncBlockFilterState,
-  term: XTerm,
+  term?: XTerm,
 ): SyncBlockClearFilterResult => {
+  if (!state.inSyncBlock && !state.pending && !data.includes("\x1b")) {
+    return { output: data, startedSyncBlock: false };
+  }
+
   const { emit, pending } = splitPendingMarkerSuffix(`${state.pending}${data}`);
   state.pending = pending;
   if (!emit) {
@@ -227,25 +255,12 @@ export const filterSyncBlockClearsWithMeta = (
 export const filterSyncBlockClears = (
   data: string,
   state: SyncBlockFilterState,
-  term: XTerm,
+  term?: XTerm,
 ): string => filterSyncBlockClearsWithMeta(data, state, term).output;
 
-export const createSyncBlockFilterState = (
-  term?: Pick<XTerm, "buffer">,
-): SyncBlockFilterState => ({
+export const createSyncBlockFilterState = (): SyncBlockFilterState => ({
   inSyncBlock: false,
-  inAlternateScreen: term?.buffer?.active?.type === "alternate",
   pending: "",
+  pendingCursorHome: null,
+  fullRedrawBlock: null,
 });
-
-export const isTerminalViewportScrolledUp = (term: XTerm): boolean => {
-  const buffer = term.buffer?.active;
-  if (!buffer || buffer.type === "alternate") {
-    return false;
-  }
-
-  return buffer.viewportY < buffer.baseY;
-};
-
-export const shouldStripSyncBlockClears = (term: XTerm): boolean =>
-  isTerminalViewportScrolledUp(term);
