@@ -15,6 +15,7 @@ import {
   writeSessionData,
   writeTerminalLine,
 } from "./terminalSessionAttachment";
+import { resetTerminalSyncBlockFilter } from "./terminalSyncBlockFilter";
 import { isConnectionTokenCurrent, registerConnectionToken, runDistroDetection } from "./terminalDistroDetection";
 import { resolveStartupCommand, scheduleStartupCommand } from "./terminalStartupCommands";
 import { markPromptLineBreakCommandPending } from "./promptLineBreak";
@@ -1096,6 +1097,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
 
       ctx.sessionRef.current = id;
       getFlowController(ctx, term).reset();
+      resetTerminalSyncBlockFilter(term);
       resetTerminalLineTimestampState(term);
       ctx.disposeDataRef.current = ctx.terminalBackend.onSessionData(id, (chunk) => {
         writeSessionData(ctx, term, chunk);
