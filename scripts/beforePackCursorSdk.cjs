@@ -68,11 +68,12 @@ function ensureCursorSdkPlatformPackages({
 function beforePackCursorSdk(context = {}) {
   const projectDir = context.appDir || process.cwd();
   const platform = context.electronPlatformName || process.platform;
+  const arch = context.arch || process.env.npm_config_arch || process.arch;
   const ensureCursor = context.ensureCursorSdkPlatformPackages || ensureCursorSdkPlatformPackages;
   ensureCursor({ projectDir, platform });
   const buildHelper = context.buildWindowsHelloHelper || buildWindowsHelloHelper;
   if (platform === "win32") {
-    const result = buildHelper({ projectDir, platform });
+    const result = buildHelper({ projectDir, platform, arch });
     if (result?.skipped) {
       throw new Error(`Windows Hello helper was not built: ${result.reason || "unknown"}`);
     }

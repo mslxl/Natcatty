@@ -8,19 +8,28 @@ function findCompiler(env = process.env) {
   return "cl.exe";
 }
 
+function normalizeWindowsHelperArch(arch) {
+  if (arch === "x64" || arch === "arm64") return arch;
+  return null;
+}
+
 function buildWindowsHelloHelper({
   projectDir = process.cwd(),
   platform = process.platform,
+  arch = process.env.npm_config_arch || process.arch,
   env = process.env,
   run = execFileSync,
+  mkdir = fs.mkdirSync,
   logger = console,
 } = {}) {
   if (platform !== "win32") return { skipped: true, reason: "non-windows" };
+  const targetArch = normalizeWindowsHelperArch(arch);
+  if (!targetArch) return { skipped: true, reason: "unsupported-arch" };
 
   const sourcePath = path.join(projectDir, "electron", "bridges", "windowsHelloHelper", "NetcattyWindowsHello.cpp");
-  const outputDir = path.join(projectDir, "electron", "bridges", "windowsHelloHelper", "build");
+  const outputDir = path.join(projectDir, "electron", "bridges", "windowsHelloHelper", "build", targetArch);
   const outputPath = path.join(outputDir, "NetcattyWindowsHello.exe");
-  fs.mkdirSync(outputDir, { recursive: true });
+  mkdir(outputDir, { recursive: true });
 
   const compiler = findCompiler(env);
   try {
@@ -57,4 +66,5 @@ if (require.main === module) {
 module.exports = {
   buildWindowsHelloHelper,
   findCompiler,
+  normalizeWindowsHelperArch,
 };

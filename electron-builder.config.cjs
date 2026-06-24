@@ -200,7 +200,7 @@ module.exports = {
             ...moshExtraResources('win32'),
             ...etExtraResources('win32'),
             {
-                from: 'electron/bridges/windowsHelloHelper/build/NetcattyWindowsHello.exe',
+                from: 'electron/bridges/windowsHelloHelper/build/${arch}/NetcattyWindowsHello.exe',
                 to: 'windowsHello/NetcattyWindowsHello.exe',
                 filter: ['**/*']
             }

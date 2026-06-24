@@ -77,10 +77,10 @@ test("Windows packaging includes the Windows Hello helper executable", () => {
   assert.ok(
     config.win.extraResources.some((entry) => (
       entry &&
-      entry.from === "electron/bridges/windowsHelloHelper/build/NetcattyWindowsHello.exe" &&
+      entry.from === "electron/bridges/windowsHelloHelper/build/${arch}/NetcattyWindowsHello.exe" &&
       entry.to === "windowsHello/NetcattyWindowsHello.exe"
     )),
-    "Windows package must include the Windows Hello helper executable",
+    "Windows package must include the Windows Hello helper executable for the target arch",
   );
 });
 

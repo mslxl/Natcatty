@@ -68,11 +68,12 @@ test("beforePackCursorSdk builds Windows Hello helper only for Windows packages"
   beforePackCursorSdk({
     appDir: process.cwd(),
     electronPlatformName: "win32",
+    arch: "arm64",
     ensureCursorSdkPlatformPackages: () => [],
     buildWindowsHelloHelper: (projectDir) => calls.push(projectDir),
   });
 
-  assert.deepEqual(calls, [{ projectDir: process.cwd(), platform: "win32" }]);
+  assert.deepEqual(calls, [{ projectDir: process.cwd(), platform: "win32", arch: "arm64" }]);
 
   beforePackCursorSdk({
     appDir: process.cwd(),
@@ -81,7 +82,29 @@ test("beforePackCursorSdk builds Windows Hello helper only for Windows packages"
     buildWindowsHelloHelper: (projectDir) => calls.push(projectDir),
   });
 
-  assert.deepEqual(calls, [{ projectDir: process.cwd(), platform: "win32" }]);
+  assert.deepEqual(calls, [{ projectDir: process.cwd(), platform: "win32", arch: "arm64" }]);
+});
+
+test("beforePackCursorSdk falls back to npm_config_arch for Windows Hello helper arch", () => {
+  const calls = [];
+  const originalArch = process.env.npm_config_arch;
+  process.env.npm_config_arch = "x64";
+  try {
+    beforePackCursorSdk({
+      appDir: process.cwd(),
+      electronPlatformName: "win32",
+      ensureCursorSdkPlatformPackages: () => [],
+      buildWindowsHelloHelper: (projectDir) => calls.push(projectDir),
+    });
+  } finally {
+    if (originalArch === undefined) {
+      delete process.env.npm_config_arch;
+    } else {
+      process.env.npm_config_arch = originalArch;
+    }
+  }
+
+  assert.deepEqual(calls, [{ projectDir: process.cwd(), platform: "win32", arch: "x64" }]);
 });
 
 test("beforePackCursorSdk fails Windows packaging when Windows Hello helper build is skipped", () => {
