@@ -351,7 +351,7 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   forcePromptNewLine: false, // Opt-in: keep the next shell prompt visually separated from unterminated final output lines
   osc52Clipboard: 'write-only', // OSC-52: allow remote programs to write clipboard by default
   rendererType: 'auto', // Auto-detect best renderer based on hardware
-  hibernateHiddenTabs: true,
+  hibernateHiddenTabs: false,
   hibernateHiddenTabsDelaySec: 5,
   hibernateSkipAltScreen: true,
   hibernateKeepRendererCount: 2,

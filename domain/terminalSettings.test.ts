@@ -17,8 +17,8 @@ test("normalizeTerminalSettings enables font smoothing by default", () => {
   assert.equal(normalizeTerminalSettings().fontSmoothing, true);
 });
 
-test("normalizeTerminalSettings enables hibernate for hidden tabs by default", () => {
-  assert.equal(normalizeTerminalSettings().hibernateHiddenTabs, true);
+test("normalizeTerminalSettings disables hibernate for hidden tabs by default", () => {
+  assert.equal(normalizeTerminalSettings().hibernateHiddenTabs, false);
   assert.equal(normalizeTerminalSettings().hibernateHiddenTabsDelaySec, 5);
 });
 
