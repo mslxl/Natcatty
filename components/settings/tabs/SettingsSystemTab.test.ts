@@ -39,13 +39,36 @@ test("app lock management separates disabling from replacing the password", () =
   const nextSectionStart = source.indexOf("<SectionHeader", appLockSectionStart + 1);
   const appLockSection = source.slice(appLockSectionStart, nextSectionStart);
 
-  assert.doesNotMatch(appLockSection, /<Toggle/);
+  assert.doesNotMatch(appLockSection, /settings\.appLock\.enableDesc/);
   assert.match(source, /settings\.appLock\.disableTitle/);
   assert.match(source, /settings\.appLock\.disableDescription/);
   assert.match(source, /settings\.appLock\.disable/);
   assert.match(source, /settings\.appLock\.changePasswordTitle/);
   assert.match(source, /settings\.appLock\.currentPasswordForDisablePlaceholder/);
   assert.match(source, /settings\.appLock\.currentPasswordForChangePlaceholder/);
+});
+
+test("app lock system unlock setting uses bridge-provided platform label", () => {
+  const source = readFileSync(new URL("./SettingsSystemTab.tsx", import.meta.url), "utf8");
+  const appLockSectionStart = source.indexOf('<SectionHeader title={t("settings.appLock.title")} />');
+  const nextSectionStart = source.indexOf("<SectionHeader", appLockSectionStart + 1);
+  const appLockSection = source.slice(appLockSectionStart, nextSectionStart);
+
+  assert.match(appLockSection, /showAppLockSystemUnlock/);
+  assert.match(appLockSection, /appLockSystemUnlockStatus\.label/);
+  assert.match(appLockSection, /settings\.appLock\.systemUnlock\.label/);
+  assert.doesNotMatch(appLockSection, /navigator\.platform/);
+});
+
+test("app lock system unlock enablement requires current password", () => {
+  const source = readFileSync(new URL("./SettingsSystemTab.tsx", import.meta.url), "utf8");
+  const handlerStart = source.indexOf("const handleAppLockSystemUnlockChange = useCallback");
+  const handlerEnd = source.indexOf("// Handle global toggle hotkey recording", handlerStart);
+  const handlerSource = source.slice(handlerStart, handlerEnd);
+
+  assert.match(handlerSource, /enabled && !appLockSystemUnlockPassword\.trim\(\)/);
+  assert.match(handlerSource, /setAppLockSystemUnlockEnabled\(\{/);
+  assert.match(handlerSource, /currentPassword: enabled \? appLockSystemUnlockPassword : undefined/);
 });
 
 test("app lock disable explains that turning it off removes the saved password", () => {

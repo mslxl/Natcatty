@@ -510,6 +510,8 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
                                 setAppLockTimeoutMinutes={settings.setAppLockTimeoutMinutes}
                                 requestAppLockDisable={settings.requestAppLockDisable}
                                 requestAppLockPasswordChange={settings.requestAppLockPasswordChange}
+                                appLockSystemUnlockStatus={appLock?.systemUnlockStatus}
+                                setAppLockSystemUnlockEnabled={settings.setAppLockSystemUnlockEnabled}
                                 sessionLogsEnabled={settings.sessionLogsEnabled}
                                 setSessionLogsEnabled={settings.setSessionLogsEnabled}
                                 sessionLogsDir={settings.sessionLogsDir}

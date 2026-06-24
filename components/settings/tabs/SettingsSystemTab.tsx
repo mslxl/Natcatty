@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, Download, ExternalLink, FolderOpen, RefreshC
 import React, { useCallback, useEffect, useState } from "react";
 import { useI18n } from "../../../application/i18n/I18nProvider";
 import type { AppLockSettingsChangeError } from "../../../application/state/appLockSettingsStorage";
+import type { AppLockSystemUnlockStatus } from "../../../application/state/useAppLockState";
 import type { AppLockSettings, AppLockTimeoutMinutes } from "../../../domain/appLock";
 import { APP_LOCK_TIMEOUT_OPTIONS_MINUTES } from "../../../domain/appLock";
 import { getCredentialProtectionAvailability } from "../../../infrastructure/services/credentialProtection";
@@ -88,6 +89,11 @@ interface SettingsSystemTabProps {
     currentPassword?: string;
     nextPassword: string;
   }) => Promise<AppLockSettings | { ok: false; error: AppLockSettingsChangeError }>;
+  appLockSystemUnlockStatus?: AppLockSystemUnlockStatus;
+  setAppLockSystemUnlockEnabled?: (input: {
+    enabled: boolean;
+    currentPassword?: string;
+  }) => Promise<AppLockSettings | { ok: false; error: 'empty-current' | 'incorrect' | 'locked' | 'unsupported' | 'unavailable' }>;
   sessionLogsEnabled: boolean;
   setSessionLogsEnabled: (enabled: boolean) => void;
   sessionLogsDir: string;
@@ -126,6 +132,8 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   setAppLockTimeoutMinutes,
   requestAppLockDisable,
   requestAppLockPasswordChange,
+  appLockSystemUnlockStatus,
+  setAppLockSystemUnlockEnabled,
   sessionLogsEnabled,
   setSessionLogsEnabled,
   sessionLogsDir,
@@ -164,10 +172,13 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   const [appLockDisablePassword, setAppLockDisablePassword] = useState("");
   const [appLockNewPassword, setAppLockNewPassword] = useState("");
   const [appLockConfirmPassword, setAppLockConfirmPassword] = useState("");
+  const [appLockSystemUnlockPassword, setAppLockSystemUnlockPassword] = useState("");
   const [appLockError, setAppLockError] = useState<string | null>(null);
   const [isDisablingAppLock, setIsDisablingAppLock] = useState(false);
   const [isSavingAppLock, setIsSavingAppLock] = useState(false);
+  const [isSavingAppLockSystemUnlock, setIsSavingAppLockSystemUnlock] = useState(false);
   const hasAppLockPassword = Boolean(appLockSettings.passwordVerifier);
+  const showAppLockSystemUnlock = Boolean(hasAppLockPassword && appLockSystemUnlockStatus?.supported && appLockSystemUnlockStatus.label);
 
   const [tempDirInfo, setTempDirInfo] = useState<TempDirInfo | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -371,7 +382,7 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
     await bridge.openSshDebugLogDir();
   }, []);
 
-  const mapAppLockChangeError = useCallback((error: AppLockSettingsChangeError): string => {
+  const mapAppLockChangeError = useCallback((error: AppLockSettingsChangeError | 'locked' | 'unsupported' | 'unavailable'): string => {
     switch (error) {
       case 'empty-current':
         return t('settings.appLock.validation.currentRequired');
@@ -379,6 +390,11 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
         return t('settings.appLock.validation.newRequired');
       case 'incorrect':
         return t('settings.appLock.validation.incorrect');
+      case 'locked':
+        return t('settings.appLock.systemUnlock.locked');
+      case 'unsupported':
+      case 'unavailable':
+        return t('settings.appLock.systemUnlock.unavailable');
     }
   }, [t]);
 
@@ -447,6 +463,36 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
     appLockNewPassword,
     mapAppLockChangeError,
     requestAppLockPasswordChange,
+    t,
+  ]);
+
+  const handleAppLockSystemUnlockChange = useCallback(async (enabled: boolean) => {
+    if (!setAppLockSystemUnlockEnabled || !appLockSystemUnlockStatus?.label) return;
+    setAppLockError(null);
+    if (enabled && !appLockSystemUnlockPassword.trim()) {
+      setAppLockError(t('settings.appLock.validation.currentRequired'));
+      return;
+    }
+
+    setIsSavingAppLockSystemUnlock(true);
+    try {
+      const result = await setAppLockSystemUnlockEnabled({
+        enabled,
+        currentPassword: enabled ? appLockSystemUnlockPassword : undefined,
+      });
+      if ('ok' in result && result.ok === false) {
+        setAppLockError(mapAppLockChangeError(result.error));
+        return;
+      }
+      setAppLockSystemUnlockPassword("");
+    } finally {
+      setIsSavingAppLockSystemUnlock(false);
+    }
+  }, [
+    appLockSystemUnlockPassword,
+    appLockSystemUnlockStatus?.label,
+    mapAppLockChangeError,
+    setAppLockSystemUnlockEnabled,
     t,
   ]);
 
@@ -688,6 +734,40 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                       className="w-36"
                     />
                   </SettingRow>
+
+                  {showAppLockSystemUnlock && appLockSystemUnlockStatus?.label && (
+                    <SettingRow
+                      label={t("settings.appLock.systemUnlock.label").replace("{label}", appLockSystemUnlockStatus.label)}
+                      description={
+                        appLockSystemUnlockStatus.available
+                          ? t("settings.appLock.systemUnlock.desc").replace("{label}", appLockSystemUnlockStatus.label)
+                          : t("settings.appLock.systemUnlock.unavailableDesc").replace("{label}", appLockSystemUnlockStatus.label)
+                      }
+                    >
+                      <div className="flex flex-col items-end gap-2">
+                        {!appLockSettings.systemUnlockEnabled && (
+                          <Input
+                            type="password"
+                            value={appLockSystemUnlockPassword}
+                            autoComplete="current-password"
+                            placeholder={t("settings.appLock.currentPassword")}
+                            disabled={!appLockSystemUnlockStatus.available || isSavingAppLockSystemUnlock}
+                            onChange={(event) => {
+                              setAppLockSystemUnlockPassword(event.target.value);
+                              setAppLockError(null);
+                            }}
+                            className="w-52"
+                          />
+                        )}
+                        <Toggle
+                          checked={appLockSettings.systemUnlockEnabled}
+                          disabled={!appLockSystemUnlockStatus.available || isSavingAppLockSystemUnlock}
+                          ariaLabel={t("settings.appLock.systemUnlock.label").replace("{label}", appLockSystemUnlockStatus.label)}
+                          onChange={(enabled) => void handleAppLockSystemUnlockChange(enabled)}
+                        />
+                      </div>
+                    </SettingRow>
+                  )}
 
                   {appLockSettings.enabled && (
                     <div className="rounded-xl border border-destructive/25 bg-destructive/5 p-4">
