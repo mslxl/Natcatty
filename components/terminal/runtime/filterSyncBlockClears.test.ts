@@ -162,6 +162,14 @@ test("preserves clear-screen when alternate-screen entry precedes sync redraw", 
   assert.equal(state.inAlternateScreen, true);
 });
 
+test("preserves clear-screen for combined alternate-screen private-mode sequences", () => {
+  const state = createSyncBlockFilterState(scrolledUpTerm);
+  const input = `\x1b[?1049;1000h${SYNC_START}${CLEAR}frame${SYNC_END}`;
+
+  assert.equal(filterSyncBlockClears(input, state, scrolledUpTerm), input);
+  assert.equal(state.inAlternateScreen, true);
+});
+
 test("preserves clear-screen inside sync blocks when viewport is at bottom", () => {
   const state = createSyncBlockFilterState(bottomTerm);
   const input = `${SYNC_START}${CLEAR}frame${SYNC_END}`;

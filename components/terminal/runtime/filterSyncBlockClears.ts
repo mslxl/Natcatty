@@ -37,18 +37,27 @@ export type SyncBlockClearFilterResult = {
 const SYNC_START = "\x1b[?2026h";
 const SYNC_END = "\x1b[?2026l";
 const CLEAR = "\x1b[2J";
-const ALT_SCREEN_ENTER = ["\x1b[?1049h", "\x1b[?1047h", "\x1b[?47h"] as const;
-const ALT_SCREEN_LEAVE = ["\x1b[?1049l", "\x1b[?1047l", "\x1b[?47l"] as const;
 
-const MARKERS = [
-  SYNC_START,
-  SYNC_END,
-  CLEAR,
-  ...ALT_SCREEN_ENTER,
-  ...ALT_SCREEN_LEAVE,
-] as const;
+const MARKERS = [SYNC_START, SYNC_END, CLEAR] as const;
+const ALTERNATE_SCREEN_MODES = new Set([47, 1047, 1049]);
 
 const maxMarkerPrefixLength = Math.max(...MARKERS.map((marker) => marker.length)) - 1;
+
+const isCsiFinal = (ch: string): boolean => ch >= "@" && ch <= "~";
+
+const isIncompleteEscapePrefix = (suffix: string): boolean => {
+  if (!suffix.startsWith("\x1b")) {
+    return false;
+  }
+  if (suffix === "\x1b") {
+    return true;
+  }
+  if (!suffix.startsWith("\x1b[")) {
+    return false;
+  }
+  const final = suffix[suffix.length - 1];
+  return !isCsiFinal(final);
+};
 
 const splitPendingMarkerSuffix = (input: string): { emit: string; pending: string } => {
   const maxLength = Math.min(input.length, maxMarkerPrefixLength);
@@ -60,16 +69,46 @@ const splitPendingMarkerSuffix = (input: string): { emit: string; pending: strin
         pending: suffix,
       };
     }
+    if (isIncompleteEscapePrefix(suffix)) {
+      return {
+        emit: input.slice(0, -length),
+        pending: suffix,
+      };
+    }
   }
   return { emit: input, pending: "" };
 };
 
-const matchMarker = (input: string, index: number, markers: readonly string[]): string | null => {
-  for (const marker of markers) {
-    if (input.startsWith(marker, index)) {
-      return marker;
-    }
+const readPrivateModeCsi = (
+  input: string,
+  index: number,
+): { raw: string; end: number; setsAlternate: boolean | null } | null => {
+  if (!input.startsWith("\x1b[?", index)) {
+    return null;
   }
+
+  for (let end = index + 3; end < input.length; end += 1) {
+    const final = input[end];
+    if (final !== "h" && final !== "l") {
+      continue;
+    }
+
+    const params = input.slice(index + 3, end).split(";");
+    let setsAlternate: boolean | null = null;
+    for (const param of params) {
+      const mode = Number.parseInt(param, 10);
+      if (ALTERNATE_SCREEN_MODES.has(mode)) {
+        setsAlternate = final === "h";
+      }
+    }
+
+    return {
+      raw: input.slice(index, end + 1),
+      end: end + 1,
+      setsAlternate,
+    };
+  }
+
   return null;
 };
 
@@ -93,22 +132,6 @@ const scanSyncBlockClears = (
   let index = 0;
 
   while (index < input.length) {
-    const alternateEnter = matchMarker(input, index, ALT_SCREEN_ENTER);
-    if (alternateEnter) {
-      state.inAlternateScreen = true;
-      result += alternateEnter;
-      index += alternateEnter.length;
-      continue;
-    }
-
-    const alternateLeave = matchMarker(input, index, ALT_SCREEN_LEAVE);
-    if (alternateLeave) {
-      state.inAlternateScreen = false;
-      result += alternateLeave;
-      index += alternateLeave.length;
-      continue;
-    }
-
     if (input.startsWith(SYNC_START, index)) {
       state.inSyncBlock = true;
       startedSyncBlock = true;
@@ -121,6 +144,18 @@ const scanSyncBlockClears = (
       state.inSyncBlock = false;
       result += SYNC_END;
       index += SYNC_END.length;
+      continue;
+    }
+
+    const privateMode = readPrivateModeCsi(input, index);
+    if (privateMode) {
+      if (privateMode.setsAlternate === true) {
+        state.inAlternateScreen = true;
+      } else if (privateMode.setsAlternate === false) {
+        state.inAlternateScreen = false;
+      }
+      result += privateMode.raw;
+      index = privateMode.end;
       continue;
     }
 
