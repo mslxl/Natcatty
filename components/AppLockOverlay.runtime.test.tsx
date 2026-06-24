@@ -208,3 +208,144 @@ test("AppLockOverlay reset controls do not submit the unlock form", async () => 
     dom.cleanup();
   }
 });
+
+test("AppLockOverlay renders platform-specific system unlock button", async () => {
+  const dom = installDomEnvironment();
+  const renderer = await createDomRenderer(dom.document);
+  let systemUnlockCount = 0;
+
+  try {
+    await renderer.render(
+      React.createElement(
+        I18nProvider,
+        { locale: "en" },
+        React.createElement(AppLockOverlay, {
+          locked: true,
+          reason: "manual",
+          onUnlock: async () => ({ ok: false, error: "incorrect" as const }),
+          systemUnlockStatus: {
+            supported: true,
+            available: true,
+            enabled: true,
+            platform: "win32",
+            label: "Windows Hello",
+            reason: null,
+          },
+          onSystemUnlock: async () => {
+            systemUnlockCount += 1;
+            return { ok: true as const };
+          },
+          onResetAppLock: async () => {},
+        }),
+      ),
+    );
+    await flushEffects();
+
+    const button = [...dom.document.querySelectorAll("button")]
+      .find((candidate) => /Unlock with Windows Hello/i.test(candidate.textContent ?? ""));
+    assert.ok(button);
+    await dispatchDomEvent(button, new dom.window.MouseEvent("click", { bubbles: true }));
+    await flushEffects();
+    await flushEffects();
+    assert.equal(systemUnlockCount, 1);
+  } finally {
+    await renderer.unmount();
+    dom.cleanup();
+  }
+});
+
+test("AppLockOverlay hides system unlock when unavailable", async () => {
+  const dom = installDomEnvironment();
+  const renderer = await createDomRenderer(dom.document);
+
+  try {
+    await renderer.render(
+      React.createElement(
+        I18nProvider,
+        { locale: "en" },
+        React.createElement(AppLockOverlay, {
+          locked: true,
+          reason: "manual",
+          onUnlock: async () => ({ ok: false, error: "incorrect" as const }),
+          systemUnlockStatus: {
+            supported: true,
+            available: false,
+            enabled: true,
+            platform: "darwin",
+            label: "Touch ID",
+            reason: "unavailable",
+          },
+          onSystemUnlock: async () => ({ ok: true as const }),
+          onResetAppLock: async () => {},
+        }),
+      ),
+    );
+    await flushEffects();
+
+    assert.doesNotMatch(dom.document.body.textContent ?? "", /Unlock with Touch ID/i);
+  } finally {
+    await renderer.unmount();
+    dom.cleanup();
+  }
+});
+
+test("AppLockOverlay keeps password fallback after system unlock failure", async () => {
+  const dom = installDomEnvironment();
+  const renderer = await createDomRenderer(dom.document);
+  const unlockAttempts: string[] = [];
+
+  try {
+    await renderer.render(
+      React.createElement(
+        I18nProvider,
+        { locale: "en" },
+        React.createElement(AppLockOverlay, {
+          locked: true,
+          reason: "manual",
+          onUnlock: async (password) => {
+            unlockAttempts.push(password);
+            return { ok: true as const };
+          },
+          systemUnlockStatus: {
+            supported: true,
+            available: true,
+            enabled: true,
+            platform: "darwin",
+            label: "Touch ID",
+            reason: null,
+          },
+          onSystemUnlock: async () => ({ ok: false as const, error: "cancelled" as const }),
+          onResetAppLock: async () => {},
+        }),
+      ),
+    );
+    await flushEffects();
+
+    const systemButton = [...dom.document.querySelectorAll("button")]
+      .find((candidate) => /Unlock with Touch ID/i.test(candidate.textContent ?? ""));
+    assert.ok(systemButton);
+    await dispatchDomEvent(systemButton, new dom.window.MouseEvent("click", { bubbles: true }));
+    await flushEffects();
+    await flushEffects();
+    assert.match(dom.document.body.textContent ?? "", /System unlock was not completed/i);
+
+    const input = dom.document.getElementById("app-lock-password") as HTMLInputElement | null;
+    const form = dom.document.querySelector("form");
+    assert.ok(input);
+    assert.ok(form);
+    const setInputValue = Object.getOwnPropertyDescriptor(
+      dom.window.HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    assert.ok(setInputValue);
+    setInputValue.call(input, "secret");
+    await dispatchDomEvent(input, new dom.window.Event("input", { bubbles: true }));
+    await dispatchDomEvent(form, new dom.window.Event("submit", { bubbles: true, cancelable: true }));
+    await flushEffects();
+
+    assert.deepEqual(unlockAttempts, ["secret"]);
+  } finally {
+    await renderer.unmount();
+    dom.cleanup();
+  }
+});
