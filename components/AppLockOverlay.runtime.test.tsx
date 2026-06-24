@@ -267,6 +267,60 @@ test("AppLockOverlay renders platform-specific system unlock button", async () =
     await dispatchDomEvent(button, new dom.window.MouseEvent("click", { bubbles: true }));
     await flushEffects();
     await flushEffects();
+    assert.equal(systemUnlockCount, 2);
+  } finally {
+    await renderer.unmount();
+    dom.cleanup();
+  }
+});
+
+test("AppLockOverlay automatically requests system unlock once when locked", async () => {
+  const dom = installDomEnvironment();
+  const renderer = await createDomRenderer(dom.document);
+  let systemUnlockCount = 0;
+
+  try {
+    const props = {
+      locked: true,
+      reason: "manual" as const,
+      onUnlock: async () => ({ ok: false as const, error: "incorrect" as const }),
+      systemUnlockStatus: {
+        supported: true,
+        available: true,
+        enabled: true,
+        platform: "darwin" as const,
+        label: "Touch ID" as const,
+        reason: null,
+      },
+      onSystemUnlock: async () => {
+        systemUnlockCount += 1;
+        return { ok: true as const };
+      },
+      onResetAppLock: async () => {},
+    };
+
+    await renderer.render(
+      React.createElement(
+        I18nProvider,
+        { locale: "en" },
+        React.createElement(AppLockOverlay, props),
+      ),
+    );
+    await flushEffects();
+    await flushEffects();
+
+    assert.equal(systemUnlockCount, 1);
+
+    await renderer.render(
+      React.createElement(
+        I18nProvider,
+        { locale: "en" },
+        React.createElement(AppLockOverlay, props),
+      ),
+    );
+    await flushEffects();
+    await flushEffects();
+
     assert.equal(systemUnlockCount, 1);
   } finally {
     await renderer.unmount();

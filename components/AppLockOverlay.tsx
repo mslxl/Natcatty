@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useI18n } from '../application/i18n/I18nProvider';
 import type {
@@ -68,6 +68,7 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
   const [showReset, setShowReset] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [resetError, setResetError] = useState(false);
+  const hasAutoRequestedSystemUnlockRef = useRef(false);
 
   useEffect(() => {
     if (!locked) {
@@ -81,11 +82,40 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
       setShowReset(false);
       setIsResetting(false);
       setResetError(false);
+      hasAutoRequestedSystemUnlockRef.current = false;
       return;
     }
     const timeout = window.setTimeout(() => passwordRef.current?.focus(), 0);
     return () => window.clearTimeout(timeout);
   }, [locked]);
+
+  const handleSystemUnlock = useCallback(async () => {
+    if (isSystemUnlocking || !onSystemUnlock) return;
+    setIsSystemUnlocking(true);
+    setSystemUnlockError(false);
+    const result = await onSystemUnlock();
+    if (!result.ok) {
+      setSystemUnlockError(true);
+    }
+    setIsSystemUnlocking(false);
+  }, [isSystemUnlocking, onSystemUnlock]);
+
+  useEffect(() => {
+    if (!locked) return;
+    if (hasAutoRequestedSystemUnlockRef.current) return;
+    if (!systemUnlockStatus?.enabled || !systemUnlockStatus.available || !systemUnlockStatus.label) return;
+    if (!onSystemUnlock) return;
+
+    hasAutoRequestedSystemUnlockRef.current = true;
+    void handleSystemUnlock();
+  }, [
+    locked,
+    onSystemUnlock,
+    systemUnlockStatus?.available,
+    systemUnlockStatus?.enabled,
+    systemUnlockStatus?.label,
+    handleSystemUnlock,
+  ]);
 
   if (!locked) return null;
 
@@ -104,17 +134,6 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
     }
     setPassword('');
     setIsSubmitting(false);
-  };
-
-  const handleSystemUnlock = async () => {
-    if (isSystemUnlocking || !onSystemUnlock) return;
-    setIsSystemUnlocking(true);
-    setSystemUnlockError(false);
-    const result = await onSystemUnlock();
-    if (!result.ok) {
-      setSystemUnlockError(true);
-    }
-    setIsSystemUnlocking(false);
   };
 
   const handleLogoClick = () => {

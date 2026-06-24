@@ -142,13 +142,6 @@ test("startup-locked gate reveals children after successful system unlock", asyn
     await flushEffects();
     await flushEffects();
 
-    const button = [...dom.document.querySelectorAll("button")]
-      .find((candidate) => /Touch ID/i.test(candidate.textContent ?? ""));
-    assert.ok(button);
-    await dispatchDomEvent(button, new dom.window.MouseEvent("click", { bubbles: true }));
-    await flushEffects();
-    await flushEffects();
-
     assert.equal(bridgeHarness.getSystemUnlockCount(), 1);
     assert.equal(bridgeHarness.getRuntimeState().locked, false);
     assert.equal(dom.document.getElementById("unlocked-content")?.textContent, "Unlocked");

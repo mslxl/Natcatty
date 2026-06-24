@@ -60,15 +60,21 @@ test("app lock system unlock setting uses bridge-provided platform label", () =>
   assert.doesNotMatch(appLockSection, /navigator\.platform/);
 });
 
-test("app lock system unlock enablement requires current password", () => {
+test("app lock system unlock enablement does not require current password in settings", () => {
   const source = readFileSync(new URL("./SettingsSystemTab.tsx", import.meta.url), "utf8");
   const handlerStart = source.indexOf("const handleAppLockSystemUnlockChange = useCallback");
   const handlerEnd = source.indexOf("// Handle global toggle hotkey recording", handlerStart);
   const handlerSource = source.slice(handlerStart, handlerEnd);
 
-  assert.match(handlerSource, /enabled && !appLockSystemUnlockPassword\.trim\(\)/);
   assert.match(handlerSource, /setAppLockSystemUnlockEnabled\(\{/);
-  assert.match(handlerSource, /currentPassword: enabled \? appLockSystemUnlockPassword : undefined/);
+  assert.doesNotMatch(handlerSource, /appLockSystemUnlockPassword/);
+  assert.doesNotMatch(handlerSource, /currentPassword:/);
+
+  const appLockSectionStart = source.indexOf('<SectionHeader title={t("settings.appLock.title")} />');
+  const systemUnlockStart = source.indexOf("{showAppLockSystemUnlock", appLockSectionStart);
+  const systemUnlockEnd = source.indexOf("{appLockSettings.enabled &&", systemUnlockStart);
+  const systemUnlockSection = source.slice(systemUnlockStart, systemUnlockEnd);
+  assert.doesNotMatch(systemUnlockSection, /settings\.appLock\.currentPassword/);
 });
 
 test("app lock system unlock toggle still allows disabling when system auth is unavailable", () => {

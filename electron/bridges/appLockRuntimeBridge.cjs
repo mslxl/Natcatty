@@ -463,12 +463,20 @@ function createAppLockController({
       });
     }
 
-    const verified = await verifyCurrentPassword(current, currentPassword);
-    if (verified !== true) return verified;
-
     const status = await getSystemAuthStatusOnly();
     if (status.supported !== true) return { ok: false, error: "unsupported" };
     if (status.available !== true) return { ok: false, error: "unavailable" };
+    if (!systemAuthBridge || typeof systemAuthBridge.requestUnlock !== "function") {
+      return { ok: false, error: "unsupported" };
+    }
+
+    const result = await systemAuthBridge.requestUnlock();
+    if (!result || result.ok !== true) {
+      return {
+        ok: false,
+        error: result?.error || "failed",
+      };
+    }
 
     return saveSettings({
       ...current,

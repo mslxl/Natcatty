@@ -172,7 +172,6 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   const [appLockDisablePassword, setAppLockDisablePassword] = useState("");
   const [appLockNewPassword, setAppLockNewPassword] = useState("");
   const [appLockConfirmPassword, setAppLockConfirmPassword] = useState("");
-  const [appLockSystemUnlockPassword, setAppLockSystemUnlockPassword] = useState("");
   const [appLockError, setAppLockError] = useState<string | null>(null);
   const [isDisablingAppLock, setIsDisablingAppLock] = useState(false);
   const [isSavingAppLock, setIsSavingAppLock] = useState(false);
@@ -469,31 +468,21 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   const handleAppLockSystemUnlockChange = useCallback(async (enabled: boolean) => {
     if (!setAppLockSystemUnlockEnabled || !appLockSystemUnlockStatus?.label) return;
     setAppLockError(null);
-    if (enabled && !appLockSystemUnlockPassword.trim()) {
-      setAppLockError(t('settings.appLock.validation.currentRequired'));
-      return;
-    }
 
     setIsSavingAppLockSystemUnlock(true);
     try {
-      const result = await setAppLockSystemUnlockEnabled({
-        enabled,
-        currentPassword: enabled ? appLockSystemUnlockPassword : undefined,
-      });
+      const result = await setAppLockSystemUnlockEnabled({ enabled });
       if ('ok' in result && result.ok === false) {
         setAppLockError(mapAppLockChangeError(result.error));
         return;
       }
-      setAppLockSystemUnlockPassword("");
     } finally {
       setIsSavingAppLockSystemUnlock(false);
     }
   }, [
-    appLockSystemUnlockPassword,
     appLockSystemUnlockStatus?.label,
     mapAppLockChangeError,
     setAppLockSystemUnlockEnabled,
-    t,
   ]);
 
   // Handle global toggle hotkey recording
@@ -745,20 +734,6 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                       }
                     >
                       <div className="flex flex-col items-end gap-2">
-                        {!appLockSettings.systemUnlockEnabled && (
-                          <Input
-                            type="password"
-                            value={appLockSystemUnlockPassword}
-                            autoComplete="current-password"
-                            placeholder={t("settings.appLock.currentPassword")}
-                            disabled={!appLockSystemUnlockStatus.available || isSavingAppLockSystemUnlock}
-                            onChange={(event) => {
-                              setAppLockSystemUnlockPassword(event.target.value);
-                              setAppLockError(null);
-                            }}
-                            className="w-52"
-                          />
-                        )}
                         <Toggle
                           checked={appLockSettings.systemUnlockEnabled}
                           disabled={isSavingAppLockSystemUnlock || (!appLockSettings.systemUnlockEnabled && !appLockSystemUnlockStatus.available)}

@@ -330,29 +330,21 @@ async function createControllerHarness() {
   };
 }
 
-test("system unlock setting requires current password to enable", async () => {
-  const { controller } = await createControllerHarness();
+test("system unlock setting confirms with system auth instead of current password when enabling", async () => {
+  const { controller, systemAuthCalls } = await createControllerHarness();
   await controller.requestPasswordChange({ nextPassword: "alpha" });
   await controller.requestEnable();
 
-  assert.deepEqual(
-    await controller.setSystemUnlockEnabled({ enabled: true }),
-    { ok: false, error: "empty-current" },
-  );
-  assert.deepEqual(
-    await controller.setSystemUnlockEnabled({ enabled: true, currentPassword: "wrong" }),
-    { ok: false, error: "incorrect" },
-  );
-
-  const saved = await controller.setSystemUnlockEnabled({ enabled: true, currentPassword: "alpha" });
+  const saved = await controller.setSystemUnlockEnabled({ enabled: true });
   assert.equal(saved.systemUnlockEnabled, true);
+  assert.equal(systemAuthCalls.unlock, 1);
 });
 
 test("system unlock setting cannot be disabled without password while locked", async () => {
   const { controller } = await createControllerHarness();
   await controller.requestPasswordChange({ nextPassword: "alpha" });
   await controller.requestEnable();
-  await controller.setSystemUnlockEnabled({ enabled: true, currentPassword: "alpha" });
+  await controller.setSystemUnlockEnabled({ enabled: true });
   controller.setLocked("manual");
 
   assert.deepEqual(
@@ -370,20 +362,20 @@ test("system unlock succeeds only when enabled and locked", async () => {
   await controller.requestEnable();
 
   assert.deepEqual(await controller.requestSystemUnlock(), { ok: false, error: "disabled" });
-  await controller.setSystemUnlockEnabled({ enabled: true, currentPassword: "alpha" });
+  await controller.setSystemUnlockEnabled({ enabled: true });
   assert.deepEqual(await controller.requestSystemUnlock(), { ok: true });
   assert.equal(runtimeBridge.getState().locked, false);
-  assert.equal(systemAuthCalls.unlock, 1);
+  assert.equal(systemAuthCalls.unlock, 2);
   assert.deepEqual(await controller.requestSystemUnlock(), { ok: false, error: "not-locked" });
 });
 
 test("system unlock cancellation preserves locked runtime state", async () => {
   const { controller, runtimeBridge, systemAuthBridge } = await createControllerHarness();
-  systemAuthBridge.requestUnlock = async () => ({ ok: false, error: "cancelled" });
   await controller.requestPasswordChange({ nextPassword: "alpha" });
   await controller.requestEnable();
   await controller.setSystemUnlockEnabled({ enabled: true, currentPassword: "alpha" });
   controller.setLocked("manual");
+  systemAuthBridge.requestUnlock = async () => ({ ok: false, error: "cancelled" });
 
   assert.deepEqual(await controller.requestSystemUnlock(), { ok: false, error: "cancelled" });
   assert.equal(runtimeBridge.getState().locked, true);
