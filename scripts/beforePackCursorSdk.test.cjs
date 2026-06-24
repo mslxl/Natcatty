@@ -68,7 +68,7 @@ test("beforePackCursorSdk builds Windows Hello helper only for Windows packages"
   beforePackCursorSdk({
     appDir: process.cwd(),
     electronPlatformName: "win32",
-    arch: "arm64",
+    arch: 3,
     ensureCursorSdkPlatformPackages: () => [],
     buildWindowsHelloHelper: (projectDir) => calls.push(projectDir),
   });

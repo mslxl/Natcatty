@@ -10,7 +10,24 @@ function findCompiler(env = process.env) {
 
 function normalizeWindowsHelperArch(arch) {
   if (arch === "x64" || arch === "arm64") return arch;
+  if (arch === 1 || arch === "1") return "x64";
+  if (arch === 3 || arch === "3") return "arm64";
   return null;
+}
+
+function getExpectedPeMachine(arch) {
+  if (arch === "x64") return 0x8664;
+  if (arch === "arm64") return 0xaa64;
+  return null;
+}
+
+function readPeMachine(input) {
+  const buffer = Buffer.isBuffer(input) ? input : fs.readFileSync(input);
+  if (buffer.length < 0x40 || buffer.toString("ascii", 0, 2) !== "MZ") return null;
+  const peOffset = buffer.readUInt32LE(0x3c);
+  if (peOffset + 6 > buffer.length) return null;
+  if (buffer.toString("ascii", peOffset, peOffset + 4) !== "PE\0\0") return null;
+  return buffer.readUInt16LE(peOffset + 4);
 }
 
 function buildWindowsHelloHelper({
@@ -20,6 +37,7 @@ function buildWindowsHelloHelper({
   env = process.env,
   run = execFileSync,
   mkdir = fs.mkdirSync,
+  readMachine = readPeMachine,
   logger = console,
 } = {}) {
   if (platform !== "win32") return { skipped: true, reason: "non-windows" };
@@ -32,6 +50,7 @@ function buildWindowsHelloHelper({
   mkdir(outputDir, { recursive: true });
 
   const compiler = findCompiler(env);
+  const machine = targetArch === "arm64" ? "ARM64" : "X64";
   try {
     run(compiler, [
       "/nologo",
@@ -39,6 +58,8 @@ function buildWindowsHelloHelper({
       "/std:c++17",
       sourcePath,
       "/Fe:" + outputPath,
+      "/link",
+      "/MACHINE:" + machine,
       "runtimeobject.lib",
       "windowsapp.lib",
     ], {
@@ -49,6 +70,13 @@ function buildWindowsHelloHelper({
   } catch (err) {
     logger.warn?.(`[windowsHelloHelper] Failed to build Windows Hello helper: ${err?.message || err}`);
     return { skipped: true, reason: "compiler-unavailable" };
+  }
+
+  const expectedMachine = getExpectedPeMachine(targetArch);
+  const actualMachine = readMachine(outputPath);
+  if (actualMachine !== expectedMachine) {
+    logger.warn?.(`[windowsHelloHelper] Built helper machine ${actualMachine} does not match ${targetArch}`);
+    return { skipped: true, reason: "wrong-arch" };
   }
 
   return { skipped: false, outputPath };
@@ -66,5 +94,7 @@ if (require.main === module) {
 module.exports = {
   buildWindowsHelloHelper,
   findCompiler,
+  getExpectedPeMachine,
   normalizeWindowsHelperArch,
+  readPeMachine,
 };
