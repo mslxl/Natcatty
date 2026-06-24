@@ -87,6 +87,13 @@ export const ruCoreMessages: Messages = {
   'appLock.unlocking': 'Разблокировка...',
   'appLock.error.emptyPassword': 'Введите пароль блокировки.',
   'appLock.error.incorrectPassword': 'Неверный пароль блокировки.',
+  'appLock.logoLabel': 'Netcatty',
+  'appLock.reset.title': 'Сбросить блокировку',
+  'appLock.reset.description': 'Это удалит текущий пароль блокировки и отключит App Lock. Новый пароль можно создать позже в настройках.',
+  'appLock.reset.cancel': 'Отмена',
+  'appLock.reset.confirm': 'Сбросить App Lock',
+  'appLock.reset.resetting': 'Сброс...',
+  'appLock.reset.error': 'Не удалось сбросить App Lock. Попробуйте ещё раз.',
   'topTabs.lockApp': 'Заблокировать Netcatty',
 
   // Settings shell

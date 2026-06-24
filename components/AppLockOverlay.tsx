@@ -1,16 +1,20 @@
-import { LockKeyhole } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 
 import { useI18n } from '../application/i18n/I18nProvider';
 import type { AppLockReason, AppLockUnlockResult } from '../application/state/useAppLockState';
+import { AppLogo } from './AppLogo';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+
+const RESET_REVEAL_CLICK_COUNT = 5;
+const RESET_REVEAL_WINDOW_MS = 1500;
 
 interface AppLockOverlayProps {
   locked: boolean;
   reason: AppLockReason | null;
   onUnlock: (password: string) => Promise<AppLockUnlockResult>;
+  onResetAppLock: () => Promise<void>;
 }
 
 export function getAppLockReasonMessageKey(reason: AppLockReason | null): string {
@@ -37,18 +41,33 @@ export function getAppLockErrorMessageKey(error: AppLockUnlockResult['error'] | 
   }
 }
 
-export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({ locked, reason, onUnlock }) => {
+export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
+  locked,
+  reason,
+  onUnlock,
+  onResetAppLock,
+}) => {
   const { t } = useI18n();
   const passwordRef = useRef<HTMLInputElement>(null);
   const [password, setPassword] = useState('');
   const [error, setError] = useState<AppLockUnlockResult['error'] | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [logoClickCount, setLogoClickCount] = useState(0);
+  const [lastLogoClickAt, setLastLogoClickAt] = useState<number | null>(null);
+  const [showReset, setShowReset] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+  const [resetError, setResetError] = useState(false);
 
   useEffect(() => {
     if (!locked) {
       setPassword('');
       setError(null);
       setIsSubmitting(false);
+      setLogoClickCount(0);
+      setLastLogoClickAt(null);
+      setShowReset(false);
+      setIsResetting(false);
+      setResetError(false);
       return;
     }
     const timeout = window.setTimeout(() => passwordRef.current?.focus(), 0);
@@ -74,6 +93,31 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({ locked, reason, 
     setIsSubmitting(false);
   };
 
+  const handleLogoClick = () => {
+    const now = Date.now();
+    setLogoClickCount((current) => {
+      const isQuickSequence = lastLogoClickAt !== null && now - lastLogoClickAt <= RESET_REVEAL_WINDOW_MS;
+      const nextCount = isQuickSequence ? current + 1 : 1;
+      if (nextCount >= RESET_REVEAL_CLICK_COUNT) {
+        setShowReset(true);
+      }
+      return nextCount;
+    });
+    setLastLogoClickAt(now);
+  };
+
+  const handleReset = async () => {
+    if (isResetting) return;
+    setIsResetting(true);
+    setResetError(false);
+    try {
+      await onResetAppLock();
+    } catch {
+      setResetError(true);
+      setIsResetting(false);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-[200000] flex items-center justify-center bg-background px-6 text-foreground"
@@ -85,9 +129,15 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({ locked, reason, 
         className="flex w-full max-w-[360px] flex-col items-center gap-5"
         onSubmit={handleSubmit}
       >
-        <div className="flex h-14 w-14 items-center justify-center rounded-full border border-border/70 bg-card text-foreground shadow-sm">
-          <LockKeyhole size={24} />
-        </div>
+        <button
+          type="button"
+          className="flex h-16 w-16 items-center justify-center rounded-[22px] border border-border/70 bg-card p-2 shadow-sm transition hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label={t('appLock.logoLabel')}
+          data-testid="app-lock-logo-easter-egg"
+          onClick={handleLogoClick}
+        >
+          <AppLogo className="h-full w-full" />
+        </button>
 
         <div className="space-y-2 text-center">
           <h1 id="app-lock-title" className="text-xl font-semibold tracking-normal">
@@ -125,6 +175,51 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({ locked, reason, 
         <Button type="submit" className="w-full" disabled={isSubmitting}>
           {isSubmitting ? t('appLock.unlocking') : t('appLock.unlock')}
         </Button>
+
+        {showReset && (
+          <div
+            className="w-full rounded-lg border border-border/70 bg-card p-3 text-left shadow-sm"
+            role="region"
+            aria-live="polite"
+          >
+            <div className="space-y-1">
+              <p className="text-sm font-medium">{t('appLock.reset.title')}</p>
+              <p className="text-xs leading-5 text-muted-foreground">
+                {t('appLock.reset.description')}
+              </p>
+            </div>
+            {resetError && (
+              <p className="mt-2 text-xs text-destructive">
+                {t('appLock.reset.error')}
+              </p>
+            )}
+            <div className="mt-3 flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1"
+                disabled={isResetting}
+                onClick={() => {
+                  setShowReset(false);
+                  setLogoClickCount(0);
+                  setLastLogoClickAt(null);
+                  setResetError(false);
+                }}
+              >
+                {t('appLock.reset.cancel')}
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                className="flex-1"
+                disabled={isResetting}
+                onClick={handleReset}
+              >
+                {isResetting ? t('appLock.reset.resetting') : t('appLock.reset.confirm')}
+              </Button>
+            </div>
+          </div>
+        )}
       </form>
     </div>
   );

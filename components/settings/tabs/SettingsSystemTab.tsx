@@ -500,6 +500,141 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
 
   return (
     <SettingsTabContent value="system">
+          <SectionHeader title={t('settings.update.title')} />
+            <SettingCard className="space-y-3 py-4">
+              {/* Current version */}
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">
+                  {t('settings.update.currentVersion')}
+                </span>
+                <span className="text-sm font-mono">
+                  {updateState.currentVersion || appVersion || '...'}
+                </span>
+              </div>
+
+              {/* Status message — priority: autoDownloadStatus > isChecking/manualCheckStatus */}
+              {updateState.autoDownloadStatus === 'downloading' && (
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    {t('settings.update.downloading').replace('{percent}', String(updateState.downloadPercent))}
+                  </p>
+                  <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-primary transition-all duration-300"
+                      style={{ width: `${updateState.downloadPercent}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+              {updateState.autoDownloadStatus === 'ready' && (
+                <p className="text-sm text-green-600 dark:text-green-400">
+                  {t('settings.update.readyToInstall')}
+                </p>
+              )}
+              {updateState.autoDownloadStatus === 'error' && (
+                <p className="text-sm text-destructive">
+                  {updateState.downloadError || t('settings.update.error')}
+                </p>
+              )}
+              {updateState.autoDownloadStatus === 'idle' && (
+                <>
+                  {updateState.manualCheckStatus === 'up-to-date' && (
+                    <p className="text-sm text-green-600 dark:text-green-400">
+                      {t('settings.update.upToDate')}
+                    </p>
+                  )}
+                  {(updateState.manualCheckStatus === 'available' || (updateState.manualCheckStatus === 'idle' && updateState.hasUpdate)) && (
+                    <p className="text-sm text-blue-600 dark:text-blue-400">
+                      {t('settings.update.available').replace(
+                        '{version}',
+                        updateState.latestRelease?.version ?? ''
+                      )}
+                    </p>
+                  )}
+                  {updateState.manualCheckStatus === 'error' && (
+                    <p className="text-sm text-destructive">
+                      {updateState.error || t('settings.update.error')}
+                    </p>
+                  )}
+                </>
+              )}
+
+              {/* Action buttons */}
+              <div className="flex items-center gap-2 pt-1">
+                {/* Checking spinner — shown when isChecking OR manualCheckStatus=checking, but no active download */}
+                {(updateState.autoDownloadStatus === 'idle' || updateState.autoDownloadStatus === 'error') &&
+                  (updateState.isChecking || updateState.manualCheckStatus === 'checking') ? (
+                  <Button variant="outline" size="sm" disabled>
+                    <RefreshCw size={14} className="mr-1.5 animate-spin" />
+                    {t('settings.update.checking')}
+                  </Button>
+                ) : (updateState.autoDownloadStatus === 'idle' || updateState.autoDownloadStatus === 'error') ? (
+                  /* Check button — shown in idle states and in error state (allows retry) */
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void checkNow()}
+                  >
+                    <RefreshCw size={14} className="mr-1.5" />
+                    {t('settings.update.checkForUpdates')}
+                  </Button>
+                ) : null}
+
+                {/* Install button — shown when download is complete */}
+                {updateState.autoDownloadStatus === 'ready' && (
+                  <Button variant="default" size="sm" onClick={installUpdate}>
+                    <RotateCcw size={14} className="mr-1.5" />
+                    {t('settings.update.restartNow')}
+                  </Button>
+                )}
+
+                {/* Open releases — shown on download error */}
+                {updateState.autoDownloadStatus === 'error' && (
+                  <Button variant="ghost" size="sm" onClick={openReleasePage}>
+                    <ExternalLink size={14} className="mr-1.5" />
+                    {t('settings.update.manualDownload')}
+                  </Button>
+                )}
+
+                {/* Download button — shown when update found and no download in progress */}
+                {updateState.autoDownloadStatus === 'idle' &&
+                  updateState.manualCheckStatus === 'available' && (
+                  <Button variant="outline" size="sm" onClick={startDownload}>
+                    <Download size={14} className="mr-1.5" />
+                    {t('update.downloadNow')}
+                  </Button>
+                )}
+
+                {/* Open releases — fallback for unsupported platforms or check errors */}
+                {updateState.autoDownloadStatus === 'idle' &&
+                  (updateState.manualCheckStatus === 'available' || updateState.manualCheckStatus === 'error' || (updateState.manualCheckStatus === 'idle' && updateState.hasUpdate)) && (
+                  <Button variant="ghost" size="sm" onClick={openReleasePage}>
+                    <ExternalLink size={14} className="mr-1.5" />
+                    {t('settings.update.manualDownload')}
+                  </Button>
+                )}
+              </div>
+              <SettingRow
+                label={t('settings.update.autoUpdateEnabled')}
+                description={t('settings.update.autoUpdateEnabledDesc')}
+              >
+                <Toggle
+                  checked={autoUpdateEnabled}
+                  onChange={setAutoUpdateEnabled}
+                />
+              </SettingRow>
+            </SettingCard>
+            <p className="text-xs text-muted-foreground">
+              {updateState.lastCheckedAt && (
+                <span>
+                  {t('settings.update.lastCheckedPrefix')}
+                  {formatLastChecked(updateState.lastCheckedAt, t)}
+                  {'　'}
+                </span>
+              )}
+              {t('settings.update.hint')}
+            </p>
+
           <SectionHeader title={t("settings.appLock.title")} />
             <SettingCard className="space-y-4 py-4">
               <p className="text-sm text-muted-foreground">
@@ -677,141 +812,6 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                 </Button>
               </div>
             </SettingCard>
-
-          <SectionHeader title={t('settings.update.title')} />
-            <SettingCard className="space-y-3 py-4">
-              {/* Current version */}
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">
-                  {t('settings.update.currentVersion')}
-                </span>
-                <span className="text-sm font-mono">
-                  {updateState.currentVersion || appVersion || '...'}
-                </span>
-              </div>
-
-              {/* Status message — priority: autoDownloadStatus > isChecking/manualCheckStatus */}
-              {updateState.autoDownloadStatus === 'downloading' && (
-                <div className="space-y-2">
-                  <p className="text-sm text-muted-foreground">
-                    {t('settings.update.downloading').replace('{percent}', String(updateState.downloadPercent))}
-                  </p>
-                  <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
-                    <div
-                      className="h-full rounded-full bg-primary transition-all duration-300"
-                      style={{ width: `${updateState.downloadPercent}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-              {updateState.autoDownloadStatus === 'ready' && (
-                <p className="text-sm text-green-600 dark:text-green-400">
-                  {t('settings.update.readyToInstall')}
-                </p>
-              )}
-              {updateState.autoDownloadStatus === 'error' && (
-                <p className="text-sm text-destructive">
-                  {updateState.downloadError || t('settings.update.error')}
-                </p>
-              )}
-              {updateState.autoDownloadStatus === 'idle' && (
-                <>
-                  {updateState.manualCheckStatus === 'up-to-date' && (
-                    <p className="text-sm text-green-600 dark:text-green-400">
-                      {t('settings.update.upToDate')}
-                    </p>
-                  )}
-                  {(updateState.manualCheckStatus === 'available' || (updateState.manualCheckStatus === 'idle' && updateState.hasUpdate)) && (
-                    <p className="text-sm text-blue-600 dark:text-blue-400">
-                      {t('settings.update.available').replace(
-                        '{version}',
-                        updateState.latestRelease?.version ?? ''
-                      )}
-                    </p>
-                  )}
-                  {updateState.manualCheckStatus === 'error' && (
-                    <p className="text-sm text-destructive">
-                      {updateState.error || t('settings.update.error')}
-                    </p>
-                  )}
-                </>
-              )}
-
-              {/* Action buttons */}
-              <div className="flex items-center gap-2 pt-1">
-                {/* Checking spinner — shown when isChecking OR manualCheckStatus=checking, but no active download */}
-                {(updateState.autoDownloadStatus === 'idle' || updateState.autoDownloadStatus === 'error') &&
-                  (updateState.isChecking || updateState.manualCheckStatus === 'checking') ? (
-                  <Button variant="outline" size="sm" disabled>
-                    <RefreshCw size={14} className="mr-1.5 animate-spin" />
-                    {t('settings.update.checking')}
-                  </Button>
-                ) : (updateState.autoDownloadStatus === 'idle' || updateState.autoDownloadStatus === 'error') ? (
-                  /* Check button — shown in idle states and in error state (allows retry) */
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void checkNow()}
-                  >
-                    <RefreshCw size={14} className="mr-1.5" />
-                    {t('settings.update.checkForUpdates')}
-                  </Button>
-                ) : null}
-
-                {/* Install button — shown when download is complete */}
-                {updateState.autoDownloadStatus === 'ready' && (
-                  <Button variant="default" size="sm" onClick={installUpdate}>
-                    <RotateCcw size={14} className="mr-1.5" />
-                    {t('settings.update.restartNow')}
-                  </Button>
-                )}
-
-                {/* Open releases — shown on download error */}
-                {updateState.autoDownloadStatus === 'error' && (
-                  <Button variant="ghost" size="sm" onClick={openReleasePage}>
-                    <ExternalLink size={14} className="mr-1.5" />
-                    {t('settings.update.manualDownload')}
-                  </Button>
-                )}
-
-                {/* Download button — shown when update found and no download in progress */}
-                {updateState.autoDownloadStatus === 'idle' &&
-                  updateState.manualCheckStatus === 'available' && (
-                  <Button variant="outline" size="sm" onClick={startDownload}>
-                    <Download size={14} className="mr-1.5" />
-                    {t('update.downloadNow')}
-                  </Button>
-                )}
-
-                {/* Open releases — fallback for unsupported platforms or check errors */}
-                {updateState.autoDownloadStatus === 'idle' &&
-                  (updateState.manualCheckStatus === 'available' || updateState.manualCheckStatus === 'error' || (updateState.manualCheckStatus === 'idle' && updateState.hasUpdate)) && (
-                  <Button variant="ghost" size="sm" onClick={openReleasePage}>
-                    <ExternalLink size={14} className="mr-1.5" />
-                    {t('settings.update.manualDownload')}
-                  </Button>
-                )}
-              </div>
-              <SettingRow
-                label={t('settings.update.autoUpdateEnabled')}
-                description={t('settings.update.autoUpdateEnabledDesc')}
-              >
-                <Toggle
-                  checked={autoUpdateEnabled}
-                  onChange={setAutoUpdateEnabled}
-                />
-              </SettingRow>
-            </SettingCard>
-            <p className="text-xs text-muted-foreground">
-              {updateState.lastCheckedAt && (
-                <span>
-                  {t('settings.update.lastCheckedPrefix')}
-                  {formatLastChecked(updateState.lastCheckedAt, t)}
-                  {'　'}
-                </span>
-              )}
-              {t('settings.update.hint')}
-            </p>
 
           <SectionHeader title={t("settings.system.credentials.title")} />
             <SettingCard className="space-y-3 py-4">

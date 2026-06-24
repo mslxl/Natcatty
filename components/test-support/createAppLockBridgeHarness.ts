@@ -24,6 +24,7 @@ export function createAppLockBridgeHarness(options: HarnessOptions) {
   const rendererReadyCalls: number[] = [];
   const unlockAttempts: string[] = [];
   const activityReports: number[] = [];
+  let resetCount = 0;
   let runtimeFetchCount = 0;
 
   const emitRuntimeState = () => {
@@ -63,6 +64,21 @@ export function createAppLockBridgeHarness(options: HarnessOptions) {
         lastActivityAt: Date.now(),
       });
       return { ok: true } satisfies UnlockResult;
+    },
+    requestAppLockReset: async () => {
+      resetCount += 1;
+      setRuntimeState({
+        initialized: true,
+        locked: false,
+        reason: null,
+        lastUnlockedAt: Date.now(),
+        lastActivityAt: Date.now(),
+      });
+      return {
+        enabled: false,
+        timeoutMinutes: 15,
+        passwordVerifier: null,
+      };
     },
     setAppLockRuntimeLocked: async (reason) => {
       setRuntimeState({
@@ -114,6 +130,9 @@ export function createAppLockBridgeHarness(options: HarnessOptions) {
     },
     getActivityReportCount() {
       return activityReports.length;
+    },
+    getResetCount() {
+      return resetCount;
     },
   };
 }

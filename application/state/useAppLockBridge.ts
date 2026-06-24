@@ -20,6 +20,10 @@ export function useAppLockBridge() {
     return netcattyBridge.get()?.requestAppLockUnlock?.(password) ?? { ok: false as const, error: 'incorrect' as const };
   }, []);
 
+  const requestReset = useCallback(async () => {
+    return netcattyBridge.get()?.requestAppLockReset?.();
+  }, []);
+
   const reportActivity = useCallback(async () => {
     await netcattyBridge.get()?.reportAppLockActivity?.();
   }, []);
@@ -61,6 +65,7 @@ export function useAppLockBridge() {
     getSettings,
     setRuntimeLocked,
     requestUnlock,
+    requestReset,
     reportActivity,
     onRuntimeStateChanged,
     onSettingsChanged,

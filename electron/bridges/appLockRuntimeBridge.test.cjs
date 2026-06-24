@@ -464,6 +464,31 @@ test("disabling app lock removes the saved password verifier", async () => {
   assert.equal(saved.passwordVerifier, null);
 });
 
+test("resetting app lock clears the verifier, unlocks runtime, and broadcasts settings and runtime", async () => {
+  const { controller, runtimeBridge, windows } = await createControllerHarness();
+  await controller.requestPasswordChange({ nextPassword: "alpha" });
+  await controller.requestEnable();
+  controller.setLocked("manual");
+  for (const win of windows) {
+    win.sent.length = 0;
+  }
+
+  const saved = await controller.requestReset();
+
+  assert.equal(saved.enabled, false);
+  assert.equal(saved.passwordVerifier, null);
+  assert.equal(runtimeBridge.getState().locked, false);
+  assert.equal(runtimeBridge.getState().reason, null);
+  for (const win of windows) {
+    const settingsMessages = win.sent.filter(([channel]) => channel === "netcatty:appLock:settingsChanged");
+    const runtimeMessages = win.sent.filter(([channel]) => channel === "netcatty:appLock:runtimeStateChanged");
+    assert.equal(settingsMessages.length, 1, `${win.name} should receive one settings broadcast`);
+    assert.equal(runtimeMessages.length, 1, `${win.name} should receive one runtime broadcast`);
+    assert.equal(settingsMessages[0][1].passwordVerifier, null);
+    assert.equal(runtimeMessages[0][1].locked, false);
+  }
+});
+
 test("creating the first app lock password enables app lock", async () => {
   const { controller } = await createControllerHarness({
     enabled: false,

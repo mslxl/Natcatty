@@ -71,6 +71,13 @@ export const zhCNCoreMessages: Messages = {
   'appLock.unlocking': '正在解锁...',
   'appLock.error.emptyPassword': '请输入锁定密码。',
   'appLock.error.incorrectPassword': '锁定密码不正确。',
+  'appLock.logoLabel': 'Netcatty',
+  'appLock.reset.title': '重置应用锁定',
+  'appLock.reset.description': '这会删除当前锁定密码并关闭应用锁定。需要再次使用时，请到设置里创建新密码。',
+  'appLock.reset.cancel': '取消',
+  'appLock.reset.confirm': '重置应用锁定',
+  'appLock.reset.resetting': '正在重置...',
+  'appLock.reset.error': '无法重置应用锁定，请重试。',
   'topTabs.lockApp': '锁定 Netcatty',
 
   // Settings shell

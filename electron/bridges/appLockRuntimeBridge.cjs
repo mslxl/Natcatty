@@ -345,6 +345,19 @@ function createAppLockController({
     return saved;
   }
 
+  async function requestReset() {
+    const current = getSettings();
+    const saved = await saveSettings({
+      enabled: false,
+      timeoutMinutes: current.timeoutMinutes,
+      passwordVerifier: null,
+    });
+    const runtimeState = runtimeBridge.unlock();
+    syncIdleTimer();
+    broadcast("netcatty:appLock:runtimeStateChanged", runtimeState);
+    return saved;
+  }
+
   async function requestPasswordChange(input = {}) {
     const current = getSettings();
     const nextPassword = typeof input.nextPassword === "string" ? input.nextPassword : "";
@@ -426,6 +439,7 @@ function createAppLockController({
     ipcMain.handle("netcatty:appLock:requestEnable", () => requestEnable());
     ipcMain.handle("netcatty:appLock:requestDisable", (_event, currentPassword) =>
       requestDisable(currentPassword));
+    ipcMain.handle("netcatty:appLock:requestReset", () => requestReset());
     ipcMain.handle("netcatty:appLock:requestPasswordChange", (_event, input) =>
       requestPasswordChange(input));
     ipcMain.handle("netcatty:appLock:setLocked", (_event, reason) => setLocked(reason));
@@ -439,6 +453,7 @@ function createAppLockController({
     getRuntimeState,
     requestEnable,
     requestDisable,
+    requestReset,
     requestPasswordChange,
     setTimeoutMinutes,
     setLocked,

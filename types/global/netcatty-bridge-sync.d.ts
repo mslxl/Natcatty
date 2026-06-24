@@ -59,6 +59,7 @@ declare global {
     setAppLockTimeoutMinutes?(timeoutMinutes: number): Promise<AppLockSettings>;
     requestAppLockEnable?(): Promise<AppLockSettings | AppLockSettingsMutationError>;
     requestAppLockDisable?(currentPassword: string): Promise<AppLockSettings | AppLockSettingsMutationError>;
+    requestAppLockReset?(): Promise<AppLockSettings>;
     requestAppLockPasswordChange?(input: {
       currentPassword?: string;
       nextPassword: string;

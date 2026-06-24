@@ -117,6 +117,7 @@ export function createAppLockGate(deps: AppLockGateDeps): React.FC<AppLockGatePr
               locked={appLock.locked}
               reason={appLock.lockReason}
               onUnlock={appLock.unlock}
+              onResetAppLock={appLock.reset}
             />
           </TooltipProvider>
         </ToastProvider>

@@ -87,6 +87,13 @@ export const enCoreMessages: Messages = {
   'appLock.unlocking': 'Unlocking...',
   'appLock.error.emptyPassword': 'Enter the lock password.',
   'appLock.error.incorrectPassword': 'Incorrect lock password.',
+  'appLock.logoLabel': 'Netcatty',
+  'appLock.reset.title': 'Reset App Lock',
+  'appLock.reset.description': 'This removes the current lock password and turns off App Lock. Set a new password from Settings when you need it again.',
+  'appLock.reset.cancel': 'Cancel',
+  'appLock.reset.confirm': 'Reset App Lock',
+  'appLock.reset.resetting': 'Resetting...',
+  'appLock.reset.error': 'Could not reset App Lock. Try again.',
   'topTabs.lockApp': 'Lock Netcatty',
 
   // Settings shell

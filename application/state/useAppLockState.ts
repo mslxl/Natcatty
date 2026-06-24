@@ -114,6 +114,16 @@ export function useAppLockState(settings: AppLockSettings) {
     return result;
   }, [refreshRuntimeState, setRuntimeState]);
 
+  const reset = useCallback(async () => {
+    if (typeof bridge?.requestAppLockReset !== 'function') {
+      throw new Error('App Lock reset bridge is unavailable');
+    }
+    await bridge.requestAppLockReset();
+    const unlockedAt = Date.now();
+    setRuntimeState((current) => createOptimisticUnlockedRuntimeState(current, unlockedAt));
+    await refreshRuntimeState().catch(() => {});
+  }, [bridge, refreshRuntimeState, setRuntimeState]);
+
   useEffect(() => {
     if (!shouldLockOnStartup(normalizedSettings) && effectiveRuntimeState.locked) {
       const unlockedAt = Date.now();
@@ -154,6 +164,7 @@ export function useAppLockState(settings: AppLockSettings) {
     lockReason: effectiveRuntimeState.reason,
     lockNow,
     unlock,
+    reset,
     recordActivity,
     resync: refreshRuntimeState,
   };
