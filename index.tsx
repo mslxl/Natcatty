@@ -150,9 +150,14 @@ const root = ReactDOM.createRoot(rootElement);
 
 const renderApp = () => {
   const route = getRoute();
+  const isPeerSessionWindow = window.location.hash.startsWith('#/session-window');
+  const settingsOptions = isPeerSessionWindow
+    ? { enableSettingsSync: false, enableSystemEffects: false }
+    : undefined;
+
   if (route === 'settings') {
     root.render(
-      <AppLockGate>
+      <AppLockGate settingsOptions={settingsOptions}>
         {({ settings, appLock }) => (
           <Suspense fallback={<SettingsWindowFallback />}>
             <LazySettingsPage settings={settings} appLock={appLock} />
@@ -162,7 +167,7 @@ const renderApp = () => {
     );
   } else if (route === 'tray') {
     root.render(
-      <AppLockGate>
+      <AppLockGate settingsOptions={settingsOptions}>
         {({ settings }) => (
           <Suspense fallback={<div style={{ minHeight: 48, background: 'hsl(var(--background))' }} />}>
             <LazyTrayPanel settings={settings} />
@@ -172,7 +177,7 @@ const renderApp = () => {
     );
   } else if (route === 'terminal-popup') {
     root.render(
-      <AppLockGate notifyRendererReady={false}>
+      <AppLockGate notifyRendererReady={false} settingsOptions={settingsOptions}>
         {({ settings }) => (
           <Suspense fallback={<TerminalPopupWindowFallback />}>
             <LazyTerminalPopupPage settings={settings} />
@@ -182,7 +187,7 @@ const renderApp = () => {
     );
   } else {
     root.render(
-      <AppLockGate>
+      <AppLockGate settingsOptions={settingsOptions}>
         {({ settings, appLock }) => <App settings={settings} appLock={appLock} />}
       </AppLockGate>
     );

@@ -107,8 +107,7 @@ async function handleBeforeQuit({
   }
 
   const reachableMainWindows = (Array.isArray(mainWindows) ? mainWindows : []).filter((candidate) => (
-    candidate && !candidate.isDestroyed?.() &&
-    (candidate.isVisible?.() || candidate.isMinimized?.())
+    candidate && !candidate.isDestroyed?.()
   ));
   const queryableWebContents = reachableMainWindows
     .map((candidate) => candidate.webContents)

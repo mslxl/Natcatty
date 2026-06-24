@@ -19,6 +19,7 @@ export interface AppLockGateRenderContext {
 interface AppLockGateProps {
   children: (ctx: AppLockGateRenderContext) => React.ReactNode;
   notifyRendererReady?: boolean;
+  settingsOptions?: Parameters<typeof useSettingsState>[0];
 }
 
 interface AppLockGateDeps {
@@ -52,8 +53,9 @@ export function createAppLockGate(deps: AppLockGateDeps): React.FC<AppLockGatePr
   const AppLockGateImpl: React.FC<AppLockGateProps> = ({
     children,
     notifyRendererReady = true,
+    settingsOptions,
   }) => {
-    const settings = deps.useSettingsState();
+    const settings = deps.useSettingsState(settingsOptions);
     const appLock = deps.useAppLockState(settings.appLockSettings);
     const {
       notifyRendererReady: notifyAppLockRendererReady,
