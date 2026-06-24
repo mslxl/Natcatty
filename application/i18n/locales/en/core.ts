@@ -87,6 +87,7 @@ export const enCoreMessages: Messages = {
   'appLock.unlocking': 'Unlocking...',
   'appLock.error.emptyPassword': 'Enter the lock password.',
   'appLock.error.incorrectPassword': 'Incorrect lock password.',
+  'appLock.systemUnlock.unlockWith': 'Unlock with {label}',
   'appLock.systemUnlock.error': 'System unlock was not completed. Use the lock password to continue.',
   'appLock.logoLabel': 'Netcatty',
   'appLock.reset.title': 'Reset App Lock',

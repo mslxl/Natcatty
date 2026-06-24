@@ -15,6 +15,10 @@ import { Label } from './ui/label';
 const RESET_REVEAL_CLICK_COUNT = 5;
 const RESET_REVEAL_WINDOW_MS = 1500;
 
+function isDocumentVisible(): boolean {
+  return typeof document === 'undefined' || document.visibilityState !== 'hidden';
+}
+
 interface AppLockOverlayProps {
   locked: boolean;
   reason: AppLockReason | null;
@@ -22,6 +26,7 @@ interface AppLockOverlayProps {
   systemUnlockStatus?: AppLockSystemUnlockStatus;
   onSystemUnlock?: () => Promise<AppLockSystemUnlockResult>;
   onResetAppLock: (currentPassword: string) => Promise<void>;
+  reopenSignal?: number;
 }
 
 export function getAppLockReasonMessageKey(reason: AppLockReason | null): string {
@@ -55,6 +60,7 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
   systemUnlockStatus,
   onSystemUnlock,
   onResetAppLock,
+  reopenSignal = 0,
 }) => {
   const { t } = useI18n();
   const passwordRef = useRef<HTMLInputElement>(null);
@@ -68,7 +74,22 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
   const [showReset, setShowReset] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [resetError, setResetError] = useState(false);
-  const hasAutoRequestedSystemUnlockRef = useRef(false);
+  const [documentVisible, setDocumentVisible] = useState(() => isDocumentVisible());
+  const lastAutoUnlockPresentationRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const updateDocumentVisible = () => {
+      setDocumentVisible(isDocumentVisible());
+    };
+
+    updateDocumentVisible();
+    document.addEventListener('visibilitychange', updateDocumentVisible);
+    window.addEventListener('focus', updateDocumentVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', updateDocumentVisible);
+      window.removeEventListener('focus', updateDocumentVisible);
+    };
+  }, []);
 
   useEffect(() => {
     if (!locked) {
@@ -82,7 +103,7 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
       setShowReset(false);
       setIsResetting(false);
       setResetError(false);
-      hasAutoRequestedSystemUnlockRef.current = false;
+      lastAutoUnlockPresentationRef.current = null;
       return;
     }
     const timeout = window.setTimeout(() => passwordRef.current?.focus(), 0);
@@ -102,14 +123,23 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
 
   useEffect(() => {
     if (!locked) return;
-    if (hasAutoRequestedSystemUnlockRef.current) return;
+    if (!documentVisible) return;
     if (!systemUnlockStatus?.enabled || !systemUnlockStatus.available || !systemUnlockStatus.label) return;
     if (!onSystemUnlock) return;
 
-    hasAutoRequestedSystemUnlockRef.current = true;
+    const presentationKey = reason === 'background'
+      ? `background:${reopenSignal}`
+      : `foreground:${reason ?? 'default'}:${locked}`;
+    if (reason === 'background' && reopenSignal <= 0) return;
+    if (lastAutoUnlockPresentationRef.current === presentationKey) return;
+
+    lastAutoUnlockPresentationRef.current = presentationKey;
     void handleSystemUnlock();
   }, [
     locked,
+    reason,
+    reopenSignal,
+    documentVisible,
     onSystemUnlock,
     systemUnlockStatus?.available,
     systemUnlockStatus?.enabled,
@@ -228,7 +258,7 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
               disabled={isSystemUnlocking}
               onClick={() => void handleSystemUnlock()}
             >
-              {`Unlock with ${systemUnlockStatus.label}`}
+              {t('appLock.systemUnlock.unlockWith').replace('{label}', systemUnlockStatus.label)}
             </Button>
             {systemUnlockError && (
               <p className="text-sm text-destructive">

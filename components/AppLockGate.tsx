@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 import { I18nProvider } from '../application/i18n/I18nProvider';
 import { useAppLockBridge } from '../application/state/useAppLockBridge';
@@ -62,6 +62,7 @@ export function createAppLockGate(deps: AppLockGateDeps): React.FC<AppLockGatePr
       onAppLockReopen,
     } = deps.useAppLockBridge();
     const hasRenderedChildrenRef = useRef(false);
+    const [reopenSignal, setReopenSignal] = useState(0);
     const renderChildren = shouldRenderAppLockGateChildren({
       initialized: appLock.initialized,
       locked: appLock.locked,
@@ -93,6 +94,7 @@ export function createAppLockGate(deps: AppLockGateDeps): React.FC<AppLockGatePr
 
     useEffect(() => {
       const unsubscribe = onAppLockReopen(() => {
+        setReopenSignal((current) => current + 1);
         void appLock.resync?.();
       });
       return () => unsubscribe?.();
@@ -122,6 +124,7 @@ export function createAppLockGate(deps: AppLockGateDeps): React.FC<AppLockGatePr
               systemUnlockStatus={appLock.systemUnlockStatus}
               onSystemUnlock={appLock.unlockWithSystemAuth}
               onResetAppLock={appLock.reset}
+              reopenSignal={reopenSignal}
             />
           </TooltipProvider>
         </ToastProvider>

@@ -274,6 +274,42 @@ test("AppLockOverlay renders platform-specific system unlock button", async () =
   }
 });
 
+test("AppLockOverlay localizes the system unlock button label", async () => {
+  const dom = installDomEnvironment();
+  const renderer = await createDomRenderer(dom.document);
+
+  try {
+    await renderer.render(
+      React.createElement(
+        I18nProvider,
+        { locale: "zh-CN" },
+        React.createElement(AppLockOverlay, {
+          locked: true,
+          reason: "manual",
+          onUnlock: async () => ({ ok: false, error: "incorrect" as const }),
+          systemUnlockStatus: {
+            supported: true,
+            available: true,
+            enabled: true,
+            platform: "darwin",
+            label: "Touch ID",
+            reason: null,
+          },
+          onSystemUnlock: async () => ({ ok: true as const }),
+          onResetAppLock: async () => {},
+        }),
+      ),
+    );
+    await flushEffects();
+
+    assert.match(dom.document.body.textContent ?? "", /使用 Touch ID 解锁/i);
+    assert.doesNotMatch(dom.document.body.textContent ?? "", /Unlock with Touch ID/i);
+  } finally {
+    await renderer.unmount();
+    dom.cleanup();
+  }
+});
+
 test("AppLockOverlay automatically requests system unlock once when locked", async () => {
   const dom = installDomEnvironment();
   const renderer = await createDomRenderer(dom.document);
@@ -318,6 +354,61 @@ test("AppLockOverlay automatically requests system unlock once when locked", asy
         React.createElement(AppLockOverlay, props),
       ),
     );
+    await flushEffects();
+    await flushEffects();
+
+    assert.equal(systemUnlockCount, 1);
+  } finally {
+    await renderer.unmount();
+    dom.cleanup();
+  }
+});
+
+test("AppLockOverlay waits until the document is visible before auto system unlock", async () => {
+  const dom = installDomEnvironment();
+  const renderer = await createDomRenderer(dom.document);
+  let systemUnlockCount = 0;
+
+  try {
+    Object.defineProperty(dom.document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+
+    await renderer.render(
+      React.createElement(
+        I18nProvider,
+        { locale: "en" },
+        React.createElement(AppLockOverlay, {
+          locked: true,
+          reason: "manual",
+          onUnlock: async () => ({ ok: false as const, error: "incorrect" as const }),
+          systemUnlockStatus: {
+            supported: true,
+            available: true,
+            enabled: true,
+            platform: "darwin" as const,
+            label: "Touch ID" as const,
+            reason: null,
+          },
+          onSystemUnlock: async () => {
+            systemUnlockCount += 1;
+            return { ok: true as const };
+          },
+          onResetAppLock: async () => {},
+        }),
+      ),
+    );
+    await flushEffects();
+    await flushEffects();
+
+    assert.equal(systemUnlockCount, 0);
+
+    Object.defineProperty(dom.document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
+    await dispatchDomEvent(dom.document, new dom.window.Event("visibilitychange"));
     await flushEffects();
     await flushEffects();
 
